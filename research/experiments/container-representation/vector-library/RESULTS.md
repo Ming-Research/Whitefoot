@@ -5792,3 +5792,151 @@ not replace its deficit. These raw files and small replay diffs serve this
 API's deficit attribution in the existing experiment home, are not gate
 inputs, and may be retired only with an evidence-preserving consolidation.
 Append remains open; no next API or overall timing claim follows.
+
+#### Registered actual-compiler append comparison
+
+The compiler-generated length-residency implementation is compared with the
+original f99 image, not with a patched native diagnostic. The emitting CLI
+must remain SHA256 `309a04cbe1af4a61297fd2c8d678c34cbb56688ac7d8545b74b5452c95cb7e74`.
+Let `P=.build/append-api` within this experiment and `R=$P/residency1`.
+Full A is `$P/ecosystem/vector-costs-timed` (SHA256
+`11beeea9123a0e65736f37f2fbf56402d3a913fda2f0e0e6ab6cef5682d87a7b`);
+full B is `$R/ecosystem/vector-costs-timed` (SHA256
+`2a6f0add2c564552576dfbb9ab82bbd2c96c217eeda6d56284d8f9f1e7607f11`). Scalar-only A is
+`$P/append-context-sweep` (SHA256
+`2ae674100c15fdbd1ea2ad01a4c105060f583ee770398202bab933bdb4496a47`);
+scalar-only B is `$R/vector-costs-context-timed`. B images and their complete
+qualification must be verified before timing; neither A image is overwritten.
+The fresh full B image passes the maintained timed/account checks; its timed
+driver, C++/Rust and all 12 runtime objects are byte-identical to A. The new
+WF timed object is `970bb67f062c55aa5118ac1e6c9f44ce3e51c56fda5ed77ebc2300db5e567419`;
+the scalar-only B link was pending at registration, using the saved context driver.
+
+B must link the exact saved A C++/Rust and runtime objects, with the saved
+full driver for the full comparison and the saved context-sweep driver for
+the scalar confirmation. Rebuilt objects are usable only if byte-identical.
+Before and after timing, verify these shared SHA256 identities under `P`:
+
+```text
+ecosystem/driver-timed.o       7a416b4882a1b9fc27403f7887e5921bf80f6876bbe01cefdb20a675994cc194
+append-context-sweep-driver.o a39cbebaf5fae2a7a70016f9c1c8926742786d4d70203eca165d8d349f42f821
+ecosystem/cpp-timed.o          b6c8555462a970dc3cee7ae4a1c4552e5c74d6da1f6de979539675d616849a3f
+ecosystem/rust-timed.a         32caefe6685a0492bdf59d9201c3ff82a99de4a0aa37bdb98f5b6212ac2935e9
+native/completion/bridge.o        a1def81793c4229e41586590b91d134a9a2375a6ad9d31189b8164e91aaf137b
+native/completion/file_adapter.o  1bcbb49aa9a44031faf6397e01a960b2ce5d5d02f42cc2aaecb4edc0818d8ec6
+native/completion/file_posix.o    f1fa09d7c0831333726c367986a3811d588e639f090435b1cbf1fce62758bf33
+native/completion/linux_io_uring.o e389769ac8c9f38af9cd00e5bc5d56d3c180dff5985fb81ddfff63dfa89eb453
+native/completion/runtime.o       75cb971977625c9b05adcf74b14989544ccbf61b0a81fe4843ec72226eb36c61
+native/completion/wait_host.o     b9dbbb1485b2c3e47ef248568020130e7e27446e56be5a2c52f224bbd7a2f463
+native/ordinary_values.o          07ebcae5ed98fa7ff1a218150170f56c961e9dbae682781b62a5878a094da58b
+native/ordinary_values_ir.o       846bc08916aadbe77111a2c45aff15f33fd1fb7ffe816c198c2bf6f96dcad210
+native/sched/core.o               0655633c69666fcce21bf67258101aedb49c914fc50a6cc8edbfe22a8315e645
+native/sched/entry.o              e04734d7a1ddbe9083b47570ca2854963803b88a7197628bed2ca66cb4924d5c
+native/sched/prim_host.o          c3a5140b8221a57d27a510995ae37c7b33a64ebc87ec9f9286b99ece649bce45
+native/wf_floor.o                 8342e7ea0b8d6a0817d543e8c05e807c96527393945e95597718ba9a27ce722d
+```
+
+After explicit timing release, run these commands in the fixed order under
+one `run-check.pl` reservation with a 180-second outer timeout (estimated
+115 seconds), recording each direct status and wall time:
+
+```sh
+"$P/ecosystem/vector-costs-timed" api-measure 4194304 7 > "$R/actual-4m-control1.csv"
+"$R/ecosystem/vector-costs-timed" api-measure 4194304 7 > "$R/actual-4m-candidate1.csv"
+"$R/ecosystem/vector-costs-timed" api-measure 4194304 7 > "$R/actual-4m-candidate2.csv"
+"$P/ecosystem/vector-costs-timed" api-measure 4194304 7 > "$R/actual-4m-control2.csv"
+WF_APPEND_CONTEXTS=32 "$P/append-context-sweep" api-measure 67108864 7 > "$R/actual-64m-control1.csv"
+WF_APPEND_CONTEXTS=32 "$R/vector-costs-context-timed" api-measure 67108864 7 > "$R/actual-64m-candidate1.csv"
+WF_APPEND_CONTEXTS=32 "$R/vector-costs-context-timed" api-measure 67108864 7 > "$R/actual-64m-candidate2.csv"
+WF_APPEND_CONTEXTS=32 "$P/append-context-sweep" api-measure 67108864 7 > "$R/actual-64m-control2.csv"
+```
+
+The full comparison retains 504 rows per image (all six cells, two cohorts,
+seven samples, append and empty controls). The scalar4096 confirmation is
+unconditional after the full comparison, retaining 84 rows per image at the
+original 32-context, 1 MiB target: 2,352 raw rows total. Its extra cycles
+increase summed sample duration; validation/reset remain outside each clock
+window. Stop only for an actual command failure, preserve partial outputs,
+and do not automatically retry, filter samples, subtract controls or choose
+orders after seeing data.
+
+Reduce control1/candidate1 and control2/candidate2 separately. Each of the six
+API cells must beat its slower ordinary peer with disjoint faster sample
+ranges in both pairs and both cohorts, retaining each peer's ratio separately.
+The existing 1 ms duration floor, maximum/minimum cohort-ratio spread of 10%,
+and 10% native-peer drift bound remain; overlap or failed qualification is
+inconclusive, never a pass. Report raw WF-relative gain/loss/overlap against A
+separately from the peer target, including adverse cells in either pair.
+No reserve/grow, other-container or whole-trace timing is authorized here.
+
+The registered sequence completes with direct exit 0 in 115.60 seconds under
+one uninterrupted guard. Scalar linking and its 30-case API check exit 0 in
+0.11/0.43 seconds; the scalar B image is SHA256
+`a8dbb2d50f8e5b19bddb3215606a5af0a97521acbe7ffcd9dc967950de540621`.
+All eight measurements exit 0: full4M clocks are 20.90/20.88/20.88/20.87
+seconds and scalar64M clocks 7.97/7.56/7.62/8.06, in registered ABBA order.
+All frozen compiler/production inputs, four images and matched shared objects
+remain unchanged. [Full4M raw](ecosystem-spare-append-residency-4m-samples.csv)
+retains 2,016 rows, and [scalar64M raw](ecosystem-spare-append-residency-64m-samples.csv)
+336 rows; explicit run columns preserve each of the eight original outputs.
+Both files serve the registered append experiment and remain with its evidence
+when consolidated; neither is a gate input.
+
+All six cells meet the slower-peer target in both pairs and both cohorts,
+with disjoint faster ranges against C++, the slower median peer throughout.
+The shortest candidate WF sample is 1.891 ms; maximum peer drift is 3.433%
+and maximum target cohort-ratio spread 3.320%, within the unchanged bounds.
+The table retains each pair separately; each entry is cohort 0 / 1.
+
+| Payload / count | B1 WF/C++ | B2 WF/C++ | B1 WF/Rust | B2 WF/Rust | WF-relative result across both pairs |
+|---|---|---|---|---|---|
+| u64 / 16 | 0.446913 / 0.450508 | 0.459645 / 0.455903 | 0.952642 / 0.966059 | 0.966650 / 0.976638 | Inconclusive |
+| u64 / 256 | 0.537585 / 0.543128 | 0.557369 / 0.541117 | 1.191251 / 1.190129 | 1.198886 / 1.195067 | Inconclusive |
+| u64 / 4096 | 0.557365 / 0.561031 | 0.568992 / 0.550714 | 0.631776 / 0.626765 | 0.627887 / 0.618218 | Gain |
+| 256 B / 16 | 0.693578 / 0.694784 | 0.686270 / 0.702485 | 1.073647 / 1.077812 | 1.096536 / 1.098686 | Inconclusive |
+| 256 B / 256 | 0.620767 / 0.629904 | 0.623364 / 0.617961 | 1.023368 / 1.034014 | 1.035295 / 1.027629 | Inconclusive |
+| 256 B / 4096 | 0.617182 / 0.615333 | 0.618525 / 0.615194 | 1.031079 / 1.022408 | 1.010828 / 1.006519 | Inconclusive |
+
+Scalar4096 has disjoint faster ranges against baseline and both peers in all
+four cohorts: candidate medians are 0.522375–0.529289 ns per append, B/A
+`0.494471/0.499550` and `0.495054/0.494491`. Scalar256's adverse median
+changes are +0.80% to +2.18%, but every B/A range overlaps. The three wide
+cells also overlap baseline in every cohort; scalar16 has one single-cohort
+gain and otherwise overlaps. There is no qualified baseline loss.
+Against Rust alone, scalar4096 passes throughout; scalar16 is inconclusive
+across orders, scalar256 and wide16 are slower throughout, and wide256/4096
+mix slower and overlapping ranges. These observations are retained separately
+from the slower-peer target. Candidate scalar16 empty-control fractions are
+17.10–17.43%; they are not subtracted.
+
+The unconditional scalar64M confirmation also passes all four cohorts against
+baseline and both peers: medians 0.525877–0.529751 ns, B/A
+`0.499333/0.496714` and `0.491697/0.497289`, WF/C++
+`0.566324/0.563358` and `0.564187/0.562861`, WF/Rust
+`0.627611/0.628748` and `0.622619/0.628406`. Its shortest candidate sample
+has 35.049 ms of summed elapsed time; individual batch windows and validation
+boundaries are unchanged. No sample is filtered or normalized. This meets
+the registered append performance criterion for compiler-generated code with
+the frozen f99 caller, peers and runtime. It establishes neither an overall
+Vector result nor a design ruling. Other APIs remain unmeasured in this series.
+
+
+The production candidate uses private typed-IR helper versions for a resolved
+incoming scalar Slots place. Its emitted scalar loop has a length PHI and no
+per-iteration header/cache store or helper call; the 48-byte frame, payload
+writes, capacity checks and ordinary growth call remain. Before ordinary
+calls and region exits it conditionally publishes length, then reloads after
+ordinary calls. Unsupported paths retain ordinary lowering and public ABI.
+The [pending amendment](../../../../design/amendments/window-length-residency.md)
+records this bounded implementation choice; no source rule changes.
+
+The focused regression batch passes two tests in 2.19 seconds after a
+64-second gate-profile build (67.24 seconds guarded total). Executions in all
+three lowering modes cover empty/nonempty starts, growth, observers, early
+exit, a removing helper and whole-owner replacement. A mutant removing
+publication must exit with failure. Outer-Box fallback is an IR-only assertion:
+the newly authored executing fixture was rejected at FN-8 after wrapping the
+inner owner; that constructor-fact question is recorded in TODO, and no guard
+was added to manufacture admission. Independent read-only review found no
+proven semantic defect and identified the replacement/fallback coverage gaps
+addressed by these tests. These focused results do not replace the full gate.

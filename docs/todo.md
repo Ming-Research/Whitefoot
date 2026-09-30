@@ -525,6 +525,60 @@ rarely insert at the same place.
 
 ## Containers and storage lowering
 
+- **Check measure-fact transport when wrapping a runtime-content Box.** A new
+  append fallback fixture constructs `inner = box_slots_new::<u64>(capacity:
+  4_u64)`, then `outer = box_new::<Box<Slots<u64>>>(value: move inner)`. Calling
+  a helper requiring `outer^.inner.inner.len == 0_u64` is rejected at FN-8 by
+  frozen compiler `f99bd0bb2bb51fa09c5ea8c09fcb0e029bfc309e`. The rejection
+  alone does not establish a language gap: determine whether the current
+  rules transport the constructor fact automatically or need an explicit proof,
+  and fix the implementation if that specified path is missing. Reopen with
+  nested-owner fact transport; qualify zero length and preserved capacity after
+  wrapping, with a nonempty negative. The append optimization's outer-Box
+  fallback test checks IR selection only; it does not claim this constructor
+  chain executes. No runtime guard or changed verdict substitutes for that gap.
+
+- **Readonly storage measures cannot yet be passed by reference.** TYPE-2,
+  OP-15, PRE-1 and REF-1 describe ordinary readonly fields and field-reference
+  paths, but the compiler's borrow-place selection rejects this minimal program:
+
+  ```wf
+  fn read_word(word: &u64) -> value: u64 reads(word) {
+    return word^;
+  }
+  fn main() -> status: std::process::ExitStatus pure {
+    let values = box_slots_new::<u64>(capacity: 1_u64);
+    let length = read_word(word: &values.inner.len);
+    return std::process::exit_status(code: 0_u8);
+  }
+  ```
+
+  The frozen `f99bd0bb2bb51fa09c5ea8c09fcb0e029bfc309e` compiler rejects
+  `.len` with TYPE-5, expecting a source struct and finding `Slots<u64>`;
+  `compiler/src/semantic/check/expressions/places.rs` takes the ordinary
+  field-rejection path instead of resolving the declared measure. This is a
+  compiler/specification discrepancy, not an alias guarantee for optimization.
+  Reopen with measure-reference support: resolve these readonly fields through
+  the ordinary reference path, preserve readonly effects and reference validity,
+  and qualify both stored runtime measures and omitted constant measures.
+  Add an executing positive for this program and observations across permitted
+  writes, plus negative writes through readonly references. The current append
+  work uses a container-reference observer and retains conservative alias rules;
+  it does not repair or redefine measure references.
+
+- **Window-length selection repeats helper-graph analysis.** The append-path
+  discovery and scalar-only check in
+  `compiler/src/lowering/window_length_residency.rs` stop recursive cycles but
+  revisit shared acyclic callees for each incoming call. A layered shared-call
+  graph can therefore multiply lowering work without increasing program size
+  proportionally. Reuse completed per-function summaries, distinguishing a
+  complete result from a recursion-cut partial result; keep helper-version keys
+  relative to the selected path and roll back unsuccessful versions. Reopen
+  when admitting additional helper shapes or when compiler phase measurements
+  expose repeated traversal. Validate on a shared-call graph with an independent
+  visit-count bound, alongside unchanged generated behavior; the current small
+  append program's emission time does not qualify larger helper graphs.
+
 - **A hash map offers no sample or bounded visit.**
   `std::collections::hash_map` visits every pair (`hash_map_each`) and
   nothing less, so a program that must look at a few pairs at a time, as
@@ -653,6 +707,12 @@ rarely insert at the same place.
   is absent from the current API and would not fix default growth-16. Defer
   implementation until a complete ordinary consumer and ownership/ABI argument
   justify the scope; the earlier realloc and initial-capacity refusals remain.
+  The separate zero-byte growth-copy elision is still unverified and is excluded
+  from the spare-capacity append comparison. Reopen it with the reserve/grow
+  API: preserve allocation, header initialization, owner replacement and release,
+  and distinguish empty scalar storage, nonempty scalar storage and nonempty
+  zero-sized elements with an independent copy/release observer. Do not attribute
+  its possible benefit to a length-publication or empty-owner change.
 
 - **Deque scalar costs remain after payload-address qualification.** The
   [paired comparison](../research/experiments/container-representation/deque-library/RESULTS.md)

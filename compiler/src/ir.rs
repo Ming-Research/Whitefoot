@@ -979,6 +979,21 @@ pub enum IrOperation {
         /// The placed element. Takes use the complete `RunTaken` operation.
         value: Option<IrValueId>,
     },
+    /// A selected closed scalar append region carries its logical length
+    /// separately. This places the admitted boundary element and returns the
+    /// new logical length; publication is explicit at every observable edge.
+    RunBoundaryResident {
+        run: IrValueId,
+        value: IrValueId,
+        length: IrValueId,
+    },
+    /// Publish a resident length to the current owner only when it differs.
+    /// Comparing at the boundary preserves an unexecuted region's no-write
+    /// behavior without a second compiler-local dirty flag.
+    RunLengthCommit {
+        run: IrValueId,
+        length: IrValueId,
+    },
     /// [OP-10] take one element and move the window boundary. The physical
     /// element address is captured before changing the descriptor; no source
     /// observation occurs between that change and reading the captured slot.
@@ -1467,6 +1482,9 @@ pub enum IrSynthesis {
     /// reach it, so it is cloned like a source function and each world's copy
     /// has exactly one caller.
     Chunk,
+    /// An ordinary acyclic scalar helper with a compiler-local length cache.
+    /// It keeps its original public definition and has no scheduler role.
+    ResidentWindow,
 }
 
 /// A checked source signature's kind [GRAM-3, REF-1, REF-4], independent of

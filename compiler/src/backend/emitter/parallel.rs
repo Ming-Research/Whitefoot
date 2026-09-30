@@ -452,6 +452,7 @@ pub(crate) fn sequential_clone_set(program: &IrProgram) -> HashSet<u32> {
             {
                 Some(IrSynthesis::Splitter) => false,
                 Some(IrSynthesis::Chunk) => true,
+                Some(IrSynthesis::ResidentWindow) => reaches_hand_out.contains(ordinal),
                 None => reaches_hand_out.contains(ordinal),
             }
         })

@@ -197,21 +197,24 @@ pub(crate) fn lower_checked_from(
     let loop_candidate_constructions = synthesis.borrow().candidate_constructions;
     let (synthesized, mut actualization) = synthesis.into_inner().finish()?;
     functions.extend(synthesized);
-    let weights = split::assign_weights(&mut functions);
-    if call_grain == CallGrain::WorkUnit {
-        call_grain::prune(&mut functions, &weights, &mut actualization);
-    }
-    Ok(IrProgram {
+    let mut program = IrProgram {
         nominals,
         elements,
         constants,
         functions,
-        actualization,
+        actualization: Vec::new(),
         sequential_compute_refusal,
         recursion_budget,
         #[cfg(test)]
         loop_candidate_constructions,
-    })
+    };
+    super::window_length_residency::select(&mut program, target);
+    let weights = split::assign_weights(&mut program.functions);
+    if call_grain == CallGrain::WorkUnit {
+        call_grain::prune(&mut program.functions, &weights, &mut actualization);
+    }
+    program.actualization = actualization;
+    Ok(program)
 }
 
 /// What every builder of one lowering shares: the program-wide tables it reads

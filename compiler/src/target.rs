@@ -1337,6 +1337,44 @@ fn validate_target_obligation(
     operation: &IrOperation,
 ) -> Result<(), TargetLayoutFailure> {
     match operation {
+        IrOperation::RunBoundaryResident { run, value, length } => {
+            let u64_type = IrType::Integer {
+                width: 64,
+                signed: false,
+            };
+            let Some(IrType::Address(crate::IrAddressed::Window {
+                shape: crate::IrWindowShape::Slots,
+                element,
+                ..
+            })) = function.value_type(*run)
+            else {
+                return Err(TargetLayoutFailure::InvalidIr);
+            };
+            if result_type != u64_type
+                || function.value_type(*length) != Some(u64_type)
+                || function.value_type(*value) != program.element(element)
+            {
+                return Err(TargetLayoutFailure::InvalidIr);
+            }
+        }
+        IrOperation::RunLengthCommit { run, length } => {
+            if result_type != IrType::Unit
+                || function.value_type(*length)
+                    != Some(IrType::Integer {
+                        width: 64,
+                        signed: false,
+                    })
+                || !matches!(
+                    function.value_type(*run),
+                    Some(IrType::Address(crate::IrAddressed::Window {
+                        shape: crate::IrWindowShape::Slots,
+                        ..
+                    }))
+                )
+            {
+                return Err(TargetLayoutFailure::InvalidIr);
+            }
+        }
         IrOperation::BoxNew { nominal, value } => {
             if result_type != IrType::Nominal(*nominal) {
                 return Err(TargetLayoutFailure::InvalidIr);

@@ -1055,6 +1055,31 @@ struct FunctionFrameContents<'plan> {
     result_slot: Option<usize>,
 }
 
+/// Optional lowering qualifies the actual selected frame before replacing the
+/// ordinary function. A cache or helper that does not fit leaves that function
+/// unchanged, rather than turning an optimizer choice into target rejection.
+pub(crate) fn validate_resident_frame(
+    target: TargetLayout,
+    program: &IrProgram,
+    function: &IrFunction,
+) -> Result<(), BackendFailure> {
+    FunctionAbi::build(program, function)?;
+    for sequential in [false, true] {
+        let storage = FunctionStoragePlan::build_in_world(program, function, sequential)?;
+        let result_slot = places::returned_storage_slot(function, &storage);
+        FunctionFramePlan::build(
+            target,
+            program,
+            function,
+            FunctionFrameContents {
+                storage: &storage,
+                result_slot,
+            },
+        )?;
+    }
+    Ok(())
+}
+
 impl FunctionFramePlan {
     fn build(
         target: TargetLayout,
@@ -1773,6 +1798,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             Signature::new(body_symbol.clone(), result, parameters)
         };
         signature.references = references;
+        if self.function.synthesis() == Some(crate::IrSynthesis::ResidentWindow) {
+            // This version is a piece of its caller's selected local region;
+            // a per-item cache-address call is not its intended rendering.
+            signature.suffix.push_str(" alwaysinline");
+        }
         if entry {
             signature.linkage = Linkage::Internal;
         }
@@ -1926,6 +1956,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         }
         let mut signature = Signature::new(symbol, result.clone(), parameters);
         signature.references = references;
+        if self.function.synthesis() == Some(crate::IrSynthesis::ResidentWindow) {
+            signature.suffix.push_str(" alwaysinline");
+        }
         let mut output = FunctionBody::default();
         output.open_block("entry".to_owned());
         output.symbol(body_symbol);
@@ -2337,6 +2370,12 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             }
             IrOperation::RunBoundary { row, run, value } => {
                 self.emit_run_boundary(result, ty, *row, *run, *value)
+            }
+            IrOperation::RunBoundaryResident { run, value, length } => {
+                self.emit_run_boundary_resident(result, ty, *run, *value, *length)
+            }
+            IrOperation::RunLengthCommit { run, length } => {
+                self.emit_run_length_commit(result, ty, *run, *length)
             }
             IrOperation::RunShift { run, index, open } => {
                 self.emit_run_shift(result, ty, *run, *index, *open)

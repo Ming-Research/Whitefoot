@@ -428,6 +428,82 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         self.emit_constant(result, ty, IrConstant::Unit)
     }
 
+    /// The selected region, rather than a stored descriptor, supplies this
+    /// admitted place-back's exact logical length. The owner slot remains the
+    /// same source place and is resolved anew after every ordinary grow.
+    pub(super) fn emit_run_boundary_resident(
+        &mut self,
+        result: IrValueId,
+        ty: IrType,
+        run: IrValueId,
+        value: IrValueId,
+        length: IrValueId,
+    ) -> Result<(), BackendFailure> {
+        let u64_type = IrType::Integer {
+            width: 64,
+            signed: false,
+        };
+        let run_type = self.run_value_type(run)?;
+        let shape = RunShape::of(run_type).ok_or(BackendFailure::InvalidIr)?;
+        if ty != u64_type
+            || self.value_type(length) != Some(u64_type)
+            || !matches!(self.value_type(run), Some(IrType::Address(_)))
+            || shape.shape != IrWindowShape::Slots
+            || self.value_type(value) != Some(shape.element_type(self.program)?)
+        {
+            return Err(BackendFailure::InvalidIr);
+        }
+        let pointer =
+            self.element_pointer(result, shape, run_type, run, &self.value_name(length))?;
+        self.store_value_at(value, &format!("%{pointer}"))?;
+        writeln!(
+            self.output,
+            "  {} = add i64 {}, 1",
+            self.value_name(result),
+            self.value_name(length)
+        )
+        .map_err(|_| BackendFailure::TextEmission)
+    }
+
+    /// Only region boundaries use this conditional publication. A zero-trip
+    /// region compares equal and writes no physical header; a grow or observer
+    /// receives the complete ordinary window before its call begins.
+    pub(super) fn emit_run_length_commit(
+        &mut self,
+        result: IrValueId,
+        ty: IrType,
+        run: IrValueId,
+        length: IrValueId,
+    ) -> Result<(), BackendFailure> {
+        let u64_type = IrType::Integer {
+            width: 64,
+            signed: false,
+        };
+        if ty != IrType::Unit || self.value_type(length) != Some(u64_type) {
+            return Err(BackendFailure::InvalidIr);
+        }
+        let run_type = self.run_value_type(run)?;
+        let shape = RunShape::of(run_type).ok_or(BackendFailure::InvalidIr)?;
+        let destination = self.run_storage(run)?.ok_or(BackendFailure::InvalidIr)?;
+        let address =
+            self.aggregate_field_pointer(run_type, &destination, shape.length_field() as usize)?;
+        let stored = self.next_temporary()?;
+        let changed = self.next_temporary()?;
+        let write = format!("run.length.write.v{}", result.ordinal());
+        let done = format!("run.length.done.v{}", result.ordinal());
+        writeln!(self.output, "  %{stored} = load i64, ptr {address}\n  %{changed} = icmp ne i64 %{stored}, {}\n  br i1 %{changed}, label %{write}, label %{done}", self.value_name(length))
+            .map_err(|_| BackendFailure::TextEmission)?;
+        self.output.open_block(write);
+        writeln!(
+            self.output,
+            "  store i64 {}, ptr {address}\n  br label %{done}",
+            self.value_name(length)
+        )
+        .map_err(|_| BackendFailure::TextEmission)?;
+        self.output.open_block(done);
+        self.emit_constant(result, ty, IrConstant::Unit)
+    }
+
     fn move_run_boundary(
         &mut self,
         shape: RunShape,
