@@ -1,0 +1,550 @@
+--- a/whitefoot-timed.ll
++++ b/whitefoot-timed.ll
+@@ -3337,13 +3337,16 @@
+   br i1 %t7, label %window.grow.full.v2, label %window.grow.partial.v2
+ window.grow.full.v2:
+   %t13 = mul nuw i64 %v1, ptrtoint (ptr getelementptr (i64, ptr null, i64 1) to i64)
+-  %t14 = call ptr @realloc(ptr %t5, i64 %t13)
++  %t14 = call ptr @malloc(i64 %t13)
+   %t15 = icmp ne ptr %t14, null
+   br i1 %t15, label %window.block.ready.v2.realloc, label %window.block.oom.v2.realloc
+ window.block.oom.v2.realloc:
+   call void @wf_resource_abort()
+   unreachable
+ window.block.ready.v2.realloc:
++  %route.copy.bytes = mul nuw i64 %t3, ptrtoint (ptr getelementptr (i64, ptr null, i64 1) to i64)
++  call void @llvm.memcpy.p0.p0.i64(ptr %t14, ptr %t5, i64 %route.copy.bytes, i1 false)
++  call void @free(ptr %t5)
+   br label %window.block.ready.v2
+ window.grow.partial.v2:
+   %t16 = mul nuw i64 %v1, ptrtoint (ptr getelementptr (i64, ptr null, i64 1) to i64)
+@@ -3417,13 +3420,16 @@
+   br i1 %t7, label %window.grow.full.v2, label %window.grow.partial.v2
+ window.grow.full.v2:
+   %t13 = mul nuw i64 %v1, ptrtoint (ptr getelementptr (%wf.t.ac26c585c4167c7a, ptr null, i64 1) to i64)
+-  %t14 = call ptr @realloc(ptr %t5, i64 %t13)
++  %t14 = call ptr @malloc(i64 %t13)
+   %t15 = icmp ne ptr %t14, null
+   br i1 %t15, label %window.block.ready.v2.realloc, label %window.block.oom.v2.realloc
+ window.block.oom.v2.realloc:
+   call void @wf_resource_abort()
+   unreachable
+ window.block.ready.v2.realloc:
++  %route.copy.bytes = mul nuw i64 %t3, ptrtoint (ptr getelementptr (%wf.t.ac26c585c4167c7a, ptr null, i64 1) to i64)
++  call void @llvm.memcpy.p0.p0.i64(ptr %t14, ptr %t5, i64 %route.copy.bytes, i1 false)
++  call void @free(ptr %t5)
+   br label %window.block.ready.v2
+ window.grow.partial.v2:
+   %t16 = mul nuw i64 %v1, ptrtoint (ptr getelementptr (%wf.t.ac26c585c4167c7a, ptr null, i64 1) to i64)
+--- a/whitefoot-account.ll
++++ b/whitefoot-account.ll
+@@ -3337,13 +3337,16 @@
+   br i1 %t7, label %window.grow.full.v2, label %window.grow.partial.v2
+ window.grow.full.v2:
+   %t13 = mul nuw i64 %v1, ptrtoint (ptr getelementptr (i64, ptr null, i64 1) to i64)
+-  %t14 = call ptr @wf_cost_reallocate(ptr %t5, i64 %t13)
++  %t14 = call ptr @wf_cost_allocate(i64 %t13)
+   %t15 = icmp ne ptr %t14, null
+   br i1 %t15, label %window.block.ready.v2.realloc, label %window.block.oom.v2.realloc
+ window.block.oom.v2.realloc:
+   call void @wf_resource_abort()
+   unreachable
+ window.block.ready.v2.realloc:
++  %route.copy.bytes = mul nuw i64 %t3, ptrtoint (ptr getelementptr (i64, ptr null, i64 1) to i64)
++  call void @llvm.memcpy.p0.p0.i64(ptr %t14, ptr %t5, i64 %route.copy.bytes, i1 false)
++  call void @wf_cost_release(ptr %t5)
+   br label %window.block.ready.v2
+ window.grow.partial.v2:
+   %t16 = mul nuw i64 %v1, ptrtoint (ptr getelementptr (i64, ptr null, i64 1) to i64)
+@@ -3417,13 +3420,16 @@
+   br i1 %t7, label %window.grow.full.v2, label %window.grow.partial.v2
+ window.grow.full.v2:
+   %t13 = mul nuw i64 %v1, ptrtoint (ptr getelementptr (%wf.t.ac26c585c4167c7a, ptr null, i64 1) to i64)
+-  %t14 = call ptr @wf_cost_reallocate(ptr %t5, i64 %t13)
++  %t14 = call ptr @wf_cost_allocate(i64 %t13)
+   %t15 = icmp ne ptr %t14, null
+   br i1 %t15, label %window.block.ready.v2.realloc, label %window.block.oom.v2.realloc
+ window.block.oom.v2.realloc:
+   call void @wf_resource_abort()
+   unreachable
+ window.block.ready.v2.realloc:
++  %route.copy.bytes = mul nuw i64 %t3, ptrtoint (ptr getelementptr (%wf.t.ac26c585c4167c7a, ptr null, i64 1) to i64)
++  call void @llvm.memcpy.p0.p0.i64(ptr %t14, ptr %t5, i64 %route.copy.bytes, i1 false)
++  call void @wf_cost_release(ptr %t5)
+   br label %window.block.ready.v2
+ window.grow.partial.v2:
+   %t16 = mul nuw i64 %v1, ptrtoint (ptr getelementptr (%wf.t.ac26c585c4167c7a, ptr null, i64 1) to i64)
+--- a/vector-costs.c
++++ b/vector-costs.c
+@@ -672,6 +672,9 @@
+ }
+ 
+ #if defined(ACCOUNT_ONLY)
++#ifndef WF_FULL_GROWTH_MALLOC_COPY
++#define WF_FULL_GROWTH_MALLOC_COPY 0
++#endif
+ #ifndef WF_EMPTY_PAYLOAD_ANCHOR
+ #define WF_EMPTY_PAYLOAD_ANCHOR 0
+ #endif
+@@ -877,14 +880,15 @@
+                         ? initial * stride : !WF_EMPTY_PAYLOAD_ANCHOR;
+                     const size_t new_payload = capacity != 0 && stride != 0
+                         ? capacity * stride : !WF_EMPTY_PAYLOAD_ANCHOR;
+-                    const size_t resize = WF_SPLIT_SLOTS_REALLOC && old_payload != 0;
+-                    const size_t release = !WF_SPLIT_SLOTS_REALLOC && old_payload != 0;
++                    const bool full_resize = WF_SPLIT_SLOTS_REALLOC && !WF_FULL_GROWTH_MALLOC_COPY;
++                    const size_t resize = full_resize && old_payload != 0;
++                    const size_t release = !full_resize && old_payload != 0;
+                     require(after.requests == before.requests + 1
+                             && after.reallocations == before.reallocations + resize
+                             && after.releases == before.releases + release
+                             && after.bytes == before.bytes + new_payload
+                             && peak_bytes == header + new_payload
+-                                + (WF_SPLIT_SLOTS_REALLOC ? 0 : old_payload)
++                                + (full_resize ? 0 : old_payload)
+                             && peak_overlap_upper_bytes == header + old_payload + new_payload,
+                             "split Slots growth allocation ledger");
+                 }
+--- a/focused/focused-fixture.wf
++++ b/focused/focused-fixture.wf
+@@ -171,3 +171,39 @@
+   free_empty(window: move values);
+   return 0_u64;
+ }
++
++fn grow_scalar() -> result: u64 pure {
++  let values = box_slots_new::<u64>(capacity: 2_u64);
++  place_back(window: &values.inner, value: 17_u64);
++  place_back(window: &values.inner, value: 29_u64);
++  grow(cell: &values, capacity: 4_u64);
++  if values.inner.len != 2_u64 {
++    return 1_u64;
++  }
++  if values.inner.cap != 4_u64 {
++    return 2_u64;
++  }
++  if values.inner[0_u64] != 17_u64 {
++    return 3_u64;
++  }
++  if values.inner[1_u64] != 29_u64 {
++    return 4_u64;
++  }
++  return 0_u64;
++}
++
++fn grow_owned_failure(values: &Box<Slots<Box<u64>>>) -> result: u64 writes(values) contract {
++  requires values^.inner.len == 2_u64;
++  requires values^.inner.cap == 2_u64;
++} {
++  grow(cell: values, capacity: 4_u64);
++  return 0_u64;
++}
++
++fn grow_scalar_failure(values: &Box<Slots<u64>>) -> result: u64 writes(values) contract {
++  requires values^.inner.len == 2_u64;
++  requires values^.inner.cap == 2_u64;
++} {
++  grow(cell: values, capacity: 4_u64);
++  return 0_u64;
++}
+--- a/focused/observer.c
++++ b/focused/observer.c
+@@ -1,4 +1,4 @@
+-/* Independent observer for the empty-payload anchor append research overlay. */
++/* Independent observer for the full-growth malloc/copy append research overlay. */
+ #include <stdint.h>
+ #include <stdalign.h>
+ #include <stdio.h>
+@@ -10,6 +10,8 @@
+ extern uint64_t wf_grow_zero_capacity(void), wf_grow_zero_stride(void);
+ extern uint64_t wf_empty_range(void), wf_empty_cell(void);
+ extern uint64_t wf_grow_failure(struct descriptor *);
++extern uint64_t wf_grow_owned_failure(struct descriptor *), wf_grow_scalar_failure(struct descriptor *);
++extern uint64_t wf_grow_scalar(void);
+ extern uint64_t wf_grow_first_failure(struct descriptor *);
+ extern uint64_t wf_two_empty_ranges(void), wf_zst_zero_large(void), wf_zst_empty(void);
+ extern uint8_t wf_swap_owners(struct descriptor *, struct descriptor *);
+@@ -18,14 +20,17 @@
+ struct allocation { unsigned char *pointer; size_t bytes; unsigned live; };
+ static struct allocation allocations[8];
+ static size_t allocated, calls, remakes, releases, transfers;
+-static unsigned selected, moving, failing, first_failing;
++static unsigned selected, failing, first_failing;
++static size_t copies, retirements, element_releases;
++static unsigned char original_payload[16];
++static struct descriptor original_full;
+ static alignas(16) unsigned char foreign_anchor[16];
+ static alignas(16) unsigned char second_anchor[16];
+ static struct descriptor *failure_cell;
+ static struct descriptor original_empty;
+ static size_t range_calls, empty_transfers;
+ static void require(int okay, const char *message) {
+-    if (!okay) { fprintf(stderr,"empty anchor observer: %s\n",message); exit(1); }
++    if (!okay) { fprintf(stderr,"full malloc/copy observer: %s\n",message); exit(1); }
+ }
+ static struct allocation *find(void *pointer) {
+     for (size_t i=0; i<allocated; ++i)
+@@ -41,48 +46,63 @@
+     return a;
+ }
+ void *wf_observe_allocate(uint64_t bytes) {
+-    static const size_t expected[11][3]={
+-        {16,8,8}, {4,8}, {3}, {0}, {0}, {0}, {1}, {2,4}, {0}, {0}, {3}
++    static const size_t expected[14][4]={
++        {16,8,8,32}, {4,8}, {3}, {0}, {0}, {0}, {1,2}, {2,4}, {0}, {0}, {3},
++        {16,32}, {16,8,8,32}, {16,32}
+     };
+-    require(calls<3 && bytes==expected[selected][calls],"exact malloc extent");
++    require(selected<14 && calls<4 && bytes!=0 && bytes==expected[selected][calls],"exact malloc extent");
+     ++calls;
+-    if (first_failing) return NULL;
++    if (first_failing || (failing && ((selected==6 || selected==13) ? calls==2 : calls==4))) return NULL;
+     return make((size_t)bytes)->pointer;
+ }
+ void *wf_observe_reallocate(void *pointer, uint64_t bytes) {
+-    static const size_t sizes[]={32,0,3,1,0,0,2};
+-    struct allocation *old=find(pointer);
+-    require((selected==0 || selected==6) && remakes++==0 && old==&allocations[0]
+-            && old->live && bytes==sizes[selected],"full realloc identity and extent");
+-    if (failing) return NULL;
+-    struct allocation *fresh=old;
+-    if (moving) {
+-        fresh=make((size_t)bytes);
+-        memcpy(fresh->pointer,old->pointer,old->bytes);
+-        old->live=0;
+-        memset(old->pointer,0xdd,old->bytes);
+-    } else {
+-        if (bytes>old->bytes)
+-            memset(old->pointer+old->bytes,0xa6,(size_t)bytes-old->bytes);
+-        old->bytes=(size_t)bytes;
+-    }
+-#ifdef CORRUPT_PRESERVED_ORDER
+-    if (selected==0) {
+-        void *first,*second;
+-        memcpy(&first,fresh->pointer,8); memcpy(&second,fresh->pointer+8,8);
+-        memcpy(fresh->pointer,&second,8); memcpy(fresh->pointer+8,&first,8);
+-    }
++    (void)bytes; (void)find(pointer); ++remakes;
++    require(0,"full-growth route must not realloc"); return NULL;
++}
++void wf_observe_full_copy(void *destination, const void *source, uint64_t bytes) {
++    require(!failing && !first_failing,"copy before successful full-growth allocation");
++    struct allocation *old=find((void *)source), *fresh=find(destination);
++    require((selected==0 || selected==11) && copies++==0 && old==&allocations[0]
++            && old->live && fresh->live && old!=fresh && bytes==16
++            && old->bytes==16 && fresh->bytes==32,"exact initialized full-growth copy");
++    memcpy(destination,source,(size_t)bytes);
++#ifdef CORRUPT_COPY_ORDER
++    unsigned char temporary[8];
++    memcpy(temporary,destination,8);
++    memcpy(destination,(unsigned char *)destination+8,8);
++    memcpy((unsigned char *)destination+8,temporary,8);
+ #endif
+-    return fresh->pointer;
+ }
+ void wf_observe_release(void *pointer) {
+     struct allocation *a=find(pointer);
+     require(a->live,"release of retired or released allocation");
++    require(!failing && !first_failing,"old allocation freed before full-growth allocation success");
+     if (selected==0) {
+-        if(a->bytes==8)
+-            require(*(uint64_t *)pointer==17 || *(uint64_t *)pointer==29,"nested owner contents");
+-        else
+-            require(!allocations[1].live && !allocations[2].live,"nested owners precede payload release");
++        if (a==&allocations[0]) {
++            require(copies==1 && allocations[1].live && allocations[2].live
++                    && allocations[3].live,"retire old payload without releasing nested owners");
++            require(memcmp(allocations[3].pointer,a->pointer,16)==0,"full nested copy order before retirement");
++            ++retirements;
++        } else if(a->bytes==8) {
++            size_t ordinal=(size_t)(a-allocations);
++            require(ordinal==element_releases+1 && *(uint64_t *)pointer==(ordinal==1 ? 17 : 29),
++                    "nested owner exact contents and cleanup order");
++            ++element_releases;
++        } else {
++            require(retirements==1 && element_releases==2 && !allocations[1].live
++                    && !allocations[2].live,"nested owners precede final payload release");
++        }
++    }
++    if (selected==11) {
++        if(a==&allocations[0]) {
++            require(copies==1 && allocations[1].live
++                    && memcmp(a->pointer,allocations[1].pointer,16)==0,"scalar copy before retirement");
++            ++retirements;
++        } else {
++            require(((uint64_t *)pointer)[0]==17 && ((uint64_t *)pointer)[1]==29,
++                    "full scalar content order");
++            for(size_t i=16;i<32;++i) require(a->pointer[i]==0xa6,"full scalar spare bytes untouched");
++        }
+     }
+     if (selected==1 && a==&allocations[1]) {
+         require(a->pointer[0]==31 && a->pointer[1]==47,"initialized prefix");
+@@ -101,9 +121,7 @@
+     require(find(in->payload)->live,"linked live payload");
+     const void *first, *second;
+     memcpy(&first,in->payload,8); memcpy(&second,in->payload+8,8);
+-#ifndef CORRUPT_PRESERVED_ORDER
+     require(*(const uint64_t *)first==17 && *(const uint64_t *)second==29,"linked complete payload");
+-#endif
+     *out=*in;
+ }
+ void wf_observe_empty_transfer(struct descriptor *out, const struct descriptor *in) {
+@@ -124,17 +142,26 @@
+                 && failure_cell->cap==original_empty.cap
+                 && failure_cell->payload==original_empty.payload,
+                 "failed first malloc preserves all caller descriptor words");
+-        puts("empty anchor: NULL first malloc preserves caller descriptor"); exit(74);
+-    }
+-    require(failing && calls==1 && remakes==1 && releases==0,"floor route");
+-    require(failure_cell && failure_cell->len==1 && failure_cell->cap==1
+-            && failure_cell->payload==allocations[0].pointer
+-            && failure_cell->payload[0]==17 && allocations[0].live,
+-            "failed realloc preserves caller descriptor and payload");
+-    puts("empty anchor: NULL preserves caller descriptor and payload"); exit(73);
++        puts("full malloc/copy: NULL first malloc preserves caller descriptor"); exit(74);
++    }
++    const size_t expected_calls=selected==12 ? 4 : 2;
++    const size_t expected_live=selected==12 ? 3 : 1;
++    require(failing && calls==expected_calls && allocated==expected_live && remakes==0
++            && copies==0 && releases==0 && retirements==0 && element_releases==0,
++            "failed full malloc performs no copy or free");
++    require(failure_cell && failure_cell->len==original_full.len
++            && failure_cell->cap==original_full.cap && failure_cell->payload==original_full.payload,
++            "failed full malloc preserves all descriptor words");
++    require(allocations[0].live && memcmp(failure_cell->payload,original_payload,allocations[0].bytes)==0,
++            "failed full malloc preserves initialized payload");
++    if(selected==12)
++        require(allocations[1].live && allocations[2].live
++                && *(uint64_t *)allocations[1].pointer==17 && *(uint64_t *)allocations[2].pointer==29,
++                "failed full malloc preserves nested owner lifetime and values");
++    puts("full malloc/copy: NULL preserves descriptor, payload and owners without copy/free"); exit(73);
+ }
+ static void reset(void) {
+-    memset(allocations,0,sizeof allocations); allocated=calls=remakes=releases=transfers=range_calls=empty_transfers=0;
++    memset(allocations,0,sizeof allocations); allocated=calls=remakes=releases=transfers=range_calls=empty_transfers=copies=retirements=element_releases=0;
+ }
+ int wf__main_body(int argc, char **argv) {
+     if (argc==2 && !strcmp(argv[1],"wrong-release")) {
+@@ -152,21 +179,36 @@
+         (void)wf_grow_first_failure(&owner);
+         require(0,"failed first grow returned");
+     }
+-    if (argc==2 && !strcmp(argv[1],"failure")) {
+-        selected=6; failing=1; reset();
+-        struct descriptor owner={1,1,wf_observe_allocate(1)};
+-        owner.payload[0]=17; failure_cell=&owner;
+-        (void)wf_grow_failure(&owner);
+-        require(0,"failed grow returned");
++    if (argc==2 && (!strcmp(argv[1],"failure") || !strcmp(argv[1],"scalar-failure")
++                    || !strcmp(argv[1],"owned-failure"))) {
++        selected=!strcmp(argv[1],"owned-failure") ? 12 : !strcmp(argv[1],"scalar-failure") ? 13 : 6;
++        reset();
++        struct descriptor owner={selected==6 ? 1 : 2,selected==6 ? 1 : 2,
++                                 wf_observe_allocate(selected==6 ? 1 : 16)};
++        if(selected==12) {
++            uint64_t *first=wf_observe_allocate(8), *second=wf_observe_allocate(8);
++            *first=17; *second=29;
++            memcpy(owner.payload,&first,8); memcpy(owner.payload+8,&second,8);
++        } else if(selected==13) {
++            ((uint64_t *)owner.payload)[0]=17; ((uint64_t *)owner.payload)[1]=29;
++        } else owner.payload[0]=17;
++        original_full=owner; memcpy(original_payload,owner.payload,allocations[0].bytes);
++        failure_cell=&owner; failing=1;
++        if(selected==12) (void)wf_grow_owned_failure(&owner);
++        else if(selected==13) (void)wf_grow_scalar_failure(&owner);
++        else (void)wf_grow_failure(&owner);
++        require(0,"failed full grow returned");
+     }
+     uint64_t (*const cases[])(void)={wf_grow_owned,wf_grow_partial,
+         wf_grow_zero_capacity,wf_grow_zero_stride,wf_empty_range,wf_empty_cell};
+-    const size_t mallocs[]={3,2,1,0,0,0};
+-    const size_t reallocs[]={1,0,0,0,0,0};
+-    for (moving=0; moving<2; ++moving) for (selected=0; selected<6; ++selected) {
++    const size_t mallocs[]={4,2,1,0,0,0};
++    const size_t reallocs[]={0,0,0,0,0,0};
++    for (selected=0; selected<6; ++selected) {
+         reset(); require(cases[selected]()==0,"source content/header assertion");
+         require(calls==mallocs[selected] && remakes==reallocs[selected]
+                 && releases==mallocs[selected],"complete malloc/realloc/free ledger");
++        require(copies==(selected==0) && retirements==(selected==0)
++                && element_releases==(selected==0 ? 2 : 0),"exact full-copy/retirement/element-cleanup ledger");
+ #ifdef EXPECT_LINKED_TRANSFER
+         require(transfers==(selected==0),"exact linked route count");
+ #endif
+@@ -175,6 +217,11 @@
+             free(allocations[i].pointer);
+         }
+     }
++    selected=11; reset();
++    require(wf_grow_scalar()==0,"full scalar source content/header assertions");
++    require(calls==2 && remakes==0 && copies==1 && releases==2 && retirements==1
++            && element_releases==0,"full scalar exact allocation/copy/retirement/cleanup ledger");
++    for(size_t i=0;i<allocated;++i) { require(!allocations[i].live,"scalar allocation leak"); free(allocations[i].pointer); }
+     selected=8; reset();
+     require(wf_two_empty_ranges()==0,"two empty ranges source check");
+     require(calls==0 && remakes==0 && releases==0,"two empty owners exact ledger");
+@@ -226,7 +273,7 @@
+     (void)wf_release_owner(&fresh);
+     require(releases==1 && !allocations[0].live,"foreign anchor grown owner cleanup");
+     free(allocations[0].pointer);
+-    puts("empty anchor: nested/partial/cap0/ZST/ranges/exchanges pass; exact releases");
++    puts("full malloc/copy: nested/partial/cap0/ZST/ranges/exchanges pass; exact releases");
+     return 0;
+ }
+ int main(int argc, char **argv) { return wf__floor_run(argc,argv); }
+--- /dev/null
++++ b/focused/linked-bridge.ll
+@@ -0,0 +1,28 @@
++; Post-lowering linked-body replacement definitions, not source fn_sig formation.
++; Replace only the ordinary public definitions of these three source functions.
++; Keep calls through public symbols; do not redirect callers to .body helpers.
++declare void @wf_observe_transfer(ptr, ptr)
++declare void @wf_observe_empty_transfer(ptr, ptr)
++declare i64 @wf_observe_empty_ranges(ptr, i64, ptr, i64)
++
++define { i64, i64, ptr } @wf_owner_identity(ptr %input) {
++entry:
++  %output = alloca { i64, i64, ptr }, align 8
++  call void @wf_observe_transfer(ptr %output, ptr %input)
++  %result = load { i64, i64, ptr }, ptr %output, align 8
++  ret { i64, i64, ptr } %result
++}
++
++define { i64, i64, ptr } @wf_owner_identity_u8(ptr %input) {
++entry:
++  %output = alloca { i64, i64, ptr }, align 8
++  call void @wf_observe_empty_transfer(ptr %output, ptr %input)
++  %result = load { i64, i64, ptr }, ptr %output, align 8
++  ret { i64, i64, ptr } %result
++}
++
++define i64 @wf_two_empty_lengths(ptr noalias nonnull captures(none) %first, i64 %first_len, ptr noalias nonnull captures(none) %second, i64 %second_len) {
++entry:
++  %result = call i64 @wf_observe_empty_ranges(ptr %first, i64 %first_len, ptr %second, i64 %second_len)
++  ret i64 %result
++}
+--- /dev/null
++++ b/focused/focused-route.patch
+@@ -0,0 +1,64 @@
++--- focused-realloc.raw.ll
+++++ focused-malloc.raw.ll
++@@ -163,6 +163,7 @@
++ 
++ declare void @llvm.assume(i1)
++ declare void @llvm.memmove.p0.p0.i64(ptr, ptr, i64, i1 immarg)
+++declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1 immarg)
++ 
++ define internal void @wf_owner_identity.body(ptr %wf.result, ptr %wf.arg.v0) #0 {
++ entry:
++@@ -1803,13 +1804,16 @@
++   br i1 %t7, label %window.grow.full.v2, label %window.grow.partial.v2
++ window.grow.full.v2:
++   %t13 = mul nuw i64 %v1, ptrtoint (ptr getelementptr (ptr, ptr null, i64 1) to i64)
++-  %t14 = call ptr @realloc(ptr %t5, i64 %t13)
+++  %t14 = call ptr @malloc(i64 %t13)
++   %t15 = icmp ne ptr %t14, null
++   br i1 %t15, label %window.block.ready.v2.realloc, label %window.block.oom.v2.realloc
++ window.block.oom.v2.realloc:
++   call void @wf_resource_abort()
++   unreachable
++ window.block.ready.v2.realloc:
+++  %route.copy.bytes = mul nuw i64 %t3, ptrtoint (ptr getelementptr (ptr, ptr null, i64 1) to i64)
+++  call void @llvm.memcpy.p0.p0.i64(ptr %t14, ptr %t5, i64 %route.copy.bytes, i1 false)
+++  call void @free(ptr %t5)
++   br label %window.block.ready.v2
++ window.grow.partial.v2:
++   %t16 = mul nuw i64 %v1, ptrtoint (ptr getelementptr (ptr, ptr null, i64 1) to i64)
++@@ -1883,13 +1887,16 @@
++   br i1 %t7, label %window.grow.full.v2, label %window.grow.partial.v2
++ window.grow.full.v2:
++   %t13 = mul nuw i64 %v1, ptrtoint (ptr getelementptr (i8, ptr null, i64 1) to i64)
++-  %t14 = call ptr @realloc(ptr %t5, i64 %t13)
+++  %t14 = call ptr @malloc(i64 %t13)
++   %t15 = icmp ne ptr %t14, null
++   br i1 %t15, label %window.block.ready.v2.realloc, label %window.block.oom.v2.realloc
++ window.block.oom.v2.realloc:
++   call void @wf_resource_abort()
++   unreachable
++ window.block.ready.v2.realloc:
+++  %route.copy.bytes = mul nuw i64 %t3, ptrtoint (ptr getelementptr (i8, ptr null, i64 1) to i64)
+++  call void @llvm.memcpy.p0.p0.i64(ptr %t14, ptr %t5, i64 %route.copy.bytes, i1 false)
+++  call void @free(ptr %t5)
++   br label %window.block.ready.v2
++ window.grow.partial.v2:
++   %t16 = mul nuw i64 %v1, ptrtoint (ptr getelementptr (i8, ptr null, i64 1) to i64)
++@@ -2047,13 +2054,16 @@
++   br i1 %t7, label %window.grow.full.v2, label %window.grow.partial.v2
++ window.grow.full.v2:
++   %t13 = mul nuw i64 %v1, ptrtoint (ptr getelementptr (i64, ptr null, i64 1) to i64)
++-  %t14 = call ptr @realloc(ptr %t5, i64 %t13)
+++  %t14 = call ptr @malloc(i64 %t13)
++   %t15 = icmp ne ptr %t14, null
++   br i1 %t15, label %window.block.ready.v2.realloc, label %window.block.oom.v2.realloc
++ window.block.oom.v2.realloc:
++   call void @wf_resource_abort()
++   unreachable
++ window.block.ready.v2.realloc:
+++  %route.copy.bytes = mul nuw i64 %t3, ptrtoint (ptr getelementptr (i64, ptr null, i64 1) to i64)
+++  call void @llvm.memcpy.p0.p0.i64(ptr %t14, ptr %t5, i64 %route.copy.bytes, i1 false)
+++  call void @free(ptr %t5)
++   br label %window.block.ready.v2
++ window.grow.partial.v2:
++   %t16 = mul nuw i64 %v1, ptrtoint (ptr getelementptr (i64, ptr null, i64 1) to i64)
+--- /dev/null
++++ b/focused/early-free.patch
+@@ -0,0 +1,26 @@
++--- focused-observed.ll
+++++ early-free.ll
++@@ -1800,6 +1800,7 @@
++   br i1 %t7, label %window.grow.full.v2, label %window.grow.partial.v2
++ window.grow.full.v2:
++   %t13 = mul nuw i64 %v1, ptrtoint (ptr getelementptr (ptr, ptr null, i64 1) to i64)
+++  call void @wf_observe_release(ptr %t5)
++   %t14 = call ptr @wf_observe_allocate(i64 %t13)
++   %t15 = icmp ne ptr %t14, null
++   br i1 %t15, label %window.block.ready.v2.realloc, label %window.block.oom.v2.realloc
++@@ -1883,6 +1884,7 @@
++   br i1 %t7, label %window.grow.full.v2, label %window.grow.partial.v2
++ window.grow.full.v2:
++   %t13 = mul nuw i64 %v1, ptrtoint (ptr getelementptr (i8, ptr null, i64 1) to i64)
+++  call void @wf_observe_release(ptr %t5)
++   %t14 = call ptr @wf_observe_allocate(i64 %t13)
++   %t15 = icmp ne ptr %t14, null
++   br i1 %t15, label %window.block.ready.v2.realloc, label %window.block.oom.v2.realloc
++@@ -2050,6 +2052,7 @@
++   br i1 %t7, label %window.grow.full.v2, label %window.grow.partial.v2
++ window.grow.full.v2:
++   %t13 = mul nuw i64 %v1, ptrtoint (ptr getelementptr (i64, ptr null, i64 1) to i64)
+++  call void @wf_observe_release(ptr %t5)
++   %t14 = call ptr @wf_observe_allocate(i64 %t13)
++   %t15 = icmp ne ptr %t14, null
++   br i1 %t15, label %window.block.ready.v2.realloc, label %window.block.oom.v2.realloc
+--- /dev/null
++++ b/focused/early-descriptor-write.patch
+@@ -0,0 +1,26 @@
++--- focused-observed.ll
+++++ early-descriptor-write.ll
++@@ -1800,6 +1800,7 @@
++   br i1 %t7, label %window.grow.full.v2, label %window.grow.partial.v2
++ window.grow.full.v2:
++   %t13 = mul nuw i64 %v1, ptrtoint (ptr getelementptr (ptr, ptr null, i64 1) to i64)
+++  store i64 %v1, ptr %t0
++   %t14 = call ptr @wf_observe_allocate(i64 %t13)
++   %t15 = icmp ne ptr %t14, null
++   br i1 %t15, label %window.block.ready.v2.realloc, label %window.block.oom.v2.realloc
++@@ -1883,6 +1884,7 @@
++   br i1 %t7, label %window.grow.full.v2, label %window.grow.partial.v2
++ window.grow.full.v2:
++   %t13 = mul nuw i64 %v1, ptrtoint (ptr getelementptr (i8, ptr null, i64 1) to i64)
+++  store i64 %v1, ptr %t0
++   %t14 = call ptr @wf_observe_allocate(i64 %t13)
++   %t15 = icmp ne ptr %t14, null
++   br i1 %t15, label %window.block.ready.v2.realloc, label %window.block.oom.v2.realloc
++@@ -2050,6 +2052,7 @@
++   br i1 %t7, label %window.grow.full.v2, label %window.grow.partial.v2
++ window.grow.full.v2:
++   %t13 = mul nuw i64 %v1, ptrtoint (ptr getelementptr (i64, ptr null, i64 1) to i64)
+++  store i64 %v1, ptr %t0
++   %t14 = call ptr @wf_observe_allocate(i64 %t13)
++   %t15 = icmp ne ptr %t14, null
++   br i1 %t15, label %window.block.ready.v2.realloc, label %window.block.oom.v2.realloc

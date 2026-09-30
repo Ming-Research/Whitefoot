@@ -1286,6 +1286,14 @@ rarely insert at the same place.
   and full append comparison.
   No general inlining policy or causal timing improvement follows from these
   unpaired trials.
+  The subsequent [paired full-growth route comparison](../research/experiments/container-representation/vector-library/RESULTS.md#full-growth-route-comparison-registered-attribution-experiment)
+  isolates a route tradeoff on the complete-append overlay: malloc/copy/free
+  beats realloc for scalar capacities 16 and 256 in both adjacent pairs and
+  cohorts, but loses at wide capacity 4096; the other matched cells remain
+  unresolved. This measures the route including its extra calls and register
+  saves, not allocator internals alone. A uniform replacement is unsuitable;
+  no size threshold is selected. Reopen with an explanation of the remaining
+  cells and a policy whose growth and spare-append costs are both qualified.
 
   The [Vector length-store diagnosis](../research/experiments/container-representation/vector-library/RESULTS.md#length-store-dependence-read-only-llvm-diagnosis)
   finds conservative header/payload dependencies in optimized take loops,

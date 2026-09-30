@@ -7668,3 +7668,126 @@ the slower peer. No all-matched pass, paired qualification, retry or further
 exposure variant follows. Removing the specified calls and spills is a native
 result, not a causal timing gain. The three trials select no production policy,
 source rule or representation; other APIs and containers remain paused.
+
+
+#### Full-growth route comparison: registered attribution experiment
+
+Complete append exposure removes the selected calls and spills without
+meeting the all-matched target. Compare allocation/movement routes next,
+without selecting a size threshold or sacrificing the wide realloc case.
+A is the frozen complete-append exposure image. B starts from its exact
+modules and changes only the two full-positive growth blocks: malloc the
+same new extent, check NULL before modifying any old state, copy exactly
+old length times stride with llvm.memcpy, free the old block, then use the
+existing descriptor publication. Keep empty and partial paths, all ten
+exposure attributes, capacity policy, driver/peer/runtime objects and link
+order. Both modules already declare the memcpy intrinsic. Successful fresh
+allocation is disjoint from the still-live positive old allocation; these
+instances have strides 8 and 256, and the full predicate proves the copied
+prefix initialized and within the new extent. No new alias/alignment facts.
+This compares the complete route, including copy choice and generated code,
+not allocator internals alone.
+
+Timed driver bytes remain unchanged. An explicit account-only route flag
+changes expected WF positive-full rows from one realloc/no retirement free
+to one malloc/one retirement free. Request count, requested bytes, capacities
+and final live bytes remain equal; peer and capacity-zero rows remain equal.
+Peak simultaneously live bytes are old plus new. Keep the existing 19
+checks and deliberately wrong value/state/account/allocation/clock exits.
+The synthetic extra-allocation check is not an OOM injection witness.
+
+Before timing, separately inject NULL at the new full-growth malloc. The
+focused observer must see the original descriptor and initialized payload
+still live and unchanged, with no copy, free or publication. Cover scalar
+and nested owning payload relocation and exact cleanup; retain empty, ZST
+and partial checks. Deliberate early-free, early-descriptor-write and wrong
+copy-order mutants must fail their respective observation. Failures and
+negative controls stay visible; no expected outcome comes from the candidate.
+
+Inspect actual scalar/wide append paths before measurement. They must use
+the intended route with equal new extents, without a new internal growth
+call, payload spill or dispatch that confounds the comparison. General partial
+reserve and null-failure handling must survive. Record code sizes, frames,
+copy calls and all collateral changes. If these conditions fail, retain the
+result without timing or broadening the change.
+
+This is paired route attribution, not qualification of an already-winning
+container. If native and correctness prerequisites pass, use one fixed
+A-B-B-A sequence of the existing ordinary-preparation
+`growth-api-measure 67108864 7 8589934592` screen. Retain all four 840-row
+outputs, every control and both peers, with unchanged RAW/duration/spread
+checks. No retry, subtraction or selecting samples. Require the same direction
+of disjoint seven-sample WF envelopes in both cohorts of both adjacent A/B
+pairs before claiming a route improvement/loss in that cell; report overlaps
+as unresolved. A peer's matched median drift above 10% across an adjacent pair
+makes that pair's attribution unresolved. The wide-4096 counterexample is
+mandatory: scalar benefits cannot select a uniform copy policy that loses
+its realloc advantage. No threshold or production choice follows automatically.
+
+Transient variants, account-only driver and failure observers belong to
+`.build/full-growth-route`; retain replay patches, complete samples and a
+compact command/observation record in this Vector home until superseded by
+a qualified growth implementation. No source/compiler/specification or other
+API is changed by this experiment.
+
+
+#### Full-growth route outcome: scalar gains and a wide realloc counterexample
+
+The [combined replay patch](full-growth-route.patch) preserves the two LLVM
+route changes, account-only driver adjustment and focused source/observer
+qualification against prior frozen inputs. The [compact record](ecosystem-append-growth-full-route-timing.txt)
+gives dependency identities, commands and all 20 API/account plus 24 focused
+stage exits. The [combined CSV](ecosystem-append-growth-full-route-samples.csv)
+retains every field of all four 840-row outputs, with a run label; removing
+that label reconstructs each original file byte for byte and matches its hash.
+
+All prerequisites pass. Genuine NULL injection at the new full malloc preserves
+the caller descriptor, initialized payload and nested owners without copy,
+retirement or publication. Early-free, early-descriptor-write and wrong-copy-order
+mutants fail their observations. Linked ownership checks remain post-lowering
+ABI evidence. They do not establish source `fn_sig` formation. Timed driver and
+peer/runtime objects stay fixed; only the account driver changes expectations.
+Initial preprocessor comparison differed in embedded source basenames; comparison
+through the same stdin filename passes, and no timed object was replaced.
+
+Both actual append paths use the intended malloc/memcpy/free route with the
+same byte extents and no new internal growth call or payload spill. Register
+preservation increases frames from 48 to 80 bytes; scalar/wide reached bodies
+increase from 43/107 to 59/123 instructions, and WF instruction bytes from
+17,860 to 18,996. These code changes are part of the route comparison.
+
+The fixed A1–B1–B2–A2 sequence completes with exit 0 for every run, preserving
+all 3,360 unique rows (1,680 real and 1,680 controls). Every real interval
+exceeds 1 ms and every RAW clock probe observes 41 ns; all within-run peer and
+WF/peer cohort spreads stay below 10%. No retry, subtraction or selection occurs.
+
+WF medians below are **ns/append, cohort 0 / cohort 1**. Pair 1 is A1/B1;
+pair 2 is B2/A2, keeping A as baseline. F/S/O means B's full sample envelope
+is faster/slower/overlapping A's; each pair shows cohort 0 / cohort 1. Peer
+drift is the largest `abs(B/A - 1)` of either peer across the two pairs/cohorts.
+
+| Element / initial capacity | A1 WF | B1 WF | B2 WF | A2 WF | Pair 1; pair 2 | Max peer drift | Attribution |
+|---|---:|---:|---:|---:|---|---:|---|
+| 8 B / 0 (policy) | 7.57 / 7.49 | 7.80 / 7.94 | 7.83 / 7.84 | 7.56 / 7.51 | O/S; O/S | 0.854% | Unresolved |
+| 8 B / 1 (policy) | 17.91 / 17.93 | 16.50 / 16.52 | 16.56 / 16.44 | 17.91 / 17.87 | F/F; F/F | 6.794% | B faster |
+| 8 B / 16 | 34.15 / 34.14 | 22.54 / 22.53 | 22.54 / 22.44 | 34.03 / 33.99 | F/F; F/F | 0.473% | B faster |
+| 8 B / 256 | 100.31 / 101.18 | 89.88 / 90.20 | 88.71 / 88.19 | 100.13 / 100.66 | F/F; F/F | 2.672% | B faster |
+| 8 B / 4096 | 710.70 / 710.33 | 729.18 / 679.56 | 708.17 / 704.16 | 723.30 / 717.25 | O/O; O/O | 13.529% | Unresolved: drift |
+| 256 B / 0 (policy) | 11.83 / 11.87 | 12.18 / 12.16 | 12.15 / 12.14 | 11.78 / 11.82 | O/S; O/S | 0.784% | Unresolved |
+| 256 B / 1 (policy) | 48.50 / 48.31 | 36.92 / 36.97 | 37.03 / 37.07 | 48.39 / 48.29 | F/F; F/F | 0.984% | B faster |
+| 256 B / 16 | 150.22 / 149.42 | 140.17 / 140.04 | 136.87 / 136.04 | 147.17 / 146.99 | O/O; O/F | 2.057% | Unresolved |
+| 256 B / 256 | 1314.89 / 1320.70 | 1316.11 / 1316.14 | 1313.09 / 1310.23 | 1319.85 / 1316.43 | O/O; O/O | 1.507% | Unresolved |
+| 256 B / 4096 | 156.66 / 152.61 | 14905.61 / 14919.30 | 14834.43 / 14809.45 | 157.77 / 157.58 | S/S; S/S | 5.688% | B slower |
+
+The matched scalar-16 and scalar-256 gains have separated envelopes in both
+cohorts of both pairs, with peer drift below 10%. Wide-4096 loses in all four
+comparisons: replacing realloc's route with a full copy removes its observed
+advantage in this cell. Scalar-4096 remains unresolved through overlapping
+ranges and 13.529% peer drift; wide-16 and wide-256 also remain unresolved.
+Capacity-1 policy cells favor B; capacity-zero policy cells are unresolved.
+
+This rejects a uniform malloc/copy replacement as the append answer. It does
+not select a threshold, a production route or an allocator-internal cause.
+Spare append still needs its own cost qualification before the API is complete.
+No compiler/library/specification revision or other API advances; no cumulative
+production speedup is claimed.
