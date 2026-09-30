@@ -32,21 +32,21 @@
 -  }
 +fn push_run(runs: &Runs, class: u8, base_cp: u32, ends_zwj: Bool, start: u64, end: u64, wide: Bool) -> result: unit writes(runs) contract {
 +  requires runs^.classes.inner.len < runs^.classes.inner.cap;
++  requires runs^.base_cps.inner.len < runs^.base_cps.inner.cap;
++  requires runs^.ends_zwj.inner.len < runs^.ends_zwj.inner.cap;
++  requires runs^.starts.inner.len < runs^.starts.inner.cap;
++  requires runs^.ends.inner.len < runs^.ends.inner.cap;
++  requires runs^.wide.inner.len < runs^.wide.inner.cap;
 +  ensures runs^.classes.inner.len == entry(runs)^.classes.inner.len + 1_u64;
 +  ensures runs^.classes.inner.cap == entry(runs)^.classes.inner.cap;
-+  requires runs^.base_cps.inner.len < runs^.base_cps.inner.cap;
 +  ensures runs^.base_cps.inner.len == entry(runs)^.base_cps.inner.len + 1_u64;
 +  ensures runs^.base_cps.inner.cap == entry(runs)^.base_cps.inner.cap;
-+  requires runs^.ends_zwj.inner.len < runs^.ends_zwj.inner.cap;
 +  ensures runs^.ends_zwj.inner.len == entry(runs)^.ends_zwj.inner.len + 1_u64;
 +  ensures runs^.ends_zwj.inner.cap == entry(runs)^.ends_zwj.inner.cap;
-+  requires runs^.starts.inner.len < runs^.starts.inner.cap;
 +  ensures runs^.starts.inner.len == entry(runs)^.starts.inner.len + 1_u64;
 +  ensures runs^.starts.inner.cap == entry(runs)^.starts.inner.cap;
-+  requires runs^.ends.inner.len < runs^.ends.inner.cap;
 +  ensures runs^.ends.inner.len == entry(runs)^.ends.inner.len + 1_u64;
 +  ensures runs^.ends.inner.cap == entry(runs)^.ends.inner.cap;
-+  requires runs^.wide.inner.len < runs^.wide.inner.cap;
 +  ensures runs^.wide.inner.len == entry(runs)^.wide.inner.len + 1_u64;
 +  ensures runs^.wide.inner.cap == entry(runs)^.wide.inner.cap;
 +} {
@@ -185,7 +185,7 @@
      }
 --- a/3773a1d/renderer/font/cmap.wf
 +++ b/3773a1d/renderer/font/cmap.wf
-@@ -277,27 +277,33 @@
+@@ -277,27 +277,31 @@
    requires low <= high;
    requires high <= face^.characters.ranges.inner.len;
  } {
@@ -226,14 +226,12 @@
 +    let last = range.last;
 +    if scalar < first {
 +      set high = middle;
++    } else if scalar > last {
++      set low = middle + 1_u64;
 +    } else {
-+      if scalar > last {
-+        set low = middle + 1_u64;
-+      } else {
-+        let distance = scalar - first;
-+        let glyph = mapped_glyph(face: face, range: range, distance: distance);
-+        return glyph;
-+      }
++      let distance = scalar - first;
++      let glyph = mapped_glyph(face: face, range: range, distance: distance);
++      return glyph;
 +    }
 +  }
 +  return 0_u16;

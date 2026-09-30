@@ -82,13 +82,19 @@ criterion and distinguishes three observations:
   chain generator. The full-module rewrites in `rewrites.patch` are likewise
   explicit new witnesses, not recovered bytes of the earlier scratch edits.
 
-The lost census automation and its exact 80 program bundles have not been
-recovered. The new replay does not silently claim to satisfy that part of the
-original cost criterion or reproduce its historical counts. A failed measured
-criterion is enough to withhold an implementation recommendation; a passing
-replay still needs that missing evidence before claiming the original
-criterion was met. Counts from this workload inventory are neither a general
-usage distribution nor a substitute for the rule's semantic grounds.
+The lost census automation and its exact claimed 80 program bundles have not
+been recovered. Before timing, the replay instead reconstructs 71 current
+program bundles covering all 75 distinct `tests/programs` source files named
+by `census.tsv`: ordinary files with `main`, plus the Slab, Indexed and Deflate
+bundles used by `compiler/tests/programs/containers.rs` and `raw_deflate.rs`.
+The script refuses an uncovered census source. Their cost is measured as one
+sum, as the original program-cost method prescribed. This is a current,
+auditable replacement inventory, not a reproduction of the missing historical
+80-bundle list. (a+) is omitted here for the same analytic reason as on
+Snowghost. A failed measured criterion is enough to withhold implementation;
+passing this matrix still does not retroactively establish the historical
+criterion. Census counts are neither a general usage distribution nor a
+substitute for the rule's semantic grounds.
 
 The replay requires Python 3.12 or newer and a Unix host with `wait4`.
 Python here only extracts pinned source, invokes the compiler, and records
@@ -96,6 +102,32 @@ outcomes and OS resource usage. It implements no acceptance rule. Run it
 explicitly under `.github/run-check.pl`; it is not a formal gate dependency.
 The replay script, patches and result data serve this investigation and retire
 when superseding evidence replaces the claims they support.
+
+## Current source-verdict results
+
+The [complete source-verdict table](verdicts.csv) and
+[compiler/input identity](verdicts-identity.json) record 1,572 current
+conformance cases, 30 probes, sixteen Snowghost modules, six collections and
+five accepted scale inputs. Every baseline outcome equals the all-switches-off
+prototype. All original Snowghost/collection/scale inputs are accepted under
+every measured configuration. (a+) has no Snowghost rows for the reason above.
+The sweep was resumed after fixing its parsing of the CLI's multi-module
+diagnostic envelope; development scale inputs rejected for noncanonical
+whitespace were corrected and rechecked, not used as cost samples.
+
+The candidate changes exactly the six conformance source verdicts listed in
+the historical [evaluation](#evaluation-against-the-criterion): (a), (a+) and
+(b) accept `inv1-neg-sequential-guarded-steps`; (b) rejects the same three
+formerly accepted certificate cases; the rows reject the same two midpoint
+certificate cases. No manifest expectation or formal case was edited. These
+are source-check results only; this investigation did not execute the
+conformance `run` cases under a modified language prototype.
+
+The original join witnesses still fail on the base, (b) accepts b3/b4/b6 and
+the lockstep/measure witnesses, and the rows accept m4/m7. The negative
+witnesses n1–n6 and m5 keep their original source-rule refusals. The narrowed
+inference mechanisms therefore still answer the original problem on v0.82;
+this observation alone does not settle their cost or approve a language rule.
 
 ## Reproduce the current replay
 
@@ -106,13 +138,14 @@ with `make -C compiler build` (the target takes the shared check lock).
 Clone `https://github.com/mbbill/Snowghost.git` into a scratch checkout; the
 script extracts the four full commit IDs it records, not its current branch.
 From this Whitefoot checkout, with the following shell variables naming the
-built executables, Snowghost checkout and a fresh output directory:
+built executables, the baseline source checkout (`replay_source`), Snowghost
+checkout and a fresh output directory:
 
 ```sh
 for mode in verdicts rewrites cost; do
   perl .github/run-check.pl branch-join-replay \
     python3 research/investigations/branch-join-relations/replay.py \
-      --base "$replay_base" --prototype "$replay_prototype" \
+      --source-root "$replay_source" --base "$replay_base" --prototype "$replay_prototype" \
       --snowghost "$replay_snowghost" --output "$replay_output" --mode "$mode"
 done
 ```
@@ -703,7 +736,7 @@ per iteration and n local invariants, so the projected relations, the L0
 matrix and the joins all grow with n. The configurations are the unmodified
 v0.78 compiler, the prototype with every switch off (the patch's inert cost),
 (a), (b), the two rows, (b) with the rows and, on the main-branch workloads,
-(a+). This method was prepared but not run (see [Status](#status)).
+(a+). This method was prepared but not run (see [current replay protocol](#current-replay-protocol)).
 
 ### Results
 

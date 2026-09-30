@@ -83,6 +83,33 @@ def cases():
     return result
 
 
+def programs():
+    # Derive the inventory from saved census sites, then use the maintained
+    # multi-file bundles in compiler/tests/programs/{containers,raw_deflate}.rs.
+    with (HERE / 'census.tsv').open() as file:
+        paths = sorted({row['file'] for row in csv.DictReader(file, delimiter='\t')
+                        if row['file'].startswith('tests/programs/')})
+    result = {}
+    covered = set()
+    for name in paths:
+        path = ROOT / name
+        if not re.search(r'^fn main\(', path.read_text(), re.M):
+            continue
+        sources = [name]
+        if path.name in ('raw_deflate_boundary.wf', 'raw_deflate_vectors.wf'):
+            sources = ['tests/programs/' + part for part in
+                       ('raw_deflate.wf', 'raw_deflate_dynamic.wf', 'raw_deflate_dynamic_decode.wf')] + sources
+        elif path.name == 'slab-program.wf':
+            sources = ['tests/programs/containers/slab-membership-program.wf'] + sources
+        elif path.name == 'indexed-membership-program.wf':
+            sources = ['tests/programs/containers/indexed-store.wf'] + sources
+        covered.update(sources)
+        result['program/' + name.removeprefix('tests/programs/')] = ['--check', *(str(ROOT / source) for source in sources)]
+    if not set(paths) <= covered:
+        raise RuntimeError(f'census sources have no maintained bundle: {set(paths) - covered}')
+    return result
+
+
 def invoke(binary, flags, args):
     env = {key: value for key, value in os.environ.items() if key not in {x for ys in CONFIGS.values() for x in ys}}
     env.update({key: '1' for key in flags})
@@ -111,6 +138,8 @@ def invoke(binary, flags, args):
                         raise ValueError('module verdict has no source diagnostic')
                     verdict = 'Source:' + '|'.join(':'.join(f) for f in failures)
                 else:
+                    if diagnostic.get('category') != 'Source':
+                        raise ValueError('not a source rejection')
                     verdict = ':'.join(str(diagnostic[k]) for k in ('category', 'rule', 'kind'))
             except (ValueError, KeyError) as error:
                 raise RuntimeError(f'compiler stop {child.returncode}: {detail}') from error
@@ -120,6 +149,8 @@ def invoke(binary, flags, args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    global ROOT
+    parser.add_argument('--source-root', required=True, type=Path, help='Whitefoot checkout at the recorded compiler source revision')
     parser.add_argument('--base', required=True, type=Path)
     parser.add_argument('--prototype', required=True, type=Path)
     parser.add_argument('--snowghost', required=True, type=Path)
@@ -128,6 +159,10 @@ def main():
     parser.add_argument('--resume', action='store_true', help='append missing verdict pairs from an interrupted run')
     parser.add_argument('--samples', type=int, default=5)
     options = parser.parse_args()
+    ROOT = options.source_root.resolve()
+    source_revision = subprocess.check_output(['git', '-C', str(ROOT), 'rev-parse', 'HEAD'], text=True).strip()
+    if source_revision != '4459df880b04a7e87f46398969e1382b52637af0':
+        parser.error('--source-root must be at the recorded compiler source revision')
     if options.samples < 1:
         parser.error('--samples must be positive')
     options.output.mkdir(parents=True, exist_ok=True)
@@ -140,6 +175,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='branch-join-') as temporary:
         jobs = prepare(Path(temporary), options.snowghost)
         corpus = cases()
+        program_jobs = programs()
         probes = {'probe/' + p.stem: ['--check', str(p)] for p in sorted((HERE / 'probes').glob('*.wf'))}
         if options.mode in ('verdicts', 'rewrites'):
             if options.mode == 'rewrites':
@@ -153,7 +189,7 @@ def main():
                                          'snowghost/css::rules', 'snowghost/css::selectors') or name.startswith('chain/')}
                 workloads['rewrite/merge_sort'] = ['--check', str(source / 'merge_sort.wf')]
             else:
-                workloads = {**probes, **jobs, **corpus}
+                workloads = {**probes, **jobs, **program_jobs, **corpus}
             output = options.output / (options.mode + '.csv')
             done = set()
             if options.resume and output.exists():
@@ -167,7 +203,7 @@ def main():
                     for config, flags in CONFIGS.items():
                         if (name, config) in done:
                             continue
-                        if config == 'ap' and name.startswith('snowghost/'):
+                        if config == 'ap' and name.startswith(('snowghost/', 'program/')):
                             continue
                         verdict, code, _, _ = invoke(options.base if config == 'base' else options.prototype, flags, args)
                         writer.writerow([name, config, verdict, code])
@@ -179,6 +215,7 @@ def main():
         else:
             # Cost measures unmodified inputs, not faster rejection of rewrites.
             workloads = {name: [args] for name, args in jobs.items()}
+            workloads['programs'] = list(program_jobs.values())
             workloads['corpus'] = list(corpus.values())
             with (options.output / 'cost.csv').open('w') as file:
                 writer = csv.writer(file, lineterminator='\n')
