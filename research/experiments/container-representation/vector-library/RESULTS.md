@@ -6312,3 +6312,139 @@ otool -rv research/experiments/container-representation/vector-library/.build/ap
 perl .github/run-check.pl append-layout-observe research/experiments/container-representation/vector-library/.build/append-allocation-layout/append-layout observe
 perl .github/run-check.pl append-layout-measure sh -c 'research/experiments/container-representation/vector-library/.build/append-allocation-layout/append-layout measure > /private/tmp/append-layout-replay.csv'
 ```
+
+#### Separate payload allocation: registered actual-WF discriminator
+
+The allocation-extent result reopens a measurement question, not a shipping
+representation choice: does removing header bytes from the element allocation
+make the existing WF append source competitive? The bounded prototype keeps a
+runtime Slots Box as a one-word owner pointing to a stable descriptor containing
+length, capacity and a payload pointer; only the payload allocation grows. Other
+shape representations and source programs remain unchanged. This deliberately
+violates the current TYPE-9/STOR-1 single-allocation representation and is a
+throwaway compiler variant, never an admitted implementation claim. A fat owner
+would additionally change OP-9's Box ceiling and is outside this discriminator.
+The extra descriptor allocation and pointer access are costs to retain, not
+optimize away by a benchmark-only Vector special case.
+Zero-byte payloads retain an allocated one-byte placeholder: existing range
+parameter lowering states `nonnull` even for empty ranges. A null payload
+would contradict that ABI; weakening those attributes would add another
+variable to the experiment. Positive payload extents remain exactly cap times
+stride. The allocator ledger includes both allocations and the placeholder.
+
+Before any timing, require complete existing append value/state checks plus
+nested-owner cleanup, zero-capacity and zero-stride behavior, and allocation
+failure before publication. Adapt the observer to the explicit two-allocation
+layout without weakening its ownership checks. Inspect actual native append and
+growth bodies for payload-only allocation sizes and unchanged old-prefix copy.
+Use the existing O3 growth API caller, inputs, peers, fixed work, two cohorts and
+seven samples for one screen; keep all samples and the direct terminal status.
+A candidate merits paired baseline/candidate qualification only if every matched
+cell beats the median-slower peer in both cohorts and satisfies the existing
+instrument criteria. A failed cell stops that qualification; it does not trigger
+extra samples. The zero/one-capacity policy differences remain separately
+labelled. No causal share, general representation selection or whole-Vector gain
+follows from a successful screen. Construction/destruction and wider owner ABI
+costs remain separate API obligations before choosing a library representation.
+
+The actual-WF screen did not pass the registered target. The compiler and
+observer edits were restored after preserving the [exact prototype patch](split-slots-payload.patch),
+[840 unique samples](ecosystem-append-growth-split-payload-samples.csv), and
+[build, native qualification, allocation and timing evidence](ecosystem-append-growth-split-payload-timing.txt).
+The patch reconstructs four compiler files, the candidate-only observer changes,
+and two temporary native-fixture inputs byte-for-byte from
+`f4fc3d5d5ad7715da3e48c200e04ebc06113e982`. It is deliberately nonconforming to
+TYPE-9/STOR-1 and is not a compiler change selected for adoption. Its temporary
+fixtures live under the ignored experiment build directory when applied.
+
+The gate-profile CLI build took 15.87 s. Existing O3 API build, growth/spare
+checks and accounting passed in 3.27 s. A separate native observer verified
+nested Box contents and exact releases, partial-prefix copying without copying
+spare bytes, zero capacity, zero stride, empty-range calls and explicit empty
+release. Forced allocation failure exited 73 after checking the unchanged old
+owner, descriptor and payload; permuting two valid nested Box pointers exited 1
+at the source-content assertion. Normal corrected execution exited 0. These are
+default-source-lowering/O3 checks, not a new three-mode or canonical-gate claim.
+The retained authoring failures were an unresolved fixture spelling, a missing
+read effect, a duplicate native entry symbol, and a floor-hook binding error
+that called the real abort (134); their corrected checks are separately retained.
+No production rule or expected verdict changed to repair those fixture errors.
+
+The native growth functions allocate exactly new capacity times element stride,
+copy the old initialized prefix, free the old payload, and update the stable
+24-byte descriptor. There is no header addition in the allocation request.
+The account image verifies one allocation and one release per measured WF
+growth; its live bytes are payload plus 24, and the zero-capacity placeholder
+is one byte. The descriptor and placeholder allocations occur during preparation outside
+append timing; their costs still belong to the later construction/destruction
+API comparison.
+
+The fixed screen exited 0 in 118.83 s. All 420 real intervals exceeded 1 ms
+(minimum 1.286459 ms); all 420 snapshot controls are also retained without
+subtraction. The RAW clock minimum increment was 41 ns. The following values
+are median [minimum–maximum] ns/append. A row passes only when WF's entire
+sample range is below that cohort's median-slower peer's range. Both cohorts
+must pass for a cell to qualify for further comparison.
+
+| Element / old capacity | Cohort | WF | Rust | C++ | Screen |
+|---|---:|---|---|---|---|
+| 8 B / 16 | 0 | 23.11 [22.96–23.95] | 36.69 [36.63–37.03] | 25.48 [25.32–26.35] | Pass |
+| 8 B / 16 | 1 | 22.95 [22.84–23.26] | 36.83 [36.63–38.13] | 25.62 [25.45–26.65] | Pass |
+| 8 B / 256 | 0 | 89.63 [88.62–93.23] | 101.64 [101.02–113.42] | 96.15 [93.17–100.20] | Pass |
+| 8 B / 256 | 1 | 89.32 [88.79–92.21] | 102.34 [100.85–106.03] | 93.62 [91.76–101.35] | Pass |
+| 8 B / 4096 | 0 | 709.25 [663.04–806.00] | 636.57 [628.77–654.51] | 663.27 [643.78–738.82] | Overlap |
+| 8 B / 4096 | 1 | 710.23 [669.54–764.83] | 637.46 [629.40–707.87] | 646.95 [643.69–671.23] | Overlap |
+| 256 B / 16 | 0 | 141.59 [139.43–151.73] | 152.25 [149.75–157.31] | 143.29 [139.70–148.99] | Overlap |
+| 256 B / 16 | 1 | 139.94 [139.79–143.80] | 151.40 [149.70–156.69] | 141.23 [138.87–153.18] | Pass |
+| 256 B / 256 | 0 | 1324.27 [1300.96–1375.16] | 1319.04 [1313.56–1328.74] | 1322.59 [1302.37–1347.59] | Overlap |
+| 256 B / 256 | 1 | 1321.46 [1303.38–1420.45] | 1319.17 [1312.12–1406.68] | 1321.62 [1312.20–1342.39] | Overlap |
+| 256 B / 4096 | 0 | 14876.90 [14809.92–15355.12] | 159.86 [157.73–162.04] | 14840.87 [14812.25–15110.07] | Overlap |
+| 256 B / 4096 | 1 | 14834.67 [14789.57–14950.12] | 160.53 [158.25–165.94] | 14842.57 [14820.48–14888.50] | Overlap |
+
+Only scalar capacities 16 and 256 pass both cohorts. At scalar 4096 the WF
+medians remain above both peers; wide 256/4096 now overlap C++ rather than
+establishing a repeatable advantage. No paired baseline/candidate qualification
+was launched. This single screen does not establish a baseline speedup, a
+causal share of the earlier gap, or a generally preferred representation.
+Rust's much cheaper wide-4096 reallocation path remains a separate growth-route
+lead now that payload allocation extents match. The prototype is preserved for
+that next discriminator, not adopted as the language representation.
+
+Capacities zero and one retain their different initial-growth policies and are
+reported separately. Entries are cohort 0 / cohort 1 medians, ns/append:
+
+| Element / old capacity | WF | Rust | C++ |
+|---|---|---|---|
+| 8 B / 0 | 17.91 / 17.88 | 11.81 / 11.93 | 11.41 / 11.35 |
+| 8 B / 1 | 16.63 / 16.63 | 32.26 / 32.49 | 19.20 / 19.18 |
+| 256 B / 0 | 21.23 / 21.76 | 22.59 / 22.50 | 15.84 / 15.74 |
+| 256 B / 1 | 36.92 / 37.18 | 53.32 / 53.13 | 43.36 / 43.43 |
+
+Frozen identities (SHA-256):
+
+- Prototype patch: `9a093df2fa61675e056a33c96b68128e326e6b8b97a27c5bf983adb0d282e14e`.
+- Candidate CLI: `15fd4c3d66c7d477ecf9717bf5ea392d6c4dd96409391565a0f1f67a7452a302`.
+- Timed image: `5724678f4be5c1c67ccb418d2d3c3b682c0b002875b07416b569e702ddd4fa16`.
+- Samples: `3ad3c8617ba9ae2bef5124b7d222d859dc150267f28d5baf897a3487275392b8`.
+
+Reproduce the screen in a fresh checkout of the named base: apply the preserved
+patch, build the gate-profile CLI with at most two jobs under the repository
+guard, then invoke the existing Vector experiment targets with an isolated
+`BUILD`, that CLI as `WHITEFOOTC`, and
+`ECO_CFLAGS='-std=c11 -O3 -Wall -Wextra -Werror -DWF_SPLIT_SLOTS_PAYLOAD=1'`.
+Run `ecosystem-build ecosystem-append-growth-check ecosystem-append-check
+ ecosystem-append-growth-account` before invoking the timed image as
+`growth-api-measure 67108864 7 8589934592`, also guarded. The retained log records
+the actual configuration and commands; the ordinary targets without the explicit
+candidate macro continue to check the baseline representation.
+
+For the focused native fixture, emit the patch's `focused-fixture.wf` to LLVM.
+In the instrumented copy only, bind malloc/free calls to the observer functions,
+replace the private resource-abort definition with an external declaration of
+`wf_observe_abort`, and rename the generated main/entry symbols so the observer
+owns the entry. Compile with the preserved `observer.c` and the ordinary runtime
+objects using the exact O3 command in the log. Run normally, with `failure`, and
+with a second build defining `CORRUPT_PRESERVED_ORDER`; require exits 0, 73 and 1,
+respectively. This instrumentation observes the candidate; it is not a native
+implementation or language mechanism. Retire these prototype artifacts with
+their superseding representation experiment.
