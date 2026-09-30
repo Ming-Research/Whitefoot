@@ -81,7 +81,7 @@ impl<'unit> TypeContext<'unit> {
         visited: &mut HashSet<NominalId>,
     ) -> Result<bool, CheckStop> {
         match ty {
-            CheckedType::Buffer { element } => {
+            CheckedType::Buffer { element } | CheckedType::Segments { element } => {
                 self.loan_bearing_with(self.element_type(element)?, visited)
             }
             CheckedType::Array { element, .. } | CheckedType::Window { element, .. } => {
@@ -111,7 +111,10 @@ impl<'unit> TypeContext<'unit> {
                 .flat_map(|variant| variant.fields.iter().map(|field| field.ty))
                 .collect(),
             CheckedNominalKind::Box { referent, .. } => vec![*referent],
-            CheckedNominalKind::Opaque => Vec::new(),
+            // A handle owns a share of its object, whose state the runtime
+            // releases with the last handle [SHARE-1]; `T: drop` keeps the
+            // handle affine.
+            CheckedNominalKind::Opaque | CheckedNominalKind::Shared { .. } => Vec::new(),
         })
     }
     /// [PROV-6] the nodes of this type's release graph, each visited once.
@@ -140,7 +143,7 @@ impl<'unit> TypeContext<'unit> {
                 nodes.push(current);
             }
             match current {
-                CheckedType::Buffer { element } => {
+                CheckedType::Buffer { element } | CheckedType::Segments { element } => {
                     pending.push(self.element_type(element)?);
                 }
                 // A run owns the elements of its window [BLK-1], so its
@@ -201,7 +204,9 @@ impl<'unit> TypeContext<'unit> {
                 } if capacity.and_then(super::super::model::CheckedConst::value) != Some(0) => {
                     pending.push(self.element_type(element)?);
                 }
-                CheckedType::Buffer { element } => pending.push(self.element_type(element)?),
+                CheckedType::Buffer { element } | CheckedType::Segments { element } => {
+                    pending.push(self.element_type(element)?);
+                }
                 _ => {}
             }
         }

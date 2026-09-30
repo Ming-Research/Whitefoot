@@ -34,7 +34,7 @@ pub(super) fn is_stored_aggregate(program: &IrProgram, ty: IrType) -> Result<boo
             match nominal.kind() {
                 IrNominalKind::Struct { .. } | IrNominalKind::Opaque => true,
                 IrNominalKind::Enum { .. } => !nominal.is_tag_only_enum(),
-                IrNominalKind::Box { .. } => false,
+                IrNominalKind::Box { .. } | IrNominalKind::Shared { .. } => false,
             }
         }
         IrType::Unit
@@ -42,6 +42,7 @@ pub(super) fn is_stored_aggregate(program: &IrProgram, ty: IrType) -> Result<boo
         | IrType::Integer { .. }
         | IrType::Float { .. }
         | IrType::Buffer { .. }
+        | IrType::Segments { .. }
         | IrType::Window { capacity: None, .. }
         | IrType::Range { .. }
         | IrType::RuntimeBoxPayload { .. }

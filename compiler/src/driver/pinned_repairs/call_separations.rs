@@ -1032,4 +1032,156 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         ],
     },
+    RepairPair {
+        name: "call-separation-below-different-range-frames.wf",
+        rejected: include_bytes!("../../../../tests/conformance/cases/eff5-neg-ranges-below-different-range-frames-overlap.wf"),
+        rule: "EFF-5",
+        sentences: &[
+            "\n  residual: values^[a..b] and values^[c..d] select different storage (one ends before the other starts, or one is empty)\n",
+            "\n  mechanical_fix: when the two ranges can lie apart here, prove before this call that one ends at or before the other starts, or that one is empty; otherwise pass ranges this call proves apart\n",
+        ],
+        repaired: &[br#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn copy_len(src: &[u64], dst: &[u64]) -> result: unit reads(src), writes(dst) {
+  let n = src^.len;
+  if 0_u64 < dst^.len {
+    set dst^[0_u64] = n;
+  }
+  return unit;
+}
+
+fn copy_between(values: &Array<u64, 8>, a: u64, b: u64, c: u64, d: u64) -> result: unit writes(values) contract {
+  requires a <= b;
+  requires b <= 8_u64;
+  requires c <= d;
+  requires d <= 8_u64;
+  requires b <= c;
+} {
+  let left = &values^[a..b];
+  let right = &values^[c..d];
+  if 2_u64 <= left^.len {
+    if 4_u64 <= right^.len {
+      copy_len(src: &left^[0_u64..2_u64], dst: &right^[2_u64..4_u64]);
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  let values = array_filled::<u64, 8>(value: 1_u64);
+  copy_between(values: &values, a: 0_u64, b: 2_u64, c: 2_u64, d: 6_u64);
+  return exit_status(code: 0_u8);
+}
+"#, br#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn copy_len(src: &[u64], dst: &[u64]) -> result: unit reads(src), writes(dst) {
+  let n = src^.len;
+  if 0_u64 < dst^.len {
+    set dst^[0_u64] = n;
+  }
+  return unit;
+}
+
+fn copy_between(values: &Array<u64, 8>, a: u64, b: u64, c: u64, d: u64) -> result: unit writes(values) contract {
+  requires a <= b;
+  requires b <= 8_u64;
+  requires c <= d;
+  requires d <= 8_u64;
+} {
+  let left = &values^[a..b];
+  let right = &values^[c..d];
+  if 4_u64 <= left^.len {
+    if 4_u64 <= right^.len {
+      copy_len(src: &left^[0_u64..2_u64], dst: &left^[2_u64..4_u64]);
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  let values = array_filled::<u64, 8>(value: 1_u64);
+  copy_between(values: &values, a: 2_u64, b: 6_u64, c: 0_u64, d: 4_u64);
+  return exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        // Equal endpoint spellings do not make two formation steps one.
+        // Use one frame for both adjacent runs instead of trying to prove
+        // their already ordered inner endpoints again.
+        name: "call-separation-below-separately-formed-same-endpoint-frames.wf",
+        rejected: br#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn copy_len(src: &[u64], dst: &[u64]) -> result: unit reads(src), writes(dst) {
+  let n = src^.len;
+  if 0_u64 < dst^.len {
+    set dst^[0_u64] = n;
+  }
+  return unit;
+}
+
+fn copy_between(values: &Array<u64, 8>, a: u64, b: u64, c: u64, d: u64) -> result: unit writes(values) contract {
+  requires a <= b;
+  requires b <= 8_u64;
+  requires c <= d;
+  requires d <= 8_u64;
+} {
+  let left = &values^[a..b];
+  let right = &values^[a..b];
+  if 2_u64 <= left^.len {
+    if 4_u64 <= right^.len {
+      copy_len(src: &left^[0_u64..2_u64], dst: &right^[2_u64..4_u64]);
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  let values = array_filled::<u64, 8>(value: 1_u64);
+  copy_between(values: &values, a: 2_u64, b: 6_u64, c: 0_u64, d: 4_u64);
+  return exit_status(code: 0_u8);
+}
+"#,
+        rule: "EFF-5",
+        sentences: &[
+            "\n  residual: values^[a..b] and values^[a..b] select different storage (one ends before the other starts, or one is empty)\n",
+            "\n  mechanical_fix: when the two ranges can lie apart here, prove before this call that one ends at or before the other starts, or that one is empty; otherwise pass ranges this call proves apart\n",
+        ],
+        repaired: &[br#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn copy_len(src: &[u64], dst: &[u64]) -> result: unit reads(src), writes(dst) {
+  let n = src^.len;
+  if 0_u64 < dst^.len {
+    set dst^[0_u64] = n;
+  }
+  return unit;
+}
+
+fn copy_between(values: &Array<u64, 8>, a: u64, b: u64, c: u64, d: u64) -> result: unit writes(values) contract {
+  requires a <= b;
+  requires b <= 8_u64;
+  requires c <= d;
+  requires d <= 8_u64;
+} {
+  let left = &values^[a..b];
+  let right = &values^[a..b];
+  if 4_u64 <= left^.len {
+    if 4_u64 <= right^.len {
+      copy_len(src: &left^[0_u64..2_u64], dst: &left^[2_u64..4_u64]);
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  let values = array_filled::<u64, 8>(value: 1_u64);
+  copy_between(values: &values, a: 2_u64, b: 6_u64, c: 0_u64, d: 4_u64);
+  return exit_status(code: 0_u8);
+}
+"#],
+    },
 ];

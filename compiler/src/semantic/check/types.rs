@@ -432,6 +432,7 @@ impl<'unit> Checker<'_, 'unit> {
             crate::ContainerShape::Array => "Array<T, N> or Array<T>",
             crate::ContainerShape::Slots => "Slots<T, N> or Slots<T>",
             crate::ContainerShape::Ring => "Ring<T, N> or Ring<T>",
+            crate::ContainerShape::Segments => "Segments<T>",
             crate::ContainerShape::Box => "Box<T> with one referent type",
         };
         let mismatch = |found: &str| -> Result<CheckedType, CheckStop> {
@@ -441,8 +442,8 @@ impl<'unit> Checker<'_, 'unit> {
                 SemanticIssueKind::type_mismatch(expected, found),
             )
         };
-        // [STOR-8] a unit carrying the no-heap declaration cannot name `Box`
-        // or a runtime-capacity shape, which is the type half of what that
+        // [STOR-8] a unit carrying the no-heap declaration cannot name `Box`,
+        // a runtime-capacity shape or `Segments`, which is the type half of what that
         // declaration withdraws; the call half is judged at the `call`.
         if self.types.declarations.no_heap
             && (shape == crate::ContainerShape::Box || arguments.len() == 1)
@@ -549,6 +550,19 @@ impl<'unit> Checker<'_, 'unit> {
                     element: self.types.intern_element(element_type)?,
                     capacity,
                 })
+            }
+            // [TYPE-9] segments exist only as `Box` content and have no
+            // constant-capacity form.
+            (crate::ContainerShape::Segments, None) => {
+                self.types
+                    .declarations
+                    .reject_unboxed_runtime_capacity(check_context, node)?;
+                Ok(CheckedType::Segments {
+                    element: self.types.intern_element(element_type)?,
+                })
+            }
+            (crate::ContainerShape::Segments, Some(_)) => {
+                mismatch("a capacity argument, which Segments<T> does not take")
             }
             (crate::ContainerShape::Box, _) => {
                 Err(SemanticCompilerFailure::InvalidResolution.into())
@@ -766,10 +780,7 @@ impl<'unit> Checker<'_, 'unit> {
             .tree
             .direct_token_with(node, TerminalPredicate::Literal)?
         {
-            let value = self
-                .types
-                .declarations
-                .parse_literal(node, self.types.declarations.tree.token_bytes(literal)?)?;
+            let value = self.types.declarations.parse_literal(node, literal)?;
             if value.ty() == expected {
                 return Ok(value);
             }
@@ -778,6 +789,35 @@ impl<'unit> Checker<'_, 'unit> {
                 node,
                 SemanticIssueKind::InvalidConstValue,
             );
+        }
+        if let Some(literal) = self
+            .types
+            .declarations
+            .tree
+            .direct_token_with(node, TerminalPredicate::String)?
+        {
+            // [CONST-2] a STRING defines an `Array<u8, N>` and no other type.
+            let CheckedType::Array { element, length } = expected else {
+                return self.types.declarations.issue_node(
+                    SemanticRule::Const2,
+                    node,
+                    SemanticIssueKind::InvalidConstValue,
+                );
+            };
+            if self.types.element_type(element)? != CheckedType::Integer(IntegerType::U8) {
+                return self.types.declarations.issue_node(
+                    SemanticRule::Const2,
+                    node,
+                    SemanticIssueKind::InvalidConstValue,
+                );
+            }
+            let length = length
+                .value()
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+            return self
+                .types
+                .declarations
+                .parse_string_constant(node, literal, expected, length);
         }
         if self
             .types
@@ -1364,11 +1404,17 @@ impl<'unit> DeclarationInventory<'unit> {
         };
         Ok(self.tree.first_child_with(*second, Production::Const)?)
     }
+    /// The value of the literal token `literal` written at `node`, judged
+    /// by [FORM-7].
     pub(super) fn parse_literal(
         &self,
         node: NodeId,
-        bytes: &[u8],
+        literal: usize,
     ) -> Result<CheckedValue, CheckStop> {
+        let bytes = self.tree.token_bytes(literal)?;
+        if bytes.first() == Some(&crate::syntax::text::CHARACTER_QUOTE) {
+            return self.parse_character_literal(node, literal);
+        }
         if bytes == b"unit" {
             return Ok(CheckedValue::Unit);
         }
@@ -1435,7 +1481,8 @@ impl<'unit> TypeContext<'unit> {
                 | CheckedType::GenericInt(_)
                 | CheckedType::GenericFloat(_)
                 | CheckedType::Window { .. }
-                | CheckedType::Buffer { .. } => return Ok(false),
+                | CheckedType::Buffer { .. }
+                | CheckedType::Segments { .. } => return Ok(false),
             }
         }
         Ok(true)
@@ -1486,8 +1533,10 @@ impl<'unit> TypeContext<'unit> {
         // today; a runtime-capacity `Slots<T>` and a `Ring` in either
         // placement stop earlier as an unimplemented representation, which is
         // compiler/storage-representation's checker-shapes decision.
-        if !matches!(ty, CheckedType::Buffer { .. })
-            || self.declarations.tree.is_prelude_node(node)?
+        if !matches!(
+            ty,
+            CheckedType::Buffer { .. } | CheckedType::Segments { .. }
+        ) || self.declarations.tree.is_prelude_node(node)?
         {
             return Ok(());
         }

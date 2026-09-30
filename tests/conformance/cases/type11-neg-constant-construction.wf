@@ -1,0 +1,23 @@
+const limit: u64 = 10_u64;
+
+struct Range {
+  lo: u64;
+  hi: u64;
+  invariant order(r): r.lo <= r.hi;
+  invariant capped(r): r.hi <= limit;
+}
+
+struct Pair {
+  left: Range;
+  right: Range;
+}
+
+const good: Range = Range(lo: 3_u64, hi: 5_u64);
+
+const both: Pair = Pair(left: Range(lo: 1_u64, hi: 2_u64), right: Range(lo: 4_u64, hi: 11_u64));
+
+fn main() -> status: std::process::ExitStatus pure {
+  let lo = good.lo;
+  let code = cvt.wrap::<u64, u8>(lo);
+  return std::process::exit_status(code: code);
+}

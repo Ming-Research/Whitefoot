@@ -1,0 +1,9 @@
+struct Pair {
+  first: u64;
+  second: u64;
+  invariant trivial(pair): 1_u64 <= 2_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

@@ -1,0 +1,9 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+const text: Array<u8, 1> = "\u{a}";
+
+fn main() -> status: ExitStatus pure {
+  doc "U+000A has the one spelling \\n, not a hexadecimal escape [FORM-7].";
+  return exit_status(code: 0_u8);
+}

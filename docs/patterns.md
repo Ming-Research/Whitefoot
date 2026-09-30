@@ -10,6 +10,40 @@ they name a maintained program. A pattern explains how to express an admitted
 design; it grants no extra acceptance rule and makes no implementation-status
 claim.
 
+## First: write every independence the program has
+
+A Whitefoot program's parallelism is maximal, not chosen. Keep only the
+data dependencies the computation actually has, and write every other part
+of the work in a form the compiler proves independent: a counted loop whose
+iterations write their own slots or their own proved ranges [PAR-2], a
+recursion whose halves take disjoint ranges, or adjacent statements with
+disjoint effects [PAR-1]. Which of that work is handed to other workers,
+and at what grain, is the compiler's and its runtime's choice; the source
+neither names a unit of parallel work nor tunes the grain.
+
+The reason is arithmetic: on P cores a computation takes about its work
+divided by P plus its critical path, the longest chain of steps that must
+follow one another. A coarse unit chosen for convenience caps parallelism
+at the number of units however much work each holds; Snowghost's layout,
+split only between CSS formatting contexts, ran no faster at four workers
+than sequentially, because one context held 85 to 95 percent of each real
+page's text
+([Snowghost layout measurement](https://github.com/mbbill/Snowghost/blob/690e0eb/research/investigations/concurrency/DESIGN.md#layout-measurement)).
+
+- Do not add an order the computation does not need. A running total over
+  independent items is an associative accumulator [PAR-2], not a loop-carried
+  variable read by the next iteration; a value each item computes goes to
+  that item's own slot, not to shared state updated in turn.
+- Shorten the critical path when extra work allows it: compute speculatively
+  and correct the few items the speculation got wrong, or combine by halves
+  instead of in one chain.
+- A sequential step should name the dependency that forces it. When the
+  compiler denies a permission you expected, `--par-ledger` says which
+  condition failed; that is a design question about the data, not a reason
+  to accept the sequential lowering.
+
+P13 describes the permission judgment these forms rely on.
+
 ## P1. Put mutation in the reference parameter's effect row
 
 A reference is a local name for a path. It has no shared or exclusive marker.
@@ -44,13 +78,16 @@ signatures without an interior-mutability mechanism.
 
 ## P2. Choose the storage shape from its occupancy rule
 
-The three storage shapes have different invariants [TYPE-9, WIN-1]:
+The four storage shapes have different invariants [TYPE-9, WIN-1]:
 
 - `Array<T, n>` is a full fixed run. Every element exists.
 - `Slots<T, n>` is an inline prefix window with `len` and `cap`.
 - `Ring<T, n>` is an inline wrapped window with `len`, `cap`, and `head`.
 - Omitting `n` makes a runtime-capacity form. It may exist only as the
   `inner` content of a `Box`.
+- `Segments<T>` is a run of `len` segments whose lengths are fixed when it is
+  built, stored as one contiguous run of elements. It has only the `Box`
+  content form.
 
 Use the construction and window operations instead of manufacturing a layout:
 
@@ -87,10 +124,12 @@ Growth policy can be ordinary source. The maintained
 supplies each concrete growth call's OP-9 bound; the policy doubles capacity
 while it fits and otherwise saturates at that ceiling. A zero ceiling admits
 an empty vector but no append. Reference-parameter contracts publish each
-operation's length and capacity relationships. FN-9 does not publish the
-constructor's measure through its aggregate result field. Its caller first
-establishes that nested measure through ordinary control flow, as the
-[program](../tests/programs/containers/grow-vector-program.wf) shows.
+operation's length and capacity relationships. The constructor states no
+postcondition, so its caller first establishes the nested length through
+ordinary control flow, as the
+[program](../tests/programs/containers/grow-vector-program.wf) shows; a
+constructor may instead publish it through its result's field path,
+`ensures made.storage.inner.len == 0_u64;` [FN-9, CALL-4].
 
 `grow_vector_remove` preserves the remaining order. Use
 `grow_vector_swap_remove` when filling the selected position with the last
@@ -157,6 +196,42 @@ payloads. Consistent key laws determine ordinary map behavior, but they do
 not grant ownership or bounds authority. The
 [caller](../tests/programs/containers/hash-map-program.wf) also exercises
 non-reflexive equality, zero-sized pairs and owned callback results.
+
+Use `Segments` when each item produces a number of outputs that differs by
+item and every output belongs in one contiguous buffer: paint commands per
+box, glyphs per text run, lines per paragraph. Count each item's outputs,
+build the run from the counts, then let item i write only its own segment:
+
+```whitefoot
+for (i in 0_u64..items) {
+  let count = count_of(item: i);
+  set counts.inner[i] = count;
+}
+let made = box_segments_filled::<Cmd>(lengths: &counts.inner[0_u64..items], value: zero);
+match move made {
+  None() => {
+    return refused;
+  }
+  Some(value: out) => {
+    let segments = out.inner.len;
+    for (i in 0_u64..segments) {
+      fill(item: i, window: &out.inner[i]);
+    }
+    consume(commands: &out.inner.all);
+  }
+}
+```
+
+`&out.inner[i]` is a range reference over segment i under `i < out.inner.len`
+[OP-4, REF-4], and `&out.inner.all` is one over every element in segment
+order, which hands the joined output to a consumer without a copy. Two
+segments with distinct offsets are distinct storage, so the fill loop is an
+ordinary element map [PAR-2]. `None` means the element total passed the size
+limit [OP-13]; the elements are copy values. When the counts are known only
+by producing the outputs, and producing them twice costs too much, keep a
+per-item buffer instead: its allocations cost more, which
+[the scatter measurement](../research/investigations/segmented-storage/DESIGN.md#measurement-where-the-outputs-go)
+shows.
 
 ## P3. Reach heap content through `Box.inner`
 
@@ -369,7 +444,10 @@ for (
 
 The counted loop supplies `at < limit` in the body. Derived expressions still
 owe their own exact integer and subscript obligations. Header invariants have
-no `use` block.
+no `use` block. A header conclusion also leaves the loop on every `break`
+[ENT-5], so a scan whose position is unchanged since the head needs no
+restated bound or clamp after the loop; the invariant's name still ends with
+the loop body.
 
 Use a local invariant for a relation proved at one program point. When the
 fixed automatic families cannot combine the needed premises, direct the finite
@@ -401,6 +479,13 @@ fn pop<T, const n: u64>(window: &Slots<T, n>) -> value: T writes(window.last), w
   return move value;
 }
 ```
+
+A relation may also name an integer field: of a struct result, `atom.index <
+table^.spans.inner.len`, or of a written reference parameter, where
+`runs^.count` is the value at return and `entry(runs)^.count` the value at
+entry. Relating a `u32` identifier to a `u64` length widens it in place,
+`cvt::<u32, u64>(atom.index)`, since a widening conversion denotes its
+operand's value [FN-9, MSR-3, ENT-2].
 
 Contracts are proof-only. They do not insert a check or an alternate result.
 If insufficient capacity, malformed input, or another false condition is an
@@ -475,10 +560,20 @@ in functions that do not wait: only they can be overlapped [PAR-1, PAR-2].
 
 A named const may contain primitives, const-eligible structs, and
 constant-capacity `Array` values [CONST-2]. A full array literal writes every
-element:
+element; an element that denotes a character is written as a character
+literal, and a number keeps its numeric literal [FORM-5]:
 
 ```whitefoot
-const digits: Array<u8, 4> =[48_u8, 49_u8, 50_u8, 51_u8];
+const digits: Array<u8, 4> =['0'_u8, '1'_u8, '2'_u8, '3'_u8];
+```
+
+A message or other text is an `Array<u8, N>` written as a STRING, whose N is
+its UTF-8 byte length. A line feed, tab and carriage return are written `\n`,
+`\t` and `\r`, any other control or non-ASCII character `\u{H}`, and the
+checker states the right N when it differs:
+
+```whitefoot
+const usage: Array<u8, 12> = "usage: tool\n";
 ```
 
 Borrow and subscript it under the ordinary rules. Const storage is immutable;
@@ -492,8 +587,15 @@ the checker has retained every required disjointness, bounds, and arithmetic
 proof. Failure to derive permission keeps sequential lowering and never changes
 source acceptance.
 
-For a map, partition one origin into proved-disjoint range references and make
-each helper's declared row stay within its actual range. For a reduction, keep
+For a map, let iteration i touch only element i and what lies below it, or
+partition one origin into proved-disjoint range references, and make each
+helper's declared row stay within its actual place. Below element i means any
+field, payload, `Box` content, subscript or range under it: aggregates own
+their parts, so `set items^[i].count = n;`, `update(item: &items^[i]);` and
+`fill(window: &items^[i].buf.inner[0_u64..size]);` each keep iteration i to
+its own item [PAR-2]. Reading element i - 1, writing element i + 1 or passing
+the whole run beside element i reaches another item and keeps the loop
+sequential. For a reduction, keep
 one associative and commutative accumulator update in the admitted operation
 family. Do not add locks, scheduling calls, or runtime alias tests to seek
 permission.
@@ -503,46 +605,11 @@ Maintained examples live under
 [tests/programs/parallel](../tests/programs/parallel); their source contracts
 and ordinary sequential behavior remain the authority.
 
-When the parallelism is the point, mark it: `mustpar` on a counted loop or on
-the call of a statement asserts the permission, and a denied permission becomes
-a rejection that names the refused condition instead of a sequential run
-[PAR-4]. The marker grants nothing and is erased before lowering:
-
-```whitefoot
-mustpar for (at in 0_u64..count) {
-  set total = total +wrap at;
-}
-```
-
-To serve independent peers at once, mark each waiting call that serves one.
-Its callee takes only value parameters, so it carries its own connection and
-a factory drawing on the shared budget, and nothing after it can depend on
-it; the program still means its sequential execution, and the compiler runs
-each marked call in a context of its own, which the marking activation waits
-for before it returns [PAR-4, WAIT-2]:
-
-```whitefoot
-let factory = std::io::factory_share(factory: &handles);
-mustpar serve(connection: move connection, factory: move factory);
-```
-
-The maintained [tcp_contexts.wf](../tests/programs/tcp_contexts.wf) accepts
-connections and serves each one this way.
-
-To gather several answers, bind each marked call. The activation waits for
-each result only before the first statement that uses it, so the calls
-proceed together until then [PAR-4, WAIT-2]:
-
-```whitefoot
-let first = mustpar fetch(factory: move first_factory, address: move first_address, request: 1_u8);
-let second = mustpar fetch(factory: move second_factory, address: move second_address, request: 2_u8);
-let total = first +wrap second;
-```
-
-The maintained [tcp_gather.wf](../tests/programs/tcp_gather.wf) fetches from
-two servers this way. Host operations of different
-contexts, and of independent statements, have no order between them; pass two
-operations through one owner when their order matters [HOST-1].
+To see which permissions hold, read the ledger: `whitefootc --par-ledger`
+prints each permission with the proof it rests on and each denial with its
+refused condition. When a loop's speed is the point, a test can compare the
+ledger, as a benchmark compares a time, so an edit that breaks the loop's
+independence fails there instead of slowing the program.
 
 ## P14. Keep branchless classifier state in `Bool`
 
@@ -565,7 +632,10 @@ let increment = match starts_word {
 This states Boolean dataflow directly and leaves control flow for genuine
 program alternatives. Use an exact integer operation when overflow is excluded
 by proof, and a `.wrap` operation only when modular arithmetic is the intended
-result [OP-2].
+result [OP-2]. A `give` of a literal, a named const or a bare integer binding
+delivers the binding's equality to it, so `increment <= 1` holds after the
+`match`, and a value-producing `if` keeps every bound that each branch's given
+value is known to satisfy, as two returns would [ENT-5].
 
 ## Known gaps
 
@@ -575,12 +645,14 @@ pattern does not authorize retired syntax or a new mechanism. Reduce the need
 to a small source case, identify the specification rule that admits or refuses
 it, and record measured cost only when performance selects between alternatives.
 
-## P15. Keep a Result's evidence with its value
+## P15. Keep a Result's or Option's evidence with its value
 
-A local `Result` with an integer success payload retains its verified success
-relations when named, copied, moved, assigned or delivered by `give`. A match's
-own `Ok` binder and a successful `propagate` make those relations available.
-The error edge keeps its ordinary return and cleanup behavior [FN-9, ENT-5].
+A local `Result` or `Option` retains its verified success relations when named,
+copied, moved, assigned or delivered by `give`, whether its success payload is
+an integer or a struct whose integer fields and measures the relations name. A
+match's own `Ok` or `Some` binder and a successful `propagate` make those
+relations available, at the binder itself or at its fields. The failure edge
+keeps its ordinary return and cleanup behavior [FN-9, ENT-5].
 
 ```whitefoot
 let outcome = bounded(count: limit);
@@ -596,10 +668,34 @@ still be proved. The
 [complete transport case](../tests/conformance/cases/fn9-pos-result-value-transport.wf)
 shows both forms and executes success and error paths.
 
+Return the value the caller needs in the shape it has. A search that may find
+nothing returns an `Option` and routes its bound through `Some`; it needs no
+`Result<T, unit>` whose only purpose is the `Ok` route. A validated header
+returns its struct, not a tuple of integers the caller reassembles:
+
+```whitefoot
+fn parse_header(width: u32, height: u32) -> result: Result<Header, PngError> pure contract {
+  ensures when Ok(value: header): header.width >= 1_u32;
+  ensures when Ok(value: header): header.width <= 16384_u32;
+} {
+  ...
+}
+```
+
+After `let header = propagate parse_header(width: w, height: h);`,
+`header.width * 4_u32` needs no range check. The relation follows the field
+through a rebinding or a construction of another value while no write reaches
+the field [MSR-3]. Storing the value in an array element, or writing the field,
+ends it. The
+[header case](../tests/conformance/cases/fn9-pos-routed-ok-struct-payload-propagate.wf)
+and the [`Some` case](../tests/conformance/cases/fn9-pos-some-route-caller-match.wf)
+execute both routes.
+
 Evidence describes the value that was evaluated. Replacing the original
 binding does not change an earlier copy. Changing supporting storage does not
 retarget an old relation to the new contents, and merely holding an outcome
-does not assert that it is Ok. A branch join keeps only common consequences:
+does not assert that it is `Ok` or `Some`. A branch join keeps only common
+consequences:
 `payload < 8` on one path and `payload < 10` on another retain `payload < 10`.
 An unchanged outcome can cross a loop head; one changed by a continuing
 backedge cannot reuse the initial payload's evidence there.
@@ -664,3 +760,141 @@ the exact conversion's proof that the output equals the input. A contract may
 name the total wrapping operation in a definition; a branch proving the
 identical wrapped comparison can satisfy that requirement through ordinary
 goal identity [FN-8, ENT-2].
+
+Use `cvt.nearest::<Src, Dst>(value)` when a value is meant to become the
+nearest float of the destination format, such as an f64 color channel stored
+as f32 or a u64 count used as an f64 statistic. The destination must be a
+float type; the source may be any numeric type. It needs no proof and returns
+the exact value whenever `cvt` would, so switching a total or proved `cvt` to
+it changes no result. Otherwise it rounds to nearest with ties to even, gives
+a signed infinity past the largest finite value and a zero with the input's
+sign below the smallest subnormal, and narrows NaN to the canonical quiet NaN
+[OP-6]. Do not guard a narrowing with `cvt.defined` and a fallback value:
+almost no computed quotient is exact in f32, so the fallback is what runs.
+
+```whitefoot
+fn channel(component: u8) -> result: f32 pure {
+  let wide = cvt::<u8, f64>(component);
+  let ratio = fdiv.strict(wide, 255.0_f64);
+  return cvt.nearest::<f64, f32>(ratio);
+}
+```
+
+A rounded value supplies no proof about its input: comparing it with the
+input after widening does not discharge a later bare `cvt` of that input.
+
+## P17. Share state between contexts through one object
+
+A spawn takes only value parameters [WAIT-3], so two contexts reach one piece
+of state only through a shared object [SHARE-1]. Move the state into it with
+`shared_new`, give each context its own handle made with `shared_share`, and
+change the state only inside an atomic statement, whose block has the object to
+itself [SHARE-2, SHARE-3]:
+
+```whitefoot
+let handle = shared_share::<u64>(shared: &counter);
+spawn bump(counter: move handle);
+
+atomic count = &counter {
+  set count^ = count^ +wrap 1_u64;
+}
+```
+
+Put everything that must happen together in one block: two atomic statements
+in a row are two points, and another context's statement may take effect
+between them. Copy out what the rest of the function needs into a local; the
+binding and every reference formed from it end with the block [REF-2], and so
+does every fact about the state.
+
+The block cannot wait [SHARE-2], so do the waiting outside it: read or receive
+first, then change the object, then send. To wait for the state itself, write
+the condition as a guard; the statement takes effect only where the guard
+holds, and the block may rely on it as a proved fact:
+
+```whitefoot
+atomic items = &queue when items^.len > 0_u64 {
+  set got = take_front(window: items);
+}
+```
+
+The maintained [shared_objects.wf](../tests/programs/shared_objects.wf) counts
+from sixteen contexts and passes values through a guarded queue this way.
+
+## P18. Keep a relation between a struct's fields as its type invariant
+
+When a value is only valid while two of its fields agree, such as a cursor
+that stays below its window's length, declare the relation on the struct
+instead of repeating it as a `requires` and `ensures` pair on every function
+that takes the value [TYPE-11]:
+
+```whitefoot
+struct Table {
+  slots: Slots<u64, 8>;
+  next: u64;
+  invariant cursor(table): table.next < table.slots.len;
+}
+
+fn advance(t: &Table) -> result: u64 reads(t.slots), writes(t.next) {
+  let at = t^.next;
+  let got = t^.slots[at];
+  let after = at + 1_u64;
+  if after == t^.slots.len {
+    set t^.next = 0_u64;
+  } else {
+    set t^.next = after;
+  }
+  return got;
+}
+```
+
+Every function taking a `Table` or a `&Table` receives the relation at entry,
+which here proves `t^.slots[at]` in bounds, and owes it back where it hands the
+value on: at its returns and its `propagate` error exits when it writes the
+value, at each call passing it, and at `shared_new`. Every construction owes it
+too. Between two field writes of
+one body the relation may be false, since no other code can see the value
+there. A shared object's state keeps it the same way: each atomic block
+receives it at entry and owes it at every edge that leaves the block.
+
+An invariant relates one field or measure on each side, displaced by a
+constant, over the struct's own fields; a relation to another value, such as an
+index into another table, stays a contract. Publish a field only as `public
+readonly`, so that only the declaring module writes it.
+
+## P19. Spawn each activity that must run while others wait
+
+A call runs in its caller's context, in order, unless it is spawned [WAIT-2].
+To serve independent peers at once, spawn each waiting call that serves one.
+Its callee takes only value parameters, so it carries its own connection and a
+factory drawing on the shared budget; it runs concurrently with the function
+that spawned it, which waits for it before it returns [WAIT-3]:
+
+```whitefoot
+let factory = std::io::factory_share(factory: &handles);
+spawn serve(connection: move connection, factory: move factory);
+```
+
+The maintained [tcp_contexts.wf](../tests/programs/tcp_contexts.wf) accepts
+connections and serves each one this way.
+
+To gather several answers, bind each spawn. The function waits for a result at
+the beginning of the first later statement that names it, so the calls proceed
+together until then [WAIT-3]:
+
+```whitefoot
+let first = spawn fetch(factory: move first_factory, address: move first_address, request: 1_u8);
+let second = spawn fetch(factory: move second_factory, address: move second_address, request: 2_u8);
+let total = first +wrap second;
+```
+
+The maintained [tcp_gather.wf](../tests/programs/tcp_gather.wf) fetches from
+two servers this way. Host operations of different contexts have no order
+between them; pass two operations through one owner when their order matters
+[HOST-1].
+
+A bound spawn is joined at the beginning of the first later statement that
+names its binding or may leave its block, such as an `if` holding a `return`
+or a `?`, and otherwise at the block's end [WAIT-3]. A statement that makes
+the spawned call's guard true therefore stands before that statement in the
+block, not inside it: inside, it would run only after the join, which waits
+for the guard.

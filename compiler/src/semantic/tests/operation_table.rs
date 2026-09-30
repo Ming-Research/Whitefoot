@@ -269,13 +269,14 @@ const BOOLEAN_SPELLINGS: [(&str, usize); 4] = [("band", 2), ("bor", 2), ("bxor",
 /// construction functions [OP-13], which are ordinary records and not
 /// operation-table rows, and allocation is total so no source predicate
 /// decides it [STOR-8].
-const UNMODELLED_ROW_SPELLINGS: [&str; 7] = [
+const UNMODELLED_ROW_SPELLINGS: [&str; 8] = [
     "eeq",
     "ene",
     "cvt",
     "cvt.checked",
     "cvt.defined",
     "cvt.wrap",
+    "cvt.nearest",
     "reinterpret",
 ];
 
@@ -580,7 +581,7 @@ fn measure_rows() -> Vec<MeasureRow> {
 #[test]
 fn the_wf_measures_table_and_the_compilers_measure_table_agree() {
     let rows = measure_rows();
-    // [MSR-1]'s seven rows are seven identities: the two placements of one
+    // [MSR-1]'s eight rows are eight identities: the two placements of one
     // shape answer `cap` differently, so a constant-capacity row and a
     // runtime-capacity row of the same shape are two rows and two kinds
     // [TYPE-9].
@@ -591,6 +592,7 @@ fn the_wf_measures_table_and_the_compilers_measure_table_agree() {
         (MeasuredKind::RuntimeSlots, "Slots<T>"),
         (MeasuredKind::ConstantRing, "Ring<T, N>"),
         (MeasuredKind::RuntimeRing, "Ring<T>"),
+        (MeasuredKind::Segments, "Segments<T>"),
         (MeasuredKind::Range, "&[T]"),
     ];
     assert_eq!(
@@ -644,6 +646,7 @@ fn the_wf_measures_table_and_the_compilers_measure_table_agree() {
                             | "len"
                             | "initialized slots"
                             | "slots taken"
+                            | "segments"
                             | "range elements"
                     ),
                     "{name}'s {} cell is a runtime quantity of the block, written {written}",

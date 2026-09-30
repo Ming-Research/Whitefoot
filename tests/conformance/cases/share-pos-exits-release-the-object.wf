@@ -1,0 +1,81 @@
+fn early(cell: &Shared<u8>, want: u8) -> result: u8 reads(cell) waits {
+  atomic value = &cell^ {
+    if value^ == want {
+      return 1_u8;
+    }
+    set value^ = want;
+  }
+  return 2_u8;
+}
+
+fn looped(cell: &Shared<u8>) -> result: u8 reads(cell) waits {
+  let count = 0_u8;
+  loop @again {
+    atomic value = &cell^ {
+      set value^ = value^ +wrap 1_u8;
+      if value^ >= 5_u8 {
+        break @again;
+      }
+    }
+    set count = count +wrap 1_u8;
+  }
+  return count;
+}
+
+fn given(cell: &Shared<u8>, flag: Bool) -> result: u8 reads(cell) waits {
+  let picked = if flag {
+    atomic value = &cell^ {
+      give value^;
+    }
+  } else {
+    give 200_u8;
+  }
+  return picked;
+}
+
+fn tried(cell: &Shared<u8>, outcome: Result<u8, unit>) -> result: Result<u8, unit> reads(cell) waits {
+  atomic value = &cell^ {
+    let inner = propagate outcome;
+    set value^ = inner;
+  }
+  return Ok<u8, unit>(value: 3_u8);
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let cell = shared_new::<u8>(value: 0_u8);
+  let first = early(cell: &cell, want: 0_u8);
+  atomic value = &cell {
+    set value^ = 0_u8;
+  }
+  let second = early(cell: &cell, want: 9_u8);
+  atomic value = &cell {
+    set value^ = 0_u8;
+  }
+  let iterations = looped(cell: &cell);
+  let yes = True();
+  let taken = given(cell: &cell, flag: yes);
+  let bad = Err<u8, unit>(error: unit);
+  let failed = tried(cell: &cell, outcome: bad);
+  let good = Ok<u8, unit>(value: 6_u8);
+  let passed = tried(cell: &cell, outcome: good);
+  let final_value = 0_u8;
+  atomic value = &cell {
+    set final_value = value^;
+  }
+  if first != 1_u8 {
+    return std::process::exit_status(code: 11_u8);
+  }
+  if second != 2_u8 {
+    return std::process::exit_status(code: 12_u8);
+  }
+  if iterations != 4_u8 {
+    return std::process::exit_status(code: 13_u8);
+  }
+  if taken != 5_u8 {
+    return std::process::exit_status(code: 14_u8);
+  }
+  if final_value != 6_u8 {
+    return std::process::exit_status(code: 15_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

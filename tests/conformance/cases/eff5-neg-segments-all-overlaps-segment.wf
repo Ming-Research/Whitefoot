@@ -1,0 +1,27 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn copy_first(from: &[u64], into: &[u64]) -> result: unit reads(from), writes(into) {
+  doc "Copies the first element of from into the first element of into, when both have one.";
+  let count = from^.len;
+  let room = into^.len;
+  if count > 0_u64 {
+    if room > 0_u64 {
+      set into^[0_u64] = from^[0_u64];
+    }
+  }
+  return unit;
+}
+
+fn both(segments: &Box<Segments<u64>>, i: u64) -> result: unit writes(segments) contract {
+  requires i < segments^.inner.len;
+} {
+  doc "The run of every element names a range whose bounds no relation states, so it overlaps segment i and the call writing one while reading the other is refused.";
+  copy_first(from: &segments^.inner.all, into: &segments^.inner[i]);
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The call above is refused by EFF-5.";
+  return exit_status(code: 0_u8);
+}

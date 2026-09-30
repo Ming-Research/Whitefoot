@@ -1,0 +1,23 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn unrelated(value: u64) -> result: u64 pure {
+  return value;
+}
+
+fn scoped(seed: u64, length: u64, pick: Bool) -> result: u64 pure contract {
+  ensures result <= length;
+} {
+  doc "The first edge gives a branch-local binding with no relation of its own. Its carrier equality x = tmp is supported by tmp and dies on the edge that ends tmp's scope, so that edge delivers nothing about length and the join cannot prove the postcondition [ENT-5, FN-9].";
+  let x = if pick {
+    let tmp = unrelated(value: seed);
+    give tmp;
+  } else {
+    give length;
+  }
+  return x;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

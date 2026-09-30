@@ -96,7 +96,8 @@ macro_rules! operation_operands {
             IrOperation::Constant(_)
             | IrOperation::ConstantAddress { .. }
             | IrOperation::Window
-            | IrOperation::ContextJoin => Vec::new(),
+            | IrOperation::ContextJoin
+            | IrOperation::SharedNew { .. } => Vec::new(),
             IrOperation::Call { arguments, .. }
             | IrOperation::ContextStart { arguments, .. }
             | IrOperation::ContextStartBound { arguments, .. }
@@ -114,12 +115,31 @@ macro_rules! operation_operands {
             | IrOperation::RuntimeBoxPayload { owner: value, .. }
             | IrOperation::RuntimeBoxOwner { payload: value, .. }
             | IrOperation::AddressOf { value, .. }
-            | IrOperation::ContextAwait { start: value } => vec![$value(value)],
+            | IrOperation::ContextAwait { start: value }
+            | IrOperation::SharedState { object: value, .. }
+            | IrOperation::SharedRetain { object: value, .. }
+            | IrOperation::SharedAcquire { object: value }
+            | IrOperation::SharedWatch { object: value }
+            | IrOperation::SharedUnlock { object: value } => vec![$value(value)],
             IrOperation::ArrayIndex { root, offset, .. } => match root {
                 IrArrayRoot::Value(value) => vec![$value(value), $value(offset)],
                 IrArrayRoot::Constant(_) => vec![$value(offset)],
             },
             IrOperation::BufferFill { length, value, .. } => vec![$value(length), $value(value)],
+            IrOperation::SegmentsTotal { lengths } => vec![$value(lengths)],
+            IrOperation::SegmentsFits { lengths, total, .. } => {
+                vec![$value(lengths), $value(total)]
+            }
+            IrOperation::SegmentsFill {
+                lengths,
+                total,
+                value,
+                ..
+            } => vec![$value(lengths), $value(total), $value(value)],
+            IrOperation::SegmentsMeasure { segments } | IrOperation::SegmentsAll { segments } => {
+                vec![$value(segments)]
+            }
+            IrOperation::SegmentSlice { segments, index } => vec![$value(segments), $value(index)],
             IrOperation::BufferMeasure { buffer } | IrOperation::SliceFromBuffer { buffer } => {
                 vec![$value(buffer)]
             }

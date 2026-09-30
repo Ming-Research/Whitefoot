@@ -314,6 +314,41 @@ impl CompilationFailure {
         }
     }
 
+    /// [STOR-6] a source call's allocation whose proved count bound the
+    /// selected target cannot hold, located at the call with the bound, the
+    /// target's largest admitted count and the fix that bounds the count.
+    fn allocation_count(
+        excess: crate::target::AllocationCountExcess,
+        target: TargetLayout,
+        bundle: &SourceBundle,
+    ) -> Self {
+        let count = excess.count_site;
+        let spelling = bundle
+            .span(count.source(), count.start(), count.end())
+            .ok()
+            .and_then(|span| bundle.span_bytes(span))
+            .map_or_else(
+                || "the count".to_owned(),
+                |bytes| String::from_utf8_lossy(bytes).into_owned(),
+            );
+        let issue = AllocationCountIssue {
+            count,
+            proved_count_bound: excess.proved_count_bound,
+            target_count_limit: excess.target_count_limit,
+            target: target.triple(),
+            mechanical_fix: crate::semantic::target_allocation_count(
+                &spelling,
+                excess.target_count_limit,
+            ),
+        };
+        Self {
+            stage: CompilationStage::TargetLayout,
+            kind: CompilationFailureKind::TargetLayout,
+            rule_id: None,
+            record: Box::new(Record::located(&issue, bundle, excess.site, Anchor::Start)),
+        }
+    }
+
     /// The record is located at the coordinate that rule selected.
     fn at_source<Issue: diagnostic::Report + ?Sized>(
         stage: CompilationStage,
@@ -404,8 +439,9 @@ impl CompilationFailure {
         }
     }
 
-    /// Returns where a source rejection is written, when it names a written
-    /// place: the file, line and column its summary line prints.
+    /// Returns where a source rejection, or a stop located at a written
+    /// construct such as a target-layout stop at an allocation [STOR-6], is
+    /// written: the file, line and column its summary line prints.
     #[must_use]
     pub fn location(&self) -> Option<SourceLocation> {
         self.record.location()
@@ -535,7 +571,7 @@ fn receipts_for(
 /// own channel: it participates in no mandatory record, changes no accepted
 /// program, and selects no lowering. Permission verdicts are independent of
 /// the actualization policy; additional actualization lines describe that
-/// policy's choices, including omitted scalar-leaf offers. The compiler's
+/// policy's choices, including call offers omitted by the call grain. The compiler's
 /// `--par-ledger` switch is its caller outside tests.
 pub fn compile_with_permission_ledger(
     inputs: &[SourceInput<'_>],
@@ -2183,6 +2219,32 @@ pub fn compile_module_program(
     build_module_entry(graph, inputs, entry, limits, overlap, None).map(|(module, _)| module)
 }
 
+/// [`compile_module_program`] plus the permission ledger of that entry's
+/// compilation, as [`compile_with_permission_ledger`] reports it for a source
+/// bundle. The ledger is developer output: this path reads and writes no
+/// build cache, so every line comes from this compilation.
+pub fn compile_module_program_with_permission_ledger(
+    graph: &crate::ModuleGraph,
+    inputs: &[SourceInput<'_>],
+    entry: ModuleEntry<'_>,
+    limits: CompilerLimits,
+    overlap: crate::OverlapLowering,
+) -> Result<(LlvmModule, Vec<String>), CompilationFailure> {
+    let inputs = &with_library_records(graph, inputs);
+    let selection = entry_selection(graph, entry)?;
+    let (modules, selected) = composition_inputs(graph, inputs, selection.module);
+    require_module_verdicts(graph, inputs, &modules, limits, None)?;
+    compile_selected(
+        &selected,
+        Some(graph.modules()),
+        limits,
+        overlap,
+        &selection,
+        None,
+    )
+    .map(|reported| (reported.module, reported.ledger))
+}
+
 /// Compiles one entry's composition to textual LLVM [MOD-9, PROG-3], reusing
 /// the module a cache recorded for exactly the same composition, lowering
 /// options and compiler, and reporting whether it did. Only a successful
@@ -2307,6 +2369,24 @@ pub(crate) enum CompositionIssue {
     /// the last one introduces the requirement by allocating or by holding a
     /// `Box` or runtime-capacity value [STOR-8].
     HeapInClosure { path: Vec<String> },
+}
+
+/// A target-layout stop at one written allocation [STOR-6]: the selected
+/// target's allocation domain cannot hold the count bound the checked program
+/// retains for this call. It is no source rejection and cites no rule
+/// [DIAG-1]; it is located at the call, whose count is what the writer bounds.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct AllocationCountIssue {
+    /// The count argument as written.
+    count: crate::SyntaxCoordinate,
+    /// The largest count the checked program proves for this call.
+    proved_count_bound: u64,
+    /// The largest count the selected target admits for this element type
+    /// and block header.
+    target_count_limit: u64,
+    /// The selected target.
+    target: &'static str,
+    mechanical_fix: String,
 }
 
 fn compile_selected(
@@ -2773,6 +2853,12 @@ fn lower_selected(
             Ok(Reported { module, ledger })
         })
         .map_err(|failure: BackendFailure| {
+            if let BackendFailure::TargetLayout(
+                crate::target::TargetLayoutFailure::AllocationCount(excess),
+            ) = failure
+            {
+                return CompilationFailure::allocation_count(excess, target, bundle);
+            }
             let (stage, kind) = match failure {
                 BackendFailure::TargetLayout(_) => (
                     CompilationStage::TargetLayout,

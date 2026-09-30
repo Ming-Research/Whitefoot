@@ -1,0 +1,29 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn clamp_to(pos: u64, length: u64) -> result: u64 pure contract {
+  ensures result <= length;
+} {
+  doc "Each give edge delivers its carrier equality besides the substituted relations: x = pos with x < length on the first edge, x = length with length <= x on the second. The join keeps their weakest common bound x <= length, which the statement form with two returns also proves [ENT-5, GIVE-1].";
+  let x = if pos < length {
+    give pos;
+  } else {
+    give length;
+  }
+  return x;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "Both edges run and their delivered values are observed.";
+  let inside = clamp_to(pos: 3_u64, length: 5_u64);
+  if inside == 3_u64 {
+  } else {
+    return exit_status(code: 201_u8);
+  }
+  let outside = clamp_to(pos: 9_u64, length: 5_u64);
+  if outside == 5_u64 {
+  } else {
+    return exit_status(code: 202_u8);
+  }
+  return exit_status(code: 0_u8);
+}

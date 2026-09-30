@@ -1,7 +1,7 @@
-//! [PAR-4] lowering of a started context and of the join every activation
-//! that starts one owes before it leaves.
+//! [WAIT-3] lowering of a spawn's context and of the join every activation
+//! that spawns owes before it leaves.
 //!
-//! A `mustpar` statement whose callee waits reaches the target as
+//! A spawned waiting call reaches the target as
 //! [`IrOperation::ContextStart`] over a synthesized wrapper that takes the
 //! call's arguments by value, makes the call and drops its result. The
 //! wrapper waits, so it is a resumable frame like every waiting function
@@ -14,10 +14,10 @@
 //! lowering places before every exit, suspends the activation until they
 //! have finished. A bound start's context constructs its result in a slot of
 //! the starting frame and is counted in a group of its own, which the
-//! start's await joins before it reads the slot [WAIT-2].
+//! start's await joins before it reads the slot [WAIT-3].
 //!
-//! Nothing here can be refused. Every marked waiting call runs as a context
-//! of its own (design/compiler/waiting-contexts.md), so there is
+//! Nothing here can be refused. Every started call runs as a context of its
+//! own (design/compiler/waiting-contexts.md), so there is
 //! no fallback that runs the call inline: running it inline would wait for
 //! it. The runtime symbols are the completion bridge's, which every program
 //! links, and they begin `wf__` so no source name can reach them.
@@ -36,7 +36,7 @@ use crate::{IrConstant, IrFunction, IrInstruction, IrOperation, IrType, IrValueI
 /// The group one starting activation keeps, named in its entry prelude.
 pub(super) const GROUP: &str = "%wf.ctx.group";
 
-/// The group a bound start keeps for its one context [WAIT-2], named after
+/// The group a bound start keeps for its one context [WAIT-3], named after
 /// the start's value so its await can find it.
 pub(super) fn bound_group(start: IrValueId) -> String {
     format!("%wf.ctx.group.{}", start.index())
@@ -108,7 +108,7 @@ pub(super) fn context_group_initialization(function: &IrFunction) -> String {
 
 impl FunctionEmitter<'_, '_> {
     /// Starts one context over the wrapper `function` with `arguments`. A
-    /// bound start's wrapper returns the marked call's result, which the
+    /// bound start's wrapper returns the started call's result, which the
     /// context constructs in the starting frame's slot for `result` and its
     /// await reads back; an unbound one's unit result lands in the argument
     /// block.
@@ -143,8 +143,7 @@ impl FunctionEmitter<'_, '_> {
                 parameter.ty(),
                 &mut frame_references.types,
             )?;
-            let operand = self.value_operand(*argument)?;
-            operands.push(format!("{parameter_type} {operand}"));
+            operands.push(self.frame_operand(&parameter_type, *argument)?);
             field_types.push(parameter_type);
         }
         let result_field = field_types.len();
@@ -161,7 +160,7 @@ impl FunctionEmitter<'_, '_> {
         let frame_type = format!("{{ {} }}", field_types.join(", "));
         // A wrapper is reached only through a start, never by a call inside a
         // budgeted component, so it has no budget-carrying variant.
-        let (callee, budget) = self.callee_target(function, target.name());
+        let (callee, budget) = self.callee_target(function, target.name(), result);
         if budget.is_some() {
             return Err(BackendFailure::InvalidIr);
         }
@@ -198,9 +197,10 @@ impl FunctionEmitter<'_, '_> {
             let field = format!("%{}", self.next_temporary()?);
             writeln!(
                 self.output,
-                "  {field} = getelementptr inbounds {frame_type}, ptr {frame}, i32 0, i32 {index}\n  store {operand}, ptr {field}"
+                "  {field} = getelementptr inbounds {frame_type}, ptr {frame}, i32 0, i32 {index}"
             )
             .map_err(|_| BackendFailure::TextEmission)?;
+            self.store_frame_operand(operand, &field)?;
         }
         let group = if bound {
             let slot = self.entry_slot(super::FunctionSlot::ContextResult(result))?;
@@ -256,23 +256,27 @@ impl FunctionEmitter<'_, '_> {
         }
         self.emit_group_join(result, &bound_group(start))?;
         let slot = self.entry_slot(super::FunctionSlot::ContextResult(start))?;
-        let emitted = self.output.type_name(self.program, ty)?;
         let (destination, reads_back) = self.waiting_destination(result, ordinary.result())?;
-        let moved = format!("%{}", self.next_temporary()?);
+        // A memory-only result (compiler/payload-enum-layout) moves by
+        // memmove; it returns through a destination, so it is never read
+        // back as a value.
+        if self.is_memory_only(ty)? {
+            if reads_back {
+                return Err(BackendFailure::InvalidIr);
+            }
+            return self.copy_storage(ty, &slot, &destination);
+        }
+        // The value is defined even when its result returns through a
+        // destination: a waiting call's result then lives only in the place
+        // its binding takes over, but an await's result keeps a slot of its
+        // own, which the definition's save stores the value into.
+        let emitted = self.output.type_name(self.program, ty)?;
+        let value = self.value_name(result);
         writeln!(
             self.output,
-            "  {moved} = load {emitted}, ptr {slot}\n  store {emitted} {moved}, ptr {destination}"
+            "  {value} = load {emitted}, ptr {slot}\n  store {emitted} {value}, ptr {destination}"
         )
-        .map_err(|_| BackendFailure::TextEmission)?;
-        if reads_back {
-            writeln!(
-                self.output,
-                "  {} = load {emitted}, ptr {destination}",
-                self.value_name(result)
-            )
-            .map_err(|_| BackendFailure::TextEmission)?;
-        }
-        Ok(())
+        .map_err(|_| BackendFailure::TextEmission)
     }
 
     /// Waits for every context this activation started.

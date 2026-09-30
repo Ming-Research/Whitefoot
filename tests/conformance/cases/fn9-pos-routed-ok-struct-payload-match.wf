@@ -1,0 +1,51 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Header {
+  width: u32;
+  height: u32;
+}
+
+enum PngError {
+  Malformed();
+}
+
+fn parse_header(width: u32, height: u32) -> result: Result<Header, PngError> pure contract {
+  ensures when Ok(value: header): header.width >= 1_u32;
+  ensures when Ok(value: header): header.width <= 16384_u32;
+  ensures when Ok(value: header): header.height >= 1_u32;
+  ensures when Ok(value: header): header.height <= 16384_u32;
+} {
+  doc "FN-9: a routed Ok clause over a struct payload names the payload's integer fields, the data an unrouted Header result would supply [CALL-4]. The construction placement carries the checked width and height into header [MSR-3].";
+  let width_ok = width >= 1_u32;
+  let width_small = width <= 16384_u32;
+  let height_ok = height >= 1_u32;
+  let height_small = height <= 16384_u32;
+  let sizes = band(width_ok, width_small);
+  let heights = band(height_ok, height_small);
+  let valid = band(sizes, heights);
+  if valid {
+    let header = Header(width: width, height: height);
+    return Ok<Header, PngError>(value: header);
+  }
+  let error = PngError::Malformed();
+  return Err<Header, PngError>(error: error);
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The Ok arm selects the call's conditional context and substitutes the binder's fields for the payload root's [ENT-5], so both multiplications discharge from the published bounds with no range check. The products multiply copies of the fields: ENT-6's interval product reads the affine images of own integer bindings, which a field place does not have.";
+  let parsed = parse_header(width: 3_u32, height: 2_u32);
+  match parsed {
+    Ok(value: header) => {
+      let width = header.width;
+      let height = header.height;
+      let stride = width * 4_u32;
+      let bytes = stride * height;
+      let code = cvt.wrap::<u32, u8>(bytes);
+      return exit_status(code: code);
+    }
+    Err(error: problem) => {
+      return exit_status(code: 1_u8);
+    }
+  }
+}

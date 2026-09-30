@@ -11,6 +11,7 @@
 //! APIs, not stable protocols.
 
 mod backend;
+mod cycles;
 mod driver;
 mod graph;
 mod ir;
@@ -61,7 +62,7 @@ pub use ir::RecursionBudget;
 pub use lexer::*;
 /// The compile-time choice of whether the backend actualizes the permission
 /// judgment's overlap groups.
-pub use lowering::OverlapLowering;
+pub use lowering::{CallGrain, OverlapLowering};
 pub use resolution::*;
 pub use source::*;
 pub use spec::*;

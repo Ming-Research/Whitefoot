@@ -429,10 +429,14 @@ impl<'unit> Checker<'_, 'unit> {
         Ok(StatementResult {
             statement: CheckedStatement::Return {
                 node_path: node_path.clone(),
+                // A result list is a compiler-owned nominal, which declares
+                // no type invariant [TYPE-11].
                 value: super::super::super::model::CheckedExpression::ConstructStruct {
                     carrier: node_path,
                     nominal,
                     fields,
+                    invariants: Vec::new(),
+                    invariant_arguments: Vec::new(),
                 },
                 drops: self.types.live_affine_drops(
                     check_context,
@@ -711,13 +715,15 @@ impl<'unit> TypeContext<'unit> {
         // place. A runtime-capacity content is never a binding's value,
         // whatever its elements [TYPE-9].
         let content = match content {
-            Some(CheckedType::Buffer { .. } | CheckedType::Window { capacity: None, .. }) => {
-                Some(if consumed.owned {
-                    CellContent::RuntimeCapacity
-                } else {
-                    CellContent::InPlace
-                })
-            }
+            Some(
+                CheckedType::Buffer { .. }
+                | CheckedType::Segments { .. }
+                | CheckedType::Window { capacity: None, .. },
+            ) => Some(if consumed.owned {
+                CellContent::RuntimeCapacity
+            } else {
+                CellContent::InPlace
+            }),
             Some(ty) if self.is_copy_type(check_context, ty)? => Some(CellContent::Copy),
             Some(_) if consumed.owned => Some(CellContent::Owned),
             Some(_) => Some(CellContent::InPlace),

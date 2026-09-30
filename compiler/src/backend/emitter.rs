@@ -21,7 +21,10 @@ mod parallel;
 pub(super) mod places;
 mod reinterpret;
 mod runs;
+mod segments;
+mod shared;
 mod slice;
+mod union_enums;
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt::Write;
@@ -31,9 +34,9 @@ use super::emission::{FunctionBody, Linkage, Module, Parameter, References, Sign
 pub use super::runtime::*;
 use super::storage::{FunctionStoragePlan, is_stored_aggregate};
 use crate::target::{
-    TargetAggregateLayout, TargetFramePlan, TargetFrameSlot, TargetLayout, TargetLayoutFailure,
-    TargetStorageType, parallel_lane_frame_layout, plan_target_frame, validate_program,
-    validate_static_storage,
+    LANE_FRAME_BYTES, TargetAggregateLayout, TargetFramePlan, TargetFrameSlot, TargetLayout,
+    TargetLayoutFailure, TargetStorageType, fits_parallel_lane_slot, parallel_lane_frame_extent,
+    parallel_lane_frame_layout, plan_target_frame, validate_program, validate_static_storage,
 };
 use crate::{
     IrAddressed, IrAllocationObligations, IrArrayRoot, IrBlock, IrBlockId, IrBooleanOperation,
@@ -42,7 +45,7 @@ use crate::{
     IrOperation, IrOverlap, IrProgram, IrTargetDomainObligation, IrTerminator, IrType, IrValueId,
     IrWindowShape,
 };
-use cleanup::{emit_resource_drop_helpers, emit_value_cleanup, type_requires_cleanup};
+use cleanup::{CleanupOperand, emit_cleanup, emit_resource_drop_helpers, type_requires_cleanup};
 pub use floor::FLOOR_STACK_BYTES;
 use floor::floor_runtime_fallback;
 pub use floor::{FLOOR_RUNTIME_SOURCE, FLOOR_WINDOWS_RUNTIME_SOURCE};
@@ -345,7 +348,7 @@ pub(super) fn emit_llvm_with_window_address_facts(
     text.header(format!("target datalayout = \"{}\"", target.data_layout()));
     text.header(format!("target triple = \"{}\"", target.triple()));
     text.text("\n");
-    emit_nominal_declarations(&mut text, program)?;
+    emit_nominal_declarations(&mut text, program, target)?;
     emit_global_constants(&mut text, program)?;
     // An allocation this host refuses is the heap twin of an exhausted stack,
     // and it gets the same treatment: one record naming the resource class,
@@ -482,12 +485,18 @@ pub(super) fn emit_llvm_with_window_address_facts(
             parameters.into_iter().map(Parameter::unnamed).collect(),
         ));
     }
+    // [SHARE-1] a module whose program holds no shared object names none of
+    // its entries.
+    if cleanup::program_uses_shared(program)? {
+        text.text("\n");
+        text.append(cleanup::shared_runtime_declarations());
+    }
     // [WAIT-1] a module with no waiting definition names no frame symbol.
     if frames::program_has_frames(program) {
         text.text("\n");
         text.append(frames::frame_runtime_declarations());
     }
-    // [PAR-4] a module that starts no context names no context thunk.
+    // [WAIT-3] a module that starts no context names no context thunk.
     if thunks.starts_contexts() {
         text.text("\n");
         text.append(thunks.take_context_definitions());
@@ -544,11 +553,67 @@ pub(super) fn emit_llvm_with_window_address_facts(
     text.append(floor_runtime_fallback()?);
     text.text("\n");
     text.attribute_group(0, format!("\"probe-stack\"=\"{}\"", target.stack_probe()));
+    let mut ledger = frontiers.ledger().to_vec();
+    ledger.extend(lane_frame_ledger(program, target, &frontiers)?);
     Ok(LlvmModule {
         text: text.render(),
         model: text,
-        ledger: frontiers.ledger().to_vec(),
+        ledger,
     })
+}
+
+/// `--par-ledger` lines for the call groups the emitter hands out nothing
+/// from because a member's lane frame does not fit the runtime's slot.
+///
+/// [`ordinary_overlap_lane_frames`] declines such a group whole, and the calls
+/// run where they stand; without a line the permitted group would vanish from
+/// the build with no reason given. Each function is asked with the budget
+/// field its emitted body carries: a budget-family member's body is its
+/// variant, whose offers into its own component carry one more `u64`.
+fn lane_frame_ledger(
+    program: &IrProgram,
+    target: TargetLayout,
+    frontiers: &RecursiveFrontiers,
+) -> Result<Vec<String>, BackendFailure> {
+    let mut lines = Vec::new();
+    for (ordinal, function) in program.functions().iter().enumerate() {
+        let grain = frontiers.grain(ordinal);
+        for overlap in function.overlaps() {
+            for member in overlap.handed_out() {
+                let Some(IrOperation::Call {
+                    function: callee, ..
+                }) = definition_operation(function, *member)
+                else {
+                    continue;
+                };
+                let called = program
+                    .functions()
+                    .get(*callee as usize)
+                    .ok_or(BackendFailure::InvalidIr)?;
+                let frame = parallel_lane_frame_extent(
+                    target,
+                    program.nominals(),
+                    program.elements(),
+                    called.parameters().iter().map(|(_, ty)| *ty),
+                    called.result(),
+                    grain.is_some_and(|grain| frontiers.stays(*callee, grain)),
+                )
+                .map_err(BackendFailure::TargetLayout)?;
+                if !fits_parallel_lane_slot(frame) {
+                    lines.push(format!(
+                        "PAR actualization  {}  lane frame: offer of {} needs {} bytes aligned to {}, over the {LANE_FRAME_BYTES}-byte lane slot; its group of {} offers runs as ordinary calls",
+                        function.name(),
+                        called.name(),
+                        frame.size(),
+                        frame.align(),
+                        overlap.handed_out().len(),
+                    ));
+                    break;
+                }
+            }
+        }
+    }
+    Ok(lines)
 }
 
 /// The bytes an allocation refusal writes before aborting.
@@ -726,6 +791,10 @@ fn emit_recursion_budget_entry(
 const GRAIN_ENTRY_LABEL: &str = "par.grain";
 const GRAIN_SPENT_LABEL: &str = "par.grain.spent";
 
+/// A budget-carrying variant's trailing parameter: the levels its activation
+/// was handed, which a call outside every group passes on unchanged.
+const BUDGET_PARAMETER: &str = "%wf.budget";
+
 /// The spelling of the no-capture parameter attribute this build's assembler
 /// accepts, probed at build time (compiler/backend-facts). LLVM 21 renamed
 /// `nocapture` to `captures(none)` and no version is pinned here.
@@ -830,6 +899,7 @@ fn global_constant_value(
 fn emit_nominal_declarations(
     module: &mut Module,
     program: &IrProgram,
+    target: TargetLayout,
 ) -> Result<(), BackendFailure> {
     let mut emitted = false;
     for nominal in program.nominals() {
@@ -838,12 +908,16 @@ fn emit_nominal_declarations(
         if nominal.is_tag_only_enum()
             || matches!(
                 nominal.kind(),
-                IrNominalKind::Box { .. } | IrNominalKind::Opaque
+                IrNominalKind::Box { .. } | IrNominalKind::Opaque | IrNominalKind::Shared { .. }
             )
         {
             continue;
         }
         emitted = true;
+        if union_enums::is_union_enum(program, nominal.id())? {
+            union_enums::emit_union_declarations(module, program, target, nominal)?;
+            continue;
+        }
         let mut output = String::from("{ ");
         let mut references = References::default();
         match nominal.kind() {
@@ -872,7 +946,7 @@ fn emit_nominal_declarations(
                     }
                 }
             }
-            IrNominalKind::Box { .. } | IrNominalKind::Opaque => {
+            IrNominalKind::Box { .. } | IrNominalKind::Opaque | IrNominalKind::Shared { .. } => {
                 return Err(BackendFailure::InvalidIr);
             }
         }
@@ -936,6 +1010,10 @@ enum FunctionSlot {
     /// The slot a waiting call constructs a result that has no planned
     /// storage in, read back once the callee has transferred back [WAIT-1].
     WaitingResult(IrValueId),
+    /// Where a memory-only edge transfer into this block parameter keeps
+    /// its source while another transfer of the same edge overwrites the
+    /// source's storage (compiler/payload-enum-layout).
+    EdgeSnapshot(IrValueId),
     /// The slot a bound start's context constructs its result in, keyed by
     /// the start, which its await reads [WAIT-2]. It is the starting frame's
     /// own, so it outlives the context that writes it.
@@ -1010,6 +1088,33 @@ impl FunctionFramePlan {
             }
         }
         for block in function.blocks() {
+            if let IrTerminator::Jump {
+                target: successor,
+                arguments,
+                ..
+            } = block.terminator()
+            {
+                let parameters = function
+                    .blocks()
+                    .get(successor.index())
+                    .ok_or(BackendFailure::InvalidIr)?
+                    .parameters();
+                for position in
+                    union_enums::edge_snapshot_positions(program, storage, parameters, arguments)?
+                {
+                    let (parameter, ty) = parameters[position];
+                    let key = FunctionSlot::EdgeSnapshot(parameter);
+                    if !ordered.contains(&key) {
+                        push_function_slot(
+                            &mut specifications,
+                            &mut ordered,
+                            key,
+                            TargetStorageType::source(ty),
+                            None,
+                        )?;
+                    }
+                }
+            }
             for instruction in block.instructions() {
                 let IrInstruction::Define {
                     result, operation, ..
@@ -1338,7 +1443,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 // One ordinary ABI, with a budget field only for a synthesized variant.
                 let Some(frames) =
                     ordinary_overlap_lane_frames(program, target, function, overlap, &|callee| {
-                        grain.is_some_and(|grain| frontiers.spends(callee, grain))
+                        grain.is_some_and(|grain| frontiers.stays(callee, grain))
                     })?
                 else {
                     continue;
@@ -1496,25 +1601,49 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     /// In the clone world a call to a function that also has a clone names the
     /// clone, which is what keeps a clone's whole dynamic extent inside the
     /// sequential world. Inside a budgeted world a call that stays in the
-    /// component names the callee's variant and spends one level; a call that
-    /// leaves it enters that callee's ordinary symbol, which obtains a budget
-    /// of its own. Other calls use the shared original.
-    pub(super) fn callee_target(&self, ordinal: u32, name: &str) -> (String, Option<&str>) {
-        match (self.sequential_clones, self.grain) {
-            (Some(clones), _) if clones.contains(&ordinal) => (sequential_clone_symbol(name), None),
-            (None, Some(grain)) => {
-                let (symbol, spends) = self.frontiers.callee(ordinal, name, grain);
-                (
-                    symbol,
-                    spends.then_some(self.grain_next.as_deref()).flatten(),
-                )
-            }
-            _ => (source_symbol(name), None),
+    /// component names the callee's variant; a call that leaves it enters that
+    /// callee's ordinary symbol, which obtains a budget of its own. Other calls
+    /// use the shared original.
+    ///
+    /// A call that stays in the component spends one level only when `site`,
+    /// its result, is a member of a group this function hands out from: the
+    /// budget bounds how deep offers nest, and a call outside every group
+    /// offers nothing, so it passes the caller's levels on unchanged. A
+    /// recursion that descends through many levels before it reaches a split
+    /// then still has its levels at the split.
+    pub(super) fn callee_target(
+        &self,
+        ordinal: u32,
+        name: &str,
+        site: IrValueId,
+    ) -> (String, Option<&str>) {
+        let (symbol, stays) = self.callee_entry(ordinal, name);
+        if !stays {
+            return (symbol, None);
         }
+        let splits = self.overlap_handed_out.contains(&site) || self.is_overlap_join_site(site);
+        let budget = if splits {
+            self.grain_next.as_deref()
+        } else {
+            Some(BUDGET_PARAMETER)
+        };
+        (symbol, budget)
     }
 
     pub(super) fn callee_symbol(&self, ordinal: u32, name: &str) -> String {
-        self.callee_target(ordinal, name).0
+        self.callee_entry(ordinal, name).0
+    }
+
+    /// The symbol one call names, and whether it stays inside this function's
+    /// budgeted component and so carries a budget.
+    fn callee_entry(&self, ordinal: u32, name: &str) -> (String, bool) {
+        match (self.sequential_clones, self.grain) {
+            (Some(clones), _) if clones.contains(&ordinal) => {
+                (sequential_clone_symbol(name), false)
+            }
+            (None, Some(grain)) => self.frontiers.callee(ordinal, name, grain),
+            _ => (source_symbol(name), false),
+        }
     }
 
     /// The budget-carrying variant's entry: test the levels this activation
@@ -1598,7 +1727,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let public = FunctionAbi::build(self.program, self.function)?;
         // A waiting function is a resumable frame [WAIT-1]: its result is
         // always constructed through a destination and it has no public
-        // entry (`frames`). A budgeted variant has no frame form.
+        // entry (`frames`). A budgeted variant has no frame form, so the
+        // recursion frontier never selects a waiting member (`frontier`).
         let waiting = self.function.waits();
         if waiting && self.grain.is_some() {
             return Err(BackendFailure::InvalidIr);
@@ -2027,6 +2157,22 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             }
             _ => self.materialize_operands(operation.operands())?,
         }
+        // Only these value operations can produce a memory-only result
+        // (compiler/payload-enum-layout), and each writes the result's slot
+        // itself; every other producer of one is a place definition above.
+        if self.is_memory_only(ty)?
+            && !matches!(
+                operation,
+                IrOperation::Call { .. }
+                    | IrOperation::LoopSplit { .. }
+                    | IrOperation::BoxTake { .. }
+                    | IrOperation::BoxDeref { .. }
+                    | IrOperation::SliceIndex { .. }
+                    | IrOperation::ContextAwait { .. }
+            )
+        {
+            return Err(BackendFailure::InvalidIr);
+        }
         self.emit_value_definition(result, ty, operation)?;
         if !self.overlap_handed_out.contains(&result) {
             self.save_value_result(result)?;
@@ -2155,6 +2301,28 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 },
             ),
             IrOperation::BufferMeasure { buffer } => self.emit_buffer_length(result, ty, *buffer),
+            IrOperation::SegmentsTotal { lengths } => {
+                self.emit_segments_total(result, ty, *lengths)
+            }
+            IrOperation::SegmentsFits {
+                lengths,
+                total,
+                layout_ceiling,
+                ..
+            } => self.emit_segments_fits(result, ty, *lengths, *total, *layout_ceiling),
+            IrOperation::SegmentsFill {
+                nominal,
+                lengths,
+                total,
+                value,
+            } => self.emit_segments_fill(result, ty, *nominal, *lengths, *total, *value),
+            IrOperation::SegmentsMeasure { segments } => {
+                self.emit_segments_measure(result, ty, *segments)
+            }
+            IrOperation::SegmentSlice { segments, index } => {
+                self.emit_segment_slice(result, ty, *segments, *index)
+            }
+            IrOperation::SegmentsAll { segments } => self.emit_segments_all(result, ty, *segments),
             IrOperation::Window => self.emit_fixed_vector(result, ty),
             IrOperation::ContainerMeasure { measure, container } => {
                 self.emit_container_measure(result, ty, *measure, *container)
@@ -2225,6 +2393,20 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             IrOperation::BoxNew { nominal, value } => {
                 self.emit_box_new(result, ty, *nominal, *value)
             }
+            IrOperation::SharedNew { nominal } => self.emit_shared_new(result, ty, *nominal),
+            IrOperation::SharedState { nominal, object } => {
+                self.emit_shared_state(result, ty, *nominal, *object)
+            }
+            IrOperation::SharedRetain { nominal, object } => {
+                self.emit_shared_retain(result, ty, *nominal, *object)
+            }
+            IrOperation::SharedAcquire { object } => {
+                self.emit_shared_wait(result, *object, "wf__shared_acquire", "acquire")
+            }
+            IrOperation::SharedWatch { object } => {
+                self.emit_shared_wait(result, *object, "wf__shared_watch", "watch")
+            }
+            IrOperation::SharedUnlock { object } => self.emit_shared_unlock(result, *object),
             IrOperation::BoxTake { nominal, value } => {
                 self.emit_box_take(result, ty, *nominal, *value)
             }
@@ -2443,6 +2625,18 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     if tag_only {
                         return Ok((self.value_name(scrutinee), tag_ty));
                     }
+                    // A memory-only scrutinee stays in its slot
+                    // (compiler/payload-enum-layout); its tag is field 0 in
+                    // every enum layout.
+                    if self.is_memory_only(IrType::Nominal(nominal))? {
+                        let address = self.value_place(scrutinee)?;
+                        let field =
+                            self.aggregate_field_pointer(IrType::Nominal(nominal), &address, 0)?;
+                        let temporary = self.next_temporary()?;
+                        writeln!(self.output, "  %{temporary} = load i32, ptr {field}")
+                            .map_err(|_| BackendFailure::TextEmission)?;
+                        return Ok((format!("%{temporary}"), tag_ty));
+                    }
                     let temporary = self.next_temporary()?;
                     writeln!(
                         self.output,
@@ -2481,7 +2675,13 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
 
     /// Validate the checked release and capture only content it actually
     /// reads. In particular, a no-op owner node requires no aggregate load.
-    fn prepare_drop(&mut self, drop: IrDrop) -> Result<Option<String>, BackendFailure> {
+    ///
+    /// A memory-only subject (compiler/payload-enum-layout) is released from
+    /// its address instead of a loaded snapshot. That address is a frame
+    /// slot, or a place the checker names on its own inside a single-drop
+    /// group, and no release of a group writes frame storage, so the
+    /// content the release reads is the content the group started with.
+    fn prepare_drop(&mut self, drop: IrDrop) -> Result<Option<CleanupOperand>, BackendFailure> {
         let actual = match drop.subject() {
             IrDropSubject::Value(value) => self.value_type(value),
             IrDropSubject::Place(address) => match self.value_type(address) {
@@ -2504,6 +2704,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     // struct node must not recursively release them again.
                     IrNominalKind::Struct { .. } => false,
                     IrNominalKind::Opaque => false,
+                    IrNominalKind::Shared { .. } => true,
                     IrNominalKind::Enum { .. } | IrNominalKind::Box { .. } => {
                         type_requires_cleanup(self.program, drop.ty())?
                     }
@@ -2514,8 +2715,17 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         if !reads_content {
             return Ok(None);
         }
+        if self.is_memory_only(drop.ty())? {
+            return Ok(Some(CleanupOperand::Address(match drop.subject() {
+                IrDropSubject::Value(value) => self.value_place(value)?,
+                IrDropSubject::Place(address) => self.value_name(address),
+            })));
+        }
         match drop.subject() {
-            IrDropSubject::Value(value) => self.value_operand(value).map(Some),
+            IrDropSubject::Value(value) => self
+                .value_operand(value)
+                .map(CleanupOperand::Value)
+                .map(Some),
             IrDropSubject::Place(address) => {
                 let snapshot = format!("%{}", self.next_temporary()?);
                 {
@@ -2528,7 +2738,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     )
                 }
                 .map_err(|_| BackendFailure::TextEmission)?;
-                Ok(Some(snapshot))
+                Ok(Some(CleanupOperand::Value(snapshot)))
             }
         }
     }
@@ -2542,13 +2752,13 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             .map(|drop| self.prepare_drop(*drop))
             .collect::<Result<Vec<_>, _>>()?;
         for (drop, snapshot) in drops.iter().zip(snapshots) {
-            if let Some(value) = snapshot {
-                emit_value_cleanup(
+            if let Some(operand) = snapshot {
+                emit_cleanup(
                     self.program,
                     &mut self.output,
                     &mut self.temporary,
                     drop.ty(),
-                    value,
+                    operand,
                 )?;
             }
             writeln!(self.output, "  ; drop {}", value_name(drop.operand()))
@@ -2707,6 +2917,11 @@ pub(super) fn llvm_type_with_references(
                 references
             )?
         )),
+        // compiler/storage-representation: a `Segments<T>` block is `len`
+        // and then `len + 1` element offsets; its elements follow at the
+        // first offset past the bounds that their alignment admits, so the
+        // type names only the header [TYPE-9].
+        IrType::Segments { .. } => Ok("{ i64, [0 x i64] }".to_owned()),
         // compiler/storage-representation: header first, so the inline and
         // the boxed placement of one shape share one address computation. A
         // `Slots` carries `len` alone and a `Ring` carries `len` and `head`;
@@ -2754,7 +2969,10 @@ pub(super) fn llvm_type_with_references(
         IrType::Address(_) | IrType::RuntimeBoxPayload { .. } => Ok("ptr".to_owned()),
         IrType::Nominal(id) => {
             let nominal = program.nominal(id).ok_or(BackendFailure::InvalidIr)?;
-            if matches!(nominal.kind(), IrNominalKind::Box { .. }) {
+            if matches!(
+                nominal.kind(),
+                IrNominalKind::Box { .. } | IrNominalKind::Shared { .. }
+            ) {
                 return Ok("ptr".to_owned());
             }
             if matches!(nominal.kind(), IrNominalKind::Opaque) {

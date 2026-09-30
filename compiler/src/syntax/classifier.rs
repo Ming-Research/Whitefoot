@@ -90,12 +90,17 @@ fn membership(token: Token, spelling: &[u8]) -> Option<TerminalSet> {
             }
             true
         }
+        TokenKind::CharacterForm => {
+            if is_literal(spelling) {
+                set.insert(TerminalPredicate::Literal);
+            }
+            true
+        }
         TokenKind::StringForm => {
-            let valid = is_string(spelling);
-            if valid {
+            if is_string(spelling) {
                 set.insert(TerminalPredicate::String);
             }
-            valid
+            true
         }
         TokenKind::OperatorForm => match FixedTerminal::from_spelling(spelling) {
             Some(terminal) if terminal.is_operator_form() => {
@@ -207,7 +212,9 @@ pub fn classify_terminals(
             let Some(terminals) = membership(*token, spelling) else {
                 let owner = match token.kind() {
                     TokenKind::LowerWordForm => Some(TerminalIssueOwner::Form3),
-                    TokenKind::NumberForm => Some(TerminalIssueOwner::Form5),
+                    TokenKind::NumberForm | TokenKind::CharacterForm | TokenKind::StringForm => {
+                        Some(TerminalIssueOwner::Form5)
+                    }
                     TokenKind::OperatorForm => Some(TerminalIssueOwner::Gram1),
                     _ => None,
                 };

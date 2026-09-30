@@ -1,0 +1,331 @@
+diff --git a/compiler/src/backend/abi.rs b/compiler/src/backend/abi.rs
+index e53202540..9a07592c1 100644
+--- a/compiler/src/backend/abi.rs
++++ b/compiler/src/backend/abi.rs
+@@ -296,3 +296,49 @@ impl ReturnLeaves {
+             .saturating_add(copies.saturating_mul(words));
+     }
+ }
++
++// CENSUS (temporary): enums a union layout would change under the hybrid rule.
++thread_local! {
++    pub(crate) static CENSUS_SITE: std::cell::RefCell<String> = std::cell::RefCell::new(String::new());
++}
++
++pub(crate) fn census_set(site: &str) {
++    CENSUS_SITE.with(|cell| *cell.borrow_mut() = site.to_owned());
++}
++
++pub(crate) fn census_site() -> String {
++    CENSUS_SITE.with(|cell| cell.borrow().clone())
++}
++
++pub(crate) fn census_union_enum(program: &IrProgram, ty: IrType) -> bool {
++    let IrType::Nominal(id) = ty else { return false };
++    let Some(nominal) = program.nominal(id) else { return false };
++    let IrNominalKind::Enum { variants } = nominal.kind() else { return false };
++    variants.iter().filter(|variant| !variant.fields().is_empty()).count() >= 2
++        && !fits_return_registers(program, ty).unwrap_or(true)
++}
++
++pub(crate) fn census_contains(program: &IrProgram, ty: IrType, depth: u32) -> bool {
++    if depth > 16 {
++        return false;
++    }
++    if census_union_enum(program, ty) {
++        return true;
++    }
++    match ty {
++        IrType::Array { element, .. } | IrType::Window { element, capacity: Some(_), .. } => program
++            .element(element)
++            .is_some_and(|element| census_contains(program, element, depth + 1)),
++        IrType::Nominal(id) => match program.nominal(id).map(|nominal| nominal.kind()) {
++            Some(IrNominalKind::Struct { fields }) => fields
++                .iter()
++                .any(|field| census_contains(program, field.ty(), depth + 1)),
++            Some(IrNominalKind::Enum { variants }) => variants
++                .iter()
++                .flat_map(|variant| variant.fields())
++                .any(|field| census_contains(program, field.ty(), depth + 1)),
++            _ => false,
++        },
++        _ => false,
++    }
++}
+diff --git a/compiler/src/backend/emitter.rs b/compiler/src/backend/emitter.rs
+index 7f4f74b5d..722eb118a 100644
+--- a/compiler/src/backend/emitter.rs
++++ b/compiler/src/backend/emitter.rs
+@@ -345,6 +345,9 @@ pub(super) fn emit_llvm_with_window_address_facts(
+     text.header(format!("target datalayout = \"{}\"", target.data_layout()));
+     text.header(format!("target triple = \"{}\"", target.triple()));
+     text.text("\n");
++    for line in crate::target::census_enum_layouts(program, target) {
++        eprintln!("{line}");
++    }
+     emit_nominal_declarations(&mut text, program)?;
+     emit_global_constants(&mut text, program)?;
+     // An allocation this host refuses is the heap twin of an exhausted stack,
+@@ -2002,10 +2005,18 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
+             IrOperation::RunInsert { run, index, .. } => {
+                 self.materialize_operands([*run, *index])?;
+             }
+-            _ => self.materialize_operands(operation.operands())?,
++            _ => {
++                let name = format!("{operation:?}");
++                let name = name.split([' ', '{', '(']).next().unwrap_or("").to_owned();
++                crate::backend::abi::census_set(&format!("operands:{name}"));
++                self.materialize_operands(operation.operands())?
++            }
+         }
+         self.emit_value_definition(result, ty, operation)?;
+         if !self.overlap_handed_out.contains(&result) {
++            let name = format!("{operation:?}");
++            let name = name.split([' ', '{', '(']).next().unwrap_or("").to_owned();
++            crate::backend::abi::census_set(&format!("result:{name}"));
+             self.save_value_result(result)?;
+         }
+         Ok(())
+@@ -2338,6 +2349,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
+                 enum_type,
+                 targets,
+             } => {
++                crate::backend::abi::census_set("match");
+                 self.materialize_operands([*scrutinee])?;
+                 let (tag, tag_ty) = self.match_tag(*scrutinee, *enum_type)?;
+                 writeln!(
+@@ -2487,7 +2499,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
+             return Ok(None);
+         }
+         match drop.subject() {
+-            IrDropSubject::Value(value) => self.value_operand(value).map(Some),
++            IrDropSubject::Value(value) => {
++                crate::backend::abi::census_set("drop");
++                self.value_operand(value).map(Some)
++            }
+             IrDropSubject::Place(address) => {
+                 let snapshot = format!("%{}", self.next_temporary()?);
+                 {
+diff --git a/compiler/src/backend/emitter/cleanup.rs b/compiler/src/backend/emitter/cleanup.rs
+index ccb2dc861..4eb5c532e 100644
+--- a/compiler/src/backend/emitter/cleanup.rs
++++ b/compiler/src/backend/emitter/cleanup.rs
+@@ -36,6 +36,9 @@ pub(super) fn emit_resource_drop_helpers(
+         }
+ 
+         let mut output = FunctionBody::default();
++        if crate::backend::abi::census_union_enum(program, ty) {
++            module.text("; census drop-helper\n");
++        }
+         let aggregate_ty = output.type_name(program, ty)?;
+         let symbol = drop_helper_symbol(nominal);
+         let mut signature = Signature::new(
+@@ -436,6 +439,9 @@ fn emit_cleanup_jobs(
+                 field_ty,
+             } => {
+                 let value = next_temporary(temporary)?;
++                if crate::backend::abi::census_contains(program, field_ty, 0) {
++                    writeln!(output, "  ; census drop-field").map_err(|_| BackendFailure::TextEmission)?;
++                }
+                 {
+                     let emitted_type_0 = output.type_name(program, aggregate_ty)?;
+                     writeln!(
+diff --git a/compiler/src/backend/emitter/contexts.rs b/compiler/src/backend/emitter/contexts.rs
+index 91e1dc4bf..77bf4a56f 100644
+--- a/compiler/src/backend/emitter/contexts.rs
++++ b/compiler/src/backend/emitter/contexts.rs
+@@ -92,6 +92,7 @@ impl FunctionEmitter<'_, '_> {
+                 parameter.ty(),
+                 &mut frame_references.types,
+             )?;
++            crate::backend::abi::census_set("context");
+             let operand = self.value_operand(*argument)?;
+             operands.push(format!("{parameter_type} {operand}"));
+             field_types.push(parameter_type);
+diff --git a/compiler/src/backend/emitter/operations.rs b/compiler/src/backend/emitter/operations.rs
+index 5f2eb680c..886725cb9 100644
+--- a/compiler/src/backend/emitter/operations.rs
++++ b/compiler/src/backend/emitter/operations.rs
+@@ -341,6 +341,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
+             .map_err(|_| BackendFailure::TextEmission)?;
+             return Ok(());
+         }
++        if crate::backend::abi::census_union_enum(self.program, ty) {
++            eprintln!("census ssa-construct");
++        }
+         let mut inserts = vec![(0_usize, None)];
+         let base = variant_field_base(variants, variant)?;
+         inserts.extend(
+@@ -543,6 +546,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
+         {
+             return Err(BackendFailure::InvalidIr);
+         }
++        if crate::backend::abi::census_union_enum(self.program, IrType::Nominal(nominal)) {
++            eprintln!("census ssa-project");
++        }
+         let index = variant_field_base(variants, variant)? + field as usize;
+         {
+             let emitted_type_1 = self
+diff --git a/compiler/src/backend/emitter/parallel.rs b/compiler/src/backend/emitter/parallel.rs
+index 0975b9777..51dd0544e 100644
+--- a/compiler/src/backend/emitter/parallel.rs
++++ b/compiler/src/backend/emitter/parallel.rs
+@@ -609,6 +609,7 @@ impl FunctionEmitter<'_, '_> {
+                 parameter.ty(),
+                 &mut frame_references.types,
+             )?;
++            crate::backend::abi::census_set("parallel");
+             let operand = self.value_operand(*argument)?;
+             operands.push(format!("{parameter_type} {operand}"));
+             // The frame keeps a range reference's pair whole; the refused
+diff --git a/compiler/src/backend/emitter/places.rs b/compiler/src/backend/emitter/places.rs
+index 568330c4d..365890e01 100644
+--- a/compiler/src/backend/emitter/places.rs
++++ b/compiler/src/backend/emitter/places.rs
+@@ -184,6 +184,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
+                 {
+                     return Err(BackendFailure::InvalidIr);
+                 }
++                if crate::backend::abi::census_union_enum(self.program, ty) {
++                    eprintln!("census mem-construct");
++                }
+                 let base = variant_field_base(variants, *variant)?;
+                 self.construct_at(
+                     result,
+@@ -244,6 +247,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
+                 {
+                     return Err(BackendFailure::InvalidIr);
+                 }
++                if crate::backend::abi::census_union_enum(self.program, IrType::Nominal(*nominal)) {
++                    eprintln!("census mem-project");
++                }
+                 let index = variant_field_base(variants, *variant)? + *field as usize;
+                 let source = self.value_place(*aggregate)?;
+                 let address =
+@@ -267,6 +273,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
+                     return Err(BackendFailure::InvalidIr);
+                 }
+                 // Read the replacement before a coalesced destination write.
++                crate::backend::abi::census_set("insert-struct");
+                 let replacement = self.value_operand(*value)?;
+                 let destination = self.value_place(result)?;
+                 let source = self.value_place(*aggregate)?;
+@@ -330,6 +337,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
+             if self.storage.slot(*parameter).is_some()
+                 && self.storage.slot(*parameter) != self.storage.slot(*argument)
+             {
++                crate::backend::abi::census_set("edge");
+                 let operand = self.value_operand(*argument)?;
+                 transfers.push((*parameter, *ty, operand));
+             }
+@@ -432,6 +440,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
+                 {
+                     return Err(BackendFailure::InvalidIr);
+                 }
++                if crate::backend::abi::census_union_enum(self.program, base.ty()) {
++                    eprintln!("census place-step");
++                }
+                 let index = variant_field_base(variants, *variant)? + *field as usize;
+                 self.aggregate_field_pointer(base.ty(), &self.value_name(address), index)?
+             }
+@@ -532,6 +543,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
+         }
+         let temporary = self.next_temporary()?;
+         let ty = self.value_type(value).ok_or(BackendFailure::InvalidIr)?;
++        if crate::backend::abi::census_contains(self.program, ty, 0) {
++            writeln!(self.output, "  ; census fca-load {}", crate::backend::abi::census_site()).map_err(|_| BackendFailure::TextEmission)?;
++        }
+         let address = self.value_place(value)?;
+         {
+             let emitted_type_0 = self.output.type_name(self.program, ty)?;
+@@ -622,6 +636,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
+             return Ok(());
+         }
+         let ty = self.value_type(result).ok_or(BackendFailure::InvalidIr)?;
++        if crate::backend::abi::census_contains(self.program, ty, 0) {
++            writeln!(self.output, "  ; census fca-save {}", crate::backend::abi::census_site()).map_err(|_| BackendFailure::TextEmission)?;
++        }
+         let destination = self.value_place(result)?;
+         {
+             let emitted_type_0 = self.output.type_name(self.program, ty)?;
+diff --git a/compiler/src/target.rs b/compiler/src/target.rs
+index cc51b79a6..00b1be159 100644
+--- a/compiler/src/target.rs
++++ b/compiler/src/target.rs
+@@ -1409,3 +1409,76 @@ fn as_object(failure: TargetLayoutFailure, object: TargetObject) -> TargetLayout
+         other => other,
+     }
+ }
++
++// CENSUS (temporary): product versus per-variant union layout of every enum
++// with at least two payload-carrying variants.
++pub(crate) fn census_enum_layouts(program: &crate::IrProgram, target: TargetLayout) -> Vec<String> {
++    let mut product = LayoutComputer::new(target, program.nominals(), program.elements());
++    let mut union = LayoutComputer::new(target, program.nominals(), program.elements());
++    let mut lines = Vec::new();
++    for (index, nominal) in program.nominals().iter().enumerate() {
++        let IrNominalKind::Enum { variants } = nominal.kind() else { continue };
++        let payload = variants.iter().filter(|variant| !variant.fields().is_empty()).count();
++        if payload < 2 {
++            continue;
++        }
++        let Ok(id) = u32::try_from(index) else { continue };
++        let id = IrNominalId(id);
++        let Ok(p) = product.layout(IrType::Nominal(id)) else { continue };
++        let Ok(u) = union.union_layout(id) else { continue };
++        lines.push(format!(
++            "census-layout {} {} variants={} payload_variants={} product={} union={} align={} product_fits_registers={}",
++            nominal.link_name(),
++            nominal.stable_spelling().unwrap_or(&nominal.name).replace(' ', ""),
++            variants.len(),
++            payload,
++            p.size,
++            u.size,
++            u.align,
++            crate::backend::abi::fits_return_registers(program, IrType::Nominal(id)).unwrap_or(false)
++        ));
++    }
++    lines
++}
++
++impl LayoutComputer<'_> {
++    fn union_field(&mut self, ty: IrType) -> Result<Layout, TargetLayoutFailure> {
++        if let IrType::Nominal(id) = ty {
++            if let Some(nominal) = self.nominals.get(id.index()) {
++                if let IrNominalKind::Enum { variants } = nominal.kind() {
++                    if variants.iter().any(|variant| !variant.fields().is_empty()) {
++                        return self.union_layout(id);
++                    }
++                }
++                if let IrNominalKind::Struct { fields } = nominal.kind() {
++                    let mut layouts = Vec::new();
++                    for field in fields.clone() {
++                        layouts.push(self.union_field(field.ty())?);
++                    }
++                    return self.aggregate_layout(layouts, TargetObject::Representation);
++                }
++            }
++        }
++        self.layout(ty)
++    }
++
++    fn union_layout(&mut self, id: IrNominalId) -> Result<Layout, TargetLayoutFailure> {
++        let nominal = self.nominals.get(id.index()).ok_or(TargetLayoutFailure::InvalidIr)?;
++        let IrNominalKind::Enum { variants } = nominal.kind() else {
++            return Err(TargetLayoutFailure::InvalidIr);
++        };
++        let mut size = 0_u64;
++        let mut align = 1_u64;
++        for variant in variants.clone() {
++            let mut layouts = vec![Layout { size: 4, align: 4 }];
++            for field in variant.fields() {
++                layouts.push(self.union_field(field.ty())?);
++            }
++            let view = self.aggregate_layout(layouts, TargetObject::Representation)?;
++            size = size.max(view.size);
++            align = align.max(view.align);
++        }
++        let size = align_up(self.target, size, align, TargetObject::Representation)?;
++        Ok(Layout { size, align })
++    }
++}

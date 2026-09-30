@@ -1,0 +1,19 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Header {
+  width: u32;
+  height: u32;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "MSR-3: the REBIND placement carries the values of an aggregate's fragment-integer fields whose source places are terms: the commit gives header.width its value, and the rebind carries it to second.width, whose product then discharges.";
+  let header = Header(width: 0_u32, height: 1_u32);
+  set header.width = 7_u32;
+  let direct = header.width * 4_u32;
+  let second = header;
+  let copied = second.width * 4_u32;
+  let sum = direct +wrap copied;
+  let code = cvt.wrap::<u32, u8>(sum);
+  return exit_status(code: code);
+}

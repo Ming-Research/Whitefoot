@@ -152,7 +152,7 @@ $(BUILD)/pipe_harness: pipe_harness.c | prepare
 
 # The gate compiles every WF program and executes the bounded native caller
 # correctness checks. Full workload protocols remain below; independent WF
-# compilations use JOBS (the guarded gate supplies two by default).
+# compilations use JOBS, every processor unless the caller names fewer.
 PROGRAMS := $(wildcard programs/*.wf)
 CHECKED := $(PROGRAMS:programs/%.wf=$(BUILD)/checked_%)
 JOBS ?= $(shell nproc 2>/dev/null || sysctl -n hw.ncpu)
@@ -537,7 +537,7 @@ NET_OUT := $(WORK)/net
 NET_ROUNDS ?= 5
 NET_WARMUP ?= 1
 # The Whitefoot line is the maintained context server, one context per
-# connection [PAR-4]; the bundle's earlier echo program is kept as evidence.
+# connection [WAIT-3]; the bundle's earlier echo program is kept as evidence.
 WF_ECHO_SOURCE := $(ROOT)/tests/programs/tcp_contexts.wf
 
 net-tools: $(BUILD)/uring_echo $(BUILD)/epoll_echo $(BUILD)/netload $(BUILD)/waiting_echo \

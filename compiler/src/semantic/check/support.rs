@@ -3,7 +3,7 @@ use crate::semantic::check::DeclarationInventory;
 use crate::syntax::NodeId;
 use crate::syntax::terminal::TerminalPredicate;
 use crate::{
-    DeclarationRole, DeferredUseRole, DependentDeclarationRole, LexicalUseRole,
+    DeclarationId, DeclarationRole, DeferredUseRole, DependentDeclarationRole, LexicalUseRole,
     SemanticCompilerFailure, SemanticIssue, SemanticIssueKind, SemanticLocation, SemanticRule,
     SemanticUnsupported, UnsupportedSemanticFeature,
 };
@@ -47,6 +47,12 @@ impl<'unit> DeclarationInventory<'unit> {
             .collect::<Vec<_>>();
         found.sort_by_key(|declaration| declaration.origin().coordinate().start());
         Ok(found)
+    }
+    /// Whether a declaration is an atomic statement's binding [SHARE-2].
+    pub(super) fn is_atomic_binder(&self, declaration: DeclarationId) -> bool {
+        self.resolved.declarations().iter().any(|record| {
+            record.id() == declaration && record.role() == DeclarationRole::AtomicBinder
+        })
     }
     pub(super) fn optional_declaration_at(
         &self,

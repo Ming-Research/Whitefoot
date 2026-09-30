@@ -634,7 +634,7 @@ o: Box<u8>; p: Slots<u8, 4>; public readonly q: Ring<u8, 2 * n>;
 r: pkg::library::Imported; s: library::nested::Pair<u8>;
 }
 enum Choice<T: copy> { doc "choice"; None(); Some(public value: T); }
-nodrop struct Lease { doc "lease"; slot: u8; }
+nodrop struct Lease { doc "lease"; slot: u8; invariant held(lease): lease.slot <= 4_u8; }
 nodrop enum Ticket { doc "ticket"; Open(value: u8); }
 interface Behavior<T: drop> {
 doc "interface";
@@ -691,6 +691,7 @@ let owned = Choice<u8>::Some(value: ordinary);
 let signed = Sign::Neg();
 return unit;
 loop @again { break @again; }
+atomic state = &shared when compared { set state^ = 1_i32; }
 for @range (
 index in 0_u64..1_u64,
 invariant limit: index + 1_u64 * (1_u64) <= 2_u64
@@ -760,7 +761,7 @@ fn main() -> result: unit pure {}
             });
         assert!(present, "fixture omitted {production:?}");
     }
-    assert_eq!(productions().len(), 92);
+    assert_eq!(productions().len(), 94);
     assert_eq!(
         parsed
             .tree

@@ -403,7 +403,7 @@ fn four_peers_are_served_in_order_under_par_on_both_routes() {
     }
 }
 
-/// Each accepted connection is served by a context of its own [PAR-4], so a
+/// Each accepted connection is served by a context of its own [WAIT-3], so a
 /// peer is answered while every peer accepted before it is still silent.
 /// The peers speak in the reverse of their acceptance order: a server that
 /// served one connection at a time would wait on the first, silent peer and
@@ -523,7 +523,7 @@ fn contexts_on_four_drivers_serve_every_peer_and_finish_before_the_entry() {
     }
 }
 
-/// Two bound `mustpar` fetches proceed together [WAIT-2]: the first server
+/// Two bound spawned fetches proceed together [WAIT-3]: the first server
 /// answers only once the second has received its request, which a program
 /// that waited for the first fetch's byte before sending the second request
 /// never sends. Each result is joined where it is first used, the sum.
@@ -532,7 +532,7 @@ fn two_bound_fetches_proceed_together_on_both_routes() {
     let llvm = compile_program("tcp_gather.wf");
     assert!(
         llvm.contains("@wf__context_launch("),
-        "each marked fetch starts a context"
+        "each spawned fetch starts a context"
     );
     let program = build_program(&llvm);
     for native_ring in [true, false] {
@@ -840,4 +840,129 @@ fn crossed_ordinary_tcp_halves_keep_the_other_directions_live() {
             assert!(output.stderr.is_empty());
         }
     }
+}
+
+/// One RESP2 request of bulk strings.
+#[cfg(target_os = "linux")]
+fn resp(arguments: &[&str]) -> Vec<u8> {
+    let mut bytes = format!("*{}\r\n", arguments.len()).into_bytes();
+    for argument in arguments {
+        bytes.extend_from_slice(format!("${}\r\n{argument}\r\n", argument.len()).as_bytes());
+    }
+    bytes
+}
+
+/// Reads exactly the bytes of the expected replies and compares them.
+#[cfg(target_os = "linux")]
+fn expect_replies(stream: &mut TcpStream, expected: &[u8], what: &str) {
+    let mut returned = vec![0_u8; expected.len()];
+    stream
+        .read_exact(&mut returned)
+        .unwrap_or_else(|error| panic!("{what}: {error}"));
+    assert_eq!(
+        String::from_utf8_lossy(&returned),
+        String::from_utf8_lossy(expected),
+        "{what}"
+    );
+}
+
+/// [SHARE-1, SHARE-3] the Redis subset serves every client over one
+/// keyspace: the commands answer as Redis does, a pipelined batch and a
+/// command split across two sends are answered whole, and clients that
+/// increment one key from four drivers at once lose no increment, which a
+/// keyspace not held alone by each atomic statement would.
+#[cfg(target_os = "linux")]
+#[test]
+fn the_redis_subset_serves_every_client_over_one_keyspace() {
+    const CLIENTS: usize = 8;
+    const INCREMENTS: usize = 250;
+    let program = build_program(&compile_program("redis_subset.wf"));
+    let port = free_port();
+    let text = port.to_string();
+    let count = (CLIENTS + 1).to_string();
+    let child = program.spawn_on_route_with(
+        true,
+        &[("WF_DRIVERS", "4")],
+        &[text.as_bytes(), count.as_bytes()],
+    );
+    let mut first = connect_when_ready(port);
+    first
+        .set_read_timeout(Some(Duration::from_secs(20)))
+        .expect("bound the first client's waits");
+    let mut batch = Vec::new();
+    for request in [
+        vec!["PING"],
+        vec!["SET", "fruit", "apple"],
+        vec!["GET", "fruit"],
+        vec!["GET", "absent"],
+        vec!["INCR", "fruit"],
+        vec!["DEL", "fruit"],
+        vec!["DEL", "fruit"],
+        vec!["INCR", "total"],
+        vec!["CONFIG", "GET", "save"],
+    ] {
+        batch.extend(resp(&request));
+    }
+    first.write_all(&batch).expect("send a pipelined batch");
+    expect_replies(
+        &mut first,
+        b"+PONG\r\n+OK\r\n$5\r\napple\r\n$-1\r\n-ERR value is not an integer or out of range\r\n:1\r\n:0\r\n:1\r\n-ERR unknown command\r\n",
+        "the pipelined batch",
+    );
+    let split = resp(&["SET", "split", "across two sends"]);
+    let (head, tail) = split.split_at(11);
+    first.write_all(head).expect("send the first part");
+    first.flush().expect("flush the first part");
+    std::thread::sleep(Duration::from_millis(50));
+    first.write_all(tail).expect("send the rest");
+    first
+        .write_all(&resp(&["GET", "split"]))
+        .expect("read it back");
+    expect_replies(
+        &mut first,
+        b"+OK\r\n$16\r\nacross two sends\r\n",
+        "a command split across two sends",
+    );
+    let clients = (0..CLIENTS)
+        .map(|client| {
+            let mut stream = connect_when_ready(port);
+            std::thread::spawn(move || {
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(20)))
+                    .expect("bound this client's waits");
+                for _ in 0..INCREMENTS {
+                    stream
+                        .write_all(&resp(&["INCR", "hits"]))
+                        .expect("send an increment");
+                    let mut reply = [0_u8; 1];
+                    let mut line = Vec::new();
+                    loop {
+                        stream
+                            .read_exact(&mut reply)
+                            .unwrap_or_else(|error| panic!("client {client}: {error}"));
+                        line.push(reply[0]);
+                        if line.ends_with(b"\r\n") {
+                            break;
+                        }
+                    }
+                    assert_eq!(line[0], b':', "client {client}: {line:?}");
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+    for client in clients {
+        client.join().expect("a client finished");
+    }
+    let total = CLIENTS * INCREMENTS;
+    first
+        .write_all(&resp(&["GET", "hits"]))
+        .expect("read the counter");
+    expect_replies(
+        &mut first,
+        format!("${}\r\n{total}\r\n", total.to_string().len()).as_bytes(),
+        "every increment",
+    );
+    drop(first);
+    let (status, _) = finished(child);
+    assert_eq!(status, 0);
 }

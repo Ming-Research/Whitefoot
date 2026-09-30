@@ -294,7 +294,7 @@ fn a_grammar_rejection_quotes_the_expected_terminals_and_the_token_it_found() {
         r#"suffix.wf:2:11: error[FORM-5]: UnexpectedToken
   source:   let a = 42;
   marker:           ^^
-  expected: [IDENT, TYPEID, "pkg", "std", "&", "entry", "move", "if", "propagate", "mustpar", "match", literal, "musttail", OPNAME]
+  expected: [IDENT, TYPEID, "pkg", "std", "&", "entry", "move", "if", "propagate", "match", literal, "musttail", "spawn", OPNAME]
   found: "42""#
     );
 }
