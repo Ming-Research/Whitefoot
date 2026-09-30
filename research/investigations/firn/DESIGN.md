@@ -444,3 +444,20 @@ and the spinning in `wf__shared_acquire` at 16%, and shows each atomic
 statement taking and releasing a handle of its own on the object
 (`wf__shared_share` and `wf__shared_release`, 4% together), atomic updates
 on the cache line the lock itself lives on.
+
+### A third look, after inline strings
+
+One pass as the second look, with the inline build, runs of about six
+seconds (600,000 requests at depth 1 and 5,000,000 at depth 16) and without
+the list ranges, which led by more than twice (the `quick look 3` lines of
+[firn-samples.csv](../../experiments/io-completion-bench/firn-samples.csv)).
+At depth 16 on two CPUs every storing and reading command now leads by 1.47
+to 2.10 times except `ZADD`, at 1.25, and `SPOP`, at 1.17; `PING_INLINE`
+reached the same rate as Dragonfly, 1,537,515, which suggests that the
+client, two threads on two CPUs, is what both reach there. On one CPU at
+depth 16 all but the pushes meet the 1.1 required, `LPUSH` at 1.00 and
+`RPUSH` at 1.03, and `LPUSH`'s p99 is 3.14 ms against Redis's 2.81. At
+depth 1 on two CPUs firn trails Dragonfly by one clock step, 0.95, on `GET`,
+the pops, `SADD` and `ZPOPMIN` and by 0.91 on `PING_MBULK`, and on one CPU
+by 0.87 on `PING_INLINE`; `SPOP` trails at depth 1 on both, 0.87 and 0.84, with
+a p99 of 1.66 ms on two CPUs against 0.93.
