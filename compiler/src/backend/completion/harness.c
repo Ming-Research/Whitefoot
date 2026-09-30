@@ -2789,8 +2789,10 @@ static int test_a_peer_wait_never_waits_behind_peer_waits(void) {
 static const char *wf_harness_self;
 extern char **environ;
 
-/* The status the child below exits with when the adapter aborts. */
+/* The status the child below exits with when the adapter aborts, and the line
+ * it writes once every helper record holds a helper inside a read. */
 #define WF_PEER_LIMIT_ABORTED 86
+#define WF_PEER_LIMIT_FULL "peer-limit: every helper record waits"
 
 /* Ends the child at the adapter's abort without a core dump: a host that
  * pipes core dumps to a collector spent tens of seconds on one of a process
@@ -2800,9 +2802,10 @@ static void wf_peer_limit_aborted(int signal_number) {
     _exit(WF_PEER_LIMIT_ABORTED);
 }
 
-/* The child's side of the case below: more reads of one empty pipe than there
- * are helper records.  It returns only if the adapter let the last one wait
- * in the queue. */
+/* The child's side of the case below: as many reads of one empty pipe as
+ * there are helper records, each inside a helper, a line saying so, and then
+ * one more.  It returns only if the adapter stopped early or let the last one
+ * wait in the queue. */
 static int wf_peer_limit_child(void) {
     static wf_completion_record reads[WF_FILE_HELPER_RECORDS + 1u];
     static unsigned char bytes[WF_FILE_HELPER_RECORDS + 1u];
@@ -2818,6 +2821,11 @@ static int wf_peer_limit_child(void) {
     CHECK(wf_completion_runtime_init(&runtime) == 0);
     CHECK(harness_contexts_adapter(&adapter, &runtime, 1) == 0);
     for (index = 0; index < WF_FILE_HELPER_RECORDS + 1u; ++index) {
+        if (index == WF_FILE_HELPER_RECORDS) {
+            CHECK(harness_await_peer_waits(&adapter, WF_FILE_HELPER_RECORDS));
+            (void)fprintf(stderr, "%s\n", WF_PEER_LIMIT_FULL);
+            (void)fflush(stderr);
+        }
         harness_pipe_request(&reads[index], 0, descriptors[0], &bytes[index]);
         CHECK(wf_file_adapter_submit(&adapter, &reads[index]) == WF_FILE_TARGET_OWNS);
     }
@@ -2844,10 +2852,9 @@ static int test_peer_waits_past_the_helper_records_stop_with_a_report(
     char *arguments[4];
     CHECK(wf_harness_self != NULL);
     CHECK(pipe(errors) == 0);
-    /* Spawned rather than forked: this process has threads, and a forked
-     * child that calls anything before its exec can wait for good on a lock
-     * one of them held at the fork, which a sanitizer build's interceptors
-     * take. */
+    /* Spawned rather than forked, as a precaution: this process has
+     * threads, and a forked child should make no call but async-signal-safe
+     * ones before its exec, which the file actions keep to. */
     arguments[0] = (char *)wf_harness_self;
     arguments[1] = (char *)scratch_directory;
     arguments[2] = (char *)"peer-limit";
@@ -2879,10 +2886,14 @@ static int test_peer_waits_past_the_helper_records_stop_with_a_report(
     report[total] = '\0';
     CHECK(close(errors[0]) == 0);
     CHECK(WIFEXITED(status) && WEXITSTATUS(status) == WF_PEER_LIMIT_ABORTED);
-    CHECK(
-        strstr(report, "whitefoot completion: more host operations waited on other contexts at once than the runtime has helper threads for")
-        != NULL
-    );
+    {
+        const char *full = strstr(report, WF_PEER_LIMIT_FULL);
+        const char *stop = strstr(report, "whitefoot completion: more host operations waited on other contexts at once than the runtime has helper threads for");
+        /* Not before every record held a waiting helper, and then at once. */
+        CHECK(full != NULL);
+        CHECK(stop != NULL);
+        CHECK(full < stop);
+    }
     return 0;
 }
 

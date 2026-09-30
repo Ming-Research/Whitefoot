@@ -1244,8 +1244,9 @@ rarely insert at the same place.
   Windows server has to run without the port.
 
 - **A wait on another context on a helper costs a thread.** Once contexts
-  run, a stream write, a stream read and a connect on a host with no ring,
-  and an accept on Windows run on helper threads, and the pool grows past its eight
+  run, a stream write on every host, a stream read on every host but Linux
+  with its ring, a connect on a host with no ring, and an accept on Windows
+  run on helper threads, and the pool grows past its eight
   helpers while every helper is inside such a wait
   (`completion/file_adapter.c`, `wf_file_grow_for_peers_locked`). Each such
   wait in flight holds a thread, and a program with more than 256 at once
