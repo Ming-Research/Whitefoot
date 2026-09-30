@@ -1,0 +1,9 @@
+fn length(values: &Box<Segments<u64>>) -> result: u64 reads(values.inner.len) {
+  doc "TYPE-2 and TYPE-9 refuse a destructuring statement naming Segments before the attempted content move; the segment count remains readable through the reference.";
+  let Segments(len: count) = move values^.inner;
+  return count;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

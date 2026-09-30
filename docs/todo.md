@@ -408,18 +408,6 @@ rarely insert at the same place.
   the opaque-struct repair; reopen with the next change to any of these
   nodes.
 
-- **Taking a storage shape apart is refused as a type mismatch.**
-  `let Slots(len: l, cap: c) = move w;`, and the same statement naming
-  `Array` or `Ring`, is rejected with TYPE-5 "found: a value of another type"
-  by `destructuring_shape_rejection` in `check/control/results.rs`, because
-  among the prelude's containers only `Box` reaches the TYPE-2 refusal there.
-  TYPE-9 makes a destructuring `let` naming any of the four a TYPE-2 refusal
-  with a repair, and no conformance case covers the three shapes. Refuse them
-  under TYPE-2 at the complete statement with a repair that reads the
-  measures as fields (`let l = w.len;`), pinned, and add a negative case per
-  shape. Found in the review of the opaque-struct repair; reopen with the
-  next change to destructuring or to the storage shapes.
-
 - **A field of a program's opaque struct cannot be read.** TYPE-2 says an
   opaque struct's fields obey the ordinary field, ownership and release
   rules, but the checker gives a source opaque struct the fieldless
@@ -519,6 +507,14 @@ rarely insert at the same place.
   `Instant` and are rejected citing TYPE-2 with its repair, with `Instant`
   otherwise unchanged. Reopen with the next change to opaque structs or
   `std::time`.
+
+- **The container inventory's comments predate Segments.**
+  `compiler/src/resolution/kernel.rs` describes `ContainerShape` as three
+  storage shapes and a cell and `ContainerNominal::shape` as one of four,
+  although the enum includes `Segments`. This misstates the inventory for a
+  reader adding a consumer. Update those descriptions when the nominal
+  inventory is next edited; the storage-destructuring repair uses its actual
+  identities and needs no inventory change.
 
 ## Containers and storage lowering
 
