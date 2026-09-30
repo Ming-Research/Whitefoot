@@ -2739,7 +2739,7 @@ condition under which it is taken up.
   program that is not in canonical form, and the compiler has the renderer
   (`render_canonical`, which the canonical corpus test calls), but neither
   `whitefootc` nor a `make` target exposes it, so a writer repairs layout by
-  hand from the diagnostic's one marked position. Writing firn's 5,000 lines
+  hand from the diagnostic's one marked position. Writing firn's 5,400 lines
   needed a scratch binary over the `whitefoot` crate that rewrites files in
   place. Add a `whitefootc --format <files>` mode that rewrites each file to
   its rendering and fails on one that does not parse; validate that it

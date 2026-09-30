@@ -105,7 +105,7 @@ slowest there.
 
 ## Design of the program
 
-`apps/firn` is a module program of six modules and about 5,300 lines;
+`apps/firn` is a module program of six modules and about 5,400 lines;
 [its README](../../../apps/firn/README.md) lists them. Each choice below keeps
 Redis's observable behavior on the suite's commands and says what it refused.
 
@@ -234,7 +234,6 @@ wake of a parked acquirer.
 The criterion below was written before the growth runs, but it was committed
 with their results, so the record cannot show that order.
 
-
 The library's hash map rebuilt only when an insertion found no bucket left,
 and its linear probing walks every filled and vacated bucket between a key's
 home and its place. The hypothesis: the long walks of a nearly full
@@ -274,9 +273,10 @@ reached 1.00 of *presized* and 1.21 times *old* on `SET`, and 1.13 and 1.87 on
 `INCR`. `SADD`, `HSET` and `ZADD` gained 1.30 to 1.46 times as well, beyond
 *presized*, since their sets, hashes and sorted sets are hash maps the
 keyspace's size does not reach. The library now rebuilds a map before an
-insertion would leave three quarters of its buckets filled or vacated,
-counting vacated buckets so that removals cannot fill it unseen
-(`design/amendments/hash-map-storage.md`, awaiting the owner's ruling).
+insertion once its filled and vacated buckets already number three quarters
+or more of its buckets, counting vacated buckets so that removals cannot fill
+it unseen (the `language/data-model/hash-map-storage` node, awaiting the
+owner's ruling).
 
 ### Keys that carry their hash, stated before measuring
 
