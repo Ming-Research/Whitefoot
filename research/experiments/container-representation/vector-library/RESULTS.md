@@ -8497,3 +8497,113 @@ production cutoff. No B timing, cutoff sweep, H spare timing or other API was
 run. Keep Vector append's spare and growth paths separate; H needs its own
 spare timing qualification before adoption. Other APIs remain paused until
 append qualifies, and all APIs precede a full container workload measurement.
+
+
+#### Small-copy outlining: registered native-first discriminator
+
+The remaining H cells take realloc at the same extents as Rust, whose linked
+path includes more helper calls and instructions. H has no extra prefix copy
+or offered-value spill on these paths. Counts alone therefore do not explain
+the timings. A concrete local cost remains: the small-copy edge keeps old and
+fresh pointers live across its allocator/copy/free calls, and the common
+append prologue saves an additional register pair even on large realloc.
+
+Test exactly one J variant of frozen H: put only the positive-full small-copy
+transaction in one internal noinline helper taking old pointer, old initialized
+bytes and new allocation bytes and returning the new pointer. It performs
+malloc, checks NULL, copies the initialized prefix, frees old storage and
+returns. On failure it enters the existing exhaustion floor before any copy,
+retirement or publication. The caller retains its existing publication join.
+Keep the 2048-byte cutoff, full/partial/empty distinctions, representation,
+all other IR bodies, driver, seeds, peer/runtime objects and target flags. No
+cold attributes, branch weights, new optimizer assumptions or threshold sweep.
+This is a code-generation probe, not a selected compiler structure or policy.
+
+Native gate before timing: the actual scalar and wide large-realloc append
+paths must use 48-byte frames instead of H's 64, and fewer executed
+instructions than H's 33/97 including the unchanged outer forwarding branch
+but excluding allocator internals. Large, empty and spare paths must not call
+the new helper; add no large-path conditional and no offered-value spill.
+Record the small path's extra call and complete caller-plus-helper work and
+frames, along with spare batch code. Stop without timing if this gate fails;
+fewer instructions are a prerequisite, not a runtime-gain claim.
+
+If it passes, first run the existing complete value/state/allocation checks,
+exact request/release ledgers, cutoff-neighbor and returned-NULL observers,
+and nested/partial/empty/ZST controls with their deliberate failures on the
+new code. Preserve the bounded observer scope: moved-only realloc success
+and the separate nested fixture do not qualify a generic source ABI. Failure
+or an unintended native route stops timing rather than relaxing a check.
+
+Then run one fixed H-then-J pair using the same eleven-cell driver and byte
+budgets, nine samples in each of two balanced cohorts, and the existing
+RAW/duration/ratio-spread/peer-drift criteria. Keep complete raw observations
+and snapshot controls, every small canonical/neighbor cell and the 1 MiB
+realloc counterexample. No repeated valid screen or adaptive sample count.
+Both peers remain separate; range overlap or failed prerequisites stay
+unresolved. Report small-path losses as well as large-path gains. One pair
+is exploratory, never repeatable qualification or grounds to advance beyond
+append. J needs its own spare timing before adoption.
+
+Transient work belongs to .build/small-copy-outline in this Vector experiment;
+retain the replay delta and compact full evidence here until superseded by
+the qualified implementation. No compiler, library, specification, live tree
+or other API changes in this probe. A failed native or timing hypothesis
+does not authorize another register-allocation permutation.
+
+#### Small-copy outlining: outcome
+
+[Replay patch](small-copy-outline.patch), [complete samples](ecosystem-append-growth-small-copy-outline-samples.csv)
+and [timing/native/correctness evidence](ecosystem-append-growth-small-copy-outline-timing.txt)
+retain this single H→J pair. The native prerequisite passed: large scalar/wide
+frames fell from 64 to 48 bytes and executed paths from 33/97 to 30/94 instructions,
+including the public forwarding branch. Both keep five conditionals and direct
+realloc; empty/spare paths bypass the helper. Small-path work instead rose
+from 39/103 to 49/113 instructions and adds one internal call, with two 48-byte
+frames instead of H's 64. Batch frames remain 80/336 bytes. Emitted WF text fell
+from 19,444 to 18,720 bytes; these counts alone establish no runtime improvement.
+
+All 53 guarded prerequisite stages had their expected exits, including real
+returned-NULL preservation on both routes and deliberate value/state/allocation,
+clock, copy, early-free and early-publication failures. The 45-row accounting
+output is byte-identical to H. The observer retains its stated moved-only
+realloc and separate nested-fixture scope. A read-only native-reduction syntax
+error and its correction are retained; it changed no native input or result.
+
+H and J each terminated 0 in 155.727 and 154.126 seconds respectively, with
+unchanged executable hashes. Each retains 1,188 rows:594 real and 594 snapshot
+controls. Positions are balanced three each per cohort. Both RAW probes report
+41 ns; minimum real durations are 1.219071/1.244268 ms. Maximum WF/peer cohort-ratio
+spread is 7.446%, between-image peer median drift 7.686%, and peer within-image
+cohort spread 7.788%; all registered bounds pass. No observations were retried,
+removed or control-subtracted.
+
+Medians below are ns/append, cohort 0/cohort 1. Each peer remains separate; the
+linked record contains every minimum/maximum and qualification calculation.
+
+| Cell | H WF | J WF | Rust H→J | C++ H→J |
+| --- | ---: | ---: | ---: | ---: |
+| 8 B × 16 | 22.51/22.45 | 23.10/23.33 | 37.59/36.81 → 37.53/37.54 | 25.90/25.85 → 26.22/26.14 |
+| 8 B × 224 | 86.64/84.83 | 89.45/88.30 | 102.46/98.49 → 104.16/99.89 | 95.05/88.18 → 95.85/93.77 |
+| 8 B × 256 | 90.23/89.82 | 92.62/91.40 | 106.31/104.02 → 106.49/105.66 | 94.80/94.33 → 97.69/99.81 |
+| 8 B × 288 | 106.24/105.87 | 108.56/107.05 | 107.83/108.15 → 110.09/109.95 | 96.63/96.64 → 98.94/96.94 |
+| 8 B × 4096 | 721.16/688.78 | 758.94/720.59 | 692.24/707.74 → 699.92/706.38 | 629.24/645.73 → 653.76/657.36 |
+| 256 B × 7 | 91.77/86.02 | 88.53/88.06 | 104.45/100.60 → 101.39/101.19 | 96.09/89.35 → 91.76/90.22 |
+| 256 B × 8 | 93.57/95.42 | 93.30/93.84 | 108.56/109.59 → 106.67/106.33 | 95.77/98.52 → 96.87/97.79 |
+| 256 B × 9 | 107.96/108.21 | 110.89/108.22 | 111.64/110.37 → 113.54/110.78 | 97.48/97.44 → 100.04/99.60 |
+| 256 B × 16 | 150.22/150.64 | 148.87/149.71 | 151.67/150.97 → 151.26/151.35 | 143.45/142.87 → 143.76/144.58 |
+| 256 B × 256 | 1335.03/1342.67 | 1322.10/1319.53 | 1341.22/1334.46 → 1340.75/1331.00 | 1331.76/1339.85 → 1323.99/1326.85 |
+| 256 B × 4096 | 168.71/170.98 | 155.00/155.78 | 174.44/170.97 → 161.03/161.34 | 15227.99/15262.03 → 14893.50/14934.87 |
+
+All eleven H/J full ranges overlap in both cohorts. This pair demonstrates
+neither a J gain nor a J loss, and does not select J. Both images meet the
+selected-peer range target in 3/6 canonical cells: scalar 16/256 and wide 4096.
+For J, scalar 16 overlaps C++ in cohort 1, scalar 256 overlaps C++ in both,
+and wide 4096 overlaps Rust in both; scalar 4096, wide 16 and wide 256 overlap
+both peers and remain unqualified. The reduced large-path work has not resolved
+append growth. No new permutation, cutoff sweep or spare timing followed.
+
+This is one exploratory pair, not repeatable qualification. Any future adopted
+candidate needs its own spare-path timing. Only Vector append spare/growth is
+in scope; other APIs remain paused until append qualifies, and all APIs must
+qualify before a full container workload measurement.
