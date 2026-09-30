@@ -1,0 +1,194 @@
+Retained growth-append instrument/build/measurement observations.
+Repository and SDK locations are role-redacted; source/object hashes retain their original bytes.
+
+== retained clock-resolution-probe.log ==
+== START vector-growth-clock-probe (limit 30s): sh -eu ==
+CLOCK_MONOTONIC,resolution_ns=1000,reads=200000,zero_deltas=195395,nonzero_deltas=4605,backwards=0,min_nonzero_ns=1000,max_nonzero_ns=1000
+CLOCK_MONOTONIC_RAW,resolution_ns=42,reads=200000,zero_deltas=76349,nonzero_deltas=123651,backwards=0,min_nonzero_ns=41,max_nonzero_ns=6083
+real 0.38
+user 0.06
+sys 0.03
+== END vector-growth-clock-probe: 0.43 s, exit 0 ==
+
+== retained raw-timing-loop-qualification.log ==
+== START vector-growth-raw-loop-qualification (limit 120s): sh -eu ==
+== START vector-growth-raw-loop-build (limit 60s): make -j2 ecosystem-build BUILD=.build/append-growth-baseline WHITEFOOTC=<repository-root>/compiler/target/gate/whitefootc ==
+<repository-root>/compiler/target/gate/whitefootc --emit-llvm vector-library.wf -o .build/append-growth-baseline/vector-library.raw.ll
+sed 's/@main(/@wf_fixture_main(/g' .build/append-growth-baseline/vector-library.raw.ll > .build/append-growth-baseline/ecosystem/whitefoot-timed.ll
+vector-costs.c:392:26: error: use of undeclared identifier 'CLOCK_MONOTONIC_RAW'; did you mean '_CLOCK_MONOTONIC'?
+  392 |     assert(clock_gettime(CLOCK_MONOTONIC_RAW, &value) == 0);
+      |                          ^~~~~~~~~~~~~~~~~~~
+      |                          _CLOCK_MONOTONIC
+<sdk-root>/usr/include/assert.h:72:25: note: expanded from macro 'assert'
+   72 |     (__builtin_expect(!(e), 0) ? __assert_rtn(__func__, __ASSERT_FILE_NAME, __LINE__, #e) : (void)0)
+      |                         ^
+<sdk-root>/usr/include/_time.h:159:1: note: '_CLOCK_MONOTONIC' declared here
+  159 | _CLOCK_MONOTONIC __CLOCK_AVAILABILITY = 6,
+      | ^
+1 error generated.
+make: *** [.build/append-growth-baseline/ecosystem/driver-timed.o] Error 1
+make: *** Waiting for unfinished jobs....
+real 0.88
+user 0.85
+sys 0.15
+== END vector-growth-raw-loop-build: 0.96 s, exit 2 ==
+real 0.98
+user 0.86
+sys 0.15
+== END vector-growth-raw-loop-qualification: 1.07 s, exit 2 ==
+
+== retained duration-pilot.log ==
+== START vector-growth-duration-pilot (limit 180s): sh -eu ==
+real 1.60
+user 1.58
+sys 0.01
+== END vector-growth-duration-pilot: 1.71 s, exit 0 ==
+
+== retained raw-duration-pilot.log ==
+== START vector-growth-raw-duration-pilot (limit 180s): sh -eu ==
+real 1.63
+user 1.62
+sys 0.00
+== END vector-growth-raw-duration-pilot: 1.74 s, exit 0 ==
+
+== retained final-entry-qualification.log ==
+== START vector-growth-final-entry-qualification (limit 120s): sh -eu ==
+== START vector-growth-final-entry-build (limit 60s): make -j2 ecosystem-build BUILD=.build/append-growth-baseline WHITEFOOTC=<repository-root>/compiler/target/gate/whitefootc ==
+clang++ -O3 .build/append-growth-baseline/ecosystem/driver-account.o .build/append-growth-baseline/ecosystem/whitefoot-account.o \
+	  .build/append-growth-baseline/ecosystem/cpp-account.o .build/append-growth-baseline/ecosystem/rust-account.a .build/append-growth-baseline/native/ordinary_values.o .build/append-growth-baseline/native/sched/core.o .build/append-growth-baseline/native/sched/entry.o .build/append-growth-baseline/native/completion/runtime.o .build/append-growth-baseline/native/completion/file_adapter.o .build/append-growth-baseline/native/completion/bridge.o .build/append-growth-baseline/native/wf_floor.o .build/append-growth-baseline/native/sched/prim_host.o .build/append-growth-baseline/native/completion/wait_host.o .build/append-growth-baseline/native/completion/file_posix.o .build/append-growth-baseline/native/completion/linux_io_uring.o .build/append-growth-baseline/native/ordinary_values_ir.o \
+	  -pthread -lm -liconv -lSystem -lc -lm -o .build/append-growth-baseline/ecosystem/vector-costs-account
+ld: warning: ignoring duplicate libraries: '-lSystem', '-lm'
+clang++ -O3 .build/append-growth-baseline/ecosystem/driver-timed.o .build/append-growth-baseline/ecosystem/whitefoot-timed.o \
+	  .build/append-growth-baseline/ecosystem/cpp-timed.o .build/append-growth-baseline/ecosystem/rust-timed.a .build/append-growth-baseline/native/ordinary_values.o .build/append-growth-baseline/native/sched/core.o .build/append-growth-baseline/native/sched/entry.o .build/append-growth-baseline/native/completion/runtime.o .build/append-growth-baseline/native/completion/file_adapter.o .build/append-growth-baseline/native/completion/bridge.o .build/append-growth-baseline/native/wf_floor.o .build/append-growth-baseline/native/sched/prim_host.o .build/append-growth-baseline/native/completion/wait_host.o .build/append-growth-baseline/native/completion/file_posix.o .build/append-growth-baseline/native/completion/linux_io_uring.o .build/append-growth-baseline/native/ordinary_values_ir.o \
+	  -pthread -lm -liconv -lSystem -lc -lm -o .build/append-growth-baseline/ecosystem/vector-costs-timed
+ld: warning: ignoring duplicate libraries: '-lSystem', '-lm'
+real 1.05
+user 1.72
+sys 0.19
+== END vector-growth-final-entry-build: 1.08 s, exit 0 ==
+== START vector-growth-final-entry-check (limit 30s): make -j2 ecosystem-append-growth-check BUILD=.build/append-growth-baseline WHITEFOOTC=<repository-root>/compiler/target/gate/whitefootc ==
+.build/append-growth-baseline/ecosystem/vector-costs-timed growth-api-check
+growth append clock: reads=200000 minimum_nonzero_ns=41 quantized=0
+growth append policy: whitefoot bytes=8 requested=0 initial=0 length=1 capacity=1
+growth append policy: rust-vec bytes=8 requested=0 initial=0 length=1 capacity=4
+growth append policy: cpp-std-vector bytes=8 requested=0 initial=0 length=1 capacity=1
+growth append policy: whitefoot bytes=256 requested=0 initial=0 length=1 capacity=1
+growth append policy: rust-vec bytes=256 requested=0 initial=0 length=1 capacity=4
+growth append policy: cpp-std-vector bytes=256 requested=0 initial=0 length=1 capacity=1
+growth append policy: whitefoot bytes=8 requested=1 initial=1 length=2 capacity=2
+growth append policy: rust-vec bytes=8 requested=1 initial=1 length=2 capacity=4
+growth append policy: cpp-std-vector bytes=8 requested=1 initial=1 length=2 capacity=2
+growth append policy: whitefoot bytes=256 requested=1 initial=1 length=2 capacity=2
+growth append policy: rust-vec bytes=256 requested=1 initial=1 length=2 capacity=4
+growth append policy: cpp-std-vector bytes=256 requested=1 initial=1 length=2 capacity=2
+vector append growth: scalar/256B, five capacities, three APIs passed
+.build/append-growth-baseline/ecosystem/vector-costs-account growth-api-check
+growth append policy: whitefoot bytes=8 requested=0 initial=0 length=1 capacity=1
+growth append policy: rust-vec bytes=8 requested=0 initial=0 length=1 capacity=4
+growth append policy: cpp-std-vector bytes=8 requested=0 initial=0 length=1 capacity=1
+growth append policy: whitefoot bytes=256 requested=0 initial=0 length=1 capacity=1
+growth append policy: rust-vec bytes=256 requested=0 initial=0 length=1 capacity=4
+growth append policy: cpp-std-vector bytes=256 requested=0 initial=0 length=1 capacity=1
+growth append policy: whitefoot bytes=8 requested=1 initial=1 length=2 capacity=2
+growth append policy: rust-vec bytes=8 requested=1 initial=1 length=2 capacity=4
+growth append policy: cpp-std-vector bytes=8 requested=1 initial=1 length=2 capacity=2
+growth append policy: whitefoot bytes=256 requested=1 initial=1 length=2 capacity=2
+growth append policy: rust-vec bytes=256 requested=1 initial=1 length=2 capacity=4
+growth append policy: cpp-std-vector bytes=256 requested=1 initial=1 length=2 capacity=2
+vector append growth: scalar/256B, five capacities, three APIs passed
+vector library costs: growth append clock precision
+vector library costs: growth append full values and checksum
+vector library costs: growth append post state
+vector library costs: growth append full values and checksum
+vector library costs: growth append post state
+real 0.74
+user 0.10
+sys 0.08
+== END vector-growth-final-entry-check: 0.77 s, exit 0 ==
+== START vector-spare-final-entry-preserved (limit 30s): make -j2 ecosystem-append-check BUILD=.build/append-growth-baseline WHITEFOOTC=<repository-root>/compiler/target/gate/whitefootc ==
+.build/append-growth-baseline/ecosystem/vector-costs-timed api-check
+vector spare append: scalar/256B, five counts, three APIs passed
+.build/append-growth-baseline/ecosystem/vector-costs-account api-check
+vector spare append: scalar/256B, five counts, three APIs passed
+grep -Fx 'vector library costs: spare append full values and checksum' .build/append-growth-baseline/ecosystem/api-fail-values.txt
+vector library costs: spare append full values and checksum
+grep -Fx 'vector library costs: spare append zero allocation' .build/append-growth-baseline/ecosystem/api-fail-allocation.txt
+vector library costs: spare append zero allocation
+real 0.10
+user 0.06
+sys 0.05
+== END vector-spare-final-entry-preserved: 0.11 s, exit 0 ==
+real 2.01
+user 1.93
+sys 0.34
+== END vector-growth-final-entry-qualification: 2.06 s, exit 0 ==
+
+== retained baseline-1.log ==
+== START vector-growth-raw-baseline-1 (limit 600s): sh -eu ==
+2e71ab5973a2c710e0ca7b6ede7574053d517a2b6672cc6960cd6240d06f9c33  vector-costs.c
+bbad1fa5d02f648f1a21da91398a04972dc6ea7c02322139c1f020543720a6d7  Makefile
+0047545db3691b9bbfb21cbd9c8293f931561ad2f8047b6a0e179ead19bfd822  vector-library.wf
+52024edc4509edacf29b60aab686dca587c80c1eed7ea2844e44ada9a17ec4a3  vector-ecosystem.cpp
+6099b4bef37fa91bb63e5396dbf740b154455ac22ddb734c0ee93a47ddb12eab  vector-ecosystem.rs
+71fac4c6dab4625cb6b1acb75b44970519e9b55790c104ab36641790c88a6b82  .build/append-growth-baseline/ecosystem/vector-costs-timed
+bbdb838c86e5db8e48c325090cd379b85e0d47406a36f6ddd202f9f1bf54d339  .build/append-growth-baseline/ecosystem/driver-timed.o
+831fff51d2b7179a7dc177b3f430a4b9634b3eb9d206a390a97069ca67824472  .build/append-growth-baseline/ecosystem/whitefoot-timed.o
+c35ec1f01eef08066ef381b06da6fc72ef6aba12d98a1b33c48a016de6313dd1  .build/append-growth-baseline/ecosystem/cpp-timed.o
+b1eccd7d521f678bd123531708f67a1cce0f6b6fa509edb907acab53f1f11873  .build/append-growth-baseline/ecosystem/rust-timed.a
+07ebcae5ed98fa7ff1a218150170f56c961e9dbae682781b62a5878a094da58b  .build/append-growth-baseline/native/ordinary_values.o
+846bc08916aadbe77111a2c45aff15f33fd1fb7ffe816c198c2bf6f96dcad210  .build/append-growth-baseline/native/ordinary_values_ir.o
+8342e7ea0b8d6a0817d543e8c05e807c96527393945e95597718ba9a27ce722d  .build/append-growth-baseline/native/wf_floor.o
+0655633c69666fcce21bf67258101aedb49c914fc50a6cc8edbfe22a8315e645  .build/append-growth-baseline/native/sched/core.o
+e04734d7a1ddbe9083b47570ca2854963803b88a7197628bed2ca66cb4924d5c  .build/append-growth-baseline/native/sched/entry.o
+c3a5140b8221a57d27a510995ae37c7b33a64ebc87ec9f9286b99ece649bce45  .build/append-growth-baseline/native/sched/prim_host.o
+a1def81793c4229e41586590b91d134a9a2375a6ad9d31189b8164e91aaf137b  .build/append-growth-baseline/native/completion/bridge.o
+1bcbb49aa9a44031faf6397e01a960b2ce5d5d02f42cc2aaecb4edc0818d8ec6  .build/append-growth-baseline/native/completion/file_adapter.o
+f1fa09d7c0831333726c367986a3811d588e639f090435b1cbf1fce62758bf33  .build/append-growth-baseline/native/completion/file_posix.o
+e389769ac8c9f38af9cd00e5bc5d56d3c180dff5985fb81ddfff63dfa89eb453  .build/append-growth-baseline/native/completion/linux_io_uring.o
+75cb971977625c9b05adcf74b14989544ccbf61b0a81fe4843ec72226eb36c61  .build/append-growth-baseline/native/completion/runtime.o
+b9dbbb1485b2c3e47ef248568020130e7e27446e56be5a2c52f224bbd7a2f463  .build/append-growth-baseline/native/completion/wait_host.o
+growth append clock: reads=200000 minimum_nonzero_ns=41 quantized=0
+== RUNNING vector-growth-raw-baseline-1: 30 s, child 37024, group 37024 ==
+== RUNNING vector-growth-raw-baseline-1: 60 s, child 37024, group 37024 ==
+== RUNNING vector-growth-raw-baseline-1: 90 s, child 37024, group 37024 ==
+real 119.24
+user 118.75
+sys 0.33
+== END vector-growth-raw-baseline-1: 119.28 s, exit 0 ==
+
+== retained baseline-2.log ==
+== START vector-growth-raw-baseline-2 (limit 600s): sh -eu ==
+2e71ab5973a2c710e0ca7b6ede7574053d517a2b6672cc6960cd6240d06f9c33  vector-costs.c
+bbad1fa5d02f648f1a21da91398a04972dc6ea7c02322139c1f020543720a6d7  Makefile
+0047545db3691b9bbfb21cbd9c8293f931561ad2f8047b6a0e179ead19bfd822  vector-library.wf
+52024edc4509edacf29b60aab686dca587c80c1eed7ea2844e44ada9a17ec4a3  vector-ecosystem.cpp
+6099b4bef37fa91bb63e5396dbf740b154455ac22ddb734c0ee93a47ddb12eab  vector-ecosystem.rs
+71fac4c6dab4625cb6b1acb75b44970519e9b55790c104ab36641790c88a6b82  .build/append-growth-baseline/ecosystem/vector-costs-timed
+bbdb838c86e5db8e48c325090cd379b85e0d47406a36f6ddd202f9f1bf54d339  .build/append-growth-baseline/ecosystem/driver-timed.o
+831fff51d2b7179a7dc177b3f430a4b9634b3eb9d206a390a97069ca67824472  .build/append-growth-baseline/ecosystem/whitefoot-timed.o
+c35ec1f01eef08066ef381b06da6fc72ef6aba12d98a1b33c48a016de6313dd1  .build/append-growth-baseline/ecosystem/cpp-timed.o
+b1eccd7d521f678bd123531708f67a1cce0f6b6fa509edb907acab53f1f11873  .build/append-growth-baseline/ecosystem/rust-timed.a
+07ebcae5ed98fa7ff1a218150170f56c961e9dbae682781b62a5878a094da58b  .build/append-growth-baseline/native/ordinary_values.o
+846bc08916aadbe77111a2c45aff15f33fd1fb7ffe816c198c2bf6f96dcad210  .build/append-growth-baseline/native/ordinary_values_ir.o
+8342e7ea0b8d6a0817d543e8c05e807c96527393945e95597718ba9a27ce722d  .build/append-growth-baseline/native/wf_floor.o
+0655633c69666fcce21bf67258101aedb49c914fc50a6cc8edbfe22a8315e645  .build/append-growth-baseline/native/sched/core.o
+e04734d7a1ddbe9083b47570ca2854963803b88a7197628bed2ca66cb4924d5c  .build/append-growth-baseline/native/sched/entry.o
+c3a5140b8221a57d27a510995ae37c7b33a64ebc87ec9f9286b99ece649bce45  .build/append-growth-baseline/native/sched/prim_host.o
+a1def81793c4229e41586590b91d134a9a2375a6ad9d31189b8164e91aaf137b  .build/append-growth-baseline/native/completion/bridge.o
+1bcbb49aa9a44031faf6397e01a960b2ce5d5d02f42cc2aaecb4edc0818d8ec6  .build/append-growth-baseline/native/completion/file_adapter.o
+f1fa09d7c0831333726c367986a3811d588e639f090435b1cbf1fce62758bf33  .build/append-growth-baseline/native/completion/file_posix.o
+e389769ac8c9f38af9cd00e5bc5d56d3c180dff5985fb81ddfff63dfa89eb453  .build/append-growth-baseline/native/completion/linux_io_uring.o
+75cb971977625c9b05adcf74b14989544ccbf61b0a81fe4843ec72226eb36c61  .build/append-growth-baseline/native/completion/runtime.o
+b9dbbb1485b2c3e47ef248568020130e7e27446e56be5a2c52f224bbd7a2f463  .build/append-growth-baseline/native/completion/wait_host.o
+growth append clock: reads=200000 minimum_nonzero_ns=41 quantized=0
+== RUNNING vector-growth-raw-baseline-2: 30 s, child 43060, group 43060 ==
+== RUNNING vector-growth-raw-baseline-2: 60 s, child 43060, group 43060 ==
+== RUNNING vector-growth-raw-baseline-2: 90 s, child 43060, group 43060 ==
+real 118.90
+user 118.52
+sys 0.30
+== END vector-growth-raw-baseline-2: 118.92 s, exit 0 ==
+
+== retained quantized clock fault (expected direct status 1, checked by Makefile) ==
+growth append clock: reads=200000 minimum_nonzero_ns=1000 quantized=1
+vector library costs: growth append clock precision

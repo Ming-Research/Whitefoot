@@ -1,3 +1,6 @@
+#if defined(__APPLE__)
+#define _DARWIN_C_SOURCE
+#endif
 #if !defined(_WIN32)
 #define _POSIX_C_SOURCE 200809L
 #endif
@@ -388,7 +391,11 @@ static uint64_t nanos(void) {
     return (uint64_t)((long double)value.QuadPart * 1.0e9L / frequency.QuadPart);
 #else
     struct timespec value;
+#if defined(__APPLE__)
+    assert(clock_gettime(CLOCK_MONOTONIC_RAW, &value) == 0);
+#else
     assert(clock_gettime(CLOCK_MONOTONIC, &value) == 0);
+#endif
     return (uint64_t)value.tv_sec * UINT64_C(1000000000) + (uint64_t)value.tv_nsec;
 #endif
 }
@@ -780,6 +787,120 @@ static void append_measure(uint64_t work, unsigned samples) {
             }
         }
 }
+
+static void growth_clock_check(bool quantized) {
+    const unsigned reads = 200000;
+    uint64_t previous = nanos(), minimum = UINT64_MAX;
+    if (quantized) previous -= previous % 1000;
+    for (unsigned i = 0; i < reads; ++i) {
+        uint64_t current = nanos();
+        if (quantized) current -= current % 1000;
+        require(current >= previous, "growth append clock nondecreasing");
+        if (current > previous && current - previous < minimum)
+            minimum = current - previous;
+        previous = current;
+    }
+    fprintf(stderr, "growth append clock: reads=%u minimum_nonzero_ns=%" PRIu64
+            " quantized=%u\n", reads, minimum, quantized);
+    require(minimum <= 100, "growth append clock precision");
+}
+
+static void growth_measure(uint64_t work_bytes, unsigned samples, uint64_t large_work_bytes) {
+    const uint64_t capacities[] = {0, 1, 16, 256, 4096};
+    // Sizing allowance only; it neither models latency nor adjusts a sample.
+    const uint64_t allowance = 256;
+    puts("contract,cohort,element_bytes,count,variant,sample,control,contexts,payload_bytes,descriptor_bytes,cycles,operations,elapsed_ns,initial_capacity,capacity,work_bytes,allowance_bytes");
+    for (unsigned wide = 0; wide < 2; ++wide)
+        for (size_t n = 0; n < sizeof capacities / sizeof capacities[0]; ++n) {
+            const uint64_t requested = capacities[n];
+            const size_t stride = wide ? sizeof(Record) : sizeof(uint64_t);
+            const uint64_t budget = wide && requested == 4096 ? large_work_bytes : work_bytes;
+            uint64_t initial_caps[3], post_caps[3];
+            for (unsigned variant = 0; variant < 3; ++variant) {
+                const ApiOperations *api = &append_api[wide][variant];
+                ApiStorage owner;
+                initial_caps[variant] = growth_prepare(api, &owner, requested, 97);
+                uint64_t length = api->append_one(&owner, 97 + initial_caps[variant]);
+                post_caps[variant] = growth_inspect_reset(api, &owner,
+                    initial_caps[variant], 97, length, wide != 0, false);
+                (void)api->destroy(&owner);
+            }
+            for (unsigned cohort = 0; cohort < 2; ++cohort)
+                for (unsigned sample = 0; sample < samples; ++sample)
+                    for (unsigned offset = 0; offset < 3; ++offset) {
+                        unsigned position = (sample + offset) % 3;
+                        unsigned variant = cohort ? 2 - position : position;
+                        const ApiOperations *api = &append_api[wide][variant];
+                        const uint64_t initial = initial_caps[variant];
+                        const uint64_t unit = initial * stride + allowance;
+                        size_t contexts = 1048576 / unit;
+                        if (contexts > 1024) contexts = 1024;
+                        if (contexts == 0) contexts = 1;
+                        const uint64_t batch_work = contexts * unit;
+                        const uint64_t cycles = (budget + batch_work - 1) / batch_work;
+                        ApiStorage *owners = malloc(contexts * sizeof *owners);
+                        ApiObservation *snapshots = malloc(contexts * sizeof *snapshots);
+                        uint64_t *returned = malloc(contexts * sizeof *returned);
+                        uint64_t *offered = malloc(contexts * sizeof *offered);
+                        require(owners && snapshots && returned && offered,
+                                "growth append context storage");
+                        for (unsigned control = 0; control < 2; ++control) {
+                            uint64_t elapsed = 0;
+                            for (uint64_t cycle = 0; cycle < cycles; ++cycle) {
+                                const uint64_t seed = 101 + sample + cycle;
+                                for (size_t k = 0; k < contexts; ++k) {
+                                    uint64_t actual = growth_prepare(api, &owners[k],
+                                                                      requested, seed + k);
+                                    if (actual != initial)
+                                        fprintf(stderr, "growth append capacity: %s requested=%" PRIu64
+                                                " initial=%" PRIu64 " observed=%" PRIu64 "\n",
+                                                api->name, requested, initial, actual);
+                                    require(actual == initial, "growth append stable initial capacity");
+                                    offered[k] = seed + k + initial;
+                                }
+                                const uint64_t start = nanos();
+                                for (size_t k = 0; k < contexts; ++k)
+                                    returned[k] = control
+                                        ? api->snapshot(&owners[k], &snapshots[k])
+                                        : api->append_one(&owners[k], offered[k]);
+                                elapsed += nanos() - start;
+                                for (size_t k = 0; k < contexts; ++k) {
+                                    if (control) {
+                                        require(returned[k] == initial && snapshots[k].length == initial
+                                                && snapshots[k].capacity == initial
+                                                && snapshots[k].valid == 1 && snapshots[k].checksum == 0,
+                                                "growth append snapshot control state");
+                                        ApiObservation actual = {0};
+                                        require(api->inspect_reset(&owners[k], initial, seed + k, &actual) == 1
+                                                && actual.length == initial && actual.capacity == initial
+                                                && actual.valid == 1
+                                                && actual.checksum == append_oracle(initial, seed + k, wide != 0),
+                                                "growth append snapshot control values");
+                                        observed = actual.checksum;
+                                    } else {
+                                        uint64_t capacity = growth_inspect_reset(api, &owners[k], initial,
+                                            seed + k, returned[k], wide != 0, false);
+                                        if (capacity != post_caps[variant])
+                                            fprintf(stderr, "growth append capacity: %s old=%" PRIu64
+                                                    " new=%" PRIu64 " expected=%" PRIu64 "\n",
+                                                    api->name, initial, capacity, post_caps[variant]);
+                                        require(capacity == post_caps[variant], "growth append stable postcapacity");
+                                    }
+                                    (void)api->destroy(&owners[k]);
+                                }
+                            }
+                            printf("%s,%u,%zu,%" PRIu64 ",%s,%u,%u,%zu,%zu,%zu,%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 "\n",
+                                   control ? "append-growth-snapshot-control-o3" : "append-growth-o3",
+                                   cohort, stride, requested, api->name, sample, control, contexts,
+                                   contexts * (size_t)initial * stride, contexts * sizeof(ApiStorage), cycles,
+                                   control ? 0 : cycles * contexts, elapsed, initial,
+                                   control ? initial : post_caps[variant], budget, allowance);
+                        }
+                        free(offered); free(returned); free(snapshots); free(owners);
+                    }
+        }
+}
+
 #endif
 
 static void check_accounting(enum Variant variant, bool wide, uint64_t count,
@@ -908,7 +1029,13 @@ int main(int argc, char **argv) {
     require(argc >= 2, "usage: vector ecosystem check|account|measure work samples");
     if (strcmp(argv[1], "check") == 0) { require(argc == 2, "check argument count"); check(); }
     else if (strcmp(argv[1], "api-check") == 0) { require(argc == 2, "api-check argument count"); append_check(false, false); }
-    else if (strcmp(argv[1], "growth-api-check") == 0) { require(argc == 2, "growth-api-check argument count"); growth_check(false, false, false); }
+    else if (strcmp(argv[1], "growth-api-check") == 0) {
+        require(argc == 2, "growth-api-check argument count");
+#if !defined(ACCOUNT_ONLY)
+        growth_clock_check(false);
+#endif
+        growth_check(false, false, false);
+    }
     else if (strcmp(argv[1], "growth-api-fail-values") == 0) { require(argc == 2, "growth-api-fail-values argument count"); growth_check(true, false, false); }
     else if (strcmp(argv[1], "growth-api-fail-state") == 0) { require(argc == 2, "growth-api-fail-state argument count"); growth_check(false, true, false); }
     else if (strcmp(argv[1], "api-fail-values") == 0) { require(argc == 2, "api-fail-values argument count"); append_check(true, false); }
@@ -926,6 +1053,20 @@ int main(int argc, char **argv) {
         check_accounting(WHITEFOOT, true, 3, 1, 1);
     }
 #else
+    else if (strcmp(argv[1], "growth-api-fail-clock") == 0) {
+        require(argc == 2, "growth-api-fail-clock argument count");
+        growth_clock_check(true);
+    }
+    else if (strcmp(argv[1], "growth-api-measure") == 0) {
+        require(argc == 4 || argc == 5,
+                "growth-api-measure requires byte budget, samples and optional large-cell budget");
+        const uint64_t work = positive_argument(argv[2], UINT64_C(4294967296));
+        const uint64_t large_work = argc == 5
+            ? positive_argument(argv[4], UINT64_C(68719476736)) : work;
+        require(large_work >= work, "growth append large-cell budget at least base");
+        growth_clock_check(false);
+        growth_measure(work, (unsigned)positive_argument(argv[3], 101), large_work);
+    }
     else if (strcmp(argv[1], "api-measure") == 0) {
         require(argc == 4, "api-measure requires work and samples");
         append_measure(positive_argument(argv[2], UINT64_C(4294967296)),

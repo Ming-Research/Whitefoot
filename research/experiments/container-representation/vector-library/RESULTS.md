@@ -5999,7 +5999,7 @@ growth checks/account/spare checks exit0 in 0.87/0.11/0.11 seconds, outer
 guard0/3.44 seconds. Emitting CLI SHA256 is
 `9a3ac1cec5eed4a7a41aeced4f12b31cf81b5d34d6d72b9fdfe2d27de2973da5`.
 
-Growth timing is **not run or implemented at this checkpoint**. Next, inspect
+Growth timing was **not run or implemented at that checkpoint**. Next, inspect
 and measure this baseline with two independent launches, each with both
 cohorts and seven samples, covering all ten cells (0/1 policy-labelled;
 16/256/4096 matched); reserve paired ABBA for an actual candidate. Keep the
@@ -6012,3 +6012,137 @@ keep fill, post-oracle and destruction outside the clock. Read-only snapshot
 controls remain raw, labelled and unsubtracted; their tiny durations are not
 subject to the real-append floor. Neither this checkpoint nor the completed
 spare path establishes whole append or whole Vector completion.
+
+The timing loop is now implemented in the same driver. Its sizing unit is
+`observed_initial_capacity * element_bytes + 256` bytes; the 256 B allowance
+sizes operation counts, not an estimated allocation cost or time correction.
+Contexts per clock batch are `max(1, min(1024, floor(1048576 / unit)))`;
+cycles are `ceil(work_bytes / (contexts * unit))`. Each owner is prepared full
+outside the clock and recreated before its next append. The clock encloses
+only the common external append-one calls and returned-length stores;
+snapshot controls use the same contexts and retain their raw durations.
+Rows also retain observed initial/post capacity, old logical payload and
+C descriptor bytes, cycles, budget and allowance. These byte columns do not
+claim total live allocator footprint.
+
+Before choosing the final budget, run exactly one duration-only pilot:
+`vector-costs-timed growth-api-measure 67108864 1`, using the existing
+`.build/append-growth-baseline/ecosystem` image under the shared check guard.
+Retain all 120 rows (ten cells, two cohorts, three peers, real/snapshot);
+review only real-append durations against the 1 ms floor. No peer ratio,
+outlier removal or favourable order selects the budget. The maintained
+`ecosystem-append-growth-measure` target accepts `GROWTH_WORK` and
+`ECO_REPEATS`; its default budget is this 64 MiB pilot budget.
+
+The first coarse-clock pilot exits0/1.71 s and retains 120 rows in scratch
+`ecosystem/append-growth-duration-pilot.csv`; it is unqualified for
+submicrosecond windows. A guarded one-shot clock probe exits0/0.43 s:
+`CLOCK_MONOTONIC` reports 1000 ns resolution and 1000 ns minimum nonzero delta;
+`CLOCK_MONOTONIC_RAW` reports 42 ns resolution and 41 ns minimum nonzero delta
+over 200,000 reads each. Neither goes backwards. Summing many approximately
+200 ns windows from the former clock does not qualify them; no performance
+ratio conclusion is drawn from that pilot.
+
+Darwin now uses RAW in the existing `nanos`; Linux retains MONOTONIC and
+Windows retains QPC. Growth qualification observes 200,000 actual `nanos`
+reads, requiring nondecreasing values and a minimum nonzero delta at most
+100 ns. Quantizing those same readings to 1000 ns must fail the precision
+check. These are measurement checks, not language acceptance rules. After
+build/check, run one fresh RAW-clock 64 MiB/one-sample duration-only pilot;
+preserve the coarse pilot and all new snapshot controls.
+
+The first RAW build exits2 before execution because the POSIX feature macro
+hides the Darwin clock extension. Its failed source/log remain in scratch;
+the repair exposes Darwin APIs with `_DARWIN_C_SOURCE`, preserving Linux and
+Windows clock selection.
+
+Before formal timing, the optional fourth measure argument
+(`GROWTH_LARGE_WORK` in Make) may enlarge only the 256 B/capacity4096 budget.
+It applies equally to all three peers; the other nine cells keep the base
+budget. Counts, context formula and sampling orders remain unchanged. This
+duration-only adjustment avoids multiplying already-long cells by the
+largest cell's needed work. The RAW pilot must be reviewed before either
+final budget is chosen.
+
+The RAW pilot exits0/1.74 s with 120 unique rows; nine cells' minimum real
+append durations exceed 1 ms. At 256 B/capacity4096 the fastest real sample
+is 10,704 ns, so duration-only calibration selects base `67108864` bytes and
+large-cell `8589934592` bytes (128 times base, the first power of two raising
+that observed duration above 1 ms). All three peers receive the same budget
+and retain the fixed context formula. The coarse and RAW pilots remain
+distinct scratch CSVs, without peer-ratio conclusions.
+
+Before formal data, fix the reviewed clock-check bypass: the measurement
+entry checks precision before any setup/measurement; the existing quantized
+negative still exercises that check. Diagnostics go to stderr, preserving CSV stdout.
+After rebuilding and checking, run exactly two independent baseline launches:
+`vector-costs-timed growth-api-measure 67108864 7 8589934592`. Preserve scratch
+`ecosystem/append-growth-raw-baseline-{1,2}.csv` and their guard logs, 840 rows
+per launch (ten cells, two rotating cohorts, seven samples, three peers,
+real/snapshot). No retry, outlier filtering, control subtraction or favourable
+order selection follows an adverse result. Only after both launches, report
+each peer's medians/ranges for six matched cells separately from four 0/1
+capacity-policy cells. Require all real samples at least 1 ms, cohort-ratio
+spread and peer drift at most 10%, and WF sample ranges disjoint below the
+slower ordinary peer in both cohorts and both launches; otherwise the cell
+does not pass. Both peer comparisons and all controls remain visible.
+
+Current scope remains Vector append's spare/full paths. Reserve, insert,
+remove, drain and whole-container timing wait until append comparison is done.
+
+
+#### Growth-append RAW baseline: two launches, append remains open
+
+Both fixed launches exit 0: guards 119.28/118.92 s, after final incremental
+build/growth/spare checks exit 0 in 1.08/0.77/0.11 s (outer 2.06 s). Each
+launch retains all 840 unique rows; no retries or data filtering occurred.
+The measurement checkpoint also passes guarded `make static` in 33.04 s;
+it does not repeat the compiler's full canonical gate or claim completion.
+The [combined baseline CSV](ecosystem-append-growth-raw-baseline-samples.csv)
+retains 1,680 rows with a launch column; the [clock-pilot CSV](ecosystem-append-growth-clock-pilot-samples.csv)
+retains both distinct 120-row pilots, including the unqualified coarse-clock samples.
+[Timing and identities](ecosystem-append-growth-raw-baseline-timing.txt)
+retain both launch logs, instrument/build observations and all 22
+source/image/native/runtime pins, equal across launches and unchanged after
+execution. The timed image is SHA256
+`71fac4c6dab4625cb6b1acb75b44970519e9b55790c104ab36641790c88a6b82`.
+These files serve this append baseline and clock repair; retain them while
+this evidence is cited, retiring them only with a superseding retained record.
+
+The tables give the span of four launch/cohort medians, then the full range
+of all 28 samples per peer in brackets; ratios span those four paired
+medians. Times are raw elapsed/operation, with no snapshot subtraction.
+
+| Payload / old capacity | WF ns/op | Rust ns/op | C++ ns/op | WF/Rust | WF/C++ | Slower-peer target |
+|---|---:|---:|---:|---:|---:|---|
+| 8 B / 16 | 28.26–28.44 [28.09–29.75] | 36.84–37.05 [36.60–38.98] | 25.60–25.74 [25.48–27.01] | 0.7634–0.7720 | 1.1015–1.1050 | Pass |
+| 8 B / 256 | 91.18–94.43 [90.36–101.25] | 102.30–103.07 [101.56–110.73] | 91.96–94.96 [91.33–99.41] | 0.8873–0.9181 | 0.9687–1.0174 | Pass |
+| 8 B / 4096 | 2212.02–2223.44 [2105.96–2353.51] | 639.54–752.99 [624.17–819.36] | 620.42–630.76 [615.55–718.60] | 2.9476–3.4715 | 3.5111–3.5785 | Not pass; peer drift |
+| 256 B / 16 | 143.80–148.03 [142.17–160.80] | 150.53–156.64 [148.86–939.48] | 139.91–141.62 [139.05–265.56] | 0.9367–0.9652 | 1.0178–1.0505 | Overlap |
+| 256 B / 256 | 1533.81–1539.10 [1506.32–1630.99] | 1315.17–1320.90 [1307.86–1388.49] | 1307.94–1324.40 [1297.30–1402.34] | 1.1620–1.1691 | 1.1607–1.1739 | Slower |
+| 256 B / 4096 | 17548.30–17875.39 [16840.32–18424.21] | 153.64–162.10 [149.50–163.47] | 14786.60–14870.32 [14699.29–14901.03] | 108.8995–114.9201 | 1.1856–1.2089 | Slower |
+
+All real-append samples exceed 1 ms (minimum 1.224527 ms). Cohort-ratio
+spreads are at most 3.030%; peer launch drift is at most 5.504% in nine cells.
+Scalar4096 Rust cohort1 drifts 17.740%, exceeding the registered 10% bound,
+so the full baseline is **not globally qualified**. Its large WF gap remains
+visible, without a qualified loss claim from that unstable cell. Only
+scalar16 and scalar256 pass the matched slower-peer target (Rust is slower
+there); wide16 overlaps, and wide256/4096 are disjoint slower. No append
+completion or production selection follows.
+
+The four policy cells preserve ordinary growth outputs: from old0, WF/C++
+produce capacity1 while Rust produces4; from old1, WF/C++ produce2 while
+Rust produces4. Their times include those different ordinary policies:
+
+| Payload / old capacity | WF ns/op | Rust ns/op | C++ ns/op | WF/Rust | WF/C++ | Slower-peer target |
+|---|---:|---:|---:|---:|---:|---|
+| 8 B / 0 | 16.77–16.83 [16.67–17.29] | 11.80–11.98 [11.76–12.54] | 10.96–11.02 [10.92–11.38] | 1.4044–1.4227 | 1.5250–1.5305 | Slower |
+| 8 B / 1 | 19.60–19.77 [19.47–20.47] | 32.35–32.49 [32.21–34.08] | 19.11–19.16 [19.00–19.82] | 0.6031–0.6113 | 1.0239–1.0318 | Disjoint faster |
+| 256 B / 0 | 26.90–27.15 [26.82–28.02] | 22.40–22.64 [22.27–23.64] | 15.64–15.69 [15.57–16.11] | 1.1982–1.2009 | 1.7159–1.7359 | Slower |
+| 256 B / 1 | 40.45–40.98 [40.17–41.75] | 52.71–52.98 [52.42–55.68] | 42.92–43.27 [42.70–45.41] | 0.7643–0.7775 | 0.9349–0.9472 | Disjoint faster |
+
+Native code permits Rust realloc; these elapsed rows do not establish its
+in-place frequency. Allocation-account observations remain separate from
+these timed images. Scope stays Vector append's spare/full paths; the next
+API and whole-Vector trace wait for append qualification.

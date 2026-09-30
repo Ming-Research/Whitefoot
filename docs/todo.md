@@ -3482,3 +3482,20 @@ condition under which it is taken up.
   least seven runs per model trips no build or case stage. Reopen when an
   overrun is traced to a change that earlier runs on faster machines passed,
   or when clippy's variance overruns come more than about once a week.
+
+- **Qualify the clock at each container API's individual timing window.**
+  The Vector growth pilot on the current macOS host reports 1,000 ns for
+  `CLOCK_MONOTONIC` and observes only 1,000 ns nonzero read steps, while one
+  measured growth call can finish in about 200 ns. Summed sample duration
+  alone does not qualify such windows. The same native probe reports 42 ns
+  for `CLOCK_MONOTONIC_RAW` and observes a 41 ns minimum nonzero step. Vector's
+  instrument repair and retained pilot belong to its
+  [growth comparison](../research/experiments/container-representation/vector-library/RESULTS.md#append-that-triggers-growth-correctness-and-native-checkpoint).
+  Deque, PriorityQueue, OrderedMap and both Map cost drivers also use
+  `CLOCK_MONOTONIC`; reopen their clock qualification when each family reaches
+  the per-API phase, and require an observation that rejects an artificially
+  coarsened clock. Keep old samples with their original instrument identity;
+  this finding does not by itself invalidate longer whole-trace windows.
+  Recheck Vector's spare-append comparisons with the repaired instrument before
+  declaring the complete append API qualified. Do not change other families'
+  benchmarks during the current Vector-only step.

@@ -69,9 +69,12 @@ ECO_REPEATS ?= 7
 APPEND_WORK ?= 4194304
 APPEND_SAMPLE_FILE ?= $(ECO_BUILD)/append-measurements.csv
 GROWTH_ACCOUNT ?= $(ECO_BUILD)/append-growth-accounting.csv
+GROWTH_WORK ?= 67108864
+GROWTH_LARGE_WORK ?= $(GROWTH_WORK)
+GROWTH_SAMPLE_FILE ?= $(ECO_BUILD)/append-growth-measurements.csv
 include ../ecosystem.mk
 
-.PHONY: ecosystem-build ecosystem-check ecosystem-account ecosystem-measure ecosystem-append-check ecosystem-append-measure ecosystem-append-growth-check ecosystem-append-growth-account
+.PHONY: ecosystem-build ecosystem-check ecosystem-account ecosystem-measure ecosystem-append-check ecosystem-append-measure ecosystem-append-growth-check ecosystem-append-growth-account ecosystem-append-growth-measure
 .SECONDARY: $(ECO_BUILD)/whitefoot-timed.ll $(ECO_BUILD)/whitefoot-account.ll \
             $(ECO_BUILD)/whitefoot-timed.o $(ECO_BUILD)/whitefoot-account.o \
             $(ECO_BUILD)/driver-timed.o $(ECO_BUILD)/driver-account.o \
@@ -114,6 +117,11 @@ ecosystem-append-check: ecosystem-build
 ecosystem-append-growth-check: ecosystem-build
 	$(ECO_BUILD)/vector-costs-timed$(EXE) growth-api-check
 	$(ECO_BUILD)/vector-costs-account$(EXE) growth-api-check
+	@set -eu; log='$(ECO_BUILD)/growth-api-fail-clock.txt'; \
+	  if $(ECO_BUILD)/vector-costs-timed$(EXE) growth-api-fail-clock > "$$log" 2>&1; then \
+	    echo 'Append growth coarse clock was accepted' >&2; exit 1; \
+	  else status=$$?; test "$$status" = 1; fi; \
+	  grep -Fx 'vector library costs: growth append clock precision' "$$log"
 	@set -eu; for image in timed account; do for fault in values state; do \
 	  log='$(ECO_BUILD)/growth-api-fail-'$$image'-'$$fault'.txt'; \
 	  if $(ECO_BUILD)/vector-costs-$$image$(EXE) growth-api-fail-$$fault > "$$log" 2>&1; then \
@@ -126,6 +134,10 @@ ecosystem-append-growth-check: ecosystem-build
 ecosystem-append-growth-account: $(ECO_BUILD)/vector-costs-account$(EXE)
 	$(ECO_BUILD)/vector-costs-account$(EXE) growth-api-account > '$(GROWTH_ACCOUNT)'
 	@echo 'Append growth allocation observations: $(GROWTH_ACCOUNT)'
+
+ecosystem-append-growth-measure: $(ECO_BUILD)/vector-costs-timed$(EXE)
+	$(ECO_BUILD)/vector-costs-timed$(EXE) growth-api-measure $(GROWTH_WORK) $(ECO_REPEATS) $(GROWTH_LARGE_WORK) > '$(GROWTH_SAMPLE_FILE)'
+	@echo 'Raw append growth samples: $(GROWTH_SAMPLE_FILE)'
 
 ecosystem-check: ecosystem-build
 	$(ECO_BUILD)/vector-costs-timed$(EXE) check
