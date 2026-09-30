@@ -456,7 +456,7 @@ rarely insert at the same place.
   live bindings' current images into L0 before the join; validate soundness
   against replacement and alias controls and measure closure cost first.
   Reopen when a consumer cannot avoid the branch.
-- **A product with a struct-field operand has no interval route.** [ENT-6]
+- **A struct-field operand of a product or subtraction is not proved.** [ENT-6]
   gives affine value images to live own integer bindings and measures only,
   and its interval product needs both operands' images, so after
   `propagate parse_header(...)` publishes `header.width <= 16384_u32` and
