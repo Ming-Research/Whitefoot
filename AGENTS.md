@@ -98,17 +98,20 @@ decisions.
    design-tree and specification change, write the log entries and mark the PR
    ready (rule 1 below).
 
-**Weigh a design on its merits alone.** No design judgment, of the language,
-the compiler, the runtime or the library, weighs the existing code, tests,
-programs or documents a choice would change: not the cost or effort of
-migrating them, not how many of them it touches, and not their present use as
-evidence of what programs need. Before real projects adopt Whitefoot there is
-nothing to keep compatible, and the corpus was written to exercise the
-compiler (`design/language.md`). A decision card names no such cost as a
-reason, a cost or an option's drawback.
-
 Record reasons when choices settle, not by reconstructing them at completion.
 Routine fixes under unchanged design need no decision record.
+
+**Judge a design without the weight of what exists.** Until real projects have
+compatibility needs ([constitution](docs/constitution.md#compatibility-and-evolution)),
+no design judgment of the language, the compiler, the runtime or the library
+weighs the existing code, tests, programs or documents a choice would change:
+neither the cost or effort of changing them nor how many of them it touches.
+How often something occurs in them is not evidence of how often real programs
+need it, since they were written to exercise the compiler
+(`design/language.md`); a program that fails still witnesses a gap, and
+measuring a change's effect on them is still evidence. The rule governs which
+design is chosen, not which work comes first. No decision card, tree reason,
+investigation or PR text uses such a cost or count as a reason or a drawback.
 
 **Fix or record what you notice.** Work in one place exposes defects in
 others: a bug, an awkward interface or architecture, duplicated logic, a file
