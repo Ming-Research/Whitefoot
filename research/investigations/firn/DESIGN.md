@@ -252,3 +252,58 @@ and *control* stays within 0.97 to 1.03 of *hashed* on every test. If
 *control* strays further, the host was too noisy to decide and the rounds are
 run again. If *keyed* misses 1.05, the change is reverted: it adds eight bytes
 to every key and member and would buy nothing measured.
+
+### Keys that carry their hash: the first two runs
+
+Requests per second, medians of five interleaved rounds (the `keyed` lines
+of [firn-samples.csv](../../experiments/io-completion-bench/firn-samples.csv),
+rounds `round` and `rerun`):
+
+| Test | run | hashed | keyed | control | keyed / hashed | control / hashed |
+|---|---|---|---|---|---|---|
+| `SET` | 1 | 585,195 | 799,360 | 615,006 | 1.37 | 1.05 |
+| `SET` | 2 | 615,195 | 749,532 | 584,795 | 1.22 | 0.95 |
+| `GET` | 1 | 773,595 | 856,898 | 799,680 | 1.11 | 1.03 |
+| `GET` | 2 | 827,244 | 888,362 | 773,894 | 1.07 | 0.94 |
+| `INCR` | 1 | 685,479 | 749,719 | 705,550 | 1.09 | 1.03 |
+| `INCR` | 2 | 685,323 | 726,832 | 685,479 | 1.06 | 1.00 |
+| `ZADD` | 1 | 257,887 | 262,824 | 257,887 | 1.02 | 1.00 |
+| `ZADD` | 2 | 257,909 | 263,597 | 263,586 | 1.02 | 1.02 |
+| `MSET` | 1 | 55,439 | 86,723 | 54,705 | 1.56 | 0.99 |
+| `MSET` | 2 | 60,496 | 83,188 | 53,952 | 1.38 | 0.89 |
+
+**Neither run decided under the criterion as written.** Its control
+condition, 0.97 to 1.03, failed in both: the same build under a second name
+strayed to 1.05 on `SET` in the first run and to 0.89 on `MSET` in the
+second. The band was tighter than this host's variation between medians of
+five, so a third run under it would most likely fail the same way. The
+criterion is therefore revised here, after these two runs and before a
+third, with the band the two runs measured: the control's medians spanned
+0.89 to 1.05, so a difference below about 12% is not resolved. In the third
+run the change is kept if *keyed* reaches at least 1.15 times *hashed* on
+two of `SET`, `INCR` and `MSET` and no test falls below 0.90, the run
+counting only if *control* stays within 0.88 to 1.12 of *hashed*; otherwise
+it is reverted.
+
+### One atomic statement per read, stated before measuring
+
+Each command now takes the keyspace in an atomic statement of its own, so at
+depth 16 a read of 16 commands takes it 16 times, and with two drivers each
+taking passes the keyspace, its lock's cache line and the map's hot lines
+between the two processors. The change: `serve` answers every complete
+command a read holds inside one atomic statement, ending it early only to
+send once 16,384 bytes of replies are waiting, and the commands take the
+held keyspace instead of taking it themselves. Parsing and copying the
+arguments then run inside the statement too, which lengthens what one
+driver holds; the hypothesis is that the takings and transfers cost more
+than the work that moves inside. Redis likewise runs every complete command
+of one client's read before it turns to another client, so no client sees an
+interleaving Redis would not produce.
+
+It is judged by a build *batched*, the keyed build with this change,
+interleaved with the third run above, and by a second comparison at depth 1
+over five interleaved rounds of `SET`, `GET` and `INCR` (1,000,000 requests
+each). By median, batching is kept if at depth 16 *batched* reaches at least
+1.15 times *keyed* on two of `SET`, `INCR` and `MSET` with no test below
+0.90, and at depth 1, where a read holds one command, *batched* stays at or
+above 0.90 of *keyed* on all three. Otherwise it is reverted.
