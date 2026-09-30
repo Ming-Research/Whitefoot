@@ -405,6 +405,253 @@ int main(int argc, char **argv) { return wf__floor_run(argc, argv); }
     }
 }
 
+/// Back placement preserves payload order and descriptor values when it fills
+/// the last vacancy or crosses the physical end. Header-only storage also
+/// admits capacities outside the signed domain. These expectations come from
+/// the source operations and do not depend on optional LLVM facts.
+#[test]
+fn ring_back_placement_preserves_wrapping_and_unsigned_measures() {
+    let mut source = String::new();
+    for (name, constructor, window) in [
+        ("fixed", "ring_new::<u64, 4>()", "values"),
+        (
+            "runtime",
+            "box_ring_new::<u64>(capacity: 4_u64)",
+            "values.inner",
+        ),
+    ] {
+        source.push_str(&format!(
+            r#"fn {name}() -> result: u8 pure {{
+  let values = {constructor};
+  place_back(window: &{window}, value: 10_u64);
+  place_back(window: &{window}, value: 20_u64);
+  place_back(window: &{window}, value: 30_u64);
+  place_back(window: &{window}, value: 40_u64);
+  if {window}.len != 4_u64 {{
+    return 1_u8;
+  }}
+  let first = take_front(window: &{window});
+  if first != 10_u64 {{
+    return 2_u8;
+  }}
+  if {window}.head != 1_u64 {{
+    return 3_u8;
+  }}
+  if {window}.len != 3_u64 {{
+    return 4_u8;
+  }}
+  place_back(window: &{window}, value: 50_u64);
+  if {window}.len != 4_u64 {{
+    return 5_u8;
+  }}
+  if {window}.head != 1_u64 {{
+    return 6_u8;
+  }}
+  if {window}.cap != 4_u64 {{
+    return 7_u8;
+  }}
+  let second = take_front(window: &{window});
+  let third = take_front(window: &{window});
+  let fourth = take_front(window: &{window});
+  let fifth = take_front(window: &{window});
+  if second != 20_u64 {{
+    return 8_u8;
+  }}
+  if third != 30_u64 {{
+    return 9_u8;
+  }}
+  if fourth != 40_u64 {{
+    return 10_u8;
+  }}
+  if fifth != 50_u64 {{
+    return 11_u8;
+  }}
+  if {window}.len != 0_u64 {{
+    return 12_u8;
+  }}
+  if {window}.head != 1_u64 {{
+    return 13_u8;
+  }}
+  if {window}.cap != 4_u64 {{
+    return 14_u8;
+  }}
+  return 0_u8;
+}}
+
+"#,
+        ));
+    }
+    for (name, constructor, window) in [
+        (
+            "large_fixed",
+            "ring_new::<Array<u64, 0>, 9223372036854775809>()",
+            "values",
+        ),
+        (
+            "large_runtime",
+            "box_ring_new::<Array<u64, 0>>(capacity: 9223372036854775809_u64)",
+            "values.inner",
+        ),
+    ] {
+        source.push_str(&format!(
+            r#"fn {name}() -> result: u8 pure {{
+  let values = {constructor};
+  let empty = array_filled::<u64, 0>(value: 0_u64);
+  place_back(window: &{window}, value: empty);
+  if {window}.len != 1_u64 {{
+    return 15_u8;
+  }}
+  if {window}.head != 0_u64 {{
+    return 16_u8;
+  }}
+  if {window}.cap != 9223372036854775809_u64 {{
+    return 17_u8;
+  }}
+  let removed = take_back(window: &{window});
+  if {window}.len != 0_u64 {{
+    return 18_u8;
+  }}
+  if {window}.head != 0_u64 {{
+    return 19_u8;
+  }}
+  return 0_u8;
+}}
+
+"#,
+        ));
+    }
+    source.push_str("fn main() -> status: std::process::ExitStatus pure {\n");
+    for name in ["fixed", "runtime", "large_fixed", "large_runtime"] {
+        source.push_str(&format!(
+            "  let {name}_result = {name}();\n  if {name}_result != 0_u8 {{\n    return std::process::exit_status(code: {name}_result);\n  }}\n"
+        ));
+    }
+    source.push_str("  return std::process::exit_status(code: 0_u8);\n}\n");
+    let modules = with_ir(source.as_bytes(), |program| {
+        let target = TargetLayout::host().expect("supported target");
+        [WindowAddressFacts::Emit, WindowAddressFacts::Withhold].map(|facts| {
+            let mut module = emit_llvm_with_window_address_facts(program, target, facts)
+                .expect("all fact observations qualify the same admitted storage")
+                .into_string();
+            module.push_str(
+                &crate::driver::launcher::render(program, "main")
+                    .expect("ordinary test launcher")
+                    .render(),
+            );
+            module
+        })
+    });
+    for module in &modules {
+        for retained in [false, true] {
+            let observed = if retained {
+                super::owned_places::retain_calls(module)
+            } else {
+                module.clone()
+            };
+            let output = super::compile_and_run(&observed);
+            assert_eq!(output.status.code(), Some(0), "{output:?}");
+            assert!(output.stdout.is_empty(), "{output:?}");
+            assert!(output.stderr.is_empty(), "{output:?}");
+        }
+    }
+    let withheld = super::owned_places::retain_calls(&modules[1]);
+    assert!(!withheld.contains("call void @llvm.assume("));
+    for (fault, code) in [
+        (RingBackPlacementFault::WrappedSlot, 8),
+        (RingBackPlacementFault::HeadAfterWrap, 6),
+    ] {
+        let corrupted = corrupt_fixed_ring_back_placement(&withheld, fault);
+        let output = super::compile_and_run(&corrupted);
+        assert_eq!(output.status.code(), Some(code), "{fault:?}: {output:?}");
+        assert!(output.stdout.is_empty(), "{fault:?}: {output:?}");
+        assert!(output.stderr.is_empty(), "{fault:?}: {output:?}");
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum RingBackPlacementFault {
+    WrappedSlot,
+    HeadAfterWrap,
+}
+
+/// Corrupt only the fixed scalar placement implementation. The fifth
+/// placement wraps after all four slots have been initialized, so slot 1 is
+/// an in-allocation wrong destination. A wrong head is observed before a take.
+fn corrupt_fixed_ring_back_placement(module: &str, fault: RingBackPlacementFault) -> String {
+    let mut lines = module.split('\n').map(str::to_owned).collect::<Vec<_>>();
+    let starts = lines
+        .iter()
+        .enumerate()
+        .filter_map(|(index, line)| {
+            (line.starts_with("define ")
+                && line.contains("@wf_place_back$")
+                && line.contains(", i64 "))
+            .then_some(index)
+        })
+        .collect::<Vec<_>>();
+    let mut changed = 0;
+    for start in starts {
+        let end = start
+            + lines[start..]
+                .iter()
+                .position(|line| line == "}")
+                .expect("complete scalar placement body");
+        let Some((wrap, condition, sum)) = (start + 1..end).find_map(|index| {
+            let (condition, operands) = lines[index].trim().split_once(" = icmp uge i64 ")?;
+            let (sum, capacity) = operands.rsplit_once(", ")?;
+            (capacity == "4").then_some((index, condition.to_owned(), sum.to_owned()))
+        }) else {
+            continue;
+        };
+        let (wrapped, operands) = lines[wrap + 1]
+            .trim()
+            .split_once(" = sub i64 ")
+            .expect("the wrapped slot subtracts capacity");
+        assert_eq!(operands, format!("{sum}, 4"));
+        let (_, selection) = lines[wrap + 2]
+            .trim()
+            .split_once(" = select i1 ")
+            .expect("the physical slot selects the wrapped arm");
+        assert_eq!(selection, format!("{condition}, i64 {wrapped}, i64 {sum}"));
+        match fault {
+            RingBackPlacementFault::WrappedSlot => {
+                lines[wrap + 1] = format!("  {wrapped} = add i64 1, 0");
+            }
+            RingBackPlacementFault::HeadAfterWrap => {
+                let store = (start + 1..end)
+                    .rev()
+                    .find(|&index| lines[index].trim().starts_with("store i64 "))
+                    .expect("the final descriptor store preserves head");
+                let (head, address) = lines[store]
+                    .trim()
+                    .strip_prefix("store i64 ")
+                    .expect("head store")
+                    .split_once(", ptr ")
+                    .expect("head destination");
+                let pointer = (start + 1..store)
+                    .find(|&index| {
+                        lines[index]
+                            .trim()
+                            .starts_with(&format!("{address} = getelementptr inbounds "))
+                    })
+                    .expect("the fixed Ring head field is addressed");
+                assert!(
+                    lines[pointer].ends_with(", i32 0, i32 1"),
+                    "the fixed Ring head field must be addressed: {}",
+                    lines[pointer]
+                );
+                assert!(!module.contains("%wf.test.wrong_head"));
+                lines[store] = format!(
+                    "  %wf.test.wrong_head = select i1 {condition}, i64 0, i64 {head}\n  store i64 %wf.test.wrong_head, ptr {address}"
+                );
+            }
+        }
+        changed += 1;
+    }
+    assert_eq!(changed, 1, "exactly one fixed Ring placement is corrupted");
+    lines.join("\n")
+}
+
 /// A front placement already has the physical slot it just wrote. The
 /// descriptor update must reuse that slot as the new Ring origin instead of
 /// reloading head/capacity and recomputing the predecessor [OP-10, WIN-1].
