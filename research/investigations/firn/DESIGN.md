@@ -815,3 +815,29 @@ A head-to-head of this binary against the head's, `d3be4d91c`, is below:
 after it, firn changed only in replies to errors and `CONFIG`, a zero byte in
 a command name and `INCR`'s decimal reply, the library lost an unreachable
 branch, and the merge of `main` brought checker changes.
+
+### The head against the measured binary
+
+The criterion, stated before the run but committed with its results: the
+suite's results stand for the head if, in three interleaved rounds on two
+server CPUs of `PING_MBULK`, `SET`, `GET` and `INCR` at depths 16 and 1, the
+median ratio of the head's firn to the measured one's lies within 0.95 to
+1.05 on every test; otherwise each difference is reported. The rounds ran on
+the machine the second restart left (the `head` lines of
+[firn-samples.csv](../../experiments/io-completion-bench/firn-samples.csv)),
+with 12,000,000 requests at depth 16 and 1,300,000 at depth 1, runs of about
+seven seconds, where a clock step is about 4% of a rate.
+
+| Test | Depth 16: measured | head / measured | Depth 1: measured | head / measured |
+|---|---|---|---|---|
+| `PING_MBULK` | 2,524,190 | 1.00 | 185,582 | 1.04 |
+| `SET` | 1,654,716 | 1.11 | 192,450 | 1.00 |
+| `GET` | 1,845,018 | 1.08 | 179,261 | 1.07 |
+| `INCR` | 1,843,601 | 1.04 | 192,450 | 1.04 |
+
+**Not met as written, and in the head's favor.** Three medians exceeded
+1.05, `SET` and `GET` at depth 16 and `GET` at depth 1, each by one to three
+clock steps, with single rounds from 0.92 to 1.23; none fell below 1.00. The
+head is not slower than the measured binary on these tests, so the suite's
+results do not overstate it; whether it is faster is not established at this
+resolution.
