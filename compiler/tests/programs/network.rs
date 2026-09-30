@@ -1077,7 +1077,7 @@ fn the_redis_subset_expires_keys_on_both_routes() {
         client.write_all(&batch).expect("send the expiry batch");
         expect_replies(
             &mut client,
-            b"+OK\r\n+OK\r\n:-1\r\n:-2\r\n:1\r\n:100\r\n:1\r\n:-1\r\n:0\r\n-ERR invalid expire time\r\n-ERR syntax error\r\n-ERR value is not an integer or out of range\r\n:2\r\n",
+            b"+OK\r\n+OK\r\n:-1\r\n:-2\r\n:1\r\n:100\r\n:1\r\n:-1\r\n:0\r\n-ERR invalid expire time in 'set' command\r\n-ERR syntax error\r\n-ERR value is not an integer or out of range\r\n:2\r\n",
             &what,
         );
         client
@@ -1154,7 +1154,10 @@ fn the_redis_subset_removes_expired_keys_no_command_reads_on_both_routes() {
 /// [PRE-2] the Redis subset replays its append-only file after a restart:
 /// every change the first run made, set, removed, incremented, given an expiry
 /// or made persistent, holds in the second, and a key whose expiry passed
-/// while the subset was stopped is absent. The first run ends once its one
+/// while the subset was stopped is absent. As in Redis, the replay applies the
+/// file's commands in order without expiring anything, so a key made
+/// persistent before its expiry holds its value, and a key incremented before
+/// its expiry passed is absent rather than counting again from one. The first run ends once its one
 /// client has closed, after its writer appended and synced the last changes.
 #[cfg(target_os = "linux")]
 #[test]
@@ -1181,13 +1184,17 @@ fn the_redis_subset_replays_its_append_only_file_after_a_restart_on_both_routes(
             vec!["SET", "kept", "v", "PX", "60000"],
             vec!["PERSIST", "kept"],
             vec!["SET", "later", "v", "PX", "60000"],
+            vec!["SET", "persisted", "v", "PX", "300"],
+            vec!["PERSIST", "persisted"],
+            vec!["SET", "bumped", "5", "PX", "300"],
+            vec!["INCR", "bumped"],
         ] {
             batch.extend(resp(&request));
         }
         client.write_all(&batch).expect("send the changes");
         expect_replies(
             &mut client,
-            b"+OK\r\n+OK\r\n+OK\r\n:1\r\n:2\r\n:1\r\n+OK\r\n:1\r\n+OK\r\n",
+            b"+OK\r\n+OK\r\n+OK\r\n:1\r\n:2\r\n:1\r\n+OK\r\n:1\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n:6\r\n",
             &what,
         );
         drop(client);
@@ -1209,6 +1216,9 @@ fn the_redis_subset_replays_its_append_only_file_after_a_restart_on_both_routes(
             vec!["GET", "count"],
             vec!["GET", "kept"],
             vec!["TTL", "kept"],
+            vec!["GET", "persisted"],
+            vec!["TTL", "persisted"],
+            vec!["GET", "bumped"],
             vec!["DBSIZE"],
         ] {
             batch.extend(resp(&request));
@@ -1216,7 +1226,7 @@ fn the_redis_subset_replays_its_append_only_file_after_a_restart_on_both_routes(
         client.write_all(&batch).expect("read the replayed keys");
         expect_replies(
             &mut client,
-            b"$-1\r\n$-1\r\n$1\r\nv\r\n$1\r\n2\r\n$1\r\nv\r\n:-1\r\n:4\r\n",
+            b"$-1\r\n$-1\r\n$1\r\nv\r\n$1\r\n2\r\n$1\r\nv\r\n:-1\r\n$1\r\nv\r\n:-1\r\n$-1\r\n:5\r\n",
             &what,
         );
         client

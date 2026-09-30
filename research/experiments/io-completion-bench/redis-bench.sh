@@ -139,13 +139,16 @@ verify_expiry() {
 }
 
 # Experiment 8: after a stop and a restart on the file, a key set and not
-# expired holds its value and a key whose expiry passed meanwhile is absent.
+# expired holds its value and a key whose expiry passed meanwhile is absent;
+# a key made persistent before its expiry holds its value, and one incremented
+# before its expiry passed is absent, as a replay that expires nothing while it
+# loads leaves them.
 # The subset stops by being killed, so the check waits 100 milliseconds for
 # its writer, which appends every 10, before stopping it; Redis flushes its
 # file when it is stopped.
 verify_restart() {
     start "$1"
-    printf 'SET k1 v\nSET k2 v PX 300\nSET k3 v EX 100\nINCR n\nINCR n\nDEL k1\nSET k4 v\n' |
+    printf 'SET k1 v\nSET k2 v PX 300\nSET k3 v EX 100\nINCR n\nINCR n\nDEL k1\nSET k4 v\nSET k5 v PX 300\nPERSIST k5\nSET n2 5 PX 300\nINCR n2\n' |
         redis-cli -p "$PORT" >/dev/null
     sleep 0.1
     stop
@@ -153,12 +156,12 @@ verify_restart() {
     KEEP=1
     start "$1"
     KEEP=
-    got=$(printf 'GET k1\nGET k2\nGET k3\nGET n\nGET k4\n' |
+    got=$(printf 'GET k1\nGET k2\nGET k3\nGET n\nGET k4\nGET k5\nGET n2\n' |
         redis-cli -p "$PORT" | tr '\n' ' ')
     left=$(redis-cli -p "$PORT" TTL k3)
     stop
     echo "verify-restart,$1,got=$got,left=$left"
-    if [ "$got" != "  v 2 v " ] || [ "$left" -lt 98 ]; then
+    if [ "$got" != "  v 2 v v  " ] || [ "$left" -lt 98 ]; then
         fail "$1" "replayed keys"
     fi
 }

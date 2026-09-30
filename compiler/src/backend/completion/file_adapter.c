@@ -269,6 +269,11 @@ static int wf_file_request_held_locked(
     return adapter->hold_for_contexts != 0 || wf_file_request_is_peer_bound(request);
 }
 
+/* Whether a record carries a deadline [PRE-2], passed or not. */
+static int wf_file_record_bounded(const wf_completion_record *record) {
+    return atomic_load_explicit(&record->deadline, memory_order_relaxed) != 0;
+}
+
 static wf_completion_record *wf_file_take_work(
     wf_file_adapter *adapter,
     int from_head
@@ -276,11 +281,20 @@ static wf_completion_record *wf_file_take_work(
     wf_completion_record *previous = NULL;
     wf_completion_record *taken = NULL;
     wf_completion_wait_lock(&adapter->queue_wait);
-    if (adapter->helper_cap != 0) {
+    {
+        /* With a pool that may grow, a scheduler thread leaves the held
+         * requests to the helpers.  A pool pinned at zero leaves this thread
+         * the queue's engine for every request but one with a deadline, which
+         * the helper started for it takes, since the thread that must end an
+         * operation at its deadline cannot be inside it [PRE-2]
+         * (`wf_file_adapter_grow_for_deadline`). */
         wf_completion_record *before = NULL;
         wf_completion_record *scan = adapter->queue_head;
         while (scan != NULL) {
-            if (!wf_file_request_held_locked(adapter, &scan->request)) {
+            int left = adapter->helper_cap != 0
+                ? wf_file_request_held_locked(adapter, &scan->request)
+                : wf_file_record_bounded(scan);
+            if (!left) {
                 previous = before;
                 taken = scan;
                 if (from_head != 0) {
@@ -289,16 +303,6 @@ static wf_completion_record *wf_file_take_work(
             }
             before = scan;
             scan = scan->next;
-        }
-    } else if (adapter->queue_head != NULL) {
-        if (from_head != 0 || adapter->queue_head == adapter->queue_tail) {
-            taken = adapter->queue_head;
-        } else {
-            previous = adapter->queue_head;
-            while (previous->next != adapter->queue_tail) {
-                previous = previous->next;
-            }
-            taken = adapter->queue_tail;
         }
     }
     if (taken != NULL) {
@@ -677,6 +681,30 @@ int wf_file_adapter_hold_for_contexts(
     wf_completion_wait_lock(&adapter->queue_wait);
     adapter->hold_for_contexts = 1u;
     adapter->grow_for_peers = grow_for_peers != 0 ? 1u : 0u;
+    wf_completion_wait_unlock(&adapter->queue_wait);
+    return 0;
+}
+
+int wf_file_adapter_grow_for_deadline(wf_file_adapter *adapter) {
+    size_t held;
+    if (!wf_file_adapter_initialized(adapter)) {
+        return EINVAL;
+    }
+    wf_completion_wait_lock(&adapter->queue_wait);
+    held = atomic_load_explicit(&adapter->helper_count, memory_order_relaxed);
+    if (adapter->stopping == 0 && held <= adapter->peer_waits) {
+        if (held >= WF_FILE_HELPER_RECORDS) {
+            wf_file_fail("more host operations waited on other contexts or deadlines at once than the runtime has helper threads for");
+        }
+        if (wf_file_start_helper_locked(adapter) != 0) {
+            wf_file_fail("the host refused a helper thread for an operation with a deadline");
+        }
+        atomic_store_explicit(
+            &adapter->helper_count,
+            held + 1,
+            memory_order_release
+        );
+    }
     wf_completion_wait_unlock(&adapter->queue_wait);
     return 0;
 }

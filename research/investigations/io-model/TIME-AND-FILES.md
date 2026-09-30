@@ -360,10 +360,11 @@ would otherwise be made in place on that thread when no other context is
 running, and a blocking call made there could not be ended by the thread
 blocked in it. A socket receive, send or accept goes to the readiness route,
 where the driver waits for the descriptor; any other operation goes to the
-helpers, as every operation does once contexts run. A pool pinned to zero
-helpers has no other thread, so there the operation ends when the host
-answers (`docs/todo.md`, "A pinned pool of zero helpers cannot end a blocking
-operation at its deadline").
+helpers, and the program keeps every later operation on them, as it does
+once contexts run, since a program that bounds a wait waits on another party.
+A pool that `WF_IO_HELPERS` pins grows by one helper when none is free to
+take such an operation, and a pool pinned at zero leaves it to that helper,
+so the deadline ends it on every setting.
 
 The contexts counted as waiting on the host (`host_waits`) include those
 waiting on a deadline, so a program whose only pending wait is a sleep is not

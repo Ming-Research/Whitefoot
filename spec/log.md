@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-09-30 v0.83: a deadline completes the wait, and each clock and sync fact is stated once
+
+Rules: changed PRE-2
+
+Owner-approved: 2026-09-30, the owner approved decision cards 6 and 9 of the completion review's findings as recommended ("all agreed", written in Chinese).
+
+Summary: PRE-2 stated only when `DeadlinePassed` may appear, which a call that never returned also satisfied; it now states that an outcome the host has not produced before the clock reaches the deadline is produced then as `DeadlinePassed` with nothing transferred, so the call completes as [WAIT-2] completes every waiting call whose outcome has been produced, and that `DeadlinePassed` arises in no other way. The ordering of two `now` reads through one clock, the completion of `sleep_until` and the promise of `sync_file` were each stated in PRE-2's prose and again in the record's doc string; the prose keeps what the doc strings do not say, and its sentence on `sync_file`, which lacked a verb, now states only what lies outside this specification. Selection ground: a deadline that bounds nothing is no bound, and each normative fact is stated once.
+
 ## 2026-09-30 v0.83: clocks, deadlines and append-only files
 
 Rules: changed PRE-2, TYPE-2

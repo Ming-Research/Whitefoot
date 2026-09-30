@@ -1805,19 +1805,6 @@ rarely insert at the same place.
   stopped between the two steps with one of the two files whole. Reopen when
   a program must rewrite or remove what it wrote.
 
-- **A pinned pool of zero helpers cannot end a blocking operation at its
-  deadline.** An operation with a deadline that the ring and the readiness
-  route do not carry, such as a read of standard input without a ring, goes
-  to the helpers so the driver thread stays free to end it; with
-  `WF_IO_HELPERS=0` the waiting thread is the queue's only engine and makes
-  the call itself, so the operation ends only when the host answers. The
-  deadline's promise [PRE-2] still holds, since it bounds when
-  `DeadlinePassed` may appear and not how soon, but the program waits past
-  its deadline. Either refuse a deadline-bearing operation that setting would
-  block, or document the setting as unbounded. Validate with the
-  `stdin_deadline.wf` program under `WF_IO_HELPERS=0` without a ring. Reopen
-  with the next change to the helper settings.
-
 - **A clock's readings cannot be replaced for a test.** `now` and the
   deadline heap read the host's monotonic clock, so a program's behavior at
   a deadline is tested by waiting for it: the deadline programs and cases

@@ -599,6 +599,17 @@ impl CompiledProgram {
         delay: std::time::Duration,
         native_ring: bool,
     ) -> Output {
+        self.run_with_late_input_and_settings(bytes, delay, native_ring, &[])
+    }
+
+    /// [`Self::run_with_late_input`] with the runtime settings named.
+    pub fn run_with_late_input_and_settings(
+        &self,
+        bytes: &[u8],
+        delay: std::time::Duration,
+        native_ring: bool,
+        settings: &[(&str, &str)],
+    ) -> Output {
         let (reader, mut writer) = std::io::pipe().expect("create the input pipe");
         let mut command = Command::new(&self.executable);
         command
@@ -607,6 +618,9 @@ impl CompiledProgram {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         select_route(&mut command, native_ring);
+        for (name, value) in settings {
+            command.env(name, value);
+        }
         let child = ProgramChild::spawn(&mut command).expect("spawn compiled program");
         let bytes = bytes.to_vec();
         let writer = std::thread::spawn(move || {

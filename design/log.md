@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-09-30 Complete a bounded wait even under a pinned pool, and record the switch it makes
+
+Nodes: compiler/waiting-contexts/bounded-waits, compiler/waiting-contexts, compiler/completion-runtime, language/data-model/opaque-struct, language/system-interface/clocks, language/system-interface/deadlines, language/system-interface/writable-directory, language/system-interface/outcome-typing
+
+Owner-approved: 2026-09-30, the owner approved decision cards 6 to 9 of the completion review's findings as recommended ("all agreed", written in Chinese): card 6 took the pinned-pool exception, card 7 option B, and card 8 the opaque-struct wording.
+
+Summary: compiler/waiting-contexts/bounded-waits now states that an operation with a deadline that reaches the helpers switches the program to the policy the first context other than the root switches it to, because a program that bounds a wait waits on another party, refusing a helper that retires after that one operation until a program shows the handoff cost; and that a pool `WF_IO_HELPERS` pins grows by one helper when none is free to take such an operation, the waiting thread of a pool pinned at zero leaving it to that helper, because [PRE-2] now produces the outcome once the deadline is reached, which the thread inside the operation cannot bring about. compiler/waiting-contexts and compiler/completion-runtime name the switch where they said only a context started it. language/data-model/opaque-struct says a host function forms every opaque struct its module declares, handles and values such as `Instant` alike, as [TYPE-2] does since v0.83. The other nodes named here are the previous entry's, which this branch also brings to main. This ruling authorizes no merge.
+
 ## 2026-09-30 Give programs clocks, deadlines and append-only files
 
 Nodes: language/system-interface/clocks, language/system-interface/deadlines, language/system-interface/writable-directory, language/system-interface/outcome-typing, compiler/waiting-contexts/bounded-waits

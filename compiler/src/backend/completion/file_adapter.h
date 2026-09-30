@@ -424,6 +424,14 @@ int wf_file_adapter_hold_for_contexts(
     int grow_for_peers
 );
 
+/* Starts one more helper, past the cap and past a pinned count, when no
+ * helper is free to take an operation with a deadline: there is none, or
+ * every one is inside a request that may wait on a peer.  The thread that
+ * must end such an operation at its deadline [PRE-2] cannot be the one inside
+ * it, so this is the one place a pinned pool grows; the runtime calls it
+ * before submitting such an operation to a pinned pool. */
+int wf_file_adapter_grow_for_deadline(wf_file_adapter *adapter);
+
 /* Read without the queue lock. Zero means the calling thread is itself the
  * only engine this queue has. */
 size_t wf_file_adapter_helper_count(const wf_file_adapter *adapter);

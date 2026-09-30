@@ -520,6 +520,15 @@ wf_file_result wf_file_execute_direct(wf_file_request *request) {
             return result;
         }
         switch (request->kind) {
+        /* An append or a sync of a regular file never waits for readiness,
+         * and carries no deadline, so an interruption by some other signal
+         * is retried and any other refusal is its answer. */
+        case WF_FILE_APPEND:
+        case WF_FILE_SYNC:
+            if (result.head.error_code == EINTR) {
+                continue;
+            }
+            return result;
         case WF_FILE_READ:
         case WF_FILE_WRITE:
         case WF_FILE_PREAD:

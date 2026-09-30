@@ -2919,7 +2919,14 @@ static void wf_bridge_join(wf_completion_record *record) {
             uint64_t epoch;
             if (now >= deadline) break;
             epoch = wf_completion_wake_epoch(&wf_bridge_runtime);
-            wf_bridge_park(epoch, (uint32_t)((deadline - now + 999999u) / 1000000u));
+            {
+                /* A deadline instant_after saturated lies centuries away, so
+                 * the park is bounded to what its milliseconds hold and the
+                 * loop parks again. */
+                uint64_t left = (deadline - now) / 1000000u + 1u;
+                if (left >= UINT32_MAX) left = UINT32_MAX - 1u;
+                wf_bridge_park(epoch, (uint32_t)left);
+            }
         }
         record->result.kind = record->request.kind;
         record->result.value = 0;
@@ -3244,10 +3251,15 @@ static void wf_bridge_dispatch(wf_completion_record *record) {
     if (bounded) {
         /* An operation with a deadline [PRE-2] is never made on the driver
          * thread, which is the thread that has to end it: the helpers take
-         * it, as they take every operation once contexts run.  A pinned
-         * count of zero helpers leaves the waiting thread the queue's only
-         * engine, and such an operation then ends when the host answers. */
+         * it, and the program keeps every later operation on them, as once
+         * a context other than the root starts, since a program that bounds
+         * a wait waits on another party.  A pinned pool keeps its count
+         * except for one more helper when none is free to take this
+         * operation. */
         wf_bridge_hold_for_contexts();
+        if (atomic_load_explicit(&wf_bridge_helpers_pinned, memory_order_relaxed) != 0) {
+            (void)wf_file_adapter_grow_for_deadline(&wf_bridge_adapter);
+        }
     }
     wf_bridge_submit_file(record);
 }

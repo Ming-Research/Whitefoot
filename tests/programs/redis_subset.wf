@@ -110,7 +110,13 @@ const reply_full: Array<u8, 20> =[45_u8, 69_u8, 82_u8, 82_u8, 32_u8, 107_u8, 101
 
 const reply_syntax: Array<u8, 19> =[45_u8, 69_u8, 82_u8, 82_u8, 32_u8, 115_u8, 121_u8, 110_u8, 116_u8, 97_u8, 120_u8, 32_u8, 101_u8, 114_u8, 114_u8, 111_u8, 114_u8, 13_u8, 10_u8];
 
-const reply_expire: Array<u8, 26> =[45_u8, 69_u8, 82_u8, 82_u8, 32_u8, 105_u8, 110_u8, 118_u8, 97_u8, 108_u8, 105_u8, 100_u8, 32_u8, 101_u8, 120_u8, 112_u8, 105_u8, 114_u8, 101_u8, 32_u8, 116_u8, 105_u8, 109_u8, 101_u8, 13_u8, 10_u8];
+const reply_expire_set: Array<u8, 43> =[45_u8, 69_u8, 82_u8, 82_u8, 32_u8, 105_u8, 110_u8, 118_u8, 97_u8, 108_u8, 105_u8, 100_u8, 32_u8, 101_u8, 120_u8, 112_u8, 105_u8, 114_u8, 101_u8, 32_u8, 116_u8, 105_u8, 109_u8, 101_u8, 32_u8, 105_u8, 110_u8, 32_u8, 39_u8, 115_u8, 101_u8, 116_u8, 39_u8, 32_u8, 99_u8, 111_u8, 109_u8, 109_u8, 97_u8, 110_u8, 100_u8, 13_u8, 10_u8];
+
+const reply_expire_expire: Array<u8, 46> =[45_u8, 69_u8, 82_u8, 82_u8, 32_u8, 105_u8, 110_u8, 118_u8, 97_u8, 108_u8, 105_u8, 100_u8, 32_u8, 101_u8, 120_u8, 112_u8, 105_u8, 114_u8, 101_u8, 32_u8, 116_u8, 105_u8, 109_u8, 101_u8, 32_u8, 105_u8, 110_u8, 32_u8, 39_u8, 101_u8, 120_u8, 112_u8, 105_u8, 114_u8, 101_u8, 39_u8, 32_u8, 99_u8, 111_u8, 109_u8, 109_u8, 97_u8, 110_u8, 100_u8, 13_u8, 10_u8];
+
+const reply_expire_pexpire: Array<u8, 47> =[45_u8, 69_u8, 82_u8, 82_u8, 32_u8, 105_u8, 110_u8, 118_u8, 97_u8, 108_u8, 105_u8, 100_u8, 32_u8, 101_u8, 120_u8, 112_u8, 105_u8, 114_u8, 101_u8, 32_u8, 116_u8, 105_u8, 109_u8, 101_u8, 32_u8, 105_u8, 110_u8, 32_u8, 39_u8, 112_u8, 101_u8, 120_u8, 112_u8, 105_u8, 114_u8, 101_u8, 39_u8, 32_u8, 99_u8, 111_u8, 109_u8, 109_u8, 97_u8, 110_u8, 100_u8, 13_u8, 10_u8];
+
+const reply_expire_pexpireat: Array<u8, 49> =[45_u8, 69_u8, 82_u8, 82_u8, 32_u8, 105_u8, 110_u8, 118_u8, 97_u8, 108_u8, 105_u8, 100_u8, 32_u8, 101_u8, 120_u8, 112_u8, 105_u8, 114_u8, 101_u8, 32_u8, 116_u8, 105_u8, 109_u8, 101_u8, 32_u8, 105_u8, 110_u8, 32_u8, 39_u8, 112_u8, 101_u8, 120_u8, 112_u8, 105_u8, 114_u8, 101_u8, 97_u8, 116_u8, 39_u8, 32_u8, 99_u8, 111_u8, 109_u8, 109_u8, 97_u8, 110_u8, 100_u8, 13_u8, 10_u8];
 
 struct Key {
   bytes: Array<u8, 48>;
@@ -143,6 +149,8 @@ struct Store {
 struct Time {
   now: u64;
   unix_ms: u64;
+  check: u64;
+  loading: Bool;
 }
 
 struct Copied {
@@ -831,7 +839,7 @@ fn log_key_command(log: &Box<Slots<u8>>, word: &[u8], input: &[u8], command: &Co
 }
 
 fn log_expire_at(log: &Box<Slots<u8>>, input: &[u8], command: &Command, at_ms: u64) -> result: unit reads(input), reads(command), writes(log) {
-  doc "Appends PEXPIREAT key with the expiry as calendar milliseconds, as Redis 7 writes every expiry.";
+  doc "Appends PEXPIREAT key with the expiry as calendar milliseconds, as Redis 7 writes an expiry EXPIRE, PEXPIRE or PEXPIREAT sets; Redis writes a SET with an expiry as one SET with PXAT, which this subset writes as SET followed by PEXPIREAT.";
   let needed = command^.second_length +wrap 96_u64;
   log_reserve(log: log, needed: needed);
   log_count(log: log, count: 3_u64);
@@ -872,7 +880,7 @@ fn run_set(store: &Shared<Store>, input: &[u8], command: &Command, output: &[u8]
     }
     let invalid = bor(zero, beyond);
     if invalid {
-      let after = put_word(output: output, at: at, word: &reply_expire[0_u64..26_u64]);
+      let after = put_word(output: output, at: at, word: &reply_expire_set[0_u64..43_u64]);
       return after;
     }
     set ttl_ms = number.value;
@@ -936,7 +944,7 @@ fn run_get(store: &Shared<Store>, input: &[u8], command: &Command, output: &[u8]
     return after;
   }
   let key = make_key(input: input, start: command^.second_start, length: command^.second_length);
-  set copied^.now = time^.now;
+  set copied^.now = time^.check;
   set copied^.expired = False();
   let found = Err<u64, unit>(error: unit);
   atomic state = &store^ {
@@ -980,7 +988,7 @@ fn run_del(store: &Shared<Store>, input: &[u8], command: &Command, output: &[u8]
       let pair = hash_map_remove::<KeyBytes, Entry, 4194304>(map: &state^.map, key: &key, env: env);
       match move pair {
         Some(value: gone) => {
-          let reached = expired(expires: gone.value.expires, now: time^.now);
+          let reached = expired(expires: gone.value.expires, now: time^.check);
           if reached {
           } else {
             set removed = 1_u64;
@@ -1005,7 +1013,7 @@ fn run_incr(store: &Shared<Store>, input: &[u8], command: &Command, output: &[u8
     return after;
   }
   let key = make_key(input: input, start: command^.second_start, length: command^.second_length);
-  let counted = Counted(value: 0_u64, now: time^.now, state: 0_u64);
+  let counted = Counted(value: 0_u64, now: time^.check, state: 0_u64);
   atomic state = &store^ {
     let edited = hash_map_edit::<KeyBytes, Entry, Counted, u64, fn bump_value, 4194304>(map: &state^.map, key: &key, key_env: env, edit_env: &counted);
     let fresh_needed = False();
@@ -1041,8 +1049,8 @@ fn run_incr(store: &Shared<Store>, input: &[u8], command: &Command, output: &[u8
   return after;
 }
 
-fn run_expire(store: &Shared<Store>, input: &[u8], command: &Command, output: &[u8], at: u64, env: &KeyEnv, time: &Time, scale: u64, absolute: Bool) -> result: u64 reads(store), reads(input), reads(command), reads(env), reads(time), writes(output) waits {
-  doc "EXPIRE key seconds (scale 1000), PEXPIRE key milliseconds (scale 1) and PEXPIREAT key calendar-milliseconds (absolute): gives a live key an expiry, or removes it when the expiry is zero or already past, and answers 1 when the key was live and 0 otherwise.";
+fn run_expire(store: &Shared<Store>, input: &[u8], command: &Command, output: &[u8], at: u64, env: &KeyEnv, time: &Time, scale: u64, absolute: Bool, invalid: &[u8]) -> result: u64 reads(store), reads(input), reads(command), reads(env), reads(time), reads(invalid), writes(output) waits {
+  doc "EXPIRE key seconds (scale 1000), PEXPIRE key milliseconds (scale 1) and PEXPIREAT key calendar-milliseconds (absolute): gives a live key an expiry, or removes it when the expiry is zero or already past, and answers 1 when the key was live and 0 otherwise. While the file is replayed an expiry already past is kept as one already reached, as Redis keeps it while loading, so a later PERSIST in the file still finds the key; invalid is the reply to an expiry out of range.";
   if command^.second_length > 48_u64 {
     let after = put_word(output: output, at: at, word: &reply_zero[0_u64..4_u64]);
     return after;
@@ -1068,26 +1076,32 @@ fn run_expire(store: &Shared<Store>, input: &[u8], command: &Command, output: &[
       set limit = 1000000000_u64;
     }
     if number.value > limit {
-      let after = put_word(output: output, at: at, word: &reply_expire[0_u64..26_u64]);
+      let after = put_word(output: output, at: at, word: invalid);
       return after;
     }
     set ttl_ms = number.value *wrap scale;
   }
   if ttl_ms > 1000000000000_u64 {
-    let after = put_word(output: output, at: at, word: &reply_expire[0_u64..26_u64]);
+    let after = put_word(output: output, at: at, word: invalid);
     return after;
   }
   let key = make_key(input: input, start: command^.second_start, length: command^.second_length);
   let ttl_ns = ttl_ms *wrap 1000000_u64;
   let expires = time^.now +wrap ttl_ns;
+  if remove_now {
+    if time^.loading {
+      set remove_now = False();
+      set expires = 1_u64;
+    }
+  }
   let at_ms = time^.unix_ms +wrap ttl_ms;
-  let expiry = Expiry(at: expires, now: time^.now, state: 0_u64);
+  let expiry = Expiry(at: expires, now: time^.check, state: 0_u64);
   atomic state = &store^ {
     if remove_now {
       let pair = hash_map_remove::<KeyBytes, Entry, 4194304>(map: &state^.map, key: &key, env: env);
       match move pair {
         Some(value: gone) => {
-          let reached = expired(expires: gone.value.expires, now: time^.now);
+          let reached = expired(expires: gone.value.expires, now: time^.check);
           if reached {
           } else {
             set expiry.state = 1_u64;
@@ -1129,7 +1143,7 @@ fn run_expire(store: &Shared<Store>, input: &[u8], command: &Command, output: &[
 
 fn run_ttl(store: &Shared<Store>, input: &[u8], command: &Command, output: &[u8], at: u64, env: &KeyEnv, time: &Time, in_seconds: Bool) -> result: u64 reads(store), reads(input), reads(command), reads(env), reads(time), writes(output) waits {
   doc "TTL key and PTTL key: answers the time a live key has left, in seconds rounded as Redis rounds them or in milliseconds, -1 for a key without an expiry and -2 for an absent or expired one.";
-  let remaining = Remaining(left: 0_u64, now: time^.now, state: 3_u64);
+  let remaining = Remaining(left: 0_u64, now: time^.check, state: 3_u64);
   if command^.second_length <= 48_u64 {
     let key = make_key(input: input, start: command^.second_start, length: command^.second_length);
     atomic state = &store^ {
@@ -1159,7 +1173,7 @@ fn run_ttl(store: &Shared<Store>, input: &[u8], command: &Command, output: &[u8]
 
 fn run_persist(store: &Shared<Store>, input: &[u8], command: &Command, output: &[u8], at: u64, env: &KeyEnv, time: &Time) -> result: u64 reads(store), reads(input), reads(command), reads(env), reads(time), writes(output) waits {
   doc "PERSIST key: removes a live key's expiry and answers 1 when it had one, 0 otherwise.";
-  let expiry = Expiry(at: 0_u64, now: time^.now, state: 0_u64);
+  let expiry = Expiry(at: 0_u64, now: time^.check, state: 0_u64);
   if command^.second_length <= 48_u64 {
     let key = make_key(input: input, start: command^.second_start, length: command^.second_length);
     atomic state = &store^ {
@@ -1233,17 +1247,17 @@ fn execute(store: &Shared<Store>, input: &[u8], command: &Command, output: &[u8]
     }
   } else if name_is(input: input, start: start, length: length, word: &word_expire[0_u64..6_u64]) {
     if count == 3_u64 {
-      let after = run_expire(store: store, input: input, command: command, output: output, at: at, env: env, time: time, scale: 1000_u64, absolute: relative);
+      let after = run_expire(store: store, input: input, command: command, output: output, at: at, env: env, time: time, scale: 1000_u64, absolute: relative, invalid: &reply_expire_expire[0_u64..46_u64]);
       return after;
     }
   } else if name_is(input: input, start: start, length: length, word: &word_pexpire[0_u64..7_u64]) {
     if count == 3_u64 {
-      let after = run_expire(store: store, input: input, command: command, output: output, at: at, env: env, time: time, scale: 1_u64, absolute: relative);
+      let after = run_expire(store: store, input: input, command: command, output: output, at: at, env: env, time: time, scale: 1_u64, absolute: relative, invalid: &reply_expire_pexpire[0_u64..47_u64]);
       return after;
     }
   } else if name_is(input: input, start: start, length: length, word: &word_pexpireat[0_u64..9_u64]) {
     if count == 3_u64 {
-      let after = run_expire(store: store, input: input, command: command, output: output, at: at, env: env, time: time, scale: 1_u64, absolute: calendar);
+      let after = run_expire(store: store, input: input, command: command, output: output, at: at, env: env, time: time, scale: 1_u64, absolute: calendar, invalid: &reply_expire_pexpireat[0_u64..49_u64]);
       return after;
     }
   } else if name_is(input: input, start: start, length: length, word: &word_ttl[0_u64..3_u64]) {
@@ -1323,7 +1337,8 @@ fn read_time(clock: &Clock, wall: &WallClock, origin: Instant) -> result: Time r
     let wide = cvt.wrap::<i64, u64>(calendar);
     set unix_ms = wide / 1000000_u64;
   }
-  return Time(now: offset, unix_ms: unix_ms);
+  let live = False();
+  return Time(now: offset, unix_ms: unix_ms, check: offset, loading: live);
 }
 
 fn serve(connection: TcpConnection, factory: HandleFactory, store: Shared<Store>, clock: Clock, wall: WallClock, origin: Instant, idle: u64) -> result: unit pure waits {
@@ -1460,7 +1475,7 @@ fn expire_batch(store: &Store, now: u64, env: &KeyEnv) -> result: Bool reads(env
 }
 
 fn expire_keys(store: Shared<Store>, clock: Clock, origin: Instant) -> result: unit pure waits {
-  doc "Wakes ten times a second and removes the keys whose expiry has passed, in batches of atomic statements so that clients proceed between them, until the program stops.";
+  doc "Wakes ten times a second and removes the keys whose expiry has passed, in batches of atomic statements so that clients proceed between them, until the program stops. A key whose expiry did not fit the queue, which holds 4,194,304 entries counting those a later command replaced, is removed only when a command finds it expired.";
   let env = KeyEnv(seed: 0_u64);
   loop @ticks {
     let started = std::time::now(clock: &clock);
@@ -1545,7 +1560,7 @@ fn write_log(store: Shared<Store>, factory: HandleFactory, file: WriteFile, cloc
 fn replay(store: &Shared<Store>, factory: &HandleFactory, root: &DirectoryRead, name: &[u8], name_length: u64, time: &Time) -> result: u64 reads(store), reads(root), reads(name), reads(time), writes(factory) waits contract {
   requires name_length <= name^.len;
 } {
-  doc "Applies every command of the append-only file the name names, when one exists, as a client's commands would apply, and returns how many it applied. An expiry the file gives as calendar time is measured against the calendar time now, so a key whose expiry passed while the program was stopped is removed.";
+  doc "Applies every command of the append-only file the name names, when one exists, and returns how many it applied. As Redis does while loading, no key counts as expired during the replay, time's check being zero, and an expiry whose calendar time has passed is kept as one already reached, so the commands after it in the file apply as they did when they were written; lazy and active expiry remove such a key once the subset listens.";
   let applied = 0_u64;
   match open_file(factory: factory, root: root, name: name, start: 0_u64, end: name_length) {
     Ok(value: file) => {
@@ -1733,7 +1748,9 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let keyspace = shared_new::<Store>(value: move initial);
   let failed = False();
   if name_length > 0_u64 {
-    let time = read_time(clock: &clock, wall: &wall_clock, origin: origin);
+    let read = read_time(clock: &clock, wall: &wall_clock, origin: origin);
+    let replaying = True();
+    let time = Time(now: read.now, unix_ms: read.unix_ms, check: 0_u64, loading: replaying);
     let applied = replay(store: &keyspace, factory: &handles, root: &cwd, name: name, name_length: name_length, time: &time);
     match open_append(factory: &handles, root: &cwd_write, name: name, start: 0_u64, end: name_length) {
       Ok(value: file) => {
