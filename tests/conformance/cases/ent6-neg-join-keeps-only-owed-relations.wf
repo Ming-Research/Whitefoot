@@ -1,0 +1,21 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn spread(flag: Bool) -> out: u64 pure {
+  doc "Both arms prove a + b <= 3, a relation over two values, but no loop around the join owes it, so the join keeps only what both arms carry over the same images, and the relation is unproved after it [ENT-6, INV-1].";
+  let a = 0_u64;
+  let b = 0_u64;
+  if flag {
+    set a = 1_u64;
+    set b = 2_u64;
+  } else {
+    set a = 2_u64;
+    set b = 1_u64;
+  }
+  invariant sum: a + b <= 3_u64;
+  return a;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

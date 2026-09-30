@@ -136,6 +136,15 @@ impl Judging<'_, '_, '_> {
     }
 }
 
+/// One measure a `swap` moves to the corresponding place under the other
+/// target: its affine image and its closed L0 bounds before the call.
+struct ExchangedMeasure {
+    term: TermId,
+    image: Option<AffineForm>,
+    lower: Option<i128>,
+    upper: Option<i128>,
+}
+
 impl Analyzer<'_, '_> {
     /// [TYPE-11] the type invariants of the atomic block being walked, owed
     /// at `site`, an edge that leaves it; judged as a requirement the body
@@ -295,8 +304,33 @@ impl Analyzer<'_, '_> {
         } else {
             self.apply_kills(state, &events);
         }
-        for (term, image) in exchanged {
-            state.affine.measure_atoms.get_mut().insert(term, image);
+        if !exchanged.is_empty() {
+            let event = self
+                .vocabulary
+                .proof_event(FlowEventKind::S5, expression_node_path(expression));
+            for moved in exchanged {
+                if let Some(image) = moved.image {
+                    state.affine.measure_atoms.get_mut().insert(moved.term, image);
+                }
+                if let Some(upper) = moved.upper {
+                    state.facts.establish_bound_with_proof(
+                        moved.term,
+                        ZERO,
+                        upper,
+                        &mut self.vocabulary.derivations,
+                        event,
+                    );
+                }
+                if let Some(lower) = moved.lower {
+                    state.facts.establish_bound_with_proof(
+                        ZERO,
+                        moved.term,
+                        -lower,
+                        &mut self.vocabulary.derivations,
+                        event,
+                    );
+                }
+            }
         }
         if let Some(prepared) = &judgment.prepared_call {
             self.reasoning()
@@ -305,7 +339,8 @@ impl Analyzer<'_, '_> {
         judgment
     }
 
-    /// [OP-11] the measure images a `swap` moves between its two targets:
+    /// [OP-11] the measure images and closed L0 bounds a `swap` moves between
+    /// its two targets:
     /// each image a measure term under one target holds before the call,
     /// filed under the same measure of the corresponding place under the
     /// other target, to be installed once the call's kills have retargeted
@@ -316,7 +351,7 @@ impl Analyzer<'_, '_> {
         expression: &CheckedExpression,
         events: &[KillEvent],
         state: &ProofFlowState,
-    ) -> Vec<(TermId, AffineForm)> {
+    ) -> Vec<ExchangedMeasure> {
         let CheckedExpression::UserCall { function, .. } = expression else {
             return Vec::new();
         };
@@ -342,20 +377,38 @@ impl Analyzer<'_, '_> {
         let [first, second] = targets.as_slice() else {
             return Vec::new();
         };
-        let held = state
-            .affine
-            .measure_atoms
-            .borrow()
-            .iter()
-            .map(|(term, image)| (*term, image.clone()))
-            .collect::<Vec<_>>();
+        // Every measure term under either target: one with an image moves
+        // that image, and one known only to L0 moves a fresh image bounded by
+        // the closed interval L0 held for it.
+        let mut terms = self.vocabulary.measure_terms();
+        terms.extend(state.affine.measure_atoms.borrow().keys().copied());
+        terms.sort_unstable_by_key(|term| term.0);
+        terms.dedup();
         let mut moved = Vec::new();
-        for (term, image) in held {
+        for term in terms {
             let TermKind::Measure(measure, place) = self.vocabulary.terms.kind(term).clone() else {
                 continue;
             };
+            let under = |target: &ResolvedPlace| {
+                place.root == target.root && place.path.starts_with(&target.path)
+            };
+            if !under(first) && !under(second) {
+                continue;
+            }
+            let image = state.affine.measure_atoms.borrow().get(&term).cloned();
+            let closed = close(
+                &state.facts,
+                &self.vocabulary.terms,
+                &self.vocabulary.goals,
+                &mut self.vocabulary.derivations,
+            );
+            let upper: Option<i128> = closed.tight_bound(term, ZERO);
+            let lower: Option<i128> = closed.tight_bound(ZERO, term).map(|bound| -bound);
+            if image.is_none() && upper.is_none() && lower.is_none() {
+                continue;
+            }
             for (from, to) in [(first, second), (second, first)] {
-                if place.root != from.root || !place.path.starts_with(&from.path) {
+                if !under(from) {
                     continue;
                 }
                 let mut path = to.path.clone();
@@ -364,7 +417,12 @@ impl Analyzer<'_, '_> {
                     root: to.root.clone(),
                     path,
                 };
-                moved.push((self.vocabulary.intern_measure(measure, &target), image.clone()));
+                moved.push(ExchangedMeasure {
+                    term: self.vocabulary.intern_measure(measure, &target),
+                    image: image.clone(),
+                    lower,
+                    upper,
+                });
             }
         }
         moved
@@ -1600,6 +1658,7 @@ impl Analyzer<'_, '_> {
                         (TargetDisposition::Proved, descent)
                     };
                     self.judging().record_loop_progress_outcome(
+                        *id,
                         &descent.node_path,
                         shown,
                         disposition,

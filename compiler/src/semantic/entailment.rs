@@ -723,6 +723,7 @@ pub(crate) struct LoopInvariantOutcome {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct LoopProgressOutcome {
     pub(crate) node_path: NodePath,
+    pub(crate) loop_id: super::model::CheckedLoopId,
     /// The descent the backedge owed, rendered over the rank's operands.
     pub(crate) required_relation: String,
     pub(crate) proved: bool,

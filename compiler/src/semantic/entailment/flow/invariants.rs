@@ -496,6 +496,7 @@ impl Judging<'_, '_, '_> {
     /// [TERM-1] one loop rank's backedge judgment.
     pub(super) fn record_loop_progress_outcome(
         &mut self,
+        loop_id: CheckedLoopId,
         node_path: &crate::NodePath,
         shown: &CheckedAffineRelation,
         disposition: TargetDisposition,
@@ -504,6 +505,7 @@ impl Judging<'_, '_, '_> {
             .loop_progress
             .push(super::super::LoopProgressOutcome {
                 node_path: node_path.clone(),
+                loop_id,
                 required_relation: self.input.render_checked_invariant_relation(shown, None),
                 proved: disposition == TargetDisposition::Proved,
                 refuted: disposition == TargetDisposition::Refuted,

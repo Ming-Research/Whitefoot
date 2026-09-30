@@ -244,9 +244,11 @@ fn hash_map_operations_preserve_owned_pairs_in_both_lowering_modes() {
         "containers/hash-map-program.wf",
         include_bytes!("../../../tests/programs/containers/hash-map-program.wf"),
     )];
-    // Seventeen map backings, ten payload/query child Boxes, and one fresh
-    // Box returned by the borrowed edit callback and consumed by its caller.
-    execute_container_program("hash-map", &sources, 28, false);
+    // Seventeen map backings, ten payload/query child Boxes, one fresh Box
+    // returned by the borrowed edit callback and consumed by its caller, and
+    // the empty stale window each of the seven maps holds for owners a
+    // failed rebuild parks.
+    execute_container_program("hash-map", &sources, 35, false);
 }
 
 #[test]
@@ -280,7 +282,9 @@ fn indexed_memberships_match_the_model_and_release_every_owner_in_both_lowering_
     // direct indexed heapify adds one; the nodrop SlabEdit result adds one
     // backing and two payload Boxes. The source model independently checks
     // dictionary membership, sorted expiration and exact owner identities.
-    execute_container_program("indexed-membership", &sources, 129, false);
+    // Each of the eleven hash maps the stores create also holds the empty
+    // stale window a failed rebuild parks owners in.
+    execute_container_program("indexed-membership", &sources, 140, false);
 }
 
 #[test]

@@ -1,0 +1,31 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Link {
+  value: u64;
+  next: Option<Box<Link>>;
+}
+
+fn lengthen(head: &Option<Box<Link>>) -> result: unit writes(head) {
+  doc "Each iteration adds a Box ahead of the cursor before moving into it, so the Box cells below the cursor never fall: an owned descent may add no Box [TERM-1].";
+  let cursor = head;
+  loop {
+    match cursor^ {
+      Some(value: node) => {
+        let rest = None<Box<Link>>();
+        let fresh = Link(value: 0_u64, next: move rest);
+        let cell = box_new::<Link>(value: move fresh);
+        set node^.inner.next = Some<Box<Link>>(value: move cell);
+        set cursor = &node^.inner.next;
+      }
+      None() => {
+        return unit;
+      }
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

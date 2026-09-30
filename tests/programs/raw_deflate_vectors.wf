@@ -443,7 +443,7 @@ fn check_fixed_match() -> result: u8 pure {
   }
   let fixed_match_index = 0_u64;
   loop @check_fixed_match {
-    let fixed_match_done = fixed_match_index == 16_u64;
+    let fixed_match_done = fixed_match_index >= 16_u64;
     if fixed_match_done {
       break @check_fixed_match;
     } else {
@@ -497,7 +497,7 @@ fn check_fixed_phrase() -> result: u8 pure {
   }
   let fixed_phrase_index = 0_u64;
   loop @check_fixed_phrase {
-    let fixed_phrase_done = fixed_phrase_index == 17_u64;
+    let fixed_phrase_done = fixed_phrase_index >= 17_u64;
     if fixed_phrase_done {
       break @check_fixed_phrase;
     } else {
@@ -552,7 +552,7 @@ fn check_dynamic() -> result: u8 pure {
   }
   let dynamic_output_index = 0_u64;
   loop @check_dynamic_output {
-    let dynamic_output_done = dynamic_output_index == 100_u64;
+    let dynamic_output_done = dynamic_output_index >= 100_u64;
     if dynamic_output_done {
       break @check_dynamic_output;
     } else {
@@ -646,14 +646,14 @@ fn check_dynamic_match() -> result: u8 pure {
   }
   let dynamic_match_repeat = 0_u64;
   loop @check_dynamic_match_repeats {
-    let all_repeats_checked = dynamic_match_repeat == 4_u64;
+    let all_repeats_checked = dynamic_match_repeat >= 4_u64;
     if all_repeats_checked {
       break @check_dynamic_match_repeats;
     } else {
       let dynamic_match_base = dynamic_match_repeat *wrap 100_u64;
       let dynamic_match_index = 0_u64;
       loop @check_dynamic_match_chunk {
-        let chunk_checked = dynamic_match_index == 100_u64;
+        let chunk_checked = dynamic_match_index >= 100_u64;
         if chunk_checked {
           break @check_dynamic_match_chunk;
         } else {
@@ -717,7 +717,7 @@ fn check_mixed_block() -> result: u8 pure {
   }
   let mixed_block_index = 0_u64;
   loop @check_mixed_block_prefix {
-    let mixed_block_prefix_done = mixed_block_index == 100_u64;
+    let mixed_block_prefix_done = mixed_block_index >= 100_u64;
     if mixed_block_prefix_done {
       break @check_mixed_block_prefix;
     } else {

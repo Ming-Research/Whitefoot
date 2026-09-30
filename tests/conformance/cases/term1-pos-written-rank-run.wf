@@ -1,0 +1,26 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn drain(start: u64) -> result: u64 pure {
+  doc "A written rank falls by one and stays nonnegative on the one edge back to the header [TERM-1].";
+  let left = start;
+  let seen = 0_u64;
+  loop (
+    decreases left
+  ) {
+    if left == 0_u64 {
+      return seen;
+    }
+    set left = left - 1_u64;
+    set seen = seen +wrap 1_u64;
+  }
+  return seen;
+}
+
+fn main() -> status: ExitStatus pure {
+  let seen = drain(start: 7_u64);
+  if seen != 7_u64 {
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 0_u8);
+}

@@ -133,7 +133,9 @@ fn emit_byte(state: &InflateState, out: &[u8], value: u8) -> result: Result<unit
 }
 
 fn decode_fixed(state: &InflateState, input: &[u8], out: &[u8]) -> result: Result<unit, InflateError> reads(input), writes(state.input_offset), writes(state.output_offset), writes(state.hold), writes(state.bits), writes(out) {
-  loop @fixed_codes {
+  doc "Every symbol but the end of the block writes at least one byte or fails, so a block holds at most one symbol more than the output has bytes. The walk is counted by that bound: the output position a call advances is not a term a rank or a postcondition can name [TERM-1, FN-9].";
+  let symbol_bound = out^.len +sat 1_u64;
+  for @fixed_codes (step in 0_u64..symbol_bound) {
     let symbol = 0_u64;
     match decode_fixed_symbol(state: state, input: input) {
       Ok(value: decoded_symbol) => {
@@ -156,7 +158,7 @@ fn decode_fixed(state: &InflateState, input: &[u8], out: &[u8]) -> result: Resul
     } else {
       let end_of_block = symbol == 256_u64;
       if end_of_block {
-        break @fixed_codes;
+        return Ok<unit, InflateError>(value: unit);
       } else {
         let copy_length = 0_u64;
         match decode_length(state: state, input: input, symbol: symbol) {
@@ -192,15 +194,18 @@ fn decode_fixed(state: &InflateState, input: &[u8], out: &[u8]) -> result: Resul
       }
     }
   }
-  return Ok<unit, InflateError>(value: unit);
+  let error = InflateError::OutputFull();
+  return Err<unit, InflateError>(error: error);
 }
 
 fn inflate(out: &[u8], input: &[u8]) -> result: Result<u64, InflateError> reads(input), writes(out) {
-  doc "The decoder owns no storage: its compressed input and its destination are two range references the caller formed, and the bit reservoir is one frame-resident struct [REF-4, STOR-1].";
+  doc "The decoder owns no storage: its compressed input and its destination are two range references the caller formed, and the bit reservoir is one frame-resident struct [REF-4, STOR-1]. Every block reads at least its three header bits, so the walk over blocks is counted by the input's bit count; running out of blocks to count means running out of input.";
   let input_length = input^.len;
   let output_length = out^.len;
   let state = InflateState(input_offset: 0_u64, output_offset: 0_u64, hold: 0_u64, bits: 0_u32);
-  loop @blocks {
+  let input_bits = input_length *sat 8_u64;
+  let block_bound = input_bits +sat 1_u64;
+  for @blocks (block in 0_u64..block_bound) {
     let final_value = 0_u64;
     match read_bits(state: &state, input: input, count: 1_u32, mask: 1_u64) {
       Ok(value: final_bit) => {
@@ -293,7 +298,7 @@ fn inflate(out: &[u8], input: &[u8]) -> result: Result<u64, InflateError> reads(
       }
       let copied = 0_u64;
       loop @copy_stored {
-        let copy_done = copied == copy_length;
+        let copy_done = copied >= copy_length;
         if copy_done {
           break @copy_stored;
         } else {
@@ -344,8 +349,9 @@ fn inflate(out: &[u8], input: &[u8]) -> result: Result<u64, InflateError> reads(
       }
     }
     if final_block {
-      break @blocks;
+      return Ok<u64, InflateError>(value: state.output_offset);
     }
   }
-  return Ok<u64, InflateError>(value: state.output_offset);
+  let error = InflateError::Truncated();
+  return Err<u64, InflateError>(error: error);
 }

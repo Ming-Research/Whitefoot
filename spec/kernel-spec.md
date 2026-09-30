@@ -1180,6 +1180,7 @@ Every possible pair of exchange targets must be equal or disjoint, with neither 
 That admission concerns its own two arguments and nothing else: against any other statement a `swap` is judged by the ordinary pairwise rule on its two write paths [PAR-1, EFF-5], so an adjacent statement touching either path denies overlap permission.
 At every program point each place holds exactly one valid owner; no temporary uninitialized hole, vacancy state, or second owner exists.
 Neither root is consumed: both bindings remain live.
+The exchange moves whole values, so after it each measure [MSR-1] of a place at or below one target has the image the same measure of the corresponding place below the other target had before it; the swap's [ENT-5] kill of both targets precedes that exchange of images [MSR-2].
 A `swap` over a copy place is a hard error citing OP-11 at the first `borrow_expr`, with a repair [DIAG-1]; that refusal is judged once at the written bound, exactly as [OWN-1]'s spelling judgment is, and is not re-made at a concrete instance [FN-2].
 
 [OP-12] The atomic in-place update.
@@ -3382,6 +3383,9 @@ For a normalized affine inequality A, `DIRECT(A)` is exactly the following nonre
 `DIRECT` never selects or subtracts a published affine premise.
 Every invariant conclusion and specification-fixed automatic image is appended when established to one automatic affine-premise sequence; its source category is diagnostic evidence and never partitions proof authority.
 At a join, an inequality survives exactly when the canonically identical inequality is present on every non-contradictory input under [ENT-5]'s all-predecessor rule; contradictory inputs are neutral, and if every input is contradictory the affine sequence is empty because L0 already proves every target.
+A join also keeps each relation a loop owes that every non-contradictory input proves under [MSR-4]'s disposition, formed over the joined images and appended to the sequence after the surviving inequalities: each input satisfies it over its own values, and the joined images take one of them.
+At a join inside a loop's body the relations owed are those the loop and every loop around it owe at their backedges: each header invariant [INV-1] and, for an ordinary loop with a rank, each relation its rank owes and each relation that implies one it owes [TERM-1].
+At the join of an ordinary loop's `break` edges they are that loop's header invariants.
 The surviving sequence is ordered by the first occurrence of each canonical inequality in the first non-contradictory structural predecessor under the edge orders fixed above.
 For each surviving inequality and each non-contradictory predecessor, the retained representative is that predecessor's first occurrence in insertion order; source and derivation evidence selects diagnostic parents only.
 At every query, canonically identical inequalities are represented once at their first occurrence in this sequence.
@@ -3637,14 +3641,17 @@ An unresolved invariant name is the ordinary INV-1 lexical-scope failure and for
 A resolved but unavailable named source, undischarged or malformed relation source, invalid multiplicity, duplicate source, arithmetic or structural overflow, unfolded nonlinear monomial in S, failed final `DIRECT` residual, or redundant block cites PRF-1 at the smallest owning source node and publishes no target.
 
 [TERM-1] Loop progress.
-Each `loop_stmt` whose body can reach its header again [FN-1] makes progress in exactly one of the following forms, the first that applies.
+Each `loop_stmt` whose body can reach its header again [FN-1] makes progress in one of the following forms, taken in this order; the first that applies is the loop's form.
 
 1. **Written rank.** The header begins with a `loop_rank` `decreases R`. R is formed as a `header_invariant`'s `affine_expr` is, over the same operands [INV-1]. Every normal edge from the body back to the header owes `R' < R0` and `0 <= R'`, where `R0` is R's value when the iteration began and `R'` its value on that edge.
 2. **Waiting.** Every path from the start of the body back to the header executes a call of a waiting function [WAIT-1] or an `atomic_stmt` that has a guard [SHARE-2]. The loop owes nothing more.
-3. **Derived rank.** The body's exit test derives a rank R by the table below, and every normal edge from the body back to the header owes `R' < R0`, with `R0` and `R'` as in form 1.
+3. **Derived rank.** The body's exit tests derive ranks by the table below, and every normal edge from the body back to the header owes `R' < R0`, with `R0` and `R'` as in form 1, for one of those ranks R, the same for every edge.
+4. **Structural descent.** Every normal edge from the body back to the header rebinds a reference binding c [REF-1] to a place that extends the place c named when the iteration began by struct-field, payload, `Box` `inner` and subscript steps, at least one of them a `Box` `inner` step, and the body contains no `set_stmt` whose target is not a reference rebinding and whose type is not `unit`, `Bool`, an integer or a float, and no call whose effect row writes anything [EFF-1]. The loop owes nothing more.
 
-The exit test is the body's first statement that is not a `let_stmt`, when every `let_stmt` before it has an initializer that is not a `call` and it is an `if_stmt` one of whose two blocks, its exit block, ends in a `break_stmt` that leaves this loop or in a `return_stmt`.
-Its condition is an integer comparison `a op b`, an `infix` whose operator is a `compare_op` [OP-1], or a binding that one of those `let_stmt`s bound to such a comparison; each operand is an integer literal, a named const, an integer binding, or a measure read [MSR-1], and an operand naming a binding one of those `let_stmt`s introduced is read as that statement's initializer.
+The body's leading statements are its `let_stmt`s whose initializers are not a `call` and its exit tests, up to the first statement of neither kind or the first exit test whose continuing block is not empty.
+An exit test is a leading `if_stmt` one of whose two blocks, its exit block, ends in a `break_stmt` that leaves this loop or a loop around it, or in a `return_stmt`; its other block is its continuing block.
+Its condition is an integer comparison `a op b`, an `infix` whose operator is a `compare_op` [OP-1], or a binding that a leading `let_stmt` bound to such a comparison.
+Each operand is an integer literal, a named const, an integer binding, a measure read [MSR-1], or an exact or `.defined` sum or difference of two operands or product of an operand and an integer literal [OP-1]; an operand naming a binding a leading `let_stmt` introduced is read as that statement's initializer.
 The continuing relation is the condition when the exit block is the `else` block and its negation when the exit block is the first block:
 
 | continuing relation | derived rank |
@@ -3654,11 +3661,12 @@ The continuing relation is the condition when the exit block is the `else` block
 | `x != 0` or `0 != x`, x unsigned | `x` |
 
 Every other continuing relation derives no rank.
-Only a test that continues leads back to the header, and the continuing relation holds there, so the rank's values at the tests that continue are nonnegative and strictly decreasing and the loop reaches its exit in finitely many iterations.
-Because the `let_stmt`s before the exit test call nothing, they write no operand, and R0 is the rank's value at the test.
+Only a test that continues leads toward the header, and its continuing relation holds there, so a rank's values at the tests of it that continue are nonnegative and strictly decreasing, and the loop reaches an exit in finitely many iterations.
+No leading statement before a test writes one of its operands, so `R0` is the rank's value at its test.
+A structural descent lowers the number of `Box` cells in the value c names at each iteration's start: the rebinding enters one of them, and no statement of the body can add one to any value.
 
 A `loop_stmt` that can reach its header again and makes progress in none of these forms is a hard error citing TERM-1 at the `loop_stmt`, with a repair [DIAG-1].
-An owed relation that the fact state at the edge does not prove is a hard error citing TERM-1 at the `loop_rank` of a written rank and at the `loop_stmt` otherwise, with the first such relation, its disposition [MSR-4] and a repair.
+An owed relation is decided at the edge back to the header, after the body, as [INV-1] decides a header invariant's step there; one the fact state at that edge does not prove is a hard error citing TERM-1 at the `loop_rank` of a written rank and at the `loop_stmt` otherwise, with the first such relation, its disposition [MSR-4] and a repair.
 The values `R0` are proof-only: like an invariant, a rank evaluates nothing at runtime and adds no value, branch or trap [INV-1].
 A counted `for_stmt` runs its body at most `upper - lower` times and owes no rank.
 

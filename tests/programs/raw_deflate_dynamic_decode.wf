@@ -43,7 +43,7 @@ fn read_dynamic_code_lengths(state: &InflateState, input: &[u8], code_lengths: &
 } {
   let code_index = 0_u64;
   loop @read_code_lengths {
-    let codes_done = code_index == code_count;
+    let codes_done = code_index >= code_count;
     if codes_done {
       break @read_code_lengths;
     } else {
@@ -81,7 +81,7 @@ fn read_dynamic_code_lengths(state: &InflateState, input: &[u8], code_lengths: &
 }
 
 fn decode_dynamic(state: &InflateState, input: &[u8], out: &[u8]) -> result: Result<unit, InflateError> reads(input), writes(state.input_offset), writes(state.output_offset), writes(state.hold), writes(state.bits), writes(out) {
-  doc "The three code-length runs are inline Slots windows of this frame and the decoder reaches each through one range reference; the frame's release reclaims them, so the block needs no arena and no allocation [TYPE-9, STOR-1, REF-4].";
+  doc "The three code-length runs are inline Slots windows of this frame and the decoder reaches each through one range reference; the frame's release reclaims them, so the block needs no arena and no allocation [TYPE-9, STOR-1, REF-4]. Every symbol but the end of the block writes at least one byte or fails, so the symbol walk is counted by one more than the output's length: the output position a call advances is not a term a rank can name [TERM-1]. The code-length expansion is counted by the number of lengths, since each of its steps stores at least one.";
   let literal_count_bits = 0_u64;
   match read_bits(state: state, input: input, count: 5_u32, mask: 31_u64) {
     Ok(value: read_count) => {
@@ -148,8 +148,8 @@ fn decode_dynamic(state: &InflateState, input: &[u8], out: &[u8]) -> result: Res
   let total_lengths = literal_count +wrap distance_count;
   let position = 0_u64;
   let previous_length = 0_u8;
-  loop @expand_lengths {
-    let lengths_done = position == total_lengths;
+  for @expand_lengths (step in 0_u64..total_lengths) {
+    let lengths_done = position >= total_lengths;
     if lengths_done {
       break @expand_lengths;
     } else {
@@ -194,7 +194,7 @@ fn decode_dynamic(state: &InflateState, input: &[u8], out: &[u8]) -> result: Res
           }
           let repeated = 0_u64;
           loop @repeat_previous_length {
-            let repeated_all = repeated == repeat_count;
+            let repeated_all = repeated >= repeat_count;
             if repeated_all {
               break @repeat_previous_length;
             } else {
@@ -243,7 +243,7 @@ fn decode_dynamic(state: &InflateState, input: &[u8], out: &[u8]) -> result: Res
           }
           let repeated = 0_u64;
           loop @repeat_zero_length {
-            let repeated_all = repeated == repeat_count;
+            let repeated_all = repeated >= repeat_count;
             if repeated_all {
               break @repeat_zero_length;
             } else {
@@ -257,6 +257,11 @@ fn decode_dynamic(state: &InflateState, input: &[u8], out: &[u8]) -> result: Res
       }
     }
   }
+  let lengths_short = position < total_lengths;
+  if lengths_short {
+    let error = InflateError::InvalidHuffmanTree();
+    return Err<unit, InflateError>(error: error);
+  }
   let end_room = literal_window^.len;
   let end_ok = 256_u64 < end_room;
   let end_length = literal_window^[256_u64];
@@ -269,7 +274,8 @@ fn decode_dynamic(state: &InflateState, input: &[u8], out: &[u8]) -> result: Res
   let literal_table = propagate build_huffman_table(lengths: literal_window, symbol_count: literal_count, max_bits: 15_u32, allow_single: literal_distance_allow_single, allow_empty: code_tree_allow_empty);
   let distance_allow_empty = True();
   let distance_table = propagate build_huffman_table(lengths: distance_window, symbol_count: distance_count, max_bits: 15_u32, allow_single: literal_distance_allow_single, allow_empty: distance_allow_empty);
-  loop @dynamic_codes {
+  let symbol_bound = out^.len +sat 1_u64;
+  for @dynamic_codes (step in 0_u64..symbol_bound) {
     let symbol = 0_u64;
     match decode_table_symbol(state: state, input: input, table: &literal_table) {
       Ok(value: decoded_symbol) => {
@@ -292,7 +298,7 @@ fn decode_dynamic(state: &InflateState, input: &[u8], out: &[u8]) -> result: Res
     } else {
       let end_of_block = symbol == 256_u64;
       if end_of_block {
-        break @dynamic_codes;
+        return Ok<unit, InflateError>(value: unit);
       } else {
         let copy_length = 0_u64;
         match decode_length(state: state, input: input, symbol: symbol) {
@@ -327,5 +333,6 @@ fn decode_dynamic(state: &InflateState, input: &[u8], out: &[u8]) -> result: Res
       }
     }
   }
-  return Ok<unit, InflateError>(value: unit);
+  let error = InflateError::OutputFull();
+  return Err<unit, InflateError>(error: error);
 }

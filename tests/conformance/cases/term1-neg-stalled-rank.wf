@@ -1,0 +1,18 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn stall(limit: u64) -> result: u64 pure {
+  doc "The exit test derives limit - cursor, but the backedge leaves the cursor where it was, so the descent is refuted [TERM-1, MSR-4].";
+  let cursor = 0_u64;
+  loop {
+    if cursor >= limit {
+      break;
+    }
+    set cursor = cursor;
+  }
+  return cursor;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

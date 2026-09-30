@@ -77,6 +77,58 @@ rarely insert at the same place.
 
 ## Checker precision and proof cost
 
+- **A rank cannot name a field advanced by a call.** The DEFLATE symbol
+  loops (`tests/programs/raw_deflate.wf` `decode_fixed`,
+  `raw_deflate_dynamic_decode.wf` `decode_dynamic`) progress because
+  `emit_byte` and `copy_distance` advance `state^.output_offset`, but a
+  written rank admits no field reached through a reference [INV-1] and a
+  routed postcondition names only its payload [FN-9], so neither the
+  callee's advance nor the loop's descent can be stated. They are counted
+  by `out^.len +sat 1_u64` with an `OutputFull` after the count, a runtime
+  counter and a result no input reaches.
+  - This meets the reopening condition of the refused "field atoms in loop
+    invariants" (`design/language/checks-and-proofs.md`).
+  - Change: admit an integer field place as an affine atom with a measure's
+    [MSR-2] kill rule, and let a postcondition relate such a field to its
+    entry value.
+  - Validate by writing `decreases out^.len - state^.output_offset` on both
+    loops with the counted bound removed.
+  - Reopen with the next state-machine or decoder loop that needs it.
+
+- **A cursor removal that shrinks its referent has no progress form.**
+  `remove_even` in `tests/programs/owned_link_cursors.wf` either moves its
+  cursor into the next `Box` or replaces the cursor's referent by its tail;
+  the structural form [TERM-1] measures only the move, so the walk is
+  counted by a list length the caller passes.
+  - Change: admit a backedge that replaces the cursor's referent by a value
+    moved out of a proper part of it, or make structural recursion (a planned TERM-2 rule)
+    the list filter's form.
+  - Reopen when TERM-2 is designed.
+
+- **Three automatic-derivation gaps the loop migration met.** Each has a
+  writer workaround recorded in
+  `research/investigations/termination/runs/migration.md`.
+  - `x / c < x` from `x >= 1` is not derived: it needs a rounding step
+    (`x - x/10 >= 0.9x`) the affine layer does not take.
+  - A `+wrap` step is exact only when L0 bounds its operand; a header
+    invariant alone does not make `i +wrap 1` exact, so writers use `+`.
+  - A backedge after `take_back` then `place_back` on two windows needs one
+    intermediate local invariant (`hash_map_rebuild`'s park loop).
+  - Reopen together with the next change to [ENT-3.S7]'s rows or to AUTO.
+
+- **Measure the cost of carrying owed relations through joins.** [ENT-6]
+  now proves each relation a loop owes at every join inside its body, once
+  per joined state, cloning each state per relation
+  (`join_carrying` in `compiler/src/semantic/entailment/flow/walk.rs`).
+  - The branch-join investigation's 10% time and RSS criterion was not run
+    for it.
+  - Change: clone each input once and prove every relation against it, and
+    skip relations whose operands no input wrote.
+  - Validate with that investigation's replay on the Snowghost modules and
+    the scale family.
+  - Reopen before the rule leaves draft or when a check stage exceeds its
+    budget.
+
 - **A widening conversion's operand is read as any affine side.**
   [ENT-2] admits `cvt::<S, D>(e)` as a relation term or comparison-origin
   operand only for e a term or constant. [FN-9] relation terms match that:
@@ -893,25 +945,21 @@ rarely insert at the same place.
   next change to `Slots` lowering or when a profile shows the clearing
   again.
 
-- **`hash_map_rebuild` ends its re-insertion loop only by a prose
-  argument.** In `lib/std/collections/hash_map/hash-map.wf`, the `@owner`
-  loop retries while its one-slot `pending` window is full.
-  - The `for @vacancy` scan can finish without finding an available bucket.
-    The loop then returns to its header with `pending` unchanged and repeats
-    the same scan forever.
-  - The function's documentation rules this out with a pigeonhole argument:
-    the probe visits every bucket, and the new capacity is at least the old
-    bucket count.
-  - No contract or checked fact carries that argument. A change to
-    `hash_map_probe` or to the capacity check would therefore turn a rebuild
-    into an endless loop, with no rejection.
-  - Change: make an exhausted scan a defined outcome of the loop, or state
-    the probe's coverage as a checked fact.
-  - Validate with a probe that skips one bucket, which must then fail
-    visibly instead of hanging.
-  - Found by the census in `research/investigations/termination/`. Reopen
-    with the next change to the hash map's probing, or when loops must carry
-    termination evidence.
+- **A map with parked owners answers keyed operations without them.**
+  `hash_map_rebuild` (`lib/std/collections/hash_map/hash-map.wf`) parks the
+  owners an unplaceable scan leaves in the map's `stale` window and reports
+  failure; `hash_map_each` and `hash_map_free` reach them, keyed lookups,
+  edits, removals and puts do not, and a put can then store a second pair
+  under a parked key. The path needs a broken probe, so it has no witness.
+  - Change: have keyed operations scan `stale` when its length is nonzero,
+    and have a put look there before inserting.
+  - The window also costs one empty allocation per map (seven in
+    `hash-map-program.wf`); an `Option` holding the window would avoid it but
+    needs the variant a swap moves to be a fact.
+  - Validate with a probe whose `hash_map_probe` skips one bucket: the rebuild
+    must fail, every pair must stay reachable, and no key may be stored twice.
+  - Reopen when a map operation changes or a consumer can observe the
+    degraded map.
 
 ## Parallel lowering and runtime
 
@@ -2072,6 +2120,15 @@ rarely insert at the same place.
   material retained text or rendering cost.
 
 ## Open language questions
+
+- **Recursion carries no checked progress yet.** [TERM-1] covers loops;
+  a recursive call is unchecked, so `pure` still promises nothing about
+  termination and the constitution's "unintended nontermination may remain"
+  still holds for recursion.
+  - Change: a TERM-2 rule for recursion, with ranks shared across a recursive component and
+    structural descent through owned arguments, as
+    `research/investigations/termination/ARENA.md` plans.
+  - Reopen as the next step of the termination work.
 
 Questions the owner has left open on purpose. None of them is a decision;
 each is resolved by a discussion and a tree change.

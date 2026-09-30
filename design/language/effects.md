@@ -8,7 +8,7 @@ Decision: A row lists no entry that another of its entries covers, a `writes` en
 
 Decision: Contracts and invariants are erased proof syntax and introduce no effect, because a proof-only statement that changed a row would be observable, instead of proof statements contributing effects.
 
-Decision: `pure` states that a function has no state effects and promises nothing about termination, because the language has no termination checker, and a promise the checker cannot verify would be a trusted theorem, instead of `pure` as totality.
+Decision: `pure` states that a function has no state effects and promises nothing about termination, because only loops carry checked progress while recursion does not, and a promise the checker cannot verify would be a trusted theorem, instead of `pure` as totality.
 
 Decision: Allocation and release carry no effect entry, no provider parameter, and no category of their own, because there is one heap supplied by the trusted base and its addresses are not observable, so an allocation tells a caller nothing about storage the caller can reach and constrains no ordering, instead of provider parameters named in an `allocates` category or an ambient-heap exemption beside branded stores.
 

@@ -781,8 +781,11 @@ fn assert_source_affine_fact_resolves(summary: &FunctionEntailment, source: Sour
                         .loop_invariants
                         .iter()
                         .any(|invariant| invariant.loop_id.0 == loop_id)
-                        || summary.loop_progress.iter().any(|_| true),
-                    "joined loop progress names a checked loop"
+                        || summary
+                            .loop_progress
+                            .iter()
+                            .any(|progress| progress.loop_id.0 == loop_id),
+                    "joined loop progress names a loop with an invariant or a rank"
                 );
             }
         }
@@ -9054,10 +9057,18 @@ fn real_sources_retain_complete_proof_roots_without_counted_false_positives() {
                     // v0.58's ordinary Inputs wrapper keeps main separate
                     // from that unchanged four-loop operation chain.
                     (1, "build_huffman_table") => 5,
-                    (1, "decode_dynamic") => 3,
+                    // [TERM-1] the length expansion and the symbol walk are
+                    // counted by the lengths and by the output's length plus
+                    // one, since the output position their calls advance is
+                    // not a term a rank can name.
+                    (1, "decode_dynamic") => 5,
                     // RFC 1951's fixed distance symbol is reconstructed from
-                    // five wire bits by one counted bit-reversal loop.
-                    (1, "decode_fixed") => 1,
+                    // five wire bits by one counted bit-reversal loop, and
+                    // the symbol walk is counted as `decode_dynamic`'s is.
+                    (1, "decode_fixed") => 2,
+                    // [TERM-1] the block walk is counted by the input's bits,
+                    // every block reading its three header bits.
+                    (1, "inflate") => 1,
                     (1, "exercise") => 4,
                     (1, "main") => 0,
                     // `wfgrep.wf`'s fill helper, which carries the zero fill

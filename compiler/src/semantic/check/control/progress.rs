@@ -24,7 +24,7 @@ use super::ControlCounters;
 use super::proofs::affine_integer_value;
 
 /// The repair a loop with no progress takes [DIAG-1].
-pub(crate) const TERM1_GIVE_THE_LOOP_AN_EXIT_TEST: &str = "write a rank the body lowers, such as `loop (decreases count - i) {`, or begin the body with an exit test a rank derives from, such as `if i >= count { break; }` for a cursor `i` that rises to `count`, or wait on every path back to the header";
+pub(crate) const TERM1_GIVE_THE_LOOP_AN_EXIT_TEST: &str = "write a rank the body lowers, such as `loop (decreases count - i) {`, or begin the body with an exit test a rank derives from, such as `if i >= count { break; }` for a cursor `i` that rises to `count`, or move a reference cursor into a `Box` below its referent on every path back to the header, or wait on every path back to the header";
 
 /// Which side of the continuing comparison the rank subtracts from.
 enum Rank {

@@ -491,3 +491,31 @@ the existing decisions they replace are rewritten:
 - `design/language/effects.md`: `pure` promises nothing about termination;
 - `design/language/checks-and-proofs.md`: no added termination checker;
 - the specification's "no termination checker" sentences.
+
+## The loop rule as implemented
+
+The mandatory loop rule is [TERM-1] of the active specification, implemented
+in `compiler/src/semantic/check/control/progress.rs` and the proof walk's loop
+arm. Recursion is not yet covered: a recursive call carries no checked
+progress, and the ranked arena, shared ranks and constant-table ranks of
+[ARENA.md](ARENA.md) are not implemented; they are the next step.
+
+A loop progresses in the first of four forms that applies: a written
+`decreases R`, a wait on every path, a rank derived from its leading exit
+tests, or a reference cursor descending into owned `Box` cells. Migrating the
+corpus ([record](runs/migration.md)) prompted five further mechanisms, each a
+decision of the `checks-and-proofs/loop-progress` and `ownership/exchange`
+nodes:
+
+- every leading exit test derives a rank, not only the first;
+- exact sums, differences and literal multiples are exit-test operands;
+- the structural form for owned walks;
+- relations a loop owes survive a join inside its body when every input
+  proves them, and header invariants survive the join of its break edges;
+- `swap` moves its targets' measure images and bounds to each other.
+
+The migration also found three termination defects in existing sources
+([record](runs/migration.md#termination-defects-the-rule-found)) and gaps the
+rule leaves open: a field advanced through a call cannot be a rank, a cursor
+removal that shrinks its referent has no form, and three derivation steps are
+missing. `docs/todo.md` carries each.
