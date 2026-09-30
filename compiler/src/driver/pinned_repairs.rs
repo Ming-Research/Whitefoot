@@ -5,14 +5,15 @@
 //! a probe in `driver::pinned_sentences` does: besides the rejected source
 //! and the repair it carries, one program for each alternative the pair
 //! carries out, which must be accepted with the repaired construct live.
-//! Adding or rewording a repair means adding or updating a pair here, or in
-//! `call_separations` for the [EFF-5] call-separation family; the repairs
-//! still printed without one are listed in `docs/todo.md`.
+//! Adding or rewording a repair means adding or updating a pair here or in
+//! its family module; the repairs still printed without one are listed in
+//! `docs/todo.md`.
 
 use super::{CompilationFailureKind, CompilerLimits, compile};
 use crate::SourceInput;
 
 mod call_separations;
+mod storage_destructuring;
 
 /// One repair [DIAG-1], pinned with the programs it produces: a rejected
 /// source, the rule and the exact repair its rejection carries, and one
@@ -3638,7 +3639,11 @@ fn contradictory_successes(name: &str, source: &[u8]) -> Result<Vec<String>, Str
 /// contradictory.
 #[test]
 fn each_pinned_repair_is_carried_out_by_its_programs() {
-    for pair in REPAIRS.iter().chain(call_separations::CALL_SEPARATIONS) {
+    for pair in REPAIRS
+        .iter()
+        .chain(call_separations::CALL_SEPARATIONS)
+        .chain(storage_destructuring::STORAGE_DESTRUCTURING)
+    {
         let failure = compile(
             &[SourceInput::new(pair.name, pair.rejected)],
             CompilerLimits::default(),
