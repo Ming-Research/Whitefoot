@@ -12,11 +12,11 @@ public fn new() -> made: Queue pure contract {
 } doc "Creates an empty queue.";
 
 public fn push(queue: &Queue, job: Job) -> result: unit writes(queue.storage) contract {
-  requires deref(queue).storage.len < capacity;
-  ensures deref(queue).storage.len == deref(entry(queue)).storage.len + 1_u64;
+  requires queue^.storage.len < capacity;
+  ensures queue^.storage.len == entry(queue)^.storage.len + 1_u64;
 } doc "Appends one job at the back.";
 
 public fn pop(queue: &Queue) -> job: Job writes(queue.storage) contract {
-  requires deref(queue).storage.len > 0_u64;
-  ensures deref(queue).storage.len + 1_u64 == deref(entry(queue)).storage.len;
+  requires queue^.storage.len > 0_u64;
+  ensures queue^.storage.len + 1_u64 == entry(queue)^.storage.len;
 } doc "Removes and returns the job at the front, which is the earliest job pushed among those still queued.";

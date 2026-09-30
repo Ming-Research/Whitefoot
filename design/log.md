@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-09-30 Retain runtime hashing and retire the module-product import prototype
+
+Nodes: compiler, compiler/diagnostic-rendering, compiler/incremental-compilation
+
+Owner-approved: The owner approved the complete PR #160 retain/remove list in the session ("agreed", written in Chinese): retain runtime SHA and its dependencies, CI and tests, the independent example syntax corrections and research evidence; remove structural-body and lowering import, their identity/serialization support and their dedicated fixes/tests from mergeable code, preserve the historical prototype, keep the approved SHA and diagnostic grounds, and leave the unqualified import proposal in research. The earlier approval of the SHA and diagnostic choices remains in force. This ruling authorizes no merge.
+
+Summary: Keep runtime cache SHA-256 through the safe sha2 API with full key/checksum checks and independent constant specification hashing, and keep the diagnostic-schema rationale without its obsolete dependency-free premise. Restore the incremental tree's ordinary composition stage and reject the tested per-product import representation on its recorded matched-hashing latency, memory and storage costs; retain the broader incremental objective and the technical wording of the finer-query work order. Retire the import implementation and tests of that mechanism together, preserving the complete prototype at the revision linked by the [experiment disposition](../research/experiments/modular-build-cost/RESULTS.md#disposition-of-the-module-product-prototype). Existing module verdict, proof-receipt and native-object reuse and their checks remain. No specification or conformance rule changes.
+
 ## 2026-09-30 Complete a bounded wait even under a pinned pool, and record the switch it makes
 
 Nodes: compiler/waiting-contexts/bounded-waits, compiler/waiting-contexts, compiler/completion-runtime, language/data-model/opaque-struct, language/system-interface/clocks, language/system-interface/deadlines, language/system-interface/writable-directory, language/system-interface/outcome-typing
@@ -194,6 +202,14 @@ Nodes: language/waiting, language/parallelism, language/system-interface, langua
 Owner-approved: The owner approved all five decision cards for PR #144 ("approve all", written in Chinese), including the rewrites of the first decisions of language/parallelism and language/system-interface, and chose to keep `factory_share` as recommended ("factory_share as you recommend", written in Chinese), on 2026-09-28.
 
 Summary: Apply the five reviewed amendments unchanged apart from one relative link depth. Add language/waiting: waiting is a function kind declared with `waits`, and a waiting function compiles to a resumable frame rather than a stack of its own. Revise language/parallelism: a program means its sequential execution, an implementation may run a waiting call statement with value parameters and a droppable result as a context, `mustpar` asserts the PAR-1, PAR-2 or WAIT-2 permission in every form, and decision 1's refused alternative becomes a keyword that grants overlap. Revise language/system-interface: host functions that may suspend declare `waits`, and host effects are ordered only through shared state. Add `factory_share` to language/system-interface/handle-factory, keeping one budget: a refusal caused by another context's acquisitions is one more outcome of an acquisition the host may already refuse, where a fixed split would move one credit per accepted connection out of a server's budget for good. Add compiler/waiting-contexts for the one-driver runtime, coroutine lowering, host-region memory, start and finish, and the readiness route. The [waiting investigation](../research/investigations/io-model/WAITS.md) holds the grounds and Experiments 1 to 3. Remove the five accepted amendments and their directory. This ruling authorizes no merge.
+
+## 2026-09-28 Approve runtime hashing and retain draft module imports
+
+Nodes: compiler, compiler/diagnostic-rendering, compiler/incremental-compilation
+
+Owner-approved: The owner agreed to all three PR #160 decision-card recommendations ("all agreed", written in Chinese): adopt the runtime SHA choice, correct the diagnostic dependency ground, and keep module-product import in Draft without merging while its cost condition remains unmet.
+
+Summary: Apply the reviewed runtime hashing decision to compiler and the reviewed diagnostic-rendering node revision unchanged, adjusting only the hashing evidence link for its live-node location. Runtime digests use the maintained safe SHA-256 API with locked dependency provisioning and the independent constant-evaluation specification identity retained; exhaustive handwritten diagnostic rendering stays selected on its actual schema-maintenance ground. Remove those two accepted amendments. The [paired cost evidence](../research/experiments/modular-build-cost/RESULTS.md#final-current-main-qualification) still does not establish the module-import cost condition, and the later catalogue screens select no new compiler change. Keep compiler/incremental-compilation unchanged and its import amendment pending under the owner's Draft disposition; this is neither adoption nor permanent rejection of that proposal. This tree update changes no language rule or compiler behavior and authorizes no merge.
 
 ## 2026-09-27 Use postfix caret for explicit reference access
 

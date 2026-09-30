@@ -421,6 +421,17 @@ rarely insert at the same place.
   opaque-struct repair; reopen when a program has a reason to declare an
   opaque struct with fields, or with the next change to nominal kinds.
 
+- **Attribute cold wfgrep compiler memory before changing its representation.**
+  The [module-product qualification](../research/experiments/modular-build-cost/RESULTS.md#final-current-main-qualification)
+  observes compiler-only peak RSS of 364.61 MiB on matched main and 377.62 MiB
+  on the candidate. Most of this footprint predates retained module products;
+  its allocation sources and reducible share are unverified. Profile live
+  allocations by checking phase, then require a same-source reduction with
+  unchanged verdicts and LLVM before selecting a representation change.
+  Defer from entry-edit latency work because these are cold-build observations
+  without causal attribution. Reopen when larger inputs or concurrent
+  compilation make the footprint limiting; remove after attribution and an
+  implemented or explicitly declined response.
 - **An instantiated goal spells a field-read range endpoint as `?`.** An
   FN-8 goal over a range an argument formed at the call renders an endpoint
   that is not a literal, const or binding as `?`, as in
@@ -1822,28 +1833,41 @@ rarely insert at the same place.
 
 ## Modules and libraries
 
-- **Finish and qualify the modular incremental design.** The module
-  decisions in the [language](../design/language.md) and
-  [compiler](../design/compiler.md) design trees rest on the
+- **Complete the vector boundary witness when comparing independent fields.**
+  The maintained GrowVector program checks the shipped vector and behavior
+  drains, but does not establish LANGUAGE.md's combined public `tag`, external
+  append wrapper and function-kind formal with the complete storage contract.
+  The actual vector has only `storage`. Build the specified witness in the
+  modular-compilation investigation and check preserved facts after a tag-only
+  write versus invalidation after append. This is additional language-boundary
+  evidence, not required to measure reuse of the existing vector program;
+  reopen when evaluating those independent-field effects or that wrapper API.
+
+- **Finish and qualify the modular incremental design.** The
   [architecture](../research/investigations/modular-compilation/DESIGN.md),
   [source rules](../research/investigations/modular-compilation/LANGUAGE.md)
-  and [complete specimen](../research/investigations/modular-compilation/demo/README.md);
-  the [build-cost measurements](../research/experiments/modular-build-cost/RESULTS.md)
-  record what the implementation costs. Remaining, each with the measurement
-  or limit that shows it: the later stage of the
-  [composition staging](../research/investigations/modular-compilation/DESIGN.md#composition-staging),
-  persistent formation, lookup, instance, summary and lowering queries inside
-  a composition, where module build units follow the owned representation
-  that [PR #146](https://github.com/mbbill/Whitefoot/pull/146) built
-  (`design/compiler/incremental-compilation.md`, since the standard library
-  on modules needs a library module checked once and reused by every program
-  that names it), and instance units and fact-based entry checks wait until
-  edit-build measurements show the composition's rerun to limit a current
-  experiment or a consumer needs them (a build of an edited entry now forms,
-  resolves and type-checks the whole closure and reuses only its proof
-  analyses and unchanged objects: about 350 ms of a 590 to 620 ms body-edit
-  build of a 32-module chain, growing with the program); a cold build without
-  a cache, which checks each module and then the whole closure; the impact report,
+  and [specimen](../research/investigations/modular-compilation/demo/README.md)
+  describe the broader goal. Module verdicts, proof receipts and native object
+  reuse exist; composition still repeats structural checking and lowering.
+  The owner retired the per-product import implementation after its
+  [matched hashing comparison and follow-up screens](../research/experiments/modular-build-cost/RESULTS.md#disposition-of-the-module-product-prototype)
+  failed to establish approximately 5% native entry-edit overhead on both
+  containers. The independent runtime SHA improvement remains. The complete
+  corrected prototype and its dedicated tests are preserved by the linked
+  revision; those tests no longer apply to the active compiler.
+  Reopen only for a newly requested consumer-boundary experiment: module-owned
+  checked results might avoid per-function reconstruction, but their lookup,
+  memory and invalidation costs remain unmeasured. Require complete consumed
+  inputs, speculative rollback, current composition/target judgments, equal
+  fresh/cached results and zero unchanged-library walks. Compare same-source
+  paired native and compiler-only costs against equally optimized main, with
+  memory, cache history and cold costs; do not count SHA's independent gain as
+  an import benefit. The removed prototype's proof-erasing lowering-input
+  projection remains an unmeasured alternative in the investigation, not a
+  defect in the current compiler. Any future key must retain proof-derived
+  allocation bounds, disposition, permissions and physical inputs.
+  Further opportunities remain: finer invalidation within an edited module;
+  a cold build without a cache, which checks each module and then the whole closure; the impact report,
   which finds each further failing body by checking its module again with
   the earlier ones set aside; ThinLTO's import threshold, which decays along
   a deep cross-fragment call chain and left the innermost step of the
