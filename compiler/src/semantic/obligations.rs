@@ -49,6 +49,8 @@ pub(crate) enum ObligationSubject {
     },
     /// One source-written loop invariant's induction [INV-1].
     LoopInvariant,
+    /// One loop rank's descent at the backedge [TERM-1].
+    LoopProgress,
     /// One local invariant, proved by AUTO or by its written certificate
     /// [INV-1, PRF-1].
     SourceProof,
@@ -63,6 +65,7 @@ pub(crate) enum RecordAnswer {
     Obligation(usize),
     CallGoal(usize),
     LoopInvariant(usize),
+    LoopProgress(usize),
     SourceProof(usize),
     Postcondition(usize),
     /// [FN-9] the independently established requirements contradict at
@@ -86,6 +89,10 @@ impl RecordAnswer {
                 .loop_invariants
                 .get(index)
                 .is_some_and(|outcome| outcome.proof.discharged()),
+            Self::LoopProgress(index) => entailment
+                .loop_progress
+                .get(index)
+                .is_some_and(|outcome| outcome.proved),
             Self::SourceProof(index) => entailment
                 .source_proofs
                 .get(index)

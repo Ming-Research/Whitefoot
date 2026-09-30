@@ -1,0 +1,523 @@
+//! [TERM-1] the progress each ordinary `loop_stmt` owes.
+//!
+//! A loop writes a rank in its header, waits on every path from its header
+//! back to its header, or derives a rank from its exit test. The rank's descent is a proof-only
+//! obligation the semantic proof checker discharges at the backedge, against
+//! snapshots it takes at the start of each iteration; nothing here reaches
+//! lowering.
+
+use std::collections::HashMap;
+
+use crate::syntax::NodeId;
+use crate::{SemanticIssueKind, SemanticRule};
+
+use super::super::super::model::{
+    BindingId, CheckedAffineExpression, CheckedAffineExpressionKind, CheckedAffineRelation,
+    CheckedEnumType, CheckedExpression, CheckedIntegerOperation, CheckedLoopId,
+    CheckedLoopProgress, CheckedProgressSnapshot, CheckedStatement, CheckedType, CheckedValue,
+    IntegerType,
+};
+use crate::NodePath;
+use super::super::{CheckStop, Checker};
+use super::ControlCounters;
+use super::proofs::affine_integer_value;
+
+/// The repair a loop with no progress takes [DIAG-1].
+pub(crate) const TERM1_GIVE_THE_LOOP_AN_EXIT_TEST: &str = "begin the body with an exit test the rank derives from, such as `if i >= count { break; }` for a cursor `i` that rises to `count`, or wait on every path back to the header";
+
+/// Which side of the continuing comparison the rank subtracts from.
+enum Rank {
+    /// Continuing while `low < high` or `low <= high`: the rank is
+    /// `high - low`.
+    Gap { low: Operand, high: Operand },
+}
+
+/// One rank operand: its affine form and the read that produced it.
+#[derive(Clone)]
+struct Operand {
+    affine: CheckedAffineExpression,
+    read: Option<CheckedExpression>,
+}
+
+impl<'unit> Checker<'_, 'unit> {
+    /// [TERM-1] the progress of one checked loop body.
+    pub(super) fn loop_progress(
+        &mut self,
+        id: CheckedLoopId,
+        node: NodeId,
+        written: Option<CheckedAffineExpression>,
+        statements: &[CheckedStatement],
+        can_continue: bool,
+        counters: &mut ControlCounters<'_>,
+    ) -> Result<CheckedLoopProgress, CheckStop> {
+        if !can_continue {
+            return Ok(CheckedLoopProgress::NoBackedge);
+        }
+        if let Some(rank) = written {
+            return written_rank_progress(rank, counters);
+        }
+        if block_waits(statements, &self.body.waiting.calls, id) {
+            return Ok(CheckedLoopProgress::Waits);
+        }
+        let node_path = self.types.declarations.tree.path(node)?.clone();
+        if let Some(rank) = derived_rank(id, statements, &node_path) {
+            return self.rank_progress(rank, counters);
+        }
+        self.types.declarations.issue_node(
+            SemanticRule::Term1,
+            node,
+            SemanticIssueKind::LoopWithoutProgress {
+                mechanical_fix: TERM1_GIVE_THE_LOOP_AN_EXIT_TEST,
+            },
+        )
+    }
+
+    /// Snapshots every operand that can change and states the descent the
+    /// backedge owes against them.
+    fn rank_progress(
+        &mut self,
+        rank: Rank,
+        counters: &mut ControlCounters<'_>,
+    ) -> Result<CheckedLoopProgress, CheckStop> {
+        let Rank::Gap { low, high } = rank;
+        let mut snapshots = Vec::new();
+        let low_before = snapshot(&low, &mut snapshots, counters, "at the exit test")?;
+        let high_before = snapshot(&high, &mut snapshots, counters, "at the exit test")?;
+        let (low, high) = (low.affine, high.affine);
+        let node_path = high.node_path.clone();
+        let relation = |left: &CheckedAffineExpression, right: &CheckedAffineExpression, bound| {
+            CheckedAffineRelation {
+                node_path: node_path.clone(),
+                left: left.clone(),
+                right: right.clone(),
+                bound,
+                equality: false,
+            }
+        };
+        // `high - low` falls: `(high - low) - (high_before - low_before) <= -1`.
+        let descent = relation(
+            &subtract(&node_path, high.clone(), low.clone()),
+            &subtract(&node_path, high_before.clone(), low_before.clone()),
+            -1,
+        );
+        // Either side moving strictly toward the other while the other side
+        // does not move away implies the descent; so does the descent itself.
+        let alternatives = vec![
+            vec![descent.clone()],
+            vec![
+                relation(&low_before, &low, -1),
+                relation(&high, &high_before, 0),
+            ],
+            vec![
+                relation(&high, &high_before, -1),
+                relation(&low_before, &low, 0),
+            ],
+        ];
+        Ok(CheckedLoopProgress::Rank {
+            snapshots,
+            owed: vec![descent.clone()],
+            alternatives,
+        })
+    }
+}
+
+/// [TERM-1] a written rank R: every backedge owes `R' < R0` and `0 <= R'`,
+/// where R0 reads each operand of R from its snapshot.
+fn written_rank_progress(
+    rank: CheckedAffineExpression,
+    counters: &mut ControlCounters<'_>,
+) -> Result<CheckedLoopProgress, CheckStop> {
+    let mut snapshots = Vec::new();
+    let before = snapshot_leaves(&rank, &mut snapshots, counters)?;
+    let node_path = rank.node_path.clone();
+    let zero = CheckedAffineExpression {
+        node_path: node_path.clone(),
+        kind: CheckedAffineExpressionKind::Constant {
+            value: 0,
+            ty: IntegerType::U64,
+        },
+    };
+    let descent = CheckedAffineRelation {
+        node_path: node_path.clone(),
+        left: rank.clone(),
+        right: before,
+        bound: -1,
+        equality: false,
+    };
+    let floor = CheckedAffineRelation {
+        node_path,
+        left: zero,
+        right: rank,
+        bound: 0,
+        equality: false,
+    };
+    Ok(CheckedLoopProgress::Rank {
+        snapshots,
+        owed: vec![descent, floor],
+        alternatives: Vec::new(),
+    })
+}
+
+/// `rank` with each operand that can change replaced by its value at the
+/// start of the iteration; one snapshot serves every occurrence of an
+/// operand.
+fn snapshot_leaves(
+    rank: &CheckedAffineExpression,
+    snapshots: &mut Vec<CheckedProgressSnapshot>,
+    counters: &mut ControlCounters<'_>,
+) -> Result<CheckedAffineExpression, CheckStop> {
+    let mut taken: Vec<(CheckedAffineExpressionKind, CheckedAffineExpression)> = Vec::new();
+    let mut values = Vec::new();
+    for expression in rank.postorder() {
+        let kind = match &expression.kind {
+            CheckedAffineExpressionKind::Add(_, _) | CheckedAffineExpressionKind::Subtract(_, _) => {
+                let right = Box::new(values.pop().ok_or(crate::SemanticCompilerFailure::InvalidCanonicalTree)?);
+                let left = Box::new(values.pop().ok_or(crate::SemanticCompilerFailure::InvalidCanonicalTree)?);
+                if matches!(expression.kind, CheckedAffineExpressionKind::Add(_, _)) {
+                    CheckedAffineExpressionKind::Add(left, right)
+                } else {
+                    CheckedAffineExpressionKind::Subtract(left, right)
+                }
+            }
+            CheckedAffineExpressionKind::MultiplyByConstant {
+                constant,
+                constant_ty,
+                ..
+            } => CheckedAffineExpressionKind::MultiplyByConstant {
+                constant: *constant,
+                constant_ty: *constant_ty,
+                value: Box::new(values.pop().ok_or(crate::SemanticCompilerFailure::InvalidCanonicalTree)?),
+            },
+            leaf @ (CheckedAffineExpressionKind::Local { .. }
+            | CheckedAffineExpressionKind::Measure(_)) => {
+                if let Some((_, before)) = taken.iter().find(|(kind, _)| kind == leaf) {
+                    before.kind.clone()
+                } else {
+                    let read = match leaf {
+                        CheckedAffineExpressionKind::Measure(measure) => Some((**measure).clone()),
+                        _ => None,
+                    };
+                    let operand = Operand {
+                        affine: expression.clone(),
+                        read,
+                    };
+                    let before = snapshot(&operand, snapshots, counters, "when the iteration began")?;
+                    taken.push((leaf.clone(), before.clone()));
+                    before.kind.clone()
+                }
+            }
+            leaf @ (CheckedAffineExpressionKind::Constant { .. }
+            | CheckedAffineExpressionKind::ConstGeneric { .. }) => leaf.clone(),
+        };
+        values.push(CheckedAffineExpression {
+            node_path: expression.node_path.clone(),
+            kind,
+        });
+    }
+    values
+        .pop()
+        .ok_or_else(|| crate::SemanticCompilerFailure::InvalidCanonicalTree.into())
+}
+
+/// The value an operand held at the start of the iteration: a constant is
+/// itself, and anything else is read from a proof-only snapshot binding.
+fn snapshot(
+    operand: &Operand,
+    snapshots: &mut Vec<CheckedProgressSnapshot>,
+    counters: &mut ControlCounters<'_>,
+    when: &str,
+) -> Result<CheckedAffineExpression, CheckStop> {
+    let read = operand.read.clone();
+    let operand = &operand.affine;
+    if let CheckedAffineExpressionKind::Constant { .. } = operand.kind {
+        return Ok(operand.clone());
+    }
+    let ty = operand_type(operand);
+    let name = match &operand.kind {
+        CheckedAffineExpressionKind::Local { binding, .. } => counters
+            .binding_names
+            .get(binding.0 as usize)
+            .map_or_else(
+                || format!("the operand {when}"),
+                |name| format!("{name} {when}"),
+            ),
+        _ => format!("the measure {when}"),
+    };
+    let binding = Checker::allocate_binding(counters.next_binding)?;
+    counters.binding_names.push(name);
+    snapshots.push(CheckedProgressSnapshot {
+        binding,
+        ty,
+        value: operand.clone(),
+        read,
+    });
+    Ok(CheckedAffineExpression {
+        node_path: operand.node_path.clone(),
+        kind: CheckedAffineExpressionKind::Local { binding, ty },
+    })
+}
+
+fn operand_type(operand: &CheckedAffineExpression) -> IntegerType {
+    match &operand.kind {
+        CheckedAffineExpressionKind::Constant { ty, .. }
+        | CheckedAffineExpressionKind::Local { ty, .. }
+        | CheckedAffineExpressionKind::ConstGeneric { ty, .. } => *ty,
+        _ => IntegerType::U64,
+    }
+}
+
+fn subtract(
+    node_path: &NodePath,
+    left: CheckedAffineExpression,
+    right: CheckedAffineExpression,
+) -> CheckedAffineExpression {
+    CheckedAffineExpression {
+        node_path: node_path.clone(),
+        kind: CheckedAffineExpressionKind::Subtract(Box::new(left), Box::new(right)),
+    }
+}
+
+/// [TERM-1] the rank a body's exit test derives: the first statement after
+/// any `let` bindings whose initializers call nothing is an `if` one of whose
+/// arms is exactly a `break` of this loop, and whose condition is an ordered
+/// comparison or a `Bool` binding one of those `let`s bound to one.
+fn derived_rank(
+    id: CheckedLoopId,
+    statements: &[CheckedStatement],
+    node_path: &NodePath,
+) -> Option<Rank> {
+    // Each `let` before the exit test, by the binding it introduces. An
+    // operand that names one is read through to its initializer, which is
+    // evaluated in the same iteration before the test.
+    let mut comparisons: HashMap<BindingId, &CheckedExpression> = HashMap::new();
+    for statement in statements {
+        match statement {
+            CheckedStatement::Let { binding, value, .. } => {
+                if calls_anything(value) {
+                    return None;
+                }
+                comparisons.insert(*binding, value);
+            }
+            CheckedStatement::Match {
+                scrutinee,
+                enum_type: CheckedEnumType::Bool,
+                arms,
+                ..
+            } => {
+                let condition = match scrutinee {
+                    CheckedExpression::Binding { binding, .. } => *comparisons.get(binding)?,
+                    other => other,
+                };
+                let breaking: Vec<u32> = arms
+                    .iter()
+                    .filter(|arm| breaks_loop(&arm.body, id))
+                    .map(|arm| arm.tag)
+                    .collect();
+                // Bool's `True` arm carries tag 1; exactly one arm breaks.
+                let [breaking_tag] = breaking.as_slice() else {
+                    return None;
+                };
+                let continuing_when = *breaking_tag == 0;
+                return comparison_rank(condition, continuing_when, node_path, &comparisons);
+            }
+            _ => return None,
+        }
+    }
+    None
+}
+
+/// Whether an arm leaves the loop on every path: it ends in a `break` of
+/// this loop or of one around it, or in a `return`. Loop identities are
+/// allocated outside in, so an enclosing loop's is smaller.
+fn breaks_loop(body: &[CheckedStatement], id: CheckedLoopId) -> bool {
+    match body.last() {
+        Some(CheckedStatement::Break { target, .. }) => target.0 <= id.0,
+        Some(CheckedStatement::Return { .. }) => true,
+        _ => false,
+    }
+}
+
+/// The rank of `condition`, read as the condition under which the loop
+/// continues when `continuing_when` is true and as its negation otherwise.
+fn comparison_rank(
+    condition: &CheckedExpression,
+    continuing_when: bool,
+    node_path: &NodePath,
+    lets: &HashMap<BindingId, &CheckedExpression>,
+) -> Option<Rank> {
+    let CheckedExpression::IntegerOperation {
+        operation,
+        arguments,
+        ..
+    } = condition
+    else {
+        return None;
+    };
+    let [left, right] = arguments.as_slice() else {
+        return None;
+    };
+    let left = affine_operand(through_lets(left, lets), node_path)?;
+    let right = affine_operand(through_lets(right, lets), node_path)?;
+    // The continuing relation, normalized to `low < high` or `low <= high`.
+    let continuing = if continuing_when {
+        *operation
+    } else {
+        negated(*operation)?
+    };
+    match continuing {
+        CheckedIntegerOperation::Less | CheckedIntegerOperation::LessEqual => Some(Rank::Gap {
+            low: left,
+            high: right,
+        }),
+        CheckedIntegerOperation::Greater | CheckedIntegerOperation::GreaterEqual => {
+            Some(Rank::Gap {
+                low: right,
+                high: left,
+            })
+        }
+        // `x != 0` over an unsigned `x` continues while `0 < x`.
+        CheckedIntegerOperation::NotEqual => {
+            if is_zero(&right.affine) && unsigned(&left.affine) {
+                Some(Rank::Gap {
+                    low: right,
+                    high: left,
+                })
+            } else if is_zero(&left.affine) && unsigned(&right.affine) {
+                Some(Rank::Gap {
+                    low: left,
+                    high: right,
+                })
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// An operand naming a binding one of the test's preceding `let`s
+/// introduced, read through to that `let`'s initializer.
+fn through_lets<'expression>(
+    operand: &'expression CheckedExpression,
+    lets: &HashMap<BindingId, &'expression CheckedExpression>,
+) -> &'expression CheckedExpression {
+    let mut current = operand;
+    while let CheckedExpression::Binding { binding, .. } = current
+        && let Some(initializer) = lets.get(binding)
+    {
+        current = initializer;
+    }
+    current
+}
+
+fn negated(operation: CheckedIntegerOperation) -> Option<CheckedIntegerOperation> {
+    Some(match operation {
+        CheckedIntegerOperation::Less => CheckedIntegerOperation::GreaterEqual,
+        CheckedIntegerOperation::LessEqual => CheckedIntegerOperation::Greater,
+        CheckedIntegerOperation::Greater => CheckedIntegerOperation::LessEqual,
+        CheckedIntegerOperation::GreaterEqual => CheckedIntegerOperation::Less,
+        CheckedIntegerOperation::Equal => CheckedIntegerOperation::NotEqual,
+        CheckedIntegerOperation::NotEqual => CheckedIntegerOperation::Equal,
+        _ => return None,
+    })
+}
+
+fn is_zero(operand: &CheckedAffineExpression) -> bool {
+    matches!(operand.kind, CheckedAffineExpressionKind::Constant { value: 0, .. })
+}
+
+fn unsigned(operand: &CheckedAffineExpression) -> bool {
+    !operand_type(operand).signed()
+}
+
+/// [TERM-1] an exit-test operand in the rank vocabulary: an integer literal
+/// or named const, an integer binding, or a measure read.
+fn affine_operand(expression: &CheckedExpression, node_path: &NodePath) -> Option<Operand> {
+    let node_path = node_path.clone();
+    let kind = match expression {
+        CheckedExpression::Constant(CheckedValue::Integer { ty, bits })
+        | CheckedExpression::NamedConstant {
+            value: CheckedValue::Integer { ty, bits },
+            ..
+        } => CheckedAffineExpressionKind::Constant {
+            value: affine_integer_value(*ty, *bits),
+            ty: *ty,
+        },
+        CheckedExpression::Binding {
+            binding,
+            ty: CheckedType::Integer(ty),
+            ..
+        } => CheckedAffineExpressionKind::Local {
+            binding: *binding,
+            ty: *ty,
+        },
+        CheckedExpression::ContainerMeasure { .. }
+        | CheckedExpression::ArrayMeasure { .. }
+        | CheckedExpression::BufferMeasure { .. }
+        | CheckedExpression::RangeMeasure { .. }
+        | CheckedExpression::RangeElementMeasure { .. } => {
+            CheckedAffineExpressionKind::Measure(Box::new(expression.clone()))
+        }
+        _ => return None,
+    };
+    Some(Operand {
+        affine: CheckedAffineExpression { node_path, kind },
+        read: Some(expression.clone()),
+    })
+}
+
+/// Whether evaluating `expression` makes a call, which could write a rank
+/// operand before the exit test reads it. A call's arguments are atoms
+/// [GRAM-9], so a call can stand only at an initializer's top.
+fn calls_anything(expression: &CheckedExpression) -> bool {
+    matches!(expression, CheckedExpression::UserCall { .. })
+}
+
+/// [TERM-1, WAIT-1] whether every path through `statements` that can reach
+/// the loop's header again executes a waiting call, a guarded atomic
+/// statement or a join.
+fn block_waits(statements: &[CheckedStatement], waiting: &[NodePath], id: CheckedLoopId) -> bool {
+    for statement in statements {
+        if statement_waits(statement, waiting, id) {
+            return true;
+        }
+        if leaves_iteration(statement) {
+            return true;
+        }
+    }
+    false
+}
+
+fn statement_waits(statement: &CheckedStatement, waiting: &[NodePath], id: CheckedLoopId) -> bool {
+    let below = |node: &NodePath| {
+        waiting
+            .iter()
+            .any(|call: &NodePath| call.components().starts_with(node.components()))
+    };
+    match statement {
+        CheckedStatement::Let { node_path, .. }
+        | CheckedStatement::DestructuringLet { node_path, .. }
+        | CheckedStatement::PropagateLet { node_path, .. }
+        | CheckedStatement::Set { node_path, .. }
+        | CheckedStatement::Evaluate { node_path, .. }
+        | CheckedStatement::DropExpression { node_path, .. } => below(node_path),
+        // An unguarded atomic statement takes effect at once; only a guard
+        // makes the context wait for another's step [SHARE-3].
+        CheckedStatement::Atomic { guard, .. } => guard.is_some(),
+        CheckedStatement::Match {
+            scrutinee, arms, ..
+        } => {
+            matches!(scrutinee, CheckedExpression::UserCall { call, .. } if below(call))
+                || arms.iter().all(|arm| block_waits(&arm.body, waiting, id))
+        }
+        _ => false,
+    }
+}
+
+/// A statement after which no path of this iteration reaches the header.
+fn leaves_iteration(statement: &CheckedStatement) -> bool {
+    matches!(
+        statement,
+        CheckedStatement::Break { .. } | CheckedStatement::Return { .. }
+    )
+}

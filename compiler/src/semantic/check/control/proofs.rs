@@ -182,6 +182,34 @@ impl<'unit> Checker<'_, 'unit> {
         Ok(relation)
     }
 
+    /// [TERM-1] a `loop_rank`'s affine expression, formed over the operands
+    /// a header invariant may name [INV-1].
+    pub(super) fn check_loop_rank(
+        &mut self,
+        context: FunctionContext<'_, '_>,
+        node: NodeId,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+        allowed_values: &HashSet<DeclarationId>,
+        loop_depth: usize,
+    ) -> Result<CheckedAffineExpression, CheckStop> {
+        let expressions = self
+            .types
+            .declarations
+            .tree
+            .children_with(node, Production::AffineExpr)?;
+        let [expression] = expressions.as_slice() else {
+            return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
+        };
+        self.check_affine_expression(
+            context,
+            *expression,
+            bindings,
+            allowed_values,
+            loop_depth,
+            AffineProofOwner::InvariantTarget,
+        )
+    }
+
     fn form_affine_relation(
         &mut self,
         context: FunctionContext<'_, '_>,
@@ -832,7 +860,7 @@ impl<'unit> Checker<'_, 'unit> {
     }
 }
 
-const fn affine_integer_value(ty: IntegerType, bits: u64) -> i128 {
+pub(super) const fn affine_integer_value(ty: IntegerType, bits: u64) -> i128 {
     let value = bits as i128;
     if ty.signed() {
         let width = ty.width() as u32;

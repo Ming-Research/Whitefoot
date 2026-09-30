@@ -217,6 +217,39 @@ pub(crate) struct CheckedLoopInvariant {
     pub(crate) relation: CheckedAffineRelation,
 }
 
+/// [TERM-1] how one `loop_stmt` makes progress. Erased before lowering: it
+/// adds no runtime value, branch, or trap.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum CheckedLoopProgress {
+    /// The body never falls through to its header, so no backedge owes a
+    /// descent.
+    NoBackedge,
+    /// A rank the header writes or the exit test derives. Each snapshot
+    /// records one operand's value at the start of an iteration. Every
+    /// backedge owes every relation of `owed`, the rank's descent first; each
+    /// entry of `alternatives` implies them all, so the backedge discharges
+    /// the rank when it proves `owed` or every relation of one entry.
+    Rank {
+        snapshots: Vec<CheckedProgressSnapshot>,
+        owed: Vec<CheckedAffineRelation>,
+        alternatives: Vec<Vec<CheckedAffineRelation>>,
+    },
+    /// Every path from the header back to the header waits [WAIT-1].
+    Waits,
+}
+
+/// [TERM-1] one proof-only value captured at the start of each iteration.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CheckedProgressSnapshot {
+    pub(crate) binding: BindingId,
+    pub(crate) ty: IntegerType,
+    pub(crate) value: CheckedAffineExpression,
+    /// The operand's own read, which the snapshot is established equal to,
+    /// as a `let` binding is to its initializer; a written rank's binding
+    /// operand has none, and its affine value alone relates it.
+    pub(crate) read: Option<CheckedExpression>,
+}
+
 /// One source-written `use` in a local invariant certificate.
 ///
 /// `multiplicity` is how many times the premise is added into the certificate
@@ -2686,6 +2719,8 @@ pub(crate) enum CheckedStatement {
         /// Formed source invariants awaiting the normal semantic proof
         /// checker. Their presence alone grants no authority.
         invariants: Vec<CheckedLoopInvariant>,
+        /// [TERM-1] the loop's progress, proved by the semantic proof checker.
+        progress: CheckedLoopProgress,
         body: Vec<CheckedStatement>,
         backedge_drops: Vec<CheckedDrop>,
     },

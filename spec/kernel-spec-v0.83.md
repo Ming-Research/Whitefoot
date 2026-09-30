@@ -1,4 +1,4 @@
-# Kernel Specification v0.84
+# Kernel Specification v0.83
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -77,8 +77,8 @@ A `fn_decl` result list renders exactly one space between `->` and its `(`, and 
 A destructuring consume's rest marker renders exactly one space between its preceding `,` and `..`, overriding the generic right attachment of `..` exactly as the `for` header's stated space overrides that of `(`, so the canonical spellings are `let Conn(f: fh, ..) = move c;` and, with no bound field, `let Conn(..) = move c;` [GRAM-4].
 A `for_stmt` with no `header_invariant` renders its whole header, from `for` through `) {`, on one line; a counted loop with no invariant therefore has the one-line header `for (i in 0_u64..count) {`.
 A `for_stmt` with at least one `header_invariant` breaks after `(` instead: its `for_binding` and every `header_invariant` each render on a separate following line at depth plus one, with a comma after every item except the last; and `) {` renders on one line at the original depth.
-An ordinary `loop_stmt` without a parenthesized header keeps the one-line introducer `loop` plus optional label through `{`.
-With a header it instead renders `loop`, its optional label, exactly one space, and `(` on one line, again overriding generic right attachment; its `loop_rank` and every `header_invariant` each render on a separate following line at depth plus one, with a comma after every item except the last; and `) {` renders on one line at the original depth.
+An ordinary `loop_stmt` without a parenthesized invariant header keeps the one-line introducer `loop` plus optional label through `{`.
+With a header it instead renders `loop`, its optional label, exactly one space, and `(` on one line, again overriding generic right attachment; every `header_invariant` renders on a separate following line at depth plus one, with a comma after every item except the last; and `) {` renders on one line at the original depth.
 In either loop form, body children and the final closing brace retain the ordinary block-bearing rendering.
 An `if_stmt` or `value_if` is rendered solely by this sentence, the generic block-bearing rendering notwithstanding: its introducer through the then-block `{` is one line; then-children render at depth plus one; an `else` renders as the join line `} else {` at the original depth, and a chained `else if` as the join line `} else if` through that `if`'s `{` at the original depth, never as a nested introducer line; else-children render at depth plus one; and the final `}` renders on its own line at the original depth.
 No one-line `if` form exists.
@@ -258,9 +258,8 @@ propagate_let_rhs := "propagate" expr ";"
 set_stmt    := "set" place "=" expr ";"
 expr_stmt   := call ";"
 return_stmt := "return" expr ("," expr)* ";"
-loop_stmt   := "loop" LABEL? ("(" (loop_rank | header_invariant) ("," header_invariant)* ")")?
+loop_stmt   := "loop" LABEL? ("(" header_invariant ("," header_invariant)* ")")?
                "{" stmt* "}"
-loop_rank   := "decreases" affine_expr
 for_stmt    := "for" LABEL? "(" for_binding ("," header_invariant)* ")"
                "{" stmt* "}"
 for_binding := IDENT "in" atom ".." atom
@@ -3635,32 +3634,6 @@ Only the owning invariant target is published after a successful certificate.
 The `proof_use` list and all of its intermediate arithmetic are erased with the invariant and have no runtime semantics.
 An unresolved invariant name is the ordinary INV-1 lexical-scope failure and forms no certificate source.
 A resolved but unavailable named source, undischarged or malformed relation source, invalid multiplicity, duplicate source, arithmetic or structural overflow, unfolded nonlinear monomial in S, failed final `DIRECT` residual, or redundant block cites PRF-1 at the smallest owning source node and publishes no target.
-
-[TERM-1] Loop progress.
-Each `loop_stmt` whose body can reach its header again [FN-1] makes progress in exactly one of the following forms, the first that applies.
-
-1. **Written rank.** The header begins with a `loop_rank` `decreases R`. R is formed as a `header_invariant`'s `affine_expr` is, over the same operands [INV-1]. Every normal edge from the body back to the header owes `R' < R0` and `0 <= R'`, where `R0` is R's value when the iteration began and `R'` its value on that edge.
-2. **Waiting.** Every path from the start of the body back to the header executes a call of a waiting function [WAIT-1] or an `atomic_stmt` that has a guard [SHARE-2]. The loop owes nothing more.
-3. **Derived rank.** The body's exit test derives a rank R by the table below, and every normal edge from the body back to the header owes `R' < R0`, with `R0` and `R'` as in form 1.
-
-The exit test is the body's first statement that is not a `let_stmt`, when every `let_stmt` before it has an initializer that is not a `call` and it is an `if_stmt` one of whose two blocks, its exit block, ends in a `break_stmt` that leaves this loop or in a `return_stmt`.
-Its condition is an integer comparison `a op b`, an `infix` whose operator is a `compare_op` [OP-1], or a binding that one of those `let_stmt`s bound to such a comparison; each operand is an integer literal, a named const, an integer binding, or a measure read [MSR-1], and an operand naming a binding one of those `let_stmt`s introduced is read as that statement's initializer.
-The continuing relation is the condition when the exit block is the `else` block and its negation when the exit block is the first block:
-
-| continuing relation | derived rank |
-|---|---|
-| `a < b`, `a <= b` | `b - a` |
-| `a > b`, `a >= b` | `a - b` |
-| `x != 0` or `0 != x`, x unsigned | `x` |
-
-Every other continuing relation derives no rank.
-Only a test that continues leads back to the header, and the continuing relation holds there, so the rank's values at the tests that continue are nonnegative and strictly decreasing and the loop reaches its exit in finitely many iterations.
-Because the `let_stmt`s before the exit test call nothing, they write no operand, and R0 is the rank's value at the test.
-
-A `loop_stmt` that can reach its header again and makes progress in none of these forms is a hard error citing TERM-1 at the `loop_stmt`, with a repair [DIAG-1].
-An owed descent that the fact state at the edge does not prove is a hard error citing TERM-1 at the `loop_stmt`, with the relation, its disposition [MSR-4] and a repair.
-The values `R0` are proof-only: like an invariant, a rank evaluates nothing at runtime and adds no value, branch or trap [INV-1].
-A counted `for_stmt` runs its body at most `upper - lower` times and owes no rank.
 
 ## 16. Worked example (normative bytes)
 

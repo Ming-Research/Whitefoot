@@ -1436,7 +1436,17 @@ impl PlaceMap {
                 CheckedStatement::Match { arms, .. } => {
                     self.collect_arm_bindings(arms);
                 }
-                CheckedStatement::Loop { body, .. } => self.collect_block_bindings(body),
+                CheckedStatement::Loop { body, progress, .. } => {
+                    if let crate::semantic::model::CheckedLoopProgress::Rank { snapshots, .. } =
+                        progress
+                    {
+                        for snapshot in snapshots {
+                            self.summary_mut(snapshot.binding).ty =
+                                Some(CheckedType::Integer(snapshot.ty));
+                        }
+                    }
+                    self.collect_block_bindings(body)
+                }
                 CheckedStatement::CountedRange { binder, body, .. } => {
                     self.summary_mut(*binder).ty = Some(CheckedType::Integer(IntegerType::U64));
                     self.collect_block_bindings(body);

@@ -216,6 +216,9 @@ pub enum SemanticRule {
     Inv1,
     /// Finite source-written affine proof formation and checking.
     Prf1,
+    /// Loop progress: a rank the exit test derives, or a wait on every path
+    /// back to the header.
+    Term1,
 }
 
 impl SemanticRule {
@@ -285,6 +288,7 @@ impl SemanticRule {
             Self::Call6 => "CALL-6",
             Self::Inv1 => "INV-1",
             Self::Prf1 => "PRF-1",
+            Self::Term1 => "TERM-1",
         }
     }
 
@@ -367,7 +371,8 @@ impl SemanticRule {
             Self::Msr3 => Self::Call6,
             Self::Call6 => Self::Inv1,
             Self::Inv1 => Self::Prf1,
-            Self::Prf1 => return None,
+            Self::Prf1 => Self::Term1,
+            Self::Term1 => return None,
         })
     }
 
@@ -444,6 +449,7 @@ impl SemanticRule {
             Self::Call6 => 59,
             Self::Inv1 => 60,
             Self::Prf1 => 61,
+            Self::Term1 => 62,
         }
     }
 }
@@ -1072,6 +1078,22 @@ pub enum SemanticIssueKind {
     UndischargedSourceProof {
         name: String,
         obligation: SourceProofObligation,
+        mechanical_fix: &'static str,
+    },
+    /// A loop that neither derives a rank from its exit test nor waits on
+    /// every path back to its header [TERM-1].
+    LoopWithoutProgress {
+        /// The repair [DIAG-1].
+        mechanical_fix: &'static str,
+    },
+    /// A loop whose rank does not fall on some backedge [TERM-1].
+    UndischargedLoopProgress {
+        /// The descent the backedge owes, rendered over the rank's operands.
+        required_relation: String,
+        /// Whether the backedge state refutes the descent or only fails to
+        /// prove it.
+        disposition: StaticObligationDisposition,
+        /// The repair [DIAG-1].
         mechanical_fix: &'static str,
     },
     /// A return expression disagrees with the written function result.

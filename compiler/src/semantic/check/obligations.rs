@@ -12,7 +12,7 @@ use super::super::entailment::ObligationFamily;
 use super::super::goal::CheckedCallRequirement;
 use super::super::model::{
     CheckedAffineExpressionKind, CheckedAffineRelation, CheckedContainerRoot,
-    CheckedConversionMode, CheckedExpression, CheckedFunction, CheckedLoopId, CheckedLoopInvariant,
+    CheckedConversionMode, CheckedExpression, CheckedFunction, CheckedLoopId, CheckedLoopInvariant, CheckedLoopProgress,
     CheckedPlaceStep, CheckedProofUseSource, CheckedRangeElementPlace, CheckedRangeSource,
     CheckedSetTarget, CheckedStatement, FunctionId,
 };
@@ -244,10 +244,23 @@ impl Records<'_> {
             CheckedStatement::Loop {
                 id,
                 invariants,
+                progress,
                 body,
                 ..
             } => {
                 self.loop_invariants(invariants);
+                if let CheckedLoopProgress::Rank { owed, .. } = progress
+                    && let Some(descent) = owed.first()
+                {
+                    for relation in owed {
+                        self.affine_relation(relation);
+                    }
+                    self.push(
+                        SemanticRule::Term1,
+                        descent.node_path.clone(),
+                        ObligationSubject::LoopProgress,
+                    );
+                }
                 self.loops.push(*id);
                 self.statements(body);
                 self.loops.pop();

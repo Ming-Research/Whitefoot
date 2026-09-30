@@ -843,6 +843,22 @@ impl<'unit> Checker<'_, 'unit> {
         )?;
         let mut body_bindings = header_bindings.clone();
         let allowed_invariant_values = base_keys.iter().copied().collect::<HashSet<_>>();
+        // [TERM-1] a written rank is formed as a header invariant's side is.
+        let written_rank = match self
+            .types
+            .declarations
+            .tree
+            .first_child_with(node, Production::LoopRank)?
+        {
+            Some(rank) => Some(self.check_loop_rank(
+                context,
+                rank,
+                &body_bindings,
+                &allowed_invariant_values,
+                scope.loops.len(),
+            )?),
+            None => None,
+        };
         let invariants = self.form_loop_invariants(
             context,
             invariant_nodes,
@@ -953,10 +969,20 @@ impl<'unit> Checker<'_, 'unit> {
             Vec::new()
         };
 
+        let progress = self.loop_progress(
+            id,
+            node,
+            written_rank,
+            &checked.statements,
+            checked.can_continue,
+            counters,
+        )?;
+
         Ok(StatementResult {
             statement: CheckedStatement::Loop {
                 id,
                 invariants,
+                progress,
                 body: checked.statements,
                 backedge_drops,
             },

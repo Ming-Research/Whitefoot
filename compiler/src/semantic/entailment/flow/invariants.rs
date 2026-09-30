@@ -133,6 +133,39 @@ impl Reasoning<'_, '_, '_> {
 
     /// The disposition of one written invariant's batch in this state
     /// [INV-1]: one inequality, or both bounds of an equality.
+    /// [TERM-1] a loop rank's owed relations at one backedge: proved when
+    /// the state proves every owed relation or every relation of one
+    /// alternative. Otherwise the first owed relation the state does not
+    /// prove is shown, refuted when the state refutes it.
+    pub(super) fn prove_loop_descent<'relation>(
+        &mut self,
+        owed: &'relation [CheckedAffineRelation],
+        alternatives: &[Vec<CheckedAffineRelation>],
+        state: &mut ProofFlowState,
+    ) -> (TargetDisposition, &'relation CheckedAffineRelation) {
+        let mut shown = None;
+        for relation in owed {
+            let disposition = self.prove_affine_relation_batch(relation, state);
+            if disposition != TargetDisposition::Proved {
+                shown = Some((disposition, relation));
+                break;
+            }
+        }
+        let Some(shown) = shown else {
+            return (TargetDisposition::Proved, &owed[0]);
+        };
+        let implied = alternatives.iter().any(|conjunction| {
+            conjunction.iter().all(|relation| {
+                self.prove_affine_relation_batch(relation, state) == TargetDisposition::Proved
+            })
+        });
+        if implied {
+            (TargetDisposition::Proved, &owed[0])
+        } else {
+            shown
+        }
+    }
+
     pub(super) fn prove_affine_relation_batch(
         &mut self,
         relation: &CheckedAffineRelation,
@@ -460,6 +493,23 @@ impl Reasoning<'_, '_, '_> {
 }
 
 impl Judging<'_, '_, '_> {
+    /// [TERM-1] one loop rank's backedge judgment.
+    pub(super) fn record_loop_progress_outcome(
+        &mut self,
+        node_path: &crate::NodePath,
+        shown: &CheckedAffineRelation,
+        disposition: TargetDisposition,
+    ) {
+        self.output
+            .loop_progress
+            .push(super::super::LoopProgressOutcome {
+                node_path: node_path.clone(),
+                required_relation: self.input.render_checked_invariant_relation(shown, None),
+                proved: disposition == TargetDisposition::Proved,
+                refuted: disposition == TargetDisposition::Refuted,
+            });
+    }
+
     pub(super) fn record_loop_invariant_outcomes(
         &mut self,
         loop_id: CheckedLoopId,

@@ -146,6 +146,8 @@ pub enum FixedTerminal {
     Return,
     /// `loop`.
     Loop,
+    /// `decreases`.
+    Decreases,
     /// `for`.
     For,
     /// `in`.
@@ -233,7 +235,7 @@ pub enum FixedTerminal {
 }
 
 /// Every fixed raw-token predicate in the active specification, in first occurrence order.
-pub const ALL_FIXED_TERMINALS: [FixedTerminal; 104] = [
+pub const ALL_FIXED_TERMINALS: [FixedTerminal; 105] = [
     FixedTerminal::Public,
     FixedTerminal::Alias,
     FixedTerminal::Equal,
@@ -296,6 +298,7 @@ pub const ALL_FIXED_TERMINALS: [FixedTerminal; 104] = [
     FixedTerminal::Set,
     FixedTerminal::Return,
     FixedTerminal::Loop,
+    FixedTerminal::Decreases,
     FixedTerminal::For,
     FixedTerminal::In,
     FixedTerminal::Invariant,
@@ -450,6 +453,7 @@ impl FixedTerminal {
             Self::Pure => "pure",
             Self::Reads => "reads",
             Self::Writes => "writes",
+            Self::Decreases => "decreases",
             Self::Public => "public",
             Self::Alias => "alias",
             Self::Pkg => "pkg",
@@ -864,18 +868,19 @@ mod tests {
         assert_eq!(FixedTerminal::Ampersand as u8, 38);
         assert_eq!(FixedTerminal::Entry as u8, 41);
         assert_eq!(FixedTerminal::DotDot as u8, 54);
-        assert_eq!(FixedTerminal::For as u8, 62);
-        assert_eq!(FixedTerminal::In as u8, 63);
-        assert_eq!(FixedTerminal::Invariant as u8, 64);
-        assert_eq!(FixedTerminal::Use as u8, 65);
-        assert_eq!(FixedTerminal::Times as u8, 66);
-        assert_eq!(FixedTerminal::Musttail as u8, 97);
-        assert_eq!(FixedTerminal::PercentChecked as u8, 92);
-        assert_eq!(FixedTerminal::Writes as u8, 103);
+        assert_eq!(FixedTerminal::Decreases as u8, 62);
+        assert_eq!(FixedTerminal::For as u8, 63);
+        assert_eq!(FixedTerminal::In as u8, 64);
+        assert_eq!(FixedTerminal::Invariant as u8, 65);
+        assert_eq!(FixedTerminal::Use as u8, 66);
+        assert_eq!(FixedTerminal::Times as u8, 67);
+        assert_eq!(FixedTerminal::Musttail as u8, 98);
+        assert_eq!(FixedTerminal::PercentChecked as u8, 93);
+        assert_eq!(FixedTerminal::Writes as u8, 104);
         assert_eq!(FixedTerminal::Waits as u8, 23);
-        assert_eq!(FixedTerminal::Spawn as u8, 98);
-        assert_eq!(TerminalPredicate::Identifier.index(), 104);
-        assert_eq!(TerminalPredicate::Digits.index(), 110);
+        assert_eq!(FixedTerminal::Spawn as u8, 99);
+        assert_eq!(TerminalPredicate::Identifier.index(), 105);
+        assert_eq!(TerminalPredicate::Digits.index(), 111);
     }
 
     /// The inventory holds every predicate, once.

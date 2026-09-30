@@ -1237,7 +1237,9 @@ impl<'program> IrBuilder<'program> {
                 }
                 CheckedStatement::Loop {
                     id,
+                    // Source proof metadata has no runtime representation.
                     invariants: _,
+                    progress: _,
                     body,
                     backedge_drops,
                 } => self.lower_loop(*id, body, backedge_drops, give_target.clone())?,

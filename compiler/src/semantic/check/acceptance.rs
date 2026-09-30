@@ -102,6 +102,7 @@ impl<'unit> DeclarationInventory<'unit> {
                 .rejection_node_path(),
             RecordAnswer::Obligation(_)
             | RecordAnswer::CallGoal(_)
+            | RecordAnswer::LoopProgress(_)
             | RecordAnswer::Postcondition(_)
             | RecordAnswer::Uninhabited => &record.site,
         };
@@ -139,6 +140,28 @@ impl<'unit> DeclarationInventory<'unit> {
             path.clone(),
             self.tree.coordinate(node)?,
         ))
+    }
+    /// [TERM-1] a loop whose rank does not fall on some backedge.
+    fn undischarged_loop_progress(
+        &self,
+        entailment: &FunctionEntailment,
+        index: usize,
+    ) -> Result<SemanticIssue, CheckStop> {
+        let outcome = entailment
+            .loop_progress
+            .get(index)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        let (disposition, _) = dispositions(outcome.refuted);
+        Ok(SemanticIssue {
+            rule: SemanticRule::Term1,
+            location: self.source_location(&outcome.node_path)?,
+            kind: SemanticIssueKind::UndischargedLoopProgress {
+                required_relation: outcome.required_relation.clone(),
+                disposition,
+                mechanical_fix: repairs::TERM1_MAKE_THE_RANK_FALL,
+            },
+            request: None,
+        })
     }
     fn undischarged_loop_invariant(
         &self,
@@ -414,6 +437,9 @@ impl<'unit> TypeContext<'unit> {
             (SemanticRule::Inv1 | SemanticRule::Prf1, RecordAnswer::SourceProof(index)) => self
                 .declarations
                 .undischarged_source_proof(&function.entailment, index),
+            (SemanticRule::Term1, RecordAnswer::LoopProgress(index)) => self
+                .declarations
+                .undischarged_loop_progress(&function.entailment, index),
             (
                 SemanticRule::Op4
                 | SemanticRule::Op2

@@ -1343,6 +1343,7 @@ impl Analyzer<'_, '_> {
             CheckedStatement::Loop {
                 id,
                 invariants,
+                progress,
                 body,
                 backedge_drops: _,
             } => {
@@ -1389,9 +1390,53 @@ impl Analyzer<'_, '_> {
                 });
                 let mut body_state = state.clone();
                 let outer_continuing = std::mem::take(&mut body_state.continuing);
+                // [TERM-1] each rank operand's value at the start of the
+                // iteration, which the backedge compares against.
+                if let CheckedLoopProgress::Rank { snapshots, .. } = progress {
+                    for snapshot in snapshots {
+                        self.declare(snapshot.binding);
+                        if let Ok(form) = self.reasoning().checked_affine_form(
+                            &snapshot.value,
+                            &mut body_state.affine,
+                            &mut AffineCheckState::new(),
+                        ) {
+                            body_state.affine.values.insert(snapshot.binding, form);
+                        }
+                        // As a `let` binding is to its initializer [ENT-3].
+                        if let Some(read) = &snapshot.read {
+                            let mut event = None;
+                            let _ = self.establish_value_image(
+                                &snapshot.value.node_path,
+                                ValueImage::Binding(snapshot.binding),
+                                read,
+                                &mut body_state.facts,
+                                &mut event,
+                            );
+                        }
+                    }
+                }
                 let body_falls_through = self.walk_block(body, &mut body_state);
                 if body_falls_through {
                     debug_assert_summarized(&body_state, &kills);
+                }
+                if let CheckedLoopProgress::Rank {
+                    owed,
+                    alternatives,
+                    ..
+                } = progress
+                    && let Some(descent) = owed.first()
+                {
+                    let (disposition, shown) = if body_falls_through {
+                        self.reasoning()
+                            .prove_loop_descent(owed, alternatives, &mut body_state)
+                    } else {
+                        (TargetDisposition::Proved, descent)
+                    };
+                    self.judging().record_loop_progress_outcome(
+                        &descent.node_path,
+                        shown,
+                        disposition,
+                    );
                 }
 
                 let mut step = vec![None; invariants.len()];

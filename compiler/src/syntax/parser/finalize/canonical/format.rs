@@ -340,8 +340,8 @@ pub(super) fn build_gap_styles(
             }
         }
 
-        // A loop header carrying at least one `header_invariant` breaks after
-        // `(`, placing each header item on its own line and `) {` back at the
+        // A loop header carrying a `loop_rank` or at least one
+        // `header_invariant` breaks after `(`, placing each header item on its own line and `) {` back at the
         // construct's depth. A counted `for` whose header is only its binding
         // has no invariant to set apart, so its whole header stays on one line;
         // an ordinary `loop` with no header has no parentheses at all.
@@ -360,7 +360,7 @@ pub(super) fn build_gap_styles(
                     .ok_or(CanonicalCompilerFailure::InvalidFinalizedTree)?;
                 match child.production {
                     Production::ForBinding => {}
-                    Production::HeaderInvariant => {
+                    Production::LoopRank | Production::HeaderInvariant => {
                         invariants = invariants
                             .checked_add(1)
                             .ok_or(CanonicalCompilerFailure::CounterOverflow)?;

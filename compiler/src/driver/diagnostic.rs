@@ -888,6 +888,8 @@ impl Report for SemanticIssueKind {
             UndischargedLocalInvariant { name, disposition, mechanical_fix };
             InvalidSourceProof { reason, mechanical_fix };
             UndischargedSourceProof { name, obligation, mechanical_fix };
+            LoopWithoutProgress { mechanical_fix };
+            UndischargedLoopProgress { required_relation, disposition, mechanical_fix };
             ReturnMismatch;
             WaitingCallOutsideWaitingFunction { callee, context, mechanical_fix };
             AtomicTargetNotShared { found, mechanical_fix };

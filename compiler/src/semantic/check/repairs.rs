@@ -1390,3 +1390,6 @@ pub(super) fn storage_taken_apart(storage: &str, fields: Option<&[(String, Strin
         "{FIELDS}: when `{storage}` is a valid readable place, replace this statement with `{reads}` and extend the enclosing effect row to cover any reads through reference parameters [EFF-2]; otherwise remove this statement and replace uses of its bindings with the values the program needs"
     )
 }
+
+/// [TERM-1] the repair a loop whose rank does not fall takes [DIAG-1].
+pub(super) const TERM1_MAKE_THE_RANK_FALL: &str = "make every path back to the header lower the rank by at least one, with arithmetic that cannot wrap: raise the exit test's rising operand or lower its falling one, or lower a written `decreases` rank and keep it nonnegative";
