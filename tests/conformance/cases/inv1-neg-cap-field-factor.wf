@@ -1,0 +1,14 @@
+struct Bounds {
+  cap: u32;
+}
+
+fn inspect(limits: &Bounds) -> result: u32 reads(limits.cap) {
+  invariant bounded: 0_u32 <= limits^.cap;
+  return limits^.cap;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let limits = Bounds(cap: 4_u32);
+  let capacity = inspect(limits: &limits);
+  return std::process::exit_status(code: 0_u8);
+}
