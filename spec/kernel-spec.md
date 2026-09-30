@@ -3644,12 +3644,12 @@ A resolved but unavailable named source, undischarged or malformed relation sour
 Each `loop_stmt` whose body can reach its header again [FN-1] makes progress in one of the following forms, taken in this order; the first that applies is the loop's form.
 
 1. **Written rank.** The header begins with a `loop_rank` `decreases R`. R is formed as a `header_invariant`'s `affine_expr` is, over the same operands [INV-1]. Every normal edge from the body back to the header owes `R' < R0` and `0 <= R'`, where `R0` is R's value when the iteration began and `R'` its value on that edge.
-2. **Waiting.** Every path from the start of the body back to the header executes a wait: a call, not a spawn, of a waiting function [WAIT-1] a host module declares [PRE-2], an `atomic_stmt` that has a guard [SHARE-2], or a `let_stmt` whose call is a spawn, whose context is joined before any edge leaves that statement's block [WAIT-3]. The loop owes nothing more.
+2. **Waiting.** Every path from the start of the body back to the header executes a wait: a call, not a spawn, whose callee resolves directly [WAIT-1] to a waiting function a host module declares [PRE-2], an `atomic_stmt` that has a guard [SHARE-2], or a `let_stmt` whose call is a spawn, whose context is joined before any edge leaves that statement's block [WAIT-3]. The loop owes nothing more.
 3. **Structural descent.** Every normal edge from the body back to the header rebinds a reference binding c [REF-1] to a place that extends the place c named when the iteration began by struct-field, payload, `Box` `inner` and subscript steps, at least one of them a `Box` `inner` step, and the body contains no `set_stmt` whose target is not a reference rebinding and whose type is not `unit`, `Bool`, an integer or a float, and no call whose effect row writes anything [EFF-1]. The loop owes nothing more.
 4. **Derived rank.** The body's exit tests derive ranks by the table below, and every normal edge from the body back to the header owes `R' < R0`, with `R0` and `R'` as in form 1, for one of those ranks R, the same for every edge.
 
-The body's leading statements are its `let_stmt`s of the form `let IDENT = expr;` whose `expr` is not a `call`, and its exit tests, up to the first statement of neither kind or the first exit test whose continuing block is not empty.
-An exit test is a leading `if_stmt` whose condition is not a `call` and one of whose two blocks, its exit block, ends in a `break_stmt` that leaves this loop or a loop around it, or in a `return_stmt`; its other block is its continuing block.
+The body's leading statements are its `let_stmt`s of the form `let IDENT = expr;` whose `expr` is not a call of a function [FN-1], and its exit tests, up to the first statement of neither kind or the first exit test whose continuing block is not empty.
+An exit test is a leading `if_stmt` whose condition is not a call of a function and one of whose two blocks, its exit block, ends in a `break_stmt` that leaves this loop or a loop around it, or in a `return_stmt`; its other block is its continuing block.
 A test derives a rank only when its condition is an integer comparison `a op b`, an `infix` whose operator is a `compare_op` [OP-1], or a binding that a leading `let_stmt` bound to such a comparison.
 Each operand is an integer literal, a named const, an integer binding, a measure read [MSR-1], or an exact or `.defined` sum or difference of two operands or product of an operand and an integer literal [OP-1]; an operand naming a binding a leading `let_stmt` introduced is read as that statement's initializer.
 The continuing relation is the condition when the exit block is the `else` block and its negation when the exit block is the first block:
@@ -3662,8 +3662,8 @@ The continuing relation is the condition when the exit block is the `else` block
 
 Every other continuing relation derives no rank.
 Only a test that continues leads toward the header, and its continuing relation holds there, so a rank's values at the tests of it that continue are nonnegative and strictly decreasing, and the loop reaches an exit in finitely many iterations.
-No leading statement before a test writes one of its operands, so `R0` is the rank's value at its test.
-A function a source record defines may declare `waits` and return without waiting, and a spawn written as an `expr_stmt` is joined only when its activation leaves, so neither is a wait of form 2.
+No leading statement before a test writes one of its operands, since an operation [OP-1] writes nothing, so `R0` is the rank's value at its test.
+Each wait of form 2 is a point at which [WAIT-2] has a context wait before its next step; a call of a function a source record defines executes in its caller's context, and a call through an interface member or a function-kind parameter may reach an actual that does not wait [FN-4].
 A structural descent lowers the number of `Box` cells in the value c names at each iteration's start: the rebinding enters one of them, and no statement of the body can add one to any value.
 
 A `loop_stmt` that can reach its header again and makes progress in none of these forms is a hard error citing TERM-1 at the `loop_stmt`, with a repair [DIAG-1].

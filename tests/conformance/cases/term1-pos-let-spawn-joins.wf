@@ -7,7 +7,7 @@ fn weight(value: u8) -> result: u8 pure waits {
 }
 
 fn gather() -> result: unit pure waits {
-  doc "A spawn bound by a let is joined before any edge leaves its block, so every path back to the header waits at the join [TERM-1, WAIT-3].";
+  doc "A spawn bound by a let is joined before any edge leaves its block, and a join is a point at which the context waits for the started one whatever that context does, so every path back to the header waits [TERM-1, WAIT-2, WAIT-3].";
   loop {
     let started = spawn weight(value: 7_u8);
     let seen = started +wrap 1_u8;
