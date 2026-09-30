@@ -1536,15 +1536,17 @@ impl Analyzer<'_, '_> {
                     progress: {
                         let ranked: &[CheckedAffineRelation] = match progress {
                             CheckedLoopProgress::Rank { owed, .. } => owed,
-                            CheckedLoopProgress::NoBackedge | CheckedLoopProgress::Waits => &[],
+                            CheckedLoopProgress::NoBackedge
+                            | CheckedLoopProgress::Waits
+                            | CheckedLoopProgress::Structural => &[],
                         };
                         let implying = match progress {
                             CheckedLoopProgress::Rank { alternatives, .. } => {
                                 alternatives.iter().flatten().collect::<Vec<_>>()
                             }
-                            CheckedLoopProgress::NoBackedge | CheckedLoopProgress::Waits => {
-                                Vec::new()
-                            }
+                            CheckedLoopProgress::NoBackedge
+                            | CheckedLoopProgress::Waits
+                            | CheckedLoopProgress::Structural => Vec::new(),
                         };
                         invariants
                             .iter()

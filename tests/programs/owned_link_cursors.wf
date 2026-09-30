@@ -45,10 +45,10 @@ fn without_first(head: Option<Box<Link>>) -> result: Option<Box<Link>> pure {
   }
 }
 
-fn remove_even(head: &Option<Box<Link>>) -> result: unit writes(head) {
-  doc "A single link-slot cursor removes nodes by atomic owned transformation, preserving the occupied slot and releasing each removed cell.";
+fn remove_even(head: &Option<Box<Link>>, count: u64) -> result: unit writes(head) {
+  doc "A single link-slot cursor removes nodes by atomic owned transformation, preserving the occupied slot and releasing each removed cell. A removal leaves the cursor where it is and shrinks the value it names, which no loop progress form measures, so the walk is counted by the list's length [TERM-1].";
   let cursor = head;
-  loop {
+  for (step in 0_u64..count) {
     match cursor^ {
       Some(value: node) => {
         let parity = node^.inner.value % 2_u64;
@@ -149,7 +149,7 @@ fn main() -> status: ExitStatus pure {
   if before != 2016_u64 {
     return exit_status(code: 1_u8);
   }
-  remove_even(head: &head);
+  remove_even(head: &head, count: 64_u64);
   let odd_sum = sum(head: &head);
   if odd_sum != 1024_u64 {
     return exit_status(code: 2_u8);

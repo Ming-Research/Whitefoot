@@ -2744,8 +2744,10 @@ fn main() -> status: std::process::ExitStatus pure {
 
 /// [INV-1, DIAG-1] A body-end local invariant is a probe: it asks whether the
 /// entering context at that join still proves the relation the header carries.
-/// Here it does not, and the header's own backedge fails for exactly the same
-/// reason. DIAG-1 admits one rejection, and the probe is decided at the join
+/// Here it does not, since one arm writes an unbounded candidate, and the
+/// header's own backedge fails for exactly the same reason. (A join whose
+/// every arm proves the header relation now keeps it [ENT-6, INV-1], so the
+/// candidate is left unguarded.) DIAG-1 admits one rejection, and the probe is decided at the join
 /// while the backedge is decided only after the whole body has been walked, so
 /// the probe is the reported failure.
 ///
@@ -2764,10 +2766,6 @@ fn a_failing_body_probe_is_reported_before_the_header_backedge() {
       return hi;
     }
     set fuel = fuel -wrap 1_u64;
-    if cand <= spare {
-    } else {
-      return 0_u64;
-    }
     if flag {
       set hi = cand;
     }

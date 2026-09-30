@@ -877,6 +877,24 @@ impl<'unit> Checker<'_, 'unit> {
                 give_context: scope.give_context,
             },
         )?;
+        // [TERM-1] a reference cursor every backedge rebinds strictly inside
+        // the owned value it named when the iteration began.
+        let descends = checked.can_continue
+            && rebound.holders.iter().any(|declaration| {
+                match (
+                    header_bindings
+                        .get(declaration)
+                        .and_then(|local| local.reference.as_ref()),
+                    body_bindings
+                        .get(declaration)
+                        .and_then(|local| local.reference.as_ref()),
+                ) {
+                    (Some(header), Some(backedge)) => {
+                        super::progress::strictly_inside(&header.paths, &backedge.paths)
+                    }
+                    _ => false,
+                }
+            });
         if checked.can_continue {
             self.body.record_backedge_supersedes(
                 id,
@@ -973,6 +991,7 @@ impl<'unit> Checker<'_, 'unit> {
             id,
             node,
             written_rank,
+            descends,
             &checked.statements,
             checked.can_continue,
             counters,

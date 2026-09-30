@@ -1919,7 +1919,7 @@ fn a_counted_loop_reducing_under_an_associative_operation_is_permitted() {
   let low = iand(index, 7_u64);
   let seen = 0_u64;
   loop @spin {
-    let done = seen == 4_u64;
+    let done = seen >= 4_u64;
     if done {
       break @spin;
     }

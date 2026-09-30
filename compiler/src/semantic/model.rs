@@ -236,6 +236,12 @@ pub(crate) enum CheckedLoopProgress {
     },
     /// Every path from the header back to the header waits [WAIT-1].
     Waits,
+    /// Every backedge rebinds a reference cursor strictly inside the owned
+    /// value it named when the iteration began, through at least one `Box`,
+    /// and the body writes nothing that could add a `Box` to any value: the
+    /// number of `Box` cells the cursor's value holds falls each iteration.
+    /// The checker decides it; the proof checker owes nothing more.
+    Structural,
 }
 
 /// [TERM-1] one proof-only value captured at the start of each iteration.

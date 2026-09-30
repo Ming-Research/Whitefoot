@@ -26,26 +26,31 @@ const distance_extras: Array<u8, 30> =[0_u8, 0_u8, 0_u8, 0_u8, 1_u8, 1_u8, 2_u8,
 fn read_bits(state: &InflateState, input: &[u8], count: u32, mask: u64) -> outcome: Result<u64, InflateError> reads(input), writes(state.input_offset), writes(state.hold), writes(state.bits) contract {
   ensures when Ok(value: result): result <= mask;
 } {
-  doc "The bit reservoir is reached through the state reference its row declares, and the compressed bytes through a range reference the caller formed.";
-  loop @fill_bits {
+  doc "The bit reservoir is reached through the state reference its row declares, and the compressed bytes through a range reference the caller formed. The input position is carried in a local while bytes are consumed, so it is the loop's rank [TERM-1], and written back on every exit.";
+  let offset = state^.input_offset;
+  loop @fill_bits (
+    decreases input^.len - offset
+  ) {
     let enough = state^.bits >= count;
     if enough {
       break @fill_bits;
     } else {
       let input_length = input^.len;
-      let input_done = state^.input_offset >= input_length;
+      let input_done = offset >= input_length;
       if input_done {
+        set state^.input_offset = offset;
         let error = InflateError::Truncated();
         return Err<u64, InflateError>(error: error);
       }
-      let next_byte = input^[state^.input_offset];
+      let next_byte = input^[offset];
       let next_word = cvt::<u8, u64>(next_byte);
       let shifted = ishl.wrap(next_word, state^.bits);
       set state^.hold = ior(state^.hold, shifted);
       set state^.bits = state^.bits +wrap 8_u32;
-      set state^.input_offset = state^.input_offset +wrap 1_u64;
+      set offset = offset + 1_u64;
     }
   }
+  set state^.input_offset = offset;
   let value = iand(state^.hold, mask);
   set state^.hold = ishr.wrap(state^.hold, count);
   set state^.bits = state^.bits -wrap count;
@@ -58,7 +63,9 @@ fn decode_fixed_symbol(state: &InflateState, input: &[u8]) -> result: Result<u64
   let symbol_index = 0_u64;
   let bit_length = 1_u32;
   let decoded = 0_u64;
-  loop @code_lengths {
+  loop @code_lengths (
+    decreases 9_u32 - bit_length
+  ) {
     let bit = 0_u64;
     match read_bits(state: state, input: input, count: 1_u32, mask: 1_u64) {
       Ok(value: read_bit) => {
@@ -103,7 +110,7 @@ fn decode_fixed_symbol(state: &InflateState, input: &[u8]) -> result: Result<u64
     set symbol_index = symbol_index +wrap count;
     set first = ishl.wrap(first_after_count, 1_u32);
     set code = ishl.wrap(code, 1_u32);
-    if bit_length == 9_u32 {
+    if bit_length >= 9_u32 {
       let error = InflateError::InvalidHuffmanCode();
       return Err<u64, InflateError>(error: error);
     }

@@ -14,9 +14,10 @@ use crate::{SemanticIssueKind, SemanticRule};
 use super::super::super::model::{
     BindingId, CheckedAffineExpression, CheckedAffineExpressionKind, CheckedAffineRelation,
     CheckedEnumType, CheckedExpression, CheckedIntegerOperation, CheckedLoopId,
-    CheckedLoopProgress, CheckedProgressSnapshot, CheckedStatement, CheckedType, CheckedValue,
-    IntegerType,
+    CheckedLoopProgress, CheckedMode, CheckedProgressSnapshot, CheckedSetTarget, CheckedStatement,
+    CheckedType, CheckedValue, IntegerType,
 };
+use super::super::super::places::{PlaceStep, ResolvedPlace};
 use crate::NodePath;
 use super::super::{CheckStop, Checker};
 use super::ControlCounters;
@@ -46,6 +47,7 @@ impl<'unit> Checker<'_, 'unit> {
         id: CheckedLoopId,
         node: NodeId,
         written: Option<CheckedAffineExpression>,
+        descends: bool,
         statements: &[CheckedStatement],
         can_continue: bool,
         counters: &mut ControlCounters<'_>,
@@ -63,6 +65,9 @@ impl<'unit> Checker<'_, 'unit> {
         let ranks = derived_ranks(id, statements, &node_path);
         if !ranks.is_empty() {
             return self.rank_progress(ranks, counters);
+        }
+        if descends && !self.writes_shape(statements) {
+            return Ok(CheckedLoopProgress::Structural);
         }
         self.types.declarations.issue_node(
             SemanticRule::Term1,
@@ -128,6 +133,106 @@ impl<'unit> Checker<'_, 'unit> {
             alternatives,
         })
     }
+}
+
+impl Checker<'_, '_> {
+    /// [TERM-1] whether some statement of `statements` may add a `Box` cell
+    /// to a value: a commit whose target is not a reference rebinding and
+    /// whose type is not a scalar, or a call whose row writes anything.
+    fn writes_shape(&self, statements: &[CheckedStatement]) -> bool {
+        statements.iter().any(|statement| match statement {
+            CheckedStatement::Set { target, value, .. } => {
+                let rebinding = matches!(
+                    target,
+                    CheckedSetTarget::Place(place)
+                        if place.fields.is_empty() && place.mode != CheckedMode::Own
+                );
+                (!rebinding && !scalar(target.ty())) || self.call_writes(value)
+            }
+            CheckedStatement::Let { value, .. }
+            | CheckedStatement::DestructuringLet { value, .. }
+            | CheckedStatement::Evaluate { value, .. }
+            | CheckedStatement::DropExpression { value, .. }
+            | CheckedStatement::Give { value, .. }
+            | CheckedStatement::Return { value, .. } => self.call_writes(value),
+            CheckedStatement::PropagateLet { scrutinee, .. } => self.call_writes(scrutinee),
+            CheckedStatement::Match {
+                scrutinee, arms, ..
+            }
+            | CheckedStatement::ValueMatchLet {
+                scrutinee, arms, ..
+            } => {
+                self.call_writes(scrutinee)
+                    || arms.iter().any(|arm| self.writes_shape(&arm.body))
+            }
+            CheckedStatement::Loop { body, .. }
+            | CheckedStatement::CountedRange { body, .. }
+            | CheckedStatement::Atomic { body, .. } => self.writes_shape(body),
+            CheckedStatement::Proof(_) | CheckedStatement::Break { .. } => false,
+        })
+    }
+
+    /// Whether `expression` is a call whose row writes anything [EFF-1].
+    fn call_writes(&self, expression: &CheckedExpression) -> bool {
+        let CheckedExpression::UserCall {
+            function,
+            formal_effects,
+            ..
+        } = expression
+        else {
+            return false;
+        };
+        formal_effects
+            .as_ref()
+            .map(|effects| !effects.writes.is_empty())
+            .or_else(|| {
+                self.types
+                    .signatures
+                    .get(function.0 as usize)
+                    .map(|signature| !signature.declared_effects.writes.is_empty())
+            })
+            .unwrap_or(true)
+    }
+}
+
+/// A value no write of which can add or remove a `Box` cell.
+fn scalar(ty: CheckedType) -> bool {
+    matches!(
+        ty,
+        CheckedType::Unit
+            | CheckedType::Bool
+            | CheckedType::Integer(_)
+            | CheckedType::Float(_)
+            | CheckedType::GenericInt(_)
+            | CheckedType::GenericFloat(_)
+    )
+}
+
+/// [TERM-1] whether `backedge`, a cursor's place set on a backedge, lies
+/// strictly inside `header`, its place set when the iteration began: every
+/// backedge place extends one header place by owned steps only, at least one
+/// of which enters a `Box`.
+pub(super) fn strictly_inside(header: &[ResolvedPlace], backedge: &[ResolvedPlace]) -> bool {
+    !backedge.is_empty()
+        && backedge.iter().all(|place| {
+            header.iter().any(|anchor| {
+                place.root == anchor.root
+                    && place.path.len() > anchor.path.len()
+                    && place.path.starts_with(&anchor.path)
+                    && {
+                        let suffix = &place.path[anchor.path.len()..];
+                        suffix.iter().all(|step| {
+                            matches!(
+                                step,
+                                PlaceStep::Field(_)
+                                    | PlaceStep::Deref
+                                    | PlaceStep::Payload { .. }
+                                    | PlaceStep::Index(_)
+                            )
+                        }) && suffix.contains(&PlaceStep::Deref)
+                    }
+            })
+        })
 }
 
 /// [TERM-1] a written rank R: every backedge owes `R' < R0` and `0 <= R'`,
