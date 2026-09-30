@@ -1364,22 +1364,6 @@ rarely insert at the same place.
   (`design/compiler/waiting-contexts`, the bound spawn's join). Reopen when a
   program needs the use and the enabling statement in one compound statement.
 
-- **At most eight operations run on helper threads at once.** Once a
-  program spawns, every operation the ring does not carry runs on the helper
-  pool (`completion/bridge.c`, `wf_bridge_hold_for_contexts`), which holds at
-  most `WF_BRIDGE_MAX_HELPERS`, eight, helpers. A ninth such operation waits
-  in the queue until one returns, so nine contexts whose operations wait on
-  one another through pipes can stop although [WAIT-2] promises that they
-  proceed. On Linux the ring carries reads, opens, closes and a socket's
-  accept, connect, receive and send, so a stream write, a directory's next
-  entry, and the immediate listen and shutdown take a helper there
-  (`completion/linux_io_uring.c`, `wf_linux_io_uring_carries`); on a host
-  with no ring every file operation does. Letting the pool
-  grow past the ceiling while every helper is blocked, or carrying stream
-  writes on the ring, would remove it; validate with nine contexts paired
-  through pipes. Reopen when a program runs more than eight such waits at
-  once.
-
 - **A split loop too small to split still costs its query at every call.**
   Snowghost's layout prototype runs `pkg::text::line_break`, whose
   `write_run_span` loop is a synthesized range split called once per run of

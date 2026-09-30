@@ -924,3 +924,64 @@ measured a different runtime, the one with the stop check fixed. Whether the
 progress changes cost anything at 1024 connections or with 64 KiB messages
 is therefore open, and `docs/todo.md` says how to settle it; 64 connections,
 where R3's criterion is set, stayed within 1% in both sessions.
+
+### 10.6 A pool whose every helper waits on a peer
+
+R1 sends every operation the ring does not carry to the helper pool once
+contexts run, and the pool grew only to the bridge's ceiling of eight. A
+helper inside an operation that waits for another context of the program
+may not return until that context acts, so eight such helpers left every
+later request queued, the peer's among them, and the program stopped with no
+report, against [WAIT-2].
+
+Which programs reach it, as of f5024250f:
+- A program holds three streams, its standard input, output and error
+  (`lib/std/process`), and no library call makes another, so pipes alone
+  give at most three such helpers.
+- With a Linux ring, the ring carries reads, sockets and opens; only stream
+  writes take a helper that may wait on a peer.
+- With no ring, a socket receive, send or accept waits for readiness on the
+  driver instead (`wf_bridge_waits_for_readiness`), and stream reads and
+  writes and connects take helpers.
+- On Windows the port carries connects, receives and sends, while accepts and
+  stream reads and writes take helpers. Eight listeners accepting at once
+  hold all eight helpers, and a context reading standard input then waits
+  until some client connects.
+
+The runtime's harness has no such limit on pipes, so the witness is there:
+nine pipes, nine one-byte reads submitted to an adapter that holds requests
+for contexts, then nine one-byte writes. On f5024250f one read and every write
+stayed queued behind eight blocked reads, and the case failed after its 10 s
+bound (`test_a_peer_wait_never_waits_behind_peer_waits` in
+`compiler/src/backend/completion/harness.c`).
+
+The rule: once contexts run, a queued request is never left behind a pool
+whose every helper is inside a request that may wait on a peer, that is a
+socket accept, connect, receive or send or an unpositioned stream read or
+write. The adapter counts such helpers under its queue lock and, when a
+request is queued or a helper enters one with more queued and the count
+equals the pool, starts one more helper past the ceiling. A helper outside
+such a request is asleep on the queue, about to take from it, or in a host
+call that ends without any context acting, so while one exists the queue
+drains. The pool then never holds more helpers than the ceiling plus the
+program's outstanding peer waits. Records for 256 helpers bound it, and a
+program past them, or one the host refuses a thread, stops with a report,
+which [SCOPE-3] allows for a runtime resource where waiting in the queue would
+stop it with none. A pinned `WF_IO_HELPERS` keeps its count, as R1 records.
+
+With the rule, the witness passes, and the same requests on a pinned pool
+stay behind its eight helpers until the test writes each pipe itself. The
+harness groups the gate runs and three ThreadSanitizer runs of the adapter
+group passed. The rule adds a lock round trip after each helper execution of
+such a request, only while contexts run; the measured programs make none on
+helpers on Linux, where their sockets use the ring.
+
+Alternatives:
+- A readiness-driven adapter, one `poll`, `kqueue` or `WSAPoll` over every
+  queued descriptor, which the adapter's comments name as the proper engine
+  for a host with no ring. It removes the thread per wait, but it is a port
+  per host, standard streams shared with other processes cannot be made
+  nonblocking safely, and Windows accepts need their own overlapped form. It
+  remains the way to make these waits cheap, not the fix for this one.
+- Leaving the ceiling and correcting the record only. The Windows case above
+  stays reachable, and the specification's promise stays unmet there.

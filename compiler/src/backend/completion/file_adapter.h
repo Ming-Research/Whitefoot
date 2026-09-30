@@ -49,6 +49,18 @@ extern "C" {
  * than this adapter can hold is asking for a pool it will not get. */
 #define WF_FILE_MAX_HELPERS 8u
 
+/* The most helpers one adapter may hold in all, counting those it starts past
+ * its cap because every helper it has is inside a wait on a peer
+ * (`wf_file_adapter_hold_for_contexts`).  It sizes the same storage: one
+ * `wf_prim_thread` per helper for the life of that helper.  A program with
+ * more waits on another of its own contexts on helper threads at once than
+ * this is stopped with a report, as other runtime resources are [SCOPE-3]. */
+#define WF_FILE_HELPER_RECORDS 256u
+_Static_assert(
+    WF_FILE_MAX_HELPERS <= WF_FILE_HELPER_RECORDS,
+    "the helper records must hold every helper the cap admits"
+);
+
 /* A target execution produces the result head published into its record.
  * Transfer bytes already occupy storage named by the request. */
 typedef struct wf_file_result {
@@ -92,7 +104,7 @@ typedef struct wf_file_adapter {
     size_t blocked_helpers;
     /* One entry record per helper, written by the starting thread under the
      * queue lock before the helper exists and never written again. */
-    wf_prim_thread helper_threads[WF_FILE_MAX_HELPERS];
+    wf_prim_thread helper_threads[WF_FILE_HELPER_RECORDS];
     /* Helpers that have started and not yet returned, maintained under the
      * queue lock.  Shutdown waits for this to reach zero rather than joining
      * threads by handle: the helpers are detached, as every thread this
@@ -111,6 +123,11 @@ typedef struct wf_file_adapter {
      * the peer a queued request waits on; see
      * `wf_file_adapter_hold_for_contexts`. */
     unsigned hold_for_contexts;
+    /* Whether the pool may grow past its cap while every helper is inside a
+     * wait on a peer, and how many helpers are inside one now, both under the
+     * queue lock; see `wf_file_adapter_hold_for_contexts`. */
+    unsigned grow_for_peers;
+    size_t peer_waits;
     /* How many helpers this adapter may ever hold.  It is the caller's stated
      * bound on the pool rather than the policy's wish, so it, and not the wish,
      * is what bounds the ceiling `wf_file_adapter_set_helper_cap` installs. */
@@ -357,8 +374,18 @@ int wf_file_adapter_set_helper_cap(wf_file_adapter *adapter, size_t cap);
  * a program runs several contexts, a scheduler thread inside such a call
  * stops every context it runs, including that peer [WAIT-2].  The runtime
  * calls this when the first context other than the root starts; it is never
- * undone, since a context started later may be the peer of any request. */
-int wf_file_adapter_hold_for_contexts(wf_file_adapter *adapter);
+ * undone, since a context started later may be the peer of any request.
+ *
+ * With `grow_for_peers` set, a queued request is also never left behind a
+ * pool whose every helper is inside a request that may wait on a peer: the
+ * pool starts one more helper for it, past its cap.  Eight helpers inside
+ * accepts would otherwise leave a ninth request, perhaps the very peer one of
+ * them waits for, in the queue for good.  A pinned pool passes zero and keeps
+ * its count. */
+int wf_file_adapter_hold_for_contexts(
+    wf_file_adapter *adapter,
+    int grow_for_peers
+);
 
 /* Read without the queue lock. Zero means the calling thread is itself the
  * only engine this queue has. */

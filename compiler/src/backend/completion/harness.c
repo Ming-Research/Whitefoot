@@ -2578,6 +2578,126 @@ static int test_a_peer_bound_request_is_left_to_a_helper(void) {
     return 0;
 }
 
+/* One more pipe than the pool's ceiling, each with a reader and a writer. */
+#define WF_PEER_PIPES (WF_FILE_MAX_HELPERS + 1u)
+
+/* Waits, bounded, until every record of `records` is done. */
+static int harness_await_all(wf_completion_record *records, unsigned count) {
+    struct timespec delay = {.tv_sec = 0, .tv_nsec = 1000000};
+    unsigned attempts;
+    unsigned index;
+    for (attempts = 0; attempts < 10000u; ++attempts) {
+        for (index = 0; index < count; ++index) {
+            if (!harness_record_done(&records[index])) {
+                break;
+            }
+        }
+        if (index == count) {
+            return 1;
+        }
+        (void)nanosleep(&delay, NULL);
+    }
+    return 0;
+}
+
+/* Once contexts run, a request that may wait on another context is never
+ * left behind a pool whose every helper is inside such a wait [WAIT-2].
+ *
+ * Nine readers of nine empty pipes are submitted first, so on the eight
+ * helpers of the ceiling one reader and every writer would wait in the
+ * queue behind eight reads whose writers never run.  With the pool allowed
+ * to grow for peers, every read ends with its writer's byte; a pinned pool
+ * keeps its eight. */
+static int test_a_peer_wait_never_waits_behind_peer_waits(void) {
+    wf_completion_runtime runtime;
+    wf_file_adapter adapter;
+    static wf_completion_record records[2u * WF_PEER_PIPES];
+    unsigned char landed[WF_PEER_PIPES];
+    unsigned char sent[WF_PEER_PIPES];
+    int pipes[WF_PEER_PIPES][2];
+    unsigned index;
+
+    CHECK(wf_completion_runtime_init(&runtime) == 0);
+    CHECK(wf_file_adapter_init(&adapter, &runtime, WF_FILE_MAX_HELPERS, 0) == 0);
+    CHECK(wf_file_adapter_set_helper_cap(&adapter, WF_FILE_MAX_HELPERS) == 0);
+    CHECK(wf_file_adapter_hold_for_contexts(&adapter, 1) == 0);
+    for (index = 0; index < WF_PEER_PIPES; ++index) {
+        CHECK(pipe(pipes[index]) == 0);
+        landed[index] = 0;
+        sent[index] = (unsigned char)(index + 1u);
+        harness_record_init(&records[index], WF_FILE_READ);
+        records[index].request.operation.read.descriptor = pipes[index][0];
+        records[index].request.operation.read.buffer = &landed[index];
+        records[index].request.operation.read.count = 1;
+        CHECK(wf_file_adapter_submit(&adapter, &records[index]) == WF_FILE_TARGET_OWNS);
+    }
+    for (index = 0; index < WF_PEER_PIPES; ++index) {
+        wf_completion_record *writer = &records[WF_PEER_PIPES + index];
+        harness_record_init(writer, WF_FILE_WRITE);
+        writer->request.operation.write.descriptor = pipes[index][1];
+        writer->request.operation.write.buffer = &sent[index];
+        writer->request.operation.write.count = 1;
+        CHECK(wf_file_adapter_submit(&adapter, writer) == WF_FILE_TARGET_OWNS);
+    }
+    CHECK(harness_await_all(records, 2u * WF_PEER_PIPES));
+    for (index = 0; index < WF_PEER_PIPES; ++index) {
+        CHECK(records[index].result.error_code == 0);
+        CHECK(records[index].result.value == 1);
+        CHECK(landed[index] == sent[index]);
+    }
+    CHECK(wf_file_adapter_helper_count(&adapter) > WF_FILE_MAX_HELPERS);
+    CHECK(wf_file_adapter_shutdown(&adapter) == 0);
+
+    /* A pinned pool keeps its count: the same requests leave the ninth read
+     * and every writer queued behind eight helpers, until this thread writes
+     * each pipe itself. */
+    CHECK(wf_file_adapter_init(&adapter, &runtime, WF_FILE_MAX_HELPERS, 0) == 0);
+    CHECK(wf_file_adapter_set_helper_cap(&adapter, WF_FILE_MAX_HELPERS) == 0);
+    CHECK(wf_file_adapter_hold_for_contexts(&adapter, 0) == 0);
+    for (index = 0; index < 2u * WF_PEER_PIPES; ++index) {
+        harness_record_init(
+            &records[index],
+            index < WF_PEER_PIPES ? WF_FILE_READ : WF_FILE_WRITE
+        );
+        if (index < WF_PEER_PIPES) {
+            records[index].request.operation.read.descriptor = pipes[index][0];
+            records[index].request.operation.read.buffer = &landed[index];
+            records[index].request.operation.read.count = 1;
+        } else {
+            unsigned pipe_index = index - WF_PEER_PIPES;
+            records[index].request.operation.write.descriptor = pipes[pipe_index][1];
+            records[index].request.operation.write.buffer = &sent[pipe_index];
+            records[index].request.operation.write.count = 1;
+        }
+        CHECK(wf_file_adapter_submit(&adapter, &records[index]) == WF_FILE_TARGET_OWNS);
+    }
+    {
+        struct timespec delay = {.tv_sec = 0, .tv_nsec = 1000000};
+        unsigned attempts;
+        for (attempts = 0; attempts < 5000u; ++attempts) {
+            if (wf_file_adapter_queued(&adapter) == WF_PEER_PIPES + 1u) {
+                break;
+            }
+            (void)nanosleep(&delay, NULL);
+        }
+    }
+    CHECK(wf_file_adapter_queued(&adapter) == WF_PEER_PIPES + 1u);
+    CHECK(wf_file_adapter_helper_count(&adapter) == WF_FILE_MAX_HELPERS);
+    for (index = 0; index < WF_PEER_PIPES; ++index) {
+        CHECK(write(pipes[index][1], &sent[index], 1) == 1);
+    }
+    CHECK(harness_await_all(records, 2u * WF_PEER_PIPES));
+    CHECK(wf_file_adapter_helper_count(&adapter) == WF_FILE_MAX_HELPERS);
+    CHECK(wf_file_adapter_shutdown(&adapter) == 0);
+
+    for (index = 0; index < WF_PEER_PIPES; ++index) {
+        CHECK(close(pipes[index][0]) == 0);
+        CHECK(close(pipes[index][1]) == 0);
+    }
+    CHECK(wf_completion_runtime_destroy(&runtime) == 0);
+    return 0;
+}
+
 
 #if defined(WF_FILE_HAS_DIRECTORY_NEXT)
 /* The base-position cell after one progressing attempt: the value the Darwin
@@ -2753,6 +2873,7 @@ int main(int argc, char **argv) {
     if (adapter) {
         RUN_TEST(test_directory_progress_is_internal());
         RUN_TEST(test_a_peer_bound_request_is_left_to_a_helper());
+        RUN_TEST(test_a_peer_wait_never_waits_behind_peer_waits());
         RUN_TEST(test_readiness_refusal_is_not_a_terminal_outcome());
         RUN_TEST(test_single_thread_file_progress(argv[1]));
         RUN_TEST(test_pool_stays_empty_when_operations_do_not_wait(argv[1]));
