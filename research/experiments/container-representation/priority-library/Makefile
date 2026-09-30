@@ -5,7 +5,7 @@ WHITEFOOTC ?= $(ROOT)/compiler/target/gate/whitefootc$(EXE)
 CLANG ?= clang
 BUILD ?= .build
 SAMPLES ?= $(BUILD)/measurements.csv
-SOURCES := $(ROOT)/lib/containers/priority-queue.wf priority-library.wf
+SOURCES := priority-library.wf
 .DELETE_ON_ERROR:
 .DEFAULT_GOAL := check
 
@@ -33,7 +33,7 @@ $(BUILD)/priority-library-normal.ll: $(BUILD)/priority-library.raw.ll Makefile
 	  awk '/^define .* @wf_priority_cost_(word|record)_trace\(/ { if (sub(/ #0 [{]$$/, " noinline #0 {") != 1) exit 1; traces++ } { print } END { if (traces != 2) exit 1 }' > $@
 
 $(BUILD)/priority-library-retained.ll: $(BUILD)/priority-library-normal.ll Makefile
-	awk '/^define .* @wf_priority_queue_(new|len|reserve|push|peek|pop|replace_top|heapify|drain|free)[$$(]/ || /^define .* @wf_priority_cost_(word|record)_(make|accept|compare|observe)\(/ \
+	awk '/^define .* @(wf_priority_queue_|wf_std\.collections\.priority_queue\.priority_queue_)(new|len|reserve|push|peek|pop|replace_top|heapify|drain|free)[$$(]/ || /^define .* @wf_priority_cost_cleanup[$$(]/ || /^define .* @wf_priority_cost_(word|record)_(make|accept|compare|observe)\(/ \
 	  { if (sub(/ #0 [{]$$/, " noinline #0 {") != 1) exit 1; retained++ } \
 	  { print } END { if (retained == 0) exit 1; print "Retained queue/callback definitions: " retained > "/dev/stderr" }' $< > $@
 
@@ -57,7 +57,7 @@ check: native-check build
 	$(BUILD)/priority-costs-normal$(EXE) check
 	$(BUILD)/priority-costs-retained$(EXE) check
 	@set -eu; for operation in new len reserve push peek pop replace_top heapify drain free; do \
-	  grep -Eq "call .*@\"?wf_priority_queue_$${operation}"'[$$(]' $(BUILD)/priority-library-retained.opt.ll; \
+	  grep -Eq "call .*@\"?(wf_priority_queue_|wf_std\\.collections\\.priority_queue\\.priority_queue_)$${operation}"'[$$(]' $(BUILD)/priority-library-retained.opt.ll; \
 	done; \
 	for operation in new len reserve push peek pop replace_top heapify drain free; do \
 	  grep -Eq "call .*@(word|record)_(swap|hole)_$${operation}[.(]" $(BUILD)/control-retained.opt.ll; \
@@ -66,8 +66,9 @@ check: native-check build
 	  grep -Eq "call .*@wf_priority_cost_(word|record)_$${callback}[(]" $(BUILD)/priority-library-retained.opt.ll; \
 	  grep -Eq "call .*@(word|record)_$${callback}[.(]" $(BUILD)/control-retained.opt.ll; \
 	done; \
+	grep -Eq 'call .*@"?wf_priority_cost_cleanup[$$(]' $(BUILD)/priority-library-retained.opt.ll; \
 	echo 'Public queue operations and payload callbacks survive in both retained modules'; \
-	wf=$$(grep -Ec 'call .*@"?wf_priority_queue_(child|make_room|sift_rise|sift_sink)' $(BUILD)/priority-library-retained.opt.ll || true); \
+	wf=$$(grep -Ec 'call .*@"?(wf_priority_queue_|wf_std\.collections\.priority_queue\.priority_queue_)(child|make_room|sift_rise|sift_sink)' $(BUILD)/priority-library-retained.opt.ll || true); \
 	control=$$(grep -Ec 'call .*@(word|record)_(swap|hole)_(child|make_room|rise|sink)' $(BUILD)/control-retained.opt.ll || true); \
 	echo "Ordinarily optimized private helper call sites: WF=$$wf C=$$control"
 

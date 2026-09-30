@@ -426,6 +426,17 @@ rarely insert at the same place.
   opaque-struct repair; reopen when a program has a reason to declare an
   opaque struct with fields, or with the next change to nominal kinds.
 
+- **Attribute cold wfgrep compiler memory before changing its representation.**
+  The [module-product qualification](../research/experiments/modular-build-cost/RESULTS.md#final-current-main-qualification)
+  observes compiler-only peak RSS of 364.61 MiB on matched main and 377.62 MiB
+  on the candidate. Most of this footprint predates retained module products;
+  its allocation sources and reducible share are unverified. Profile live
+  allocations by checking phase, then require a same-source reduction with
+  unchanged verdicts and LLVM before selecting a representation change.
+  Defer from entry-edit latency work because these are cold-build observations
+  without causal attribution. Reopen when larger inputs or concurrent
+  compilation make the footprint limiting; remove after attribution and an
+  implemented or explicitly declined response.
 - **An instantiated goal spells a field-read range endpoint as `?`.** An
   FN-8 goal over a range an argument formed at the call renders an endpoint
   that is not a literal, const or binding as `?`, as in
@@ -491,6 +502,28 @@ rarely insert at the same place.
   Found in the writer-lost-facts investigation; reopen with the next
   diagnostics change.
 
+- **An opaque struct's capabilities ignore its fields.** The checker gives
+  every opaque struct a module declares the field-less host representation
+  (`CheckedNominalKind::Opaque`), whose capabilities come from its modifiers
+  alone, while [TYPE-2] and [PROV-6] give an opaque struct the capabilities
+  its fields give it: `opaque struct Holder { item: Box<u8>; }` without a
+  modifier is copy to the checker and affine to the specification. No such
+  struct has a value [TYPE-2], so the gap shows only in a generic bound or a
+  second use checked against a declared type, and `Instant`, the one opaque
+  struct with a field, has a copy field and no modifier, where the two agree.
+  Its layout is also the 32-byte host representation rather than its fields'.
+  Give an opaque struct with fields the ordinary struct kind with a refused
+  constructor. The same representation cites the wrong rule for `Instant`'s
+  field: `instant.ticks` is rejected as TYPE-5, "expected a source struct",
+  where [TYPE-2] makes the field private to a module with no implementation
+  record [MOD-6], and destructuring an `Instant` reaches a repair sentence
+  no conformance case covers. Validate with conformance cases that pass such
+  a struct where `T: copy` is required and use it twice, both rejected, that
+  read `instant.ticks` and are rejected citing MOD-6, and that destructure an
+  `Instant` and are rejected citing TYPE-2 with its repair, with `Instant`
+  otherwise unchanged. Reopen with the next change to opaque structs or
+  `std::time`.
+
 - **The container inventory's comments predate Segments.**
   `compiler/src/resolution/kernel.rs` describes `ContainerShape` as three
   storage shapes and a cell and `ContainerNominal::shape` as one of four,
@@ -500,6 +533,21 @@ rarely insert at the same place.
   identities and needs no inventory change.
 
 ## Containers and storage lowering
+
+- **A hash map offers no sample or bounded visit.**
+  `std::collections::hash_map` visits every pair (`hash_map_each`) and
+  nothing less, so a program that must look at a few pairs at a time, as
+  Redis samples keys with an expiry, either scans the whole map inside one
+  atomic statement, holding every other context for the scan, or keeps a
+  second structure beside it: the Redis subset keeps a priority queue of
+  expiries, one entry per expiry set, including those a later command
+  replaced (`research/investigations/io-model/TIME-AND-FILES.md`,
+  Experiment 8). A visit that starts at a position and returns the position
+  the next visit resumes at would express sampling and incremental scans,
+  as Redis's `SCAN`. Validate with a `SCAN`-style program over a map that
+  changes between visits, every pair present throughout reported at least
+  once. Reopen when a program must walk a shared map without holding it for
+  the whole walk.
 
 - **Validate a shared Ring wrap calculation independent of layout bounds.**
   The corrected front predecessor handles every admitted capacity. Remaining
@@ -686,6 +734,20 @@ rarely insert at the same place.
   that cause is established; reopen for a workload dominated by these cycles.
   The [paired samples and limits](../research/experiments/container-representation/vector-library/RESULTS.md)
   are the starting evidence, not a claim of uniform improvement.
+
+- **Historical container comparisons need an explicit replay scope.** The
+  current-library Slab, Vector, Deque, PriorityQueue and shared Indexed
+  harnesses use the compiler's embedded `std::collections` records. The Map
+  alternative-representation and Ordered insertion experiments, and Indexed's
+  standalone-heap mode, still use retired syntax, flat library paths or pinned
+  source overlays. Their dated results remain historical evidence; those
+  modes are not current-compiler replay tools. Reopen only when a selected
+  representation or insertion comparison needs them: port the complete
+  source/overlay/identity path, preserve the original operation and retained
+  call-boundary contracts, and run its independent correctness controls before
+  new timing. Until then, use the recorded revision for historical replay;
+  partial syntax edits would break its pinned source identities without
+  establishing a usable current experiment.
 
 - **Inactive-payload omission has measured optimizer regressions.** The
   destination-construction candidate removes the owning map's 264-byte vacant
@@ -1719,7 +1781,10 @@ rarely insert at the same place.
   current rule; the join comment in `compiler/src/backend/completion/bridge.h`
   describes pool stacks rather than contexts; the `.wf` programs under
   `research/experiments/io-completion-bench/programs/` use the retired
-  `&uniq` and `own Bool` spellings and no longer compile, so `read-bench.sh`
+  `&uniq` and `own Bool` spellings and no longer compile, as do
+  `park-on-miss-measurements/programs/grid_split.wf`, the
+  `wfgrep-double-walk/shapes/` programs and the programs
+  `differential-fuzz/src/generator.rs` writes, so `read-bench.sh`
   stops at its first build and the spawn work measured single-context reads
   with a scratch loop instead
   (`research/investigations/io-model/CONCURRENCY-MODEL.md`, section 10.5);
@@ -1761,30 +1826,67 @@ rarely insert at the same place.
   holding a link, with an enumerated link left unfollowed. Reopen when a
   program must open data-named files below linked directories.
 
+- **Files can only be appended.** `std::fs` opens a file for appending,
+  appends, syncs and closes it [PRE-2], and has no positioned write,
+  truncation, rename, removal, directory creation, directory sync, create rule
+  other than create-if-missing, or way to descend into a subdirectory for
+  writing. A program cannot rewrite a log compactly, as Redis's
+  `BGREWRITEAOF` writes a new file, syncs it, renames it over the old one and
+  syncs the directory, nor clean up a file it made; the append-only surface
+  was chosen as the one the persistent programs in view needed
+  (`research/investigations/io-model/TIME-AND-FILES.md`, "Writable
+  directories and append-only files"). Each addition is a specification
+  change to `std::fs` taking the write half. Validate with a program that
+  rewrites its log through a new file and a rename, and survives being
+  stopped between the two steps with one of the two files whole. Reopen when
+  a program must rewrite or remove what it wrote.
+
+- **A clock's readings cannot be replaced for a test.** `now` and the
+  deadline heap read the host's monotonic clock, so a program's behavior at
+  a deadline is tested by waiting for it: the deadline programs and cases
+  sleep for tens of milliseconds and cannot show an order of events that
+  needs a clock to stand still. A test build could answer the clock from a
+  script, as the completion harness already scripts `wf_file_monotonic_ns`.
+  Reopen when a test needs a deadline order that real time cannot produce
+  reliably.
+
 ## Modules and libraries
 
-- **Finish and qualify the modular incremental design.** The module
-  decisions in the [language](../design/language.md) and
-  [compiler](../design/compiler.md) design trees rest on the
+- **Complete the vector boundary witness when comparing independent fields.**
+  The maintained GrowVector program checks the shipped vector and behavior
+  drains, but does not establish LANGUAGE.md's combined public `tag`, external
+  append wrapper and function-kind formal with the complete storage contract.
+  The actual vector has only `storage`. Build the specified witness in the
+  modular-compilation investigation and check preserved facts after a tag-only
+  write versus invalidation after append. This is additional language-boundary
+  evidence, not required to measure reuse of the existing vector program;
+  reopen when evaluating those independent-field effects or that wrapper API.
+
+- **Finish and qualify the modular incremental design.** The
   [architecture](../research/investigations/modular-compilation/DESIGN.md),
   [source rules](../research/investigations/modular-compilation/LANGUAGE.md)
-  and [complete specimen](../research/investigations/modular-compilation/demo/README.md);
-  the [build-cost measurements](../research/experiments/modular-build-cost/RESULTS.md)
-  record what the implementation costs. Remaining, each with the measurement
-  or limit that shows it: the later stage of the
-  [composition staging](../research/investigations/modular-compilation/DESIGN.md#composition-staging),
-  persistent formation, lookup, instance, summary and lowering queries inside
-  a composition, where module build units follow the owned representation
-  that [PR #146](https://github.com/mbbill/Whitefoot/pull/146) built
-  (`design/compiler/incremental-compilation.md`, since the standard library
-  on modules needs a library module checked once and reused by every program
-  that names it), and instance units and fact-based entry checks wait until
-  edit-build measurements show the composition's rerun to limit a current
-  experiment or a consumer needs them (a build of an edited entry now forms,
-  resolves and type-checks the whole closure and reuses only its proof
-  analyses and unchanged objects: about 350 ms of a 590 to 620 ms body-edit
-  build of a 32-module chain, growing with the program); a cold build without
-  a cache, which checks each module and then the whole closure; the impact report,
+  and [specimen](../research/investigations/modular-compilation/demo/README.md)
+  describe the broader goal. Module verdicts, proof receipts and native object
+  reuse exist; composition still repeats structural checking and lowering.
+  The owner retired the per-product import implementation after its
+  [matched hashing comparison and follow-up screens](../research/experiments/modular-build-cost/RESULTS.md#disposition-of-the-module-product-prototype)
+  failed to establish approximately 5% native entry-edit overhead on both
+  containers. The independent runtime SHA improvement remains. The complete
+  corrected prototype and its dedicated tests are preserved by the linked
+  revision; those tests no longer apply to the active compiler.
+  Reopen only for a newly requested consumer-boundary experiment: module-owned
+  checked results might avoid per-function reconstruction, but their lookup,
+  memory and invalidation costs remain unmeasured. Require complete consumed
+  inputs, speculative rollback, current composition/target judgments, equal
+  fresh/cached results and zero unchanged-library walks. Compare same-source
+  paired native and compiler-only costs against equally optimized main, with
+  memory, cache history and cold costs; do not count SHA's independent gain as
+  an import benefit. The removed prototype's proof-erasing lowering-input
+  projection remains an unmeasured alternative in the investigation, not a
+  defect in the current compiler. Any future key must retain proof-derived
+  allocation bounds, disposition, permissions and physical inputs.
+  Further opportunities remain: finer invalidation within an edited module;
+  a cold build without a cache, which checks each module and then the whole closure; the impact report,
   which finds each further failing body by checking its module again with
   the earlier ones set aside; ThinLTO's import threshold, which decays along
   a deep cross-fragment call chain and left the innermost step of the
@@ -2134,6 +2236,20 @@ each is resolved by a discussion and a tree change.
   that the caller's handle is the last. Reopen when a program keeps a linear
   value in a shared object.
 
+- **An atomic statement's guard cannot be bounded by a time.** A context
+  waiting for a guard [SHARE-3] wakes only when another context changes the
+  object, and no deadline or sleep races it, so a context that must act on
+  whichever comes first, work arriving or a time passing, polls: the Redis
+  subset's append-only file writer wakes every few milliseconds to move the
+  buffered changes out instead of waiting for them
+  (`research/investigations/io-model/TIME-AND-FILES.md`, "What is left
+  out"). A deadline on the guard's wait, with a guard-false outcome, would
+  express it without polling. Validate with the writer rewritten to wait on
+  its buffer with a one-second deadline, comparing its wakeups and latency
+  with the polling one. Reopen when a program must wake on the earlier of an
+  object's change and a time, or when the polling writer's cost shows in a
+  profile.
+
 ## Ownership redesign (candidate x1) follow-ups
 
 Items the owner asked to be kept on this list during the redesign recorded in
@@ -2233,24 +2349,29 @@ condition under which it is taken up.
   syntax investigation while the owned rebase meets that contract; reopen
   when selecting its reference counterpart. Do not manufacture an impossible
   branch or weaken a postcondition to complete the comparison.
-- **Conditional measure preservation needs a precise remaining diagnosis.**
-  A counted-loop control calling a length/capacity-preserving helper in only
-  one arm rejects its backedge facts. Capturing both measures before the
-  branch and restating their equality afterward admits the small control;
-  this is not a blanket inability to preserve conditional measures. The
-  full sparse-map loop still rejects its extent invariant when its
-  length-preserving wrapper is inlined with an explicit extent bridge. Its
-  normative classification is unresolved. The [exact controls](../research/investigations/containers-and-resources/X1-LIBRARY.md#generic-owning-map-trial-after-the-ring-comparison)
-  retain both outcomes. The [aggregate-postcondition probes](../research/investigations/aggregate-postconditions/DESIGN.md#separate-finding-lockstep-growth-under-a-branch)
-  reduce a related refusal to two scalars incremented together under a branch
-  in a loop, whose `invariant same: a == b` fails its backedge, and read it as
-  following from ENT-6's per-binding join images and INV-1's affine-only
-  conclusions rather than a compiler defect; Snowghost's line breaker keeps
-  its run-length guards for it. Reopen with contract-proof work: reduce the remaining
-  refusal, compare it with ENT-5/ENT-6, and distinguish a compiler defect from
-  a proposed rule change before implementation. Keep the admitted wrapper
-  while it supplies the needed proof; validate aliases and false preservation
-  claims as well as checking cost for any improvement.
+- **Conditional measure controls expose a branch-join limit.** A counted-loop control calling a length/capacity-preserving
+  helper in only one arm rejects its backedge facts, as do lockstep growth
+  under a branch and a binary search that updates `low` in one arm and `high`
+  in the other. The [branch-join investigation](../research/investigations/branch-join-relations/DESIGN.md)
+  classifies these as the specification as written, not compiler defects: an
+  invariant's conclusion is an affine theorem only, the pre-kill closure and
+  the join keep only L0 facts, and the join gives each changed binding a
+  fresh atom (INV-1, ENT-5, ENT-6). Its reduced sparse-map loop fails for that
+  reason and is admitted by capturing the extent before the branch; the full
+  loop the [exact controls](../research/investigations/containers-and-resources/X1-LIBRARY.md#generic-owning-map-trial-after-the-ring-comparison)
+  record as still refused with an explicit extent bridge is written in
+  retired syntax and was not reproduced. A prototype that also establishes a
+  proved unit-coefficient invariant as an L0 relation admits the complete
+  line-break and CSS rewrites; with two midpoint rows it admits loop searches.
+  Its [cost replay](../research/investigations/branch-join-relations/DESIGN.md#current-cost-results)
+  does not qualify the proposals: HTML tree-building peak RSS exceeds the
+  recorded 10% criterion under the invariant projection, and Vector's inert
+  control itself exceeds that threshold, so its row-only result cannot be
+  attributed to the candidate. Keep the admitted wrapper and captures.
+  Reopen rule selection when a real consumer needs the simpler source, after
+  attributing memory growth and repeating the affected comparisons with a
+  qualified control; retain the original time/RSS criterion and source-rule
+  negatives. Reduce and classify the full sparse-map loop separately.
 - **Owning HashMap has a remaining large-value performance gap.** The
   [matched comparison](../research/experiments/container-representation/map-library/RESULTS.md)
   exercises the actual generic library, including must-consume pairs, without

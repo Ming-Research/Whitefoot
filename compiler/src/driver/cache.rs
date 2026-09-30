@@ -17,7 +17,13 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::spec::sha256::digest;
+use sha2::{Digest, Sha256};
+
+/// Runtime hashing uses the host implementation behind a safe API; the
+/// specification's constant-evaluation SHA-256 remains independent.
+fn digest(bytes: &[u8]) -> [u8; 32] {
+    Sha256::digest(bytes).into()
+}
 
 /// The first bytes of every record.
 const MAGIC: &[u8; 8] = b"WFCACHE1";
@@ -260,6 +266,33 @@ impl Fields {
 #[cfg(test)]
 mod tests {
     use super::BuildCache;
+
+    #[test]
+    fn runtime_sha256_preserves_published_vectors_and_constant_identity() {
+        assert_eq!(
+            super::hex(&super::digest(b"abc")),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        let million = vec![b'a'; 1_000_000];
+        assert_eq!(
+            super::hex(&super::digest(&million)),
+            "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0"
+        );
+        // Every short padding boundary and the actual specification bytes
+        // must match the independently maintained constant implementation.
+        let bytes = (0..=255).collect::<Vec<u8>>();
+        for length in 0..=bytes.len() {
+            assert_eq!(
+                super::digest(&bytes[..length]),
+                crate::spec::sha256::digest(&bytes[..length])
+            );
+        }
+        let specification = include_bytes!("../../../spec/kernel-spec.md");
+        assert_eq!(
+            super::digest(specification),
+            crate::spec::sha256::digest(specification)
+        );
+    }
 
     fn directory(name: &str) -> std::path::PathBuf {
         let path = std::env::temp_dir().join(format!(

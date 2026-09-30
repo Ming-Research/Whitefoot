@@ -1234,6 +1234,10 @@ pub(super) enum OpaqueStruct {
     /// declaration writes `nodrop`, so that it leaves a scope only by moving
     /// out [PROV-6].
     HostHandle { linear: bool },
+    /// A host module's opaque struct with fields, `Instant`: only a host
+    /// function forms one, and its fields are private to a module no program
+    /// writes in [PRE-2, MOD-6].
+    HostValue,
     /// An opaque struct the program declares, which never has a value.
     Program,
 }
@@ -1253,6 +1257,9 @@ pub(super) fn opaque_struct_constructed(opaque: OpaqueStruct) -> &'static str {
         OpaqueStruct::HostHandle { .. } => {
             "a host handle is formed only by a host function [PRE-2]: replace this construction with a handle that a function of its module returns or that the program's entry receives"
         }
+        OpaqueStruct::HostValue => {
+            "a host module's opaque value is formed only by a host function [PRE-2]: replace this construction with a value that a function of its module returns"
+        }
         OpaqueStruct::Program => PROGRAM_OPAQUE_STRUCT,
     }
 }
@@ -1269,6 +1276,9 @@ pub(super) fn opaque_struct_taken_apart(opaque: OpaqueStruct, owned: bool) -> &'
         }
         OpaqueStruct::HostHandle { .. } => {
             "a host handle has no fields to take apart [PRE-2]: remove this statement"
+        }
+        OpaqueStruct::HostValue => {
+            "a host module's opaque value keeps its fields private to its module [PRE-2, MOD-6]: read it through the functions of its module instead of taking it apart"
         }
         OpaqueStruct::Program => PROGRAM_OPAQUE_STRUCT,
     }

@@ -2,7 +2,7 @@
 //!
 //! The corpus is deliberately toolchain-agnostic data, so the adapter reads
 //! the same bytes `runner.py` reads rather than a Rust-side copy of the
-//! corpus. The compiler has no dependencies and gains none for a test: this
+//! corpus. This closed manifest format needs no additional parser dependency: it
 //! reads exactly the closed value set one manifest line uses — object, array,
 //! string, unsigned integer, and `true` — and refuses everything else instead
 //! of guessing. A manifest line the reader cannot read is a corpus defect the

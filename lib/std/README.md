@@ -8,8 +8,8 @@ each module that names it, and a source bundle may name any of them. A check
 reads a library module only when it names it. Editing these records means
 rebuilding the compiler.
 
-The host modules `std::io`, `std::text`, `std::fs`, `std::net` and
-`std::process` declare the host types and functions whose definitions the
+The host modules `std::time`, `std::io`, `std::text`, `std::fs`, `std::net`
+and `std::process` declare the host types and functions whose definitions the
 build supplies; the specification states their interface text [PRE-2]. The
 container modules below, under `std::collections`, are ordinary Whitefoot
 modules checked like any other; their interfaces are their documentation.

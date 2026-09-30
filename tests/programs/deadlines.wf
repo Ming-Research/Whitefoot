@@ -1,0 +1,373 @@
+alias AcceptedConnection = std::net::AcceptedConnection;
+alias Clock = std::time::Clock;
+alias ExitStatus = std::process::ExitStatus;
+alias HandleFactory = std::io::HandleFactory;
+alias Inputs = std::process::Inputs;
+alias Instant = std::time::Instant;
+alias IoError = std::io::IoError;
+alias ReadStop = std::io::ReadStop;
+alias SocketAddress = std::net::SocketAddress;
+alias TcpConnection = std::net::TcpConnection;
+alias TcpListener = std::net::TcpListener;
+alias arg_get = std::text::arg_get;
+alias args_count = std::text::args_count;
+alias close_directory = std::fs::close_directory;
+alias close_directory_write = std::fs::close_directory_write;
+alias close_listener = std::net::close_listener;
+alias close_receive = std::net::close_receive;
+alias close_send = std::net::close_send;
+alias exit_status = std::process::exit_status;
+alias host_copy_utf8 = std::text::host_copy_utf8;
+alias instant_after = std::time::instant_after;
+alias instant_reached = std::time::instant_reached;
+alias now = std::time::now;
+alias receive_next = std::net::receive_next;
+alias send_once = std::net::send_once;
+alias sleep_until = std::time::sleep_until;
+alias socket_address_v4 = std::net::socket_address_v4;
+alias tcp_accept = std::net::tcp_accept;
+alias tcp_connect = std::net::tcp_connect;
+alias tcp_listen = std::net::tcp_listen;
+
+fn deadline_passed(error: &IoError) -> result: Bool reads(error) {
+  doc "Whether an operation's outcome is the passing of its own deadline [PRE-2].";
+  match error^ {
+    NotFound(code: c, origin: o) => {
+      return False();
+    }
+    PermissionDenied(code: c, origin: o) => {
+      return False();
+    }
+    AlreadyExists(code: c, origin: o) => {
+      return False();
+    }
+    NotDirectory(code: c, origin: o) => {
+      return False();
+    }
+    IsDirectory(code: c, origin: o) => {
+      return False();
+    }
+    DirectoryNotEmpty(code: c, origin: o) => {
+      return False();
+    }
+    ReadOnly(code: c, origin: o) => {
+      return False();
+    }
+    ResourceBusy(code: c, origin: o) => {
+      return False();
+    }
+    InvalidInput(code: c, origin: o) => {
+      return False();
+    }
+    InvalidPath(code: c, origin: o) => {
+      return False();
+    }
+    Unsupported(code: c, origin: o) => {
+      return False();
+    }
+    TimedOut(code: c, origin: o) => {
+      return False();
+    }
+    DeadlinePassed() => {
+      return True();
+    }
+    BrokenPipe(code: c, origin: o) => {
+      return False();
+    }
+    WriteZero(code: c, origin: o) => {
+      return False();
+    }
+    UnexpectedEnd(code: c, origin: o) => {
+      return False();
+    }
+    ConnectionRefused(code: c, origin: o) => {
+      return False();
+    }
+    ConnectionReset(code: c, origin: o) => {
+      return False();
+    }
+    ConnectionAborted(code: c, origin: o) => {
+      return False();
+    }
+    NotConnected(code: c, origin: o) => {
+      return False();
+    }
+    AddressInUse(code: c, origin: o) => {
+      return False();
+    }
+    AddressUnavailable(code: c, origin: o) => {
+      return False();
+    }
+    ResourceExhausted(code: c, origin: o) => {
+      return False();
+    }
+    FileTooLarge(code: c, origin: o) => {
+      return False();
+    }
+    NoSpace(code: c, origin: o) => {
+      return False();
+    }
+    QuotaExceeded(code: c, origin: o) => {
+      return False();
+    }
+    CrossDevice(code: c, origin: o) => {
+      return False();
+    }
+    DeviceFailure(code: c, origin: o) => {
+      return False();
+    }
+    Other(code: c, origin: o) => {
+      return False();
+    }
+  }
+}
+
+fn read_stop_deadline(stop: &ReadStop) -> result: Bool reads(stop) {
+  doc "Whether a receive ended because its deadline passed.";
+  match stop^ {
+    ReadEnd() => {
+      return False();
+    }
+    ReadFailed(error: failure) => {
+      let passed = deadline_passed(error: failure);
+      return passed;
+    }
+  }
+}
+
+fn byte_at(store: &[u8], index: u64) -> result: u8 reads(store) {
+  doc "Reads one stored byte, delivering zero for a position the range reference does not hold.";
+  let room = store^.len;
+  let inside = index < room;
+  if inside {
+    let value = store^[index];
+    return value;
+  }
+  return 0_u8;
+}
+
+fn parse_port(digits: &[u8], length: u64) -> result: u16 reads(digits) {
+  doc "Reads one decimal port out of the argument bytes the invocation supplied; a byte that is not a digit ends the number.";
+  let port = 0_u16;
+  let ended = 0_u8;
+  let index = 0_u64;
+  loop @scan {
+    let more = index < length;
+    if more {
+    } else {
+      break @scan;
+    }
+    let byte = byte_at(store: digits, index: index);
+    let low = byte >= 48_u8;
+    let high = byte <= 57_u8;
+    let digit = band(low, high);
+    if digit {
+      let value = byte -wrap 48_u8;
+      let widened = cvt::<u8, u16>(value);
+      let scaled = port *wrap 10_u16;
+      set port = scaled +wrap widened;
+    } else {
+      set ended = 1_u8;
+    }
+    if ended == 0_u8 {
+      set index = index +wrap 1_u64;
+    } else {
+      break @scan;
+    }
+  }
+  return port;
+}
+
+fn nap(until: Instant) -> result: unit pure waits {
+  doc "Sleeps in a context of its own until the instant.";
+  sleep_until(deadline: until);
+  return unit;
+}
+
+fn close_connection(factory: &HandleFactory, connection: TcpConnection) -> result: unit writes(factory) waits {
+  doc "Closes both halves of a connection.";
+  let TcpConnection(receive: receive, send: send) = move connection;
+  close_receive(factory: factory, receive: move receive);
+  close_send(factory: factory, send: move send);
+  return unit;
+}
+
+fn converse(client: &TcpConnection, server: &TcpConnection, clock: &Clock) -> result: u8 writes(client.send), writes(server.receive), writes(clock) waits {
+  doc "Receives with a deadline while the peer is silent, then shows the connection lost nothing and that a sleeping context and a bounded receive both end.";
+  let bytes = slots_new::<u8, 1>();
+  place_back(window: &bytes, value: 0_u8);
+  let started = now(clock: clock);
+  let soon = instant_after(instant: started, nanoseconds: 50000000_u64);
+  let bound = Some<Instant>(value: soon);
+  let destination = &bytes[0_u64..1_u64];
+  match receive_next(receive: &server^.receive, destination: destination, start: 0_u64, end: 1_u64, deadline: bound) {
+    Ok(value: received) => {
+      return 20_u8;
+    }
+    Err(error: stop) => {
+      let passed = read_stop_deadline(stop: &stop);
+      if passed {
+      } else {
+        return 21_u8;
+      }
+    }
+  }
+  let after = now(clock: clock);
+  let reached = instant_reached(deadline: soon, instant: after);
+  if reached {
+  } else {
+    return 22_u8;
+  }
+  set bytes[0_u64] = 120_u8;
+  let source = &bytes[0_u64..1_u64];
+  let no_deadline = None<Instant>();
+  match send_once(send: &client^.send, source: source, start: 0_u64, end: 1_u64, deadline: no_deadline) {
+    Ok(value: sent) => {
+      if sent != 1_u64 {
+        return 23_u8;
+      }
+    }
+    Err(error: problem) => {
+      return 24_u8;
+    }
+  }
+  set bytes[0_u64] = 0_u8;
+  let later = now(clock: clock);
+  let generous = instant_after(instant: later, nanoseconds: 5000000000_u64);
+  let wide = Some<Instant>(value: generous);
+  let again = &bytes[0_u64..1_u64];
+  match receive_next(receive: &server^.receive, destination: again, start: 0_u64, end: 1_u64, deadline: wide) {
+    Ok(value: received) => {
+      if received != 1_u64 {
+        return 25_u8;
+      }
+    }
+    Err(error: stop) => {
+      return 26_u8;
+    }
+  }
+  if bytes[0_u64] != 120_u8 {
+    return 27_u8;
+  }
+  let begin = now(clock: clock);
+  let wake = instant_after(instant: begin, nanoseconds: 30000000_u64);
+  let napped = spawn nap(until: wake);
+  let cutoff = instant_after(instant: begin, nanoseconds: 60000000_u64);
+  let short = Some<Instant>(value: cutoff);
+  let third = &bytes[0_u64..1_u64];
+  match receive_next(receive: &server^.receive, destination: third, start: 0_u64, end: 1_u64, deadline: short) {
+    Ok(value: received) => {
+      return 28_u8;
+    }
+    Err(error: stop) => {
+      let passed = read_stop_deadline(stop: &stop);
+      if passed {
+      } else {
+        return 29_u8;
+      }
+    }
+  }
+  let rested = napped;
+  let finished = now(clock: clock);
+  let slept = instant_reached(deadline: wake, instant: finished);
+  if slept {
+  } else {
+    return 30_u8;
+  }
+  return 0_u8;
+}
+
+fn exercise(factory: &HandleFactory, listener: &TcpListener, address: &SocketAddress, clock: &Clock) -> result: u8 reads(address), writes(factory), writes(listener), writes(clock) waits {
+  doc "Accepts with a deadline while no client connects, then connects to itself and converses.";
+  let started = now(clock: clock);
+  let soon = instant_after(instant: started, nanoseconds: 50000000_u64);
+  let bound = Some<Instant>(value: soon);
+  match tcp_accept(factory: factory, listener: listener, deadline: bound) {
+    Ok(value: stray) => {
+      let AcceptedConnection(connection: connection, peer: unused_peer) = move stray;
+      close_connection(factory: factory, connection: move connection);
+      return 10_u8;
+    }
+    Err(error: problem) => {
+      let passed = deadline_passed(error: &problem);
+      if passed {
+      } else {
+        return 11_u8;
+      }
+    }
+  }
+  let after = now(clock: clock);
+  let reached = instant_reached(deadline: soon, instant: after);
+  if reached {
+  } else {
+    return 12_u8;
+  }
+  let no_deadline = None<Instant>();
+  match tcp_connect(factory: factory, address: address, deadline: no_deadline) {
+    Ok(value: client) => {
+      match tcp_accept(factory: factory, listener: listener, deadline: no_deadline) {
+        Ok(value: accepted) => {
+          let AcceptedConnection(connection: server, peer: unused_peer) = move accepted;
+          let status = converse(client: &client, server: &server, clock: clock);
+          close_connection(factory: factory, connection: move client);
+          close_connection(factory: factory, connection: move server);
+          return status;
+        }
+        Err(error: problem) => {
+          close_connection(factory: factory, connection: move client);
+          return 13_u8;
+        }
+      }
+    }
+    Err(error: problem) => {
+      return 14_u8;
+    }
+  }
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  doc "Listens on the loopback port the first argument names and shows that a passed deadline ends an accept and a receive with nothing transferred, while the connection keeps every byte sent afterwards [PRE-2].";
+  let Inputs(args: args, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
+  close_directory_write(factory: &handles, directory: move cwd_write);
+  close_directory(factory: &handles, directory: move cwd);
+  let digits = slots_new::<u8, 16>();
+  for @fill_digits (
+    at in 0_u64..16_u64,
+    invariant grown_digits: digits.len == at
+  ) {
+    place_back(window: &digits, value: 0_u8);
+  }
+  let window = &digits[0_u64..16_u64];
+  let carried = 0_u64;
+  match arg_get(args: &args, position: 1_u64) {
+    Ok(value: text) => {
+      match host_copy_utf8(value: &text, destination: window, start: 0_u64, end: 16_u64) {
+        Ok(value: written) => {
+          set carried = written;
+        }
+        Err(error: problem) => {
+          set carried = 0_u64;
+        }
+      }
+    }
+    Err(error: problem) => {
+      set carried = 0_u64;
+    }
+  }
+  if carried == 0_u64 {
+    return exit_status(code: 2_u8);
+  }
+  let port = parse_port(digits: window, length: carried);
+  let address = socket_address_v4(a: 127_u8, b: 0_u8, c: 0_u8, d: 1_u8, port: port);
+  match tcp_listen(factory: &handles, address: &address) {
+    Ok(value: listener) => {
+      let status = exercise(factory: &handles, listener: &listener, address: &address, clock: &clock);
+      close_listener(factory: &handles, listener: move listener);
+      return exit_status(code: status);
+    }
+    Err(error: problem) => {
+      return exit_status(code: 3_u8);
+    }
+  }
+}

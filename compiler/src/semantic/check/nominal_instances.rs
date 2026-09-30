@@ -1888,6 +1888,14 @@ impl<'unit> TypeContext<'unit> {
             .get(&declaration)
             .and_then(|&index| self.nominal_templates.get(index))
             .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        if !self
+            .declarations
+            .tree
+            .children_with(template.node, Production::Field)?
+            .is_empty()
+        {
+            return Ok(super::repairs::OpaqueStruct::HostValue);
+        }
         Ok(super::repairs::OpaqueStruct::HostHandle {
             linear: self.declarations.declaration_is_linear(template.node)?,
         })

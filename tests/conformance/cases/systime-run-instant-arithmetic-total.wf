@@ -1,0 +1,32 @@
+alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias Instant = std::time::Instant;
+alias exit_status = std::process::exit_status;
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  let Inputs(args: unused_args, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: clock, wall_clock: wall_clock) = move inputs;
+  let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
+  std::fs::close_directory_write(factory: &handles, directory: move cwd_write);
+  std::fs::close_directory(factory: &handles, directory: move cwd);
+  let start = std::time::now(clock: &clock);
+  let latest = std::time::instant_after(instant: start, nanoseconds: 18446744073709551615_u64);
+  let beyond = std::time::instant_after(instant: latest, nanoseconds: 1_u64);
+  let gap = std::time::nanoseconds_from(earlier: latest, later: beyond);
+  if gap != 0_u64 {
+    return exit_status(code: 1_u8);
+  }
+  let reversed = std::time::nanoseconds_from(earlier: latest, later: start);
+  if reversed != 0_u64 {
+    return exit_status(code: 2_u8);
+  }
+  let reached = std::time::instant_reached(deadline: latest, instant: start);
+  if reached {
+    return exit_status(code: 3_u8);
+  }
+  let same = std::time::instant_reached(deadline: start, instant: start);
+  if same {
+  } else {
+    return exit_status(code: 4_u8);
+  }
+  return exit_status(code: 0_u8);
+}

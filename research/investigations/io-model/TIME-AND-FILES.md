@@ -1,0 +1,655 @@
+<!-- Serves the clock, timed waits and file writes that a Redis subset with
+     key expiry and an append-only file needs. Its surviving decisions go to
+     the design tree and the specification; this record stays as their
+     grounds and holds Experiment 8. -->
+
+# Time, deadlines and file writes
+
+## The question
+
+The Redis subset of Experiment 7 (`SHARED.md`) serves `SET`, `GET`, `DEL`
+and `INCR` over one shared keyspace. Redis's next two features, key expiry
+and the append-only file, need three things no program can write today:
+
+- **a clock**, to stamp when a key expires and to ask whether it has;
+- **a timed wait**, to wake a context that expires keys ten times a second
+  and one that hands the file to the disk once a second, and to give up on a
+  peer that has sent nothing for too long; and
+- **a file write**, to append each change to a file and to ask the host to
+  keep it.
+
+The host modules [PRE-2] read files and directories, and read and write
+standard streams and TCP connections; nothing in them observes time, bounds
+a wait or writes a file.
+
+## The rulings this design starts from
+
+The owner ruled four questions on 2026-09-30, in Chinese: Q26 directly,
+and Q23 to Q25 by approving the recommendations below ("all agreed"):
+
+- **Q23 B.** The clock reaches a program as a field of `Inputs`, as every
+  other host capability the entry receives does, and not through the handle
+  factory or ambient access.
+- **Q24 A.** An operation that waits on a peer takes an optional deadline,
+  `deadline: Option<Instant>`, whose `Instant` is opaque; a separate
+  `sleep_until` waits for an instant alone; file operations take no deadline.
+  The owner refused a second, deadline-taking copy of each operation ("B
+  doubling the I/O is plainly wrong. What about Option?").
+- **Q25 D.** `Inputs.cwd` becomes a directory the program may both read and
+  write, which it may weaken to read-only; every operation that writes needs
+  write authority.
+- **Q26 A.** A sync promises only that the bytes written before it have been
+  handed to the host's durability mechanism; the specification says nothing
+  about what survives a crash.
+
+Four smaller choices inside those rulings followed, each a card in
+[the choices the owner ruled](#choices-the-owner-ruled); the owner approved
+all four as recommended on 2026-09-30, and the surface below follows them.
+
+## Surface
+
+### `std::time`
+
+```
+public opaque nocopy struct Clock {
+}
+
+public opaque nocopy struct WallClock {
+}
+
+public opaque struct Instant {
+  ticks: u64;
+}
+
+public fn clock_share(clock: &Clock) -> result: Clock reads(clock) doc "Returns a clock that reads the same monotonic clock as clock.";
+
+public fn wall_clock_share(clock: &WallClock) -> result: WallClock reads(clock) doc "Returns a wall clock that reads the same calendar time as clock.";
+
+public fn now(clock: &Clock) -> result: Instant writes(clock) doc "Returns the current reading of the monotonic clock, not before any reading an earlier call through clock returned.";
+
+public fn instant_after(instant: Instant, nanoseconds: u64) -> result: Instant pure doc "Returns the instant nanoseconds after instant, or the latest instant when that lies beyond it.";
+
+public fn nanoseconds_from(earlier: Instant, later: Instant) -> result: u64 pure doc "Returns the nanoseconds from earlier to later, or zero when later is not after earlier.";
+
+public fn instant_reached(deadline: Instant, instant: Instant) -> result: Bool pure doc "Returns whether instant is at or after deadline.";
+
+public fn sleep_until(deadline: Instant) -> result: unit pure waits doc "Completes once the monotonic clock has reached deadline.";
+
+public fn unix_nanoseconds(clock: &WallClock) -> result: i64 reads(clock) doc "Returns the calendar time as nanoseconds since 1970-01-01T00:00:00Z.";
+```
+
+**Why each operation has the row it has.**
+
+- `now` writes its clock. Two host operations of one context are ordered
+  only when their footprints overlap with a write [HOST-1], and two adjacent
+  statements that only read one place may overlap [PAR-1]. With `reads`, two
+  successive `now` calls through one clock would have no order, and the
+  second could return the earlier instant. The write states the one thing a
+  monotonic clock promises its reader: each read is not before the last one
+  through the same clock. The clock's state is the latest instant it has
+  reported, and a read advances it. Reads through two clocks that
+  `clock_share` relates are not ordered by this. A program that needs such an
+  order passes both reads through one clock, which is exactly what HOST-1
+  asks of every other host state.
+- `unix_nanoseconds` reads its clock. The calendar time promises no order
+  between reads, since the host may set it back, so a write would order
+  nothing the reader can rely on.
+- The three `Instant` functions are total and `pure`. The checker has no
+  fact source for the clock's monotonicity, so an operation with a domain
+  (a subtraction that requires `earlier <= later`) would leave the caller an
+  obligation no proof can discharge. `instant_after` saturates at the latest
+  instant, which lies more than 580 years after the clock's origin, and
+  `nanoseconds_from` answers zero for a pair out of order. Both are named for
+  what they return in every case.
+- `sleep_until` takes no clock. An `Instant` is formed only by `now` and
+  `instant_after` from one that `now` formed, so a program that holds one has
+  already read a clock; the wait observes nothing a clock read has not. The
+  deadline parameters below take none for the same reason. A context runs its
+  statements one at a time and never overlaps a waiting statement with any
+  other [WAIT-2, PAR-1], so a `now` executed after `sleep_until(d)` returns
+  an instant at or after `d`.
+- `sleep_until` returns `unit`. A timer the host cannot arm is a host
+  resource exhausted, which may stop execution [SCOPE-3]; a sleep has no
+  source-visible failure.
+
+**Why `Instant` has a field.** `Instant` must be copyable, since a program
+computes a deadline once and passes it to many calls, and unforgeable, since
+an integer the program can write would let `sleep_until` wait for any time at
+all without a clock. An opaque struct is unforgeable [TYPE-2], and a struct
+is copy when its fields are [PROV-6]. A host handle, by the declaration-home
+decision, is a fieldless opaque struct declared `nocopy` or `nodrop`, so an
+`Instant` cannot be one. Its one private field states its representation and
+gives it the copy capability through the ordinary structural rule: a
+monotonic count of nanoseconds from an origin the host chooses. No module
+reads the field, since `std::time` has no implementation record; the host
+functions form and read it. The one specification change this needs is that
+a host function forms every opaque struct a host module declares, not only
+its handles [TYPE-2].
+
+**Borrowed names.** `Instant` means what Rust's `std::time::Instant` means:
+an opaque, copyable reading of a monotonic clock, compared and subtracted
+only against other readings, whose `duration_since` saturates at zero as
+`nanoseconds_from` does. Java's `java.time.Instant` names a point on the
+calendar timeline instead, which is `WallClock`'s meaning here, where a
+calendar reading is a plain count of nanoseconds. `Clock` follows neither
+language: Java's `Clock` supplies calendar instants and can be replaced for
+a test, and Rust has no clock value; here a `Clock` is the capability to
+read the monotonic clock, and it cannot be replaced (`docs/todo.md`, "A
+clock's readings cannot be replaced for a test"). `sleep_until` waits for a
+monotonic reading, as Tokio's `sleep_until` and Rust's unstable
+`std::thread::sleep_until` do. `sync_file` promises what POSIX `fdatasync`
+and Rust's `File::sync_data` promise, the hand-off of the written bytes to
+the host's durability mechanism, and no more; it names a file because
+syncing a directory, which Redis's rewrite of its file needs, is a separate
+operation this version leaves out.
+
+### Deadlines on the operations that wait on a peer
+
+Each operation that may wait on another party gains a last parameter,
+`deadline: Option<Instant>`:
+
+| Module | Operation | Waits on |
+|---|---|---|
+| `std::io` | `read_next` | the writer of an input stream |
+| `std::io` | `write_once` | the reader of an output stream |
+| `std::net` | `tcp_accept` | a connecting client |
+| `std::net` | `tcp_connect` | the listening server |
+| `std::net` | `receive_next` | the peer's sending |
+| `std::net` | `send_once` | the peer's receiving |
+
+`IoError` gains one variant, `DeadlinePassed()`, which is the outcome of an
+operation whose deadline the monotonic clock reached before the operation
+produced any other outcome. The meaning, stated once for all six:
+
+- `None` leaves the operation as it is today.
+- With `Some(d)`, the operation produces `DeadlinePassed` only once the
+  monotonic clock has reached `d`, and then it has transferred nothing: no
+  byte was read, written, received or sent, and no connection was accepted
+  or opened.
+- An operation whose own outcome the host produces while the deadline is
+  being reached reports that outcome, bytes or connection included; the
+  deadline never discards a completed transfer.
+- A deadline already reached when the call begins produces `DeadlinePassed`
+  unless the operation completes without waiting, as a receive whose bytes
+  have already arrived does. The specification promises only the first two
+  points; which of the two outcomes a race produces is an input of the
+  execution [WAIT-2], like which of two operations completes first.
+
+WAIT-2's progress clause needs no change: an outcome produced at a deadline
+is a host outcome that has been produced, and the context waiting for it
+takes its next step.
+
+File operations take no deadline. They wait on the host's storage, not on a
+party that may never answer (Q24 A).
+
+**That a deadline outcome is an `IoError` variant** is card 3; the
+refused alternative is `TimedOut` with a reserved origin.
+
+### Writable directories and append-only files
+
+`std::fs` gains:
+
+```
+public opaque nodrop struct DirectoryWrite {
+}
+
+public struct Directory {
+  public read: DirectoryRead;
+  public write: DirectoryWrite;
+}
+
+public opaque nodrop struct WriteFile {
+}
+
+public fn open_append(factory: &HandleFactory, root: &DirectoryWrite, name: &[u8], start: u64, end: u64) -> result: Result<WriteFile, IoError> reads(root), reads(name), writes(factory) waits contract {
+  requires start <= end;
+  requires end <= name^.len;
+} doc "Opens the file that the bytes of name from start to end name below root for appending, creating it empty when no entry has that name.";
+
+public fn append_once(factory: &HandleFactory, file: &WriteFile, source: &[u8], start: u64, end: u64) -> result: Result<u64, IoError> reads(source), writes(factory), writes(file) waits contract {
+  requires start <= end;
+  requires end <= source^.len;
+  ensures when Ok(value: next): start <= next;
+  ensures when Ok(value: next): next <= end;
+} doc "Appends bytes of source from start toward end to the end of file with one host write; Ok carries the index after the last byte appended.";
+
+public fn sync_file(factory: &HandleFactory, file: &WriteFile) -> result: Result<unit, IoError> writes(factory), writes(file) waits doc "Hands every byte appended to file before this call to the host's durability mechanism; Ok reports that the host accepted them.";
+
+public fn close_write(factory: &HandleFactory, file: WriteFile) -> result: Result<unit, IoError> writes(factory) waits doc "Closes file.";
+
+public fn close_directory_write(factory: &HandleFactory, directory: DirectoryWrite) -> result: Result<unit, IoError> writes(factory) waits doc "Closes the write half of a directory.";
+```
+
+- **Two halves, one struct.** `Directory` is an ordinary struct of two
+  separately closable owners, as `TcpConnection` is, for the reason the
+  system-interface decision gives for it: well-typed code may pair halves
+  from different directories, and closing stays correct for any pair because
+  each half closes alone. The read operations keep taking `&DirectoryRead`
+  and so take `&cwd.read`; the write operations take `&DirectoryWrite`. To
+  weaken the directory to read-only, a program closes `cwd.write` and passes
+  `cwd.read` on; a function that receives only a `DirectoryRead` cannot
+  write below it. Each half is one host handle and one credit of the
+  factory's budget.
+- **Appending only.** `open_append` opens for appending and creates a
+  missing file; `append_once` is one host write at the end of the file, a
+  single attempt as every transfer is (the single-attempt decision), so a
+  caller loops for a whole buffer as `send_all` does. Two contexts that each
+  open the same file append whole host writes in an order that is an input
+  of the execution.
+- **`sync_file`** carries the Q26 A promise and nothing more. It orders
+  after every append through the same file, since both write it [HOST-1].
+- **Not in this version**: writing at an offset, truncating, renaming,
+  removing, creating a directory, a create rule other than create-if-missing,
+  descending into a subdirectory for writing, and syncing a directory. The
+  append-only file needs none of them until it is rewritten, which is Redis's
+  `BGREWRITEAOF`: a new file, synced, renamed over the old, and the directory
+  synced. Each is recorded in `docs/todo.md` with that reopening condition.
+
+### `Inputs`
+
+```
+public struct Inputs {
+  public args: Args;
+  public cwd: Directory;
+  public stdout: OutputStream;
+  public stderr: OutputStream;
+  public handles: HandleFactory;
+  public stdin: InputStream;
+  public clock: Clock;
+  public wall_clock: WallClock;
+}
+```
+
+`cwd` holds both halves of the working directory (card 4); `clock` and
+`wall_clock` are the two clocks of card 2. The runtime supplies the write half on every
+host; a host that refuses the working directory to writing still hands a
+write half, and every write through it reports that host's refusal.
+
+### Modules
+
+`std::time` is the sixth host module. Its graph row has no dependency, and
+the modules that name `Instant` gain one:
+
+```
+pkg::io: [pkg::time];
+pkg::text: [];
+pkg::time: [];
+pkg::fs: [pkg::io, pkg::text];
+pkg::net: [pkg::io, pkg::time];
+pkg::process: [pkg::io, pkg::text, pkg::fs, pkg::time];
+```
+
+The graph stays acyclic: `time` depends on nothing, `io` on `time`, and every
+other row on modules above it.
+
+## Choices the owner ruled
+
+The owner approved each card below as recommended on 2026-09-30 ("Q27
+agreed. Q28 agreed, Q29 agreed, Q30 agreed", written in Chinese).
+
+**Card 1 (Q27): how is `Instant` declared?** Recommended: an opaque struct
+with one private `u64` field, as above; copy through its field, formed only by
+host functions. The alternatives are a fieldless `opaque` struct left copy,
+which contradicts the declaration-home decision that every host handle is
+`nocopy` or `nodrop`; a `nocopy` handle, which makes every deadline a move and
+leaves a program copying one through a host function; and a public `u64`,
+which is forgeable and turns `sleep_until` and every deadline into ambient
+access to time. Confidence 4/5.
+
+**Card 2 (Q28): one clock or two?** Recommended: two capabilities, `Clock`
+for monotonic time and `WallClock` for calendar time, as two `Inputs` fields.
+Monotonic time measures intervals and bounds waits; calendar time names a
+moment another process or a later run of this one can read. They differ in
+what they promise (the calendar may move back) and in what a function that
+uses one depends on: a function given only a `Clock` provably does not depend
+on a setting an administrator can change. The capability dossier reached the
+same separation ("wall and monotonic time remain distinct",
+`system-capability-architecture/DOSSIER.md` §8). The Redis subset needs
+both, and each of its functions needs only one: expiry runs on the monotonic
+clock, and the append-only file records absolute calendar times so that a
+later run can replay them. The alternative, one `Clock` with both reads, is
+one field fewer and loses that separation. Confidence 3/5: one clock with
+both reads would also be correct; the separation only narrows what a
+function given a clock may depend on.
+
+**Card 3 (Q29): how is a passed deadline reported?** Recommended: a new
+variant `IoError::DeadlinePassed()`. A passed deadline is the program's own
+bound, not a host failure; `TimedOut` already reports a host's timeout, such as
+a connection attempt the peer never answered, and a program may well treat the
+two differently (retry the host's, give up on its own). The alternative
+reuses `TimedOut` with an origin value reserved for deadlines, which adds no
+variant but makes the distinction a number to compare. The outcome-typing
+decision prefers operation-specific outcomes; a variant an operation without
+a deadline never produces is the cost, shared with every `IoError` variant a
+given operation never produces. Confidence 3/5.
+
+**Card 4 (Q30): what shape has the writable directory?** Recommended: the
+struct of two halves above. The alternative is one `Directory` handle with both
+authorities and a consuming `directory_read_only` that weakens it; the read
+operations would then need a second form for a `Directory`, or every program
+would weaken before reading, and the directory would need a two-count close
+hidden behind one handle. Confidence 4/5.
+
+## Departures from the capability dossier
+
+`system-capability-architecture/DOSSIER.md` is a draft that no ruling adopted.
+It framed a timeout as a race between a timer and a pending operation whose
+winning branch asks for cancellation (§7.4), and a clock read as a shared
+observation that advances no cursor (§6.2). This design departs from both,
+for these reasons:
+
+- The language has no construct that races two waits, and adding one needs a
+  cancellation semantics of its own. A deadline parameter is the one bounded
+  cancellation expressible without it, and the owner chose it (Q24). A race
+  construct, if one comes, subsumes the parameter without contradicting it.
+- The dossier predates HOST-1 and PAR-1's read overlap. Under them a read
+  that writes nothing is unordered with the next read, so a monotonic clock
+  whose reads promise an order must state that order as a write.
+
+## Runtime plan
+
+### One timer queue per driver
+
+A driver already parks its contexts on its own ring, and only its own thread
+touches its parked contexts (`bridge.c`, `wf_driver`). Each driver gains a
+binary heap of the deadlines of the contexts parked on it, keyed by the
+monotonic instant. Parking with a deadline inserts; completion before the
+deadline removes. Every place the driver waits for the host, whether it parks
+on the ring (`wf_linux_io_uring_park`), polls for readiness
+(`wf_context_poll`) or sleeps on its wake (`wf_completion_park_if_unchanged`),
+bounds that wait by the earliest deadline instead of waiting without limit.
+A driver that is running contexts looks at the heap's head when it reaps
+host completions, which it does every few resumes.
+
+When the head's instant has passed, the driver ends that context's wait:
+
+- A `sleep_until` context has no host operation; the driver completes its
+  record and makes it ready.
+- A context with an operation asks the operation's route to cancel it, and
+  the operation completes through its ordinary completion path with either
+  its own outcome or `DeadlinePassed`.
+
+The deadline reaches the record before any engine sees it: the operation's
+body hands it to the runtime just before the submit
+(`wf__completion_next_deadline`), and the submit stores it in the record it
+fills. The dispatch then keeps a bounded operation off the driver thread,
+which is the thread that has to end it. An operation the ring does not take
+would otherwise be made in place on that thread when no other context is
+running, and a blocking call made there could not be ended by the thread
+blocked in it. A socket receive, send or accept goes to the readiness route,
+where the driver waits for the descriptor; any other operation goes to the
+helpers, and the program keeps every later operation on them, as it does
+once contexts run, since a program that bounds a wait waits on another party.
+A pool that `WF_IO_HELPERS` pins grows by one helper when none is free to
+take such an operation, and a pool pinned at zero leaves it to that helper,
+so the deadline ends it on every setting.
+
+The contexts counted as waiting on the host (`host_waits`) include those
+waiting on a deadline, so a program whose only pending wait is a sleep is not
+taken for one that can take no step. `wait_host.c` builds its own wait's end
+from `CLOCK_REALTIME`, which the calendar can move; a bounded park builds it
+from the monotonic clock.
+
+### Cancelling on each route
+
+| Route | Operations | How a deadline ends it | Why nothing is lost |
+|---|---|---|---|
+| Linux ring | read, accept, connect, receive, send | `IORING_OP_ASYNC_CANCEL` for the record's key | a cancelled request completes with `-ECANCELED` and transfers nothing; one that finished first completes with its result |
+| readiness, no ring | receive, send, accept | the driver stops polling the descriptor and completes the record | the transfer is a nonblocking call made only after readiness; a record completed by the deadline made none |
+| helper thread, POSIX | stream read and write, connect without a ring | a signal, installed without restart, sent to the helper until it acknowledges | an interrupted blocking call returns `EINTR` before transferring; one that transferred returns its count |
+| helper thread, Windows | stream read and write | `CancelSynchronousIo` on the helper, repeated until it acknowledges | an aborted call reports `ERROR_OPERATION_ABORTED` with no transfer |
+| helper thread, Windows | accept | the helper waits for its listener with `WSAPoll` in slices of at most 50 milliseconds and gives up once the deadline has passed, since `CancelSynchronousIo` does not end a blocking `accept` | the accept is made only after the listener reported a connection, and the listener is the program's alone, so the connection is still there |
+| IOCP, Windows | connect, receive, send | `CancelIoEx` for the record's overlapped | as the ring |
+
+A readiness wait alone is not enough for a stream: standard input may be
+shared with other processes, so it can be readable at the poll and empty at
+the read, which then blocks past the deadline. The helper's interruption
+covers that case.
+
+### File writes on each host
+
+`open_append` opens with `O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC` below the
+write half's descriptor (`openat`), and on Windows with `FILE_APPEND_DATA` and
+`OPEN_ALWAYS`. `append_once` is one `write`, and `WriteFile` on Windows. The
+write half of the working directory is its own descriptor, opened as the read
+half is. `sync_file` is `fdatasync` on Linux, `fcntl(F_FULLFSYNC)` on macOS,
+whose `fsync` hands bytes only to the drive's cache, and `FlushFileBuffers`
+on Windows; each is the host's own interface for handing written bytes to
+its durability mechanism, which is all Q26 A promises. The regular file
+never waits on a peer, so these run on the helpers, as file reads do.
+
+## What is left out, and when it returns
+
+- **Bounding an atomic statement's guard by a deadline.** A context waiting
+  for a guard [SHARE-3] cannot also wake at a time. The append-only file's
+  writer below polls on a short period instead of waiting for work. Reopen
+  when a program must wake on the earlier of work arriving and a time
+  passing without polling.
+- **The file operations listed above**, with the rewrite of the append-only
+  file as their reopening condition.
+- **A clock whose reads can be replaced for testing.** No current test needs
+  one.
+
+## Experiment 8: expiry and persistence in the Redis subset
+
+### Design
+
+The subset gains the commands that set and read a key's expiry, `EXPIRE`,
+`PEXPIRE`, `PEXPIREAT`, `TTL`, `PTTL` and `PERSIST`, the `EX` and `PX`
+options of `SET`, and `DBSIZE`. As Redis does, it expires a key in two ways:
+a command that finds an expired key treats it as absent and removes it, and
+a context of its own wakes ten times a second and removes expired keys.
+
+- **Which keys the context removes.** Redis samples 20 keys with an expiry
+  at random and repeats while a quarter of a sample had expired.
+  `std::collections::hash_map` offers no sample and no bounded visit, only a
+  visit of every pair, which would hold the keyspace from every client for
+  the length of the scan. The subset instead keeps each expiry it sets in a
+  priority queue in the shared object, earliest first, and removes due keys
+  from its head in atomic statements of at most 256 keys, so clients proceed
+  between them. An entry whose key has since been set again, given another
+  expiry or removed no longer matches the key's expiry and is dropped when
+  it comes due. The queue removes every expired key within one period
+  rather than a sampled share of them, and costs one queue entry per expiry
+  set, including one that a later command replaced.
+- **What time a command sees.** An expiry is a monotonic reading, kept as
+  nanoseconds from an `Instant` read at start. A client's context reads both
+  clocks once per received batch of commands, and every command of the
+  batch sees those readings. Redis reads the time for each command: sent in
+  one write, `SET k v PX 50`, `DEBUG SLEEP 0.2` and `GET k` answer nil from
+  `redis-server` 7.0.15, where the subset, reading once for the batch,
+  would still find the key.
+
+With a third argument naming a file, the subset appends every command that
+changes the keyspace to that file in Redis's own format, as `appendonly yes`
+with `appendfsync everysec` does:
+
+- The statement that changes a key also appends the command's bytes to a
+  buffer in the same shared object, so the file holds the changes in the
+  order the keyspace took them.
+- A writer context moves the buffer out every 10 milliseconds, appends it to
+  the file and syncs the file when a second has passed since the last sync.
+- An expiry that `EXPIRE`, `PEXPIRE` or `PEXPIREAT` sets is written as
+  `PEXPIREAT` with an absolute calendar time in milliseconds, as Redis 7
+  writes it; a `SET` with an expiry is written as `SET` followed by
+  `PEXPIREAT`, where Redis writes one `SET` with `PXAT`.
+- Replay, as Redis's loading does, expires no key while it runs. An expiry
+  whose calendar time has passed is kept as one already reached, so the
+  commands after it in the file apply as they applied when they were
+  written, a `PERSIST` still finding its key and an `INCR` still counting
+  from the stored value, and lazy and active expiry remove such a key once
+  the subset listens. A future expiry becomes a monotonic reading from the
+  two clocks' current readings.
+- At start, the subset replays the file before it listens.
+
+A reply may leave before its change reaches the file. `everysec` already
+promises no more than a second of changes, so that fits the promise it
+imitates; Redis writes the buffer before it replies, and the measurement
+below states the difference.
+
+A fourth argument, an idle limit in seconds, closes a connection that sends
+nothing for that long, as Redis's `timeout` does; it is the program's use of
+a deadline on `receive_next`. A third argument of `-` names no file.
+
+With a count of clients to accept, the subset stops once they have all
+closed: the root context waits in a guarded atomic statement for the
+keyspace's client count to reach zero and then marks it stopping, and the
+writer and the expiring context end at their next wake, the writer after
+appending and syncing the last buffer. The root's own join of the contexts
+it spawned [WAIT-3] then ends the program.
+
+Where the subset answers differently from Redis:
+
+- An expiry is at most 10^9 seconds or 10^12 milliseconds ahead; Redis
+  accepts any that does not overflow its millisecond clock. A negative
+  expiry is refused as not an integer, where Redis answers a negative
+  `EXPIRE` by removing the key and a negative `SET ... EX` with its
+  invalid-expire-time error.
+- A key removed because it expired is not written to the file as `DEL`, as
+  Redis writes it; replay keeps it as expired, and lazy and active expiry
+  remove it once the subset listens.
+- The clocks are read once per received batch rather than for each
+  command, and a `SET` with an expiry is written to the file as two
+  commands rather than one.
+- A key whose expiry did not fit the queue of expiries, which holds
+  4,194,304 entries counting those a later command replaced, is removed
+  only when a command finds it expired.
+- `SET` takes only `EX` and `PX`; `NX`, `XX`, `KEEPTTL` and `GET` are
+  syntax errors.
+
+### What would distinguish the hypotheses, stated before measuring
+
+The reference is `redis-server` 7.0.15 on the host and with the pinning of
+Experiment 7, in two configurations: persistence off, as there, and
+`--appendonly yes --appendfsync everysec` with the file on the same
+file system as the subset's. `redis-bench.sh` gains the persistent lines.
+
+- **Correct.** Every run completes with no error reply, the shared-counter
+  check of Experiment 7 holds, and a check sequence answers as Redis does:
+  a key set with `PX 100` answers a positive `PTTL`, then reads as absent
+  after 200 milliseconds; `PERSIST` removes an expiry; `TTL` answers -1 for a
+  key without one and -2 for a missing key. After the subset is stopped and
+  restarted on its file, every key that was set and not expired holds its
+  value, and every key whose expiry passed while it was stopped is absent.
+  An idle connection with a one-second limit is closed within two seconds.
+- **Expiry costs little.** With persistence off, the subset's `SET` and `GET`
+  rates without pipelining are at least 0.9 times Experiment 7's second run
+  on this host, measured in the same session with the build before this
+  change. A command now reads the clock and checks an expiry.
+- **Persistence keeps up.** With `everysec` on both, the subset on two
+  drivers reaches at least the reference's rate for `SET` without
+  pipelining, and at least half its rate with 16 per pipeline, the same two
+  bars Experiment 7 set without persistence.
+- **Active expiry removes keys.** After 100,000 keys set with `PX 1000` and
+  no further reads, `DBSIZE` falls below 1 percent of them within ten seconds
+  on both servers. The subset gains `DBSIZE` for this check.
+
+A criterion that fails is attributed with a profile before any conclusion is
+drawn from it.
+
+### Results
+
+Two runs on the host of Experiment 7: 4 CPUs (Intel Xeon at 2.80 GHz),
+Linux 6.18, redis-server and redis-benchmark 7.0.15, clang 18.1.3. The
+baseline lines are the subset at 7edc86591, the revision before this work,
+built with that revision's compiler. Requests per second, two passes each;
+the raw output of both runs and of the attribution below is
+`research/experiments/io-completion-bench/redis-persistence-samples.csv`.
+
+The first run, `redis-bench.sh` at 3b7a263e7 and the subset at c97dbdc7c:
+
+| Line | `SET` | `GET` | `SET`, 16 per pipeline | `GET`, 16 per pipeline |
+|---|---|---|---|---|
+| redis-server | 86,934 / 92,963 | 90,884 / 88,865 | 570,776 / 499,500 | 570,776 / 570,451 |
+| subset, 2 drivers | 117,578 / 117,578 | 117,592 / 121,139 | 799,361 / 799,361 | 999,001 / 999,001 |
+| subset, 1 driver | 92,989 / 86,926 | 90,893 / 90,893 | 570,776 / 571,102 | 571,102 / 665,779 |
+| baseline, 2 drivers | 117,592 / 117,592 | 121,139 / 124,953 | 999,001 / 799,361 | 999,001 / 798,722 |
+| baseline, 1 driver | 86,926 / 90,884 | 95,220 / 92,997 | 570,451 / 571,102 | 666,223 / 666,223 |
+| redis-server, everysec | 86,919 / 81,599 | 88,818 / 88,865 | 363,108 / 362,582 | 571,102 / 570,776 |
+| subset, 2 drivers, everysec | 121,153 / 124,938 | 121,153 / 121,153 | 799,361 / 499,500 | 999,001 / 799,361 |
+
+The completion review then found the replay wrong for a sequence the first
+run's restart check did not contain: the subset removed a key while
+replaying a `PEXPIREAT` whose time had passed, so a key made persistent
+before that time was lost and a key incremented before it counted again
+from one, where Redis keeps both as they were written. The replay now
+expires nothing while it loads (the design above), the restart check adds
+both sequences, and the rerun measured the fixed program, `redis-bench.sh`
+and the subset at 32a0cbf87:
+
+| Line | `SET` | `GET` | `SET`, 16 per pipeline | `GET`, 16 per pipeline |
+|---|---|---|---|---|
+| redis-server | 90,860 / 95,175 | 97,532 / 92,971 | 499,500 / 499,251 | 570,776 / 570,776 |
+| subset, 2 drivers | 111,062 / 121,153 | 121,153 / 124,953 | 799,361 / 798,722 | 797,448 / 999,001 |
+| subset, 1 driver | 85,041 / 88,857 | 90,860 / 86,934 | 571,102 / 571,102 | 666,223 / 665,779 |
+| baseline, 2 drivers | 114,234 / 121,153 | 117,592 / 124,938 | 999,001 / 798,722 | 798,722 / 799,361 |
+| baseline, 1 driver | 90,876 / 85,085 | 90,868 / 97,523 | 571,102 / 570,776 | 666,223 / 571,102 |
+| redis-server, everysec | 85,048 / 81,593 | 90,835 / 90,843 | 362,713 / 399,361 | 570,451 / 571,102 |
+| subset, 2 drivers, everysec | 121,153 / 117,592 | 114,207 / 124,922 | 570,451 / 665,779 | 1,041,667 / 799,361 |
+
+`redis-benchmark` reports a rate from a run of one million requests, and
+the rates cluster at a few levels about a quarter second of run time apart:
+999,001, 799,361, 665,779, 570,776 and 499,500 are one million requests in
+1.00, 1.25, 1.50, 1.75 and 2.00 seconds. With 16 per pipeline one level is
+15 to 25 percent of the rate, so a difference of one level is within the
+instrument's resolution; without pipelining, where a run takes 10 to 12
+seconds, a level is about 2.5 percent.
+
+- **Correct: met in both runs.** Every line passed Experiment 7's pass. On
+  both servers, with and without the file, the expiry sequence answered
+  `OK OK -1 -2 1 100 1 -1 0`, a positive `PTTL` of 90 to 93 milliseconds,
+  then absent and -2. After a restart on the file both answered, in the
+  rerun, absent, absent, `v`, 2, `v`, `v` and absent for a removed key, a
+  key whose 300-millisecond expiry passed while stopped, a key with 100
+  seconds left, a key incremented twice, a key without an expiry, a key
+  made persistent before its expiry, and a key incremented before its
+  expiry passed, with 99 seconds left on the third. A client silent past a
+  one-second limit was closed after 1.00 seconds by the subset in both
+  runs, and after 1.92 and 1.72 by Redis.
+- **Expiry costs little: met by the median, not by every pass.** Without
+  pipelining the first run's subset reached 1.00 and 1.00 times the
+  baseline for `SET` and 0.97 and 0.97 for `GET` on two drivers, and 1.07
+  and 0.96 for `SET` and 0.95 and 0.98 for `GET` on one; the rerun's reached
+  0.97 and 1.00, 1.03 and 1.00 on two drivers and 0.94 and 1.04, 1.00 and
+  0.89 on one. The one pass under 0.9 was attributed by six more
+  interleaved passes of the two one-driver lines, which put the subset at a
+  median of 0.93 times the baseline for `SET` and 0.97 for `GET`, with 5 of
+  the 24 single pairs under 0.9. At one driver a command now costs a few
+  percent more, the reading of both clocks per received batch and the
+  expiry fields among it, which one pass's noise can take under the bar; at
+  two drivers no cost shows. The host ran slower than for Experiment 7's
+  second run, whose subset on two drivers made 153,775 and 166,583 `SET`s
+  against these baselines of 114,234 to 121,153, which is why the criterion
+  compares within one session.
+- **Persistence keeps up: met in both runs.** With `everysec` on both, the
+  subset on two drivers reached 1.39 and 1.53, then 1.42 and 1.44, times
+  the reference for `SET` without pipelining, and 2.20 and 1.38, then 1.57
+  and 1.67, times with 16 per pipeline.
+- **Active expiry removes keys: met in both runs.** Of 100,000 keys set with
+  `PX 1000`, none was left 1.06 and 1.10 seconds after the last set on the
+  subset, and 72 after 1.42 and 1.43 seconds on Redis.
+
+An earlier attempt at the first run stopped in its correctness pass: the
+subset could not listen on a port that the previous run's idle check had
+left in `TIME_WAIT` by closing the client itself, since both runs started
+from one fixed port. The script now starts each run's ports from its
+process number.
+
+What this shows, and what it does not. The clock, the deadline on
+`receive_next`, `sleep_until` and the append-only file were enough to write
+expiry, an append-only file and an idle limit in the language, with no
+change beyond the ruled surface, and the program keeps Redis's rates on this
+host with them. The file costs both servers about alike: with 16 per
+pipeline Redis lost 20 to 36 percent of its `SET` rate to it across the two
+runs, and the subset none in one pass and 17 to 38 percent in the other
+three, a level or two of the instrument. What differs is when a reply
+leaves: Redis writes its buffer to the file before it replies, while the
+subset replies and leaves the write to a context that runs every 10
+milliseconds, so a killed subset loses up to 10 milliseconds of changes it
+acknowledged and a killed Redis none, while a host that fails costs either
+up to about a second. Waking the writer when changes arrive, rather than
+polling, while still syncing within a second when none do, needs a guard
+wait that a time can bound (`docs/todo.md`, "An atomic statement's guard
+cannot be bounded by a time"). The subset is 1,821 lines, against the 830
+of Experiment 7's; expiry, the append-only file and its replay are most of
+the difference.

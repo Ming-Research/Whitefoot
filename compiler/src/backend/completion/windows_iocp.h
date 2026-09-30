@@ -117,6 +117,12 @@ int wf_windows_iocp_issue_descriptor(wf_completion_record *record);
  * ring did not take.  Nothing was published and nothing is left half-owned. */
 void wf_windows_iocp_withdraw(wf_completion_record *record);
 
+/* Asks the kernel to give up the operation a record names, once its deadline
+ * has passed [PRE-2]: `CancelIoEx` on the handle and `OVERLAPPED` it was
+ * issued with.  The record then completes with ERROR_OPERATION_ABORTED, or
+ * with its own result when that came first. */
+void wf_windows_iocp_cancel(wf_completion_record *record);
+
 /* Hands one record to the ring, on a handle the port has taken.  It cannot
  * answer capacity: the record is the frame's and the port holds no pool. */
 enum wf_windows_iocp_submit_result wf_windows_iocp_submit(

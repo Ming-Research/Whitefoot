@@ -60,13 +60,16 @@ fn folded(lo: u64, hi: u64) -> result: u64 pure {
 }
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: unused_args, cwd: unused_cwd, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin) = move inputs;
+  let Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
+  std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
   close_directory(factory: &entry_factory, directory: move unused_cwd);
   let value = folded(lo: 0_u64, hi: 400000_u64);
   let report = box_array_filled::<u8>(count: 8_u64, value: 0_u8);
   let window = &report.inner[0_u64..8_u64];
   let filled = spell(destination: window, at: 0_u64, value: value);
-  match write_once(factory: &entry_factory, output: &out, source: window, start: 0_u64, end: 8_u64) {
+  let no_deadline = None<std::time::Instant>();
+  match write_once(factory: &entry_factory, output: &out, source: window, start: 0_u64, end: 8_u64, deadline: no_deadline) {
     Ok(value: next) => {
       return exit_status(code: 0_u8);
     }

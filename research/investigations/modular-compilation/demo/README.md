@@ -169,7 +169,7 @@ function is for beyond its checked contract.
 `Queue` has its one complete definition in `.wfm`, and its ring is published
 as `public readonly storage: Ring<Job, capacity>`. Every module with an edge
 to the queue can read the ring in code and in contracts, for example
-`deref(queue).storage.len`, exactly as it reads any prelude window's length.
+`queue^.storage.len`, exactly as it reads any prelude window's length.
 Only the queue module writes it: outside the module the field is never a `set`
 target, never passed to a writing parameter such as `place_back`'s window, and
 never supplied by construction, so `new` remains the only way to build a
@@ -254,10 +254,10 @@ Inside the queue, `push` and `pop` name the published ring's length in
 requires/ensures and change it through the ordinary window operations. The
 external `run_two` interface and its function-kind formal repeat the same
 paths; this is ordinary access to a public field, not a special visibility
-rule. `batch.wf` reads `deref(queue).storage.len` directly for the report's
+rule. `batch.wf` reads `queue^.storage.len` directly for the report's
 `remaining` field. The `writes(queue.storage)` rows kill overlapping facts
 before the verified postconditions supply the new state's facts.
-`deref(entry(queue)).storage.len` is the frozen entry datum in an `ensures`,
+`entry(queue)^.storage.len` is the frozen entry datum in an `ensures`,
 with no runtime snapshot. `made.storage.len` describes the constructor's
 returned value and uses the proposed CALL-4 result-projection admission. In
 `new`, the helper's postcondition reaches `storage` at its result destination,
@@ -313,7 +313,7 @@ active specification's module grammar [GRAM-2, GRAM-3, GRAM-5].
 | File-local `alias` headers | Abbreviations with the original identities and direct-edge checks |
 | `public readonly storage` | A field every module with an edge may read, in code and annotations, and only the declaring module writes or constructs |
 | `reads(...)` / `writes(queue.storage)` | Exact structural effects over accessible paths, repeatable in external wrapper and formal rows |
-| `deref(entry(queue)).storage.len` | Frozen mathematical entry value, independent of later mutation |
+| `entry(queue)^.storage.len` | Frozen mathematical entry value, independent of later mutation |
 | `made.storage.len` | Result projection admitted by CALL-4, queried at the return and instantiated at the caller's result destination |
 
 Callers still cannot write, pass to a writing parameter or construct the
@@ -321,10 +321,15 @@ queue's ring, and they cannot name a private field in any role. No `observe`,
 `use view`, footprint declaration, getter in a contract, trusted axiom,
 implicit type invariant, runtime snapshot or mandatory box is needed.
 
-Both entries check and execute under these rules. The larger GrowVector
-wrapper/function-kind witness from LANGUAGE.md is still to be built; the FIFO
-alone is not evidence for all containers, precise effect combinations or
-incremental performance.
+Both entries check and execute under these rules. The maintained
+`tests/programs/containers/grow-vector-program.wf` exercises the standard
+library's vector, including draining through behavior bindings. It does not
+implement LANGUAGE.md's complete wrapper/function-kind witness: that witness
+adds an independent public `tag`, a wrapper repeating the append contract and
+a function-kind formal with the same boundary. The library's actual vector
+has only its readonly `storage` field. Keep that remaining language witness
+distinct from using the maintained program to qualify module build costs;
+the FIFO alone supplies neither result.
 
 ## Edits to try while reading
 
@@ -359,11 +364,18 @@ boundary; an unrelated earlier syntax failure is not evidence for it. The
 module-form conformance cases pin the access, publication, correspondence and
 graph-order boundaries among them under their rules.
 
-A future review aid should compare the resolved public API, not only changed
-lines containing `public`. Changing a published field type or a contract
-without editing its modifier must still be reported. Private field changes
-that alter public capabilities also matter; layout-only effects can be reported
-separately. No comparison script or new review gate is implemented here.
+The driver renders and compares resolved interfaces, including reached
+declarations, rather than selecting changed lines containing `public`:
+
+```sh
+whitefootc --graph modules.wfg --render-interface pkg::runtime::queue
+whitefootc --graph modules.wfg --compare-interface pkg::runtime::queue --against ../previous/modules.wfg
+```
+
+Use a complete previous specimen at the comparison path. Public field types,
+contracts and reached private declarations can affect this comparison even
+when no `public` modifier changes. The comparison is a review aid, not a
+separate approval or correctness gate.
 
 Both entries check and run, the rejection probes reject under their rules and
 the kernel artifact has no allocator dependency. Cold/incremental agreement for

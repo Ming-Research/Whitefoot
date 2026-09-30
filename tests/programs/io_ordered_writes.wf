@@ -6,27 +6,30 @@ alias write_once = std::io::write_once;
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "Three single-byte publications through one range reference over one frame-resident array; the declared writes of the output stream are what keep them in source order.";
-  let Inputs(args: unused_args, cwd: unused_cwd, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin) = move inputs;
+  let Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
+  std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
   close_directory(factory: &entry_factory, directory: move unused_cwd);
   let bytes = array_filled::<u8, 3>(value: 65_u8);
   set bytes[1_u64] = 66_u8;
   set bytes[2_u64] = 67_u8;
   let window = &bytes[0_u64..3_u64];
-  match write_once(factory: &entry_factory, output: &out, source: window, start: 0_u64, end: 1_u64) {
+  let no_deadline = None<std::time::Instant>();
+  match write_once(factory: &entry_factory, output: &out, source: window, start: 0_u64, end: 1_u64, deadline: no_deadline) {
     Ok(value: first) => {
     }
     Err(error: problem) => {
       return exit_status(code: 210_u8);
     }
   }
-  match write_once(factory: &entry_factory, output: &out, source: window, start: 1_u64, end: 2_u64) {
+  match write_once(factory: &entry_factory, output: &out, source: window, start: 1_u64, end: 2_u64, deadline: no_deadline) {
     Ok(value: second) => {
     }
     Err(error: problem) => {
       return exit_status(code: 211_u8);
     }
   }
-  match write_once(factory: &entry_factory, output: &out, source: window, start: 2_u64, end: 3_u64) {
+  match write_once(factory: &entry_factory, output: &out, source: window, start: 2_u64, end: 3_u64, deadline: no_deadline) {
     Ok(value: third) => {
       return exit_status(code: 0_u8);
     }

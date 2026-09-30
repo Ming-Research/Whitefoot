@@ -1,6 +1,10 @@
 #if !defined(_POSIX_C_SOURCE)
 #define _POSIX_C_SOURCE 200809L
 #endif
+#if defined(__APPLE__) && !defined(_DARWIN_C_SOURCE)
+/* `pthread_cond_timedwait_relative_np` is a Darwin extension. */
+#define _DARWIN_C_SOURCE
+#endif
 
 /*
  * The host's one wait set: a mutex and a condition variable.
@@ -55,7 +59,23 @@ int wf_completion_wait_init(wf_completion_wait *wait) {
     if (error != 0) {
         return error;
     }
+#if defined(__APPLE__)
     error = pthread_cond_init(&host->condition, NULL);
+#else
+    {
+        /* A bounded sleep ends on the monotonic clock, so a calendar the
+         * host sets back cannot stretch a deadline's wait [PRE-2]. */
+        pthread_condattr_t attributes;
+        error = pthread_condattr_init(&attributes);
+        if (error == 0) {
+            error = pthread_condattr_setclock(&attributes, CLOCK_MONOTONIC);
+            if (error == 0) {
+                error = pthread_cond_init(&host->condition, &attributes);
+            }
+            (void)pthread_condattr_destroy(&attributes);
+        }
+    }
+#endif
     if (error != 0) {
         (void)pthread_mutex_destroy(&host->lock);
         return error;
@@ -84,10 +104,11 @@ void wf_completion_wait_unlock(wf_completion_wait *wait) {
     (void)pthread_mutex_unlock(&wf_completion_wait_of(wait)->lock);
 }
 
+#if !defined(__APPLE__)
 static struct timespec wf_completion_wait_deadline(uint32_t milliseconds) {
     struct timespec deadline;
     uint64_t nanoseconds;
-    (void)clock_gettime(CLOCK_REALTIME, &deadline);
+    (void)clock_gettime(CLOCK_MONOTONIC, &deadline);
     nanoseconds = (uint64_t)deadline.tv_nsec
         + (uint64_t)(milliseconds % 1000u) * 1000000u;
     deadline.tv_sec += (time_t)(milliseconds / 1000u)
@@ -95,6 +116,7 @@ static struct timespec wf_completion_wait_deadline(uint32_t milliseconds) {
     deadline.tv_nsec = (long)(nanoseconds % 1000000000u);
     return deadline;
 }
+#endif
 
 enum wf_completion_wait_result wf_completion_wait_sleep(
     wf_completion_wait *wait,
@@ -105,6 +127,18 @@ enum wf_completion_wait_result wf_completion_wait_sleep(
     if (timeout_milliseconds == UINT32_MAX) {
         error = pthread_cond_wait(&host->condition, &host->lock);
     } else {
+#if defined(__APPLE__)
+        /* Darwin measures a relative wait on its own monotonic clock and
+         * has no way to set a condition's clock. */
+        struct timespec interval;
+        interval.tv_sec = (time_t)(timeout_milliseconds / 1000u);
+        interval.tv_nsec = (long)(timeout_milliseconds % 1000u) * 1000000L;
+        error = pthread_cond_timedwait_relative_np(
+            &host->condition,
+            &host->lock,
+            &interval
+        );
+#else
         struct timespec deadline =
             wf_completion_wait_deadline(timeout_milliseconds);
         error = pthread_cond_timedwait(
@@ -112,6 +146,7 @@ enum wf_completion_wait_result wf_completion_wait_sleep(
             &host->lock,
             &deadline
         );
+#endif
     }
 #if defined(WF_COMPLETION_WAIT_RETURN)
     /* Harness observation only, with the real condition lock reacquired. */
