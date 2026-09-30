@@ -101,17 +101,21 @@ decisions.
 Record reasons when choices settle, not by reconstructing them at completion.
 Routine fixes under unchanged design need no decision record.
 
-**Judge a design without the weight of what exists.** Until real projects have
-compatibility needs ([constitution](docs/constitution.md#compatibility-and-evolution)),
-no design judgment of the language, the compiler, the runtime or the library
-weighs the existing code, tests, programs or documents a choice would change:
-neither the cost or effort of changing them nor how many of them it touches.
-How often something occurs in them is not evidence of how often real programs
-need it, since they were written to exercise the compiler
-(`design/language.md`); a program that fails still witnesses a gap, and
-measuring a change's effect on them is still evidence. The rule governs which
-design is chosen, not which work comes first. No decision card, tree reason,
-investigation or PR text uses such a cost or count as a reason or a drawback.
+**Judge a design by its merits, not by the work it takes.** Until real
+projects have compatibility needs
+([constitution](docs/constitution.md#compatibility-and-evolution)), no design
+judgment of the language, the compiler, the runtime or the library weighs the
+existing code, tests, programs or documents a choice would change: neither the
+cost or effort of changing them nor how many of them it touches. How often
+something occurs in them is not evidence of how often real programs need it,
+since they were written to exercise the compiler (`design/language.md`); a
+program that fails still witnesses a gap, and measuring a change's effect on
+them is still evidence. Nor is the effort of building a mechanism with sound
+engineering a reason to choose or refuse it; work that a design makes
+necessary only through a poor abstraction or needless complexity is a flaw of
+that design and is judged as one. The rule governs which design is chosen, not
+which work comes first. No decision card, tree reason, investigation or PR
+text uses such a cost or count as a reason or a drawback.
 
 **Fix or record what you notice.** Work in one place exposes defects in
 others: a bug, an awkward interface or architecture, duplicated logic, a file

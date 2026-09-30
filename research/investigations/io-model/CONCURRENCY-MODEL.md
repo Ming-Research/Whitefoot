@@ -995,9 +995,10 @@ streams, and their sockets use the ring on Linux.
 Alternatives:
 - A readiness-driven adapter, one `poll`, `kqueue` or `WSAPoll` over every
   queued descriptor, which the adapter's comments name as the proper engine
-  for a host with no ring. It removes the thread per wait, but it is a port
-  per host, standard streams shared with other processes cannot be made
-  nonblocking safely, and Windows accepts need their own overlapped form. It
-  remains the way to make these waits cheap, not the fix for this one.
+  for a host with no ring. It removes the thread per socket wait, but it
+  cannot wait on a standard stream shared with other processes without making
+  that stream nonblocking under them, so a stream's waits would still need
+  helpers and this rule. It remains the way to make socket waits cheap, not
+  the fix for this one.
 - Leaving the ceiling and correcting the record only. The Windows case above
   stays reachable, and the specification's promise stays unmet there.

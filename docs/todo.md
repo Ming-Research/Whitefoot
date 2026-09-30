@@ -1253,10 +1253,10 @@ rarely insert at the same place.
   stops with a report (`research/investigations/io-model/CONCURRENCY-MODEL.md`,
   section 10.6). A readiness-driven adapter, one `poll`, `kqueue` or
   `WSAPoll` over every queued descriptor made where an idle thread already
-  parks, would hold none; it needs a port per host, cannot make standard
-  streams shared with other processes nonblocking safely, and needs an
-  overlapped accept on Windows. Validate by the 257-read harness case running
-  to completion on one thread and by the context echo server's rate on the
+  parks, would hold none for sockets; a standard stream shared with other
+  processes would stay on helpers, since making it nonblocking would change it
+  under them. Validate by a harness case of 257 socket waits running to
+  completion on one thread and by the context echo server's rate on the
   no-ring route. Reopen when a program needs more than a few hundred such
   waits at once or a profile shows their threads.
 
