@@ -555,15 +555,15 @@ rarely insert at the same place.
   buckets.** `hash_map_put` never rebuilds a map already at its ceiling
   (`language/data-model/hash-map-storage`), so a map that churns there, a
   bounded cache that evicts one key to admit another, keeps every bucket a
-  removal vacated until the program calls `hash_map_rehash`; once no bucket
-  is left vacant, every lookup of an absent key and every insertion probes
-  the whole backing. Rebuilding at the same capacity when few buckets are
-  filled, as below the ceiling, would clear them only for a map kept less
-  than half full and would allocate a second backing at the ceiling; an
-  in-place rehash that permutes the backing, the rebuild the node refuses
-  as the default, clears them without one. Measure a map held at its ceiling
-  under steady removal and insertion, probes per lookup of an absent key
-  over time, with and without an automatic rehash, before choosing. Reopen
+  removal vacated until the program calls `hash_map_rehash`; once no bucket is
+  left vacant, every lookup of an absent key and every insertion probes the
+  whole backing. Rebuilding at the same capacity when few buckets are filled,
+  as below the ceiling, would clear them only for a map with fewer than three
+  eighths of its buckets filled and would allocate a second backing at the
+  ceiling; an in-place rehash that permutes the backing, the rebuild the node
+  refuses as the default, clears them without one. Measure a map held at its
+  ceiling under steady removal and insertion, probes per lookup of an absent
+  key over time, with and without an automatic rehash, before choosing. Reopen
   with a program whose map churns at its ceiling.
 
 - **Validate a shared Ring wrap calculation independent of layout bounds.**

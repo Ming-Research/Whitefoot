@@ -41,11 +41,11 @@ After the full suite, also on 2026-09-30:
 - **The fastest competitor includes Garnet**, although Garnet was installed
   after the baseline was measured and so never entered it. The criteria stand
   as written and this stage's verdict is recorded as measured; the gap to
-  Garnet at depth 16 on two CPUs goes to the scaling stage, and the tests the
-  benchmark's client saturates on this host are judged again on one where it
-  does not.
+  Garnet at depth 16 on two CPUs goes to the scaling stage, and the list
+  ranges and `PING`, which the benchmark's client may limit on this host, are
+  judged again on one where it cannot.
 - **Scaling past two cores is to be done**, since a production server has
-  more than two; it follows this stage.
+  more than two, once this stage is finished.
 
 ## Criteria, stated before measuring
 
@@ -428,8 +428,8 @@ two server CPUs and on one (the `quick look 2` lines of
 Its runs are short, 300,000 requests at depth 1 and 1,500,000 at depth 16,
 so the benchmark's 250 ms clock step is a share of a rate that grows with the
 rate: at most 10% at depth 1 and 25% at depth 16 (`PING_MBULK`), 1.3 to 5.6%
-for `MSET` and less for the list ranges, and only gaps larger than a step are
-read from it.
+for `MSET`, and 0.2 to 6.7% for the list ranges, the most for `LRANGE_100` at
+depth 1; only gaps larger than a step are read from it.
 Here and in the third look the faster competitor is the faster of Redis and
 Dragonfly; Valkey and Garnet run only in the full suite. Against the
 criteria, `MSET` falls short in three of the four settings: 0.87 times the
@@ -659,15 +659,17 @@ own command.
 
 A container restart stopped the third pass among its one-CPU lines and
 restarted the virtual machine; afterwards every server ran the one-CPU tests
-1.5 to 2 times faster than in the first two passes (Valkey's `SET` at depth 1,
-72,319 and 75,520 before, 115,088 after), so the lines run again after it are
-kept in the CSV as the `suite second host` lines and not used. The one-CPU
-results rest on the first machine's passes: three for Redis, three for Valkey
-at depth 1 and on 9 tests at depth 16, and two otherwise, below the three the
-criteria ask for. The two-CPU results rest on three.
+1.36 to 2.48 times as fast as in the first two passes, 1.69 at the median
+(Valkey's `SET` at depth 1, 72,319 and 75,520 before, 115,088 after), so the
+lines run again after it are kept in the CSV as the `suite second host` lines
+and not used. The one-CPU results rest on the first machine's passes: three
+for Redis, three for Valkey at depth 1 and on 9 tests at depth 16, and two
+otherwise, below the three the criteria ask for. The two-CPU results rest on
+three.
 
 Medians of the passes, requests per second; firn's rate is bold where it
 leads every competitor:
+
 Two server CPUs, depth 16 (at least 1.4 required):
 
 | Test | Redis | Valkey | Valkey, I/O threads | Dragonfly | Garnet | firn | firn / fastest |
@@ -766,7 +768,7 @@ One server CPU, depth 1 (at least 1.0 required):
 
 **Verdict.** firn is faster than Redis on every test in every
 configuration, by the least on `PING_INLINE` at depth 1 on one CPU, 85,443
-against 85,350, within a clock step. It leads every competitor on 58 of the
+against 85,350, within a clock step. It leads every competitor on 62 of the
 76. Against the criteria:
 
 - *The pipelined lead*: met on 18 of 19 tests on one CPU, where `LRANGE_600`
@@ -783,15 +785,20 @@ against 85,350, within a clock step. It leads every competitor on 58 of the
   competitor's on 36 of 38, the exceptions on two CPUs `MSET`, 9.20 against
   Garnet's 7.66 ms, and `LRANGE_500`, 11.86 against 11.57.
 
-Three readings qualify the verdict:
+Four readings qualify the verdict:
 
-- **The ranges and possibly `PING` measure the client on two CPUs.** With the
-  client on two CPUs and two threads, firn's `LRANGE_100` at depth 16 reached
-  231,228; on one server CPU, with the client on three, it reached 320,305,
-  and at depth 1 `LRANGE_500` went from 28,854 to 43,118 the same way.
-  Garnet's ranges on two CPUs sit at or near firn's, as a shared client limit
-  would put them. Whether `PING`, at 1.5 million requests a second, is also at
-  the client's limit is not established.
+- **The ranges on two CPUs, and possibly `PING`, may measure the client rather
+  than the servers.** With two server CPUs and the client on two CPUs and two
+  threads, firn's `LRANGE_100` at depth 16 reached 231,228; with one server
+  CPU and the client on three, it reached 320,305, and at depth 1 `LRANGE_500`
+  went from 28,854 to 43,118 the same way, and Garnet's ranges on two CPUs sit
+  at or near firn's, as a shared client limit would put them. The server's and
+  the client's CPUs changed together, though, and two drivers contending for
+  the one keyspace lock while a range is built inside the atomic statement
+  would also lower firn's two-CPU rate; neither the client's CPU use nor one
+  server CPU against a two-CPU client was measured, so which limit binds is
+  not established. Whether `PING`, at 1.5 million requests a second, is at the
+  client's limit is not established either.
 - **At depth 1 on two CPUs the margins are within this measurement's
   resolution.** On `PING`, `SET`, `GET` and `INCR` every server there ran
   between 76,644 and 119,402 requests a second, where at depth 16 `SET` alone
@@ -800,16 +807,25 @@ Three readings qualify the verdict:
   is measured, an inference from these spreads that no profile at depth 1 has
   checked. The median ratio of a test's highest pass to its lowest was 1.09
   for firn and 1.11 for Dragonfly there, so the six tests at 0.98 of
-  Dragonfly, one clock step, do not separate the two. `SPOP` is a real gap
-  with a known cause, a set that never shrinks (in
-  [docs/todo.md](../../../docs/todo.md) under firn).
-- **At depth 1 firn leads on 18 of 19 tests on one CPU and on 9 on two.** Two
-  drivers take one keyspace lock for every command, so its cache line moves
-  between the cores once a request; on one CPU it does not, and Dragonfly
-  keeps each connection's data on its own thread. That this is the difference
-  is a hypothesis: the lock's share at depth 16 is the 16 to 19% of spinning
-  measured above, and no profile at depth 1 has measured it. The scaling
-  stage, which removes the one lock, tests it.
+  Dragonfly, one clock step, do not separate the two. `SPOP`, at 0.87 of
+  Valkey with I/O threads and 0.94 of Dragonfly, is a gap beyond that
+  resolution; a set that never shrinks contributes to it, since the refused
+  shrinking build gained 0.14 over its control there (in
+  [docs/todo.md](../../../docs/todo.md) under firn), and whether it accounts
+  for all of it is not established.
+- **At depth 1 firn leads on 18 of 19 tests on one CPU and on 9 on two.** With
+  two drivers every command takes the one keyspace lock, so its cache line
+  moves between the cores about once a request; with one driver it does not.
+  That this is the difference is a hypothesis: the lock's share at depth 16 is
+  the 16 to 19% of spinning measured above, and no profile at depth 1 has
+  measured it. The scaling stage, which removes the one lock, tests it.
+- **Garnet answered every test at depth 1 on one CPU at about 20,000 requests
+  a second** (12,567 to 21,912), the 600-element ranges as fast as `PING`,
+  which points to a fixed wait per request under its defaults on one CPU
+  rather than to its commands' costs. It ran with its defaults, the port and a
+  loopback bind; the cause was not investigated. It bears only on the one-CPU
+  depth-1 ranges `LRANGE_500` and `LRANGE_600`, where Garnet is the fastest
+  competitor and firn leads by 2.06 and 1.88 either way.
 
 A head-to-head of this binary against the head's, `d3be4d91c`, is below:
 after it, firn changed only in replies to errors and `CONFIG`, a zero byte in
@@ -825,15 +841,17 @@ median ratio of the head's firn to the measured one's lies within 0.95 to
 1.05 on every test; otherwise each difference is reported. The rounds ran on
 the machine the second restart left (the `head` lines of
 [firn-samples.csv](../../experiments/io-completion-bench/firn-samples.csv)),
-with 12,000,000 requests at depth 16 and 1,300,000 at depth 1, runs of about
-seven seconds, where a clock step is about 4% of a rate.
+with 12,000,000 requests at depth 16 and 1,300,000 at depth 1, runs of five
+to seven seconds, where a clock step is 4 to 5% of a rate. The rates are
+medians of the three rounds; each round's ratio compares the two lines of
+that round.
 
-| Test | Depth 16: measured | head / measured | Depth 1: measured | head / measured |
-|---|---|---|---|---|
-| `PING_MBULK` | 2,524,190 | 1.00 | 185,582 | 1.04 |
-| `SET` | 1,654,716 | 1.11 | 192,450 | 1.00 |
-| `GET` | 1,845,018 | 1.08 | 179,261 | 1.07 |
-| `INCR` | 1,843,601 | 1.04 | 192,450 | 1.04 |
+| Test | Depth 16: measured | head | median of the rounds' ratios | Depth 1: measured | head | median of the rounds' ratios |
+|---|---|---|---|---|---|---|
+| `PING_MBULK` | 2,524,190 | 2,399,040 | 1.00 | 185,582 | 192,564 | 1.04 |
+| `SET` | 1,654,716 | 1,777,251 | 1.11 | 192,450 | 192,536 | 1.00 |
+| `GET` | 1,845,018 | 1,998,335 | 1.08 | 179,261 | 192,536 | 1.07 |
+| `INCR` | 1,843,601 | 1,845,302 | 1.04 | 192,450 | 199,908 | 1.04 |
 
 **Not met as written, and in the head's favor.** Three medians exceeded
 1.05, `SET` and `GET` at depth 16 and `GET` at depth 1, each by one to three
