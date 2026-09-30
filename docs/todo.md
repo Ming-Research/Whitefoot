@@ -345,9 +345,9 @@ rarely insert at the same place.
 - **Most repairs outside the goal families have no pinned pair.**
   `compiler/diagnostic-repairs` pins every repair with its rejected source
   and a program for each alternative, and keeps the words in one module;
-  `driver::pinned_repairs` holds 75 pairs, nearly all for goals, effect rows
-  and TYPE-2's opaque-struct refusals, while most of the eighty-odd sites
-  across the checker that print a fixed repair sentence have none. Among
+  `driver::pinned_repairs` covers goal and effect rejections as well as
+  selected formation and ownership refusals, while many sites across the
+  checker that print a fixed repair sentence have no pair. Among
   them are TYPE-2's "build it with a construction function [OP-13]" for a
   storage shape or a cell, OWN-1's "write `move p` for the affine place" and
   "use the copy place without `move`", TYPE-9's inline-shape and
@@ -2507,21 +2507,6 @@ condition under which it is taken up.
   (`&[T]` is a kind, not a type) and the four effect-row part names `next`,
   `last`, `filled`, `free` remain specification vocabulary after the
   measures became declared readonly fields. Find a better home for them.
-- **An ordinary field named `len` takes the measure route in an affine
-  factor.** Changing `limits.high` to `limits.len` in
-  `inv1-neg-an-affine-atom-is-not-a-bare-local` changes its rejection from
-  INV-1 to TYPE-5, "an array, buffer, or slice place", although both fields
-  are ordinary `u64` fields and neither is an admitted affine atom. The
-  body, constant and result-clause routes now select fields by prefix type;
-  `check/control/proofs.rs` still selects a measure by spelling. This
-  rejects invalid source under the wrong rule and conceals INV-1's working
-  repair: bind the field value with a preceding `let` and use that binding.
-  Reopen when affine-factor typing or its diagnostics are next changed:
-  classify the prefix before forming a measure, keeping INV-1's narrower
-  atom domain. Validate all three field names with the INV-1 refusal and the
-  let-bound form accepted, while genuine storage measures retain their
-  ordinary subscript obligations. Found while fixing measure-named fields;
-  the remaining route is outside the body and clause changes of that repair.
 - **The storage shape declarations are inelegant.** `Array`, `Slots` and
   `Ring` are prelude opaque structs with readonly fields, but the
   omitted-capacity form, element storage and placement still live in the

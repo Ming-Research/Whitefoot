@@ -19,6 +19,7 @@ use super::super::super::model::{
     CheckedMode, CheckedProofMultiplicity, CheckedProofUse, CheckedProofUseSource,
     CheckedSourceProof, CheckedStatement, CheckedType, CheckedValue, IntegerType,
 };
+use super::super::types::SelectedPlaceType;
 use super::super::{CheckStop, Checker, EffectSet, LocalBinding};
 use super::StatementResult;
 
@@ -402,9 +403,9 @@ impl<'unit> Checker<'_, 'unit> {
         // [GRAM-4, MSR-5] the factor production is shared with a contract
         // clause and carries an `atom`, a `call`, a `construct`, or a
         // parenthesized expression. [INV-1] admits an `atom` only as one
-        // bare IDENT place or one integer literal; every other atom shape,
-        // and a `construct`, is a rule rejection at this factor and not a
-        // parse rejection.
+        // bare IDENT place, one integer literal, or one measure member;
+        // every other atom shape, and a `construct`, is a rule rejection
+        // at this factor and not a parse rejection.
         if let Some(atom) = self
             .types
             .declarations
@@ -442,10 +443,8 @@ impl<'unit> Checker<'_, 'unit> {
             );
         }
 
-        // [INV-1, MSR-1] one measure former as an affine factor. The relation
-        // evaluates nothing and reads no storage, so the factor reaches the
-        // resolved place and the measure row and stops there: no loan access,
-        // no effect, and no goal.
+        // Calls share the grammar but have no admitted affine form [INV-1].
+        // Their rejection is owned by this proof position.
         if let Some(call) = self
             .types
             .declarations
@@ -472,8 +471,8 @@ impl<'unit> Checker<'_, 'unit> {
         Err(SemanticCompilerFailure::InvalidCanonicalTree.into())
     }
 
-    /// [INV-1] the one `atom` an affine factor admits: a bare IDENT place or
-    /// an integer literal.
+    /// [INV-1] the admitted atoms: a bare IDENT place, an integer literal,
+    /// or a measure member over an admitted measure place.
     #[allow(clippy::too_many_arguments)]
     fn check_affine_atom(
         &mut self,
@@ -574,6 +573,21 @@ impl<'unit> Checker<'_, 'unit> {
         // measure row and stops there: no access, no effect, and no goal.
         if let Some(measure) = self.types.declarations.trailing_measure_member(&suffixes)? {
             let base = &suffixes[..suffixes.len() - 1];
+            if let Some(SelectedPlaceType::Value(ty)) = self.types.place_prefix_selected_kind(
+                check_context,
+                place,
+                base,
+                bindings,
+                owner.value_role(),
+            )? && ty.measured().is_none()
+            {
+                return self.types.declarations.invalid_affine_proof(
+                    owner,
+                    node,
+                    "an affine factor selects a field or an element of a place",
+                    "bind the integer value with a `let` and use that binding",
+                );
+            }
             let measured = self.check_indexed_place_rooted(
                 context,
                 place,
@@ -738,8 +752,7 @@ impl<'unit> Checker<'_, 'unit> {
         ))
     }
 
-    /// [INV-1] the one `call` an affine factor admits: a measure former over
-    /// an admitted measure place.
+    /// Resolves a call's callee for its affine-factor rejection [INV-1].
     fn check_affine_measure(
         &mut self,
         context: FunctionContext<'_, '_>,
