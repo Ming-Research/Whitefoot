@@ -1,0 +1,25 @@
+public opaque nocopy struct Clock {
+}
+
+public opaque nocopy struct WallClock {
+}
+
+public opaque struct Instant {
+  ticks: u64;
+}
+
+public fn clock_share(clock: &Clock) -> result: Clock reads(clock) doc "Returns a clock that reads the same monotonic clock as clock.";
+
+public fn wall_clock_share(clock: &WallClock) -> result: WallClock reads(clock) doc "Returns a wall clock that reads the same calendar time as clock.";
+
+public fn now(clock: &Clock) -> result: Instant writes(clock) doc "Returns the current reading of the monotonic clock, not before any reading an earlier call through clock returned.";
+
+public fn instant_after(instant: Instant, nanoseconds: u64) -> result: Instant pure doc "Returns the instant nanoseconds after instant, or the latest instant when that lies beyond it.";
+
+public fn nanoseconds_from(earlier: Instant, later: Instant) -> result: u64 pure doc "Returns the nanoseconds from earlier to later, or zero when later is not after earlier.";
+
+public fn instant_reached(deadline: Instant, instant: Instant) -> result: Bool pure doc "Returns whether instant is at or after deadline.";
+
+public fn sleep_until(deadline: Instant) -> result: unit pure waits doc "Completes once the monotonic clock has reached deadline.";
+
+public fn unix_nanoseconds(clock: &WallClock) -> result: i64 reads(clock) doc "Returns the calendar time as nanoseconds since 1970-01-01T00:00:00Z.";

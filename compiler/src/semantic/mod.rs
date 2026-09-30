@@ -29,7 +29,10 @@ pub use check::check_semantics;
 pub(crate) use check::check_semantics_arithmetic_obligations;
 #[cfg(test)]
 pub(crate) use check::check_semantics_division_obligations;
-pub(crate) use check::{ProofReceipts, check_semantics_with_receipts, target_allocation_count};
+pub(crate) use check::{
+    ProofReceipts, check_semantics_with_receipts, header_invariant_scope_repair,
+    target_allocation_count,
+};
 pub(crate) use entry::{EntryRejection, EntryRequest};
 
 /// The permission table the overlap lowering reads. It is the same table the
@@ -1133,7 +1136,10 @@ pub enum SemanticIssueKind {
     /// A requirement entry uses a construct outside the admitted FN-8 goal subset.
     InvalidRequires,
     /// An ensures selector does not match the concrete result class FN-9 admits.
-    InvalidPostconditionSelector,
+    InvalidPostconditionSelector {
+        /// The admitted result data and routes, and how to remove this clause.
+        mechanical_fix: &'static str,
+    },
     /// [CALL-4] a route omits its ordinal binder where two or more declared
     /// result ordinals could carry it.
     AmbiguousResultRoute {
@@ -1290,6 +1296,14 @@ pub(crate) fn written_count(count: usize, noun: &str) -> String {
 }
 
 impl SemanticIssueKind {
+    /// [FN-9] preserves the selector refusal while explaining its admitted
+    /// forms. Wording belongs to the shared repair module.
+    pub(crate) const fn invalid_postcondition_selector() -> Self {
+        Self::InvalidPostconditionSelector {
+            mechanical_fix: check::postcondition_selector_repair(),
+        }
+    }
+
     /// One [TYPE-5] disagreement, in the spellings the source uses.
     ///
     /// The rejection published neither side for four blind-writer rounds: a

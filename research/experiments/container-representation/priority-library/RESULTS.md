@@ -382,6 +382,16 @@ Each cell has ordinary optimization and retained public queue operations
 `drain`, `free`) and element callbacks. Private child-selection, room-making
 and sift helpers remain ordinarily optimizable in both languages. The check
 prints their actual surviving call sites; no extra private boundary is forced.
+The raw-prefix cleanup uses a local `priority_cost_cleanup` function, since
+module visibility prevents constructing a `PriorityQueue` around that prefix.
+It performs the same reverse-slot consumption, and the retained build keeps
+its call boundary just as the C controls keep `free`. The check requires that
+call to survive optimization. This restores the comparison's retained-boundary
+condition; it does not assert identical generated code or timing to the
+historical queue-wrapper implementation. The initial module-port revision
+inlined this loop into the driver, so its setup/cleanup cell has a different
+boundary and must not be pooled with this retained comparison.
+
 A normal/retained difference does not isolate call latency. WF uses full-slot
 swaps. `swap-c` follows
 that source algorithm; `hole-c` carries one pending value through a private

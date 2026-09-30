@@ -154,7 +154,9 @@ fn last_byte(v: u64) -> result: u8 pure {
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
   doc "A pure call handed out while a pure call written as an if condition runs.";
-  let std::process::Inputs(args: unused_args, cwd: unused_cwd, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin) = move inputs;
+  let std::process::Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
+  std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
   std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
   let report = box_array_filled::<u8>(count: 2_u64, value: 0_u8);
   let value = mixdown(a: 11_u64, b: 22_u64);
@@ -164,7 +166,8 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure w
   let byte = last_byte(v: value);
   set report.inner[0_u64] = byte;
   let ordinary_source_2 = &report.inner[0_u64..2_u64];
-  match std::io::write_once(factory: &entry_factory, output: &out, source: ordinary_source_2, start: 0_u64, end: 2_u64) {
+  let no_deadline = None<std::time::Instant>();
+  match std::io::write_once(factory: &entry_factory, output: &out, source: ordinary_source_2, start: 0_u64, end: 2_u64, deadline: no_deadline) {
     Ok(value: accepted) => {
       return std::process::exit_status(code: 0_u8);
     }
@@ -2009,11 +2012,14 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn a_waiting_helper_is_never_handed_out() {
     let source = br#"fn write_byte(inputs: std::process::Inputs) -> result: u64 pure waits {
-  let std::process::Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: factory, stdin: input) = move inputs;
+  let std::process::Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: factory, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
+  std::fs::close_directory_write(factory: &factory, directory: move cwd_write);
   std::fs::close_directory(factory: &factory, directory: move cwd);
   let bytes = box_array_filled::<u8>(count: 1_u64, value: 88_u8);
   let window = &bytes.inner[0_u64..1_u64];
-  match std::io::write_once(factory: &factory, output: &out, source: window, start: 0_u64, end: 1_u64) {
+  let no_deadline = None<std::time::Instant>();
+  match std::io::write_once(factory: &factory, output: &out, source: window, start: 0_u64, end: 1_u64, deadline: no_deadline) {
     Ok(value: accepted) => {
       return accepted;
     }

@@ -77,6 +77,16 @@ enum wf_file_operation_kind {
     /* One direction's half-close, and the close of the target's object when
      * it is the pair's second release (ordinary native library). */
     WF_FILE_SOCKET_SHUTDOWN = 14,
+    /* One write at the end of a file opened for appending (`append_once`
+     * [PRE-2]).  It shares the write arm, and is a kind of its own because
+     * it waits on the host's storage and never on another party. */
+    WF_FILE_APPEND = 15,
+    /* Hands a file's written bytes to the host's durability mechanism
+     * (`sync_file` [PRE-2]); it names only a descriptor, in the close arm. */
+    WF_FILE_SYNC = 16,
+    /* A wait for the monotonic clock alone (`sleep_until` [PRE-2]): no host
+     * operation, so no arm, and the record's deadline is the instant. */
+    WF_FILE_SLEEP = 17,
 };
 
 /* Which direction of one connection a half-close releases (ordinary native library). */
@@ -260,8 +270,16 @@ enum wf_completion_route {
     WF_COMPLETION_ROUTE_WINDOWS_IOCP = 4,
     /* No engine yet: the operation's join makes it once its descriptor is
      * ready, because another context shares the thread [WAIT-2]. */
-    WF_COMPLETION_ROUTE_READINESS = 5
+    WF_COMPLETION_ROUTE_READINESS = 5,
+    /* No engine at all: the driver whose context waits on the record
+     * completes it when the monotonic clock reaches its deadline. */
+    WF_COMPLETION_ROUTE_TIMER = 6
 };
+
+/* A record's deadline once the driver has cancelled its operation for it,
+ * which no reading of the monotonic clock reaches: `instant_after`
+ * saturates there, and a body passes that instant as no deadline. */
+#define WF_COMPLETION_DEADLINE_FIRED UINT64_MAX
 
 /* The ring's own state inside the record, one platform's at a time.
  *
@@ -319,6 +337,12 @@ typedef struct wf_completion_record {
      * threaded through the records themselves, so it has no capacity of its
      * own and cannot refuse an operation (design §7). */
     struct wf_completion_record *next;
+    /* The reading of the monotonic clock that bounds the wait for the
+     * operation, zero for none, and WF_COMPLETION_DEADLINE_FIRED once the
+     * driver has asked the operation's route to cancel it.  A helper inside
+     * the operation reads it to tell a cancellation from an interruption it
+     * retries. */
+    _Atomic uint64_t deadline;
 } wf_completion_record;
 
 /* The ABI constants, and the two assertions that keep them true.  A record

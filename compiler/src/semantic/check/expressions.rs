@@ -838,8 +838,9 @@ impl<'unit> Checker<'_, 'unit> {
         }
         // [OP-15, MSR-1] a measure is read over the place written before it,
         // and [ENT-2] clause (b) forms that place with subscripts as well as
-        // field selections: `rows[0_u64].len` is the measure of the element
-        // the subscript selects and never a field of it. The subscript inside
+        // field selections: `rows[0_u64].len` is a measure only when the
+        // selected element type is measured; otherwise it is its field.
+        // The subscript inside
         // the place keeps its ordinary [OP-4] obligation.
         if let Some(measure) = self.types.declarations.trailing_measure_member(&suffixes)?
             && let Some(subscript) = self.indexing_subscript(

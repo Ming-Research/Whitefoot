@@ -1,0 +1,32 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn skip_spaces(data: &[u8], start: u64) -> result: u64 reads(data) contract {
+  requires start <= data^.len;
+  ensures result <= data^.len;
+} {
+  let length = data^.len;
+  let pos = start;
+  loop (
+    invariant bounded: pos <= length
+  ) {
+    if pos >= length {
+      break;
+    }
+    let byte = data^[pos];
+    if byte != 32_u8 {
+      set pos = pos +wrap 2_u64;
+      break;
+    }
+    set pos = pos + 1_u64;
+  }
+  return pos;
+}
+
+fn main() -> status: ExitStatus pure {
+  let backing = box_array_filled::<u8>(count: 3_u64, value: 7_u8);
+  let text = &backing.inner[0_u64..3_u64];
+  let at = skip_spaces(data: text, start: 0_u64);
+  let code = cvt.wrap::<u64, u8>(at);
+  return exit_status(code: code);
+}

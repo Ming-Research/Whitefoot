@@ -1,0 +1,89 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Span {
+  len: u32;
+  cap: u16;
+  head: u8;
+}
+
+const fixed: Span = Span(len: 7_u32, cap: 9_u16, head: 2_u8);
+
+fn make(value: u32) -> result: Span pure contract {
+  ensures result.len == value;
+  ensures result.cap == 9_u16;
+  ensures result.head == 2_u8;
+} {
+  return Span(len: value, cap: 9_u16, head: 2_u8);
+}
+
+fn bounded(span: Span, k: u32) -> result: u32 pure contract {
+  requires k < span.len;
+  ensures result < span.len;
+} {
+  return k;
+}
+
+fn check_run(spans: &[Span]) -> result: u8 reads(spans) contract {
+  requires 1_u64 < spans^.len;
+} {
+  let selected = spans^[1_u64].len;
+  let room = spans^[1_u64].cap;
+  let origin = spans^[1_u64].head;
+  if selected == 7_u32 {
+    if room == 9_u16 {
+      return origin;
+    }
+  }
+  return 1_u8;
+}
+
+fn measured() -> result: Array<u8, 2> pure contract {
+  ensures result.len == 2_u64;
+} {
+  let made = array_filled::<u8, 2>(value: 0_u8);
+  return made;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "TYPE-2, TYPE-5, MSR-1, CALL-4: len, cap and head on a source struct select its declared fields and exact types, in clauses, under Array and range subscripts, and in constants.";
+  let array = measured();
+  if array.len != 2_u64 {
+    return exit_status(code: 7_u8);
+  }
+  let span = make(value: 7_u32);
+  let limited = bounded(span: span, k: 3_u32);
+  let spans = array_filled::<Span, 2>(value: span);
+  set spans[1_u64].len = 8_u32;
+  let changed = spans[1_u64].len;
+  set spans[1_u64].len = 7_u32;
+  let room = spans[1_u64].cap;
+  let origin = spans[1_u64].head;
+  let static_len = fixed.len;
+  let static_cap = fixed.cap;
+  let static_head = fixed.head;
+  invariant length_fits: static_len <= 4294967295_u32;
+  invariant capacity_fits: room <= 65535_u16;
+  invariant head_fits: origin <= 255_u8;
+  invariant array_length: array.len == 2_u64;
+  let viewed = check_run(spans: &spans[0_u64..2_u64]);
+  if changed != 8_u32 {
+    return exit_status(code: 1_u8);
+  }
+  if limited != 3_u32 {
+    return exit_status(code: 2_u8);
+  }
+  if room != static_cap {
+    return exit_status(code: 3_u8);
+  }
+  if origin != static_head {
+    return exit_status(code: 4_u8);
+  }
+  if static_len != 7_u32 {
+    return exit_status(code: 5_u8);
+  }
+  if viewed != 2_u8 {
+    return exit_status(code: 6_u8);
+  }
+  return exit_status(code: 0_u8);
+}

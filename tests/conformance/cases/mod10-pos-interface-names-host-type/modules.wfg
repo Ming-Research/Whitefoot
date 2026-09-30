@@ -1,4 +1,4 @@
-pkg::report: [std::io];
+pkg::report: [std::io, std::time];
 pkg: [pkg::report, std::process, std::fs];
 
 entry main = pkg::main;

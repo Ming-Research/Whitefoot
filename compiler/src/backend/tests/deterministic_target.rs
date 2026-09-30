@@ -54,7 +54,9 @@ use crate::target::{TargetLayout, TargetLayoutFailure};
 const CHUNKED_READ: &[u8] = include_bytes!("../../../../tests/programs/io_chunked_read.wf");
 const WRITE_PREFIX: &[u8] = include_bytes!("../../../../tests/programs/io_write_prefix.wf");
 
-fn io_error_classes() -> Vec<&'static str> {
+/// `IoError`'s variants in declared order, each with whether it carries the
+/// native code and origin: every variant but `DeadlinePassed` does.
+fn io_error_classes() -> Vec<(&'static str, bool)> {
     let declaration = crate::library::RECORDS
         .iter()
         .find_map(|(_, source)| {
@@ -65,7 +67,11 @@ fn io_error_classes() -> Vec<&'static str> {
         .expect("the standard library declares IoError");
     declaration
         .lines()
-        .filter_map(|line| line.trim().split_once('(').map(|(name, _)| name))
+        .filter_map(|line| {
+            line.trim()
+                .split_once('(')
+                .map(|(name, fields)| (name, !fields.starts_with(')')))
+        })
         .collect()
 }
 
@@ -73,7 +79,7 @@ fn class_arms(indent: usize, named: &[(&str, &str)], default: &str) -> String {
     let pad = " ".repeat(indent);
     let inner = " ".repeat(indent + 2);
     let mut arms = String::new();
-    for class in io_error_classes() {
+    for (class, carries) in io_error_classes() {
         let body = named
             .iter()
             .find(|(spelling, _)| *spelling == class)
@@ -82,9 +88,8 @@ fn class_arms(indent: usize, named: &[(&str, &str)], default: &str) -> String {
             .lines()
             .map(|line| format!("{inner}{line}\n"))
             .collect();
-        arms.push_str(&format!(
-            "{pad}{class}(code: c, origin: o) => {{\n{body}{pad}}}\n"
-        ));
+        let fields = if carries { "code: c, origin: o" } else { "" };
+        arms.push_str(&format!("{pad}{class}({fields}) => {{\n{body}{pad}}}\n"));
     }
     arms
 }
@@ -767,9 +772,12 @@ pub(super) fn run_emitted_on_deterministic_host(
     DeterministicRun { output }
 }
 
-/// An ordinary entry that explicitly closes its initial working directory.
+/// An ordinary entry that explicitly closes both halves of its initial working
+/// directory, the write half first.
 const RELEASES_ONE_DIRECTORY: &[u8] = br#"fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
-  let std::process::Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: factory, stdin: input) = move inputs;
+  let std::process::Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: factory, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
+  std::fs::close_directory_write(factory: &factory, directory: move cwd_write);
   let closed = std::fs::close_directory(factory: &factory, directory: move cwd);
   return std::process::exit_status(code: 0_u8);
 }
@@ -779,7 +787,9 @@ const RELEASES_ONE_DIRECTORY: &[u8] = br#"fn main(inputs: std::process::Inputs) 
 /// at all, so every row it uses is one both target columns share.
 const READS_ITS_ARGUMENTS: &[u8] =
     br#"fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
-  let std::process::Inputs(args: args, cwd: unused_cwd, stdout: unused_stdout, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin) = move inputs;
+  let std::process::Inputs(args: args, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
+  std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
   std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
   let total = std::text::args_count(args: &args);
   let narrowed = cvt.checked::<u64, u8>(total);
@@ -795,15 +805,16 @@ const READS_ITS_ARGUMENTS: &[u8] =
 "#;
 
 /// Publishes three bytes to standard output and returns the accepted count,
-/// while also binding the initial working directory so exactly one resource
-/// in the program releases with a close.
+/// while also binding the initial working directory so exactly its two halves
+/// release with a close.
 const WRITES_THEN_RELEASES_BOTH: &[u8] =
     br#"fn exercise(cwd: &std::fs::DirectoryRead, out: &std::io::OutputStream, entry_factory: &std::io::HandleFactory) -> status: std::process::ExitStatus writes(out), writes(entry_factory) waits {
   let bytes = array_filled::<u8, 3>(value: 65_u8);
   set bytes[1_u64] = 66_u8;
   set bytes[2_u64] = 67_u8;
   let payload = &bytes[0_u64..3_u64];
-  match std::io::write_once(factory: entry_factory, output: out, source: payload, start: 0_u64, end: 3_u64) {
+  let no_deadline = None<std::time::Instant>();
+  match std::io::write_once(factory: entry_factory, output: out, source: payload, start: 0_u64, end: 3_u64, deadline: no_deadline) {
     Ok(value: written) => {
       let narrowed = cvt.checked::<u64, u8>(written);
       match narrowed {
@@ -823,7 +834,9 @@ const WRITES_THEN_RELEASES_BOTH: &[u8] =
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
   doc "PRE-2 ordinary std::process::Inputs are destructured once; the borrowed operation chain returns before the initial directory is explicitly closed on every exit.";
-  let std::process::Inputs(args: unused_args, cwd: cwd, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin) = move inputs;
+  let std::process::Inputs(args: unused_args, cwd: cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
+  std::fs::close_directory_write(factory: &entry_factory, directory: move cwd_write);
   let outcome = exercise(cwd: &cwd, out: &out, entry_factory: &entry_factory);
   std::fs::close_directory(factory: &entry_factory, directory: move cwd);
   return move outcome;
@@ -853,7 +866,9 @@ fn opens_one_file(named: &[(&str, &str)], default: &str) -> String {
 }}
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {{
-  let std::process::Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: factory, stdin: input) = move inputs;
+  let std::process::Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: factory, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
+  std::fs::close_directory_write(factory: &factory, directory: move cwd_write);
   let outcome = std::process::exit_status(code: 0_u8);
   set outcome = exercise(factory: &factory, cwd: &cwd);
   std::fs::close_directory(factory: &factory, directory: move cwd);
@@ -945,7 +960,8 @@ fn linked_library_substitution_preserves_argument_access() {
     // exactly.
     let run = run_on_deterministic_host(READS_ITS_ARGUMENTS, &HostScript::new(), &[b"a", b"b"]);
     assert_eq!(run.output.status.code(), Some(3));
-    assert_eq!(run.attempts("close"), 1);
+    // The working directory's two halves, one close each [PRE-2].
+    assert_eq!(run.attempts("close"), 2);
     assert_eq!(run.attempts("open"), 0);
 }
 
@@ -953,16 +969,21 @@ fn linked_library_substitution_preserves_argument_access() {
 fn an_explicit_close_that_fails_is_attempted_once_and_never_retried() {
     // The ordinary close implementation attempts once even on EINTR.
     // The caller explicitly discards its Result; an implicit drop does nothing.
+    // The directory's write half closes first and succeeds; the scripted
+    // failure is the read half's close [PRE-2].
     let run = run_on_deterministic_host(
         RELEASES_ONE_DIRECTORY,
-        &HostScript::new().closes(&[HostOutcome::Fail(HostError::Interrupted)]),
+        &HostScript::new().closes(&[
+            HostOutcome::Succeed,
+            HostOutcome::Fail(HostError::Interrupted),
+        ]),
         &[],
     );
 
     assert_eq!(
         run.attempts("close"),
-        1,
-        "an interrupted close is never retried; trace was {:?}",
+        2,
+        "one attempt per half, and an interrupted close is never retried; trace was {:?}",
         run.trace()
     );
     // The descriptor closed is the one the scripted directory open produced,
@@ -983,11 +1004,12 @@ fn an_explicit_close_that_succeeds_is_also_exactly_one_attempt() {
     // release, not of the failure.
     let run = run_on_deterministic_host(
         RELEASES_ONE_DIRECTORY,
-        &HostScript::new().closes(&[HostOutcome::Succeed]),
+        &HostScript::new().closes(&[HostOutcome::Succeed, HostOutcome::Succeed]),
         &[],
     );
 
-    assert_eq!(run.attempts("close"), 1);
+    // One attempt for each half of the working directory [PRE-2].
+    assert_eq!(run.attempts("close"), 2);
     assert!(
         run.trace()
             .lines()
@@ -1014,7 +1036,9 @@ fn an_inspection_error_survives_a_failed_provisional_close() {
         &HostScript::new()
             .file(b"x")
             .file_status(HostFileStatus::Fail(HostError::DeviceFailure))
+            // The working directory's write half closes first [PRE-2].
             .closes(&[
+                HostOutcome::Succeed,
                 HostOutcome::Fail(HostError::Interrupted),
                 HostOutcome::Succeed,
             ]),
@@ -1031,7 +1055,7 @@ fn an_inspection_error_survives_a_failed_provisional_close() {
         .expect("the failing inspection reports its native code");
     assert_eq!(run.output.status.code(), Some(inspection_code));
     assert_eq!(run.attempts("fstat"), 1);
-    assert_eq!(run.attempts("close"), 2);
+    assert_eq!(run.attempts("close"), 3);
     assert!(run.trace().contains("wf_test fstat fd=42 outcome=error"));
     assert!(run.trace().contains("wf_test close fd=42 outcome=error"));
     assert!(
@@ -1059,7 +1083,9 @@ fn a_nonregular_result_survives_a_failed_provisional_close() {
         &HostScript::new()
             .file(b"x")
             .file_status(HostFileStatus::Directory)
+            // The working directory's write half closes first [PRE-2].
             .closes(&[
+                HostOutcome::Succeed,
                 HostOutcome::Fail(HostError::Interrupted),
                 HostOutcome::Succeed,
             ]),
@@ -1073,7 +1099,7 @@ fn a_nonregular_result_survives_a_failed_provisional_close() {
         run.trace()
     );
     assert_eq!(run.attempts("fstat"), 1);
-    assert_eq!(run.attempts("close"), 2);
+    assert_eq!(run.attempts("close"), 3);
     assert!(run.trace().contains("wf_test fstat fd=42 outcome=ok"));
     assert!(run.trace().contains("wf_test close fd=42 outcome=error"));
     assert!(
@@ -1256,12 +1282,15 @@ fn a_forced_short_write_reports_the_absolute_endpoint_after_the_host_prefix() {
 #[test]
 fn an_affine_output_drop_does_not_call_a_close() {
     // A host handle's drop is empty [PRE-2]. OutputStream is affine, so dropping it
-    // performs no native close or flush. DirectoryRead is explicitly closed.
+    // performs no native close or flush. Both halves of the working directory
+    // are explicitly closed [PRE-2].
     let run = run_on_deterministic_host(
         WRITES_THEN_RELEASES_BOTH,
         &HostScript::new()
-            // Only the explicit directory close can consume a scripted answer.
+            // Only the two explicit directory closes can consume a scripted
+            // answer; a third would be an output's.
             .closes(&[
+                HostOutcome::Fail(HostError::DeviceFailure),
                 HostOutcome::Fail(HostError::DeviceFailure),
                 HostOutcome::Fail(HostError::DeviceFailure),
             ]),
@@ -1279,10 +1308,10 @@ fn an_affine_output_drop_does_not_call_a_close() {
         run.trace()
             .contains("wf_test write fd=1 count=3 accepted=3 bytes=ABC")
     );
-    // Exactly one close attempt, and it is the `DirectoryRead`'s. Neither
+    // Exactly two close attempts, the working directory's halves. Neither
     // `OutputStream` owner closed its descriptor, so the sink's close-time failure
     // is outside what any release can observe.
-    assert_eq!(run.attempts("close"), 1);
+    assert_eq!(run.attempts("close"), 2);
     assert!(
         run.trace()
             .lines()
@@ -1300,11 +1329,14 @@ fn the_heap_resource_record_writer_stays_native_on_the_deterministic_target() {
     // on it; allocation is total in the source, so the record writer below is
     // the trusted base's own exhaustion path and not a source-visible arm.
     let source = br#"fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
-  let std::process::Inputs(args: unused_args, cwd: unused_cwd, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin) = move inputs;
+  let std::process::Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
+  std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
   std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
   let bytes = box_array_filled::<u8>(count: 1_u64, value: 65_u8);
   let ordinary_source = &bytes.inner[0_u64..1_u64];
-  match std::io::write_once(factory: &entry_factory, output: &out, source: ordinary_source, start: 0_u64, end: 1_u64) {
+  let no_deadline = None<std::time::Instant>();
+  match std::io::write_once(factory: &entry_factory, output: &out, source: ordinary_source, start: 0_u64, end: 1_u64, deadline: no_deadline) {
     Ok(value: accepted) => {
     }
     Err(error: problem) => {
@@ -1352,11 +1384,14 @@ pub(super) fn assert_zero_write_outcome() {
     );
     let source = format!(
         r#"fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {{
-  let std::process::Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: factory, stdin: input) = move inputs;
+  let std::process::Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: factory, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
+  std::fs::close_directory_write(factory: &factory, directory: move cwd_write);
   std::fs::close_directory(factory: &factory, directory: move cwd);
   let bytes = array_filled::<u8, 2>(value: 119_u8);
   let window = &bytes[0_u64..2_u64];
-  match std::io::write_once(factory: &factory, output: &out, source: window, start: 0_u64, end: 2_u64) {{
+  let no_deadline = None<std::time::Instant>();
+  match std::io::write_once(factory: &factory, output: &out, source: window, start: 0_u64, end: 2_u64, deadline: no_deadline) {{
     Ok(value: written) => {{
       let narrowed = cvt.checked::<u64, u8>(written);
       match narrowed {{

@@ -7,13 +7,17 @@
  * and lives in one leaf per platform: `file_posix.c` and `file_windows.c`.
  * Nothing in this unit makes a host call of its own -- its threads come from
  * `wf_prim_thread_start` and its lock and condition from the platform's one
- * wait set -- so there is no `#if` here and no header of a host in it.
+ * wait set -- so there is no `#if` here and no header of a host in it; its one
+ * fail-stop writes a line through the C library and aborts, as the other
+ * units' do.
  */
 
 #include "file_adapter.h"
 
 #include <errno.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -30,8 +34,11 @@ int wf_file_request_valid(const wf_file_request *request) {
         return request->operation.read.buffer != NULL
             || request->operation.read.count == 0;
     case WF_FILE_WRITE:
+    case WF_FILE_APPEND:
         return request->operation.write.buffer != NULL
             || request->operation.write.count == 0;
+    case WF_FILE_SYNC:
+        return request->operation.close.descriptor >= 0;
     case WF_FILE_PREAD:
         return request->operation.pread.buffer != NULL
             || request->operation.pread.count == 0;
@@ -93,6 +100,24 @@ int wf_file_request_is_peer_bound(const wf_file_request *request) {
     default:
         return 0;
     }
+}
+
+/* Whether a request may wait for another context of this program: the
+ * peer-bound kinds, and an unpositioned stream read or write, whose stream may
+ * be a pipe another context drains or fills.  A positioned read, an open, a
+ * close and a directory step wait for the host alone. */
+static int wf_file_request_may_wait_on_peer(const wf_file_request *request) {
+    return wf_file_request_is_peer_bound(request)
+        || request->kind == WF_FILE_READ
+        || request->kind == WF_FILE_WRITE;
+}
+
+/* The adapter's one fail-stop: a runtime resource the host did not grant, which
+ * stops the program with a line naming it [SCOPE-3]. */
+static _Noreturn void wf_file_fail(const char *reason) {
+    (void)fprintf(stderr, "whitefoot completion: %s\n", reason);
+    (void)fflush(stderr);
+    abort();
 }
 
 /* The two-count of every connection descriptor, one byte each: zero when
@@ -244,6 +269,11 @@ static int wf_file_request_held_locked(
     return adapter->hold_for_contexts != 0 || wf_file_request_is_peer_bound(request);
 }
 
+/* Whether a record carries a deadline [PRE-2], passed or not. */
+static int wf_file_record_bounded(const wf_completion_record *record) {
+    return atomic_load_explicit(&record->deadline, memory_order_relaxed) != 0;
+}
+
 static wf_completion_record *wf_file_take_work(
     wf_file_adapter *adapter,
     int from_head
@@ -251,11 +281,20 @@ static wf_completion_record *wf_file_take_work(
     wf_completion_record *previous = NULL;
     wf_completion_record *taken = NULL;
     wf_completion_wait_lock(&adapter->queue_wait);
-    if (adapter->helper_cap != 0) {
+    {
+        /* With a pool that may grow, a scheduler thread leaves the held
+         * requests to the helpers.  A pool pinned at zero leaves this thread
+         * the queue's engine for every request but one with a deadline, which
+         * the helper started for it takes, since the thread that must end an
+         * operation at its deadline cannot be inside it [PRE-2]
+         * (`wf_file_adapter_grow_for_deadline`). */
         wf_completion_record *before = NULL;
         wf_completion_record *scan = adapter->queue_head;
         while (scan != NULL) {
-            if (!wf_file_request_held_locked(adapter, &scan->request)) {
+            int left = adapter->helper_cap != 0
+                ? wf_file_request_held_locked(adapter, &scan->request)
+                : wf_file_record_bounded(scan);
+            if (!left) {
                 previous = before;
                 taken = scan;
                 if (from_head != 0) {
@@ -264,16 +303,6 @@ static wf_completion_record *wf_file_take_work(
             }
             before = scan;
             scan = scan->next;
-        }
-    } else if (adapter->queue_head != NULL) {
-        if (from_head != 0 || adapter->queue_head == adapter->queue_tail) {
-            taken = adapter->queue_head;
-        } else {
-            previous = adapter->queue_head;
-            while (previous->next != adapter->queue_tail) {
-                previous = previous->next;
-            }
-            taken = adapter->queue_tail;
         }
     }
     if (taken != NULL) {
@@ -389,21 +418,87 @@ void wf_file_complete_record(
     wf_completion_record_complete(record);
 }
 
+/* The record the calling thread is executing, which its leaf consults when a
+ * host call is interrupted. */
+static _Thread_local wf_completion_record *wf_file_running;
+
+int wf_file_running_cancelled(void) {
+    return wf_file_running != NULL
+        && atomic_load_explicit(&wf_file_running->deadline, memory_order_acquire)
+            == WF_COMPLETION_DEADLINE_FIRED;
+}
+
+uint64_t wf_file_running_deadline(void) {
+    return wf_file_running == NULL
+        ? 0
+        : atomic_load_explicit(&wf_file_running->deadline, memory_order_acquire);
+}
+
+void wf_file_running_fire(void) {
+    if (wf_file_running != NULL) {
+        atomic_store_explicit(&wf_file_running->deadline, WF_COMPLETION_DEADLINE_FIRED,
+                              memory_order_release);
+    }
+}
+
 static void wf_file_run_work(
     wf_file_adapter *adapter,
     wf_completion_record *record,
     int helper
 ) {
-    wf_file_result result = wf_file_execute_timed(adapter, &record->request);
+    wf_file_result result;
+    wf_file_running = record;
+    result = wf_file_execute_timed(adapter, &record->request);
+    wf_file_running = NULL;
     wf_file_finish_execution(adapter, helper);
     wf_file_complete_record(record, &result);
 }
 
+int wf_file_adapter_cancel(wf_file_adapter *adapter, wf_completion_record *record) {
+    wf_completion_record *previous = NULL;
+    wf_completion_record *scan;
+    size_t slot;
+    wf_completion_wait_lock(&adapter->queue_wait);
+    for (scan = adapter->queue_head; scan != NULL; previous = scan, scan = scan->next) {
+        if (scan == record) {
+            wf_file_result result;
+            wf_file_unlink_locked(adapter, previous, record);
+            wf_completion_wait_unlock(&adapter->queue_wait);
+            memset(&result, 0, sizeof(result));
+            result.head.kind = record->request.kind;
+            result.head.value = -1;
+            result.head.error_code = wf_file_cancelled_error();
+            wf_file_complete_record(record, &result);
+            return 0;
+        }
+    }
+    for (slot = 0; slot < adapter->helper_slots; slot++) {
+        if (adapter->executing[slot] == record) {
+            wf_file_thread_interrupt(adapter->executing_thread[slot]);
+            break;
+        }
+    }
+    wf_completion_wait_unlock(&adapter->queue_wait);
+    /* Asked again until it completes: a helper between taking the record and
+     * entering its host call is not interrupted by this one. */
+    return atomic_load_explicit(&record->state, memory_order_acquire) != WF_COMPLETION_DONE;
+}
+
+static void wf_file_grow_for_peers_locked(wf_file_adapter *adapter);
+
 static void wf_file_helper_main(void *context) {
     wf_file_adapter *adapter = context;
+    size_t slot;
+    wf_completion_wait_lock(&adapter->queue_wait);
+    slot = adapter->helper_slots++;
+    adapter->executing[slot] = NULL;
+    adapter->executing_thread[slot] = wf_file_thread_self();
+    wf_completion_wait_unlock(&adapter->queue_wait);
     for (;;) {
         wf_completion_record *record;
+        int peer;
         wf_completion_wait_lock(&adapter->queue_wait);
+        adapter->executing[slot] = NULL;
         while (adapter->queue_head == NULL && adapter->stopping == 0) {
             adapter->blocked_helpers += 1;
             (void)wf_completion_wait_sleep(&adapter->queue_wait, UINT32_MAX);
@@ -432,8 +527,22 @@ static void wf_file_helper_main(void *context) {
                 - 1u,
             memory_order_seq_cst
         );
+        adapter->executing[slot] = record;
+        /* Counted before the lock is released, so an enqueue that follows
+         * sees this helper inside its wait. The kind is read here because
+         * publishing the result is the engine's last access to the record. */
+        peer = wf_file_request_may_wait_on_peer(&record->request);
+        if (peer != 0) {
+            adapter->peer_waits += 1u;
+            wf_file_grow_for_peers_locked(adapter);
+        }
         wf_completion_wait_unlock(&adapter->queue_wait);
         wf_file_run_work(adapter, record, 1);
+        if (peer != 0) {
+            wf_completion_wait_lock(&adapter->queue_wait);
+            adapter->peer_waits -= 1u;
+            wf_completion_wait_unlock(&adapter->queue_wait);
+        }
     }
 }
 
@@ -459,7 +568,7 @@ static int wf_file_start_helper_locked(wf_file_adapter *adapter) {
         &adapter->helper_count,
         memory_order_relaxed
     );
-    if (held >= WF_FILE_MAX_HELPERS) {
+    if (held >= WF_FILE_HELPER_RECORDS) {
         return 1;
     }
     adapter->live_helpers += 1u;
@@ -513,8 +622,15 @@ int wf_file_adapter_init(
     atomic_init(&adapter->execute_ticks, 0);
     adapter->blocked_helpers = 0;
     adapter->live_helpers = 0;
+    /* A helper takes the next slot when it starts, and no more helpers ever
+     * start on one adapter than it has slots. */
+    adapter->helper_slots = 0;
+    memset(adapter->executing, 0, sizeof(adapter->executing));
+    memset(adapter->executing_thread, 0, sizeof(adapter->executing_thread));
     adapter->stopping = 0;
     adapter->hold_for_contexts = 0;
+    adapter->grow_for_peers = 0;
+    adapter->peer_waits = 0;
     adapter->helper_capacity = helper_capacity;
     adapter->helper_cap = helper_count;
     atomic_init(&adapter->stat_submissions, 0);
@@ -555,12 +671,40 @@ int wf_file_adapter_init(
     return 0;
 }
 
-int wf_file_adapter_hold_for_contexts(wf_file_adapter *adapter) {
+int wf_file_adapter_hold_for_contexts(
+    wf_file_adapter *adapter,
+    int grow_for_peers
+) {
     if (!wf_file_adapter_initialized(adapter)) {
         return EINVAL;
     }
     wf_completion_wait_lock(&adapter->queue_wait);
     adapter->hold_for_contexts = 1u;
+    adapter->grow_for_peers = grow_for_peers != 0 ? 1u : 0u;
+    wf_completion_wait_unlock(&adapter->queue_wait);
+    return 0;
+}
+
+int wf_file_adapter_grow_for_deadline(wf_file_adapter *adapter) {
+    size_t held;
+    if (!wf_file_adapter_initialized(adapter)) {
+        return EINVAL;
+    }
+    wf_completion_wait_lock(&adapter->queue_wait);
+    held = atomic_load_explicit(&adapter->helper_count, memory_order_relaxed);
+    if (adapter->stopping == 0 && held <= adapter->peer_waits) {
+        if (held >= WF_FILE_HELPER_RECORDS) {
+            wf_file_fail("more host operations waited on other contexts or deadlines at once than the runtime has helper threads for");
+        }
+        if (wf_file_start_helper_locked(adapter) != 0) {
+            wf_file_fail("the host refused a helper thread for an operation with a deadline");
+        }
+        atomic_store_explicit(
+            &adapter->helper_count,
+            held + 1,
+            memory_order_release
+        );
+    }
     wf_completion_wait_unlock(&adapter->queue_wait);
     return 0;
 }
@@ -569,9 +713,9 @@ int wf_file_adapter_set_helper_cap(wf_file_adapter *adapter, size_t cap) {
     if (!wf_file_adapter_initialized(adapter)) {
         return EINVAL;
     }
-    /* The policy asks for a ceiling; the caller's storage decides how much of
-     * it exists.  A cap above the bound init was given would let the pool grow
-     * past the number of helpers this adapter was told it may ever hold. */
+    /* The policy asks for a ceiling; the bound init was given decides how
+     * much of it exists.  A cap above it would let demand grow the pool past
+     * that bound. */
     if (cap > adapter->helper_capacity) {
         cap = adapter->helper_capacity;
     }
@@ -579,6 +723,17 @@ int wf_file_adapter_set_helper_cap(wf_file_adapter *adapter, size_t cap) {
     adapter->helper_cap = cap;
     wf_completion_wait_unlock(&adapter->queue_wait);
     return 0;
+}
+
+size_t wf_file_adapter_peer_waits(wf_file_adapter *adapter) {
+    size_t waits;
+    if (!wf_file_adapter_initialized(adapter)) {
+        return 0;
+    }
+    wf_completion_wait_lock(&adapter->queue_wait);
+    waits = adapter->peer_waits;
+    wf_completion_wait_unlock(&adapter->queue_wait);
+    return waits;
 }
 
 size_t wf_file_adapter_helper_count(const wf_file_adapter *adapter) {
@@ -666,6 +821,45 @@ static void wf_file_grow_helpers_locked(
     );
 }
 
+/* Starts one more helper, past the cap, when a request is queued and every
+ * helper is inside a request that may wait on a peer.  The caller holds the
+ * queue lock.
+ *
+ * A helper inside such a request may never return on its own: it waits for
+ * another context of this program, and that context may be waiting for the
+ * queued request.  A helper that is not inside one is asleep on the queue,
+ * about to take from it, or inside a host call that ends without any context
+ * acting, so while one exists the queue drains.  This keeps one: it runs when
+ * a request is queued and when a helper enters such a request with more
+ * queued, the two moments the count of helpers outside a peer wait can reach
+ * zero with work waiting.  Each helper it starts is one outstanding wait on a
+ * peer, so the pool never holds more helpers than the cap and the program's
+ * outstanding peer waits together.  The records bound that sum, and a program
+ * past them, or one the host refuses a thread, stops with a report: queuing
+ * the request would stop it without one [WAIT-2, SCOPE-3]. */
+static void wf_file_grow_for_peers_locked(wf_file_adapter *adapter) {
+    size_t held;
+    if (adapter->grow_for_peers == 0 || adapter->stopping != 0
+        || adapter->queue_head == NULL) {
+        return;
+    }
+    held = atomic_load_explicit(&adapter->helper_count, memory_order_relaxed);
+    if (held > adapter->peer_waits) {
+        return;
+    }
+    if (held >= WF_FILE_HELPER_RECORDS) {
+        wf_file_fail("more host operations waited on other contexts at once than the runtime has helper threads for");
+    }
+    if (wf_file_start_helper_locked(adapter) != 0) {
+        wf_file_fail("the host refused a helper thread for an operation that waits on another context");
+    }
+    atomic_store_explicit(
+        &adapter->helper_count,
+        held + 1,
+        memory_order_release
+    );
+}
+
 /* Appends one record to the pending list and grows the pool when the list has
  * outrun it.  The caller holds the queue lock.
  *
@@ -712,6 +906,7 @@ static int wf_file_enqueue_locked(
         adapter,
         wf_file_request_held_locked(adapter, &record->request)
     );
+    wf_file_grow_for_peers_locked(adapter);
     return wake;
 }
 
@@ -803,17 +998,16 @@ void wf_file_adapter_run_claimed(
  * is the whole defect this rule removes, and it would do it at exactly the
  * moment the program is widest.
  *
- * So on a host with no kernel completion ring, the number of socket operations
- * this route can have waiting at once is `WF_BRIDGE_MAX_HELPERS`, and a
- * program that needs more of them in flight than that waits.  That bound is a
- * property of an engine built out of blocking host calls and threads to make
- * them on.  The engine that removes it is a readiness-driven adapter -- one
+ * So on a host with no kernel completion ring, a helper is a thread per
+ * peer-bound operation in flight: up to the cap, and once contexts run past it
+ * while every helper waits on a peer (`wf_file_grow_for_peers_locked`).  That
+ * cost is a property of an engine built out of blocking host calls and threads
+ * to make them on.  The engine that removes it is a readiness-driven adapter -- one
  * `poll`, `kqueue` or `WSAPoll` over the descriptors of every queued request,
  * made inside the park a thread with nothing to run already enters, so waiting
  * for any number of peers costs one thread and no host call per peer.  That is
- * the ring-less host's proper engine and it is the open design item here; it
- * is not this change, which is the kind rule that makes the present engine
- * correct within its bound. */
+ * the ring-less host's proper engine and it is the open design item here; the
+ * kind rule and the growth for peers make the present engine correct. */
 size_t wf_file_adapter_progress(wf_file_adapter *adapter, size_t budget) {
     size_t executed = 0;
     if (!wf_file_adapter_initialized(adapter)) {

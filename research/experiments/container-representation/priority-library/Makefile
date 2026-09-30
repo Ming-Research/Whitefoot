@@ -42,7 +42,7 @@ $(BUILD)/priority-library-normal.ll: $(BUILD)/priority-library.raw.ll Makefile
 	  awk '/^define .* @wf_priority_cost_(word|record)_trace\(/ { if (sub(/ #0 [{]$$/, " noinline #0 {") != 1) exit 1; traces++ } { print } END { if (traces != 2) exit 1 }' > $@
 
 $(BUILD)/priority-library-retained.ll: $(BUILD)/priority-library-normal.ll Makefile
-	awk '(/^define .* @"?wf_(std[.]collections[.]priority_queue[.])?priority_queue_(new|len|reserve|push|peek|pop|replace_top|heapify|drain|free)[$$(]/ || /^define .* @wf_priority_cost_(word|record)_(make|accept|compare|observe)\(/) && !/[.]body"?[(]/ \
+	awk '(/^define .* @"?wf_(std[.]collections[.]priority_queue[.])?priority_queue_(new|len|reserve|push|peek|pop|replace_top|heapify|drain|free)[$$(]/ || /^define .* @"?wf_priority_cost_cleanup[$$(]/ || /^define .* @wf_priority_cost_(word|record)_(make|accept|compare|observe)\(/) && !/[.]body"?[(]/ \
 	  { if (sub(/ #0 [{]$$/, " noinline #0 {") != 1) exit 1; retained++ } \
 	  { print } END { if (retained == 0) exit 1; print "Retained queue/callback definitions: " retained > "/dev/stderr" }' $< > $@
 
@@ -75,6 +75,7 @@ check: native-check build
 	  grep -Eq "call .*@wf_priority_cost_(word|record)_$${callback}[(]" $(BUILD)/priority-library-retained.opt.ll; \
 	  grep -Eq "call .*@(word|record)_$${callback}[.(]" $(BUILD)/control-retained.opt.ll; \
 	done; \
+	grep -Eq 'call .*@"?wf_priority_cost_cleanup[$$(]' $(BUILD)/priority-library-retained.opt.ll; \
 	echo 'Public queue operations and payload callbacks survive in both retained modules'; \
 	wf=$$(grep -Ec 'call .*@"?wf_(std[.]collections[.]priority_queue[.])?priority_queue_(child|make_room|sift_rise|sift_sink)' $(BUILD)/priority-library-retained.opt.ll || true); \
 	control=$$(grep -Ec 'call .*@(word|record)_(swap|hole)_(child|make_room|rise|sink)' $(BUILD)/control-retained.opt.ll || true); \

@@ -91,7 +91,9 @@ fn spell(destination: &[u8], at: u64, value: u64) -> result: u64 writes(destinat
 }
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: unused_args, cwd: unused_cwd, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin) = move inputs;
+  let Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
+  std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
   close_directory(factory: &entry_factory, directory: move unused_cwd);
   let t0 = oct(a: 1_u64, b: 2_u64, c: 3_u64, d: 4_u64, e: 5_u64, f: 6_u64, g: 7_u64, h: 8_u64);
   let t1 = oct(a: 9_u64, b: 10_u64, c: 11_u64, d: 12_u64, e: 13_u64, f: 14_u64, g: 15_u64, h: 16_u64);
@@ -104,7 +106,8 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let value = fold(node: &root);
   let window = &report.inner[0_u64..8_u64];
   let filled = spell(destination: window, at: 0_u64, value: value);
-  match write_once(factory: &entry_factory, output: &out, source: window, start: 0_u64, end: 8_u64) {
+  let no_deadline = None<std::time::Instant>();
+  match write_once(factory: &entry_factory, output: &out, source: window, start: 0_u64, end: 8_u64, deadline: no_deadline) {
     Ok(value: next) => {
       return exit_status(code: 0_u8);
     }

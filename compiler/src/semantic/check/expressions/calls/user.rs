@@ -13,8 +13,9 @@ use super::super::super::super::goal::{
     EvaluatedValueOccurrence, GoalDatum, GoalExpression, GoalOperation, GoalProjection,
 };
 use super::super::super::super::model::{
-    BindingId, CheckedCallContract, CheckedCallSeparation, CheckedEffectStep, CheckedEffects,
-    CheckedExpression, CheckedMode, CheckedNominalKind, CheckedStatePath, CheckedType,
+    BindingId, CheckedCallContract, CheckedCallSeparation, CheckedCallSeparationPositions,
+    CheckedEffectStep, CheckedEffects, CheckedExpression, CheckedMode, CheckedNominalKind,
+    CheckedStatePath, CheckedType,
 };
 use super::super::super::super::places::{
     CaptureId, CapturedRange, CapturedTerm, CapturedValue, PlaceRoot, PlaceStep, ResolvedPlace,
@@ -745,14 +746,40 @@ impl<'unit> Checker<'_, 'unit> {
                 if let Some((positions, window)) =
                     Checker::separable_by_position(&left.place, &right.place)
                 {
+                    // [OWN-7] positions below different range frames are
+                    // relative to those frames. Name the range pair the
+                    // proof actually compares, rather than descendant runs
+                    // whose endpoints can already satisfy the printed repair.
+                    let mut left_diagnostic = left.place.clone();
+                    let mut right_diagnostic = right.place.clone();
+                    if matches!(
+                        positions.first(),
+                        Some(CheckedCallSeparationPositions::Ranges(..))
+                    ) && let Some(depth) = left
+                        .place
+                        .path
+                        .iter()
+                        .zip(&right.place.path)
+                        .position(|(first, second)| {
+                            matches!((first, second), (PlaceStep::Range(_), PlaceStep::Range(_)))
+                                && first != second
+                        })
+                    {
+                        left_diagnostic.path.truncate(depth + 1);
+                        right_diagnostic.path.truncate(depth + 1);
+                    }
                     self.body.call_separations.push(CheckedCallSeparation {
                         site: self.types.declarations.tree.path(node)?.clone(),
                         exchange,
                         reference_use: None,
                         positions,
                         window,
-                        left_spelling: self.types.render_resolved_place(&left.place, bindings)?,
-                        right_spelling: self.types.render_resolved_place(&right.place, bindings)?,
+                        left_spelling: self
+                            .types
+                            .render_resolved_place(&left_diagnostic, bindings)?,
+                        right_spelling: self
+                            .types
+                            .render_resolved_place(&right_diagnostic, bindings)?,
                         one_argument: left.argument == right.argument,
                     });
                     continue;

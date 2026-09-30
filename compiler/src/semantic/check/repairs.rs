@@ -29,6 +29,10 @@
 //! is no rejection [DIAG-1], but it sends the writer to the same count as
 //! [OP-9]'s repair, whose words stand next to it.
 //!
+//! Selector admission and invariant-name scope repairs also live here. The
+//! resolver calls the scope formatter with the name it has already classified;
+//! that formatter performs no semantic checking.
+//!
 //! The sentences live here, in one place, so that wording can follow evidence
 //! from agents without touching the judgments that select them.
 
@@ -44,6 +48,21 @@ use super::super::model::{
 };
 use super::super::permission::visit_read_bindings;
 use crate::NodePath;
+
+/// [FN-9] an unsupported selector cannot state this postcondition. Removing
+/// its last clause also removes a now-empty or define-only contract [FN-8].
+pub(crate) const fn postcondition_selector_repair() -> &'static str {
+    "remove this ensures clause, and remove its contract block if no requires or ensures clauses remain; an unrouted clause can name only result data admitted by [CALL-4]; a routed clause selects `when b is Ok(value: r):` for an own Result<T, E> or `when b is Some(value: r):` for an own Option<T>, where b names that result, r is fresh and payload T supplies admitted data [FN-9]; omit `b is` only when exactly one declared result has the route's enum type [CALL-4]; Err, None and user-enum variants are not postcondition routes"
+}
+
+/// [INV-1, ENT-5] the name's scope and the conclusion's survival are separate.
+/// An explicit certificate may use a surviving relation, but not its expired
+/// header name; a target AUTO already proves needs no proof block [PRF-1].
+pub(crate) fn header_invariant_scope_repair(name: &str) -> String {
+    format!(
+        "header invariant `{name}` can be named only inside its loop body [INV-1]; its conclusion survives only under the ordinary fact rules [ENT-5]: if AUTO proves this target, remove its proof block; otherwise, if an available relation with in-scope terms supplies the same premise as `{name}`, replace `{name}` in this use with `(relation)`, keeping `use` and any `k times` coefficient [PRF-1]"
+    )
+}
 
 /// Whether the checker derived a goal false or derived neither sign [ENT-4].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1234,6 +1253,10 @@ pub(super) enum OpaqueStruct {
     /// declaration writes `nodrop`, so that it leaves a scope only by moving
     /// out [PROV-6].
     HostHandle { linear: bool },
+    /// A host module's opaque struct with fields, `Instant`: only a host
+    /// function forms one, and its fields are private to a module no program
+    /// writes in [PRE-2, MOD-6].
+    HostValue,
     /// An opaque struct the program declares, which never has a value.
     Program,
 }
@@ -1253,6 +1276,9 @@ pub(super) fn opaque_struct_constructed(opaque: OpaqueStruct) -> &'static str {
         OpaqueStruct::HostHandle { .. } => {
             "a host handle is formed only by a host function [PRE-2]: replace this construction with a handle that a function of its module returns or that the program's entry receives"
         }
+        OpaqueStruct::HostValue => {
+            "a host module's opaque value is formed only by a host function [PRE-2]: replace this construction with a value that a function of its module returns"
+        }
         OpaqueStruct::Program => PROGRAM_OPAQUE_STRUCT,
     }
 }
@@ -1269,6 +1295,9 @@ pub(super) fn opaque_struct_taken_apart(opaque: OpaqueStruct, owned: bool) -> &'
         }
         OpaqueStruct::HostHandle { .. } => {
             "a host handle has no fields to take apart [PRE-2]: remove this statement"
+        }
+        OpaqueStruct::HostValue => {
+            "a host module's opaque value keeps its fields private to its module [PRE-2, MOD-6]: read it through the functions of its module instead of taking it apart"
         }
         OpaqueStruct::Program => PROGRAM_OPAQUE_STRUCT,
     }
@@ -1316,4 +1345,28 @@ pub(super) fn cell_taken_apart(
         ),
         (None, _) | (_, None) => format!("{INNER}: remove this statement"),
     }
+}
+
+/// [TYPE-2, TYPE-9] a destructuring statement naming a storage shape reads
+/// its readonly fields instead. Each pair retains the written field and its
+/// binder; a rest marker introduces no binding and no read. `None` means
+/// the actual operand does not establish all the written measure fields.
+pub(super) fn storage_taken_apart(storage: &str, fields: Option<&[(String, String)]>) -> String {
+    const FIELDS: &str = "storage shapes expose their measures as readonly fields [TYPE-9]";
+    let Some(fields) = fields else {
+        return format!(
+            "{FIELDS}: remove this statement, keep using `{storage}` directly, and replace uses of its bindings with the values the program needs"
+        );
+    };
+    if fields.is_empty() {
+        return format!("{FIELDS}: remove this statement and keep using `{storage}` directly");
+    }
+    let reads = fields
+        .iter()
+        .map(|(field, binder)| format!("let {binder} = {storage}.{field};"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!(
+        "{FIELDS}: when `{storage}` is a valid readable place, replace this statement with `{reads}` and extend the enclosing effect row to cover any reads through reference parameters [EFF-2]; otherwise remove this statement and replace uses of its bindings with the values the program needs"
+    )
 }

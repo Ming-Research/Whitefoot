@@ -1,3 +1,4 @@
+alias PriorityQueue = std::collections::priority_queue::PriorityQueue;
 alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 alias priority_queue_drain = std::collections::priority_queue::priority_queue_drain;
@@ -124,23 +125,28 @@ fn priority_cost_prefix<interface PriorityCostElement<T>>(count: u64, seed: u64)
   return move storage;
 }
 
+fn priority_cost_cleanup<interface PriorityCostElement<T>>(storage: Box<Slots<T>>, env: &PriorityCostDigest) -> result: unit writes(env) {
+  loop @release {
+    if storage.inner.len == 0_u64 {
+      break @release;
+    }
+    let value = take_back(window: &storage.inner);
+    PriorityCostElement::accept(env: env, value: move value);
+  }
+  free_empty(window: move storage);
+  return unit;
+}
+
 fn priority_cost_trace<interface PriorityCostElement<T>>(count: u64, rounds: u64, seed: u64, path: u64) -> result: u64 pure contract {
   requires count <= 4096_u64;
 } {
-  doc "The cleanup path needs no heap ordering: its raw initialized prefix is consumed in reverse physical order without comparisons. Other paths consume through the queue's ordered drain.";
+  doc "The cleanup path consumes the raw initialized prefix in reverse physical order without comparisons. Other paths consume through the queue's ordered drain.";
   let digest = PriorityCostDigest(value: seed);
   let order = PriorityCostOrder();
   if path >= 3_u64 {
     let storage = priority_cost_prefix::<PriorityCostElement<T>>(count: count, seed: seed);
     if path == 4_u64 {
-      loop @release {
-        if storage.inner.len == 0_u64 {
-          break @release;
-        }
-        let value = take_back(window: &storage.inner);
-        PriorityCostElement::accept(env: &digest, value: move value);
-      }
-      free_empty(window: move storage);
+      priority_cost_cleanup::<PriorityCostElement<T>>(storage: move storage, env: &digest);
       return digest.value;
     }
     let queue = priority_queue_heapify::<T, PriorityCostOrder, fn PriorityCostElement::compare, 4096>(storage: move storage, env: &order);

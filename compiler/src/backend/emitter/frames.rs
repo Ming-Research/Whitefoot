@@ -272,11 +272,9 @@ impl FunctionEmitter<'_, '_> {
             return Err(BackendFailure::InvalidIr);
         }
         let host = target.blocks().is_empty();
-        if host && !ordinary.result().uses_destination() {
-            // Every waiting host entry constructs its result through a
-            // pointer; a register-returned one would need a second shape.
-            return Err(BackendFailure::InvalidIr);
-        }
+        // Every waiting host entry constructs its result through a pointer,
+        // whatever its public ABI: a result that would return in registers,
+        // such as `sleep_until`'s unit, is written to a slot and read back.
         let (destination, reads_back) = self.waiting_destination(result, ordinary.result())?;
         let mut rendered = vec![format!("ptr {destination}")];
         let mut operands = Vec::with_capacity(arguments.len());

@@ -24,6 +24,10 @@ extern "C" {
  * because a socket is ended by `closesocket` and a file by the CRT's own
  * close. */
 #define WF_WINDOWS_DESCRIPTOR_CLASS_SOCKET 6u
+/* A file opened for appending [PRE-2]: its handle has append access alone,
+ * so every write lands at the file's end, and it is synchronous, as a read
+ * file's helper transfer is. */
+#define WF_WINDOWS_DESCRIPTOR_CLASS_WRITE_FILE 7u
 
 /* What the runtime remembers about one descriptor it produced.
  *

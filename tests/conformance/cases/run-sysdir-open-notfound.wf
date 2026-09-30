@@ -50,6 +50,9 @@ fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
     TimedOut(code: native_code, origin: native_origin) => {
       return False();
     }
+    DeadlinePassed() => {
+      return False();
+    }
     BrokenPipe(code: native_code, origin: native_origin) => {
       return False();
     }
@@ -154,6 +157,9 @@ fn exercise(args: &Args, cwd: &DirectoryRead, files: &HandleFactory) -> status: 
                 TimedOut(code: c, origin: o) => {
                   return exit_status(code: 11_u8);
                 }
+                DeadlinePassed() => {
+                  return exit_status(code: 11_u8);
+                }
                 BrokenPipe(code: c, origin: o) => {
                   return exit_status(code: 11_u8);
                 }
@@ -219,7 +225,9 @@ fn exercise(args: &Args, cwd: &DirectoryRead, files: &HandleFactory) -> status: 
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "PRE-2 ordinary Inputs are destructured once, with the rest marker covering the fields this program does not name; the referenced operation chain returns before the initial directory is explicitly closed.";
-  let Inputs(args: arguments, cwd: root, handles: files, ..) = move inputs;
+  let Inputs(args: arguments, cwd: root_directory, handles: files, ..) = move inputs;
+  let std::fs::Directory(read: root, write: root_write) = move root_directory;
+  std::fs::close_directory_write(factory: &files, directory: move root_write);
   let outcome = exercise(args: &arguments, cwd: &root, files: &files);
   close_directory(factory: &files, directory: move root);
   return move outcome;

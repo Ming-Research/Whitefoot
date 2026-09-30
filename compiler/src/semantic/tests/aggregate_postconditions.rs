@@ -139,7 +139,7 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_rule(
         source,
         SemanticRule::Fn9,
-        SemanticIssueKind::InvalidPostconditionSelector,
+        SemanticIssueKind::invalid_postcondition_selector(),
     );
 }
 
@@ -168,7 +168,7 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_rule(
         source,
         SemanticRule::Fn9,
-        SemanticIssueKind::InvalidPostconditionSelector,
+        SemanticIssueKind::invalid_postcondition_selector(),
     );
 }
 
@@ -201,7 +201,7 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_rule_kind(source, SemanticRule::Fn9, |kind| {
         matches!(
             kind,
-            SemanticIssueKind::InvalidPostconditionSelector
+            SemanticIssueKind::InvalidPostconditionSelector { .. }
                 | SemanticIssueKind::InvalidPostconditionRelation
         )
     });
@@ -663,7 +663,7 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_rule(
         none_route,
         SemanticRule::Fn9,
-        SemanticIssueKind::InvalidPostconditionSelector,
+        SemanticIssueKind::invalid_postcondition_selector(),
     );
 
     let unproved = br#"fn find(limit: u64) -> result: Option<u64> pure contract {

@@ -1298,20 +1298,6 @@ impl<'unit> DeclarationInventory<'unit> {
             .map_or(context.result_type, |(_, ty)| ty);
         Ok(Some((usage.origin.clone(), ty)))
     }
-    /// Whether this selector atom is a `place` whose trailing `psuffix` names
-    /// one of [MSR-1]'s four measures.
-    fn selector_atom_reads_a_measure(&self, atom: NodeId) -> Result<bool, CheckStop> {
-        let place = if self.tree.production(atom)? == Production::Place {
-            atom
-        } else {
-            let Some(place) = self.tree.first_child_with(atom, Production::Place)? else {
-                return Ok(false);
-            };
-            place
-        };
-        let suffixes = self.tree.children_with(place, Production::Psuffix)?;
-        Ok(self.trailing_measure_member(&suffixes)?.is_some())
-    }
     /// `entry` selects proof state, never an executable place expression.
     /// Its argument must be the declaration's own exclusive parameter.
     pub(super) fn check_entry_formers(
@@ -1636,8 +1622,10 @@ impl<'unit> DeclarationInventory<'unit> {
                         | SelectorAdmissionType::Symbolic
                         | SelectorAdmissionType::Aggregate
                 ) {
-                    return self
-                        .issue_selector(record, SemanticIssueKind::InvalidPostconditionSelector);
+                    return self.issue_selector(
+                        record,
+                        SemanticIssueKind::invalid_postcondition_selector(),
+                    );
                 }
                 record
                     .result_binders
@@ -1649,8 +1637,10 @@ impl<'unit> DeclarationInventory<'unit> {
                     admission,
                     SelectorAdmissionType::SuccessPayload | SelectorAdmissionType::Symbolic
                 ) {
-                    return self
-                        .issue_selector(record, SemanticIssueKind::InvalidPostconditionSelector);
+                    return self.issue_selector(
+                        record,
+                        SemanticIssueKind::invalid_postcondition_selector(),
+                    );
                 }
                 // [FN-9] the route names the success variant of the routed
                 // ordinal's own type: `Ok` of a Result, `Some` of an Option.
@@ -1658,8 +1648,10 @@ impl<'unit> DeclarationInventory<'unit> {
                     .iter()
                     .any(|variant| record.variant_target == Some(ResolvedTarget::Prelude(*variant)))
                 {
-                    return self
-                        .issue_selector(record, SemanticIssueKind::InvalidPostconditionSelector);
+                    return self.issue_selector(
+                        record,
+                        SemanticIssueKind::invalid_postcondition_selector(),
+                    );
                 }
                 let Some(field) = record.fields.first() else {
                     return self.issue_selector(
@@ -1740,20 +1732,10 @@ impl<'unit> TypeContext<'unit> {
         Ok(Some(match ty {
             CheckedType::Integer(ty) => CheckedValue::Integer { ty, bits: 0 },
             CheckedType::GenericInt(_) => CheckedValue::NumericIdentity { ty, one: false },
-            // [OP-15, MSR-1] a measure is a read-only `own u64` member of the
-            // measured place, so a selector atom that reads one stands for a
-            // u64 whatever the measured result's own type is. [CALL-4]
-            // already admits a result of measured type as an operand; the
-            // placeholder has to agree with the measure's type and not with
-            // the place's.
-            _ if self.declarations.selector_atom_reads_a_measure(atom)? => CheckedValue::Integer {
-                ty: super::super::model::IntegerType::U64,
-                bits: 0,
-            },
             // [CALL-4] a fragment-integer place reached from an aggregate
             // result through struct-field and `Box` content steps stands for
             // a value of that field's type.
-            _ => match self.postcondition_selector_field_type(check_context, atom, ty)? {
+            _ => match self.postcondition_selector_type(check_context, atom, ty)? {
                 Some(CheckedType::Integer(ty)) => CheckedValue::Integer { ty, bits: 0 },
                 Some(field @ CheckedType::GenericInt(_)) => CheckedValue::NumericIdentity {
                     ty: field,
@@ -1763,7 +1745,7 @@ impl<'unit> TypeContext<'unit> {
                     return Checker::issue_origin(
                         SemanticRule::Fn9,
                         &origin,
-                        SemanticIssueKind::InvalidPostconditionSelector,
+                        SemanticIssueKind::invalid_postcondition_selector(),
                     );
                 }
             },
@@ -1771,10 +1753,12 @@ impl<'unit> TypeContext<'unit> {
     }
     /// [CALL-4] the type a selector atom's written member path reaches below
     /// an aggregate result datum, when every step is a struct-field
-    /// selection or a `Box` `inner` step. An enum-payload step, a subscript,
+    /// selection or a `Box` `inner` step, possibly ending in a measure of
+    /// the selected storage shape. A measure spelling on any other type
+    /// selects its declared field. An enum-payload step, a subscript,
     /// a dereference and a step below a value of type-parameter type reach no
     /// datum, and a bare aggregate binder is none either.
-    fn postcondition_selector_field_type(
+    fn postcondition_selector_type(
         &self,
         check_context: &CheckContext<'_>,
         atom: NodeId,
@@ -1794,7 +1778,7 @@ impl<'unit> TypeContext<'unit> {
         if suffixes.is_empty() {
             return Ok(None);
         }
-        for suffix in suffixes {
+        for (position, &suffix) in suffixes.iter().enumerate() {
             if self.declarations.tree.subscript_offset(suffix)?.is_some()
                 || matches!(
                     self.declarations.tree.place_suffix(suffix)?,
@@ -1802,6 +1786,34 @@ impl<'unit> TypeContext<'unit> {
                 )
             {
                 return Ok(None);
+            }
+            let name = self
+                .declarations
+                .deferred_use_at(suffix, crate::DeferredUseRole::ProjectedField)?
+                .spelling();
+            let measured = super::expressions::flat_storage::measured_kind_of(ty).or(
+                if self.declarations.tree.is_prelude_node(suffix)? {
+                    self.box_content(ty)?
+                        .and_then(super::expressions::flat_storage::measured_kind_of)
+                } else {
+                    None
+                },
+            );
+            if let Some(measured) = measured
+                && let Some(measure) = super::types::measure_named(name)
+            {
+                if measure.cell(measured) == super::super::model::MeasureCell::Absent {
+                    return self.declarations.issue_node(
+                        SemanticRule::Type5,
+                        place,
+                        SemanticIssueKind::type_mismatch(
+                            "a measured place whose measure table has this row",
+                            self.checked_type_name(ty)?,
+                        ),
+                    );
+                }
+                return Ok((position + 1 == suffixes.len())
+                    .then_some(CheckedType::Integer(super::super::model::IntegerType::U64)));
             }
             let CheckedType::Nominal(nominal) = ty else {
                 return Ok(None);
@@ -2808,7 +2820,7 @@ impl<'unit> TypeContext<'unit> {
             else {
                 return self
                     .declarations
-                    .issue_selector(record, SemanticIssueKind::InvalidPostconditionSelector);
+                    .issue_selector(record, SemanticIssueKind::invalid_postcondition_selector());
             };
             return u32::try_from(named)
                 .map_err(|_| SemanticCompilerFailure::CounterOverflow.into());
@@ -2879,7 +2891,7 @@ impl<'unit> TypeContext<'unit> {
         {
             return self
                 .declarations
-                .issue_selector(record, SemanticIssueKind::InvalidPostconditionSelector);
+                .issue_selector(record, SemanticIssueKind::invalid_postcondition_selector());
         }
 
         // [CALL-4] a route applies to exactly one declared result ordinal:

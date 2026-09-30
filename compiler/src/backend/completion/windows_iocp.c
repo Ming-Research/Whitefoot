@@ -104,6 +104,13 @@ static wf_windows_iocp_state *wf_windows_state_of(
     return (wf_windows_iocp_state *)(void *)&record->ring;
 }
 
+void wf_windows_iocp_cancel(wf_completion_record *record) {
+    wf_windows_iocp_state *state = wf_windows_state_of(record);
+    /* A refusal means the operation has already completed, and its packet
+     * reports that. */
+    (void)CancelIoEx(state->handle, &state->overlapped);
+}
+
 static wf_completion_record *wf_windows_record_of(OVERLAPPED *overlapped) {
     unsigned char *bytes = (unsigned char *)(void *)overlapped;
     return (wf_completion_record *)(void *)(

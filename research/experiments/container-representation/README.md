@@ -61,6 +61,37 @@ Its parts answer different questions:
   Normal and retained helper measurements distinguish source composition from
   lowering; neither experiment supplies a workload-frequency distribution.
 
+## Current-library replay
+
+The Slab, Vector, Deque, PriorityQueue and shared-heap Indexed harnesses use
+`std::collections` from the selected compiler. Those library records are
+embedded in `whitefootc` (`compiler/src/library.rs`), so rebuild the compiler
+after a library edit; the harnesses depend on that executable, not a separate
+on-disk library checkout. `WHITEFOOTC` selects both the compiler and its library.
+
+```sh
+make -C compiler build
+for name in slab vector deque priority indexed; do
+  perl .github/run-check.pl container-replay \
+    make -C research/experiments/container-representation/$name-library check
+done
+```
+
+On the compiler source at `4459df880b04a7e87f46398969e1382b52637af0`, all
+five checks passed in normal and retained modes on Darwin arm64 with Apple
+Clang 21.0.0. The gate-profile compiler SHA-256 was
+`419c1aa4108d8bfcd4c5a0c8df806bcd3060811911760fce8c959f8a0abb16cd`.
+These are correctness and retained-boundary checks, not new timing results.
+The priority [comparison contract](priority-library/RESULTS.md) describes the
+raw-prefix cleanup boundary and the limit on using the earlier port's timings.
+
+Map's alternative layouts, Ordered's insertion snapshots and Indexed's
+`HEAP_STYLE=standalone` remain historical replay modes. Their source syntax,
+overlays and pinned identities need a complete port before current-compiler
+use; the default bundle-wide targets below are not a claim that those modes
+have been ported. Their dated results remain unchanged. The reopening scope
+is recorded in [the maintained TODO](../../../docs/todo.md).
+
 These small programs test specific capabilities and costs. They are not a
 representative corpus of real applications and supply no workload-frequency data.
 Broader demand selection needs evidence from established applications in languages

@@ -29,6 +29,7 @@
 #define wf_getcwd _getcwd
 #define wf_mkdir(path) _mkdir(path)
 #define wf_rmdir _rmdir
+#define wf_unlink _unlink
 #define wf_pid() GetCurrentProcessId()
 #else
 #include <arpa/inet.h>
@@ -40,6 +41,7 @@
 #define wf_getcwd getcwd
 #define wf_mkdir(path) mkdir(path, 0700)
 #define wf_rmdir rmdir
+#define wf_unlink unlink
 #define wf_pid() getpid()
 #endif
 #include "sched/prim.h"
@@ -201,7 +203,7 @@ static void file_probe(wf_inputs *inputs, wf_probe_open open_file, wf_probe_read
     /* This valid component names a regular file, so opening it as a directory
      * fails after taking the sole credit, not at the quota refusal above the
      * host call. The next successful open must consume that same credit. */
-    wf__body_open_directory(&listing, &limited_factory, &inputs->cwd, &name, 0, name.length);
+    wf__body_open_directory(&listing, &limited_factory, &inputs->cwd_read, &name, 0, name.length);
 #if defined(_WIN32)
     /* NtCreateFile opens without FILE_DIRECTORY_FILE; the production kind
      * check then refuses this regular object as Unsupported, with no host
@@ -216,17 +218,17 @@ static void file_probe(wf_inputs *inputs, wf_probe_open open_file, wf_probe_read
     assert(listing.err.error.code == ENOTDIR && listing.err.error.origin == 1);
 #endif
     assert(limited_factory.words[0] == 1);
-    open_file(&opened, &limited_factory, &inputs->cwd, &name, 0, name.length);
+    open_file(&opened, &limited_factory, &inputs->cwd_read, &name, 0, name.length);
     assert(opened.tag == 0 && limited_factory.words[0] == 0);
     wf__body_close_read(&closed, &limited_factory, &opened.ok.value);
     check_close(&closed);
     assert(limited_factory.words[0] == 1);
     WF_PROBE_INPUT_BUDGET = 0;
-    open_file(&opened, &inputs->handles, &inputs->cwd, &name, 0, name.length);
-    assert(opened.tag == 1 && opened.err.error.tag == 21 && WF_PROBE_INPUT_BUDGET == 0);
+    open_file(&opened, &inputs->handles, &inputs->cwd_read, &name, 0, name.length);
+    assert(opened.tag == 1 && opened.err.error.tag == WF_IO_RESOURCE_EXHAUSTED && WF_PROBE_INPUT_BUDGET == 0);
     assert(opened.err.error.code == 0 && opened.err.error.origin == 0);
     WF_PROBE_INPUT_BUDGET = saved;
-    open_file(&opened, &inputs->handles, &inputs->cwd, &name, 0, name.length);
+    open_file(&opened, &inputs->handles, &inputs->cwd_read, &name, 0, name.length);
     assert(opened.tag == 0 && WF_PROBE_INPUT_BUDGET == saved - 1);
     memset(bytes, 7, sizeof(bytes));
     read_at(&read, &inputs->handles, &opened.ok.value, &window, 0, 2, 9);
@@ -245,7 +247,7 @@ static void file_probe(wf_inputs *inputs, wf_probe_open open_file, wf_probe_read
     check_close(&closed);
     assert(WF_PROBE_INPUT_BUDGET == saved - 1 && receiving_factory.words[0] == 1);
     assert(remove(filename) == 0);
-    open_file(&opened, &inputs->handles, &inputs->cwd, &name, 0, name.length);
+    open_file(&opened, &inputs->handles, &inputs->cwd_read, &name, 0, name.length);
     assert(opened.tag == 1 && opened.err.error.tag == 0);
     assert(WF_PROBE_INPUT_BUDGET == saved - 1);
 #if defined(_WIN32)
@@ -254,12 +256,12 @@ static void file_probe(wf_inputs *inputs, wf_probe_open open_file, wf_probe_read
     static const unsigned char invalid[] = { 'b','a','d','/','n','a','m','e' };
 #endif
     wf_view invalid_name = {(void *)invalid, sizeof(invalid)};
-    open_file(&opened, &inputs->handles, &inputs->cwd, &invalid_name, 0, invalid_name.length);
+    open_file(&opened, &inputs->handles, &inputs->cwd_read, &invalid_name, 0, invalid_name.length);
     assert(opened.tag == 1 && opened.err.error.tag == 9);
     assert(WF_PROBE_INPUT_BUDGET == saved - 1);
     /* Transfer the received credit back by actually opening and closing an
      * owner, without comparing the close's factory to its creator. */
-    wf__body_open_directory_source(&listing, &receiving_factory, &inputs->cwd);
+    wf__body_open_directory_source(&listing, &receiving_factory, &inputs->cwd_read);
     assert(listing.tag == 0 && receiving_factory.words[0] == 0);
     wf__body_close_directory_source(&closed, &inputs->handles, &listing.ok.value);
     check_close(&closed);
@@ -352,9 +354,9 @@ static void directory_probe(wf_inputs *inputs) {
     fixture = fopen("ordinary-directory.data", "wb");
 #endif
     assert(fixture && fclose(fixture) == 0);
-    wf__body_open_directory_source(&first, &inputs->handles, &inputs->cwd);
+    wf__body_open_directory_source(&first, &inputs->handles, &inputs->cwd_read);
     assert(first.tag == 0 && WF_PROBE_INPUT_BUDGET == before - 1);
-    wf__body_open_directory_source(&second, &inputs->handles, &inputs->cwd);
+    wf__body_open_directory_source(&second, &inputs->handles, &inputs->cwd_read);
     assert(second.tag == 0 && WF_PROBE_INPUT_BUDGET == before - 2);
     unsigned first_entries = directory_contents(&first.ok.value, 1, ordinary_entries, 3);
     unsigned second_entries = directory_contents(&second.ok.value, 0, ordinary_entries, 3);
@@ -402,24 +404,24 @@ static void windows_namespace_probe(wf_inputs *inputs) {
     unsigned char byte = 0;
     wf_view destination = { &byte, 1 };
     wf_view name = { (void *)file_name, sizeof(file_name) - sizeof(wchar_t) };
-    wf__body_open_file(&opened, &inputs->handles, &inputs->cwd, &name, 0, name.length);
+    wf__body_open_file(&opened, &inputs->handles, &inputs->cwd_read, &name, 0, name.length);
     assert(opened.tag == 0 && WF_PROBE_INPUT_BUDGET == credits - 1);
     wf__body_read_at(&read, &inputs->handles, &opened.ok.value, &destination, 0, 0, 1);
     assert(read.tag == 0 && read.ok.value == 1 && byte == 'N');
     wf__body_close_read(&closed, &inputs->handles, &opened.ok.value); check_close(&closed);
 
     name.data = (void *)directory_name; name.length = sizeof(directory_name) - sizeof(wchar_t);
-    wf__body_open_directory(&opened, &inputs->handles, &inputs->cwd, &name, 0, name.length);
+    wf__body_open_directory(&opened, &inputs->handles, &inputs->cwd_read, &name, 0, name.length);
     assert(opened.tag == 0);
     wf__body_close_directory(&closed, &inputs->handles, &opened.ok.value); check_close(&closed);
-    wf__body_open_directory_source(&opened, &inputs->handles, &inputs->cwd);
+    wf__body_open_directory_source(&opened, &inputs->handles, &inputs->cwd_read);
     assert(opened.tag == 0);
     (void)directory_contents(&opened.ok.value, 1, expected, 6);
     wf__body_close_directory_source(&closed, &inputs->handles, &opened.ok.value); check_close(&closed);
     assert(WF_PROBE_INPUT_BUDGET == credits);
 
     name.data = (void *)missing_name; name.length = sizeof(missing_name) - sizeof(wchar_t);
-    wf__body_open_file(&opened, &inputs->handles, &inputs->cwd, &name, 0, name.length);
+    wf__body_open_file(&opened, &inputs->handles, &inputs->cwd_read, &name, 0, name.length);
     assert(opened.tag == 1 && opened.err.error.tag == 0);
     assert(opened.err.error.code == ERROR_FILE_NOT_FOUND && opened.err.error.origin == 1);
     assert(WF_PROBE_INPUT_BUDGET == credits);
@@ -429,7 +431,7 @@ static void windows_namespace_probe(wf_inputs *inputs) {
     DWORD handles_before = 0, handles_after = 0;
     assert(GetProcessHandleCount(GetCurrentProcess(), &handles_before));
     name.data = (void *)link_name; name.length = sizeof(link_name) - sizeof(wchar_t);
-    wf__body_open_file(&opened, &inputs->handles, &inputs->cwd, &name, 0, name.length);
+    wf__body_open_file(&opened, &inputs->handles, &inputs->cwd_read, &name, 0, name.length);
     assert(opened.tag == 1 && opened.err.error.tag == 10);
     assert(opened.err.error.code == 0 && opened.err.error.origin == 0);
     assert(WF_PROBE_INPUT_BUDGET == credits);
@@ -438,7 +440,7 @@ static void windows_namespace_probe(wf_inputs *inputs) {
     wf_value text = {{ (uint64_t)(uintptr_t)link_name, 4, 0, 0 }};
     wf_value_result path;
     wf__body_relative_path(&path, &text); assert(path.tag == 0);
-    wf__body_open_read(&opened, &inputs->handles, &inputs->cwd, &path.ok.value);
+    wf__body_open_read(&opened, &inputs->handles, &inputs->cwd_read, &path.ok.value);
     assert(opened.tag == 0 && WF_PROBE_INPUT_BUDGET == credits - 1);
     byte = 0;
     wf__body_read_at(&read, &inputs->handles, &opened.ok.value, &destination, 0, 0, 1);
@@ -477,13 +479,13 @@ static void tcp_probe(wf_inputs *inputs) {
         listener.err.error.origin);
     assert(listener.tag == 0 && WF_PROBE_INPUT_BUDGET == before - 1);
     wf__body_socket_address_v4(&address, 127, 0, 0, 1, listener_port(&listener.ok.value));
-    wf__body_tcp_connect(&first_client, &inputs->handles, &address);
+    wf__body_tcp_connect(&first_client, &inputs->handles, &address, NULL);
     assert(first_client.tag == 0 && WF_PROBE_INPUT_BUDGET == before - 2);
-    wf__body_tcp_accept(&first_server, &inputs->handles, &listener.ok.value);
+    wf__body_tcp_accept(&first_server, &inputs->handles, &listener.ok.value, NULL);
     assert(first_server.tag == 0 && WF_PROBE_INPUT_BUDGET == before - 3);
-    wf__body_tcp_connect(&second_client, &inputs->handles, &address);
+    wf__body_tcp_connect(&second_client, &inputs->handles, &address, NULL);
     assert(second_client.tag == 0 && WF_PROBE_INPUT_BUDGET == before - 4);
-    wf__body_tcp_accept(&second_server, &inputs->handles, &listener.ok.value);
+    wf__body_tcp_accept(&second_server, &inputs->handles, &listener.ok.value, NULL);
     assert(second_server.tag == 0);
     assert(WF_PROBE_INPUT_BUDGET == before - 5);
     crossed_a.receive = first_server.ok.value.connection.receive;
@@ -494,14 +496,14 @@ static void tcp_probe(wf_inputs *inputs) {
     assert(WF_PROBE_INPUT_BUDGET == before - 5 && other_factory.words[0] == 0);
     wf__body_close_send(&closed, &inputs->handles, &crossed_a.send); check_close(&closed);
     assert(WF_PROBE_INPUT_BUDGET == before - 5 && other_factory.words[0] == 0);
-    wf__body_send_once(&sent, &crossed_b.send, &source, 0, 1);
+    wf__body_send_once(&sent, &crossed_b.send, &source, 0, 1, NULL);
     assert(sent.tag == 0 && sent.ok.value == 1);
-    wf__body_receive_next(&received, &first_client.ok.value.receive, &destination, 0, 1);
+    wf__body_receive_next(&received, &first_client.ok.value.receive, &destination, 0, 1, NULL);
     assert(received.tag == 0 && received.ok.value == 1 && target == byte);
     target = 0;
-    wf__body_send_once(&sent, &second_client.ok.value.send, &source, 0, 1);
+    wf__body_send_once(&sent, &second_client.ok.value.send, &source, 0, 1, NULL);
     assert(sent.tag == 0 && sent.ok.value == 1);
-    wf__body_receive_next(&received, &crossed_b.receive, &destination, 0, 1);
+    wf__body_receive_next(&received, &crossed_b.receive, &destination, 0, 1, NULL);
     assert(received.tag == 0 && received.ok.value == 1 && target == byte);
     wf__body_close_send(&closed, &other_factory, &crossed_b.send); check_close(&closed);
     assert(other_factory.words[0] == 1 && WF_PROBE_INPUT_BUDGET == before - 5);
@@ -539,9 +541,9 @@ static void concurrent_half_close_probe(wf_inputs *inputs, int send_first) {
     wf__body_tcp_listen(&listener, &inputs->handles, &address);
     assert(listener.tag == 0);
     wf__body_socket_address_v4(&address, 127, 0, 0, 1, listener_port(&listener.ok.value));
-    wf__body_tcp_connect(&client, &inputs->handles, &address);
+    wf__body_tcp_connect(&client, &inputs->handles, &address, NULL);
     assert(client.tag == 0);
-    wf__body_tcp_accept(&server, &inputs->handles, &listener.ok.value);
+    wf__body_tcp_accept(&server, &inputs->handles, &listener.ok.value, NULL);
     assert(server.tag == 0 && WF_PROBE_INPUT_BUDGET == before - 3);
     descriptor = server.ok.value.connection.send.words[0];
     memset(&call, 0, sizeof(call));
@@ -581,19 +583,19 @@ static void concurrent_half_close_probe(wf_inputs *inputs, int send_first) {
      * The just-released lowest slot must therefore be reused, on both the
      * POSIX table and Windows CRT registry, without an open-until-reused loop.
      * Fresh bidirectional IO checks that its half-close state was reset. */
-    wf__body_tcp_connect(&replacement, &call.factory, &address);
+    wf__body_tcp_connect(&replacement, &call.factory, &address, NULL);
     assert(replacement.tag == 0 && call.factory.words[0] == 0);
     assert(replacement.ok.value.receive.words[0] == descriptor);
-    wf__body_tcp_accept(&replacement_server, &inputs->handles, &listener.ok.value);
+    wf__body_tcp_accept(&replacement_server, &inputs->handles, &listener.ok.value, NULL);
     assert(replacement_server.tag == 0);
-    wf__body_send_once(&sent, &replacement.ok.value.send, &source, 0, 1);
+    wf__body_send_once(&sent, &replacement.ok.value.send, &source, 0, 1, NULL);
     assert(sent.tag == 0 && sent.ok.value == 1);
-    wf__body_receive_next(&received, &replacement_server.ok.value.connection.receive, &destination, 0, 1);
+    wf__body_receive_next(&received, &replacement_server.ok.value.connection.receive, &destination, 0, 1, NULL);
     assert(received.tag == 0 && received.ok.value == 1 && target == byte);
     target = 0;
-    wf__body_send_once(&sent, &replacement_server.ok.value.connection.send, &source, 0, 1);
+    wf__body_send_once(&sent, &replacement_server.ok.value.connection.send, &source, 0, 1, NULL);
     assert(sent.tag == 0 && sent.ok.value == 1);
-    wf__body_receive_next(&received, &replacement.ok.value.receive, &destination, 0, 1);
+    wf__body_receive_next(&received, &replacement.ok.value.receive, &destination, 0, 1, NULL);
     assert(received.tag == 0 && received.ok.value == 1 && target == byte);
     wf__body_close_send(&closed, &inputs->handles, &replacement.ok.value.send); check_close(&closed);
     wf__body_close_receive(&closed, &inputs->handles, &replacement.ok.value.receive); check_close(&closed);
@@ -603,6 +605,81 @@ static void concurrent_half_close_probe(wf_inputs *inputs, int send_first) {
     wf__body_close_send(&closed, &inputs->handles, &client.ok.value.send); check_close(&closed);
     wf__body_close_listener(&closed, &inputs->handles, &listener.ok.value); check_close(&closed);
     assert(WF_PROBE_INPUT_BUDGET == before && call.factory.words[0] == 0);
+}
+
+/* [PRE-2] a file opened for appending below the directory's write half takes
+ * each append at its end, is handed to durability, and reads back through the
+ * read half; opening it again appends rather than truncating. */
+static void append_probe(wf_inputs *inputs) {
+    /* A path component is UTF-16 on Windows, as the file probe's is. */
+#if defined(_WIN32)
+    static const uint16_t component[] = { 'a','p','p','e','n','d','e','d' };
+    wf_view name = { (void *)component, sizeof(component) };
+#else
+    static const unsigned char component[] = "appended";
+    wf_view name = { (void *)component, sizeof(component) - 1 };
+#endif
+    wf_view source = { (void *)"abcde", 5 };
+    unsigned char bytes[8];
+    wf_view destination = { bytes, sizeof bytes };
+    wf_open_result opened;
+    wf_write_result written;
+    wf_close_result closed;
+    wf_read_result read;
+    wf__body_open_append(&opened, &inputs->handles, &inputs->cwd_write, &name, 0, name.length);
+    assert(opened.tag == 0);
+    wf__body_append_once(&written, &inputs->handles, &opened.ok.value, &source, 0, 3);
+    assert(written.tag == 0 && written.ok.value == 3);
+    wf__body_sync_file(&closed, &inputs->handles, &opened.ok.value);
+    check_close(&closed);
+    wf__body_close_write(&closed, &inputs->handles, &opened.ok.value);
+    check_close(&closed);
+    wf__body_open_append(&opened, &inputs->handles, &inputs->cwd_write, &name, 0, name.length);
+    assert(opened.tag == 0);
+    wf__body_append_once(&written, &inputs->handles, &opened.ok.value, &source, 3, 5);
+    assert(written.tag == 0 && written.ok.value == 5);
+    wf__body_close_write(&closed, &inputs->handles, &opened.ok.value);
+    check_close(&closed);
+    wf__body_open_file(&opened, &inputs->handles, &inputs->cwd_read, &name, 0, name.length);
+    assert(opened.tag == 0);
+    memset(bytes, 0, sizeof bytes);
+    wf__body_read_at(&read, &inputs->handles, &opened.ok.value, &destination, 0, 0, sizeof bytes);
+    assert(read.tag == 0 && read.ok.value == 5 && memcmp(bytes, "abcde", 5) == 0);
+    wf__body_close_read(&closed, &inputs->handles, &opened.ok.value);
+    check_close(&closed);
+    if (wf_unlink("appended") != 0) {
+#if defined(_WIN32)
+        fprintf(stderr, "removing the appended file failed: errno %d, Windows error %lu\n",
+                errno, (unsigned long)GetLastError());
+#else
+        fprintf(stderr, "removing the appended file failed: errno %d\n", errno);
+#endif
+        assert(0);
+    }
+}
+
+/* [PRE-2] two reads through one clock do not go back, a sleep outside every
+ * context lasts until its deadline, and every instant operation is total. */
+static void time_probe(wf_inputs *inputs) {
+    wf_value first, second, deadline, later, latest;
+    uint8_t unit = 1;
+    wf__body_now(&first, &inputs->clock);
+    wf__body_now(&second, &inputs->clock);
+    assert(wf__body_nanoseconds_from(&second, &first) == 0);
+    wf__body_instant_after(&deadline, &second, 2000000u);
+    assert(!wf__body_instant_reached(&deadline, &second));
+    wf__body_sleep_until(&unit, &deadline);
+    assert(unit == 0);
+    wf__body_now(&later, &inputs->clock);
+    assert(wf__body_instant_reached(&deadline, &later));
+    assert(wf__body_nanoseconds_from(&second, &later) >= 2000000u);
+    wf__body_instant_after(&latest, &later, UINT64_MAX);
+    assert(latest.words[0] == UINT64_MAX);
+    wf__body_instant_after(&latest, &latest, 1u);
+    assert(latest.words[0] == UINT64_MAX);
+    assert(!wf__body_instant_reached(&latest, &later));
+    /* 2020-01-01T00:00:00Z. */
+    assert(wf__body_unix_nanoseconds(&inputs->wall_clock) > INT64_C(1577836800000000000));
 }
 
 /* One logical selection can share the main runtime harness without making
@@ -635,12 +712,13 @@ int wf_ordinary_values_tests(const char *scratch, const char *group) {
         wf_open_result listing;
         wf__body_factory_share(&shared, &inputs.handles);
         assert(shared.words[2] == inputs.handles.words[2]);
-        wf__body_open_directory_source(&listing, &shared, &inputs.cwd);
+        wf__body_open_directory_source(&listing, &shared, &inputs.cwd_read);
         assert(listing.tag == 0 && *budget == before - 1);
         wf__body_close_directory_source(&closed, &inputs.handles, &listing.ok.value);
         assert(closed.tag == 0 && *budget == before);
     }
     if (files) { wf_test_guard_phase("ordinary file/credits"); file_probe(&inputs, wf__body_open_file, wf__body_read_at); file_probe(&inputs, wf_test_public_open, wf_test_public_read); puts("ordinary file/credits public+body: PASS"); }
+    if (files) { wf_test_guard_phase("ordinary append/sync/clock"); append_probe(&inputs); time_probe(&inputs); puts("ordinary append/sync/clock: PASS"); }
     if (directory) { wf_test_guard_phase("ordinary directory/cursors"); directory_probe(&inputs); puts("ordinary directory/cursors: PASS"); }
 #if defined(_WIN32)
     if (directory) {
@@ -660,7 +738,9 @@ int wf_ordinary_values_tests(const char *scratch, const char *group) {
         wf_prim_wait_destroy(&half_close.wait);
         puts("ordinary TCP crossed halves/concurrent close/credits: PASS");
     }
-    wf__body_close_directory(&closed, &inputs.handles, &inputs.cwd);
+    wf__body_close_directory_write(&closed, &inputs.handles, &inputs.cwd_write);
+    check_close(&closed);
+    wf__body_close_directory(&closed, &inputs.handles, &inputs.cwd_read);
     check_close(&closed);
     assert(wf_chdir("..") == 0 && wf_rmdir(fixture) == 0);
     assert(wf_chdir(previous) == 0);

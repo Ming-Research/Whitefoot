@@ -1,0 +1,17 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Span {
+  len: u32;
+}
+
+fn make(value: u32) -> result: Span pure contract {
+  ensures result.len == value;
+} {
+  doc "CALL-4, FN-9: result.len is the source field of exact type u32; a returned field whose value differs from the promised one is refused.";
+  return Span(len: 0_u32);
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

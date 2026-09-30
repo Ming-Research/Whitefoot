@@ -111,3 +111,89 @@ fn an_empty_standard_input_reaches_its_end_without_publishing() {
         assert!(output.stdout.is_empty(), "native ring: {native_ring}");
     }
 }
+
+/// [PRE-2] a read of standard input with a deadline ends once the clock has
+/// reached it while the writer is still silent, with nothing read: the byte
+/// the writer sends afterwards is what the next read receives. The shipped
+/// route cancels the ring's read; without a ring a helper holds the read and
+/// is interrupted. The program reports the first check that failed.
+#[test]
+fn a_deadline_ends_a_read_of_a_silent_writer_on_both_routes() {
+    let llvm = compile_program("stdin_deadline.wf");
+    let program = build_program(&llvm);
+    let routes: &[bool] = if cfg!(windows) {
+        &[true]
+    } else {
+        &[true, false]
+    };
+    for &native_ring in routes {
+        let output =
+            program.run_with_late_input(b"z", std::time::Duration::from_millis(400), native_ring);
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "native ring: {native_ring}: {output:?}"
+        );
+        assert!(
+            output.stderr.is_empty(),
+            "native ring: {native_ring}: {output:?}"
+        );
+    }
+}
+
+/// [PRE-2] a read with a deadline still completes as soon as its bytes
+/// arrive: a byte sent after a tenth of a second ends a read whose deadline is
+/// ten seconds away, on both routes and with the helper pool pinned at zero,
+/// where the read waits for the helper started for it rather than for its
+/// deadline. A runtime that queued the read and left it to the deadline would
+/// answer `DeadlinePassed` after ten seconds instead.
+#[cfg(unix)]
+#[test]
+fn a_read_with_a_distant_deadline_completes_when_its_bytes_arrive() {
+    let llvm = compile_program("stdin_before_deadline.wf");
+    let program = build_program(&llvm);
+    for (native_ring, settings) in [
+        (true, &[][..]),
+        (false, &[][..]),
+        (false, &[("WF_IO_HELPERS", "0")][..]),
+    ] {
+        let started = std::time::Instant::now();
+        let output = program.run_with_late_input_and_settings(
+            b"z",
+            std::time::Duration::from_millis(100),
+            native_ring,
+            settings,
+        );
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "native ring: {native_ring}, {settings:?}: {output:?}"
+        );
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "native ring: {native_ring}, {settings:?}: {:?}",
+            started.elapsed()
+        );
+    }
+}
+
+/// [PRE-2] a deadline ends the read even when the helper pool is pinned at
+/// zero: the waiting thread would otherwise be the queue's only engine and
+/// make the read itself, waiting past the deadline for the late byte. The pool
+/// grows by one helper for the bounded read, which a passed deadline
+/// interrupts. The route without a ring is the one that queues a stream read
+/// on these hosts.
+#[cfg(unix)]
+#[test]
+fn a_deadline_ends_a_read_under_a_pool_pinned_at_zero() {
+    let llvm = compile_program("stdin_deadline.wf");
+    let program = build_program(&llvm);
+    let output = program.run_with_late_input_and_settings(
+        b"z",
+        std::time::Duration::from_millis(400),
+        false,
+        &[("WF_IO_HELPERS", "0")],
+    );
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
+}

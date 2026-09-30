@@ -1,0 +1,9 @@
+fn head(values: Box<Ring<u64>>) -> result: u64 pure {
+  doc "TYPE-2 and TYPE-9 refuse a destructuring statement naming Ring before the attempted move of its runtime-capacity content; its measures remain readable in place.";
+  let Ring(len: count, cap: limit, head: start) = move values.inner;
+  return start;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

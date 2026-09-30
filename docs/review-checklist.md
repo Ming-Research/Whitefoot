@@ -191,8 +191,10 @@ establish that the group is inapplicable.
   particular mechanism. Flag a substantive question for the implementing
   agent rather than inventing a rationale. Unresolved proposals and assumptions
   have not become settled decisions through wording alone. Before real project
-  adoption, internal adaptation costs have not been used to reject a language
-  change, and test/example frequency has not been passed off as real usage.
+  adoption, the cost of changing existing code, tests, programs or documents,
+  or the effort of building a soundly engineered mechanism, has not been
+  weighed for or against any design choice, and test/example frequency has
+  not been passed off as real usage.
 - [ ] **R2 — Discriminating evidence.** An experiment used to select a design
   states what comparison could distinguish it, the conditions and protected
   requirements, and the actual outcome. A claim of a prediction made before

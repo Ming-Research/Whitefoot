@@ -112,21 +112,23 @@ rarely insert at the same place.
   at most 1.1 times H1, verdicts unchanged. Reopen when check time limits an
   experiment.
 
-- **A small module check is mostly parsing the prelude again.** Checking a
-  one-function module that names no library module executes 66.9 million
-  instructions, of which parsing takes 24.0 million and finalizing 16.5
-  million, and 97 percent of the bytes parsed are the 24 prelude records
-  (4,425 bytes against the module's 105); the parser's arm selection
-  (`row_score` under `select_arm` in `compiler/src/syntax/parser/diagnostic.rs`)
-  alone takes 13.9 million, since it scans every row of a decision
-  ([library-modules measurements](../research/investigations/library-modules/DESIGN.md#measurements-of-the-implemented-split),
-  W1 under callgrind). Impact: a fixed cost of every check and composition,
-  now the largest part of a small module check. Change: select a decision's
-  arm through an index by the first token's terminals instead of a scan, and
-  parse the prelude, which the compiler fixes at build time, once per
-  process rather than once per check. Validate with the same callgrind
-  comparison and unchanged parse outcomes over the corpus. Reopen when check
-  time limits an experiment.
+- **Each check still re-parses the fixed prelude.** The earlier
+  [library-modules measurements](../research/investigations/library-modules/DESIGN.md#measurements-of-the-implemented-split)
+  found 97 percent of a one-function module's parsed bytes in the 24 prelude
+  records (4,425 bytes against the module's 105). Arm selection now indexes
+  rows by the first token's full membership, and terminal-set iteration visits
+  set bits; the
+  [matched macOS comparison](../research/experiments/modular-build-cost/RESULTS.md#parser-row-lookup-cleanup)
+  reduces a small check's paired median by 12.4 percent, but the prelude is
+  still parsed per check. Impact: fixed repeated work in every module check
+  and composition. Change: retain its parsing once per process, relocating
+  source/token identities because prelude records follow writer records,
+  and preserving explicit resource-ceiling accounting. The relocation's
+  representation and benefit remain unmeasured. Validate unchanged verdicts,
+  derivations, locations and diagnostics across different writer bundles and
+  limits, with a matched checking-cost improvement over this indexed baseline.
+  Defer the representation change from the row-lookup cleanup; reopen when
+  check time limits an experiment.
 
 - **Some ENT-3 sources read no measure operand.** S5/S6 copies, S1
   comparisons, S11 counted captures, every S7 operation row and a checked
@@ -351,9 +353,9 @@ rarely insert at the same place.
 - **Most repairs outside the goal families have no pinned pair.**
   `compiler/diagnostic-repairs` pins every repair with its rejected source
   and a program for each alternative, and keeps the words in one module;
-  `driver::pinned_repairs` holds 75 pairs, nearly all for goals, effect rows
-  and TYPE-2's opaque-struct refusals, while most of the eighty-odd sites
-  across the checker that print a fixed repair sentence have none. Among
+  `driver::pinned_repairs` covers goal and effect rejections as well as
+  selected formation and ownership refusals, while many sites across the
+  checker that print a fixed repair sentence have no pair. Among
   them are TYPE-2's "build it with a construction function [OP-13]" for a
   storage shape or a cell, OWN-1's "write `move p` for the affine place" and
   "use the copy place without `move`", TYPE-9's inline-shape and
@@ -412,18 +414,6 @@ rarely insert at the same place.
   the opaque-struct repair; reopen with the next change to any of these
   nodes.
 
-- **Taking a storage shape apart is refused as a type mismatch.**
-  `let Slots(len: l, cap: c) = move w;`, and the same statement naming
-  `Array` or `Ring`, is rejected with TYPE-5 "found: a value of another type"
-  by `destructuring_shape_rejection` in `check/control/results.rs`, because
-  among the prelude's containers only `Box` reaches the TYPE-2 refusal there.
-  TYPE-9 makes a destructuring `let` naming any of the four a TYPE-2 refusal
-  with a repair, and no conformance case covers the three shapes. Refuse them
-  under TYPE-2 at the complete statement with a repair that reads the
-  measures as fields (`let l = w.len;`), pinned, and add a negative case per
-  shape. Found in the review of the opaque-struct repair; reopen with the
-  next change to destructuring or to the storage shapes.
-
 - **A field of a program's opaque struct cannot be read.** TYPE-2 says an
   opaque struct's fields obey the ordinary field, ownership and release
   rules, but the checker gives a source opaque struct the fieldless
@@ -437,6 +427,17 @@ rarely insert at the same place.
   opaque-struct repair; reopen when a program has a reason to declare an
   opaque struct with fields, or with the next change to nominal kinds.
 
+- **Attribute cold wfgrep compiler memory before changing its representation.**
+  The [module-product qualification](../research/experiments/modular-build-cost/RESULTS.md#final-current-main-qualification)
+  observes compiler-only peak RSS of 364.61 MiB on matched main and 377.62 MiB
+  on the candidate. Most of this footprint predates retained module products;
+  its allocation sources and reducible share are unverified. Profile live
+  allocations by checking phase, then require a same-source reduction with
+  unchanged verdicts and LLVM before selecting a representation change.
+  Defer from entry-edit latency work because these are cold-build observations
+  without causal attribution. Reopen when larger inputs or concurrent
+  compilation make the footprint limiting; remove after attribution and an
+  implemented or explicitly declined response.
 - **An instantiated goal spells a field-read range endpoint as `?`.** An
   FN-8 goal over a range an argument formed at the call renders an endpoint
   that is not a literal, const or binding as `?`, as in
@@ -462,7 +463,7 @@ rarely insert at the same place.
   live bindings' current images into L0 before the join; validate soundness
   against replacement and alias controls and measure closure cost first.
   Reopen when a consumer cannot avoid the branch.
-- **A product with a struct-field operand has no interval route.** [ENT-6]
+- **A struct-field operand of a product or subtraction is not proved.** [ENT-6]
   gives affine value images to live own integer bindings and measures only,
   and its interval product needs both operands' images, so after
   `propagate parse_header(...)` publishes `header.width <= 16384_u32` and
@@ -472,25 +473,72 @@ rarely insert at the same place.
   proves both. The same holds for a parameter's fields bounded by `requires`,
   so it predates v0.80, but v0.80's field relations make it the next thing a
   writer meets: PR #169's probe p2a predicted exit 24 and is refused at that
-  product. Impact: one `let` per field before a nonlinear product. Candidate:
-  give a tracked field place the current-value image its binding copy would
-  have, killed with the field; validate against field writes, whole-value
-  replacement and aliases, and measure closure cost. Reopen when a program
-  cannot copy the field.
+  product. A subtraction shows the same pattern: with
+  `struct Span { start: u64; end: u64; }`, `span.end - span.start` stays
+  [OP-2] Unproved (residual `span.end -defined span.start`) under
+  `requires span.start <= span.end` on a by-value parameter, at 290b575b and
+  f5024250, and at f5024250 also under that requirement on a `&Span`
+  parameter, inside `if span.start <= span.end` on a local, and under the
+  v0.82 struct invariant `span.start <= span.end` on a by-value parameter;
+  copying the fields into bindings first proves each. [ENT-2] clause (a)
+  makes the field places terms; where the subtraction's proof loses them is
+  not yet located. Impact: one `let` per field before a nonlinear product
+  or such a subtraction, and a struct invariant alone does not discharge a
+  subtraction of the fields it orders. Candidate: give a tracked field place
+  the current-value image its binding copy would have, killed with the
+  field; validate against field writes, whole-value replacement and aliases,
+  and measure closure cost; check that it also discharges the subtraction.
+  Reopen when a program cannot copy the field, or with the next change to
+  struct invariants.
 
-- **Two rejections writers meet carry no repair.** `InvalidPostconditionSelector`
-  for a route the version does not admit, such as `when Err(error: e):` or a
-  variant of a program's own enum, names neither the admitted `Ok` and `Some`
-  routes nor the result types they apply to, and `InvisibleUse` for a header
-  invariant named after its loop does not say the name's scope ended with
-  the loop body [INV-1]; the Snowghost writers reported changing result
-  types and retrying certificates, which either repair would have
-  shortened. Add a repair to each under `compiler/diagnostic-repairs`,
-  pinned with a program per alternative.
-  Found in the writer-lost-facts investigation; reopen with the next
-  diagnostics change.
+- **An opaque struct's capabilities ignore its fields.** The checker gives
+  every opaque struct a module declares the field-less host representation
+  (`CheckedNominalKind::Opaque`), whose capabilities come from its modifiers
+  alone, while [TYPE-2] and [PROV-6] give an opaque struct the capabilities
+  its fields give it: `opaque struct Holder { item: Box<u8>; }` without a
+  modifier is copy to the checker and affine to the specification. No such
+  struct has a value [TYPE-2], so the gap shows only in a generic bound or a
+  second use checked against a declared type, and `Instant`, the one opaque
+  struct with a field, has a copy field and no modifier, where the two agree.
+  Its layout is also the 32-byte host representation rather than its fields'.
+  Give an opaque struct with fields the ordinary struct kind with a refused
+  constructor. The same representation cites the wrong rule for `Instant`'s
+  field: `instant.ticks` is rejected as TYPE-5, "expected a source struct",
+  where [TYPE-2] makes the field private to a module with no implementation
+  record [MOD-6], and destructuring an `Instant` reaches a repair sentence
+  no conformance case covers. Validate with conformance cases that pass such
+  a struct where `T: copy` is required and use it twice, both rejected, that
+  read `instant.ticks` and are rejected citing MOD-6, and that destructure an
+  `Instant` and are rejected citing TYPE-2 with its repair, with `Instant`
+  otherwise unchanged. Reopen with the next change to opaque structs or
+  `std::time`.
+
+- **The container inventory's comments predate Segments.**
+  `compiler/src/resolution/kernel.rs` describes `ContainerShape` as three
+  storage shapes and a cell and `ContainerNominal::shape` as one of four,
+  although the enum includes `Segments`; `DeclarationMeta::container` in
+  `compiler/src/resolution/engine.rs` repeats the four-shape inventory.
+  This misstates the inventory for a
+  reader adding a consumer. Update those descriptions when the nominal
+  inventory is next edited; the storage-destructuring repair uses its actual
+  identities and needs no inventory change.
 
 ## Containers and storage lowering
+
+- **A hash map offers no sample or bounded visit.**
+  `std::collections::hash_map` visits every pair (`hash_map_each`) and
+  nothing less, so a program that must look at a few pairs at a time, as
+  Redis samples keys with an expiry, either scans the whole map inside one
+  atomic statement, holding every other context for the scan, or keeps a
+  second structure beside it: the Redis subset keeps a priority queue of
+  expiries, one entry per expiry set, including those a later command
+  replaced (`research/investigations/io-model/TIME-AND-FILES.md`,
+  Experiment 8). A visit that starts at a position and returns the position
+  the next visit resumes at would express sampling and incremental scans,
+  as Redis's `SCAN`. Validate with a `SCAN`-style program over a map that
+  changes between visits, every pair present throughout reported at least
+  once. Reopen when a program must walk a shared map without holding it for
+  the whole walk.
 
 - **Validate a shared Ring wrap calculation independent of layout bounds.**
   The corrected front predecessor handles every admitted capacity. Remaining
@@ -1008,6 +1056,29 @@ rarely insert at the same place.
   a caller that frees the empty result directly, checking the zero length and
   capacity and retaining wrong-contract and stale-write rejection controls.
 
+- **Historical container comparisons need an explicit replay scope.** The
+  current-library Slab, Vector, Deque, PriorityQueue and shared Indexed
+  harnesses use the compiler's embedded `std::collections` records. The Map
+  alternative-representation and Ordered insertion experiments, and Indexed's
+  standalone-heap mode, still use retired syntax, flat library paths or pinned
+  source overlays. Their dated results remain historical evidence; those
+  modes are not current-compiler replay tools. Reopen only when a selected
+  representation or insertion comparison needs them: port the complete
+  source/overlay/identity path, preserve the original operation and retained
+  call-boundary contracts, and run its independent correctness controls before
+  new timing. Until then, use the recorded revision for historical replay;
+  partial syntax edits would break its pinned source identities without
+  establishing a usable current experiment.
+  The OrderedMap Makefile's `LIBRARY_SOURCE` override also changes only
+  prerequisites and recorded identities: the current CLI embeds its `std`
+  records, so changing that path does not select a candidate implementation.
+  A current source experiment must use a rebuilt CLI or an explicit ordinary
+  package containing the selected body, with the same package transport in
+  both arms and a baseline code comparison. Otherwise an apparent A/B run can
+  silently compile the baseline twice. The drained-node experiment reopens
+  this issue; clarify the recipe and prove which source reached emission
+  before using an override for performance evidence.
+
 - **Inactive-payload omission has measured optimizer regressions.** The
   destination-construction candidate removes the owning map's 264-byte vacant
   payload clear and its local pending-window clear while preserving active
@@ -1172,30 +1243,6 @@ rarely insert at the same place.
   which is correct but copies it by memmove where its other fields alone
   would be first-class, reopened if a measured path moves many of them.
 
-- **Separate historical container-candidate replay from current-source targets.**
-  The [map comparison](../research/experiments/container-representation/map-library/RESULTS.md)
-  retains old representation and compact-result overlays whose explicit
-  research targets still name the removed `lib/containers` sources and older
-  constructor syntax. Their recorded measurements are reproducible at their
-  recorded revisions; the current `ecosystem-*` targets use bundled standard
-  modules and do not depend on those candidates. Impact: invoking a historical
-  target from the current checkout fails before testing its cost hypothesis.
-  When one of those hypotheses is reopened, port only the selected candidate
-  and its independent oracle to the current interface, or make the target's
-  historical-checkout requirement explicit at invocation. Require unchanged
-  outcomes and fresh same-revision controls; do not regenerate old evidence
-  merely to make a stale target pass. Defer that port because the practical
-  Rust/C++ comparison does not select a historical candidate.
-  The OrderedMap Makefile's `LIBRARY_SOURCE` override also changes only
-  prerequisites and recorded identities: the current CLI embeds its `std`
-  records, so changing that path does not select a candidate implementation.
-  A current source experiment must use a rebuilt CLI or an explicit ordinary
-  package containing the selected body, with the same package transport in
-  both arms and a baseline code comparison. Otherwise an apparent A/B run can
-  silently compile the baseline twice. The drained-node experiment reopens
-  this issue; clarify the recipe and prove which source reached emission
-  before using an override for performance evidence.
-
 - **Runtime-content swap exchanges only headers, losing the allocation extent.**
   [OP-11 and TYPE-9](../spec/kernel-spec.md) admit the implicit `swap` instance
   over two runtime `Slots` contents; no runtime-content local or move is needed.
@@ -1287,6 +1334,27 @@ rarely insert at the same place.
   unconstrained generic swap instantiated with `u64` remains admitted under
   FN-2. The [runtime-content investigation](../research/investigations/containers-and-resources/X1-LIBRARY.md#runtime-capacity-content-references-and-exchange)
   records why these source controls are separate from native exchange.
+
+- **A local `slots_new::<T, N>()` clears all N slots when it is created.**
+  Snowghost's `match_complex` (`renderer/css/selectors/match.wf`) creates
+  `slots_new::<Frame, 64>()`, 12-byte frames, on every call, and the code
+  compiled at 290b575b clears the whole window first: its
+  `proto_style_seq` driver calls `memset` for 0x308 bytes, 64 frames and
+  the length word, at the function's start. In a callgrind profile of one
+  style computation on the ECMAScript specification page (Snowghost
+  58fa8ee's `proto_layout_seq`, collection limited to `compute_styles`),
+  106 million calls made that `memset` 21 percent of the instructions
+  (Snowghost `research/investigations/concurrency/DESIGN.md`, "Style's
+  work per element"); Snowghost's rule index (ec21b7c) has since cut the
+  calls, so the share is smaller now and not measured. [WIN-1] leaves every
+  slot past `len` holding nothing and [OP-13] starts a `slots_new` window
+  empty, and no access reads past `len`, so the clearing is not observable.
+  Change: create an inline `Slots` window without clearing the slots past
+  its length, checking first that no drop, move or bounds path in the
+  lowering reads them, and measure a program that creates many
+  short-lived windows. Not checked on a later revision. Reopen with the
+  next change to `Slots` lowering or when a profile shows the clearing
+  again.
 
 ## Parallel lowering and runtime
 
@@ -1721,9 +1789,27 @@ rarely insert at the same place.
   served in its own context with the completion port required, and two bound
   fetches on both routes. Without the port a Windows context's socket wait
   is a blocking helper wait, because that host has no readiness wait, so a
-  server there holds only as many silent peers as the pool has helpers. A
-  `WSAPoll` readiness wait would give it the Linux readiness route's
-  behavior. Reopen when a Windows server has to run without the port.
+  server there holds a helper thread per silent peer, up to the adapter's 256
+  helper records, past which it stops with a report. A `WSAPoll` readiness
+  wait would give it the Linux readiness route's behavior. Reopen when a
+  Windows server has to run without the port.
+
+- **A wait on another context on a helper costs a thread.** Once contexts
+  run, a stream write on every host, a stream read on every host but Linux
+  with its ring, a connect on a host with no ring, and an accept on Windows
+  run on helper threads, and the pool grows past its eight
+  helpers while every helper is inside such a wait
+  (`completion/file_adapter.c`, `wf_file_grow_for_peers_locked`). Each such
+  wait in flight holds a thread, and a program with more than 256 at once
+  stops with a report (`research/investigations/io-model/CONCURRENCY-MODEL.md`,
+  section 10.6). A readiness-driven adapter, one `poll`, `kqueue` or
+  `WSAPoll` over every queued descriptor made where an idle thread already
+  parks, would hold none for sockets; a standard stream shared with other
+  processes would stay on helpers, since making it nonblocking would change it
+  under them. Validate by a harness case of 257 socket waits running to
+  completion on one thread and by the context echo server's rate on the
+  no-ring route. Reopen when a program needs more than a few hundred such
+  waits at once or a profile shows their threads.
 
 - **The context echo server's rate at 1024 connections and with 64 KiB
   messages moved between sessions.** With R1 to R4 as committed,
@@ -1846,22 +1932,6 @@ rarely insert at the same place.
   was refused because later code would merge a joined and an unjoined path
   (`design/compiler/waiting-contexts`, the bound spawn's join). Reopen when a
   program needs the use and the enabling statement in one compound statement.
-
-- **At most eight operations run on helper threads at once.** Once a
-  program spawns, every operation the ring does not carry runs on the helper
-  pool (`completion/bridge.c`, `wf_bridge_hold_for_contexts`), which holds at
-  most `WF_BRIDGE_MAX_HELPERS`, eight, helpers. A ninth such operation waits
-  in the queue until one returns, so nine contexts whose operations wait on
-  one another through pipes can stop although [WAIT-2] promises that they
-  proceed. On Linux the ring carries reads, opens, closes and a socket's
-  accept, connect, receive and send, so a stream write, a directory's next
-  entry, and the immediate listen and shutdown take a helper there
-  (`completion/linux_io_uring.c`, `wf_linux_io_uring_carries`); on a host
-  with no ring every file operation does. Letting the pool
-  grow past the ceiling while every helper is blocked, or carrying stream
-  writes on the ring, would remove it; validate with nine contexts paired
-  through pipes. Reopen when a program runs more than eight such waits at
-  once.
 
 - **A split loop too small to split still costs its query at every call.**
   Snowghost's layout prototype runs `pkg::text::line_break`, whose
@@ -2185,7 +2255,10 @@ rarely insert at the same place.
   current rule; the join comment in `compiler/src/backend/completion/bridge.h`
   describes pool stacks rather than contexts; the `.wf` programs under
   `research/experiments/io-completion-bench/programs/` use the retired
-  `&uniq` and `own Bool` spellings and no longer compile, so `read-bench.sh`
+  `&uniq` and `own Bool` spellings and no longer compile, as do
+  `park-on-miss-measurements/programs/grid_split.wf`, the
+  `wfgrep-double-walk/shapes/` programs and the programs
+  `differential-fuzz/src/generator.rs` writes, so `read-bench.sh`
   stops at its first build and the spawn work measured single-context reads
   with a scratch loop instead
   (`research/investigations/io-model/CONCURRENCY-MODEL.md`, section 10.5);
@@ -2227,30 +2300,67 @@ rarely insert at the same place.
   holding a link, with an enumerated link left unfollowed. Reopen when a
   program must open data-named files below linked directories.
 
+- **Files can only be appended.** `std::fs` opens a file for appending,
+  appends, syncs and closes it [PRE-2], and has no positioned write,
+  truncation, rename, removal, directory creation, directory sync, create rule
+  other than create-if-missing, or way to descend into a subdirectory for
+  writing. A program cannot rewrite a log compactly, as Redis's
+  `BGREWRITEAOF` writes a new file, syncs it, renames it over the old one and
+  syncs the directory, nor clean up a file it made; the append-only surface
+  was chosen as the one the persistent programs in view needed
+  (`research/investigations/io-model/TIME-AND-FILES.md`, "Writable
+  directories and append-only files"). Each addition is a specification
+  change to `std::fs` taking the write half. Validate with a program that
+  rewrites its log through a new file and a rename, and survives being
+  stopped between the two steps with one of the two files whole. Reopen when
+  a program must rewrite or remove what it wrote.
+
+- **A clock's readings cannot be replaced for a test.** `now` and the
+  deadline heap read the host's monotonic clock, so a program's behavior at
+  a deadline is tested by waiting for it: the deadline programs and cases
+  sleep for tens of milliseconds and cannot show an order of events that
+  needs a clock to stand still. A test build could answer the clock from a
+  script, as the completion harness already scripts `wf_file_monotonic_ns`.
+  Reopen when a test needs a deadline order that real time cannot produce
+  reliably.
+
 ## Modules and libraries
 
-- **Finish and qualify the modular incremental design.** The module
-  decisions in the [language](../design/language.md) and
-  [compiler](../design/compiler.md) design trees rest on the
+- **Complete the vector boundary witness when comparing independent fields.**
+  The maintained GrowVector program checks the shipped vector and behavior
+  drains, but does not establish LANGUAGE.md's combined public `tag`, external
+  append wrapper and function-kind formal with the complete storage contract.
+  The actual vector has only `storage`. Build the specified witness in the
+  modular-compilation investigation and check preserved facts after a tag-only
+  write versus invalidation after append. This is additional language-boundary
+  evidence, not required to measure reuse of the existing vector program;
+  reopen when evaluating those independent-field effects or that wrapper API.
+
+- **Finish and qualify the modular incremental design.** The
   [architecture](../research/investigations/modular-compilation/DESIGN.md),
   [source rules](../research/investigations/modular-compilation/LANGUAGE.md)
-  and [complete specimen](../research/investigations/modular-compilation/demo/README.md);
-  the [build-cost measurements](../research/experiments/modular-build-cost/RESULTS.md)
-  record what the implementation costs. Remaining, each with the measurement
-  or limit that shows it: the later stage of the
-  [composition staging](../research/investigations/modular-compilation/DESIGN.md#composition-staging),
-  persistent formation, lookup, instance, summary and lowering queries inside
-  a composition, where module build units follow the owned representation
-  that [PR #146](https://github.com/mbbill/Whitefoot/pull/146) built
-  (`design/compiler/incremental-compilation.md`, since the standard library
-  on modules needs a library module checked once and reused by every program
-  that names it), and instance units and fact-based entry checks wait until
-  edit-build measurements show the composition's rerun to limit a current
-  experiment or a consumer needs them (a build of an edited entry now forms,
-  resolves and type-checks the whole closure and reuses only its proof
-  analyses and unchanged objects: about 350 ms of a 590 to 620 ms body-edit
-  build of a 32-module chain, growing with the program); a cold build without
-  a cache, which checks each module and then the whole closure; the impact report,
+  and [specimen](../research/investigations/modular-compilation/demo/README.md)
+  describe the broader goal. Module verdicts, proof receipts and native object
+  reuse exist; composition still repeats structural checking and lowering.
+  The owner retired the per-product import implementation after its
+  [matched hashing comparison and follow-up screens](../research/experiments/modular-build-cost/RESULTS.md#disposition-of-the-module-product-prototype)
+  failed to establish approximately 5% native entry-edit overhead on both
+  containers. The independent runtime SHA improvement remains. The complete
+  corrected prototype and its dedicated tests are preserved by the linked
+  revision; those tests no longer apply to the active compiler.
+  Reopen only for a newly requested consumer-boundary experiment: module-owned
+  checked results might avoid per-function reconstruction, but their lookup,
+  memory and invalidation costs remain unmeasured. Require complete consumed
+  inputs, speculative rollback, current composition/target judgments, equal
+  fresh/cached results and zero unchanged-library walks. Compare same-source
+  paired native and compiler-only costs against equally optimized main, with
+  memory, cache history and cold costs; do not count SHA's independent gain as
+  an import benefit. The removed prototype's proof-erasing lowering-input
+  projection remains an unmeasured alternative in the investigation, not a
+  defect in the current compiler. Any future key must retain proof-derived
+  allocation bounds, disposition, permissions and physical inputs.
+  Further opportunities remain: finer invalidation within an edited module;
+  a cold build without a cache, which checks each module and then the whole closure; the impact report,
   which finds each further failing body by checking its module again with
   the earlier ones set aside; ThinLTO's import threshold, which decays along
   a deep cross-fragment call chain and left the innermost step of the
@@ -2298,20 +2408,6 @@ rarely insert at the same place.
   Subtree-private independently compiled modules remain unselected; reconsider
   for a concrete privacy consumer that cannot use one module's private
   implementation files.
-
-- **Build-cost runner can hide compiler failures.** In
-  [modular-build-cost/run.sh](../research/experiments/modular-build-cost/run.sh),
-  `measure` pipes compiler output through `tail` and suppresses failure with
-  `|| true`; `recheck` also suppresses the status. A timing row therefore does
-  not establish successful construction; this does not show that a published
-  build actually failed. Preserve the direct exit status,
-  complete diagnostic log and successful-build elapsed time separately from
-  explicitly expected recheck rejections. Validate with a successful build,
-  an injected failed build that must stop the measurement, and an expected
-  semantic rejection that must retain its classified status. Defer repair
-  from the read-only native-pipeline preparation; reopen before this harness
-  supplies compile-cost selection evidence. Until then use explicit guarded
-  commands with checked statuses, not these rows as success evidence.
 
 - **Executable caller synthesis moves reference arguments.** The Ring
   boundary sources above pass checking and emit callable libraries, but
@@ -2664,6 +2760,20 @@ each is resolved by a discussion and a tree change.
   that the caller's handle is the last. Reopen when a program keeps a linear
   value in a shared object.
 
+- **An atomic statement's guard cannot be bounded by a time.** A context
+  waiting for a guard [SHARE-3] wakes only when another context changes the
+  object, and no deadline or sleep races it, so a context that must act on
+  whichever comes first, work arriving or a time passing, polls: the Redis
+  subset's append-only file writer wakes every few milliseconds to move the
+  buffered changes out instead of waiting for them
+  (`research/investigations/io-model/TIME-AND-FILES.md`, "What is left
+  out"). A deadline on the guard's wait, with a guard-false outcome, would
+  express it without polling. Validate with the writer rewritten to wait on
+  its buffer with a one-second deadline, comparing its wakeups and latency
+  with the polling one. Reopen when a program must wake on the earlier of an
+  object's change and a time, or when the polling writer's cost shows in a
+  profile.
+
 ## Ownership redesign (candidate x1) follow-ups
 
 Items the owner asked to be kept on this list during the redesign recorded in
@@ -2775,24 +2885,30 @@ condition under which it is taken up.
   and classify the result before changing proof plumbing. Keep this distinct
   from the linear-target restriction above; no source bound or rule changes
   are selected by the PriorityQueue exchange-helper native probe.
-- **Conditional measure preservation needs a precise remaining diagnosis.**
-  A counted-loop control calling a length/capacity-preserving helper in only
-  one arm rejects its backedge facts. Capturing both measures before the
-  branch and restating their equality afterward admits the small control;
-  this is not a blanket inability to preserve conditional measures. The
-  full sparse-map loop still rejects its extent invariant when its
-  length-preserving wrapper is inlined with an explicit extent bridge. Its
-  normative classification is unresolved. The [exact controls](../research/investigations/containers-and-resources/X1-LIBRARY.md#generic-owning-map-trial-after-the-ring-comparison)
-  retain both outcomes. The [aggregate-postcondition probes](../research/investigations/aggregate-postconditions/DESIGN.md#separate-finding-lockstep-growth-under-a-branch)
-  reduce a related refusal to two scalars incremented together under a branch
-  in a loop, whose `invariant same: a == b` fails its backedge, and read it as
-  following from ENT-6's per-binding join images and INV-1's affine-only
-  conclusions rather than a compiler defect; Snowghost's line breaker keeps
-  its run-length guards for it. Reopen with contract-proof work: reduce the remaining
-  refusal, compare it with ENT-5/ENT-6, and distinguish a compiler defect from
-  a proposed rule change before implementation. Keep the admitted wrapper
-  while it supplies the needed proof; validate aliases and false preservation
-  claims as well as checking cost for any improvement.
+- **Conditional measure controls expose a branch-join limit.** A counted-loop control calling a length/capacity-preserving
+  helper in only one arm rejects its backedge facts, as do lockstep growth
+  under a branch and a binary search that updates `low` in one arm and `high`
+  in the other. The [branch-join investigation](../research/investigations/branch-join-relations/DESIGN.md)
+  classifies these as the specification as written, not compiler defects: an
+  invariant's conclusion is an affine theorem only, the pre-kill closure and
+  the join keep only L0 facts, and the join gives each changed binding a
+  fresh atom (INV-1, ENT-5, ENT-6). Its reduced sparse-map loop fails for that
+  reason and is admitted by capturing the extent before the branch; the full
+  loop the [exact controls](../research/investigations/containers-and-resources/X1-LIBRARY.md#generic-owning-map-trial-after-the-ring-comparison)
+  record as still refused with an explicit extent bridge is written in
+  retired syntax and was not reproduced. A prototype that also establishes a
+  proved unit-coefficient invariant as an L0 relation admits the complete
+  line-break and CSS rewrites; with two midpoint rows it admits loop searches.
+  Its [cost replay](../research/investigations/branch-join-relations/DESIGN.md#current-cost-results)
+  does not qualify the proposals: HTML tree-building peak RSS exceeds the
+  recorded 10% criterion under the invariant projection, and Vector's inert
+  control itself exceeds that threshold, so its row-only result cannot be
+  attributed to the candidate. Keep the admitted wrapper and captures.
+  Reopen rule selection when a real consumer needs the simpler source, after
+  attributing memory growth and repeating the affected comparisons with a
+  qualified control; retain the original time/RSS criterion and source-rule
+  negatives. Reduce and classify the full sparse-map loop separately.
+
 - **Classify the zero-ceiling Map invariant rejection.** The frozen compiler
   identified in the [two-span experiment](../research/experiments/container-representation/map-library/RESULTS.md#prospective-two-span-cyclic-probing)
   rejects the migration header
@@ -3107,18 +3223,6 @@ condition under which it is taken up.
   its formation is the owner's choice. Validate with that call once the
   ruling admits or refuses it. Found by the recheck of PR #141's
   containing-path ruling.
-- **An EFF-5 refusal for runs below different range frames names the
-  runs.** For runs `&left^[0_u64..2_u64]` and
-  `&right^[2_u64..4_u64]` of frames `left = &values^[a..b]` and
-  `right = &values^[c..d]`, the residual quotes the complete paths and
-  the repair asks to prove that one ends at or before the other starts,
-  which the quoted runs `0_u64..2_u64` and `2_u64..4_u64` already satisfy.
-  The unproved pair is the frames: proving `b <= c` separates everything
-  below them. Name the first pair of differing range steps and ask for their
-  ordering. Validate with `eff5-neg-ranges-below-different-range-frames-overlap`
-  and the same-endpoint program in the item above, each pinned with a
-  repaired source that is accepted. Found by the recheck of PR #141's
-  containing-path ruling.
 - **OP-11 admits equal-depth slots under one identical array or window
   only.** The checker also admits them under containing paths that differ
   only in index steps: `swap(first: &outer^[i][k], second:
@@ -3130,26 +3234,6 @@ condition under which it is taken up.
   the checker implements or the checker requires one identical array or
   window. Validate with that swap. Found by the recheck of PR #141's
   containing-path ruling.
-- **A range below a subscript of a range reference is not formed.**
-  `&strip^[i][1_u64..3_u64]`, where `strip` is a range reference, is
-  refused as the unsupported capability `ReferenceFormation` by the v0.73
-  and v0.74 checkers: the re-slicing branch in `check/references.rs` refuses
-  any step between the reference-access step and the range. The examples
-  here use the current caret spelling; the observations used the baseline
-  `deref` spelling and have not been remeasured on v0.76. REF-4 admits the form, and
-  binding the row first, `let row = &strip^[i];` and then
-  `&row^[1_u64..3_u64]`, is accepted. Validate with the direct form
-  accepted and its separations and REF-2 invalidations matching the bound
-  form. Found by the recheck of PR #141's containing-path ruling.
-- **Member names `len`, `cap` and `head` are classified by spelling in two
-  paths.** Contract clauses and subscripted body places pick the measure
-  route by the member's name before its type is known, so a writer's field
-  named `len` fails: `requires k < s.len` over a struct field is an internal
-  `InvalidResolution`, and `spans[1_u64].len` is a TYPE-5 rejection. The
-  typed member walk already decides this for unsubscripted body places.
-  Select the measure route from the prefix type in `trailing_measure_member`'s
-  callers; validate with a readonly and a writable field named `len` in a
-  clause, below a subscript, and as a counted endpoint.
 - **Vocabulary no declaration can state.** The `len` of a range reference
   (`&[T]` is a kind, not a type) and the four effect-row part names `next`,
   `last`, `filled`, `free` remain specification vocabulary after the

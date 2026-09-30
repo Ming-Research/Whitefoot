@@ -711,7 +711,7 @@ fn requires_locals_do_not_escape_into_the_function_body() {
         assert_eq!(issue.rule(), ResolutionRule::Type5);
         assert!(matches!(
             issue.kind(),
-            ResolutionIssueKind::InvisibleUse { spelling, .. } if spelling == "condition"
+            ResolutionIssueKind::InvisibleUse { spelling, mechanical_fix: None, .. } if spelling == "condition"
         ));
     });
 }
@@ -1312,6 +1312,7 @@ fn invariant_fact_names_resolve_only_after_their_complete_declaration() {
             ResolutionIssueKind::InvisibleUse {
                 spelling,
                 role: LexicalUseRole::InvariantFact,
+                mechanical_fix: None,
                 ..
             } if spelling == "same"
         ));
@@ -1418,6 +1419,7 @@ fn header_invariant_names_are_invisible_after_their_loop() {
                 issue.kind(),
                 ResolutionIssueKind::InvisibleUse {
                     role: LexicalUseRole::InvariantFact,
+                    mechanical_fix: Some(_),
                     ..
                 }
             ));

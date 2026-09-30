@@ -465,6 +465,33 @@ static wf_file_result wf_file_windows_socket_connect(
     return result;
 }
 
+/* Waits until the listener has a connection or the running operation's
+ * deadline passes: zero to accept, or the error that ends the accept. */
+static int wf_file_windows_await_listener(SOCKET listener) {
+    for (;;) {
+        uint64_t deadline = wf_file_running_deadline();
+        uint64_t now;
+        uint64_t milliseconds;
+        WSAPOLLFD entry;
+        int ready;
+        if (deadline == 0) return 0;
+        if (deadline == WF_COMPLETION_DEADLINE_FIRED) return (int)ERROR_OPERATION_ABORTED;
+        now = wf_file_monotonic_ns();
+        if (now >= deadline) {
+            wf_file_running_fire();
+            return (int)ERROR_OPERATION_ABORTED;
+        }
+        milliseconds = (deadline - now + 999999u) / 1000000u;
+        if (milliseconds > 50u) milliseconds = 50u;
+        memset(&entry, 0, sizeof(entry));
+        entry.fd = listener;
+        entry.events = POLLRDNORM;
+        ready = WSAPoll(&entry, 1, (INT)milliseconds);
+        if (ready > 0) return 0;
+        if (ready < 0) return wf_file_windows_socket_error();
+    }
+}
+
 /* One accept.  The connection Winsock hands over is adopted into a descriptor
  * of this runtime's own socket class, and the peer record the host wrote is
  * rewritten in place as the portable form the accept join publishes -- the
@@ -483,6 +510,18 @@ static wf_file_result wf_file_windows_socket_accept(wf_file_request *request) {
     if (listener == INVALID_SOCKET) {
         result.head.error_code = (int)ERROR_INVALID_HANDLE;
         return result;
+    }
+    {
+        /* A blocking accept is not one `CancelSynchronousIo` ends, so an
+         * accept with a deadline waits for its listener in bounded polls and
+         * gives up itself once the deadline passes [PRE-2].  The listener is
+         * this program's alone, so a connection it reports is still there
+         * for the accept. */
+        int waited = wf_file_windows_await_listener(listener);
+        if (waited != 0) {
+            result.head.error_code = waited;
+            return result;
+        }
     }
     taken = accept(
         listener,
@@ -636,6 +675,48 @@ static wf_file_result wf_file_windows_directory_next(
 }
 #endif
 
+/* Hands a file's written bytes to durable storage [PRE-2]. */
+static wf_file_result wf_file_windows_sync(const wf_file_request *request) {
+    wf_file_result result;
+    HANDLE handle;
+    memset(&result, 0, sizeof(result));
+    result.head.kind = request->kind;
+    result.head.value = -1;
+    handle = wf__windows_completion_descriptor_handle(request->operation.close.descriptor);
+    if (handle == INVALID_HANDLE_VALUE) {
+        result.head.error_code = ERROR_INVALID_HANDLE;
+        return result;
+    }
+    if (FlushFileBuffers(handle) == FALSE) {
+        result.head.error_code = (int)GetLastError();
+        return result;
+    }
+    result.head.value = 0;
+    return result;
+}
+
+/* Deadlines [PRE-2].  A helper inside a synchronous host call is ended by
+ * `CancelSynchronousIo`, which needs a real handle to the helper's thread
+ * rather than the pseudo-handle a thread has for itself. */
+int wf_file_cancelled_error(void) {
+    return (int)ERROR_OPERATION_ABORTED;
+}
+
+int wf_file_error_is_cancellation(int error_code) {
+    return error_code == (int)ERROR_OPERATION_ABORTED || error_code == (int)ERROR_CANCELLED;
+}
+
+uintptr_t wf_file_thread_self(void) {
+    HANDLE thread = OpenThread(THREAD_TERMINATE, FALSE, GetCurrentThreadId());
+    return (uintptr_t)thread;
+}
+
+void wf_file_thread_interrupt(uintptr_t thread) {
+    if (thread != 0) {
+        (void)CancelSynchronousIo((HANDLE)thread);
+    }
+}
+
 wf_file_result wf_file_execute_direct(wf_file_request *request) {
     if (!wf_file_request_valid(request)) {
         wf_file_result result;
@@ -651,7 +732,10 @@ wf_file_result wf_file_execute_direct(wf_file_request *request) {
     case WF_FILE_PREAD:
         return wf_file_windows_pread(request);
     case WF_FILE_WRITE:
+    case WF_FILE_APPEND:
         return wf_file_windows_write(request);
+    case WF_FILE_SYNC:
+        return wf_file_windows_sync(request);
     case WF_FILE_CLOSE:
         return wf_file_windows_close(request);
     case WF_FILE_READ:

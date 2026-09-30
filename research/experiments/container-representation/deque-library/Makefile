@@ -23,7 +23,7 @@ $(BUILD)/deque-library-normal.ll: $(BUILD)/deque-library.raw.ll Makefile
 	    -e 's/^declare ptr @wf_cost_allocate(i64)$$/declare noalias nonnull ptr @wf_cost_allocate(i64)/' $< > $@
 
 $(BUILD)/deque-library-retained.ll: $(BUILD)/deque-library-normal.ll Makefile
-	awk '/^define .* @"?wf_(std[.]collections[.]deque[.]deque_|deque_(library|word|record)_)/ && !/[.]body["(]/ { if (sub(/ #0 [{]$$/, " noinline #0 {") != 1) exit 1; retained++ } { print } END { if (retained == 0) exit 1; print "retained Deque helpers: " retained > "/dev/stderr" }' $< > $@
+	awk '/^define .* @"?wf_(std[.]collections[.]deque[.]deque_|deque_)/ && !/[.]body["(]/ { if (sub(/ #0 [{]$$/, " noinline #0 {") != 1) exit 1; retained++ } { print } END { if (retained == 0) exit 1; print "retained Deque helpers: " retained > "/dev/stderr" }' $< > $@
 
 $(BUILD)/deque-library-%.opt.ll: $(BUILD)/deque-library-%.ll
 	$(CLANG) -O2 -Wno-override-module -x ir -S -emit-llvm $< -o $@
@@ -42,7 +42,7 @@ check: $(addprefix $(BUILD)/deque-costs-,normal$(EXE) retained$(EXE)) \
 	@grep -Eq '^declare noalias nonnull ptr @wf_cost_allocate\(i64\)' $(BUILD)/deque-library-normal.ll
 	$(BUILD)/deque-costs-normal$(EXE) check
 	$(BUILD)/deque-costs-retained$(EXE) check
-	@set -eu; wf=`grep -Ec 'call .*@"?wf_std[.]collections[.]deque[.]deque_(push|pop|rebase|drain)' $(BUILD)/deque-library-retained.opt.ll || true`; \
+	@set -eu; wf=`grep -Ec 'call .*@"?wf_(deque_|std[.]collections[.]deque[.]deque_)(push|pop|rebase|drain)' $(BUILD)/deque-library-retained.opt.ll || true`; \
 	  control=`grep -Ec 'call .*@(word|record)_(loop|bulk)_(push|pop|rebase|drain)' $(BUILD)/control-retained.opt.ll || true`; \
 	  test "$$wf" -gt 0; test "$$control" -gt 0; \
 	  echo "Retained Deque helper call sites: WF=$$wf C=$$control"

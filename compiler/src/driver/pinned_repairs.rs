@@ -5,14 +5,16 @@
 //! a probe in `driver::pinned_sentences` does: besides the rejected source
 //! and the repair it carries, one program for each alternative the pair
 //! carries out, which must be accepted with the repaired construct live.
-//! Adding or rewording a repair means adding or updating a pair here, or in
-//! `call_separations` for the [EFF-5] call-separation family; the repairs
-//! still printed without one are listed in `docs/todo.md`.
+//! Adding or rewording a repair means adding or updating a pair here or in
+//! its family module; the repairs still printed without one are listed in
+//! `docs/todo.md`.
 
 use super::{CompilationFailureKind, CompilerLimits, compile};
 use crate::SourceInput;
 
 mod call_separations;
+mod selector_scope;
+mod storage_destructuring;
 
 /// One repair [DIAG-1], pinned with the programs it produces: a rejected
 /// source, the rule and the exact repair its rejection carries, and one
@@ -1857,6 +1859,144 @@ fn main() -> status: std::process::ExitStatus pure {
     // negation of one of the target's bounds [MSR-4].
     // -------------------------------------------------------------------
     RepairPair {
+        name: "len-field-in-header-factor.wf",
+        rejected: include_bytes!("../../../tests/conformance/cases/inv1-neg-len-field-factor.wf"),
+        rule: "INV-1",
+        sentences: &[
+            "\n  reason: an affine factor selects a field or an element of a place\n",
+            "\n  mechanical_fix: bind the integer value with a `let` and use that binding\n",
+        ],
+        repaired: &[br#"struct Bounds {
+  len: u64;
+}
+
+const limits: Bounds = Bounds(len: 4_u64);
+
+fn main() -> status: std::process::ExitStatus pure {
+  let length = limits.len;
+  for (
+    i in 0_u64..4_u64,
+    invariant bounded: 0_u64 <= length
+  ) {
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "cap-field-in-reference-factor.wf",
+        rejected: include_bytes!("../../../tests/conformance/cases/inv1-neg-cap-field-factor.wf"),
+        rule: "INV-1",
+        sentences: &[
+            "\n  reason: an affine factor selects a field or an element of a place\n",
+            "\n  mechanical_fix: bind the integer value with a `let` and use that binding\n",
+        ],
+        repaired: &[br#"struct Bounds {
+  cap: u32;
+}
+
+fn inspect(limits: &Bounds) -> result: u32 reads(limits.cap) {
+  let capacity = limits^.cap;
+  invariant bounded: 0_u32 <= capacity;
+  return limits^.cap;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let limits = Bounds(cap: 4_u32);
+  let capacity = inspect(limits: &limits);
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "head-field-in-indexed-factor.wf",
+        rejected: include_bytes!("../../../tests/conformance/cases/inv1-neg-head-field-factor.wf"),
+        rule: "INV-1",
+        sentences: &[
+            "\n  reason: an affine factor selects a field or an element of a place\n",
+            "\n  mechanical_fix: bind the integer value with a `let` and use that binding\n",
+        ],
+        repaired: &[br#"struct Bounds {
+  head: u8;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let initial = Bounds(head: 4_u8);
+  let limits = array_filled::<Bounds, 2>(value: initial);
+  let head = limits[1_u64].head;
+  invariant bounded: head <= 255_u8;
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "measure-named-field-in-proof-source.wf",
+        rejected: include_bytes!("../../../tests/conformance/cases/prf1-neg-measure-named-field-factor.wf"),
+        rule: "PRF-1",
+        sentences: &[
+            "\n  reason: an affine factor selects a field or an element of a place\n",
+            "\n  mechanical_fix: bind the integer value with a `let` and use that binding\n",
+        ],
+        repaired: &[br#"struct Bounds {
+  len: u64;
+}
+
+fn combine(first: u64, second: u64, third: u64, limits: Bounds, second_limit: u64, third_limit: u64) -> result: u8 pure contract {
+  requires first <= limits.len;
+  requires second <= second_limit;
+  requires third <= third_limit;
+} {
+  let length = limits.len;
+  invariant combined: first + second + third <= length + second_limit + third_limit {
+    use (first <= length);
+    use (second <= second_limit);
+    use (third <= third_limit);
+  }
+  return 0_u8;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let limits = Bounds(len: 4_u64);
+  let answer = combine(first: 1_u64, second: 2_u64, third: 3_u64, limits: limits, second_limit: 5_u64, third_limit: 6_u64);
+  return std::process::exit_status(code: answer);
+}
+"#],
+    },
+    // [MSR-1, TYPE-5] a measured type supplies only its declared measures.
+    RepairPair {
+        name: "absent-array-measure-in-factor.wf",
+        rejected: include_bytes!("../../../tests/conformance/cases/type5-neg-absent-array-measure-in-factor.wf"),
+        rule: "TYPE-5",
+        sentences: &[
+            "\n  expected: a measured place whose measure table has this row\n",
+            "\n  found: Array<u8, 2>\n",
+        ],
+        repaired: &[br#"fn main() -> status: std::process::ExitStatus pure {
+  let values = array_filled::<u8, 2>(value: 0_u8);
+  invariant same: values.len == values.len;
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "absent-runtime-array-measure-in-factor.wf",
+        rejected: include_bytes!("../../../tests/conformance/cases/type5-neg-absent-runtime-array-measure-in-factor.wf"),
+        rule: "TYPE-5",
+        sentences: &[
+            "\n  expected: a measured place whose measure table has this row\n",
+            "\n  found: Array<u8>\n",
+        ],
+        repaired: &[br#"fn inspect(values: &Box<Array<u8>>) -> result: u8 pure {
+  invariant same: values^.inner.len == values^.inner.len;
+  return 0_u8;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
         name: "local-invariant-refuted.wf",
         rejected: br#"fn main() -> status: std::process::ExitStatus pure {
   let x = 255_u8;
@@ -2205,7 +2345,9 @@ alias close_directory = std::fs::close_directory;
 alias exit_status = std::process::exit_status;
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: unused_args, cwd: unused_cwd, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin) = move inputs;
+  let Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
+  std::fs::close_directory_write(factory: &factory, directory: move unused_cwd_write);
   close_directory(factory: &factory, directory: move unused_cwd);
   return exit_status(code: 0_u8);
 }
@@ -2246,7 +2388,9 @@ alias close_directory = std::fs::close_directory;
 alias exit_status = std::process::exit_status;
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: unused_args, cwd: unused_cwd, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin) = move inputs;
+  let Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
+  std::fs::close_directory_write(factory: &factory, directory: move unused_cwd_write);
   close_directory(factory: &factory, directory: move unused_cwd);
   let HandleFactory() = move factory;
   return exit_status(code: 0_u8);
@@ -2263,7 +2407,9 @@ alias close_directory = std::fs::close_directory;
 alias exit_status = std::process::exit_status;
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: unused_args, cwd: unused_cwd, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin) = move inputs;
+  let Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
+  std::fs::close_directory_write(factory: &factory, directory: move unused_cwd_write);
   close_directory(factory: &factory, directory: move unused_cwd);
   return exit_status(code: 0_u8);
 }
@@ -2278,8 +2424,10 @@ alias DirectoryRead = std::fs::DirectoryRead;
 alias Inputs = std::process::Inputs;
 alias exit_status = std::process::exit_status;
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {
-  let Inputs(args: unused_args, cwd: directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin) = move inputs;
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  let Inputs(args: unused_args, cwd: directory_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: directory, write: directory_write) = move directory_directory;
+  std::fs::close_directory_write(factory: &factory, directory: move directory_write);
   let DirectoryRead() = move directory;
   return exit_status(code: 0_u8);
 }
@@ -2295,7 +2443,9 @@ alias close_directory = std::fs::close_directory;
 alias exit_status = std::process::exit_status;
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: unused_args, cwd: directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin) = move inputs;
+  let Inputs(args: unused_args, cwd: directory_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: directory, write: directory_write) = move directory_directory;
+  std::fs::close_directory_write(factory: &factory, directory: move directory_write);
   close_directory(factory: &factory, directory: move directory);
   return exit_status(code: 0_u8);
 }
@@ -3380,6 +3530,91 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#],
     },
+    RepairPair {
+        name: "range-below-range-element-out-of-bounds.wf",
+        rejected: include_bytes!("../../../tests/conformance/cases/ref4-neg-range-below-range-element-bound.wf"),
+        rule: "REF-4",
+        sentences: &[
+            "\n  residual: 5_u64 <= strip^[i].len\n",
+            "\n  disposition: Refuted\n",
+            "\n  mechanical_fix: `5_u64 <= strip^[i].len` is false where this range is formed: choose endpoints that satisfy it\n",
+        ],
+        repaired: &[br#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn nested(strip: &[Array<u64, 4>], i: u64) -> result: u64 reads(strip[i]) contract {
+  requires i < strip^.len;
+} {
+  let part = &strip^[i][1_u64..3_u64];
+  return part^.len;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "range-below-replaced-range-element.wf",
+        rejected: include_bytes!("../../../tests/conformance/cases/ref2-neg-range-below-replaced-range-element.wf"),
+        rule: "REF-2",
+        sentences: &[
+            "\n  event: a proper prefix of the reference's path was written\n",
+            "\n  mechanical_fix: form the reference again after that event\n",
+        ],
+        repaired: &[br#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn nested(strip: &[Array<u64, 4>], i: u64) -> result: u64 writes(strip) contract {
+  requires i < strip^.len;
+} {
+  let replacement = array_filled::<u64, 4>(value: 9_u64);
+  set strip^[i] = replacement;
+  let part = &strip^[i][1_u64..3_u64];
+  return part^[0_u64];
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "writable-len-field-counted-endpoint.wf",
+        rejected: br#"struct Span {
+  len: u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let span = Span(len: 3_u64);
+  let spans = array_filled::<Span, 2>(value: span);
+  let count = 0_u64;
+  for (i in 0_u64..spans[1_u64].len) {
+    set count = count +wrap 1_u64;
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "ENT-2",
+        sentences: &[
+            "\n  mechanical_fix: bind the computed u64 value with one preceding ordinary let and use that term as the endpoint\n",
+        ],
+        repaired: &[br#"struct Span {
+  len: u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let span = Span(len: 3_u64);
+  let spans = array_filled::<Span, 2>(value: span);
+  let count = 0_u64;
+  let length = spans[1_u64].len;
+  for (i in 0_u64..length) {
+    set count = count +wrap 1_u64;
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
 ];
 
 /// Every function a source declares, by the name its `fn` introduces.
@@ -3415,7 +3650,12 @@ fn contradictory_successes(name: &str, source: &[u8]) -> Result<Vec<String>, Str
 /// contradictory.
 #[test]
 fn each_pinned_repair_is_carried_out_by_its_programs() {
-    for pair in REPAIRS.iter().chain(call_separations::CALL_SEPARATIONS) {
+    for pair in REPAIRS
+        .iter()
+        .chain(call_separations::CALL_SEPARATIONS)
+        .chain(storage_destructuring::STORAGE_DESTRUCTURING)
+        .chain(selector_scope::SELECTOR_SCOPE)
+    {
         let failure = compile(
             &[SourceInput::new(pair.name, pair.rejected)],
             CompilerLimits::default(),
@@ -3527,7 +3767,9 @@ fn make(count: u64) -> made: Box<Slots<u8>> pure {
 }
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: files, stdin: unused) = move inputs;
+  let Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: files, stdin: unused, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
+  std::fs::close_directory_write(factory: &files, directory: move cwd_write);
   close_directory(factory: &files, directory: move cwd);
   let n = args_count(args: &args);
   let cell = make(count: n);
@@ -3591,7 +3833,9 @@ fn make(count: u64) -> made: Box<Slots<u8>> pure {
 }
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: files, stdin: unused) = move inputs;
+  let Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: files, stdin: unused, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
+  std::fs::close_directory_write(factory: &files, directory: move cwd_write);
   close_directory(factory: &files, directory: move cwd);
   let n = args_count(args: &args);
   let cell = make(count: n);
@@ -3614,7 +3858,9 @@ fn make(count: u64) -> made: Box<Slots<u8>> pure contract {
 }
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: files, stdin: unused) = move inputs;
+  let Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: files, stdin: unused, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
+  std::fs::close_directory_write(factory: &files, directory: move cwd_write);
   close_directory(factory: &files, directory: move cwd);
   let n = args_count(args: &args);
   if n <= 4096_u64 {
