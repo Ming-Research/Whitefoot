@@ -940,6 +940,14 @@ rarely insert at the same place.
   code and cross-program performance; do not ship a benchmark-specific native
   edit. Digest handoff remains a separate unmeasured lead. Reopen it when its
   change can be isolated without compensating spills or changed call depth.
+  The [metadata-only growth-edge discriminator](../research/experiments/container-representation/vector-library/RESULTS.md#branch-weight-growth-edge-discriminator-qualified-behavior-timing-inconclusive)
+  obtains that seven-save placement through the existing LLVM pipeline and
+  passes the complete owner/behavior witness, but its one full pair has no
+  qualified useful gain and all three wide suffix-one peer targets remain
+  inconclusive. The fixed 2000:1 ratio is no general policy; test a
+  type/name-independent cold-growth rule against growth-dense and short-lived
+  callers before selecting it. The separate unchanged-IR spill-sinking option
+  gives byte-identical native code here.
   The [ordinary spill-splitting screen](../research/experiments/container-representation/vector-library/RESULTS.md#ordinary-spill-splitting-unchanged-target-rejected-before-execution)
   changed Apple Clang's actual `speed` default to partition mode at O3, but
   retained all seven saves and identical target MIR/native code. It is rejected

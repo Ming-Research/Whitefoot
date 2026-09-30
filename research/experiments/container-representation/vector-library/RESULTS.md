@@ -4496,6 +4496,74 @@ The reproduction patch is
 the retained witness ledger is
 `3eeb59d1360691ee9c9d7b0b122ffa3f62ad42c9b9512e32176c3815bf2d9cb9`.
 
+### Branch-weight growth-edge discriminator: qualified behavior, timing inconclusive
+
+The [save-placement result](#constructor-save-placement-native-code-discriminator)
+left a general compiler route open. One diagnostic attached LLVM `!prof`
+weights `1, 2000, 1` to the invalid, spare and full successors of the wide
+make-room switch. The [two-hunk IR patch](branch-weight-cold-edge.patch) applies
+to frozen `both/ecosystem/whitefoot-timed.ll` SHA-256
+`8038674ab44bfabb89fa9d985dfe5ecb271157b1bc2c40df0b10b0dd44eecde6`
+from source pin `36e27e57f46ff4f5de3fc9da155ca33a2254fe7b`. The fixed ratio
+is a diagnostic choice, not an observed frequency. It changes no path, call,
+value, proof or allocation, and selects no policy.
+
+Using `/usr/bin/clang -O3 -Wno-override-module -x ir -S` and the same flags
+with `-x assembler -c`, the unpatched object reproduces frozen SHA-256
+`c7fc3dcf0d127d3586678f0c8aaabe5848da38a1e427f35c4f729261ba50e235`;
+the candidate is `3d8317e9ad07defb693e83a4bccd2c4be2b958ecf0de2848ebd25e70e1238a8b`.
+Only six wide WF function bodies change (trace, append, tail, work, make-room,
+insert), with the same maximum frames and call/tail-call multisets. Scalar
+trace/tail remain byte-identical. Wide tail moves seven Q-pair saves under
+the full-capacity branch before `grow_full`; direct-to-backing construction,
+restores, truncate and its 288-byte frame remain. Changed placement elsewhere
+prevents interpreting this as an isolated stack-traffic percentage.
+
+Both linked arms reused the frozen non-WF inputs and passed the unchanged
+1,260-configuration/8,820-execution ordinary matrix and checksum fault.
+Separate allocator-observed assembly preserves code and relocation meaning
+after reversing only the symbol substitutions. The same independent 15-case
+ordered-digest/owner ledger passes both arms; q17–q30 release clobbers reach
+the growth return, while misplaced saves and the cleanup, release and seven
+witness-field faults fail as expected. Runner-only bookkeeping, screen and
+path corrections were preserved before the complete qualification; no native
+candidate or criterion changed. No timing ran during qualification.
+
+One full guarded `measure 1048576 7` pair ran control then candidate once,
+81.354/80.893 s. [Control](ecosystem-branch-weight-control-samples.csv) and
+[candidate](ecosystem-branch-weight-candidate-samples.csv) each retain 4,116
+rows, 588 groups, both cohorts, all seven samples and six unranked suffix-zero
+controls; non-time columns match exactly. Under the unchanged paired rules,
+36 useful cells have **zero qualified gains or losses**, 34 overlaps and two
+unstable cells. The wide suffix-one results are:
+
+| Count | Candidate/control medians, cohorts 0/1 | Qualified result |
+|---:|---:|---|
+| 16 | 0.588678 / 0.592479 | Overlap: cohort 0 separates, cohort 1 overlaps after a retained 29.772 ms candidate sample |
+| 256 | 0.755899 / 0.541548 | Unstable (>10% ratio spread) |
+| 4096 | 0.625171 / 0.553925 | Unstable despite a raw two-cohort gain |
+
+Standard-peer totals move from control 15 pass/1 deficit/20 inconclusive to
+candidate 16/2/18, plus six unranked each. All three candidate wide
+suffix-one median ratios fall below the selected slower peer (0.969–0.993),
+but sample overlap leaves all three inconclusive. At count 16, candidate
+medians are `1.039/1.041` times Rust and `0.977/0.977` times C++ across cohorts.
+Control's wide/count-16 deficit becomes inconclusive; candidate deficits are scalar growth/count 16
+and scalar suffix-two/count 256 (roughly 1.06 times the slower peer), neither
+a qualified paired WF loss. Comparator drift includes direct C's useful
+median ratio range 0.673–1.021. The raw sample SHA-256 values are control
+`816b08972cbbbe069bd13d2d7ce14444f8860ea4aa3fa0ea8fb638c8b31704d6`
+and candidate `b32bdcf945d7393ff72f3765902bc8e698711d009eb26fcdc0ee93eced60d434`.
+No sample was dropped or timed again; the older-lineage signal does not
+complete the Vector peer target or select a general branch hint.
+
+A separate unchanged-IR screen added only `-mllvm -sink-insts-to-avoid-spills`
+(the installed default is off). Candidate assembly and object were byte-identical
+to control, so this option supplies no placement on this input/toolchain. A
+general branch hint would need type/name-independent structural grounds and
+measurement on growth-dense short-lived, exact-reserve and ceiling paths as
+well as spare-heavy repeated insertion; 2000:1 is not universally expected.
+
 ### Ordinary spill splitting: unchanged target, rejected before execution
 
 The [registered code-only screen](../ECOSYSTEM.md#next-discriminator-ordinary-register-allocation-spill-splitting)

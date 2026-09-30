@@ -466,6 +466,18 @@ selected. A screen-script false positive was corrected in a recorded bounded
 continuation using unchanged frozen objects, without rebuilding or retrying
 performance measurements.
 
+The [branch-weight discriminator](vector-library/RESULTS.md#branch-weight-growth-edge-discriminator-qualified-behavior-timing-inconclusive)
+kept this frozen source and native link input set, adding only one LLVM IR
+switch's `1/2000/1` weights for invalid/spare/full. Apple Clang moved the seven
+wide-tail saves under the full/growth branch without larger frames or more
+calls; the complete ordinary matrix and clobber/owner witness passed. One
+unchanged full timing pair has no qualified useful gain or loss: count-16 wide
+suffix-one medians improve about 41% but fail two-cohort range separation,
+while counts 256/4096 are unstable. All three candidate wide suffix-one
+standard-peer targets remain inconclusive. The separate unchanged-IR
+`-sink-insts-to-avoid-spills` option produces byte-identical native code.
+Neither diagnostic selects a production compiler policy or completes Vector.
+
 ### Next discriminator: ordinary register-allocation spill splitting
 
 The native save-placement result permits one code-generation screen, not a
