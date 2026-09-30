@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-09-30 Give programs clocks, deadlines and append-only files
+
+Nodes: language/system-interface/clocks, language/system-interface/deadlines, language/system-interface/writable-directory, language/system-interface/outcome-typing, compiler/waiting-contexts/bounded-waits
+
+Owner-approved: 2026-09-30, the owner ruled Q23 B, Q24 A, Q25 D and Q26 A in the session, then Q27 to Q30 as recommended ("Q27 agreed. Q28 agreed Q29 agreed Q30 agreed", written in Chinese), and approved the handoff's decision cards 1 to 5, one per node named here, with the specification's revisions ("all approved", written in Chinese).
+
+Summary: language/system-interface/clocks gives the entry a monotonic `Clock` and a calendar `WallClock` in `Inputs`, makes a monotonic reading an `Instant`, an opaque copyable struct with one private field that only host functions form, has `now` write its clock so that [HOST-1] orders two reads through it, keeps every `Instant` operation total, and gives `sleep_until` and every deadline an `Instant` and no clock. language/system-interface/deadlines puts `deadline: Option<Instant>` on the six operations that may wait on another party, reported as `DeadlinePassed()` only once the clock has reached it and with nothing transferred, and none on file operations. language/system-interface/writable-directory splits `Inputs.cwd` into a read half and a write half that close separately, so closing the write half weakens it, and admits only appending, with `sync_file` promising the hand-off to the host's durability mechanism and no crash model. language/system-interface/outcome-typing replaces its `IoError` decision so that `DeadlinePassed`, which no host produces, carries no code. compiler/waiting-contexts/bounded-waits keeps each driver's deadlines in a heap only its thread touches, bounds every park and poll by its head, cancels through the route that holds the operation, and routes an operation with a deadline off the driver thread. Grounds: [the design](../research/investigations/io-model/TIME-AND-FILES.md) and its Experiment 8. This ruling authorizes no merge.
+
 ## 2026-09-30 Grow the helper pool past its ceiling while every helper waits on a peer
 
 Nodes: compiler/waiting-contexts, compiler/completion-runtime
