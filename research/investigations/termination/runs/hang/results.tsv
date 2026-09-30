@@ -11,3 +11,4 @@ oracle_09d33ba	<math><mtext></br>	no result within 20 s
 oracle_1120edf	<math><mtext></br>	exit 0: html_tree: 1 cases, 1 passed, 0 failed, 0 excluded
 oracle_09d33ba	<math><annotation-xml encoding="text/html"></p>	no result within 20 s
 oracle_1120edf	<math><annotation-xml encoding="text/html"></p>	exit 0: html_tree: 1 cases, 1 passed, 0 failed, 0 excluded
+oracle_09d33ba	<p>hi</p> (control)	exit 0: html_tree: 1 cases, 1 passed, 0 failed, 0 excluded

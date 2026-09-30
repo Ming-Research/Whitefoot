@@ -324,6 +324,7 @@ compiler built at 7ad65dc7. Each writes a descent invariant after the update.
 | p4 | callee with `ensures next > pos` | proved |
 | p5 | `take_back` on a `Slots` window | proved |
 | p3e | advance 1 or 3 through a value `if`, then `if` sets `pos` to `length` or `pos + advance` | descent proved; the loop's `pos <= length` header invariant is not preserved |
+| p3f | p3e without that header invariant | proved |
 | n1 | `set index = index +wrap 0_u64` (control) | refuted |
 | p3 | Snowghost's `pos +wrap advance` then clamp (`url/host.wf`) | unproved |
 | p3b, p3c | a mutable `step` clamped through a join | unproved: `1 <= step` is lost at the join |
@@ -346,7 +347,9 @@ control.
 | a fact lost at a join or at an inner loop's exit | 3 |
 | an operation fact missing: `ishr.wrap(e, 1)` is smaller than a nonzero `e` | 1 |
 
-Half the sample needs no written step. The other half splits into four
+Half the sample needs no written step. The per-row cause is in `results.tsv`, and
+the loops and the draw are in `sample.tsv` and `insert_descent.py`. The
+other half splits into four
 distinct gaps:
 
 - the rank vocabulary must admit fields read through references;
@@ -361,7 +364,7 @@ distinct gaps:
   forever on a decomposition cycle in its input, such as a code point that
   decomposes to itself, because each pop is matched by a push. The tool
   reads the Unicode data at build time. Disposition: reported to the owner
-  with this record, for Snowghost's own tracking.
+  in the handoff of this record, for Snowghost's own tracking.
 - **Snowghost `html/tree_builder/insert.wf`, `move_all_children`.** It loops
   forever if its source and destination are the same node. Both callers pass
   distinct nodes. Disposition: reported to the owner, as above.
@@ -373,8 +376,11 @@ distinct gaps:
   pigeonhole argument in its documentation. Disposition: added to
   `docs/todo.md`.
 - **Prose-only progress facts.** Many cursor and I/O contracts state
-  progress only in prose, or allow no progress. They matter only under a
-  mandatory rule, so they stay here as evidence for that rule.
+  progress only in prose, or allow no progress. For Whitefoot's `read_at`,
+  `write_once` and `send_once`, a zero-length transfer is a legitimate host
+  outcome, so the contract cannot promise progress and no `docs/todo.md`
+  item is added. Snowghost's own prose-only facts, such as `next_char` and
+  `peek_pp`, are Snowghost's to state.
 
 ## Verdict against the criteria
 
@@ -391,7 +397,8 @@ distinct gaps:
   504 loops and 28 of 51 recursive rows.
 - **A family of rank forms, with one gap.** A single rule, "every cycle
   carries a checked descent or a wait", covers every other entry except nine
-  sites. It needs three forms beyond the scalar rank: lexicographic,
+  acyclicity sites and three sites that must be restructured: a two-state
+  flag, `hash_map_rebuild` and the infeasible `mode_in_body` cycle. It needs three forms beyond the scalar rank: lexicographic,
   owned-structural and waiting. It also needs shared ranks for mutual
   recursion.
 - **Criterion 1 is not met for the nine sites.** They need to know that
@@ -447,6 +454,7 @@ distinct gaps:
 If the rule is adopted, the constitution's Safety sentence "Logic errors,
 including unintended nontermination, may remain" narrows to exclude
 nontermination between waits, and the [WAIT-2] premise becomes a theorem.
-The constitution already accepts additional proof work that serves its
-objectives, which weighs for the rule. The practical-feasibility condition,
-measured here as the four gaps in the sample, weighs on how it is built.
+The constitution accepts additional proof work "within the constraints of
+required safety and practical development feasibility". Whether progress
+between waits is required safety is the owner's decision; the four gaps in
+the sample bear on feasibility.
