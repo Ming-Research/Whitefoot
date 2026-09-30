@@ -131,6 +131,39 @@ witnesses n1–n6 and m5 keep their original source-rule refusals. The narrowed
 inference mechanisms therefore still answer the original problem on v0.82;
 this observation alone does not settle their cost or approve a language rule.
 
+## Current whole-module rewrites
+
+The [rewrite patch](rewrites.patch), [66 source-check results](rewrites.csv)
+and [identity](rewrites-identity.json) preserve five complete rewritten
+workloads, plus the five scale controls. The patch applies without fuzz to the
+pinned source copies. It changes only extracted temporary inputs, never the
+Snowghost checkout or repository.
+
+| Rewritten workload | Base / off / (a) | (b) | Rows | (b) + rows |
+|---|---|---|---|---|
+| `text::line_break` | FN-8 | accepted | FN-8 | accepted |
+| `css::rules` | FN-8 | accepted | FN-8 | accepted |
+| `css::selectors` | FN-8 | accepted | FN-8 | accepted |
+| `font` | INV-1 local | INV-1 local | INV-1 loop | accepted |
+| `merge_sort.wf` | INV-1 local | INV-1 local | INV-1 loop | accepted |
+
+Line-break publishes the six windows' growth/preservation contracts and their
+loop relations, removing six room guards and the two corresponding run-index
+guards. Stored element/span checks remain. The CSS rewrites replace four
+post-loop clamps with the proved cursor and add lower/upper header relations.
+The font and merge-sort searches use their ordinary loops and natural
+`span / 2_u64` midpoint with an explicit `inside` invariant. (a+) still refuses
+the merge-sort midpoint; it is omitted on the four Snowghost modules for the
+analytic reason above. All scale controls remain accepted.
+
+These observations establish source-proof benefit on complete modules. They
+are not native execution tests, timings of the rewrites, or a claim that the
+new patch recovers every historical census edit. The initial development
+rewrites' contract ordering and conditional spelling were corrected before
+these semantic outcomes were recorded. Two requested pauses interrupted the
+font replay; only completed compiler outcomes were retained and missing pairs
+were resumed with unchanged inputs.
+
 ## Reproduce the current replay
 
 Create two clean scratch worktrees at
@@ -145,7 +178,7 @@ checkout and a fresh output directory:
 
 ```sh
 for mode in verdicts rewrites cost; do
-  perl .github/run-check.pl branch-join-replay \
+  WHITEFOOT_CHECK_TIMEOUT=7200 perl .github/run-check.pl branch-join-replay \
     python3 research/investigations/branch-join-relations/replay.py \
       --source-root "$replay_source" --base "$replay_base" --prototype "$replay_prototype" \
       --snowghost "$replay_snowghost" --output "$replay_output" --mode "$mode"
