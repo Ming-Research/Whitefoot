@@ -461,3 +461,36 @@ depth 1 on two CPUs firn trails Dragonfly by one clock step, 0.95, on `GET`,
 the pops, `SADD` and `ZPOPMIN` and by 0.91 on `PING_MBULK`, and on one CPU
 by 0.87 on `PING_INLINE`; `SPOP` trails at depth 1 on both, 0.87 and 0.84, with
 a p99 of 1.66 ms on two CPUs against 0.93.
+
+### List elements inline, and maps that shrink, stated before measuring
+
+Two changes aimed at the third look's remaining gaps, measured together
+against the inline build with a shared control:
+
+- *lists*: list elements become the same `Bytes` as other strings, so a
+  push of a short element allocates nothing and a pop or range reads it
+  from the ring's own slot. Aimed at `LPUSH` and `RPUSH` on one CPU at depth
+  16, which reached 1.00 and 1.03 of the 1.1 required.
+- *shrink*: the library's hash map rebuilds at four times its pairs, at
+  least 64 buckets, when a removal leaves a map of more than 64 buckets less
+  than an eighth filled, and its rebuild accepts fewer buckets than before
+  when they still outnumber the pairs. `SPOP` picks the first filled bucket
+  from a random position, so as a set empties without shrinking each pop
+  walks more empty buckets inside the atomic statement: after `SADD` filled
+  one to 100,000 members, one pass of `SPOP` at depth 1 took up to 39 ms per
+  request. Aimed at `SPOP`, which trailed at depth 1 on both CPU counts.
+
+Five interleaved rounds of four lines, *inline*, *lists*, *shrink* and
+*control* (*inline* again), each round running: on one CPU at depth 16,
+`LPUSH`, `RPUSH`, `LPOP`, `RPOP` (5,000,000 requests each) and
+`LRANGE_100` (2,000,000), then `SADD` (2,000,000) and `SPOP` (5,000,000);
+on two CPUs and on one at depth 1, `SADD` at depth 16 to fill the set, then
+`SPOP` (600,000). For each test, each round's ratio of a line to that
+round's *inline* is taken, and the medians decide against *control*'s median
+on the same test. *lists* is kept if its median exceeds *control*'s by at
+least 0.08 on both `LPUSH` and `RPUSH` at depth 16 on one CPU and falls
+below *control*'s by no more than 0.08 on any test. *shrink* is kept if its
+median exceeds *control*'s by at least 0.08 on `SPOP` at depth 1 on both CPU
+counts, its median `SPOP` p99 at depth 1 is lower than *inline*'s on both,
+and it falls below *control*'s by no more than 0.08 on any test. A change
+that is not kept is reverted.
