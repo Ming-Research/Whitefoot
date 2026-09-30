@@ -281,7 +281,9 @@ receive, send, stream read, half-close) and the routes are:
 
   The bound this leaves is explicit and is not worked around: adapter-route
   socket concurrency is `WF_BRIDGE_MAX_HELPERS`, and a program needing more
-  peer waits in flight than that waits. There is no fallback that puts a
+  peer waits in flight than that waits. (Once contexts run, the pool now grows
+  past it while every helper waits on a peer: `CONCURRENCY-MODEL.md`, section
+  10.6.) There is no fallback that puts a
   peer-bound request back on a scheduler thread when the pool is at its cap,
   because that is the defect returning at exactly the moment the program is
   widest. **Open design item:** the bound is a property of an engine built out

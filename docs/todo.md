@@ -456,7 +456,7 @@ rarely insert at the same place.
   live bindings' current images into L0 before the join; validate soundness
   against replacement and alias controls and measure closure cost first.
   Reopen when a consumer cannot avoid the branch.
-- **A product with a struct-field operand has no interval route.** [ENT-6]
+- **A struct-field operand of a product or subtraction is not proved.** [ENT-6]
   gives affine value images to live own integer bindings and measures only,
   and its interval product needs both operands' images, so after
   `propagate parse_header(...)` publishes `header.width <= 16384_u32` and
@@ -466,11 +466,23 @@ rarely insert at the same place.
   proves both. The same holds for a parameter's fields bounded by `requires`,
   so it predates v0.80, but v0.80's field relations make it the next thing a
   writer meets: PR #169's probe p2a predicted exit 24 and is refused at that
-  product. Impact: one `let` per field before a nonlinear product. Candidate:
-  give a tracked field place the current-value image its binding copy would
-  have, killed with the field; validate against field writes, whole-value
-  replacement and aliases, and measure closure cost. Reopen when a program
-  cannot copy the field.
+  product. A subtraction shows the same pattern: with
+  `struct Span { start: u64; end: u64; }`, `span.end - span.start` stays
+  [OP-2] Unproved (residual `span.end -defined span.start`) under
+  `requires span.start <= span.end` on a by-value parameter, at 290b575b and
+  f5024250, and at f5024250 also under that requirement on a `&Span`
+  parameter, inside `if span.start <= span.end` on a local, and under the
+  v0.82 struct invariant `span.start <= span.end` on a by-value parameter;
+  copying the fields into bindings first proves each. [ENT-2] clause (a)
+  makes the field places terms; where the subtraction's proof loses them is
+  not yet located. Impact: one `let` per field before a nonlinear product
+  or such a subtraction, and a struct invariant alone does not discharge a
+  subtraction of the fields it orders. Candidate: give a tracked field place
+  the current-value image its binding copy would have, killed with the
+  field; validate against field writes, whole-value replacement and aliases,
+  and measure closure cost; check that it also discharges the subtraction.
+  Reopen when a program cannot copy the field, or with the next change to
+  struct invariants.
 
 - **Two rejections writers meet carry no repair.** `InvalidPostconditionSelector`
   for a route the version does not admit, such as `when Err(error: e):` or a
@@ -1253,9 +1265,27 @@ rarely insert at the same place.
   served in its own context with the completion port required, and two bound
   fetches on both routes. Without the port a Windows context's socket wait
   is a blocking helper wait, because that host has no readiness wait, so a
-  server there holds only as many silent peers as the pool has helpers. A
-  `WSAPoll` readiness wait would give it the Linux readiness route's
-  behavior. Reopen when a Windows server has to run without the port.
+  server there holds a helper thread per silent peer, up to the adapter's 256
+  helper records, past which it stops with a report. A `WSAPoll` readiness
+  wait would give it the Linux readiness route's behavior. Reopen when a
+  Windows server has to run without the port.
+
+- **A wait on another context on a helper costs a thread.** Once contexts
+  run, a stream write on every host, a stream read on every host but Linux
+  with its ring, a connect on a host with no ring, and an accept on Windows
+  run on helper threads, and the pool grows past its eight
+  helpers while every helper is inside such a wait
+  (`completion/file_adapter.c`, `wf_file_grow_for_peers_locked`). Each such
+  wait in flight holds a thread, and a program with more than 256 at once
+  stops with a report (`research/investigations/io-model/CONCURRENCY-MODEL.md`,
+  section 10.6). A readiness-driven adapter, one `poll`, `kqueue` or
+  `WSAPoll` over every queued descriptor made where an idle thread already
+  parks, would hold none for sockets; a standard stream shared with other
+  processes would stay on helpers, since making it nonblocking would change it
+  under them. Validate by a harness case of 257 socket waits running to
+  completion on one thread and by the context echo server's rate on the
+  no-ring route. Reopen when a program needs more than a few hundred such
+  waits at once or a profile shows their threads.
 
 - **The context echo server's rate at 1024 connections and with 64 KiB
   messages moved between sessions.** With R1 to R4 as committed,
@@ -1378,22 +1408,6 @@ rarely insert at the same place.
   was refused because later code would merge a joined and an unjoined path
   (`design/compiler/waiting-contexts`, the bound spawn's join). Reopen when a
   program needs the use and the enabling statement in one compound statement.
-
-- **At most eight operations run on helper threads at once.** Once a
-  program spawns, every operation the ring does not carry runs on the helper
-  pool (`completion/bridge.c`, `wf_bridge_hold_for_contexts`), which holds at
-  most `WF_BRIDGE_MAX_HELPERS`, eight, helpers. A ninth such operation waits
-  in the queue until one returns, so nine contexts whose operations wait on
-  one another through pipes can stop although [WAIT-2] promises that they
-  proceed. On Linux the ring carries reads, opens, closes and a socket's
-  accept, connect, receive and send, so a stream write, a directory's next
-  entry, and the immediate listen and shutdown take a helper there
-  (`completion/linux_io_uring.c`, `wf_linux_io_uring_carries`); on a host
-  with no ring every file operation does. Letting the pool
-  grow past the ceiling while every helper is blocked, or carrying stream
-  writes on the ring, would remove it; validate with nine contexts paired
-  through pipes. Reopen when a program runs more than eight such waits at
-  once.
 
 - **A split loop too small to split still costs its query at every call.**
   Snowghost's layout prototype runs `pkg::text::line_break`, whose
