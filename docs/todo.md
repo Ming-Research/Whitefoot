@@ -501,20 +501,25 @@ rarely insert at the same place.
 ## Containers and storage lowering
 
 - **A local `slots_new::<T, N>()` clears all N slots when it is created.**
-  In Snowghost's `pkg::css::selectors`, `match_complex` creates
-  `slots_new::<Frame, 64>()` (12-byte frames) on every call, and the code
-  compiled at 290b575b clears the whole window, `memset` of 0x308 bytes,
-  before any frame is placed. Style matching calls it about 106 million
-  times on the ECMAScript specification page, and that `memset` is 21
-  percent of the style stage's instructions there (Snowghost
-  `research/investigations/concurrency/DESIGN.md`, "Style's work per
-  element"). A slot at or past the window's length is never read, so the
-  clearing buys nothing that the language exposes. Change: create an
-  inline `Slots` window without clearing the slots past its length,
-  checking first that no drop, move or bounds path reads them, and measure
-  a program that creates many short-lived windows. Not checked on a later
-  revision. Reopen with the next change to `Slots` lowering or when a
-  profile shows the clearing again.
+  Snowghost's `match_complex` (`renderer/css/selectors/match.wf`) creates
+  `slots_new::<Frame, 64>()`, 12-byte frames, on every call, and the code
+  compiled at 290b575b clears the whole window first: its
+  `proto_style_seq` driver calls `memset` for 0x308 bytes, 64 frames and
+  the length word, at the function's start. In a callgrind profile of one
+  style computation on the ECMAScript specification page (Snowghost
+  58fa8ee's `proto_layout_seq`, collection limited to `compute_styles`),
+  106 million calls made that `memset` 21 percent of the instructions
+  (Snowghost `research/investigations/concurrency/DESIGN.md`, "Style's
+  work per element"); Snowghost's rule index (ec21b7c) has since cut the
+  calls, so the share is smaller now and not measured. [WIN-1] leaves every
+  slot past `len` holding nothing and [OP-13] starts a `slots_new` window
+  empty, and no access reads past `len`, so the clearing is not observable.
+  Change: create an inline `Slots` window without clearing the slots past
+  its length, checking first that no drop, move or bounds path in the
+  lowering reads them, and measure a program that creates many
+  short-lived windows. Not checked on a later revision. Reopen with the
+  next change to `Slots` lowering or when a profile shows the clearing
+  again.
 
 - **Validate a shared Ring wrap calculation independent of layout bounds.**
   The corrected front predecessor handles every admitted capacity. Remaining
