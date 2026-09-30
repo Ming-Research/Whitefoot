@@ -3,7 +3,8 @@ alias KeyEnv = pkg::bytes::KeyEnv;
 alias Span = pkg::protocol::Span;
 alias Store = pkg::store::Store;
 alias Time = pkg::store::Time;
-alias Bytes = pkg::bytes::Bytes;
+alias Key = pkg::bytes::Key;
+alias Keyed = pkg::bytes::Keyed;
 alias DueOrder = pkg::store::DueOrder;
 alias Due = pkg::store::Due;
 alias Entry = pkg::store::Entry;
@@ -11,7 +12,8 @@ alias arg = pkg::protocol::arg;
 alias ceiling = pkg::store::ceiling;
 alias clear_items = pkg::protocol::clear_items;
 alias push_item = pkg::protocol::push_item;
-alias copy_bytes = pkg::bytes::copy_bytes;
+alias copy_key = pkg::bytes::copy_key;
+alias make_key = pkg::bytes::make_key;
 alias expired = pkg::store::expired;
 alias hash_map_edit = std::collections::hash_map::hash_map_edit;
 alias hash_map_len = std::collections::hash_map::hash_map_len;
@@ -87,14 +89,14 @@ struct Remaining {
   state: u64;
 }
 
-fn key_at(input: &[u8], args: &Box<Slots<Span>>, index: u64) -> made: Box<Slots<u8>> reads(input), reads(args) {
-  doc "Copies one argument out of the input into a string of its own.";
+fn key_at(input: &[u8], args: &Box<Slots<Span>>, index: u64) -> made: Key reads(input), reads(args) {
+  doc "Copies one argument out of the input into a key of its own, hashed.";
   let span = arg(args: args, index: index);
-  let made = copy_bytes(input: input, start: span.start, length: span.length);
+  let made = make_key(input: input, start: span.start, length: span.length);
   return move made;
 }
 
-fn kind_of(env: &Client, key: &Box<Slots<u8>>, value: &Entry) -> kind: u64 reads(value), writes(env) {
+fn kind_of(env: &Client, key: &Key, value: &Entry) -> kind: u64 reads(value), writes(env) {
   doc "Reports a live entry's kind: 1 a string, 2 a list, 3 a set, 4 a hash and 5 a sorted set, recording done in state; an expired one is 0, recording expired.";
   let reached = expired(expires: value^.expires, now: env^.now);
   if reached {
@@ -121,14 +123,14 @@ fn kind_of(env: &Client, key: &Box<Slots<u8>>, value: &Entry) -> kind: u64 reads
   }
 }
 
-fn live_kind(state: &Store, key: &Box<Slots<u8>>, client: &Client, env: &KeyEnv) -> kind: u64 reads(key), reads(env), writes(state), writes(client) {
+fn live_kind(state: &Store, key: &Key, client: &Client, env: &KeyEnv) -> kind: u64 reads(key), reads(env), writes(state), writes(client) {
   doc "The kind of the value a key holds, as kind_of reports it, removing the key when its expiry has been reached; 0 for an absent or expired key.";
   set client^.state = state_absent;
-  let found = hash_map_lookup::<Bytes, Entry, Client, u64, fn kind_of, ceiling>(map: &state^.map, key: key, key_env: env, visit_env: client);
+  let found = hash_map_lookup::<Keyed, Entry, Client, u64, fn kind_of, ceiling>(map: &state^.map, key: key, key_env: env, visit_env: client);
   match found {
     Ok(value: kind) => {
       if client^.state == state_expired {
-        let gone = hash_map_remove::<Bytes, Entry, ceiling>(map: &state^.map, key: key, env: env);
+        let gone = hash_map_remove::<Keyed, Entry, ceiling>(map: &state^.map, key: key, env: env);
         return 0_u64;
       }
       return kind;
@@ -139,9 +141,9 @@ fn live_kind(state: &Store, key: &Box<Slots<u8>>, client: &Client, env: &KeyEnv)
   }
 }
 
-fn put_entry(state: &Store, key: Box<Slots<u8>>, held: Entry, env: &KeyEnv) -> stored: Bool reads(env), writes(state) {
+fn put_entry(state: &Store, key: Key, held: Entry, env: &KeyEnv) -> stored: Bool reads(env), writes(state) {
   doc "Stores an entry under a key, replacing any the key held, and reports whether the keyspace had room.";
-  let put = hash_map_put::<Bytes, Entry, ceiling>(map: &state^.map, key: move key, value: move held, env: env);
+  let put = hash_map_put::<Keyed, Entry, ceiling>(map: &state^.map, key: move key, value: move held, env: env);
   match move put {
     HashMapInserted() => {
       return True();
@@ -159,9 +161,9 @@ fn put_entry(state: &Store, key: Box<Slots<u8>>, held: Entry, env: &KeyEnv) -> s
   }
 }
 
-fn remove_live(state: &Store, key: &Box<Slots<u8>>, env: &KeyEnv, now: u64) -> removed: Bool reads(key), reads(env), writes(state) {
+fn remove_live(state: &Store, key: &Key, env: &KeyEnv, now: u64) -> removed: Bool reads(key), reads(env), writes(state) {
   doc "Removes a key and reports whether it was live.";
-  let pair = hash_map_remove::<Bytes, Entry, ceiling>(map: &state^.map, key: key, env: env);
+  let pair = hash_map_remove::<Keyed, Entry, ceiling>(map: &state^.map, key: key, env: env);
   match move pair {
     Some(value: gone) => {
       let reached = expired(expires: gone.value.expires, now: now);
@@ -176,18 +178,16 @@ fn remove_live(state: &Store, key: &Box<Slots<u8>>, env: &KeyEnv, now: u64) -> r
   }
 }
 
-fn queue_expiry(state: &Store, key: &Box<Slots<u8>>, at: u64, env: &KeyEnv) -> result: unit reads(key), reads(env), writes(state) {
+fn queue_expiry(state: &Store, key: &Key, at: u64, env: &KeyEnv) -> result: unit reads(key), reads(env), writes(state) {
   doc "Queues a key's new expiry for active removal; one past the queue's ceiling is left to lazy removal.";
-  let length = key^.inner.len;
-  let window = &key^.inner[0_u64..length];
-  let copied = copy_bytes(input: window, start: 0_u64, length: length);
+  let copied = copy_key(key: key);
   let due = Due(key: move copied, at: at);
   let queued = priority_queue_push::<DueOrder, ceiling>(queue: &state^.due, value: move due, env: env);
   return unit;
 }
 
 fn prepare_keys(input: &[u8], args: &Box<Slots<Span>>, client: &Client, first: u64) -> result: unit reads(input), reads(args), writes(client) {
-  doc "Copies the arguments from first on into the client's prepared strings, the last argument first, so that taking them from the back takes them in order.";
+  doc "Copies the arguments from first on into the client's prepared keys, the last argument first, so that taking them from the back takes them in order.";
   clear_items(client: client);
   let count = args^.inner.len;
   let many = count -sat first;
@@ -274,7 +274,7 @@ fn run_type(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client
   return unit;
 }
 
-fn set_expiry(env: &Expiry, key: &Box<Slots<u8>>, value: &Entry) -> result: u64 writes(env), writes(value) {
+fn set_expiry(env: &Expiry, key: &Key, value: &Entry) -> result: u64 writes(env), writes(value) {
   doc "Gives a live entry the expiry env carries. State 1 is done and 2 marks an expired entry.";
   let reached = expired(expires: value^.expires, now: env^.now);
   if reached {
@@ -286,7 +286,7 @@ fn set_expiry(env: &Expiry, key: &Box<Slots<u8>>, value: &Entry) -> result: u64 
   return 1_u64;
 }
 
-fn clear_expiry(env: &Expiry, key: &Box<Slots<u8>>, value: &Entry) -> result: u64 writes(env), writes(value) {
+fn clear_expiry(env: &Expiry, key: &Key, value: &Entry) -> result: u64 writes(env), writes(value) {
   doc "Removes a live entry's expiry. State 1 removed one, 0 found none, and 2 marks an expired entry.";
   let reached = expired(expires: value^.expires, now: env^.now);
   if reached {
@@ -302,7 +302,7 @@ fn clear_expiry(env: &Expiry, key: &Box<Slots<u8>>, value: &Entry) -> result: u6
   return 1_u64;
 }
 
-fn read_expiry(env: &Remaining, key: &Box<Slots<u8>>, value: &Entry) -> result: u64 reads(value), writes(env) {
+fn read_expiry(env: &Remaining, key: &Key, value: &Entry) -> result: u64 reads(value), writes(env) {
   doc "Reads how long a live entry has left. State 2 has an expiry and its nanoseconds left, 1 has none, and 0 marks an expired entry.";
   let reached = expired(expires: value^.expires, now: env^.now);
   if reached {
@@ -397,11 +397,11 @@ fn run_expire(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, clie
         }
       }
     } else {
-      let edited = hash_map_edit::<Bytes, Entry, Expiry, u64, fn set_expiry, ceiling>(map: &state^.map, key: &key, key_env: env, edit_env: &expiry);
+      let edited = hash_map_edit::<Keyed, Entry, Expiry, u64, fn set_expiry, ceiling>(map: &state^.map, key: &key, key_env: env, edit_env: &expiry);
       match edited {
         Ok(value: outcome) => {
           if expiry.state == state_expired {
-            let gone = hash_map_remove::<Bytes, Entry, ceiling>(map: &state^.map, key: &key, env: env);
+            let gone = hash_map_remove::<Keyed, Entry, ceiling>(map: &state^.map, key: &key, env: env);
           }
         }
         Err(error: absent) => {
@@ -428,9 +428,9 @@ fn run_ttl(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client:
   let remaining = Remaining(left: 0_u64, now: time^.check, state: 3_u64);
   let key = key_at(input: input, args: args, index: 1_u64);
   atomic state = &store^ {
-    let found = hash_map_lookup::<Bytes, Entry, Remaining, u64, fn read_expiry, ceiling>(map: &state^.map, key: &key, key_env: env, visit_env: &remaining);
+    let found = hash_map_lookup::<Keyed, Entry, Remaining, u64, fn read_expiry, ceiling>(map: &state^.map, key: &key, key_env: env, visit_env: &remaining);
     if remaining.state == 0_u64 {
-      let gone = hash_map_remove::<Bytes, Entry, ceiling>(map: &state^.map, key: &key, env: env);
+      let gone = hash_map_remove::<Keyed, Entry, ceiling>(map: &state^.map, key: &key, env: env);
     }
   }
   if remaining.state == 1_u64 {
@@ -458,11 +458,11 @@ fn run_persist(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, cli
   let key_span = arg(args: args, index: 1_u64);
   let key = key_at(input: input, args: args, index: 1_u64);
   atomic state = &store^ {
-    let edited = hash_map_edit::<Bytes, Entry, Expiry, u64, fn clear_expiry, ceiling>(map: &state^.map, key: &key, key_env: env, edit_env: &expiry);
+    let edited = hash_map_edit::<Keyed, Entry, Expiry, u64, fn clear_expiry, ceiling>(map: &state^.map, key: &key, key_env: env, edit_env: &expiry);
     match edited {
       Ok(value: outcome) => {
         if expiry.state == state_expired {
-          let gone = hash_map_remove::<Bytes, Entry, ceiling>(map: &state^.map, key: &key, env: env);
+          let gone = hash_map_remove::<Keyed, Entry, ceiling>(map: &state^.map, key: &key, env: env);
         }
       }
       Err(error: absent) => {
@@ -486,7 +486,7 @@ fn run_dbsize(store: &Shared<Store>, client: &Client) -> result: unit reads(stor
   doc "DBSIZE: answers how many keys the keyspace holds, counting an expired key not yet removed, as Redis does.";
   let size = 0_u64;
   atomic state = &store^ {
-    set size = hash_map_len::<Box<Slots<u8>>, Entry, ceiling>(map: &state^.map);
+    set size = hash_map_len::<Key, Entry, ceiling>(map: &state^.map);
   }
   let answer = cvt.wrap::<u64, i64>(size);
   reply_integer(client: client, value: answer);

@@ -1,4 +1,5 @@
 alias HashMap = std::collections::hash_map::HashMap;
+alias Key = pkg::bytes::Key;
 alias KeyEnv = pkg::bytes::KeyEnv;
 alias OrderedKey = std::collections::ordered_map::OrderedKey;
 alias OrderedMap = std::collections::ordered_map::OrderedMap;
@@ -11,20 +12,20 @@ public const ceiling: u64 = 4294967296_u64;
 public struct Rank {
   doc "A sorted set's member at its score, the key the set's order keeps.";
   public score: f64;
-  public member: Box<Slots<u8>>;
+  public member: Key;
 }
 
 public struct Sorted {
   doc "A sorted set: its members in score order, ties by member bytes, and each member's score.";
   public order: OrderedMap<Rank, unit, ceiling>;
-  public scores: HashMap<Box<Slots<u8>>, f64, ceiling>;
+  public scores: HashMap<Key, f64, ceiling>;
 }
 
 public enum Value {
   Text(public bytes: Box<Slots<u8>>);
   Items(public items: Box<Ring<Box<Slots<u8>>>>);
-  Members(public members: HashMap<Box<Slots<u8>>, unit, ceiling>);
-  Fields(public fields: HashMap<Box<Slots<u8>>, Box<Slots<u8>>, ceiling>);
+  Members(public members: HashMap<Key, unit, ceiling>);
+  Fields(public fields: HashMap<Key, Box<Slots<u8>>, ceiling>);
   Ranked(public ranked: Sorted);
 }
 
@@ -36,13 +37,13 @@ public struct Entry {
 
 public struct Due {
   doc "An expiry queued for active removal: the key and the instant it was set to expire at.";
-  public key: Box<Slots<u8>>;
+  public key: Key;
   public at: u64;
 }
 
 public struct Store {
   doc "The keyspace every client reaches through atomic statements: its keys, the queued expiries, the append-only file's pending bytes and whether they are kept, the clients connected, whether the server is stopping, and the state SPOP draws from.";
-  public map: HashMap<Box<Slots<u8>>, Entry, ceiling>;
+  public map: HashMap<Key, Entry, ceiling>;
   public due: PriorityQueue<Due, ceiling>;
   public log: Box<Slots<u8>>;
   public logging: Bool;

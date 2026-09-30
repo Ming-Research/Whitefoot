@@ -1,3 +1,4 @@
+alias Key = pkg::bytes::Key;
 alias KeyEnv = pkg::bytes::KeyEnv;
 alias byte_at = pkg::bytes::byte_at;
 
@@ -345,14 +346,14 @@ fn client_new(capacity: u64) -> made: Client pure contract {
   ) {
     place_back(window: &bytes.inner, value: 0_u8);
   }
-  let items = box_slots_new::<Box<Slots<u8>>>(capacity: 16_u64);
+  let items = box_slots_new::<Key>(capacity: 16_u64);
   let scores = box_slots_new::<f64>(capacity: 16_u64);
-  let keys = KeyEnv(seed: 0_u64);
+  let keys = KeyEnv();
   return Client(bytes: move bytes, at: 0_u64, now: 0_u64, state: 0_u64, number: 0_u64, low: 0_i64, high: 0_i64, items: move items, scores: move scores, keys: keys, random: 0_u64);
 }
 
 fn clear_items(client: &Client) -> result: unit writes(client) {
-  doc "Drops every prepared string and score.";
+  doc "Drops every prepared key and score.";
   loop @strings {
     if client^.items.inner.len > 0_u64 {
       let dropped = take_back(window: &client^.items.inner);
@@ -370,8 +371,8 @@ fn clear_items(client: &Client) -> result: unit writes(client) {
   return unit;
 }
 
-fn push_item(client: &Client, item: Box<Slots<u8>>) -> result: unit writes(client) {
-  doc "Adds a prepared string, growing the space for them when it is full.";
+fn push_item(client: &Client, item: Key) -> result: unit writes(client) {
+  doc "Adds a prepared key, growing the space for them when it is full.";
   let capacity = client^.items.inner.cap;
   if client^.items.inner.len >= capacity {
     let doubled = capacity +wrap capacity;

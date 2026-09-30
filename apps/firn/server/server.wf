@@ -108,7 +108,7 @@ fn read_time(clock: &Clock, wall: &WallClock, origin: Instant) -> result: Time r
 
 fn serve(connection: TcpConnection, factory: HandleFactory, store: Shared<Store>, clock: Clock, wall: WallClock, origin: Instant, idle: u64) -> result: unit pure waits {
   doc "Serves one client in a context of its own: reads requests into its input, which grows to hold a request larger than it, answers every complete request the input holds with one send, sending sooner once 16,384 bytes of replies are waiting, and keeps an incomplete one for the next read. Every command of one read sees the clocks as read once after it; a client silent for idle seconds, when idle is not zero, is closed, and so is one that sends a malformed request, after its error.";
-  let env = KeyEnv(seed: 0_u64);
+  let env = KeyEnv();
   let client = client_new(capacity: 16384_u64);
   let args = box_slots_new::<Span>(capacity: 16_u64);
   let input = input_new(capacity: 16384_u64);
@@ -193,7 +193,7 @@ fn serve(connection: TcpConnection, factory: HandleFactory, store: Shared<Store>
 
 fn expire_keys(store: Shared<Store>, clock: Clock, origin: Instant) -> result: unit pure waits {
   doc "Wakes ten times a second and removes the keys whose expiry has passed, in batches of atomic statements so that clients proceed between them, until the server stops. A key whose expiry did not fit the queue is removed only when a command finds it expired.";
-  let env = KeyEnv(seed: 0_u64);
+  let env = KeyEnv();
   loop @ticks {
     let started = std::time::now(clock: &clock);
     let wake = instant_after(instant: started, nanoseconds: 100000000_u64);

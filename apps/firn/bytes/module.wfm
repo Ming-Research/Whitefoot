@@ -1,8 +1,13 @@
 alias HashMapKey = std::collections::hash_map::HashMapKey;
 
 public struct KeyEnv {
-  doc "What hashing and comparing keys reads: the seed every key hash starts from.";
-  public seed: u64;
+  doc "The environment firn's key protocols take. It holds nothing: every key carries the hash it was made with.";
+}
+
+public struct Key {
+  doc "A string with its hash, computed once when the key is made, so that a hash map neither hashes it again nor compares the bytes of two keys whose hashes differ.";
+  public hash: u64;
+  public bytes: Box<Slots<u8>>;
 }
 
 public struct Integer {
@@ -13,16 +18,24 @@ public struct Integer {
 
 public fn byte_at(input: &[u8], index: u64) -> result: u8 reads(input) doc "Reads one byte, or zero at a position the range does not hold.";
 
-public fn bytes_hash(env: &KeyEnv, key: &Box<Slots<u8>>) -> hash: u64 reads(env), reads(key) doc "FNV-1a over the string's bytes, started from the seed.";
-
-public fn bytes_equal(env: &KeyEnv, left: &Box<Slots<u8>>, right: &Box<Slots<u8>>) -> equal: Bool reads(left), reads(right) doc "Two strings are equal when their lengths and every byte are.";
-
 public fn bytes_compare(left: &Box<Slots<u8>>, right: &Box<Slots<u8>>) -> order: i32 reads(left), reads(right) doc "Orders two strings byte by byte as unsigned values, a proper prefix first: -1, 0 or 1.";
 
-public binding Bytes : HashMapKey<Box<Slots<u8>>, KeyEnv> {
-  hash = bytes_hash;
-  equal = bytes_equal;
+public fn key_hash(env: &KeyEnv, key: &Key) -> hash: u64 reads(key) doc "The hash a key carries.";
+
+public fn key_equal(env: &KeyEnv, left: &Key, right: &Key) -> equal: Bool reads(left), reads(right) doc "Two keys are equal when their hashes, lengths and every byte are.";
+
+public binding Keyed : HashMapKey<Key, KeyEnv> {
+  hash = key_hash;
+  equal = key_equal;
 }
+
+public fn make_key(input: &[u8], start: u64, length: u64) -> made: Key reads(input) doc "Copies bytes of the input into a key with the FNV-1a hash of its bytes, the hash every key of firn carries.";
+
+public fn key_of(bytes: Box<Slots<u8>>) -> made: Key pure doc "A string made into a key with the FNV-1a hash of its bytes.";
+
+public fn copy_key(key: &Key) -> made: Key reads(key) doc "A copy of a key, its hash kept.";
+
+public fn key_bytes(key: Key) -> bytes: Box<Slots<u8>> pure doc "A key's string, its hash dropped, for a value that is stored where no hash map looks it up.";
 
 public fn copy_bytes(input: &[u8], start: u64, length: u64) -> made: Box<Slots<u8>> reads(input) doc "Copies the bytes of the input from a position into a string of its own; a position the input does not hold reads as zero. No request carries an argument of 2^62 bytes, the most a string holds; a longer one copies as the empty string.";
 

@@ -7,12 +7,36 @@ fn byte_at(input: &[u8], index: u64) -> result: u8 reads(input) {
   return 0_u8;
 }
 
-fn bytes_hash(env: &KeyEnv, key: &Box<Slots<u8>>) -> hash: u64 reads(env), reads(key) {
-  doc "FNV-1a over the string's bytes, started from the seed.";
-  let hash = ixor(14695981039346656037_u64, env^.seed);
-  let length = key^.inner.len;
+fn key_hash(env: &KeyEnv, key: &Key) -> hash: u64 reads(key) {
+  doc "The hash a key carries.";
+  return key^.hash;
+}
+
+fn key_equal(env: &KeyEnv, left: &Key, right: &Key) -> equal: Bool reads(left), reads(right) {
+  doc "Two keys are equal when their hashes, lengths and every byte are.";
+  if left^.hash != right^.hash {
+    return False();
+  }
+  let length = left^.bytes.inner.len;
+  if length != right^.bytes.inner.len {
+    return False();
+  }
   for @bytes (index in 0_u64..length) {
-    let byte = key^.inner[index];
+    let first = left^.bytes.inner[index];
+    let second = right^.bytes.inner[index];
+    if first != second {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn string_hash(bytes: &Box<Slots<u8>>) -> hash: u64 reads(bytes) {
+  doc "FNV-1a over a string's bytes.";
+  let hash = 14695981039346656037_u64;
+  let length = bytes^.inner.len;
+  for @bytes (index in 0_u64..length) {
+    let byte = bytes^.inner[index];
     let wide = cvt::<u8, u64>(byte);
     let folded = ixor(hash, wide);
     set hash = folded *wrap 1099511628211_u64;
@@ -20,20 +44,31 @@ fn bytes_hash(env: &KeyEnv, key: &Box<Slots<u8>>) -> hash: u64 reads(env), reads
   return hash;
 }
 
-fn bytes_equal(env: &KeyEnv, left: &Box<Slots<u8>>, right: &Box<Slots<u8>>) -> equal: Bool reads(left), reads(right) {
-  doc "Two strings are equal when their lengths and every byte are.";
-  let length = left^.inner.len;
-  if length != right^.inner.len {
-    return False();
-  }
-  for @bytes (index in 0_u64..length) {
-    let first = left^.inner[index];
-    let second = right^.inner[index];
-    if first != second {
-      return False();
-    }
-  }
-  return True();
+fn make_key(input: &[u8], start: u64, length: u64) -> made: Key reads(input) {
+  doc "Copies bytes of the input into a key with the FNV-1a hash of its bytes, the hash every key of firn carries.";
+  let bytes = copy_bytes(input: input, start: start, length: length);
+  let hash = string_hash(bytes: &bytes);
+  return Key(hash: hash, bytes: move bytes);
+}
+
+fn key_of(bytes: Box<Slots<u8>>) -> made: Key pure {
+  doc "A string made into a key with the FNV-1a hash of its bytes.";
+  let hash = string_hash(bytes: &bytes);
+  return Key(hash: hash, bytes: move bytes);
+}
+
+fn copy_key(key: &Key) -> made: Key reads(key) {
+  doc "A copy of a key, its hash kept.";
+  let length = key^.bytes.inner.len;
+  let window = &key^.bytes.inner[0_u64..length];
+  let bytes = copy_bytes(input: window, start: 0_u64, length: length);
+  return Key(hash: key^.hash, bytes: move bytes);
+}
+
+fn key_bytes(key: Key) -> bytes: Box<Slots<u8>> pure {
+  doc "A key's string, its hash dropped, for a value that is stored where no hash map looks it up.";
+  let Key(hash: dropped, bytes: bytes) = move key;
+  return move bytes;
 }
 
 fn bytes_compare(left: &Box<Slots<u8>>, right: &Box<Slots<u8>>) -> order: i32 reads(left), reads(right) {

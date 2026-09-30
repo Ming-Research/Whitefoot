@@ -1,4 +1,5 @@
-alias Bytes = pkg::bytes::Bytes;
+alias Key = pkg::bytes::Key;
+alias Keyed = pkg::bytes::Keyed;
 alias Client = pkg::protocol::Client;
 alias Entry = pkg::store::Entry;
 alias KeyEnv = pkg::bytes::KeyEnv;
@@ -13,8 +14,8 @@ alias Value = pkg::store::Value;
 alias arg = pkg::protocol::arg;
 alias byte_at = pkg::bytes::byte_at;
 alias ceiling = pkg::store::ceiling;
+alias copy_key = pkg::bytes::copy_key;
 alias clear_items = pkg::protocol::clear_items;
-alias copy_bytes = pkg::bytes::copy_bytes;
 alias expired = pkg::store::expired;
 alias hash_map_edit = std::collections::hash_map::hash_map_edit;
 alias hash_map_lookup = std::collections::hash_map::hash_map_lookup;
@@ -209,15 +210,7 @@ fn score_integer(score: f64) -> value: i64 pure {
   }
 }
 
-fn clone_bytes(stored: &Box<Slots<u8>>) -> made: Box<Slots<u8>> reads(stored) {
-  doc "A copy of a stored string.";
-  let length = stored^.inner.len;
-  let window = &stored^.inner[0_u64..length];
-  let made = copy_bytes(input: window, start: 0_u64, length: length);
-  return move made;
-}
-
-fn score_probe(env: &ScoreProbe, key: &Box<Slots<u8>>, value: &f64) -> result: u64 reads(value), writes(env) {
+fn score_probe(env: &ScoreProbe, key: &Key, value: &f64) -> result: u64 reads(value), writes(env) {
   doc "Records a member's score.";
   set env^.score = value^;
   set env^.found = True();
@@ -240,32 +233,32 @@ fn add_ranked(sorted: &Sorted, client: &Client) -> added: u64 writes(sorted), wr
     let keys = client^.keys;
     let absent = False();
     let probe = ScoreProbe(score: 0.0_f64, found: absent);
-    let seen = hash_map_lookup::<Bytes, f64, ScoreProbe, u64, fn score_probe, ceiling>(map: &sorted^.scores, key: &member, key_env: &keys, visit_env: &probe);
+    let seen = hash_map_lookup::<Keyed, f64, ScoreProbe, u64, fn score_probe, ceiling>(map: &sorted^.scores, key: &member, key_env: &keys, visit_env: &probe);
     if probe.found {
       let same = feq(probe.score, score);
       if same {
         let unchanged = move member;
       } else {
-        let old_member = clone_bytes(stored: &member);
+        let old_member = copy_key(key: &member);
         let old = Rank(score: probe.score, member: move old_member);
         let removed = ordered_map_remove::<RankOrder, unit, ceiling>(map: &sorted^.order, key: &old, env: &keys);
-        let new_member = clone_bytes(stored: &member);
+        let new_member = copy_key(key: &member);
         let rank = Rank(score: score, member: move new_member);
         let placed = ordered_map_put::<RankOrder, unit, ceiling>(map: &sorted^.order, key: move rank, value: unit, env: &keys);
-        let updated = hash_map_put::<Bytes, f64, ceiling>(map: &sorted^.scores, key: move member, value: score, env: &keys);
+        let updated = hash_map_put::<Keyed, f64, ceiling>(map: &sorted^.scores, key: move member, value: score, env: &keys);
       }
     } else {
-      let ranked_member = clone_bytes(stored: &member);
+      let ranked_member = copy_key(key: &member);
       let rank = Rank(score: score, member: move ranked_member);
       let placed = ordered_map_put::<RankOrder, unit, ceiling>(map: &sorted^.order, key: move rank, value: unit, env: &keys);
-      let stored = hash_map_put::<Bytes, f64, ceiling>(map: &sorted^.scores, key: move member, value: score, env: &keys);
+      let stored = hash_map_put::<Keyed, f64, ceiling>(map: &sorted^.scores, key: move member, value: score, env: &keys);
       set added = added +wrap 1_u64;
     }
   }
   return added;
 }
 
-fn add_scores(env: &Client, key: &Box<Slots<u8>>, value: &Entry) -> kind: u64 writes(env), writes(value) {
+fn add_scores(env: &Client, key: &Key, value: &Entry) -> kind: u64 writes(env), writes(value) {
   doc "Adds the prepared members at their scores to a live sorted set, recording done and how many were new in number; records wrong for another kind and expired for an expired entry.";
   let reached = expired(expires: value^.expires, now: env^.now);
   if reached {
@@ -336,24 +329,22 @@ fn run_zadd(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client
   set client^.number = 0_u64;
   let full = False();
   atomic state = &store^ {
-    let edited = hash_map_edit::<Bytes, Entry, Client, u64, fn add_scores, ceiling>(map: &state^.map, key: &key, key_env: env, edit_env: client);
+    let edited = hash_map_edit::<Keyed, Entry, Client, u64, fn add_scores, ceiling>(map: &state^.map, key: &key, key_env: env, edit_env: client);
     let create = client^.state == state_absent;
     if client^.state == state_expired {
-      let gone = hash_map_remove::<Bytes, Entry, ceiling>(map: &state^.map, key: &key, env: env);
+      let gone = hash_map_remove::<Keyed, Entry, ceiling>(map: &state^.map, key: &key, env: env);
       set create = True();
     }
     if create {
       let capacity = imax(pairs, 4_u64);
       if capacity <= ceiling {
         let order = ordered_map_new::<Rank, unit, ceiling>();
-        let scores = hash_map_new::<Box<Slots<u8>>, f64, ceiling>(capacity: capacity);
+        let scores = hash_map_new::<Key, f64, ceiling>(capacity: capacity);
         let sorted = Sorted(order: move order, scores: move scores);
         set client^.number = add_ranked(sorted: &sorted, client: client);
         let made = Value::Ranked(ranked: move sorted);
         let fresh = Entry(value: move made, expires: 0_u64);
-        let length = key.inner.len;
-        let window = &key.inner[0_u64..length];
-        let owned_key = copy_bytes(input: window, start: 0_u64, length: length);
+        let owned_key = copy_key(key: &key);
         let put = put_entry(state: &state^, key: move owned_key, held: move fresh, env: env);
         if put {
           set client^.state = state_done;
@@ -396,7 +387,7 @@ fn leftmost(node: &OrderedNode<Rank, unit>) -> found: Option<Rank> reads(node) {
   }
   if node^.entries.len > 0_u64 {
     let first = &node^.entries[0_u64].pair.key;
-    let member = clone_bytes(stored: &first^.member);
+    let member = copy_key(key: &first^.member);
     let rank = Rank(score: first^.score, member: move member);
     return Some<Rank>(value: move rank);
   }
@@ -412,7 +403,7 @@ fn lowest(sorted: &Sorted) -> found: Option<Rank> reads(sorted) {
   return None<Rank>();
 }
 
-fn pop_lowest(env: &Client, key: &Box<Slots<u8>>, value: &Entry) -> kind: u64 writes(env), writes(value) {
+fn pop_lowest(env: &Client, key: &Key, value: &Entry) -> kind: u64 writes(env), writes(value) {
   doc "Removes up to number of a live sorted set's lowest members, writing each member and its score as an array reply. Records done, or emptied when the set is left empty; wrong for another kind and expired for an expired entry.";
   let reached = expired(expires: value^.expires, now: env^.now);
   if reached {
@@ -431,8 +422,8 @@ fn pop_lowest(env: &Client, key: &Box<Slots<u8>>, value: &Entry) -> kind: u64 wr
         match move first {
           Some(value: rank) => {
             let removed = ordered_map_remove::<RankOrder, unit, ceiling>(map: &sorted^.order, key: &rank, env: &keys);
-            let dropped = hash_map_remove::<Bytes, f64, ceiling>(map: &sorted^.scores, key: &rank.member, env: &keys);
-            reply_bulk(client: env, stored: &rank.member);
+            let dropped = hash_map_remove::<Keyed, f64, ceiling>(map: &sorted^.scores, key: &rank.member, env: &keys);
+            reply_bulk(client: env, stored: &rank.member.bytes);
             let whole = score_integer(score: rank.score);
             reply_bulk_decimal(client: env, value: whole);
           }
@@ -487,12 +478,12 @@ fn run_zpopmin(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, cli
   set client^.state = state_absent;
   set client^.number = wanted;
   atomic state = &store^ {
-    let edited = hash_map_edit::<Bytes, Entry, Client, u64, fn pop_lowest, ceiling>(map: &state^.map, key: &key, key_env: env, edit_env: client);
+    let edited = hash_map_edit::<Keyed, Entry, Client, u64, fn pop_lowest, ceiling>(map: &state^.map, key: &key, key_env: env, edit_env: client);
     let emptied = client^.state == state_emptied;
     let lapsed = client^.state == state_expired;
     let removing = bor(emptied, lapsed);
     if removing {
-      let gone = hash_map_remove::<Bytes, Entry, ceiling>(map: &state^.map, key: &key, env: env);
+      let gone = hash_map_remove::<Keyed, Entry, ceiling>(map: &state^.map, key: &key, env: env);
     }
     let done = client^.state == state_done;
     let changed = bor(done, emptied);
@@ -516,7 +507,7 @@ fn run_zpopmin(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, cli
   return unit;
 }
 
-fn sorted_size(env: &Client, key: &Box<Slots<u8>>, value: &Entry) -> kind: u64 reads(value), writes(env) {
+fn sorted_size(env: &Client, key: &Key, value: &Entry) -> kind: u64 reads(value), writes(env) {
   doc "Records a live sorted set's size in number and done; wrong for another kind and expired for an expired entry.";
   let reached = expired(expires: value^.expires, now: env^.now);
   if reached {
@@ -555,9 +546,9 @@ fn run_zcard(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, clien
   set client^.state = state_absent;
   set client^.number = 0_u64;
   atomic state = &store^ {
-    let found = hash_map_lookup::<Bytes, Entry, Client, u64, fn sorted_size, ceiling>(map: &state^.map, key: &key, key_env: env, visit_env: client);
+    let found = hash_map_lookup::<Keyed, Entry, Client, u64, fn sorted_size, ceiling>(map: &state^.map, key: &key, key_env: env, visit_env: client);
     if client^.state == state_expired {
-      let gone = hash_map_remove::<Bytes, Entry, ceiling>(map: &state^.map, key: &key, env: env);
+      let gone = hash_map_remove::<Keyed, Entry, ceiling>(map: &state^.map, key: &key, env: env);
       set client^.number = 0_u64;
     }
   }
@@ -570,7 +561,7 @@ fn run_zcard(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, clien
   return unit;
 }
 
-fn member_score(env: &Client, key: &Box<Slots<u8>>, value: &Entry) -> kind: u64 reads(value), writes(env) {
+fn member_score(env: &Client, key: &Key, value: &Entry) -> kind: u64 reads(value), writes(env) {
   doc "Writes the prepared member's score in a live sorted set as a bulk string, recording done, or records absent when the set does not hold it; wrong for another kind and expired for an expired entry.";
   let reached = expired(expires: value^.expires, now: env^.now);
   if reached {
@@ -584,7 +575,7 @@ fn member_score(env: &Client, key: &Box<Slots<u8>>, value: &Entry) -> kind: u64 
         let keys = env^.keys;
         let absent = False();
         let probe = ScoreProbe(score: 0.0_f64, found: absent);
-        let seen = hash_map_lookup::<Bytes, f64, ScoreProbe, u64, fn score_probe, ceiling>(map: &sorted^.scores, key: &member, key_env: &keys, visit_env: &probe);
+        let seen = hash_map_lookup::<Keyed, f64, ScoreProbe, u64, fn score_probe, ceiling>(map: &sorted^.scores, key: &member, key_env: &keys, visit_env: &probe);
         if probe.found {
           let whole = score_integer(score: probe.score);
           reply_bulk_decimal(client: env, value: whole);
@@ -621,9 +612,9 @@ fn run_zscore(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, clie
   set client^.now = time^.check;
   set client^.state = state_absent;
   atomic state = &store^ {
-    let found = hash_map_edit::<Bytes, Entry, Client, u64, fn member_score, ceiling>(map: &state^.map, key: &key, key_env: env, edit_env: client);
+    let found = hash_map_edit::<Keyed, Entry, Client, u64, fn member_score, ceiling>(map: &state^.map, key: &key, key_env: env, edit_env: client);
     if client^.state == state_expired {
-      let gone = hash_map_remove::<Bytes, Entry, ceiling>(map: &state^.map, key: &key, env: env);
+      let gone = hash_map_remove::<Keyed, Entry, ceiling>(map: &state^.map, key: &key, env: env);
     }
   }
   clear_items(client: client);

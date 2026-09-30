@@ -84,7 +84,7 @@ fn replay(store: &Shared<Store>, factory: &HandleFactory, root: &DirectoryRead, 
   let applied = 0_u64;
   match open_file(factory: factory, root: root, name: name, start: 0_u64, end: name_length) {
     Ok(value: file) => {
-      let env = KeyEnv(seed: 0_u64);
+      let env = KeyEnv();
       let client = client_new(capacity: 16384_u64);
       let args = box_slots_new::<Span>(capacity: 16_u64);
       let input = input_new(capacity: 65536_u64);
