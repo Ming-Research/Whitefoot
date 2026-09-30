@@ -1815,7 +1815,7 @@ rarely insert at the same place.
   another representation. The [integrated-main compiler comparison](../research/experiments/modular-build-cost/RESULTS.md#integrated-main-compiler-cost)
   records paired entry-edit overhead of +11.3% for GrowVector and +20.0% for
   HashMap at `7ec0a8b` against main `f502425`, with greater compiler RSS/cache
-  use; the later main `4459df88` integration is unmeasured. Native same-image
+  use; later main integrations have no fresh matched-main measurement. Native same-image
   controls failed twice, so the approximately 5%
   native target is unqualified. Recheck adapter attribution on the current
   model before selecting the broader sharing boundary. The [current-model
@@ -1838,8 +1838,13 @@ rarely insert at the same place.
   and was removed. A shared stored-identity catalogue then reduced native
   HashMap cache size by 18.3%, but entry time by only 1.3% native / 1.2%
   compiler-only, while second-entry compiler RSS rose 7.5%. It too failed
-  and was removed. These screens leave no measured gain for the tested
-  local caches. Before another implementation, reassess the original import
+  and was removed. A subsequent [shared callable ownership trial](../research/experiments/modular-build-cost/RESULTS.md#shared-callable-ownership-trial)
+  retained immutable signatures and their encodings across speculative forks.
+  It failed too: HashMap improved 5.58% native but only 1.15% compiler-only,
+  and GrowVector regressed 2.57% native. Its five compiler edits and dedicated
+  test were removed. The owner closed this investigation round; reopen only
+  for a newly requested consumer-boundary experiment. These screens leave no
+  selected improvement from the tested local mechanisms. Before another implementation, reassess the original import
   boundary: a module-owned checked result shared through composition might
   avoid rebuilding per-function metadata, while references spanning module
   inventories could increase ordinary lookup costs or retain more live memory. Its

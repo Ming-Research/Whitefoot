@@ -2107,6 +2107,63 @@ preceding compiler-only null control failed the direction criterion. No timing
 comparison was admitted. The older joint-cost evidence remains historical;
 current-model dominance and the wider sharing boundary remain open.
 
+### Shared callable ownership screen
+
+The next bounded representation experiment shares immutable formed callable
+metadata and its complete canonical input through speculative composition
+forks. This tests a prerequisite of module-owned result sharing; it does not
+implement a module-owned checked body or change global handle ownership.
+The current import boundary remains the unadopted proposal. Signature entries
+own their input encoding, and cloning an inventory shares entries. Mutation
+separates the entry and clears its encoding before exposing a mutable borrow.
+Every retained consumer still compares its complete expected input. Headers
+belong to the same immutable resolved source, and named identities remain
+stable within that check; no encoded value crosses a fresh resolved check.
+Nominal inputs, including separately stored formed invariants, remain freshly
+constructed. No-op allocation-bit assignments should preserve the entry.
+
+This differs from the rejected version-token memo: that trial deeply cloned
+values and started an empty memo in each speculative fork. Sharing an owned
+entry preserves both the value and its encoding across a fork without looking
+up a revision in a separate map. The tradeoff is one pointer lookup per
+signature access and retention of canonical bytes. The earlier staging cost
+alone does not justify this change; compare total build cost. Existing dense
+IDs retain one current inventory owner, and ordinary formation, rollback,
+composition and lowering judgments remain unchanged.
+
+Before selecting it, run seven alternating pairs against the same-source
+unmodified compiler, in native and compiler-only modes on GrowVector and
+HashMap. Precede each mode with seven same-image pairs. For this new screen,
+require the null paired median within 3% and at least five of seven pairs
+within 5% of zero; report all pairs. The previous four-of-five sign condition
+rejects 12 of 32 equally likely fair sign sequences even when differences
+are arbitrarily small. It is therefore replaced prospectively by an effect
+size control, not used to readmit any previous failed experiment. A failed
+new control ends this screen without retries selected for passing.
+
+Require at least 3% lower HashMap paired entry-edit time in both modes, no
+GrowVector paired-median loss above 2%, no compiler cold-time or per-step
+median RSS increase above 5%, equal LLVM/native outputs and zero unchanged
+library structural/lowering walks. Check value/encoding isolation on mutation
+in both fork directions, discarded-fork ordinal reuse, changed callable
+claims and the existing rollback/current-input tests. A surviving screen
+continues to an equally SHA-optimized current-main comparison, edit history
+and broader correctness qualification; it does not itself meet the owner's
+approximately 5% native overhead target. A failed screen removes the trial
+implementation and records what it did and did not discriminate.
+
+The [completed screen](../../experiments/modular-build-cost/RESULTS.md#shared-callable-ownership-trial)
+passed its null, output and reuse controls but failed selection: HashMap's
+paired entry-edit gain was 5.58% native and only 1.15% compiler-only, while
+GrowVector's native paired median regressed 2.57%. The five trial compiler
+edits and their dedicated test were removed. Sharing callable metadata alone
+did not establish the required gain; module-owned checked bodies and their
+consumer lookup costs remain unimplemented and unmeasured. This round closes
+at the owner's direction, retaining the useful integration and prior hashing
+change, with no new representation selected and no adoption of the Draft
+import proposal. Reopening needs an explicit new investigation of the wider
+consumer boundary, not another run of this failed screen.
+
 ## Recursive dependencies and generic instances
 
 ### Keep module, call and proof graphs distinct

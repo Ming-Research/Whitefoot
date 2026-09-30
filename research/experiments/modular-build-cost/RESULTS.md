@@ -1038,6 +1038,100 @@ protocol. Raw local records are `f502-omit-{bodies,lowerings,both}-outputs.jsonl
 and `f502-omission-null-pure.jsonl`. Keep each exported scratch compiler's
 output directory independent and verify artifact identity before observation.
 
+### Shared callable ownership trial
+
+The [prospective screen](../../investigations/modular-compilation/DESIGN.md#shared-callable-ownership-screen)
+tested shared immutable callable entries and their complete input encoding
+across speculative forks, with copy-on-write invalidation. It did not replace
+the composition's dense handles with module-owned checked bodies. Unlike the
+previous version-token memo, it retained both values and encodings across
+forks and avoided invalidation on unchanged allocation-bit assignments.
+Every body still compared every complete consumed input; nominal inputs,
+including formed type invariants, remained freshly constructed.
+
+The unmodified control is integration `b02dff8329d055d72689a3efcde882008a5e7df4`,
+which merges main `db3ba937f346e668f870cb634b99cdfe4effc687`. The trial adds
+only its five-file compiler patch. Both use the same runtime SHA optimization
+and Cargo gate profile. Compiler construction is excluded: the control build
+took 45.64 s; the trial test build took 46.75 s and its executable build
+33.31 s. One new ownership/isolation test and 74 driver tests passed; the
+latter executed in 1.39 s. An extracted copy of the actual ownership type and
+test also passed under `rustc --test`; deliberately retaining a stale encoding
+or deep-copying a fork's entries each made it fail with exit 101. The source
+extraction changed visibility only, not ownership or test logic.
+
+Seven alternating pairs per mode and workload completed 448 samples across
+two null and two causal comparisons. All 224 paired LLVM comparisons and
+112 paired native runtime comparisons agreed; all 28 candidate-side native
+entry edits showed positive library reuse and zero unchanged-library body
+and lowering walks. The new effect-size null control passed in both modes:
+
+| Mode | GrowVector paired median | Pairs within 5% | HashMap paired median | Pairs within 5% |
+|---|---:|---:|---:|---:|
+| Compiler-only | -1.01% | 7/7 | +0.39% | 7/7 |
+| Native | -0.86% | 6/7 | +2.45% | 6/7 |
+
+Elapsed medians in milliseconds, control / trial. Entry-change percentages
+below are medians of paired ratios, not ratios of these wall-time medians.
+
+| Step | GrowVector native | HashMap native | GrowVector compiler-only | HashMap compiler-only |
+|---|---:|---:|---:|---:|
+| cold | 1437.12 / 1441.82 | 1985.72 / 1991.92 | 350.17 / 355.44 | 733.48 / 728.87 |
+| warm | 95.72 / 94.15 | 94.51 / 95.05 | 12.94 / 12.50 | 13.40 / 13.41 |
+| second-entry | 333.19 / 325.05 | 662.07 / 657.60 | 98.04 / 96.11 | 255.68 / 244.28 |
+| entry-edit | 198.34 / 203.43 | 354.43 / 341.05 | 114.66 / 115.91 | 265.27 / 262.62 |
+
+All seven causal entry-edit changes, percent:
+
+- grow-vector, pure: +61.89, -2.86, +6.11, -0.58, -1.88, +1.71, -0.62; median -0.58%.
+- hash-map, pure: -4.10, +3.05, -1.15, -4.23, -0.13, +0.11, -30.39; median -1.15%.
+- grow-vector, native: +4.96, +2.33, +2.57, -2.74, +37.79, +2.66, -5.53; median +2.57%.
+- hash-map, native: -4.53, -0.67, +0.29, -6.32, -6.55, -5.58, -8.51; median -5.58%.
+
+HashMap's native gain of 5.58% did not reproduce as the required compiler-only
+gain (1.15%, below 3%). GrowVector's native paired median regressed 2.57%,
+above the 2% limit. Both independently fail the screen. Retain the large
+outliers rather than removing them; a host-process snapshot after the pure
+comparison did not establish their cause. The passing preceding null does
+not make subsequent noise disappear or establish a population confidence bound.
+
+Compiler-only peak RSS medians in MiB, control / trial:
+
+| Step | GrowVector | HashMap |
+|---|---:|---:|
+| cold | 57.78 / 59.55 | 95.95 / 97.25 |
+| warm | 15.31 / 15.30 | 17.19 / 17.20 |
+| second-entry | 37.53 / 37.81 | 65.77 / 67.20 |
+| entry-edit | 37.83 / 37.84 | 65.22 / 66.41 |
+
+All per-step compiler RSS medians and cold compiler-time changes stayed within
+the screen's 5% limit; those do not rescue the failed latency criteria.
+Cache bytes were identical in every causal pair: entry edits ended at
+4,958,584 / 16,665,768 bytes in compiler-only mode and 5,120,531 / 16,878,179
+bytes in native mode for GrowVector / HashMap. These are cache sizes, not
+compiler RSS. Native warm-emit RSS is not used as compiler peak evidence.
+
+Remove all five trial compiler edits, including the trial-only ownership
+test, because the unselected representation no longer exists. The integrated
+compiler and its existing correctness controls remain unchanged. No new
+representation or performance optimization is selected. At the owner's
+request, close this investigation round instead of starting another trial.
+The additional current-main baseline build was stopped; no fresh matched-main
+comparison, history qualification or full module-owned body implementation
+was completed. The roughly 5% matched-main native target remains unmet by the
+recorded evidence; these causal results must not be relabeled as main overhead.
+
+Reproduce with `units.py --rounds 7 --workloads grow-vector hash-map`, using
+`--require-reuse` for native and a separate `--compiler-only` invocation,
+under the host-wide guard. Raw `shared-callable-{null,causal}-{pure,native}.jsonl`,
+the compiler patch and control logs remain in the local audit directory.
+The one-shot orchestration and extracted mutation-test files were removed.
+Artifact SHA-256 digests:
+
+- Control executable: `7b425bbb1e1bdf80be16953ef4ffa53d48bdde598581b94d0b6bb7beff65325b`.
+- Trial executable: `3eae48dc55568341195f3efcc4cce67a643c0d3bb096e7bf542613f77fc63419`.
+- Trial patch: `09b2047ab44976fe7843393c98ef68cb0f332727485dee7a7f3224debe4bbe74`.
+
 ## Limits
 
 - The original backend comparison above used two small runtime loops on one
