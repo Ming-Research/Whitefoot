@@ -105,7 +105,7 @@ slowest there.
 
 ## Design of the program
 
-`apps/firn` is a module program of six modules and about 4,900 lines;
+`apps/firn` is a module program of six modules and about 5,200 lines;
 [its README](../../../apps/firn/README.md) lists them. Each choice below keeps
 Redis's observable behavior on the suite's commands and says what it refused.
 
@@ -133,6 +133,15 @@ Redis's observable behavior on the suite's commands and says what it refused.
   out of the keyspace and putting it back, which needs no callback, was
   refused: it costs two hash operations per command where the callback costs
   one.
+- **Every key, member and field carries its hash**, computed when it is
+  copied out of the request, and the hash maps compare two keys' bytes only
+  when their hashes agree. Hashing inside the atomic statement, where the
+  library's maps hash a key, was refused: the statement is what two drivers
+  wait on, and the probes then chase each probed key's pointer to compare
+  bytes that a stored hash rules out (measured under
+  [Keys that carry their hash](#the-third-run-and-one-atomic-statement-per-read-results)).
+  Each command still takes the keyspace in an atomic statement of its own;
+  answering a whole read in one was refused in the same experiment.
 - **A command is found by a number packed from its name's first eight
   letters**, compared once per known command, rather than by comparing names
   letter by letter.
@@ -307,3 +316,50 @@ each). By median, batching is kept if at depth 16 *batched* reaches at least
 1.15 times *keyed* on two of `SET`, `INCR` and `MSET` with no test below
 0.90, and at depth 1, where a read holds one command, *batched* stays at or
 above 0.90 of *keyed* on all three. Otherwise it is reverted.
+
+### The third run, and one atomic statement per read: results
+
+Depth 16, medians of five interleaved rounds (the `third` lines of
+[firn-samples.csv](../../experiments/io-completion-bench/firn-samples.csv)):
+
+| Test | hashed | keyed | control | batched | keyed / hashed | control / hashed | batched / keyed |
+|---|---|---|---|---|---|---|---|
+| `SET` | 631,313 | 705,633 | 631,380 | 799,680 | 1.12 | 1.000 | 1.13 |
+| `GET` | 727,096 | 922,367 | 773,994 | 922,367 | 1.27 | 1.064 | 1.00 |
+| `INCR` | 648,368 | 749,438 | 666,519 | 749,813 | 1.16 | 1.028 | 1.00 |
+| `ZADD` | 247,249 | 257,798 | 260,666 | 198,216 | 1.04 | 1.054 | 0.77 |
+| `MSET` | 56,249 | 84,983 | 49,278 | 67,700 | 1.51 | 0.876 | 0.80 |
+
+Depth 1, the `depth1` lines:
+
+| Test | keyed | batched | batched / keyed |
+|---|---|---|---|
+| `SET` | 111,037 | 114,194 | 1.03 |
+| `GET` | 114,234 | 117,592 | 1.03 |
+| `INCR` | 108,061 | 116,918 | 1.08 |
+
+**Keys that carry their hash: kept, on the three runs together rather than
+on the letter of either criterion.** In the third run *keyed* reached 1.16
+times *hashed* on `INCR` and 1.51 on `MSET`, with no test below 0.90, but
+the control fell to 0.876 on `MSET`, just outside the 0.88 the revised
+criterion allowed, so by its letter this run does not count either. Across
+the three runs *keyed* exceeded *hashed* on every test in every run: `SET`
+1.37, 1.22 and 1.12; `INCR` 1.09, 1.06 and 1.16; `MSET` 1.56, 1.38 and 1.51;
+`GET` 1.11, 1.07 and 1.27; `ZADD` 1.02, 1.02 and 1.04. The control's medians
+ranged from 0.88 to 1.06 over the same runs, so the `MSET` and `SET` gains lie
+outside anything the host's variation produced, while `INCR`'s and
+`ZADD`'s do not by themselves. The lesson for the next experiments on this
+host: compare the ratio of each round's pair, not medians taken apart, and
+give a band no narrower than the 12% measured here.
+
+**One atomic statement per read: refused.** *batched* reached 1.13 times
+*keyed* on `SET` and matched it on `GET` and `INCR`, but fell to 0.80 on
+`MSET` and 0.77 on `ZADD`, below the 0.90 floor. The commands that do the
+most work outside the keyspace, copying twenty arguments or reading scores,
+lost the most when that work moved inside the statement: with two drivers
+the statement is the bottleneck, so what it holds costs more than the
+takings it saves. The `SET` gain says the takings are not free, so the
+remaining form of the idea is to prepare every command of a read outside the
+statement and apply them all inside one; that splits every command into a
+preparing and an applying part and is left until the statement's own work
+has been reduced.
