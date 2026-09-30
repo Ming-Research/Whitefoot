@@ -26,7 +26,9 @@ mod type_regions;
 mod types;
 
 pub(crate) use receipts::ProofReceipts;
-pub(crate) use repairs::target_allocation_count;
+pub(crate) use repairs::{
+    header_invariant_scope_repair, postcondition_selector_repair, target_allocation_count,
+};
 
 use std::collections::{HashMap, HashSet};
 

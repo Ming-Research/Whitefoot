@@ -352,15 +352,20 @@ rarely insert at the same place.
   checker that print a fixed repair sentence have no pair. Among
   them are TYPE-2's "build it with a construction function [OP-13]" for a
   storage shape or a cell, OWN-1's "write `move p` for the affine place" and
-  "use the copy place without `move`", TYPE-9's inline-shape and
-  content-move repairs, and EFF-5's "these two entries of the callee's row
+  "use the copy place without `move`", TYPE-9's inline-shape repair, and
+  EFF-5's "these two entries of the callee's row
   may reach overlapping places through one argument", whose pair v0.74
   accepts now that an index and a range can be proved apart: every pair of
   one argument's declared paths a call compares now has a position to
   prove, so only a joined argument naming two places still reaches it. Some cannot be carried out as written: TYPE-9's
-  content-move repair writes `free_empty(move b)` without the argument name
-  GRAM-11 requires and offers the cell's scope-exit release to a content
-  whose elements are linear, and PROV-6's partial-consume repair writes the
+  inline-shape fallback sentence offers a constant-capacity form for
+  `Segments<T>`, which has none [TYPE-9]; its reachability is unverified.
+  A direct `Segments<u64>` parameter instead reaches TYPE-9's type mismatch
+  with no repair (`type9-neg-segments-parameter`), although the rule requires
+  one. Audit the inline-placement rejection paths, offer only wrapping in a
+  `Box` for segments, and pin each reachable repair when revisiting those
+  diagnostics.
+  PROV-6's partial-consume repair writes the
   placeholder `let N(f: a, ...) = move v;`. PROV-6's LinearValueNotConsumed
   offers that placeholder as its second route for every linear binding,
   although an opaque host handle such as `ReadFile` cannot be taken apart
@@ -485,18 +490,6 @@ rarely insert at the same place.
   Reopen when a program cannot copy the field, or with the next change to
   struct invariants.
 
-- **Two rejections writers meet carry no repair.** `InvalidPostconditionSelector`
-  for a route the version does not admit, such as `when Err(error: e):` or a
-  variant of a program's own enum, names neither the admitted `Ok` and `Some`
-  routes nor the result types they apply to, and `InvisibleUse` for a header
-  invariant named after its loop does not say the name's scope ended with
-  the loop body [INV-1]; the Snowghost writers reported changing result
-  types and retrying certificates, which either repair would have
-  shortened. Add a repair to each under `compiler/diagnostic-repairs`,
-  pinned with a program per alternative.
-  Found in the writer-lost-facts investigation; reopen with the next
-  diagnostics change.
-
 - **An opaque struct's capabilities ignore its fields.** The checker gives
   every opaque struct a module declares the field-less host representation
   (`CheckedNominalKind::Opaque`), whose capabilities come from its modifiers
@@ -522,7 +515,9 @@ rarely insert at the same place.
 - **The container inventory's comments predate Segments.**
   `compiler/src/resolution/kernel.rs` describes `ContainerShape` as three
   storage shapes and a cell and `ContainerNominal::shape` as one of four,
-  although the enum includes `Segments`. This misstates the inventory for a
+  although the enum includes `Segments`; `DeclarationMeta::container` in
+  `compiler/src/resolution/engine.rs` repeats the four-shape inventory.
+  This misstates the inventory for a
   reader adding a consumer. Update those descriptions when the nominal
   inventory is next edited; the storage-destructuring repair uses its actual
   identities and needs no inventory change.
