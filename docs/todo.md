@@ -800,6 +800,13 @@ rarely insert at the same place.
   unobservable, prevent reference escape and separate the callback
   environments' accessed state from queue writes, giving grounds to
   investigate physical residency without changing source acceptance or API.
+  Callback-environment disjointness alone is insufficient:
+  `priority_queue_child` declares `reads(queue.storage)`. The sink needs a
+  verified actual access slice, or ordinary inlining, proving that the
+  child's reads are disjoint from the pending slot. Current
+  `IrSourceSignature` and `IrSourceCall` retain modes and borrow/allocation
+  information but no complete access map. This requires a separate proof
+  over the closed CFG and owner flow, beyond result placement.
   The generic owner domain and every ordinary exit's materialization and
   cleanup still need proof; contexts, waits, unknown transport and the CFG
   carrying that owner remain obligations. Lazy capture at the first exchange
