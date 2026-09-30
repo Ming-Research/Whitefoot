@@ -31,7 +31,8 @@ fn watch(factory: HandleFactory, input: InputStream, state: Shared<Turns>) -> re
   doc "Reads once from the standard input and then sets the stop mark, whatever the read answered.";
   let buffer = array_filled::<u8, 16>(value: 0_u8);
   let window = &buffer[0_u64..16_u64];
-  match read_next(factory: &factory, input: &input, destination: window, start: 0_u64, end: 16_u64) {
+  let no_deadline = None<std::time::Instant>();
+  match read_next(factory: &factory, input: &input, destination: window, start: 0_u64, end: 16_u64, deadline: no_deadline) {
     Ok(value: n) => {
       let unused = n;
     }
@@ -47,7 +48,9 @@ fn watch(factory: HandleFactory, input: InputStream, state: Shared<Turns>) -> re
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "Two contexts hand a turn back and forth through a guard and stop only after a third context's read has completed. The two players are never both waiting, so the program finishes only if the host's answer to the read reaches its context while contexts are ready [WAIT-2].";
-  let Inputs(args: unused_args, cwd: cwd, stdout: unused_out, stderr: unused_err, handles: handles, stdin: input) = move inputs;
+  let Inputs(args: unused_args, cwd: cwd_directory, stdout: unused_out, stderr: unused_err, handles: handles, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
+  std::fs::close_directory_write(factory: &handles, directory: move cwd_write);
   close_directory(factory: &handles, directory: move cwd);
   let start = Turns(turn: 0_u64, stop: 0_u64);
   let state = shared_new::<Turns>(value: start);

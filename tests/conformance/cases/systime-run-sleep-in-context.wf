@@ -1,0 +1,35 @@
+alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias Instant = std::time::Instant;
+alias exit_status = std::process::exit_status;
+
+fn nap(until: Instant) -> result: unit pure waits {
+  std::time::sleep_until(deadline: until);
+  return unit;
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  let Inputs(args: unused_args, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: clock, wall_clock: wall_clock) = move inputs;
+  let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
+  std::fs::close_directory_write(factory: &handles, directory: move cwd_write);
+  std::fs::close_directory(factory: &handles, directory: move cwd);
+  let begin = std::time::now(clock: &clock);
+  let wake = std::time::instant_after(instant: begin, nanoseconds: 40000000_u64);
+  let short = std::time::instant_after(instant: begin, nanoseconds: 5000000_u64);
+  let napped = spawn nap(until: wake);
+  std::time::sleep_until(deadline: short);
+  let middle = std::time::now(clock: &clock);
+  let rested = napped;
+  let finished = std::time::now(clock: &clock);
+  let early = std::time::instant_reached(deadline: short, instant: middle);
+  if early {
+  } else {
+    return exit_status(code: 1_u8);
+  }
+  let joined = std::time::instant_reached(deadline: wake, instant: finished);
+  if joined {
+  } else {
+    return exit_status(code: 2_u8);
+  }
+  return exit_status(code: 0_u8);
+}

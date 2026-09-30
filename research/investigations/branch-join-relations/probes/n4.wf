@@ -1,0 +1,20 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  let a = 0_u64;
+  let b = 0_u64;
+  for (
+    i in 0_u64..10_u64,
+    invariant double: 2_u64 * a <= b,
+    invariant bounded: b <= 2_u64 * i
+  ) {
+    let keep = i != 3_u64;
+    if keep {
+      set a = a + 1_u64;
+      set b = b + 2_u64;
+    }
+  }
+  let code = cvt.wrap::<u64, u8>(a);
+  return exit_status(code: code);
+}

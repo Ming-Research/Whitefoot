@@ -9,7 +9,18 @@ public opaque nocopy struct RelativePath {
 public opaque nodrop struct DirectoryRead {
 }
 
+public opaque nodrop struct DirectoryWrite {
+}
+
+public struct Directory {
+  public read: DirectoryRead;
+  public write: DirectoryWrite;
+}
+
 public opaque nodrop struct ReadFile {
+}
+
+public opaque nodrop struct WriteFile {
 }
 
 public opaque nodrop struct DirectorySource {
@@ -54,8 +65,26 @@ public fn open_file(factory: &HandleFactory, root: &DirectoryRead, name: &[u8], 
   requires end <= name^.len;
 } doc "Opens the file that the bytes of name from start to end name below root for reading.";
 
+public fn open_append(factory: &HandleFactory, root: &DirectoryWrite, name: &[u8], start: u64, end: u64) -> result: Result<WriteFile, IoError> reads(root), reads(name), writes(factory) waits contract {
+  requires start <= end;
+  requires end <= name^.len;
+} doc "Opens the file that the bytes of name from start to end name below root for appending, creating it empty when no entry has that name.";
+
+public fn append_once(factory: &HandleFactory, file: &WriteFile, source: &[u8], start: u64, end: u64) -> result: Result<u64, IoError> reads(source), writes(factory), writes(file) waits contract {
+  requires start <= end;
+  requires end <= source^.len;
+  ensures when Ok(value: next): start <= next;
+  ensures when Ok(value: next): next <= end;
+} doc "Appends bytes of source from start toward end to the end of file with one host write; Ok carries the index after the last byte appended.";
+
+public fn sync_file(factory: &HandleFactory, file: &WriteFile) -> result: Result<unit, IoError> writes(factory), writes(file) waits doc "Hands every byte appended to file before this call to the host's durability mechanism; Ok reports that the host accepted them.";
+
 public fn close_read(factory: &HandleFactory, file: ReadFile) -> result: Result<unit, IoError> writes(factory) waits doc "Closes file.";
 
+public fn close_write(factory: &HandleFactory, file: WriteFile) -> result: Result<unit, IoError> writes(factory) waits doc "Closes file.";
+
 public fn close_directory(factory: &HandleFactory, directory: DirectoryRead) -> result: Result<unit, IoError> writes(factory) waits doc "Closes directory.";
+
+public fn close_directory_write(factory: &HandleFactory, directory: DirectoryWrite) -> result: Result<unit, IoError> writes(factory) waits doc "Closes the write half of a directory.";
 
 public fn close_directory_source(factory: &HandleFactory, source: DirectorySource) -> result: Result<unit, IoError> writes(factory) waits doc "Closes the directory listing source.";

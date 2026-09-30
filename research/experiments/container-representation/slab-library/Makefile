@@ -4,7 +4,7 @@ EXE := $(if $(filter Windows_NT,$(OS)),.exe,)
 WHITEFOOTC ?= $(ROOT)/compiler/target/gate/whitefootc$(EXE)
 CLANG ?= clang
 BUILD ?= .build
-SOURCES := $(ROOT)/lib/containers/slab.wf slab-library.wf
+SOURCES := slab-library.wf
 .DELETE_ON_ERROR:
 
 include ../../../../compiler/runtime.mk
@@ -22,7 +22,7 @@ $(BUILD)/slab-library-normal.ll: $(BUILD)/slab-library.raw.ll
 	    -e 's/^declare ptr @wf_cost_allocate(i64)$$/declare noalias nonnull ptr @wf_cost_allocate(i64)/' $< > $@
 
 $(BUILD)/slab-library-retained.ll: $(BUILD)/slab-library-normal.ll
-	awk '/^define .* @wf_slab_/ { if (sub(/ #0 [{]$$/, " noinline #0 {") != 1) exit 1; retained++ } { print } END { if (retained == 0) exit 1; print "retained Slab helpers: " retained > "/dev/stderr" }' $< > $@
+	awk '/^define .* @(wf_slab_|wf_std\.collections\.slab\.slab_)/ { if (sub(/ #0 [{]$$/, " noinline #0 {") != 1) exit 1; retained++ } { print } END { if (retained == 0) exit 1; print "retained Slab helpers: " retained > "/dev/stderr" }' $< > $@
 
 $(BUILD)/slab-library-%.opt.ll: $(BUILD)/slab-library-%.ll
 	$(CLANG) -O2 -Wno-override-module -x ir -S -emit-llvm $< -o $@
@@ -41,7 +41,7 @@ check: $(addprefix $(BUILD)/slab-costs-,normal$(EXE) retained$(EXE)) \
 	@grep -Eq '^declare noalias nonnull ptr @wf_cost_allocate\(i64\)' $(BUILD)/slab-library-normal.ll
 	$(BUILD)/slab-costs-normal$(EXE) check
 	$(BUILD)/slab-costs-retained$(EXE) check
-	@set -eu; wf=`grep -Ec 'call .*@"?wf_slab_(insert|visit|remove|free)' $(BUILD)/slab-library-retained.opt.ll || true`; \
+	@set -eu; wf=`grep -Ec 'call .*@"?(wf_slab_|wf_std\.collections\.slab\.slab_)(insert|visit|remove|free)' $(BUILD)/slab-library-retained.opt.ll || true`; \
 	  control=`grep -Ec 'call .*@(word|record)_(window|tagged)_(insert|visit|remove|free)' $(BUILD)/control-retained.opt.ll || true`; \
 	  test "$$wf" -gt 0; test "$$control" -gt 0; \
 	  echo "Retained Slab helper call sites: WF=$$wf C=$$control"

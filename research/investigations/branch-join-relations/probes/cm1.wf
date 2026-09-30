@@ -1,0 +1,40 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn preserve(values: &Box<Slots<u64>>) -> result: unit writes(values) contract {
+  requires values^.inner.cap <= 1_u64;
+  ensures values^.inner.len == entry(values)^.inner.len;
+  ensures values^.inner.cap == entry(values)^.inner.cap;
+} {
+  let capacity = values^.inner.cap;
+  grow(cell: values, capacity: capacity);
+  return unit;
+}
+
+fn conditional(values: &Box<Slots<u64>>, enabled: Bool) -> result: unit writes(values) contract {
+  requires values^.inner.cap <= 1_u64;
+  ensures values^.inner.len == entry(values)^.inner.len;
+} {
+  let count = values^.inner.len;
+  for (
+    index in 0_u64..count,
+    invariant retained: values^.inner.len == count,
+    invariant bounded: values^.inner.cap <= 1_u64
+  ) {
+    if enabled {
+      preserve(values: values);
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  let values = box_slots_new::<u64>(capacity: 1_u64);
+  place_back(window: &values.inner, value: 7_u64);
+  let enabled = True();
+  conditional(values: &values, enabled: enabled);
+  if values.inner.len != 1_u64 {
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 0_u8);
+}

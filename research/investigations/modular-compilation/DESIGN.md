@@ -1353,6 +1353,837 @@ P3.2 and P3.3 made the syntax and the checked program owned and gave every
 declaration a stable key. Each step is measured against the stage it
 replaces.
 
+### Disposition of the import implementation
+
+The owner closed the import experiment and selected a reduced PR containing
+the independent runtime SHA optimization, its controls, corrected design
+grounds and research evidence. The retained-body/lowering import adapters,
+typed codecs, discovery hooks, work counters and dedicated tests are removed
+from the active compiler. Their complete corrected implementation remains in
+the [historical prototype](https://github.com/mbbill/Whitefoot/tree/e1db29f19addf1274d794560fd067c376b77558d); current source again uses main's ordinary
+composition checking and lowering, alongside its existing module verdicts,
+proof receipts and object cache.
+
+The implementation and screen sections below, through the shared-callable
+ownership screen, document that prototype and the alternatives tested against
+it. Their imperatives describe those experiments, not outstanding work for
+this PR. The [measured limits](../../experiments/modular-build-cost/RESULTS.md#disposition-of-the-module-product-prototype)
+select neither import adoption nor a replacement module-owned body inventory.
+The broader incremental architecture remains an objective; reopen its
+consumer boundary only for a newly requested experiment. Preserve full
+current-input and current composition judgments in any such experiment.
+
+### Module build unit implementation and qualification
+
+The next implementation retains the products of a module check for entry
+compositions. The existing driver keeps only its verdict, declaration read
+set and function proof receipts; `ModuleCheck::run` discards the checked
+program, and `build_module_entry` checks the complete selected closure again.
+Owned syntax and declaration keys now exist, and checked identities survive
+the symbolic and ordinary views inside one check. They do not yet identify a
+retained body in another check's inventory.
+
+The selected delivery is module build units containing checked bodies,
+nominal/layout information, heap and call facts, and reusable lowered
+fragments. The existing module-verdict dependency boundary remains the
+source-check boundary. A composition must still judge concrete instances,
+cross-module recursive components and its entry requirements against current
+implementations. Reusing an unchanged module identity alone grants none of
+those judgments. Instance-only checking and fact-based entry admission remain
+separate, unselected steps.
+
+Before choosing a retained representation, trace every identity and judgment
+that crosses this boundary. Compare importing owned checked products into the
+composition with retaining module-local inventories behind a composition
+view. The comparison must account for generic discovery, interface/definition
+identity, source locations, opaque representations, current callee claims and
+proof availability, and the existing single semantic path. Record material
+representation or reuse choices in the Draft branch's live design tree;
+owner approval at handoff governs adoption under the current AGENTS.md.
+
+Qualification criteria, recorded before candidate measurements:
+
+- A second entry and an entry-body edit reuse unchanged library module
+  products in a fresh invocation. Count actual source body formation and
+  lowering, independently of cache-hit labels; a repeated whole-closure body walk
+  or a cache containing only verdicts does not meet this criterion.
+- Cached and fresh builds agree on acceptance, diagnostics and executable
+  behavior. Cover body edits with unchanged headers, changes in published and
+  private fields, hidden layout and heap use, changed summary availability,
+  callback recursion, generic instances, graph/alias changes and failed
+  builds. Missing or incompatible products recompute through the ordinary
+  path. Exercise each reuse/invalidating check with a deliberate defect that
+  makes it fail.
+- Use the existing queue specimen, GrowVector, wfgrep, SHA-256, a generic-heavy
+  consumer and controlled dependency scaling. Compare the same sources and
+  edits with the merged compiler and candidate, separating compiler build
+  time from invocation time and source validation, formation/checking,
+  lowering, native construction and linking. Report peak memory separately.
+  Record clean, warm, changed-entry and second-entry runs; use seven paired,
+  alternating runs for a claimed timing difference. Select additional cache
+  granularity only when saved work exceeds loading/rebinding work on a real
+  consumer, with unchanged runtime quality. A null comparison must establish
+  that the host can distinguish the claimed difference.
+- Keep the formal regression coverage in compiler/program/conformance test
+  ownership and run the canonical gate. Research drivers are measurement
+  callers, never gate dependencies. The build-cost driver now propagates
+  compiler failures and compares runtime exit results; its discriminating
+  controls are recorded with the build-cost measurements.
+
+This section is maintained with this implementation and its findings. The
+existing build-cost experiment owns reproducible workloads and measurements;
+no parallel implementation plan or result ledger is introduced.
+
+#### Retained product import
+
+The implementation candidate imports retained module products into the
+composition's existing inventories. Each product has a local identity table;
+declarations and occurrences are rebound through the keys resolution mints,
+and nominal/callable instances through their declaration, arguments and formal
+boundary. Dense ordinals never leave that table as cross-check identities.
+The import restores required instances in discovery order, including those a
+body originally requested through operand-directed calls. Source locations
+are read from the current resolved occurrence, not an old file ordinal.
+
+Keep structural body formation separate from its later judgments. A retained
+structural body carries the products and dependencies of its completed walk;
+it does not grant entailment, summary publication, parallel permission or entry
+admission. The existing composition computes the current call components,
+heap closure and permission, and reuses a proof analysis only through the
+existing complete-input receipt key. Module checks still precede composition
+and keep MOD-8's interface-only dependency boundary. Lowered products have
+their additional target, physical representation, call-selection and permission
+inputs; a source module verdict alone never authorizes their reuse.
+
+This keeps every checked handle relative to one current composition inventory;
+missing products take the ordinary computation path. The alternative, sharing
+module-owned inventories through their consumers, keeps each handle relative
+to its owning module and makes lookups resolve that owner as well as its local
+ordinal. That may remove reconstruction while adding lookup and view-selection
+cost; neither effect is measured for this alternative. Importing costs
+translation and retained storage, and the qualification above must show that
+avoided body/translation work justifies it. The candidate does not claim that parsing/resolving the current
+composition or global judgment scheduling becomes incremental in this step.
+
+The product encoding is compiler-private and follows the concrete Rust data
+types, with exhaustive construction and matching so a changed field or variant
+requires its encoding to be updated. It must preserve the checked tree and
+query-local proof inventories without parsing diagnostic `Debug` output.
+Missing, truncated or incompatible products take the ordinary computation path.
+This encoding serves retained compiler results only; no artifact ABI or
+independent proof replay is introduced. The typed field/variant declarations
+live beside their owning semantic types in `products` child modules, so the
+large checked-model and entailment owners do not also absorb the encoding
+lists. These files serve module-product retention and leave with that
+representation if it is replaced; they are not a second model or generated
+syntax inventory. The driver owns source dependency keys and storage, while
+the checker owns product formation, identity import and current judgments.
+
+The queue checkpoint in the [build-cost results](../../experiments/modular-build-cost/RESULTS.md#structural-import-checkpoint)
+shows why discovery is part of a module product: importing only bodies that
+leave the existing inventory unchanged still repeats queue and callback walks.
+The remaining adapter must retain the discovered instances, activations and
+request origins together, and validate a retained FN-4 query against the complete
+current formal and actual claims. Use the resolver's existing MOD-7 header
+normalizer for those claim inputs, including generic binders and contract
+`define` expansion. A second header parser would duplicate the very
+interface/implementation equality the compiler already judges; raw header
+spelling would lose reuse across equivalent aliases. This adds an immutable
+consumer of that normalizer, not a new language equality or source judgment.
+Ordinary composition entailment and proof availability remain current.
+
+For discovery import, retain ordinary formation recipes alongside each local
+identity and replay only missing instances through the existing type and
+signature producers. A miss that needs formation stages a clone of the type
+metadata and a separate analysis scratch, validates all retained inputs, then
+publishes the types and recorded discovery effects together. It never clones
+the composed proof inventory. Existing-identity imports need no staging copy.
+This reuses formation judgments and preserves failure atomicity instead of
+adding a second set of inventory constructors or attempting rollback of
+partially mutated checker state. The remaining type-metadata copying and
+formation cost is an explicit qualification cost; if it dominates real
+consumers, replace the staging representation with an append-only transaction
+before claiming the build-cost target. The product child module owns these
+recipes; remove it when the retained representation no longer needs them.
+
+Record a body's formation and diagnostic-source requests, including requests
+that find an existing instance. Inventory growth alone loses those contributions
+when another entry has a different discovery order. Reapply the requests to
+the current inventories and retain the selectors of the requested functions.
+When formation against a current implementation exposes private metadata or
+analysis absent from the retained product, discard the staged import and run
+the ordinary walk. This keeps an interface-produced product from silently
+dropping work that its producer could not have seen.
+
+Lowering retains one source function's completed typed CFG together with its
+synthesized helpers and structured loop-actualization notes. The input records
+the checked runtime body, current physical type/reclamation graphs, selected
+callee symbols and result representations, target layout and the permission
+facts that lowering reads. Proof derivation arenas do not enter that key.
+Import rebinds global IR type, constant and call identities; function-local
+values and blocks keep their ordinals. Helpers reserve their new contiguous
+slots before decoding, and publication occurs only after the whole fragment
+decodes. Global work weights, scalar-offer pruning, target qualification and
+LLVM emission continue over the current assembled program. This boundary
+reuses the existing typed IR instead of treating printed LLVM as a source of
+lowering ownership, and structured notes preserve current source paths without
+rewriting finished diagnostic text. The `ir/products` schema and lowering
+product adapter serve this fragment store and leave with it if replaced.
+
+The first real-consumer cost probe found that the source-key constructor
+requested a dependency's declaration digests once per reached declaration.
+The existing reading cache already avoids repeated parsing, but those requests
+still repeat hashing and cloning. Memoize those digests once per resolved
+checking view, using the existing producer and unchanged key bytes. Do not
+attribute the observed GrowVector loss to parsing from that call count. Also
+keep lowering checkpoints proportional to new helper reservations:
+a reservation journal avoids copying all earlier functions' helper counters
+at each source function. These are local work reductions under the retained
+representation, not new cache authority or a different invalidation boundary.
+
+Stage observations of the first complete candidate show that body import and
+record processing cost more than the saved walks on every selected workload.
+Before making a performance claim, remove duplicated work within the selected
+boundary: store a module's body records in one container under its complete
+source inputs, validating those inputs once rather than repeating their bytes
+and checksum work in every function record. Function keys still distinguish
+their structural identity, selector universe and signature; malformed containers
+miss as a whole. Publish completed structural products at the end of the
+checking invocation, including completed bodies preceding a later failure.
+This changes storage grouping, not the authority of a retained body or the
+module-verdict dependency boundary. Compare with the preceding candidate as
+well as the merged baseline; keep the previous work counters and equality
+checks as falsifiers. Share immutable source-identity/header tables between
+staged imports and use bulk copying for byte payloads under the same typed
+encoding. These remove repeated construction and byte-at-a-time framing, not
+formation judgments or input validation. Reopen the representation if the
+paired real-consumer measurements still show retention costing more than the
+work it replaces.
+
+The grouped candidate's single diagnostic pass preserves the same outputs and
+work counters and reduces the previous overhead, but remains slower than the
+baseline. The next local comparison memoizes normalized header tokens per
+source function node and the physical reverse-identity catalogue per lowering
+context; both are immutable for their consumer lifetime. It also writes
+canonical byte slices directly instead of allocating an intermediate vector.
+These changes keep the same encoded key bytes and current-input guards. Use
+the preceding grouped binary as their ablation; do not infer a final gain from
+the work counters or from the earlier single-pass costs.
+
+The current container reader validates the grouped field framing once, retains
+the source bytes and an index of key/payload ranges, and copies a payload only
+when a body import requests it. Newly produced bodies remain in a small update
+map and are folded into the complete container only at atomic publication.
+This removes eager payload copies without changing malformed-container misses,
+per-function structural keys, or the module-level invalidation boundary. The
+seven-pair indexed-container qualification preserves runtime/LLVM equality and
+zero unchanged-library walks, but remains slower than the merged baseline and
+therefore does not satisfy the cost condition for adopting the amendment.
+
+#### Current-main audit and cost attribution
+
+The owner requested a fresh audit before continuing optimization and set an
+approximately 5% entry-edit overhead as an acceptable target for HashMap and
+GrowVector. Earlier qualification remains evidence for its original compiler
+pair only. After integrating current main, validate the merged implementation
+and migrate the queue specimen to the current reference-access spelling before
+using it. Keep source fixtures identical between compared compilers.
+
+First measure the unmodified merged implementation against its main parent,
+using independently built, uninstrumented executables. Record the compiler
+hashes and reject stage-instrumented binaries in that timing pair. Then use
+separate instrumented copies to divide source-input assembly and lowering into
+dependency discovery, source-identity construction, product key construction,
+cache addressing/read/checksum, and payload import. Nested timers are subsets,
+not additional work. Broad stage differences alone do not attribute a loss to
+an individual helper.
+
+Choose a local optimization only after its measured component can explain the
+loss; compare the same sources before and after the change. The falsifiers are
+unchanged cached/fresh verdicts and LLVM, successful native results, and zero
+unchanged-library body/lowering walks. Removing product coverage or weakening
+an input guard does not meet the target. Final claims require seven alternating
+pairs, a same-binary null comparison and compiler-only memory observations.
+Keep build time outside invocation timing. If those observations reject the
+local approach, reassess the representation with the owner instead of claiming
+that avoided walks alone justify its cost.
+
+The current-main stage probe identifies record validation and retained-record
+loading as material costs; source-identity setup is small by comparison.
+Assess the existing canonical writer before changing storage authority: it
+repeats a complete structural identity spelling at every reference position.
+Try interning equal spellings within each canonical record, numbering them by
+first occurrence and retaining the ordered literal segments and references.
+The expected benefit is fewer repeated name constructions and fewer key/payload
+bytes to store and checksum. The cost is a small per-record lookup table.
+This changes only the private encoding under the compiler identity; existing
+module invalidation, complete-input equality and product consumers remain.
+Require invariance under dense renumbering and distinguish changed names,
+reference positions and literal bytes. Retain the change only if the paired
+consumer run reduces cost while preserving the existing falsifiers; use the
+uninstrumented pre-change binary as the ablation.
+
+That trial reduced retained bytes but did not reduce either container's build
+time in the paired diagnostic comparison, so it is rejected and its encoding
+change is removed. The next probe isolated the existing SHA-256 compression
+loop with the same algorithm, safe Rust and published test vectors. Its
+hypothesis was that a fixed eight-round unrolling could remove loop and
+state-shuffle overhead without changing key material, checksums, cache
+authority or dependencies. The native kernel probe was only a screen;
+selection required a same-source whole-compiler comparison, including the
+main compiler with the same hash optimization to distinguish a general
+compiler gain from reduced module-product overhead.
+
+The unrolled scalar kernel gave only a small improvement. This selected a
+comparison with the safe runtime API of the maintained RustCrypto `sha2`
+implementation, which can use the host's SHA instructions. The trial preserves
+SHA-256 bytes, published-vector results, complete record validation and the
+compiler crate's `forbid(unsafe_code)`. It keeps the constant-evaluation
+implementation for the specification/build identity and provisions the locked
+dependency set explicitly before offline checks. The native compiler
+comparison records a gain, including a main control with the same optimization.
+The owner approved the reviewed runtime hashing decision and the diagnostic
+dependency-ground correction; they are now recorded in the live compiler tree.
+The module-import proposal remains pending under the owner's decision to keep
+this PR in Draft while its separate import-cost condition is unmet.
+
+With matching runtime hashing on main, the three-pair container comparison
+still measures 9.3% and 13.3% entry-edit overhead. The next trial removes
+repeated canonical-name and callable-input construction within one invocation.
+Keep these memos inside their existing semantic and lowering product owners;
+no new cache family, codec, shared interface or acceptance path is needed.
+Lowering reads an immutable checked program, so its semantic identity names
+can be retained for that product adapter's lifetime. Checking can change a
+function's allocation effect, so reuse of its complete canonical input must
+first compare the complete current signature's encoded bytes. Normalized
+headers are immutable within the resolved source view. A speculative import
+gets an empty memo, so failed formation cannot publish entries for rolled-back
+identities. Other identity kinds retain their ordinary current-input check.
+Compare the trial with the saved runtime-hash binary and the equally optimized
+main control. Select it only for a measurable consumer gain with unchanged
+fresh/cached results, library work counts and complete input equality; include
+memory in final qualification. A cache keyed by the dense function ordinal
+alone is rejected because activation and heap closure can change its effects.
+
+The paired memo trial did not improve either container: medians were 1.8% and
+0.6% slower than the runtime-hash-only candidate. Both memos were removed.
+The next attribution splits retained-body import into record decoding, identity
+mapping, complete-input validation and typed payload import. Select any further
+change from that observed cost, retain the same cache guards, and compare it
+against the saved runtime-hash-only candidate before final qualification.
+
+Aggregated stage observations put HashMap identity mapping at 8.4 ms, callable
+input construction at 9.3 ms, and staging clone/retirement at 5.2 ms. The last
+number does not justify changing the checker's ownership model to solve this
+loss. The next trial compared hash lookup tables for private identity rebinding
+with the existing ordered maps. It preserved the ordered vectors and sets that
+select discovery, serialization and diagnostic order; only point-lookup
+catalogues and the reader's old-to-current identity map changed. Their iteration
+had no ordering consumer: the reader map was only searched or queried for
+membership. This kept the same product owner, identities, private format and
+equality guards. The criterion required identical LLVM across fresh processes
+with independently seeded maps and the existing cached/fresh and library-work
+controls, with native pairs beating the saved runtime-hash-only candidate.
+
+The lookup trial passed the 97 driver/cache tests and all native output and
+library-work controls, but did not show a meaningful consumer gain: GrowVector
+was 1.0% slower and HashMap 0.3% faster in three alternating pairs. The maps
+were restored. Final qualification therefore measures the runtime-hash change,
+with the matched main control to expose module-product overhead and the
+unchanged main compiler to report the PR's actual effect on the two container
+workloads. Keep those two questions distinct in the owner handoff.
+
+The [final seven-pair qualification](../../experiments/modular-build-cost/RESULTS.md#final-current-main-qualification)
+preserves paired LLVM/native results and entry-edit library reuse across all
+seven workloads. Against equally optimized main, GrowVector's native edit
+build is 4.6% slower and HashMap's is 14.7% slower; compiler-only costs are
+12.2% and 16.6% higher. HashMap's compiler peak memory rises from 48.33 to
+62.48 MiB and its native cache from 6.20 to 15.96 MiB. The complete PR is
+faster than unchanged main on both containers, but the general hashing gain
+does not discharge the import amendment's cost condition. The small local
+trials above did not remove that remaining loss. The owner retained the Draft
+and the unapproved import decision with this cost finding unresolved; do not
+replace its criterion with a count of avoided walks or with the unrelated
+hashing gain.
+Any further representation trial must identify the import work it removes,
+preserve complete current-input validation and rollback, and use the matched
+main comparison and independent output/work controls again.
+
+#### Import repetition investigation
+
+The owner directed continued investigation after the cost review. Retain the
+approximately 5% edit-build target against equally optimized main; that
+direction does not approve a live-tree change or waive current-input checks.
+The next observation counts retained input bytes and repeated exact encodings
+within one checking view, separating imports that already have every identity
+from imports that form missing instances in a staged context. This tests
+whether the remaining import cost is dominated by repeated work that can be
+shared, rather than the necessary current-program checks. Counting uses a
+separate instrumented compiler and is not invocation timing evidence.
+
+Before choosing a representation, require that the counted repetitions explain
+a material share of the measured import work. An optimization must retain
+complete input equality, declaration/instance identity, successful publication
+and failed-import rollback; repeated bytes alone do not establish safe reuse
+across mutable signatures or separate checking views. Compare any selected
+trial with the saved uninstrumented hash-only candidate, then equally optimized
+main. Reject it if it fails current/fresh outputs, library-work coverage or the
+paired consumer cost criterion. The existing experiment driver owns these
+temporary observations and retires them with the retained-product comparison.
+
+The count probe found repeated exact encodings in 77% of GrowVector's checked
+input records and 87% of HashMap's, covering 51% and 64% of their encoded input
+bytes. Most validations already have every needed identity; staged formation
+accounts for 26% and 12% of those records. Revisit the prior callable memo only
+with a different guard: compare the complete typed signature or nominal value
+by derived equality before encoding anything. The earlier trial serialized the
+current signature on every lookup, retaining a substantial part of the work
+it aimed to save. Source headers and identity names remain fixed within the
+checking view; full typed equality includes mutable allocation effects and
+nominal fields. A fresh staged context keeps independent memos so failed
+formation cannot leave encodings attached to discarded identities. Keep the
+private product format, per-record input comparison and current judgments.
+Select this bounded adapter change only if its native causal comparison gains
+time with unchanged outputs and library work; a repeated record count alone
+is not sufficient evidence.
+
+That typed-equality trial passed the driver/cache suite and output/work
+controls, but its three-pair native screen improved GrowVector only 1.9% and
+HashMap 0.7%. It did not explain enough of the remaining cost to select the
+extra memo state, so it was removed. Use native stack sampling of the saved
+uninstrumented compiler next: per-identity timers add observer work to very
+short helpers, and repeated encoded bytes do not establish their share of
+uninstrumented execution. Sampling selects a cost hypothesis; only a subsequent
+same-source uninstrumented comparison may establish an optimization gain.
+
+Native samples still reach both product identity/record handling and lowering
+key construction. The common writer eagerly inserts every identity into an
+ordered set while also recording every identity occurrence for canonical
+encoding. Canonical-only consumers never read the set. Compare deriving the
+ordered unique inventory from those recorded occurrences only when a consumer
+requests it. This removes redundant index maintenance, keeps one reference
+inventory as the source of both views, and changes no record bytes, dependency
+closure or reader semantics. The cost is a later set construction for the few
+consumers that do need unique references. Require a HashMap native gain above
+2% in the diagnostic pair without a GrowVector regression, then the ordinary
+seven-pair qualification; otherwise remove the trial. Existing identity
+renumbering and cached/fresh controls must still pass.
+
+The deferred-index trial passed the driver/cache and semantic product tests,
+but the native pair was 2.3% slower on GrowVector and 2.1% slower on HashMap.
+It failed the recorded criterion and was removed. Neither repeated-input
+memoization nor local collection substitutions have justified more machinery
+in the current product adapters.
+
+Before another representation change, separate the two retained-product
+features with scratch-only ablations: omit the structural-body adapter, omit
+the lowering adapter, and omit both while preserving the proof-receipt cache.
+Compare each single omission with the unchanged candidate, and the double
+omission with equally hash-optimized main, in three alternating pairs for
+both containers. Measure compiler-only and native construction separately.
+Require equal LLVM and native results. These controls deliberately repeat
+library work and cannot qualify an implementation or relax the zero-unchanged-
+library-work requirement. If either adapter accounts for at least two thirds
+of HashMap's excess compiler cost, investigate that adapter first; otherwise
+retain the joint-cost hypothesis. The double omission tests whether these
+features actually explain the regression rather than merely appearing in a
+profile. Build time and attribution controls are excluded from qualification
+timings.
+
+The [three-pair omissions](../../experiments/modular-build-cost/RESULTS.md#feature-omission-controls)
+remove 25.0 ms of HashMap compiler time for body products and 13.5 ms for
+lowering products. Omitting both puts this branch within 1.0% of equally
+optimized main. The pair controls differ slightly, so these are not additive
+stage timings; neither observation establishes the two-thirds dominance
+criterion. Keep both adapters in scope. Their joint cost explains the excess
+better than additional proof analysis or native object construction: the full
+candidate and matched main reuse the same proof analyses and native objects
+on the measured entry edits.
+
+The next local representation trial compares a body's current typed input
+bytes with retained bytes through the identity mapping already required for
+payload import. Retain reference positions and kinds beside the raw input;
+compare every literal byte and map every old reference to its current identity.
+Require identical reference positions and kinds before this comparison. Names
+still establish the mapping, all transitive inputs still join the retained
+closure, and every current input is reconstructed and checked. This replaces
+expanded structural names at every input reference, without a cross-body memo
+or a new validity lifetime. It fits the existing private product writer and
+body adapter; keys used outside an import continue to use canonical names.
+The uncertainty is whether rebinding an interface identity to its definition
+preserves existing hits; a conservative miss is correct but fails the selected
+reuse requirement. Compare the saved candidate in three alternating native
+pairs, requiring more than 2% HashMap improvement without a GrowVector loss and
+unchanged library work, then qualify any retained change with seven pairs and
+the same-image control. Unit controls must separate renumbering from changed
+literal bytes, reference kinds, positions, targets and incomplete mappings.
+
+That diagnostic trial passed its selection screen: 2.3% lower native entry-edit
+time for GrowVector and 2.4% for HashMap, with unchanged library reuse. This is
+not the final cost qualification. The remaining body and lowering readers both
+translate dense ordinals through a search tree at every reference. Compare a
+separate dense slot vector for each identity kind, keeping absence explicit
+and the mapping local to one imported product. This differs from the rejected
+hash-map trial by removing key search entirely. Its cost is space up to each
+kind's largest retained ordinal, rather than only its populated references.
+Keep this inside the existing identity-map owner; no cross-import state or
+new cache authority is needed. Compare against the saved relocated-input
+candidate, requiring more than 2% HashMap native improvement without a
+GrowVector loss, unchanged reuse and results, and no more than 5% compiler-RSS
+growth on either container before the final seven-pair qualification.
+
+The dense mapping failed that screen: GrowVector's native median increased
+4.8%, HashMap improved only 1.6%, and compiler-only time did not establish a
+gain. It was removed. A final local candidate caches decoding and resolution
+of source identity names, which are immutable for one resolved view and can
+therefore be shared with its speculative forks. The existing reverse catalogue
+covers semantic instances but repeatedly decodes source names. Keep the new
+catalogue beside that view's source identities, require matching identity
+kinds, and preserve all current-input comparisons. Unlike callable-input memos,
+this cache cannot outlive or bypass a mutable semantic input. Apply the same
+native-gain, reuse and compiler-memory screen against the relocated-input
+candidate; otherwise remove it and qualify only the surviving representation.
+
+The source-name memo also failed: GrowVector's native median increased 2.7%,
+HashMap improved only 0.3%, and both compiler-only medians increased 0.2%.
+It was removed. Extend the relocated-input candidate alone to seven alternating
+pairs against its unchanged-source control, itself and equally optimized main,
+for both containers in native and compiler-only modes. A three-pair gain that
+does not survive this control does not justify retaining the new encoding.
+
+The extended comparison completed all output/reuse controls, but the native
+GrowVector median increased 1.6% against the unchanged candidate. HashMap's
+native gain of 5.5% did not reproduce in compiler-only time (+0.5%); matched
+main still beat the trial by 15.3% native and 16.9% compiler-only. The null
+controls and complete medians are in the
+[trial result](../../experiments/modular-build-cost/RESULTS.md#relocated-input-and-lookup-trials).
+Remove the input-encoding trial too. No new compiler change survives this
+continuation, and the existing qualification and unresolved cost condition
+remain in force.
+
+The next representation question is how much work can be shared by a module
+or instance import before reconstructing its individual functions. The current
+per-function adapters add cost after main has already reused the expensive
+proof analyses; eliminating a body walk does not eliminate its identities,
+input comparisons, reconstruction or lowered-product lookup. The feature
+omissions establish that joint cost, while the local trials do not establish
+a profitable finer mechanism. A bounded next experiment would compare one
+shared identity/input catalogue and grouped lowering reads with the current
+adapters on these same two containers. The grouped lowering-read screen below
+rejects the storage-only part; the subsequent catalogue screens test sharing
+current encodings and stored identity records separately.
+It must retain complete per-consumer
+input equality, speculative rollback, current composition judgments and zero
+unchanged-library walks, and measure cold builds, edited builds, memory and
+cache history as well as the approximately 5% target. Sharing validity across
+mutable signatures or using a whole-module match to waive a consumed input
+would not qualify. This is an unmeasured alternative for reassessing the
+pending import representation, not an adopted tree revision or an assertion
+that batching will meet the target.
+
+A separate opportunity is the lowered-function key's inclusion of proof
+statements and loop invariants that the builder erases. Keep its possible
+runtime-input projection in the maintained TODO: its consumer must still see
+proof-derived allocation bounds, body disposition and permissions. The
+structural product is retained before call requirements and allocation bounds
+are installed, so reusing its identity alone as the final lowering key would
+skip current inputs. No such shortcut is selected by this investigation.
+
+### Grouped lowering-read screen
+
+Before changing the semantic import representation, isolate storage grouping
+for lowered products. Keep the complete per-function semantic, physical,
+permission and target key and the existing typed payload reader. Store one
+checksummed container per compiler/module, with one latest record per emitted
+function/overlap slot; compare its complete inner key before reuse. An edited
+slot replaces its prior version, so repeated edits of the same function do not
+make every later import read its whole history. A missing, incompatible or
+damaged container remains an ordinary miss. Do not combine this trial with
+canonical-input memos or a new body import representation.
+
+Reuse the driver's existing indexed product container for both body and
+lowering storage, keeping source dependency construction in `CheckProducts`
+and publication in the lowering adapter's lifetime. This tests whether fewer
+file reads and record validations justify holding a module's lowered bytes
+in memory. The costs are broader read granularity, a complete-container write
+when one slot changes, and loss of an older version of that slot. None changes
+reuse authority or source acceptance. Treat this as an unselected research
+candidate; a retained storage-policy change needs a live tree revision and owner approval.
+
+Screen three alternating native and compiler-only pairs against the saved
+qualified candidate on GrowVector and HashMap. Require identical outputs,
+zero unchanged-library walks, more than 2% lower HashMap compiler-only
+entry-edit time with the paired direction agreeing in at least two rounds,
+no greater than 2% entry-edit loss for GrowVector in either mode, and no
+greater than 5% compiler RSS growth on either workload. Report cold and warm
+costs separately. If it passes, extend to seven pairs with a same-image
+control and equally optimized main, and exercise repeated edits/reversions,
+different entries, corrupted records and complete-key changes before
+selecting it. Otherwise remove the trial code and retain its measurement.
+
+The screen completed 98 driver/cache tests and 96 comparison samples with
+identical paired results and unchanged library reuse. HashMap's compiler-only
+entry-edit median increased 0.6%, with a gain in only one of three rounds;
+its native median increased 1.6%. GrowVector improved 0.7% compiler-only and
+7.3% native, but cannot compensate for the failed HashMap criterion. Compiler
+RSS medians grew less than 5%, but individual cold pairs rose 12.1% for
+GrowVector and 7.0% for HashMap. The
+[complete result](../../experiments/modular-build-cost/RESULTS.md#grouped-lowering-read-trial)
+reports cold, warm and second-entry costs too. Remove the grouped storage
+candidate and its dedicated test. Fewer cache files with unchanged full keys
+did not establish the required gain; the catalogue screens below examine a
+different representation question. No new compiler change
+or design selection survives this screen.
+
+### Versioned current-input catalogue screen
+
+The next bounded trial shares complete canonical callable and nominal inputs
+within one checking view. Unlike the rejected typed-equality memo, a lookup
+must not clone or deeply compare the current signature to establish that its
+encoding is current. Inspection identifies mutable allocation effects when a
+function enters a view or its heap closure is formed, and nominal fields when
+a declared head is completed. Consequently an identity-only memo is invalid.
+
+Keep a private revision token beside each callable/nominal inventory entry.
+The inventory owner exposes read-only slices, append, and mutable access to
+one entry; mutable access replaces that entry's token before returning the
+borrow. Clones retain tokens for equal initial values and acquire independent
+tokens on mutation, so failed speculative imports cannot make a later entry
+appear unchanged. Tokens are invocation-local equality witnesses, not
+persistent keys or language identities. Compare the cached complete canonical
+bytes with every retained consumer's expected bytes; other identity kinds
+still construct their inputs normally. Each staged checking view starts its
+own input catalogue. Current source headers and structural naming remain
+owned by the existing resolved view.
+
+This is a provisional representation experiment in the existing inventory
+and product adapters, not a selected tree revision. Its expected benefit is
+one encoding per unchanged entry rather than one per consuming body; its
+costs are revision-token storage, extra mutation bookkeeping and retained
+canonical bytes. The wrapper must provide no untracked mutable slice or
+interior-mutability route. Test append versus replacement, changed values in
+both branches of a clone, repeated changes and independent fresh checking;
+an unchanged token must never survive a changed entry.
+
+Before selecting the trial, compare five alternating native and compiler-only
+pairs with the saved qualified candidate on GrowVector and HashMap. Require
+matching LLVM/native results and zero unchanged-library walks, at least 3%
+lower HashMap entry-edit time in both modes, and an improving paired direction
+in at least four rounds. Neither GrowVector mode may regress more than 2%.
+Report every step's RSS and cold/warm/second-entry times; reject median
+compiler RSS growth above 5% or cold compiler-time growth above 5%. Report
+individual outliers too. A surviving trial still needs seven-pair null and
+matched-main qualification, mutation controls and the broader workload suite;
+the approximately 5% matched-main target remains unchanged. Otherwise remove
+the trial code and preserve its result.
+
+The five-pair screen passed the three mutation controls and 97 driver/cache
+tests. All 160 samples preserved paired outputs, and every native entry edit
+preserved unchanged-library reuse. HashMap's
+compiler-only entry median fell 3.6%, but its native median fell only 0.8%,
+with an improving direction in three of five native pairs. This fails the
+recorded gain and direction criteria. The
+[result](../../experiments/modular-build-cost/RESULTS.md#versioned-current-input-trial)
+also reports RSS outliers above 5%, despite all step medians staying below
+that limit. Remove the inventory wrapper, memo and dedicated tests. Cheap
+revision guards alone did not establish the required consumer gain.
+
+### Shared retained-identity catalogue screen
+
+Test sharing stored metadata and its decoding across bodies, independently
+of the rejected current-input memo. Within the existing module source-input
+container, intern each complete retained identity record by exact bytes:
+its old identity, structural name, expected inputs and formation recipe.
+Body records name catalogue slots, and each checking view decodes a slot
+once. Old ordinals alone cannot identify a slot: different checking views
+can assign the same ordinal to different declarations or instances. Recipes
+still use each consuming body's complete mapping, never another body's
+ordinal environment.
+
+The driver owns opaque immutable bytes and slot storage; the semantic
+adapter owns typed decoding and name resolution. A successful slot-to-current
+identity resolution may be shared within the fixed resolved view and its
+append-only identity inventories. Speculative formation starts a fresh
+resolution map, and failed formation publishes no mappings to its parent.
+Every body still reconstructs and compares every complete current input;
+neither the shared slot nor a previous consumer's success authorizes reuse.
+Missing, malformed or incompatible slots are ordinary cache misses.
+
+This is a bounded unselected representation trial in the existing product
+adapters. It may remove repeated byte copies, decoding and source-name
+resolution, at the cost of interning on writes and holding a shared catalogue
+on reads. It does not select a new cache authority or change composition
+judgments. Retaining it would require an updated tree decision and broader
+qualification. Do not combine it with versioned input memos or grouped
+lowering storage. Check exact-entry deduplication versus equal old ordinals,
+module isolation, reload, missing slots, and existing invalidation/rollback
+controls before measuring it.
+
+Screen five alternating native and compiler-only pairs against the saved
+qualified candidate on GrowVector and HashMap. Require identical outputs and
+zero unchanged-library walks, at least 3% lower HashMap entry-edit time in
+both modes with improvement in at least four pairs, no GrowVector entry-edit
+regression above 2%, and no compiler cold-time or median peak-RSS growth above
+5%. Report all steps and individual outliers. A passing screen extends to
+seven-pair null/matched-main and broader-workload qualification, repeated
+edits/reversions, corruption and mutation controls; it is not completion of
+the approximately 5% matched-main target. Otherwise remove the trial code
+and retain its evidence.
+
+The screen passed 99 driver/cache tests and 160 paired samples, with equal
+outputs and unchanged-library reuse on native entry edits. HashMap improved
+only 1.3% native and 1.2% compiler-only; its compiler second-entry peak-RSS
+median grew 7.5%. Its native cache shrank 18.3%, which does not meet the
+latency or memory criteria. Remove both compiler files' trial changes and
+the two dedicated controls. The
+[result](../../experiments/modular-build-cost/RESULTS.md#shared-retained-identity-trial)
+reports every step and the individual memory spikes. Neither catalogue
+screen selects a production change or resolves the import-cost condition.
+
+### Implication for the next representation experiment
+
+The measured catalogue reduces stored bytes without removing each body's
+current-input reconstruction, mapping assembly, formation and typed import.
+Together with the rejected revision memo and storage grouping, this gives
+no measured reason to keep adding local caches to the present adapter.
+The next substantial question is the import boundary chosen in
+[retained product import](#retained-product-import): whether a module-owned
+checked result can remain shared through composition instead of rebuilding
+its full function metadata in each consumer inventory. Investigate that
+boundary before selecting another implementation. Expected benefit is less
+identity/input reconstruction; the open tradeoff is its effect on ordinary
+lookup cost and memory while every handle keeps an unambiguous inventory owner.
+Any candidate must preserve complete consumed-input equality, speculative
+rollback and current composition/target judgments, and face the same paired
+cost, memory, history and approximately 5% matched-main criteria. This is an
+open alternative, not approval to adopt a replacement for the current Draft import decision.
+
+The separate runtime-input projection opportunity does not yet justify a
+second body encoder. The existing instrumented same-image observation gives
+HashMap's entire lowering-key construction a 6.30 ms entry-edit median and
+the whole lowering stage 19.60 ms; these include observer cost and are not
+recoverable savings. The source inspection confirms that Proof payloads and
+loop invariants are serialized despite being erased by the builder, but
+does not isolate their duration or their effect on subsequent cache reads.
+That is a narrower unmeasured opportunity, not evidence that it can close
+the remaining matched-main gap. Keep it in the TODO with its actual
+allocation, permission and physical-input requirements; no key is weakened
+and no new encoder is selected here.
+
+### Qualification after current-main integration
+
+The qualifications remain evidence for their recorded compiler and main
+revisions, not for a compiler carrying newer semantic or parser changes. The
+five-pair integrated-model observations apply to `7ec0a8b` against main
+`f502425`; the subsequent main `4459df88` integration is unmeasured. The first
+integration extended the exhaustive typed records while preserving fresh
+composition checking. Future integrations must preserve that correspondence
+before revisiting the import boundary.
+In particular, retained waiting/spawn data, Segments operations, implicit
+struct invariants and allocation diagnostic coordinates must follow the
+current representations. Source coordinates rebind by module and logical
+file path; unchanged module bytes preserve their offsets. Current nominal
+inputs include formed type invariants and their referenced inputs.
+
+Before measuring the integrated candidate, compare it with the integrated
+main compiler given the identical safe runtime SHA implementation. Run five
+alternating pairs on GrowVector and HashMap, both native construction and
+compiler-only emission, preceded by five same-image pairs in each mode.
+Report every cold, warm, second-entry and entry-edit observation; keep build
+latency separate from generated-program execution. The same-image entry-edit
+median difference must stay within 3% per workload and mode, with no consistent
+four-of-five direction, or the cost result is inconclusive and repeated after
+investigating the host. Verify exact LLVM and executable outputs and zero
+unchanged-library structural/lowering walks for native candidate entry edits.
+Report compiler-only peak RSS and cache bytes alongside latency; a lower
+wall-time observation alone does not qualify a higher-memory representation.
+
+The owner's approximately 5% matched-main entry-edit native overhead target
+still applies to both workloads. Reaching it in a fresh qualification would
+reopen adoption; missing it determines the current gap the next module-owned
+consumer-boundary experiment must remove. This run selects neither a new
+representation nor a weaker current-input equality condition.
+
+The native same-image comparison failed the direction criterion, including
+its one repeat after host inspection. Keep native cost unqualified; do not
+repeat until a passing window appears. Compiler-only entry-edit controls
+passed, and the integrated candidate remains slower in every matched entry-edit
+pair.
+Before changing the representation, rerun the existing scratch-only adapter
+omissions on the integrated source: bodies, lowerings and both. Use three
+alternating compiler-only pairs for both containers, with a five-pair
+same-image entry-edit control preceding them. Require equal LLVM at every
+step; these controls deliberately repeat library work and cannot qualify an
+implementation. Retain the previous two-thirds criterion for investigating
+one adapter first; compare the double omission directly with SHA-matched
+main to test the joint-cost explanation. Report all pairs and memory/cache
+costs, and treat any effect within the observed null variability as unresolved.
+This isolates the current gap without selecting another local cache or
+assuming historical attribution survived the newer checked model.
+
+The [current-model omission attempt](../../experiments/modular-build-cost/RESULTS.md#current-model-omission-preconditions)
+distinguished the scratch configurations and checked their outputs, but its
+preceding compiler-only null control failed the direction criterion. No timing
+comparison was admitted. The older joint-cost evidence remains historical;
+current-model dominance and the wider sharing boundary remain open.
+
+### Shared callable ownership screen
+
+The next bounded representation experiment shares immutable formed callable
+metadata and its complete canonical input through speculative composition
+forks. This tests a prerequisite of module-owned result sharing; it does not
+implement a module-owned checked body or change global handle ownership.
+The current import boundary remains the unadopted proposal. Signature entries
+own their input encoding, and cloning an inventory shares entries. Mutation
+separates the entry and clears its encoding before exposing a mutable borrow.
+Every retained consumer still compares its complete expected input. Headers
+belong to the same immutable resolved source, and named identities remain
+stable within that check; no encoded value crosses a fresh resolved check.
+Nominal inputs, including separately stored formed invariants, remain freshly
+constructed. No-op allocation-bit assignments should preserve the entry.
+
+This differs from the rejected version-token memo: that trial deeply cloned
+values and started an empty memo in each speculative fork. Sharing an owned
+entry preserves both the value and its encoding across a fork without looking
+up a revision in a separate map. The tradeoff is one pointer lookup per
+signature access and retention of canonical bytes. The earlier staging cost
+alone does not justify this change; compare total build cost. Existing dense
+IDs retain one current inventory owner, and ordinary formation, rollback,
+composition and lowering judgments remain unchanged.
+
+Before selecting it, run seven alternating pairs against the same-source
+unmodified compiler, in native and compiler-only modes on GrowVector and
+HashMap. Precede each mode with seven same-image pairs. For this new screen,
+require the null paired median within 3% and at least five of seven pairs
+within 5% of zero; report all pairs. The previous four-of-five sign condition
+rejects 12 of 32 equally likely fair sign sequences even when differences
+are arbitrarily small. It is therefore replaced prospectively by an effect
+size control, not used to readmit any previous failed experiment. A failed
+new control ends this screen without retries selected for passing.
+
+Require at least 3% lower HashMap paired entry-edit time in both modes, no
+GrowVector paired-median loss above 2%, no compiler cold-time or per-step
+median RSS increase above 5%, equal LLVM/native outputs and zero unchanged
+library structural/lowering walks. Check value/encoding isolation on mutation
+in both fork directions, discarded-fork ordinal reuse, changed callable
+claims and the existing rollback/current-input tests. A surviving screen
+continues to an equally SHA-optimized current-main comparison, edit history
+and broader correctness qualification; it does not itself meet the owner's
+approximately 5% native overhead target. A failed screen removes the trial
+implementation and records what it did and did not discriminate.
+
+The [completed screen](../../experiments/modular-build-cost/RESULTS.md#shared-callable-ownership-trial)
+passed its null, output and reuse controls but failed selection: HashMap's
+paired entry-edit gain was 5.58% native and only 1.15% compiler-only, while
+GrowVector's native paired median regressed 2.57%. The five trial compiler
+edits and their dedicated test were removed. Sharing callable metadata alone
+did not establish the required gain; module-owned checked bodies and their
+consumer lookup costs remain unimplemented and unmeasured. This round closes
+at the owner's direction, retaining the useful integration and prior hashing
+change, with no new representation selected and no adoption of the Draft
+import proposal. Reopening needs an explicit new investigation of the wider
+consumer boundary, not another run of this failed screen.
+
 ## Recursive dependencies and generic instances
 
 ### Keep module, call and proof graphs distinct
@@ -2253,10 +3084,14 @@ the paired experiments are implementation acceptance work. A stable artifact
 ABI, remote cache service, package resolution and incremental native linker
 remain outside the selected scope.
 
-The grammar candidate has been qualified using the existing compiler
-generator, including a prefix check that it keeps every active form. The source
-demo, container argument and cold/warm transition matrix are design evidence;
-no execution or controlled performance measurement is claimed.
+The initial grammar candidate was qualified using the existing compiler
+generator, including a prefix check that it kept every active form. The source
+demo, container argument and cold/warm transition matrix began as design
+evidence. Execution and performance evidence is recorded separately in the
+[demo walkthrough](demo/README.md) and the
+[build-cost results](../../experiments/modular-build-cost/RESULTS.md), scoped
+to their named revisions. The [import disposition](#disposition-of-the-import-implementation)
+distinguishes that retired prototype from the compiler retained by this PR.
 The live specification is unchanged. The owner approved the module, name,
 visibility, readonly, proof, effect and compiler decisions, including retained
 component evidence, the legacy source-bundle entry and per-module summary

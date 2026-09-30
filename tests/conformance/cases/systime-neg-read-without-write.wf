@@ -1,0 +1,7 @@
+alias Clock = std::time::Clock;
+alias Instant = std::time::Instant;
+
+fn stamp(clock: &Clock) -> result: Instant reads(clock) {
+  let reading = std::time::now(clock: clock);
+  return reading;
+}

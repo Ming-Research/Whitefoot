@@ -6,6 +6,9 @@ publish = false
 # The oldest stable that builds the compiler (let chains, slice::as_chunks).
 rust-version = "1.88"
 
+[dependencies]
+sha2 = { version = "0.11", default-features = false }
+
 [lib]
 doctest = false
 

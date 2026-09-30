@@ -324,13 +324,16 @@ fn folded(salt: u64, rounds: u64, stride: u64) -> result: u64 pure {
 }
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
-  let std::process::Inputs(args: unused_args, cwd: unused_cwd, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin) = move inputs;
+  let std::process::Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
+  std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
   std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
   let value = folded(salt: 9876543210_u64, rounds: 24_u64, stride: 7_u64);
   let report = box_array_filled::<u8>(count: 8_u64, value: 0_u8);
   let window = &report.inner[0_u64..8_u64];
   let stored = spell(destination: window, at: 0_u64, value: value);
-  match std::io::write_once(factory: &entry_factory, output: &out, source: window, start: 0_u64, end: 8_u64) {
+  let no_deadline = None<std::time::Instant>();
+  match std::io::write_once(factory: &entry_factory, output: &out, source: window, start: 0_u64, end: 8_u64, deadline: no_deadline) {
     Ok(value: accepted) => {
       return std::process::exit_status(code: 0_u8);
     }
@@ -387,12 +390,15 @@ fn mapped() -> result: Box<Array<u8>> pure {
 }
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
-  let std::process::Inputs(args: unused_args, cwd: unused_cwd, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin) = move inputs;
+  let std::process::Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
+  std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
   std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
   let report = mapped();
   let size = report.inner.len;
   let source = &report.inner[0_u64..size];
-  match std::io::write_once(factory: &entry_factory, output: &out, source: source, start: 0_u64, end: size) {
+  let no_deadline = None<std::time::Instant>();
+  match std::io::write_once(factory: &entry_factory, output: &out, source: source, start: 0_u64, end: size, deadline: no_deadline) {
     Ok(value: accepted) => {
       return std::process::exit_status(code: 0_u8);
     }
@@ -1885,7 +1891,9 @@ fn admitted_combine_source() -> Vec<u8> {
     let width = 8 * ADMITTED_COMBINES.len();
     source.push_str(&format!(
         "\nfn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {{\n  \
-         let std::process::Inputs(args: unused_args, cwd: cwd, stdout: out, stderr: unused_stderr, handles: factory, stdin: unused_stdin) = move inputs;\n  \
+         let std::process::Inputs(args: unused_args, cwd: cwd_directory, stdout: out, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;\n  \
+         let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;\n  \
+         std::fs::close_directory_write(factory: &factory, directory: move cwd_write);\n  \
          std::fs::close_directory(factory: &factory, directory: move cwd);\n  \
          let report = box_array_filled::<u8>(count: {width}_u64, value: 0_u8);\n  \
          let window = &report.inner[0_u64..{width}_u64];\n"
@@ -1900,8 +1908,9 @@ fn admitted_combine_source() -> Vec<u8> {
         at = format!("a{index}");
     }
     source.push_str(&format!(
-        "  match std::io::write_once(factory: &factory, output: &out, source: window, start: 0_u64, \
-         end: {width}_u64) {{\n    Ok(value: accepted) => {{\n      \
+        "  let no_deadline = None<std::time::Instant>();\n  \
+         match std::io::write_once(factory: &factory, output: &out, source: window, start: 0_u64, \
+         end: {width}_u64, deadline: no_deadline) {{\n    Ok(value: accepted) => {{\n      \
          return std::process::exit_status(code: 0_u8);\n    }}\n    Err(error: problem) => {{\n      \
          return std::process::exit_status(code: 1_u8);\n    }}\n  }}\n}}\n"
     ));
