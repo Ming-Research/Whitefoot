@@ -2450,7 +2450,7 @@ fn main() -> status: std::process::ExitStatus pure {
             source,
             crate::OverlapLowering::OnWithRecursionBudget {
                 budget,
-                maximum_scalar_leaf_operations: Some(16),
+                call_grain: crate::CallGrain::WorkUnit,
                 sequential_refusal: false,
             },
         );
