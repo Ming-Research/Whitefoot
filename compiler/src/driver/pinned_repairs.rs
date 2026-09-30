@@ -13,6 +13,7 @@ use super::{CompilationFailureKind, CompilerLimits, compile};
 use crate::SourceInput;
 
 mod call_separations;
+mod content_moves;
 mod storage_destructuring;
 
 /// One repair [DIAG-1], pinned with the programs it produces: a rejected
@@ -3642,6 +3643,7 @@ fn each_pinned_repair_is_carried_out_by_its_programs() {
     for pair in REPAIRS
         .iter()
         .chain(call_separations::CALL_SEPARATIONS)
+        .chain(content_moves::CONTENT_MOVES)
         .chain(storage_destructuring::STORAGE_DESTRUCTURING)
     {
         let failure = compile(
