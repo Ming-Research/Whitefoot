@@ -2055,8 +2055,10 @@ and no new encoder is selected here.
 The qualifications remain evidence for their recorded compiler and main
 revisions, not for a compiler carrying newer semantic or parser changes. The
 five-pair integrated-model observations apply to `7ec0a8b` against main
-`f502425`; the subsequent main `4459df88` integration is unmeasured. Integrate main, extend the exhaustive typed records
-and preserve fresh composition checking before revisiting the import boundary.
+`f502425`; the subsequent main `4459df88` integration is unmeasured. The first
+integration extended the exhaustive typed records while preserving fresh
+composition checking. Future integrations must preserve that correspondence
+before revisiting the import boundary.
 In particular, retained waiting/spawn data, Segments operations, implicit
 struct invariants and allocation diagnostic coordinates must follow the
 current representations. Source coordinates rebind by module and logical
