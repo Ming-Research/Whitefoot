@@ -8255,8 +8255,117 @@ the local sampler documentation does not specify its unwind policy. A future
 frame-pointer diagnostic would change instructions and could not serve as an
 unchanged-code timing comparison.
 
-The immediate next question is reliable WF stack recovery, recorded in TODO,
-not another allocator or copy-loop variant. No representation, inlining or
-growth policy is selected, and append growth remains unqualified. No ranked
+Reliable WF stack recovery remains deferred in TODO while the append
+growth-route investigation proceeds. No representation, inlining or growth
+policy is selected, and append growth remains unqualified. No ranked
 performance rerun, other API, compiler change or specification amendment was
-made in this diagnostic.
+made in this profiling diagnostic.
+
+
+#### Equal-byte growth ladder: registered route discriminator
+
+The paired A/B results justify different route costs at the observed extremes,
+but not a monotone size crossover or a production cutoff. A page-size switch
+would be a heuristic, not an allocator guarantee. Before introducing dispatch,
+test whether route direction agrees for equal physical extents represented
+by different element widths. Keep frozen A (full-positive realloc) and B
+(full-positive malloc/copy/free), their ordinary public append helpers,
+compiler objects and runtime/peer inputs. Change only a copied driver.
+
+Use previously unpaired old byte extents 512, 1536, 3072 and 8192: scalar
+capacities 64, 192, 384 and 1024; wide capacities 2, 6, 12 and 32. Include
+wide capacity 4096 as the mandatory 1 MiB realloc counterexample. Require
+actual old capacity N and resulting capacity 2N for every peer in each cell;
+the wide-2 cell must also satisfy that equality rather than entering a
+policy-comparison category. Preserve complete initialization, seed schedule,
+post-state/value oracle, cleanup and snapshot controls. No capacity, hidden
+reservation, allocator or owner-layout changes.
+
+Before timing, check every new cell through all three public APIs on both
+images, including deliberate wrong offered-value and post-state controls.
+Inspect the linked append bodies and verify all frozen inputs and the intended
+routes; changed driver code may change addresses but must not rebuild or
+alter library objects. Record build and execution costs separately. Do not
+proceed past a correctness or native prerequisite failure.
+
+Run one fixed A-then-B exploratory screen, nine samples in each of two
+reversed/rotated cohorts, with all peers equally often in each position.
+Keep the existing 64 MiB byte budget and 8 GiB wide-4096 budget, RAW clock
+check, duration minimum of 1 ms, cohort-ratio bound of 10%, and at most 10%
+peer-median drift between images. Retain every raw sample and control; no
+subtraction, adaptive sample count or rerun. Compare complete WF observed
+ranges in each cohort. The same separated direction in both cohorts is only
+a single-pair route observation, not repeatable qualification. Overlap or a
+failed prerequisite leaves the cell unresolved.
+
+Opposite qualified route directions at the same old byte extent falsify a
+size-only explanation for these instances. Consistent directions can motivate
+one later, fixed policy with unseen neighboring sizes and its actual dispatch
+cost measured; they do not select that policy here. Preserve the large realloc
+counterexample and all adverse results. Neither peer target nor append
+completion changes, and other APIs remain paused.
+
+Transient drivers, manifests and executions belong to
+`.build/append-byte-ladder`; retain the reproducible driver delta, complete
+samples and compact outcome in this Vector home until superseded by the
+qualified growth implementation. This changes no compiler, specification,
+library API or production growth policy.
+
+
+#### Equal-byte growth ladder: outcome
+
+The copied-driver [delta](append-byte-ladder.patch), complete
+[samples](ecosystem-append-growth-byte-ladder-samples.csv), and
+[commands, identities, native excerpts, ledgers and ranges](ecosystem-append-growth-byte-ladder-timing.txt)
+retain the single A-then-B experiment. A uses full-positive realloc; B uses
+malloc/copy/free. All compiler, peer and runtime object inputs were frozen;
+only the diagnostic driver changed.
+
+All 25 guarded prerequisite stages returned their expected statuses. Positive
+checks covered all nine cells and three peers on each image. Wrong-value,
+post-state and quantized-clock controls failed their intended oracles. All
+54 accounting rows confirmed exact initial capacity N, resulting capacity
+2N, request bytes, route-specific realloc/release counts and complete cleanup.
+This includes wide capacity 2 growing to 4. Build/link cost was 3.080 s,
+execution checks 3.312 s and native extraction 0.484 s. Linked full-growth
+paths retained A's realloc and 48 B frame and B's malloc/memcpy/free and 80 B
+frame; no library object was rebuilt.
+
+The two screens returned 0 in 151.190/153.401 s, with unchanged before/after
+image hashes. Each retained 972 rows: 486 real intervals and 486 snapshot
+controls. Both RAW probes had a 41 ns minimum nonzero tick; minimum real
+intervals were 1.274/1.305 ms. Each peer occupied each position three times
+per cohort. Maximum between-image peer median drift was 5.17%; no cell failed
+that limit. Scalar capacity 1024 did fail the cohort-ratio limit: A's WF/C++
+ratio varied by 11.54%. Its overlapping ranges independently leave it unresolved.
+
+Medians below are ns/append, cohort 0/cohort 1; each peer remains separate.
+Directions require separated complete WF ranges in both cohorts and the
+registered prerequisites, not merely the median ordering. Complete ranges
+and per-cell duration, ratio-spread and drift values are in the evidence file.
+
+| Element × capacity (old bytes) | WF A | WF B | Rust A → B | C++ A → B | Single-pair route observation |
+| --- | ---: | ---: | ---: | ---: | --- |
+| 8 B × 64 (512 B) | 57.42/56.08 | 46.06/45.93 | 59.46/58.95 → 59.26/59.18 | 49.44/49.32 → 49.89/50.28 | B faster |
+| 8 B × 192 (1536 B) | 88.37/85.56 | 73.22/73.52 | 92.26/87.96 → 87.49/87.01 | 80.09/78.45 → 77.43/76.35 | B faster |
+| 8 B × 384 (3072 B) | 125.34/126.74 | 112.63/113.03 | 125.98/129.12 → 124.94/124.95 | 117.12/115.60 → 115.88/115.68 | unresolved |
+| 8 B × 1024 (8192 B) | 254.61/228.73 | 223.61/222.01 | 237.62/228.37 → 237.60/229.52 | 215.07/215.52 → 221.39/216.89 | unresolved |
+| 256 B × 2 (512 B) | 60.30/59.51 | 50.51/50.16 | 64.02/62.98 → 62.30/62.34 | 54.21/53.61 → 53.06/53.10 | B faster |
+| 256 B × 6 (1536 B) | 89.50/87.35 | 76.68/76.76 | 90.54/89.71 → 90.27/90.19 | 81.16/80.25 → 79.25/79.14 | B faster |
+| 256 B × 12 (3072 B) | 125.28/125.11 | 115.29/114.22 | 128.50/127.43 → 127.20/127.04 | 117.96/117.35 → 114.88/114.97 | B faster |
+| 256 B × 32 (8192 B) | 225.84/225.28 | 215.25/215.33 | 229.65/228.71 → 227.02/227.84 | 216.90/219.72 → 216.51/216.51 | unresolved |
+| 256 B × 4096 (1048576 B) | 158.71/158.79 | 14844.48/14852.12 | 161.50/163.89 → 162.57/168.70 | 14839.73/14856.19 → 14946.61/14909.47 | A faster |
+
+B was separated faster at 512 and 1536 old bytes for both widths, and at
+3072 bytes for the wide element. Scalar 3072 bytes overlapped in cohort 0;
+both 8192-byte instances overlapped. The mandatory 1 MiB cell strongly favored
+A, preserving the large realloc counterexample. No equal-byte pair had
+opposite qualified directions: this experiment does not falsify a size-only
+explanation, but it does not establish one or choose a crossover or cutoff.
+One exploratory pair is not repeatable performance qualification, and no
+production policy follows.
+
+Work remains confined to Vector append, with spare-capacity and growth paths
+assessed separately. No other API starts until append qualifies; every API
+must qualify before measuring the full container workload. This checkpoint
+changes no compiler, library, specification or production growth policy.
