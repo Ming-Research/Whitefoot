@@ -88,6 +88,9 @@ rarely insert at the same place.
   counter and a result no input reaches.
   - This meets the reopening condition of the refused "field atoms in loop
     invariants" (`design/language/checks-and-proofs.md`).
+  - Snowghost's font shaper has seven loops of the same kind, bounded by
+    `buffer^.index` (`research/investigations/termination/runs/checker.md`).
+    A measure through a reference is already an atom there.
   - Change: admit an integer field place as an affine atom with a measure's
     [MSR-2] kill rule, and let a postcondition relate such a field to its
     entry value.
@@ -105,13 +108,21 @@ rarely insert at the same place.
     the list filter's form.
   - Reopen when TERM-2 is designed.
 
-- **Three automatic-derivation gaps the loop migration met.** Each has a
+- **Four automatic-derivation gaps the loop migration met.** Each has a
   writer workaround recorded in
-  `research/investigations/termination/runs/migration.md`.
+  `research/investigations/termination/runs/migration.md` and
+  `runs/checker.md`.
   - `x / c < x` from `x >= 1` is not derived: it needs a rounding step
     (`x - x/10 >= 0.9x`) the affine layer does not take.
-  - A `+wrap` step is exact only when L0 bounds its operand; a header
-    invariant alone does not make `i +wrap 1` exact, so writers use `+`.
+  - A `+wrap` step is exact only when L0 bounds its operand: under
+    `requires pos < length;`, `let next = pos +wrap 1_u64;` does not prove
+    `ensures next > pos;`, which exact `+` does, although `pos < length`
+    leaves no room to wrap. A header invariant alone does not make
+    `i +wrap 1` exact either, so writers use `+`.
+  - A leading `if done { break; }` whose condition is not a comparison ends
+    the leading statements [TERM-1], so `if done { break; } if i >= n {
+    break; }` derives no rank although the flag test writes nothing. Admit
+    any call-free exit test as a leading statement that derives no rank.
   - A backedge after `take_back` then `place_back` on two windows needs one
     intermediate local invariant (`hash_map_rebuild`'s park loop).
   - Reopen together with the next change to [ENT-3.S7]'s rows or to AUTO.

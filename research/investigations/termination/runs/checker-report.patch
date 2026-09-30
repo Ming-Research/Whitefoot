@@ -1,0 +1,62 @@
+diff --git a/compiler/src/semantic/check/control/progress.rs b/compiler/src/semantic/check/control/progress.rs
+index f7744837..caa4c232 100644
+--- a/compiler/src/semantic/check/control/progress.rs
++++ b/compiler/src/semantic/check/control/progress.rs
+@@ -59,24 +59,38 @@ impl<'unit> Checker<'_, 'unit> {
+         can_continue: bool,
+         counters: &mut ControlCounters<'_>,
+     ) -> Result<CheckedLoopProgress, CheckStop> {
++        let census = std::env::var_os("WF_TERM1_CENSUS").is_some();
++        let census_path = self.types.declarations.tree.path(node)?.clone();
++        let census_line = self.types.declarations.tree.source_line(&census_path).map(|(f, l)| format!("{f}:{l}")).unwrap_or_default();
++        let census_key = format!("{:?}", census_path.components());
++        let report = |form: &str| if census { eprintln!("CENSUS\t{form}\t{census_line}\t{census_key}"); };
+         if !can_continue {
++            report("nobackedge");
+             return Ok(CheckedLoopProgress::NoBackedge);
+         }
+         let ProgressEvidence { written, descends } = header;
++        if written.is_some() { report("written"); }
+         if let Some(rank) = written {
+             return written_rank_progress(rank, counters);
+         }
+         if block_waits(statements, &self.body.waiting.calls, id) {
++            report("waits");
+             return Ok(CheckedLoopProgress::Waits);
+         }
+         let node_path = self.types.declarations.tree.path(node)?.clone();
+         let ranks = derived_ranks(id, statements, &node_path);
+         if !ranks.is_empty() {
++            report("derived");
+             return self.rank_progress(ranks, counters);
+         }
+         if descends && !self.writes_shape(statements) {
++            report("structural");
+             return Ok(CheckedLoopProgress::Structural);
+         }
++        if census {
++            report(if descends { "none-descends-writes" } else { "none" });
++            return Ok(CheckedLoopProgress::NoBackedge);
++        }
+         self.types.declarations.issue_node(
+             SemanticRule::Term1,
+             node,
+diff --git a/compiler/src/semantic/entailment/flow/invariants.rs b/compiler/src/semantic/entailment/flow/invariants.rs
+index a880aeb3..36d9019a 100644
+--- a/compiler/src/semantic/entailment/flow/invariants.rs
++++ b/compiler/src/semantic/entailment/flow/invariants.rs
+@@ -507,9 +507,12 @@ impl Judging<'_, '_, '_> {
+                 node_path: node_path.clone(),
+                 loop_id,
+                 required_relation: self.input.render_checked_invariant_relation(shown, None),
+-                proved: disposition == TargetDisposition::Proved,
+-                refuted: disposition == TargetDisposition::Refuted,
++                proved: disposition == TargetDisposition::Proved || std::env::var_os("WF_TERM1_CENSUS").is_some(),
++                refuted: disposition == TargetDisposition::Refuted && std::env::var_os("WF_TERM1_CENSUS").is_none(),
+             });
++        if std::env::var_os("WF_TERM1_CENSUS").is_some() {
++            eprintln!("CENSUSRANK\t{}\t{}\t{:?}", if disposition == TargetDisposition::Proved { "proved" } else { "unproved" }, self.input.render_checked_invariant_relation(shown, None), node_path.components());
++        }
+     }
+ 
+     pub(super) fn record_loop_invariant_outcomes(

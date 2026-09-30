@@ -1,0 +1,325 @@
+location	module	module checked to the end	form	descent relation
+base/atom/atom.wf:222	pkg::base::atom	yes	derived-proved	(index^.inner.len - 0_u64) < (the measure at the exit test - 0_u64)
+css/color/scan.wf:308	pkg::css::color	yes	derived-proved	(limit - pos) < (limit at the exit test - pos at the exit test)
+css/rules/lists.wf:143	pkg::css::rules	yes	derived-unproved	(limit - pos) < (limit at the exit test - pos at the exit test)
+css/rules/lists.wf:50	pkg::css::rules	yes	derived-unproved	(limit - pos) < (limit at the exit test - pos at the exit test)
+css/rules/lists.wf:98	pkg::css::rules	yes	derived-unproved	(limit - pos) < (limit at the exit test - pos at the exit test)
+css/rules/scan.wf:123	pkg::css::rules	yes	derived-proved	(limit - pos) < (limit at the exit test - pos at the exit test)
+css/rules/scan.wf:157	pkg::css::rules	yes	derived-proved	(limit - pos) < (limit at the exit test - pos at the exit test)
+css/rules/scan.wf:201	pkg::css::rules	yes	derived-proved	(limit - pos) < (limit at the exit test - pos at the exit test)
+css/rules/scan.wf:254	pkg::css::rules	yes	derived-proved	(9_u64 - i) < (9_u64 - i at the exit test)
+css/rules/scan.wf:284	pkg::css::rules	yes	derived-proved	(limit - pos) < (limit at the exit test - pos at the exit test)
+css/rules/scan.wf:70	pkg::css::rules	yes	derived-proved	(limit - pos) < (limit at the exit test - pos at the exit test)
+css/rules/scan.wf:98	pkg::css::rules	yes	derived-proved	(limit - pos) < (limit at the exit test - pos at the exit test)
+css/selectors/anb.wf:737	pkg::css::selectors	yes	derived-proved	(limit - pos) < (limit at the exit test - pos at the exit test)
+css/selectors/match.wf:794	pkg::css::selectors	yes	derived-proved	(stack^.len - 0_u64) < (the measure at the exit test - 0_u64)
+css/selectors/match.wf:857	pkg::css::selectors	yes	none	
+css/selectors/nth.wf:67	pkg::css::selectors	yes	derived-proved	(node_count - step) < (node_count at the exit test - step at the exit test)
+css/selectors/parse.wf:156	pkg::css::selectors	yes	none	
+css/selectors/parse.wf:260	pkg::css::selectors	yes	derived-unproved	(limit - cur) < (limit at the exit test - cur at the exit test)
+css/selectors/parse.wf:382	pkg::css::selectors	yes	derived-unproved	(limit - cur) < (limit at the exit test - cur at the exit test)
+css/selectors/positions.wf:149	pkg::css::selectors	yes	derived-proved	(count - back) < (count at the exit test - back at the exit test)
+css/selectors/positions.wf:96	pkg::css::selectors	yes	derived-proved	(count - step) < (count at the exit test - step at the exit test)
+css/selectors/scan.wf:609	pkg::css::selectors	yes	derived-proved	(limit - pos) < (limit at the exit test - pos at the exit test)
+css/selectors/text_cmp.wf:145	pkg::css::selectors	yes	derived-unproved	(h - pos) < (h at the exit test - pos at the exit test)
+css/selectors/text_cmp.wf:183	pkg::css::selectors	yes	derived-proved	(limit - pos) < (limit at the exit test - pos at the exit test)
+css/selectors/text_cmp.wf:207	pkg::css::selectors	yes	derived-proved	(limit - pos) < (limit at the exit test - pos at the exit test)
+css/syntax/decode.wf:236	pkg::css::syntax	yes	derived-proved	(6_u64 - count) < (6_u64 - count at the exit test)
+css/syntax/decode.wf:292	pkg::css::syntax	yes	derived-unproved	(length - pos) < (length at the exit test - pos at the exit test)
+css/syntax/decode.wf:74	pkg::css::syntax	yes	derived-proved	(need - index) < (need at the exit test - index at the exit test)
+css/syntax/numbers.wf:119	pkg::css::syntax	yes	derived-unproved	(length - pos) < (length at the exit test - pos at the exit test)
+css/syntax/numbers.wf:168	pkg::css::syntax	yes	derived-unproved	(length - pos) < (length at the exit test - pos at the exit test)
+css/syntax/numbers.wf:253	pkg::css::syntax	yes	derived-unproved	(length - pos) < (length at the exit test - pos at the exit test)
+css/syntax/numbers.wf:8	pkg::css::syntax	yes	derived-unproved	(e - 0_u64) < (e at the exit test - 0_u64)
+css/syntax/strings.wf:106	pkg::css::syntax	yes	derived-unproved	(length - pos) < (length at the exit test - pos at the exit test)
+css/syntax/strings.wf:123	pkg::css::syntax	yes	derived-unproved	(length - pos) < (length at the exit test - pos at the exit test)
+css/syntax/strings.wf:146	pkg::css::syntax	yes	derived-unproved	(length - wpos) < (length at the exit test - wpos at the exit test)
+css/syntax/strings.wf:16	pkg::css::syntax	yes	derived-unproved	(length - pos) < (length at the exit test - pos at the exit test)
+css/syntax/strings.wf:72	pkg::css::syntax	yes	derived-unproved	(length - pos) < (length at the exit test - pos at the exit test)
+css/syntax/tokenizer.wf:25	pkg::css::syntax	yes	derived-unproved	(length - p) < (length at the exit test - p at the exit test)
+css/syntax/tokenizer.wf:271	pkg::css::syntax	yes	derived-proved	(6_u64 - count) < (6_u64 - count at the exit test)
+css/syntax/tokenizer.wf:298	pkg::css::syntax	yes	derived-proved	(remaining - wild_count) < (remaining at the exit test - wild_count at the exit test)
+css/syntax/tokenizer.wf:347	pkg::css::syntax	yes	derived-proved	(6_u64 - ecount) < (6_u64 - ecount at the exit test)
+css/syntax/tokenizer.wf:50	pkg::css::syntax	yes	derived-proved	(length - pos) < (length at the exit test - pos at the exit test)
+css/syntax/tokenizer.wf:820	pkg::css::syntax	yes	derived-unproved	(length - pos) < (length at the exit test - pos at the exit test)
+css/syntax/tokenizer.wf:864	pkg::css::syntax	yes	derived-unproved	(open_blocks.inner.len - 0_u64) < (the measure at the exit test - 0_u64)
+font/shape_apply.wf:1039	pkg::font	yes	none	
+font/shape_apply.wf:1046	pkg::font	yes	derived-proved	(length - stop) < (length at the exit test - stop at the exit test)
+font/shape_apply.wf:361	pkg::font	yes	none	
+font/shape_apply.wf:385	pkg::font	yes	derived-proved	(at - 0_u64) < (at at the exit test - 0_u64)
+font/shape_apply.wf:424	pkg::font	yes	derived-proved	(position - 0_u64) < (position at the exit test - 0_u64)
+font/shape_apply.wf:647	pkg::font	yes	none	
+font/shape_buffer.wf:483	pkg::font	yes	derived-proved	(length - stop) < (length at the exit test - stop at the exit test)
+font/shape_buffer.wf:498	pkg::font	yes	derived-proved	(begin - index) < (begin at the exit test - index at the exit test)
+font/shape_buffer.wf:518	pkg::font	yes	derived-proved	(position - 0_u64) < (position at the exit test - 0_u64)
+font/shape_buffer.wf:556	pkg::font	yes	derived-proved	(begin - 0_u64) < (begin at the exit test - 0_u64)
+font/shape_buffer.wf:570	pkg::font	yes	derived-proved	(out_length - stop) < (out_length at the exit test - stop at the exit test)
+font/shape_buffer.wf:588	pkg::font	yes	derived-proved	(length - position) < (length at the exit test - position at the exit test)
+font/shape_buffer.wf:628	pkg::font	yes	derived-proved	(position - 0_u64) < (position at the exit test - 0_u64)
+font/shape_normalize.wf:268	pkg::font	yes	none	
+font/shape_normalize.wf:287	pkg::font	yes	none	
+font/shape_normalize.wf:324	pkg::font	yes	none	
+font/shape_normalize.wf:342	pkg::font	yes	none	
+font/shape_normalize.wf:351	pkg::font	yes	derived-proved	(count - end) < (count at the exit test - end at the exit test)
+font/shape_normalize.wf:365	pkg::font	yes	none	
+font/shape_normalize.wf:383	pkg::font	yes	derived-proved	(count - cluster_end) < (count at the exit test - cluster_end at the exit test)
+font/shape_normalize.wf:408	pkg::font	yes	derived-proved	(target - start) < (target at the exit test - start at the exit test)
+font/shape_normalize.wf:441	pkg::font	yes	derived-unproved	(count - position) < (count at the exit test - position at the exit test)
+font/shape_normalize.wf:451	pkg::font	yes	derived-proved	(count - end) < (count at the exit test - end at the exit test)
+font/shape_normalize.wf:48	pkg::font	yes	derived-unproved	(count - position) < (count at the exit test - position at the exit test)
+font/shape_normalize.wf:506	pkg::font	yes	none	
+font/shape_normalize.wf:607	pkg::font	yes	derived-unproved	(count - position) < (count at the exit test - position at the exit test)
+font/shape_normalize.wf:615	pkg::font	yes	derived-proved	(start - 0_u64) < (start at the exit test - 0_u64)
+font/shape_normalize.wf:628	pkg::font	yes	derived-proved	(count - end) < (count at the exit test - end at the exit test)
+font/shape_position.wf:338	pkg::font	yes	derived-proved	(position - until) < (position at the exit test - until at the exit test)
+font/shape_position.wf:755	pkg::font	yes	derived-proved	(back - 0_u64) < (back at the exit test - 0_u64)
+html/tokenizer/charref.wf:104	pkg::html::tokenizer	yes	derived-proved	(length - at) < (length at the exit test - at at the exit test)
+html/tokenizer/charref.wf:149	pkg::html::tokenizer	yes	derived-proved	(bucket_end - index) < (bucket_end at the exit test - index at the exit test)
+html/tokenizer/charref.wf:182	pkg::html::tokenizer	yes	derived-proved	(name_len - i) < (name_len at the exit test - i at the exit test)
+html/tokenizer/charref.wf:27	pkg::html::tokenizer	yes	derived-proved	(count - at) < (count at the exit test - at at the exit test)
+html/tokenizer/charref.wf:74	pkg::html::tokenizer	yes	derived-proved	(length - at) < (length at the exit test - at at the exit test)
+html/tokenizer/comments.wf:136	pkg::html::tokenizer	yes	none	
+html/tokenizer/comments.wf:15	pkg::html::tokenizer	yes	none	
+html/tokenizer/data_state.wf:137	pkg::html::tokenizer	yes	derived-proved	(7_u64 - i) < (7_u64 - i at the exit test)
+html/tokenizer/data_state.wf:239	pkg::html::tokenizer	yes	none	
+html/tokenizer/data_state.wf:46	pkg::html::tokenizer	yes	derived-proved	(7_u64 - i) < (7_u64 - i at the exit test)
+html/tokenizer/data_state.wf:84	pkg::html::tokenizer	yes	derived-proved	(7_u64 - i) < (7_u64 - i at the exit test)
+html/tokenizer/doctype.wf:38	pkg::html::tokenizer	yes	derived-proved	(6_u64 - i) < (6_u64 - i at the exit test)
+html/tokenizer/doctype.wf:99	pkg::html::tokenizer	yes	none	
+html/tokenizer/script_data.wf:14	pkg::html::tokenizer	yes	none	
+html/tokenizer/script_data.wf:56	pkg::html::tokenizer	yes	none	
+html/tokenizer/tags.wf:114	pkg::html::tokenizer	yes	none	
+html/tokenizer/tags.wf:179	pkg::html::tokenizer	yes	derived-proved	(left_len - i) < (left_len at the exit test - i at the exit test)
+html/tokenizer/tags.wf:18	pkg::html::tokenizer	yes	none	
+html/tokenizer/tags.wf:209	pkg::html::tokenizer	yes	derived-proved	(name_end - i) < (name_end at the exit test - i at the exit test)
+html/tokenizer/tags.wf:301	pkg::html::tokenizer	yes	derived-unproved	(cursor - 0_u64) < (cursor at the exit test - 0_u64)
+html/tokenizer/tags.wf:390	pkg::html::tokenizer	yes	none	
+html/tokenizer/tags.wf:47	pkg::html::tokenizer	yes	none	
+html/tokenizer/tags.wf:485	pkg::html::tokenizer	yes	none	
+html/tokenizer/tags.wf:577	pkg::html::tokenizer	yes	derived-proved	(copy_len - i) < (copy_len at the exit test - i at the exit test)
+html/tokenizer/tags.wf:78	pkg::html::tokenizer	yes	none	
+html/tokenizer/text_states.wf:111	pkg::html::tokenizer	yes	none	
+html/tokenizer/text_states.wf:188	pkg::html::tokenizer	yes	none	
+html/tokenizer/text_states.wf:207	pkg::html::tokenizer	yes	none	
+html/tokenizer/text_states.wf:22	pkg::html::tokenizer	yes	derived-proved	(name_len - i) < (name_len at the exit test - i at the exit test)
+html/tokenizer/text_states.wf:235	pkg::html::tokenizer	yes	none	
+html/tokenizer/text_states.wf:56	pkg::html::tokenizer	yes	derived-proved	(len - i) < (len at the exit test - i at the exit test)
+html/tokenizer/types.wf:46	pkg::html::tokenizer	yes	derived-proved	(cell^.inner.len - length) < (the measure at the exit test - length at the exit test)
+html/tokenizer/types.wf:60	pkg::html::tokenizer	yes	derived-proved	(cell^.inner.len - length) < (the measure at the exit test - length at the exit test)
+html/tree_builder/adoption.wf:133	pkg::html::tree_builder	yes	derived-proved	(8_u64 - outer) < (8_u64 - outer at the exit test)
+html/tree_builder/adoption.wf:249	pkg::html::tree_builder	yes	derived-proved	(node_idx - 0_u64) < (node_idx at the exit test - 0_u64)
+html/tree_builder/adoption.wf:26	pkg::html::tree_builder	yes	derived-proved	(idx - scan_from) < (idx at the exit test - scan_from at the exit test)
+html/tree_builder/adoption.wf:55	pkg::html::tree_builder	yes	derived-proved	(len - idx) < (len at the exit test - idx at the exit test)
+html/tree_builder/adoption.wf:81	pkg::html::tree_builder	yes	derived-proved	(idx - 0_u64) < (idx at the exit test - 0_u64)
+html/tree_builder/afe.wf:101	pkg::html::tree_builder	yes	derived-proved	(count - i) < (count at the exit test - i at the exit test)
+html/tree_builder/afe.wf:243	pkg::html::tree_builder	yes	derived-proved	(existing_count - i) < (existing_count at the exit test - i at the exit test)
+html/tree_builder/afe.wf:291	pkg::html::tree_builder	yes	derived-proved	(count - i) < (count at the exit test - i at the exit test)
+html/tree_builder/afe.wf:380	pkg::html::tree_builder	yes	derived-proved	(len - idx) < (len at the exit test - idx at the exit test)
+html/tree_builder/afe.wf:412	pkg::html::tree_builder	yes	derived-proved	(idx - 0_u64) < (idx at the exit test - 0_u64)
+html/tree_builder/afe.wf:449	pkg::html::tree_builder	yes	derived-proved	(len - idx) < (len at the exit test - idx at the exit test)
+html/tree_builder/afe.wf:482	pkg::html::tree_builder	yes	none	
+html/tree_builder/afe.wf:54	pkg::html::tree_builder	yes	derived-proved	(count - i) < (count at the exit test - i at the exit test)
+html/tree_builder/afe.wf:74	pkg::html::tree_builder	yes	derived-proved	(count - i) < (count at the exit test - i at the exit test)
+html/tree_builder/dispatch.wf:253	pkg::html::tree_builder	yes	none	
+html/tree_builder/elements.wf:227	pkg::html::tree_builder	yes	derived-proved	(len - idx) < (len at the exit test - idx at the exit test)
+html/tree_builder/elements.wf:263	pkg::html::tree_builder	yes	derived-proved	(count - i) < (count at the exit test - i at the exit test)
+html/tree_builder/elements.wf:93	pkg::html::tree_builder	yes	derived-proved	(end64 - idx) < (end64 at the exit test - idx at the exit test)
+html/tree_builder/entry.wf:29	pkg::html::tree_builder	yes	none	
+html/tree_builder/entry.wf:85	pkg::html::tree_builder	yes	derived-proved	(len - i) < (len at the exit test - i at the exit test)
+html/tree_builder/foreign.wf:291	pkg::html::tree_builder	yes	derived-proved	(end64 - idx) < (end64 at the exit test - idx at the exit test)
+html/tree_builder/foreign.wf:383	pkg::html::tree_builder	yes	derived-proved	(idx - 0_u64) < (idx at the exit test - 0_u64)
+html/tree_builder/foreign.wf:42	pkg::html::tree_builder	yes	derived-proved	(count - i) < (count at the exit test - i at the exit test)
+html/tree_builder/foreign.wf:497	pkg::html::tree_builder	yes	none	
+html/tree_builder/implied.wf:37	pkg::html::tree_builder	yes	none	
+html/tree_builder/implied.wf:63	pkg::html::tree_builder	yes	none	
+html/tree_builder/implied.wf:93	pkg::html::tree_builder	yes	none	
+html/tree_builder/insert.wf:114	pkg::html::tree_builder	yes	none	
+html/tree_builder/insert.wf:263	pkg::html::tree_builder	yes	derived-proved	(idx - 0_u64) < (idx at the exit test - 0_u64)
+html/tree_builder/insert.wf:293	pkg::html::tree_builder	yes	derived-proved	(len - idx) < (len at the exit test - idx at the exit test)
+html/tree_builder/insert.wf:424	pkg::html::tree_builder	yes	derived-proved	(len - i) < (len at the exit test - i at the exit test)
+html/tree_builder/insert.wf:445	pkg::html::tree_builder	yes	derived-proved	(len - j) < (len at the exit test - j at the exit test)
+html/tree_builder/insert.wf:480	pkg::html::tree_builder	yes	derived-proved	(len - i) < (len at the exit test - i at the exit test)
+html/tree_builder/insert.wf:501	pkg::html::tree_builder	yes	derived-proved	(len - j) < (len at the exit test - j at the exit test)
+html/tree_builder/insert.wf:542	pkg::html::tree_builder	yes	derived-proved	(len - j) < (len at the exit test - j at the exit test)
+html/tree_builder/mode_body_end.wf:183	pkg::html::tree_builder	yes	derived-proved	(idx - 0_u64) < (idx at the exit test - 0_u64)
+html/tree_builder/mode_body_end.wf:214	pkg::html::tree_builder	yes	none	
+html/tree_builder/mode_body_helpers.wf:139	pkg::html::tree_builder	yes	none	
+html/tree_builder/mode_body_helpers.wf:182	pkg::html::tree_builder	yes	none	
+html/tree_builder/mode_body_helpers.wf:60	pkg::html::tree_builder	yes	derived-proved	(end64 - idx) < (end64 at the exit test - idx at the exit test)
+html/tree_builder/mode_body_start.wf:58	pkg::html::tree_builder	yes	derived-proved	(count - i) < (count at the exit test - i at the exit test)
+html/tree_builder/mode_table.wf:13	pkg::html::tree_builder	yes	none	
+html/tree_builder/mode_table.wf:273	pkg::html::tree_builder	yes	derived-proved	(blen - i) < (blen at the exit test - i at the exit test)
+html/tree_builder/mode_table_body.wf:11	pkg::html::tree_builder	yes	none	
+html/tree_builder/mode_table_body.wf:398	pkg::html::tree_builder	yes	none	
+html/tree_builder/mode_table_body.wf:40	pkg::html::tree_builder	yes	none	
+html/tree_builder/reconstruct.wf:24	pkg::html::tree_builder	yes	derived-proved	(idx - 0_u64) < (idx at the exit test - 0_u64)
+html/tree_builder/reconstruct.wf:83	pkg::html::tree_builder	yes	none	
+html/tree_builder/reset_mode.wf:28	pkg::html::tree_builder	yes	none	
+html/tree_builder/stack.wf:109	pkg::html::tree_builder	yes	derived-proved	(len - idx) < (len at the exit test - idx at the exit test)
+html/tree_builder/stack.wf:131	pkg::html::tree_builder	yes	derived-proved	(len - idx) < (len at the exit test - idx at the exit test)
+html/tree_builder/stack.wf:219	pkg::html::tree_builder	yes	none	
+html/tree_builder/stack.wf:240	pkg::html::tree_builder	yes	none	
+html/tree_builder/stack.wf:254	pkg::html::tree_builder	yes	none	
+html/tree_builder/stack.wf:384	pkg::html::tree_builder	yes	derived-proved	(idx - 0_u64) < (idx at the exit test - 0_u64)
+html/tree_builder/stack.wf:417	pkg::html::tree_builder	yes	derived-proved	(idx - 0_u64) < (idx at the exit test - 0_u64)
+html/tree_builder/util.wf:104	pkg::html::tree_builder	yes	derived-proved	(len - i) < (len at the exit test - i at the exit test)
+html/tree_builder/util.wf:11	pkg::html::tree_builder	yes	derived-proved	(la - idx) < (la at the exit test - idx at the exit test)
+html/tree_builder/util.wf:131	pkg::html::tree_builder	yes	derived-proved	(len - i) < (len at the exit test - i at the exit test)
+html/tree_builder/util.wf:154	pkg::html::tree_builder	yes	derived-proved	(len - i) < (len at the exit test - i at the exit test)
+html/tree_builder/util.wf:179	pkg::html::tree_builder	yes	derived-proved	(len - i) < (len at the exit test - i at the exit test)
+html/tree_builder/util.wf:206	pkg::html::tree_builder	yes	derived-proved	(len - i) < (len at the exit test - i at the exit test)
+html/tree_builder/util.wf:54	pkg::html::tree_builder	yes	derived-proved	(la - idx) < (la at the exit test - idx at the exit test)
+image/png/checksums.wf:59	pkg::image::png	yes	derived-unproved	((length - block_start) - 0_u64) < (the operand at the exit test - 0_u64)
+image/png/checksums.wf:70	pkg::image::png	yes	derived-proved	((block_end - at) - 8_u64) < (the operand at the exit test - 8_u64)
+image/png/chunks.wf:231	pkg::image::png	yes	derived-proved	((length - offset) - 12_u64) < (the operand at the exit test - 12_u64)
+image/png/huffman.wf:174	pkg::image::png	yes	derived-proved	(size - slot) < (size at the exit test - slot at the exit test)
+image/png/inflate.wf:110	pkg::image::png	yes	none	
+image/png/inflate.wf:194	pkg::image::png	yes	none	
+image/png/inflate_codes.wf:20	pkg::image::png	yes	none	
+image/png/rows.wf:30	pkg::image::png	yes	derived-proved	(width - column) < (width at the exit test - column at the exit test)
+oracle/css_color/css_color.wf:151	pkg::oracle::css_color	no	waits	
+oracle/css_json/css_json.wf:180	pkg::oracle::css_json	yes	derived-proved	(to - at) < (to at the exit test - at at the exit test)
+oracle/css_rules/css_rules.wf:184	pkg::oracle::css_rules	no	waits	
+oracle/css_rules/css_rules.wf:526	pkg::oracle::css_rules	no	none	
+oracle/css_rules/css_rules.wf:527	pkg::oracle::css_rules	no	none	
+oracle/css_rules/css_rules.wf:557	pkg::oracle::css_rules	no	derived-proved	(limit - at) < (limit at the exit test - at at the exit test)
+oracle/css_rules/css_rules.wf:646	pkg::oracle::css_rules	no	none	
+oracle/css_selectors/css_selectors.wf:722	pkg::oracle::css_selectors	no	waits	
+oracle/css_syntax/css_syntax.wf:87	pkg::oracle::css_syntax	no	waits	
+oracle/dom_serialize/dom_serialize.wf:58	pkg::oracle::dom_serialize	yes	derived-proved	(stack.inner.len - 0_u64) < (the measure at the exit test - 0_u64)
+oracle/font_shape/font_shape.wf:236	pkg::oracle::font_shape	no	derived-unproved	(length - position) < (length at the exit test - position at the exit test)
+oracle/font_shape/font_shape.wf:403	pkg::oracle::font_shape	no	none	
+oracle/font_shape/font_shape.wf:406	pkg::oracle::font_shape	no	derived-proved	(end - at) < (end at the exit test - at at the exit test)
+oracle/html_tokenizer/html_tokenizer.wf:158	pkg::oracle::html_tokenizer	no	none	
+oracle/html_tokenizer/html_tokenizer.wf:207	pkg::oracle::html_tokenizer	no	waits	
+oracle/html_tokenizer/html_tokenizer.wf:364	pkg::oracle::html_tokenizer	no	derived-proved	(limit - count) < (limit at the exit test - count at the exit test)
+oracle/html_tree/html_tree.wf:115	pkg::oracle::html_tree	no	none	
+oracle/html_tree/html_tree.wf:184	pkg::oracle::html_tree	no	waits	
+oracle/idna/idna.wf:119	pkg::oracle::idna	no	waits	
+oracle/line_break/line_break.wf:148	pkg::oracle::line_break	no	derived-unproved	(length - start) < (length at the exit test - start at the exit test)
+oracle/line_break/line_break.wf:213	pkg::oracle::line_break	no	none	
+oracle/line_break/line_break.wf:236	pkg::oracle::line_break	no	none	
+oracle/line_break/line_break.wf:350	pkg::oracle::line_break	no	none	
+oracle/normalization/normalization.wf:240	pkg::oracle::normalization	no	derived-unproved	(length - start) < (length at the exit test - start at the exit test)
+oracle/normalization/normalization.wf:331	pkg::oracle::normalization	no	none	
+oracle/normalization/normalization.wf:354	pkg::oracle::normalization	no	none	
+oracle/normalization/normalization.wf:443	pkg::oracle::normalization	no	none	
+oracle/normalization/normalization.wf:500	pkg::oracle::normalization	no	derived-unproved	(length - start) < (length at the exit test - start at the exit test)
+oracle/normalization/normalization.wf:545	pkg::oracle::normalization	no	derived-proved	(output^.inner.len - 0_u64) < (the measure at the exit test - 0_u64)
+oracle/normalization/normalization.wf:797	pkg::oracle::normalization	no	none	
+oracle/png/png.wf:288	pkg::oracle::png	no	derived-unproved	(length - start) < (length at the exit test - start at the exit test)
+oracle/png/png.wf:491	pkg::oracle::png	no	derived-proved	(remaining - 0_u64) < (remaining at the exit test - 0_u64)
+oracle/png/png.wf:678	pkg::oracle::png	no	derived-proved	(length - at) < (length at the exit test - at at the exit test)
+oracle/support/support.wf:102	pkg::oracle::support	no	derived-proved	(buffer^.inner.len - length) < (the measure at the exit test - length at the exit test)
+oracle/support/support.wf:118	pkg::oracle::support	no	waits	
+oracle/support/support.wf:210	pkg::oracle::support	no	derived-proved	(length - at) < (length at the exit test - at at the exit test)
+oracle/support/support.wf:231	pkg::oracle::support	no	derived-proved	(length - at) < (length at the exit test - at at the exit test)
+oracle/support/support.wf:343	pkg::oracle::support	no	derived-proved	(length - at) < (length at the exit test - at at the exit test)
+oracle/support/support.wf:435	pkg::oracle::support	no	none	
+oracle/support/support.wf:449	pkg::oracle::support	no	derived-proved	(count - 0_u64) < (count at the exit test - 0_u64)
+oracle/support/support.wf:468	pkg::oracle::support	no	derived-unproved	(probe - 0_u64) < (probe at the exit test - 0_u64)
+oracle/support/support.wf:479	pkg::oracle::support	no	derived-proved	(remaining - 0_u64) < (remaining at the exit test - 0_u64)
+oracle/support/support.wf:84	pkg::oracle::support	no	derived-proved	(total - cell^.inner.len) < (total at the exit test - the measure at the exit test)
+oracle/text_properties/text_properties.wf:407	pkg::oracle::text_properties	no	waits	
+oracle/url/url.wf:224	pkg::oracle::url	no	waits	
+proto/layout/driver.wf:488	pkg::proto::layout	no	none	
+proto/style/cascade.wf:105	pkg::proto::style	no	derived-proved	(pending - 0_u64) < (pending at the exit test - 0_u64)
+proto/style/store.wf:114	pkg::proto::style	no	derived-unproved	(stack.inner.len - 0_u64) < (the measure at the exit test - 0_u64)
+text/idna/bidi_rule.wf:114	pkg::text::idna	yes	derived-proved	(at - 0_u64) < (at at the exit test - 0_u64)
+text/idna/bidi_rule.wf:39	pkg::text::idna	yes	derived-proved	(at - 0_u64) < (at at the exit test - 0_u64)
+text/idna/buffer.wf:48	pkg::text::idna	yes	derived-proved	(buffer^.inner.len - length) < (the measure at the exit test - length at the exit test)
+text/idna/buffer.wf:99	pkg::text::idna	yes	derived-proved	(buffer^.inner.len - length) < (the measure at the exit test - length at the exit test)
+text/idna/contextj.wf:27	pkg::text::idna	yes	derived-proved	(at - 0_u64) < (at at the exit test - 0_u64)
+text/idna/contextj.wf:59	pkg::text::idna	yes	derived-proved	(length - at) < (length at the exit test - at at the exit test)
+text/idna/idna.wf:111	pkg::text::idna	yes	none	
+text/idna/idna.wf:159	pkg::text::idna	yes	none	
+text/idna/idna.wf:200	pkg::text::idna	yes	none	
+text/idna/labels.wf:21	pkg::text::idna	yes	derived-proved	(length - at) < (length at the exit test - at at the exit test)
+text/idna/punycode.wf:120	pkg::text::idna	yes	none	
+text/idna/punycode.wf:210	pkg::text::idna	yes	derived-proved	(at - 0_u64) < (at at the exit test - 0_u64)
+text/idna/punycode.wf:273	pkg::text::idna	yes	derived-unproved	(length - pos) < (length at the exit test - pos at the exit test)
+text/idna/punycode.wf:282	pkg::text::idna	yes	derived-proved	(length - cursor) < (length at the exit test - cursor at the exit test)
+text/idna/punycode.wf:439	pkg::text::idna	yes	derived-unproved	(total - h) < (total at the exit test - h at the exit test)
+text/idna/punycode.wf:488	pkg::text::idna	yes	none	
+text/normalization/buffer.wf:44	pkg::text::normalization	yes	derived-proved	(output^.inner.len - length) < (the measure at the exit test - length at the exit test)
+text/normalization/compose.wf:22	pkg::text::normalization	yes	derived-proved	(output^.inner.len - read_pos) < (the measure at the exit test - read_pos at the exit test)
+text/normalization/decompose.wf:158	pkg::text::normalization	yes	derived-unproved	(output^.inner.len - pos) < (the measure at the exit test - pos at the exit test)
+text/normalization/decompose.wf:68	pkg::text::normalization	yes	derived-proved	(total - at) < (total at the exit test - at at the exit test)
+tools/html_entities/html_entities.wf:115	pkg::tools::html_entities	no	derived-not-reached	
+tools/html_entities/html_entities.wf:131	pkg::tools::html_entities	no	waits	
+tools/html_entities/html_entities.wf:97	pkg::tools::html_entities	no	derived-not-reached	
+tools/idna_tables/idna_bidi.wf:190	pkg::tools::idna_tables	no	derived-not-reached	
+tools/idna_tables/idna_joining.wf:112	pkg::tools::idna_tables	no	derived-not-reached	
+tools/idna_tables/idna_mapping.wf:207	pkg::tools::idna_tables	no	derived-not-reached	
+tools/idna_tables/idna_mapping.wf:37	pkg::tools::idna_tables	no	none	
+tools/idna_tables/idna_mark.wf:90	pkg::tools::idna_tables	no	derived-not-reached	
+tools/idna_tables/idna_virama.wf:59	pkg::tools::idna_tables	no	derived-not-reached	
+tools/idna_tables/io.wf:157	pkg::tools::idna_tables	no	derived-not-reached	
+tools/idna_tables/io.wf:178	pkg::tools::idna_tables	no	derived-not-reached	
+tools/idna_tables/io.wf:300	pkg::tools::idna_tables	no	none	
+tools/idna_tables/io.wf:314	pkg::tools::idna_tables	no	derived-not-reached	
+tools/idna_tables/io.wf:333	pkg::tools::idna_tables	no	derived-not-reached	
+tools/idna_tables/io.wf:60	pkg::tools::idna_tables	no	derived-not-reached	
+tools/idna_tables/io.wf:78	pkg::tools::idna_tables	no	derived-not-reached	
+tools/idna_tables/io.wf:94	pkg::tools::idna_tables	no	waits	
+tools/line_break_tables/build.wf:111	pkg::tools::line_break_tables	no	derived-not-reached	
+tools/line_break_tables/build.wf:151	pkg::tools::line_break_tables	no	derived-not-reached	
+tools/line_break_tables/build.wf:29	pkg::tools::line_break_tables	no	derived-not-reached	
+tools/line_break_tables/build.wf:71	pkg::tools::line_break_tables	no	derived-not-reached	
+tools/line_break_tables/cursor.wf:5	pkg::tools::line_break_tables	no	derived-not-reached	
+tools/line_break_tables/io.wf:157	pkg::tools::line_break_tables	no	derived-not-reached	
+tools/line_break_tables/io.wf:178	pkg::tools::line_break_tables	no	derived-not-reached	
+tools/line_break_tables/io.wf:300	pkg::tools::line_break_tables	no	none	
+tools/line_break_tables/io.wf:314	pkg::tools::line_break_tables	no	derived-not-reached	
+tools/line_break_tables/io.wf:333	pkg::tools::line_break_tables	no	derived-not-reached	
+tools/line_break_tables/io.wf:60	pkg::tools::line_break_tables	no	derived-not-reached	
+tools/line_break_tables/io.wf:78	pkg::tools::line_break_tables	no	derived-not-reached	
+tools/line_break_tables/io.wf:94	pkg::tools::line_break_tables	no	waits	
+tools/normalization_tables/expand.wf:23	pkg::tools::normalization_tables	no	derived-not-reached	
+tools/normalization_tables/io.wf:157	pkg::tools::normalization_tables	no	derived-not-reached	
+tools/normalization_tables/io.wf:178	pkg::tools::normalization_tables	no	derived-not-reached	
+tools/normalization_tables/io.wf:300	pkg::tools::normalization_tables	no	none	
+tools/normalization_tables/io.wf:314	pkg::tools::normalization_tables	no	derived-not-reached	
+tools/normalization_tables/io.wf:333	pkg::tools::normalization_tables	no	derived-not-reached	
+tools/normalization_tables/io.wf:60	pkg::tools::normalization_tables	no	derived-not-reached	
+tools/normalization_tables/io.wf:78	pkg::tools::normalization_tables	no	derived-not-reached	
+tools/normalization_tables/io.wf:94	pkg::tools::normalization_tables	no	waits	
+tools/properties_tables/build.wf:28	pkg::tools::properties_tables	no	derived-not-reached	
+tools/properties_tables/build.wf:73	pkg::tools::properties_tables	no	derived-not-reached	
+tools/properties_tables/io.wf:157	pkg::tools::properties_tables	no	derived-not-reached	
+tools/properties_tables/io.wf:178	pkg::tools::properties_tables	no	derived-not-reached	
+tools/properties_tables/io.wf:300	pkg::tools::properties_tables	no	none	
+tools/properties_tables/io.wf:314	pkg::tools::properties_tables	no	derived-not-reached	
+tools/properties_tables/io.wf:333	pkg::tools::properties_tables	no	derived-not-reached	
+tools/properties_tables/io.wf:60	pkg::tools::properties_tables	no	derived-not-reached	
+tools/properties_tables/io.wf:78	pkg::tools::properties_tables	no	derived-not-reached	
+tools/properties_tables/io.wf:94	pkg::tools::properties_tables	no	waits	
+url/builder.wf:125	pkg::url	yes	derived-proved	(v - 10_u64) < (v at the exit test - 10_u64)
+url/builder.wf:92	pkg::url	yes	derived-proved	(length - pos) < (length at the exit test - pos at the exit test)
+url/bytes.wf:209	pkg::url	yes	derived-proved	(need - index) < (need at the exit test - index at the exit test)
+url/bytes.wf:79	pkg::url	yes	derived-proved	(buffer^.inner.len - length) < (the measure at the exit test - length at the exit test)
+url/host.wf:16	pkg::url	yes	derived-unproved	(length - pos) < (length at the exit test - pos at the exit test)
+url/host.wf:194	pkg::url	yes	derived-proved	(length - pos) < (length at the exit test - pos at the exit test)
+url/host.wf:70	pkg::url	yes	derived-proved	(length - pos) < (length at the exit test - pos at the exit test)
+url/ipv4.wf:198	pkg::url	yes	derived-proved	(length - cursor) < (length at the exit test - cursor at the exit test)
+url/ipv4.wf:72	pkg::url	yes	derived-proved	(length - pos) < (length at the exit test - pos at the exit test)
+url/ipv6.wf:129	pkg::url	yes	derived-unproved	(length - pos) < (length at the exit test - pos at the exit test)
+url/ipv6.wf:15	pkg::url	yes	derived-unproved	(length - pos) < (length at the exit test - pos at the exit test)
+url/ipv6.wf:153	pkg::url	yes	derived-proved	(4_u64 - digit_count) < (4_u64 - digit_count at the exit test)
+url/ipv6.wf:253	pkg::url	yes	none	
+url/ipv6.wf:45	pkg::url	yes	derived-proved	(length - pos) < (length at the exit test - pos at the exit test)
+url/parser.wf:1056	pkg::url	yes	derived-proved	(length - scan_pos) < (length at the exit test - scan_pos at the exit test)
+url/parser.wf:1131	pkg::url	yes	derived-proved	(length - scan_pos) < (length at the exit test - scan_pos at the exit test)
+url/parser.wf:1167	pkg::url	yes	derived-proved	(length - scan_pos) < (length at the exit test - scan_pos at the exit test)
+url/parser.wf:26	pkg::url	yes	derived-proved	(hi - lo) < (hi at the exit test - lo at the exit test)
+url/parser.wf:552	pkg::url	yes	derived-proved	(length - p) < (length at the exit test - p at the exit test)
+url/parser.wf:589	pkg::url	yes	derived-proved	(length - pos) < (length at the exit test - pos at the exit test)
+url/parser.wf:645	pkg::url	yes	derived-proved	(seg_end - pos) < (seg_end at the exit test - pos at the exit test)
+url/parser.wf:692	pkg::url	yes	derived-proved	(length - scan_pos) < (length at the exit test - scan_pos at the exit test)
+url/parser.wf:7	pkg::url	yes	derived-proved	(length - lo) < (length at the exit test - lo at the exit test)
+url/parser.wf:818	pkg::url	yes	derived-proved	(terminator - pos) < (terminator at the exit test - pos at the exit test)
+url/parser.wf:863	pkg::url	yes	derived-proved	(length - digit_end) < (length at the exit test - digit_end at the exit test)
+url/parser.wf:999	pkg::url	yes	derived-proved	(length - scan_pos) < (length at the exit test - scan_pos at the exit test)
+url/path.wf:249	pkg::url	yes	derived-proved	(buffer^.inner.len - length) < (the measure at the exit test - length at the exit test)
+url/path.wf:269	pkg::url	yes	none	
+url/scheme.wf:171	pkg::url	yes	derived-proved	(length - pos) < (length at the exit test - pos at the exit test)

@@ -1554,7 +1554,7 @@ A PRE-1 or PRE-2 function signature is the ordinary declared boundary; its suppl
 
 [EFF-3] A call whose row is `pure` and which allocates nothing licenses deduplication and reordering with equal arguments.
 The ground is that the heap a call takes from is finite and a duplicated take is a different program [STOR-8].
-Elimination of an unused licensed call additionally requires a termination proof; v0 provides no termination checker, so unused calls are not eliminated.
+Elimination of an unused licensed call additionally requires a termination proof; [TERM-1] proves progress only for loops, and a waiting loop or a recursive call need not terminate, so no call has one and unused calls are not eliminated.
 The source spelling `pure` excludes state reads and state writes; it does not promise termination.
 A call that exhibits `writes(path)` may remain observable even when its result is unused. A call on fresh local state retains that instantiated effect even though it frames out of the enclosing signature. No optimization may erase, duplicate, speculate, or reorder either call unless ordinary effect-path overlap, closed-state, escape, ownership, control, result, release, and surviving-observer proofs establish the exact transformation.
 

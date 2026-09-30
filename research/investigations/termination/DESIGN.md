@@ -519,3 +519,11 @@ The migration also found three termination defects in existing sources
 rule leaves open: a field advanced through a call cannot be a rank, a cursor
 removal that shrinks its referent has no form, and three derivation steps are
 missing. `docs/todo.md` carries each.
+
+Checked against Snowghost as it stands ([record](runs/checker.md)), the rule
+accepts 142 of the 229 loops in the 20 modules checked to the end without a
+change; 30 derive a rank that the facts do not show falling, mostly a position
+advanced through a helper whose contract does not state the advance, and 57
+have no form. Two probes turn a class of each into accepted loops with a
+written rank, helper postconditions and a narrower effect row; the run adds a
+fourth derivation gap, a `Bool` exit test ending the leading statements.
