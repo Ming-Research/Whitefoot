@@ -3662,7 +3662,7 @@ The continuing relation is the condition when the exit block is the `else` block
 
 Every other continuing relation derives no rank.
 Only a test that continues leads toward the header, and its continuing relation holds there, so a rank's values at the tests of it that continue are nonnegative and strictly decreasing, and the loop reaches an exit in finitely many iterations.
-No leading statement before a test writes one of its operands, since an operation [OP-1] writes nothing, so `R0` is the rank's value at its test.
+No leading statement before a test writes one of its operands, since an operation [OP-1] and a construction [GRAM-8] write nothing, so `R0` is the rank's value at its test.
 Each wait of form 2 is a point at which [WAIT-2] has a context wait before its next step; a call of a function a source record defines executes in its caller's context, and a call through an interface member or a function-kind parameter may reach an actual that does not wait [FN-4].
 A structural descent lowers the number of `Box` cells in the value c names at each iteration's start: the rebinding enters one of them, and no statement of the body can add one to any value.
 
