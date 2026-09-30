@@ -392,9 +392,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         if shape.element_type(self.program)? != ty {
             return Err(BackendFailure::InvalidIr);
         }
-        let physical = self.boundary_slot(shape, run_type, run, row)?;
+        let length = self.run_word(run_type, run, shape.length_field())?;
+        let physical = self.boundary_slot(shape, run_type, run, row, &length)?;
         let element_pointer = self.element_pointer(result, shape, run_type, run, &physical)?;
-        self.move_run_boundary(shape, run_type, run, row, None)?;
+        self.move_run_boundary(shape, run_type, run, row, &length, None)?;
         self.load_place_result(result, ty, &format!("%{element_pointer}"))
     }
 
@@ -421,10 +422,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             return Err(BackendFailure::InvalidIr);
         }
         let updated = self.prepare_run_update(result, run, run_type)?;
-        let physical = self.boundary_slot(shape, run_type, run, row)?;
+        let length = self.run_word(run_type, run, shape.length_field())?;
+        let physical = self.boundary_slot(shape, run_type, run, row, &length)?;
         let element_pointer = self.element_pointer(result, shape, run_type, updated, &physical)?;
         self.store_value_at(value, &format!("%{element_pointer}"))?;
-        self.move_run_boundary(shape, run_type, run, row, Some(physical))?;
+        self.move_run_boundary(shape, run_type, run, row, &length, Some(physical))?;
         self.emit_constant(result, ty, IrConstant::Unit)
     }
 
@@ -510,9 +512,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         run_type: IrType,
         run: IrValueId,
         row: IrBoundary,
+        length: &str,
         front_placement_slot: Option<String>,
     ) -> Result<(), BackendFailure> {
-        let length = self.run_word(run_type, run, shape.length_field())?;
+        // Capture belongs to this complete boundary operation only. Its
+        // payload transfer cannot modify the disjoint descriptor words.
         // A front placement has already computed the touched slot in its
         // payload store. Reuse that value for the new origin instead of
         // reloading head/capacity and recomputing the same predecessor.
@@ -537,7 +541,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             if row.places() {
                 match front_placement_slot {
                     Some(slot) => slot,
-                    None => self.boundary_slot(shape, run_type, run, row)?,
+                    None => self.boundary_slot(shape, run_type, run, row, length)?,
                 }
             } else {
                 self.wrap_offset(
@@ -585,6 +589,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         run_type: IrType,
         run: IrValueId,
         row: IrBoundary,
+        length: &str,
     ) -> Result<String, BackendFailure> {
         let head = self.window_origin(shape, run_type, run)?;
         match row {
@@ -619,9 +624,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 Ok(format!("%{physical}"))
             }
             IrBoundary::PlaceBack | IrBoundary::TakeBack => {
-                let length = self.run_word(run_type, run, shape.length_field())?;
                 let offset = if row.places() {
-                    length
+                    length.to_owned()
                 } else {
                     let previous = self.next_temporary()?;
                     writeln!(self.output, "  %{previous} = sub i64 {length}, 1")

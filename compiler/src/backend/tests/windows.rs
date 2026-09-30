@@ -652,6 +652,39 @@ fn corrupt_fixed_ring_back_placement(module: &str, fault: RingBackPlacementFault
     lines.join("\n")
 }
 
+/// One OP-10 placement uses its entry length for both the payload offset
+/// and the final length. The payload transfer cannot modify that descriptor.
+#[test]
+fn back_placement_reads_its_length_once_for_scalar_aggregate_and_zero_size_values() {
+    for element in ["u64", "Array<u64, 2>", "Array<u64, 0>", "Box<u64>"] {
+        for (ty, window) in [
+            (format!("Slots<{element}, 4>"), "values^"),
+            (format!("Box<Slots<{element}>>"), "values^.inner"),
+        ] {
+            let transfer = if element == "Box<u64>" {
+                "move value"
+            } else {
+                "value"
+            };
+            let source = format!(
+                "fn back(values: &{ty}, value: {element}) -> result: unit writes(values) contract {{\n  requires {window}.len < {window}.cap;\n}} {{\n  place_back(window: &{window}, value: {transfer});\n  return unit;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
+            );
+            let module = emit(source.as_bytes());
+            let body = emitted_prelude_row(&module, "place_back");
+            // A Slots back-placement needs no head or capacity read. This
+            // observes the unoptimized emitted operation, so an optimizer
+            // cannot hide a redundant post-transfer descriptor read.
+            assert_eq!(
+                body.lines()
+                    .filter(|line| line.contains(" = load i64, "))
+                    .count(),
+                1,
+                "one entry length for {ty}: {body}"
+            );
+        }
+    }
+}
+
 /// A front placement already has the physical slot it just wrote. The
 /// descriptor update must reuse that slot as the new Ring origin instead of
 /// reloading head/capacity and recomputing the predecessor [OP-10, WIN-1].
@@ -693,8 +726,8 @@ fn main() -> status: std::process::ExitStatus pure {
     let tail = &lines[payload_store + 1..];
     assert_eq!(
         tail.iter().filter(|line| line.contains("load i64")).count(),
-        1,
-        "only the length is loaded after the payload store: {body}"
+        0,
+        "the boundary reuses its entry length and written head: {body}"
     );
     let descriptor_stores = tail
         .iter()

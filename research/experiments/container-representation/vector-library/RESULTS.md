@@ -6575,3 +6575,150 @@ serve the append allocation-route experiment and retire with its superseding
 representation evidence. No specification, acceptance rule or live-tree
 revision was made. A separately noticed redundant entry-contract branch is
 recorded in TODO; it was not changed in this experiment.
+
+
+#### Single-operation boundary length reuse: registered discriminator
+
+The frozen payload-realloc image exposes one local emitter cost independent
+of its proposed representation. Scalar append reads the descriptor length
+again after storing the element; wide append does the same after its final
+slot stores. The ordinary `emit_run_boundary` computes the touched slot using
+one length read, then `move_run_boundary` reads it again. OP-10's one boundary
+operation has no intervening user call or release, and the payload is disjoint
+from its descriptor (a zero-stride element writes no bytes). Reuse that entry
+length for the operation's final length update. This is not caching a measure
+across a source call, changing an effect row, or eliminating the post-grow read.
+
+Implement in the shared boundary emitter with its existing Slots/Ring rules,
+then require a regression which observes one length read for back placement
+and fails with the old implementation. Native complete-content/length and
+cleanup checks must still pass, including aggregate and zero-size elements;
+existing Ring boundary tests remain obligations because the helper is shared.
+Inspect the optimized native single-append body for removal of the post-store
+length load, while preserving the growth call and its needed reload.
+
+Measure the changed primitive separately from a layout selection. First use
+native correctness and assembly to establish the code change on the production
+layout. Then use the same preserved payload-realloc overlay before and after
+this emitter change for a paired append-growth comparison, keeping the exact
+O3 harness, capacities, policies, seeds and both peer implementations. Record
+both binary identities before running. Use the fixed command
+`growth-api-measure 67108864 7 8589934592`, first A then B. Retain both
+launches and every snapshot control without subtraction or retry. If every
+matched B cell passes the existing instrument/drift conditions and its full
+WF range is below its median-slower peer's range in both cohorts, continue
+with B then A to complete the reverse-order qualification. Otherwise stop
+qualification and retain the failed screen. This early-stop staging is
+registered before either launch to avoid spending a second pair on an API
+that already misses the target. An API win requires both pairs; a narrower
+instruction reduction or cell gain cannot qualify the whole API. If native
+code retains the load or correctness fails, do not start timing.
+Spare append and the remaining APIs stay open; no other family is resumed.
+
+
+Outcome: the local emitter change removes the redundant read in both production
+and overlay native append code. It does not establish a timing gain. The shared
+boundary operations now read entry length once and pass it to slot calculation
+and descriptor update. No cache survives an ordinary source call; the native
+append bodies still reload owner/length after the ordinary growth call as their
+representation requires. Public APIs, allocation routes and source acceptance
+are unchanged. This small emission cleanup is retained for its directly verified
+instruction reduction, not as a qualified performance win or a layout selection.
+
+The new regression covers fixed/runtime Slots with scalar, two-word Array,
+zero-size Array and Box elements. The old emitter fails its emitted-code
+assertion with two length reads against one expected; all eight instantiations
+pass on the new emitter. The existing Ring front-placement check is strengthened
+to require no post-payload descriptor reload, preserving its written-head check.
+All 27 window tests pass, including native wrapping, zero-size and cleanup cases.
+The first authored scalar fixture incorrectly used `move` on a copy value and
+was rejected under OWN-1; that failure is retained and is not the counterfactual
+proof. The corrected old-emitter assertion is separately recorded. One duplicate
+build attempt was refused by the global runner with exit 75 and did not run.
+
+| Stage | Wall time | Result |
+|---|---:|---|
+| Initial old-control test build / malformed source run | 72.39 s / 5.43 s | Build 0; OWN-1 rejection, not optimization evidence |
+| Corrected old-control test build / test execution | 61.39 s / 0.78 s | Build 0; expected assertion failure, two reads versus one |
+| Fixed test build / 27 window tests | 18.53 s / 6.71 s | Both exit 0 |
+| Production CLI build / API build, checks and accounting | 14.79 s / 3.23 s | Both exit 0 |
+| Overlay CLI build / API build, checks and accounting | 14.34 s / 3.14 s | Both exit 0 |
+| Overlay forced allocator fixture | Separate subsecond stages in retained log | Normal 0, failed growth 73, content fault 1 |
+| Fixed A / B timing launches | 117.18 s / 117.05 s | Both exit 0 |
+| Restored-source static checks / all-target Clippy | 32.86 s / 16.12 s | Both exit 0 |
+
+The overlay fixture again checks nested-owner contents/releases, partial-run
+spare bytes, zero-capacity/zero-stride and empty ranges under forced in-place
+and moving realloc, plus unchanged state before the failed-allocation floor.
+Its deliberately permuted valid Box pointers still fail the source-content
+assertion. Both production and overlay API checks retain all prior deliberate
+value, state, allocator and clock failures; the 30-row ledgers retain their
+respective allocation contracts.
+
+Each timing launch has 840 unique rows: 420 real intervals and 420 snapshot
+controls, all retained without subtraction. Minimum real durations are
+1.276980 ms (A) and 1.273175 ms (B); both clocks have a 41 ns minimum increment.
+The driver, C++ object and Rust archive are byte-identical between the paired
+images. A/B below mean old/new emitter on the *same A2 representation*, not a
+comparison between the production representation and the overlay. Values are
+median [minimum–maximum] ns/append. The final columns report B versus A / B
+versus its median-slower peer, and the largest Rust/C++ median drift from A.
+
+| Element / old capacity | Cohort | A WF | B WF | B Rust | B C++ | B/A / peer | Peer drift |
+|---|---:|---|---|---|---|---|---:|
+| 8 B / 16 | 0 | 35.74 [34.91–36.15] | 34.80 [34.63–36.49] | 37.16 [36.62–37.94] | 25.66 [25.38–26.90] | Overlap / Pass | 0.97% |
+| 8 B / 16 | 1 | 35.09 [34.91–36.87] | 34.87 [34.68–36.20] | 36.72 [36.61–36.89] | 25.55 [25.41–27.07] | Overlap / Pass | 0.35% |
+| 8 B / 256 | 0 | 99.82 [99.62–104.99] | 101.80 [99.75–105.01] | 103.12 [101.26–107.84] | 94.26 [92.42–97.11] | Overlap / Overlap | 3.28% |
+| 8 B / 256 | 1 | 100.28 [99.84–106.29] | 101.11 [99.54–104.37] | 102.71 [101.26–104.96] | 92.90 [92.04–93.65] | Overlap / Overlap | 2.13% |
+| 8 B / 4096 | 0 | 691.88 [666.99–757.31] | 726.56 [720.55–803.97] | 728.39 [726.25–808.71] | 719.19 [714.75–816.55] | Overlap / Overlap | 14.04% |
+| 8 B / 4096 | 1 | 677.30 [660.82–742.34] | 733.63 [713.12–839.91] | 727.88 [720.33–779.33] | 725.70 [711.96–730.14] | Overlap / Overlap | 13.74% |
+| 256 B / 16 | 0 | 147.16 [146.07–169.39] | 150.14 [149.41–161.55] | 148.06 [146.70–159.50] | 142.59 [141.89–143.23] | Overlap / Overlap | 2.04% |
+| 256 B / 16 | 1 | 150.39 [148.25–155.03] | 150.61 [148.94–160.33] | 147.11 [146.51–153.33] | 142.04 [141.99–145.98] | Overlap / Overlap | 1.25% |
+| 256 B / 256 | 0 | 1312.32 [1302.74–1342.50] | 1322.86 [1313.49–1395.29] | 1311.88 [1308.14–1324.84] | 1306.36 [1296.90–1327.09] | Overlap / Overlap | 0.65% |
+| 256 B / 256 | 1 | 1320.57 [1307.12–1411.68] | 1311.96 [1307.45–1416.27] | 1315.29 [1313.20–1331.07] | 1312.60 [1299.48–1389.93] | Overlap / Overlap | 0.56% |
+| 256 B / 4096 | 0 | 156.97 [156.02–158.46] | 157.88 [156.14–158.37] | 162.52 [159.95–162.85] | 14813.47 [14795.40–14908.36] | Overlap / Pass | 0.51% |
+| 256 B / 4096 | 1 | 157.51 [155.90–160.92] | 158.73 [155.44–167.50] | 161.24 [159.80–163.98] | 14796.11 [14753.89–15003.35] | Overlap / Pass | 0.98% |
+
+Every B/A WF sample range overlaps: no favorable or adverse timing change is
+qualified. Scalar-4096 additionally fails the 10% peer-drift bound, so its
+higher candidate medians are not evidence of an emitter regression. Only
+scalar-16 and wide-4096 beat the median-slower peer in both cohorts, as before.
+The API criterion therefore fails; the conditional reverse B/A pair was not
+run, and no full qualification or speedup percentage is claimed.
+
+Initial-policy cells remain separate and are not rescued by the matched table:
+
+| Element / old capacity | Cohort | A WF | B WF | B Rust | B C++ | B/A / peer | Peer drift |
+|---|---:|---|---|---|---|---|---:|
+| 8 B / 0 | 0 | 18.51 [18.38–18.74] | 18.45 [18.40–18.67] | 11.77 [11.72–12.32] | 10.96 [10.92–11.38] | Overlap / Lose | 0.42% |
+| 8 B / 0 | 1 | 18.45 [18.38–19.14] | 18.41 [18.37–19.12] | 11.74 [11.70–12.17] | 10.95 [10.92–11.45] | Overlap / Lose | 0.82% |
+| 8 B / 1 | 0 | 18.63 [18.51–18.74] | 18.61 [18.50–19.42] | 32.31 [32.20–32.83] | 20.49 [20.29–20.90] | Overlap / Pass | 0.40% |
+| 8 B / 1 | 1 | 18.58 [18.52–18.76] | 18.62 [18.53–18.67] | 32.33 [32.22–32.44] | 20.42 [20.29–20.53] | Overlap / Pass | 0.30% |
+| 256 B / 0 | 0 | 34.86 [34.78–35.33] | 34.75 [34.58–36.73] | 22.31 [22.25–22.90] | 15.74 [15.61–16.39] | Overlap / Lose | 0.81% |
+| 256 B / 0 | 1 | 34.84 [34.74–36.39] | 34.65 [34.52–36.32] | 22.44 [22.41–24.04] | 15.71 [15.62–16.19] | Overlap / Lose | 0.72% |
+| 256 B / 1 | 0 | 49.49 [49.33–49.87] | 49.37 [49.06–51.46] | 52.75 [52.45–53.90] | 43.46 [43.06–44.64] | Overlap / Pass | 0.46% |
+| 256 B / 1 | 1 | 49.63 [49.46–52.03] | 49.25 [49.13–51.41] | 52.77 [52.63–55.85] | 43.17 [42.93–44.69] | Overlap / Pass | 0.28% |
+
+Evidence: [old-emitter samples](ecosystem-append-growth-length-reuse-baseline-samples.csv),
+[new-emitter samples](ecosystem-append-growth-length-reuse-candidate-samples.csv),
+[checks, ledgers, native bodies and timings](ecosystem-append-growth-length-reuse-timing.txt),
+and the [small emission patch](boundary-length-reuse.patch).
+For reproduction, use base `d576072ccf3a60950b95e71662e38fc9cbf287c5` plus the
+previous `split-slots-payload-realloc.patch` for A; additionally apply the small
+emission patch for B. Both use the prior explicit overlay flags and existing
+build/check/account targets. The focused native fixture remains the prior
+patch's inputs. The small patch serves this paired discriminator and retires
+with its superseding experiment; its implementation also lives in the compiler.
+The overlay was removed after constructing B; the production source retains
+only the shared primitive change and its regression tests. No specification
+or live-tree revision is made, and no other API or container is qualified here.
+
+SHA-256 identities:
+
+- Emission patch: `c4bd6ee0d5deecd3b75545f5ed17a495641d82afca163f386ec5a7bcd60c0326`.
+- Production CLI: `5e8d37585a06e7b7040b43032b1cd5d4f41cce16d0e91aa77b35e7d0e83c74ac`.
+- Overlay CLI: `2b668d006477c4079c036b4baa38049276ec619573a9c583667cbf809679b48d`.
+- A timed image: `5efc26fed2a63f2d8e6bc7e521bf64b0586491fc181de3f58070100e29673ab0`.
+- B timed image: `b2beba8cf19113948643eba4aeac07a9fbba7191f397deccc530cbc469aafc6c`.
+- A samples: `76c7596c5ed827447b86176ac415734eb3104ab73dbe908cbd27fcccfe4fb840`.
+- B samples: `100175461d6878cd03c1bf195d77f06810a4ed7b3880b21714bc3c6b62c32d2f`.
