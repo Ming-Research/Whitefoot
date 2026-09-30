@@ -867,6 +867,27 @@ rarely insert at the same place.
   which is correct but copies it by memmove where its other fields alone
   would be first-class, reopened if a measured path moves many of them.
 
+- **A local `slots_new::<T, N>()` clears all N slots when it is created.**
+  Snowghost's `match_complex` (`renderer/css/selectors/match.wf`) creates
+  `slots_new::<Frame, 64>()`, 12-byte frames, on every call, and the code
+  compiled at 290b575b clears the whole window first: its
+  `proto_style_seq` driver calls `memset` for 0x308 bytes, 64 frames and
+  the length word, at the function's start. In a callgrind profile of one
+  style computation on the ECMAScript specification page (Snowghost
+  58fa8ee's `proto_layout_seq`, collection limited to `compute_styles`),
+  106 million calls made that `memset` 21 percent of the instructions
+  (Snowghost `research/investigations/concurrency/DESIGN.md`, "Style's
+  work per element"); Snowghost's rule index (ec21b7c) has since cut the
+  calls, so the share is smaller now and not measured. [WIN-1] leaves every
+  slot past `len` holding nothing and [OP-13] starts a `slots_new` window
+  empty, and no access reads past `len`, so the clearing is not observable.
+  Change: create an inline `Slots` window without clearing the slots past
+  its length, checking first that no drop, move or bounds path in the
+  lowering reads them, and measure a program that creates many
+  short-lived windows. Not checked on a later revision. Reopen with the
+  next change to `Slots` lowering or when a profile shows the clearing
+  again.
+
 ## Parallel lowering and runtime
 
 - **Validate reuse of selected-target element layouts during emission.**
