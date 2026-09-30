@@ -164,3 +164,62 @@ Building firn found three things outside the program, recorded under
   map. firn alternates `hash_map_edit` and `hash_map_lookup` instead.
 - **No command renders a program in canonical form** [FORM-2], which every
   program must be in; writing firn needed the renderer the corpus test calls.
+
+## Closing the gaps
+
+### A first look
+
+One pass of the default suite on two server CPUs, firn at `e1e37b100`
+against Redis and Dragonfly (the `quick look` lines of
+[firn-samples.csv](../../experiments/io-completion-bench/firn-samples.csv)),
+found firn ahead on every read and pop, the lists' pushes and `PING`, and
+behind on the commands that store a new string: at depth 16 `SET`, `INCR`,
+`ZADD` and `MSET` reached 0.56 to 0.79 of the faster of Redis and Dragonfly.
+A profile of firn under `INCR` put a quarter of its time in
+`hash_map_edit` and another third in acquiring the keyspace and the kernel's
+wake of a parked acquirer.
+
+### The hash map's growth, stated before measuring
+
+The library's hash map rebuilt only when an insertion found no bucket left,
+and its linear probing walks every filled and vacated bucket between a key's
+home and its place. The hypothesis: the long walks of a nearly full
+keyspace, held inside the atomic statement, are the gap on the storing
+commands. It is judged by three builds of firn, interleaved over three rounds
+of `SET`, `GET`, `INCR`, `SADD`, `HSET` and `ZADD` at depth 16 with 3,000,000
+requests each:
+
+- *old*, the library as it was;
+- *presized*, the same with the keyspace created at 4,194,304 buckets, so
+  that it never fills;
+- *new*, the library rebuilding before three quarters of its buckets are
+  filled or vacated.
+
+The growth is the gap if *new* reaches at least 0.95 of *presized* and at
+least 1.2 times *old* on `INCR` and `SET`, the commands that insert into the
+keyspace on most requests.
+
+### The hash map's growth: results
+
+Requests per second, rounds 1 to 3 (the `growth` lines of
+[firn-samples.csv](../../experiments/io-completion-bench/firn-samples.csv);
+the third round of *presized* and *new* ran after the third of *old* rather
+than interleaved with it, since the first run was stopped by a time limit):
+
+| Test | old | presized | new |
+|---|---|---|---|
+| `SET` | 521,376 / 521,558 / 521,376 | 666,223 / 597,967 / 631,446 | 666,370 / 631,180 / 521,558 |
+| `GET` | 799,574 / 749,438 / 799,787 | 799,787 / 749,813 / 631,180 | 922,793 / 922,793 / 856,898 |
+| `INCR` | 428,143 / 413,280 / 428,082 | 749,438 / 705,384 / 704,887 | 799,574 / 799,787 / 631,313 |
+| `SADD` | 599,760 / 631,180 / 705,053 | 666,223 / 631,048 / 545,157 | 922,509 / 922,509 / 749,625 |
+| `HSET` | 499,584 / 544,070 / 521,286 | 544,860 / 521,376 / 461,113 | 749,625 / 705,550 / 705,550 |
+| `ZADD` | 214,072 / 230,521 / 244,658 | 244,718 / 217,770 / 176,170 | 315,623 / 299,880 / 278,914 |
+
+**The growth is the gap on the inserting commands: met.** By median, *new*
+reached 1.00 of *presized* and 1.21 times *old* on `SET`, and 1.13 and 1.87 on
+`INCR`. `SADD`, `HSET` and `ZADD` gained 1.30 to 1.46 times as well, beyond
+*presized*, since their sets, hashes and sorted sets are hash maps the
+keyspace's size does not reach. The library now rebuilds a map before an
+insertion would leave three quarters of its buckets filled or vacated,
+counting vacated buckets so that removals cannot fill it unseen
+(`design/amendments/hash-map-storage.md`, awaiting the owner's ruling).

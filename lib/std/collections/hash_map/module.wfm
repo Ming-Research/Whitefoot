@@ -29,6 +29,7 @@ public enum HashMapAction {
 public struct HashMap<K, V, const ceiling: u64> {
   public readonly cells: Box<Slots<HashMapSlot<K, V>>>;
   public readonly length: u64;
+  public readonly vacated: u64;
 }
 
 public interface HashMapKey<K, E> {

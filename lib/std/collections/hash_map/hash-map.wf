@@ -28,7 +28,7 @@ fn hash_map_new<K, V, const ceiling: u64>(capacity: u64) -> result: HashMap<K, V
   doc "The ceiling is the maximum public capacity: reserve and automatic growth never exceed it. Rebuild can change bucket positions; no stable index or address is promised. Ordinary map semantics require hashing, equality, and their per-call environments to retain one consistent key protocol while entries remain stored, including equal hashes for equivalent keys. These laws are not source-admission prerequisites: ownership safety and finite probe bounds hold even when they are inconsistent, provided callbacks return.";
   let cells = box_slots_new::<HashMapSlot<K, V>>(capacity: capacity);
   hash_map_extend::<K, V, ceiling>(cells: &cells, target: capacity);
-  return HashMap<K, V, ceiling>(cells: move cells, length: 0_u64);
+  return HashMap<K, V, ceiling>(cells: move cells, length: 0_u64, vacated: 0_u64);
 }
 
 fn hash_map_len<K, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>) -> length: u64 reads(map) {
@@ -208,6 +208,10 @@ fn hash_map_try_put<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &Has
     let before = map^.length;
     if before < ceiling {
       set map^.length = before + 1_u64;
+      let reused = hash_map_is_deleted::<K, V>(slot: &map^.cells.inner[available]);
+      if reused {
+        set map^.vacated = map^.vacated -sat 1_u64;
+      }
       let inserted = hash_map_exchange::<K, V>(cells: &map^.cells, index: available, key: move key, value: move value);
       return move inserted;
     }
@@ -215,6 +219,20 @@ fn hash_map_try_put<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &Has
   let offered = HashMapPair<K, V>(key: move key, value: move value);
   let refusal_reason = HashMapReturnReason::HashMapFull();
   return HashMapPut<K, V>::HashMapReturned(reason: refusal_reason, pair: move offered);
+}
+
+fn hash_map_is_deleted<K, V>(slot: &HashMapSlot<K, V>) -> result: Bool reads(slot) {
+  match slot^ {
+    HashMapDeleted() => {
+      return True();
+    }
+    HashMapVacant() => {
+      return False();
+    }
+    HashMapFilled(key: saved_key, value: saved_value) => {
+      return False();
+    }
+  }
 }
 
 fn hash_map_is_available<K, V>(slot: &HashMapSlot<K, V>) -> result: Bool reads(slot) {
@@ -290,6 +308,7 @@ fn hash_map_rebuild<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &Has
     }
   }
   free_empty(window: move previous);
+  set map^.vacated = 0_u64;
   return Ok<unit, unit>(value: unit);
 }
 
@@ -311,6 +330,29 @@ fn hash_map_rehash<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &Hash
 }
 
 fn hash_map_put<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>, key: K, value: V, env: &E) -> result: HashMapPut<K, V> reads(env), writes(map) {
+  let buckets = map^.cells.inner.len;
+  let used = map^.length +sat map^.vacated;
+  let quarter = buckets / 4_u64;
+  let limit = buckets - quarter;
+  let crowded = used >= limit;
+  let below_ceiling = buckets < ceiling;
+  let rebuild = band(crowded, below_ceiling);
+  if rebuild {
+    let target = ceiling;
+    let live = map^.length;
+    let half = limit / 2_u64;
+    if live < half {
+      set target = buckets;
+    } else if buckets == 0_u64 {
+      set target = 1_u64;
+    } else if buckets <= 9223372036854775807_u64 {
+      let widened = buckets + buckets;
+      if widened <= ceiling {
+        set target = widened;
+      }
+    }
+    let grown = hash_map_rebuild::<HashMapKey<K, E>, V, ceiling>(map: map, capacity: target, env: env);
+  }
   let attempted = hash_map_try_put::<HashMapKey<K, E>, V, ceiling>(map: map, key: move key, value: move value, env: env);
   match move attempted {
     HashMapInserted() => {
@@ -368,6 +410,7 @@ fn hash_map_remove<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &Hash
       match move removed {
         HashMapFilled(key: saved_key, value: saved_value) => {
           set map^.length = before - 1_u64;
+          set map^.vacated = map^.vacated +sat 1_u64;
           let pair = HashMapPair<K, V>(key: move saved_key, value: move saved_value);
           return Some<HashMapPair<K, V>>(value: move pair);
         }
@@ -409,7 +452,7 @@ fn hash_map_pair_consume<interface HashMapConsume<K, V, E>>(pair: HashMapPair<K,
 }
 
 fn hash_map_free<interface HashMapConsume<K, V, E>, const ceiling: u64>(map: HashMap<K, V, ceiling>, env: &E) -> result: unit writes(env) {
-  let HashMap(cells: storage, length: live) = move map;
+  let HashMap(cells: storage, length: live, vacated: unused) = move map;
   loop @cleanup {
     if storage.inner.len == 0_u64 {
       break @cleanup;
