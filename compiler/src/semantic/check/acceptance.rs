@@ -61,7 +61,8 @@ impl<'unit> DeclarationInventory<'unit> {
     /// full-range atom is exactly what breaks it. Positioning the backedge
     /// after the body it consumes therefore reports the cause rather than the
     /// effect, while INV-1's base judgment stays at the header where it is
-    /// decided. A local invariant is decided at the written `use` that owns
+    /// decided. TERM-1's descent is decided at the same backedge and stands
+    /// there too. A local invariant is decided at the written `use` that owns
     /// its failure.
     fn proof_position(
         &self,
@@ -95,6 +96,32 @@ impl<'unit> DeclarationInventory<'unit> {
                 }
                 &outcome.node_path
             }
+            // [TERM-1] a rank's descent is decided at the backedge, after
+            // the body, exactly as INV-1's step is; a header invariant the
+            // same backedge fails is therefore reported before it.
+            RecordAnswer::LoopProgress(index) => {
+                let outcome = entailment
+                    .loop_progress
+                    .get(index)
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                let node = self
+                    .tree
+                    .node_with_path(&outcome.node_path)
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                if let Some(loop_node) = self.enclosing_loop_node(node)? {
+                    let mut components = self
+                        .tree
+                        .path(loop_node)?
+                        .components()
+                        .iter()
+                        .copied()
+                        .map(ProofPosition::Child)
+                        .collect::<Vec<_>>();
+                    components.push(ProofPosition::AfterSubtree);
+                    return Ok(components);
+                }
+                &outcome.node_path
+            }
             RecordAnswer::SourceProof(index) => entailment
                 .source_proofs
                 .get(index)
@@ -102,7 +129,6 @@ impl<'unit> DeclarationInventory<'unit> {
                 .rejection_node_path(),
             RecordAnswer::Obligation(_)
             | RecordAnswer::CallGoal(_)
-            | RecordAnswer::LoopProgress(_)
             | RecordAnswer::Postcondition(_)
             | RecordAnswer::Uninhabited => &record.site,
         };

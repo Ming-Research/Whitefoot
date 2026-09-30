@@ -239,7 +239,9 @@ fn put_decimal(output: &[u8], at: u64, value: u64) -> result: u64 writes(output)
   let digits = array_filled::<u8, 20>(value: 0_u8);
   let count = 0_u64;
   let rest = value;
-  loop @digits {
+  loop @digits (
+    decreases rest
+  ) {
     let low = rest % 10_u64;
     let narrow = cvt.wrap::<u64, u8>(low);
     let glyph = narrow +wrap 48_u8;
@@ -534,7 +536,9 @@ fn decimal_value(value: u64) -> made: Box<Slots<u8>> pure {
   let digits = array_filled::<u8, 20>(value: 0_u8);
   let count = 0_u64;
   let rest = value;
-  loop @digits {
+  loop @digits (
+    decreases rest
+  ) {
     let low = rest % 10_u64;
     let narrow = cvt.wrap::<u64, u8>(low);
     let glyph = narrow +wrap 48_u8;
@@ -728,7 +732,9 @@ fn log_decimal(log: &Box<Slots<u8>>, value: u64) -> result: unit writes(log) {
   let digits = array_filled::<u8, 20>(value: 0_u8);
   let count = 0_u64;
   let rest = value;
-  loop @digits {
+  loop @digits (
+    decreases rest
+  ) {
     let low = rest % 10_u64;
     let narrow = cvt.wrap::<u64, u8>(low);
     let glyph = narrow +wrap 48_u8;
@@ -755,14 +761,16 @@ fn log_decimal(log: &Box<Slots<u8>>, value: u64) -> result: unit writes(log) {
 
 fn decimal_length(value: u64) -> result: u64 pure {
   doc "The number of decimal digits of a number.";
-  let count = 1_u64;
-  let rest = value / 10_u64;
-  loop @digits {
+  let count = 0_u64;
+  let rest = value;
+  loop @digits (
+    decreases rest
+  ) {
+    set count = count +wrap 1_u64;
+    set rest = rest / 10_u64;
     if rest == 0_u64 {
       break @digits;
     }
-    set count = count +wrap 1_u64;
-    set rest = rest / 10_u64;
   }
   return count;
 }
@@ -1475,7 +1483,7 @@ fn expire_batch(store: &Store, now: u64, env: &KeyEnv) -> result: Bool reads(env
 }
 
 fn expire_keys(store: Shared<Store>, clock: Clock, origin: Instant) -> result: unit pure waits {
-  doc "Wakes ten times a second and removes the keys whose expiry has passed, in batches of atomic statements so that clients proceed between them, until the program stops. A key whose expiry did not fit the queue, which holds 4,194,304 entries counting those a later command replaced, is removed only when a command finds it expired.";
+  doc "Wakes ten times a second and removes the keys whose expiry has passed, in batches of atomic statements so that clients proceed between them, until the program stops. One tick runs at most 16,384 batches of 256, enough to empty a full queue; what clients queue meanwhile waits for the next tick. A key whose expiry did not fit the queue, which holds 4,194,304 entries counting those a later command replaced, is removed only when a command finds it expired.";
   let env = KeyEnv(seed: 0_u64);
   loop @ticks {
     let started = std::time::now(clock: &clock);
@@ -1484,7 +1492,7 @@ fn expire_keys(store: Shared<Store>, clock: Clock, origin: Instant) -> result: u
     let reading = std::time::now(clock: &clock);
     let current = nanoseconds_from(earlier: origin, later: reading);
     let stop = False();
-    loop @batches {
+    for @batches (batch in 0_u64..16384_u64) {
       let more = False();
       atomic state = &store {
         set stop = state^.stopping;

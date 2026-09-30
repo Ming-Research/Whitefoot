@@ -89,7 +89,7 @@ fn an_unproved_postcondition_rejects_under_fn9() {
   let reviewed = 1_i32;
   let cursor = 0_u8;
   loop {
-    if cursor == 3_u8 {
+    if cursor >= 3_u8 {
       break;
     } else {
       set reviewed = 1_i32;

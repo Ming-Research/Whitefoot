@@ -622,6 +622,11 @@ pub(crate) enum SourceAffineFactRef {
     JoinedSourceProof {
         join_ordinal: u32,
     },
+    /// Diagnostic-only identity for one relation an ordinary loop's rank owes
+    /// that every predecessor of a join inside its body proved [TERM-1].
+    JoinedLoopProgress {
+        loop_id: u32,
+    },
 }
 
 /// One source-affine premise selected by the fixed automatic residual rule.
@@ -1724,6 +1729,7 @@ fn tie_component(node: &DerivationNode, index: usize) -> Option<u32> {
                     }
                     SourceAffineFactRef::SourceProof { source_ordinal } => (2, source_ordinal, 0),
                     SourceAffineFactRef::JoinedSourceProof { join_ordinal } => (3, join_ordinal, 0),
+                    SourceAffineFactRef::JoinedLoopProgress { loop_id } => (4, loop_id, 0),
                 };
                 let factor = premise.factor as u128;
                 return [

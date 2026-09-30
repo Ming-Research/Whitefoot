@@ -231,7 +231,7 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
     let i = 0_u64;
     let seed = initial_seed;
     loop @reps {
-      let done = i == repetitions;
+      let done = i >= repetitions;
       if done {
         break @reps;
       }
@@ -252,7 +252,7 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
     let j = 0_u64;
     let band_seed = initial_seed;
     loop @band_reps {
-      let done = j == repetitions;
+      let done = j >= repetitions;
       if done {
         break @band_reps;
       }

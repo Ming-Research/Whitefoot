@@ -15,7 +15,10 @@ fn walk(n: u64, target: &Cell) -> result: u64 writes(target) {
   let held = &owner.inner.value;
   let cursor = target;
   let done = False();
-  loop {
+  let fuel = 64_u64;
+  loop (
+    decreases fuel
+  ) {
     set cursor^ = Cell(value: 7_u64);
     set cursor = target;
     if done {
@@ -23,6 +26,10 @@ fn walk(n: u64, target: &Cell) -> result: u64 writes(target) {
     }
     set done = True();
     set cursor = &owner.inner;
+    if fuel == 0_u64 {
+      break;
+    }
+    set fuel = fuel -wrap 1_u64;
   }
   return 0_u64;
 }

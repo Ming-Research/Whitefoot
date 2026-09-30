@@ -914,12 +914,19 @@ fn an_ordinary_loop_uses_the_exact_first_invalidation_event_without_a_snapshot()
     let source = br#"fn looped(value: i32, stop: Bool) -> result: i32 pure contract {
   ensures result == value;
 } {
-  loop @again {
+  let fuel = 64_u64;
+  loop @again (
+    decreases fuel
+  ) {
     set value = 1_i32;
     set value = 2_i32;
     if stop {
       break @again;
     }
+    if fuel == 0_u64 {
+      break @again;
+    }
+    set fuel = fuel -wrap 1_u64;
   }
   return value;
 }
@@ -2151,7 +2158,7 @@ fn checked_integer_result_loop_kills_remove_previous_iteration_evidence() {
         "other: u64, stop: Bool",
         "",
         &format!(
-            "  let pending = cvt.checked::<u64, u8>(0_u64);\n  loop @again {{\n    if stop {{\n      break @again;\n    }}\n    set pending = cvt.checked::<u64, u8>(other);\n    set stop = True();\n  }}\n{CHECKED_CONVERSION_READ}"
+            "  let pending = cvt.checked::<u64, u8>(0_u64);\n  let fuel = 64_u64;\n  loop @again (\n    decreases fuel\n  ) {{\n    if stop {{\n      break @again;\n    }}\n    if fuel == 0_u64 {{\n      break @again;\n    }}\n    set fuel = fuel -wrap 1_u64;\n    set pending = cvt.checked::<u64, u8>(other);\n    set stop = True();\n  }}\n{CHECKED_CONVERSION_READ}"
         ),
         4,
     );

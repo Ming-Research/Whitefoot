@@ -3160,13 +3160,17 @@ impl<'unit> TypeContext<'unit> {
             if signature.id.0 as usize != index {
                 return Err(SemanticCompilerFailure::InvalidResolution.into());
             }
-            callees.push(EntailmentCallee::from_signature(
+            let mut callee = EntailmentCallee::from_signature(
                 signature
                     .parameters
                     .iter()
                     .map(|parameter| (parameter.declaration, parameter.mode, parameter.ty)),
                 &signature.declared_effects.writes,
-            ));
+            );
+            // [OP-11] `swap` is reserved in every scope [TYPE-6], so the
+            // spelling names the built-in exchange.
+            callee.exchanges = signature.name == "swap";
+            callees.push(callee);
         }
         Ok(callees)
     }

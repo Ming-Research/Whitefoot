@@ -561,20 +561,22 @@ fn append_trailing_newline(input: &[u8], carry: u64) -> result: TrailingChunk wr
   return accepted;
 }
 
-fn scan_line(input: &[u8], available: u64, scan: u64, pattern: &[u8], pattern_length: u64, first_pattern_byte: u8, empty_pattern: Bool) -> result: LineScan reads(input), reads(pattern) {
+fn scan_line(input: &[u8], available: u64, scan: u64, pattern: &[u8], pattern_length: u64, first_pattern_byte: u8, empty_pattern: Bool) -> result: LineScan reads(input), reads(pattern) contract {
+  ensures result.terminator >= scan;
+} {
   let input_room = input^.len;
   let available_fits = available <= input_room;
   if available_fits {
   } else {
     let missed = False();
-    let rejected = LineScan(terminator: available, hit: missed, status: 6_u8);
+    let rejected = LineScan(terminator: scan, hit: missed, status: 6_u8);
     return rejected;
   }
   let scan_fits = scan <= available;
   if scan_fits {
   } else {
     let missed = False();
-    let rejected = LineScan(terminator: available, hit: missed, status: 6_u8);
+    let rejected = LineScan(terminator: scan, hit: missed, status: 6_u8);
     return rejected;
   }
   let pattern_room = pattern^.len;
@@ -802,7 +804,9 @@ fn search_file(factory: &HandleFactory, file: &ReadFile, pattern: &[u8], pattern
       }
     }
     let scan = 0_u64;
-    loop @lines {
+    loop @lines (
+      decreases available - scan
+    ) {
       let terminator = available;
       let hit = empty_pattern;
       let line_status = 0_u8;
@@ -1047,7 +1051,9 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
           break @batches;
         }
         let at = 0_u64;
-        loop @stored_entry {
+        loop @stored_entry (
+          decreases produced - at
+        ) {
           let entries_room = entries^.len;
           let header_end = at +wrap 3_u64;
           let complete = header_end <= produced;

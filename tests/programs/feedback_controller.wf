@@ -19,7 +19,7 @@ fn main() -> status: ExitStatus pure {
   let integral = 0.0_f64;
   let previous_error = 0.0_f64;
   loop @control_samples {
-    let finished = iteration == 4096_u64;
+    let finished = iteration >= 4096_u64;
     if finished {
       break @control_samples;
     }

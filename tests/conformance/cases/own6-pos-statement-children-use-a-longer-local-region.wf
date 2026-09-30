@@ -35,7 +35,7 @@ fn repeat(counter: &Counter) -> result: unit writes(counter.total) {
   doc "Sequential statements each form their own access to the same referenced field.";
   let index = 0_u64;
   loop @again {
-    if index == 2_u64 {
+    if index >= 2_u64 {
       break @again;
     }
     tick(counter: counter);

@@ -137,6 +137,10 @@ pub(crate) struct EntailmentCallee {
     /// under-approximate the write.
     pub(crate) parameter_writes: Vec<Vec<Vec<super::model::CheckedEffectStep>>>,
     pub(crate) parameter_transports: Vec<CallTransport>,
+    /// [OP-11] the call exchanges the values at its two reference actuals,
+    /// so each measure under one of them is, after the call, the value the
+    /// same measure under the other had before it.
+    pub(crate) exchanges: bool,
 }
 
 impl EntailmentCallee {
@@ -174,6 +178,7 @@ impl EntailmentCallee {
                 })
                 .collect(),
             parameter_modes: parameters.into_iter().map(|(_, mode, _)| mode).collect(),
+            exchanges: false,
         }
     }
 }

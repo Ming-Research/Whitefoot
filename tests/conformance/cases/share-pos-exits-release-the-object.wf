@@ -10,7 +10,7 @@ fn early(cell: &Shared<u8>, want: u8) -> result: u8 reads(cell) waits {
 
 fn looped(cell: &Shared<u8>) -> result: u8 reads(cell) waits {
   let count = 0_u8;
-  loop @again {
+  for @again (step in 0_u64..256_u64) {
     atomic value = &cell^ {
       set value^ = value^ +wrap 1_u8;
       if value^ >= 5_u8 {

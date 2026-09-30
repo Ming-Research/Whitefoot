@@ -28,7 +28,8 @@ fn hash_map_new<K, V, const ceiling: u64>(capacity: u64) -> result: HashMap<K, V
   doc "The ceiling is the maximum public capacity: reserve and automatic growth never exceed it. Rebuild can change bucket positions; no stable index or address is promised. Ordinary map semantics require hashing, equality, and their per-call environments to retain one consistent key protocol while entries remain stored, including equal hashes for equivalent keys. These laws are not source-admission prerequisites: ownership safety and finite probe bounds hold even when they are inconsistent, provided callbacks return.";
   let cells = box_slots_new::<HashMapSlot<K, V>>(capacity: capacity);
   hash_map_extend::<K, V, ceiling>(cells: &cells, target: capacity);
-  return HashMap<K, V, ceiling>(cells: move cells, length: 0_u64);
+  let stale = box_slots_new::<HashMapSlot<K, V>>(capacity: 0_u64);
+  return HashMap<K, V, ceiling>(cells: move cells, length: 0_u64, stale: move stale);
 }
 
 fn hash_map_len<K, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>) -> length: u64 reads(map) {
@@ -232,12 +233,18 @@ fn hash_map_is_available<K, V>(slot: &HashMapSlot<K, V>) -> result: Bool reads(s
 }
 
 fn hash_map_rebuild<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>, capacity: u64, env: &E) -> result: Result<unit, unit> reads(env), writes(map) {
-  doc "Direct migration keeps the original enum buckets and uses one temporary inline one-slot window for a pending pair. Refusal precedes owner mutation. Every exchange result has useful behavior: Inserted empties the staging window; Replaced and Full restore their complete returned owner for retry. Each attempt hashes the current staged key and probes only occupancy, never equality. With at most the old bucket count of owners and at least that many fresh destinations, each retained owner reaches a vacant bucket in one capacity-bounded scan. No global occupancy fact authorizes a discard or a partial operation. A zero-capacity rebuild is allocation-free. The backing swap does not publish an extent relation under the current proof rules, so this function promises no monotone extent postcondition; subsequent operations read their current bounds.";
+  doc "Direct migration keeps the original enum buckets and moves each owner from the back of the old table straight into the first available bucket of one capacity-bounded scan. Refusal precedes owner mutation, and a map holding parked owners refuses. Each attempt hashes the owner's key and probes only occupancy, never equality. With at most the old bucket count of owners and at least that many fresh destinations, each owner reaches a vacant bucket, and an exchange into an available bucket inserts. No checked fact carries that counting argument, so an owner that finds no bucket, or that an exchange returns, goes back to the old table, whose remaining owners are then parked, in order, in the map's stale window, and the rebuild reports failure. Every owner stays in the map; hash_map_each and hash_map_free reach the parked ones, keyed operations do not. A zero-capacity rebuild is allocation-free.";
   if capacity > ceiling {
     return Err<unit, unit>(error: unit);
   }
   let old_count = map^.cells.inner.len;
   if capacity < old_count {
+    return Err<unit, unit>(error: unit);
+  }
+  if map^.stale.inner.len != 0_u64 {
+    return Err<unit, unit>(error: unit);
+  }
+  if map^.stale.inner.cap > capacity {
     return Err<unit, unit>(error: unit);
   }
   if capacity == 0_u64 {
@@ -246,7 +253,9 @@ fn hash_map_rebuild<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &Has
   let previous = box_slots_new::<HashMapSlot<K, V>>(capacity: capacity);
   hash_map_extend::<K, V, ceiling>(cells: &previous, target: capacity);
   swap(first: &map^.cells, second: &previous);
-  loop @old_cells {
+  loop @old_cells (
+    invariant drained: previous.inner.len <= old_count
+  ) {
     if previous.inner.len == 0_u64 {
       break @old_cells;
     }
@@ -257,40 +266,56 @@ fn hash_map_rebuild<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &Has
       HashMapDeleted() => {
       }
       HashMapFilled(key: saved_key, value: saved_value) => {
-        let pending = slots_new::<HashMapPair<K, V>, 1>();
-        let initial = HashMapPair<K, V>(key: move saved_key, value: move saved_value);
-        place_back(window: &pending, value: move initial);
-        loop @owner {
-          if pending.len == 0_u64 {
-            break @owner;
-          }
-          let hash = HashMapKey::hash(env: env, key: &pending[0_u64].key);
-          let count = map^.cells.inner.len;
-          for @vacancy (step in 0_u64..count) {
-            let home = hash % count;
-            let index = hash_map_probe(home: home, step: step, count: count);
-            let available = hash_map_is_available::<K, V>(slot: &map^.cells.inner[index]);
-            if available {
-              let offered = take_back(window: &pending);
-              let HashMapPair(key: offered_key, value: offered_value) = move offered;
-              let exchanged = hash_map_exchange::<K, V>(cells: &map^.cells, index: index, key: move offered_key, value: move offered_value);
-              match move exchanged {
-                HashMapInserted() => {
-                }
-                HashMapReturned(reason: returned_reason, pair: returned_pair) => {
-                  place_back(window: &pending, value: move returned_pair);
-                }
-              }
-              break @vacancy;
-            }
+        let hash = HashMapKey::hash(env: env, key: &saved_key);
+        let count = map^.cells.inner.len;
+        let target = count;
+        for @vacancy (step in 0_u64..count) {
+          let home = hash % count;
+          let index = hash_map_probe(home: home, step: step, count: count);
+          let available = hash_map_is_available::<K, V>(slot: &map^.cells.inner[index]);
+          if available {
+            set target = index;
+            break @vacancy;
           }
         }
-        free_empty(window: move pending);
+        if target < count {
+          let exchanged = hash_map_exchange::<K, V>(cells: &map^.cells, index: target, key: move saved_key, value: move saved_value);
+          match move exchanged {
+            HashMapInserted() => {
+            }
+            HashMapReturned(reason: returned_reason, pair: returned_pair) => {
+              let HashMapPair(key: returned_key, value: returned_value) = move returned_pair;
+              let returned = HashMapSlot<K, V>::HashMapFilled(key: move returned_key, value: move returned_value);
+              place_back(window: &previous.inner, value: move returned);
+              break @old_cells;
+            }
+          }
+        } else {
+          let unplaced = HashMapSlot<K, V>::HashMapFilled(key: move saved_key, value: move saved_value);
+          place_back(window: &previous.inner, value: move unplaced);
+          break @old_cells;
+        }
       }
     }
   }
+  if previous.inner.len == 0_u64 {
+    free_empty(window: move previous);
+    return Ok<unit, unit>(value: unit);
+  }
+  grow(cell: &map^.stale, capacity: capacity);
+  loop @park (
+    invariant parked_room: map^.stale.inner.len + previous.inner.len <= map^.stale.inner.cap
+  ) {
+    if previous.inner.len == 0_u64 {
+      break @park;
+    }
+    let parked = take_back(window: &previous.inner);
+    invariant after_take: map^.stale.inner.len + previous.inner.len + 1_u64 <= map^.stale.inner.cap;
+    place_back(window: &map^.stale.inner, value: move parked);
+    invariant after_place: map^.stale.inner.len + previous.inner.len <= map^.stale.inner.cap;
+  }
   free_empty(window: move previous);
-  return Ok<unit, unit>(value: unit);
+  return Err<unit, unit>(error: unit);
 }
 
 fn hash_map_reserve<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>, capacity: u64, env: &E) -> result: Result<unit, unit> reads(env), writes(map) {
@@ -399,6 +424,19 @@ fn hash_map_each<K, V, E, fn visit(env: &E, key: &K, value: &V) -> result: unit 
       }
     }
   }
+  let parked = map^.stale.inner.len;
+  for (index in 0_u64..parked) {
+    let slot = &map^.stale.inner[index];
+    match slot^ {
+      HashMapFilled(key: saved_key, value: saved_value) => {
+        visit(env: env, key: saved_key, value: saved_value);
+      }
+      HashMapVacant() => {
+      }
+      HashMapDeleted() => {
+      }
+    }
+  }
   return unit;
 }
 
@@ -409,7 +447,7 @@ fn hash_map_pair_consume<interface HashMapConsume<K, V, E>>(pair: HashMapPair<K,
 }
 
 fn hash_map_free<interface HashMapConsume<K, V, E>, const ceiling: u64>(map: HashMap<K, V, ceiling>, env: &E) -> result: unit writes(env) {
-  let HashMap(cells: storage, length: live) = move map;
+  let HashMap(cells: storage, length: live, stale: parked) = move map;
   loop @cleanup {
     if storage.inner.len == 0_u64 {
       break @cleanup;
@@ -426,5 +464,21 @@ fn hash_map_free<interface HashMapConsume<K, V, E>, const ceiling: u64>(map: Has
     }
   }
   free_empty(window: move storage);
+  loop @parked_cleanup {
+    if parked.inner.len == 0_u64 {
+      break @parked_cleanup;
+    }
+    let slot = take_back(window: &parked.inner);
+    match move slot {
+      HashMapFilled(key: saved_key, value: saved_value) => {
+        HashMapConsume::consume(env: env, key: move saved_key, value: move saved_value);
+      }
+      HashMapVacant() => {
+      }
+      HashMapDeleted() => {
+      }
+    }
+  }
+  free_empty(window: move parked);
   return unit;
 }

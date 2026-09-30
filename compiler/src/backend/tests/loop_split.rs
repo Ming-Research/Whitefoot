@@ -91,7 +91,7 @@ const EDGE_RANGES: &[u8] = br#"fn mix(seed: u64) -> result: u64 pure {
   let state = seed;
   let round = 0_u64;
   loop @rounds {
-    let done = round == 24_u64;
+    let done = round >= 24_u64;
     if done {
       break @rounds;
     }
@@ -147,7 +147,7 @@ const WIDE_FRAME: &[u8] = br#"fn mix(seed: u64) -> result: u64 pure {
   let state = seed;
   let round = 0_u64;
   loop @rounds {
-    let done = round == 24_u64;
+    let done = round >= 24_u64;
     if done {
       break @rounds;
     }
@@ -260,7 +260,7 @@ fn mix(seed: u64, salt: u64, rounds: u64) -> result: u64 pure {
   let state = ixor(seed, salt);
   let round = 0_u64;
   loop @rounds {
-    let done = round == rounds;
+    let done = round >= rounds;
     if done {
       break @rounds;
     }
@@ -288,8 +288,8 @@ fn low_byte(v: u64) -> result: u8 pure {
 fn spell(destination: &[u8], at: u64, value: u64) -> result: u64 writes(destination) {
   let cursor = at;
   let rest = value;
+  let limit = at +wrap 8_u64;
   loop @octets {
-    let limit = at +wrap 8_u64;
     let done = cursor >= limit;
     if done {
       break @octets;
@@ -352,7 +352,7 @@ const INDEPENDENT_MAP: &[u8] = br#"fn mix(seed: u64) -> result: u64 pure {
   let state = seed;
   let round = 0_u64;
   loop @rounds {
-    let done = round == 24_u64;
+    let done = round >= 24_u64;
     if done {
       break @rounds;
     }
@@ -433,7 +433,7 @@ fn mix(seed: u64) -> result: u64 pure {
   let state = seed;
   let round = 0_u64;
   loop @rounds {
-    let done = round == 24_u64;
+    let done = round >= 24_u64;
     if done {
       break @rounds;
     }
@@ -1806,7 +1806,7 @@ const COMBINE_PRELUDE: &str = r#"fn mix(seed: u64) -> result: u64 pure {
   let state = seed;
   let round = 0_u64;
   loop @rounds {
-    let done = round == 24_u64;
+    let done = round >= 24_u64;
     if done {
       break @rounds;
     }
@@ -1834,8 +1834,8 @@ fn low_byte(v: u64) -> result: u8 pure {
 fn spell(destination: &[u8], at: u64, value: u64) -> result: u64 writes(destination) {
   let cursor = at;
   let rest = value;
+  let limit = at +wrap 8_u64;
   loop @octets {
-    let limit = at +wrap 8_u64;
     let done = cursor >= limit;
     if done {
       break @octets;
@@ -2089,7 +2089,7 @@ fn composed(limit: u64) -> result: u64 pure {
   let acc = marks[0_u64] +wrap marks[1_u64];
   let round = 0_u64;
   loop @carry {
-    if round == 2_u64 {
+    if round >= 2_u64 {
       break @carry;
     }
     set acc = acc +wrap 1_u64;

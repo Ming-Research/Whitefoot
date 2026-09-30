@@ -3658,7 +3658,7 @@ Only a test that continues leads back to the header, and the continuing relation
 Because the `let_stmt`s before the exit test call nothing, they write no operand, and R0 is the rank's value at the test.
 
 A `loop_stmt` that can reach its header again and makes progress in none of these forms is a hard error citing TERM-1 at the `loop_stmt`, with a repair [DIAG-1].
-An owed descent that the fact state at the edge does not prove is a hard error citing TERM-1 at the `loop_stmt`, with the relation, its disposition [MSR-4] and a repair.
+An owed relation that the fact state at the edge does not prove is a hard error citing TERM-1 at the `loop_rank` of a written rank and at the `loop_stmt` otherwise, with the first such relation, its disposition [MSR-4] and a repair.
 The values `R0` are proof-only: like an invariant, a rank evaluates nothing at runtime and adds no value, branch or trap [INV-1].
 A counted `for_stmt` runs its body at most `upper - lower` times and owes no rank.
 

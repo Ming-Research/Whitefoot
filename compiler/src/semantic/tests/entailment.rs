@@ -773,6 +773,18 @@ fn assert_source_affine_fact_resolves(summary: &FunctionEntailment, source: Sour
                     pending.push(predecessor);
                 }
             }
+            // [TERM-1] a loop's owed relation proved on every predecessor of
+            // a join inside its body names that loop, which must exist.
+            SourceAffineFactRef::JoinedLoopProgress { loop_id } => {
+                assert!(
+                    summary
+                        .loop_invariants
+                        .iter()
+                        .any(|invariant| invariant.loop_id.0 == loop_id)
+                        || summary.loop_progress.iter().any(|_| true),
+                    "joined loop progress names a checked loop"
+                );
+            }
         }
     }
 }
@@ -4107,7 +4119,14 @@ fn all_contradictory(left: u64, right: u64, choose: Bool) -> result: unit pure {
 }
 
 fn no_induction(left: u64, right: u64, leave: Bool) -> result: unit pure {
-  loop @again {
+  let fuel = 64_u64;
+  loop @again (
+    decreases fuel
+  ) {
+    if fuel == 0_u64 {
+      return unit;
+    }
+    set fuel = fuel -wrap 1_u64;
     need_distinct(left: left, right: right);
     if left < right {
     } else {
@@ -5011,7 +5030,14 @@ fn read(i: u64) -> result: i32 pure {
     return 0_i32;
   }
   let before = values[i];
-  loop @l {
+  let fuel = 64_u64;
+  loop @l (
+    decreases fuel
+  ) {
+    if fuel == 0_u64 {
+      return 0_i32;
+    }
+    set fuel = fuel -wrap 1_u64;
     let inside = values[i];
     set i = i +wrap 1_u64;
     if i < 4_u64 {
@@ -5164,7 +5190,14 @@ fn read(i: u64, leave_outer: Bool, leave_inner: Bool) -> result: i32 pure {
     return 0_i32;
   }
   loop @outer {
-    loop @inner {
+    let fuel = 64_u64;
+    loop @inner (
+      decreases fuel
+    ) {
+      if fuel == 0_u64 {
+        return 0_i32;
+      }
+      set fuel = fuel -wrap 1_u64;
       let at_head = values[i];
       if leave_outer {
         set i = i +wrap 1_u64;
@@ -5213,7 +5246,14 @@ fn read(i: u64, fail: Bool, leave: Bool) -> result: Result<i32, Fail> pure {
   } else {
     return Ok<i32, Fail>(value: 0_i32);
   }
-  loop @l {
+  let fuel = 64_u64;
+  loop @l (
+    decreases fuel
+  ) {
+    if fuel == 0_u64 {
+      return Ok<i32, Fail>(value: 0_i32);
+    }
+    set fuel = fuel -wrap 1_u64;
     let value = propagate source(fail: fail);
     let at_head = values[i];
     if leave {
@@ -5245,7 +5285,14 @@ fn read(i: u64, mutate: Bool, leave: Bool) -> result: i32 pure {
   } else {
     return 0_i32;
   }
-  loop @l {
+  let fuel = 64_u64;
+  loop @l (
+    decreases fuel
+  ) {
+    if fuel == 0_u64 {
+      return 0_i32;
+    }
+    set fuel = fuel -wrap 1_u64;
     if mutate {
       set i = i +wrap 1_u64;
     }
@@ -5279,7 +5326,14 @@ fn read(i: u64, mutate: Bool, leave: Bool) -> result: i32 pure {
   } else {
     return 0_i32;
   }
-  loop @l {
+  let fuel = 64_u64;
+  loop @l (
+    decreases fuel
+  ) {
+    if fuel == 0_u64 {
+      return 0_i32;
+    }
+    set fuel = fuel -wrap 1_u64;
     let picked = if mutate {
       set i = i +wrap 1_u64;
       give 1_i32;
@@ -5322,7 +5376,14 @@ fn read(i: u64, j: u64, stop: Bool, leave: Bool) -> result: i32 pure {
   } else {
     return 0_i32;
   }
-  loop @l {
+  let fuel = 64_u64;
+  loop @l (
+    decreases fuel
+  ) {
+    if fuel == 0_u64 {
+      return 0_i32;
+    }
+    set fuel = fuel -wrap 1_u64;
     if stop {
       set i = i +wrap 1_u64;
       return 0_i32;
@@ -5360,7 +5421,14 @@ fn read(i: u64, leave_outer: Bool) -> result: i32 pure {
   } else {
     return 0_i32;
   }
-  loop @outer {
+  let fuel = 64_u64;
+  loop @outer (
+    decreases fuel
+  ) {
+    if fuel == 0_u64 {
+      return 0_i32;
+    }
+    set fuel = fuel -wrap 1_u64;
     let at_head = values[i];
     loop @inner {
       set i = i +wrap 1_u64;
@@ -6075,7 +6143,14 @@ fn read(i: u64, leave: Bool) -> result: i32 pure {
   } else {
     return 0_i32;
   }
-  loop @outer {
+  let fuel = 64_u64;
+  loop @outer (
+    decreases fuel
+  ) {
+    if fuel == 0_u64 {
+      return 0_i32;
+    }
+    set fuel = fuel -wrap 1_u64;
     for @inner (n in 0_u64..1_u64) {
       set i = i +wrap 1_u64;
       let ignored = n;
@@ -6695,7 +6770,14 @@ fn clamp_three(value: u64) -> result: u64 pure {
 
 fn direct(input: u64) -> result: i32 pure {
   let bounded = 0_u64;
-  loop @select_bound {
+  let fuel = 64_u64;
+  loop @select_bound (
+    decreases fuel
+  ) {
+    if fuel == 0_u64 {
+      return 0_i32;
+    }
+    set fuel = fuel -wrap 1_u64;
     if bounded == input {
       break @select_bound;
     } else if bounded == 3_u64 {
@@ -6712,7 +6794,14 @@ fn direct(input: u64) -> result: i32 pure {
 
 fn through_origin(input: u64) -> result: i32 pure {
   let bounded = 0_u64;
-  loop @select_bound {
+  let fuel = 64_u64;
+  loop @select_bound (
+    decreases fuel
+  ) {
+    if fuel == 0_u64 {
+      return 0_i32;
+    }
+    set fuel = fuel -wrap 1_u64;
     if bounded == input {
       break @select_bound;
     } else if bounded == 3_u64 {
@@ -6754,7 +6843,14 @@ fn clamp_three(value: u64) -> result: u64 pure {
 
 fn read(left_raw: u64, right_raw: u64) -> result: i32 pure {
   let left = 0_u64;
-  loop @select_left {
+  let fuel = 64_u64;
+  loop @select_left (
+    decreases fuel
+  ) {
+    if fuel == 0_u64 {
+      return 0_i32;
+    }
+    set fuel = fuel -wrap 1_u64;
     if left == left_raw {
       break @select_left;
     } else if left == 3_u64 {
@@ -6764,7 +6860,14 @@ fn read(left_raw: u64, right_raw: u64) -> result: i32 pure {
     }
   }
   let right = 0_u64;
-  loop @select_right {
+  let fuel_right = 64_u64;
+  loop @select_right (
+    decreases fuel_right
+  ) {
+    if fuel_right == 0_u64 {
+      return 0_i32;
+    }
+    set fuel_right = fuel_right -wrap 1_u64;
     if right == right_raw {
       break @select_right;
     } else if right == 3_u64 {
@@ -7202,7 +7305,14 @@ fn alias_write(value: f64) -> result: i32 pure {
 
 fn backedge(value: f64, stop: Bool) -> result: unit pure {
   let allowed = cvt.defined::<f64, i32>(value);
-  loop @again {
+  let fuel = 64_u64;
+  loop @again (
+    decreases fuel
+  ) {
+    if fuel == 0_u64 {
+      return unit;
+    }
+    set fuel = fuel -wrap 1_u64;
     if allowed {
       let converted = cvt::<f64, i32>(value);
     }
@@ -7215,7 +7325,14 @@ fn backedge(value: f64, stop: Bool) -> result: unit pure {
 }
 
 fn fresh(value: f64, stop: Bool) -> result: unit pure {
-  loop @again {
+  let fuel = 64_u64;
+  loop @again (
+    decreases fuel
+  ) {
+    if fuel == 0_u64 {
+      return unit;
+    }
+    set fuel = fuel -wrap 1_u64;
     if cvt.defined::<f64, i32>(value) {
       let converted = cvt::<f64, i32>(value);
     }

@@ -535,7 +535,9 @@ fn record_store_expire<T, E, fn consume(env: &E, value: Record<T>) -> result: un
   doc "Due entries leave the heap in deadline order. Old generations consume no replacement payload and cannot detach a replacement's ID mapping. The live target's memberships retire before deletion; each returned owner reaches the callback once.";
   let count = 0_u64;
   let empty = RecordEmpty();
-  loop @expire {
+  loop @expire (
+    decreases store^.due.storage.inner.len
+  ) {
     let length = priority_queue_len::<RecordDue, ceiling>(queue: &store^.due);
     if length == 0_u64 {
       break @expire;

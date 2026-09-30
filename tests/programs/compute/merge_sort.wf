@@ -1,25 +1,6 @@
 alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
-fn search_step(input: &[u64], lower: u64, upper: u64, key: u64) -> (next_lower: u64, next_upper: u64) reads(input) contract {
-  requires input^.len <= 16777216_u64;
-  requires lower < upper;
-  requires upper <= input^.len;
-  ensures next_lower <= next_upper;
-  ensures next_upper <= input^.len;
-} {
-  let last = upper - 1_u64;
-  let span = last - lower;
-  let half = span / 2_u64;
-  let middle = lower + half;
-  let value = input^[middle];
-  if value < key {
-    let first = middle + 1_u64;
-    return first, upper;
-  }
-  return lower, middle;
-}
-
 fn lower_bound(input: &[u64], key: u64) -> result: u64 reads(input) contract {
   requires input^.len <= 16777216_u64;
   ensures result <= input^.len;
@@ -34,9 +15,16 @@ fn lower_bound(input: &[u64], key: u64) -> result: u64 reads(input) contract {
     if lower >= upper {
       return lower;
     }
-    let (next_lower, next_upper) = search_step(input: input, lower: lower, upper: upper, key: key);
-    set lower = next_lower;
-    set upper = next_upper;
+    let last = upper - 1_u64;
+    let span = last - lower;
+    let half = span / 2_u64;
+    let middle = lower + half;
+    let value = input^[middle];
+    if value < key {
+      set lower = middle + 1_u64;
+    } else {
+      set upper = middle;
+    }
   }
   return count;
 }

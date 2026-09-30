@@ -70,8 +70,8 @@ fn spell(destination: &[u8], at: u64, value: u64) -> result: u64 writes(destinat
   doc "Writes the eight little-endian bytes of value at the given offset, skipping any slot the range does not have.";
   let cursor = at;
   let rest = value;
+  let limit = at +wrap 8_u64;
   loop @octets {
-    let limit = at +wrap 8_u64;
     let done = cursor >= limit;
     if done {
       break @octets;

@@ -630,13 +630,21 @@ fn main() -> status: std::process::ExitStatus pure {
             };
         },
     );
+    // A loop that can reach its header again makes progress [TERM-1]; an
+    // empty body makes none, so the loop is rejected before its unreachable
+    // continuation is considered. `ordinary_loop_without_a_break_has_a_
+    // contradictory_continuation` keeps the continuation's observation.
     with_semantics(
         b"fn main() -> status: std::process::ExitStatus pure {\n  loop @forever {\n  }\n  return std::process::exit_status(code: 0_u8);\n}\n",
         |outcome| {
-            assert!(
-                matches!(outcome, SemanticOutcome::Complete(_)),
-                "a break-free loop has a contradictory continuation rather than an unsupported shape: {outcome:?}"
-            );
+            let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+                panic!("a loop with no progress must reject: {outcome:?}");
+            };
+            assert_eq!(issue.rule(), SemanticRule::Term1);
+            assert!(matches!(
+                issue.kind(),
+                SemanticIssueKind::LoopWithoutProgress { .. }
+            ));
         },
     );
 }
@@ -648,7 +656,14 @@ fn loop_break_and_backedge_cleanup_is_explicit() {
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  loop @again {
+  let fuel = 64_u64;
+  loop @again (
+    decreases fuel
+  ) {
+    if fuel == 0_u64 {
+      return std::process::exit_status(code: 0_u8);
+    }
+    set fuel = fuel -wrap 1_u64;
     let first = Cell(value: 1_i32);
     if True() {
       break @again;
@@ -667,14 +682,15 @@ fn main() -> status: std::process::ExitStatus pure {
             body,
             backedge_drops,
             ..
-        } = &main.body.as_ref().expect("WF body")[0]
+        } = &main.body.as_ref().expect("WF body")[1]
         else {
-            panic!("first statement must be the checked loop");
+            panic!("the statement after the fuel binding must be the checked loop");
         };
         assert_eq!(backedge_drops.len(), 2);
         assert!(backedge_drops[0].binding.0 > backedge_drops[1].binding.0);
-        let CheckedStatement::Match { arms, .. } = &body[1] else {
-            panic!("second loop statement must be the match");
+        // The fuel exit test and its decrement come first [TERM-1].
+        let CheckedStatement::Match { arms, .. } = &body[3] else {
+            panic!("the statement after `first` must be the match");
         };
         let CheckedStatement::Break { drops, .. } = &arms[0].body[0] else {
             panic!("True arm must contain the checked break");

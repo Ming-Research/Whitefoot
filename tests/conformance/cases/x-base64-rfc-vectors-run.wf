@@ -63,12 +63,15 @@ fn encode(out: &[u8], input: &[u8]) -> function_result: Result<u64, IndexError> 
   let input_length = input^.len;
   let input_offset = 0_u64;
   let output_offset = 0_u64;
-  loop @full_groups {
-    let remaining = input_length -wrap input_offset;
+  loop @full_groups (
+    invariant consumed: input_offset <= input_length
+  ) {
+    let remaining = input_length - input_offset;
     let short_group = remaining < 3_u64;
     if short_group {
       break @full_groups;
     } else {
+      invariant whole_group: input_offset + 3_u64 <= input_length;
       let input_one = input_offset +wrap 1_u64;
       let input_two = input_offset +wrap 2_u64;
       let output_one = output_offset +wrap 1_u64;
@@ -103,7 +106,7 @@ fn encode(out: &[u8], input: &[u8]) -> function_result: Result<u64, IndexError> 
       let wrote_one = propagate write_index(values: out, index: output_one, value: encoded_one);
       let wrote_two = propagate write_index(values: out, index: output_two, value: encoded_two);
       let wrote_three = propagate write_index(values: out, index: output_three, value: encoded_three);
-      set input_offset = input_offset +wrap 3_u64;
+      set input_offset = input_offset + 3_u64;
       set output_offset = output_offset +wrap 4_u64;
     }
   }

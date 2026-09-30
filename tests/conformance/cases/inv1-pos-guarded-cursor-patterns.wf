@@ -95,6 +95,7 @@ fn merge_total<const left_cap: u64, const right_cap: u64>(left: Slots<u64, left_
   let j = 0_u64;
   let total = 0_u64;
   loop (
+    decreases left_len - i + right_len - j,
     invariant bounded_left: i <= left_len,
     invariant bounded_right: j <= right_len
   ) {

@@ -245,9 +245,8 @@ pub(crate) struct CheckedProgressSnapshot {
     pub(crate) ty: IntegerType,
     pub(crate) value: CheckedAffineExpression,
     /// The operand's own read, which the snapshot is established equal to,
-    /// as a `let` binding is to its initializer; a written rank's binding
-    /// operand has none, and its affine value alone relates it.
-    pub(crate) read: Option<CheckedExpression>,
+    /// as a `let` binding is to its initializer.
+    pub(crate) read: CheckedExpression,
 }
 
 /// One source-written `use` in a local invariant certificate.

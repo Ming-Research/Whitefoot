@@ -205,6 +205,11 @@ struct LoopFrame {
     /// the private endpoint-capture scope as well as source binding scopes.
     capture_path: Option<Vec<u32>>,
     breaks: Vec<ProofFlowState>,
+    /// [INV-1, TERM-1] the relations a loop owes at its backedge: its header
+    /// invariants and, for an ordinary loop, its rank's relations with the
+    /// relations that imply them. At a join inside the body each one that
+    /// every joined state proves holds in the joined state [ENT-6].
+    progress: Box<[CheckedAffineRelation]>,
 }
 
 /// The [ENT-3] facts one `match` scrutinee admits at its arms' entries: the

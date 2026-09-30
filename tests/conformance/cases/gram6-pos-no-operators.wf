@@ -6,7 +6,7 @@ fn main() -> return_value: ExitStatus pure {
   let n = 4_i32;
   let acc = 0_i32;
   loop @l {
-    if n == 0_i32 {
+    if n <= 0_i32 {
       break @l;
     }
     set acc = acc +wrap n;

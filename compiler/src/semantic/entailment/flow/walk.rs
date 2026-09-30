@@ -183,6 +183,83 @@ impl Analyzer<'_, '_> {
         continues
     }
 
+    /// [ENT-6, TERM-1] the join of `exits`, which additionally keeps each
+    /// relation an enclosing ordinary loop's rank owes, or that implies what
+    /// it owes, when every joined state proves it. Each state satisfies the
+    /// relation over its own values of the relation's operands, so the
+    /// joined state, whose operands take one of those values, satisfies it
+    /// too; a later write of an operand kills it as it kills any fact.
+    pub(super) fn join_carrying_progress(&mut self, exits: &[ProofFlowState]) -> ProofFlowState {
+        let candidates = self
+            .frames
+            .loops
+            .iter()
+            .flat_map(|frame| frame.progress.iter().map(move |relation| (frame.id, relation)))
+            .map(|(id, relation)| (id, relation.clone()))
+            .collect::<Vec<_>>();
+        self.join_carrying(exits, candidates)
+    }
+
+    /// The join of `exits`, keeping each candidate relation that every
+    /// joined state proves.
+    fn join_carrying(
+        &mut self,
+        exits: &[ProofFlowState],
+        candidates: Vec<(CheckedLoopId, CheckedAffineRelation)>,
+    ) -> ProofFlowState {
+        let mut joined = self.judging().join_flows(exits);
+        if candidates.is_empty() || exits.len() < 2 || joined.facts.all_derivable {
+            return joined;
+        }
+        for (loop_id, relation) in candidates {
+            let everywhere = exits.iter().all(|exit| {
+                exit.facts.all_derivable || {
+                    let mut probe = exit.clone();
+                    self.reasoning()
+                        .prove_affine_relation_batch(&relation, &mut probe)
+                        == TargetDisposition::Proved
+                }
+            });
+            if !everywhere {
+                continue;
+            }
+            let Ok(inequality) = self.reasoning().checked_affine_relation_inequality(
+                &relation,
+                &mut joined.affine,
+                &mut AffineCheckState::new(),
+            ) else {
+                continue;
+            };
+            // [INV-1] an `==` relation is the bound pair, both proved above.
+            let partner = match self.reasoning().checked_affine_relation_partner(
+                &relation,
+                &mut joined.affine,
+                &mut AffineCheckState::new(),
+            ) {
+                None => None,
+                Some(Ok(partner)) => Some(partner),
+                Some(Err(_)) => continue,
+            };
+            for inequality in std::iter::once(inequality).chain(partner) {
+                if joined
+                    .affine
+                    .facts
+                    .iter()
+                    .any(|fact| fact.inequality == inequality)
+                {
+                    continue;
+                }
+                joined.affine.facts.push(ActiveAffineFact {
+                    inequality,
+                    evidence: AffineFactEvidence::Source(SourceAffineFactRef::JoinedLoopProgress {
+                        loop_id: loop_id.0,
+                    }),
+                });
+            }
+        }
+        joined
+    }
+
     pub(super) fn declare(&mut self, binding: BindingId) {
         if let Some(scope) = self.frames.scopes.last_mut() {
             scope.push(binding);
@@ -197,6 +274,7 @@ impl Analyzer<'_, '_> {
         let mut judgment = self.judge_expression(expression, state);
         let mut events = Vec::new();
         self.input.collect_expression_kills(expression, &mut events);
+        let exchanged = self.exchanged_measures(expression, &events, state);
         if let Some(prepared) = &mut judgment.prepared_call {
             let transfer_events = &mut prepared.transfer_events;
             let live = self.apply_kills_each(state, &events, |analyzer, event| {
@@ -217,11 +295,79 @@ impl Analyzer<'_, '_> {
         } else {
             self.apply_kills(state, &events);
         }
+        for (term, image) in exchanged {
+            state.affine.measure_atoms.get_mut().insert(term, image);
+        }
         if let Some(prepared) = &judgment.prepared_call {
             self.reasoning()
                 .establish_call_state(expression, prepared, state);
         }
         judgment
+    }
+
+    /// [OP-11] the measure images a `swap` moves between its two targets:
+    /// each image a measure term under one target holds before the call,
+    /// filed under the same measure of the corresponding place under the
+    /// other target, to be installed once the call's kills have retargeted
+    /// both. The exchange moves whole values, so every measure inside them
+    /// moves with its value; an element exchange moves no measure of the run.
+    fn exchanged_measures(
+        &mut self,
+        expression: &CheckedExpression,
+        events: &[KillEvent],
+        state: &ProofFlowState,
+    ) -> Vec<(TermId, AffineForm)> {
+        let CheckedExpression::UserCall { function, .. } = expression else {
+            return Vec::new();
+        };
+        if !self
+            .input
+            .context
+            .callee(*function)
+            .is_some_and(|callee| callee.exchanges)
+        {
+            return Vec::new();
+        }
+        let targets = events
+            .iter()
+            .filter_map(|event| match event {
+                KillEvent::Write {
+                    place,
+                    element: false,
+                    ..
+                } => Some(place.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let [first, second] = targets.as_slice() else {
+            return Vec::new();
+        };
+        let held = state
+            .affine
+            .measure_atoms
+            .borrow()
+            .iter()
+            .map(|(term, image)| (*term, image.clone()))
+            .collect::<Vec<_>>();
+        let mut moved = Vec::new();
+        for (term, image) in held {
+            let TermKind::Measure(measure, place) = self.vocabulary.terms.kind(term).clone() else {
+                continue;
+            };
+            for (from, to) in [(first, second), (second, first)] {
+                if place.root != from.root || !place.path.starts_with(&from.path) {
+                    continue;
+                }
+                let mut path = to.path.clone();
+                path.extend_from_slice(&place.path[from.path.len()..]);
+                let target = ResolvedPlace {
+                    root: to.root.clone(),
+                    path,
+                };
+                moved.push((self.vocabulary.intern_measure(measure, &target), image.clone()));
+            }
+        }
+        moved
     }
 
     pub(super) fn walk_set(
@@ -1275,7 +1421,7 @@ impl Analyzer<'_, '_> {
                 if exits.is_empty() {
                     false
                 } else {
-                    *state = self.judging().join_flows(&exits);
+                    *state = self.join_carrying_progress(&exits);
                     true
                 }
             }
@@ -1330,7 +1476,7 @@ impl Analyzer<'_, '_> {
                 if frame.gives.is_empty() {
                     return false;
                 }
-                *state = self.judging().join_flows(&frame.gives);
+                *state = self.join_carrying_progress(&frame.gives);
                 if self.input.affine_binding_type(*binding).is_some()
                     && let Some(value) = self.vocabulary.affine_unknown_integer(*result_type)
                 {
@@ -1387,6 +1533,27 @@ impl Analyzer<'_, '_> {
                     invariant_atoms: HashSet::new(),
                     capture_path: None,
                     breaks: Vec::new(),
+                    progress: {
+                        let ranked: &[CheckedAffineRelation] = match progress {
+                            CheckedLoopProgress::Rank { owed, .. } => owed,
+                            CheckedLoopProgress::NoBackedge | CheckedLoopProgress::Waits => &[],
+                        };
+                        let implying = match progress {
+                            CheckedLoopProgress::Rank { alternatives, .. } => {
+                                alternatives.iter().flatten().collect::<Vec<_>>()
+                            }
+                            CheckedLoopProgress::NoBackedge | CheckedLoopProgress::Waits => {
+                                Vec::new()
+                            }
+                        };
+                        invariants
+                            .iter()
+                            .map(|invariant| &invariant.relation)
+                            .chain(ranked)
+                            .chain(implying)
+                            .cloned()
+                            .collect()
+                    },
                 });
                 let mut body_state = state.clone();
                 let outer_continuing = std::mem::take(&mut body_state.continuing);
@@ -1403,16 +1570,14 @@ impl Analyzer<'_, '_> {
                             body_state.affine.values.insert(snapshot.binding, form);
                         }
                         // As a `let` binding is to its initializer [ENT-3].
-                        if let Some(read) = &snapshot.read {
-                            let mut event = None;
-                            let _ = self.establish_value_image(
-                                &snapshot.value.node_path,
-                                ValueImage::Binding(snapshot.binding),
-                                read,
-                                &mut body_state.facts,
-                                &mut event,
-                            );
-                        }
+                        let mut event = None;
+                        let _ = self.establish_value_image(
+                            &snapshot.value.node_path,
+                            ValueImage::Binding(snapshot.binding),
+                            &snapshot.read,
+                            &mut body_state.facts,
+                            &mut event,
+                        );
                     }
                 }
                 let body_falls_through = self.walk_block(body, &mut body_state);
@@ -1460,7 +1625,15 @@ impl Analyzer<'_, '_> {
                 // break it is the contradictory all-derivable state, matching
                 // an unreachable-in-truth continuation the conservative graph
                 // keeps reachable [ENT-5].
-                *state = self.judging().join_flows(&breaks);
+                // [INV-1] a header invariant every break edge proves holds
+                // after the loop, as it does after any join [ENT-6].
+                *state = self.join_carrying(
+                    &breaks,
+                    invariants
+                        .iter()
+                        .map(|invariant| (*id, invariant.relation.clone()))
+                        .collect(),
+                );
                 if !has_breaks {
                     state.entry_images = head_entry_images;
                 }
@@ -1624,6 +1797,10 @@ impl Analyzer<'_, '_> {
                     invariant_atoms,
                     capture_path: Some(range_path.clone()),
                     breaks: Vec::new(),
+                    progress: invariants
+                        .iter()
+                        .map(|invariant| invariant.relation.clone())
+                        .collect(),
                 });
                 let mut body_state = head.clone();
                 let outer_continuing = std::mem::take(&mut body_state.continuing);

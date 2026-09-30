@@ -619,7 +619,7 @@ fn a_counted_reduction_over_a_pure_callee_is_permitted_and_eligible() {
   let low = iand(index, 7_u64);
   let seen = 0_u64;
   loop @spin {
-    let done = seen == 4_u64;
+    let done = seen >= 4_u64;
     if done {
       break @spin;
     }
@@ -2109,11 +2109,11 @@ fn a_break_to_an_enclosing_loop_is_denied_while_an_inner_break_is_not() {
   for @sum (i in 0_u64..16_u64) {
     let seen = 0_u64;
     loop @inner {
-      set seen = seen +wrap 1_u64;
-      let done = seen == 4_u64;
+      let done = seen >= 4_u64;
       if done {
         break @inner;
       }
+      set seen = seen +wrap 1_u64;
     }
     set total = total +wrap i;
   }

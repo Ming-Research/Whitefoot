@@ -2187,13 +2187,13 @@ fn indexed_call_separation_uses_runtime_order_and_disequality_facts() {
 #[test]
 fn indexed_call_separation_obeys_loop_backedges() {
     let first_visit_only = format!(
-        "{INDEXED_CALL_HELPER}\nfn looped(values: &Array<u8, 4>, i: u64, j: u64, stop: Bool) -> result: unit writes(values) {{\n  if i < j {{\n  }} else {{\n    return unit;\n  }}\n  loop @again {{\n    write_two(values: values, first: i, second: j);\n    set j = i;\n    if stop {{\n      break @again;\n    }}\n  }}\n  return unit;\n}}\n"
+        "{INDEXED_CALL_HELPER}\nfn looped(values: &Array<u8, 4>, i: u64, j: u64, stop: Bool) -> result: unit writes(values) {{\n  if i < j {{\n  }} else {{\n    return unit;\n  }}\n  let fuel = 64_u64;\n  loop @again (\n    decreases fuel\n  ) {{\n    write_two(values: values, first: i, second: j);\n    set j = i;\n    if stop {{\n      break @again;\n    }}\n    if fuel == 0_u64 {{\n      break @again;\n    }}\n    set fuel = fuel -wrap 1_u64;\n  }}\n  return unit;\n}}\n"
     );
     assert_rule_kind(first_visit_only.as_bytes(), SemanticRule::Eff5, |kind| {
         matches!(kind, SemanticIssueKind::UndischargedCallSeparation { .. })
     });
     let every_visit = format!(
-        "{INDEXED_CALL_HELPER}\nfn looped(values: &Array<u8, 4>, i: u64, j: u64, stop: Bool) -> result: unit writes(values) {{\n  loop @again {{\n    if i < j {{\n      write_two(values: values, first: i, second: j);\n    }}\n    set j = i;\n    if stop {{\n      break @again;\n    }}\n  }}\n  return unit;\n}}\n"
+        "{INDEXED_CALL_HELPER}\nfn looped(values: &Array<u8, 4>, i: u64, j: u64, stop: Bool) -> result: unit writes(values) {{\n  let fuel = 64_u64;\n  loop @again (\n    decreases fuel\n  ) {{\n    if i < j {{\n      write_two(values: values, first: i, second: j);\n    }}\n    set j = i;\n    if stop {{\n      break @again;\n    }}\n    if fuel == 0_u64 {{\n      break @again;\n    }}\n    set fuel = fuel -wrap 1_u64;\n  }}\n  return unit;\n}}\n"
     );
     assert_indexed_call_proof("every loop visit", every_visit.as_bytes(), false);
 }

@@ -40,7 +40,8 @@ fn a_pipe_between_two_contexts_drains_on_every_route() {
 /// R2: the entry polls an object for the write of a context it spawned.
 /// Every poll is an atomic statement the object answers at once, so the
 /// entry never suspends; before a run of such waits yielded to a ready
-/// context, one driver never ran the producer.
+/// context, one driver never ran the producer. The polls are counted
+/// [TERM-1], and a program that exhausts them exits with status 1.
 #[test]
 fn a_context_polling_an_object_lets_the_producer_run_on_one_driver() {
     let program = build_program(&compile_program("poll_contexts.wf"));
