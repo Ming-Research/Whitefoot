@@ -1,0 +1,44 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn find_byte_or_end(input: &[u8], start: u64, length: u64, target: u8) -> result: u64 reads(input) contract {
+  requires start <= length;
+  requires length == input^.len;
+  ensures result >= start;
+  ensures result <= length;
+} {
+  let pos = start;
+  loop @scan (
+    invariant pos_bounded: pos <= length
+  ) {
+    let more = pos < length;
+    if more {
+    } else {
+      invariant at_end: pos <= length;
+      break @scan;
+    }
+    let byte = input^[pos];
+    let found = byte == target;
+    if found {
+      invariant at_stop: pos <= length;
+      break @scan;
+    }
+    let next = pos +wrap 1_u64;
+    invariant next_bounded: next <= length;
+    set pos = next;
+  }
+  let result = pos;
+  let too_near = result < start;
+  if too_near {
+    set result = start;
+  }
+  return result;
+}
+
+fn main() -> status: ExitStatus pure {
+  let backing = box_array_filled::<u8>(count: 3_u64, value: 7_u8);
+  let text = &backing.inner[0_u64..3_u64];
+  let found = find_byte_or_end(input: text, start: 1_u64, length: 3_u64, target: 7_u8);
+  let code = cvt.wrap::<u64, u8>(found);
+  return exit_status(code: code);
+}

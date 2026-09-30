@@ -1,0 +1,20 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn split(n: u64, cut: Bool) -> result: u64 pure {
+  let q = n / 2_u64;
+  let r = n - q;
+  invariant qr: q <= r;
+  if cut {
+    set r = r - q;
+  }
+  invariant still: q <= r;
+  return r;
+}
+
+fn main() -> status: ExitStatus pure {
+  let cut = True();
+  let r = split(n: 2_u64, cut: cut);
+  let code = cvt.wrap::<u64, u8>(r);
+  return exit_status(code: code);
+}

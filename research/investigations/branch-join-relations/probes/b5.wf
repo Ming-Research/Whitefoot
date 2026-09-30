@@ -1,0 +1,51 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn find(keys: &[u32], key: u32) -> result: Option<u64> reads(keys) {
+  let low = 0_u64;
+  let high = keys^.len;
+  loop (
+    invariant ordered: low <= high,
+    invariant within: high <= keys^.len
+  ) {
+    if low >= high {
+      break;
+    }
+    let span = high - low;
+    let half = span / 2_u64;
+    let mid = low + half;
+    if mid >= high {
+      return None<u64>();
+    }
+    let probe = keys^[mid];
+    if probe == key {
+      return Some<u64>(value: mid);
+    }
+    set high = mid;
+  }
+  return None<u64>();
+}
+
+fn main() -> status: ExitStatus pure {
+  let keys = box_slots_new::<u32>(capacity: 4_u64);
+  for (i in 0_u64..4_u64) {
+    let room = keys.inner.len < keys.inner.cap;
+    if room {
+      let t = i * 3_u64;
+      let v = cvt.wrap::<u64, u32>(t);
+      place_back(window: &keys.inner, value: v);
+    }
+  }
+  let n = keys.inner.len;
+  let all = &keys.inner[0_u64..n];
+  let found = find(keys: all, key: 6_u32);
+  match found {
+    Some(value: at) => {
+      let code = cvt.wrap::<u64, u8>(at);
+      return exit_status(code: code);
+    }
+    None() => {
+      return exit_status(code: 99_u8);
+    }
+  }
+}
