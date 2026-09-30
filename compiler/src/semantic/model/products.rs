@@ -239,6 +239,7 @@ record_enum!(CheckedConversionMode {
     1 => Checked,
     2 => Defined,
     3 => Wrap,
+    4 => Nearest,
 });
 
 record_enum!(CheckedNumericType {
@@ -273,6 +274,7 @@ record_enum!(CheckedType {
     8 => Array { element, length },
     9 => Buffer { element },
     10 => Window { shape, element, capacity },
+    11 => Segments { element },
 });
 
 record_enum!(WindowShape {
@@ -303,6 +305,7 @@ record_enum!(MeasuredKind {
     4 => ConstantRing,
     5 => RuntimeRing,
     6 => Range,
+    7 => Segments,
 });
 
 record_enum!(CheckedValue {
@@ -344,6 +347,7 @@ record_enum!(CheckedNominalKind {
     1 => Enum { variants },
     2 => Box { referent, region, release },
     3 => Opaque,
+    4 => Shared { state },
 });
 
 record_struct!(CheckedNominal {
@@ -470,7 +474,9 @@ record_struct!(CheckedAllocationFit {
     element,
     layout_ceiling,
     count,
-    source_length_upper_bound
+    source_length_upper_bound,
+    site,
+    count_site
 });
 
 record_enum!(CheckedArrayRoot {
@@ -494,6 +500,7 @@ record_struct!(CheckedRangeRoot {
 record_enum!(CheckedRangeSource {
     0 => Storage(f0),
     1 => Range(f0),
+    2 => Element(f0),
 });
 
 record_struct!(CheckedRangeElementPlace {
@@ -504,6 +511,17 @@ record_struct!(CheckedRangeElementPlace {
     ty,
     obligation,
     target_domain
+});
+
+record_enum!(CheckedSegmentSelect {
+    0 => One(f0),
+    1 => All(f0),
+});
+
+record_struct!(CheckedSegmentIndex {
+    offset,
+    obligation,
+    captured
 });
 
 record_struct!(CheckedContainerRoot { root, path, ty });
@@ -569,10 +587,11 @@ record_enum!(CheckedExpression {
     22 => BoxDeref { carrier, nominal, referent, value },
     23 => BorrowAddressed { carrier, root },
     24 => DerefAddressed { carrier, binding, ty },
-    25 => ConstructStruct { carrier, nominal, fields },
+    25 => ConstructStruct { carrier, nominal, fields, invariants, invariant_arguments },
     26 => ConstructEnum { carrier, nominal, variant, fields },
     27 => Project { carrier, binding, fields, ty, consume_root, residual_drops },
     28 => ProjectValue { carrier, value, nominal, field, ty },
+    29 => BorrowSegment { carrier, root, segment, element, element_type },
 });
 
 record_enum!(CheckedEnumType {
@@ -642,7 +661,8 @@ record_enum!(CheckedStatement {
     10 => Give { node_path, value, drops },
     11 => Loop { id, invariants, body, backedge_drops },
     12 => CountedRange { id, node_path, binder, lower, upper, invariants, body, backedge_drops },
-    13 => Break { target, drops },
+    13 => Break { node_path, target, drops },
+    14 => Atomic { node_path, target, binding, state, guard, body, fallthrough_drops, continues, invariants },
 });
 
 record_struct!(CheckedParameter {
@@ -689,9 +709,19 @@ record_struct!(CheckedFunction {
     allocates,
     call_separations,
     permission_separation_queries,
+    waiting,
     obligations,
     entailment
 });
+
+record_struct!(CheckedWaiting {
+    waits,
+    calls,
+    context_starts,
+    context_awaits
+});
+
+record_struct!(CheckedContextAwait { statement, before });
 
 record_struct!(CheckedCallSeparation {
     site,

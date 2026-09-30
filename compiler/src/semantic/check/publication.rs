@@ -21,7 +21,8 @@
 use super::super::postcondition::{
     NormalizedRelation, PostconditionPlaceRoot, RelationDatum, RelationTemplate, RelationTerm,
 };
-use crate::semantic::model::{CheckedMeasure, CheckedValue, IntegerType};
+use crate::semantic::entailment::integer_value;
+use crate::semantic::model::{CheckedMeasure, CheckedValue};
 
 /// The abstract term one operand denotes in the declaration-domain closure:
 /// an offset from a named term, where term `0` is the zero term.
@@ -138,10 +139,13 @@ impl DifferenceSystem {
 /// constant name one term; a literal is folded onto the zero term instead.
 #[derive(Eq, PartialEq)]
 enum OperandKey {
-    /// One declared result ordinal [CALL-4]. Distinct ordinals are distinct
-    /// destination datums even when their value types agree.
-    Result(u32),
-    Parameter(u32, ProjectionKey),
+    /// One declared result datum [CALL-4]: an ordinal and the owned
+    /// descendant projection below it. Distinct ordinals or projections are
+    /// distinct destination datums even when their value types agree.
+    Result(u32, ProjectionKey),
+    /// One parameter datum; its entry and exit denotations are distinct
+    /// terms even over one place [MSR-3].
+    Parameter(u32, ProjectionKey, bool),
     NamedConst(crate::DeclarationId, ProjectionKey),
     /// One measure of one formal place [MSR-1]: two clauses name one term
     /// only when they name the same measure of the same place.
@@ -189,12 +193,18 @@ impl DeclaredSystem {
 
     fn operand(&mut self, datum: &RelationDatum) -> Option<Operand> {
         let key = match datum {
-            RelationDatum::Result { ordinal, .. } => OperandKey::Result(*ordinal),
+            RelationDatum::Result {
+                ordinal,
+                projections,
+                ..
+            } => OperandKey::Result(*ordinal, projection_key(projections)),
             RelationDatum::Parameter {
                 ordinal,
                 projections,
                 ..
-            } => OperandKey::Parameter(*ordinal, projection_key(projections)),
+            } => {
+                OperandKey::Parameter(*ordinal, projection_key(projections), datum.is_exit_state())
+            }
             RelationDatum::NamedConst {
                 declaration,
                 projections,
@@ -293,17 +303,3 @@ pub(super) fn relations_are_contradictory(templates: &[&RelationTemplate]) -> bo
 // construction operations being ordinary [PRE-1] records whose contracts are
 // judged as every other declaration's are. The source-clause closure above,
 // which is the half [FN-8] still states, is unchanged.
-
-/// The mathematical value of one checked integer constant, whose `bits` hold
-/// the type-width two's-complement pattern [ENT-2].
-const fn integer_value(ty: IntegerType, bits: u64) -> i128 {
-    let value = bits as i128;
-    if ty.signed() {
-        let width = ty.width() as u32;
-        let sign_bit = 1_u64 << (width - 1);
-        if bits & sign_bit != 0 {
-            return value - (1_i128 << width);
-        }
-    }
-    value
-}

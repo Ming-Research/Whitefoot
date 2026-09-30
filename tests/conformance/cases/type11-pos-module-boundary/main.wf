@@ -1,0 +1,27 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+alias Pair = pkg::pairs::Pair;
+alias make = pkg::pairs::make;
+
+fn gap_alias(p: &Pair) -> result: u64 reads(p) {
+  let a = p^.first;
+  let b = p^.second;
+  let d = b - a;
+  return d;
+}
+
+fn gap_qualified(p: &pkg::pairs::Pair) -> result: u64 reads(p) {
+  let a = p^.first;
+  let b = p^.second;
+  let d = b - a;
+  return d;
+}
+
+fn main() -> status: ExitStatus pure {
+  let p = make(low: 2_u64, high: 9_u64);
+  let s = gap_alias(p: &p);
+  let t = gap_qualified(p: &p);
+  let u = s +wrap t;
+  let c = cvt.wrap::<u64, u8>(u);
+  return exit_status(code: c);
+}

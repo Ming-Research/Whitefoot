@@ -1,0 +1,26 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Counter {
+  count: u64;
+}
+
+struct Holder<T> {
+  item: T;
+  serial: u64;
+}
+
+fn hold<T>(item: T) -> result: Holder<T> pure contract {
+  ensures result.item.count == 0_u64;
+} {
+  doc "A value whose declared type is a type parameter declares no field below it [CALL-4, FN-2], so the step result.item.count supplies no datum in the generic template and the clause is refused under FN-9.";
+  let held = Holder<T>(item: move item, serial: 0_u64);
+  return move held;
+}
+
+fn main() -> status: ExitStatus pure {
+  let counter = Counter(count: 0_u64);
+  let held = hold::<Counter>(item: counter);
+  let code = cvt.wrap::<u64, u8>(held.serial);
+  return exit_status(code: code);
+}

@@ -1,0 +1,33 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Span {
+  head: u64;
+  len: u64;
+  cap: u64;
+}
+
+fn make(cap: u64) -> span: Span pure contract {
+  ensures span.head == 0_u64;
+  ensures span.len <= span.cap;
+} {
+  let made = Span(head: 0_u64, len: 0_u64, cap: cap);
+  return made;
+}
+
+fn room(span: &Span) -> result: u64 reads(span) contract {
+  requires span^.head <= span^.cap;
+} {
+  let head = span^.head;
+  let cap = span^.cap;
+  let free = cap - head;
+  return free;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "TYPE-10: the measure spellings reserve nothing in contract clauses either. A struct's fields named head, len and cap are ordinary field data in a requires and an ensures, whose relations the checker carries: make's postcondition proves room's requirement, and that requirement discharges the subtraction.";
+  let span = make(cap: 8_u64);
+  let result = room(span: &span);
+  let code = cvt.wrap::<u64, u8>(result);
+  return exit_status(code: code);
+}

@@ -2,12 +2,78 @@
 //! after inventory and source-coordinate changes.
 
 use super::with_resolved_semantics;
+use super::with_resolved_semantics_inputs;
 use crate::SemanticOutcome;
 use crate::semantic::model::CheckedFunction;
 use crate::semantic::places::CaptureId;
 use crate::semantic::products::identity::SourceIdentities;
 use crate::semantic::products::{IdentityKind, IdentityMap, Reader, Record, Writer};
 use crate::syntax::views::SyntaxView;
+
+#[test]
+fn retained_allocation_coordinates_follow_source_inventory_reordering() {
+    let original = b"fn run() -> result: u8 pure {\n  return 0_u8;\n}\n";
+    let earlier = b"fn earlier() -> result: u8 pure {\n  return 1_u8;\n}\n";
+    let old_inputs = [crate::SourceInput::new("test.wf", original)];
+    let new_inputs = [
+        crate::SourceInput::new("earlier.wf", earlier),
+        crate::SourceInput::new("test.wf", original),
+    ];
+    with_resolved_semantics_inputs(&old_inputs, |old_resolved, _| {
+        let old_view = SyntaxView::new(old_resolved.syntax()).unwrap();
+        let old_sources = SourceIdentities::new(old_resolved, &old_view).unwrap();
+        let source_id = |resolved: &crate::ResolvedSyntaxUnit| {
+            let bundle = resolved.syntax().classified_bundle().source_bundle();
+            let ordinal = bundle
+                .files()
+                .iter()
+                .position(|file| file.logical_path().as_str() == "test.wf")
+                .unwrap();
+            crate::SourceId::from_ordinal(ordinal as u32)
+        };
+        let old = crate::SyntaxCoordinate::new(
+            source_id(old_resolved),
+            crate::ByteOffset::new(3),
+            crate::ByteOffset::new(6),
+        );
+        let mut writer = Writer::default();
+        old.write(&mut writer);
+        with_resolved_semantics_inputs(&new_inputs, |new_resolved, _| {
+            let new_view = SyntaxView::new(new_resolved.syntax()).unwrap();
+            let new_sources = SourceIdentities::new(new_resolved, &new_view).unwrap();
+            let expected = crate::SyntaxCoordinate::new(
+                source_id(new_resolved),
+                crate::ByteOffset::new(3),
+                crate::ByteOffset::new(6),
+            );
+            assert_ne!(
+                old.source(),
+                expected.source(),
+                "the fixture must renumber sources"
+            );
+            let mut mapping = IdentityMap::new();
+            for &identity in &writer.identities {
+                let name = old_sources.name(identity).unwrap();
+                let current = new_sources.resolve(&name).unwrap();
+                assert_eq!(identity.0, current.0);
+                mapping.insert(identity, current.1);
+            }
+            let mut reader = Reader::new(&writer.bytes, &mapping);
+            assert_eq!(crate::SyntaxCoordinate::read(&mut reader), Some(expected));
+            assert!(reader.finished());
+            assert!(
+                crate::SyntaxCoordinate::read(&mut Reader::new(&writer.bytes, &IdentityMap::new()))
+                    .is_none()
+            );
+            for end in 0..writer.bytes.len() {
+                assert!(
+                    crate::SyntaxCoordinate::read(&mut Reader::new(&writer.bytes[..end], &mapping))
+                        .is_none()
+                );
+            }
+        });
+    });
+}
 
 #[test]
 fn retained_byte_sequences_keep_length_framing_and_reject_every_truncation() {

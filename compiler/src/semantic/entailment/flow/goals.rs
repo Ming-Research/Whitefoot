@@ -454,6 +454,7 @@ impl Input<'_, '_> {
             | CheckedExpression::BorrowRangeIndex { .. }
             | CheckedExpression::RangeOf { .. }
             | CheckedExpression::BorrowAddressed { .. }
+            | CheckedExpression::BorrowSegment { .. }
             | CheckedExpression::ConstructStruct { .. }
             | CheckedExpression::ConstructEnum { .. } => None,
         }
@@ -1331,6 +1332,16 @@ impl Reasoning<'_, '_, '_> {
             expression
         {
             return Some((None, integer_value(*ty, *bits)));
+        }
+        // [ENT-2] a widening conversion denotes its operand's mathematical
+        // value, so a comparison-origin side over one is that operand's side:
+        // `cvt::<u32, u64>(node.index) < nodes.len` projects to the relation
+        // over `node.index` itself [ENT-3].
+        if let GoalExpression::Operation { row, arguments, .. } = expression
+            && super::super::super::goal::widening_integer_conversion(row)
+            && let [argument] = arguments.as_slice()
+        {
+            return self.goal_affine_side(argument);
         }
         Some((Some(self.goal_operand(expression)?), 0))
     }

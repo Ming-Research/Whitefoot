@@ -41,6 +41,8 @@ pub(crate) use state::{
     GoalSign, ImplicitBoundKind, JoinParent, PostconditionCallDetail,
     PostconditionDeliveryJoinDetail, RangeSeparationOrdering, Relation,
 };
+/// The mathematical value of a checked integer constant [ENT-2].
+pub(crate) use term::integer_value;
 #[cfg(test)]
 pub(crate) use term::{
     CountedCaptureSide, MeasureBound, PlaceRoot, TermId, TermKind, ZERO, type_range,
@@ -861,6 +863,10 @@ pub(crate) struct PostconditionEntryImage {
     pub(crate) projections: Vec<super::goal::GoalProjection>,
     /// Which [MSR-1] measure the datum denotes, when it denotes one.
     pub(crate) measure: Option<super::model::CheckedMeasure>,
+    /// Whether the operand denotes an immutable entry datum [MSR-3] — every
+    /// measure, and an entry-qualified place of a written reference
+    /// parameter — rather than an entry image whose stability [FN-9] tracks.
+    pub(crate) immutable: bool,
 }
 
 /// Source-value stability retained at one selected return. `None` is the
@@ -1038,6 +1044,8 @@ pub(crate) struct CallGoalOutcome {
     /// callee for a direct call and the instantiated formal for a bound call
     /// [FN-5].
     pub(crate) requires_clause: NodePath,
+    /// [TYPE-11] the requirement's subject ordinal.
+    pub(crate) subject: Option<u32>,
     pub(crate) goal: ConcreteGoal,
     /// The same goal in the terms the source wrote it in, rendered here
     /// because this is where the caller's binding names are in scope. [FN-8]
@@ -1061,6 +1069,36 @@ pub(crate) struct CallGoalOutcome {
     /// some path to the call roots its place, sorted [ENT-5], as
     /// [`ObligationOutcome::written_before`] records it.
     pub(crate) written_before: Vec<BindingId>,
+    /// For a call no step discharged, every range the goal measures that the
+    /// call formed at an argument [REF-4], in goal order, for the repair
+    /// [DIAG-1]. Discharged calls carry none.
+    pub(crate) range_lengths: Vec<RangeLengthReading>,
+}
+
+/// [REF-4] one range formed at a call whose `len` an unproved requirement
+/// reads, spelled as the repair names it [DIAG-1]: the range, and its length
+/// as the difference of its two captured endpoints.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct RangeLengthReading {
+    /// The place the range was formed over, as the instantiated goal
+    /// spells it: `text^` for `text^[start..end]`.
+    pub(crate) base: String,
+    pub(crate) start: RangeEndpointReading,
+    pub(crate) end: RangeEndpointReading,
+    /// The goal with this and every other such range's `len` written as its
+    /// endpoint difference, present when every endpoint is spelled.
+    pub(crate) difference_goal: Option<String>,
+}
+
+/// How one range endpoint reads in source [REF-1, REF-4].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum RangeEndpointReading {
+    /// A written literal, a const, or a binding still holding the value the
+    /// formation read: a term the relation can name.
+    Spelled(String),
+    /// Any other value, such as a field or element read, identified by the
+    /// source occurrence that evaluated it where it has one.
+    Unspelled(Option<u32>),
 }
 
 /// One retained declaration-only [FN-4] implication result. Its enclosing
@@ -1153,7 +1191,11 @@ pub(crate) fn answer_records(
     }));
     let mut call_goals = Judgments::of(entailment.call_goals.iter().map(|outcome| {
         (
-            (&outcome.node_path, &outcome.requires_clause),
+            (
+                &outcome.node_path,
+                &outcome.requires_clause,
+                outcome.subject,
+            ),
             &outcome.node_path,
         )
     }));
@@ -1192,9 +1234,11 @@ pub(crate) fn answer_records(
                     .take(&(site, *family, *conjunct))
                     .map(RecordAnswer::Obligation),
                 ObligationSubject::CallRequirement {
-                    requires_clause, ..
+                    requires_clause,
+                    subject,
+                    ..
                 } => call_goals
-                    .take(&(site, requires_clause))
+                    .take(&(site, requires_clause, *subject))
                     .map(RecordAnswer::CallGoal),
                 ObligationSubject::LoopInvariant => {
                     loop_invariants.take(&site).map(RecordAnswer::LoopInvariant)
@@ -1601,6 +1645,18 @@ pub(super) fn collect_statement_calls(
             } => {
                 collect_expression_calls(caller, lower, calls);
                 collect_expression_calls(caller, upper, calls);
+                collect_statement_calls(caller, body, calls);
+            }
+            CheckedStatement::Atomic {
+                target,
+                guard,
+                body,
+                ..
+            } => {
+                collect_expression_calls(caller, target, calls);
+                if let Some(guard) = guard {
+                    collect_expression_calls(caller, guard, calls);
+                }
                 collect_statement_calls(caller, body, calls);
             }
             CheckedStatement::Break { .. } => {}

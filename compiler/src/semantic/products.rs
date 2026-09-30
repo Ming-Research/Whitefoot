@@ -23,6 +23,7 @@ pub(crate) enum IdentityKind {
     Module,
     Item,
     Node,
+    Source,
 }
 
 pub(crate) type Identity = (IdentityKind, u32);
@@ -345,6 +346,22 @@ impl Record for crate::SourceOrigin {
     }
 }
 
+impl Record for crate::SyntaxCoordinate {
+    fn write(&self, writer: &mut Writer) {
+        writer.identity(IdentityKind::Source, self.source().ordinal());
+        self.start().value().write(writer);
+        self.end().value().write(writer);
+    }
+
+    fn read(reader: &mut Reader<'_>) -> Option<Self> {
+        Some(Self::new(
+            crate::SourceId::from_ordinal(reader.identity(IdentityKind::Source)?),
+            crate::ByteOffset::new(u64::read(reader)?),
+            crate::ByteOffset::new(u64::read(reader)?),
+        ))
+    }
+}
+
 /// Explicit field lists are exhaustive in both directions. Adding a field
 /// requires changing the product; silently omitting it is a compile error.
 macro_rules! record_struct {
@@ -469,6 +486,10 @@ record_enum!(crate::semantic::SemanticRule {
     55 => Call6,
     56 => Inv1,
     57 => Prf1,
+    58 => Wait3,
+    59 => Share2,
+    60 => Type11,
+    61 => Wait1,
 });
 
 impl Record for crate::syntax::NodeId {
@@ -492,6 +513,7 @@ record_enum!(IdentityKind {
     8 => Module,
     9 => Item,
     10 => Node,
+    11 => Source,
 });
 
 impl Record for crate::BuiltinPreludeId {

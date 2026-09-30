@@ -45,6 +45,7 @@ record_enum!(IrAddressed {
     5 => Buffer { element },
     6 => Array { element, length },
     7 => Window { shape, element, capacity },
+    8 => Segments { element },
 });
 
 record_enum!(IrReleaseClass {
@@ -63,6 +64,7 @@ record_enum!(IrType {
     8 => Range { element },
     9 => RuntimeBoxPayload { nominal },
     10 => Window { shape, element, capacity },
+    11 => Segments { element },
 });
 
 record_enum!(IrWindowShape {
@@ -79,6 +81,7 @@ record_enum!(IrNominalKind {
     1 => Enum { variants },
     2 => Box { referent, release },
     3 => Opaque,
+    4 => Shared { state },
 });
 
 record_struct!(IrNominal {
@@ -163,6 +166,7 @@ record_enum!(IrConversionMode {
     1 => Checked,
     2 => Defined,
     3 => Wrap,
+    4 => Nearest,
 });
 
 record_enum!(IrFloatOperation {
@@ -327,6 +331,22 @@ record_enum!(IrOperation {
     44 => ProjectAddress { address, projection },
     45 => Load { address, referent },
     46 => LoopSplit { splitter: Function, chunk: Function, seed, lower, upper, captures, weight, work },
+    47 => ContextStart { function: Function, arguments },
+    48 => ContextJoin,
+    49 => ContextStartBound { function: Function, arguments },
+    50 => ContextAwait { start },
+    51 => SegmentsTotal { lengths },
+    52 => SegmentsFits { nominal, lengths, total, layout_ceiling },
+    53 => SegmentsFill { nominal, lengths, total, value },
+    54 => SegmentsMeasure { segments },
+    55 => SegmentSlice { segments, index },
+    56 => SegmentsAll { segments },
+    57 => SharedNew { nominal },
+    58 => SharedState { nominal, object },
+    59 => SharedRetain { nominal, object },
+    60 => SharedAcquire { object },
+    61 => SharedWatch { object },
+    62 => SharedUnlock { object },
 });
 
 record_enum!(IrInstruction {
@@ -385,7 +405,9 @@ record_struct!(IrSourceAllocation {
     cell,
     count_argument,
     layout_ceiling,
-    source_length_upper_bound
+    source_length_upper_bound,
+    site,
+    count_site
 });
 
 record_struct!(IrSourceCall {
@@ -413,7 +435,8 @@ record_struct!(IrFunction {
     blocks,
     counted_ranges,
     overlaps,
-    synthesis
+    synthesis,
+    waits
 });
 
 impl Record for std::ops::Range<usize> {

@@ -1378,8 +1378,8 @@ composition with retaining module-local inventories behind a composition
 view. The comparison must account for generic discovery, interface/definition
 identity, source locations, opaque representations, current callee claims and
 proof availability, and the existing single semantic path. Record material
-representation or reuse choices as amendments before treating them as live
-decisions.
+representation or reuse choices in the Draft branch's live design tree;
+owner approval at handoff governs adoption under the current AGENTS.md.
 
 Qualification criteria, recorded before candidate measurements:
 
@@ -1681,7 +1681,7 @@ build is 4.6% slower and HashMap's is 14.7% slower; compiler-only costs are
 faster than unchanged main on both containers, but the general hashing gain
 does not discharge the import amendment's cost condition. The small local
 trials above did not remove that remaining loss. The owner retained the Draft
-and the pending import amendment with this cost finding unresolved; do not
+and the unapproved import decision with this cost finding unresolved; do not
 replace its criterion with a count of avoided walks or with the unrelated
 hashing gain.
 Any further representation trial must identify the import work it removes,
@@ -1887,7 +1887,7 @@ file reads and record validations justify holding a module's lowered bytes
 in memory. The costs are broader read granularity, a complete-container write
 when one slot changes, and loss of an older version of that slot. None changes
 reuse authority or source acceptance. Treat this as an unselected research
-candidate; a retained storage-policy change needs a current amendment.
+candidate; a retained storage-policy change needs a live tree revision and owner approval.
 
 Screen three alternating native and compiler-only pairs against the saved
 qualified candidate on GrowVector and HashMap. Require identical outputs,
@@ -1992,7 +1992,7 @@ This is a bounded unselected representation trial in the existing product
 adapters. It may remove repeated byte copies, decoding and source-name
 resolution, at the cost of interning on writes and holding a shared catalogue
 on reads. It does not select a new cache authority or change composition
-judgments. Retaining it would require an updated amendment and broader
+judgments. Retaining it would require an updated tree decision and broader
 qualification. Do not combine it with versioned input memos or grouped
 lowering storage. Check exact-entry deduplication versus equal old ordinals,
 module isolation, reload, missing slots, and existing invalidation/rollback
@@ -2035,7 +2035,7 @@ composition consumers, with an unproven effect on ordinary lookup cost.
 Any candidate must preserve complete consumed-input equality, speculative
 rollback and current composition/target judgments, and face the same paired
 cost, memory, history and approximately 5% matched-main criteria. This is an
-open alternative, not approval to replace the current pending amendment.
+open alternative, not approval to adopt a replacement for the current Draft import decision.
 
 The separate runtime-input projection opportunity does not yet justify a
 second body encoder. The existing instrumented same-image observation gives
@@ -2048,6 +2048,37 @@ That is a narrower unmeasured opportunity, not evidence that it can close
 the remaining matched-main gap. Keep it in the TODO with its actual
 allocation, permission and physical-input requirements; no key is weakened
 and no new encoder is selected here.
+
+### Qualification after current-main integration
+
+The earlier qualification remains evidence for its recorded compiler and
+main revisions, not for a compiler carrying the newer specification and
+checked-model changes. Integrate main, extend the exhaustive typed records
+and preserve fresh composition checking before revisiting the import boundary.
+In particular, retained waiting/spawn data, Segments operations, implicit
+struct invariants and allocation diagnostic coordinates must follow the
+current representations. Source coordinates rebind by module and logical
+file path; unchanged module bytes preserve their offsets. Current nominal
+inputs include formed type invariants and their referenced inputs.
+
+Before measuring the integrated candidate, compare it with the integrated
+main compiler given the identical safe runtime SHA implementation. Run five
+alternating pairs on GrowVector and HashMap, both native construction and
+compiler-only emission, preceded by five same-image pairs in each mode.
+Report every cold, warm, second-entry and entry-edit observation; keep build
+latency separate from generated-program execution. The same-image entry-edit
+median difference must stay within 3% per workload and mode, with no consistent
+four-of-five direction, or the cost result is inconclusive and repeated after
+investigating the host. Verify exact LLVM and executable outputs and zero
+unchanged-library structural/lowering walks for native candidate entry edits.
+Report compiler-only peak RSS and cache bytes alongside latency; a lower
+wall-time observation alone does not qualify a higher-memory representation.
+
+The owner's approximately 5% matched-main entry-edit native overhead target
+still applies to both workloads. Reaching it in a fresh qualification would
+reopen adoption; missing it determines the current gap the next module-owned
+consumer-boundary experiment must remove. This run selects neither a new
+representation nor a weaker current-input equality condition.
 
 ## Recursive dependencies and generic instances
 

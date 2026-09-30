@@ -735,7 +735,6 @@ impl<'unit> Checker<'_, 'unit> {
         let FunctionContext { check_context, .. } = context;
         if let Some(value) = self
             .types
-            .declarations
             .postcondition_result_placeholder(check_context, node)?
         {
             return Ok(TypedExpression::owned(
@@ -756,7 +755,7 @@ impl<'unit> Checker<'_, 'unit> {
                     .check_generic_numeric_identity(context, node, bytes == b"1_T");
             }
             return Ok(TypedExpression::owned(
-                CheckedExpression::Constant(self.types.declarations.parse_literal(node, bytes)?),
+                CheckedExpression::Constant(self.types.declarations.parse_literal(node, literal)?),
                 EffectSet::NONE,
             ));
         }
@@ -1322,6 +1321,12 @@ impl<'unit> Checker<'_, 'unit> {
             // [SET-1] a reference does not make a counted binder writable.
             return Ok(local.live && !local.compiler_updated);
         }
+        // [SET-1, SHARE-2] an atomic statement's binding names the state of
+        // a shared object, which is writable whatever row the callable
+        // declares: the state belongs to no binding and no caller.
+        if self.types.declarations.is_atomic_binder(local.declaration) {
+            return Ok(true);
+        }
         let Some(target) = self.state_path(place, bindings)? else {
             return Ok(false);
         };
@@ -1496,10 +1501,14 @@ impl<'unit> Checker<'_, 'unit> {
         }
         let carrier = self.types.declarations.tree.path(node)?.clone();
         let expression = match site.variant {
+            // A struct with region parameters declares generics, so it
+            // declares no type invariant [TYPE-11].
             None => CheckedExpression::ConstructStruct {
                 carrier,
                 nominal,
                 fields,
+                invariants: Vec::new(),
+                invariant_arguments: Vec::new(),
             },
             Some(variant) => CheckedExpression::ConstructEnum {
                 carrier,
@@ -1527,11 +1536,11 @@ impl<'unit> Checker<'_, 'unit> {
                 .declarations
                 .use_at(check_context, node, LexicalUseRole::Construct)?;
         let constructor_name = usage.spelling().to_owned();
-        // x1 [TYPE-2]: the three storage shapes and the cell are all the
+        // x1 [TYPE-2]: the four storage shapes and the cell are all the
         // prelude's opaque structs, and an opaque struct's constructor entry
         // exists to be refused. "A constructor `call` and a destructuring
-        // `let_stmt` naming any of the four is refused by [TYPE-2] like every
-        // opaque struct's", so the four cite one rule where the shapes used
+        // `let_stmt` naming any of the five is refused by [TYPE-2] like every
+        // opaque struct's", so the five cite one rule where the shapes used
         // to cite [TYPE-9] and the cell [TYPE-2].
         if let ResolvedTarget::Container(id) = usage.target() {
             let _ =
@@ -1792,6 +1801,7 @@ impl<'unit> Checker<'_, 'unit> {
             );
         }
         let mut fields = Vec::with_capacity(written_fields.len());
+        let mut operands = Vec::with_capacity(written_fields.len());
         let mut effects = EffectSet::NONE;
         for (written, declared) in written_fields.into_iter().zip(&declared_fields) {
             if self
@@ -1836,15 +1846,23 @@ impl<'unit> Checker<'_, 'unit> {
                     },
                 );
             }
-            effects = effects.union(value.effects);
-            fields.push(value.expression);
+            effects = effects.union(value.effects.clone());
+            fields.push(value.expression.clone());
+            operands.push((atom, declared.ty, value));
         }
         let expression = match constructor {
-            Constructor::Struct(nominal) => CheckedExpression::ConstructStruct {
-                carrier: self.types.declarations.tree.path(node)?.clone(),
-                nominal,
-                fields,
-            },
+            Constructor::Struct(nominal) => {
+                let carrier = self.types.declarations.tree.path(node)?.clone();
+                let (invariants, invariant_arguments) =
+                    self.construction_invariants(context, &carrier, nominal, &operands, bindings)?;
+                CheckedExpression::ConstructStruct {
+                    carrier,
+                    nominal,
+                    fields,
+                    invariants,
+                    invariant_arguments,
+                }
+            }
             Constructor::Enum { nominal, variant } => CheckedExpression::ConstructEnum {
                 carrier: self.types.declarations.tree.path(node)?.clone(),
                 nominal,
@@ -2131,6 +2149,12 @@ impl<'unit> TypeContext<'unit> {
             CheckedType::Buffer { element } => {
                 format!(
                     "Array<{}>",
+                    self.checked_type_name(self.element_type(element)?)?
+                )
+            }
+            CheckedType::Segments { element } => {
+                format!(
+                    "Segments<{}>",
                     self.checked_type_name(self.element_type(element)?)?
                 )
             }

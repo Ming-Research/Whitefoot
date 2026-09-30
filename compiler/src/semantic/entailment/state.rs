@@ -581,10 +581,13 @@ pub(crate) enum DerivationNode {
         parent: DerivationId,
     },
     /// One eligible value-initializer edge after forward carrier-to-receiver
-    /// substitution and the edge's ordinary kills.
+    /// substitution and the edge's ordinary kills. `carrier` is the term the
+    /// receiver replaced [ENT-5]: a bare atom, or the give's evaluated value,
+    /// which a literal or named-const carrier and a bare atom's carrier
+    /// equality `v = d` are stated over.
     PostconditionGive {
         statement: NodePath,
-        carrier: BindingId,
+        carrier: TermId,
         receiver: BindingId,
         relation: Box<Relation>,
         event: FlowEventId,
@@ -2501,7 +2504,7 @@ impl BoundStore {
     }
 
     /// The smallest bound among a pair's candidates whose proof passes `test`.
-    fn candidate_minimum(
+    pub(crate) fn candidate_minimum(
         &self,
         pair: (TermId, TermId),
         mut test: impl FnMut(DerivationId) -> bool,
@@ -3898,6 +3901,22 @@ pub(crate) fn close(
     closed
 }
 
+/// The tightest implicit bound on one ordered pair of Z and a term [ENT-4],
+/// with its kind, when the term carries one.
+pub(crate) fn implicit_bound_between(
+    terms: &TermTable,
+    pair: (TermId, TermId),
+) -> Option<(i128, ImplicitBoundKind)> {
+    let term = if pair.0 == ZERO { pair.1 } else { pair.0 };
+    let mut tightest: Option<(i128, ImplicitBoundKind)> = None;
+    for_each_implicit_bound(terms, term, |left, right, bound, kind| {
+        if (left, right) == pair && tightest.is_none_or(|(held, _)| bound < held) {
+            tightest = Some((bound, kind));
+        }
+    });
+    tightest
+}
+
 /// Emits every [ENT-2] implicit bound carried by one term: the reflexive
 /// bound, the fragment-type range, the constant fold through Z, and the
 /// `len_of(P) = N` equality of an `array<T, N>` place.
@@ -3928,12 +3947,13 @@ fn for_each_implicit_bound(
         // table adds is the value a fixed cell has and the ordering between
         // two measures of one place. Each has empty support and no event
         // kills it, which is exactly what an implicit bound is.
-        // [MSR-3] an entry datum is one measure's value at body entry, of
-        // fragment type u64 and with empty support. Its standing orderings
-        // reach it through the equality this datum is established with at
-        // entry; what it carries of its own is the type range.
-        TermKind::EntryDatum { .. } | TermKind::MeasureDatum { .. } => {
-            let (minimum, maximum) = type_range(IntegerType::U64);
+        // [MSR-3] an entry or placement datum is one measure's value, of
+        // fragment type u64, or one fragment-integer place's value, of that
+        // place's type, with empty support. Its standing orderings reach it
+        // through the equality this datum is established with; what it
+        // carries of its own is the type range.
+        TermKind::EntryDatum { ty, .. } | TermKind::MeasureDatum { ty, .. } => {
+            let (minimum, maximum) = type_range(*ty);
             emit(id, ZERO, maximum, ImplicitBoundKind::TypeMaximum);
             emit(ZERO, id, -minimum, ImplicitBoundKind::TypeMinimum);
         }
@@ -3970,7 +3990,7 @@ fn for_each_implicit_bound(
             emit(id, ZERO, maximum, ImplicitBoundKind::TypeMaximum);
             emit(ZERO, id, -minimum, ImplicitBoundKind::TypeMinimum);
         }
-        TermKind::ResultPayload(ty)
+        TermKind::ResultPayload { ty, .. }
         | TermKind::CommitValue { ty, .. }
         | TermKind::CallDatum { ty, .. } => {
             let (minimum, maximum) = type_range(*ty);

@@ -40,6 +40,14 @@ line number is unchanged, and the compiler at `3cd7e8139` prints the same
 three ledger lines. The times below were measured before that edit, with the
 compiler named under Environment.
 
+On 2026-09-29 the file's nineteen `deref(v)` calls were mechanically
+respelled to the postfix `v^` the kernel specification adopted at v0.76, with
+`sed 's/deref(\([a-z_][a-z0-9_]*\))/\1^/g'`, so the program compiles with the
+current compiler. Every other line and every line number is unchanged, and
+the compiler at `68735cfb8` prints the same three ledger lines. The times
+below were measured before this respelling too, with the compiler named
+under Environment.
+
 ## Environment
 
 - Host: 4 processors (`getconf _NPROCESSORS_ONLN`), `Intel(R) Xeon(R)

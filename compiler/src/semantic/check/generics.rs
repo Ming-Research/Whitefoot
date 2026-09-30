@@ -145,6 +145,18 @@ impl GenericSubstitution {
         &self.regions
     }
 
+    /// The first type argument this substitution binds, in binding order:
+    /// the one argument of a single-parameter prelude nominal such as
+    /// `Shared<T>` [SHARE-1].
+    pub(super) fn first_type_argument(&self) -> Option<CheckedType> {
+        self.bindings
+            .iter()
+            .find_map(|(_, argument)| match argument {
+                GenericArgument::Type(ty) => Some(*ty),
+                GenericArgument::Const(_) | GenericArgument::Function(_) => None,
+            })
+    }
+
     pub(super) fn type_argument(&self, declaration: DeclarationId) -> Option<CheckedType> {
         self.bindings
             .iter()
@@ -231,9 +243,10 @@ impl GenericSubstitution {
 /// base case of that fact is this list and every other boundary's fact is the
 /// union of the facts of the calls its body exhibits. Frame-resident
 /// construction and conversion rows are not allocations [EFF-1].
-pub(in crate::semantic::check) const HEAP_ALLOCATING_PRELUDE_FUNCTIONS: [&str; 5] = [
+pub(in crate::semantic::check) const HEAP_ALLOCATING_PRELUDE_FUNCTIONS: [&str; 6] = [
     "box_new",
     "box_array_filled",
+    "box_segments_filled",
     "box_slots_new",
     "box_ring_new",
     "grow",
@@ -1163,6 +1176,15 @@ impl<'unit> Checker<'_, 'unit> {
             result_list,
             effects_node: effects,
             declared_effects,
+            waits: self
+                .types
+                .declarations
+                .tree
+                .direct_token_with(
+                    template.node,
+                    crate::TerminalPredicate::Fixed(crate::FixedTerminal::Waits),
+                )?
+                .is_some(),
             formal_parameter: None,
             substitution,
         })
@@ -1826,6 +1848,9 @@ impl<'unit> TypeContext<'unit> {
                         CheckedNominalKind::Box { referent, .. } => {
                             self.concrete_type_identity(*referent)?
                         }
+                        CheckedNominalKind::Shared { state } => {
+                            self.concrete_type_identity(*state)?
+                        }
                         CheckedNominalKind::Opaque => {
                             return Err(SemanticCompilerFailure::InvalidResolution.into());
                         }
@@ -1835,7 +1860,7 @@ impl<'unit> TypeContext<'unit> {
             CheckedType::Array { element, length } => {
                 length.is_concrete() && self.concrete_type_identity(self.element_type(element)?)?
             }
-            CheckedType::Buffer { element } => {
+            CheckedType::Buffer { element } | CheckedType::Segments { element } => {
                 self.concrete_type_identity(self.element_type(element)?)?
             }
             CheckedType::Window {
@@ -2097,6 +2122,15 @@ impl<'unit> TypeContext<'unit> {
                     "Buffer { element: StableElement("
                 } else {
                     "Array<"
+                });
+                self.write_type_identity(self.element_type(element)?, out, ordering, visiting)?;
+                out.push_str(if ordering { ") }" } else { ">" });
+            }
+            CheckedType::Segments { element } => {
+                out.push_str(if ordering {
+                    "Segments { element: StableElement("
+                } else {
+                    "Segments<"
                 });
                 self.write_type_identity(self.element_type(element)?, out, ordering, visiting)?;
                 out.push_str(if ordering { ") }" } else { ">" });

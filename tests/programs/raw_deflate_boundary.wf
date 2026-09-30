@@ -104,21 +104,21 @@ fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
   }
 }
 
-const usage_text: Array<u8, 33> =[117_u8, 115_u8, 97_u8, 103_u8, 101_u8, 58_u8, 32_u8, 114_u8, 97_u8, 119_u8, 95_u8, 100_u8, 101_u8, 102_u8, 108_u8, 97_u8, 116_u8, 101_u8, 95_u8, 98_u8, 111_u8, 117_u8, 110_u8, 100_u8, 97_u8, 114_u8, 121_u8, 32_u8, 70_u8, 73_u8, 76_u8, 69_u8, 10_u8];
+const usage_text: Array<u8, 33> = "usage: raw_deflate_boundary FILE\n";
 
-const reason_unreadable: Array<u8, 55> =[114_u8, 97_u8, 119_u8, 95_u8, 100_u8, 101_u8, 102_u8, 108_u8, 97_u8, 116_u8, 101_u8, 95_u8, 98_u8, 111_u8, 117_u8, 110_u8, 100_u8, 97_u8, 114_u8, 121_u8, 58_u8, 32_u8, 99_u8, 97_u8, 110_u8, 110_u8, 111_u8, 116_u8, 32_u8, 114_u8, 101_u8, 97_u8, 100_u8, 32_u8, 116_u8, 104_u8, 101_u8, 32_u8, 99_u8, 111_u8, 109_u8, 112_u8, 114_u8, 101_u8, 115_u8, 115_u8, 101_u8, 100_u8, 32_u8, 105_u8, 110_u8, 112_u8, 117_u8, 116_u8, 10_u8];
+const reason_unreadable: Array<u8, 55> = "raw_deflate_boundary: cannot read the compressed input\n";
 
-const reason_empty: Array<u8, 45> =[114_u8, 97_u8, 119_u8, 95_u8, 100_u8, 101_u8, 102_u8, 108_u8, 97_u8, 116_u8, 101_u8, 95_u8, 98_u8, 111_u8, 117_u8, 110_u8, 100_u8, 97_u8, 114_u8, 121_u8, 58_u8, 32_u8, 101_u8, 109_u8, 112_u8, 116_u8, 121_u8, 32_u8, 99_u8, 111_u8, 109_u8, 112_u8, 114_u8, 101_u8, 115_u8, 115_u8, 101_u8, 100_u8, 32_u8, 105_u8, 110_u8, 112_u8, 117_u8, 116_u8, 10_u8];
+const reason_empty: Array<u8, 45> = "raw_deflate_boundary: empty compressed input\n";
 
-const reason_too_large: Array<u8, 64> =[114_u8, 97_u8, 119_u8, 95_u8, 100_u8, 101_u8, 102_u8, 108_u8, 97_u8, 116_u8, 101_u8, 95_u8, 98_u8, 111_u8, 117_u8, 110_u8, 100_u8, 97_u8, 114_u8, 121_u8, 58_u8, 32_u8, 99_u8, 111_u8, 109_u8, 112_u8, 114_u8, 101_u8, 115_u8, 115_u8, 101_u8, 100_u8, 32_u8, 105_u8, 110_u8, 112_u8, 117_u8, 116_u8, 32_u8, 101_u8, 120_u8, 99_u8, 101_u8, 101_u8, 100_u8, 115_u8, 32_u8, 116_u8, 104_u8, 101_u8, 32_u8, 105_u8, 110_u8, 112_u8, 117_u8, 116_u8, 32_u8, 98_u8, 117_u8, 102_u8, 102_u8, 101_u8, 114_u8, 10_u8];
+const reason_too_large: Array<u8, 64> = "raw_deflate_boundary: compressed input exceeds the input buffer\n";
 
-const reason_truncated: Array<u8, 51> =[114_u8, 97_u8, 119_u8, 95_u8, 100_u8, 101_u8, 102_u8, 108_u8, 97_u8, 116_u8, 101_u8, 95_u8, 98_u8, 111_u8, 117_u8, 110_u8, 100_u8, 97_u8, 114_u8, 121_u8, 58_u8, 32_u8, 99_u8, 111_u8, 109_u8, 112_u8, 114_u8, 101_u8, 115_u8, 115_u8, 101_u8, 100_u8, 32_u8, 115_u8, 116_u8, 114_u8, 101_u8, 97_u8, 109_u8, 32_u8, 101_u8, 110_u8, 100_u8, 115_u8, 32_u8, 101_u8, 97_u8, 114_u8, 108_u8, 121_u8, 10_u8];
+const reason_truncated: Array<u8, 51> = "raw_deflate_boundary: compressed stream ends early\n";
 
-const reason_malformed: Array<u8, 50> =[114_u8, 97_u8, 119_u8, 95_u8, 100_u8, 101_u8, 102_u8, 108_u8, 97_u8, 116_u8, 101_u8, 95_u8, 98_u8, 111_u8, 117_u8, 110_u8, 100_u8, 97_u8, 114_u8, 121_u8, 58_u8, 32_u8, 109_u8, 97_u8, 108_u8, 102_u8, 111_u8, 114_u8, 109_u8, 101_u8, 100_u8, 32_u8, 99_u8, 111_u8, 109_u8, 112_u8, 114_u8, 101_u8, 115_u8, 115_u8, 101_u8, 100_u8, 32_u8, 115_u8, 116_u8, 114_u8, 101_u8, 97_u8, 109_u8, 10_u8];
+const reason_malformed: Array<u8, 50> = "raw_deflate_boundary: malformed compressed stream\n";
 
-const reason_output_full: Array<u8, 63> =[114_u8, 97_u8, 119_u8, 95_u8, 100_u8, 101_u8, 102_u8, 108_u8, 97_u8, 116_u8, 101_u8, 95_u8, 98_u8, 111_u8, 117_u8, 110_u8, 100_u8, 97_u8, 114_u8, 121_u8, 58_u8, 32_u8, 100_u8, 101_u8, 99_u8, 111_u8, 100_u8, 101_u8, 100_u8, 32_u8, 111_u8, 117_u8, 116_u8, 112_u8, 117_u8, 116_u8, 32_u8, 101_u8, 120_u8, 99_u8, 101_u8, 101_u8, 100_u8, 115_u8, 32_u8, 116_u8, 104_u8, 101_u8, 32_u8, 111_u8, 117_u8, 116_u8, 112_u8, 117_u8, 116_u8, 32_u8, 98_u8, 117_u8, 102_u8, 102_u8, 101_u8, 114_u8, 10_u8];
+const reason_output_full: Array<u8, 63> = "raw_deflate_boundary: decoded output exceeds the output buffer\n";
 
-const reason_write_failed: Array<u8, 56> =[114_u8, 97_u8, 119_u8, 95_u8, 100_u8, 101_u8, 102_u8, 108_u8, 97_u8, 116_u8, 101_u8, 95_u8, 98_u8, 111_u8, 117_u8, 110_u8, 100_u8, 97_u8, 114_u8, 121_u8, 58_u8, 32_u8, 99_u8, 97_u8, 110_u8, 110_u8, 111_u8, 116_u8, 32_u8, 112_u8, 117_u8, 98_u8, 108_u8, 105_u8, 115_u8, 104_u8, 32_u8, 116_u8, 104_u8, 101_u8, 32_u8, 100_u8, 101_u8, 99_u8, 111_u8, 100_u8, 101_u8, 100_u8, 32_u8, 111_u8, 117_u8, 116_u8, 112_u8, 117_u8, 116_u8, 10_u8];
+const reason_write_failed: Array<u8, 56> = "raw_deflate_boundary: cannot publish the decoded output\n";
 
 fn append_slice(destination: &[u8], capacity: u64, filled: u64, text: &[u8]) -> result: u64 reads(text), writes(destination) contract {
   requires capacity == destination^.len;
@@ -201,7 +201,7 @@ fn inflate_status(error: InflateError) -> result: u8 pure {
   }
 }
 
-fn publish_all(factory: &HandleFactory, output: &OutputStream, source: &[u8], length: u64) -> result: Result<unit, IoError> reads(source), writes(factory), writes(output) contract {
+fn publish_all(factory: &HandleFactory, output: &OutputStream, source: &[u8], length: u64) -> result: Result<unit, IoError> reads(source), writes(factory), writes(output) waits contract {
   define source_length = source^.len;
   requires length <= source_length;
 } {
@@ -267,7 +267,7 @@ fn assemble_reason(report: &[u8], capacity: u64, reason: u8) -> result: u64 writ
   return length;
 }
 
-fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputStream, files: &HandleFactory) -> status: ExitStatus reads(args), reads(cwd), writes(out), writes(err), writes(files) {
+fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputStream, files: &HandleFactory) -> status: ExitStatus reads(args), reads(cwd), writes(out), writes(err), writes(files) waits {
   doc "Reads one raw DEFLATE file named on the command line through ordinary read_at calls; every boundary outcome reaches its own status. The four runs are inline Slots windows of this frame, so the boundary needs no arena [TYPE-9, STOR-1].";
   let scratch = slots_new::<u8, 4097>();
   for @reserve_scratch (
@@ -463,7 +463,7 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputSt
   return exit_status(code: 0_u8);
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "PRE-1 ordinary Inputs are destructured once; the borrowed operation chain returns before the initial directory is explicitly closed on every exit.";
   let Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: files, stdin: unused_stdin) = move inputs;
   let outcome = exercise(args: &args, cwd: &cwd, out: &out, err: &err, files: &files);

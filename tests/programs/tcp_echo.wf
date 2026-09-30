@@ -240,7 +240,7 @@ fn parse_port(digits: &[u8], length: u64) -> result: u16 reads(digits) {
   return port;
 }
 
-fn send_all(send: &TcpSend, source: &[u8], length: u64) -> result: Result<unit, IoError> reads(source), writes(send) contract {
+fn send_all(send: &TcpSend, source: &[u8], length: u64) -> result: Result<unit, IoError> reads(source), writes(send) waits contract {
   define source_length = source^.len;
   requires length <= source_length;
 } {
@@ -264,7 +264,7 @@ fn send_all(send: &TcpSend, source: &[u8], length: u64) -> result: Result<unit, 
   return Ok<unit, IoError>(value: unit);
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "Listens on the loopback port named by the invocation, takes one connection, and returns every byte the peer sends until the peer stops sending through ordinary prelude calls [PRE-1]. The prelude declares no operation reporting a listener's own local address, so the port is the caller's choice and arrives as an argument. The argument scratch and the echo chunk are two inline Slots windows of this frame, each reached through one range reference [TYPE-9, REF-4].";
   let Inputs(args: args, cwd: unused_cwd, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin) = move inputs;
   close_directory(factory: &handles, directory: move unused_cwd);

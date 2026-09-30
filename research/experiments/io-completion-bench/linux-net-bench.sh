@@ -13,6 +13,11 @@
 #   sh linux-net-bench.sh          build everything and run the protocol
 #   sh linux-net-bench.sh verify   only the correctness pass, over binaries
 #                                  another build already put in $OUT
+#   sh linux-net-bench.sh measure  the correctness pass and the protocol over
+#                                  binaries another build already put in $OUT
+#   sh linux-net-bench.sh memory   the resident memory and mapping count each
+#                                  idle connection adds to every Whitefoot line
+#                                  in $OUT (WAITS.md, Experiment 3)
 #
 # The bar this measures against is the one
 # research/investigations/io-model/NETWORK.md section 6 sets: the reference is
@@ -45,17 +50,19 @@ k64 64 2000 64
 k1024 1024 200 64
 k64.64k 64 200 65536"
 
-# The server lines to run, out of "uring epoll wf", space separated. The
+# The server lines to run, out of "uring epoll wf wf1 wfbase waiting", space
+# separated. `wf1` is the same binary as `wf` run with one driver thread.
+# `wfbase` is a second Whitefoot build of the same source, from an earlier
+# compiler, put in $OUT as wf_echo_base by whoever compares the two. The
 # default is every line whose binary is in $OUT, which is every line the build
 # above produced. Naming a subset is for the case where one server cannot
 # complete a run yet and the others still owe a table; the table says which
 # lines it holds.
 NET_LINES=${NET_LINES:-}
 
-# The Whitefoot line's environment. A parked callee holds a pool stack for as
-# long as its connection lives, so 1024 connections need 1024 of them at once;
-# everything else is the shipped default.
-WF_ENVIRONMENT="WF_STACKS=1100"
+# The Whitefoot lines' environments: the shipped defaults, and one driver.
+WF_ENVIRONMENT=""
+WF1_ENVIRONMENT="WF_DRIVERS=1"
 
 # --- the pieces a run is made of ----------------------------------------
 
@@ -173,6 +180,14 @@ field() {
     echo "$1" | tr '\t' '\n' | sed -n "s/^$2=//p"
 }
 
+line_environment() {
+    case $1 in
+        wf) echo "$WF_ENVIRONMENT" ;;
+        wf1) echo "$WF1_ENVIRONMENT" ;;
+        *) echo "" ;;
+    esac
+}
+
 median_of() {
     awk -F'\t' -v want="$1" -v column="$2" '
         $1 == want { values[count++] = $column + 0 }
@@ -211,11 +226,10 @@ if [ "$MODE" = bench ]; then
     "$CLANG" -std=c11 -O2 -Wall -Wextra -Werror -pthread uring_echo.c -o "$OUT/uring_echo"
     "$CLANG" -std=c11 -O2 -Wall -Wextra -Werror -pthread epoll_echo.c -o "$OUT/epoll_echo"
     "$CLANG" -std=c11 -O2 -Wall -Wextra -Werror -pthread netload.c -o "$OUT/netload"
+    "$CLANG" -std=c11 -O2 -Wall -Wextra -Werror -pthread waiting_echo.c -o "$OUT/waiting_echo"
 
-    if [ -f "$BUNDLE/programs/tcp_echo_server.wf" ]; then
-        cd "$BUNDLE/programs"
-        "$WFC" --par -o "$OUT/wf_echo" tcp_echo_server.wf
-    fi
+    # The maintained context server: one context per connection [WAIT-3].
+    "$WFC" -o "$OUT/wf_echo" "$ROOT/tests/programs/tcp_contexts.wf"
 fi
 
 if [ ! -x "$OUT/netload" ]; then
@@ -224,11 +238,13 @@ if [ ! -x "$OUT/netload" ]; then
 fi
 
 LINES=""
-for name in ${NET_LINES:-uring epoll wf}; do
+for name in ${NET_LINES:-uring epoll wf wf1 wfbase waiting}; do
     case $name in
         uring) binary=$OUT/uring_echo ;;
         epoll) binary=$OUT/epoll_echo ;;
-        wf) binary=$OUT/wf_echo ;;
+        wf|wf1) binary=$OUT/wf_echo ;;
+        wfbase) binary=$OUT/wf_echo_base ;;
+        waiting) binary=$OUT/waiting_echo ;;
         *) echo "linux-net-bench: there is no $name line" >&2; exit 2 ;;
     esac
     if [ -x "$binary" ]; then
@@ -237,10 +253,45 @@ for name in ${NET_LINES:-uring epoll wf}; do
     elif [ -n "$NET_LINES" ]; then
         echo "linux-net-bench: $binary is not built" >&2
         exit 1
-    else
+    elif [ "$name" != wfbase ]; then
         echo "note: $binary was not built, so the table is without the $name line."
     fi
 done
+
+# --- idle-connection memory -----------------------------------------------
+#
+# Each Whitefoot line is started for N connections, `idleload` opens them and
+# sends nothing, and reads what they added to the server's resident set and
+# mapping count once the server has accepted every one; closing them lets the
+# server exit, which it must do with status zero. N is bounded by the host's
+# descriptor limit, which `idleload` and the server each need N of.
+
+if [ "$MODE" = memory ]; then
+    if [ ! -x "$OUT/idleload" ]; then
+        echo "linux-net-bench: $OUT/idleload is not built" >&2
+        exit 1
+    fi
+    for count in ${MEMORY_COUNTS:-1000 5000 19000}; do
+        echo "$LINES" | while read -r name binary; do
+            case $name in wf|wf1|wfbase) ;; *) continue ;; esac
+            port=$(free_port)
+            env $(line_environment "$name") "$binary" "$port" "$count" \
+                >"$OUT/server.out" 2>"$OUT/server.err" &
+            server=$!
+            wait_for_listener "$port" "$server" "$name.memory"
+            line=$("$OUT/idleload" "$port" "$count" "$server")
+            status=0
+            wait "$server" || status=$?
+            if [ "$status" != 0 ]; then
+                echo "$name.memory: the server exited with status $status" >&2
+                cat "$OUT/server.err" >&2
+                exit 1
+            fi
+            printf '%s\t%s\n' "$name" "$line"
+        done
+    done
+    exit 0
+fi
 
 # --- the correctness pass -------------------------------------------------
 #
@@ -250,10 +301,7 @@ done
 
 echo "$LINES" | while read -r name binary; do
     [ -n "$name" ] || continue
-    environment=""
-    if [ "$name" = wf ]; then
-        environment=$WF_ENVIRONMENT
-    fi
+    environment=$(line_environment "$name")
     run_case "$name.verify" "$binary" "$environment" 4 200 64 0
 done
 echo "every server echoes what netload sent, at 4 connections"
@@ -301,10 +349,7 @@ while [ "$pass" -lt "$passes" ]; do
     fi
     while IFS='	' read -r label name binary connections roundtrips bytes; do
         [ -n "$label" ] || continue
-        environment=""
-        if [ "$name" = wf ]; then
-            environment=$WF_ENVIRONMENT
-        fi
+        environment=$(line_environment "$name")
         run_case "$label" "$binary" "$environment" "$connections" "$roundtrips" "$bytes" \
             "$recording"
     done < "$order"

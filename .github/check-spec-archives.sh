@@ -10,6 +10,15 @@
 #     archive, byte-identical to the base's active file, and retitles the
 #     active file with the next version (vA.B+1, or vA+1.0).
 # A green run says only that; it does not judge the amendment's content.
+#
+# `--require-approval BASE` is the readiness check: an active specification
+# changed since BASE needs a newest spec/log.md entry that is new since BASE
+# and carries nonempty Rules:, Owner-approved: and Summary: fields, the design
+# tree log's form with Rules: in place of Nodes:. A field's value is what
+# follows its name, surrounding spaces removed, as the tree lint reads it. The
+# check cannot tell whether Rules: names every changed rule, and the approval
+# is an assertion; the owner reads the log before merging.
+#
 # `--self-test` builds throwaway repositories and requires each rule to
 # accept its valid case and reject its invalid ones for the intended reason.
 set -eu
@@ -19,7 +28,7 @@ export LC_ALL
 TITLE='# Kernel Specification '
 
 usage() {
-    echo 'usage: check-spec-archives.sh MAIN-REF | --self-test' >&2
+    echo 'usage: check-spec-archives.sh MAIN-REF | --require-approval BASE | --self-test' >&2
     exit 2
 }
 
@@ -85,6 +94,32 @@ ${added:-(none)}"
     echo "spec archives: $outgoing archived byte for byte and the active specification retitled $incoming; no released archive changed since $short"
 }
 
+approval() {
+    base=$1
+    git rev-parse --verify --quiet "$base^{commit}" >/dev/null ||
+        fail "$base must name a commit"
+    short=$(git rev-parse --short "$base")
+    if git diff --quiet "$base" -- spec/kernel-spec.md; then
+        echo "spec approval: the active specification is unchanged since $short"
+        return
+    fi
+    test -f spec/log.md ||
+        fail "the active specification changed since $short, but spec/log.md is missing"
+    heading=$(grep -m 1 '^## ' spec/log.md) ||
+        fail "the active specification changed since $short, but spec/log.md has no entry"
+    printf '%s\n' "$heading" | grep -q '^## [0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\} [^ ]' ||
+        fail "the newest spec/log.md heading must be '## YYYY-MM-DD <title>'"
+    if git show "$base:spec/log.md" 2>/dev/null | grep -qxF -- "$heading"; then
+        fail "the active specification changed since $short, but the newest spec/log.md entry is not new"
+    fi
+    entry=$(awk 'found && /^## / { exit } /^## / { found = 1 } found' spec/log.md)
+    for field in Rules: Owner-approved: Summary:; do
+        printf '%s\n' "$entry" | grep -q "^$field[[:space:]]*[^[:space:]]" ||
+            fail "the newest spec/log.md entry lacks a nonempty $field field"
+    done
+    echo "spec approval: the active specification changed since $short and the newest spec/log.md entry records its approval"
+}
+
 self_test() {
     work=$(mktemp -d "${TMPDIR:-/tmp}/spec-archives-test.XXXXXX")
     trap 'rm -rf "$work"' EXIT
@@ -96,6 +131,7 @@ self_test() {
     mkdir spec
     printf '%sv0.1\nrules one\n' "$TITLE" > spec/kernel-spec.md
     printf '%sv0.0\nrules zero\n' "$TITLE" > spec/kernel-spec-v0.0.md
+    printf '# Specification change log\n\n## 2026-01-01 Base\n\nRules: X-1\n\nOwner-approved: Base.\n\nSummary: Base.\n' > spec/log.md
     git add -A && git commit -qm base
 
     passed=0
@@ -104,9 +140,9 @@ self_test() {
         echo 'spec archives self-test: successor_of reads versions as decimal' >&2
         exit 1
     }
-    expect() { # expect pass|reject PATTERN DESCRIPTION
+    expect() { # expect pass|reject PATTERN DESCRIPTION [OPTION]
         outcome=pass
-        sh "$script" main > "$work/out" 2>&1 || outcome=reject
+        sh "$script" ${4:-} main > "$work/out" 2>&1 || outcome=reject
         if test "$outcome" != "$1" || ! grep -q -- "$2" "$work/out"; then
             echo "spec archives self-test: $3: expected $1 matching '$2', got $outcome:" >&2
             cat "$work/out" >&2
@@ -176,11 +212,41 @@ self_test() {
     git checkout -q behind
     expect pass 'is unchanged' 'a branch behind a main that added an archive'
 
+    log_entry() { # log_entry OWNER-APPROVED-FIELD-LINE
+        { printf '# Specification change log\n\n## 2026-01-02 Amend\n\nRules: X-1\n\n%s\n\nSummary: Amend.\n\n' "$1"
+          git show main:spec/log.md | tail -n +3; } > spec/log.md.new
+        mv spec/log.md.new spec/log.md
+    }
+
+    # main amended to v0.2 above, so these branches amend it to v0.3.
+    branch approval-unchanged
+    expect pass 'is unchanged' 'readiness with an unchanged specification' --require-approval
+    branch approval-unlogged
+    amend kernel-spec-v0.2.md v0.3
+    expect reject 'is not new' 'readiness with an amendment and no new entry' --require-approval
+    branch approval-approved
+    amend kernel-spec-v0.2.md v0.3
+    log_entry 'Owner-approved: The owner approved v0.3.'
+    expect pass 'records its approval' 'readiness with an approved entry' --require-approval
+    branch approval-unapproved
+    amend kernel-spec-v0.2.md v0.3
+    log_entry 'Owner-approved:'
+    expect reject 'nonempty Owner-approved:' 'readiness with an empty approval' --require-approval
+    branch approval-spaced
+    amend kernel-spec-v0.2.md v0.3
+    log_entry 'Owner-approved:   The owner approved v0.3.'
+    expect pass 'records its approval' 'readiness with spaces before the approval' --require-approval
+    branch approval-blank
+    amend kernel-spec-v0.2.md v0.3
+    log_entry 'Owner-approved:   '
+    expect reject 'nonempty Owner-approved:' 'readiness with a blank approval' --require-approval
+
     echo "spec archives self-test: $passed cases pass"
 }
 
 case "${1:-}" in
     --self-test) test "$#" -eq 1 || usage; self_test ;;
+    --require-approval) test "$#" -eq 2 || usage; approval "$2" ;;
     ''|-*) usage ;;
     *) test "$#" -eq 1 || usage; check "$1" ;;
 esac

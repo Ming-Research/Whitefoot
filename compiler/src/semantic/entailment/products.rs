@@ -162,7 +162,8 @@ record_enum!(PostconditionDisposition {
 record_struct!(PostconditionEntryImage {
     parameter,
     projections,
-    measure
+    measure,
+    immutable
 });
 
 record_struct!(PostconditionEntryImageOutcome {
@@ -249,13 +250,27 @@ record_struct!(CallGoalOutcome {
     node_path,
     callee,
     requires_clause,
+    subject,
     goal,
     rendered_goal,
     argument_count,
     disposition,
     evidence,
     derivation,
-    written_before
+    written_before,
+    range_lengths
+});
+
+record_struct!(RangeLengthReading {
+    base,
+    start,
+    end,
+    difference_goal
+});
+
+record_enum!(RangeEndpointReading {
+    0 => Spelled(f0),
+    1 => Unspelled(f0),
 });
 
 record_struct!(ContractGoalOutcome {

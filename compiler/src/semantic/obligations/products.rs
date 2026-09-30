@@ -11,7 +11,7 @@ record_struct!(ObligationRecord {
 
 record_enum!(ObligationSubject {
     0 => Source { family, conjunct },
-    1 => CallRequirement { callee, requires_clause },
+    1 => CallRequirement { callee, requires_clause, subject },
     2 => LoopInvariant,
     3 => SourceProof,
     4 => Postcondition { relation_ordinal },

@@ -1,5 +1,5 @@
 use super::{
-    CompilationFailureKind, CompilationStage, CompilerLimits, check, compile,
+    CompilationFailureKind, CompilationStage, CompilerLimits, DiagnosticFormat, check, compile,
     compile_with_permission_ledger,
 };
 use crate::{OverlapLowering, RecursionBudget, SourceInput};
@@ -916,6 +916,63 @@ fn an_entry_build_is_reused_for_an_unchanged_composition() {
     ));
 }
 
+/// [MOD-9] a module program's entry build reports the permission ledger of
+/// its whole composition, a line from a module other than the entry's
+/// included, and emits the module the same build without the ledger emits.
+#[test]
+fn an_entry_build_reports_the_permission_ledger_of_its_composition() {
+    let graph = crate::form_module_graph(
+        SourceInput::new(
+            "modules.wfg",
+            b"pkg::lib: [];\npkg: [pkg::lib, std::process];\n\nentry app = pkg::main;\n",
+        ),
+        CompilerLimits::default(),
+    )
+    .expect("the graph forms");
+    let records: [(&str, &[u8]); 4] = [
+        (
+            "lib/module.wfm",
+            b"public fn pair(x: u64) -> result: u64 pure doc \"Adds two independent halves.\";\n",
+        ),
+        (
+            "lib/pair.wf",
+            b"fn half(x: u64) -> result: u64 pure {\n  return x / 2_u64;\n}\n\nfn pair(x: u64) -> result: u64 pure {\n  let a = half(x: x);\n  let b = half(x: x);\n  return a +wrap b;\n}\n",
+        ),
+        (
+            "module.wfm",
+            b"public fn main() -> status: std::process::ExitStatus pure doc \"Runs the pair.\";\n",
+        ),
+        (
+            "main.wf",
+            b"fn main() -> status: std::process::ExitStatus pure {\n  let value = pkg::lib::pair(x: 8_u64);\n  if value == 8_u64 {\n    return std::process::exit_status(code: 0_u8);\n  }\n  return std::process::exit_status(code: 1_u8);\n}\n",
+        ),
+    ];
+    let inputs = module_inputs(&graph, &records);
+    let (module, ledger) = super::compile_module_program_with_permission_ledger(
+        &graph,
+        &inputs,
+        super::ModuleEntry::Named("app"),
+        CompilerLimits::default(),
+        OverlapLowering::Off,
+    )
+    .expect("the entry builds");
+    let plain = super::compile_module_program(
+        &graph,
+        &inputs,
+        super::ModuleEntry::Named("app"),
+        CompilerLimits::default(),
+        OverlapLowering::Off,
+    )
+    .expect("the entry builds");
+    assert_eq!(module, plain);
+    assert!(
+        ledger
+            .iter()
+            .any(|line| line.contains("lib/pair.wf:6  pair(half, half)  eligible")),
+        "{ledger:#?}"
+    );
+}
+
 /// [FN-2, MOD-8] a rejection raised while checking a concrete instance
 /// stays at the template's source, in the module that owns it, and names
 /// the call in another module that requested the instance. Here the
@@ -1386,7 +1443,7 @@ fn a_canonical_rejection_prints_the_expected_bytes_beside_the_found_bytes() {
 /// the requirement, not by adding a scope.
 #[test]
 fn a_reference_parameter_keeps_its_later_call_requirement() {
-    let source = br#"fn walk(factory: &std::io::HandleFactory, root: &std::fs::DirectoryRead, name: &[u8]) -> result: u8 reads(root), reads(name), writes(factory) {
+    let source = br#"fn walk(factory: &std::io::HandleFactory, root: &std::fs::DirectoryRead, name: &[u8]) -> result: u8 reads(root), reads(name), writes(factory) waits {
   match std::fs::open_file(factory: factory, root: root, name: name, start: 0_u64, end: 1_u64) {
     Ok(value: handle) => {
       std::fs::close_read(factory: factory, file: move handle);
@@ -1410,8 +1467,8 @@ fn a_reference_parameter_keeps_its_later_call_requirement() {
         failure.detail()
     );
     let bounded = std::str::from_utf8(source).unwrap().replace(
-        "writes(factory) {",
-        "writes(factory) contract {\n  requires 1_u64 <= name^.len;\n} {",
+        "writes(factory) waits {",
+        "writes(factory) waits contract {\n  requires 1_u64 <= name^.len;\n} {",
     );
     compile(
         &[SourceInput::new("bounded_walk.wf", bounded.as_bytes())],
@@ -2327,7 +2384,7 @@ fn main() -> status: std::process::ExitStatus pure {{
     );
     let budgeted = |budget| OverlapLowering::OnWithRecursionBudget {
         budget,
-        maximum_scalar_leaf_operations: None,
+        call_grain: crate::CallGrain::Every,
         sequential_refusal: false,
     };
     let lines = |name: &str, source: &[u8], overlap| {
@@ -2537,7 +2594,7 @@ fn every_pre_semantic_rejection_publishes_the_rule_its_stage_attributed() {
             ),
             (
                 "string.wf",
-                b"fn probe() -> result: unit pure {\n  let text: str = \"bad\\t\";\n  return unit;\n}\n",
+                b"fn probe() -> result: unit pure {\n  let text: str = \"bad\\x\";\n  return unit;\n}\n",
                 CompilationStage::Lexing,
                 "FORM-5",
             ),
@@ -2695,7 +2752,33 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_eq!(failure.stage(), CompilationStage::TargetLayout);
     assert_eq!(failure.kind(), CompilationFailureKind::TargetLayout);
     assert_eq!(failure.rule_id(), None);
-    assert!(failure.detail().contains("RuntimeSizedAllocation"));
+    // [STOR-6] the stop names the allocating call, the bound the program
+    // proves and the largest count the target admits: every supported target
+    // allocates at most `i64::MAX` bytes, and an `Array<u16>` block spends one
+    // header word, so `(i64::MAX - 8) / 2` elements fit.
+    let location = failure.location().expect("the stop names the allocation");
+    assert_eq!(
+        (location.path(), location.line(), location.column()),
+        ("value.wf", 13, 10),
+        "{failure}"
+    );
+    assert!(
+        failure.render(DiagnosticFormat::Text).starts_with(
+            "value.wf:13:10: target layout failure in TargetLayout: AllocationCountExceedsTarget\n"
+        ),
+        "{failure}"
+    );
+    let detail = failure.detail();
+    for line in [
+        "count: \"bounded\"",
+        "proved_count_bound: 5000000000000000000",
+        "target_count_limit: 4611686018427387899",
+    ] {
+        assert!(
+            detail.lines().any(|field| field == line),
+            "{line}\n{detail}"
+        );
+    }
 }
 
 #[test]

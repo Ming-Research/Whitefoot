@@ -130,6 +130,7 @@ impl<'a> Products<'a> {
             result_mode,
             result,
             declared_state_writes,
+            waiting,
             body,
             body_disposition,
             formal_hypothesis: _,
@@ -155,6 +156,7 @@ impl<'a> Products<'a> {
         result_mode.write(&mut source);
         result.write(&mut source);
         declared_state_writes.write(&mut source);
+        waiting.write(&mut source);
         body.write(&mut source);
         matches!(
             body_disposition,
@@ -346,7 +348,8 @@ impl<'a> Products<'a> {
                 IdentityKind::Item
                 | IdentityKind::Node
                 | IdentityKind::Declaration
-                | IdentityKind::Module => {
+                | IdentityKind::Module
+                | IdentityKind::Source => {
                     let mut reader = Reader::new(&name, &empty);
                     if IdentityKind::read(&mut reader)? != old.0 {
                         return None;

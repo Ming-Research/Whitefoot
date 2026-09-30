@@ -115,7 +115,7 @@ const fn prelude(
 }
 
 /// Distinct OP-1 spellings in normative table order.
-pub(crate) const OPERATION_FAMILIES: [&str; 89] = [
+pub(crate) const OPERATION_FAMILIES: [&str; 90] = [
     "+wrap",
     "-wrap",
     "*wrap",
@@ -164,6 +164,7 @@ pub(crate) const OPERATION_FAMILIES: [&str; 89] = [
     "cvt.checked",
     "cvt.defined",
     "cvt.wrap",
+    "cvt.nearest",
     "iand",
     "ior",
     "ixor",
@@ -207,7 +208,7 @@ pub(crate) const OPERATION_FAMILIES: [&str; 89] = [
     "fnan",
 ];
 
-pub(crate) const MODE_WORDS: [&str; 5] = ["wrap", "defined", "checked", "sat", "strict"];
+pub(crate) const MODE_WORDS: [&str; 6] = ["wrap", "defined", "checked", "sat", "strict", "nearest"];
 
 pub(crate) fn operation_id(spelling: &str) -> Option<OperationFamilyId> {
     OPERATION_FAMILIES
@@ -258,7 +259,7 @@ mod tests {
     #[test]
     fn exact_catalogs_are_closed_and_unique_where_required() {
         assert_eq!(PRELUDE_DECLARATIONS.len(), 24);
-        assert_eq!(OPERATION_FAMILIES.len(), 89);
+        assert_eq!(OPERATION_FAMILIES.len(), 90);
         assert_eq!(
             OPERATION_FAMILIES
                 .iter()

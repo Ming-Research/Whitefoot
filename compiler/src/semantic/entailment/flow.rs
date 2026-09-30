@@ -55,7 +55,6 @@ use walk::*;
 
 use sources::{bound_place, capture_counted_preheader};
 
-use super::super::postcondition::PostconditionPlace;
 use results::ResultEvidence;
 use sources::{MeasureCarry, ValueImage};
 use std::cell::RefCell;
@@ -83,8 +82,9 @@ use super::super::places::{
     PlaceStep, ResolvedPlace, SeparationOracle, WindowPart, named_place,
 };
 use super::super::postcondition::{
-    CheckedPostcondition, NormalizedRelation, PostconditionPlaceRoot, PostconditionReturnDatum,
-    PostconditionReturnPlace, PostconditionReturnPlaceRoot, RelationDatum, RelationTemplate,
+    CheckedPostcondition, NormalizedRelation, ParameterDenotation, PostconditionPlaceRoot,
+    PostconditionReturnDatum, PostconditionReturnPlace, PostconditionReturnPlaceRoot,
+    RelationDatum, RelationTemplate,
 };
 use super::affine::{
     AffineCheckError, AffineCheckLimit, AffineCheckState, AffineCoefficient, AffineForm,
@@ -112,8 +112,9 @@ use super::{
     FunctionPostconditionProof, JoinedSourceProofProvenance, LoopInvariantOutcome,
     LoopInvariantProof, ObligationFamily, ObligationOutcome, PostconditionAggregate,
     PostconditionDisposition, PostconditionEntryImage, PostconditionEntryImageOutcome,
-    PostconditionExit, SourceProofCertificateFailure, SourceProofCheck, SourceProofOutcome,
-    VerifiedPostconditionSummaryRef, fragment_type, overflow_conjuncts_for_values,
+    PostconditionExit, RangeEndpointReading, RangeLengthReading, SourceProofCertificateFailure,
+    SourceProofCheck, SourceProofOutcome, VerifiedPostconditionSummaryRef, fragment_type,
+    overflow_conjuncts_for_values,
 };
 
 /// One [ENT-5] kill event gathered from a statement or expression.
@@ -217,6 +218,15 @@ struct ArmFacts {
     goals: Vec<GoalId>,
 }
 
+/// [TYPE-11] an atomic block's type invariants, owed at each edge leaving
+/// the block: its end, a `return`, a `break` of a loop around it, a `give` to
+/// a value initializer around it, and an error propagation.
+struct AtomicFrame {
+    loop_depth: usize,
+    give_depth: usize,
+    invariants: Vec<crate::semantic::goal::CheckedCallRequirement>,
+}
+
 /// A value initializer collecting give-edge states for its continuation.
 struct GiveFrame {
     scope_depth: usize,
@@ -233,10 +243,32 @@ struct GiveFrame {
 /// Stable source and substitution identity for one [GIVE-1] edge.
 struct DeliveryEdgeContext<'a> {
     statement: &'a crate::NodePath,
-    carrier_binding: BindingId,
     receiver_binding: BindingId,
+    /// The carrier term c whose relations the edge substitutes [ENT-5]: a
+    /// bare atom itself, or the given value of a literal or named const.
     carrier: TermId,
     receiver: TermId,
+    event: FlowEventId,
+}
+
+/// The carrier of one eligible `give` [GIVE-1, ENT-5].
+#[derive(Clone, Copy)]
+enum DeliveryCarrier {
+    /// A direct non-consuming bare atom's place term, its own carrier term.
+    Atom(TermId),
+    /// A typed integer literal or integer-typed named const, delivered
+    /// through the give's evaluated value.
+    Constant,
+}
+
+/// One bare-atom give edge's carrier equality `x = d` [ENT-5], sourced from
+/// the give's evaluated value `v = d`.
+struct CarrierEquality<'a> {
+    statement: &'a crate::NodePath,
+    receiver_binding: BindingId,
+    receiver: TermId,
+    evaluated: TermId,
+    atom: TermId,
     event: FlowEventId,
 }
 
@@ -596,9 +628,6 @@ struct ProofResult {
 struct ActiveAffineFact {
     inequality: AffineInequality,
     evidence: AffineFactEvidence,
-    /// Enclosing loop assumptions on which this fact still depends. Removing
-    /// any listed loop removes the fact; an empty list is path-stable.
-    active_loops: Vec<CheckedLoopId>,
 }
 
 /// Captured values of one admitted unsigned division. These identities are
@@ -904,11 +933,22 @@ struct InstantiatedPostcondition {
     substitutions: Vec<PostconditionCallSubstitution>,
 }
 
+/// Where one result ordinal's data land at a caller [ENT-3.S12, CALL-4].
+#[derive(Clone, Debug)]
+enum ResultDestination {
+    /// A destination place: a fresh binding, a `set` target, or a
+    /// destructuring binder, with the path it names. A datum below the
+    /// result is this place projected by the datum's projection.
+    Place(PlaceRoot, Vec<GoalProjection>),
+    /// The private payload root of the returned value's conditional success
+    /// context [ENT-5], typed by the success payload.
+    PayloadRoot(CheckedType),
+}
+
 #[derive(Clone, Copy)]
 struct DirectReceiverRoute {
     binding: BindingId,
     formal: u32,
-    ty: CheckedType,
 }
 
 struct DirectReceiverCandidate {
@@ -1250,6 +1290,7 @@ impl<'check, 'unit> Analyzer<'check, 'unit> {
                 scopes: Vec::new(),
                 loops: Vec::new(),
                 gives: Vec::new(),
+                atomic: None,
                 product_intervals: HashMap::new(),
                 product_operands: HashMap::new(),
             },
@@ -1645,6 +1686,9 @@ struct Frames {
     scopes: Vec<Vec<BindingId>>,
     loops: Vec<LoopFrame>,
     gives: Vec<GiveFrame>,
+    /// The atomic statement whose block is being walked, if any; atomic
+    /// statements do not nest [SHARE-2].
+    atomic: Option<AtomicFrame>,
     /// The interval [ENT-6]'s interval-product rule proved at each admitted
     /// non-constant multiplication, with that domain's derivation, keyed by
     /// that operation's own node. The domain is judged while the initializer
@@ -1866,6 +1910,7 @@ mod indexed_goal_kill_tests {
             allocates: false,
             call_separations: Vec::new(),
             permission_separation_queries: Vec::new(),
+            waiting: crate::semantic::model::CheckedWaiting::default(),
             obligations: Vec::new(),
             entailment: FunctionEntailment::default(),
         };
@@ -2091,6 +2136,7 @@ mod range_argument_kill_tests {
             allocates: false,
             call_separations: Vec::new(),
             permission_separation_queries: Vec::new(),
+            waiting: crate::semantic::model::CheckedWaiting::default(),
             obligations: Vec::new(),
             entailment: FunctionEntailment::default(),
         };

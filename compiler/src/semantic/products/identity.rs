@@ -12,6 +12,7 @@ pub(crate) enum SourceIdentity {
     Module(String),
     Item(String),
     Node { item: String, path: Vec<u32> },
+    Source { module: String, path: String },
 }
 
 record_enum!(SourceIdentity {
@@ -19,6 +20,7 @@ record_enum!(SourceIdentity {
     1 => Module(key),
     2 => Item(key),
     3 => Node { item, path },
+    4 => Source { module, path },
 });
 
 /// The interface declaration and implementation of a callable denote one
@@ -76,6 +78,7 @@ pub(crate) struct SourceIdentities<'a> {
     declarations: BTreeMap<String, u32>,
     items: BTreeMap<String, u32>,
     modules: BTreeMap<String, u32>,
+    sources: BTreeMap<(String, String), u32>,
 }
 
 impl<'a> SourceIdentities<'a> {
@@ -110,12 +113,28 @@ impl<'a> SourceIdentities<'a> {
             .enumerate()
             .map(|(index, module)| Some((module.qualified_name(), u32::try_from(index).ok()?)))
             .collect::<Option<_>>()?;
+        let bundle = resolved.syntax().classified_bundle().source_bundle();
+        let sources = bundle
+            .files()
+            .iter()
+            .enumerate()
+            .map(|(index, file)| {
+                Some((
+                    (
+                        bundle.module(file.module())?.qualified_name(),
+                        file.logical_path().as_str().to_owned(),
+                    ),
+                    u32::try_from(index).ok()?,
+                ))
+            })
+            .collect::<Option<_>>()?;
         Some(Self {
             resolved,
             view,
             declarations,
             items,
             modules,
+            sources,
         })
     }
 
@@ -146,6 +165,14 @@ impl<'a> SourceIdentities<'a> {
                     path: key.path,
                 }
             }
+            IdentityKind::Source => {
+                let bundle = self.resolved.syntax().classified_bundle().source_bundle();
+                let file = bundle.file(crate::SourceId::from_ordinal(index))?;
+                SourceIdentity::Source {
+                    module: bundle.module(file.module())?.qualified_name(),
+                    path: file.logical_path().as_str().to_owned(),
+                }
+            }
             _ => return None,
         })
     }
@@ -163,6 +190,10 @@ impl<'a> SourceIdentities<'a> {
                 let node = self.view.node_with_path(&NodePath { components })?;
                 (IdentityKind::Node, u32::try_from(node.index()).ok()?)
             }
+            SourceIdentity::Source { module, path } => (
+                IdentityKind::Source,
+                *self.sources.get(&(module.clone(), path.clone()))?,
+            ),
         })
     }
 

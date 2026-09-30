@@ -41,6 +41,7 @@
 //! depends on [OP-10]'s uninferred window type parameter; none names a
 //! runtime-capacity `Slots` or `Ring`; and none moves out of a window slot.
 
+use super::BoundedOutput;
 use std::fmt::Write as _;
 
 use crate::target::{TargetLayout, TargetLayoutFailure};
@@ -667,6 +668,13 @@ void wf_test_close_submit(int descriptor, void *record) {\n\
                     WF_TEST_OPEN_SUCCEEDED);\n\
 }\n\
 \n\
+/* Every scripted submit above publishes before it returns, so no record is\n\
+   ever pending and a waiting frame reads its outcome without suspending. */\n\
+int wf_test_pending(const void *record) {\n\
+    (void)record;\n\
+    return 0;\n\
+}\n\
+\n\
 void wf_test_file_join(const void *record, int64_t *value, int *error_code) {\n\
     wf_test_completion completion;\n\
     memcpy(&completion, record, sizeof completion);\n\
@@ -737,6 +745,7 @@ pub(super) fn run_emitted_on_deterministic_host(
         "wf__completion_file_close_submit=wf_test_close_submit",
         "wf__completion_file_join=wf_test_file_join",
         "wf__completion_file_open_join=wf_test_file_open_join",
+        "wf__completion_pending=wf_test_pending",
     ]
     .map(str::to_owned);
     let executable = build_linked_executable_with_library_defines(
@@ -752,14 +761,14 @@ pub(super) fn run_emitted_on_deterministic_host(
                 .iter()
                 .map(|bytes| std::ffi::OsStr::from_bytes(bytes)),
         )
-        .output()
+        .bounded_output()
         .expect("run the ordinary linked library with scripted syscalls");
     std::fs::remove_dir_all(directory).expect("remove scripted library fixture");
     DeterministicRun { output }
 }
 
 /// An ordinary entry that explicitly closes its initial working directory.
-const RELEASES_ONE_DIRECTORY: &[u8] = br#"fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure {
+const RELEASES_ONE_DIRECTORY: &[u8] = br#"fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
   let std::process::Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: factory, stdin: input) = move inputs;
   let closed = std::fs::close_directory(factory: &factory, directory: move cwd);
   return std::process::exit_status(code: 0_u8);
@@ -769,7 +778,7 @@ const RELEASES_ONE_DIRECTORY: &[u8] = br#"fn main(inputs: std::process::Inputs) 
 /// A command that reads its own invocation vector and reaches no host object
 /// at all, so every row it uses is one both target columns share.
 const READS_ITS_ARGUMENTS: &[u8] =
-    br#"fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure {
+    br#"fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
   let std::process::Inputs(args: args, cwd: unused_cwd, stdout: unused_stdout, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin) = move inputs;
   std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
   let total = std::text::args_count(args: &args);
@@ -789,7 +798,7 @@ const READS_ITS_ARGUMENTS: &[u8] =
 /// while also binding the initial working directory so exactly one resource
 /// in the program releases with a close.
 const WRITES_THEN_RELEASES_BOTH: &[u8] =
-    br#"fn exercise(cwd: &std::fs::DirectoryRead, out: &std::io::OutputStream, entry_factory: &std::io::HandleFactory) -> status: std::process::ExitStatus writes(out), writes(entry_factory) {
+    br#"fn exercise(cwd: &std::fs::DirectoryRead, out: &std::io::OutputStream, entry_factory: &std::io::HandleFactory) -> status: std::process::ExitStatus writes(out), writes(entry_factory) waits {
   let bytes = array_filled::<u8, 3>(value: 65_u8);
   set bytes[1_u64] = 66_u8;
   set bytes[2_u64] = 67_u8;
@@ -812,7 +821,7 @@ const WRITES_THEN_RELEASES_BOTH: &[u8] =
   }
 }
 
-fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure {
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
   doc "PRE-2 ordinary std::process::Inputs are destructured once; the borrowed operation chain returns before the initial directory is explicitly closed on every exit.";
   let std::process::Inputs(args: unused_args, cwd: cwd, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin) = move inputs;
   let outcome = exercise(cwd: &cwd, out: &out, entry_factory: &entry_factory);
@@ -828,7 +837,7 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure {
 fn opens_one_file(named: &[(&str, &str)], default: &str) -> String {
     let arms = class_arms(8, named, default);
     format!(
-        r#"fn exercise(factory: &std::io::HandleFactory, cwd: &std::fs::DirectoryRead) -> status: std::process::ExitStatus reads(cwd), writes(factory) {{
+        r#"fn exercise(factory: &std::io::HandleFactory, cwd: &std::fs::DirectoryRead) -> status: std::process::ExitStatus reads(cwd), writes(factory) waits {{
   let name = array_filled::<u8, 1>(value: 65_u8);
   let component = &name[0_u64..1_u64];
   match std::fs::open_file(factory: factory, root: cwd, name: component, start: 0_u64, end: 1_u64) {{
@@ -843,7 +852,7 @@ fn opens_one_file(named: &[(&str, &str)], default: &str) -> String {
   }}
 }}
 
-fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure {{
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {{
   let std::process::Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: factory, stdin: input) = move inputs;
   let outcome = std::process::exit_status(code: 0_u8);
   set outcome = exercise(factory: &factory, cwd: &cwd);
@@ -1082,7 +1091,9 @@ fn substituting_linked_closes_keeps_one_ordinary_call_in_optimized_ir() {
     let optimized = host_optimized_module(&emit_for_deterministic_target(RELEASES_ONE_DIRECTORY));
     // The optimized WF body calls its ordinary declaration; linked internals
     // are neither copied into this module nor selected by the compiler.
-    assert!(optimized.contains("@wf_std.fs.close_directory("));
+    // A waiting host function is linked as its start and its finish.
+    assert!(optimized.contains("@wf_std.fs.close_directory.start("));
+    assert!(optimized.contains("@wf_std.fs.close_directory.finish("));
     assert!(!optimized.contains("@wf_test_close_submit"));
     assert!(!optimized.contains("@malloc"));
 }
@@ -1288,7 +1299,7 @@ fn the_heap_resource_record_writer_stays_native_on_the_deterministic_target() {
     // The heap is the one [STOR-8] heap and a `Box` is what puts this module
     // on it; allocation is total in the source, so the record writer below is
     // the trusted base's own exhaustion path and not a source-visible arm.
-    let source = br#"fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure {
+    let source = br#"fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
   let std::process::Inputs(args: unused_args, cwd: unused_cwd, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin) = move inputs;
   std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
   let bytes = box_array_filled::<u8>(count: 1_u64, value: 65_u8);
@@ -1305,12 +1316,13 @@ fn the_heap_resource_record_writer_stays_native_on_the_deterministic_target() {
     let module = emit_for_deterministic_target(source);
     // The record loop reaches native write through its EINTR retry helper.
     // Both edges must remain independent of the substituted library call.
-    assert!(module.contains("declare void @wf_std.io.write_once(ptr %wf.result,"));
+    assert!(module.contains("declare i32 @wf_std.io.write_once.start(ptr %wf.result,"));
     assert!(module.contains("declare i64 @write(i32, ptr, i64)"));
     assert!(module.contains("%written = call i64 @wf_resource_write(ptr %cursor, i64 %remaining)"));
     assert!(module.contains("%written = call i64 @write(i32 2, ptr %bytes, i64 %length)"));
     assert!(module.contains("call void @wf_resource_record_abort("));
-    assert!(module.contains("call void @wf_std.io.write_once("));
+    assert!(module.contains("call i32 @wf_std.io.write_once.start("));
+    assert!(module.contains("call void @wf_std.io.write_once.finish("));
     assert!(!module.contains("@wf_test_write_submit"));
 
     // And the native target still declares exactly one `@write` for both.
@@ -1339,7 +1351,7 @@ pub(super) fn assert_zero_write_outcome() {
         "return std::process::exit_status(code: 199_u8);",
     );
     let source = format!(
-        r#"fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure {{
+        r#"fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {{
   let std::process::Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: factory, stdin: input) = move inputs;
   std::fs::close_directory(factory: &factory, directory: move cwd);
   let bytes = array_filled::<u8, 2>(value: 119_u8);

@@ -12,7 +12,7 @@ binding First : Disposer {
   release = release_read_file;
 }
 
-fn release_read_file(factory: &HandleFactory, file: ReadFile) -> function_result: unit writes(factory) {
+fn release_read_file(factory: &HandleFactory, file: ReadFile) -> function_result: unit writes(factory) waits {
   doc "FN-4: the explicit ordinary close has effects exceeding the formal's pure row. No implicit finalizer supplies the difference, and release itself carries no effect entry [STOR-3, STOR-8].";
   let closed = close_read(factory: factory, file: move file);
   return unit;

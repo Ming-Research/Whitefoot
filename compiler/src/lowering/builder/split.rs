@@ -280,7 +280,7 @@ impl Synthesis {
     /// and the stable part of its symbol, which numbers it among `parent`'s
     /// own, so that an unchanged function's helpers keep their symbols when
     /// another function gains or loses a split [MOD-8].
-    fn reserve(&mut self, parent: &str) -> Result<(u32, String), LoweringFailure> {
+    pub(super) fn reserve(&mut self, parent: &str) -> Result<(u32, String), LoweringFailure> {
         let ordinal = u32::try_from(self.functions.len())
             .ok()
             .and_then(|offset| self.base.checked_add(offset))
@@ -295,7 +295,11 @@ impl Synthesis {
         Ok((ordinal, name))
     }
 
-    fn file(&mut self, ordinal: u32, function: IrFunction) -> Result<(), LoweringFailure> {
+    pub(super) fn file(
+        &mut self,
+        ordinal: u32,
+        function: IrFunction,
+    ) -> Result<(), LoweringFailure> {
         let slot = ordinal
             .checked_sub(self.base)
             .and_then(|offset| self.functions.get_mut(offset as usize))
@@ -1360,7 +1364,9 @@ fn frame_bytes(ty: IrType) -> u64 {
         IrType::Integer { width, .. } | IrType::Float { width } => u64::from(width).div_ceil(8),
         // A descriptor is a pointer and a length; a borrow and a box handle
         // are one pointer each.
-        IrType::Buffer { .. } | IrType::Range { .. } => 2 * FRAME_FIELD_ALIGN,
+        IrType::Buffer { .. } | IrType::Segments { .. } | IrType::Range { .. } => {
+            2 * FRAME_FIELD_ALIGN
+        }
         IrType::Address(_) | IrType::RuntimeBoxPayload { .. } => FRAME_FIELD_ALIGN,
         // Aggregates trigger capture selection and the final exact-layout
         // query; a conservative fit retains its established capture interface.
@@ -1379,8 +1385,9 @@ fn frame_bytes(ty: IrType) -> u64 {
 /// allowance. The runtime estimate then substitutes available counted extents
 /// through helper arguments, distinguishing a 17-element row from a
 /// 1024-element row without changing either loop body. Unknown extents keep
-/// this static price; no universal grain plateau is established.
-pub(crate) fn assign_weights(functions: &mut [IrFunction]) {
+/// this static price; no universal grain plateau is established. Each
+/// function's whole static weight is returned for call-offer grain.
+pub(crate) fn assign_weights(functions: &mut [IrFunction]) -> Vec<u64> {
     let costs: Vec<Cost> = functions.iter().map(cost).collect();
     let mut total: Vec<u64> = costs.iter().map(|cost| cost.instructions).collect();
     // Three rounds of substitution, so a chunk's weight sees its callees, their
@@ -1418,6 +1425,7 @@ pub(crate) fn assign_weights(functions: &mut [IrFunction]) {
         }
     }
     super::work::assign(functions, &total);
+    total
 }
 
 /// How much an instruction inside a loop is charged over one outside it.
@@ -1577,6 +1585,7 @@ mod tests {
             counted_ranges: Vec::new(),
             overlaps: Vec::new(),
             synthesis: Some(IrSynthesis::Chunk),
+            waits: false,
             blocks: vec![
                 IrBlock {
                     parameters: Vec::new(),

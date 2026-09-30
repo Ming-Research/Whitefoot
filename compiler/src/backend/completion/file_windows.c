@@ -697,6 +697,20 @@ uint64_t wf_file_monotonic_ns(void) {
           );
 }
 
+/* Sockets here have the completion port, so no context waits on a
+ * descriptor's readiness; without the port, a context's socket wait blocks
+ * the thread as every wait did before contexts. */
+int wf_file_readiness_supported(void) {
+    return 0;
+}
+
+int wf_file_wait_readiness(wf_file_readiness *entries, size_t count, int timeout_ms) {
+    (void)entries;
+    (void)count;
+    (void)timeout_ms;
+    return -1;
+}
+
 /* This platform's sockets are blocking objects of the completion port and the
  * adapter, so no transfer is attempted without an engine: every one is left
  * for the route the bridge chooses. */

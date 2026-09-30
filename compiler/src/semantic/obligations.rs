@@ -44,6 +44,8 @@ pub(crate) enum ObligationSubject {
     CallRequirement {
         callee: FunctionId,
         requires_clause: NodePath,
+        /// [TYPE-11] the requirement's subject ordinal.
+        subject: Option<u32>,
     },
     /// One source-written loop invariant's induction [INV-1].
     LoopInvariant,
@@ -141,6 +143,7 @@ mod tests {
             allocates: false,
             call_separations: Vec::new(),
             permission_separation_queries: Vec::new(),
+            waiting: crate::semantic::model::CheckedWaiting::default(),
             obligations,
             entailment: FunctionEntailment::default(),
         }

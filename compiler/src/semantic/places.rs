@@ -1237,6 +1237,14 @@ pub(crate) fn named_place(expression: &CheckedExpression) -> Option<NamedPlace> 
         CheckedExpression::BorrowAddressed { root, .. } => {
             named(root.root, root.place_path(), Vec::new(), NamingForm::Borrow)
         }
+        // [REF-4] a segment borrow names the `Segments` place extended by
+        // the segment's index, or by a range over every element.
+        CheckedExpression::BorrowSegment { root, segment, .. } => named(
+            root.root,
+            root.place_path(),
+            vec![segment.place_step()],
+            NamingForm::Range,
+        ),
         CheckedExpression::BorrowRangeIndex { place, .. } => named(
             PlaceRoot::Binding(place.root.binding),
             Vec::new(),
@@ -1431,6 +1439,22 @@ impl PlaceMap {
                 CheckedStatement::Loop { body, .. } => self.collect_block_bindings(body),
                 CheckedStatement::CountedRange { binder, body, .. } => {
                     self.summary_mut(*binder).ty = Some(CheckedType::Integer(IntegerType::U64));
+                    self.collect_block_bindings(body);
+                }
+                // [SHARE-2] the binding is a reference anchored at the
+                // object's state, as a reference parameter is at itself.
+                CheckedStatement::Atomic {
+                    binding,
+                    state,
+                    body,
+                    ..
+                } => {
+                    let summary = self.summary_mut(*binding);
+                    summary.ty = Some(*state);
+                    summary.reference = true;
+                    if summary.reference_paths.is_empty() {
+                        summary.reference_paths = vec![ResolvedPlace::binding(*binding)];
+                    }
                     self.collect_block_bindings(body);
                 }
                 _ => {}

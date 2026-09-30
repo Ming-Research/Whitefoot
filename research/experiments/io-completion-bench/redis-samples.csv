@@ -1,0 +1,107 @@
+# Experiment 7 of research/investigations/io-model/SHARED.md: raw output, one line per run.
+# First run, redis-bench.sh at c40b738f5 (fields after the prefix are redis-benchmark --csv: test, rps, avg, min, p50, p95, p99, max ms)
+first run,verify,reference,counter=100000,replies=OK 1 2 1  
+first run,verify,subset-2,counter=100000,replies=OK 1 2 1  
+first run,verify,subset-1,counter=100000,replies=OK 1 2 1  
+first run,reference,round 1,pipeline 1,"SET","105218.86","0.426","0.048","0.391","0.751","1.183","15.903"
+first run,reference,round 1,pipeline 1,"GET","105229.92","0.428","0.048","0.391","0.767","1.199","8.319"
+first run,reference,round 1,pipeline 16,"SET","665779.00","1.126","0.136","1.135","1.543","2.271","9.759"
+first run,reference,round 1,pipeline 16,"GET","666222.50","1.063","0.168","1.023","1.703","2.327","8.383"
+first run,subset-2,round 1,pipeline 1,"SET","142795.95","0.238","0.024","0.207","0.399","0.735","17.999"
+first run,subset-2,round 1,pipeline 1,"GET","142694.06","0.255","0.008","0.215","0.439","0.799","14.223"
+first run,subset-2,round 1,pipeline 16,"SET","443655.72","1.629","0.040","1.583","2.687","4.039","12.991"
+first run,subset-2,round 1,pipeline 16,"GET","332668.00","2.334","0.064","2.319","3.335","4.031","18.079"
+first run,subset-1,round 1,pipeline 1,"SET","99980.01","0.462","0.072","0.423","0.783","1.127","16.415"
+first run,subset-1,round 1,pipeline 1,"GET","102532.55","0.457","0.072","0.431","0.735","0.927","8.271"
+first run,subset-1,round 1,pipeline 16,"SET","665779.00","1.002","0.128","1.007","1.239","1.791","4.263"
+first run,subset-1,round 1,pipeline 16,"GET","499750.16","1.511","0.176","1.431","2.263","2.687","5.991"
+first run,reference,round 2,pipeline 1,"SET","105163.53","0.429","0.048","0.391","0.791","1.183","14.263"
+first run,reference,round 2,pipeline 1,"GET","124937.54","0.357","0.040","0.335","0.599","0.895","8.287"
+first run,reference,round 2,pipeline 16,"SET","665779.00","1.095","0.168","1.143","1.415","1.591","4.287"
+first run,reference,round 2,pipeline 16,"GET","666222.50","1.045","0.160","1.039","1.487","2.031","4.871"
+first run,subset-2,round 2,pipeline 1,"SET","166611.14","0.221","0.008","0.191","0.407","0.663","18.815"
+first run,subset-2,round 2,pipeline 1,"GET","148104.27","0.250","0.016","0.231","0.431","0.631","11.751"
+first run,subset-2,round 2,pipeline 16,"SET","443655.72","1.667","0.128","1.623","2.631","3.159","7.391"
+first run,subset-2,round 2,pipeline 16,"GET","307408.53","2.362","0.192","2.319","3.367","4.079","11.463"
+first run,subset-1,round 2,pipeline 1,"SET","108084.74","0.427","0.072","0.399","0.719","0.959","19.583"
+first run,subset-1,round 2,pipeline 1,"GET","102543.07","0.463","0.080","0.439","0.751","1.015","6.455"
+first run,subset-1,round 2,pipeline 16,"SET","665779.00","1.135","0.184","1.135","1.391","1.839","5.167"
+first run,subset-1,round 2,pipeline 16,"GET","443655.72","1.628","0.160","1.551","2.447","2.935","6.903"
+# Second run, redis-bench.sh at 2d5c41250
+second run,verify,reference,counter=100000,replies=OK 1 2 1  
+second run,verify,subset-2,counter=100000,replies=OK 1 2 1  
+second run,verify,subset-1,counter=100000,replies=OK 1 2 1  
+second run,reference,round 1,pipeline 1,"SET","111049.41","0.401","0.048","0.375","0.695","1.103","8.263"
+second run,reference,round 1,pipeline 1,"GET","114181.31","0.400","0.048","0.375","0.687","1.023","8.575"
+second run,reference,round 1,pipeline 16,"SET","570450.62","1.278","0.200","1.183","1.847","3.143","86.655"
+second run,reference,round 1,pipeline 16,"GET","664893.62","1.019","0.104","1.015","1.527","2.263","28.383"
+second run,subset-2,round 1,pipeline 1,"SET","153775.19","0.195","0.008","0.175","0.295","0.511","18.079"
+second run,subset-2,round 1,pipeline 1,"GET","159948.81","0.185","0.024","0.175","0.303","0.463","10.783"
+second run,subset-2,round 1,pipeline 16,"SET","799360.50","0.841","0.032","0.711","1.679","2.343","6.863"
+second run,subset-2,round 1,pipeline 16,"GET","998004.00","0.630","0.056","0.567","1.175","1.735","23.983"
+second run,subset-1,round 1,pipeline 1,"SET","99980.01","0.462","0.064","0.431","0.751","1.063","21.535"
+second run,subset-1,round 1,pipeline 1,"GET","102543.07","0.453","0.072","0.439","0.719","0.975","9.703"
+second run,subset-1,round 1,pipeline 16,"SET","664451.81","1.078","0.136","1.007","1.687","2.207","7.847"
+second run,subset-1,round 1,pipeline 16,"GET","665779.00","1.014","0.168","0.943","1.607","1.871","7.583"
+second run,reference,round 2,pipeline 1,"SET","108049.70","0.410","0.048","0.375","0.751","1.087","8.207"
+second run,reference,round 2,pipeline 1,"GET","105053.05","0.436","0.048","0.391","0.775","1.191","31.679"
+second run,reference,round 2,pipeline 16,"SET","570450.62","1.194","0.128","1.183","1.831","2.503","5.607"
+second run,reference,round 2,pipeline 16,"GET","571102.19","1.209","0.168","1.135","2.023","2.767","8.535"
+second run,subset-2,round 2,pipeline 1,"SET","166583.38","0.177","0.008","0.159","0.271","0.487","33.471"
+second run,subset-2,round 2,pipeline 1,"GET","153798.83","0.186","0.016","0.175","0.287","0.447","11.391"
+second run,subset-2,round 2,pipeline 16,"SET","799360.50","0.786","0.064","0.759","1.311","1.799","9.551"
+second run,subset-2,round 2,pipeline 16,"GET","999000.94","0.692","0.048","0.663","1.071","1.431","4.727"
+second run,subset-1,round 2,pipeline 1,"SET","108084.74","0.430","0.064","0.399","0.719","1.063","16.863"
+second run,subset-1,round 2,pipeline 1,"GET","102270.41","0.461","0.072","0.431","0.759","1.023","34.143"
+second run,subset-1,round 2,pipeline 16,"SET","570776.25","1.211","0.184","1.111","1.855","2.143","36.255"
+second run,subset-1,round 2,pipeline 16,"GET","666222.50","1.126","0.200","1.039","1.647","1.975","46.431"
+# Attribution, PING and SET with 16 per pipeline on the first run's build
+attribution ping,drivers 1,round 1,"PING_MBULK","1998001.88"
+attribution ping,drivers 1,round 1,"SET","799360.50"
+attribution ping,drivers 2,round 1,"PING_MBULK","1998001.88"
+attribution ping,drivers 2,round 1,"SET","469704.09"
+attribution ping,drivers 1,round 2,"PING_MBULK","1598721.00"
+attribution ping,drivers 1,round 2,"SET","726744.19"
+attribution ping,drivers 2,round 2,"PING_MBULK","1998001.88"
+attribution ping,drivers 2,round 2,"SET","469814.44"
+# Counting builds: the first run's lock (handoff) against the changed lock (retry), same program, SET, parks per million acquires
+counting handoff,round 1,drivers 1,pipeline 1,"97503.91",acquires=1000000,parks=0
+counting handoff,round 1,drivers 1,pipeline 16,"665779.00",acquires=1000000,parks=0
+counting handoff,round 1,drivers 2,pipeline 1,"159948.81",acquires=1000000,parks=755665
+counting handoff,round 1,drivers 2,pipeline 16,"499002.00",acquires=1000000,parks=969192
+counting retry,round 1,drivers 1,pipeline 1,"102532.55",acquires=1000000,parks=0
+counting retry,round 1,drivers 1,pipeline 16,"665779.00",acquires=1000000,parks=0
+counting retry,round 1,drivers 2,pipeline 1,"153775.19",acquires=1006159,parks=6159
+counting retry,round 1,drivers 2,pipeline 16,"999000.94",acquires=1005736,parks=5736
+counting handoff,round 2,drivers 1,pipeline 1,"108096.41",acquires=1000000,parks=0
+counting handoff,round 2,drivers 1,pipeline 16,"665336.00",acquires=1000000,parks=0
+counting handoff,round 2,drivers 2,pipeline 1,"159948.81",acquires=1000000,parks=561330
+counting handoff,round 2,drivers 2,pipeline 16,"499500.47",acquires=1000000,parks=972752
+counting retry,round 2,drivers 1,pipeline 1,"105241.00",acquires=1000000,parks=0
+counting retry,round 2,drivers 1,pipeline 16,"570776.25",acquires=1000000,parks=0
+counting retry,round 2,drivers 2,pipeline 1,"173822.36",acquires=1005158,parks=5158
+counting retry,round 2,drivers 2,pipeline 16,"999000.94",acquires=1006241,parks=6241
+# GET copy: changed lock, one driver, 16 per pipeline, before (whole buffer) and after (value's bytes)
+get copy whole buffer,round 1,"SET","665779.00","GET","444247.03"
+get copy value bytes,round 1,"SET","570776.25","GET","666222.50"
+get copy whole buffer,round 2,"SET","665779.00","GET","443852.62"
+get copy value bytes,round 2,"SET","666222.50","GET","665779.00"
+get copy whole buffer,round 3,"SET","665336.00","GET","443852.62"
+get copy value bytes,round 3,"SET","665336.00","GET","799360.50"
+# Not a criterion: redis-server with --io-threads 2 --io-threads-do-reads yes against the subset on two drivers, second run's build
+io threads,threaded,round 1,pipeline 1,"SET","128998.97"
+io threads,threaded,round 1,pipeline 1,"GET","142816.34"
+io threads,threaded,round 1,pipeline 16,"SET","665779.00"
+io threads,threaded,round 1,pipeline 16,"GET","665779.00"
+io threads,subset,round 1,pipeline 1,"SET","159948.81"
+io threads,subset,round 1,pipeline 1,"GET","153775.19"
+io threads,subset,round 1,pipeline 16,"SET","799360.50"
+io threads,subset,round 1,pipeline 16,"GET","999000.94"
+io threads,threaded,round 2,pipeline 1,"SET","142795.95"
+io threads,threaded,round 2,pipeline 1,"GET","148082.34"
+io threads,threaded,round 2,pipeline 16,"SET","570450.62"
+io threads,threaded,round 2,pipeline 16,"GET","666222.50"
+io threads,subset,round 2,pipeline 1,"SET","166611.14"
+io threads,subset,round 2,pipeline 1,"GET","166611.14"
+io threads,subset,round 2,pipeline 16,"SET","798722.06"
+io threads,subset,round 2,pipeline 16,"GET","999000.94"

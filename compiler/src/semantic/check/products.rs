@@ -49,6 +49,7 @@ record_struct!(FunctionSignature {
     result_list,
     effects_node,
     declared_effects,
+    waits,
     formal_parameter,
     substitution,
 });
@@ -56,6 +57,24 @@ record_struct!(EffectSet {
     reads,
     writes,
     allocates
+});
+record_struct!(super::type_invariants::TypeInvariantTemplate {
+    clause,
+    goal,
+    relation,
+    expanded,
+    binder
+});
+record_enum!(super::requires::ExpandedClauseDatum {
+    0 => Parameter { ordinal, projections, ty, denotation },
+    1 => NamedConst { declaration, projections, ty },
+    2 => Literal { value, origin },
+    3 => Result { ordinal, projections, ty },
+});
+record_enum!(super::requires::ExpandedClauseExpression {
+    0 => Datum(f0),
+    1 => Operation { row, type_arguments, const_arguments, result, arguments },
+    2 => InvalidSelectorUse { ty },
 });
 record_struct!(CheckedFunctionInventory {
     function,
@@ -415,7 +434,8 @@ impl Checker<'_, '_> {
             | IdentityKind::Declaration
             | IdentityKind::Module
             | IdentityKind::Item
-            | IdentityKind::Node => return None,
+            | IdentityKind::Node
+            | IdentityKind::Source => return None,
         }
         writer.canonical(|identity| self.identity_name(identity, identities))
     }
@@ -456,6 +476,16 @@ impl Checker<'_, '_> {
                 // declaration/arguments name the type; its fields guard it.
                 nominal.name.clear();
                 nominal.write(&mut writer);
+                // Implicit [TYPE-11] clauses are consumed by construction,
+                // calls and atomic exit checks even when the fields agree.
+                super::type_invariants::TypeInvariantTemplate::write_slice(
+                    self.types
+                        .type_invariants
+                        .get(&NominalId(index))
+                        .map(Vec::as_slice)
+                        .unwrap_or_default(),
+                    &mut writer,
+                );
             }
             IdentityKind::Constant => self
                 .types
@@ -719,7 +749,8 @@ impl Checker<'_, '_> {
                 IdentityKind::Declaration
                 | IdentityKind::Module
                 | IdentityKind::Item
-                | IdentityKind::Node => {
+                | IdentityKind::Node
+                | IdentityKind::Source => {
                     let mut reader = Reader::new(&entry.name, &empty);
                     let kind = IdentityKind::read(&mut reader)?;
                     let source =

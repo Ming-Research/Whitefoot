@@ -1,0 +1,94 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+const cap: u64 = 16_u64;
+
+fn bounded_or_zero(pos: u64, length: u64) -> result: u64 pure contract {
+  ensures result <= length;
+} {
+  doc "A literal carrier is the give's value v with v = 0, as a let of the literal establishes it; length's type bound closes it to x <= length on that edge, exactly as giving a branch-local copy of the literal would [ENT-5, GIVE-1].";
+  let x = if pos < length {
+    give pos;
+  } else {
+    give 0_u64;
+  }
+  return x;
+}
+
+fn capped(n: u64) -> result: u64 pure contract {
+  ensures result <= 16_u64;
+} {
+  doc "A named-const carrier delivers x = 16; the other edge delivers x < 16, and the join keeps x <= 16 [ENT-5, GIVE-1].";
+  let x = if n < 16_u64 {
+    give n;
+  } else {
+    give cap;
+  }
+  return x;
+}
+
+fn first_or_zero(pos: u64, length: u64) -> result: u64 pure contract {
+  requires 1_u64 <= length;
+  ensures result < length;
+} {
+  doc "The literal edge's closed state holds the requirement 1 <= length, so v = 0 closes to v < length and the edge delivers x < length, as a branch-local copy of the literal would; the join keeps the strict bound both edges hold [ENT-5, GIVE-1].";
+  let x = if pos < length {
+    give pos;
+  } else {
+    give 0_u64;
+  }
+  return x;
+}
+
+fn guarded_or_zero(pos: u64, length: u64) -> result: u64 pure contract {
+  requires pos < length;
+  ensures result < length;
+} {
+  doc "The literal edge cannot be reached: its closed state is contradictory, so its image is contradictory and neutral at the join, as a branch-local copy's would be, and the reachable edge alone decides x < length [ENT-5].";
+  let x = if pos < length {
+    give pos;
+  } else {
+    give 0_u64;
+  }
+  return x;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "Every reachable edge runs and its delivered value is observed.";
+  let kept = bounded_or_zero(pos: 2_u64, length: 5_u64);
+  if kept == 2_u64 {
+  } else {
+    return exit_status(code: 201_u8);
+  }
+  let zero = bounded_or_zero(pos: 7_u64, length: 5_u64);
+  if zero == 0_u64 {
+  } else {
+    return exit_status(code: 202_u8);
+  }
+  let small = capped(n: 4_u64);
+  if small == 4_u64 {
+  } else {
+    return exit_status(code: 203_u8);
+  }
+  let large = capped(n: 40_u64);
+  if large == 16_u64 {
+  } else {
+    return exit_status(code: 204_u8);
+  }
+  let inside = first_or_zero(pos: 1_u64, length: 2_u64);
+  if inside == 1_u64 {
+  } else {
+    return exit_status(code: 205_u8);
+  }
+  let first = first_or_zero(pos: 3_u64, length: 2_u64);
+  if first == 0_u64 {
+  } else {
+    return exit_status(code: 206_u8);
+  }
+  let guarded = guarded_or_zero(pos: 1_u64, length: 3_u64);
+  if guarded == 1_u64 {
+  } else {
+    return exit_status(code: 207_u8);
+  }
+  return exit_status(code: 0_u8);
+}

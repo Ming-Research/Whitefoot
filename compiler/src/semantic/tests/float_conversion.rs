@@ -232,3 +232,85 @@ fn main() -> status: std::process::ExitStatus pure {
         });
     }
 }
+
+/// [OP-6] `cvt.nearest` admits exactly the 20 float-destination pairs, carries
+/// no ConversionDomain obligation and returns Dst; an integer destination is
+/// an OP-1 rejection.
+#[test]
+fn rounding_conversion_admits_exactly_the_float_destination_pairs() {
+    let mut admitted = 0;
+    for (source_name, source_type) in NUMERIC_TYPES {
+        for (destination_name, destination_type) in NUMERIC_TYPES {
+            let source = format!(
+                "fn convert(value: {source_name}) -> result: {destination_name} pure {{\n  return cvt.nearest::<{source_name}, {destination_name}>(value);\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
+            );
+            let float_destination = matches!(destination_type, CheckedNumericType::Float(_));
+            admitted += usize::from(float_destination);
+            with_semantics(source.as_bytes(), |outcome| {
+                if float_destination {
+                    let SemanticOutcome::Complete(checked) = outcome else {
+                        panic!("total {source_name} -> {destination_name}: {outcome:?}");
+                    };
+                    let function = &checked.data.functions[0];
+                    let [
+                        CheckedStatement::Return {
+                            value:
+                                CheckedExpression::NumericConversion {
+                                    mode,
+                                    source,
+                                    destination,
+                                    result,
+                                    ..
+                                },
+                            ..
+                        },
+                    ] = function.body.as_deref().expect("WF body")
+                    else {
+                        panic!("the body returns one rounding conversion");
+                    };
+                    assert_eq!(*mode, CheckedConversionMode::Nearest);
+                    assert_eq!((*source, *destination), (source_type, destination_type));
+                    assert_eq!(*result, destination_type.ty());
+                    super::entailment::validate_derivations(&function.entailment);
+                } else {
+                    let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+                        panic!(
+                            "integer destination {source_name} -> {destination_name}: {outcome:?}"
+                        );
+                    };
+                    assert_eq!(issue.rule(), SemanticRule::Op1);
+                    assert!(matches!(issue.kind(), SemanticIssueKind::InvalidOperation));
+                }
+            });
+        }
+    }
+    assert_eq!(admitted, 20);
+}
+
+/// [FN-8] A total rounding row is admitted in an erased definition over
+/// symbolic endpoints, and its result is not an exact-domain proof [OP-6].
+#[test]
+fn rounding_conversion_is_admitted_in_contracts_and_proves_no_exact_domain() {
+    let source = br#"fn nonnegative<T: Int>(value: T) -> result: T pure contract {
+  define rounded = cvt.nearest::<T, f64>(value);
+  requires fge(rounded, 0.0_f64);
+} {
+  return value;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_semantics(source, |outcome| {
+        assert!(
+            matches!(outcome, SemanticOutcome::Complete(_)),
+            "a total rounding definition is admitted: {outcome:?}"
+        );
+    });
+    assert_rule_kind(
+        b"fn narrow(value: u64) -> result: f32 pure {\n  let rounded = cvt.nearest::<u64, f32>(value);\n  let back = cvt.nearest::<f32, f64>(rounded);\n  return cvt::<u64, f32>(value);\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n",
+        SemanticRule::Op6,
+        |kind| matches!(kind, SemanticIssueKind::UndischargedConversionDomainObligation { .. }),
+    );
+}

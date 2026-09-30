@@ -291,11 +291,11 @@ pub(super) fn resolve_uses_deferred(
                 }
                 if admissible.contains(class) {
                     if visible {
-                        // [TYPE-2, PRE-1] the three storage shapes and the
+                        // [TYPE-2, PRE-1] the four storage shapes and the
                         // cell `Box` are declared by the prelude like any
                         // other opaque struct, but each names one
                         // compiler-owned shape [TYPE-9] and not a source
-                        // struct, so a use that selects one of those four
+                        // struct, so a use that selects one of those five
                         // declarations resolves to its container identity in
                         // both of its domains: the nominal-type entry an
                         // `Array<T, n>` or `Box<T>` type names, and the
@@ -319,7 +319,7 @@ pub(super) fn resolve_uses_deferred(
                 }
             }
         }
-        // x1 [TYPE-2, PRE-1]: the three storage shapes no longer stand beside
+        // x1 [TYPE-2, PRE-1]: the four storage shapes no longer stand beside
         // the declaration tables. They are prelude opaque structs, so their
         // nominal-type and constructor entries arrive through the declaration
         // loop above like `Box`'s, and the container identity is attached
@@ -467,7 +467,7 @@ fn resolve_qualified(
             meta.scope == inventory
                 && !meta.type_owned
                 && !defers_to_definition(meta)
-                && !(use_record.interface && meta.implementation_only)
+                && (!use_record.interface || !meta.implementation_only)
         })
     {
         for class in &meta.entries {

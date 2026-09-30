@@ -161,6 +161,9 @@ impl TypeContext<'_> {
                 .map(|field| field.ty)
                 .collect(),
             CheckedNominalKind::Box { referent, .. } => vec![*referent],
+            // The state is released through the handle's last release, so its
+            // type is live wherever a handle's is [SHARE-1].
+            CheckedNominalKind::Shared { state } => vec![*state],
             CheckedNominalKind::Opaque => Vec::new(),
         };
         for ty in fields {
@@ -174,6 +177,7 @@ impl TypeContext<'_> {
             CheckedType::Nominal(id) => self.activate_nominal(id),
             CheckedType::Array { element, .. }
             | CheckedType::Buffer { element }
+            | CheckedType::Segments { element }
             | CheckedType::Window { element, .. } => {
                 self.activate_type(self.element_type(element)?)
             }

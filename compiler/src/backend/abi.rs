@@ -41,7 +41,7 @@
 //! the one row whose two arguments may name the same place. The emitter reads
 //! the source signature, not this representation table, to decide that.
 
-use crate::{IrFunction, IrNominalKind, IrProgram, IrType};
+use crate::{IrFunction, IrProgram, IrType};
 
 use super::{BackendFailure, storage::is_stored_aggregate};
 
@@ -137,6 +137,18 @@ impl FunctionAbi {
         self.result
     }
 
+    /// The ABI a waiting function [WAIT-1] is defined and called under: its
+    /// ordinary parameters, and every result constructed through a
+    /// destination, because a resumable frame returns its frame and
+    /// constructs its result in the caller's storage before it transfers
+    /// back (design/compiler/waiting-contexts.md).
+    pub(crate) fn waiting(&self) -> Self {
+        Self {
+            parameters: self.parameters.clone(),
+            result: ResultAbi::Destination(self.result.ty()),
+        }
+    }
+
     /// The ABI a definition's body is emitted under. A register-returned
     /// result is constructed through a destination pointer inside the body,
     /// as a larger result is, and only the definition's public entry
@@ -153,18 +165,6 @@ impl FunctionAbi {
     }
 }
 
-/// The integer-class words one returned first-class value can occupy on
-/// every admitted target: LLVM's x86-64 return convention assigns RAX, RDX
-/// and RCX, one per scalar leaf, and AArch64 assigns X0 to X7.
-const RETURN_INTEGER_WORDS: u64 = 3;
-
-/// The floating leaves one returned value can occupy on every admitted
-/// target: XMM0 and XMM1 on x86-64, and D0 to D7 on AArch64. A third
-/// floating leaf on x86-64 returns in the x87 register ST0 through a stack
-/// store and `fld`, which quiets a signaling NaN, so this bound also keeps
-/// returned floats bit-exact.
-const RETURN_FLOATING_LEAVES: u64 = 2;
-
 /// Whether every scalar leaf of `ty`'s LLVM representation gets its own
 /// return register on every admitted target.
 ///
@@ -173,114 +173,20 @@ const RETURN_FLOATING_LEAVES: u64 = 2;
 /// integer leaves than the target has registers is silently returned through
 /// a hidden pointer, which is the destination ABI with an extra copy. A third
 /// floating leaf on x86-64 goes through the x87 stack instead (see
-/// [`RETURN_FLOATING_LEAVES`]). The count
+/// `RETURN_FLOATING_LEAVES` in target layout). The count
 /// therefore follows the leaves of [`super::emitter::llvm_type`], not bytes:
 /// `Result<u32, Overflow>`, `{ i32, i32, i1 }`, uses three registers, and
 /// the 32-byte opaque representation `{ i128, i128 }` needs four words and
 /// keeps its destination. The admitted targets share the smaller x86-64
 /// budget, so the ABI and the linked definitions are the same on every
-/// target.
+/// target. A union-laid-out enum (compiler/payload-enum-layout) is
+/// memory-only, so a result holding one never fits and keeps its
+/// destination. The count lives in target layout, which the union-layout
+/// rule also reads.
 pub(crate) fn fits_return_registers(
     program: &IrProgram,
     ty: IrType,
 ) -> Result<bool, BackendFailure> {
-    let mut leaves = ReturnLeaves::default();
-    leaves.add(program, ty, 1)?;
-    Ok(leaves.integer_words <= RETURN_INTEGER_WORDS && leaves.floating <= RETURN_FLOATING_LEAVES)
-}
-
-/// The scalar leaves of one LLVM representation, counted in the return
-/// registers they occupy. Counts saturate, so a long array only ever
-/// exceeds the budget.
-#[derive(Default)]
-struct ReturnLeaves {
-    integer_words: u64,
-    floating: u64,
-}
-
-impl ReturnLeaves {
-    /// Adds `copies` repetitions of `ty`'s leaves, mirroring the
-    /// representation `llvm_type` emits for it.
-    fn add(&mut self, program: &IrProgram, ty: IrType, copies: u64) -> Result<(), BackendFailure> {
-        match ty {
-            // `i8`, `i1`, the integer widths, a pointer, and a Box owner's
-            // pointer each occupy one integer-class register.
-            IrType::Unit
-            | IrType::Bool
-            | IrType::Integer {
-                width: 8 | 16 | 32 | 64,
-                ..
-            }
-            | IrType::Address(_)
-            | IrType::RuntimeBoxPayload { .. } => self.integer(copies, 1),
-            IrType::Integer { .. } => return Err(BackendFailure::InvalidIr),
-            IrType::Float { width: 32 | 64 } => {
-                self.floating = self.floating.saturating_add(copies);
-            }
-            IrType::Float { .. } => return Err(BackendFailure::InvalidIr),
-            // `[0 x i8]` has no leaf; a longer array repeats its element.
-            IrType::Array { length: 0, .. } => {}
-            IrType::Array { element, length } => self.add(
-                program,
-                program.element(element).ok_or(BackendFailure::InvalidIr)?,
-                copies.saturating_mul(length),
-            )?,
-            // `{ ptr, i64 }`, and the runtime-capacity blocks' headers, whose
-            // zero-length element tails have no leaf.
-            IrType::Range { .. } => self.integer(copies, 2),
-            IrType::Buffer { .. } => self.integer(copies, 1),
-            IrType::Window {
-                shape,
-                element,
-                capacity,
-            } => {
-                let header = match (shape, capacity) {
-                    (crate::IrWindowShape::Slots, Some(_)) => 1,
-                    (crate::IrWindowShape::Slots, None) | (crate::IrWindowShape::Ring, Some(_)) => {
-                        2
-                    }
-                    (crate::IrWindowShape::Ring, None) => 3,
-                };
-                self.integer(copies, header);
-                if let Some(length @ 1..) = capacity {
-                    self.add(
-                        program,
-                        program.element(element).ok_or(BackendFailure::InvalidIr)?,
-                        copies.saturating_mul(length),
-                    )?;
-                }
-            }
-            IrType::Nominal(id) => {
-                let nominal = program.nominal(id).ok_or(BackendFailure::InvalidIr)?;
-                match nominal.kind() {
-                    IrNominalKind::Box { .. } => self.integer(copies, 1),
-                    // `{ i128, i128 }`: each `i128` takes two words.
-                    IrNominalKind::Opaque => self.integer(copies, 4),
-                    // `i1` or `i32`.
-                    IrNominalKind::Enum { .. } if nominal.is_tag_only_enum() => {
-                        self.integer(copies, 1);
-                    }
-                    // The `i32` tag, then every variant's fields in order.
-                    IrNominalKind::Enum { variants } => {
-                        self.integer(copies, 1);
-                        for field in variants.iter().flat_map(|variant| variant.fields()) {
-                            self.add(program, field.ty(), copies)?;
-                        }
-                    }
-                    IrNominalKind::Struct { fields } => {
-                        for field in fields {
-                            self.add(program, field.ty(), copies)?;
-                        }
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn integer(&mut self, copies: u64, words: u64) {
-        self.integer_words = self
-            .integer_words
-            .saturating_add(copies.saturating_mul(words));
-    }
+    crate::target::fits_return_registers(program.nominals(), program.elements(), ty)
+        .map_err(|_| BackendFailure::InvalidIr)
 }

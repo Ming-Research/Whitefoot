@@ -104,6 +104,9 @@ fn lower_type(erasure: TypeLowering<'_>, value: CheckedType) -> Result<IrType, L
         CheckedType::Buffer { element } => IrType::Buffer {
             element: lower_element(erasure, element)?,
         },
+        CheckedType::Segments { element } => IrType::Segments {
+            element: lower_element(erasure, element)?,
+        },
         CheckedType::Window {
             shape,
             element,
@@ -215,6 +218,7 @@ impl From<CheckedConversionMode> for IrConversionMode {
             CheckedConversionMode::Checked => Self::Checked,
             CheckedConversionMode::Defined => Self::Defined,
             CheckedConversionMode::Wrap => Self::Wrap,
+            CheckedConversionMode::Nearest => Self::Nearest,
         }
     }
 }
@@ -288,6 +292,22 @@ impl From<CheckedTargetDomainObligation> for IrTargetDomainObligation {
     }
 }
 
+/// Which permitted statement-group call offers lowering publishes.
+///
+/// Only a call's publication is selected here: an omitted offer is the
+/// ordinary call its refused edge already makes, so no value, acceptance or
+/// proof judgment reads this.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum CallGrain {
+    /// Offer a permitted call only when its callee belongs to or reaches a
+    /// cyclic call component, or its static work summary reaches the runtime
+    /// work unit that prices a range split.
+    #[default]
+    WorkUnit,
+    /// Offer every permitted call, for tests of the offer path.
+    Every,
+}
+
 /// Whether lowering actualizes ordinary permission-derived overlap.
 ///
 /// Every mode runs the same permission judgment and preserves source acceptance.
@@ -296,30 +316,27 @@ pub enum OverlapLowering {
     /// Emit sequential ordinary calls.
     #[default]
     Off,
-    /// Outline eligible ordinary calls and counted-loop groups.
+    /// Outline eligible ordinary calls and counted-loop groups, offering
+    /// every permitted call.
     On,
+    /// `On` with its call offers selected by the [`CallGrain::WorkUnit`]
+    /// rule, the `--par` default.
+    OnWithCallGrain,
     /// Control over the recursion budget every other `On` form derives from
     /// the runtime: pin its starting value, or emit no budget family at all.
     OnWithRecursionBudget {
         /// Where one call into a recursive component starts counting.
         budget: RecursionBudget,
-        /// Optional scalar-leaf offer suppression.
-        maximum_scalar_leaf_operations: Option<u32>,
+        /// Which permitted call offers are published.
+        call_grain: CallGrain,
         /// Also select sequential clones on refused compute offers.
         sequential_refusal: bool,
     },
     /// Optional control: an ungranted ordinary call may enter
     /// its existing ordinary-ABI sequential clone at the original join.
     OnWithSequentialRefusal {
-        /// Optional suppression of small scalar leaf offers, as in the leaf control.
-        maximum_scalar_leaf_operations: Option<u32>,
-    },
-    /// Retain `On` except for offers of straight-line scalar
-    /// leaves with at most this many nonconstant IR operations. This is an
-    /// actualization heuristic, not an acceptance bound or machine-cost claim.
-    OnWithoutSmallScalarLeaves {
-        /// Maximum nonconstant operations in a scalar leaf whose offer is omitted.
-        maximum_operations: u32,
+        /// Which permitted call offers are published.
+        call_grain: CallGrain,
     },
 }
 
@@ -357,9 +374,10 @@ impl From<crate::target::TargetLayoutFailure> for LoweringFailure {
     }
 }
 
-/// The [PRE-1] records whose bodies the compiler itself emits: the nine
+/// The [PRE-1] records whose bodies the compiler itself emits: the ten
 /// construction functions [OP-13], the nine window operations [OP-10],
-/// `swap` [OP-11] and `free_empty` [OP-14].
+/// `swap` [OP-11], `free_empty` [OP-14], and `shared_new` and
+/// `shared_share` [SHARE-1].
 ///
 /// The host functions [PRE-2] are deliberately absent: those are body-less
 /// because the trusted base defines them, and calling one emits an ordinary
@@ -367,13 +385,14 @@ impl From<crate::target::TargetLayoutFailure> for LoweringFailure {
 /// build reaches [`LoweringFailure::UnimplementedPreludeRow`], so a row this
 /// version has not built can never become a module that names a symbol
 /// nothing defines.
-pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 20] = [
-    // [OP-13] the nine construction functions.
+pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 23] = [
+    // [OP-13] the ten construction functions.
     "box_new",
     "array_filled",
     "slots_new",
     "ring_new",
     "box_array_filled",
+    "box_segments_filled",
     "box_slots_new",
     "box_ring_new",
     "slots_from_array",
@@ -391,6 +410,9 @@ pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 20] = [
     // [OP-11] `swap` and [OP-14] `free_empty`.
     "swap",
     "free_empty",
+    // [SHARE-1] the shared-object handle's two functions.
+    "shared_new",
+    "shared_share",
 ];
 
 mod builder;

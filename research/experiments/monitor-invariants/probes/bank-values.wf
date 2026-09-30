@@ -1,0 +1,15 @@
+fn transfer(a: u64, b: u64, n: u64) -> result: unit pure contract {
+  requires a + b <= 100_u64;
+  requires a + b >= 100_u64;
+  requires a >= n;
+} {
+  let a_next = a - n;
+  let b_next = b + n;
+  invariant kept_low: a_next + b_next <= 100_u64;
+  invariant kept_high: a_next + b_next >= 100_u64;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

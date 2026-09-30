@@ -14,13 +14,13 @@ alias open_read = std::fs::open_read;
 alias read_at = std::fs::read_at;
 alias relative_path = std::fs::relative_path;
 
-fn acquire(factory: &HandleFactory, root: &DirectoryRead, path: &RelativePath) -> result: Result<ReadFile, IoError> reads(root), reads(path), writes(factory) {
+fn acquire(factory: &HandleFactory, root: &DirectoryRead, path: &RelativePath) -> result: Result<ReadFile, IoError> reads(root), reads(path), writes(factory) waits {
   doc "The owner or the error is propagated unchanged; propagate consumes the Result place exactly once and the error edge returns Err with its auto-derived context record [ERR-3].";
   let file = propagate open_read(factory: factory, root: root, path: path);
   return Ok<ReadFile, IoError>(value: move file);
 }
 
-fn exercise(args: &Args, cwd: &DirectoryRead, files: &HandleFactory) -> status: ExitStatus reads(args), reads(cwd), writes(files) {
+fn exercise(args: &Args, cwd: &DirectoryRead, files: &HandleFactory) -> status: ExitStatus reads(args), reads(cwd), writes(files) waits {
   doc "The acquisition goes through the propagating helper, and the destination is a caller-formed range reference over one frame-resident array.";
   match arg_get(args: args, position: 1_u64) {
     Ok(value: text) => {
@@ -66,7 +66,7 @@ fn exercise(args: &Args, cwd: &DirectoryRead, files: &HandleFactory) -> status: 
   }
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "PRE-1 ordinary Inputs are destructured once; the referenced operation chain returns before the initial directory is explicitly closed on every exit.";
   let Inputs(args: args, cwd: cwd, stdout: unused_stdout, stderr: unused_stderr, handles: files, stdin: unused_stdin) = move inputs;
   let outcome = exercise(args: &args, cwd: &cwd, files: &files);

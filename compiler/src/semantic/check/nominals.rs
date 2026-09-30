@@ -78,7 +78,11 @@ impl<'unit> TypeContext<'unit> {
                 .iter()
                 .flat_map(|variant| variant.fields.iter())
                 .collect(),
-            CheckedNominalKind::Box { .. } | CheckedNominalKind::Opaque => Vec::new(),
+            // A handle is one pointer to the shared object, so its state is no
+            // part of its layout [SHARE-1].
+            CheckedNominalKind::Box { .. }
+            | CheckedNominalKind::Opaque
+            | CheckedNominalKind::Shared { .. } => Vec::new(),
         };
         let mut pending: Vec<_> = fields.into_iter().map(|field| field.ty).collect();
         let mut visited = HashSet::new();

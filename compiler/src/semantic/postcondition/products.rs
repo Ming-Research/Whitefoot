@@ -37,11 +37,17 @@ record_enum!(NormalizedRelation {
 });
 
 record_enum!(RelationDatum {
-    0 => Result { ordinal, ty },
-    1 => Parameter { ordinal, projections, ty },
+    0 => Result { ordinal, projections, ty },
+    1 => Parameter { ordinal, projections, ty, denotation },
     2 => NamedConst { declaration, projections, ty },
     3 => Literal { value, origin },
     4 => Measure(f0, f1),
+});
+
+record_enum!(ParameterDenotation {
+    0 => EntryImage,
+    1 => ExitState,
+    2 => EntryDatum,
 });
 
 record_enum!(PostconditionConstantOrigin {
@@ -70,6 +76,7 @@ record_enum!(PostconditionReturnDatum {
     1 => Place(f0),
     2 => Literal { value, origin },
     3 => Measure(f0, f1),
+    4 => Construct { fields },
 });
 
 record_struct!(PostconditionReturnPlace {

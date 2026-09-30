@@ -262,4 +262,4 @@ pub(crate) use native::{observe_layout, observe_worker_schedule, spine_source, w
 #[allow(dead_code)]
 mod process;
 #[allow(unused_imports)]
-pub(crate) use process::{ProgramChild, run_command};
+pub(crate) use process::{PROGRAM_DEADLINE, ProgramChild, output_within, run_command};

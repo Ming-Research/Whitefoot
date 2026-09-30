@@ -1,0 +1,23 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+enum Held {
+  Full(count: u64);
+  Empty();
+}
+
+struct Slot {
+  held: Held;
+  serial: u64;
+}
+
+fn pass_slot(slot: Slot) -> result: Slot pure contract {
+  ensures result.held.Full.count == 3_u64;
+} {
+  doc "An enum-payload step below an unrouted result supplies no datum: no route selects a variant of it [CALL-4], so result.held.Full.count is refused under FN-9 although result.serial would be admitted.";
+  return move slot;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

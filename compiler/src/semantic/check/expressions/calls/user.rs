@@ -121,6 +121,11 @@ struct FormalCallBoundary {
     contract: CheckedCallContract,
 }
 
+/// [WAIT-1, DIAG-1] the repair for a waiting call in a function that does
+/// not wait. Declaring the enclosing function `waits` admits the call; every
+/// caller of that function then meets the same rule, up to a waiting entry.
+pub(in crate::semantic::check) const WAIT1_DECLARE_THE_CALLER_WAITING: &str = "write `waits` after the enclosing function's effect row, so the call stands in a waiting function; each caller of that function then waits in turn, up to an entry that waits";
+
 impl<'unit> Checker<'_, 'unit> {
     pub(super) fn check_user_call(
         &mut self,
@@ -221,6 +226,39 @@ impl<'unit> Checker<'_, 'unit> {
             check_context,
             function,
         } = context;
+        // [WAIT-1] a waiting call stands only in the body of a waiting
+        // function, so every function that does not wait is wait-free and
+        // compute overlap never contains a wait [PAR-1, PAR-2].
+        if signature.waits && !function.waits {
+            return self.types.declarations.issue_node(
+                SemanticRule::Wait1,
+                node,
+                SemanticIssueKind::WaitingCallOutsideWaitingFunction {
+                    callee: signature.name.clone(),
+                    context: "a function that does not wait",
+                    mechanical_fix: WAIT1_DECLARE_THE_CALLER_WAITING,
+                },
+            );
+        }
+        // [SHARE-2] an atomic statement's guard and block contain no waiting
+        // call, so the object is never held while its context waits.
+        if signature.waits && self.body.atomic_depth > 0 {
+            return self.types.declarations.issue_node(
+                SemanticRule::Share2,
+                node,
+                SemanticIssueKind::WaitInsideAtomic {
+                    construct: "a waiting call",
+                    mechanical_fix: super::super::super::control::SHARE2_WAIT_OUTSIDE_THE_BLOCK,
+                },
+            );
+        }
+        if signature.waits {
+            let call = self.types.declarations.tree.path(node)?.clone();
+            self.body.waiting.calls.push(call);
+            if self.types.declarations.is_spawn(node)? {
+                self.check_spawn(check_context, node, signature)?;
+            }
+        }
         let target = signature.id;
         let fields = if let Some(list) = self
             .types
@@ -251,6 +289,7 @@ impl<'unit> Checker<'_, 'unit> {
         }
         let mut arguments = Vec::with_capacity(fields.len());
         let mut argument_nodes = Vec::with_capacity(fields.len());
+        let mut argument_atoms = Vec::with_capacity(fields.len());
         let mut goal_arguments = Vec::with_capacity(fields.len());
         // [EFF-5] each actual's resolved path set, in parameter order. The set
         // has more than one member only where the actual is a reference a
@@ -409,6 +448,7 @@ impl<'unit> Checker<'_, 'unit> {
                 bindings,
             )?);
             argument_nodes.push(self.types.declarations.tree.path(atom)?.clone());
+            argument_atoms.push(atom);
             actual_paths.push(paths);
             actual_captures.push(
                 self.body.note_capture(
@@ -498,7 +538,9 @@ impl<'unit> Checker<'_, 'unit> {
                 requirements: Vec::new(),
                 result,
                 result_borrow: None,
-                allocation: self.types.allocation_fit_of_call(signature)?,
+                allocation: self
+                    .types
+                    .allocation_fit_of_call(signature, node, &argument_atoms)?,
             },
             mode: result_mode,
             // [REF-3] no call delivers a reference: FN-1 returns owned values
@@ -877,10 +919,14 @@ impl<'unit> TypeContext<'unit> {
     /// stored type is that cell's and its count is its second argument. The
     /// constant-capacity rows allocate nothing at runtime and the cell row
     /// `box_new` allocates exactly one value, so neither carries the
-    /// obligation.
+    /// obligation. `node` is the call and `atoms` its argument atoms in
+    /// declared order, whose coordinates the record keeps for a target that
+    /// cannot hold the retained bound [STOR-6].
     fn allocation_fit_of_call(
         &self,
         signature: &FunctionSignature,
+        node: NodeId,
+        atoms: &[NodeId],
     ) -> Result<Option<super::super::super::super::model::CheckedAllocationFit>, CheckStop> {
         let (count, cell) = match signature.name.as_str() {
             "box_array_filled" | "box_slots_new" | "box_ring_new" => (0, signature.result),
@@ -910,12 +956,19 @@ impl<'unit> TypeContext<'unit> {
             }
             None => return Err(SemanticCompilerFailure::InvalidResolution.into()),
         };
+        let tree = &self.declarations.tree;
+        let count_atom = atoms
+            .get(count)
+            .copied()
+            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
         Ok(Some(
             super::super::super::super::model::CheckedAllocationFit {
                 cell,
                 element,
                 layout_ceiling,
                 count,
+                site: tree.coordinate(node)?,
+                count_site: tree.coordinate(count_atom)?,
                 source_length_upper_bound: None,
             },
         ))
@@ -1569,7 +1622,7 @@ impl<'unit> DeclarationInventory<'unit> {
     /// [STOR-8] a compilation unit carrying the no-heap declaration cannot
     /// call an allocating prelude row.
     ///
-    /// The five rows the rule names are exactly the allocating [OP-13] and
+    /// The six rows the rule names are exactly the allocating [OP-13] and
     /// [OP-10] records that take a cell from the heap; `slots_new`,
     /// `ring_new` and `array_filled` build frame-resident shapes and are not
     /// among them.

@@ -90,6 +90,10 @@ pub enum IrAddressed {
     Buffer {
         element: IrElement,
     },
+    /// One `Segments<T>` block [TYPE-9], reached only through its cell.
+    Segments {
+        element: IrElement,
+    },
     /// Dense inline array storage reached through a checked borrow or target.
     Array {
         element: IrElement,
@@ -114,6 +118,7 @@ impl IrAddressed {
             Self::Float { width } => IrType::Float { width },
             Self::Nominal(id) => IrType::Nominal(id),
             Self::Buffer { element } => IrType::Buffer { element },
+            Self::Segments { element } => IrType::Segments { element },
             Self::Array { element, length } => IrType::Array { element, length },
             Self::Window {
                 shape,
@@ -135,6 +140,7 @@ impl IrAddressed {
             IrType::Float { width } => Self::Float { width },
             IrType::Nominal(id) => Self::Nominal(id),
             IrType::Buffer { element } => Self::Buffer { element },
+            IrType::Segments { element } => Self::Segments { element },
             IrType::Range { .. } | IrType::RuntimeBoxPayload { .. } => return None,
             IrType::Array { element, length } => Self::Array { element, length },
             IrType::Window {
@@ -190,6 +196,16 @@ pub enum IrType {
     /// the `Box` value is that pointer — and no value of this type is ever
     /// copied, passed, or stored.
     Buffer {
+        element: IrElement,
+    },
+    /// One `Segments<T>` block [TYPE-9]: `[len | bounds | elements]` in one
+    /// allocation, where `bounds` is `len + 1` element offsets beginning at
+    /// zero and the elements begin at the first offset past the bounds that
+    /// the element type's alignment admits (compiler/storage-representation).
+    /// Like a runtime-capacity `Array`, it is only `Box` content and is only
+    /// ever reached by pointer. Its elements are copy [OP-13], so releasing it
+    /// is one free.
+    Segments {
         element: IrElement,
     },
     /// One `&[T]` range reference [REF-4]: a pointer to the first element of
@@ -259,6 +275,7 @@ pub(crate) fn type_derives_release(
             // A runtime-capacity block is one heap object the owner frees
             // [TYPE-9, STOR-3], so it always derives a release.
             IrType::Buffer { .. }
+            | IrType::Segments { .. }
             | IrType::Window {
                 capacity: None, ..
             } => return Some(true),
@@ -307,7 +324,9 @@ pub(crate) fn type_derives_release(
                             .map(IrField::ty),
                     );
                 }
-                IrNominalKind::Box { .. } => {
+                // A handle's release releases a share of its object, and the
+                // last one its state [SHARE-1].
+                IrNominalKind::Box { .. } | IrNominalKind::Shared { .. } => {
                     return Some(true);
                 }
                 // Ordinary opaque values have empty release [PRE-1].
@@ -374,6 +393,11 @@ pub enum IrNominalKind {
     },
     /// An ordinary opaque nominal supplied by PRE-1.
     Opaque,
+    /// [SHARE-1] a handle to a shared object: one pointer to the object,
+    /// whose state of type `state` the runtime keeps behind its header.
+    Shared {
+        state: IrType,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -505,6 +529,10 @@ pub enum IrConversionMode {
     Checked,
     Defined,
     Wrap,
+    /// Total rounding into a float destination [OP-6]. It shares the exact
+    /// conversion's instruction sequence, which rounds to nearest, ties to
+    /// even, in the default floating-point environment [OP-8].
+    Nearest,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -774,6 +802,32 @@ pub enum IrOperation {
         function: u32,
         arguments: Vec<IrValueId>,
     },
+    /// [WAIT-3] starts `function`, a synthesized wrapper taking exactly
+    /// `arguments` by value and returning `Unit`, in a context of its own;
+    /// the activation continues without waiting for it. Defines `Unit`.
+    ContextStart {
+        function: u32,
+        arguments: Vec<IrValueId>,
+    },
+    /// [WAIT-3] waits until every context this activation started has
+    /// finished. It stands before every exit of an activation that starts
+    /// one. Defines `Unit`.
+    ContextJoin,
+    /// [WAIT-3] starts `function`, a synthesized wrapper taking exactly
+    /// `arguments` by value and returning the spawned call's result, in a
+    /// context of its own whose result the starting activation keeps. Defines
+    /// `Unit`; [`Self::ContextAwait`] names this value to read the result.
+    ContextStartBound {
+        function: u32,
+        arguments: Vec<IrValueId>,
+    },
+    /// [WAIT-3] waits until the context `start` started has finished and
+    /// defines its result. It stands at the beginning of the first later
+    /// statement of the binding's block that names the binding or may leave
+    /// the block, and otherwise at the block's end.
+    ContextAwait {
+        start: IrValueId,
+    },
     Integer {
         operation: IrIntegerOperation,
         operand_type: IrType,
@@ -835,6 +889,46 @@ pub enum IrOperation {
         value: IrValueId,
         layout_ceiling: IrLayoutCeiling,
         target_domains: IrRuntimeTargetObligations,
+    },
+    /// [OP-13] the element total of `box_segments_filled`: the sum of
+    /// `lengths`, or `2^63` where the sum is larger, which no block admits.
+    SegmentsTotal {
+        lengths: IrValueId,
+    },
+    /// [OP-13] whether `box_segments_filled` returns a block: the total and
+    /// the count of `lengths` fit the size predicate its record states,
+    /// judged with the element type's layout ceiling so that the answer is
+    /// the same on every qualified target.
+    SegmentsFits {
+        /// The cell a block would be built for.
+        nominal: IrNominalId,
+        lengths: IrValueId,
+        total: IrValueId,
+        layout_ceiling: IrLayoutCeiling,
+    },
+    /// [OP-13] `box_segments_filled` after [`Self::SegmentsFits`] held: one
+    /// `Segments<T>` block whose bounds are the running sums of `lengths` and
+    /// whose every element holds `value`, and the cell that owns it, which is
+    /// the same pointer.
+    SegmentsFill {
+        nominal: IrNominalId,
+        lengths: IrValueId,
+        total: IrValueId,
+        value: IrValueId,
+    },
+    /// [MSR-1] a `Segments` block's one measure, its segment count.
+    SegmentsMeasure {
+        segments: IrValueId,
+    },
+    /// [REF-4] the range reference over segment `index`, whose bound
+    /// `index < len` was discharged before this operation exists [OP-4].
+    SegmentSlice {
+        segments: IrValueId,
+        index: IrValueId,
+    },
+    /// [REF-4] the range reference over every element in segment order.
+    SegmentsAll {
+        segments: IrValueId,
     },
     /// [MSR-1] the one measure a runtime-capacity `Array<T>` has, read from
     /// the `len` word at the head of its block. `buffer` is the block's
@@ -1009,6 +1103,38 @@ pub enum IrOperation {
     BoxDeref {
         nominal: IrNominalId,
         value: IrValueId,
+    },
+    /// [SHARE-1] a new shared object of `nominal`, holding one handle and a
+    /// state not yet stored. Defines the handle.
+    SharedNew {
+        nominal: IrNominalId,
+    },
+    /// The address of the state of the shared object `object` names. Defines
+    /// an address of the nominal's state type.
+    SharedState {
+        nominal: IrNominalId,
+        object: IrValueId,
+    },
+    /// [SHARE-1] one further handle to the object `object` names: `object`
+    /// itself, whose handle count rose by one. Defines the handle.
+    SharedRetain {
+        nominal: IrNominalId,
+        object: IrValueId,
+    },
+    /// [SHARE-2, SHARE-3] waits until this context holds the object alone.
+    /// Defines `Unit`.
+    SharedAcquire {
+        object: IrValueId,
+    },
+    /// [SHARE-3] a guard read false: gives up the hold and waits until a
+    /// statement that writes the object ends. Defines `Unit`.
+    SharedWatch {
+        object: IrValueId,
+    },
+    /// [SHARE-3] gives up this context's hold, after a statement that may
+    /// have written the object. Defines `Unit`.
+    SharedUnlock {
+        object: IrValueId,
     },
     /// The first-element pointer used only by a synthesized split capture of
     /// a `Box<Array<T>>`. The source Box value remains the allocation-base
@@ -1385,6 +1511,11 @@ pub(crate) struct IrSourceAllocation {
     pub(crate) count_argument: usize,
     pub(crate) layout_ceiling: IrLayoutCeiling,
     pub(crate) source_length_upper_bound: u64,
+    /// Where the call and its count argument are written, which a target
+    /// that cannot hold the bound names [STOR-6]. Presentation only: no
+    /// qualification reads them.
+    pub(crate) site: crate::SyntaxCoordinate,
+    pub(crate) count_site: crate::SyntaxCoordinate,
 }
 
 impl IrSourceAllocation {
@@ -1402,6 +1533,14 @@ impl IrSourceAllocation {
 
     pub(crate) const fn source_length_upper_bound(self) -> u64 {
         self.source_length_upper_bound
+    }
+
+    pub(crate) const fn site(self) -> crate::SyntaxCoordinate {
+        self.site
+    }
+
+    pub(crate) const fn count_site(self) -> crate::SyntaxCoordinate {
+        self.count_site
     }
 }
 
@@ -1474,11 +1613,20 @@ pub struct IrFunction {
     pub(crate) counted_ranges: Vec<IrCountedRange>,
     pub(crate) overlaps: Vec<IrOverlap>,
     pub(crate) synthesis: Option<IrSynthesis>,
+    /// [WAIT-1] whether the function waits: its declaration writes `waits`,
+    /// or it is the wrapper a context start runs. The backend lowers such a
+    /// function to a resumable frame and every call of it to a transfer.
+    pub(crate) waits: bool,
 }
 
 impl IrFunction {
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// Whether the function waits [WAIT-1].
+    pub const fn waits(&self) -> bool {
+        self.waits
     }
 
     /// Why this function exists, or `None` for a source function.

@@ -775,7 +775,9 @@ fn every_retired_comparison_name_is_a_free_identifier() {
 // roles. Proof-only invariant declarations select their own lookup domain.
 #[test]
 fn operation_and_mode_names_resolve_as_header_and_body_invariants() {
-    for spelling in ["cvt", "wrap", "defined", "checked", "sat", "strict"] {
+    for spelling in [
+        "cvt", "wrap", "defined", "checked", "sat", "strict", "nearest",
+    ] {
         for header in [false, true] {
             let declaration = if header {
                 format!(
@@ -1446,7 +1448,9 @@ fn counted_range_label_is_non_enclosing_after_the_loop() {
 
 #[test]
 fn counted_range_binder_uses_the_for_binder_reservation_role() {
-    for name in ["cvt", "wrap", "defined", "checked", "sat", "strict"] {
+    for name in [
+        "cvt", "wrap", "defined", "checked", "sat", "strict", "nearest",
+    ] {
         for label in ["", " @range"] {
             let source = format!(
                 "fn probe(limit: u64) -> result: unit pure {{\n  for{label} ({name} in 0_u64..limit) {{\n    break{label};\n  }}\n  return unit;\n}}\n"
@@ -2618,8 +2622,9 @@ fn ordinary_prelude_diagnostic_origins_follow_the_complete_record_preorder() {
     // not its own.
     for (name, origins) in [
         ("Slots", vec![5, 6]),
-        ("Bool", vec![22]),
-        ("Overflow", vec![37, 38]),
+        ("Shared", vec![26, 27]),
+        ("Bool", vec![29]),
+        ("Overflow", vec![44, 45]),
     ] {
         let source = format!("struct {name} {{\n}}\n");
         with_resolution_sources(
@@ -2679,7 +2684,7 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     assert_eq!(first, second);
     // [PRE-1]'s preorder: "each opaque struct above in written order with its
     // refused constructor and its fields in declaration order". x1 puts the
-    // three storage shapes first, each with its nominal, the constructor
+    // four storage shapes first, each with its nominal, the constructor
     // [TYPE-2] exists to refuse, its element and capacity parameters and its
     // readonly measure fields; the cell follows with four records of its own.
     // The host handles are the standard library's [PRE-2], not PRE-1's.
@@ -2697,28 +2702,43 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     assert_eq!(first[15].1, "len");
     assert_eq!(first[16].1, "cap");
     assert_eq!(first[17].1, "head");
-    assert_eq!(first[18].1, "Box");
-    assert_eq!(first[18].2, Some(DeclarationClass::NominalType));
-    assert_eq!(first[19].1, "Box");
-    assert_eq!(first[19].2, Some(DeclarationClass::StructConstructor));
+    assert_eq!(first[18].1, "Segments");
     assert_eq!(first[20].1, "T");
-    assert_eq!(first[21].1, "inner");
+    assert_eq!(first[21].1, "len");
+    assert_eq!(first[22].1, "Box");
+    assert_eq!(first[22].2, Some(DeclarationClass::NominalType));
+    assert_eq!(first[23].1, "Box");
+    assert_eq!(first[23].2, Some(DeclarationClass::StructConstructor));
+    assert_eq!(first[24].1, "T");
+    assert_eq!(first[25].1, "inner");
+    // The shared-object handle [SHARE-1] closes the opaque phase: its
+    // nominal, its refused constructor and its state parameter.
+    assert_eq!(first[26].1, "Shared");
+    assert_eq!(first[26].2, Some(DeclarationClass::NominalType));
+    assert_eq!(first[27].1, "Shared");
+    assert_eq!(first[27].2, Some(DeclarationClass::StructConstructor));
+    assert_eq!(first[28].1, "T");
     // Then each enum with its variants and their fields, then `Int` and
     // `Float`, then the construction functions [OP-13], then the window
-    // operations [OP-10], then `swap` [OP-11] and `free_empty` [OP-14], each
-    // with its type, const and value parameters in declared order.
-    assert_eq!(first[22].1, "Bool");
-    assert_eq!(first[44].1, "Int");
-    assert_eq!(first[45].1, "Float");
-    assert_eq!(first[46].1, "box_new");
-    assert_eq!(first[77].1, "place_back");
-    assert_eq!(first[121].1, "swap");
-    assert_eq!(first[125].1, "free_empty");
-    // The opaque phase holds the three storage shapes and the cell, 22
-    // records: `Array` contributes five, `Slots` six, `Ring` seven and `Box`
-    // four. The host declarations left PRE-1 for the standard library
-    // [PRE-2], so the inventory holds 128 records where it held 397.
-    assert_eq!(first.len(), 128);
+    // operations [OP-10], then `swap` [OP-11], `shared_new` and
+    // `shared_share` [SHARE-1] and `free_empty` [OP-14], each with its type,
+    // const and value parameters in declared order.
+    assert_eq!(first[29].1, "Bool");
+    assert_eq!(first[51].1, "Int");
+    assert_eq!(first[52].1, "Float");
+    assert_eq!(first[53].1, "box_new");
+    assert_eq!(first[70].1, "box_segments_filled");
+    assert_eq!(first[88].1, "place_back");
+    assert_eq!(first[132].1, "swap");
+    assert_eq!(first[136].1, "shared_new");
+    assert_eq!(first[139].1, "shared_share");
+    assert_eq!(first[142].1, "free_empty");
+    // The opaque phase holds the four storage shapes, the cell and the
+    // shared-object handle, 29 records: `Array` contributes five, `Slots`
+    // six, `Ring` seven, `Segments` four, `Box` four and `Shared` three. The
+    // host declarations left PRE-1 for the standard library [PRE-2], so the
+    // inventory holds 145 records where it held 397.
+    assert_eq!(first.len(), 145);
     // `free_empty`'s own value parameter is the last record of the preorder.
     assert_eq!(first.last().map(|record| record.1.as_str()), Some("window"));
     assert!(
@@ -2732,7 +2752,7 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
 /// While the host declarations were PRE-1's the inventory held 397 records,
 /// and this test showed that a late collision kept an ordinal above `u8`. The
 /// host declarations are the standard library's now [PRE-2] and the
-/// inventory holds 128, so no prelude ordinal exceeds `u8`; what remains to
+/// inventory holds 145, so no prelude ordinal exceeds `u8`; what remains to
 /// show is that the last function's collision names its own preorder ordinal.
 #[test]
 fn a_late_prelude_function_collision_names_its_preorder_ordinal() {
@@ -2749,7 +2769,7 @@ fn a_late_prelude_function_collision_names_its_preorder_ordinal() {
             };
             assert_eq!(conflicts.len(), 1);
             assert!(
-                matches!(conflicts[0].origin(), DeclarationOrigin::Prelude(id) if id.ordinal() == 125)
+                matches!(conflicts[0].origin(), DeclarationOrigin::Prelude(id) if id.ordinal() == 142)
             );
         },
     );

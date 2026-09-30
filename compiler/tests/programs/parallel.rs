@@ -21,7 +21,7 @@ use whitefoot::{FragmentGranularity, module_requires_parallel_runtime};
 #[test]
 fn the_quadrature_program_publishes_the_analytic_integral_under_each_policy() {
     use whitefoot::{
-        CompilerLimits, OverlapLowering, RecursionBudget, SourceInput,
+        CallGrain, CompilerLimits, OverlapLowering, RecursionBudget, SourceInput,
         compile_with_permission_ledger,
     };
 
@@ -39,16 +39,14 @@ fn the_quadrature_program_publishes_the_analytic_integral_under_each_policy() {
         (OverlapLowering::Off, 0, [None].as_slice()),
         (OverlapLowering::On, 0, [None].as_slice()),
         (
-            OverlapLowering::OnWithoutSmallScalarLeaves {
-                maximum_operations: 16,
-            },
+            OverlapLowering::OnWithCallGrain,
             2,
             [Some("1"), Some("2"), Some("4")].as_slice(),
         ),
         (
             OverlapLowering::OnWithRecursionBudget {
                 budget: RecursionBudget::Off,
-                maximum_scalar_leaf_operations: Some(16),
+                call_grain: CallGrain::WorkUnit,
                 sequential_refusal: false,
             },
             2,
@@ -66,14 +64,11 @@ fn the_quadrature_program_publishes_the_analytic_integral_under_each_policy() {
         assert_eq!(
             ledger
                 .iter()
-                .filter(|line| line.contains("scalar leaf limit"))
+                .filter(|line| line.contains("call grain: omitted offer"))
                 .count(),
             omitted_leaves
         );
-        let has_budget = matches!(
-            mode,
-            OverlapLowering::On | OverlapLowering::OnWithoutSmallScalarLeaves { .. }
-        );
+        let has_budget = matches!(mode, OverlapLowering::On | OverlapLowering::OnWithCallGrain);
         assert_eq!(
             module.lines().any(|line| line.starts_with("define ")
                 && line.contains(" double @wf__par_budget_adaptive(")),
@@ -168,7 +163,7 @@ fn tree_window_and_deep_spine_preserve_their_independent_results() {
                     budget: whitefoot::RecursionBudget::Pinned(
                         std::num::NonZeroU8::new(2).unwrap(),
                     ),
-                    maximum_scalar_leaf_operations: None,
+                    call_grain: whitefoot::CallGrain::Every,
                     sequential_refusal: false,
                 },
             )
@@ -402,5 +397,26 @@ fn layout_preserves_both_results_without_benchmark_repetition() {
         assert!(output.status.success(), "workers={workers:?}: {output:?}");
         assert_eq!(output.stdout, expected, "workers={workers:?}");
         assert!(output.stderr.is_empty());
+    }
+}
+
+/// [SHARE-1, SHARE-3] sixteen contexts adding to one counter, and producers
+/// and consumers passing values through one guarded queue, reach the sums
+/// every order of their atomic statements gives, on one driver and on four.
+/// Four drivers run the contexts on four threads, so an atomic statement that
+/// did not hold its object alone would lose increments or deliver a value
+/// twice; the program names the first wrong sum in its status.
+#[test]
+fn shared_objects_keep_every_update_on_one_driver_and_on_four() {
+    let program = build_program(&compile_program("shared_objects.wf"));
+    for drivers in ["1", "4"] {
+        for round in 0..3 {
+            let output = program.run_with_settings(None, &[("WF_DRIVERS", drivers)]);
+            assert_eq!(
+                output.status.code(),
+                Some(0),
+                "drivers {drivers}, round {round}: {output:?}"
+            );
+        }
     }
 }

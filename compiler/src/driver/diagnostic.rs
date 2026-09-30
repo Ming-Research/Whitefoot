@@ -27,7 +27,10 @@
 //! Stops that are not source rejections -- resource ceilings, invocation
 //! envelopes, internal invariants, target layout, backend -- carry
 //! compiler-facing payloads with no writer repair. They keep their stage
-//! value's `Debug` text as one `payload` field.
+//! value's `Debug` text as one `payload` field. The one exception is a
+//! target-layout stop at a written allocation whose proved count the
+//! selected target cannot hold [STOR-6]: the writer fixes it by bounding the
+//! count, so it is located at the call and lists its fields.
 
 use core::fmt::{self, Write as _};
 
@@ -562,6 +565,12 @@ impl FieldValue for u32 {
     }
 }
 
+impl FieldValue for u64 {
+    fn value(&self, _: &SourceBundle) -> Option<Value> {
+        Some(Value::Number(*self))
+    }
+}
+
 /// Exact bytes that must be read quoted, such as trivia a canonical-form
 /// rejection wanted and found.
 struct Exact<'text>(&'text str);
@@ -698,13 +707,13 @@ variant_names! {
     LoopInvariantProofObligation { Base, Backedge }
     PostconditionProofDisposition { Refuted, Unproved }
     ReservedDeclarationRole {
-        Function, NamedConst, Parameter, Let, ContractDefinition, ForBinder, MatchBinder,
-        PlainResultSelector, VariantResultSelector, Field, VariantField,
+        Function, NamedConst, Parameter, Let, ContractDefinition, ForBinder, AtomicBinder,
+        MatchBinder, PlainResultSelector, VariantResultSelector, Field, VariantField,
     }
     ReservedNameClass { DotlessOperation, ModeWord }
     SourceIssueKind {
-        InvalidUtf8, UnexpectedByte, MissingLabelName, UnterminatedString, InvalidStringByte,
-        InvalidStringEscape, InvalidSourceByte, CommentPrefix,
+        InvalidUtf8, UnexpectedByte, MissingLabelName, UnterminatedText, InvalidTextByte,
+        InvalidTextEscape, InvalidSourceByte, CommentPrefix,
     }
     StaticObligationDisposition { Refuted, Unproved }
     UnsupportedSemanticFeature {
@@ -818,6 +827,9 @@ impl Report for SemanticIssueKind {
         report_variants!(SemanticIssueKind, self, fields;
             InvalidIntegerLiteral;
             InvalidFloatLiteral;
+            InvalidTextItem { reason, mechanical_fix };
+            NonAsciiByteCharacter { mechanical_fix };
+            TextLengthMismatch { declared_length, byte_length, mechanical_fix };
             InvalidConstValue;
             InaccessibleField { field, reason };
             InaccessibleVariant { variant, reason };
@@ -869,11 +881,19 @@ impl Report for SemanticIssueKind {
             InvalidCountedEndpoint { mechanical_fix };
             BreakOutsideLoop { mechanical_fix };
             InvalidInvariant { reason, mechanical_fix };
+            InvalidTypeInvariant { reason, mechanical_fix };
+            TypeInvariantWritableField { field, mechanical_fix };
+            UndischargedTypeInvariant { type_invariant, instantiated_goal, disposition, mechanical_fix };
             UndischargedLoopInvariant { name, obligation, required_relation, disposition, mechanical_fix };
             UndischargedLocalInvariant { name, disposition, mechanical_fix };
             InvalidSourceProof { reason, mechanical_fix };
             UndischargedSourceProof { name, obligation, mechanical_fix };
             ReturnMismatch;
+            WaitingCallOutsideWaitingFunction { callee, context, mechanical_fix };
+            AtomicTargetNotShared { found, mechanical_fix };
+            WaitInsideAtomic { construct, mechanical_fix };
+            AtomicGuardWrites { mechanical_fix };
+            InvalidSpawn { condition };
             InvalidMusttail { condition, subject };
             PolymorphicRecursion { cycle, mechanical_fix };
             UnreachableStatement;
@@ -939,6 +959,27 @@ impl Report for ResolutionIssue {
             UnresolvedUse { spelling, role, admissible, available };
             UndeclaredSetTarget { spelling, mechanical_fix };
         )
+    }
+}
+
+/// A target-layout stop at one allocation [STOR-6]: the count as written, the
+/// bound the program proves for it, the largest count the selected target
+/// admits, and the fix that bounds the count.
+impl Report for super::AllocationCountIssue {
+    fn report(&self, fields: &mut Fields<'_>) -> &'static str {
+        let Self {
+            count,
+            proved_count_bound,
+            target_count_limit,
+            target,
+            mechanical_fix,
+        } = self;
+        fields.field("count", &Spelled(*count));
+        fields.field("proved_count_bound", proved_count_bound);
+        fields.field("target_count_limit", target_count_limit);
+        fields.field("target", *target);
+        fields.field("mechanical_fix", mechanical_fix);
+        "AllocationCountExceedsTarget"
     }
 }
 

@@ -756,6 +756,19 @@ impl<'unit> Checker<'_, 'unit> {
         let kind = (|| {
             Ok(match template.role {
                 DeclarationRole::Struct
+                    if template.name == "Shared"
+                        && self
+                            .types
+                            .declarations
+                            .is_prelude_opaque_declaration(template.node)? =>
+                {
+                    CheckedNominalKind::Shared {
+                        state: substitution
+                            .first_type_argument()
+                            .ok_or(SemanticCompilerFailure::InvalidResolution)?,
+                    }
+                }
+                DeclarationRole::Struct
                     if self
                         .types
                         .declarations
@@ -989,6 +1002,9 @@ impl<'unit> Checker<'_, 'unit> {
             CheckedType::Buffer { element } => CheckedType::Buffer {
                 element: self.substitute_element_regions(check_context, element, regions)?,
             },
+            CheckedType::Segments { element } => CheckedType::Segments {
+                element: self.substitute_element_regions(check_context, element, regions)?,
+            },
             CheckedType::Window {
                 shape,
                 element,
@@ -1134,7 +1150,8 @@ impl<'unit> Checker<'_, 'unit> {
             }
             CheckedNominalKind::Struct { .. }
             | CheckedNominalKind::Enum { .. }
-            | CheckedNominalKind::Opaque => Ok(CheckedType::Nominal(id)),
+            | CheckedNominalKind::Opaque
+            | CheckedNominalKind::Shared { .. } => Ok(CheckedType::Nominal(id)),
         }
     }
 
@@ -1198,6 +1215,18 @@ impl<'unit> Checker<'_, 'unit> {
 }
 
 impl<'unit> DeclarationInventory<'unit> {
+    /// Whether `node` is an opaque struct the prelude declares [PRE-1].
+    fn is_prelude_opaque_declaration(&self, node: NodeId) -> Result<bool, CheckStop> {
+        let source = self.tree.coordinate(node)?.source();
+        Ok(self
+            .resolved
+            .syntax()
+            .classified_bundle()
+            .source_bundle()
+            .file(source)
+            .is_some_and(|file| file.prelude() == Some(crate::source::PreludeSource::Opaque)))
+    }
+
     /// [TYPE-2] whether this `struct_decl` carries the `opaque` modifier.
     ///
     /// The modifier is a written one, and [GRAM-2] admits it on a source
@@ -1213,14 +1242,7 @@ impl<'unit> DeclarationInventory<'unit> {
         {
             return Ok(true);
         }
-        let source = self.tree.coordinate(node)?.source();
-        Ok(self
-            .resolved
-            .syntax()
-            .classified_bundle()
-            .source_bundle()
-            .file(source)
-            .is_some_and(|file| file.prelude() == Some(crate::source::PreludeSource::Opaque)))
+        self.is_prelude_opaque_declaration(node)
     }
     fn nominal_type_descendants(&self, node: NodeId) -> Result<Vec<NodeId>, CheckStop> {
         let mut nested = self.tree.descendants_with(node, Production::Type)?;
@@ -1411,7 +1433,11 @@ impl<'unit> TypeContext<'unit> {
                     pending.push((self.element_type(left)?, self.element_type(right)?));
                     left_length == right_length
                 }
-                (CheckedType::Buffer { element: left }, CheckedType::Buffer { element: right }) => {
+                (CheckedType::Buffer { element: left }, CheckedType::Buffer { element: right })
+                | (
+                    CheckedType::Segments { element: left },
+                    CheckedType::Segments { element: right },
+                ) => {
                     pending.push((self.element_type(left)?, self.element_type(right)?));
                     true
                 }
@@ -1851,10 +1877,10 @@ impl<'unit> TypeContext<'unit> {
         &self,
         declaration: crate::DeclarationId,
     ) -> Result<super::repairs::OpaqueStruct, CheckStop> {
-        if !self
+        if self
             .declarations
             .declaration_home(declaration)
-            .is_some_and(|(package, _)| package == crate::Package::Standard)
+            .is_none_or(|(package, _)| package != crate::Package::Standard)
         {
             return Ok(super::repairs::OpaqueStruct::Program);
         }

@@ -1,0 +1,19 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Counter {
+  count: u64;
+}
+
+fn bump(counter: &Counter) -> result: unit writes(counter) contract {
+  requires counter^.count < 100_u64;
+  ensures counter^.count == entry(counter)^.count;
+} {
+  doc "entry(counter)^.count is the immutable entry datum and counter^.count the exit state [MSR-3]: after the increment they differ by one, so the clause is refuted.";
+  set counter^.count = counter^.count + 1_u64;
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

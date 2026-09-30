@@ -300,15 +300,47 @@ Safe, fast and small are the core. These are the other things worth knowing.
 ### In progress
 
 - **Concurrent I/O without async.** The language has no `async`, `await`,
-  futures, callbacks or tasks: files and sockets are ordinary values, and an
-  I/O operation is an ordinary call, so code is never split into synchronous
-  and asynchronous kinds. The compiled program carries out I/O through a
-  completion runtime (io_uring on Linux, I/O completion ports on Windows).
-  The `reads` and `writes` rows that let computation run in parallel also
-  decide which I/O calls may overlap. Today the overlap comes from `--par`,
-  which can run two independent calls on two workers, I/O included; the
-  default build issues I/O one call at a time. Serving many connections at
-  once is being designed.
+  futures or callbacks: files and sockets are ordinary values, and an I/O
+  operation is an ordinary call. A function that makes one declares `waits`
+  after its effect row, and only a waiting function may call it, so every
+  place a program can pause is visible in its signatures. A waiting call
+  returns when its operation has completed, and a call runs in order unless
+  it is spawned: `spawn serve(…);` runs the call in a context of its own,
+  concurrently with the function that spawned it, and while one context
+  waits the thread runs the others, so a server serves every connection at
+  once (`tests/programs/tcp_contexts.wf`). The function that spawned a
+  context returns only after it finishes. A spawn can also bind its result,
+  `let a = spawn fetch(…);`, and the function waits for it at the first
+  statement that uses `a` or may leave the block, so several requests
+  proceed together
+  (`tests/programs/tcp_gather.wf`). A waiting function keeps its state in a
+  frame the size of what it holds across a wait, not in a stack of its own,
+  so a context costs about what its own variables do and adds no kernel
+  mapping. The compiled program carries out I/O through a completion runtime
+  (io_uring on Linux, I/O completion ports on Windows). Computation that
+  `--par` overlaps never waits for I/O. On Linux the contexts run on one
+  driver thread per CPU, each with its own ring; a context starts on its
+  starter's thread, and an idle driver takes ready contexts from a busy one.
+  Still open: more than one driver where the host has no ring, and on
+  Windows.
+- **State that many contexts share.** A `Shared<T>` handle names one
+  object that several contexts may hold, and its value is reached only
+  inside `atomic s = &handle { … }`, whose block runs with the object to
+  itself and takes effect at one point. The block cannot wait, so no context
+  holds an object while it waits for the host or for another object, and a
+  lock-order deadlock cannot be written. `when` makes the statement wait
+  until a condition on the value holds, and the block may rely on it, as in a
+  queue whose consumer takes an item only when one is there
+  (`tests/programs/shared_objects.wf`). While a statement waits on `when`,
+  the other contexts and the function that started it go on, so a consumer
+  started before its producer still finishes. A Redis subset written this way,
+  `PING`, `SET`, `GET`, `DEL` and `INCR` over one shared keyspace
+  (`tests/programs/redis_subset.wf`), served `SET` and `GET` at least as fast
+  as `redis-server` on the same two cores of one four-CPU host under
+  `redis-benchmark`, with and without pipelining
+  ([Experiment 7](research/investigations/io-model/SHARED.md#experiment-7-a-redis-subset)).
+  Still open: a statement over several objects, and letting statements that
+  only read run at the same time.
 
 ### Planned
 
@@ -409,7 +441,8 @@ Other options:
 
 - `--par` builds the parallel version, and `--par-ledger` prints every
   parallelism decision with its reason. At run time, `WF_WORKERS` sets how
-  many workers it uses;
+  many workers it uses, and `WF_DRIVERS` how many driver threads run the
+  contexts that `spawn` starts, one per CPU by default;
 - `--stack-ledger` reports each function's frame and how many levels each
   recursive cycle fits;
 - `--emit-llvm` prints the LLVM IR;
@@ -417,8 +450,7 @@ Other options:
   line;
 - `whitefootc --help` lists the rest.
 
-To work on the language or the compiler, start from [AGENTS.md](AGENTS.md)
-and the [workflow map](docs/workflow.md).
+To work on the language or the compiler, start from [AGENTS.md](AGENTS.md).
 
 ## Related work
 

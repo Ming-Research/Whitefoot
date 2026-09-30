@@ -413,14 +413,53 @@ fn main() -> status: std::process::ExitStatus pure {
     );
 }
 
+/// Since v0.79 a proved header conclusion leaves its loop on the `break`
+/// edge [ENT-5]: it is a theorem over the image `value` had at the head of
+/// the iteration that took the exit, and nothing between that head and the
+/// `break` writes `value`, so `value <= 0` holds after the loop. Before v0.79
+/// every edge leaving the loop removed it, and this test pinned that removal
+/// as a rejection of the subtraction.
 #[test]
-fn ordinary_loop_break_does_not_export_its_header_invariant() {
+fn ordinary_loop_break_exports_its_header_invariant() {
     let source = br#"fn leave_loop(leave: Bool) -> result: unit pure {
   let value = 0_u64;
   loop (
     invariant limit: value <= 0_u64
   ) {
     if leave {
+      break;
+    } else {
+      set value = 0_u64;
+    }
+  }
+  let proved = 0_u64 - value;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_semantics(source, |outcome| {
+        assert!(
+            matches!(outcome, SemanticOutcome::Complete(_)),
+            "a break must carry its iteration's header conclusion: {outcome:?}"
+        );
+    });
+}
+
+/// The retained header conclusion is about the head image, not the binding:
+/// a write between the head and the `break` gives `value` a new image that
+/// the theorem does not bound, so the subtraction stays unproved.
+#[test]
+fn a_write_before_break_leaves_the_header_invariant_about_the_old_image() {
+    let source = br#"fn leave_loop(leave: Bool) -> result: unit pure {
+  let value = 0_u64;
+  loop (
+    invariant limit: value <= 0_u64
+  ) {
+    if leave {
+      set value = value + 1_u64;
       break;
     } else {
       set value = 0_u64;
@@ -436,7 +475,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#;
     with_semantics(source, |outcome| {
         let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
-            panic!("an ordinary break must not export its header invariant: {outcome:?}");
+            panic!("a written binding must not inherit the head theorem: {outcome:?}");
         };
         assert_eq!(issue.rule(), SemanticRule::Op2);
     });
@@ -1614,7 +1653,7 @@ fn main() -> status: std::process::ExitStatus pure {
 
 #[test]
 fn exhaustion_facts_prove_both_ordinary_range_requirements() {
-    let source = br#"fn publish_prefix(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], limit: u64) -> result: unit reads(source), writes(factory), writes(output) contract {
+    let source = br#"fn publish_prefix(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], limit: u64) -> result: unit reads(source), writes(factory), writes(output) waits contract {
   define capacity = source^.len;
   requires limit <= capacity;
 } {

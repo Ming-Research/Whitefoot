@@ -1,0 +1,9 @@
+opaque struct Span {
+  first: u64;
+  last: u64;
+  invariant ordered(span): span.first <= span.last;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

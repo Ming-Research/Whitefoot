@@ -1,0 +1,17 @@
+fn add(total: Shared<u8>) -> result: unit pure waits {
+  atomic value = &total {
+    set value^ = value^ +wrap 1_u8;
+  }
+  return unit;
+}
+
+fn start(total: Shared<u8>) -> result: unit pure {
+  spawn add(total: move total);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let total = shared_new::<u8>(value: 0_u8);
+  start(total: move total);
+  return std::process::exit_status(code: 0_u8);
+}

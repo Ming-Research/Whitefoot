@@ -1,0 +1,13 @@
+fn pause(cell: Shared<u8>) -> result: unit pure waits {
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let cell = shared_new::<u8>(value: 0_u8);
+  let other = shared_share::<u8>(shared: &cell);
+  atomic value = &cell {
+    pause(cell: move other);
+    set value^ = 1_u8;
+  }
+  return std::process::exit_status(code: 0_u8);
+}

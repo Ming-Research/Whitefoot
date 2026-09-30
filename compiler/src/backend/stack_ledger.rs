@@ -30,7 +30,7 @@ use std::collections::HashMap;
 use std::fmt::Write;
 
 use super::emitter::{is_recursion_budget_symbol, overlapped_clone_symbol};
-use super::graph::components;
+use crate::cycles::components;
 
 /// One machine function's frame, as the host compiler reported it.
 struct Frame {

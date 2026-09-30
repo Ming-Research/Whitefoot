@@ -92,7 +92,7 @@
 
 use super::loop_permission::LoopPermission;
 use super::model::{
-    BindingId, CheckedArrayRoot, CheckedEffects, CheckedExpression, CheckedFunction,
+    BindingId, CheckedArrayRoot, CheckedEffects, CheckedExpression, CheckedFunction, CheckedLoopId,
     CheckedMeasure, CheckedMode, CheckedPlaceStep, CheckedSetTarget, CheckedStatePath,
     CheckedStatement, FunctionId, expression_children,
 };
@@ -249,6 +249,9 @@ pub(crate) enum Denial {
     /// A statement whose continuation may leave the block, so the statement
     /// written after it need not execute at all.
     SkippingExit { side: PairSide, kind: ExitKind },
+    /// A statement that contains a waiting call [WAIT-1], which has no
+    /// overlap permission with any statement [PAR-1].
+    WaitingCall { side: PairSide, call: NodePath },
 }
 
 impl Denial {
@@ -260,6 +263,7 @@ impl Denial {
             | Self::UnresolvedFootprint { .. }
             | Self::UnclassifiedForm { .. } => 1,
             Self::SkippingExit { .. } => 2,
+            Self::WaitingCall { .. } => 3,
         }
     }
 }
@@ -327,6 +331,9 @@ pub(crate) struct FunctionPermissions {
     /// The [PAR-2] verdict of every counted loop of this function, in source
     /// order.
     pub(crate) loops: Vec<LoopPermission>,
+    /// [WAIT-3] where each bound spawn is joined, in source order.
+    /// The checker installs it on the function for lowering.
+    pub(crate) context_awaits: Vec<super::model::CheckedContextAwait>,
 }
 
 /// The whole-program permission table, dense by [`FunctionId`].
@@ -429,13 +436,24 @@ struct Classified {
     footprint: Result<Footprint, Refusal>,
 }
 
+/// The loops and value constructs a join-plan walk has entered inside one
+/// later statement: a `break` to one of them, or a `give` inside one, does
+/// not leave the block a bound context was started in.
+#[derive(Default)]
+struct InnerTargets {
+    loops: Vec<CheckedLoopId>,
+    values: usize,
+}
+
 /// Why one statement cannot take part in an overlap as written.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum Refusal {
     /// It carries an exit edge.
     Exit(ExitKind),
     /// Its footprint is not computed for this form.
     Form(&'static str),
+    /// It contains this waiting call [WAIT-1].
+    Waits(NodePath),
 }
 
 impl<'check> Program<'check> {
@@ -508,19 +526,32 @@ impl<'check> Program<'check> {
             pairs: Vec::new(),
             runs: Vec::new(),
             loops: Vec::new(),
+            context_awaits: Vec::new(),
         };
         let mut blocks = vec![function.body.as_deref().unwrap_or_default()];
         while let Some(block) = blocks.pop() {
             self.analyze_block(
                 &places,
+                &function.waiting.calls,
                 block,
                 &function.entailment.permission_separations,
                 &mut permissions,
+            );
+            self.plan_context_awaits(
+                &places,
+                &function.waiting.context_starts,
+                block,
+                &mut permissions.context_awaits,
             );
             for statement in block {
                 push_nested_blocks(statement, &mut blocks);
             }
         }
+        permissions.context_awaits.sort_by(|left, right| {
+            left.statement
+                .components()
+                .cmp(right.statement.components())
+        });
         permissions.pairs.sort_by(|left, right| {
             left.first
                 .statement
@@ -555,6 +586,7 @@ impl<'check> Program<'check> {
     fn analyze_block(
         &self,
         places: &PlaceMap,
+        waiting: &[NodePath],
         block: &'check [CheckedStatement],
         proofs: &[PermissionSeparationProof],
         permissions: &mut FunctionPermissions,
@@ -564,7 +596,7 @@ impl<'check> Program<'check> {
         }
         let classified = block
             .iter()
-            .map(|statement| self.classify(places, statement))
+            .map(|statement| self.classify_waiting(places, waiting, statement))
             .collect::<Vec<_>>();
         for window in classified.windows(2) {
             let [first, second] = window else {
@@ -589,6 +621,133 @@ impl<'check> Program<'check> {
         self.collect_runs(&classified, proofs, permissions);
     }
 
+    /// [WAIT-3] where each bound spawn of one block is joined: before the
+    /// first later statement of the block that
+    /// [`Self::requires_bound_result`] finds names its binding or leaves the
+    /// block, and otherwise at the block's end. A statement that waits, or
+    /// that holds a block, is looked into rather than refused, since the
+    /// join's place is observable: a join too early would wait for a context
+    /// whose guard only a later statement makes true.
+    fn plan_context_awaits(
+        &self,
+        places: &PlaceMap,
+        starts: &[NodePath],
+        block: &'check [CheckedStatement],
+        awaits: &mut Vec<super::model::CheckedContextAwait>,
+    ) {
+        for (index, statement) in block.iter().enumerate() {
+            let CheckedStatement::Let {
+                node_path, binding, ..
+            } = statement
+            else {
+                continue;
+            };
+            if !starts.contains(node_path) {
+                continue;
+            }
+            let mut inner = InnerTargets::default();
+            let before = block[index + 1..]
+                .iter()
+                .position(|later| {
+                    self.requires_bound_result(places, *binding, node_path, later, &mut inner)
+                })
+                .and_then(|offset| u32::try_from(offset + 1).ok());
+            awaits.push(super::model::CheckedContextAwait {
+                statement: node_path.clone(),
+                before,
+            });
+        }
+    }
+
+    /// Whether a later statement of a bound spawn's block is where [WAIT-3]
+    /// joins the context: the statement may leave the block, which releases
+    /// the binding, or an expression, set target or statement it holds names
+    /// the binding, which every read, write, release and reference formation
+    /// of it does, since nothing reaches the binding before a statement names
+    /// it. A resolved footprint that reaches the binding also requires it, as
+    /// a second account of the same accesses. A compound statement is looked
+    /// into rather than refused, and an unresolved footprint is no reason to
+    /// wait, so the starter never joins before the point [WAIT-3] fixes.
+    fn requires_bound_result(
+        &self,
+        places: &PlaceMap,
+        binding: BindingId,
+        site: &NodePath,
+        statement: &'check CheckedStatement,
+        inner: &mut InnerTargets,
+    ) -> bool {
+        let reaches = |footprint: &Footprint| {
+            footprint
+                .writes
+                .iter()
+                .chain(&footprint.reads)
+                .chain(&footprint.operand_reads)
+                .any(|access| access.place.root == PlaceRoot::Binding(binding))
+        };
+        let expression = |value: &CheckedExpression| {
+            expression_names(value, binding) || reaches(&self.value_footprint(places, value, site))
+        };
+        let block = |statements: &'check [CheckedStatement], inner: &mut InnerTargets| {
+            statements.iter().any(|statement| {
+                self.requires_bound_result(places, binding, site, statement, inner)
+            })
+        };
+        match statement {
+            CheckedStatement::Match {
+                scrutinee, arms, ..
+            } => expression(scrutinee) || arms.iter().any(|arm| block(&arm.body, inner)),
+            // A `give` in an arm delivers to this statement, not out of the
+            // block the context was started in.
+            CheckedStatement::ValueMatchLet {
+                scrutinee, arms, ..
+            } => {
+                inner.values += 1;
+                let requires =
+                    expression(scrutinee) || arms.iter().any(|arm| block(&arm.body, inner));
+                inner.values -= 1;
+                requires
+            }
+            CheckedStatement::Loop { id, body, .. } => {
+                inner.loops.push(*id);
+                let requires = block(body, inner);
+                inner.loops.pop();
+                requires
+            }
+            CheckedStatement::CountedRange {
+                id,
+                lower,
+                upper,
+                body,
+                ..
+            } => {
+                if expression(lower) || expression(upper) {
+                    return true;
+                }
+                inner.loops.push(*id);
+                let requires = block(body, inner);
+                inner.loops.pop();
+                requires
+            }
+            CheckedStatement::Atomic {
+                target,
+                guard,
+                body,
+                ..
+            } => {
+                expression(target) || guard.as_deref().is_some_and(expression) || block(body, inner)
+            }
+            CheckedStatement::Break { target, .. } => !inner.loops.contains(target),
+            CheckedStatement::Give { value, .. } => inner.values == 0 || expression(value),
+            // The permission judgment does not classify a statement that
+            // binds a result list [CALL-4], but its one value is all it reads.
+            CheckedStatement::DestructuringLet { value, .. } => expression(value),
+            _ => match self.classify(places, statement).footprint {
+                Err(_) => true,
+                Ok(footprint) => leaf_names(statement, binding) || reaches(&footprint),
+            },
+        }
+    }
+
     /// The verdict of one ordered adjacency.
     fn judge(
         &self,
@@ -603,6 +762,12 @@ impl<'check> Program<'check> {
                 }
                 Err(Refusal::Form(form)) => {
                     return PermissionVerdict::Denied(Denial::UnclassifiedForm { side, form });
+                }
+                Err(Refusal::Waits(call)) => {
+                    return PermissionVerdict::Denied(Denial::WaitingCall {
+                        side,
+                        call: call.clone(),
+                    });
                 }
                 Ok(footprint) => {
                     if let Some(argument) = &footprint.unresolved {
@@ -715,6 +880,21 @@ impl<'check> Program<'check> {
             }
         }
         flush(&mut run);
+    }
+
+    /// [PAR-1] one statement as [`Self::classify`] reduces it, refused
+    /// outright when it contains a waiting call [WAIT-1].
+    fn classify_waiting(
+        &self,
+        places: &PlaceMap,
+        waiting: &[NodePath],
+        statement: &'check CheckedStatement,
+    ) -> Classified {
+        let mut classified = self.classify(places, statement);
+        if let Some(call) = waiting_call(waiting, statement) {
+            classified.footprint = Err(Refusal::Waits(call));
+        }
+        classified
     }
 
     /// One statement, reduced to what [PAR-1] judges, or the reason it cannot
@@ -846,6 +1026,16 @@ impl<'check> Program<'check> {
             CheckedStatement::Loop { .. } => {
                 (None, None, None, "a loop", Err(Refusal::Form("a loop")))
             }
+            // [SHARE-2] an atomic statement counts as a waiting call, which
+            // `classify_waiting` refuses by its node; the join plan looks
+            // into it instead [WAIT-3].
+            CheckedStatement::Atomic { node_path, .. } => (
+                Some(node_path),
+                None,
+                None,
+                "an atomic statement",
+                Err(Refusal::Form("an atomic statement")),
+            ),
             CheckedStatement::CountedRange { node_path, .. } => (
                 Some(node_path),
                 None,
@@ -1011,6 +1201,50 @@ impl<'check> Program<'check> {
             let node = call.argument_nodes.get(index).unwrap_or(call.call);
             collect_operand_reads(places, argument, node, footprint);
         }
+    }
+}
+
+/// The first waiting call [WAIT-1] a statement contains, at any depth.
+///
+/// Every call node lies inside the node of the statement holding it, so a
+/// statement with a node of its own contains exactly the waiting calls below
+/// that node. A match without one holds its scrutinee call and its arms.
+fn waiting_call(waiting: &[NodePath], statement: &CheckedStatement) -> Option<NodePath> {
+    if waiting.is_empty() {
+        return None;
+    }
+    let below = |node: &NodePath| {
+        waiting
+            .iter()
+            .find(|call| call.components().starts_with(node.components()))
+            .cloned()
+    };
+    match statement {
+        CheckedStatement::Let { node_path, .. }
+        | CheckedStatement::DestructuringLet { node_path, .. }
+        | CheckedStatement::PropagateLet { node_path, .. }
+        | CheckedStatement::Set { node_path, .. }
+        | CheckedStatement::Evaluate { node_path, .. }
+        | CheckedStatement::DropExpression { node_path, .. }
+        | CheckedStatement::Return { node_path, .. }
+        | CheckedStatement::ValueMatchLet { node_path, .. }
+        | CheckedStatement::Give { node_path, .. }
+        | CheckedStatement::CountedRange { node_path, .. }
+        | CheckedStatement::Atomic { node_path, .. } => below(node_path),
+        CheckedStatement::Proof(proof) => below(&proof.node_path),
+        CheckedStatement::Match {
+            scrutinee, arms, ..
+        } => call_projection(scrutinee)
+            .and_then(|projection| below(projection.call))
+            .or_else(|| {
+                arms.iter()
+                    .flat_map(|arm| &arm.body)
+                    .find_map(|child| waiting_call(waiting, child))
+            }),
+        CheckedStatement::Loop { body, .. } => {
+            body.iter().find_map(|child| waiting_call(waiting, child))
+        }
+        CheckedStatement::Break { .. } => None,
     }
 }
 
@@ -1490,9 +1724,9 @@ fn push_nested_blocks<'check>(
                 blocks.push(arm.body.as_slice());
             }
         }
-        CheckedStatement::Loop { body, .. } | CheckedStatement::CountedRange { body, .. } => {
-            blocks.push(body.as_slice())
-        }
+        CheckedStatement::Loop { body, .. }
+        | CheckedStatement::CountedRange { body, .. }
+        | CheckedStatement::Atomic { body, .. } => blocks.push(body.as_slice()),
         CheckedStatement::Let { .. }
         | CheckedStatement::DestructuringLet { .. }
         | CheckedStatement::PropagateLet { .. }
@@ -1525,6 +1759,48 @@ pub(super) fn visit_read_bindings(
     }
 }
 
+/// Whether an expression tree names `binding` anywhere, through
+/// [`named_binding`] at each node, both matches being exhaustive.
+fn expression_names(expression: &CheckedExpression, binding: BindingId) -> bool {
+    named_binding(expression) == Some(binding)
+        || expression_children(expression)
+            .into_iter()
+            .any(|child| expression_names(child, binding))
+}
+
+/// Whether a statement that holds no block names `binding` in an expression
+/// or set target it holds; a statement that holds a block answers yes, since
+/// its caller walks it.
+fn leaf_names(statement: &CheckedStatement, binding: BindingId) -> bool {
+    match statement {
+        CheckedStatement::Let { value, .. }
+        | CheckedStatement::DestructuringLet { value, .. }
+        | CheckedStatement::Evaluate { value, .. }
+        | CheckedStatement::DropExpression { value, .. }
+        | CheckedStatement::Return { value, .. }
+        | CheckedStatement::Give { value, .. } => expression_names(value, binding),
+        CheckedStatement::PropagateLet { scrutinee, .. } => expression_names(scrutinee, binding),
+        CheckedStatement::Set { target, value, .. } => {
+            let mut offsets: Vec<&CheckedExpression> = match target {
+                CheckedSetTarget::Place(_) => Vec::new(),
+                CheckedSetTarget::RangeIndex(target) => target.offsets().collect(),
+                CheckedSetTarget::Storage(target) => target.offsets().collect(),
+            };
+            offsets.push(value);
+            target.binding() == binding
+                || offsets
+                    .into_iter()
+                    .any(|offset| expression_names(offset, binding))
+        }
+        CheckedStatement::Proof(_) | CheckedStatement::Break { .. } => false,
+        CheckedStatement::Match { .. }
+        | CheckedStatement::ValueMatchLet { .. }
+        | CheckedStatement::Loop { .. }
+        | CheckedStatement::CountedRange { .. }
+        | CheckedStatement::Atomic { .. } => true,
+    }
+}
+
 /// The binding one expression's own place is written at, leaving its child
 /// expressions to the caller.
 ///
@@ -1537,6 +1813,7 @@ fn named_binding(expression: &CheckedExpression) -> Option<BindingId> {
         | CheckedExpression::BoxTake { binding, .. }
         | CheckedExpression::DerefAddressed { binding, .. } => Some(*binding),
         CheckedExpression::BorrowAddressed { root, .. }
+        | CheckedExpression::BorrowSegment { root, .. }
         | CheckedExpression::ContainerMeasure { root, .. }
         | CheckedExpression::ReadStorage { root, .. } => root.binding(),
         CheckedExpression::BufferMeasure { root, .. }
@@ -1637,7 +1914,7 @@ fn collect_operand_reads(
         // Naming a path reads no content: a reference formation evaluates its
         // index and endpoint atoms, which are this expression's own children
         // and are walked below [REF-1, REF-4].
-        CheckedExpression::BorrowAddressed { .. } => {}
+        CheckedExpression::BorrowAddressed { .. } | CheckedExpression::BorrowSegment { .. } => {}
         CheckedExpression::Binding { binding, .. } => {
             read(footprint, places.resolve(PlaceRoot::Binding(*binding), &[]));
         }

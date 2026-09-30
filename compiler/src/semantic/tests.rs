@@ -26,6 +26,7 @@
 //   [STOR-4]: v0.60 has no regions, lifetimes, arenas or store brands at all.
 //   There is no successor rule; a pool or an arena is ordinary `Slots` usage
 //   under [OP-13] over the one heap [STOR-8].
+mod aggregate_postconditions;
 mod arithmetic_obligations;
 mod arrays;
 mod boolean_composition;

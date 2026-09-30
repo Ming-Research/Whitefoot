@@ -14,6 +14,11 @@
 //! shape where both families agree — that is the cross-check the plan item
 //! asks for, and it is what establishes that the walk reaches the same files
 //! a real recursive searcher reaches.
+//!
+//! Every case runs against two builds of the one source: the default
+//! compilation and the `whitefootc --par` one, whose permitted compute offers
+//! are handed to worker lanes. The search publishes the same bytes either way,
+//! so both builds answer to the same oracles.
 
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::process::ExitStatusExt;
@@ -24,7 +29,7 @@ use whitefoot::FragmentGranularity;
 
 use super::support::{
     CompiledProgram, build_program, build_program_from_fragments, close_path, compile_program,
-    fixture_directory, reopen_path,
+    compile_sources_with_cli_parallel_defaults, fixture_directory, read_program, reopen_path,
 };
 
 /// The initial read window length in `tests/programs/wfgrep.wf`.
@@ -57,6 +62,29 @@ fn wfgrep_module() -> &'static whitefoot::LlvmModule {
 fn wfgrep() -> &'static CompiledProgram {
     static PROGRAM: std::sync::OnceLock<CompiledProgram> = std::sync::OnceLock::new();
     PROGRAM.get_or_init(|| build_program(wfgrep_module()))
+}
+
+/// The same source as `whitefootc --par` compiles it, shared the same way.
+///
+/// The recursive walk waits, and every level reaches the byte-pair offers of
+/// `name_before`, so this build carries hand-outs beneath a waiting recursion.
+/// That shape once stopped the `--par` build in the backend before any case
+/// could run it.
+fn wfgrep_parallel_module() -> &'static whitefoot::LlvmModule {
+    static MODULE: std::sync::OnceLock<whitefoot::LlvmModule> = std::sync::OnceLock::new();
+    MODULE.get_or_init(|| {
+        compile_sources_with_cli_parallel_defaults(&[("wfgrep.wf", &read_program("wfgrep.wf"))])
+    })
+}
+
+fn wfgrep_parallel() -> &'static CompiledProgram {
+    static PROGRAM: std::sync::OnceLock<CompiledProgram> = std::sync::OnceLock::new();
+    PROGRAM.get_or_init(|| build_program(wfgrep_parallel_module()))
+}
+
+/// The two builds every case runs, each named for its assertion messages.
+fn builds() -> [(&'static str, &'static CompiledProgram); 2] {
+    [("default", wfgrep()), ("--par", wfgrep_parallel())]
 }
 
 /// The trusted reference search, over a real directory tree.
@@ -144,19 +172,26 @@ fn occurs(line: &[u8], pattern: &[u8]) -> bool {
             .any(|window| window == pattern)
 }
 
-/// Runs wfgrep over one fixture tree and compares it with the reference.
-fn assert_reference(program: &CompiledProgram, root: &Path, tree: &str, pattern: &[u8]) -> Vec<u8> {
+/// Runs one build of wfgrep over one fixture tree and compares it with the
+/// reference.
+fn assert_reference(
+    build: &str,
+    program: &CompiledProgram,
+    root: &Path,
+    tree: &str,
+    pattern: &[u8],
+) -> Vec<u8> {
     let output = program.run(root, &[pattern, tree.as_bytes()]);
     let (expected, status) = reference(&root.join(tree), tree.as_bytes(), pattern);
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&expected),
-        "published bytes disagree with the reference search"
+        "{build}: published bytes disagree with the reference search"
     );
     assert_eq!(
         output.status.code(),
         Some(status),
-        "status disagrees with the reference search; diagnostics: {}",
+        "{build}: status disagrees with the reference search; diagnostics: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     output.stdout
@@ -209,12 +244,14 @@ fn search_tree() -> super::support::FixtureDirectory {
 #[test]
 fn wfgrep_searches_a_real_tree_and_agrees_with_grep() {
     let fixture = search_tree();
-    let published = assert_reference(wfgrep(), fixture.path(), "tree", b"needle");
-    assert_eq!(
-        sorted_lines(&published),
-        grep_rn(fixture.path(), "tree", b"needle"),
-        "wfgrep and grep -rn disagree about the hit set"
-    );
+    for (build, program) in builds() {
+        let published = assert_reference(build, program, fixture.path(), "tree", b"needle");
+        assert_eq!(
+            sorted_lines(&published),
+            grep_rn(fixture.path(), "tree", b"needle"),
+            "{build}: wfgrep and grep -rn disagree about the hit set"
+        );
+    }
 }
 
 /// wfgrep linked from the link fragments a modular build splits it into
@@ -224,12 +261,18 @@ fn wfgrep_searches_a_real_tree_and_agrees_with_grep() {
 #[test]
 fn wfgrep_linked_from_its_fragments_searches_as_the_whole_module() {
     let fixture = search_tree();
-    for granularity in [FragmentGranularity::Function, FragmentGranularity::Module] {
-        let program = build_program_from_fragments(wfgrep_module(), granularity);
-        assert_reference(&program, fixture.path(), "tree", b"needle");
-        let absent = program.run(fixture.path(), &[b"absent-pattern", b"tree"]);
-        assert_eq!(absent.status.code(), Some(1), "{granularity:?}");
-        assert!(absent.stdout.is_empty(), "{granularity:?}");
+    for (build, module) in [
+        ("default", wfgrep_module()),
+        ("--par", wfgrep_parallel_module()),
+    ] {
+        for granularity in [FragmentGranularity::Function, FragmentGranularity::Module] {
+            let program = build_program_from_fragments(module, granularity);
+            let named = format!("{build} {granularity:?}");
+            assert_reference(&named, &program, fixture.path(), "tree", b"needle");
+            let absent = program.run(fixture.path(), &[b"absent-pattern", b"tree"]);
+            assert_eq!(absent.status.code(), Some(1), "{named}");
+            assert!(absent.stdout.is_empty(), "{named}");
+        }
     }
 }
 
@@ -239,20 +282,22 @@ fn wfgrep_linked_from_its_fragments_searches_as_the_whole_module() {
 #[test]
 fn wfgrep_agrees_with_grep_on_the_empty_and_the_total_hit_set() {
     let fixture = search_tree();
-    let absent = wfgrep().run(fixture.path(), &[b"absent-pattern", b"tree"]);
-    assert_eq!(absent.status.code(), Some(1));
-    assert!(absent.stdout.is_empty());
-    assert_eq!(
-        grep_rn(fixture.path(), "tree", b"absent-pattern"),
-        Vec::<String>::new()
-    );
+    for (build, program) in builds() {
+        let absent = program.run(fixture.path(), &[b"absent-pattern", b"tree"]);
+        assert_eq!(absent.status.code(), Some(1), "{build}");
+        assert!(absent.stdout.is_empty(), "{build}");
+        assert_eq!(
+            grep_rn(fixture.path(), "tree", b"absent-pattern"),
+            Vec::<String>::new()
+        );
 
-    let published = assert_reference(wfgrep(), fixture.path(), "tree", b"e");
-    assert_eq!(
-        sorted_lines(&published),
-        grep_rn(fixture.path(), "tree", b"e"),
-        "wfgrep and grep -rn disagree about the total hit set"
-    );
+        let published = assert_reference(build, program, fixture.path(), "tree", b"e");
+        assert_eq!(
+            sorted_lines(&published),
+            grep_rn(fixture.path(), "tree", b"e"),
+            "{build}: wfgrep and grep -rn disagree about the total hit set"
+        );
+    }
 }
 
 /// The former sixteen-level cutoff silently skipped a matching file while
@@ -272,12 +317,14 @@ fn a_tree_beyond_the_former_sixteen_level_cap_is_searched_completely() {
     fixture.write_nested(&relative, b"needle at the bottom\n");
     fixture.write_nested("tree/top.txt", b"needle at the top\n");
 
-    let published = assert_reference(wfgrep(), fixture.path(), "tree", b"needle");
-    assert_eq!(
-        sorted_lines(&published).len(),
-        2,
-        "the deep file and the shallow one are both hits"
-    );
+    for (build, program) in builds() {
+        let published = assert_reference(build, program, fixture.path(), "tree", b"needle");
+        assert_eq!(
+            sorted_lines(&published).len(),
+            2,
+            "{build}: the deep file and the shallow one are both hits"
+        );
+    }
 }
 
 /// A search root written with several components is searched.
@@ -296,45 +343,50 @@ fn a_root_with_several_components_is_searched() {
     fixture.write_nested("top/middle/tree/sub/beta.txt", b"deep needle\n");
     fixture.write_nested("top/middle/outside.txt", b"needle outside the root\n");
 
-    let published = assert_reference(wfgrep(), fixture.path(), "top/middle/tree", b"needle");
-    assert_eq!(
-        sorted_lines(&published),
-        grep_rn(fixture.path(), "top/middle/tree", b"needle"),
-        "wfgrep and grep -rn disagree about a root with several components"
-    );
-
-    for spelling in ["top/middle/tree/", "top//middle/tree//"] {
-        let output = wfgrep().run(fixture.path(), &[b"needle", spelling.as_bytes()]);
-        let shown = if spelling.starts_with("top//") {
-            String::from_utf8_lossy(&published).replace("top/middle", "top//middle")
-        } else {
-            String::from_utf8_lossy(&published).into_owned()
-        };
+    for (build, program) in builds() {
+        let published =
+            assert_reference(build, program, fixture.path(), "top/middle/tree", b"needle");
         assert_eq!(
-            String::from_utf8_lossy(&output.stdout),
-            shown,
-            "the root spelled {spelling:?} displays differently"
+            sorted_lines(&published),
+            grep_rn(fixture.path(), "top/middle/tree", b"needle"),
+            "{build}: wfgrep and grep -rn disagree about a root with several components"
         );
-        assert_eq!(output.status.code(), Some(0));
+
+        for spelling in ["top/middle/tree/", "top//middle/tree//"] {
+            let output = program.run(fixture.path(), &[b"needle", spelling.as_bytes()]);
+            let shown = if spelling.starts_with("top//") {
+                String::from_utf8_lossy(&published).replace("top/middle", "top//middle")
+            } else {
+                String::from_utf8_lossy(&published).into_owned()
+            };
+            assert_eq!(
+                String::from_utf8_lossy(&output.stdout),
+                shown,
+                "{build}: the root spelled {spelling:?} displays differently"
+            );
+            assert_eq!(output.status.code(), Some(0), "{build}");
+        }
+
+        let single = program.run(
+            fixture.path(),
+            &[b"needle", b"top/middle/tree/sub/beta.txt"],
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&single.stdout),
+            "top/middle/tree/sub/beta.txt:1:deep needle\n",
+            "{build}"
+        );
+        assert_eq!(single.status.code(), Some(0), "{build}");
+
+        let missing = program.run(fixture.path(), &[b"needle", b"top/absent/tree"]);
+        assert!(missing.stdout.is_empty(), "{build}");
+        assert_eq!(
+            String::from_utf8_lossy(&missing.stderr),
+            "wfgrep: top/absent/tree: no such file or directory\n",
+            "{build}"
+        );
+        assert_eq!(missing.status.code(), Some(2), "{build}");
     }
-
-    let single = wfgrep().run(
-        fixture.path(),
-        &[b"needle", b"top/middle/tree/sub/beta.txt"],
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&single.stdout),
-        "top/middle/tree/sub/beta.txt:1:deep needle\n"
-    );
-    assert_eq!(single.status.code(), Some(0));
-
-    let missing = wfgrep().run(fixture.path(), &[b"needle", b"top/absent/tree"]);
-    assert!(missing.stdout.is_empty());
-    assert_eq!(
-        String::from_utf8_lossy(&missing.stderr),
-        "wfgrep: top/absent/tree: no such file or directory\n"
-    );
-    assert_eq!(missing.status.code(), Some(2));
 }
 
 /// A directory with far more entries than the former cap, and more name
@@ -374,15 +426,20 @@ fn a_directory_past_the_former_entry_cap_is_searched_completely() {
     }
     fixture.write_nested("tree/zzzz-last.txt", b"needle sorted last\n");
 
-    let published = assert_reference(wfgrep(), fixture.path(), "tree", b"needle");
-    let hits = sorted_lines(&published);
-    assert_eq!(hits.len(), 6 + 8 + 1, "every hit is published");
-    assert!(hits.contains(&"tree/zzzz-last.txt:1:needle sorted last".to_owned()));
-    assert_eq!(
-        hits,
-        grep_rn(fixture.path(), "tree", b"needle"),
-        "wfgrep and grep -rn disagree about a large directory"
-    );
+    for (build, program) in builds() {
+        let published = assert_reference(build, program, fixture.path(), "tree", b"needle");
+        let hits = sorted_lines(&published);
+        assert_eq!(hits.len(), 6 + 8 + 1, "{build}: every hit is published");
+        assert!(
+            hits.contains(&"tree/zzzz-last.txt:1:needle sorted last".to_owned()),
+            "{build}"
+        );
+        assert_eq!(
+            hits,
+            grep_rn(fixture.path(), "tree", b"needle"),
+            "{build}: wfgrep and grep -rn disagree about a large directory"
+        );
+    }
 }
 
 /// Lines longer than the initial read window, and records longer than the
@@ -422,12 +479,14 @@ fn lines_longer_than_the_read_window_are_searched_and_published_whole() {
     fixture.write_nested("tree/long.txt", &content);
     fixture.write_nested("tree/short.txt", b"needle in a short file\n");
 
-    let published = assert_reference(wfgrep(), fixture.path(), "tree", b"needle");
-    assert_eq!(
-        sorted_lines(&published).len(),
-        7,
-        "every matching line, long or short, is published"
-    );
+    for (build, program) in builds() {
+        let published = assert_reference(build, program, fixture.path(), "tree", b"needle");
+        assert_eq!(
+            sorted_lines(&published).len(),
+            7,
+            "{build}: every matching line, long or short, is published"
+        );
+    }
 }
 
 /// A refused write to standard output stops the search and is reported once,
@@ -441,18 +500,21 @@ fn lines_longer_than_the_read_window_are_searched_and_published_whole() {
 #[test]
 fn a_closed_standard_output_stops_the_search_without_blaming_an_input() {
     let fixture = search_tree();
-    let (status, diagnostics) =
-        wfgrep().run_with_closed_output(fixture.path(), &[b"needle", b"tree"]);
-    assert_eq!(
-        status.signal(),
-        None,
-        "a write to a closed destination must not kill the process"
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&diagnostics),
-        "wfgrep: standard output: broken pipe\n"
-    );
-    assert_eq!(status.code(), Some(2));
+    for (build, program) in builds() {
+        let (status, diagnostics) =
+            program.run_with_closed_output(fixture.path(), &[b"needle", b"tree"]);
+        assert_eq!(
+            status.signal(),
+            None,
+            "{build}: a write to a closed destination must not kill the process"
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&diagnostics),
+            "wfgrep: standard output: broken pipe\n",
+            "{build}"
+        );
+        assert_eq!(status.code(), Some(2), "{build}");
+    }
 }
 
 /// A match that straddles a read boundary is still one match, and the line
@@ -472,11 +534,14 @@ fn a_match_across_a_read_boundary_keeps_its_line_number() {
     content.extend_from_slice(b"tail\n");
     fixture.write_nested("tree/wide.txt", &content);
 
-    let published = assert_reference(wfgrep(), fixture.path(), "tree", b"needle");
-    assert_eq!(
-        sorted_lines(&published),
-        grep_rn(fixture.path(), "tree", b"needle")
-    );
+    for (build, program) in builds() {
+        let published = assert_reference(build, program, fixture.path(), "tree", b"needle");
+        assert_eq!(
+            sorted_lines(&published),
+            grep_rn(fixture.path(), "tree", b"needle"),
+            "{build}"
+        );
+    }
 }
 
 /// An empty tree publishes nothing and reports no match, which is the
@@ -485,9 +550,11 @@ fn a_match_across_a_read_boundary_keeps_its_line_number() {
 fn an_empty_tree_publishes_nothing_and_reports_no_match() {
     let fixture = fixture_directory();
     fixture.directory("tree");
-    let output = wfgrep().run(fixture.path(), &[b"needle", b"tree"]);
-    assert!(output.stdout.is_empty());
-    assert_eq!(output.status.code(), Some(1));
+    for (build, program) in builds() {
+        let output = program.run(fixture.path(), &[b"needle", b"tree"]);
+        assert!(output.stdout.is_empty(), "{build}");
+        assert_eq!(output.status.code(), Some(1), "{build}");
+    }
 }
 
 /// A subdirectory the process cannot open is an ordinary recoverable outcome:
@@ -502,19 +569,24 @@ fn an_unreadable_subdirectory_is_reported_and_the_rest_is_still_searched() {
     fixture.write_nested("tree/closed/buried.txt", b"needle buried\n");
     close_path(&closed);
 
-    let output = wfgrep().run(fixture.path(), &[b"needle", b"tree"]);
+    let outputs = builds()
+        .map(|(build, program)| (build, program.run(fixture.path(), &[b"needle", b"tree"])));
 
     reopen_path(&closed, 0o755);
 
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
-        "tree/open.txt:1:needle visible\n"
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&output.stderr),
-        "wfgrep: tree/closed: permission denied\n"
-    );
-    assert_eq!(output.status.code(), Some(2));
+    for (build, output) in outputs {
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "tree/open.txt:1:needle visible\n",
+            "{build}"
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr),
+            "wfgrep: tree/closed: permission denied\n",
+            "{build}"
+        );
+        assert_eq!(output.status.code(), Some(2), "{build}");
+    }
 }
 
 /// A file the process cannot open is reported by its complete relative path
@@ -527,19 +599,24 @@ fn an_unreadable_file_is_reported_by_path_and_the_walk_continues() {
     fixture.write_nested("tree/open.txt", b"needle visible\n");
     close_path(&denied);
 
-    let output = wfgrep().run(fixture.path(), &[b"needle", b"tree"]);
+    let outputs = builds()
+        .map(|(build, program)| (build, program.run(fixture.path(), &[b"needle", b"tree"])));
 
     reopen_path(&denied, 0o644);
 
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
-        "tree/open.txt:1:needle visible\n"
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&output.stderr),
-        "wfgrep: tree/denied.txt: permission denied\n"
-    );
-    assert_eq!(output.status.code(), Some(2));
+    for (build, output) in outputs {
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "tree/open.txt:1:needle visible\n",
+            "{build}"
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr),
+            "wfgrep: tree/denied.txt: permission denied\n",
+            "{build}"
+        );
+        assert_eq!(output.status.code(), Some(2), "{build}");
+    }
 }
 
 /// A search root the capability cannot open is reported once and is the
@@ -547,26 +624,32 @@ fn an_unreadable_file_is_reported_by_path_and_the_walk_continues() {
 #[test]
 fn a_missing_search_root_is_reported_once() {
     let fixture = fixture_directory();
-    let output = wfgrep().run(fixture.path(), &[b"needle", b"absent"]);
-    assert!(output.stdout.is_empty());
-    assert_eq!(
-        String::from_utf8_lossy(&output.stderr),
-        "wfgrep: absent: no such file or directory\n"
-    );
-    assert_eq!(output.status.code(), Some(2));
+    for (build, program) in builds() {
+        let output = program.run(fixture.path(), &[b"needle", b"absent"]);
+        assert!(output.stdout.is_empty(), "{build}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr),
+            "wfgrep: absent: no such file or directory\n",
+            "{build}"
+        );
+        assert_eq!(output.status.code(), Some(2), "{build}");
+    }
 }
 
 /// An invocation naming no root reports its usage and the error status.
 #[test]
 fn wfgrep_reports_its_usage_when_the_invocation_names_no_root() {
     let fixture = fixture_directory();
-    let output = wfgrep().run(fixture.path(), &[b"needle"]);
-    assert!(output.stdout.is_empty());
-    assert_eq!(
-        String::from_utf8_lossy(&output.stderr),
-        "usage: wfgrep PATTERN ROOT\n"
-    );
-    assert_eq!(output.status.code(), Some(2));
+    for (build, program) in builds() {
+        let output = program.run(fixture.path(), &[b"needle"]);
+        assert!(output.stdout.is_empty(), "{build}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr),
+            "usage: wfgrep PATTERN ROOT\n",
+            "{build}"
+        );
+        assert_eq!(output.status.code(), Some(2), "{build}");
+    }
 }
 
 /// A pattern that is not valid text travels the lossless route unchanged and
@@ -587,14 +670,16 @@ fn a_pattern_that_is_not_text_travels_the_lossless_route_unchanged() {
         b"prefix \xff\xfe marker suffix\nplain line\n",
     );
 
-    let output = wfgrep().run(fixture.path(), &[b"\xff\xfe marker", b"tree"]);
-    assert_eq!(
-        output.stdout,
-        b"tree/raw.txt:1:prefix \xff\xfe marker suffix\n".to_vec(),
-        "diagnostics: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert_eq!(output.status.code(), Some(0));
+    for (build, program) in builds() {
+        let output = program.run(fixture.path(), &[b"\xff\xfe marker", b"tree"]);
+        assert_eq!(
+            output.stdout,
+            b"tree/raw.txt:1:prefix \xff\xfe marker suffix\n".to_vec(),
+            "{build}: diagnostics: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.status.code(), Some(0), "{build}");
+    }
 }
 
 /// A symbolic link the walk enumerates is not followed.
@@ -616,29 +701,37 @@ fn an_enumerated_symbolic_link_is_not_followed() {
     fixture.symlink("tree/link.txt", &outside);
     fixture.symlink("tree/linkdir", &outside_directory);
 
-    let output = wfgrep().run(fixture.path(), &[b"needle", b"tree"]);
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
-        "tree/visible.txt:1:needle inside\n"
-    );
-    assert_eq!(output.status.code(), Some(0));
+    for (build, program) in builds() {
+        let output = program.run(fixture.path(), &[b"needle", b"tree"]);
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "tree/visible.txt:1:needle inside\n",
+            "{build}"
+        );
+        assert_eq!(output.status.code(), Some(0), "{build}");
+    }
 }
 
 /// The search reaches its file and directory operations through ordinary
 /// direct calls. A supplied declaration alone does not establish a call site.
 #[test]
 fn the_search_uses_ordinary_file_and_directory_calls() {
-    let llvm = wfgrep_module();
-    for name in [
-        "open_file",
-        "open_directory_source",
-        "directory_next",
-        "open_directory",
-        "read_at",
+    for (build, llvm) in [
+        ("default", wfgrep_module()),
+        ("--par", wfgrep_parallel_module()),
     ] {
-        assert!(
-            llvm.contains(&format!("call void @wf_std.fs.{name}(")),
-            "the search must call the ordinary {name} declaration"
-        );
+        for name in [
+            "open_file",
+            "open_directory_source",
+            "directory_next",
+            "open_directory",
+            "read_at",
+        ] {
+            // A waiting host function is linked as its start and its finish.
+            assert!(
+                llvm.contains(&format!("call i32 @wf_std.fs.{name}.start(")),
+                "{build}: the search must call the ordinary {name} declaration"
+            );
+        }
     }
 }

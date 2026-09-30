@@ -59,6 +59,7 @@ use crate::backend::emission::{FunctionBody, Linkage, Module, Parameter, Referen
 use std::collections::HashSet;
 use std::fmt::Write;
 
+use super::union_enums::FrameOperand;
 use super::{BackendFailure, FunctionEmitter, IntrinsicDeclaration, value_name};
 use crate::backend::abi::{FunctionAbi, ResultAbi};
 use crate::{
@@ -375,7 +376,13 @@ pub(crate) fn sequential_clone_set(program: &IrProgram) -> HashSet<u32> {
                     continue;
                 };
                 match operation {
-                    IrOperation::Call { function, .. } => callees[ordinal].push(*function),
+                    // A started context runs its wrapper in the world of the
+                    // activation that starts it, so the wrapper is reached
+                    // exactly as a call is.
+                    IrOperation::Call { function, .. }
+                    | IrOperation::ContextStart { function, .. } => {
+                        callees[ordinal].push(*function);
+                    }
                     // A split reaches both halves: the overlapped world calls
                     // the splitter and the sequential world calls the chunk, so
                     // each world's reachability has to hold the one it uses.
@@ -462,6 +469,11 @@ pub(crate) struct ParallelThunks {
     /// Whether any emitted function asked the runtime for a split allowance, so
     /// a module that splits no loop names that symbol nowhere.
     queries_split_budget: bool,
+    /// The thunks of started contexts [WAIT-3], which name the bridge's context
+    /// entry points and no compute scheduler symbol.
+    context_definitions: Module,
+    context_count: u32,
+    context_local: std::collections::HashMap<String, u32>,
     /// The same for the recursion budget: a module with no budgeted component
     /// names that symbol nowhere either.
     pub(super) queries_recursion_budget: bool,
@@ -476,6 +488,36 @@ impl ParallelThunks {
 
     pub(crate) const fn is_used(&self) -> bool {
         self.count != 0
+    }
+
+    /// The started contexts' thunk definitions, or empty when no function
+    /// starts one.
+    pub(super) fn take_context_definitions(&mut self) -> Module {
+        std::mem::take(&mut self.context_definitions)
+    }
+
+    pub(crate) const fn starts_contexts(&self) -> bool {
+        self.context_count != 0
+    }
+
+    /// Records one started context's thunk, numbered among `parent`'s own as
+    /// [`Self::register`] numbers a hand-out's.
+    pub(super) fn register_context(
+        &mut self,
+        parent: &str,
+        body: impl FnOnce(&str) -> Result<Module, BackendFailure>,
+    ) -> Result<String, BackendFailure> {
+        let local = self.context_local.entry(parent.to_owned()).or_insert(0);
+        let symbol = format!("@wf__ctx_thunk_{parent}.{local}");
+        *local = local
+            .checked_add(1)
+            .ok_or(BackendFailure::CounterOverflow)?;
+        self.context_count = self
+            .context_count
+            .checked_add(1)
+            .ok_or(BackendFailure::CounterOverflow)?;
+        self.context_definitions.append(body(&symbol)?);
+        Ok(symbol)
     }
 
     pub(crate) const fn queries_split_budget(&self) -> bool {
@@ -568,16 +610,22 @@ impl FunctionEmitter<'_, '_> {
                 parameter.ty(),
                 &mut frame_references.types,
             )?;
-            let operand = self.value_operand(*argument)?;
-            operands.push(format!("{parameter_type} {operand}"));
+            let operand = self.frame_operand(&parameter_type, *argument)?;
             // The frame keeps a range reference's pair whole; the refused
             // edge's own call receives it split, like every other call.
             call_arguments.push(if parameter.is_indirect() {
                 let address = self.value_place(*argument)?;
                 format!("ptr {address}")
             } else {
-                self.value_argument(*parameter, &operand)?
+                // A by-value parameter is never a stored aggregate, so it has
+                // no slot and its operand is its own name.
+                let FrameOperand::Value(_) = operand else {
+                    return Err(BackendFailure::InvalidIr);
+                };
+                let name = self.value_name(*argument);
+                self.value_argument(*parameter, &name)?
             });
+            operands.push(operand);
             field_types.push(parameter_type);
         }
         let result_type =
@@ -595,7 +643,7 @@ impl FunctionEmitter<'_, '_> {
         // arguments: one more frame field, stored at the offer and read by the
         // thunk. The field follows the result, which leaves every existing
         // field at the offset it had.
-        let (callee, budget) = self.callee_target(function, target.name());
+        let (callee, budget) = self.callee_target(function, target.name(), result);
         let budget = budget.map(str::to_owned);
         let budget_field = budget.as_ref().map(|_| {
             field_types.push("i64".to_owned());
@@ -643,9 +691,10 @@ impl FunctionEmitter<'_, '_> {
             let field = format!("%{}", self.next_temporary()?);
             writeln!(
                 self.output,
-                "  {field} = getelementptr inbounds {frame_type}, ptr {frame}, i32 0, i32 {index}\n  store {operand}, ptr {field}"
+                "  {field} = getelementptr inbounds {frame_type}, ptr {frame}, i32 0, i32 {index}"
             )
             .map_err(|_| BackendFailure::TextEmission)?;
+            self.store_frame_operand(operand, &field)?;
         }
         if let (Some(field), Some(budget)) = (budget_field, budget.as_ref()) {
             let slot = format!("%{}", self.next_temporary()?);
@@ -940,6 +989,17 @@ impl FunctionEmitter<'_, '_> {
         if result_abi.uses_destination() {
             let destination = self.value_place(result)?;
             arguments.insert(0, format!("ptr {destination}"));
+            // A memory-only result stays in the destination it was
+            // constructed in (compiler/payload-enum-layout).
+            if self.is_memory_only(result_abi.ty())? {
+                self.output.symbol(callee.to_string());
+                return writeln!(
+                    self.output,
+                    "  call void @{callee}({})",
+                    arguments.join(", ")
+                )
+                .map_err(|_| BackendFailure::TextEmission);
+            }
             // LoopSplit uses the value-definition bridge, whose ordinary
             // result save reads this snapshot of the completed destination.
             return {
@@ -999,6 +1059,42 @@ impl FunctionEmitter<'_, '_> {
                 ..
             } = &pending;
             self.output.symbol(callee.as_str());
+            // A memory-only result is constructed in its destination by the
+            // inline call and copied there from the lane frame by the wait
+            // (compiler/payload-enum-layout); no first-class value joins.
+            if self.is_memory_only(pending.result_abi.ty())? {
+                let destination = self.value_place(pending.result)?;
+                let arguments = if arguments.is_empty() {
+                    format!("ptr {destination}")
+                } else {
+                    format!("ptr {destination}, {arguments}")
+                };
+                write!(self.output, "  {condition} = icmp eq ptr {frame}, null\n  br i1 {condition}, label %{inline}, label %{wait}\n")
+                    .map_err(|_| BackendFailure::TextEmission)?;
+                self.output.open_block(inline.clone());
+                write!(
+                    self.output,
+                    "  call void @{callee}({arguments})\n  br label %{done}\n"
+                )
+                .map_err(|_| BackendFailure::TextEmission)?;
+                self.output.open_block(wait.clone());
+                self.output.symbol("wf__par_join");
+                self.output.symbol("wf__par_release");
+                writeln!(
+                    self.output,
+                    "  call void @wf__par_join(ptr {frame})\n  {field} = getelementptr inbounds {frame_type}, ptr {frame}, i32 0, i32 {result_field}"
+                )
+                .map_err(|_| BackendFailure::TextEmission)?;
+                let frame = frame.clone();
+                self.copy_storage(pending.result_abi.ty(), &field, &destination)?;
+                write!(
+                    self.output,
+                    "  call void @wf__par_release(ptr {frame})\n  br label %{done}\n"
+                )
+                .map_err(|_| BackendFailure::TextEmission)?;
+                self.output.open_block(done.clone());
+                continue;
+            }
             let (inline_call, save_waited) = if pending.result_abi.uses_destination() {
                 let destination = self.value_place(pending.result)?;
                 let arguments = if arguments.is_empty() {
@@ -1045,43 +1141,29 @@ impl FunctionEmitter<'_, '_> {
 
 /// The lane frame one hand-out fills, as its thunk reads it back: the LLVM
 /// struct type, its field types in order, and which fields are not arguments.
-struct ThunkFrame<'site> {
-    ty: &'site str,
-    field_types: &'site [String],
+/// A started context's frame has the same shape [WAIT-3].
+pub(super) struct ThunkFrame<'site> {
+    pub(super) ty: &'site str,
+    pub(super) field_types: &'site [String],
     /// The field the result is left in: the argument count.
-    result: usize,
+    pub(super) result: usize,
     /// The field carrying the callee variant's budget, where the callback
     /// lands inside a budgeted component.
-    budget: Option<usize>,
-    references: &'site References,
+    pub(super) budget: Option<usize>,
+    pub(super) references: &'site References,
 }
 
-/// One outlined call over its frame.
-fn thunk_definition(
-    symbol: &str,
-    frame: &ThunkFrame<'_>,
+/// A thunk's reads of its call's arguments out of the frame, in the callee's
+/// ABI: a pointer to the field for an argument passed indirectly, the pair's
+/// two words for a range reference, and the loaded value otherwise. A started
+/// context's thunk reads its frame the same way [WAIT-3].
+pub(super) fn thunk_arguments(
+    body: &mut FunctionBody,
+    frame_type: &str,
+    field_types: &[String],
     abi: &FunctionAbi,
-    callee: &str,
-    result_type: &str,
-) -> Result<Module, BackendFailure> {
-    let ThunkFrame {
-        ty: frame_type,
-        field_types,
-        result: result_field,
-        budget: budget_field,
-        references,
-    } = *frame;
-    let mut signature = Signature::new(
-        symbol.trim_start_matches('@'),
-        "void",
-        vec![Parameter::named("ptr", "%frame")],
-    );
-    signature.linkage = Linkage::Internal;
-    let mut body = FunctionBody::default();
-    body.references.extend(references);
-    body.symbol(callee);
-    body.open_block("entry".to_owned());
-    let mut rendered = Vec::with_capacity(field_types.len() - 1);
+) -> Vec<String> {
+    let mut rendered = Vec::with_capacity(field_types.len().saturating_sub(1));
     for (index, (field_type, parameter)) in field_types.iter().zip(abi.parameters()).enumerate() {
         let _ = writeln!(
             body,
@@ -1106,6 +1188,35 @@ fn thunk_definition(
             rendered.push(format!("{field_type} %a{index}"));
         }
     }
+    rendered
+}
+
+/// One outlined call over its frame.
+pub(super) fn thunk_definition(
+    symbol: &str,
+    frame: &ThunkFrame<'_>,
+    abi: &FunctionAbi,
+    callee: &str,
+    result_type: &str,
+) -> Result<Module, BackendFailure> {
+    let ThunkFrame {
+        ty: frame_type,
+        field_types,
+        result: result_field,
+        budget: budget_field,
+        references,
+    } = *frame;
+    let mut signature = Signature::new(
+        symbol.trim_start_matches('@'),
+        "void",
+        vec![Parameter::named("ptr", "%frame")],
+    );
+    signature.linkage = Linkage::Internal;
+    let mut body = FunctionBody::default();
+    body.references.extend(references);
+    body.symbol(callee);
+    body.open_block("entry".to_owned());
+    let mut rendered = thunk_arguments(&mut body, frame_type, field_types, abi);
     // The budget the offering activation had left, where this callback lands
     // in a budget-carrying variant: an ordinary trailing argument, read out of
     // the frame like every other one.

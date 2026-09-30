@@ -14,40 +14,59 @@
 
 typedef struct { alignas(16) uint64_t words[4]; } wf_value;
 typedef struct { void *data; uint64_t length; } wf_view;
-typedef struct { uint32_t code; uint8_t origin; } wf_error_detail;
-typedef struct { uint32_t tag; wf_error_detail detail[28]; } wf_io_error;
-typedef struct { uint32_t tag; wf_value value; uint8_t error; } wf_value_result;
+/* An enum with two or more payload-carrying variants whose tag-then-every-
+ * payload product would not return in registers is laid out as a union of
+ * per-variant views, each the tag followed by that variant's fields
+ * (compiler/payload-enum-layout). C spells it as a union of structs that each
+ * begin with the tag; `tag` reads it in every view. `IoError`'s 28 views are
+ * identical, so one struct is all of them. */
+typedef struct { uint32_t tag; uint32_t code; uint8_t origin; } wf_io_error;
 typedef struct { uint32_t tag; uint64_t required; } wf_copy_error;
-typedef struct { uint32_t tag; uint64_t value; wf_copy_error error; } wf_copy_result;
-typedef struct { uint32_t tag; uint64_t value; uint8_t error; } wf_utf8_result;
-typedef struct { uint32_t tag; uint64_t value; wf_io_error error; } wf_write_result;
 typedef struct { uint32_t tag; wf_io_error error; } wf_read_stop;
-typedef struct { uint32_t tag; uint64_t value; wf_read_stop error; } wf_read_result;
-typedef struct { uint32_t tag; uint8_t value; wf_read_stop error; } wf_list_status;
-typedef struct { wf_list_status result; uint64_t next; uint64_t entries; } wf_list_result;
-typedef struct { uint32_t tag; uint8_t value; wf_io_error error; } wf_close_result;
-typedef struct { uint32_t tag; wf_value value; wf_io_error error; } wf_open_result;
 typedef struct { wf_value receive; wf_value send; } wf_connection;
 typedef struct { wf_connection connection; wf_value peer; } wf_accepted_connection;
-typedef struct { uint32_t tag; wf_connection value; wf_io_error error; } wf_connect_result;
-typedef struct { uint32_t tag; wf_accepted_connection value; wf_io_error error; } wf_accept_result;
+#define WF_RESULT_UNION(name, ok_type, error_type) \
+    typedef union { \
+        uint32_t tag; \
+        struct { uint32_t tag; ok_type value; } ok; \
+        struct { uint32_t tag; error_type error; } err; \
+    } name
+WF_RESULT_UNION(wf_value_result, wf_value, uint8_t);
+WF_RESULT_UNION(wf_copy_result, uint64_t, wf_copy_error);
+/* Its tag, value and one-bit error fit the return registers, so it keeps the
+ * product layout. */
+typedef struct { uint32_t tag; uint64_t value; uint8_t error; } wf_utf8_result;
+WF_RESULT_UNION(wf_write_result, uint64_t, wf_io_error);
+WF_RESULT_UNION(wf_read_result, uint64_t, wf_read_stop);
+typedef wf_read_stop wf_list_stop;
+WF_RESULT_UNION(wf_list_status, uint8_t, wf_list_stop);
+typedef struct { wf_list_status result; uint64_t next; uint64_t entries; } wf_list_result;
+WF_RESULT_UNION(wf_close_result, uint8_t, wf_io_error);
+WF_RESULT_UNION(wf_open_result, wf_value, wf_io_error);
+WF_RESULT_UNION(wf_connect_result, wf_connection, wf_io_error);
+WF_RESULT_UNION(wf_accept_result, wf_accepted_connection, wf_io_error);
+#undef WF_RESULT_UNION
 typedef struct {
     wf_value args, cwd, out, err, handles, in;
 } wf_inputs;
 
 _Static_assert(sizeof(wf_value) == 32 && _Alignof(wf_value) == 16, "ordinary opaque layout");
-_Static_assert(sizeof(wf_io_error) == 228, "ordinary error enum layout");
-_Static_assert(sizeof(wf_read_result) == 248, "ordinary read Result layout");
-_Static_assert(sizeof(wf_list_status) == 240, "ordinary directory status Result layout");
-_Static_assert(offsetof(wf_list_result, next) == 240 &&
-               offsetof(wf_list_result, entries) == 248 &&
-               sizeof(wf_list_result) == 256, "ordinary directory three-result layout");
-_Static_assert(sizeof(wf_open_result) == 288, "ordinary open Result layout");
-_Static_assert(sizeof(wf_connect_result) == 320, "ordinary connect Result layout");
+_Static_assert(sizeof(wf_io_error) == 12, "ordinary error enum layout");
+_Static_assert(sizeof(wf_value_result) == 48, "ordinary value Result layout");
+_Static_assert(sizeof(wf_copy_result) == 24, "ordinary copy Result layout");
+_Static_assert(sizeof(wf_write_result) == 16, "ordinary write Result layout");
+_Static_assert(sizeof(wf_read_result) == 24, "ordinary read Result layout");
+_Static_assert(sizeof(wf_list_status) == 20, "ordinary directory status Result layout");
+_Static_assert(offsetof(wf_list_result, next) == 24 &&
+               offsetof(wf_list_result, entries) == 32 &&
+               sizeof(wf_list_result) == 40, "ordinary directory three-result layout");
+_Static_assert(sizeof(wf_close_result) == 16, "ordinary close Result layout");
+_Static_assert(sizeof(wf_open_result) == 48, "ordinary open Result layout");
+_Static_assert(sizeof(wf_connect_result) == 80, "ordinary connect Result layout");
 _Static_assert(sizeof(wf_accepted_connection) == 96, "ordinary AcceptedConnection layout");
-_Static_assert(offsetof(wf_accept_result, value) == 16 &&
-               offsetof(wf_accept_result, error) == 112 &&
-               sizeof(wf_accept_result) == 352, "ordinary accept Result layout");
+_Static_assert(offsetof(wf_accept_result, ok.value) == 16 &&
+               offsetof(wf_accept_result, err.error) == 4 &&
+               sizeof(wf_accept_result) == 112, "ordinary accept Result layout");
 _Static_assert(sizeof(wf_inputs) == 192, "ordinary Inputs layout");
 
 /* A host function's link name is its standard library identity [MOD-10],
@@ -83,6 +102,7 @@ void wf__body_send_once(wf_write_result *result, wf_value *send, const wf_view *
 void wf__body_close_listener(wf_close_result *result, wf_value *factory, const wf_value *listener);
 void wf__body_close_receive(wf_close_result *result, wf_value *factory, const wf_value *receive);
 void wf__body_close_send(wf_close_result *result, wf_value *factory, const wf_value *send);
+void wf__body_factory_share(wf_value *result, const wf_value *factory);
 
 /* Build launcher support: constructs ordinary argument representations. The
  * supplied argument backing remains valid until the selected call returns.

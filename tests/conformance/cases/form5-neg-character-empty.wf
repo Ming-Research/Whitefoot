@@ -1,0 +1,8 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  doc "A character literal holds exactly one text item, so an empty one is not a literal [FORM-5].";
+  let a = ''_u8;
+  return exit_status(code: 0_u8);
+}

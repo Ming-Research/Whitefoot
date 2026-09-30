@@ -1,0 +1,7 @@
+fn main() -> status: std::process::ExitStatus pure waits {
+  let plain = 0_u8;
+  atomic value = &plain {
+    set value^ = 1_u8;
+  }
+  return std::process::exit_status(code: plain);
+}

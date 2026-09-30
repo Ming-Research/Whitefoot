@@ -1,0 +1,16 @@
+interface Closer {
+  fn close(factory: &std::io::HandleFactory, directory: std::fs::DirectoryRead) -> result: unit writes(factory);
+}
+
+binding Direct : Closer {
+  close = close_it;
+}
+
+fn close_it(factory: &std::io::HandleFactory, directory: std::fs::DirectoryRead) -> result: unit writes(factory) waits {
+  std::fs::close_directory(factory: factory, directory: move directory);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

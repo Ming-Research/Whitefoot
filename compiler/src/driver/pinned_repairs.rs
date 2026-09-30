@@ -45,6 +45,147 @@ struct RepairPair {
 
 const REPAIRS: &[RepairPair] = &[
     // -------------------------------------------------------------------
+    // [FORM-7] a text item's one spelling and a `u8` character's range.
+    // -------------------------------------------------------------------
+    RepairPair {
+        name: "character-escaped-printable.wf",
+        rejected: br#"fn main() -> status: std::process::ExitStatus pure {
+  let a = '\u{41}'_u8;
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "FORM-7",
+        sentences: &[
+            "]: InvalidTextItem\n",
+            "\n  reason: each character has exactly one spelling: the printable ASCII byte itself, `\\\\`, `\\n`, `\\t`, `\\r` or the escaped quote, and `\\u{H}` in lowercase hexadecimal without leading zeros for every other value\n",
+            "\n  mechanical_fix: write `A` in place of `\\u{41}`\n",
+        ],
+        repaired: &[br#"fn main() -> status: std::process::ExitStatus pure {
+  let a = 'A'_u8;
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "string-escaped-newline.wf",
+        rejected: br#"const line: Array<u8, 3> = "ok\u{a}";
+
+fn main() -> status: std::process::ExitStatus pure {
+  let a = line[2_u64];
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "FORM-7",
+        sentences: &[
+            "]: InvalidTextItem\n",
+            "\n  mechanical_fix: write `\\n` in place of `\\u{a}`\n",
+        ],
+        repaired: &[br#"const line: Array<u8, 3> = "ok\n";
+
+fn main() -> status: std::process::ExitStatus pure {
+  let a = line[2_u64];
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "character-escaped-tab.wf",
+        rejected: br#"fn main() -> status: std::process::ExitStatus pure {
+  let a = '\u{9}'_u8;
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "FORM-7",
+        sentences: &[
+            "]: InvalidTextItem\n",
+            "\n  mechanical_fix: write `\\t` in place of `\\u{9}`\n",
+        ],
+        repaired: &[br#"fn main() -> status: std::process::ExitStatus pure {
+  let a = '\t'_u8;
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "u8-character-above-ascii.wf",
+        rejected: br#"fn main() -> status: std::process::ExitStatus pure {
+  let a = '\u{e9}'_u8;
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "FORM-7",
+        sentences: &[
+            "]: NonAsciiByteCharacter\n",
+            "\n  mechanical_fix: a `u8` character is ASCII, at most 0x7F: write `'\\u{e9}'_u32` for the character, or `233_u8` for the byte\n",
+        ],
+        repaired: &[
+            br#"fn main() -> status: std::process::ExitStatus pure {
+  let a = '\u{e9}'_u32;
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+            br#"fn main() -> status: std::process::ExitStatus pure {
+  let a = 233_u8;
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        ],
+    },
+    RepairPair {
+        name: "u8-character-beyond-a-byte.wf",
+        rejected: br#"fn main() -> status: std::process::ExitStatus pure {
+  let a = '\u{3b1}'_u8;
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "FORM-7",
+        sentences: &[
+            "]: NonAsciiByteCharacter\n",
+            "\n  mechanical_fix: a `u8` character is ASCII, at most 0x7F: write `'\\u{3b1}'_u32`\n",
+        ],
+        repaired: &[br#"fn main() -> status: std::process::ExitStatus pure {
+  let a = '\u{3b1}'_u32;
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    // -------------------------------------------------------------------
+    // [CONST-2] a STRING constant's length.
+    // -------------------------------------------------------------------
+    RepairPair {
+        name: "string-length-mismatch.wf",
+        rejected: br#"const usage: Array<u8, 5> = "usage\n";
+
+fn main() -> status: std::process::ExitStatus pure {
+  let a = usage[0_u64];
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "CONST-2",
+        sentences: &[
+            "]: TextLengthMismatch\n",
+            "\n  declared_length: 5\n",
+            "\n  byte_length: 6\n",
+            "\n  mechanical_fix: this text is 6 bytes in UTF-8: write `Array<u8, 6>` where this array's type is declared, or change the text to 5 bytes\n",
+        ],
+        repaired: &[
+            br#"const usage: Array<u8, 6> = "usage\n";
+
+fn main() -> status: std::process::ExitStatus pure {
+  let a = usage[0_u64];
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+            br#"const usage: Array<u8, 5> = "usage";
+
+fn main() -> status: std::process::ExitStatus pure {
+  let a = usage[0_u64];
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        ],
+    },
+    // -------------------------------------------------------------------
     // [FN-8] an ordinary call's requirement.
     // -------------------------------------------------------------------
     RepairPair {
@@ -309,9 +450,32 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "FN-8",
         sentences: &[
             "\n  disposition: Unproved\n",
-            "` reads a value no fact can name until a `let` binds it: bind that value with one preceding `let`, use the binding in the call, and establish the relation over the binding\n",
+            "\n  mechanical_fix: `values[0_u64..k].len` is `k` [REF-4], so this call needs `2_u64 <= k`: guard the call with `if 2_u64 <= k` where skipping it is the intended behavior; or bind the range with one preceding `let`, use the binding in the call, and establish the relation over the binding\n",
         ],
-        repaired: &[br#"fn need(v: &[u64]) -> result: u64 pure contract {
+        repaired: &[
+            br#"fn need(v: &[u64]) -> result: u64 pure contract {
+  requires 2_u64 <= v^.len;
+} {
+  return 0_u64;
+}
+
+fn caller(k: u64) -> result: u64 pure {
+  let values = array_filled::<u64, 4>(value: 0_u64);
+  if k <= 4_u64 {
+    if 2_u64 <= k {
+      let r = need(v: &values[0_u64..k]);
+      return r;
+    }
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let r = caller(k: 3_u64);
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+            br#"fn need(v: &[u64]) -> result: u64 pure contract {
   requires 2_u64 <= v^.len;
 } {
   return 0_u64;
@@ -331,6 +495,226 @@ fn caller(k: u64) -> result: u64 pure {
 
 fn main() -> status: std::process::ExitStatus pure {
   let r = caller(k: 3_u64);
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        ],
+    },
+    RepairPair {
+        name: "call-requirement-over-a-range-length-that-is-a-difference.wf",
+        rejected: br#"fn need(v: &[u64]) -> result: u64 reads(v.len) contract {
+  requires v^.len <= 2_u64;
+} {
+  return v^.len;
+}
+
+fn caller(start: u64, end: u64) -> result: u64 pure {
+  let values = array_filled::<u64, 4>(value: 0_u64);
+  let ordered = start <= end;
+  let within = end <= 4_u64;
+  if band(ordered, within) {
+    let r = need(v: &values[start..end]);
+    return r;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let r = caller(start: 1_u64, end: 3_u64);
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "FN-8",
+        sentences: &[
+            "\n  disposition: Unproved\n",
+            "\n  mechanical_fix: `values[start..end].len` is `end - start` [REF-4], so this call needs `end - start <= 2_u64`: where `start <= end` holds, bind the difference with the exact `-`, `let width = end - start;` (a `-wrap` difference carries no relation to the range's length), and guard the call with `if width <= 2_u64` where skipping it is the intended behavior; or bind the range with one preceding `let`, use the binding in the call, and establish the relation over the binding\n",
+        ],
+        repaired: &[
+            br#"fn need(v: &[u64]) -> result: u64 reads(v.len) contract {
+  requires v^.len <= 2_u64;
+} {
+  return v^.len;
+}
+
+fn caller(start: u64, end: u64) -> result: u64 pure {
+  let values = array_filled::<u64, 4>(value: 0_u64);
+  let ordered = start <= end;
+  let within = end <= 4_u64;
+  if band(ordered, within) {
+    let width = end - start;
+    if width <= 2_u64 {
+      let r = need(v: &values[start..end]);
+      return r;
+    }
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let r = caller(start: 1_u64, end: 3_u64);
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+            br#"fn need(v: &[u64]) -> result: u64 reads(v.len) contract {
+  requires v^.len <= 2_u64;
+} {
+  return v^.len;
+}
+
+fn caller(start: u64, end: u64) -> result: u64 pure {
+  let values = array_filled::<u64, 4>(value: 0_u64);
+  let ordered = start <= end;
+  let within = end <= 4_u64;
+  if band(ordered, within) {
+    let part = &values[start..end];
+    if part^.len <= 2_u64 {
+      let r = need(v: part);
+      return r;
+    }
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let r = caller(start: 1_u64, end: 3_u64);
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        ],
+    },
+    RepairPair {
+        name: "call-requirement-over-a-range-with-field-endpoints.wf",
+        rejected: br#"struct Span {
+  start: u64;
+  end: u64;
+}
+
+fn need(v: &[u64]) -> result: u64 reads(v.len) contract {
+  requires v^.len <= 2_u64;
+} {
+  return v^.len;
+}
+
+fn caller(span: Span) -> result: u64 pure {
+  let values = array_filled::<u64, 4>(value: 0_u64);
+  let ordered = span.start <= span.end;
+  let within = span.end <= 4_u64;
+  if band(ordered, within) {
+    let r = need(v: &values[span.start..span.end]);
+    return r;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let span = Span(start: 1_u64, end: 3_u64);
+  let r = caller(span: span);
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "FN-8",
+        sentences: &[
+            "\n  disposition: Unproved\n",
+            "\n  mechanical_fix: `values[span.start..span.end].len` is the difference of its endpoints [REF-4], and its endpoints `span.start` and `span.end` are not bindings, so no fact names that difference: copy each into a `let` binding before the call and form the range from the bindings, then, where the start is at most the end, bind the difference of the bindings with the exact `-` (a `-wrap` difference carries no relation to the range's length) and establish the requirement over it\n",
+        ],
+        repaired: &[br#"struct Span {
+  start: u64;
+  end: u64;
+}
+
+fn need(v: &[u64]) -> result: u64 reads(v.len) contract {
+  requires v^.len <= 2_u64;
+} {
+  return v^.len;
+}
+
+fn caller(span: Span) -> result: u64 pure {
+  let values = array_filled::<u64, 4>(value: 0_u64);
+  let start = span.start;
+  let end = span.end;
+  let ordered = start <= end;
+  let within = end <= 4_u64;
+  if band(ordered, within) {
+    let width = end - start;
+    if width <= 2_u64 {
+      let r = need(v: &values[start..end]);
+      return r;
+    }
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let span = Span(start: 1_u64, end: 3_u64);
+  let r = caller(span: span);
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "call-requirement-equating-range-length-differences.wf",
+        rejected: br#"fn pair(left: &[u64], right: &[u64]) -> result: u64 reads(left.len) contract {
+  requires left^.len == right^.len;
+} {
+  return left^.len;
+}
+
+fn caller(s: u64, e: u64, t: u64, u: u64) -> result: u64 pure {
+  let a = array_filled::<u64, 4>(value: 0_u64);
+  let b = array_filled::<u64, 4>(value: 0_u64);
+  let ordered = s <= e;
+  let within = e <= 4_u64;
+  let other_ordered = t <= u;
+  let other_within = u <= 4_u64;
+  let first = band(ordered, within);
+  let second = band(other_ordered, other_within);
+  if band(first, second) {
+    let r = pair(left: &a[s..e], right: &b[t..u]);
+    return r;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let r = caller(s: 1_u64, e: 3_u64, t: 0_u64, u: 2_u64);
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "FN-8",
+        sentences: &[
+            "\n  disposition: Unproved\n",
+            "\n  mechanical_fix: `a[s..e].len` is `e - s` and `b[t..u].len` is `u - t` [REF-4], so this call needs `e - s == u - t`, and an equality over the difference of two distinct endpoints has no difference-bound form [ENT-4]: where the start is at most the end, bind each such difference with the exact `-`, as `let width = e - s;` (a `-wrap` difference carries no relation to the range's length), bind its range with one preceding `let`, as `let part = &a[s..e];`, and pass `&part^[0_u64..width]` in its place, whose length is `width` itself; then establish the requirement over those bindings\n",
+        ],
+        repaired: &[br#"fn pair(left: &[u64], right: &[u64]) -> result: u64 reads(left.len) contract {
+  requires left^.len == right^.len;
+} {
+  return left^.len;
+}
+
+fn caller(s: u64, e: u64, t: u64, u: u64) -> result: u64 pure {
+  let a = array_filled::<u64, 4>(value: 0_u64);
+  let b = array_filled::<u64, 4>(value: 0_u64);
+  let ordered = s <= e;
+  let within = e <= 4_u64;
+  let other_ordered = t <= u;
+  let other_within = u <= 4_u64;
+  let first = band(ordered, within);
+  let second = band(other_ordered, other_within);
+  if band(first, second) {
+    let width = e - s;
+    let other_width = u - t;
+    let part = &a[s..e];
+    let other = &b[t..u];
+    if width == other_width {
+      let r = pair(left: &part^[0_u64..width], right: &other^[0_u64..other_width]);
+      return r;
+    }
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let r = caller(s: 1_u64, e: 3_u64, t: 0_u64, u: 2_u64);
   return std::process::exit_status(code: 0_u8);
 }
 "#],
@@ -1820,7 +2204,7 @@ alias Inputs = std::process::Inputs;
 alias close_directory = std::fs::close_directory;
 alias exit_status = std::process::exit_status;
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let Inputs(args: unused_args, cwd: unused_cwd, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin) = move inputs;
   close_directory(factory: &factory, directory: move unused_cwd);
   return exit_status(code: 0_u8);
@@ -1861,7 +2245,7 @@ alias Inputs = std::process::Inputs;
 alias close_directory = std::fs::close_directory;
 alias exit_status = std::process::exit_status;
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let Inputs(args: unused_args, cwd: unused_cwd, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin) = move inputs;
   close_directory(factory: &factory, directory: move unused_cwd);
   let HandleFactory() = move factory;
@@ -1878,7 +2262,7 @@ alias Inputs = std::process::Inputs;
 alias close_directory = std::fs::close_directory;
 alias exit_status = std::process::exit_status;
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let Inputs(args: unused_args, cwd: unused_cwd, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin) = move inputs;
   close_directory(factory: &factory, directory: move unused_cwd);
   return exit_status(code: 0_u8);
@@ -1910,7 +2294,7 @@ alias Inputs = std::process::Inputs;
 alias close_directory = std::fs::close_directory;
 alias exit_status = std::process::exit_status;
 
-fn main(inputs: Inputs) -> status: ExitStatus pure {
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let Inputs(args: unused_args, cwd: directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin) = move inputs;
   close_directory(factory: &factory, directory: move directory);
   return exit_status(code: 0_u8);
@@ -2399,6 +2783,532 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#],
     },
+    // -------------------------------------------------------------------
+    // [WAIT-1] a waiting call in a function that does not wait. The repair
+    // declares the enclosing function waiting; its caller is the entry,
+    // which may wait, so the chain ends there.
+    // -------------------------------------------------------------------
+    RepairPair {
+        name: "waiting-call-outside-a-waiting-function.wf",
+        rejected: br#"fn close_it(factory: &std::io::HandleFactory, directory: std::fs::DirectoryRead) -> result: unit writes(factory) {
+  std::fs::close_directory(factory: factory, directory: move directory);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "WAIT-1",
+        sentences: &[
+            "]: WaitingCallOutsideWaitingFunction\n",
+            "\n  mechanical_fix: write `waits` after the enclosing function's effect row, so the call stands in a waiting function; each caller of that function then waits in turn, up to an entry that waits\n",
+        ],
+        repaired: &[br#"fn close_it(factory: &std::io::HandleFactory, directory: std::fs::DirectoryRead) -> result: unit writes(factory) waits {
+  std::fs::close_directory(factory: factory, directory: move directory);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    // -------------------------------------------------------------------
+    // [SHARE-2] an atomic statement's target, block and guard. Each repair
+    // keeps the statement and moves what it refuses outside it.
+    // -------------------------------------------------------------------
+    RepairPair {
+        name: "atomic-target-is-not-a-shared-handle.wf",
+        rejected: br#"fn main() -> status: std::process::ExitStatus pure waits {
+  let plain = 0_u8;
+  atomic value = &plain {
+    set value^ = 1_u8;
+  }
+  return std::process::exit_status(code: plain);
+}
+"#,
+        rule: "SHARE-2",
+        sentences: &[
+            "]: AtomicTargetNotShared\n",
+            "\n  mechanical_fix: name a place of type `Shared<T>`: create the object with `shared_new` and give each context its own handle made with `shared_share`\n",
+        ],
+        repaired: &[br#"fn main() -> status: std::process::ExitStatus pure waits {
+  let plain = shared_new::<u8>(value: 0_u8);
+  let seen = 0_u8;
+  atomic value = &plain {
+    set value^ = 1_u8;
+    set seen = value^;
+  }
+  return std::process::exit_status(code: seen);
+}
+"#],
+    },
+    RepairPair {
+        name: "waiting-call-inside-an-atomic-statement.wf",
+        rejected: br#"fn pause(cell: Shared<u8>) -> result: unit pure waits {
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let cell = shared_new::<u8>(value: 0_u8);
+  let other = shared_share::<u8>(shared: &cell);
+  atomic value = &cell {
+    pause(cell: move other);
+    set value^ = 1_u8;
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "SHARE-2",
+        sentences: &[
+            "]: WaitInsideAtomic\n",
+            "\n  mechanical_fix: move the waiting call out of the atomic statement: end the statement first, wait, and start another atomic statement for any update that depends on the outcome\n",
+        ],
+        repaired: &[br#"fn pause(cell: Shared<u8>) -> result: unit pure waits {
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let cell = shared_new::<u8>(value: 0_u8);
+  let other = shared_share::<u8>(shared: &cell);
+  atomic value = &cell {
+    set value^ = 1_u8;
+  }
+  pause(cell: move other);
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "atomic-statement-inside-another.wf",
+        rejected: br#"fn main() -> status: std::process::ExitStatus pure waits {
+  let first = shared_new::<u8>(value: 0_u8);
+  let second = shared_new::<u8>(value: 0_u8);
+  atomic outer = &first {
+    atomic inner = &second {
+      set inner^ = outer^;
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "SHARE-2",
+        sentences: &[
+            "]: WaitInsideAtomic\n",
+            "\n  mechanical_fix: end the outer atomic statement before starting the inner one, carrying what the inner one needs in a local\n",
+        ],
+        repaired: &[br#"fn main() -> status: std::process::ExitStatus pure waits {
+  let first = shared_new::<u8>(value: 0_u8);
+  let second = shared_new::<u8>(value: 0_u8);
+  let carried = 0_u8;
+  atomic outer = &first {
+    set carried = outer^;
+  }
+  atomic inner = &second {
+    set inner^ = carried;
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "atomic-guard-writes.wf",
+        rejected: br#"fn claim(value: &u8) -> result: Bool writes(value) {
+  set value^ = 1_u8;
+  return True();
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let cell = shared_new::<u8>(value: 0_u8);
+  atomic value = &cell when claim(value: value) {
+    set value^ = 2_u8;
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "SHARE-2",
+        sentences: &[
+            "]: AtomicGuardWrites\n",
+            "\n  mechanical_fix: make the guard read only, calling a function whose row writes nothing and moves no argument, and make the update in the block\n",
+        ],
+        repaired: &[br#"fn unclaimed(value: &u8) -> result: Bool reads(value) {
+  let free = value^ == 0_u8;
+  return free;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let cell = shared_new::<u8>(value: 0_u8);
+  atomic value = &cell when unclaimed(value: value) {
+    set value^ = 1_u8;
+    set value^ = 2_u8;
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    // -------------------------------------------------------------------
+    // [TYPE-11] a struct's type invariants: their formation, a construction
+    // that does not establish one, and an atomic block that leaves one
+    // unproved.
+    // -------------------------------------------------------------------
+    RepairPair {
+        name: "type-invariant-on-a-generic-struct.wf",
+        rejected: br#"struct Pair<T> {
+  first: u64;
+  second: u64;
+  invariant ordered(pair): pair.first <= pair.second;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "TYPE-11",
+        sentences: &[
+            "]: InvalidTypeInvariant\n",
+            "\n  mechanical_fix: declare the invariant on a struct without generics, or state the relation as a `requires` and `ensures` pair on each function that takes the value\n",
+        ],
+        repaired: &[br#"struct Pair {
+  first: u64;
+  second: u64;
+  invariant ordered(pair): pair.first <= pair.second;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "propagation-leaves-a-type-invariant-false.wf",
+        rejected: br#"struct Table {
+  slots: Slots<u64, 8>;
+  next: u64;
+  invariant cursor(table): table.next < table.slots.len;
+}
+
+fn make() -> table: Table pure {
+  let slots = slots_new::<u64, 8>();
+  place_back(window: &slots, value: 10_u64);
+  let made = Table(slots: move slots, next: 0_u64);
+  return move made;
+}
+
+fn peek(t: &Table) -> result: u64 reads(t) {
+  let at = t^.next;
+  let got = t^.slots[at];
+  return got;
+}
+
+fn step(t: &Table, outcome: Result<u8, unit>) -> result: Result<u8, unit> writes(t.next) {
+  set t^.next = 99_u64;
+  let inner = propagate outcome;
+  set t^.next = 0_u64;
+  return Ok<u8, unit>(value: inner);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let table = make();
+  let bad = Err<u8, unit>(error: unit);
+  let r = step(t: &table, outcome: bad);
+  let got = peek(t: &table);
+  let code = cvt.wrap::<u64, u8>(got);
+  return std::process::exit_status(code: code);
+}
+"#,
+        rule: "FN-9",
+        sentences: &[
+            "]: UndischargedPostcondition\n",
+            "\n  mechanical_fix: the state this `propagate` leaves the function with makes the postcondition false: restore the places it relates before the `propagate`, or state a postcondition every exit satisfies\n",
+        ],
+        repaired: &[br#"struct Table {
+  slots: Slots<u64, 8>;
+  next: u64;
+  invariant cursor(table): table.next < table.slots.len;
+}
+
+fn make() -> table: Table pure {
+  let slots = slots_new::<u64, 8>();
+  place_back(window: &slots, value: 10_u64);
+  let made = Table(slots: move slots, next: 0_u64);
+  return move made;
+}
+
+fn peek(t: &Table) -> result: u64 reads(t) {
+  let at = t^.next;
+  let got = t^.slots[at];
+  return got;
+}
+
+fn step(t: &Table, outcome: Result<u8, unit>) -> result: Result<u8, unit> writes(t.next) {
+  set t^.next = 99_u64;
+  set t^.next = 0_u64;
+  let inner = propagate outcome;
+  return Ok<u8, unit>(value: inner);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let table = make();
+  let bad = Err<u8, unit>(error: unit);
+  let r = step(t: &table, outcome: bad);
+  let got = peek(t: &table);
+  let code = cvt.wrap::<u64, u8>(got);
+  return std::process::exit_status(code: code);
+}
+"#],
+    },
+    RepairPair {
+        name: "type-invariant-on-an-opaque-struct.wf",
+        rejected: br#"opaque struct Span {
+  first: u64;
+  last: u64;
+  invariant ordered(span): span.first <= span.last;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "TYPE-11",
+        sentences: &[
+            "]: InvalidTypeInvariant\n",
+            "\n  mechanical_fix: declare the invariant on a struct that is not `opaque`\n",
+        ],
+        repaired: &[br#"struct Span {
+  first: u64;
+  last: u64;
+  invariant ordered(span): span.first <= span.last;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "type-invariants-share-a-name.wf",
+        rejected: br#"struct Pair {
+  first: u64;
+  second: u64;
+  invariant ordered(pair): pair.first <= pair.second;
+  invariant ordered(pair): pair.first <= 10_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "TYPE-11",
+        sentences: &[
+            "]: InvalidTypeInvariant\n",
+            "\n  mechanical_fix: give each type invariant of the struct its own name\n",
+        ],
+        repaired: &[br#"struct Pair {
+  first: u64;
+  second: u64;
+  invariant ordered(pair): pair.first <= pair.second;
+  invariant small(pair): pair.first <= 10_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "type-invariant-is-not-a-comparison.wf",
+        rejected: br#"struct Pair {
+  first: u64;
+  second: u64;
+  invariant sums(pair): pair.first +defined pair.second;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "TYPE-11",
+        sentences: &[
+            "]: InvalidTypeInvariant\n",
+            "\n  mechanical_fix: state the invariant as one comparison between two sides, such as `table.next < table.slots.len`; write two invariants for a conjunction\n",
+        ],
+        repaired: &[br#"struct Pair {
+  first: u64;
+  second: u64;
+  invariant ordered(pair): pair.first <= pair.second;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "type-invariant-with-two-datums-on-a-side.wf",
+        rejected: br#"struct Pair {
+  first: u64;
+  second: u64;
+  invariant bounded(pair): pair.first + pair.second <= 10_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "TYPE-11",
+        sentences: &[
+            "]: InvalidTypeInvariant\n",
+            "\n  mechanical_fix: keep one field or measure of the binder on each side, displaced by a constant, such as `table.next + 1_u64 <= table.slots.len`\n",
+        ],
+        repaired: &[br#"struct Pair {
+  first: u64;
+  second: u64;
+  invariant bounded(pair): pair.first + 1_u64 <= pair.second;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "type-invariant-names-no-field.wf",
+        rejected: br#"struct Pair {
+  first: u64;
+  second: u64;
+  invariant trivial(pair): 1_u64 <= 2_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "TYPE-11",
+        sentences: &[
+            "]: InvalidTypeInvariant\n",
+            "\n  mechanical_fix: relate at least one field or measure of the binder, such as `table.next`\n",
+        ],
+        repaired: &[br#"struct Pair {
+  first: u64;
+  second: u64;
+  invariant small(pair): pair.first <= 2_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "construction-refutes-a-type-invariant.wf",
+        rejected: br#"struct Table {
+  slots: Slots<u64, 8>;
+  next: u64;
+  invariant cursor(table): table.next < table.slots.len;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let slots = slots_new::<u64, 8>();
+  let table = Table(slots: move slots, next: 0_u64);
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "TYPE-11",
+        sentences: &[
+            "]: UndischargedTypeInvariant\n",
+            "\n  mechanical_fix: `0_u64 < slots.len` is false for the operands this construction receives: construct the value from operands that satisfy it, or change the statements that fix those operands\n",
+        ],
+        repaired: &[br#"struct Table {
+  slots: Slots<u64, 8>;
+  next: u64;
+  invariant cursor(table): table.next < table.slots.len;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let slots = slots_new::<u64, 8>();
+  place_back(window: &slots, value: 1_u64);
+  let table = Table(slots: move slots, next: 0_u64);
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "atomic-block-leaves-a-type-invariant-unproved.wf",
+        rejected: br#"struct Table {
+  slots: Slots<u64, 8>;
+  next: u64;
+  invariant cursor(table): table.next < table.slots.len;
+}
+
+fn fresh() -> table: Table pure {
+  let slots = slots_new::<u64, 8>();
+  place_back(window: &slots, value: 10_u64);
+  let made = Table(slots: move slots, next: 0_u64);
+  return move made;
+}
+
+fn claim(table: Shared<Table>) -> result: u64 pure waits {
+  let got = 0_u64;
+  atomic t = &table {
+    let at = t^.next;
+    set got = t^.slots[at];
+    let after = at + 1_u64;
+    set t^.next = after;
+  }
+  return got;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let initial = fresh();
+  let table = shared_new::<Table>(value: move initial);
+  let got = claim(table: move table);
+  let code = cvt.wrap::<u64, u8>(got);
+  return std::process::exit_status(code: code);
+}
+"#,
+        rule: "TYPE-11",
+        sentences: &[
+            "]: UndischargedTypeInvariant\n",
+            "\n  mechanical_fix: `t^.next < t^.slots.len` is not proved where the block leaves the object's state: restore it before this edge, writing the fields it relates so the block shows it holds, or prove it with an `invariant` whose `use` steps name the facts it follows from\n",
+        ],
+        repaired: &[br#"struct Table {
+  slots: Slots<u64, 8>;
+  next: u64;
+  invariant cursor(table): table.next < table.slots.len;
+}
+
+fn fresh() -> table: Table pure {
+  let slots = slots_new::<u64, 8>();
+  place_back(window: &slots, value: 10_u64);
+  let made = Table(slots: move slots, next: 0_u64);
+  return move made;
+}
+
+fn claim(table: Shared<Table>) -> result: u64 pure waits {
+  let got = 0_u64;
+  atomic t = &table {
+    let at = t^.next;
+    set got = t^.slots[at];
+    let after = at + 1_u64;
+    if after == t^.slots.len {
+      set t^.next = 0_u64;
+    } else {
+      set t^.next = after;
+    }
+  }
+  return got;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let initial = fresh();
+  let table = shared_new::<Table>(value: move initial);
+  let got = claim(table: move table);
+  let code = cvt.wrap::<u64, u8>(got);
+  return std::process::exit_status(code: code);
+}
+"#],
+    },
     RepairPair {
         name: "bound-function-exceeds-the-formal-row.wf",
         rejected: br#"interface Disposer {
@@ -2409,7 +3319,7 @@ binding First : Disposer {
   release = release_read_file;
 }
 
-fn release_read_file(factory: &std::io::HandleFactory, file: std::fs::ReadFile) -> function_result: unit writes(factory) {
+fn release_read_file(factory: &std::io::HandleFactory, file: std::fs::ReadFile) -> function_result: unit writes(factory) waits {
   let closed = std::fs::close_read(factory: factory, file: move file);
   return unit;
 }
@@ -2424,14 +3334,14 @@ fn main() -> status: std::process::ExitStatus pure {
             "\n  mechanical_fix: supply a function whose signature, row and contract meet the formal interface, or weaken the formal interface to what the supplied function declares\n",
         ],
         repaired: &[br#"interface Disposer {
-  fn release(factory: &std::io::HandleFactory, file: std::fs::ReadFile) -> function_result: unit writes(factory);
+  fn release(factory: &std::io::HandleFactory, file: std::fs::ReadFile) -> function_result: unit writes(factory) waits;
 }
 
 binding First : Disposer {
   release = release_read_file;
 }
 
-fn release_read_file(factory: &std::io::HandleFactory, file: std::fs::ReadFile) -> function_result: unit writes(factory) {
+fn release_read_file(factory: &std::io::HandleFactory, file: std::fs::ReadFile) -> function_result: unit writes(factory) waits {
   let closed = std::fs::close_read(factory: factory, file: move file);
   return unit;
 }
@@ -2597,6 +3507,166 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_eq!(
         failure.kind(),
         CompilationFailureKind::TargetLayout,
+        "{failure}"
+    );
+}
+
+/// An allocation whose count is proved only by its type: `u64::MAX` for a
+/// `u8` element, which OP-9 accepts and no supported target can allocate.
+/// This is the program a writer met in an image decoder, where the count came
+/// from the image's dimensions.
+const UNBOUNDED_TARGET_COUNT: &[u8] = br#"alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias args_count = std::text::args_count;
+alias close_directory = std::fs::close_directory;
+alias exit_status = std::process::exit_status;
+
+fn make(count: u64) -> made: Box<Slots<u8>> pure {
+  let cell = box_slots_new::<u8>(capacity: count);
+  return move cell;
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  let Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: files, stdin: unused) = move inputs;
+  close_directory(factory: &files, directory: move cwd);
+  let n = args_count(args: &args);
+  let cell = make(count: n);
+  let cap = cell.inner.cap;
+  let code = cvt.wrap::<u64, u8>(cap);
+  return exit_status(code: code);
+}
+"#;
+
+/// [STOR-6] the target-layout stop at an allocation the selected target
+/// cannot hold names the call, the proved bound and the largest count the
+/// target admits, and its fix is carried out by the programs below it: the
+/// same program with the count guarded in the allocating function, and with
+/// the count required there and guarded by its caller. Every supported
+/// target allocates at most `i64::MAX` bytes, and a `Slots<u8>` block spends
+/// two header words, so `i64::MAX - 16` elements fit.
+#[test]
+fn an_allocation_count_the_target_cannot_hold_is_located_with_its_bounds() {
+    super::check(
+        &[SourceInput::new("unbounded.wf", UNBOUNDED_TARGET_COUNT)],
+        CompilerLimits::default(),
+    )
+    .expect("the type's own bound passes OP-9");
+    let failure = compile(
+        &[SourceInput::new("unbounded.wf", UNBOUNDED_TARGET_COUNT)],
+        CompilerLimits::default(),
+    )
+    .expect_err("no supported target allocates u64::MAX bytes");
+    assert_eq!(
+        failure.kind(),
+        CompilationFailureKind::TargetLayout,
+        "{failure}"
+    );
+    assert_eq!(failure.rule_id(), None, "a target stop cites no rule");
+    let rendered = failure.to_string();
+    for sentence in [
+        "unbounded.wf:8:14: target layout failure in TargetLayout: AllocationCountExceedsTarget\n",
+        "\n  count: \"count\"\n",
+        "\n  proved_count_bound: 18446744073709551615\n",
+        "\n  target_count_limit: 9223372036854775791\n",
+        "\n  mechanical_fix: with N the largest count the program needs, at most 9223372036854775791, bound `count` by N before this call: add `requires count <= N;` to the `contract` of the function whose parameter it is, which each caller then establishes; state the bound in the `ensures` of the function whose result it is; or guard the allocation with `if count <= N` where refusing a larger count is the intended behavior",
+    ] {
+        assert!(
+            rendered.contains(sentence),
+            "the stop no longer carries this text.\nwanted: {sentence}\ngot:    {rendered}"
+        );
+    }
+    let guarded = br#"alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias args_count = std::text::args_count;
+alias close_directory = std::fs::close_directory;
+alias exit_status = std::process::exit_status;
+
+fn make(count: u64) -> made: Box<Slots<u8>> pure {
+  if count <= 4096_u64 {
+    let cell = box_slots_new::<u8>(capacity: count);
+    return move cell;
+  }
+  let empty = box_slots_new::<u8>(capacity: 0_u64);
+  return move empty;
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  let Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: files, stdin: unused) = move inputs;
+  close_directory(factory: &files, directory: move cwd);
+  let n = args_count(args: &args);
+  let cell = make(count: n);
+  let cap = cell.inner.cap;
+  let code = cvt.wrap::<u64, u8>(cap);
+  return exit_status(code: code);
+}
+"#;
+    let required = br#"alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias args_count = std::text::args_count;
+alias close_directory = std::fs::close_directory;
+alias exit_status = std::process::exit_status;
+
+fn make(count: u64) -> made: Box<Slots<u8>> pure contract {
+  requires count <= 4096_u64;
+} {
+  let cell = box_slots_new::<u8>(capacity: count);
+  return move cell;
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  let Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: files, stdin: unused) = move inputs;
+  close_directory(factory: &files, directory: move cwd);
+  let n = args_count(args: &args);
+  if n <= 4096_u64 {
+    let cell = make(count: n);
+    let cap = cell.inner.cap;
+    let code = cvt.wrap::<u64, u8>(cap);
+    return exit_status(code: code);
+  }
+  return exit_status(code: 1_u8);
+}
+"#;
+    for (name, source) in [("guarded.wf", &guarded[..]), ("required.wf", &required[..])] {
+        let contradictions = contradictory_successes(name, source)
+            .unwrap_or_else(|rejection| panic!("{name} is rejected:\n{rejection}"));
+        assert!(
+            contradictions.is_empty(),
+            "{name} succeeds only where its state is contradictory: {contradictions:?}"
+        );
+        if let Err(failure) = compile(&[SourceInput::new(name, source)], CompilerLimits::default())
+        {
+            panic!("{name} does not build:\n{failure}");
+        }
+    }
+}
+
+/// The printed limit is the target's exact threshold: a count proved at most
+/// that number builds, and one more stops at target layout [STOR-6].
+#[test]
+fn the_printed_target_count_limit_is_the_exact_threshold() {
+    let bounded = |limit: &str| {
+        format!(
+            "fn make(count: u64) -> made: Box<Slots<u8>> pure contract {{\n  requires count <= {limit}_u64;\n}} {{\n  let cell = box_slots_new::<u8>(capacity: count);\n  return move cell;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  let cell = make(count: 4_u64);\n  return std::process::exit_status(code: 0_u8);\n}}\n"
+        )
+    };
+    let at_limit = bounded("9223372036854775791");
+    if let Err(failure) = compile(
+        &[SourceInput::new("at-limit.wf", at_limit.as_bytes())],
+        CompilerLimits::default(),
+    ) {
+        panic!("a count at the printed limit does not build:\n{failure}");
+    }
+    let above = bounded("9223372036854775792");
+    let failure = compile(
+        &[SourceInput::new("above-limit.wf", above.as_bytes())],
+        CompilerLimits::default(),
+    )
+    .expect_err("one more than the printed limit exceeds the target");
+    assert!(
+        failure
+            .detail()
+            .lines()
+            .any(|line| line == "target_count_limit: 9223372036854775791"),
         "{failure}"
     );
 }

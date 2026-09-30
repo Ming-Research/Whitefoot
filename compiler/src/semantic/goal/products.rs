@@ -3,7 +3,11 @@
 use super::*;
 use crate::semantic::products::{record_enum, record_struct};
 
-record_struct!(CheckedRequirement { template, clause });
+record_struct!(CheckedRequirement {
+    template,
+    clause,
+    subject
+});
 
 record_struct!(GoalTemplate { root });
 
@@ -11,6 +15,7 @@ record_struct!(ConcreteGoal { root });
 
 record_struct!(CheckedCallRequirement {
     requires_clause,
+    subject,
     goal
 });
 

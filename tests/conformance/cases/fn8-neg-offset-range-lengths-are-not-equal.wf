@@ -1,0 +1,31 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn combined_length(first: &[u32], second: &[u64]) -> result: u64 reads(first.len), reads(second.len) contract {
+  requires first^.len == second^.len;
+} {
+  let total = first^.len +wrap second^.len;
+  return total;
+}
+
+fn probe(low: u64, high: u64) -> result: u64 pure {
+  doc "The two ranges share the same non-zero start but the second ends one past the first, so REF-4 gives lengths high - low and (high + 1) - low, which differ by exactly one. Neither direction of the equality is provable, so ENT-4's bound pair cannot both close and the call requirement is unproved.";
+  let a = box_array_filled::<u32>(count: 16_u64, value: 0_u32);
+  let b = box_array_filled::<u64>(count: 16_u64, value: 0_u64);
+  if low <= high {
+    if high <= 15_u64 {
+      let high_plus_one = high +wrap 1_u64;
+      let first = &a.inner[low..high];
+      let second = &b.inner[low..high_plus_one];
+      let total = combined_length(first: first, second: second);
+      return total;
+    }
+  }
+  return 0_u64;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "REF-4, FN-8: the offset ranges have lengths high - low and high + 1 - low, so a requirement equating them is refused; with low = 3 and high = 8 the callee would read second^[5] outside first's five-element range.";
+  let total = probe(low: 3_u64, high: 8_u64);
+  return exit_status(code: 0_u8);
+}

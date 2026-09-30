@@ -36,10 +36,17 @@ fn build_with_overlap(
         CompilerLimits::default(),
     )
     .unwrap();
+    let root_interface = if entry.contains("ExitStatus pure waits") {
+        std::str::from_utf8(ROOT_INTERFACE)
+            .unwrap()
+            .replace("pure doc", "pure waits doc")
+    } else {
+        std::str::from_utf8(ROOT_INTERFACE).unwrap().to_owned()
+    };
     let records = [
         ("lib/module.wfm", interface.as_bytes()),
         ("lib/body.wf", library.as_bytes()),
-        ("module.wfm", ROOT_INTERFACE),
+        ("module.wfm", root_interface.as_bytes()),
         ("main.wf", entry.as_bytes()),
     ];
     let inputs = module_inputs(&graph, &records);
@@ -56,6 +63,60 @@ fn build_with_overlap(
         None => fresh_product_entry(&graph, &inputs, overlap),
     }
     .map_err(|failure| failure.to_string())
+}
+
+#[test]
+fn entry_edits_reuse_segments_and_waiting_shared_products() {
+    let cases = [
+        (
+            "segments",
+            "",
+            "fn value() -> result: u8 pure {\n  let lengths = box_array_filled::<u64>(count: 1_u64, value: 2_u64);\n  let made = box_segments_filled::<u64>(lengths: &lengths.inner[0_u64..1_u64], value: 0_u64);\n  match move made {\n    None() => {\n      return 1_u8;\n    }\n    Some(value: segments) => {\n      let length = segments.inner.len;\n      if length != 1_u64 {\n        return 3_u8;\n      }\n      let part = &segments.inner[0_u64];\n      let count = part^.len;\n      if count == 2_u64 {\n        return 0_u8;\n      }\n      return 2_u8;\n    }\n  }\n}\n",
+        ),
+        (
+            "waiting-shared",
+            " waits",
+            "fn produce(cell: Shared<u8>) -> result: unit pure waits {\n  atomic state = &cell {\n    set state^ = 0_u8;\n  }\n  return unit;\n}\n\nfn value() -> result: u8 pure waits {\n  let cell = shared_new::<u8>(value: 0_u8);\n  let handle = shared_share::<u8>(shared: &cell);\n  spawn produce(cell: move handle);\n  let seen = 0_u8;\n  atomic state = &cell {\n    set seen = state^;\n  }\n  return seen;\n}\n",
+        ),
+    ];
+    for (name, waits, library) in cases {
+        let directory = CacheDirectory::new(name);
+        let interface =
+            format!("public fn value() -> result: u8 pure{waits} doc \"Returns a value.\";\n");
+        for local in ["before", "after"] {
+            let entry = format!(
+                "fn main() -> status: std::process::ExitStatus pure{waits} {{\n  let {local} = pkg::lib::value();\n  return std::process::exit_status(code: {local});\n}}\n"
+            );
+            let cache = directory.open();
+            let cached = build(GRAPH, &interface, library, &entry, Some(&cache)).unwrap();
+            assert_eq!(
+                cached,
+                build(GRAPH, &interface, library, &entry, None).unwrap()
+            );
+            if local == "after" {
+                let (_, checked, reused) = cache
+                    .body_module_counts()
+                    .into_iter()
+                    .find(|(module, _, _)| module == "pkg::lib")
+                    .unwrap();
+                assert_eq!(
+                    checked, 0,
+                    "{name}: unchanged library bodies must not be walked"
+                );
+                assert!(reused > 0, "{name}: structural products must be imported");
+                let (_, lowered, reused) = cache
+                    .lowering_counts()
+                    .into_iter()
+                    .find(|(module, _, _)| module == "pkg::lib")
+                    .unwrap();
+                assert_eq!(
+                    lowered, 0,
+                    "{name}: unchanged library lowering must not be walked"
+                );
+                assert!(reused > 0, "{name}: typed lowerings must be imported");
+            }
+        }
+    }
 }
 
 #[test]
@@ -441,4 +502,75 @@ fn private_capture_layout_changes_rejudge_retained_parallel_fragments() {
         )
         .unwrap()
     );
+}
+
+#[test]
+fn an_indirect_return_type_invariant_edit_invalidates_a_retained_caller() {
+    let directory = CacheDirectory::new("product-indirect-type-invariant");
+    let graph = crate::form_module_graph(
+        SourceInput::new("modules.wfg", PROGRAM_GRAPH),
+        CompilerLimits::default(),
+    )
+    .unwrap();
+    let body = b"fn make() -> result: Cell pure {\n  return Cell(value: 0_u8);\n}\n";
+    let user = b"fn use_half() -> result: u8 pure {\n  let cell = pkg::base::make();\n  let value = cell.value;\n  return 7_u8 - value;\n}\n";
+    let interface = |bound| {
+        format!(
+            "public struct Cell {{\n  public readonly value: u8;\n  invariant bounded(cell): cell.value <= {bound}_u8;\n}}\n\npublic fn make() -> result: Cell pure doc \"Makes a cell.\";\n"
+        )
+    };
+    let run = |bound, edited: bool, cache: Option<&super::super::BuildCache>| {
+        let interface = interface(bound);
+        let entry = if edited {
+            std::str::from_utf8(ROOT_BODY)
+                .unwrap()
+                .replace("let code =", "let answer =")
+                .replace("code: code", "code: answer")
+        } else {
+            std::str::from_utf8(ROOT_BODY).unwrap().to_owned()
+        };
+        let records = [
+            ("base/module.wfm", interface.as_bytes()),
+            ("base/body.wf", body.as_slice()),
+            ("user/module.wfm", USER_INTERFACE),
+            ("user/body.wf", user.as_slice()),
+            ("tool/module.wfm", TOOL_INTERFACE),
+            ("tool/body.wf", TOOL_BODY),
+            ("module.wfm", ROOT_INTERFACE),
+            ("main.wf", entry.as_bytes()),
+        ];
+        let inputs = module_inputs(&graph, &records);
+        match cache {
+            Some(cache) => super::super::build_module_entry(
+                &graph,
+                &inputs,
+                super::super::ModuleEntry::Named("app"),
+                CompilerLimits::default(),
+                OverlapLowering::Off,
+                Some(cache),
+            )
+            .map(|built| built.0),
+            None => fresh_product_entry(&graph, &inputs, OverlapLowering::Off),
+        }
+        .map_err(|failure| failure.to_string())
+    };
+    let original = run(7, false, Some(&directory.open())).unwrap();
+    assert_eq!(original, run(7, false, None).unwrap());
+    let reused = directory.open();
+    assert_eq!(run(7, true, Some(&reused)).unwrap(), original);
+    assert!(
+        reused
+            .body_module_counts()
+            .iter()
+            .any(|(module, _, reused)| module == "pkg::user" && *reused > 0)
+    );
+    let changed = run(9, true, Some(&directory.open()));
+    assert!(
+        changed
+            .as_ref()
+            .is_err_and(|failure| failure.contains("[OP-2]")),
+        "{changed:?}"
+    );
+    assert_eq!(changed, run(9, true, None));
+    assert_eq!(run(7, true, Some(&directory.open())).unwrap(), original);
 }
