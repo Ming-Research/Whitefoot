@@ -886,6 +886,39 @@ fn resp(arguments: &[&str]) -> Vec<u8> {
     bytes
 }
 
+/// The Redis subset, built once for every case that runs it; each case
+/// names its own append-only file, so the shared working directory holds
+/// no state one case leaves for another.
+#[cfg(target_os = "linux")]
+fn redis_subset() -> &'static CompiledProgram {
+    static PROGRAM: std::sync::OnceLock<CompiledProgram> = std::sync::OnceLock::new();
+    PROGRAM.get_or_init(|| build_program(&compile_program("redis_subset.wf")))
+}
+
+/// Reads one reply line through its CR LF.
+#[cfg(target_os = "linux")]
+fn reply_line(stream: &mut TcpStream, what: &str) -> String {
+    let mut byte = [0_u8; 1];
+    let mut line = Vec::new();
+    while !line.ends_with(b"\r\n") {
+        stream
+            .read_exact(&mut byte)
+            .unwrap_or_else(|error| panic!("{what}: {error}"));
+        line.push(byte[0]);
+    }
+    String::from_utf8_lossy(&line).into_owned()
+}
+
+/// Reads one RESP integer reply.
+#[cfg(target_os = "linux")]
+fn integer_reply(stream: &mut TcpStream, what: &str) -> i64 {
+    let line = reply_line(stream, what);
+    line.strip_prefix(':')
+        .and_then(|rest| rest.strip_suffix("\r\n"))
+        .and_then(|digits| digits.parse().ok())
+        .unwrap_or_else(|| panic!("{what}: not an integer reply: {line:?}"))
+}
+
 /// Reads exactly the bytes of the expected replies and compares them.
 #[cfg(target_os = "linux")]
 fn expect_replies(stream: &mut TcpStream, expected: &[u8], what: &str) {
@@ -910,7 +943,7 @@ fn expect_replies(stream: &mut TcpStream, expected: &[u8], what: &str) {
 fn the_redis_subset_serves_every_client_over_one_keyspace() {
     const CLIENTS: usize = 8;
     const INCREMENTS: usize = 250;
-    let program = build_program(&compile_program("redis_subset.wf"));
+    let program = redis_subset();
     let port = free_port();
     let text = port.to_string();
     let count = (CLIENTS + 1).to_string();
@@ -999,4 +1032,240 @@ fn the_redis_subset_serves_every_client_over_one_keyspace() {
     drop(first);
     let (status, _) = finished(child);
     assert_eq!(status, 0);
+}
+
+/// [PRE-2] the Redis subset expires keys as Redis does. In one pipelined
+/// batch, whose commands all see one reading of the clocks, `TTL` answers -1
+/// for a key without an expiry and -2 for an absent one, `EXPIRE` gives one,
+/// `PERSIST` removes it once, and `SET` refuses a zero expiry, an unknown
+/// option and a count that is not a number. A key set with `PX 100` answers a
+/// positive `PTTL` and is absent 200 milliseconds later. A key read 5
+/// milliseconds after its expiry is absent too, which the command's own check
+/// answers: the expiring context wakes only every 100 milliseconds, so without
+/// that check the value would usually still be returned.
+#[cfg(target_os = "linux")]
+#[test]
+fn the_redis_subset_expires_keys_on_both_routes() {
+    let program = redis_subset();
+    for native_ring in [true, false] {
+        let what = format!("native ring: {native_ring}");
+        let port = free_port();
+        let text = port.to_string();
+        let child = program.spawn_on_route(native_ring, &[text.as_bytes(), b"1"]);
+        let mut client = connect_when_ready(port);
+        client
+            .set_read_timeout(Some(Duration::from_secs(20)))
+            .expect("bound the client's waits");
+        let mut batch = Vec::new();
+        for request in [
+            vec!["SET", "kept", "1"],
+            vec!["SET", "brief", "hello", "PX", "100"],
+            vec!["TTL", "kept"],
+            vec!["TTL", "absent"],
+            vec!["EXPIRE", "kept", "100"],
+            vec!["TTL", "kept"],
+            vec!["PERSIST", "kept"],
+            vec!["TTL", "kept"],
+            vec!["PERSIST", "kept"],
+            vec!["SET", "other", "v", "EX", "0"],
+            vec!["SET", "other", "v", "XX", "1"],
+            vec!["SET", "other", "v", "PX", "soon"],
+            vec!["DBSIZE"],
+        ] {
+            batch.extend(resp(&request));
+        }
+        client.write_all(&batch).expect("send the expiry batch");
+        expect_replies(
+            &mut client,
+            b"+OK\r\n+OK\r\n:-1\r\n:-2\r\n:1\r\n:100\r\n:1\r\n:-1\r\n:0\r\n-ERR invalid expire time\r\n-ERR syntax error\r\n-ERR value is not an integer or out of range\r\n:2\r\n",
+            &what,
+        );
+        client
+            .write_all(&resp(&["PTTL", "brief"]))
+            .expect("ask the time left");
+        let left = integer_reply(&mut client, &what);
+        assert!((1..=100).contains(&left), "{what}: {left}");
+        std::thread::sleep(Duration::from_millis(200));
+        let mut after = resp(&["GET", "brief"]);
+        after.extend(resp(&["PTTL", "brief"]));
+        after.extend(resp(&["DBSIZE"]));
+        client.write_all(&after).expect("read the expired key");
+        expect_replies(&mut client, b"$-1\r\n:-2\r\n:1\r\n", &what);
+        client
+            .write_all(&resp(&["SET", "flash", "v", "PX", "1"]))
+            .expect("set a key that expires at once");
+        expect_replies(&mut client, b"+OK\r\n", &what);
+        std::thread::sleep(Duration::from_millis(5));
+        client
+            .write_all(&resp(&["GET", "flash"]))
+            .expect("read it after its expiry");
+        expect_replies(&mut client, b"$-1\r\n", &what);
+        drop(client);
+        let (status, _) = finished(child);
+        assert_eq!(status, 0, "{what}");
+    }
+}
+
+/// [PRE-2] the Redis subset's expiring context removes keys no command reads:
+/// a thousand keys set with `PX 50` leave `DBSIZE`, which reads no key, at
+/// zero within three seconds.
+#[cfg(target_os = "linux")]
+#[test]
+fn the_redis_subset_removes_expired_keys_no_command_reads_on_both_routes() {
+    const KEYS: usize = 1000;
+    let program = redis_subset();
+    for native_ring in [true, false] {
+        let what = format!("native ring: {native_ring}");
+        let port = free_port();
+        let text = port.to_string();
+        let child = program.spawn_on_route(native_ring, &[text.as_bytes(), b"1"]);
+        let mut client = connect_when_ready(port);
+        client
+            .set_read_timeout(Some(Duration::from_secs(20)))
+            .expect("bound the client's waits");
+        let mut batch = Vec::new();
+        for index in 0..KEYS {
+            let key = format!("key:{index}");
+            batch.extend(resp(&["SET", &key, "v", "PX", "50"]));
+        }
+        client.write_all(&batch).expect("send the keys");
+        expect_replies(&mut client, &b"+OK\r\n".repeat(KEYS), &what);
+        let started = Instant::now();
+        loop {
+            client
+                .write_all(&resp(&["DBSIZE"]))
+                .expect("count the keys");
+            let size = integer_reply(&mut client, &what);
+            if size == 0 {
+                break;
+            }
+            assert!(
+                started.elapsed() < Duration::from_secs(3),
+                "{what}: {size} keys left"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        drop(client);
+        let (status, _) = finished(child);
+        assert_eq!(status, 0, "{what}");
+    }
+}
+
+/// [PRE-2] the Redis subset replays its append-only file after a restart:
+/// every change the first run made, set, removed, incremented, given an expiry
+/// or made persistent, holds in the second, and a key whose expiry passed
+/// while the subset was stopped is absent. The first run ends once its one
+/// client has closed, after its writer appended and synced the last changes.
+#[cfg(target_os = "linux")]
+#[test]
+fn the_redis_subset_replays_its_append_only_file_after_a_restart_on_both_routes() {
+    let program = redis_subset();
+    for native_ring in [true, false] {
+        let what = format!("native ring: {native_ring}");
+        let name = format!("replay-{native_ring}.aof");
+        let port = free_port();
+        let text = port.to_string();
+        let child = program.spawn_on_route(native_ring, &[text.as_bytes(), b"1", name.as_bytes()]);
+        let mut client = connect_when_ready(port);
+        client
+            .set_read_timeout(Some(Duration::from_secs(20)))
+            .expect("bound the first client's waits");
+        let mut batch = Vec::new();
+        for request in [
+            vec!["SET", "gone", "v"],
+            vec!["SET", "brief", "v", "PX", "300"],
+            vec!["SET", "long", "v", "EX", "100"],
+            vec!["INCR", "count"],
+            vec!["INCR", "count"],
+            vec!["DEL", "gone"],
+            vec!["SET", "kept", "v", "PX", "60000"],
+            vec!["PERSIST", "kept"],
+            vec!["SET", "later", "v", "PX", "60000"],
+        ] {
+            batch.extend(resp(&request));
+        }
+        client.write_all(&batch).expect("send the changes");
+        expect_replies(
+            &mut client,
+            b"+OK\r\n+OK\r\n+OK\r\n:1\r\n:2\r\n:1\r\n+OK\r\n:1\r\n+OK\r\n",
+            &what,
+        );
+        drop(client);
+        let (status, _) = finished(child);
+        assert_eq!(status, 0, "{what}: the first run");
+        std::thread::sleep(Duration::from_millis(400));
+        let port = free_port();
+        let text = port.to_string();
+        let child = program.spawn_on_route(native_ring, &[text.as_bytes(), b"1", name.as_bytes()]);
+        let mut client = connect_when_ready(port);
+        client
+            .set_read_timeout(Some(Duration::from_secs(20)))
+            .expect("bound the second client's waits");
+        let mut batch = Vec::new();
+        for request in [
+            vec!["GET", "gone"],
+            vec!["GET", "brief"],
+            vec!["GET", "long"],
+            vec!["GET", "count"],
+            vec!["GET", "kept"],
+            vec!["TTL", "kept"],
+            vec!["DBSIZE"],
+        ] {
+            batch.extend(resp(&request));
+        }
+        client.write_all(&batch).expect("read the replayed keys");
+        expect_replies(
+            &mut client,
+            b"$-1\r\n$-1\r\n$1\r\nv\r\n$1\r\n2\r\n$1\r\nv\r\n:-1\r\n:4\r\n",
+            &what,
+        );
+        client
+            .write_all(&resp(&["TTL", "long"]))
+            .expect("ask the time left");
+        let long = integer_reply(&mut client, &what);
+        assert!((98..=100).contains(&long), "{what}: {long}");
+        client
+            .write_all(&resp(&["PTTL", "later"]))
+            .expect("ask the time left");
+        let later = integer_reply(&mut client, &what);
+        assert!((58_000..=60_000).contains(&later), "{what}: {later}");
+        drop(client);
+        let (status, _) = finished(child);
+        assert_eq!(status, 0, "{what}: the second run");
+    }
+}
+
+/// [PRE-2] a deadline on `receive_next` closes a client silent past the
+/// subset's idle limit: with a limit of one second, the connection ends after
+/// at least 0.9 and at most two seconds of silence.
+#[cfg(target_os = "linux")]
+#[test]
+fn the_redis_subset_closes_a_client_silent_past_its_idle_limit_on_both_routes() {
+    let program = redis_subset();
+    for native_ring in [true, false] {
+        let what = format!("native ring: {native_ring}");
+        let port = free_port();
+        let text = port.to_string();
+        let child = program.spawn_on_route(native_ring, &[text.as_bytes(), b"1", b"-", b"1"]);
+        let mut client = connect_when_ready(port);
+        client
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .expect("bound the client's waits");
+        client.write_all(&resp(&["PING"])).expect("send a ping");
+        expect_replies(&mut client, b"+PONG\r\n", &what);
+        let started = Instant::now();
+        let mut rest = [0_u8; 16];
+        let read = client
+            .read(&mut rest)
+            .unwrap_or_else(|error| panic!("{what}: the connection stayed open: {error}"));
+        let silent = started.elapsed();
+        assert_eq!(read, 0, "{what}: {:?}", &rest[..read]);
+        assert!(
+            silent >= Duration::from_millis(900) && silent <= Duration::from_secs(2),
+            "{what}: closed after {silent:?}"
+        );
+        drop(client);
+        let (status, _) = finished(child);
+        assert_eq!(status, 0, "{what}");
+    }
 }

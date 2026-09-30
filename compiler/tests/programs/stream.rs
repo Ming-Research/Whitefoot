@@ -129,7 +129,14 @@ fn a_deadline_ends_a_read_of_a_silent_writer_on_both_routes() {
     for &native_ring in routes {
         let output =
             program.run_with_late_input(b"z", std::time::Duration::from_millis(400), native_ring);
-        assert_eq!(output.status.code(), Some(0), "native ring: {native_ring}: {output:?}");
-        assert!(output.stderr.is_empty(), "native ring: {native_ring}: {output:?}");
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "native ring: {native_ring}: {output:?}"
+        );
+        assert!(
+            output.stderr.is_empty(),
+            "native ring: {native_ring}: {output:?}"
+        );
     }
 }

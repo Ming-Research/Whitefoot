@@ -89,9 +89,7 @@ fn class_arms(indent: usize, named: &[(&str, &str)], default: &str) -> String {
             .map(|line| format!("{inner}{line}\n"))
             .collect();
         let fields = if carries { "code: c, origin: o" } else { "" };
-        arms.push_str(&format!(
-            "{pad}{class}({fields}) => {{\n{body}{pad}}}\n"
-        ));
+        arms.push_str(&format!("{pad}{class}({fields}) => {{\n{body}{pad}}}\n"));
     }
     arms
 }
@@ -975,7 +973,10 @@ fn an_explicit_close_that_fails_is_attempted_once_and_never_retried() {
     // failure is the read half's close [PRE-2].
     let run = run_on_deterministic_host(
         RELEASES_ONE_DIRECTORY,
-        &HostScript::new().closes(&[HostOutcome::Succeed, HostOutcome::Fail(HostError::Interrupted)]),
+        &HostScript::new().closes(&[
+            HostOutcome::Succeed,
+            HostOutcome::Fail(HostError::Interrupted),
+        ]),
         &[],
     );
 

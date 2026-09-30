@@ -416,11 +416,28 @@ never waits on a peer, so these run on the helpers, as file reads do.
 ### Design
 
 The subset gains the commands that set and read a key's expiry, `EXPIRE`,
-`PEXPIRE`, `TTL`, `PTTL` and `PERSIST`, and the `EX` and `PX` options of
-`SET`. As Redis does, it expires a key in two ways: a command that finds an
-expired key treats it as absent and removes it, and a context of its own
-wakes ten times a second and removes expired keys it samples. The expiry is
-a monotonic `Instant`; each read of the clock is one `now`.
+`PEXPIRE`, `PEXPIREAT`, `TTL`, `PTTL` and `PERSIST`, the `EX` and `PX`
+options of `SET`, and `DBSIZE`. As Redis does, it expires a key in two ways:
+a command that finds an expired key treats it as absent and removes it, and
+a context of its own wakes ten times a second and removes expired keys.
+
+- **Which keys the context removes.** Redis samples 20 keys with an expiry
+  at random and repeats while a quarter of a sample had expired.
+  `std::collections::hash_map` offers no sample and no bounded visit, only a
+  visit of every pair, which would hold the keyspace from every client for
+  the length of the scan. The subset instead keeps each expiry it sets in a
+  priority queue in the shared object, earliest first, and removes due keys
+  from its head in atomic statements of at most 256 keys, so clients proceed
+  between them. An entry whose key has since been set again, given another
+  expiry or removed no longer matches the key's expiry and is dropped when
+  it comes due. The queue removes every expired key within one period
+  rather than a sampled share of them, and costs one queue entry per expiry
+  set, including one that a later command replaced.
+- **What time a command sees.** An expiry is a monotonic reading, kept as
+  nanoseconds from an `Instant` read at start. A client's context reads both
+  clocks once per received batch of commands, and every command of the
+  batch sees those readings, as Redis reads its cached time once per
+  iteration of its event loop.
 
 With a third argument naming a file, the subset appends every command that
 changes the keyspace to that file in Redis's own format, as `appendonly yes`
@@ -433,7 +450,8 @@ with `appendfsync everysec` does:
   the file and syncs the file when a second has passed since the last sync.
 - An expiry is written as `PEXPIREAT` with an absolute calendar time in
   milliseconds, as Redis 7 writes it, and replay converts it back into a
-  monotonic `Instant` from the two clocks' current readings.
+  monotonic reading from the two clocks' current readings, removing a key
+  whose calendar expiry has passed.
 - At start, the subset replays the file before it listens.
 
 A reply may leave before its change reaches the file. `everysec` already
@@ -443,7 +461,25 @@ below states the difference.
 
 A fourth argument, an idle limit in seconds, closes a connection that sends
 nothing for that long, as Redis's `timeout` does; it is the program's use of
-a deadline on `receive_next`.
+a deadline on `receive_next`. A third argument of `-` names no file.
+
+With a count of clients to accept, the subset stops once they have all
+closed: the root context waits in a guarded atomic statement for the
+keyspace's client count to reach zero and then marks it stopping, and the
+writer and the expiring context end at their next wake, the writer after
+appending and syncing the last buffer. The root's own join of the contexts
+it spawned [WAIT-3] then ends the program.
+
+Where the subset answers differently from Redis:
+
+- An expiry is at most 10^9 seconds or 10^12 milliseconds ahead; Redis
+  accepts any that does not overflow its millisecond clock. A negative
+  expiry is refused as not an integer; Redis removes the key.
+- A key removed because it expired is not written to the file as `DEL`, as
+  Redis writes it; replay removes it anyway, since its `PEXPIREAT` has
+  passed.
+- `SET` takes only `EX` and `PX`; `NX`, `XX`, `KEEPTTL` and `GET` are
+  syntax errors.
 
 ### What would distinguish the hypotheses, stated before measuring
 

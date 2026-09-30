@@ -513,6 +513,21 @@ rarely insert at the same place.
 
 ## Containers and storage lowering
 
+- **A hash map offers no sample or bounded visit.**
+  `std::collections::hash_map` visits every pair (`hash_map_each`) and
+  nothing less, so a program that must look at a few pairs at a time, as
+  Redis samples keys with an expiry, either scans the whole map inside one
+  atomic statement, holding every other context for the scan, or keeps a
+  second structure beside it: the Redis subset keeps a priority queue of
+  expiries, one entry per expiry set, including those a later command
+  replaced (`research/investigations/io-model/TIME-AND-FILES.md`,
+  Experiment 8). A visit that starts at a position and returns the position
+  the next visit resumes at would express sampling and incremental scans,
+  as Redis's `SCAN`. Validate with a `SCAN`-style program over a map that
+  changes between visits, every pair present throughout reported at least
+  once. Reopen when a program must walk a shared map without holding it for
+  the whole walk.
+
 - **Validate a shared Ring wrap calculation independent of layout bounds.**
   The corrected front predecessor handles every admitted capacity. Remaining
   address-only modular additions are justified by the positive-stride target
