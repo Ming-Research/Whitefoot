@@ -523,6 +523,18 @@ representation. An immutable READ-only fallback also fails its native
 promotion/frame screen before any link or timing. The source patch, exact
 identities and all raw samples are retained; neither variant is integrated.
 
+The [canonical empty-header tag diagnostic](vector-library/RESULTS.md#canonical-empty-header-tag-balanced-diagnostic-misses-the-growth-criterion)
+recovers baseline work/tail native operand streams but preserves both static
+refusals: the external-tag trace frames grow, and known contents still add
+16 bytes per trace. Its full ABBA run has two cross-order scalar suffix-two
+gains and no qualified useful loss, but the required scalar growth/16 gain
+overlaps in both pairs, so the primary criterion is not met. Growth medians
+approach C++ with peer targets still inconclusive. The total diagnostic also
+elides first-growth `memmove(0)`; it does not isolate allocation savings.
+All four raw files and 42 outcomes are retained. This frozen pre-countdown
+current122/retained-peer result is not additive with the selected caller,
+merged-head qualification, or a production representation selection.
+
 ### Next discriminator: ordinary register-allocation spill splitting
 
 The native save-placement result permits one code-generation screen, not a

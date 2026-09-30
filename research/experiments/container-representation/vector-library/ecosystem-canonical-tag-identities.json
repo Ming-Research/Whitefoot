@@ -1,0 +1,1128 @@
+{
+  "experiment": "Canonical nonnull empty-header component diagnostic; primary measured criterion not met",
+  "recorded_on_revision": "f99bd0bb2bb51fa09c5ea8c09fcb0e029bfc309e",
+  "scope": "Frozen pre-countdown current122 WF IR, retained harness/runtime/peers; no merged-head parity, compiler, runtime, representation or source selection; suffix gains are not additive with selected countdown",
+  "artifact_purpose": "Retain exact refused IR mapping, runtime tag, raw ABBA samples and replay identities under the existing Vector experiment",
+  "artifact_lifecycle": "Reproduce only in scratch; no production or gate consumes these artifacts. Consolidate only while preserving raw identities, replay mapping, failed criteria and inbound result anchor; remove temporary reproduction outputs afterward.",
+  "base": {
+    "existing_identity": "ecosystem-nullable-owner-identities.json",
+    "existing_identity_sha256": "53e23a904d2ea125f24d1629769f4b937a4c447fbfc1aa3efd261dea3ffe1aba",
+    "compiler_patch": "nullable-zero-owner.patch",
+    "compiler_patch_sha256": "dbe8a4c5c19bb32fa80a98b163a378b1a9a1ff14a7e130b1bdad1a680c1a59c0",
+    "source_revision": "1226083e2375044483109c17bcc46a7c652f44bf",
+    "source_path": "research/experiments/container-representation/vector-library/vector-library.wf",
+    "source_sha256": "7feb508efa973f65b4fac5c044ec4eeacad78382d157bbfe1e10ba20d1ad8b7a",
+    "base_timed_ir_sha256": "cd4ad45820746acb27757381e09ae88fa6da414d68cf622074dfd6a8223411cf",
+    "timed_name_mapping": "Replace emitted @main with @wf_fixture_main before applying IR patch; use pinned pre-countdown source, not current witness"
+  },
+  "ir_delta": {
+    "patch": "canonical-empty-tag-ir.patch",
+    "patch_sha256": "637c1342e6dd1ac1ced2fdce6731fb0f0e16dd553bcd01ec4c95efee038e4199",
+    "patch_context_lines": 0,
+    "replay": [
+      "Recreate nullable candidate timed IR using existing compiler patch/identity and historical source; verify base SHA256",
+      "Copy it to nullable-owner.timed.ll and run patch -u nullable-owner.timed.ll canonical-empty-tag-ir.patch; verify known-contents SHA256",
+      "For external-tag first screen, replace the one available_externally declaration with the retained external declaration; verify its SHA256",
+      "For account IR, replace declare ptr @malloc(i64) with declare noalias nonnull ptr @wf_cost_allocate(i64), then all @malloc( and @free( with @wf_cost_allocate( and @wf_cost_release("
+    ],
+    "known_contents_sha256": "f5f1d593c9b46534af4b2d58f5c51d773f1713f8a3472d0b34f509f453a2a8a1",
+    "external_tag_sha256": "034cd8d752e47cdf56a9461573fc9d1b27ac985d27a70807d2a02479d99c1e7a",
+    "external_tag_declaration": "@wf_runtime_empty_header = external constant [3 x i64], align 8",
+    "known_contents_declaration": "@wf_runtime_empty_header = available_externally constant [3 x i64] zeroinitializer, align 8",
+    "direct_write_mapping": [
+      {
+        "original_llvm_line": 1998,
+        "operation": "RunConsumeFinish",
+        "emitter_method": "emit_run_consume_finish",
+        "emitter_source": "compiler/src/backend/emitter/runs.rs",
+        "domain": "builder nonempty edge; no callback may observe/replace this window",
+        "original_call": "  call void @wf.runtime.shape.write(ptr %t6, i64 0, i64 %v1)",
+        "replacement": "  %wf.direct.header.0 = getelementptr inbounds i64, ptr %t6, i64 0\n  store i64 %v1, ptr %wf.direct.header.0"
+      },
+      {
+        "original_llvm_line": 2169,
+        "operation": "RunConsumeFinish",
+        "emitter_method": "emit_run_consume_finish",
+        "emitter_source": "compiler/src/backend/emitter/runs.rs",
+        "domain": "builder nonempty edge; no callback may observe/replace this window",
+        "original_call": "  call void @wf.runtime.shape.write(ptr %t6, i64 0, i64 %v1)",
+        "replacement": "  %wf.direct.header.1 = getelementptr inbounds i64, ptr %t6, i64 0\n  store i64 %v1, ptr %wf.direct.header.1"
+      },
+      {
+        "original_llvm_line": 2431,
+        "operation": "RunBoundary",
+        "emitter_method": "move_run_boundary",
+        "emitter_source": "compiler/src/backend/emitter/runs.rs",
+        "domain": "place domain len < cap",
+        "original_call": "  call void @wf.runtime.shape.write(ptr %t9, i64 0, i64 %t8)",
+        "replacement": "  %wf.direct.header.2 = getelementptr inbounds i64, ptr %t9, i64 0\n  store i64 %t8, ptr %wf.direct.header.2",
+        "operation_entry": "emit_run_boundary"
+      },
+      {
+        "original_llvm_line": 2501,
+        "operation": "RunBoundary",
+        "emitter_method": "move_run_boundary",
+        "emitter_source": "compiler/src/backend/emitter/runs.rs",
+        "domain": "place domain len < cap",
+        "original_call": "  call void @wf.runtime.shape.write(ptr %t9, i64 0, i64 %t8)",
+        "replacement": "  %wf.direct.header.3 = getelementptr inbounds i64, ptr %t9, i64 0\n  store i64 %t8, ptr %wf.direct.header.3",
+        "operation_entry": "emit_run_boundary"
+      },
+      {
+        "original_llvm_line": 2527,
+        "operation": "RunTaken",
+        "emitter_method": "move_run_boundary",
+        "emitter_source": "compiler/src/backend/emitter/runs.rs",
+        "domain": "take domain len > 0",
+        "original_call": "  call void @wf.runtime.shape.write(ptr %t10, i64 0, i64 %t9)",
+        "replacement": "  %wf.direct.header.4 = getelementptr inbounds i64, ptr %t10, i64 0\n  store i64 %t9, ptr %wf.direct.header.4",
+        "operation_entry": "emit_run_taken"
+      },
+      {
+        "original_llvm_line": 2568,
+        "operation": "RunShift",
+        "emitter_method": "emit_run_shift",
+        "emitter_source": "compiler/src/backend/emitter/runs.rs",
+        "domain": "opening shift: len < cap",
+        "original_call": "  call void @wf.runtime.shape.write(ptr %t11, i64 0, i64 %t10)",
+        "replacement": "  %wf.direct.header.5 = getelementptr inbounds i64, ptr %t11, i64 0\n  store i64 %t10, ptr %wf.direct.header.5"
+      },
+      {
+        "original_llvm_line": 2611,
+        "operation": "RunShift",
+        "emitter_method": "emit_run_shift",
+        "emitter_source": "compiler/src/backend/emitter/runs.rs",
+        "domain": "closing shift: index < len",
+        "original_call": "  call void @wf.runtime.shape.write(ptr %t14, i64 0, i64 %t13)",
+        "replacement": "  %wf.direct.header.6 = getelementptr inbounds i64, ptr %t14, i64 0\n  store i64 %t13, ptr %wf.direct.header.6"
+      },
+      {
+        "original_llvm_line": 2629,
+        "operation": "RunTaken",
+        "emitter_method": "move_run_boundary",
+        "emitter_source": "compiler/src/backend/emitter/runs.rs",
+        "domain": "take domain len > 0",
+        "original_call": "  call void @wf.runtime.shape.write(ptr %t10, i64 0, i64 %t9)",
+        "replacement": "  %wf.direct.header.7 = getelementptr inbounds i64, ptr %t10, i64 0\n  store i64 %t9, ptr %wf.direct.header.7",
+        "operation_entry": "emit_run_taken"
+      },
+      {
+        "original_llvm_line": 2674,
+        "operation": "RunShift",
+        "emitter_method": "emit_run_shift",
+        "emitter_source": "compiler/src/backend/emitter/runs.rs",
+        "domain": "opening shift: len < cap",
+        "original_call": "  call void @wf.runtime.shape.write(ptr %t11, i64 0, i64 %t10)",
+        "replacement": "  %wf.direct.header.8 = getelementptr inbounds i64, ptr %t11, i64 0\n  store i64 %t10, ptr %wf.direct.header.8"
+      },
+      {
+        "original_llvm_line": 2717,
+        "operation": "RunShift",
+        "emitter_method": "emit_run_shift",
+        "emitter_source": "compiler/src/backend/emitter/runs.rs",
+        "domain": "closing shift: index < len",
+        "original_call": "  call void @wf.runtime.shape.write(ptr %t14, i64 0, i64 %t13)",
+        "replacement": "  %wf.direct.header.9 = getelementptr inbounds i64, ptr %t14, i64 0\n  store i64 %t13, ptr %wf.direct.header.9"
+      }
+    ],
+    "identity_guarded_write_operations": "RunTransfer zero-count append/split_off; absent from this Vector module, private guarded helper remains",
+    "grow_zero_delta": "same release old real0/skip virtual0, then store canonical tag instead of null; no allocation-policy change",
+    "all_other_null_lines_unchanged": true,
+    "runtime_tag": "One externally linked immutable three-word zero header, no private/unnamed_addr identity; actual provider below, available_externally definition supplies contents only"
+  },
+  "runtime_tag": {
+    "file": "canonical-empty-header.c",
+    "sha256": "707164f096aec23485fbba9bd9cf1cbe8dc7023b3d847d39e61c53c1937bc4bf",
+    "symbol": "wf_runtime_empty_header",
+    "nm_observation": "0000000000000000 S _wf_runtime_empty_header\n0000000000000000 t ltmp0\n0000000000000000 s ltmp1\n"
+  },
+  "native": {
+    "instruction_count_convention": "Operand-bearing instructions; excludes operandless ret. Full operand comparisons normalize only local LBB/Lloh labels.",
+    "bodies": {
+      "baseline": {
+        "trace:scalar": {
+          "operand_instruction_count": 228,
+          "frame_bytes": 160
+        },
+        "trace:wide": {
+          "operand_instruction_count": 189,
+          "frame_bytes": 352
+        },
+        "tail_work:scalar": {
+          "operand_instruction_count": 48,
+          "frame_bytes": 64
+        },
+        "work:scalar": {
+          "operand_instruction_count": 156,
+          "frame_bytes": 64
+        },
+        "round:scalar": {
+          "operand_instruction_count": 40,
+          "frame_bytes": 80
+        },
+        "tail_work:wide": {
+          "operand_instruction_count": 107,
+          "frame_bytes": 288
+        },
+        "work:wide": {
+          "operand_instruction_count": 440,
+          "frame_bytes": 688
+        },
+        "round:wide": {
+          "operand_instruction_count": 40,
+          "frame_bytes": 80
+        }
+      },
+      "external_tag": {
+        "trace:scalar": {
+          "operand_instruction_count": 270,
+          "frame_bytes": 176
+        },
+        "trace:wide": {
+          "operand_instruction_count": 264,
+          "frame_bytes": 384
+        },
+        "tail_work:scalar": {
+          "operand_instruction_count": 48,
+          "frame_bytes": 64
+        },
+        "work:scalar": {
+          "operand_instruction_count": 156,
+          "frame_bytes": 64
+        },
+        "round:scalar": {
+          "operand_instruction_count": 44,
+          "frame_bytes": 64
+        },
+        "tail_work:wide": {
+          "operand_instruction_count": 107,
+          "frame_bytes": 288
+        },
+        "work:wide": {
+          "operand_instruction_count": 440,
+          "frame_bytes": 688
+        },
+        "round:wide": {
+          "operand_instruction_count": 44,
+          "frame_bytes": 64
+        }
+      },
+      "known_contents": {
+        "trace:scalar": {
+          "operand_instruction_count": 259,
+          "frame_bytes": 176
+        },
+        "trace:wide": {
+          "operand_instruction_count": 233,
+          "frame_bytes": 368
+        },
+        "tail_work:scalar": {
+          "operand_instruction_count": 48,
+          "frame_bytes": 64
+        },
+        "work:scalar": {
+          "operand_instruction_count": 156,
+          "frame_bytes": 64
+        },
+        "round:scalar": {
+          "operand_instruction_count": 33,
+          "frame_bytes": 64
+        },
+        "tail_work:wide": {
+          "operand_instruction_count": 107,
+          "frame_bytes": 288
+        },
+        "work:wide": {
+          "operand_instruction_count": 440,
+          "frame_bytes": 688
+        },
+        "round:wide": {
+          "operand_instruction_count": 33,
+          "frame_bytes": 64
+        }
+      }
+    },
+    "external_tag_static_criterion": "FAILED: scalar trace160->176, wide trace352->384; work/tail recovered",
+    "known_contents_static_criterion": "FAILED: scalar trace160->176, wide trace352->368; work/tail full operand instruction streams identical to baseline",
+    "native_commands_external_tag": {
+      "commands": [
+        {
+          "argv": [
+            "/usr/bin/clang",
+            "-O3",
+            "-Wno-override-module",
+            "-x",
+            "ir",
+            "-S",
+            "-emit-llvm",
+            "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/canonical-tag.timed.ll",
+            "-o",
+            "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/canonical-tag.opt.ll"
+          ],
+          "exit_code": 0,
+          "wall_seconds": 0.08881016704253852
+        },
+        {
+          "argv": [
+            "/usr/bin/clang",
+            "-O3",
+            "-Wno-override-module",
+            "-x",
+            "ir",
+            "-S",
+            "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/canonical-tag.timed.ll",
+            "-o",
+            "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/canonical-tag.s"
+          ],
+          "exit_code": 0,
+          "wall_seconds": 0.15822425018996
+        }
+      ],
+      "timeout_seconds": 30,
+      "mapping_sha256": "ad17d40d20dca0c8dd4989dfb667730b45f1e765305896dacd38b6b69ccab284",
+      "all_inputs_unchanged": true,
+      "outputs_sha256": {
+        "canonical-tag.opt.ll": "8f58820aed833359c54cb85692cefe3cf00b676d2101b8ea8d15ad8c43b1f71a",
+        "canonical-tag.s": "7db89336a71c58fd1e58f0c6700ef543110f2406b0591299e751c840b7fe4ef8"
+      }
+    },
+    "native_commands_known_contents": [
+      {
+        "command": [
+          "/usr/bin/clang",
+          "-O3",
+          "-Wno-override-module",
+          "-x",
+          "ir",
+          "-S",
+          "-emit-llvm",
+          "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/known-contents.timed.ll",
+          "-o",
+          "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/known-contents.opt.ll"
+        ],
+        "exit_code": 0,
+        "seconds": 0.08779666689224541,
+        "stderr": ""
+      },
+      {
+        "command": [
+          "/usr/bin/clang",
+          "-O3",
+          "-Wno-override-module",
+          "-x",
+          "ir",
+          "-S",
+          "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/known-contents.timed.ll",
+          "-o",
+          "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/known-contents.s"
+        ],
+        "exit_code": 0,
+        "seconds": 0.1561499577946961,
+        "stderr": ""
+      },
+      {
+        "command": [
+          "/usr/bin/clang",
+          "-O3",
+          "-Wno-override-module",
+          "-x",
+          "ir",
+          "-c",
+          "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/known-contents.timed.ll",
+          "-o",
+          "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/known-contents.o"
+        ],
+        "exit_code": 0,
+        "seconds": 0.14459033403545618,
+        "stderr": ""
+      },
+      {
+        "command": [
+          "/usr/bin/nm",
+          "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/known-contents.o"
+        ],
+        "exit_code": 0,
+        "seconds": 0.025724624982103705,
+        "stderr": ""
+      }
+    ],
+    "four_work_tail_streams_equal": true,
+    "known_contents_symbol_reference": [
+      "                 U _wf_runtime_empty_header"
+    ],
+    "no_emitted_tag_definition": true,
+    "attribution_limit": "Diagnostic includes zero-length first-growth memmove elision inherited from nullable base, in addition to removed allocation/release and tag/frame changes. No isolated allocation percentage or layout/frame-cost guarantee.",
+    "full_operand_comparison_variants": [
+      "external_tag",
+      "known_contents"
+    ]
+  },
+  "qualification": {
+    "identities": {
+      "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/known-contents.timed.ll": "f5f1d593c9b46534af4b2d58f5c51d773f1713f8a3472d0b34f509f453a2a8a1",
+      "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/known-contents.o": "1ff1fe5ba24bcb510a00a7ec9b82f24cbcba61699a46ca3618150ef254108da3",
+      "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/root-qualification/candidate.account.ll": "953f569a884c89a49c027558abff66a283057b7c47625d4c2a37c9473bde9e22",
+      "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/root-qualification/candidate.account.o": "e450e07865ba150a7804b4dbb1a3b59313bc4f244f2cff1dbdb2e9a68b10621a",
+      "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/root-qualification/empty-header.c": "707164f096aec23485fbba9bd9cf1cbe8dc7023b3d847d39e61c53c1937bc4bf",
+      "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/root-qualification/empty-header.o": "9f40d5c63dd9f7381cbe4f1f5b49964f6eca5712377a4e91607ffa10e524e844",
+      "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/baseline-timed": "e5dec48cf7b3144fbea89f6c5d4db81698fa54c095ab9ac1bc785e23fc1fc433",
+      "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/baseline-account": "af469d711272fe8e12a2c558e6506313fb329563b05f77ffa3aaba6e9b3435cb",
+      "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/root-qualification/candidate-timed": "b50aa9002b4bf216910a68fa63eeeb53df04d51467c2c40134b4c75bf17f3fed",
+      "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/root-qualification/candidate-account": "e5a997233724e3deb1aaad67ae2dba369d02fd9a3d3777bdc2019cca28bbf8fe"
+    },
+    "commands": [
+      {
+        "name": "account-build",
+        "argv": [
+          "/usr/bin/clang",
+          "-O3",
+          "-Wno-override-module",
+          "-x",
+          "ir",
+          "-c",
+          "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/root-qualification/candidate.account.ll",
+          "-o",
+          "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/root-qualification/candidate.account.o"
+        ],
+        "exit_code": 0,
+        "expected_exit_code": 0,
+        "seconds": 0.14025750011205673,
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout": "",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": ""
+      },
+      {
+        "name": "tag-build",
+        "argv": [
+          "/usr/bin/clang",
+          "-O3",
+          "-std=c11",
+          "-Wall",
+          "-Wextra",
+          "-Werror",
+          "-c",
+          "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/root-qualification/empty-header.c",
+          "-o",
+          "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/root-qualification/empty-header.o"
+        ],
+        "exit_code": 0,
+        "expected_exit_code": 0,
+        "seconds": 0.031499542063102126,
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout": "",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": ""
+      },
+      {
+        "name": "timed-link",
+        "argv": [
+          "/usr/bin/clang++",
+          "-O3",
+          "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/root-qualification/empty-header.o",
+          "/private/tmp/whitefoot-vector-actual-ablation/research/experiments/container-representation/vector-library/.build/actual-ablation/both/ecosystem/driver-timed.o",
+          "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/known-contents.o",
+          "/private/tmp/whitefoot-ordered-tail-descent-KESLsH/runtime-current-2f3aff89d/native/completion/bridge.o",
+          "/private/tmp/whitefoot-ordered-tail-descent-KESLsH/runtime-current-2f3aff89d/native/completion/file_adapter.o",
+          "/private/tmp/whitefoot-ordered-tail-descent-KESLsH/runtime-current-2f3aff89d/native/completion/file_posix.o",
+          "/private/tmp/whitefoot-ordered-tail-descent-KESLsH/runtime-current-2f3aff89d/native/completion/linux_io_uring.o",
+          "/private/tmp/whitefoot-ordered-tail-descent-KESLsH/runtime-current-2f3aff89d/native/completion/runtime.o",
+          "/private/tmp/whitefoot-ordered-tail-descent-KESLsH/runtime-current-2f3aff89d/native/completion/wait_host.o",
+          "/private/tmp/whitefoot-ordered-tail-descent-KESLsH/runtime-current-2f3aff89d/native/ordinary_values.o",
+          "/private/tmp/whitefoot-ordered-tail-descent-KESLsH/runtime-current-2f3aff89d/native/ordinary_values_ir.o",
+          "/private/tmp/whitefoot-ordered-tail-descent-KESLsH/runtime-current-2f3aff89d/native/sched/core.o",
+          "/private/tmp/whitefoot-ordered-tail-descent-KESLsH/runtime-current-2f3aff89d/native/sched/entry.o",
+          "/private/tmp/whitefoot-ordered-tail-descent-KESLsH/runtime-current-2f3aff89d/native/sched/prim_host.o",
+          "/private/tmp/whitefoot-ordered-tail-descent-KESLsH/runtime-current-2f3aff89d/native/wf_floor.o",
+          "/private/tmp/whitefoot-vector-actual-ablation/research/experiments/container-representation/vector-library/.build/actual-ablation/both/ecosystem/cpp-timed.o",
+          "/private/tmp/whitefoot-vector-actual-ablation/research/experiments/container-representation/vector-library/.build/actual-ablation/both/ecosystem/rust-timed.a",
+          "-pthread",
+          "-lm",
+          "-liconv",
+          "-lSystem",
+          "-lc",
+          "-lm",
+          "-o",
+          "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/root-qualification/candidate-timed"
+        ],
+        "exit_code": 0,
+        "expected_exit_code": 0,
+        "seconds": 0.10446291696280241,
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout": "",
+        "stderr_sha256": "3dd21f402679d9ef523ca2103fb8a9cfa2a36ab1b9d8146d877a89684dbbbbb5",
+        "stderr": "ld: warning: ignoring duplicate libraries: '-lSystem', '-lm'\n"
+      },
+      {
+        "name": "account-link",
+        "argv": [
+          "/usr/bin/clang++",
+          "-O3",
+          "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/root-qualification/empty-header.o",
+          "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/candidate-driver-account.o",
+          "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/root-qualification/candidate.account.o",
+          "/private/tmp/whitefoot-ordered-tail-descent-KESLsH/runtime-current-2f3aff89d/native/completion/bridge.o",
+          "/private/tmp/whitefoot-ordered-tail-descent-KESLsH/runtime-current-2f3aff89d/native/completion/file_adapter.o",
+          "/private/tmp/whitefoot-ordered-tail-descent-KESLsH/runtime-current-2f3aff89d/native/completion/file_posix.o",
+          "/private/tmp/whitefoot-ordered-tail-descent-KESLsH/runtime-current-2f3aff89d/native/completion/linux_io_uring.o",
+          "/private/tmp/whitefoot-ordered-tail-descent-KESLsH/runtime-current-2f3aff89d/native/completion/runtime.o",
+          "/private/tmp/whitefoot-ordered-tail-descent-KESLsH/runtime-current-2f3aff89d/native/completion/wait_host.o",
+          "/private/tmp/whitefoot-ordered-tail-descent-KESLsH/runtime-current-2f3aff89d/native/ordinary_values.o",
+          "/private/tmp/whitefoot-ordered-tail-descent-KESLsH/runtime-current-2f3aff89d/native/ordinary_values_ir.o",
+          "/private/tmp/whitefoot-ordered-tail-descent-KESLsH/runtime-current-2f3aff89d/native/sched/core.o",
+          "/private/tmp/whitefoot-ordered-tail-descent-KESLsH/runtime-current-2f3aff89d/native/sched/entry.o",
+          "/private/tmp/whitefoot-ordered-tail-descent-KESLsH/runtime-current-2f3aff89d/native/sched/prim_host.o",
+          "/private/tmp/whitefoot-ordered-tail-descent-KESLsH/runtime-current-2f3aff89d/native/wf_floor.o",
+          "/private/tmp/whitefoot-vector-actual-ablation/research/experiments/container-representation/vector-library/.build/actual-ablation/both/ecosystem/cpp-account.o",
+          "/private/tmp/whitefoot-vector-actual-ablation/research/experiments/container-representation/vector-library/.build/actual-ablation/both/ecosystem/rust-account.a",
+          "-pthread",
+          "-lm",
+          "-liconv",
+          "-lSystem",
+          "-lc",
+          "-lm",
+          "-o",
+          "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/root-qualification/candidate-account"
+        ],
+        "exit_code": 0,
+        "expected_exit_code": 0,
+        "seconds": 0.057901332853361964,
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout": "",
+        "stderr_sha256": "3dd21f402679d9ef523ca2103fb8a9cfa2a36ab1b9d8146d877a89684dbbbbb5",
+        "stderr": "ld: warning: ignoring duplicate libraries: '-lSystem', '-lm'\n"
+      },
+      {
+        "name": "tag-symbol",
+        "argv": [
+          "/usr/bin/nm",
+          "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/root-qualification/empty-header.o"
+        ],
+        "exit_code": 0,
+        "expected_exit_code": 0,
+        "seconds": 0.0138195410836488,
+        "stdout_sha256": "8dfcbd97dcd3b8ff4ef72ecf232a8e29729b1fd6b83389dc6e8cd52dc4d41fea",
+        "stdout": "0000000000000000 S _wf_runtime_empty_header\n0000000000000000 t ltmp0\n0000000000000000 s ltmp1\n",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": ""
+      },
+      {
+        "name": "baseline-timed-check",
+        "argv": [
+          "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/baseline-timed",
+          "check"
+        ],
+        "exit_code": 0,
+        "expected_exit_code": 0,
+        "seconds": 0.5131633330602199,
+        "stdout_sha256": "f0648eb4f40d834b55e0a09ef08c679f8e8a585d47413684e609da558d60192b",
+        "stdout": "vector ecosystem: 1260 configurations, 8820 executions passed\n",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": ""
+      },
+      {
+        "name": "baseline-timed-fail-checksum",
+        "argv": [
+          "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/baseline-timed",
+          "fail-checksum"
+        ],
+        "exit_code": 1,
+        "expected_exit_code": 1,
+        "seconds": 0.004382750019431114,
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout": "",
+        "stderr_sha256": "277610f05e0b2d4cccaaf96bfdb5a58fffb325aeb56a4cd458bbfda8162613aa",
+        "stderr": "vector library costs: independent logical-order checksum\n"
+      },
+      {
+        "name": "baseline-account-check",
+        "argv": [
+          "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/baseline-account",
+          "check"
+        ],
+        "exit_code": 0,
+        "expected_exit_code": 0,
+        "seconds": 0.5212013327982277,
+        "stdout_sha256": "f0648eb4f40d834b55e0a09ef08c679f8e8a585d47413684e609da558d60192b",
+        "stdout": "vector ecosystem: 1260 configurations, 8820 executions passed\n",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": ""
+      },
+      {
+        "name": "baseline-account-fail-checksum",
+        "argv": [
+          "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/baseline-account",
+          "fail-checksum"
+        ],
+        "exit_code": 1,
+        "expected_exit_code": 1,
+        "seconds": 0.004617791855707765,
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout": "",
+        "stderr_sha256": "277610f05e0b2d4cccaaf96bfdb5a58fffb325aeb56a4cd458bbfda8162613aa",
+        "stderr": "vector library costs: independent logical-order checksum\n"
+      },
+      {
+        "name": "baseline-account-fail-cleanup",
+        "argv": [
+          "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/baseline-account",
+          "fail-cleanup"
+        ],
+        "exit_code": 1,
+        "expected_exit_code": 1,
+        "seconds": 0.0040645000990480185,
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout": "",
+        "stderr_sha256": "1ac046c93cb2e7ba2df8bbac72d17d0d16ba2ba280900f70d4c4cd7ae8c2c453",
+        "stderr": "vector library costs: complete cleanup\n"
+      },
+      {
+        "name": "baseline-account-account",
+        "argv": [
+          "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/baseline-account",
+          "account"
+        ],
+        "exit_code": 0,
+        "expected_exit_code": 0,
+        "seconds": 0.03613595780916512,
+        "stdout_sha256": "ab3dd14d3e73fe437baac27dd09c88e59982e172902d3478378c8eb9a0d011b7",
+        "account_rows": 294,
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": ""
+      },
+      {
+        "name": "candidate-timed-check",
+        "argv": [
+          "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/root-qualification/candidate-timed",
+          "check"
+        ],
+        "exit_code": 0,
+        "expected_exit_code": 0,
+        "seconds": 0.8758879581000656,
+        "stdout_sha256": "f0648eb4f40d834b55e0a09ef08c679f8e8a585d47413684e609da558d60192b",
+        "stdout": "vector ecosystem: 1260 configurations, 8820 executions passed\n",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": ""
+      },
+      {
+        "name": "candidate-timed-fail-checksum",
+        "argv": [
+          "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/root-qualification/candidate-timed",
+          "fail-checksum"
+        ],
+        "exit_code": 1,
+        "expected_exit_code": 1,
+        "seconds": 0.0058775420766323805,
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout": "",
+        "stderr_sha256": "277610f05e0b2d4cccaaf96bfdb5a58fffb325aeb56a4cd458bbfda8162613aa",
+        "stderr": "vector library costs: independent logical-order checksum\n"
+      },
+      {
+        "name": "candidate-account-check",
+        "argv": [
+          "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/root-qualification/candidate-account",
+          "check"
+        ],
+        "exit_code": 0,
+        "expected_exit_code": 0,
+        "seconds": 0.7922923748847097,
+        "stdout_sha256": "f0648eb4f40d834b55e0a09ef08c679f8e8a585d47413684e609da558d60192b",
+        "stdout": "vector ecosystem: 1260 configurations, 8820 executions passed\n",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": ""
+      },
+      {
+        "name": "candidate-account-fail-checksum",
+        "argv": [
+          "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/root-qualification/candidate-account",
+          "fail-checksum"
+        ],
+        "exit_code": 1,
+        "expected_exit_code": 1,
+        "seconds": 0.006538707995787263,
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout": "",
+        "stderr_sha256": "277610f05e0b2d4cccaaf96bfdb5a58fffb325aeb56a4cd458bbfda8162613aa",
+        "stderr": "vector library costs: independent logical-order checksum\n"
+      },
+      {
+        "name": "candidate-account-fail-cleanup",
+        "argv": [
+          "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/root-qualification/candidate-account",
+          "fail-cleanup"
+        ],
+        "exit_code": 1,
+        "expected_exit_code": 1,
+        "seconds": 0.003991791047155857,
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout": "",
+        "stderr_sha256": "1ac046c93cb2e7ba2df8bbac72d17d0d16ba2ba280900f70d4c4cd7ae8c2c453",
+        "stderr": "vector library costs: complete cleanup\n"
+      },
+      {
+        "name": "candidate-account-account",
+        "argv": [
+          "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/root-qualification/candidate-account",
+          "account"
+        ],
+        "exit_code": 0,
+        "expected_exit_code": 0,
+        "seconds": 0.03601350006647408,
+        "stdout_sha256": "61b5f6ead9d24608a8db781eab95a988f6f6f49c829f7be12cc95e68104e5b2b",
+        "account_rows": 294,
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": ""
+      }
+    ],
+    "account_delta": "Canonical candidate accounting bytes equal previously qualified nullable candidate. All42 WF rows match one fewer zero request/release and16B per source zero constructor;252 peer rows unchanged. Ledger is instrumented, separate from elapsed timing.",
+    "retained_account_delta_patch": "nullable-zero-owner-account.patch",
+    "retained_account_delta_patch_sha256": "78e434582a58f41899986440409ad86f0634a5b8d6b6c37b14f78617223fa4e6",
+    "shape_worker_limits": "Measured Vector path only; no new all-bin, real-worker transport or general ABI coverage inferred"
+  },
+  "timing": {
+    "preregistered_plan": {
+      "authorization": "Root-authorized bounded canonical-header stage2 measurement diagnostic, after root-qualified behavior; no repeated correctness",
+      "runner": "/private/tmp/whitefoot-vector-batch-controller/timing/run.py",
+      "runner_sha256": "77333ae277a2f929637f9545cf52a2790bf3a6e502f400ae370ee9d098bb8e9b",
+      "derived_runner_sha256": "cc6c3ec47560168f65c87a4c108b9459b5b740b47637909c01dd1e611e699d79",
+      "in_memory_path_order_substitutions": {
+        "p = pathlib.Path('/private/tmp/whitefoot-vector-batch-controller')": "p = pathlib.Path('/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/stage2')",
+        "control = '/private/tmp/whitefoot-vector-actual-ablation/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/vector-costs-timed'": "control = '/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/baseline-timed'",
+        "for arm, image in [('control', control), ('candidate', str(p / 'continuation/candidate/vector-costs-timed'))]:": "for arm, image in [('control1', control), ('candidate1', '/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/root-qualification/candidate-timed'), ('candidate2', '/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/root-qualification/candidate-timed'), ('control2', control)]:",
+        "for arm in ('control', 'candidate')": "for arm in ('control1', 'candidate1', 'candidate2', 'control2')"
+      },
+      "order": [
+        "control1",
+        "candidate1",
+        "candidate2",
+        "control2"
+      ],
+      "argv_suffix": [
+        "measure",
+        "1048576",
+        "7"
+      ],
+      "images": {
+        "control-timed": {
+          "path": "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/baseline-timed",
+          "sha256": "e5dec48cf7b3144fbea89f6c5d4db81698fa54c095ab9ac1bc785e23fc1fc433"
+        },
+        "candidate-timed": {
+          "path": "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/root-qualification/candidate-timed",
+          "sha256": "b50aa9002b4bf216910a68fa63eeeb53df04d51467c2c40134b4c75bf17f3fed"
+        }
+      },
+      "raw_rows_per_process": 4116,
+      "total_raw_rows": 16464,
+      "pins": 44,
+      "pairs": [
+        [
+          "control1",
+          "candidate1"
+        ],
+        [
+          "control2",
+          "candidate2"
+        ]
+      ],
+      "reduction": "unchanged maintained --complete/--targets per process; existing paired analyze.py per complete pair, OUT binding only; same countdown ABBA combined result logic",
+      "criterion": "Primary scalar8 growth/count16 must be qualified gain in BOTH independent complete pairs (disjoint observed ranges same direction both cohorts, every paired WF sample>=1ms, cohort median ratio max/min-1<=10%). Any qualified useful loss in either pair refuses this diagnostic. All42cells/36useful/6unranked controls and every raw sample retained; no noise normalization or pooling. Peer targets/native drift separately per ordering.",
+      "preserved_failed_prediction": "Known-contents canonical-header candidate FAILED original static criterion: scalar/wide trace frames+16. This stage2 question measures allocation savings versus once-per-trace tag/frame overhead; hot work/tail baseline restored,round40->33instructions/frame80->64. No compiler/representation selection.",
+      "source_label": "Pre-countdown frozen current122 WF IR component diagnostic with retained harness/runtime/peers. No merged-head/f1 production parity or countdown-layering claim.",
+      "correctness_record": {
+        "path": "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/root-qualification/execution.json",
+        "sha256": "b62b2e09a9f1a99bdfba6da09572d164e6564db421d874e3692b21d603aaebbd",
+        "direct_statuses_match": true,
+        "commands": 17,
+        "reexecuted": false
+      },
+      "observed_cost_estimate_seconds": 324,
+      "guard_seconds": 420,
+      "guard": "/private/tmp/whitefoot-container-library-complete/.github/run-check.pl",
+      "stop_on_actual_failure_no_retry": true,
+      "reduce_only_after_all4_complete": true,
+      "no_source_build_or_repository_edits": true
+    },
+    "plan_sha256": "cea36481d931be237540024659f7093f1503fd6620b9a7b2f64c0b046725c718",
+    "frozen_inputs_before": {
+      "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/known-contents.timed.ll": "f5f1d593c9b46534af4b2d58f5c51d773f1713f8a3472d0b34f509f453a2a8a1",
+      "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/known-contents.o": "1ff1fe5ba24bcb510a00a7ec9b82f24cbcba61699a46ca3618150ef254108da3",
+      "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/root-qualification/candidate.account.ll": "953f569a884c89a49c027558abff66a283057b7c47625d4c2a37c9473bde9e22",
+      "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/root-qualification/candidate.account.o": "e450e07865ba150a7804b4dbb1a3b59313bc4f244f2cff1dbdb2e9a68b10621a",
+      "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/root-qualification/empty-header.c": "707164f096aec23485fbba9bd9cf1cbe8dc7023b3d847d39e61c53c1937bc4bf",
+      "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/root-qualification/empty-header.o": "9f40d5c63dd9f7381cbe4f1f5b49964f6eca5712377a4e91607ffa10e524e844",
+      "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/baseline-timed": "e5dec48cf7b3144fbea89f6c5d4db81698fa54c095ab9ac1bc785e23fc1fc433",
+      "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/baseline-account": "af469d711272fe8e12a2c558e6506313fb329563b05f77ffa3aaba6e9b3435cb",
+      "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/root-qualification/candidate-timed": "b50aa9002b4bf216910a68fa63eeeb53df04d51467c2c40134b4c75bf17f3fed",
+      "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/root-qualification/candidate-account": "e5a997233724e3deb1aaad67ae2dba369d02fd9a3d3777bdc2019cca28bbf8fe",
+      "/private/tmp/whitefoot-vector-actual-ablation/research/experiments/container-representation/vector-library/.build/actual-ablation/both/ecosystem/driver-timed.o": "2bd0ff0962381a90f486bd8682196efea3214b7d9c0969bf58ec2380f3e9f77d",
+      "/private/tmp/whitefoot-ordered-tail-descent-KESLsH/runtime-current-2f3aff89d/native/completion/bridge.o": "cdd9dc3e067943096f3324e1eb0169513bfa2abd73c4c53e65abbea9a408c728",
+      "/private/tmp/whitefoot-ordered-tail-descent-KESLsH/runtime-current-2f3aff89d/native/completion/file_adapter.o": "5cb12d765edebbef18ddbe0f40368f1c79e1c877883f87020f431c7bcbad754d",
+      "/private/tmp/whitefoot-ordered-tail-descent-KESLsH/runtime-current-2f3aff89d/native/completion/file_posix.o": "3dd03e94cef7a789a2dbe2e69fe5d83972f02cd0b92d99e36fbfbeb5e519eadb",
+      "/private/tmp/whitefoot-ordered-tail-descent-KESLsH/runtime-current-2f3aff89d/native/completion/linux_io_uring.o": "e389769ac8c9f38af9cd00e5bc5d56d3c180dff5985fb81ddfff63dfa89eb453",
+      "/private/tmp/whitefoot-ordered-tail-descent-KESLsH/runtime-current-2f3aff89d/native/completion/runtime.o": "75cb971977625c9b05adcf74b14989544ccbf61b0a81fe4843ec72226eb36c61",
+      "/private/tmp/whitefoot-ordered-tail-descent-KESLsH/runtime-current-2f3aff89d/native/completion/wait_host.o": "d95b24c2367aa6dcf60a9d9e4e36acf79fa502d4ded856f244c6f4afcf28aa10",
+      "/private/tmp/whitefoot-ordered-tail-descent-KESLsH/runtime-current-2f3aff89d/native/ordinary_values.o": "27fb1587c0f16e7c8150595b90065270344abbafa13ea81f4fa1a773f9954eb9",
+      "/private/tmp/whitefoot-ordered-tail-descent-KESLsH/runtime-current-2f3aff89d/native/ordinary_values_ir.o": "c537ffa1ef86ef11ba76b749870793dc3b13afd7792a62a423e98a52feec3a06",
+      "/private/tmp/whitefoot-ordered-tail-descent-KESLsH/runtime-current-2f3aff89d/native/sched/core.o": "0655633c69666fcce21bf67258101aedb49c914fc50a6cc8edbfe22a8315e645",
+      "/private/tmp/whitefoot-ordered-tail-descent-KESLsH/runtime-current-2f3aff89d/native/sched/entry.o": "e04734d7a1ddbe9083b47570ca2854963803b88a7197628bed2ca66cb4924d5c",
+      "/private/tmp/whitefoot-ordered-tail-descent-KESLsH/runtime-current-2f3aff89d/native/sched/prim_host.o": "c3a5140b8221a57d27a510995ae37c7b33a64ebc87ec9f9286b99ece649bce45",
+      "/private/tmp/whitefoot-ordered-tail-descent-KESLsH/runtime-current-2f3aff89d/native/wf_floor.o": "8342e7ea0b8d6a0817d543e8c05e807c96527393945e95597718ba9a27ce722d",
+      "/private/tmp/whitefoot-vector-actual-ablation/research/experiments/container-representation/vector-library/.build/actual-ablation/both/ecosystem/cpp-timed.o": "d3c51cf441054e8ba6bc337ccf64f90ecce78df770f1333453e7c3fa107ebc7f",
+      "/private/tmp/whitefoot-vector-actual-ablation/research/experiments/container-representation/vector-library/.build/actual-ablation/both/ecosystem/rust-timed.a": "7fffbc66201cd03866f7540451c551c417bf04f2ecb1467699adfac05260ced6",
+      "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/candidate-driver-account.o": "0ce654fc90c598057f5a64f0dc36ee8bf2029bf3bdedd410b55cfd4b2c61b5bb",
+      "/private/tmp/whitefoot-vector-actual-ablation/research/experiments/container-representation/vector-library/.build/actual-ablation/both/ecosystem/cpp-account.o": "94a69e9f50a1ba182bdc130aca291bdc2d2f1525dc713874e47361acd64c6bfb",
+      "/private/tmp/whitefoot-vector-actual-ablation/research/experiments/container-representation/vector-library/.build/actual-ablation/both/ecosystem/rust-account.a": "f661e352339ea993b53870dae435602c0c39f466480b3d3f10e46ab8a94e28c5",
+      "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/root-qualification/identities.json": "96e5113d89f43c4d3e03aef35554978f04a4c923aedcc49ffd533375ab52d225",
+      "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/root-qualification/execution.json": "b62b2e09a9f1a99bdfba6da09572d164e6564db421d874e3692b21d603aaebbd",
+      "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/links.json": "bce40fa2e07e15733742b6e6510ec8c2f0e4a3406a1d86d1358daafb1dc577c2",
+      "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/native-inventory.json": "e84039d7cea8b8ce50fe48efc09570f170977585de2f84b4e09cb8912bcb9655",
+      "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/baseline.timed.ll": "4466a9f68575ac8dea1599d5c179e14ea55ac2b0a66a298b41d03528a0f6bd85",
+      "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/baseline.timed.o": "c7fc3dcf0d127d3586678f0c8aaabe5848da38a1e427f35c4f729261ba50e235",
+      "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/baseline.s": "35cdb3befd7e7f731003cbb4d099e96060006fbe71a251e9b3e10487882a356e",
+      "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/known-contents-input.json": "d859ee4cef2cad566c76442c7aeb8ca8902c62aeb126e8f39877f774fab6671b",
+      "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/known-contents-inventory.json": "be0b84f8fe05be0b39aff29960cc6d28bfa1fd0288385a24e08e44e93d895871",
+      "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/known-contents-native.json": "b1653b5c6237b2239c37f7676ab9534474434247157c9cbdc41473b750160727",
+      "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/known-contents.s": "e5c3c9e2795791a4e032c9f64e1dce8ce42593c3f8e50a0e57e21234a9836f10",
+      "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/known-contents.opt.ll": "02e5c1093b28d7b5acb44a1460ddcbbe063d6bcb65ad226b6085747ba711b9d6",
+      "/private/tmp/whitefoot-vector-batch-controller/timing/run.py": "77333ae277a2f929637f9545cf52a2790bf3a6e502f400ae370ee9d098bb8e9b",
+      "/private/tmp/whitefoot-vector-batch-controller/timing/analyze.py": "034850fb5410724ef0730bcff867df39dacda551ebeb6da426e32cc4cb9cf0bc",
+      "/private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/summarize-ecosystem.pl": "f9669548af494ccd27285c78b04fcc0e0ddffaa88a574e5733e593dbd70dfd59",
+      "/private/tmp/whitefoot-container-library-complete/.github/run-check.pl": "ff267e6c29fb542d9e54476cb2fe375b860e7a8e68596fabd33c61e930aca4d4"
+    },
+    "all44_inputs_unchanged": true,
+    "outer": {
+      "direct_exit": 0,
+      "wall_seconds": 323.86548945796676,
+      "guard_label": "vector-canonical-header-stage2-balanced-timing",
+      "derived_runner_sha256": "cc6c3ec47560168f65c87a4c108b9459b5b740b47637909c01dd1e611e699d79"
+    },
+    "actual": {
+      "pair_completed": true,
+      "phases": [
+        {
+          "arm": "control1",
+          "argv": [
+            "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/baseline-timed",
+            "measure",
+            "1048576",
+            "7"
+          ],
+          "cwd": "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/stage2",
+          "started_utc": "2026-09-30T09:53:42.473258+00:00",
+          "exit_code": 0,
+          "wall_seconds": 80.9450515001081,
+          "ended_utc": "2026-09-30T09:55:03.419126+00:00"
+        },
+        {
+          "arm": "candidate1",
+          "argv": [
+            "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/root-qualification/candidate-timed",
+            "measure",
+            "1048576",
+            "7"
+          ],
+          "cwd": "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/stage2",
+          "started_utc": "2026-09-30T09:55:03.420168+00:00",
+          "exit_code": 0,
+          "wall_seconds": 81.18835195805877,
+          "ended_utc": "2026-09-30T09:56:24.609224+00:00"
+        },
+        {
+          "arm": "candidate2",
+          "argv": [
+            "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/root-qualification/candidate-timed",
+            "measure",
+            "1048576",
+            "7"
+          ],
+          "cwd": "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/stage2",
+          "started_utc": "2026-09-30T09:56:24.610124+00:00",
+          "exit_code": 0,
+          "wall_seconds": 80.85223045805469,
+          "ended_utc": "2026-09-30T09:57:45.456002+00:00"
+        },
+        {
+          "arm": "control2",
+          "argv": [
+            "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/baseline-timed",
+            "measure",
+            "1048576",
+            "7"
+          ],
+          "cwd": "/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/stage2",
+          "started_utc": "2026-09-30T09:57:45.456981+00:00",
+          "exit_code": 0,
+          "wall_seconds": 80.61974104191177,
+          "ended_utc": "2026-09-30T09:59:06.076827+00:00"
+        }
+      ],
+      "hashes_unchanged": true,
+      "samples": {
+        "control1": "8970aceb609e35d6be7363c503de3b71a216fb4306e83abe030d72526e5f8bcf",
+        "candidate1": "dee50d53fe79ea2486df2fb1b60b4141e7c12277dbd1a71da6df948d6f68fa66",
+        "candidate2": "230b14f3d029fc183ba40b224dbdfb8b203532529991fe3fd3000a656f9e7778",
+        "control2": "7098249cc6cdb4523f3dbe16b1aaee1d1133614175faff36cdf0164b5c3612a6"
+      }
+    },
+    "raw_samples": {
+      "control1": {
+        "file": "ecosystem-canonical-tag-control1-samples.csv",
+        "sha256": "8970aceb609e35d6be7363c503de3b71a216fb4306e83abe030d72526e5f8bcf",
+        "rows": 4116
+      },
+      "candidate1": {
+        "file": "ecosystem-canonical-tag-candidate1-samples.csv",
+        "sha256": "dee50d53fe79ea2486df2fb1b60b4141e7c12277dbd1a71da6df948d6f68fa66",
+        "rows": 4116
+      },
+      "candidate2": {
+        "file": "ecosystem-canonical-tag-candidate2-samples.csv",
+        "sha256": "230b14f3d029fc183ba40b224dbdfb8b203532529991fe3fd3000a656f9e7778",
+        "rows": 4116
+      },
+      "control2": {
+        "file": "ecosystem-canonical-tag-control2-samples.csv",
+        "sha256": "7098249cc6cdb4523f3dbe16b1aaee1d1133614175faff36cdf0164b5c3612a6",
+        "rows": 4116
+      }
+    },
+    "paired_cells": {
+      "file": "ecosystem-canonical-tag-paired.csv",
+      "sha256": "02f1be12039f166eddff1044f9c8431b58acf1ae44be0258ca02d2b8b71e3976",
+      "rows": 42,
+      "frozen_reducer_output_sha256": "97e5aa123c75a989419fe28e2365eb4b806bd0888494dd3fe565730d26b5cdfe",
+      "repository_text_normalization": "CRLF to LF only in derived paired CSV; all parsed cells identical; four native raw CSV bytes unchanged"
+    },
+    "complete_reduction": {
+      "all_ABBA_complete": true,
+      "all_recorded_rows": 16464,
+      "aggregation": "Each pair independent; both orderings must agree qualified gain/loss; all other results inconclusive; any qualified adverse useful cell in either pair refuses old selection",
+      "useful_combined": {
+        "inconclusive": 34,
+        "gain": 2
+      },
+      "unranked_controls_combined": {
+        "inconclusive": 6
+      },
+      "old_selection_refused": false,
+      "adverse_cells": [],
+      "targets": {
+        "1-control": {
+          "inconclusive": 15,
+          "pass": 17,
+          "unranked": 6,
+          "deficit": 4
+        },
+        "1-candidate": {
+          "inconclusive": 14,
+          "pass": 20,
+          "unranked": 6,
+          "deficit": 2
+        },
+        "2-control": {
+          "inconclusive": 16,
+          "pass": 17,
+          "unranked": 6,
+          "deficit": 3
+        },
+        "2-candidate": {
+          "inconclusive": 18,
+          "pass": 17,
+          "unranked": 6,
+          "deficit": 1
+        }
+      },
+      "raw_hashes": {
+        "control1": "8970aceb609e35d6be7363c503de3b71a216fb4306e83abe030d72526e5f8bcf",
+        "candidate1": "dee50d53fe79ea2486df2fb1b60b4141e7c12277dbd1a71da6df948d6f68fa66",
+        "candidate2": "230b14f3d029fc183ba40b224dbdfb8b203532529991fe3fd3000a656f9e7778",
+        "control2": "7098249cc6cdb4523f3dbe16b1aaee1d1133614175faff36cdf0164b5c3612a6"
+      },
+      "reducers": [
+        {
+          "path": "/private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/summarize-ecosystem.pl",
+          "sha256": "f9669548af494ccd27285c78b04fcc0e0ddffaa88a574e5733e593dbd70dfd59"
+        },
+        {
+          "path": "/private/tmp/whitefoot-vector-batch-controller/timing/analyze.py",
+          "sha256": "034850fb5410724ef0730bcff867df39dacda551ebeb6da426e32cc4cb9cf0bc"
+        }
+      ],
+      "inputs_unchanged": true,
+      "source_label": "Pre-countdown canonical-header component diagnostic from frozen current122 WF IR with retained harness/runtime/peers; no merged/f1 production or representation selection",
+      "stage2_criterion_result": {
+        "primary_cell": {
+          "element_bytes": 8,
+          "path": "growth",
+          "count": 16
+        },
+        "required_primary_gain_both_orders": false,
+        "primary_pair1": "overlap",
+        "primary_pair2": "overlap",
+        "any_qualified_useful_loss_either_pair": false,
+        "criterion_met": false,
+        "selection": "No compiler or representation selection; no extra timing"
+      },
+      "bounded_native_evidence": {
+        "four_work_tail_full_operand_streams_identical_after_only_local_label_normalization": true,
+        "counts_including_ret": {
+          "scalar_tail": 49,
+          "scalar_work": 157,
+          "wide_tail": 108,
+          "wide_work": 441
+        },
+        "prior_static_trace_frame_criterion": "failed: +16 bytes",
+        "round_static_instructions": "40 to 33",
+        "round_frame_bytes": "80 to 64",
+        "attribution_limit": "Total diagnostic also includes zero-length first-growth memmove elision inherited from nullable prototype. Not isolated allocation attribution, no guarantee on layout or frame cost."
+      },
+      "qualified_gains": [
+        {
+          "element_bytes": "8",
+          "path": "suffix-2",
+          "count": "256",
+          "candidate_over_control_pair1_0": "0.8389145496535797",
+          "candidate_over_control_pair1_1": "0.8393782383419689",
+          "candidate_over_control_pair2_0": "0.8400692840646651",
+          "candidate_over_control_pair2_1": "0.8521939953810623"
+        },
+        {
+          "element_bytes": "8",
+          "path": "suffix-2",
+          "count": "4096",
+          "candidate_over_control_pair1_0": "0.8366877515813687",
+          "candidate_over_control_pair1_1": "0.8273743016759777",
+          "candidate_over_control_pair2_0": "0.8371691599539701",
+          "candidate_over_control_pair2_1": "0.8455797933409873"
+        }
+      ]
+    },
+    "reduction_commands": [
+      {
+        "pair": 1,
+        "arm": "control",
+        "kind": "summary",
+        "argv": [
+          "perl",
+          "/private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/summarize-ecosystem.pl",
+          "--complete",
+          "vector=/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/stage2/timing/pair1/control-samples.csv"
+        ],
+        "direct_exit": 0,
+        "seconds": 0.0633525000885129
+      },
+      {
+        "pair": 1,
+        "arm": "control",
+        "kind": "targets",
+        "argv": [
+          "perl",
+          "/private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/summarize-ecosystem.pl",
+          "--targets",
+          "vector=/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/stage2/timing/pair1/control-samples.csv"
+        ],
+        "direct_exit": 0,
+        "seconds": 0.06301437504589558
+      },
+      {
+        "pair": 1,
+        "arm": "candidate",
+        "kind": "summary",
+        "argv": [
+          "perl",
+          "/private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/summarize-ecosystem.pl",
+          "--complete",
+          "vector=/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/stage2/timing/pair1/candidate-samples.csv"
+        ],
+        "direct_exit": 0,
+        "seconds": 0.06410441687330604
+      },
+      {
+        "pair": 1,
+        "arm": "candidate",
+        "kind": "targets",
+        "argv": [
+          "perl",
+          "/private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/summarize-ecosystem.pl",
+          "--targets",
+          "vector=/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/stage2/timing/pair1/candidate-samples.csv"
+        ],
+        "direct_exit": 0,
+        "seconds": 0.06276870798319578
+      },
+      {
+        "pair": 1,
+        "kind": "paired-analysis",
+        "original_reader": "/private/tmp/whitefoot-vector-batch-controller/timing/analyze.py",
+        "original_sha256": "034850fb5410724ef0730bcff867df39dacda551ebeb6da426e32cc4cb9cf0bc",
+        "derived_code_sha256": "e238d05ab081d771e88a16889ab21eadacbd918d3ce8848bf637ad04158b4000",
+        "direct_exit": 0,
+        "seconds": 0.07749620894901454
+      },
+      {
+        "pair": 2,
+        "arm": "control",
+        "kind": "summary",
+        "argv": [
+          "perl",
+          "/private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/summarize-ecosystem.pl",
+          "--complete",
+          "vector=/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/stage2/timing/pair2/control-samples.csv"
+        ],
+        "direct_exit": 0,
+        "seconds": 0.061531417071819305
+      },
+      {
+        "pair": 2,
+        "arm": "control",
+        "kind": "targets",
+        "argv": [
+          "perl",
+          "/private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/summarize-ecosystem.pl",
+          "--targets",
+          "vector=/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/stage2/timing/pair2/control-samples.csv"
+        ],
+        "direct_exit": 0,
+        "seconds": 0.10265091713517904
+      },
+      {
+        "pair": 2,
+        "arm": "candidate",
+        "kind": "summary",
+        "argv": [
+          "perl",
+          "/private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/summarize-ecosystem.pl",
+          "--complete",
+          "vector=/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/stage2/timing/pair2/candidate-samples.csv"
+        ],
+        "direct_exit": 0,
+        "seconds": 0.0648427908308804
+      },
+      {
+        "pair": 2,
+        "arm": "candidate",
+        "kind": "targets",
+        "argv": [
+          "perl",
+          "/private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/summarize-ecosystem.pl",
+          "--targets",
+          "vector=/private/tmp/whitefoot-vector-empty-owner-study/native-vector-screen/canonical-empty-tag/stage2/timing/pair2/candidate-samples.csv"
+        ],
+        "direct_exit": 0,
+        "seconds": 0.0647054580040276
+      },
+      {
+        "pair": 2,
+        "kind": "paired-analysis",
+        "original_reader": "/private/tmp/whitefoot-vector-batch-controller/timing/analyze.py",
+        "original_sha256": "034850fb5410724ef0730bcff867df39dacda551ebeb6da426e32cc4cb9cf0bc",
+        "derived_code_sha256": "63526e9119c48e0148b107a10404dd785c52a463f7f13ff45afae4ee9d35300f",
+        "direct_exit": 0,
+        "seconds": 0.08104008389636874
+      }
+    ],
+    "paired_replay": "For each complete A1/B1 and A2/B2 pair separately: all IDs0..6; range upper=max(B)/min(A), lower=min(B)/max(A) in each cohort; qualified gain requires upper<1 in both, loss lower>1 in both, all paired WF samples>=1ms and cohort median B/A max/min-1<=10%. Both pairs must agree gain/loss for combined classification. Any qualified useful loss in either pair vetoes, even without cross-order agreement. Controls stay unranked. Maintained summarize-ecosystem.pl --complete/--targets gives separate ordinary peer targets."
+  }
+}

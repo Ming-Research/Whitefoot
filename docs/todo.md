@@ -635,6 +635,15 @@ rarely insert at the same place.
   a general nonnull hot-path lowering that passes a discriminating native
   screen, then complete real-worker and all-bin lifetime qualification before
   any representation selection.
+  The [canonical-header successor](../research/experiments/container-representation/vector-library/RESULTS.md#canonical-empty-header-tag-balanced-diagnostic-misses-the-growth-criterion)
+  restores baseline hot operand streams but fails both trace-frame screens.
+  Its balanced measured diagnostic has two suffix-two gains and no qualified
+  useful loss; the required growth/16 gain overlaps in both pairs, so the
+  primary criterion remains unmet. Its near-C++ growth medians are peer-target
+  inconclusive, and inherited `memmove(0)` elision prevents isolated allocation
+  attribution. Keep this frozen pre-countdown result separate from selected
+  caller gains; reopen only with a materially changed general lowering and
+  complete lifetime coverage, not a rerun of this unchanged candidate.
   The surviving native empty allocation/free pair occurs per reserved/growing
   round; optimized reuse/suffix construction already omits it, unlike the
   instrumented ledger. Local fresh-allocation coalescing is an unimplemented

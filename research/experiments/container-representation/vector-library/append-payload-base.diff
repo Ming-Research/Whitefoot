@@ -1,0 +1,10 @@
+--- append-payload-base-control.s
++++ append-payload-base-candidate.s
+@@ -757,0 +758 @@
++	add	x11, x8, #16
+@@ -761,2 +762 @@
+-	add	x10, x8, x9, lsl #3
+-	str	x19, [x10, #16]
++	str	x19, [x11, x9, lsl #3]
+@@ -778,0 +779 @@
++	add	x11, x8, #16

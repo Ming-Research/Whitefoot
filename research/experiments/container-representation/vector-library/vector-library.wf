@@ -247,6 +247,157 @@ fn vector_library_record_trace(count: u64, rounds: u64, seed: u64, path: u64) ->
   return result;
 }
 
+struct VectorApiObservation {
+  length: u64;
+  capacity: u64;
+  checksum: u64;
+  valid: u64;
+}
+
+struct VectorApiDigest {
+  seed: u64;
+  index: u64;
+  checksum: u64;
+  valid: u64;
+}
+
+interface VectorApiElement<T: drop> {
+  fn make(seed: u64) -> value: T pure;
+  fn inspect(env: &VectorApiDigest, value: T) -> result: unit writes(env);
+}
+
+fn vector_api_word_inspect(env: &VectorApiDigest, value: u64) -> result: unit writes(env) {
+  let expected = env^.seed +wrap env^.index;
+  if value != expected {
+    set env^.valid = 0_u64;
+  }
+  let prefix = env^.checksum *wrap 131_u64;
+  set env^.checksum = prefix +wrap value;
+  set env^.index = env^.index +wrap 1_u64;
+  return unit;
+}
+
+fn vector_api_record_inspect(env: &VectorApiDigest, value: VectorRecord) -> result: unit writes(env) {
+  let base = env^.seed +wrap env^.index;
+  for (word in 0_u64..32_u64) {
+    let actual = value.words[word];
+    let expected = base +wrap word;
+    if actual != expected {
+      set env^.valid = 0_u64;
+    }
+    let prefix = env^.checksum *wrap 131_u64;
+    set env^.checksum = prefix +wrap actual;
+  }
+  set env^.index = env^.index +wrap 1_u64;
+  return unit;
+}
+
+binding ApiWordElement : VectorApiElement<u64> {
+  make = vector_word_make;
+  inspect = vector_api_word_inspect;
+}
+
+binding ApiRecordElement : VectorApiElement<VectorRecord> {
+  make = vector_record_make;
+  inspect = vector_api_record_inspect;
+}
+
+fn vector_api_prepare<interface VectorApiElement<T>>(capacity: u64) -> made: GrowVector<T, 8193> pure contract {
+  requires capacity <= 8193_u64;
+} {
+  let values = grow_vector_new::<T, 8193>();
+  let reserved = grow_vector_reserve::<T, 8193>(values: &values, total: capacity);
+  return move values;
+}
+
+fn vector_api_append_batch<interface VectorApiElement<T>>(values: &GrowVector<T, 8193>, count: u64, seed: u64) -> length: u64 writes(values.storage) contract {
+  requires count <= 8192_u64;
+  requires values^.storage.inner.len <= 0_u64;
+  ensures values^.storage.inner.len == count;
+} {
+  for @append (
+    index in 0_u64..count,
+    invariant length_lo: values^.storage.inner.len >= index,
+    invariant length_hi: values^.storage.inner.len <= index
+  ) {
+    let next = seed +wrap index;
+    let value = VectorApiElement::make(seed: next);
+    let appended = grow_vector_append::<T, 8193>(values: values, value: move value);
+  }
+  return values^.storage.inner.len;
+}
+
+fn vector_api_inspect_reset<interface VectorApiElement<T>>(values: &GrowVector<T, 8193>, count: u64, seed: u64, observation: &VectorApiObservation) -> valid: u64 writes(values.storage), writes(observation) contract {
+  ensures values^.storage.inner.len == 0_u64;
+} {
+  let length = values^.storage.inner.len;
+  let capacity = values^.storage.inner.cap;
+  let digest = VectorApiDigest(seed: seed, index: 0_u64, checksum: seed, valid: 1_u64);
+  if length != count {
+    set digest.valid = 0_u64;
+  }
+  grow_vector_drain::<T, VectorApiDigest, fn VectorApiElement::inspect, 8193>(values: values, env: &digest);
+  set observation^.length = length;
+  set observation^.capacity = capacity;
+  set observation^.checksum = digest.checksum;
+  set observation^.valid = digest.valid;
+  return digest.valid;
+}
+
+fn vector_api_word_prepare(capacity: u64) -> made: GrowVector<u64, 8193> pure contract {
+  requires capacity <= 8193_u64;
+} {
+  return vector_api_prepare::<ApiWordElement>(capacity: capacity);
+}
+
+fn vector_api_record_prepare(capacity: u64) -> made: GrowVector<VectorRecord, 8193> pure contract {
+  requires capacity <= 8193_u64;
+} {
+  return vector_api_prepare::<ApiRecordElement>(capacity: capacity);
+}
+
+fn vector_api_word_append_batch(values: &GrowVector<u64, 8193>, count: u64, seed: u64) -> length: u64 writes(values.storage) contract {
+  requires count <= 8192_u64;
+  requires values^.storage.inner.len <= 0_u64;
+  ensures values^.storage.inner.len == count;
+} {
+  return vector_api_append_batch::<ApiWordElement>(values: values, count: count, seed: seed);
+}
+
+fn vector_api_record_append_batch(values: &GrowVector<VectorRecord, 8193>, count: u64, seed: u64) -> length: u64 writes(values.storage) contract {
+  requires count <= 8192_u64;
+  requires values^.storage.inner.len <= 0_u64;
+  ensures values^.storage.inner.len == count;
+} {
+  return vector_api_append_batch::<ApiRecordElement>(values: values, count: count, seed: seed);
+}
+
+fn vector_api_word_inspect_reset(values: &GrowVector<u64, 8193>, count: u64, seed: u64, observation: &VectorApiObservation) -> valid: u64 writes(values.storage), writes(observation) contract {
+  ensures values^.storage.inner.len == 0_u64;
+} {
+  return vector_api_inspect_reset::<ApiWordElement>(values: values, count: count, seed: seed, observation: observation);
+}
+
+fn vector_api_record_inspect_reset(values: &GrowVector<VectorRecord, 8193>, count: u64, seed: u64, observation: &VectorApiObservation) -> valid: u64 writes(values.storage), writes(observation) contract {
+  ensures values^.storage.inner.len == 0_u64;
+} {
+  return vector_api_inspect_reset::<ApiRecordElement>(values: values, count: count, seed: seed, observation: observation);
+}
+
+fn vector_api_word_destroy(values: GrowVector<u64, 8193>) -> result: unit pure contract {
+  requires values.storage.inner.len <= 0_u64;
+} {
+  grow_vector_free_empty::<u64, 8193>(values: move values);
+  return unit;
+}
+
+fn vector_api_record_destroy(values: GrowVector<VectorRecord, 8193>) -> result: unit pure contract {
+  requires values.storage.inner.len <= 0_u64;
+} {
+  grow_vector_free_empty::<VectorRecord, 8193>(values: move values);
+  return unit;
+}
+
 fn main() -> status: ExitStatus pure {
   let word_reserved = vector_library_word_trace(count: 3_u64, rounds: 2_u64, seed: 17_u64, path: 0_u64);
   let word_growth = vector_library_word_trace(count: 3_u64, rounds: 2_u64, seed: 17_u64, path: 1_u64);

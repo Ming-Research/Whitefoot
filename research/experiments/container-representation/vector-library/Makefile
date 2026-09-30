@@ -66,9 +66,11 @@ clean:
 ECO_FAMILY := vector
 ECO_WORK ?= 1048576
 ECO_REPEATS ?= 7
+APPEND_WORK ?= 4194304
+APPEND_SAMPLE_FILE ?= $(ECO_BUILD)/append-measurements.csv
 include ../ecosystem.mk
 
-.PHONY: ecosystem-build ecosystem-check ecosystem-account ecosystem-measure
+.PHONY: ecosystem-build ecosystem-check ecosystem-account ecosystem-measure ecosystem-append-check ecosystem-append-measure
 .SECONDARY: $(ECO_BUILD)/whitefoot-timed.ll $(ECO_BUILD)/whitefoot-account.ll \
             $(ECO_BUILD)/whitefoot-timed.o $(ECO_BUILD)/whitefoot-account.o \
             $(ECO_BUILD)/driver-timed.o $(ECO_BUILD)/driver-account.o \
@@ -98,6 +100,16 @@ $(ECO_BUILD)/vector-costs-%$(EXE): $(ECO_BUILD)/driver-%.o $(ECO_BUILD)/whitefoo
 
 ecosystem-build: $(ECO_BUILD)/vector-costs-timed$(EXE) $(ECO_BUILD)/vector-costs-account$(EXE)
 
+ecosystem-append-check: ecosystem-build
+	$(ECO_BUILD)/vector-costs-timed$(EXE) api-check
+	$(ECO_BUILD)/vector-costs-account$(EXE) api-check
+	@set -eu; for fault in values allocation; do \
+	  if $(ECO_BUILD)/vector-costs-account$(EXE) api-fail-$$fault > $(ECO_BUILD)/api-fail-$$fault.txt 2>&1; then \
+	    echo "Spare append $$fault fault was accepted" >&2; exit 1; else status=$$?; test "$$status" = 1; fi; \
+	 done
+	grep -Fx 'vector library costs: spare append full values and checksum' $(ECO_BUILD)/api-fail-values.txt
+	grep -Fx 'vector library costs: spare append zero allocation' $(ECO_BUILD)/api-fail-allocation.txt
+
 ecosystem-check: ecosystem-build
 	$(ECO_BUILD)/vector-costs-timed$(EXE) check
 	$(ECO_BUILD)/vector-costs-account$(EXE) check
@@ -122,3 +134,7 @@ ecosystem-account: $(ECO_BUILD)/vector-costs-account$(EXE)
 ecosystem-measure: $(ECO_BUILD)/vector-costs-timed$(EXE)
 	$(ECO_BUILD)/vector-costs-timed$(EXE) measure $(ECO_WORK) $(ECO_REPEATS) > '$(ECO_SAMPLE_FILE)'
 	@echo 'Raw practical samples: $(ECO_SAMPLE_FILE)'
+
+ecosystem-append-measure: $(ECO_BUILD)/vector-costs-timed$(EXE)
+	$(ECO_BUILD)/vector-costs-timed$(EXE) api-measure $(APPEND_WORK) $(ECO_REPEATS) > '$(APPEND_SAMPLE_FILE)'
+	@echo 'Raw spare-capacity append samples: $(APPEND_SAMPLE_FILE)'

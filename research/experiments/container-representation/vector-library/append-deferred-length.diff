@@ -1,0 +1,12 @@
+--- append-payload-base-control.s
++++ append-deferred-length-candidate.s
+@@ -764 +763,0 @@
+-	str	x9, [x8]
+@@ -767 +766 @@
+-	b.eq	LBB12_5
++	b.eq	LBB12_store_len
+@@ -774,0 +774 @@
++	str	x9, [x8]
+@@ -779,0 +780,2 @@
++LBB12_store_len:
++	str	x9, [x8]

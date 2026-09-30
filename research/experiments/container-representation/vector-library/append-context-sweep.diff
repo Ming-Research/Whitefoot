@@ -1,0 +1,19 @@
+--- vector-costs.c
++++ append-context-sweep-driver.c
+@@ -608,0 +609,2 @@
++static uint64_t positive_argument(const char *text, uint64_t limit);
++
+@@ -610 +612,4 @@
+-    const uint64_t counts[] = {16, 256, 4096};
++    const uint64_t counts[] = {4096};
++    const char *context_text = getenv("WF_APPEND_CONTEXTS");
++    require(context_text != NULL, "WF_APPEND_CONTEXTS must name 1..64 contexts");
++    const size_t selected_contexts = (size_t)positive_argument(context_text, 64);
+@@ -612 +617 @@
+-    for (unsigned wide = 0; wide < 2; ++wide)
++    for (unsigned wide = 0; wide < 1; ++wide)
+@@ -616,3 +621 @@
+-            size_t contexts = 1048576 / (count * stride);
+-            if (contexts > 1024) contexts = 1024;
+-            if (contexts == 0) contexts = 1;
++            const size_t contexts = selected_contexts;

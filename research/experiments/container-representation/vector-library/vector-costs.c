@@ -479,6 +479,191 @@ static const char *const ecosystem_variants[] = {
     "whitefoot", "reverse-c", "direct-c", "swap-take-c", "take-swap-c", "rust-vec", "cpp-std-vector"
 };
 
+// The language-specific descriptors stay opaque. Whitefoot's ordinary result
+// ABI is a one-pointer struct; mutation and consumption borrow that owner slot.
+typedef struct { void *state; } ApiOwner;
+typedef union { max_align_t alignment; unsigned char bytes[3 * sizeof(void *)]; } ApiStorage;
+typedef struct { uint64_t length, capacity, checksum, valid; } ApiObservation;
+typedef struct {
+    void (*prepare)(uint64_t, void *);
+    uint64_t (*append_batch)(void *, uint64_t, uint64_t);
+    uint64_t (*inspect_reset)(void *, uint64_t, uint64_t, ApiObservation *);
+    uint8_t (*destroy)(void *);
+    const char *name;
+} ApiOperations;
+#define DECLARE_APPEND_OPERATIONS(prefix, width)                            \
+    extern uint64_t prefix##_##width##_append_batch(void *, uint64_t, uint64_t); \
+    extern uint64_t prefix##_##width##_inspect_reset(void *, uint64_t, uint64_t, ApiObservation *); \
+    extern uint8_t prefix##_##width##_destroy(void *)
+#define DECLARE_APPEND_API(prefix, width)                                   \
+    extern void prefix##_##width##_prepare(uint64_t, void *);               \
+    DECLARE_APPEND_OPERATIONS(prefix, width)
+#define DECLARE_WF_APPEND_API(width)                                        \
+    extern ApiOwner wf_vector_api_##width##_prepare(uint64_t);             \
+    DECLARE_APPEND_OPERATIONS(wf_vector_api, width);                         \
+    static void wf_vector_api_##width##_prepare_slot(uint64_t capacity, void *storage) { \
+        ApiOwner owner = wf_vector_api_##width##_prepare(capacity);         \
+        memcpy(storage, &owner, sizeof owner);                             \
+    }
+DECLARE_WF_APPEND_API(word)
+DECLARE_WF_APPEND_API(record)
+DECLARE_APPEND_API(rust_vector_api, word);
+DECLARE_APPEND_API(rust_vector_api, record);
+DECLARE_APPEND_API(cpp_vector_api, word);
+DECLARE_APPEND_API(cpp_vector_api, record);
+#define APPEND_API(prefix, width, label) { prefix##_##width##_prepare,       \
+    prefix##_##width##_append_batch, prefix##_##width##_inspect_reset,       \
+    prefix##_##width##_destroy, label }
+static const ApiOperations append_api[2][3] = {
+    { { wf_vector_api_word_prepare_slot, wf_vector_api_word_append_batch,
+        wf_vector_api_word_inspect_reset, wf_vector_api_word_destroy, "whitefoot" },
+      APPEND_API(rust_vector_api, word, "rust-vec"),
+      APPEND_API(cpp_vector_api, word, "cpp-std-vector") },
+    { { wf_vector_api_record_prepare_slot, wf_vector_api_record_append_batch,
+        wf_vector_api_record_inspect_reset, wf_vector_api_record_destroy, "whitefoot" },
+      APPEND_API(rust_vector_api, record, "rust-vec"),
+      APPEND_API(cpp_vector_api, record, "cpp-std-vector") }
+};
+
+static uint64_t append_oracle(uint64_t count, uint64_t seed, bool wide) {
+    uint64_t checksum = seed;
+    for (uint64_t index = 0; index < count; ++index)
+        for (unsigned word = 0; word < (wide ? RECORD_WORDS : 1); ++word)
+            checksum = checksum * UINT64_C(131) + seed + index + word;
+    return checksum;
+}
+
+#if defined(ACCOUNT_ONLY)
+typedef struct { size_t requests, reallocations, releases, bytes, live; } ApiAccount;
+static ApiAccount append_account_snapshot(void) {
+    return (ApiAccount){requests, realloc_requests, releases, requested_bytes, live_bytes};
+}
+static void append_account_unchanged(ApiAccount before) {
+    require(requests == before.requests && realloc_requests == before.reallocations
+            && releases == before.releases && requested_bytes == before.bytes
+            && live_bytes == before.live, "spare append zero allocation");
+}
+#endif
+
+static void append_check(bool fail_values, bool fail_allocation) {
+    const uint64_t counts[] = {16, 0, 1, 256, 4096};
+    const uint64_t seed = UINT64_MAX - 7;
+    for (size_t n = 0; n < sizeof counts / sizeof counts[0]; ++n) {
+    const uint64_t count = counts[n];
+    for (unsigned wide = 0; wide < 2; ++wide)
+        for (unsigned variant = 0; variant < 3; ++variant) {
+            const ApiOperations *api = &append_api[wide][variant];
+            reset_accounting();
+            ApiStorage owner;
+            api->prepare(count, &owner);
+            ApiObservation prepared = {0};
+            require(api->inspect_reset(&owner, 0, seed, &prepared) == 1
+                    && prepared.length == 0 && prepared.capacity == count,
+                    "spare append prepared state");
+#if defined(ACCOUNT_ONLY)
+            ApiAccount before = append_account_snapshot();
+#endif
+            uint64_t length = api->append_batch(&owner, count, seed + fail_values);
+#if defined(ACCOUNT_ONLY)
+            if (fail_allocation) {
+                void *extra = wf_cost_allocate(1);
+                wf_cost_release(extra);
+            }
+            append_account_unchanged(before);
+#else
+            (void)fail_allocation;
+#endif
+            ApiObservation actual = {0};
+            uint64_t valid = api->inspect_reset(&owner, count, seed, &actual);
+            require(length == count && actual.length == count
+                    && actual.capacity == prepared.capacity,
+                    "spare append length and capacity");
+            require(valid == 1 && actual.valid == 1
+                    && actual.checksum == append_oracle(count, seed, wide != 0),
+                    "spare append full values and checksum");
+            (void)api->destroy(&owner);
+#if defined(ACCOUNT_ONLY)
+            require(live_bytes == 0 && requests == releases + realloc_requests,
+                    "spare append complete cleanup");
+#endif
+        }
+    }
+    puts("vector spare append: scalar/256B, five counts, three APIs passed");
+}
+
+#if !defined(ACCOUNT_ONLY)
+static void append_inspect_batch(const ApiOperations *api, ApiStorage *owners,
+                                 size_t contexts, uint64_t count, uint64_t capacity,
+                                 uint64_t seed, bool wide) {
+    for (size_t k = 0; k < contexts; ++k) {
+        ApiObservation actual = {0};
+        uint64_t valid = api->inspect_reset(&owners[k], count, seed + k, &actual);
+        require(valid == 1 && actual.valid == 1 && actual.length == count
+                && actual.capacity == capacity
+                && actual.checksum == append_oracle(count, seed + k, wide),
+                "timed spare append complete observation");
+        observed = actual.checksum;
+    }
+}
+
+static void append_measure(uint64_t work, unsigned samples) {
+    const uint64_t counts[] = {16, 256, 4096};
+    puts("contract,cohort,element_bytes,count,variant,sample,control,contexts,payload_bytes,descriptor_bytes,cycles,operations,elapsed_ns");
+    for (unsigned wide = 0; wide < 2; ++wide)
+        for (size_t n = 0; n < sizeof counts / sizeof counts[0]; ++n) {
+            const uint64_t count = counts[n];
+            const size_t stride = wide ? sizeof(Record) : sizeof(uint64_t);
+            size_t contexts = 1048576 / (count * stride);
+            if (contexts > 1024) contexts = 1024;
+            if (contexts == 0) contexts = 1;
+            const uint64_t batch_work = count * contexts;
+            const uint64_t cycles = (work + batch_work - 1) / batch_work;
+            ApiStorage *owners[3];
+            for (unsigned v = 0; v < 3; ++v) {
+                owners[v] = malloc(contexts * sizeof(ApiStorage));
+                require(owners[v] != NULL, "append descriptor storage");
+                const ApiOperations *api = &append_api[wide][v];
+                for (size_t k = 0; k < contexts; ++k)
+                    api->prepare(count, &owners[v][k]);
+                append_inspect_batch(api, owners[v], contexts, 0, count, 97, wide != 0);
+                for (size_t k = 0; k < contexts; ++k)
+                    (void)api->append_batch(&owners[v][k], count, 97 + k);
+                append_inspect_batch(api, owners[v], contexts, count, count, 97, wide != 0);
+            }
+            for (unsigned cohort = 0; cohort < 2; ++cohort)
+                for (unsigned sample = 0; sample < samples; ++sample)
+                    for (unsigned offset = 0; offset < 3; ++offset) {
+                        unsigned position = (sample + offset) % 3;
+                        unsigned v = cohort ? 2 - position : position;
+                        const ApiOperations *api = &append_api[wide][v];
+                        for (unsigned control = 0; control < 2; ++control) {
+                            const uint64_t appended = control ? 0 : count;
+                            uint64_t elapsed = 0;
+                            for (uint64_t cycle = 0; cycle < cycles; ++cycle) {
+                                const uint64_t seed = 101 + sample + cycle;
+                                const uint64_t start = nanos();
+                                for (size_t k = 0; k < contexts; ++k)
+                                    (void)api->append_batch(&owners[v][k], appended, seed + k);
+                                elapsed += nanos() - start;
+                                append_inspect_batch(api, owners[v], contexts, appended,
+                                                     count, seed, wide != 0);
+                            }
+                            printf("append-spare-o3,%u,%zu,%" PRIu64 ",%s,%u,%u,%zu,%zu,%zu,%" PRIu64 ",%" PRIu64 ",%" PRIu64 "\n",
+                                   cohort, stride, count, api->name, sample, control,
+                                   contexts, contexts * (size_t)count * stride,
+                                   contexts * sizeof(ApiStorage), cycles,
+                                   cycles * contexts * appended, elapsed);
+                        }
+                    }
+            for (unsigned v = 0; v < 3; ++v) {
+                for (size_t k = 0; k < contexts; ++k)
+                    (void)append_api[wide][v].destroy(&owners[v][k]);
+                free(owners[v]);
+            }
+        }
+}
+#endif
+
 static void check_accounting(enum Variant variant, bool wide, uint64_t count,
                              uint64_t rounds, uint64_t path) {
 #if defined(ACCOUNT_ONLY)
@@ -604,18 +789,26 @@ static void measure(uint64_t work, unsigned samples) {
 int main(int argc, char **argv) {
     require(argc >= 2, "usage: vector ecosystem check|account|measure work samples");
     if (strcmp(argv[1], "check") == 0) { require(argc == 2, "check argument count"); check(); }
+    else if (strcmp(argv[1], "api-check") == 0) { require(argc == 2, "api-check argument count"); append_check(false, false); }
+    else if (strcmp(argv[1], "api-fail-values") == 0) { require(argc == 2, "api-fail-values argument count"); append_check(true, false); }
     else if (strcmp(argv[1], "fail-checksum") == 0) {
         uint64_t actual = checked_run(WHITEFOOT, true, 3, 1, 17, 1);
         require((actual ^ 1) == oracle(3, 1, 17, true, 1), "independent logical-order checksum");
     }
 #if defined(ACCOUNT_ONLY)
     else if (strcmp(argv[1], "account") == 0) { require(argc == 2, "account argument count"); account(); }
+    else if (strcmp(argv[1], "api-fail-allocation") == 0) { require(argc == 2, "api-fail-allocation argument count"); append_check(false, true); }
     else if (strcmp(argv[1], "fail-cleanup") == 0) {
         (void)checked_run(WHITEFOOT, true, 3, 1, 17, 1);
         (void)wf_cost_allocate(1);
         check_accounting(WHITEFOOT, true, 3, 1, 1);
     }
 #else
+    else if (strcmp(argv[1], "api-measure") == 0) {
+        require(argc == 4, "api-measure requires work and samples");
+        append_measure(positive_argument(argv[2], UINT64_C(4294967296)),
+                       (unsigned)positive_argument(argv[3], 101));
+    }
     else if (strcmp(argv[1], "measure") == 0) {
         require(argc == 4, "measure requires work and samples");
         measure(positive_argument(argv[2], UINT64_C(4294967296)),

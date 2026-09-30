@@ -2,11 +2,20 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
+#include <new>
 #include <utility>
 #include <vector>
 #if defined(ACCOUNT_ONLY)
 #include "../ecosystem-allocator.hpp"
 #endif
+
+struct ApiObservation {
+    std::uint64_t length;
+    std::uint64_t capacity;
+    std::uint64_t checksum;
+    std::uint64_t valid;
+};
 
 namespace {
 struct Record {
@@ -35,6 +44,61 @@ template<class T> using Vector = std::vector<T, EcosystemAllocator<T>>;
 #else
 template<class T> using Vector = std::vector<T>;
 #endif
+
+// The C driver supplies max_align_t-aligned storage for three pointer words.
+static_assert(sizeof(Vector<std::uint64_t>) <= 3 * sizeof(void *));
+static_assert(sizeof(Vector<Record>) <= 3 * sizeof(void *));
+static_assert(alignof(Vector<std::uint64_t>) <= alignof(std::max_align_t));
+static_assert(alignof(Vector<Record>) <= alignof(std::max_align_t));
+
+template<class T>
+void api_prepare(std::uint64_t capacity, void *storage) {
+    auto *values = ::new (storage) Vector<T>;
+    values->reserve(static_cast<std::size_t>(capacity));
+}
+
+template<class T>
+std::uint64_t api_append_batch(void *storage, std::uint64_t count,
+                               std::uint64_t seed) {
+    auto &values = *static_cast<Vector<T> *>(storage);
+    for (std::uint64_t index = 0; index < count; ++index)
+        values.emplace_back(seed + index);
+    return values.size();
+}
+
+bool api_inspect(std::uint64_t value, std::uint64_t expected, std::uint64_t &digest) {
+    consume(digest, value);
+    return value == expected;
+}
+
+bool api_inspect(const Record &value, std::uint64_t expected, std::uint64_t &digest) {
+    bool valid = true;
+    for (std::size_t word = 0; word < value.words.size(); ++word) {
+        consume(digest, value.words[word]);
+        valid &= value.words[word] == expected + word;
+    }
+    return valid;
+}
+
+template<class T>
+std::uint64_t api_inspect_reset(void *storage, std::uint64_t count,
+                                std::uint64_t seed, ApiObservation *observation) {
+    auto &values = *static_cast<Vector<T> *>(storage);
+    std::uint64_t digest = seed;
+    bool valid = values.size() == count;
+    for (std::size_t index = 0; index < values.size(); ++index)
+        valid &= api_inspect(values[index], seed + index, digest);
+    *observation = {values.size(), values.capacity(), digest,
+                    static_cast<std::uint64_t>(valid)};
+    values.clear();
+    return observation->valid;
+}
+
+template<class T>
+std::uint8_t api_destroy(void *storage) {
+    std::destroy_at(static_cast<Vector<T> *>(storage));
+    return 0;
+}
 
 template<class T>
 void consume_suffix(Vector<T> &values, std::size_t retained, std::uint64_t &digest) {
@@ -114,4 +178,46 @@ extern "C" std::uint64_t cpp_vector_word_trace(std::uint64_t count, std::uint64_
 extern "C" std::uint64_t cpp_vector_record_trace(std::uint64_t count, std::uint64_t rounds,
                                                  std::uint64_t seed, std::uint64_t path) {
     return trace<Record>(static_cast<std::size_t>(count), rounds, seed, path);
+}
+
+extern "C" void cpp_vector_api_word_prepare(std::uint64_t capacity, void *storage) {
+    api_prepare<std::uint64_t>(capacity, storage);
+}
+
+extern "C" std::uint64_t cpp_vector_api_word_append_batch(void *storage,
+                                                          std::uint64_t count,
+                                                          std::uint64_t seed) {
+    return api_append_batch<std::uint64_t>(storage, count, seed);
+}
+
+extern "C" std::uint64_t cpp_vector_api_word_inspect_reset(void *storage,
+                                                           std::uint64_t count,
+                                                           std::uint64_t seed,
+                                                           ApiObservation *observation) {
+    return api_inspect_reset<std::uint64_t>(storage, count, seed, observation);
+}
+
+extern "C" std::uint8_t cpp_vector_api_word_destroy(void *storage) {
+    return api_destroy<std::uint64_t>(storage);
+}
+
+extern "C" void cpp_vector_api_record_prepare(std::uint64_t capacity, void *storage) {
+    api_prepare<Record>(capacity, storage);
+}
+
+extern "C" std::uint64_t cpp_vector_api_record_append_batch(void *storage,
+                                                            std::uint64_t count,
+                                                            std::uint64_t seed) {
+    return api_append_batch<Record>(storage, count, seed);
+}
+
+extern "C" std::uint64_t cpp_vector_api_record_inspect_reset(void *storage,
+                                                             std::uint64_t count,
+                                                             std::uint64_t seed,
+                                                             ApiObservation *observation) {
+    return api_inspect_reset<Record>(storage, count, seed, observation);
+}
+
+extern "C" std::uint8_t cpp_vector_api_record_destroy(void *storage) {
+    return api_destroy<Record>(storage);
 }

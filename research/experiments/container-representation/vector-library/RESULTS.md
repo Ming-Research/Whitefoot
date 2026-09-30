@@ -5531,3 +5531,248 @@ frame grows 64→80 bytes and wide tail's 288→304. Wide constants recover
 register residency, but the nonnull append path does not regain length
 promotion. This variant stopped before linking, behavior execution or timing.
 No shared mutable header, owner policy or fallback was adopted.
+
+### Canonical empty-header tag: balanced diagnostic misses the growth criterion
+
+This IR-only successor to the refused nullable prototype uses one externally
+linked immutable three-word zero header as the empty-owner identity. Reads
+load that header directly; release and possibly zero-count writes test its
+identity. Ten writes whose operation domains prove a real destination become
+direct stores. The [exact IR patch](canonical-empty-tag-ir.patch),
+[runtime C definition](canonical-empty-header.c) and
+[identity/replay record](ecosystem-canonical-tag-identities.json) reuse the
+existing nullable compiler patch. They are frozen research inputs, consumed
+only by scratch reproduction; consolidation must preserve their hashes,
+failed criteria, raw samples and this result anchor.
+
+Both static refusals remain. With an external declaration whose contents are
+unknown, scalar/wide trace frames grow `160→176`/`352→384` bytes. Both variants
+match the baseline's full scalar and wide work/tail operand streams,
+normalizing only local assembly labels. With an `available_externally` zero
+initializer, trace frames still grow `160→176`/`352→368`: the unchanged frame
+criterion fails. Both widths' round bodies fall from 40 to 33 operand
+instructions and 80 to 64 frame bytes. Counts exclude operandless `ret`;
+they do not attribute elapsed time. The linked object references the one
+actual C tag definition.
+
+The saved baseline/candidate timed and account images each pass all 1,260
+configurations and 8,820 executions. Four checksum and two cleanup faults
+exit 1 with the required diagnostics; all 17 construction/qualification
+commands have their expected direct statuses. Candidate accounting is
+byte-identical to the qualified nullable delta: all 42 WF rows save one zero
+request/release and 16 bytes per source zero constructor, while all 252 peer
+rows stay unchanged. This covers the measured Vector path, not remaining
+shape or real-worker ABI qualification.
+
+The separate measured criterion required scalar growth/count 16 to gain in
+both independent process orderings; any qualified useful loss in either pair
+would refuse it. Before observation, A1,B1,B2,A2 was fixed, each
+`measure 1048576 7`, using the same 1 ms floor, at most 10% cohort-ratio spread
+and disjoint observed sample ranges. The guarded run exits 0 in 323.865 s;
+all four process statuses are 0 and all 44 input pins stay unchanged.
+[A1](ecosystem-canonical-tag-control1-samples.csv),
+[B1](ecosystem-canonical-tag-candidate1-samples.csv),
+[B2](ecosystem-canonical-tag-candidate2-samples.csv) and
+[A2](ecosystem-canonical-tag-control2-samples.csv) preserve every one of the
+16,464 rows, including all seven sample IDs and outliers. The
+[42-cell reduction](ecosystem-canonical-tag-paired.csv) retains both pairs.
+
+| Scalar cell | B/A, pair 1 cohorts | B/A, pair 2 cohorts | Combined |
+|---|---|---|---|
+| growth/16 | 0.939977 / 0.923010 | 0.929565 / 0.950725 | Overlap |
+| suffix-2/256 | 0.838915 / 0.839378 | 0.840069 / 0.852194 | Gain |
+| suffix-2/4096 | 0.836688 / 0.827374 | 0.837169 / 0.845580 | Gain |
+
+The primary criterion is **not met**: growth/16 overlaps in both pairs.
+Its candidate WF/C++ medians are `0.997641/0.983753` and
+`0.988540/0.974202`, with ordinary peer targets inconclusive in both orders;
+WF/Rust remains `1.024–1.033`. There are two cross-order useful gains,
+34 inconclusive useful cells, zero qualified useful losses, and six unranked
+suffix-zero controls. Separate A/B peer totals are `17/4/15 → 20/2/14` and
+`17/3/16 → 17/1/18` (pass/deficit/inconclusive); all cells remain visible.
+
+This total diagnostic also inherits the nullable prototype's first-growth
+zero-length `memmove` elision; it does not isolate allocation savings from
+tag, frame, transfer or layout costs. It uses frozen pre-countdown current122
+WF IR with retained harness/runtime/peers, so the two suffix gains are not
+additive with the selected countdown caller and do not establish merged-head
+parity. No compiler, runtime, representation or source change is selected;
+no additional timing is scheduled for this unchanged candidate.
+
+### Per-API Vector comparison: spare-capacity append first
+
+The next series follows one container and one API at a time: spare-capacity
+append; reserve/grow; insert; remove/swap_remove; truncate/drain; construct/free.
+Overall Vector timing follows only after every API passes; other containers
+remain paused. Existing whole-trace modes and their historical results remain.
+
+The first comparison uses ordinary `grow_vector_append`, `Vec::push` and
+`std::vector::emplace_back`, with scalar u64 and move-only 256-byte records at
+counts/capacities 16, 256 and 4096. Preparation reserves independent vectors
+outside timing. One clock interval covers many external append-batch calls;
+identical wrapping seed-plus-index and 32-word construction are included in
+each language's batch. Inspection checks every value, length, capacity and
+independent checksum, then resets and destroys outside timing. A separate
+account image must observe zero allocation/reallocation/release/byte change
+across append only; payload and allocation faults must fail that check.
+Working-set size and empty-batch clock/call controls remain reported, especially
+at count16; no guessed overhead is subtracted. Passing requires each cell to
+be repeatably faster than the slower ordinary Rust/C++ peer in both sampling
+orders under the established duration, stability and sample-range criteria.
+Each peer is reported separately; indistinguishable results do not pass.
+
+The timed and separate account images pass counts 0, 1, 16, 256 and 4096 for
+both widths and all three APIs, including wrapping seeds. Exact prepared
+capacity, every word, length, independent checksum and complete cleanup are
+observed; the account snapshot spans append only and remains unchanged. The
+deliberately wrong offered seed and allocation-inside-append faults exit 1
+with their required value and allocation diagnostics. Native descriptors live
+directly in aligned C-owned storage: no boxed peer descriptor or extra handle
+lookup is timed, and no native vector field layout is exposed. WF uses its
+ordinary generated single-pointer result and borrowed owner-slot ABI.
+
+Each interval contains only the common C context loop and external append
+batch calls, including equal wrapping input generation. Allocation/reserve,
+warmup, validation/reset, checksum observation and cleanup are outside it.
+Elapsed time sums these fixed intervals; rotating peer order is reversed in
+the second cohort. The context count is capped at 1024: scalar counts
+16/256/4096 use 1024/512/32 contexts, and wide counts use 256/16/1. Reported
+payload is 128 KiB per scalar16 variant and 1 MiB otherwise; descriptor bytes
+are C context storage, not complete allocator residency (WF backing headers
+and allocator metadata are additional). Empty batch calls use the same
+wrappers and intervals, are retained as `control=1`, and are never subtracted.
+
+The [1M-operation run](ecosystem-spare-append-1m-samples.csv) retains all 504
+rows: all three scalar cells are unqualified because WF or its selected peer
+falls below 1 ms; all three wide cells pass the slower-peer target. The
+[4M-operation run](ecosystem-spare-append-4m-samples.csv) also retains all 504
+rows, including seven samples, both orders, both controls and every outlier.
+It is the primary comparison: all six cells satisfy the 1 ms minimum and
+10% cohort-ratio stability bound, with no sample filtering or noise
+normalization. C++ is the slower median peer in every cell and cohort.
+
+| Payload / count | WF/C++, cohorts 0 / 1 | WF/Rust, cohorts 0 / 1 | Slower-peer qualification |
+|---|---|---|---|
+| u64 / 16 | 0.472254 / 0.473033 | 1.023964 / 1.011988 | Pass |
+| u64 / 256 | 0.539397 / 0.539979 | 1.164024 / 1.175125 | Pass |
+| u64 / 4096 | 1.148838 / 1.161742 | 1.275510 / 1.226601 | Deficit |
+| 256 B / 16 | 0.703558 / 0.702951 | 1.092599 / 1.086562 | Pass |
+| 256 B / 256 | 0.633152 / 0.637639 | 1.028976 / 1.038434 | Pass |
+| 256 B / 4096 | 0.630182 / 0.624518 | 1.031091 / 1.032847 | Pass |
+
+Each pass has disjoint faster sample ranges in both orders; scalar4096 has
+disjoint slower ranges against both peers. Against Rust alone, scalar16 and
+wide256 overlap in both orders; scalar256 and wide16 are slower in both;
+wide4096 overlaps in order 0 and is slower in order 1. The WF/C++ cohort-ratio
+spread is at most 1.124%. WF empty-control/append median fractions are
+16.19%/16.58% at scalar16, 0.986%/0.997% at scalar256,
+0.044%/0.067% at scalar4096, 2.009%/1.981% at wide16,
+0.333%/0.311% at wide256 and 0.122%/0.140% at wide4096. Scalar16 remains
+sensitive to wrapper/timer overhead; its pass does not isolate single-append
+latency. No control fraction is used to adjust a result.
+
+All five premeasurement image/source hashes remain unchanged. The measured
+image SHA256 is `11beeea9123a0e65736f37f2fbf56402d3a913fda2f0e0e6ab6cef5682d87a7b`;
+the frozen f99 compiler is `bd4e5268f16b892d645bd64f352c6551041ffefc90b57948ffa04de7fb59dfd8`.
+Harness source SHA256 identities (the compiler's pending emitter experiment
+was not linked into this image) are:
+
+```text
+vector-costs.c          64cdc01bb7cc2713586362838c241cf0e143d883d2f8c151d30bdecccd4eec52
+vector-library.wf      134b1209e4617a9b525be1686fdbcd3e894fbe28e1bf19140056594577013f6a
+vector-ecosystem.cpp   1dc9bd24782a9f3bf35c641fb7a86a0f672d8e3a5a7514329f5c8c4d4050da37
+vector-ecosystem.rs    2ba7a8c4bf8fee871adeed1fb31ff29e2ca30c82b685f3f76b1f0eebbb21bcb6
+```
+
+`ecosystem-append-measure` reuses this mode with `APPEND_WORK=4194304` and
+`ECO_REPEATS=7`; the whole-trace `ECO_WORK` default stays unchanged. Raw files
+serve this API's deficit attribution and are not gate inputs. Keep them and
+the source identities when consolidating this record. **Append remains open:**
+scalar4096's qualified deficit prevents advancing to the next API or an
+overall Vector timing claim.
+
+Three scalar native diagnostics retain that boundary. [Payload-base](append-payload-base.diff)
+hoists the payload base; [postindexed](append-postindexed.diff) advances a payload
+cursor in the store; [cached-capacity](append-cached-capacity.diff) hoists the
+capacity load. Each recomputes its cached state after growth, preserving the
+ordinary full-capacity path. These are assembly diagnostics, with no compiler,
+library or source change selected. Their control object is byte-identical to
+the measured baseline `whitefoot-timed.o`, SHA256
+`2099a2fbf8bed6a46f7a9b9e8fdbb4f838ecbcb1e249176f8a88f5f7b5283bae`.
+All three patches replay exactly against the saved baseline assembly.
+
+Each qualification exits 0 with all 30 API cases and eight additional
+empty/reserved/growing append chains; qualification times are 1.04, 1.04 and
+1.03 seconds respectively. Measurements exit 0 in 20.99, 21.51 and 21.18
+seconds. The [payload-base](ecosystem-spare-append-payload-base-4m-samples.csv),
+[postindexed](ecosystem-spare-append-postindexed-4m-samples.csv) and
+[cached-capacity](ecosystem-spare-append-cached-capacity-4m-samples.csv) files each
+retain all 504 rows, both orders, seven samples and empty controls. The same
+duration, stability and disjoint-range criteria apply without adjustment.
+Ratios below are medians in cohort 0 / 1; B/A compares WF against the original
+4M baseline above, while peer ratios use each diagnostic's unchanged peers.
+
+| Diagnostic | Scalar256 B/A | Scalar4096 B/A | Scalar4096 WF/C++ | Scalar4096 WF/Rust |
+|---|---|---|---|---|
+| Payload-base | 0.826679 / 0.831514 | 1.121556 / 1.147033 | 1.263329 / 1.270638 | 1.380848 / 1.426471 |
+| Postindexed | 0.843119 / 0.859516 | 1.105778 / 1.125167 | 1.237503 / 1.267085 | 1.318495 / 1.357104 |
+| Cached-capacity | 0.966181 / 0.981490 | 1.008444 / 1.014502 | 1.168684 / 1.137603 | 1.254284 / 1.193752 |
+
+Payload-base and postindexed each have a qualified scalar256 gain and a
+qualified scalar4096 loss versus baseline; their other four cells are
+inconclusive across orders. Cached-capacity has six inconclusive B/A cells.
+Each diagnostic still has five slower-peer passes and the scalar4096 deficit,
+so none passes the API criterion or is selected. Postindexed wide4096's Rust
+median drifts +10.67% versus baseline in cohort 1, exceeding the 10% peer-drift
+bound; that B/A cell remains inconclusive, and its samples are retained.
+
+The [deferred-length diagnostic](append-deferred-length.diff) instead keeps
+scalar length in a register, publishing it before growth and on batch exit;
+the zero-count path stays unchanged. The same 30 API cases and eight growth
+chains, followed by measurement, exit 0 in one 22.38-second guarded command.
+Its [504 raw rows](ecosystem-spare-append-deferred-length-4m-samples.csv) give
+six slower-peer passes in this run. Scalar4096 medians are
+0.541687/0.528097 ns per append, B/A `0.504889/0.494199`, WF/C++
+`0.577676/0.563327` and WF/Rust `0.587840/0.606019`; scalar16 and4096 have
+disjoint B/A gains in both cohorts. Scalar256 B/A is `1.008924/1.022781`,
+overlapping in both. All three wide cells are inconclusive across orders;
+wide16 and wide256 have disjoint slower B/A ranges in cohort 1, with the
+other cohort overlapping. These adverse observations remain visible despite
+their slower-peer passes. The patch also replays exactly against baseline.
+
+A scalar4096-only, 32-context [ABBA confirmation](ecosystem-spare-append-deferred-length-confirmation-samples.csv)
+retains all 336 rows with an explicit run column in
+control1/candidate1/candidate2/control2 order; the guarded command exits 0 in
+2.71 seconds. Baseline medians are 1.063–1.080 ns and candidate medians
+0.524–0.537 ns. Candidate1 cohort0 sample0 is retained at 5,729,000 ns
+(1.365900 ns per append), overlapping baseline and both peers; the other
+three candidate cohorts have disjoint faster ranges. Thus this confirmation
+is **inconclusive** under the unchanged full-range criterion. Deferred length
+is a promising native diagnostic, not an implemented compiler transform or
+selected API result. Append remains open pending a general implementation
+and qualification; neither medians nor the first run replace that requirement.
+
+A [driver-only context sweep](append-context-sweep.diff) then varies scalar4096
+from 1 to 64 independent vectors, using the original three language objects.
+The guarded build, 30 checks and seven measurements exit 0 in 5.19 seconds.
+The [combined raw file](ecosystem-spare-append-context-sweep-4m-samples.csv)
+concatenates all seven 84-row files, retaining 588 rows in context-count order.
+Below are elapsed medians per appended element in ns, cohort 0 / 1; setup,
+inspection/reset and cleanup remain outside timing.
+
+| Contexts / logical payload | WF | Rust | C++ |
+|---|---|---|---|
+| 1 / 32 KiB | 0.521421 / 0.512600 | 0.420094 / 0.435829 | 0.997066 / 0.956535 |
+| 2 / 64 KiB | 0.528097 / 0.524998 | 0.442982 / 0.423670 | 0.944614 / 0.960827 |
+| 4 / 128 KiB | 0.538588 / 0.541925 | 0.444651 / 0.444651 | 0.953913 / 0.999689 |
+| 8 / 256 KiB | 1.120806 / 1.081944 | 1.109600 / 1.085281 | 0.985861 / 0.933886 |
+| 16 / 512 KiB | 1.068354 / 1.079798 | 0.932217 / 0.980616 | 0.941277 / 0.966549 |
+| 32 / 1 MiB | 1.111269 / 1.087189 | 0.870228 / 0.920773 | 0.945568 / 0.959396 |
+| 64 / 2 MiB | 1.120090 / 1.083612 | 0.940800 / 0.890493 | 0.966311 / 0.944853 |
+
+This observes a working-set dependence, without assigning a hardware cause.
+The target remains the original 32-context, 1 MiB cell; smaller contexts do
+not replace its deficit. These raw files and small replay diffs serve this
+API's deficit attribution in the existing experiment home, are not gate
+inputs, and may be retired only with an evidence-preserving consolidation.
+Append remains open; no next API or overall timing claim follows.
