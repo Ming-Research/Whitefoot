@@ -358,9 +358,13 @@ rarely insert at the same place.
   accepts now that an index and a range can be proved apart: every pair of
   one argument's declared paths a call compares now has a position to
   prove, so only a joined argument naming two places still reaches it. Some cannot be carried out as written: TYPE-9's
-  inline-shape repair offers a constant-capacity form even for `Segments<T>`,
-  which has none [TYPE-9]; select only wrapping it in a `Box` for that shape
-  and pin the correction when revisiting inline-shape diagnostics.
+  inline-shape fallback sentence offers a constant-capacity form for
+  `Segments<T>`, which has none [TYPE-9]; its reachability is unverified.
+  A direct `Segments<u64>` parameter instead reaches TYPE-9's type mismatch
+  with no repair (`type9-neg-segments-parameter`), although the rule requires
+  one. Audit the inline-placement rejection paths, offer only wrapping in a
+  `Box` for segments, and pin each reachable repair when revisiting those
+  diagnostics.
   PROV-6's partial-consume repair writes the
   placeholder `let N(f: a, ...) = move v;`. PROV-6's LinearValueNotConsumed
   offers that placeholder as its second route for every linear binding,
