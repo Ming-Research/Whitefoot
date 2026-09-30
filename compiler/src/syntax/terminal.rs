@@ -578,7 +578,7 @@ pub const ALL_TERMINAL_PREDICATES: [TerminalPredicate;
 };
 
 impl TerminalPredicate {
-    const fn index(self) -> u8 {
+    pub(crate) const fn index(self) -> u8 {
         let base = EXTERNAL_TERMINAL_BASE as u8;
         match self {
             Self::Fixed(terminal) => terminal.index(),
@@ -657,10 +657,15 @@ impl TerminalSet {
     /// diagnostics. Parser tables must retain their specification-defined
     /// source-grammar ranks.
     pub fn iter(self) -> impl Iterator<Item = TerminalPredicate> {
-        ALL_TERMINAL_PREDICATES
-            .iter()
-            .copied()
-            .filter(move |predicate| self.contains(*predicate))
+        let mut remaining = self.0;
+        std::iter::from_fn(move || {
+            if remaining == 0 {
+                return None;
+            }
+            let index = remaining.trailing_zeros() as usize;
+            remaining &= remaining - 1;
+            Some(ALL_TERMINAL_PREDICATES[index])
+        })
     }
 }
 
@@ -1072,5 +1077,20 @@ mod tests {
                 TerminalPredicate::Literal,
             ]
         );
+    }
+
+    #[test]
+    fn membership_iteration_visits_sparse_and_full_sets_in_storage_order() {
+        assert_eq!(TerminalSet::empty().iter().next(), None);
+        for predicate in ALL_TERMINAL_PREDICATES {
+            let mut singleton = TerminalSet::empty();
+            singleton.insert(predicate);
+            assert_eq!(singleton.iter().collect::<Vec<_>>(), vec![predicate]);
+        }
+        let mut complete = TerminalSet::empty();
+        for predicate in ALL_TERMINAL_PREDICATES.into_iter().rev() {
+            complete.insert(predicate);
+        }
+        assert_eq!(complete.iter().collect::<Vec<_>>(), ALL_TERMINAL_PREDICATES);
     }
 }
