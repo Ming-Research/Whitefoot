@@ -559,16 +559,31 @@ rarely insert at the same place.
   consumer that separates hinted and unhinted native code and passes matched
   performance checks. Terminal traversal's separate costs remain open.
 
-- **An empty-Slots sentinel needs every cleanup path checked before revival.**
+- **Empty-Slots allocation removal needs complete ownership and ABI coverage.**
   The unselected [zero-capacity candidate](../research/experiments/container-representation/vector-library/RESULTS.md#zero-capacity-slots-sentinel-complete-samples-selection-unresolved)
   changes explicit growth and empty release, but its patch does not change
   derived Box cleanup's ordinary `FreePointer` path. A shared header must
-  never reach an allocator release through implicit scope cleanup. This is a
-  candidate-coverage concern, not a demonstrated retained-compiler defect.
-  Before reopening empty-state allocation removal, write implicit-drop and
-  nested-owner witnesses as well as explicit-release controls; either cover
-  every release path or establish why the candidate cannot reach it. Defer
-  this representation change while ordinary source-controller costs are tested.
+  never reach an allocator release through implicit scope cleanup. The
+  [read-only ownership/native audit](../research/experiments/container-representation/vector-library/RESULTS.md#empty-storage-native-scope-and-ownership-audit)
+  also finds that legal `grow(capacity: 0)` still allocates a heap header which
+  the patch's capacity-zero release test skips, while zero-count `append` and
+  `split_off` still write length words. These are inspected gaps in the
+  unselected patch, not demonstrated defects in the retained compiler.
+  Before reopening, cover explicit, implicit and nested cleanup, grow-zero,
+  whole-Box replacement/exchange, two independent empty owners, zero-count
+  writes and ordinary linked constructors/consumers under one physical ABI.
+  Capacity zero is not an allocation-ownership tag. Account for any new
+  metadata or runtime checks on positive-capacity hot paths; do not revive the
+  old patch.
+  The surviving native empty allocation/free pair occurs per reserved/growing
+  round; optimized reuse/suffix construction already omits it, unlike the
+  instrumented ledger. Local fresh-allocation coalescing is an unimplemented
+  hypothesis, limited by conditional lifetime and the growing path's surviving
+  call boundaries. A new pass is not justified by this benchmark alone.
+  A capacity-taking convenience constructor could address reserved setup but
+  is absent from the current API and would not fix default growth-16. Defer
+  implementation until a complete ordinary consumer and ownership/ABI argument
+  justify the scope; the earlier realloc and initial-capacity refusals remain.
 
 - **Deque scalar costs remain after payload-address qualification.** The
   [paired comparison](../research/experiments/container-representation/deque-library/RESULTS.md)
@@ -611,10 +626,80 @@ rarely insert at the same place.
   ownership/checksum matrix pass. A matched seven-sample, two-cohort run
   reduces scalar reverse churn from about 1.39--1.41 times C++ to
   0.49--0.50 times, without a useful regression elsewhere. The remaining
-  scalar growth deficits concern rebase's per-element transfer and are not
-  explained by this fix. Reopen the growth path with a same-source bulk
-  transfer discriminator, preserving the allocation policy and logical-order
-  oracle, before changing the Ring API or selecting a new operation.
+  scalar growth traces include rebase's per-element transfer and additional
+  appends; this front-placement fix does not explain those costs. Keep a
+  same-source bulk-transfer discriminator separate, preserving allocation
+  policy and the logical-order oracle before changing the Ring API or
+  selecting a new operation.
+
+  The [uniform entry-capacity trial](../research/experiments/container-representation/deque-library/RESULTS.md#entry-capacity-pair-scalar-gains-wide-regression-candidate-rejected)
+  is rejected: three scalar growth gains accompany a qualified wide growth
+  loss. Removing destination wrapping permits adjacent scalar stores, but
+  the wide append instead vectorizes corresponding fields across records
+  and shuffles them back into record order, with a larger frame and a seed
+  reload. The pair does not apportion those costs. The isolated
+  [representation-limited trial](../research/experiments/container-representation/deque-library/RESULTS.md#representation-limited-pair-scalar-gains-historical-target-unresolved)
+  preserves aggregate control instructions and obtains three scalar growth
+  gains, including both required populations, with unchanged semantic and
+  120-row accounting observations and no qualified loss in all 24 cells.
+  Selection remains pending: the historical scalar forward-churn 256 target
+  pass disappears in both current arms, so the original historical-target
+  condition is unresolved without a demonstrated candidate-caused loss.
+  Keep that condition separate from any prospective final-current-main
+  comparison. The SSA-value versus stored-aggregate boundary excludes even
+  one-word structs and arrays; its current success is not a profitability
+  theorem. Scalar growth 4096 still costs about 1.18 times Rust and 1.30 times
+  C++, while growth 256 and both wide growth populations still overlap their
+  slower standard peer. Reopen selection on the separately specified current
+  comparison or a representation/native-consumer change, and investigate
+  remaining transfer and controller costs with the same source and complete
+  family controls. The uniform trial's refusal and standard-peer deficits
+  remain; no new API or allocation-policy change follows from this pair.
+
+  The [retained native comparison](../research/experiments/container-representation/deque-library/RESULTS.md#remaining-margins-and-retained-native-work)
+  narrows a next lowering question to the one-step Ring front-removal
+  successor: WF still uses the general wrap subtraction in rebase and drain,
+  while C uses equality and a shorter conditional increment. The current
+  constructor/writer induction preserves `head < cap` at positive capacity,
+  but [MSR-2 and PRE-1](../spec/kernel-spec.md) publish only `head <= cap`,
+  and the [storage representation](../design/compiler/storage-representation.md)
+  and ordinary ABI decisions state no stricter linked-caller obligation.
+  PROG-3 permits an ordinary Ring-taking entry; an inventory of today's host
+  modules cannot close that boundary. For a zero-size Ring with `len = 1`
+  and `cap = head = 1`, the bounded O0/O3 native observer returns head 1;
+  an equality-only successor would yield 2 and violate the declared bound.
+  Fixed/runtime scalar and zero-size boundary sources pass source checking
+  and LLVM emission, as does a closed constructor control. The positive-stride
+  boundary exposed a separate correctness defect: TakeFront used the raw head
+  as its physical index and returned the initialized one-past guard instead of
+  slot zero. The physical-address correction and its
+  [ordinary-signature regression](../compiler/src/backend/tests/windows.rs)
+  normalize that address without changing the numerical head update. The
+  minimal ordinary-call boundary below is not a closed Whitefoot construction
+  trace.
+
+  ```wf
+  fn main(window: &Ring<Array<u64, 0>, 1>) -> result: u64 writes(window) contract {
+    requires window^.len > 0_u64;
+    requires window^.head == window^.cap;
+  } {
+    let value = take_front(window: window);
+    return window^.head;
+  }
+  ```
+
+  Head is observable logical state; zero-stride address normalization changes
+  only the physical operand. The current unsigned addition can wrap at a
+  maximum-capacity zero-stride Ring, so the positive-stride allocation bound
+  is not a proof about that numerical successor. Any shorter successor must
+  cover the inclusive head domain and the full zero-stride range under the
+  existing OP-10/PRE-1 rules; no source fact or new acceptance path follows
+  from the compiler's stronger reachable invariant. Reopen only with that
+  equivalence argument and the pending policy comparison resolved, requiring
+  scalar native work to decrease without wide shuffle/spill expansion and
+  preserving every semantic, accounting and useful-cell control. Defer bulk
+  transfer as its separate algorithm/API question, and do not attribute
+  elapsed shares from static instruction counts.
 
 - **Slab aggregate results retain extra transfers and layout overhead.**
   The [Slab comparison](../research/experiments/container-representation/slab-library/RESULTS.md)
@@ -677,6 +762,36 @@ rarely insert at the same place.
   optimized transfers under the same owning contract; do not subtract the
   whole-trace controls to assign a copy or ABI percentage. Preserve both work
   settings because extending churn materially changes setup amortization.
+
+  The [bounded-scratch exchange trial](../research/experiments/container-representation/priority-library/RESULTS.md#fixed-storage-exchange-timing-three-gains-and-six-useful-losses)
+  is refused: three useful gains, six losses and fifteen overlaps. Smaller
+  scratch retained 416 bytes of exchange traffic, added hot call boundaries,
+  and increased replacement's root-exchange operand traffic despite the
+  smaller complete frame. Its compiler machinery is withdrawn; generic
+  ownership, equal/disjoint, padding and zero-size behavior tests remain.
+  Reopen with a distinct ownership or source data flow that removes complete
+  transfers while preserving the shared sift and placement-reporting protocol,
+  rather than another chunk-size choice. Delayed reverse rotation changes the
+  observable indexed reporter order and cannot replace the shared core. The
+  owned-element atomic helper rejects a potentially linear T under WIN-3;
+  narrowing the owner domain is not a replacement. The ordinary
+  [distinct-reference helper](../research/experiments/container-representation/priority-library/RESULTS.md#distinct-reference-helper-result-native-movement-gate-failed)
+  admits T and exposes the expected noalias fact, but retains the same three
+  wide copies and 512 bytes of stack payload traffic, failing its native gate.
+  Merely adding that source boundary is therefore insufficient on the tested
+  toolchain. Reopen with evidence for eliminating complete transfers while
+  preserving generic ownership and immediate resident-position reporting;
+  none of these probes selects a language or compiler-rule change.
+
+  The read-only [replacement placement diagnosis](../research/experiments/container-representation/priority-library/RESULTS.md#replacement-result-placement-unselected-lowering-diagnosis)
+  identifies a separate complete copy from an addressed local owner into its
+  already-selected whole result, after the sink. Investigate qualified whole
+  addressed-binding result placement, retaining entry capture, independent
+  intermediate snapshots and caller-visible reference reads until commit.
+  Reopen with the recorded native transfer/frame/call discriminator and
+  same/distinct-result, late-alias-read, competing-return and ownership tests;
+  retained input/result aliasing may exchange an outgoing copy for an incoming
+  capture, so removing the final copy alone is not a performance result.
 
 - **Small results beyond the per-leaf register budget still use a
   destination.** A stored result returns in registers only when its scalar
@@ -882,22 +997,19 @@ rarely insert at the same place.
   [transfer evidence](../research/experiments/container-representation/vector-library/RESULTS.md#v061-copy-and-consumption-trial)
   separates this opportunity from the library's remaining element relocation.
 
-- **Ordered node construction and cleanup retain wide transfers.** The
+- **Ordered node construction retains wide transfers.** The
   [ordered-map attribution](../research/experiments/container-representation/ordered-library/RESULTS.md#transfer-and-generated-code-attribution)
-  shows field-expanded node-to-Box construction and a 504/4224-byte copy of
-  each exhausted node before only its leading link is consumed. Reducing that
-  work could improve split/build and final cleanup without changing the tree.
-  Static transfer counts do not isolate its timing contribution. Validate a
-  bounded construction/consumption improvement with unchanged ownership
-  outcomes, node allocation counts, dirty/quarantined release checks and
-  normal/retained scalar and wide comparisons; inspect optimized code to
-  establish which transfers disappear. Keep aggregate-result ABI and general
-  argument forwarding under the existing Slab and consumed-argument items;
-  this task isolates fixed-node construction and consumed-field selection.
-  As with the indexed snapshot/result work, validate general lowering rather
-  than a container-specific compiler path. Defer a change until these
-  construction/consumption paths isolate its benefit; reopen when the transfers
-  materially affect a measured consumer or lowering work reaches those paths.
+  shows field-expanded node-to-Box construction whose timing contribution
+  remains unisolated. The
+  [selected cleanup rewrite](../research/experiments/container-representation/ordered-library/RESULTS.md#paired-timing-selects-the-cleanup-rewrite)
+  removes the exhausted-node 504/4,224-byte copies; fixed-node construction
+  and other materialization are the remaining scope here. Validate a bounded
+  construction improvement with unchanged ownership outcomes, node allocation
+  counts, dirty/quarantined release checks and normal/retained scalar and wide
+  comparisons; inspect optimized code to establish which transfers disappear.
+  Keep aggregate-result ABI and general argument forwarding under the existing
+  Slab and consumed-argument items. Reopen when construction materialization
+  remains in a measured split/build path after the selected cleanup change.
 
   The current-module [native-library series](../research/experiments/container-representation/ordered-library/RESULTS.md#verified-practical-run)
   supplies that consumer without reusing the old ABI timings. At 4096 wide
@@ -907,6 +1019,18 @@ rarely insert at the same place.
   treating the historical node copies as surviving costs. Keep the library's
   node layout and repair policy separate from any compiler transfer fix;
   closeness to source C alone does not assign either a causal percentage.
+
+  The [aggregate-opening comparison](../research/experiments/container-representation/ordered-library/RESULTS.md#aggregate-opening-full-pair-refuses-selection)
+  removes wide per-entry shift calls but fails selection on two scalar Ordered
+  cells. The [guarded follow-up](../research/experiments/container-representation/ordered-library/RESULTS.md#guarded-aggregate-opening-full-matrix-still-refuses-selection)
+  also fails its full comparison: Vector has no qualified useful gain, while
+  OrderedMap has five gains and three scalar losses. Skipping empty-suffix
+  calls is therefore insufficient grounds for this policy. Small positive
+  transfers and caller spills remain unpriced. Reopen only with a different
+  transfer-cost hypothesis and a discriminating native observation, preserving
+  the full family controls rather than selecting a container or observed-winner
+  whitelist. Node occupancy and key/child layout remain separate unresolved
+  factors for lookup/traversal after these refused shift trials.
 
 - **Box/window representation costs remain unqualified.** The current runtime-
   capacity Box is one pointer to one header-first allocation; `grow` uses
@@ -1074,6 +1198,34 @@ rarely insert at the same place.
   open only for the separate performance attribution and any zero-stride
   workload it may expose. Shared-empty optimization remains deferred until
   that measurement.
+
+- **Classify Segments content exchange after the main integration.** This is
+  an **untested source/IR hypothesis**, with no observed source verdict or
+  native result. [TYPE-9 and PRE-1](../spec/kernel-spec.md) place `Segments<T>`
+  only in a Box and declare it noncopy; OP-11 exchanges the complete values
+  at its two admitted places and REF-2 governs earlier exact-content aliases.
+  [IrAddressed::is_runtime_content](../compiler/src/ir.rs) currently includes
+  runtime Array and window contents but omits Segments. The
+  [shared swap body](../compiler/src/lowering/builder/prelude.rs) therefore
+  appears to select owned header loads and stores for Segments, while
+  [Segments readers](../compiler/src/backend/emitter/segments.rs) expect the
+  captured backing address. Hypothesis: unequal segment counts and bounds
+  would exchange only headers or stop during lowering rather than exchange
+  the complete content. Impact, if admitted: a Segments content exchange
+  would fail OP-11 or leave aliases observing the wrong allocation extent.
+  The untested scratch draft `segments-swap-witness-draft.wf` is retained
+  outside the repository in the PR 108 preservation bundle
+  `/private/tmp/whitefoot-pr108-pre-main-4dwglu_x/`. It builds lengths `[1]`
+  and `[2, 2]` with distinct 11/22 payloads, forms content aliases before
+  exchange, and observes segment counts, total element counts and values.
+  Reopen at the next clean production CLI verification after this main
+  integration: establish its source verdict and inspect emitted IR before
+  executing it with an allocation-bounded observer. If confirmed, assess
+  extending the existing owner-slot reference path and every Segments
+  measure/range/ABI consumer, retaining unequal-count, equal-place and live
+  alias controls. No source-rule change or new mechanism is selected by
+  this code-reading lead; it is recorded while the serial container
+  measurement proceeds, and a confirmed correctness defect must be repaired.
 
 - **Runtime Array copy capability ignores the element type.** The same frozen
   compiler accepts a direct `.inner` swap between two `box_array_filled::<u64>`
@@ -2112,7 +2264,43 @@ rarely insert at the same place.
   supplies compile-cost selection evidence. Until then use explicit guarded
   commands with checked statuses, not these rows as success evidence.
 
+- **Executable caller synthesis moves reference arguments.** The Ring
+  boundary sources above pass checking and emit callable libraries, but
+  [caller_source](../compiler/src/driver/launcher.rs) spells their generated
+  call as `main(window: move window)` and reports OWN-1 `MoveOfCopy` for its
+  own reference argument. This is a tool-generated caller defect, not a
+  source rejection. A minimal follow-up source without a requirement is:
+
+  ```wf
+  fn main(value: &u64) -> result: unit reads(value) {
+    return unit;
+  }
+  ```
+
+  Derive argument transfer from the checked parameter mode and capability,
+  retaining ordinary contract checks and owning-value transfer controls.
+  The bundled runner currently supplies only Inputs or no arguments; these
+  reference entries remain available through ordinary linked calls. Repair
+  the synthesized call and its misleading diagnostic without silently adding
+  a runner argument policy. Defer from the Ring address-domain probe; reopen
+  when caller synthesis or entry support is next changed, requiring this
+  reference-copy case to pass its ordinary call check while an unsatisfied
+  declared requirement still prevents the generated executable caller.
+
 ## Code structure
+
+- **Container performance reports obscure the current conclusion.** The Vector,
+  Map and Ordered `RESULTS.md` files under
+  `research/experiments/container-representation/` mix many frozen trials with
+  current proposals; the Vector report alone exceeds 5,000 lines. A stale
+  prospective projection paragraph already linked an unavailable amendment,
+  making a refused broad factor look like the current candidate. Reopen at
+  the five-family comparison handoff: keep one short current-result map and
+  clearly bounded historical experiment sections in the existing family homes,
+  preserving raw samples, adverse results, source identities and inbound
+  anchors. Verify that each headline resolves to its measured revision and
+  that every existing decision/evidence link still resolves. Do not relocate
+  load-bearing paths or treat frozen timings as current capabilities.
 
 - **Five parallel substitution walkers over a type invariant.**
   `compiler/src/semantic/check/type_invariants.rs` rewrites the invariant's
@@ -2526,6 +2714,18 @@ condition under which it is taken up.
   syntax investigation while the owned rebase meets that contract; reopen
   when selecting its reference counterpart. Do not manufacture an impossible
   branch or weaken a postcondition to complete the comparison.
+
+  A separate, **unverified** OP-12 concern is dynamic index separation in
+  `set heap[parent] = exchange_owned(held: move heap[parent], other:
+  &heap[child]);`, with both indices in bounds and `parent < child`. The early
+  `check_atomic_update_row` uses `UnprovedSeparations` before EFF-5's proved
+  pairwise check, so it may classify the second write as reaching the target.
+  This is a code-reading hypothesis, not an established compiler violation.
+  Reopen with a complete affine-owner witness admitted by OP-12/EFF-5, compare
+  the direct call with a two-reference wrapper and an equal-index negative,
+  and classify the result before changing proof plumbing. Keep this distinct
+  from the linear-target restriction above; no source bound or rule changes
+  are selected by the PriorityQueue exchange-helper native probe.
 - **Conditional measure preservation needs a precise remaining diagnosis.**
   A counted-loop control calling a length/capacity-preserving helper in only
   one arm rejects its backedge facts. Capturing both measures before the
@@ -2544,6 +2744,25 @@ condition under which it is taken up.
   a proposed rule change before implementation. Keep the admitted wrapper
   while it supplies the needed proof; validate aliases and false preservation
   claims as well as checking cost for any improvement.
+- **Classify the zero-ceiling Map invariant rejection.** Frozen compiler
+  SHA-256 `5753999f224f89a9a99e0399b76bfd7b92cd53d5f22b0d204df4f2ec3ffbc20b`
+  rejects the two-span migration header
+  `invariant home_low: home >= 0_u64` with `INV-1`, Backedge,
+  `required_relation: 0_u64 <= home`, `disposition: Unproved`. The retained
+  standalone `invariant-isolation/map-zero/witness.wf` instantiates
+  `hash_map_new::<u64, u64, 0>` and `hash_map_rehash::<Key, u64, 0>`; its
+  included `hash_map/hash-map.wf:313` carries the rejected header. Otherwise
+  identical ceilings 8 and 17 admit. Tiny generic-loop and nested `Slots`
+  controls admit too, so this is not a demonstrated general failure of
+  unsigned type bounds. The [exact sources and diagnostics](../research/experiments/container-representation/map-library/RESULTS.md#prospective-two-span-cyclic-probing)
+  preserve all forms and the successful span-local endpoint alternative.
+  The remaining full-library context prevents a minimal rule-level verdict.
+  Reopen during invariant proof work to reduce the zero-ceiling context and
+  classify it under ENT-2's implicit type bounds and INV-1's reachable
+  backedge obligations before changing the checker. It limits one proof
+  spelling; it does not narrow the public Map domain or block the admitted
+  source experiment. Defer that separate diagnosis because the five-scan
+  experiment already failed its independent native gate.
 - **Owning HashMap has a remaining large-value performance gap.** The
   [matched comparison](../research/experiments/container-representation/map-library/RESULTS.md)
   exercises the actual generic library, including must-consume pairs, without
@@ -2977,6 +3196,20 @@ condition under which it is taken up.
   at the next workflow-maintenance change. This research uses the existing
   `DESIGN_REVIEW_BASE` override for the actual merge base and records default
   failures; it does not change the checks or another worktree's main ref.
+- **The host-wide check guard has no queued admission.**
+  `.github/run-check.pl` rejects a competing invocation with exit 75; it
+  records the current owner but no waiting command. During concurrent
+  container and compiler investigations, successive commands from other
+  worktrees acquired the released lock before the waiting container stage
+  could start. Single-command serialization works, but repeated polling does
+  not give a waiting investigation a turn and adds coordination delay.
+  Investigate an optional cancellable admission queue when multi-worktree
+  contention next delays a registered experiment. Preserve one heavy owner,
+  nested-command handling, process-group cleanup and stale-owner checks;
+  report queue time separately from command time. Validate three competing
+  worktrees, cancellation before admission, owner failure and a nested check,
+  with no overlapping heavy children or abandoned queue entries. Do not
+  bypass the existing lock while this remains deferred.
 - **The corpus stage waits on one serial conformance walk.** Each of the
   conformance adapter's two walks visits every conformance case on one
   thread, 62 s and 78 s on the four-core container where it was profiled, so

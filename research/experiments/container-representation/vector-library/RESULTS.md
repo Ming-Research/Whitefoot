@@ -5211,3 +5211,79 @@ interleaved execution remain unisolated conditions, not demonstrated causes
 of the loss. The exact source/native lines and every differing word are in
 the identity record. No new source variant or timing pair follows this result;
 another optimization needs evidence about costs on the dominant repeated path.
+
+### Empty storage: native scope and ownership audit
+
+This read-only audit uses the unchanged source/compiler pin
+`7abd6bb34746b7b983b83103c68ee429b24859bb`, frozen compiler `5753999f...`, and
+the baseline raw/optimized LLVM and assembly under
+`.build/swap-remove-source/native-2/`, identified in the
+[branch-first record](ecosystem-swap-remove-branch-first-identities.json).
+No source change, compilation or new timing follows from it. The preceding
+branch-first refusal remains; its suffix loss is not attributable to execution
+of the changed removal operation.
+
+Both native `round` instances retain `calloc(1,16)`: reserved rounds release
+that header during reserve, growing rounds at first growth. At population 16
+this is 65,536 empty allocation/free pairs per measured trace. Reuse and suffix
+traces instead allocate positive backing directly; their optimized construction
+already omits the empty pair. The pre-O3 accounting ledger still observes that
+pair and must not be read as optimized allocation traffic. The ordinary Rust
+and C++ growth loops initialize inline descriptors without allocating an empty
+heap header; payload work and their distinct growth policies remain intact.
+The earlier [empty-header cost injection](#native-empty-header-ab-the-allocation-pair-explains-most-of-the-standard-gap)
+establishes a material small-growth cost, not a promised speedup from a new
+representation or a benefit on the already-elided suffix paths.
+
+The reserved-arm explanation is narrower than an inlining failure. In
+`baseline.opt.ll:1480`, the nullable calloc and its write/abort resource-floor
+edge precede `reserve_first`; the reserved edge already exposes positive
+allocation and `free(old)`, while the other edge carries the stored old pointer
+to `work`. The initial pointer is therefore live on one branch. The same
+file's trace body at line 433 removes the empty allocation and its failure edge
+for unconditional new-then-reserve. Thus resource checks are not an independent
+prohibition on removal. LLVM's [allocation-elision contract](https://llvm.org/docs/LangRef.html#function-attributes)
+allows virtual allocation, and upstream
+[LLVM 21 InstCombine](https://github.com/llvm/llvm-project/blob/llvmorg-21.1.0/llvm/lib/Transforms/InstCombine/InstructionCombining.cpp#L3132)
+can fold null comparisons when removing an allocation, but rejects a use that
+stores the allocated pointer elsewhere. The surviving `store ptr %calloc...,
+ptr %v4` is such a use. This supports a conditional-lifetime/use limitation;
+it does not identify the exact failing pass in the vendor compiler. Growth
+additionally crosses `round` to `work` to `grow_full`; existing `noalias` and
+`captures(none)` do not establish that the pointee is dispensable.
+
+The historical [sentinel patch](zero-slots.patch) is incomplete beyond the
+previously recorded implicit/nested cleanup gap. PRE-1 permits grow-zero from
+capacity zero, but its patched grow still allocates a fresh 16-byte heap header
+which the patched `free_empty` skips. Repeated grow-zero also skips
+old heap headers. Moreover, the unchanged
+[run-transfer lowering](https://github.com/mbbill/Whitefoot/blob/7abd6bb34746b7b983b83103c68ee429b24859bb/compiler/src/backend/emitter/runs.rs#L980)
+writes both length words for zero-count append/split-off. Its shared-header
+claim therefore needs independent-owner and parallel-write coverage as well
+as explicit, implicit and nested releases. These are deductions from the
+patch and rules, not newly executed witnesses or retained-compiler defects.
+
+STOR-7/8 remove address observations and put resource exhaustion outside source
+outcomes; they do not by themselves establish a compatible shared-header ABI.
+STOR-1/3 retain ownership/release obligations, and SCOPE-3/PRE-1 require ordinary
+linked definitions to use the selected physical representation. A linked
+constructor can supply a real zero-capacity allocation under the current ABI;
+whole-Box replacement or exchange transports that owner. Capacity alone cannot
+distinguish it from static storage. Source readonly fields also do not establish
+that every compatible linked implementation omits physical zero-count stores.
+
+A lazy library enum would change the public `storage: Box<Slots<T>>` path and
+its measure/element/ownership observations; the [earlier proof-interface
+witness](#next-discriminator-merge-the-first-growth-into-construction) remains
+relevant. Conservative fresh-allocation coalescing could retain the current ABI
+by materializing before unknown calls or escaping ownership, with no tag on
+positive-capacity storage, but is only a hypothesis. A local fold does not cover
+the surviving growth call chain, and this benchmark alone does not justify a
+new interprocedural pass. The current WF API has no capacity-taking constructor:
+its reserved caller uses new then reserve, while Rust uses `with_capacity` and
+C++ reserves its empty descriptor. Such a WF convenience API could avoid
+reserved setup's empty header; it would require caller adoption and would not
+fix default growth-16. The [H1/H2 realloc refusals](#h-realloc-for-runtime-slots-growth)
+and [common-caller small-allocation losses](#hbyte-allocation-byte-attribution-through-one-common-caller)
+also remain in force. Reopening any alternative requires complete cleanup/ABI
+coverage and explicit positive-path costs before another performance selection.
