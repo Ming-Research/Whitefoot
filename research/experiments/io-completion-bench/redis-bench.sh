@@ -282,7 +282,12 @@ verify_suite() {
     stop
     tests=$(grep -c -v '^"test"' "$OUT/suite-$1.csv")
     echo "verify-suite,$1,$tests tests"
-    if [ "$tests" != 20 ] || [ -s "$OUT/suite-$1.err" ]; then
+    # redis-benchmark reads the server's CONFIG only to report it; Dragonfly
+    # does not answer it as Redis does, which the client warns about and
+    # which changes nothing it measures. Any other message is a failure.
+    grep -v '^WARNING: Could not fetch server CONFIG$' "$OUT/suite-$1.err" \
+        >"$OUT/suite-$1.problems" || true
+    if [ "$tests" != 20 ] || [ -s "$OUT/suite-$1.problems" ]; then
         fail "$1" "the default suite"
     fi
 }
