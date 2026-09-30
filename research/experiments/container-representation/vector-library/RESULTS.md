@@ -5940,3 +5940,12 @@ inner owner; that constructor-fact question is recorded in TODO, and no guard
 was added to manufacture admission. Independent read-only review found no
 proven semantic defect and identified the replacement/fallback coverage gaps
 addressed by these tests. These focused results do not replace the full gate.
+
+A lint-only refactor subsequently groups the rewrite's shared parameters.
+The resulting CLI is SHA256
+`9a3ac1cec5eed4a7a41aeced4f12b31cf81b5d34d6d72b9fdfe2d27de2973da5`;
+its complete emitted Vector LLVM compares byte-for-byte equal to the measured
+compiler's output (both SHA256
+`75b909699ef952625a132482c14453641daacef1a0ae9eb9dc90658c70a78d0f`).
+The timed program therefore keeps the measured code after this refactor;
+no second timing series was substituted.

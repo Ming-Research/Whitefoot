@@ -2393,6 +2393,20 @@ rarely insert at the same place.
   Reopen when a test needs a deadline order that real time cannot produce
   reliably.
 
+  The append gate exposed a concrete relative-timer risk in
+  `compiler/tests/programs/support.rs::run_with_late_input_and_settings`:
+  the parent sleeps 400 ms after spawning, while `stdin_deadline.wf` starts
+  its 50 ms deadline only after child startup. Both deadline tests returned
+  exit 10 (the first read succeeded) in a full host-permitted corpus run;
+  both passed unchanged in a single-thread isolated run. Baseline and append
+  compilers emit byte-identical LLVM for this program. This supports, but
+  does not prove, a startup/scheduling race. Synchronize the test's writer
+  with the child's deadline/read state or control the clock, then deliberately
+  delay child startup to show the asserted order survives; merely increasing
+  sleeps is not a fix. Reopen on the next deadline-test change. Preserve the
+  failed full-suite observation rather than treating the isolated pass as a
+  green full gate.
+
 ## Modules and libraries
 
 - **Complete the vector boundary witness when comparing independent fields.**
