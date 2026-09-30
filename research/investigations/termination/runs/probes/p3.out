@@ -1,0 +1,6 @@
+p3.wf:28:5: error[INV-1]: UndischargedLocalInvariant
+  source:     invariant progress: before < pos;
+  marker:     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  name: progress
+  disposition: Unproved
+  mechanical_fix: `progress` is not proved from the facts that reach it: establish them before it, add `use` steps naming the facts it follows from, or weaken it

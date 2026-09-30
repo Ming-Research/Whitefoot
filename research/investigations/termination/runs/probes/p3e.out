@@ -1,0 +1,8 @@
+p3e.wf:7:5: error[INV-1]: UndischargedLoopInvariant
+  source:     invariant pos_bounded: pos <= length
+  marker:     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  name: pos_bounded
+  obligation: Backedge
+  required_relation: pos <= length
+  disposition: Unproved
+  mechanical_fix: `pos_bounded` is not proved preserved at the next loop header: strengthen the invariant prefix, weaken or correct it, or establish in the body the facts from which every reachable fallthrough preserves it

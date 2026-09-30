@@ -1,0 +1,21 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn count_wrap(need: u64) -> result: u64 pure {
+  let index = 0_u64;
+  loop @cont {
+    let more = index < need;
+    if more {
+    } else {
+      break @cont;
+    }
+    let before = index;
+    set index = index +wrap 1_u64;
+    invariant progress: before < index;
+  }
+  return index;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

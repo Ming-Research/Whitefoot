@@ -1,0 +1,6 @@
+n1.wf:14:5: error[INV-1]: UndischargedLocalInvariant
+  source:     invariant progress: before < index;
+  marker:     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  name: progress
+  disposition: Refuted
+  mechanical_fix: `progress` is false where it is stated: correct the relation, or state one that the facts reaching it imply
