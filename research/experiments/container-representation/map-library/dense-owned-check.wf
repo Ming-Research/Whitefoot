@@ -23,15 +23,15 @@ fn dense_owned_make(id: u64, serial: u64) -> result: DenseOwnedNode pure {
 }
 
 fn dense_owned_fail(ledger: &DenseOwnerLedger) -> result: unit writes(ledger) {
-  set ledger^.failures = ledger^.failures +wrap 1_u64;
+  set deref(ledger).failures = deref(ledger).failures +wrap 1_u64;
   return unit;
 }
 
 fn dense_owned_release(value: DenseOwnedNode, ledger: &DenseOwnerLedger) -> result: unit writes(ledger) {
   let DenseOwnedNode(child: owned_child) = move value;
   let serial = owned_child.inner.serial;
-  if serial < ledger^.releases.len {
-    set ledger^.releases[serial] = ledger^.releases[serial] +wrap 1_u64;
+  if serial < deref(ledger).releases.len {
+    set deref(ledger).releases[serial] = deref(ledger).releases[serial] +wrap 1_u64;
   } else {
     dense_owned_fail(ledger: ledger);
   }
@@ -45,34 +45,34 @@ fn dense_owned_consume(env: &DenseOwnerLedger, key: DenseOwnedNode, value: Dense
 }
 
 fn dense_owned_hash(env: &DenseOwnerEnv, key: &DenseOwnedNode) -> result: u64 reads(key) {
-  return key^.child.inner.id % 1_u64;
+  return deref(key).child.inner.id % 1_u64;
 }
 
 fn dense_owned_equal(env: &DenseOwnerEnv, left: &DenseOwnedNode, right: &DenseOwnedNode) -> result: Bool reads(left), reads(right) {
-  return left^.child.inner.id == right^.child.inner.id;
+  return deref(left).child.inner.id == deref(right).child.inner.id;
 }
 
 fn dense_owned_read(env: &DenseOwnerLedger, key: &DenseOwnedNode, value: &DenseOwnedNode) -> result: u64 reads(key), reads(value), writes(env) {
-  if key^.child.inner.serial != 4_u64 {
+  if deref(key).child.inner.serial != 4_u64 {
     dense_owned_fail(ledger: env);
   }
-  if value^.child.inner.serial != 14_u64 {
+  if deref(value).child.inner.serial != 14_u64 {
     dense_owned_fail(ledger: env);
   }
-  set env^.visits = env^.visits +wrap 1_u64;
-  return value^.child.inner.id;
+  set deref(env).visits = deref(env).visits +wrap 1_u64;
+  return deref(value).child.inner.id;
 }
 
 fn dense_owned_increment(env: &DenseOwnerLedger, key: &DenseOwnedNode, value: &DenseOwnedNode) -> result: u64 reads(key), writes(env), writes(value) {
-  if key^.child.inner.serial != 4_u64 {
+  if deref(key).child.inner.serial != 4_u64 {
     dense_owned_fail(ledger: env);
   }
-  if value^.child.inner.serial != 14_u64 {
+  if deref(value).child.inner.serial != 14_u64 {
     dense_owned_fail(ledger: env);
   }
-  set env^.visits = env^.visits +wrap 1_u64;
-  set value^.child.inner.id = value^.child.inner.id +wrap 1_u64;
-  return value^.child.inner.id;
+  set deref(env).visits = deref(env).visits +wrap 1_u64;
+  set deref(value).child.inner.id = deref(value).child.inner.id +wrap 1_u64;
+  return deref(value).child.inner.id;
 }
 
 binding DenseOwnedKey : DenseKey<DenseOwnedNode, DenseOwnerEnv> {
@@ -85,10 +85,10 @@ binding DenseOwnedConsume : DenseConsume<DenseOwnedNode, DenseOwnedNode, DenseOw
 }
 
 fn dense_owned_check_pair(pair: &DensePair<DenseOwnedNode, DenseOwnedNode>, key: u64, value: u64, ledger: &DenseOwnerLedger) -> result: unit reads(pair), writes(ledger) {
-  if pair^.key.child.inner.id != key {
+  if deref(pair).key.child.inner.id != key {
     dense_owned_fail(ledger: ledger);
   }
-  if pair^.value.child.inner.id != value {
+  if deref(pair).value.child.inner.id != value {
     dense_owned_fail(ledger: ledger);
   }
   return unit;

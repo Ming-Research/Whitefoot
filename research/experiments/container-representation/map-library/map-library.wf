@@ -1,16 +1,3 @@
-alias HashMapPair = std::collections::hash_map::HashMapPair;
-alias HashMapKey = std::collections::hash_map::HashMapKey;
-alias hash_map_new = std::collections::hash_map::hash_map_new;
-alias hash_map_put = std::collections::hash_map::hash_map_put;
-alias hash_map_remove = std::collections::hash_map::hash_map_remove;
-alias hash_map_lookup = std::collections::hash_map::hash_map_lookup;
-alias hash_map_rehash = std::collections::hash_map::hash_map_rehash;
-alias hash_map_reserve = std::collections::hash_map::hash_map_reserve;
-alias hash_map_edit = std::collections::hash_map::hash_map_edit;
-alias hash_map_free = std::collections::hash_map::hash_map_free;
-alias ExitStatus = std::process::ExitStatus;
-alias exit_status = std::process::exit_status;
-
 struct MapCostEnv {
   salt: u64;
   collide: Bool;
@@ -47,15 +34,15 @@ fn map_cost_mix(value: u64) -> result: u64 pure {
 }
 
 fn map_cost_hash(env: &MapCostEnv, key: &u64) -> result: u64 reads(env), reads(key) {
-  if env^.collide {
+  if deref(env).collide {
     return 0_u64;
   }
-  let salted = ixor(key^, env^.salt);
+  let salted = ixor(deref(key), deref(env).salt);
   return map_cost_mix(value: salted);
 }
 
 fn map_cost_equal(env: &MapCostEnv, left: &u64, right: &u64) -> result: Bool reads(left), reads(right) {
-  return left^ == right^;
+  return deref(left) == deref(right);
 }
 
 binding MapCostDenseKey : DenseKey<u64, MapCostEnv> {
@@ -89,16 +76,16 @@ fn map_cost_key(index: u64) -> result: u64 pure {
 }
 
 fn map_cost_ordered(env: &MapCostDigest, value: u64) -> result: unit writes(env) {
-  let prefix = env^.ordered *wrap 131_u64;
-  set env^.ordered = prefix +wrap value;
+  let prefix = deref(env).ordered *wrap 131_u64;
+  set deref(env).ordered = prefix +wrap value;
   return unit;
 }
 
 fn map_cost_final(env: &MapCostDigest, value: u64) -> result: unit writes(env) {
-  set env^.sum = env^.sum +wrap value;
+  set deref(env).sum = deref(env).sum +wrap value;
   let mixed = map_cost_mix(value: value);
-  set env^.parity = ixor(env^.parity, mixed);
-  set env^.count = env^.count +wrap 1_u64;
+  set deref(env).parity = ixor(deref(env).parity, mixed);
+  set deref(env).count = deref(env).count +wrap 1_u64;
   return unit;
 }
 
@@ -121,12 +108,12 @@ fn map_cost_word_content(key: u64, value: u64) -> result: u64 pure {
 }
 
 fn map_cost_word_observe(env: &MapCostDigest, key: &u64, value: &u64) -> result: u64 reads(value) {
-  return value^;
+  return deref(value);
 }
 
 fn map_cost_word_edit(env: &MapCostDigest, key: &u64, value: &u64) -> result: u64 writes(value) {
-  set value^ = value^ +wrap 1_u64;
-  return value^;
+  set deref(value) = deref(value) +wrap 1_u64;
+  return deref(value);
 }
 
 fn map_cost_word_consume(env: &MapCostDigest, key: u64, value: u64) -> result: unit writes(env) {
@@ -153,12 +140,12 @@ fn map_cost_record_content(key: u64, value: MapCostRecord) -> result: u64 pure {
 }
 
 fn map_cost_record_observe(env: &MapCostDigest, key: &u64, value: &MapCostRecord) -> result: u64 reads(value) {
-  return value^.words[0_u64];
+  return deref(value).words[0_u64];
 }
 
 fn map_cost_record_edit(env: &MapCostDigest, key: &u64, value: &MapCostRecord) -> result: u64 writes(value) {
-  set value^.words[0_u64] = value^.words[0_u64] +wrap 1_u64;
-  return value^.words[0_u64];
+  set deref(value).words[0_u64] = deref(value).words[0_u64] +wrap 1_u64;
+  return deref(value).words[0_u64];
 }
 
 fn map_cost_record_consume(env: &MapCostDigest, key: u64, value: MapCostRecord) -> result: unit writes(env) {
