@@ -77,29 +77,6 @@ rarely insert at the same place.
 
 ## Checker precision and proof cost
 
-- **A subtraction of two struct fields is not proved from a fact over
-  them.** With `struct Span { start: u64; end: u64; }`, `let w = span.end -
-  span.start;` stays [OP-2] Unproved (residual `span.end -defined
-  span.start`) under `requires span.start <= span.end` on a by-value
-  parameter, under `requires span^.start <= span^.end` with
-  `span^.end - span^.start` on a `&Span` parameter, and inside
-  `if span.start <= span.end` on a local `let span = Span(...)`; the same
-  holds with the v0.82 struct invariant `span.start <= span.end`. Copying
-  both fields into `let` bindings first and subtracting those is proved.
-  Found at 290b575b and f5024250 while assessing v0.82 for Snowghost.
-  [ENT-2] clause (a) makes `span.end` and `span^.end` terms (a place rooted
-  at a `param` or `let` binding with field selections and `^`, of a
-  fragment type), so the fact and the obligation should meet in L0, while
-  [ENT-6] image formation names reading "a live own integer binding" and not
-  a field. Impact: every writer copies fields into locals before exact
-  arithmetic on them, and a struct invariant cannot discharge arithmetic on
-  the fields it relates.
-  Next: find where the goal's operands or the guard's fact lose the field
-  place (`compiler/src/semantic/entailment/`), decide from ENT-2 and ENT-6
-  whether the specification or the checker is to change, and add a
-  conformance case for the chosen behavior. Reopen with the next change to
-  term formation or struct invariants.
-
 - **A widening conversion's operand is read as any affine side.**
   [ENT-2] admits `cvt::<S, D>(e)` as a relation term or comparison-origin
   operand only for e a term or constant. [FN-9] relation terms match that:
@@ -489,11 +466,23 @@ rarely insert at the same place.
   proves both. The same holds for a parameter's fields bounded by `requires`,
   so it predates v0.80, but v0.80's field relations make it the next thing a
   writer meets: PR #169's probe p2a predicted exit 24 and is refused at that
-  product. Impact: one `let` per field before a nonlinear product. Candidate:
-  give a tracked field place the current-value image its binding copy would
-  have, killed with the field; validate against field writes, whole-value
-  replacement and aliases, and measure closure cost. Reopen when a program
-  cannot copy the field.
+  product. A subtraction shows the same pattern: with
+  `struct Span { start: u64; end: u64; }`, `span.end - span.start` stays
+  [OP-2] Unproved (residual `span.end -defined span.start`) under
+  `requires span.start <= span.end` on a by-value parameter, at 290b575b and
+  f5024250, and at f5024250 also under that requirement on a `&Span`
+  parameter, inside `if span.start <= span.end` on a local, and under the
+  v0.82 struct invariant `span.start <= span.end` on a by-value parameter;
+  copying the fields into bindings first proves each. [ENT-2] clause (a)
+  makes the field places terms; where the subtraction's proof loses them is
+  not yet located. Impact: one `let` per field before a nonlinear product
+  or such a subtraction, and a struct invariant alone does not discharge a
+  subtraction of the fields it orders. Candidate: give a tracked field place
+  the current-value image its binding copy would have, killed with the
+  field; validate against field writes, whole-value replacement and aliases,
+  and measure closure cost; check that it also discharges the subtraction.
+  Reopen when a program cannot copy the field, or with the next change to
+  struct invariants.
 
 - **Two rejections writers meet carry no repair.** `InvalidPostconditionSelector`
   for a route the version does not admit, such as `when Err(error: e):` or a
