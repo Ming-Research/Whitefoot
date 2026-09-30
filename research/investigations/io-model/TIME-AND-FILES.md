@@ -510,3 +510,65 @@ file system as the subset's. `redis-bench.sh` gains the persistent lines.
 
 A criterion that fails is attributed with a profile before any conclusion is
 drawn from it.
+
+### Results
+
+`redis-bench.sh` at 3b7a263e7, the subset at c97dbdc7c, and as the
+baseline lines the subset at 7edc86591, the revision before this work,
+built with that revision's compiler. Requests per second, two passes; the
+raw output is
+`research/experiments/io-completion-bench/redis-persistence-samples.csv`.
+The host is Experiment 7's: 4 CPUs (Intel Xeon at 2.80 GHz), Linux 6.18,
+redis-server and redis-benchmark 7.0.15, clang 18.1.3.
+
+| Line | `SET` | `GET` | `SET`, 16 per pipeline | `GET`, 16 per pipeline |
+|---|---|---|---|---|
+| redis-server | 86,934 / 92,963 | 90,884 / 88,865 | 570,776 / 499,500 | 570,776 / 570,451 |
+| subset, 2 drivers | 117,578 / 117,578 | 117,592 / 121,139 | 799,361 / 799,361 | 999,001 / 999,001 |
+| subset, 1 driver | 92,989 / 86,926 | 90,893 / 90,893 | 570,776 / 571,102 | 571,102 / 665,779 |
+| baseline, 2 drivers | 117,592 / 117,592 | 121,139 / 124,953 | 999,001 / 799,361 | 999,001 / 798,722 |
+| baseline, 1 driver | 86,926 / 90,884 | 95,220 / 92,997 | 570,451 / 571,102 | 666,223 / 666,223 |
+| redis-server, everysec | 86,919 / 81,599 | 88,818 / 88,865 | 363,108 / 362,582 | 571,102 / 570,776 |
+| subset, 2 drivers, everysec | 121,153 / 124,938 | 121,153 / 121,153 | 799,361 / 499,500 | 999,001 / 799,361 |
+
+- **Correct: met.** Every line passed Experiment 7's pass. On both servers,
+  with and without the file, the expiry sequence answered `OK OK -1 -2 1 100
+  1 -1 0`, a positive `PTTL` of 90 to 93 milliseconds, then absent and -2.
+  After a restart on the file both answered absent, absent, `v`, 2 and `v`
+  for a removed key, a key whose 300-millisecond expiry passed while
+  stopped, a key with 100 seconds left, a key incremented twice and a key
+  without an expiry, with 99 seconds left on the third. A client silent
+  past a one-second limit was closed after 1.00 seconds by the subset and
+  1.92 by Redis.
+- **Expiry costs little: met.** Without pipelining the subset reached 1.00
+  and 1.00 times the baseline for `SET` and 0.97 and 0.97 for `GET` on two
+  drivers, and 1.07 and 0.96 for `SET` and 0.95 and 0.98 for `GET` on one.
+  The host ran slower than for Experiment 7's second run, whose subset on
+  two drivers made 153,775 and 166,583 `SET`s against today's baseline of
+  117,592, which is why the criterion compares within one session.
+- **Persistence keeps up: met.** With `everysec` on both, the subset on two
+  drivers reached 1.39 and 1.53 times the reference for `SET` without
+  pipelining and 2.20 and 1.38 times with 16 per pipeline.
+- **Active expiry removes keys: met.** Of 100,000 keys set with `PX 1000`,
+  none was left 1.06 seconds after the last set on the subset, and 72 after
+  1.42 seconds on Redis.
+
+An earlier attempt stopped in its correctness pass: the subset could not
+listen on a port that the previous run's idle check had left in `TIME_WAIT`
+by closing the client itself, since both runs started from one fixed port.
+The script now starts each run's ports from its process number.
+
+What this shows, and what it does not. The clock, the deadline on
+`receive_next`, `sleep_until` and the append-only file were enough to write
+expiry, an append-only file and an idle limit in the language, with no
+change beyond the ruled surface, and the program keeps Redis's rates on this
+host with them. The comparison with persistence is not like for like: Redis
+writes its buffer to the file before it replies, while the subset replies
+and leaves the write to a context that runs every 10 milliseconds. Redis
+with `everysec` loses a quarter to a third of its pipelined `SET` rate to
+that write, and the subset loses none; in exchange a killed subset loses up to
+10 milliseconds of changes it acknowledged, and a killed Redis none, while a
+host that fails costs either up to about a second. Waking the writer when
+changes arrive, rather than polling, while still syncing within a second
+when none do, needs a guard wait that a time can bound (`docs/todo.md`, "An
+atomic statement's guard cannot be bounded by a time"). The subset is 1,804 lines, most of them RESP parsing and encoding.

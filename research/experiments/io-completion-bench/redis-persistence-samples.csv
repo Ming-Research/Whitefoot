@@ -1,0 +1,75 @@
+# Experiment 8 of research/investigations/io-model/TIME-AND-FILES.md: raw output, one line per run.
+# redis-bench.sh at 3b7a263e7, the subset at c97dbdc7c, the baseline lines the subset at 7edc86591 (fields after the prefix are redis-benchmark --csv: test, rps, avg, min, p50, p95, p99, max ms)
+verify,reference,counter=100000,replies=OK 1 2 1  
+verify,subset-2,counter=100000,replies=OK 1 2 1  
+verify,subset-1,counter=100000,replies=OK 1 2 1  
+verify,baseline-2,counter=100000,replies=OK 1 2 1  
+verify,baseline-1,counter=100000,replies=OK 1 2 1  
+verify,reference-aof,counter=100000,replies=OK 1 2 1  
+verify,subset-aof-2,counter=100000,replies=OK 1 2 1  
+verify-expiry,reference,replies=OK OK -1 -2 1 100 1 -1 0 ,left=93,after= -2 
+verify-expiry,subset-2,replies=OK OK -1 -2 1 100 1 -1 0 ,left=90,after= -2 
+verify-expiry,reference-aof,replies=OK OK -1 -2 1 100 1 -1 0 ,left=92,after= -2 
+verify-expiry,subset-aof-2,replies=OK OK -1 -2 1 100 1 -1 0 ,left=91,after= -2 
+verify-restart,reference-aof,got=  v 2 v ,left=99
+verify-restart,subset-aof-2,got=  v 2 v ,left=99
+verify-idle,reference,closed after 1.92 s
+verify-active,reference,72 keys left after 1.42 s
+verify-idle,subset-2,closed after 1.00 s
+verify-active,subset-2,0 keys left after 1.06 s
+reference,round 1,pipeline 1,"SET","86933.84","0.509","0.064","0.471","0.855","1.399","14.871"
+reference,round 1,pipeline 1,"GET","90884.30","0.490","0.072","0.447","0.871","1.295","8.367"
+reference,round 1,pipeline 16,"SET","570776.25","1.268","0.304","1.287","1.663","1.951","7.759"
+reference,round 1,pipeline 16,"GET","570776.25","1.137","0.192","1.127","1.527","2.095","7.327"
+subset-2,round 1,pipeline 1,"SET","117577.89","0.249","0.008","0.223","0.375","0.631","22.767"
+subset-2,round 1,pipeline 1,"GET","117591.73","0.239","0.024","0.223","0.367","0.551","10.455"
+subset-2,round 1,pipeline 16,"SET","799360.50","0.961","0.064","0.911","1.679","1.999","4.983"
+subset-2,round 1,pipeline 16,"GET","999000.94","0.719","0.040","0.679","1.311","1.495","3.559"
+subset-1,round 1,pipeline 1,"SET","92988.66","0.491","0.096","0.463","0.791","1.199","23.455"
+subset-1,round 1,pipeline 1,"GET","90892.56","0.504","0.040","0.471","0.823","1.231","16.559"
+subset-1,round 1,pipeline 16,"SET","570776.25","1.227","0.176","1.151","1.751","3.631","7.271"
+subset-1,round 1,pipeline 16,"GET","571102.19","1.174","0.184","1.039","2.007","3.367","64.895"
+baseline-2,round 1,pipeline 1,"SET","117591.73","0.241","0.016","0.215","0.375","0.583","26.399"
+baseline-2,round 1,pipeline 1,"GET","121138.70","0.233","0.032","0.215","0.359","0.551","6.263"
+baseline-2,round 1,pipeline 16,"SET","999000.94","0.683","0.032","0.695","1.095","1.431","5.423"
+baseline-2,round 1,pipeline 16,"GET","999000.94","0.600","0.032","0.575","0.935","1.279","3.663"
+baseline-1,round 1,pipeline 1,"SET","86926.29","0.528","0.104","0.487","0.879","1.335","32.959"
+baseline-1,round 1,pipeline 1,"GET","95219.96","0.473","0.096","0.439","0.831","1.183","9.775"
+baseline-1,round 1,pipeline 16,"SET","570450.62","1.183","0.184","1.127","1.775","2.727","11.335"
+baseline-1,round 1,pipeline 16,"GET","666222.50","1.106","0.184","1.063","1.567","2.207","11.511"
+reference-aof,round 1,pipeline 1,"SET","86918.73","0.520","0.072","0.487","0.855","1.231","24.863"
+reference-aof,round 1,pipeline 1,"GET","88817.84","0.492","0.072","0.455","0.847","1.279","10.023"
+reference-aof,round 1,pipeline 16,"SET","363108.22","1.955","0.296","1.911","2.783","4.599","12.903"
+reference-aof,round 1,pipeline 16,"GET","571102.19","1.180","0.200","1.143","1.711","2.919","8.175"
+subset-aof-2,round 1,pipeline 1,"SET","121153.38","0.250","0.016","0.223","0.399","0.687","27.599"
+subset-aof-2,round 1,pipeline 1,"GET","121153.38","0.241","0.040","0.215","0.399","0.583","12.487"
+subset-aof-2,round 1,pipeline 16,"SET","799360.50","0.938","0.064","0.911","1.591","2.279","4.519"
+subset-aof-2,round 1,pipeline 16,"GET","999000.94","0.724","0.080","0.679","1.087","1.399","7.231"
+reference,round 2,pipeline 1,"SET","92962.72","0.472","0.064","0.439","0.799","1.271","20.575"
+reference,round 2,pipeline 1,"GET","88865.19","0.500","0.064","0.471","0.831","1.327","15.735"
+reference,round 2,pipeline 16,"SET","499500.47","1.429","0.208","1.351","2.303","2.927","7.439"
+reference,round 2,pipeline 16,"GET","570450.62","1.280","0.248","1.199","2.063","3.015","8.415"
+subset-2,round 2,pipeline 1,"SET","117577.89","0.240","0.016","0.215","0.367","0.631","24.735"
+subset-2,round 2,pipeline 1,"GET","121138.70","0.239","0.024","0.215","0.399","0.607","23.199"
+subset-2,round 2,pipeline 16,"SET","799360.50","0.886","0.048","0.839","1.479","2.087","7.095"
+subset-2,round 2,pipeline 16,"GET","999000.94","0.662","0.072","0.631","1.039","1.367","12.207"
+subset-1,round 2,pipeline 1,"SET","86926.29","0.525","0.104","0.487","0.911","1.279","22.527"
+subset-1,round 2,pipeline 1,"GET","90892.56","0.497","0.104","0.455","0.879","1.271","13.767"
+subset-1,round 2,pipeline 16,"SET","571102.19","1.314","0.232","1.263","1.807","2.783","7.783"
+subset-1,round 2,pipeline 16,"GET","665779.00","1.113","0.160","1.055","1.671","2.455","6.767"
+baseline-2,round 2,pipeline 1,"SET","117591.73","0.246","0.016","0.223","0.367","0.607","25.807"
+baseline-2,round 2,pipeline 1,"GET","124953.14","0.227","0.024","0.207","0.351","0.567","11.951"
+baseline-2,round 2,pipeline 16,"SET","799360.50","0.881","0.056","0.791","1.551","2.535","26.079"
+baseline-2,round 2,pipeline 16,"GET","798722.06","0.806","0.048","0.735","1.455","2.223","14.943"
+baseline-1,round 2,pipeline 1,"SET","90884.30","0.510","0.112","0.471","0.839","1.199","22.287"
+baseline-1,round 2,pipeline 1,"GET","92997.30","0.491","0.096","0.471","0.751","1.135","10.215"
+baseline-1,round 2,pipeline 16,"SET","571102.19","1.188","0.256","1.135","1.639","2.143","3.935"
+baseline-1,round 2,pipeline 16,"GET","666222.50","1.164","0.240","1.047","1.927","2.319","3.983"
+reference-aof,round 2,pipeline 1,"SET","81599.34","0.552","0.064","0.503","0.967","1.559","11.775"
+reference-aof,round 2,pipeline 1,"GET","88865.19","0.494","0.056","0.447","0.895","1.431","10.191"
+reference-aof,round 2,pipeline 16,"SET","362581.59","2.063","0.368","1.887","3.855","5.463","19.247"
+reference-aof,round 2,pipeline 16,"GET","570776.25","1.233","0.160","1.183","1.935","2.687","7.711"
+subset-aof-2,round 2,pipeline 1,"SET","124937.54","0.244","0.016","0.207","0.407","0.783","23.807"
+subset-aof-2,round 2,pipeline 1,"GET","121153.38","0.233","0.024","0.215","0.367","0.559","7.983"
+subset-aof-2,round 2,pipeline 16,"SET","499500.47","1.429","0.096","1.423","2.159","2.935","7.367"
+subset-aof-2,round 2,pipeline 16,"GET","799360.50","0.797","0.024","0.759","1.431","2.463","5.335"
