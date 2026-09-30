@@ -1,0 +1,10 @@
+struct Bounds {
+  head: u8;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let initial = Bounds(head: 4_u8);
+  let limits = array_filled::<Bounds, 2>(value: initial);
+  invariant bounded: limits[1_u64].head <= 255_u8;
+  return std::process::exit_status(code: 0_u8);
+}

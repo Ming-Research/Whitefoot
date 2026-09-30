@@ -477,6 +477,30 @@ impl<'unit> TypeContext<'unit> {
         place: NodeId,
         bindings: &HashMap<DeclarationId, LocalBinding>,
     ) -> Result<Option<SelectedPlaceType>, CheckStop> {
+        let suffixes = self
+            .declarations
+            .tree
+            .children_with(place, Production::Psuffix)?;
+        self.place_prefix_selected_kind(
+            check_context,
+            place,
+            &suffixes,
+            bindings,
+            LexicalUseRole::PlaceBase,
+        )
+    }
+
+    /// The same declared-type query for a prefix in its own lexical role.
+    /// Proof factors use it to distinguish a source field from a measure
+    /// before the ordinary measure-place judgment checks the selected path.
+    pub(in crate::semantic::check) fn place_prefix_selected_kind(
+        &self,
+        check_context: &CheckContext<'_>,
+        place: NodeId,
+        suffixes: &[NodeId],
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+        root_role: LexicalUseRole,
+    ) -> Result<Option<SelectedPlaceType>, CheckStop> {
         let pbase = self
             .declarations
             .tree
@@ -492,9 +516,7 @@ impl<'unit> TypeContext<'unit> {
                     .declarations
                     .unsupported(UnsupportedSemanticFeature::CompositeValues, pbase);
             }
-            let usage =
-                self.declarations
-                    .use_at(check_context, pbase, LexicalUseRole::PlaceBase)?;
+            let usage = self.declarations.use_at(check_context, pbase, root_role)?;
             match usage.target() {
                 ResolvedTarget::Source {
                     declaration,
@@ -516,11 +538,7 @@ impl<'unit> TypeContext<'unit> {
                 _ => return Ok(None),
             }
         };
-        for suffix in self
-            .declarations
-            .tree
-            .children_with(place, Production::Psuffix)?
-        {
+        for &suffix in suffixes {
             if matches!(
                 self.declarations.tree.place_suffix(suffix)?,
                 crate::syntax::views::PlaceSuffix::Dereference

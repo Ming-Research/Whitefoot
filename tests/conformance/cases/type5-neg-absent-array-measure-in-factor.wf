@@ -1,0 +1,5 @@
+fn main() -> status: std::process::ExitStatus pure {
+  let values = array_filled::<u8, 2>(value: 0_u8);
+  invariant same: values.cap == values.cap;
+  return std::process::exit_status(code: 0_u8);
+}

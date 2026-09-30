@@ -62,6 +62,10 @@ fn main() -> status: ExitStatus pure {
   let static_len = fixed.len;
   let static_cap = fixed.cap;
   let static_head = fixed.head;
+  invariant length_fits: static_len <= 4294967295_u32;
+  invariant capacity_fits: room <= 65535_u16;
+  invariant head_fits: origin <= 255_u8;
+  invariant array_length: array.len == 2_u64;
   let viewed = check_run(spans: &spans[0_u64..2_u64]);
   if changed != 8_u32 {
     return exit_status(code: 1_u8);

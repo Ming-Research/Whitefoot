@@ -1360,9 +1360,9 @@ impl<'unit> Checker<'_, 'unit> {
     /// subscripts, in written order [MSR-1, OWN-7]. Measures and addressed
     /// borrows use the same path and owe the same subscript obligations.
     ///
-    /// `len_of(table[i])` is a term, so a measured place is not a field path.
+    /// `table[i].len` is a term, so a measured place is not a field path.
     /// A subscript inside one is an [OP-4] occurrence like every other: it
-    /// selects the base's [WIN-1] element and owes `i < len_of(base)`, which
+    /// selects the base's [WIN-1] element and owes `i < base.len`, which
     /// is submitted where the place is formed [MSR-4]. Its offset must be a
     /// term the place relations can name — [OWN-7] decides two subscripts by
     /// their offsets and [ENT-5] takes each offset's own support into every
@@ -1674,8 +1674,8 @@ impl<'unit> Checker<'_, 'unit> {
 
     /// Checks "pbase plus the given suffix run" as one place of indexable
     /// storage. A subscript passes the chain before its own `psuffix` and
-    /// anchors its wrong-base judgment there [OP-4]; a `len` or `slice_of`
-    /// operand passes the complete chain and anchors at the place node.
+    /// anchors its wrong-base judgment there [OP-4]; a measure member passes
+    /// the chain before that member and anchors at the place node.
     pub(in crate::semantic::check) fn check_indexed_place(
         &mut self,
         context: FunctionContext<'_, '_>,
@@ -2133,6 +2133,41 @@ impl<'unit> TypeContext<'unit> {
         place: CheckedIndexedPlace,
         operand: NodeId,
     ) -> Result<CheckedExpression, CheckStop> {
+        // [MSR-1] every representation, including compact array roots,
+        // admits exactly the measure cells its storage type supplies.
+        let measured = match &place {
+            CheckedIndexedPlace::Array(_) => MeasuredKind::ConstantArray,
+            CheckedIndexedPlace::Buffer(_) => MeasuredKind::RuntimeArray,
+            CheckedIndexedPlace::Range(_) => MeasuredKind::Range,
+            CheckedIndexedPlace::Container(container) => container
+                .root
+                .measured()
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?,
+        };
+        if matches!(measure.cell(measured), MeasureCell::Absent) {
+            let found = match &place {
+                CheckedIndexedPlace::Array(array) => self.checked_type_name(array.array_type)?,
+                CheckedIndexedPlace::Buffer(buffer) => {
+                    self.checked_type_name(CheckedType::Buffer {
+                        element: buffer.root.element,
+                    })?
+                }
+                CheckedIndexedPlace::Range(_) => {
+                    "a range reference, whose one measure is `len` [REF-4]".to_owned()
+                }
+                CheckedIndexedPlace::Container(container) => {
+                    self.checked_type_name(container.root.ty)?
+                }
+            };
+            return self.declarations.issue_node(
+                SemanticRule::Type5,
+                operand,
+                SemanticIssueKind::type_mismatch(
+                    "a measured place whose measure table has this row",
+                    found,
+                ),
+            );
+        }
         Ok(match place {
             CheckedIndexedPlace::Array(array) => CheckedExpression::ArrayMeasure {
                 measure,
@@ -2143,47 +2178,14 @@ impl<'unit> TypeContext<'unit> {
                 measure,
                 root: buffer.root,
             },
-            // [MSR-1] `&[T]` has exactly one row cell, `len`; every other
-            // measure is the ordinary [TYPE-5] operand rejection.
-            CheckedIndexedPlace::Range(range) => {
-                if matches!(measure.cell(MeasuredKind::Range), MeasureCell::Absent) {
-                    return self.declarations.issue_node(
-                        SemanticRule::Type5,
-                        operand,
-                        SemanticIssueKind::type_mismatch(
-                            "a measured place whose measure table has this row",
-                            "a range reference, whose one measure is `len` [REF-4]",
-                        ),
-                    );
-                }
-                CheckedExpression::RangeMeasure {
-                    measure,
-                    root: range.root,
-                }
-            }
-            CheckedIndexedPlace::Container(container) => {
-                // [MSR-1]: a measure the table gives no row is the
-                // ordinary [TYPE-5] operand rejection, carried by the
-                // measured types the table does have a row for.
-                let measured = container
-                    .root
-                    .measured()
-                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                if matches!(measure.cell(measured), MeasureCell::Absent) {
-                    return self.declarations.issue_node(
-                        SemanticRule::Type5,
-                        operand,
-                        SemanticIssueKind::type_mismatch(
-                            "a measured place whose measure table has this row",
-                            self.checked_type_name(container.root.ty)?,
-                        ),
-                    );
-                }
-                CheckedExpression::ContainerMeasure {
-                    measure,
-                    root: container.root,
-                }
-            }
+            CheckedIndexedPlace::Range(range) => CheckedExpression::RangeMeasure {
+                measure,
+                root: range.root,
+            },
+            CheckedIndexedPlace::Container(container) => CheckedExpression::ContainerMeasure {
+                measure,
+                root: container.root,
+            },
         })
     }
     /// [ENT-2, DIAG-1] a measure read or a read whose final step selects a
