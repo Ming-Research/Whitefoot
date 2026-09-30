@@ -456,7 +456,7 @@ rarely insert at the same place.
   live bindings' current images into L0 before the join; validate soundness
   against replacement and alias controls and measure closure cost first.
   Reopen when a consumer cannot avoid the branch.
-- **A product with a struct-field operand has no interval route.** [ENT-6]
+- **A struct-field operand of a product or subtraction is not proved.** [ENT-6]
   gives affine value images to live own integer bindings and measures only,
   and its interval product needs both operands' images, so after
   `propagate parse_header(...)` publishes `header.width <= 16384_u32` and
@@ -466,11 +466,23 @@ rarely insert at the same place.
   proves both. The same holds for a parameter's fields bounded by `requires`,
   so it predates v0.80, but v0.80's field relations make it the next thing a
   writer meets: PR #169's probe p2a predicted exit 24 and is refused at that
-  product. Impact: one `let` per field before a nonlinear product. Candidate:
-  give a tracked field place the current-value image its binding copy would
-  have, killed with the field; validate against field writes, whole-value
-  replacement and aliases, and measure closure cost. Reopen when a program
-  cannot copy the field.
+  product. A subtraction shows the same pattern: with
+  `struct Span { start: u64; end: u64; }`, `span.end - span.start` stays
+  [OP-2] Unproved (residual `span.end -defined span.start`) under
+  `requires span.start <= span.end` on a by-value parameter, at 290b575b and
+  f5024250, and at f5024250 also under that requirement on a `&Span`
+  parameter, inside `if span.start <= span.end` on a local, and under the
+  v0.82 struct invariant `span.start <= span.end` on a by-value parameter;
+  copying the fields into bindings first proves each. [ENT-2] clause (a)
+  makes the field places terms; where the subtraction's proof loses them is
+  not yet located. Impact: one `let` per field before a nonlinear product
+  or such a subtraction, and a struct invariant alone does not discharge a
+  subtraction of the fields it orders. Candidate: give a tracked field place
+  the current-value image its binding copy would have, killed with the
+  field; validate against field writes, whole-value replacement and aliases,
+  and measure closure cost; check that it also discharges the subtraction.
+  Reopen when a program cannot copy the field, or with the next change to
+  struct invariants.
 
 - **Two rejections writers meet carry no repair.** `InvalidPostconditionSelector`
   for a route the version does not admit, such as `when Err(error: e):` or a
