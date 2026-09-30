@@ -5,7 +5,7 @@ use super::RepairPair;
 
 const SELECTOR: &[&str] = &[
     "]: InvalidPostconditionSelector\n",
-    "\n  mechanical_fix: remove this ensures clause, and remove its contract block if no requires or ensures clauses remain; an unrouted clause can name only result data admitted by [CALL-4]; a routed clause selects only `when Ok(value: r):` for an own Result<T, E> or `when Some(value: r):` for an own Option<T>, with a fresh r and a payload T that supplies admitted data [FN-9]; Err, None and user-enum variants are not postcondition routes\n",
+    "\n  mechanical_fix: remove this ensures clause, and remove its contract block if no requires or ensures clauses remain; an unrouted clause can name only result data admitted by [CALL-4]; a routed clause selects `when b is Ok(value: r):` for an own Result<T, E> or `when b is Some(value: r):` for an own Option<T>, where b names that result, r is fresh and payload T supplies admitted data [FN-9]; omit `b is` only when exactly one declared result has the route's enum type [CALL-4]; Err, None and user-enum variants are not postcondition routes\n",
 ];
 
 pub(super) const SELECTOR_SCOPE: &[RepairPair] = &[
@@ -110,7 +110,7 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "INV-1",
         sentences: &[
             "]: InvisibleUse\n",
-            "\n  mechanical_fix: header invariant `bounded` can be named only inside its loop body [INV-1]; its conclusion survives only under the ordinary fact rules [ENT-5]: if AUTO proves this target, remove its proof block; otherwise replace this use of `bounded` with an available relation-form premise whose terms are in scope, keeping its coefficient [PRF-1]\n",
+            "\n  mechanical_fix: header invariant `bounded` can be named only inside its loop body [INV-1]; its conclusion survives only under the ordinary fact rules [ENT-5]: if AUTO proves this target, remove its proof block; otherwise, if an available relation with in-scope terms supplies the same premise as `bounded`, replace `bounded` in this use with `(relation)`, keeping `use` and any `k times` coefficient [PRF-1]\n",
         ],
         repaired: &[br#"fn main() -> status: std::process::ExitStatus pure {
   let cursor = 0_u64;
@@ -152,7 +152,7 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "INV-1",
         sentences: &[
             "]: InvisibleUse\n",
-            "\n  mechanical_fix: header invariant `first` can be named only inside its loop body [INV-1]; its conclusion survives only under the ordinary fact rules [ENT-5]: if AUTO proves this target, remove its proof block; otherwise replace this use of `first` with an available relation-form premise whose terms are in scope, keeping its coefficient [PRF-1]\n",
+            "\n  mechanical_fix: header invariant `first` can be named only inside its loop body [INV-1]; its conclusion survives only under the ordinary fact rules [ENT-5]: if AUTO proves this target, remove its proof block; otherwise, if an available relation with in-scope terms supplies the same premise as `first`, replace `first` in this use with `(relation)`, keeping `use` and any `k times` coefficient [PRF-1]\n",
         ],
         repaired: &[br#"fn combine(a: u64, b: u64, c: u64, d: u64, e: u64, f: u64) -> result: unit pure contract {
   requires a <= b;
