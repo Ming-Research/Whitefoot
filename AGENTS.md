@@ -98,6 +98,15 @@ decisions.
    design-tree and specification change, write the log entries and mark the PR
    ready (rule 1 below).
 
+**Weigh a design on its merits alone.** No design judgment, of the language,
+the compiler, the runtime or the library, weighs the existing code, tests,
+programs or documents a choice would change: not the cost or effort of
+migrating them, not how many of them it touches, and not their present use as
+evidence of what programs need. Before real projects adopt Whitefoot there is
+nothing to keep compatible, and the corpus was written to exercise the
+compiler (`design/language.md`). A decision card names no such cost as a
+reason, a cost or an option's drawback.
+
 Record reasons when choices settle, not by reconstructing them at completion.
 Routine fixes under unchanged design need no decision record.
 
