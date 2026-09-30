@@ -1320,9 +1320,15 @@ pub(super) fn cell_taken_apart(
 
 /// [TYPE-2, TYPE-9] a destructuring statement naming a storage shape reads
 /// its readonly fields instead. Each pair retains the written field and its
-/// binder; a rest marker introduces no binding and no read.
-pub(super) fn storage_taken_apart(storage: &str, fields: &[(String, String)]) -> String {
+/// binder; a rest marker introduces no binding and no read. `None` means
+/// the actual operand does not establish all the written measure fields.
+pub(super) fn storage_taken_apart(storage: &str, fields: Option<&[(String, String)]>) -> String {
     const FIELDS: &str = "storage shapes expose their measures as readonly fields [TYPE-9]";
+    let Some(fields) = fields else {
+        return format!(
+            "{FIELDS}: remove this statement, keep using `{storage}` directly, and replace uses of its bindings with the values the program needs"
+        );
+    };
     if fields.is_empty() {
         return format!("{FIELDS}: remove this statement and keep using `{storage}` directly");
     }
@@ -1331,5 +1337,7 @@ pub(super) fn storage_taken_apart(storage: &str, fields: &[(String, String)]) ->
         .map(|(field, binder)| format!("let {binder} = {storage}.{field};"))
         .collect::<Vec<_>>()
         .join(" ");
-    format!("{FIELDS}: replace this statement with `{reads}`")
+    format!(
+        "{FIELDS}: when `{storage}` is a valid readable place, replace this statement with `{reads}` and extend the enclosing effect row to cover any reads through reference parameters [EFF-2]; otherwise remove this statement and replace uses of its bindings with the values the program needs"
+    )
 }

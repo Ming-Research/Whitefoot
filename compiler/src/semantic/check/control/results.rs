@@ -653,7 +653,8 @@ impl<'unit> TypeContext<'unit> {
     }
     /// [TYPE-2, TYPE-9] read the storage shape's fields with the names the
     /// rejected statement binds, retaining the consumed place's spelling.
-    /// This reads syntax only, so TYPE-2 still precedes the place's judgments.
+    /// The non-judging type oracle and the measure table select only fields
+    /// the actual operand has, so TYPE-2 still precedes the place's judgments.
     fn storage_taken_apart_repair(
         &self,
         check_context: &CheckContext<'_>,
@@ -688,9 +689,24 @@ impl<'unit> TypeContext<'unit> {
         let consumed = self
             .declarations
             .consumed_place(check_context, place, bindings)?;
+        let measured = match self.place_selected_kind(check_context, place, bindings) {
+            Ok(Some(super::super::types::SelectedPlaceType::Value(ty))) => ty.measured(),
+            Ok(_) | Err(CheckStop::Unsupported(_)) => None,
+            Err(stop) => return Err(stop),
+        };
+        let readable = fields.iter().all(|(field, _)| {
+            measured.is_some_and(|kind| {
+                super::super::types::measure_named(field).is_some_and(|measure| {
+                    !matches!(
+                        measure.cell(kind),
+                        super::super::super::model::MeasureCell::Absent
+                    )
+                })
+            })
+        });
         Ok(super::super::repairs::storage_taken_apart(
             &consumed.spelling,
-            &fields,
+            readable.then_some(fields.as_slice()),
         ))
     }
 

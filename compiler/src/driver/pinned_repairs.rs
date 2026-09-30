@@ -5,9 +5,9 @@
 //! a probe in `driver::pinned_sentences` does: besides the rejected source
 //! and the repair it carries, one program for each alternative the pair
 //! carries out, which must be accepted with the repaired construct live.
-//! Adding or rewording a repair means adding or updating a pair here, or in
-//! `call_separations` for the [EFF-5] call-separation family; the repairs
-//! still printed without one are listed in `docs/todo.md`.
+//! Adding or rewording a repair means adding or updating a pair here or in
+//! its family module; the repairs still printed without one are listed in
+//! `docs/todo.md`.
 
 use super::{CompilationFailureKind, CompilerLimits, compile};
 use crate::SourceInput;
