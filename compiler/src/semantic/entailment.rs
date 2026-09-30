@@ -1837,5 +1837,3 @@ mod component_tests {
         }
     }
 }
-
-mod products;

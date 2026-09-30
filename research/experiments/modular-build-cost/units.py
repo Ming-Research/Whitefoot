@@ -5,6 +5,9 @@ This independent process driver copies formal programs without importing the
 experiment into their tests. Python owns process observation and scratch trees,
 not compiler judgments. Remove it when this retained-product comparison retires.
 Use a guarded invocation; compiler build time is excluded. Results are JSONL.
+Product-specific instrumentation, omissions and --require-reuse target the
+historical module-product prototype named in RESULTS.md, not the reduced
+compiler. Reproduce with that revision's compiler, harness and fixtures.
 """
 
 import argparse

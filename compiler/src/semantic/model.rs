@@ -3438,5 +3438,3 @@ impl FunctionMentions {
         }
     }
 }
-
-mod products;

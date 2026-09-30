@@ -780,10 +780,6 @@ fn finish(
     .map_err(Stop::toolchain)?;
     if options.report {
         report.analyses = cache.map(BuildCache::receipt_counts);
-        report.bodies = cache.map(BuildCache::body_counts);
-        report.headers = cache.map(BuildCache::header_checks);
-        report.module_bodies = cache.map_or_else(Vec::new, BuildCache::body_module_counts);
-        report.module_lowerings = cache.map_or_else(Vec::new, BuildCache::lowering_counts);
         println!("{}", report.json());
     }
     Ok(())
@@ -1129,11 +1125,6 @@ struct BuildReport {
     /// Function analyses the front end took from proof receipts and
     /// recorded, with a cache [MOD-8].
     analyses: Option<(u64, u64)>,
-    /// Structural body walks and imports, distinct from body-less headers.
-    bodies: Option<(u64, u64)>,
-    headers: Option<u64>,
-    module_bodies: Vec<(String, u64, u64)>,
-    module_lowerings: Vec<(String, u64, u64)>,
 }
 
 impl BuildReport {
@@ -1148,7 +1139,7 @@ impl BuildReport {
     fn json(&self) -> String {
         let milliseconds = |duration: std::time::Duration| duration.as_secs_f64() * 1000.0;
         format!(
-            "{{\"build\":{{\"module_reused\":{},\"front_end_ms\":{:.1},\"analyses_reused\":{},\"analyses_recorded\":{},\"fragments\":{},\"split_ms\":{:.1},\"objects_compiled\":{},\"objects_reused\":{},\"compile_ms\":{:.1},\"link_ms\":{:.1},\"bodies_checked\":{},\"bodies_reused\":{},\"headers_checked\":{},\"module_bodies\":[{}],\"module_lowerings\":[{}]}}}}",
+            "{{\"build\":{{\"module_reused\":{},\"front_end_ms\":{:.1},\"analyses_reused\":{},\"analyses_recorded\":{},\"fragments\":{},\"split_ms\":{:.1},\"objects_compiled\":{},\"objects_reused\":{},\"compile_ms\":{:.1},\"link_ms\":{:.1}}}}}",
             self.module_reused
                 .map_or_else(|| "null".to_owned(), |reused| reused.to_string()),
             milliseconds(self.front_end),
@@ -1162,28 +1153,6 @@ impl BuildReport {
             self.objects_reused,
             milliseconds(self.compile),
             milliseconds(self.link),
-            self.bodies
-                .map_or_else(|| "null".to_owned(), |(checked, _)| checked.to_string()),
-            self.bodies
-                .map_or_else(|| "null".to_owned(), |(_, reused)| reused.to_string()),
-            self.headers
-                .map_or_else(|| "null".to_owned(), |checked| checked.to_string()),
-            self.module_bodies
-                .iter()
-                .map(|(module, checked, reused)| format!(
-                    "{{\"module\":{},\"checked\":{checked},\"reused\":{reused}}}",
-                    json_string(module)
-                ))
-                .collect::<Vec<_>>()
-                .join(","),
-            self.module_lowerings
-                .iter()
-                .map(|(module, lowered, reused)| format!(
-                    "{{\"module\":{},\"lowered\":{lowered},\"reused\":{reused}}}",
-                    json_string(module)
-                ))
-                .collect::<Vec<_>>()
-                .join(","),
         )
     }
 }

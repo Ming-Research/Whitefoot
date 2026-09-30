@@ -35,8 +35,6 @@ static PUBLICATIONS: AtomicU64 = AtomicU64::new(0);
 /// The cache family of proof receipts [MOD-8].
 const PROOF_RECEIPTS: &str = "proof-receipts";
 
-type MemoryRecords = HashMap<(String, Vec<u8>), Vec<u8>>;
-
 /// One cache directory, scoped to the compiler that reads and writes it.
 #[derive(Clone, Debug)]
 pub struct BuildCache {
@@ -45,18 +43,11 @@ pub struct BuildCache {
     /// Proof receipts this handle found and recorded, for the build report.
     receipts_reused: Cell<u64>,
     receipts_recorded: Cell<u64>,
-    bodies_checked: Cell<u64>,
-    headers_checked: Cell<u64>,
-    bodies_reused: Cell<u64>,
-    body_modules: RefCell<std::collections::BTreeMap<String, (u64, u64)>>,
-    lowerings: RefCell<std::collections::BTreeMap<String, (u64, u64)>>,
     /// Whether each verdict this handle already settled for exact inputs
     /// was an acceptance, by the digest of its key material: one
     /// invocation's checks consult each module's interface verdict once for
     /// every module whose closure holds it [MOD-8].
     settled: RefCell<HashMap<[u8; 32], bool>>,
-    /// Invocation-local products when no persistent directory was requested.
-    memory: Option<RefCell<MemoryRecords>>,
 }
 
 impl BuildCache {
@@ -71,25 +62,10 @@ impl BuildCache {
         Ok(Self {
             root: root.to_path_buf(),
             compiler,
-            memory: None,
-            ..Self::ephemeral()
-        })
-    }
-
-    pub(super) fn ephemeral() -> Self {
-        Self {
-            root: PathBuf::new(),
-            compiler: [0; 32],
             receipts_reused: Cell::new(0),
             receipts_recorded: Cell::new(0),
-            bodies_checked: Cell::new(0),
-            headers_checked: Cell::new(0),
-            bodies_reused: Cell::new(0),
-            body_modules: RefCell::default(),
-            lowerings: RefCell::default(),
-            settled: RefCell::default(),
-            memory: Some(RefCell::default()),
-        }
+            settled: RefCell::new(HashMap::new()),
+        })
     }
 
     /// Whether the verdict this handle settled for exactly `material` was
@@ -110,65 +86,10 @@ impl BuildCache {
         (self.receipts_reused.get(), self.receipts_recorded.get())
     }
 
-    /// Structural function walks performed and imported by this invocation.
-    #[must_use]
-    pub fn body_counts(&self) -> (u64, u64) {
-        (self.bodies_checked.get(), self.bodies_reused.get())
-    }
-
-    /// Structural walks and imports grouped by declaring module; compiler
-    /// prelude rows have the separate `prelude` label.
-    #[must_use]
-    pub fn body_module_counts(&self) -> Vec<(String, u64, u64)> {
-        self.body_modules
-            .borrow()
-            .iter()
-            .map(|(module, (checked, reused))| (module.clone(), *checked, *reused))
-            .collect()
-    }
-
-    /// Function CFGs built and imported, grouped by declaring module.
-    #[must_use]
-    pub fn lowering_counts(&self) -> Vec<(String, u64, u64)> {
-        self.lowerings
-            .borrow()
-            .iter()
-            .map(|(module, (built, reused))| (module.clone(), *built, *reused))
-            .collect()
-    }
-
-    /// Body-less callable boundaries checked by this invocation.
-    #[must_use]
-    pub fn header_checks(&self) -> u64 {
-        self.headers_checked.get()
-    }
-
-    pub(super) fn header_checked(&self) {
-        self.headers_checked.set(self.headers_checked.get() + 1);
-    }
-
-    pub(super) fn body_work(&self, module: &str, reused: bool) {
-        let mut modules = self.body_modules.borrow_mut();
-        let counts = modules.entry(module.to_owned()).or_default();
-        if reused {
-            self.bodies_reused.set(self.bodies_reused.get() + 1);
-            counts.1 += 1;
-        } else {
-            self.bodies_checked.set(self.bodies_checked.get() + 1);
-            counts.0 += 1;
-        }
-    }
-
     /// The payload of the complete record of `family` whose key material is
     /// exactly `material`, when one is present.
     #[must_use]
     pub fn load(&self, family: &str, material: &[u8]) -> Option<Vec<u8>> {
-        if let Some(memory) = &self.memory {
-            return memory
-                .borrow()
-                .get(&(family.to_owned(), material.to_vec()))
-                .cloned();
-        }
         let scoped = self.scoped(material);
         let bytes = std::fs::read(self.record_path(family, &scoped)).ok()?;
         decode(&bytes, &scoped)
@@ -182,12 +103,6 @@ impl BuildCache {
     /// Returns the I/O error that prevented the publication; no partial
     /// record is left under the record's name.
     pub fn store(&self, family: &str, material: &[u8], payload: &[u8]) -> std::io::Result<()> {
-        if let Some(memory) = &self.memory {
-            memory
-                .borrow_mut()
-                .insert((family.to_owned(), material.to_vec()), payload.to_vec());
-            return Ok(());
-        }
         let scoped = self.scoped(material);
         let path = self.record_path(family, &scoped);
         let directory = self.root.join(family);
@@ -213,12 +128,6 @@ impl BuildCache {
     ///
     /// Returns the I/O error that prevented creating the directory.
     pub fn area(&self, name: &str) -> std::io::Result<PathBuf> {
-        if self.memory.is_some() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Unsupported,
-                "an invocation-local cache has no native tool directory",
-            ));
-        }
         let area = self.root.join(name);
         std::fs::create_dir_all(&area)?;
         Ok(area)
@@ -237,24 +146,6 @@ impl BuildCache {
 
     fn record_path(&self, family: &str, scoped: &[u8]) -> PathBuf {
         self.root.join(family).join(hex(&digest(scoped)))
-    }
-}
-
-impl crate::LoweringProducts for BuildCache {
-    fn load(&self, key: &[u8]) -> Option<Vec<u8>> {
-        self.load("lowered-functions", key)
-    }
-    fn store(&self, key: &[u8], product: &[u8]) {
-        let _ = self.store("lowered-functions", key, product);
-    }
-    fn lowered(&self, module: &str, reused: bool) {
-        let mut counts = self.lowerings.borrow_mut();
-        let counts = counts.entry(module.to_owned()).or_default();
-        if reused {
-            counts.1 += 1;
-        } else {
-            counts.0 += 1;
-        }
     }
 }
 
@@ -370,30 +261,11 @@ impl Fields {
         }
         Some(fields)
     }
-
-    /// The byte ranges occupied by each field, or `None` when the payload is
-    /// not exactly a sequence of complete fields.  Keeping offsets lets a
-    /// grouped product validate its container once and copy only a field that
-    /// a later consumer actually requests.
-    pub(crate) fn ranges(mut bytes: &[u8]) -> Option<Vec<(usize, usize)>> {
-        let mut ranges = Vec::new();
-        let mut offset = 0usize;
-        while !bytes.is_empty() {
-            let (field, rest) = length_prefixed(bytes)?;
-            let consumed = bytes.len().checked_sub(rest.len())?;
-            let start = offset.checked_add(8)?;
-            let end = start.checked_add(field.len())?;
-            ranges.push((start, end));
-            offset = offset.checked_add(consumed)?;
-            bytes = rest;
-        }
-        Some(ranges)
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{BuildCache, Fields};
+    use super::BuildCache;
 
     #[test]
     fn runtime_sha256_preserves_published_vectors_and_constant_identity() {
@@ -472,21 +344,5 @@ mod tests {
             Some(&b"payload"[..])
         );
         let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn grouped_field_ranges_validate_without_copying_their_payloads() {
-        let mut fields = Fields::default();
-        fields.push(b"key").push(b"payload").push(b"last");
-        let bytes = fields.into_bytes();
-        let ranges = Fields::ranges(&bytes).expect("complete fields");
-        assert_eq!(
-            ranges
-                .iter()
-                .map(|&(start, end)| &bytes[start..end])
-                .collect::<Vec<_>>(),
-            vec![&b"key"[..], &b"payload"[..], &b"last"[..]]
-        );
-        assert!(Fields::ranges(&bytes[..bytes.len() - 1]).is_none());
     }
 }

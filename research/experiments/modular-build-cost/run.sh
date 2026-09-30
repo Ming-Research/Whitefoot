@@ -11,6 +11,7 @@
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
+# --units also preserves the historical product comparison described in RESULTS.md.
 if [ "${1:-}" = --units ]; then
     shift
     exec python3 "$here/units.py" "$@"

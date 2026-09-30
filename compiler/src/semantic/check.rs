@@ -12,7 +12,6 @@ mod linearity;
 mod nominal_instances;
 mod nominals;
 mod obligations;
-mod products;
 pub(crate) mod publication;
 mod receipts;
 mod references;
@@ -26,11 +25,8 @@ mod type_invariants;
 mod type_regions;
 mod types;
 
-pub(crate) use products::ModuleProducts;
 pub(crate) use receipts::ProofReceipts;
 pub(crate) use repairs::target_allocation_count;
-
-pub(super) use products::retained_reference_event;
 
 use std::collections::{HashMap, HashSet};
 
@@ -529,7 +525,6 @@ struct DeclarationInventory<'unit> {
 
 /// Formed types, constants, templates and callable instances. Body checks can
 /// extend this context directly; checking phases select ordered views of it.
-#[derive(Clone)]
 struct TypeContext<'unit> {
     declarations: &'unit DeclarationInventory<'unit>,
     view: InventoryView,
@@ -576,7 +571,6 @@ struct TypeContext<'unit> {
     /// evaluates entries away, so no id reaches lowering.
     derived_consts: Vec<DerivedConst>,
     behavior: behavior::BehaviorInventory,
-    product_discovery: std::cell::RefCell<Option<products::DiscoveryRequests>>,
     /// [TYPE-11] each struct's formed type invariants, in declaration order.
     type_invariants: HashMap<NominalId, Vec<type_invariants::TypeInvariantTemplate>>,
 }
@@ -3146,7 +3140,6 @@ impl<'unit> TypeContext<'unit> {
         substitution: &generics::GenericSubstitution,
         call: NodeId,
     ) {
-        self.record_product_request(template, substitution, call);
         let requests = &mut self.instance_requests;
         if !requests
             .iter()
@@ -3895,7 +3888,6 @@ impl<'unit> TypeContext<'unit> {
             checked_constants: Default::default(),
             derived_consts: Default::default(),
             behavior: Default::default(),
-            product_discovery: Default::default(),
             type_invariants: Default::default(),
             functions_by_declaration: Default::default(),
             nominals_by_declaration: Default::default(),

@@ -434,9 +434,6 @@ fn emit(
     table(&mut out, "PRODUCTIONS", "Production", names, |name| {
         format!("Production::{}", camel(name))
     });
-    table(&mut out, "PRODUCTION_NAMES", "&str", &enum_names, |name| {
-        format!("{name:?}")
-    });
     table(
         &mut out,
         "PRODUCTION_ROOTS",

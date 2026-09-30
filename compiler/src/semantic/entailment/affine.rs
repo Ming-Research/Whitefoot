@@ -1417,5 +1417,3 @@ mod tests {
         assert_eq!(check.used(), u64::MAX);
     }
 }
-
-mod products;

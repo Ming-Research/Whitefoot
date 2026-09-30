@@ -60,14 +60,13 @@ pub(super) struct ActualGroup {
     pub(super) bindings: Vec<NodeId>,
 }
 
-#[derive(Clone, Eq, PartialEq)]
-pub(super) struct BindingSite {
+struct BindingSite {
     substitution: GenericSubstitution,
     key: GenericParameterKey,
     source: NodeId,
 }
 
-#[derive(Clone, Default)]
+#[derive(Default)]
 pub(super) struct BehaviorInventory {
     pub(super) formals: HashMap<DeclarationId, FormalGroup>,
     pub(super) actuals: HashMap<DeclarationId, ActualGroup>,
@@ -860,11 +859,6 @@ impl<'unit> TypeContext<'unit> {
         let arguments = substitution.clone().with_regions(Vec::new());
         let mut sites = self.behavior.binding_sites.borrow_mut();
         for (key, source) in sources {
-            self.record_product_binding(BindingSite {
-                substitution: arguments.clone(),
-                key: *key,
-                source: *source,
-            });
             if let Some(site) = sites
                 .iter_mut()
                 .find(|site| site.key == *key && site.substitution == arguments)
@@ -1728,60 +1722,3 @@ impl<'unit> DeclarationInventory<'unit> {
         }
     }
 }
-
-impl crate::semantic::products::Record for FunctionReferenceId {
-    fn write(&self, writer: &mut crate::semantic::products::Writer) {
-        writer.identity(
-            crate::semantic::products::IdentityKind::FunctionReference,
-            self.0,
-        );
-    }
-    fn read(reader: &mut crate::semantic::products::Reader<'_>) -> Option<Self> {
-        Some(Self(reader.identity(
-            crate::semantic::products::IdentityKind::FunctionReference,
-        )?))
-    }
-}
-
-crate::semantic::products::record_enum!(FunctionArgument {
-    0 => Parameter(key),
-    1 => Source { reference, concrete },
-});
-crate::semantic::products::record_struct!(FunctionReference {
-    declaration,
-    substitution
-});
-
-impl FunctionReferenceId {
-    pub(super) fn from_index(index: u32) -> Self {
-        Self(index)
-    }
-}
-
-impl BehaviorInventory {
-    pub(super) fn import_binding_sites(&self, sites: Vec<BindingSite>) {
-        let mut current = self.binding_sites.borrow_mut();
-        for site in sites {
-            if let Some(known) = current
-                .iter_mut()
-                .find(|known| known.key == site.key && known.substitution == site.substitution)
-            {
-                if site.source.index() < known.source.index() {
-                    known.source = site.source;
-                }
-            } else {
-                current.push(site);
-            }
-        }
-    }
-
-    pub(super) fn reference_count(&self) -> usize {
-        self.references.borrow().len()
-    }
-}
-
-crate::semantic::products::record_struct!(BindingSite {
-    substitution,
-    key,
-    source
-});

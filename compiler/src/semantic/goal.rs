@@ -330,5 +330,3 @@ pub(crate) enum GoalOperation {
         constant: Option<CheckedConst>,
     },
 }
-
-mod products;

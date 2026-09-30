@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-09-30 Retain runtime hashing and retire the module-product import prototype
+
+Nodes: compiler, compiler/diagnostic-rendering, compiler/incremental-compilation
+
+Owner-approved: The owner approved the complete PR #160 retain/remove list in the session ("agreed", written in Chinese): retain runtime SHA and its dependencies, CI and tests, the independent example syntax corrections and research evidence; remove structural-body and lowering import, their identity/serialization support and their dedicated fixes/tests from mergeable code, preserve the historical prototype, keep the approved SHA and diagnostic grounds, and leave the unqualified import proposal in research. The earlier approval of the SHA and diagnostic choices remains in force. This ruling authorizes no merge.
+
+Summary: Keep runtime cache SHA-256 through the safe sha2 API with full key/checksum checks and independent constant specification hashing, and keep the diagnostic-schema rationale without its obsolete dependency-free premise. Restore the incremental tree's ordinary composition stage and reject the tested per-product import representation on its recorded matched-hashing latency, memory and storage costs; retain the broader incremental objective and the technical wording of the finer-query work order. Retire the import implementation and tests of that mechanism together, preserving the complete prototype at the revision linked by the [experiment disposition](../research/experiments/modular-build-cost/RESULTS.md#disposition-of-the-module-product-prototype). Existing module verdict, proof-receipt and native-object reuse and their checks remain. No specification or conformance rule changes.
+
 ## 2026-09-30 Grow the helper pool past its ceiling while every helper waits on a peer
 
 Nodes: compiler/waiting-contexts, compiler/completion-runtime

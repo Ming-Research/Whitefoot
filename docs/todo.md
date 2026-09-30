@@ -1779,96 +1779,31 @@ rarely insert at the same place.
   evidence, not required to measure reuse of the existing vector program;
   reopen when evaluating those independent-field effects or that wrapper API.
 
-- **Finish and qualify the modular incremental design.** The module
-  decisions in the [language](../design/language.md) and
-  [compiler](../design/compiler.md) design trees rest on the
+- **Finish and qualify the modular incremental design.** The
   [architecture](../research/investigations/modular-compilation/DESIGN.md),
   [source rules](../research/investigations/modular-compilation/LANGUAGE.md)
-  and [complete specimen](../research/investigations/modular-compilation/demo/README.md);
-  the [build-cost measurements](../research/experiments/modular-build-cost/RESULTS.md)
-  record what the implementation costs. Remaining, each with the measurement
-  or limit that shows it: the later stage of the
-  [composition staging](../research/investigations/modular-compilation/DESIGN.md#composition-staging),
-  persistent formation, lookup, instance, summary and lowering queries inside
-  a composition, where module build units follow the owned representation
-  that [PR #146](https://github.com/mbbill/Whitefoot/pull/146) built
-  (`design/compiler/incremental-compilation.md`, since the standard library
-  on modules needs a library module checked once and reused by every program
-  that names it), and instance units and fact-based entry checks wait until
-  edit-build measurements show the composition's rerun to limit a current
-  experiment or a consumer needs them. The retained-product candidate imports
-  unchanged library structural bodies and lowerings after entry edits while
-  retaining current composition judgments. The audit against its recorded main found no
-  demonstrated correctness defect within scope and selected faster runtime
-  hashing, whose independent design choice the owner has approved. The
-  [final qualification](../research/experiments/modular-build-cost/RESULTS.md#final-current-main-qualification)
-  made the qualified revision faster than its recorded unchanged main, but against main with the
-  same hashing optimization its entry-edit native cost is +4.6% for GrowVector
-  and +14.7% for HashMap, with greater compiler memory and cache size. Thus the
-  import decision's cost condition remains unresolved, and the owner retained
-  the Draft without adopting or merging that proposal. Requalify these historical
-  costs after integration with a newer main before using them to select
-  another representation. The [integrated-main compiler comparison](../research/experiments/modular-build-cost/RESULTS.md#integrated-main-compiler-cost)
-  records paired entry-edit overhead of +11.3% for GrowVector and +20.0% for
-  HashMap at `7ec0a8b` against main `f502425`, with greater compiler RSS/cache
-  use; later main integrations have no fresh matched-main measurement. Native same-image
-  controls failed twice, so the approximately 5%
-  native target is unqualified. Recheck adapter attribution on the current
-  model before selecting the broader sharing boundary. The [current-model
-  omission preconditions](../research/experiments/modular-build-cost/RESULTS.md#current-model-omission-preconditions)
-  checked output equality and distinct configurations, but their timing null
-  failed; no fresh adapter-cost attribution is available. The compact-name,
-  invocation-memo and identity-lookup trials gave no useful gain and were
-  removed. The owner directed further investigation under the same target.
-  [Feature omissions](../research/experiments/modular-build-cost/RESULTS.md#feature-omission-controls)
-  isolate about 25 ms of HashMap compiler cost in body products and 14 ms in
-  lowering products; omitting both restores approximately the matched-main
-  cost. Further typed-input memos, deferred reference indexes, dense maps and
-  source-name memos failed their consumer criteria. A smaller
-  relocated-input encoding also failed its extended paired/null comparison
-  and was removed. A separate grouped lowering-read trial also failed:
-  HashMap compiler-only entry cost increased 0.6%, with a gain in only one of
-  three pairs; the trial was removed. A version-guarded current-input memo
-  reduced HashMap compiler-only entry cost by 3.6%, but native cost by only
-  0.8%, with gains in three of five native pairs; it too failed its screen
-  and was removed. A shared stored-identity catalogue then reduced native
-  HashMap cache size by 18.3%, but entry time by only 1.3% native / 1.2%
-  compiler-only, while second-entry compiler RSS rose 7.5%. It too failed
-  and was removed. A subsequent [shared callable ownership trial](../research/experiments/modular-build-cost/RESULTS.md#shared-callable-ownership-trial)
-  retained immutable signatures and their encodings across speculative forks.
-  It failed too: HashMap improved 5.58% native but only 1.15% compiler-only,
-  and GrowVector regressed 2.57% native. Its five compiler edits and dedicated
-  test were removed. The owner closed this investigation round; reopen only
-  for a newly requested consumer-boundary experiment. These screens leave no
-  selected improvement from the tested local mechanisms. Before another implementation, reassess the original import
-  boundary: a module-owned checked result shared through composition might
-  avoid rebuilding per-function metadata, while references spanning module
-  inventories could increase ordinary lookup costs or retain more live memory. Its
-  benefit is unverified; reopen with a concrete consumer-boundary experiment
-  and complete current-input/rollback controls rather than repeating the
-  failed local mechanisms. Include
-  cache-history and memory costs as well as unchanged results, invalidation
-  and library-work controls, as described in the investigation. Target
-  approximately 5% overhead without
-  losing library reuse or current-input validation. Compare same-source paired
-  timings, compiler-only cost and memory with equally optimized main; do not
-  count the general hashing benefit as a module-product gain.
-  The lowering key currently serializes proof statements and loop invariants
-  that lowering itself erases. A runtime-input projection could reduce key
-  construction and false invalidation; its benefit is unmeasured, and a
-  duplicate partial encoder could omit a real dependency. The historical
-  instrumented HashMap observation puts the entire lowering-key stage at
-  6.30 ms, including observer cost; the erased subset and downstream loading
-  effect are not isolated, so this is no measured saving. Defer it until the
-  lowering-input representation is selected or its key cost limits that
-  experiment. Preserve proof-derived allocation bounds, body disposition,
-  permissions and physical inputs, which lowering does consume, and validate
-  accepted proof-only edits separately from changed runtime expressions and
-  permissions. Structural-body retention precedes installation of call
-  requirements and allocation bounds, so a retained-body token alone cannot
-  replace the lowering-input check.
-  Finer invalidation within an edited module remains deferred; a cold build without
-  a cache, which checks each module and then the whole closure; the impact report,
+  and [specimen](../research/investigations/modular-compilation/demo/README.md)
+  describe the broader goal. Module verdicts, proof receipts and native object
+  reuse exist; composition still repeats structural checking and lowering.
+  The owner retired the per-product import implementation after its
+  [matched hashing comparison and follow-up screens](../research/experiments/modular-build-cost/RESULTS.md#disposition-of-the-module-product-prototype)
+  failed to establish approximately 5% native entry-edit overhead on both
+  containers. The independent runtime SHA improvement remains. The complete
+  corrected prototype and its dedicated tests are preserved by the linked
+  revision; those tests no longer apply to the active compiler.
+  Reopen only for a newly requested consumer-boundary experiment: module-owned
+  checked results might avoid per-function reconstruction, but their lookup,
+  memory and invalidation costs remain unmeasured. Require complete consumed
+  inputs, speculative rollback, current composition/target judgments, equal
+  fresh/cached results and zero unchanged-library walks. Compare same-source
+  paired native and compiler-only costs against equally optimized main, with
+  memory, cache history and cold costs; do not count SHA's independent gain as
+  an import benefit. The removed prototype's proof-erasing lowering-input
+  projection remains an unmeasured alternative in the investigation, not a
+  defect in the current compiler. Any future key must retain proof-derived
+  allocation bounds, disposition, permissions and physical inputs.
+  Further opportunities remain: finer invalidation within an edited module;
+  a cold build without a cache, which checks each module and then the whole closure; the impact report,
   which finds each further failing body by checking its module again with
   the earlier ones set aside; ThinLTO's import threshold, which decays along
   a deep cross-fragment call chain and left the innermost step of the

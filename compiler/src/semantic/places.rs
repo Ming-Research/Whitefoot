@@ -2042,5 +2042,3 @@ mod tests {
         );
     }
 }
-
-mod products;

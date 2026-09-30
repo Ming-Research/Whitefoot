@@ -1757,7 +1757,6 @@ impl<'unit> TypeContext<'unit> {
             .cloned()
             .ok_or(SemanticCompilerFailure::InvalidResolution)?;
         if let Some(id) = self.source_nominal_instance(template.declaration, &substitution) {
-            self.record_product_nominal(id);
             self.activate_substitution(&substitution)?;
             if self.view.add_nominal(id) {
                 self.nominal_layouts_acyclic_at = None;

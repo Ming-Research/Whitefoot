@@ -301,5 +301,3 @@ mod tests {
         assert_eq!(answer_records(&body, &entailment).1, [path(&[5])]);
     }
 }
-
-mod products;

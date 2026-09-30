@@ -2313,14 +2313,3 @@ impl<'unit> DeclarationInventory<'unit> {
         Ok(count)
     }
 }
-
-crate::semantic::products::record_struct!(GenericSubstitution { bindings, regions });
-crate::semantic::products::record_enum!(GenericParameterKey {
-    0 => Source(declaration),
-    1 => Member { application, member },
-});
-crate::semantic::products::record_enum!(GenericArgument {
-    0 => Type(ty),
-    1 => Const(value),
-    2 => Function(function),
-});

@@ -10,9 +10,9 @@ invocation). The machine was shared: single runs vary by about 10%, and a
 check without a cache by up to 20%, so treat smaller differences as noise.
 Two further runs of the 32-module edit builds are reported beside the table.
 
-This bundle answers slice 6 of the
+The original measurement bundle answers slice 6 of the
 [modular compilation design](../../investigations/modular-compilation/DESIGN.md#ordered-implementation-slices-and-completion-evidence)
-for the implementation that exists: module verdicts that record which
+for the measured implementation: module verdicts that record which
 declarations of other interfaces their check reached, function analyses
 reused through proof receipts, stable names for every link-visible entity, a
 native split of the emitted module into ThinLTO fragments, cached runtime and
@@ -21,6 +21,41 @@ build, first requires the verdict of every module in the entry's closure and
 then checks the closure as a whole, taking the analyses whose inputs are
 unchanged from their receipts; it still forms, resolves and type-checks
 every body of the closure.
+
+## Disposition of the module-product prototype
+
+The owner selected the independent runtime SHA optimization and retired this
+module-product import implementation from PR #160's mergeable code. The
+[complete prototype](https://github.com/mbbill/Whitefoot/tree/e1db29f19addf1274d794560fd067c376b77558d) remains at `e1db29f19addf1274d794560fd067c376b77558d` on
+`research/module-product-import-prototype`, including its typed codecs,
+current-input and rollback controls, source-coordinate/instance rebinding,
+lowering helpers, work counters and dedicated tests. These are historical
+implementation evidence, not features of the reduced compiler.
+
+The reduction retains `sha2`, its locked dependencies, offline CI provisioning,
+published-vector/padding/specification digest checks, the independent constant
+specification hash, and the corrected diagnostic design ground. Main's
+existing module verdicts, proof receipts and native object cache remain.
+No language or conformance rule changes. The import-specific tests retire
+with the mechanism they observe; no test of the retained compiler is removed
+or weakened to obtain a passing check.
+
+The [matched hashing comparison](#final-current-main-qualification) measured
++4.6% GrowVector and +14.7% HashMap native entry-edit cost for its recorded
+revisions, with higher memory/cache use. The subsequent local trials did not
+establish both workloads' approximately 5% target. The latest
+[ownership screen](#shared-callable-ownership-trial) also failed its criterion.
+This supports declining the measured import representation, not abandoning
+incremental compilation or claiming a current-head performance number.
+
+The following product protocols and results describe their named historical
+revisions. For reproduction, check out the named revision's compiler, harness
+and fixtures together; `run.sh --units` retains that explicit research caller.
+Instrumentation, omission and library-work assertions require a compatible
+prototype. The reduced compiler deliberately has no module-product counters.
+A new representation requires a newly requested experiment with complete
+input validation, fresh-result controls and matched hashing costs; no further
+trial is scheduled by this record.
 
 ## Workloads and modes
 

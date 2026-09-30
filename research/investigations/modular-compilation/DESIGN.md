@@ -1353,6 +1353,26 @@ P3.2 and P3.3 made the syntax and the checked program owned and gave every
 declaration a stable key. Each step is measured against the stage it
 replaces.
 
+### Disposition of the import implementation
+
+The owner closed the import experiment and selected a reduced PR containing
+the independent runtime SHA optimization, its controls, corrected design
+grounds and research evidence. The retained-body/lowering import adapters,
+typed codecs, discovery hooks, work counters and dedicated tests are removed
+from the active compiler. Their complete corrected implementation remains in
+the [historical prototype](https://github.com/mbbill/Whitefoot/tree/e1db29f19addf1274d794560fd067c376b77558d); current source again uses main's ordinary
+composition checking and lowering, alongside its existing module verdicts,
+proof receipts and object cache.
+
+The implementation and screen sections below, through the shared-callable
+ownership screen, document that prototype and the alternatives tested against
+it. Their imperatives describe those experiments, not outstanding work for
+this PR. The [measured limits](../../experiments/modular-build-cost/RESULTS.md#disposition-of-the-module-product-prototype)
+select neither import adoption nor a replacement module-owned body inventory.
+The broader incremental architecture remains an objective; reopen its
+consumer boundary only for a newly requested experiment. Preserve full
+current-input and current composition judgments in any such experiment.
+
 ### Module build unit implementation and qualification
 
 The next implementation retains the products of a module check for entry
@@ -3064,10 +3084,14 @@ the paired experiments are implementation acceptance work. A stable artifact
 ABI, remote cache service, package resolution and incremental native linker
 remain outside the selected scope.
 
-The grammar candidate has been qualified using the existing compiler
-generator, including a prefix check that it keeps every active form. The source
-demo, container argument and cold/warm transition matrix are design evidence;
-no execution or controlled performance measurement is claimed.
+The initial grammar candidate was qualified using the existing compiler
+generator, including a prefix check that it kept every active form. The source
+demo, container argument and cold/warm transition matrix began as design
+evidence. Execution and performance evidence is recorded separately in the
+[demo walkthrough](demo/README.md) and the
+[build-cost results](../../experiments/modular-build-cost/RESULTS.md), scoped
+to their named revisions. The [import disposition](#disposition-of-the-import-implementation)
+distinguishes that retired prototype from the compiler retained by this PR.
 The live specification is unchanged. The owner approved the module, name,
 visibility, readonly, proof, effect and compiler decisions, including retained
 component evidence, the legacy source-bundle entry and per-module summary

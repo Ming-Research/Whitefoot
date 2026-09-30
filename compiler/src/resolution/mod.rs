@@ -7,8 +7,6 @@
 
 mod catalog;
 mod engine;
-
-pub(crate) use engine::correspondence::{CallableHeaders, HeaderToken};
 mod kernel;
 mod scopes;
 
@@ -161,12 +159,6 @@ impl BuiltinPreludeId {
     pub(crate) const NARROW_ERROR: Self = Self(21);
     pub(crate) const INT: Self = Self(22);
     pub(crate) const FLOAT: Self = Self(23);
-
-    pub(crate) fn from_ordinal(ordinal: u8) -> Option<Self> {
-        catalog::PRELUDE_DECLARATIONS
-            .get(usize::from(ordinal))
-            .map(|record| record.id)
-    }
 
     /// Returns the internal built-in record index.
     #[must_use]
@@ -1451,23 +1443,6 @@ impl ResolvedSyntaxUnit {
         )
     }
 
-    /// Shares MOD-7's normalized callable boundaries with retained-query
-    /// consumers. This table grants no source acceptance or proof result.
-    pub(crate) fn callable_headers(
-        &self,
-    ) -> Result<CallableHeaders<'_>, ResolutionCompilerFailure> {
-        CallableHeaders::new(
-            &self.syntax.finalized.topology,
-            self.syntax.classified_bundle(),
-            &self.declarations,
-            self.lexical_uses.iter().chain(
-                self.postconditions
-                    .iter()
-                    .flat_map(|record| &record.provisional_uses),
-            ),
-        )
-    }
-
     /// Returns every interface function declaration with its definition
     /// [MOD-7].
     #[must_use]
@@ -1519,15 +1494,6 @@ impl ResolvedSyntaxUnit {
     #[must_use]
     pub fn item_key(&self, ordinal: u32) -> Option<&ItemKey> {
         self.items.get(ordinal as usize)?.as_ref()
-    }
-
-    /// Declaration-bearing items already indexed during resolution. Consumers
-    /// that only need these keys need not rebuild a syntax view to count items.
-    pub(crate) fn item_keys(&self) -> impl Iterator<Item = (u32, &ItemKey)> {
-        self.items
-            .iter()
-            .enumerate()
-            .filter_map(|(ordinal, key)| Some((u32::try_from(ordinal).ok()?, key.as_ref()?)))
     }
 
     /// Returns the stable identity of the node at `path`, relative to the

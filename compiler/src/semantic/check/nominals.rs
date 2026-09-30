@@ -57,7 +57,6 @@ impl<'unit> Checker<'_, 'unit> {
 impl<'unit> TypeContext<'unit> {
     /// Appends one nominal instance, a change to the table.
     pub(super) fn push_nominal(&mut self, nominal: CheckedNominal) {
-        self.record_product_nominal(nominal.id);
         self.view.add_nominal(nominal.id);
         self.nominals.push(nominal);
         self.nominal_table_changed();

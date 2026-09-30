@@ -311,5 +311,3 @@ pub(crate) struct CheckedPostcondition {
     pub(crate) relation: RelationTemplate,
     pub(crate) selected_returns: Vec<SelectedPostconditionReturn>,
 }
-
-mod products;

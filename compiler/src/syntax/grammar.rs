@@ -386,11 +386,6 @@ impl SelectRow {
 }
 
 impl Production {
-    /// The normative source-EBNF spelling, independent of its dense index.
-    pub(crate) const fn name(self) -> &'static str {
-        generated::PRODUCTION_NAMES[self.index()]
-    }
-
     /// Returns the root source-EBNF node for this production.
     #[must_use]
     pub fn root(self) -> GrammarNodeId {

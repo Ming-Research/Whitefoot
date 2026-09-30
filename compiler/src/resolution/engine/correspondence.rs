@@ -23,7 +23,7 @@ use super::super::{
 
 /// One normalized header token.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum HeaderToken {
+enum Token {
     Open(Production),
     Close,
     /// A fixed terminal or literal, by exact spelling.
@@ -46,10 +46,10 @@ type Coordinate = (u32, u64);
 #[derive(Default)]
 struct Scope {
     binders: HashMap<DeclarationId, usize>,
-    expansions: HashMap<DeclarationId, Vec<HeaderToken>>,
+    expansions: HashMap<DeclarationId, Vec<Token>>,
 }
 
-pub(crate) struct CallableHeaders<'a> {
+struct Tables<'a> {
     topology: &'a FinalizedTopology,
     classified: &'a crate::ClassifiedBundle,
     direct: Vec<Vec<usize>>,
@@ -70,7 +70,31 @@ pub(super) fn check_correspondence<'a>(
     if pairs.is_empty() {
         return Ok(None);
     }
-    let tables = CallableHeaders::new(topology, classified, declarations, uses)?;
+    let mut direct = vec![Vec::new(); topology.nodes.len()];
+    for (index, terminal) in topology.terminals.iter().enumerate() {
+        let owner = terminal
+            .owner
+            .ok_or(ResolutionCompilerFailure::InvalidCanonicalTree)?;
+        direct
+            .get_mut(owner.index())
+            .ok_or(ResolutionCompilerFailure::InvalidCanonicalTree)?
+            .push(index);
+    }
+    let key = |coordinate: crate::SyntaxCoordinate| {
+        (coordinate.source().ordinal(), coordinate.start().value())
+    };
+    let tables = Tables {
+        topology,
+        classified,
+        direct,
+        uses: uses
+            .map(|usage| (key(usage.origin().coordinate()), usage))
+            .collect(),
+        declarations: declarations
+            .iter()
+            .map(|declaration| (key(declaration.origin().coordinate()), declaration))
+            .collect(),
+    };
     let mut issues = Vec::new();
     for (interface, definition) in pairs {
         let (Some(interface_node), Some(definition_node)) = (
@@ -99,48 +123,10 @@ pub(super) fn check_correspondence<'a>(
     Ok(issues.into_iter().next())
 }
 
-impl<'a> CallableHeaders<'a> {
-    pub(crate) fn new(
-        topology: &'a FinalizedTopology,
-        classified: &'a crate::ClassifiedBundle,
-        declarations: &'a [DeclarationRecord],
-        uses: impl Iterator<Item = &'a LexicalUseRecord>,
-    ) -> Result<Self, ResolutionCompilerFailure> {
-        let mut direct = vec![Vec::new(); topology.nodes.len()];
-        for (index, terminal) in topology.terminals.iter().enumerate() {
-            let owner = terminal
-                .owner
-                .ok_or(ResolutionCompilerFailure::InvalidCanonicalTree)?;
-            direct
-                .get_mut(owner.index())
-                .ok_or(ResolutionCompilerFailure::InvalidCanonicalTree)?
-                .push(index);
-        }
-        let key = |coordinate: crate::SyntaxCoordinate| {
-            (coordinate.source().ordinal(), coordinate.start().value())
-        };
-        Ok(Self {
-            topology,
-            classified,
-            direct,
-            uses: uses
-                .map(|usage| (key(usage.origin().coordinate()), usage))
-                .collect(),
-            declarations: declarations
-                .iter()
-                .map(|declaration| (key(declaration.origin().coordinate()), declaration))
-                .collect(),
-        })
-    }
-}
-
-impl CallableHeaders<'_> {
+impl Tables<'_> {
     /// The normalized header of one `fn_decl`: every child and terminal up to
     /// its closing `;`, its `doc` entry or its body.
-    pub(crate) fn header(
-        &self,
-        function: NodeId,
-    ) -> Result<Vec<HeaderToken>, ResolutionCompilerFailure> {
+    fn header(&self, function: NodeId) -> Result<Vec<Token>, ResolutionCompilerFailure> {
         let mut tokens = Vec::new();
         let mut scope = Scope::default();
         self.walk(function, true, &mut tokens, &mut scope)?;
@@ -155,7 +141,7 @@ impl CallableHeaders<'_> {
     fn define(
         &self,
         node: NodeId,
-        tokens: &mut Vec<HeaderToken>,
+        tokens: &mut Vec<Token>,
         scope: &mut Scope,
     ) -> Result<(), ResolutionCompilerFailure> {
         let terminals = self.direct.get(node.index()).map_or(&[][..], Vec::as_slice);
@@ -187,10 +173,10 @@ impl CallableHeaders<'_> {
         }
         let ordinal = scope.binders.len();
         scope.binders.insert(binder.id(), ordinal);
-        tokens.push(HeaderToken::Open(Production::ContractDefine));
-        tokens.push(HeaderToken::Binder(ordinal));
+        tokens.push(Token::Open(Production::ContractDefine));
+        tokens.push(Token::Binder(ordinal));
         self.walk(expression, false, tokens, scope)?;
-        tokens.push(HeaderToken::Close);
+        tokens.push(Token::Close);
         Ok(())
     }
 
@@ -208,7 +194,7 @@ impl CallableHeaders<'_> {
 
     /// The erased `define` a bare atom names, when it names one: an `atom`
     /// whose only content is a `place` of one `pbase` IDENT.
-    fn erased_define<'s>(&self, atom: NodeId, scope: &'s Scope) -> Option<&'s Vec<HeaderToken>> {
+    fn erased_define<'s>(&self, atom: NodeId, scope: &'s Scope) -> Option<&'s Vec<Token>> {
         let children = self.topology.node_children(atom)?;
         let [place] = children else {
             return None;
@@ -249,7 +235,7 @@ impl CallableHeaders<'_> {
         &self,
         node: NodeId,
         function: bool,
-        tokens: &mut Vec<HeaderToken>,
+        tokens: &mut Vec<Token>,
         scope: &mut Scope,
     ) -> Result<(), ResolutionCompilerFailure> {
         let record = self
@@ -275,7 +261,7 @@ impl CallableHeaders<'_> {
             tokens.extend(expansion.iter().cloned());
             return Ok(());
         }
-        tokens.push(HeaderToken::Open(record.production));
+        tokens.push(Token::Open(record.production));
         let mut items: Vec<(u64, Result<NodeId, usize>)> = Vec::new();
         for child in self
             .topology
@@ -328,14 +314,14 @@ impl CallableHeaders<'_> {
                 }
             }
         }
-        tokens.push(HeaderToken::Close);
+        tokens.push(Token::Close);
         Ok(())
     }
 
     fn terminal(
         &self,
         terminal: usize,
-        tokens: &mut Vec<HeaderToken>,
+        tokens: &mut Vec<Token>,
         scope: &mut Scope,
     ) -> Result<(), ResolutionCompilerFailure> {
         let classified = self
@@ -353,10 +339,10 @@ impl CallableHeaders<'_> {
             if let ResolvedTarget::Source { declaration, .. } = usage.target()
                 && let Some(ordinal) = scope.binders.get(&declaration)
             {
-                tokens.push(HeaderToken::BinderUse(*ordinal));
+                tokens.push(Token::BinderUse(*ordinal));
                 return Ok(());
             }
-            tokens.push(HeaderToken::Use(usage.target()));
+            tokens.push(Token::Use(usage.target()));
             return Ok(());
         }
         if let Some(declaration) = self.declarations.get(&key) {
@@ -366,16 +352,16 @@ impl CallableHeaders<'_> {
                 | DeclarationRole::FunctionParameter => {
                     let ordinal = scope.binders.len();
                     scope.binders.insert(declaration.id(), ordinal);
-                    tokens.push(HeaderToken::Binder(ordinal));
+                    tokens.push(Token::Binder(ordinal));
                 }
                 // A parameter keeps its label, which callers write, and its
                 // uses compare by position like a generic binder's.
                 DeclarationRole::Parameter => {
                     let ordinal = scope.binders.len();
                     scope.binders.insert(declaration.id(), ordinal);
-                    tokens.push(HeaderToken::Name(declaration.spelling().to_owned()));
+                    tokens.push(Token::Name(declaration.spelling().to_owned()));
                 }
-                _ => tokens.push(HeaderToken::Name(declaration.spelling().to_owned())),
+                _ => tokens.push(Token::Name(declaration.spelling().to_owned())),
             }
             return Ok(());
         }
@@ -388,13 +374,13 @@ impl CallableHeaders<'_> {
         .iter()
         .any(|predicate| classified.terminals().contains(*predicate));
         tokens.push(if is_name {
-            HeaderToken::Name(
+            Token::Name(
                 std::str::from_utf8(spelling)
                     .map_err(|_| ResolutionCompilerFailure::InvalidNameEncoding)?
                     .to_owned(),
             )
         } else {
-            HeaderToken::Text(spelling.to_vec())
+            Token::Text(spelling.to_vec())
         });
         Ok(())
     }

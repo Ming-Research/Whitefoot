@@ -1030,9 +1030,9 @@ pub(crate) struct DerivationRoot {
     pub(crate) node: DerivationId,
 }
 
-/// Private derivation storage for one concrete checked function. A retained
-/// completed query may encode this inventory inside a compiler-scoped product;
-/// it is not independently verifiable and grants no composition authority.
+/// Private, lifetime-bound derivation storage for one concrete checked
+/// function. It is intentionally neither serializable nor independently
+/// verifiable; the checked program remains the only authority.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct DerivationLedger {
     pub(crate) events: Vec<FlowEvent>,
@@ -7755,5 +7755,3 @@ pub(crate) mod tests {
         }
     }
 }
-
-mod products;
