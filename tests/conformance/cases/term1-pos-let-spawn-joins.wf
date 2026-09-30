@@ -1,0 +1,20 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn weight(value: u8) -> result: u8 pure waits {
+  doc "Returns value from a started context.";
+  return value;
+}
+
+fn gather() -> result: unit pure waits {
+  doc "A spawn bound by a let is joined before any edge leaves its block, so every path back to the header waits at the join [TERM-1, WAIT-3].";
+  loop {
+    let started = spawn weight(value: 7_u8);
+    let seen = started +wrap 1_u8;
+  }
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

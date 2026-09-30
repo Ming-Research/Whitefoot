@@ -593,6 +593,13 @@ struct BodyChecker {
     /// [WAIT-1, WAIT-3] the waiting calls and spawns of the function being
     /// checked, published with its finished body.
     waiting: super::model::CheckedWaiting,
+    /// [TERM-1] the calls of the function being checked that wait for the
+    /// host: a call, not a spawn, of a waiting function a host module
+    /// declares [PRE-2].
+    host_waits: Vec<NodePath>,
+    /// [TERM-1, WAIT-3] the `let_stmt`s whose call is a spawn: each joins
+    /// its context before any edge leaves the `let_stmt`'s block.
+    spawn_joins: Vec<NodePath>,
     /// [REF-2] uses reached under loop-header validity variables. Every
     /// owning loop resolves its variables before the function is published;
     /// the function driver clears this scratch state on every retry.

@@ -1028,6 +1028,12 @@ about stored element values, which the fact language excludes.
   automatic-facts node refused branch-history enumeration for conditional
   values, and #172 declined a failure-silent re-proof at `break` because such a
   judgment is new to [INV-1].
+  - Later: the loop-progress work ([termination](../termination/DESIGN.md#the-loop-rule-as-implemented))
+    adopted the re-proof for the relations a loop owes, at joins inside its
+    body and at its `break` join [ENT-6], without enumerating paths. It
+    accepts `inv1-pos-sequential-guarded-steps`, formerly negative, and a
+    textbook bisection. This investigation's 10% time and RSS criterion was
+    not run for it; `docs/todo.md` carries that measurement.
 
 ## Where the decision goes
 

@@ -1,7 +1,8 @@
 //! [TERM-1] the progress each ordinary `loop_stmt` owes.
 //!
 //! A loop writes a rank in its header, waits on every path from its header
-//! back to its header, or derives a rank from its exit test. The rank's descent is a proof-only
+//! back to its header, moves a reference cursor into owned structure, or
+//! derives a rank from its leading exit tests. The rank's descent is a proof-only
 //! obligation the semantic proof checker discharges at the backedge, against
 //! snapshots it takes at the start of each iteration; nothing here reaches
 //! lowering.
@@ -18,19 +19,18 @@ use super::super::super::model::{
     CheckedType, CheckedValue, IntegerType,
 };
 use super::super::super::places::{PlaceStep, ResolvedPlace};
-use crate::NodePath;
 use super::super::{CheckStop, Checker};
 use super::ControlCounters;
 use super::proofs::affine_integer_value;
+use crate::NodePath;
 
 /// The repair a loop with no progress takes [DIAG-1].
 pub(crate) const TERM1_GIVE_THE_LOOP_AN_EXIT_TEST: &str = "write a rank the body lowers, such as `loop (decreases count - i) {`, or begin the body with an exit test a rank derives from, such as `if i >= count { break; }` for a cursor `i` that rises to `count`, or move a reference cursor into a `Box` below its referent on every path back to the header, or wait on every path back to the header";
 
-/// Which side of the continuing comparison the rank subtracts from.
-enum Rank {
-    /// Continuing while `low < high` or `low <= high`: the rank is
-    /// `high - low`.
-    Gap { low: Operand, high: Operand },
+/// Continuing while `low < high` or `low <= high`: the rank is `high - low`.
+struct Rank {
+    low: Operand,
+    high: Operand,
 }
 
 /// What the checker knows of a loop's progress before reading its body: the
@@ -66,16 +66,22 @@ impl<'unit> Checker<'_, 'unit> {
         if let Some(rank) = written {
             return written_rank_progress(rank, counters);
         }
-        if block_waits(statements, &self.body.waiting.calls, id) {
+        let waits = Waits {
+            host_calls: &self.body.host_waits,
+            spawn_joins: &self.body.spawn_joins,
+        };
+        if block_waits(statements, &waits, id) {
             return Ok(CheckedLoopProgress::Waits);
+        }
+        // A structural descent owes no proof, so it is tried before a rank
+        // that a leading test happens to derive.
+        if descends && !self.writes_shape(statements) {
+            return Ok(CheckedLoopProgress::Structural);
         }
         let node_path = self.types.declarations.tree.path(node)?.clone();
         let ranks = derived_ranks(id, statements, &node_path);
         if !ranks.is_empty() {
             return self.rank_progress(ranks, counters);
-        }
-        if descends && !self.writes_shape(statements) {
-            return Ok(CheckedLoopProgress::Structural);
         }
         self.types.declarations.issue_node(
             SemanticRule::Term1,
@@ -98,7 +104,7 @@ impl<'unit> Checker<'_, 'unit> {
         let mut owed = Vec::new();
         let mut alternatives = Vec::new();
         for rank in ranks {
-            let Rank::Gap { low, high } = rank;
+            let Rank { low, high } = rank;
             let low_before = snapshot(&low, &mut snapshots, counters, "at the exit test")?;
             let high_before = snapshot(&high, &mut snapshots, counters, "at the exit test")?;
             let (low, high) = (low.affine, high.affine);
@@ -169,10 +175,7 @@ impl Checker<'_, '_> {
             }
             | CheckedStatement::ValueMatchLet {
                 scrutinee, arms, ..
-            } => {
-                self.call_writes(scrutinee)
-                    || arms.iter().any(|arm| self.writes_shape(&arm.body))
-            }
+            } => self.call_writes(scrutinee) || arms.iter().any(|arm| self.writes_shape(&arm.body)),
             CheckedStatement::Loop { body, .. }
             | CheckedStatement::CountedRange { body, .. }
             | CheckedStatement::Atomic { body, .. } => self.writes_shape(body),
@@ -302,9 +305,18 @@ fn snapshot_leaves(
     let mut values = Vec::new();
     for expression in rank.postorder() {
         let kind = match &expression.kind {
-            CheckedAffineExpressionKind::Add(_, _) | CheckedAffineExpressionKind::Subtract(_, _) => {
-                let right = Box::new(values.pop().ok_or(crate::SemanticCompilerFailure::InvalidCanonicalTree)?);
-                let left = Box::new(values.pop().ok_or(crate::SemanticCompilerFailure::InvalidCanonicalTree)?);
+            CheckedAffineExpressionKind::Add(_, _)
+            | CheckedAffineExpressionKind::Subtract(_, _) => {
+                let right = Box::new(
+                    values
+                        .pop()
+                        .ok_or(crate::SemanticCompilerFailure::InvalidCanonicalTree)?,
+                );
+                let left = Box::new(
+                    values
+                        .pop()
+                        .ok_or(crate::SemanticCompilerFailure::InvalidCanonicalTree)?,
+                );
                 if matches!(expression.kind, CheckedAffineExpressionKind::Add(_, _)) {
                     CheckedAffineExpressionKind::Add(left, right)
                 } else {
@@ -318,7 +330,11 @@ fn snapshot_leaves(
             } => CheckedAffineExpressionKind::MultiplyByConstant {
                 constant: *constant,
                 constant_ty: *constant_ty,
-                value: Box::new(values.pop().ok_or(crate::SemanticCompilerFailure::InvalidCanonicalTree)?),
+                value: Box::new(
+                    values
+                        .pop()
+                        .ok_or(crate::SemanticCompilerFailure::InvalidCanonicalTree)?,
+                ),
             },
             leaf @ (CheckedAffineExpressionKind::Local { .. }
             | CheckedAffineExpressionKind::Measure(_)) => {
@@ -335,13 +351,16 @@ fn snapshot_leaves(
                                 consume_root: false,
                             }
                         }
-                        _ => return Err(crate::SemanticCompilerFailure::InvalidCanonicalTree.into()),
+                        _ => {
+                            return Err(crate::SemanticCompilerFailure::InvalidCanonicalTree.into());
+                        }
                     };
                     let operand = Operand {
                         affine: expression.clone(),
                         read,
                     };
-                    let before = snapshot(&operand, snapshots, counters, "when the iteration began")?;
+                    let before =
+                        snapshot(&operand, snapshots, counters, "when the iteration began")?;
                     taken.push((leaf.clone(), before.clone()));
                     before.kind.clone()
                 }
@@ -374,13 +393,12 @@ fn snapshot(
     }
     let ty = operand_type(operand);
     let name = match &operand.kind {
-        CheckedAffineExpressionKind::Local { binding, .. } => counters
-            .binding_names
-            .get(binding.0 as usize)
-            .map_or_else(
+        CheckedAffineExpressionKind::Local { binding, .. } => {
+            counters.binding_names.get(binding.0 as usize).map_or_else(
                 || format!("the operand {when}"),
                 |name| format!("{name} {when}"),
-            ),
+            )
+        }
         CheckedAffineExpressionKind::Measure(_) => format!("the measure {when}"),
         _ => format!("the operand {when}"),
     };
@@ -452,12 +470,16 @@ fn derived_ranks(
                 arms,
                 ..
             } => {
+                // A call in the condition could write an operand of a later
+                // test, so it ends the leading statements; any other
+                // condition is a test that derives a rank only when it is a
+                // comparison.
+                if calls_anything(scrutinee) {
+                    break;
+                }
                 let condition = match scrutinee {
                     CheckedExpression::Binding { binding, .. } => {
-                        match comparisons.get(binding) {
-                            Some(condition) => *condition,
-                            None => break,
-                        }
+                        comparisons.get(binding).copied().unwrap_or(scrutinee)
                     }
                     other => other,
                 };
@@ -529,25 +551,23 @@ fn comparison_rank(
         negated(*operation)?
     };
     match continuing {
-        CheckedIntegerOperation::Less | CheckedIntegerOperation::LessEqual => Some(Rank::Gap {
+        CheckedIntegerOperation::Less | CheckedIntegerOperation::LessEqual => Some(Rank {
             low: left,
             high: right,
         }),
-        CheckedIntegerOperation::Greater | CheckedIntegerOperation::GreaterEqual => {
-            Some(Rank::Gap {
-                low: right,
-                high: left,
-            })
-        }
+        CheckedIntegerOperation::Greater | CheckedIntegerOperation::GreaterEqual => Some(Rank {
+            low: right,
+            high: left,
+        }),
         // `x != 0` over an unsigned `x` continues while `0 < x`.
         CheckedIntegerOperation::NotEqual => {
             if is_zero(&right.affine) && unsigned(&left.affine) {
-                Some(Rank::Gap {
+                Some(Rank {
                     low: right,
                     high: left,
                 })
             } else if is_zero(&left.affine) && unsigned(&right.affine) {
-                Some(Rank::Gap {
+                Some(Rank {
                     low: left,
                     high: right,
                 })
@@ -587,7 +607,10 @@ fn negated(operation: CheckedIntegerOperation) -> Option<CheckedIntegerOperation
 }
 
 fn is_zero(operand: &CheckedAffineExpression) -> bool {
-    matches!(operand.kind, CheckedAffineExpressionKind::Constant { value: 0, .. })
+    matches!(
+        operand.kind,
+        CheckedAffineExpressionKind::Constant { value: 0, .. }
+    )
 }
 
 fn unsigned(operand: &CheckedAffineExpression) -> bool {
@@ -691,12 +714,19 @@ fn calls_anything(expression: &CheckedExpression) -> bool {
     matches!(expression, CheckedExpression::UserCall { .. })
 }
 
-/// [TERM-1, WAIT-1] whether every path through `statements` that can reach
-/// the loop's header again executes a waiting call, a guarded atomic
-/// statement or a join.
-fn block_waits(statements: &[CheckedStatement], waiting: &[NodePath], id: CheckedLoopId) -> bool {
+/// [TERM-1] the waits of the function being checked: its calls that wait for
+/// the host and its `let_stmt` spawns, each joined within its block.
+struct Waits<'body> {
+    host_calls: &'body [NodePath],
+    spawn_joins: &'body [NodePath],
+}
+
+/// [TERM-1, PRE-2, WAIT-3] whether every path through `statements` that can
+/// reach the loop's header again executes a call that waits for the host, a
+/// guarded atomic statement or a spawn's join.
+fn block_waits(statements: &[CheckedStatement], waits: &Waits<'_>, id: CheckedLoopId) -> bool {
     for statement in statements {
-        if statement_waits(statement, waiting, id) {
+        if statement_waits(statement, waits, id) {
             return true;
         }
         if leaves_iteration(statement) {
@@ -706,16 +736,25 @@ fn block_waits(statements: &[CheckedStatement], waiting: &[NodePath], id: Checke
     false
 }
 
-fn statement_waits(statement: &CheckedStatement, waiting: &[NodePath], id: CheckedLoopId) -> bool {
+fn statement_waits(statement: &CheckedStatement, waits: &Waits<'_>, id: CheckedLoopId) -> bool {
     let below = |node: &NodePath| {
-        waiting
+        waits
+            .host_calls
             .iter()
             .any(|call: &NodePath| call.components().starts_with(node.components()))
     };
+    let joins = |node: &NodePath| {
+        waits
+            .spawn_joins
+            .iter()
+            .any(|join: &NodePath| join.components().starts_with(node.components()))
+    };
     match statement {
         CheckedStatement::Let { node_path, .. }
-        | CheckedStatement::DestructuringLet { node_path, .. }
-        | CheckedStatement::PropagateLet { node_path, .. }
+        | CheckedStatement::DestructuringLet { node_path, .. } => {
+            below(node_path) || joins(node_path)
+        }
+        CheckedStatement::PropagateLet { node_path, .. }
         | CheckedStatement::Set { node_path, .. }
         | CheckedStatement::Evaluate { node_path, .. }
         | CheckedStatement::DropExpression { node_path, .. } => below(node_path),
@@ -726,7 +765,7 @@ fn statement_waits(statement: &CheckedStatement, waiting: &[NodePath], id: Check
             scrutinee, arms, ..
         } => {
             matches!(scrutinee, CheckedExpression::UserCall { call, .. } if below(call))
-                || arms.iter().all(|arm| block_waits(&arm.body, waiting, id))
+                || arms.iter().all(|arm| block_waits(&arm.body, waits, id))
         }
         _ => false,
     }

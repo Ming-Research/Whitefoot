@@ -51,7 +51,7 @@ The 57 loops with no form, by cause, read from each loop's first statements:
 | The exit test reads a length or field through a reference, via an accessor call or `buffer^.index` | 21 | 14 tree-builder stack loops: a written rank over the measure (probe B). 7 font loops over the scalar field `buffer^.index`: none, the field-atom gap |
 | Tokenizer character loops that exit when `next_char` returns the end-of-file character | 16 | a written `decreases length - position` and a `next_char` postcondition; loops that change phase without consuming also need a lexicographic rank |
 | The exit test is not among the leading statements | 9 | a written rank |
-| The exit condition is not a comparison: a `Bool` flag, `band`, or a `cvt` operand | 4 | reorder the tests, or the flag-test gap |
+| The exit condition is not a comparison: a `Bool` flag, `band`, or a `cvt` operand | 4 | reorder the tests; a flag test no longer ends the leading statements |
 | The exit operand is a `+wrap` sum | 2 | exact `+` |
 | An equality exit | 1 | `>=` |
 | A DOM link walk, the tree builder's reprocess loop and its token loop | 3 | ranked arena and table ranks ([ARENA.md](../ARENA.md)) |
@@ -75,9 +75,13 @@ compiler.
 
   After it, 10 fell, 9 did not, and the module was accepted.
   - With `+wrap` the postcondition `next > pos` was unproved at
-    `return value, next`, although `pos < length` held.
-  - With exact `+` it was proved. The derivation gap is exactly this: a
-    difference bound `pos < length` does not make `pos +wrap 1` exact.
+    `decode_utf8`'s `return value, next`, where `next` is
+    `(pos +wrap 1_u64) +wrap index`. With exact `+` it was proved, because
+    the exact sum's overflow obligation is discharged from the body's facts.
+    A reduced witness shows the gap exactly. Under
+    `requires pos + index < length;`, that `+wrap` sum does not prove
+    `next > pos`, but the exact sum does. `pos +wrap 1_u64` alone under
+    `pos < length` is exact.
   - The remaining 9 advance through other helpers that the probe did not
     edit.
 - **B. Stack measure through a reference (`pkg::html::tree_builder`,
@@ -109,11 +113,11 @@ compiler.
   - a helper postcondition stating the advance;
   - a narrower effect row;
   - `>=` for `==`.
-- Four gaps in the checker or the language remain:
+- The run found four gaps in the checker or the language:
   - a scalar field through a reference cannot be a rank atom (7 loops);
-  - a `+wrap` step is not exact under a difference bound (probe A, and 2
-    loops directly);
-  - a `Bool` exit test ends the leading statements (2 loops begin with
-    one);
+  - a `+wrap` sum is not read as exact from a bound on the sum (probe A);
+  - a `Bool` exit test ended the leading statements (2 loops begin with
+    one); after this run, an exit test with a call-free condition that is
+    not a comparison continues them and derives nothing;
   - link walks and the reprocess loop need the ranked arena and table
     ranks (3 loops).

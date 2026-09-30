@@ -18,7 +18,7 @@ files, and the spec, repair text and parser fixture lines that name
 | Change | Loops | Where |
 |---|---|---|
 | `==` exit rewritten to `>=` (one to `<=`) | 38 | 10 program loops, 13 DEFLATE loops, 13 compiler unit-test loops, 2 conformance cases |
-| written `decreases` rank | 23 | programs 15, conformance 8 |
+| written `decreases` rank | 25 | programs 17, conformance 8 |
 | independent fuel rank (`decreases fuel`, `-wrap` decrement) | 34 | compiler unit tests 31, conformance 3 |
 | counted bound replacing an unbounded loop | 9 | BFS frontier, DEFLATE blocks and symbols (4), redis expiry batches, a shared counter, polling, list removal |
 | restructured (hoisted bound, inlined step, local copy, do-while) | 9 | five octet loops, merge sort, DEFLATE bit reservoir, redis digit count, byte_string |
@@ -86,6 +86,19 @@ refused (`term1-neg-owned-descent-grows`).
 tail, leaving the cursor in place. No form measures a shrinking referent, so
 the walk is counted by the list's length; this is a gap, recorded in
 `docs/todo.md`.
+
+## Waits
+
+The first implementation counted a call of any function that declares
+`waits` as a wait, as [WAIT-1] classifies calls. Review found that a source
+function may declare `waits` and return at once, so `loop { pause(); }` was
+accepted as waiting; a spawn written as a statement also counted, although it
+is joined only when its activation leaves. The rule now counts only a call of
+a host module's waiting function, a guarded atomic statement and a `let`
+spawn's join, as ruling Q16 names them. The two `@commands` loops of
+`redis_subset.wf` had passed only because each calls the source function
+`execute`; they process a buffer and now write `decreases held - consumed`,
+with a malformed-parse exit when the parser does not advance.
 
 ## Joins
 

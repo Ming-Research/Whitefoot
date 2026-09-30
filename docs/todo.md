@@ -108,21 +108,19 @@ rarely insert at the same place.
     the list filter's form.
   - Reopen when TERM-2 is designed.
 
-- **Four automatic-derivation gaps the loop migration met.** Each has a
+- **Three automatic-derivation gaps the loop migration met.** Each has a
   writer workaround recorded in
   `research/investigations/termination/runs/migration.md` and
   `runs/checker.md`.
   - `x / c < x` from `x >= 1` is not derived: it needs a rounding step
     (`x - x/10 >= 0.9x`) the affine layer does not take.
-  - A `+wrap` step is exact only when L0 bounds its operand: under
-    `requires pos < length;`, `let next = pos +wrap 1_u64;` does not prove
-    `ensures next > pos;`, which exact `+` does, although `pos < length`
-    leaves no room to wrap. A header invariant alone does not make
+  - A `+wrap` sum is not read as exact from a bound on the sum: under
+    `requires pos + index < length;`,
+    `let base = pos +wrap 1_u64; let next = base +wrap index;` does not
+    prove `ensures next > pos;`, while the same body with exact `+` does,
+    although the bound leaves no room to wrap. `pos +wrap 1_u64` alone under
+    `pos < length` is exact. A header invariant alone does not make
     `i +wrap 1` exact either, so writers use `+`.
-  - A leading `if done { break; }` whose condition is not a comparison ends
-    the leading statements [TERM-1], so `if done { break; } if i >= n {
-    break; }` derives no rank although the flag test writes nothing. Admit
-    any call-free exit test as a leading statement that derives no rank.
   - A backedge after `take_back` then `place_back` on two windows needs one
     intermediate local invariant (`hash_map_rebuild`'s park loop).
   - Reopen together with the next change to [ENT-3.S7]'s rows or to AUTO.
@@ -2132,6 +2130,18 @@ rarely insert at the same place.
 
 ## Open language questions
 
+- **A loop that waits only through a source helper owes a rank.** [TERM-1]
+  counts a call as a wait only when a host module declares the waiting
+  function, because a source function may declare `waits` and return at
+  once. A server loop whose waits sit in a helper of its own module must
+  call the host function itself or write a rank.
+  - Change: count a call of a function of the same module that waits on
+    every path to each edge leaving it, the least set closed under that
+    rule, or a boundary atom stating it that the definition is checked
+    against [MOD-8].
+  - Reopen with the first program whose never-ending loop waits through a
+    helper.
+
 - **Recursion carries no checked progress yet.** [TERM-1] covers loops;
   a recursive call is unchecked, so `pure` still promises nothing about
   termination and the constitution's "unintended nontermination may remain"
@@ -2449,9 +2459,11 @@ condition under which it is taken up.
   when selecting its reference counterpart. Do not manufacture an impossible
   branch or weaken a postcondition to complete the comparison.
 - **Conditional measure controls expose a branch-join limit.** A counted-loop control calling a length/capacity-preserving
-  helper in only one arm rejects its backedge facts, as do lockstep growth
-  under a branch and a binary search that updates `low` in one arm and `high`
-  in the other. The [branch-join investigation](../research/investigations/branch-join-relations/DESIGN.md)
+  helper in only one arm rejects its backedge facts, as does lockstep growth
+  under a branch. A binary search that updates `low` in one arm and `high` in
+  the other is accepted since [ENT-6] keeps at a join the relations the loop
+  owes when every arm proves them (`term1-pos-bisection-join`); the other
+  cases stay refused because their facts are not relations the loop owes. The [branch-join investigation](../research/investigations/branch-join-relations/DESIGN.md)
   classifies these as the specification as written, not compiler defects: an
   invariant's conclusion is an affine theorem only, the pre-kill closure and
   the join keep only L0 facts, and the join gives each changed binding a

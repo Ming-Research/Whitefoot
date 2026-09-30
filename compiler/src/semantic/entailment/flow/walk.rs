@@ -203,7 +203,12 @@ impl Analyzer<'_, '_> {
             .frames
             .loops
             .iter()
-            .flat_map(|frame| frame.progress.iter().map(move |relation| (frame.id, relation)))
+            .flat_map(|frame| {
+                frame
+                    .progress
+                    .iter()
+                    .map(move |relation| (frame.id, relation))
+            })
             .map(|(id, relation)| (id, relation.clone()))
             .collect::<Vec<_>>();
         self.join_carrying(exits, candidates)
@@ -310,7 +315,11 @@ impl Analyzer<'_, '_> {
                 .proof_event(FlowEventKind::S5, expression_node_path(expression));
             for moved in exchanged {
                 if let Some(image) = moved.image {
-                    state.affine.measure_atoms.get_mut().insert(moved.term, image);
+                    state
+                        .affine
+                        .measure_atoms
+                        .get_mut()
+                        .insert(moved.term, image);
                 }
                 if let Some(upper) = moved.upper {
                     state.facts.establish_bound_with_proof(
@@ -1645,9 +1654,7 @@ impl Analyzer<'_, '_> {
                     debug_assert_summarized(&body_state, &kills);
                 }
                 if let CheckedLoopProgress::Rank {
-                    owed,
-                    alternatives,
-                    ..
+                    owed, alternatives, ..
                 } = progress
                     && let Some(descent) = owed.first()
                 {

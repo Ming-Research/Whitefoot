@@ -541,4 +541,3 @@ fn all_detailed_rows_retain_provenance_and_remain_cross_arm_disjoint() {
     assert_eq!(total_rows, 7_298);
     assert!(saw_atom_only);
 }
-

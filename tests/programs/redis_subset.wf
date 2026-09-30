@@ -1399,7 +1399,10 @@ fn serve(connection: TcpConnection, factory: HandleFactory, store: Shared<Store>
     let consumed = 0_u64;
     let written = 0_u64;
     let broken = False();
-    loop @commands {
+    loop @commands (
+      decreases held - consumed,
+      invariant within: consumed <= held
+    ) {
       let command = parse_command(input: input, start: consumed, held: held);
       if command.state == 0_u64 {
         break @commands;
@@ -1408,8 +1411,17 @@ fn serve(connection: TcpConnection, factory: HandleFactory, store: Shared<Store>
         set broken = True();
         break @commands;
       }
+      let next = command.next;
+      if next <= consumed {
+        set broken = True();
+        break @commands;
+      }
+      if next > held {
+        set broken = True();
+        break @commands;
+      }
       set written = execute(store: &store, input: input, command: &command, output: output, at: written, env: &env, copied: &copied, time: &time);
-      set consumed = command.next;
+      set consumed = next;
       if written > 12288_u64 {
         let bounded = written;
         if bounded > 16384_u64 {
@@ -1617,7 +1629,10 @@ fn replay(store: &Shared<Store>, factory: &HandleFactory, root: &DirectoryRead, 
         }
         let consumed = 0_u64;
         let broken = False();
-        loop @commands {
+        loop @commands (
+          decreases held - consumed,
+          invariant within: consumed <= held
+        ) {
           let command = parse_command(input: input, start: consumed, held: held);
           if command.state == 0_u64 {
             break @commands;
@@ -1626,9 +1641,18 @@ fn replay(store: &Shared<Store>, factory: &HandleFactory, root: &DirectoryRead, 
             set broken = True();
             break @commands;
           }
+          let next = command.next;
+          if next <= consumed {
+            set broken = True();
+            break @commands;
+          }
+          if next > held {
+            set broken = True();
+            break @commands;
+          }
           let answered = execute(store: store, input: input, command: &command, output: output, at: 0_u64, env: &env, copied: &copied, time: time);
           set applied = applied +wrap 1_u64;
-          set consumed = command.next;
+          set consumed = next;
         }
         if broken {
           break @chunks;

@@ -1,0 +1,20 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn nap(until: std::time::Instant) -> result: unit pure waits {
+  doc "Waits until the instant.";
+  std::time::sleep_until(deadline: until);
+  return unit;
+}
+
+fn start_forever(until: std::time::Instant) -> result: unit pure waits {
+  doc "A spawn as an expression statement joins its context only when the activation leaves, so the loop's paths back to the header never wait [TERM-1, WAIT-3].";
+  loop {
+    spawn nap(until: until);
+  }
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

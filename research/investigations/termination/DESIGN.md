@@ -154,6 +154,10 @@ Its per-entry records are in `runs/`:
 - **Hang witness.** `runs/hang/` holds the hang reproduction.
 - **Sample.** `runs/sample/` holds the real-loop sample.
 
+The scripts and outputs under `runs/` reproduce these results and stay with
+the investigation until it closes and moves to `archive/`; an empty `.out`
+file records a probe the compiler accepted without output.
+
 Each census entry was classified by a mid-sized model against a fixed rubric,
 and the classifications are recorded, not independently rechecked. I rechecked
 by tool only the facts that decide a criterion: the hang reproduction, the
@@ -525,5 +529,6 @@ accepts 142 of the 229 loops in the 20 modules checked to the end without a
 change; 30 derive a rank that the facts do not show falling, mostly a position
 advanced through a helper whose contract does not state the advance, and 57
 have no form. Two probes turn a class of each into accepted loops with a
-written rank, helper postconditions and a narrower effect row; the run adds a
-fourth derivation gap, a `Bool` exit test ending the leading statements.
+written rank, helper postconditions and a narrower effect row. The run also
+found that a `Bool` exit test ended the leading statements; an exit test with
+a call-free condition now continues them and derives nothing.

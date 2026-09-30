@@ -1,0 +1,42 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn descend(start: u64, floor: u64) -> result: u64 pure {
+  doc "The inner test continues while at > floor, which derives at - floor, and its exit block leaves the enclosing loop, which itself never reaches its header again [TERM-1].";
+  let at = start;
+  loop @outer {
+    loop {
+      if at > floor {
+      } else {
+        break @outer;
+      }
+      set at = at - 1_u64;
+    }
+    break;
+  }
+  return at;
+}
+
+fn first_at_or_below(start: u64, floor: u64) -> result: u64 pure {
+  doc "The test leaves by return when at <= floor, so it continues while at > floor and derives at - floor [TERM-1].";
+  let at = start;
+  loop {
+    if at <= floor {
+      return at;
+    }
+    set at = at - 1_u64;
+  }
+  return at;
+}
+
+fn main() -> status: ExitStatus pure {
+  let low = descend(start: 9_u64, floor: 4_u64);
+  let also = first_at_or_below(start: 9_u64, floor: 6_u64);
+  if low != 4_u64 {
+    return exit_status(code: 1_u8);
+  }
+  if also != 6_u64 {
+    return exit_status(code: 2_u8);
+  }
+  return exit_status(code: 0_u8);
+}

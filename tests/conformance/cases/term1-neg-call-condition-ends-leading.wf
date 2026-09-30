@@ -1,0 +1,29 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn done(cursor: u64) -> result: Bool pure {
+  doc "Tells whether cursor is past a fixed point.";
+  if cursor > 100_u64 {
+    return True();
+  }
+  return False();
+}
+
+fn count_to(limit: u64) -> result: u64 pure {
+  doc "A test whose condition is a call ends the leading statements, so the later test derives no rank [TERM-1].";
+  let cursor = 0_u64;
+  loop {
+    if done(cursor: cursor) {
+      break;
+    }
+    if cursor >= limit {
+      break;
+    }
+    set cursor = cursor +wrap 1_u64;
+  }
+  return cursor;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

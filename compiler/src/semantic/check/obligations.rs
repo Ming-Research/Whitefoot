@@ -12,9 +12,9 @@ use super::super::entailment::ObligationFamily;
 use super::super::goal::CheckedCallRequirement;
 use super::super::model::{
     CheckedAffineExpressionKind, CheckedAffineRelation, CheckedContainerRoot,
-    CheckedConversionMode, CheckedExpression, CheckedFunction, CheckedLoopId, CheckedLoopInvariant, CheckedLoopProgress,
-    CheckedPlaceStep, CheckedProofUseSource, CheckedRangeElementPlace, CheckedRangeSource,
-    CheckedSetTarget, CheckedStatement, FunctionId,
+    CheckedConversionMode, CheckedExpression, CheckedFunction, CheckedLoopId, CheckedLoopInvariant,
+    CheckedLoopProgress, CheckedPlaceStep, CheckedProofUseSource, CheckedRangeElementPlace,
+    CheckedRangeSource, CheckedSetTarget, CheckedStatement, FunctionId,
 };
 use super::super::obligations::{ObligationRecord, ObligationSubject};
 use super::{CheckStop, CheckedFunctionInventory};

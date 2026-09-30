@@ -1,0 +1,17 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+alias Instant = std::time::Instant;
+
+fn tick(clock: std::time::Clock) -> result: unit pure waits {
+  doc "Every path back to the header calls sleep_until, a host module's waiting function, so the loop owes no rank [TERM-1, PRE-2].";
+  loop {
+    let now = std::time::now(clock: &clock);
+    let wake = std::time::instant_after(instant: now, nanoseconds: 1000000_u64);
+    std::time::sleep_until(deadline: wake);
+  }
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

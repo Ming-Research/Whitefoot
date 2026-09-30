@@ -255,9 +255,15 @@ impl<'unit> Checker<'_, 'unit> {
         }
         if signature.waits {
             let call = self.types.declarations.tree.path(node)?.clone();
-            self.body.waiting.calls.push(call);
+            self.body.waiting.calls.push(call.clone());
             if self.types.declarations.is_spawn(node)? {
                 self.check_spawn(check_context, node, signature)?;
+            } else if self
+                .types
+                .declarations
+                .declares_host_function(signature.declaration)?
+            {
+                self.body.host_waits.push(call);
             }
         }
         let target = signature.id;

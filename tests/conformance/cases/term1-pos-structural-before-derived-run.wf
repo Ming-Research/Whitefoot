@@ -1,0 +1,43 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+enum Chain {
+  End();
+  Next(stamp: u64, tail: Box<Chain>);
+}
+
+fn walk(limit: u64) -> result: u64 pure {
+  doc "A leading test on operands the body never changes derives limit - seen, which does not fall, but the cursor descends into a Box on every backedge, and a structural descent is taken before a derived rank [TERM-1].";
+  let end = Chain::End();
+  let root = box_new::<Chain>(value: move end);
+  for (i in 0_u64..4_u64) {
+    let item = Chain::Next(stamp: i, tail: move root);
+    set root = box_new::<Chain>(value: move item);
+  }
+  let cursor = &root.inner;
+  let total = 0_u64;
+  let seen = 0_u64;
+  loop {
+    if seen >= limit {
+      break;
+    }
+    match cursor^ {
+      End() => {
+        break;
+      }
+      Next(stamp: value, tail: rest) => {
+        set total = total +wrap value^;
+        set cursor = &rest^.inner;
+      }
+    }
+  }
+  return total;
+}
+
+fn main() -> status: ExitStatus pure {
+  let total = walk(limit: 10_u64);
+  if total != 6_u64 {
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 0_u8);
+}
