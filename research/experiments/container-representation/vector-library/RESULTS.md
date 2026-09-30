@@ -5752,6 +5752,22 @@ is a promising native diagnostic, not an implemented compiler transform or
 selected API result. Append remains open pending a general implementation
 and qualification; neither medians nor the first run replace that requirement.
 
+The predeclared [64M-operation native-floor confirmation](ecosystem-spare-append-deferred-length-64m-confirmation-samples.csv)
+uses the same binaries, scalar4096, 32 contexts and ABBA order, retaining all
+336 rows and all seven samples per cohort; its guarded command exits 0 in
+31.23 seconds. Candidate medians are 0.528172–0.539482 ns per append against
+1.057804–1.085922 ns baselines. All four candidate cohorts have disjoint
+faster ranges against their baselines and both peers; the shortest WF sample
+has 35.157 ms of summed elapsed time, and paired cohort-ratio spread is at
+most 3.184%. Individual clock windows still cover one 32-context batch
+(about 70 microseconds for the candidate), with validation/reset outside each window;
+64M increases cycle count, not the uninterrupted timed interval.
+Candidate WF/C++ medians span 0.569246–0.574594 and WF/Rust
+0.618999–0.634572. No outlier is filtered, and the inconclusive 4M result
+above remains intact. This confirms the native floor with larger summed
+sample durations;
+it selects no compiler implementation and does not close the append API.
+
 A [driver-only context sweep](append-context-sweep.diff) then varies scalar4096
 from 1 to 64 independent vectors, using the original three language objects.
 The guarded build, 30 checks and seven measurements exit 0 in 5.19 seconds.
