@@ -77,6 +77,36 @@ rarely insert at the same place.
 
 ## Checker precision and proof cost
 
+- **An invariant-proved fact does not reach a constructed struct's field
+  in a postcondition.** Minimal witness: after
+  `loop (invariant from: start <= index) { ... }`,
+  `let next = index + 1_u64; let number = Decimal(value: 0_u64, next: next);
+  return number;` does not discharge `ensures result.next > start;`, while
+  the same function returning the scalar `next` under
+  `ensures result > start;` does. A control-flow edge fact such as
+  `if next > start { ... }` reaches the field; a proved header or local
+  invariant, even `invariant probe: start < next;` written just before the
+  construction, does not. [MSR-3]'s construct placement carries a construction
+  operand's value into the field, and [MSR-4] step 6 bridges through a live
+  own integer binding with a current image, so this reads as a compiler
+  discrepancy rather than a precision limit.
+  - Candidate points: the value half of `mint_measure_datums`
+    (`compiler/src/semantic/entailment/flow/sources.rs`), which establishes
+    only the L0 equality `datum = next` and skips a source place with no
+    interned term, and the step-6 candidates of `measure_terms`
+    (`flow/prover.rs`), which admit only measure datums with a measure.
+    Neither is confirmed as the one that fires.
+  - Impact: a routed postcondition over a struct payload cannot use a loop
+    invariant, so the Redis subset's `parse_command` cannot publish
+    `command.next > start` and `command.next <= held`, and its two
+    `@commands` loops keep the runtime tests `next <= consumed` and
+    `next > held` that the rewrite under the termination rulings (Q24,
+    Q26) was to remove.
+  - Change: carry the operand's affine image into the value datum, or
+    admit value datums as step-6 candidates, after confirming which point
+    fails; validate with the witness pair and the Redis rewrite.
+  - Reopen with the Redis rewrite or the first program whose postcondition
+    names a constructed field.
 - **A rank cannot name a field advanced by a call.** The DEFLATE symbol
   loops (`tests/programs/raw_deflate.wf` `decode_fixed`,
   `raw_deflate_dynamic_decode.wf` `decode_dynamic`) progress because

@@ -27,6 +27,10 @@ use crate::NodePath;
 /// The repair a loop with no progress takes [DIAG-1].
 pub(crate) const TERM1_GIVE_THE_LOOP_AN_EXIT_TEST: &str = "write a rank the body lowers, such as `loop (decreases count - i) {`, or begin the body with an exit test a rank derives from, such as `if i >= count { break; }` for a cursor `i` that rises to `count`, or move a reference cursor into a `Box` below its referent on every path back to the header, or wait on every path back to the header";
 
+/// The repair a loop takes whose only exit tests leave on an equality, which
+/// derives no rank [DIAG-1].
+pub(crate) const TERM1_ORDER_THE_EQUALITY_EXIT: &str = "this exit test leaves the loop on `==`, from which no rank derives, since a cursor that steps past the value it is compared with never meets it: compare with an order instead, such as `if i >= count { break; }` for a cursor `i` that rises to `count`";
+
 /// Continuing while `low < high` or `low <= high`: the rank is `high - low`.
 struct Rank {
     low: Operand,
@@ -79,9 +83,25 @@ impl<'unit> Checker<'_, 'unit> {
             return Ok(CheckedLoopProgress::Structural);
         }
         let node_path = self.types.declarations.tree.path(node)?.clone();
-        let ranks = derived_ranks(id, statements, &node_path);
+        let Derived {
+            ranks,
+            equality_exit,
+        } = derived_ranks(id, statements, &node_path);
         if !ranks.is_empty() {
             return self.rank_progress(ranks, counters);
+        }
+        // A leading equality exit is the likely intent, so the rejection
+        // names it and suggests the order that derives a rank.
+        if let Some(test) = equality_exit.and_then(|path| {
+            self.types.declarations.tree.node_with_path(&path)
+        }) {
+            return self.types.declarations.issue_node(
+                SemanticRule::Term1,
+                test,
+                SemanticIssueKind::LoopWithoutProgress {
+                    mechanical_fix: TERM1_ORDER_THE_EQUALITY_EXIT,
+                },
+            );
         }
         self.types.declarations.issue_node(
             SemanticRule::Term1,
@@ -450,12 +470,13 @@ fn derived_ranks(
     id: CheckedLoopId,
     statements: &[CheckedStatement],
     node_path: &NodePath,
-) -> Vec<Rank> {
+) -> Derived {
     // Each `let` before an exit test, by the binding it introduces. An
     // operand that names one is read through to its initializer, which is
     // evaluated in the same iteration before the test.
     let mut comparisons: HashMap<BindingId, &CheckedExpression> = HashMap::new();
     let mut ranks = Vec::new();
+    let mut equality_exit = None;
     for statement in statements {
         match statement {
             CheckedStatement::Let { binding, value, .. } => {
@@ -497,6 +518,8 @@ fn derived_ranks(
                     comparison_rank(condition, continuing_when, node_path, &comparisons)
                 {
                     ranks.push(rank);
+                } else if equality_exit.is_none() {
+                    equality_exit = leaves_on_equality(condition, continuing_when);
                 }
                 let continuing_empty = arms
                     .iter()
@@ -509,7 +532,36 @@ fn derived_ranks(
             _ => break,
         }
     }
-    ranks
+    Derived {
+        ranks,
+        equality_exit,
+    }
+}
+
+/// What a body's leading exit tests give: the ranks they derive, and the
+/// first test that leaves on an integer equality, which derives none.
+struct Derived {
+    ranks: Vec<Rank>,
+    equality_exit: Option<NodePath>,
+}
+
+/// The comparison's node when `condition` is an integer comparison under
+/// which the loop continues exactly while its operands differ.
+fn leaves_on_equality(condition: &CheckedExpression, continuing_when: bool) -> Option<NodePath> {
+    let CheckedExpression::IntegerOperation {
+        carrier,
+        operation,
+        ..
+    } = condition
+    else {
+        return None;
+    };
+    let continuing = if continuing_when {
+        *operation
+    } else {
+        negated(*operation)?
+    };
+    (continuing == CheckedIntegerOperation::NotEqual).then(|| carrier.clone())
 }
 
 /// Whether an arm leaves the loop on every path: it ends in a `break` of

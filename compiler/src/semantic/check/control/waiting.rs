@@ -215,7 +215,7 @@ fn leave_loop(id: CheckedLoopId, inner: Paths, completion: Option<bool>) -> Path
 }
 
 /// [DIAG-1] the repair for a waiting kind whose body executes no wait.
-pub(crate) const WAIT1_REMOVE_THE_WAITING_KIND: &str = "the body executes no wait: remove the waiting kind after the effect row, or call a waiting function in the body";
+pub(crate) const WAIT1_REMOVE_THE_WAITING_KIND: &str = "the body executes no wait: remove the waiting kind after the effect row, or execute a wait in the body, on every path to an exit for `must_wait` and on some path but not every one for `may_wait`";
 
 /// [DIAG-1] the repair for `must_wait` over a body with a path that waits
 /// nowhere.
