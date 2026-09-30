@@ -2789,16 +2789,31 @@ static int test_a_peer_wait_never_waits_behind_peer_waits(void) {
 static const char *wf_harness_self;
 extern char **environ;
 
+/* The status the child below exits with when the adapter aborts. */
+#define WF_PEER_LIMIT_ABORTED 86
+
+/* Ends the child at the adapter's abort without a core dump: a host that
+ * pipes core dumps to a collector spent tens of seconds on one of a process
+ * holding 256 blocked threads. */
+static void wf_peer_limit_aborted(int signal_number) {
+    (void)signal_number;
+    _exit(WF_PEER_LIMIT_ABORTED);
+}
+
 /* The child's side of the case below: more reads of one empty pipe than there
  * are helper records.  It returns only if the adapter let the last one wait
  * in the queue. */
 static int wf_peer_limit_child(void) {
     static wf_completion_record reads[WF_FILE_HELPER_RECORDS + 1u];
     static unsigned char bytes[WF_FILE_HELPER_RECORDS + 1u];
+    struct sigaction aborted;
     wf_completion_runtime runtime;
     wf_file_adapter adapter;
     int descriptors[2];
     unsigned index;
+    memset(&aborted, 0, sizeof(aborted));
+    aborted.sa_handler = wf_peer_limit_aborted;
+    CHECK(sigaction(SIGABRT, &aborted, NULL) == 0);
     CHECK(pipe(descriptors) == 0);
     CHECK(wf_completion_runtime_init(&runtime) == 0);
     CHECK(harness_contexts_adapter(&adapter, &runtime, 1) == 0);
@@ -2812,7 +2827,8 @@ static int wf_peer_limit_child(void) {
 
 /* A program with more waits on its own contexts on helper threads than the
  * adapter has records for stops with a report [SCOPE-3]; waiting in the queue
- * would stop it with none.  The child aborts with the adapter's line. */
+ * would stop it with none.  The child aborts with the adapter's line, which
+ * its SIGABRT handler turns into an exit status. */
 static int test_peer_waits_past_the_helper_records_stop_with_a_report(
     const char *scratch_directory
 ) {
@@ -2862,7 +2878,7 @@ static int test_peer_waits_past_the_helper_records_stop_with_a_report(
     }
     report[total] = '\0';
     CHECK(close(errors[0]) == 0);
-    CHECK(WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT);
+    CHECK(WIFEXITED(status) && WEXITSTATUS(status) == WF_PEER_LIMIT_ABORTED);
     CHECK(
         strstr(report, "whitefoot completion: more host operations waited on other contexts at once than the runtime has helper threads for")
         != NULL
