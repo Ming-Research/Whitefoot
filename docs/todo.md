@@ -2887,12 +2887,15 @@ condition under which it is taken up.
   measured and refused by its criterion
   ([firn](../research/investigations/firn/DESIGN.md#list-elements-inline-and-maps-that-shrink-results)):
   `SPOP` at depth 1 gained 14% on two CPUs but only 4% on one, while its p99
-  fell to 0.32 and 0.58 of the unshrinking map's. Reopen when a criterion
-  weighs depth-1 tail latency, or when the final suite shows `SPOP` short of
-  its competitors; the change is small (`hash_map_rebuild` accepting fewer
-  buckets than it had while they outnumber the pairs, and a check after each
-  removal) and would join the growth decision of `hash-map-storage` in the
-  design tree.
+  fell to 0.32 and 0.58 of the unshrinking map's. The full suite then left
+  `SPOP` at depth 1 on two CPUs at 0.87 of Valkey with I/O threads and 0.94
+  of Dragonfly
+  ([firn](../research/investigations/firn/DESIGN.md#the-full-suite-results)).
+  Reopen with firn's next performance work after the scaling stage, or when a
+  criterion weighs depth-1 tail latency; the change is small
+  (`hash_map_rebuild` accepting fewer buckets than it had while they
+  outnumber the pairs, and a check after each removal) and would join the
+  growth decision of `hash-map-storage` in the design tree.
 - **`SPOP` reads the hash map's buckets.** The library has no entry that
   returns a member at random, so firn's `pick_member`
   (`apps/firn/commands/sets.wf`) reads the map's public bucket array and

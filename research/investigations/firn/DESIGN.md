@@ -36,6 +36,17 @@ All on 2026-09-30:
 - **The features** of this stage are the commands the benchmark needs; what
   suffices for deployment is set later.
 
+After the full suite, also on 2026-09-30:
+
+- **The fastest competitor includes Garnet**, although Garnet was installed
+  after the baseline was measured and so never entered it. The criteria stand
+  as written and this stage's verdict is recorded as measured; the gap to
+  Garnet at depth 16 on two CPUs goes to the scaling stage, and the tests the
+  benchmark's client saturates on this host are judged again on one where it
+  does not.
+- **Scaling past two cores is to be done**, since a production server has
+  more than two; it follows this stage.
+
 ## Criteria, stated before measuring
 
 The baseline below translates "the lead measured today" into numbers. A test's
@@ -630,3 +641,177 @@ rebalancing and the score map's lookup and replacement, and the library's
 two-descent put stays as it is. `ordered_map_insert` and its tests were not
 kept; `ordered-map-storage`'s refusal of a single-descent put stands, and
 this measurement does not bear on it.
+
+### The full suite: results
+
+The criteria's measurement is `redis-bench.sh suite` (the `suite` lines of
+[firn-samples.csv](../../experiments/io-completion-bench/firn-samples.csv)):
+firn at `636cdacc8`, whose binary a rebuild of that commit's compiler, library
+and program reproduces byte for byte; three interleaved passes of the suite
+at depths 1 and 16, on two server CPUs against Redis, Valkey, Valkey with I/O
+threads, Dragonfly and Garnet 2.1.8, and on one against the same without
+Valkey's I/O threads; each run's requests set by a pilot to 12 seconds at the
+faster of Redis and firn, so that a step of the benchmark's clock is about 2%
+of a rate. The suite's check runs all 20 of the default suite's lines on every
+server first; the rates compare 19, since the twentieth, `LPUSH (needed to
+benchmark LRANGE)`, fills the lists before the ranges with the `LPUSH` test's
+own command.
+
+A container restart stopped the third pass among its one-CPU lines and
+restarted the virtual machine; afterwards every server ran the one-CPU tests
+1.5 to 2 times faster than in the first two passes (Valkey's `SET` at depth 1,
+72,319 and 75,520 before, 115,088 after), so the lines run again after it are
+kept in the CSV as the `suite second host` lines and not used. The one-CPU
+results rest on the first machine's passes: three for Redis, three for Valkey
+at depth 1 and on 9 tests at depth 16, and two otherwise, below the three the
+criteria ask for. The two-CPU results rest on three.
+
+Medians of the passes, requests per second; firn's rate is bold where it
+leads every competitor:
+Two server CPUs, depth 16 (at least 1.4 required):
+
+| Test | Redis | Valkey | Valkey, I/O threads | Dragonfly | Garnet | firn | firn / fastest |
+|---|---|---|---|---|---|---|---|
+| `PING_INLINE` | 877,167 | 877,409 | 834,179 | 1,375,549 | 1,210,159 | **1,589,722** | 1.16 |
+| `PING_MBULK` | 1,081,401 | 1,050,794 | 1,146,975 | 1,375,436 | 1,261,191 | **1,544,645** | 1.12 |
+| `SET` | 503,603 | 488,774 | 484,330 | 571,766 | 783,223 | **979,090** | 1.25 |
+| `GET` | 577,463 | 529,247 | 558,049 | 612,277 | 861,460 | **1,105,185** | 1.28 |
+| `INCR` | 578,206 | 530,018 | 552,752 | 541,009 | 748,683 | **1,060,654** | 1.42 |
+| `LPUSH` | 748,432 | 748,608 | 748,432 | 448,947 | 454,587 | **1,193,433** | 1.59 |
+| `RPUSH` | 797,739 | 765,733 | 814,559 | 445,248 | 368,310 | **1,197,157** | 1.47 |
+| `LPOP` | 719,580 | 680,917 | 740,348 | 625,116 | 778,647 | **1,387,526** | 1.78 |
+| `RPOP` | 891,666 | 861,285 | 940,887 | 758,796 | 996,720 | **1,639,184** | 1.64 |
+| `SADD` | 550,685 | 610,403 | 589,163 | 512,021 | 522,635 | **1,207,324** | 1.98 |
+| `HSET` | 498,714 | 505,275 | 479,625 | 456,894 | 519,583 | **1,115,479** | 2.15 |
+| `SPOP` | 932,429 | 955,633 | 955,633 | 830,906 | 215,488 | **1,469,730** | 1.54 |
+| `ZADD` | 172,595 | 170,637 | 170,591 | 271,516 | 144,782 | **323,694** | 1.19 |
+| `ZPOPMIN` | 977,412 | 924,335 | 977,187 | 726,041 | 958,983 | **1,588,600** | 1.63 |
+| `LRANGE_100` | 99,723 | 102,460 | 102,425 | 68,018 | 212,560 | **231,228** | 1.09 |
+| `LRANGE_300` | 32,756 | 31,925 | 31,375 | 25,602 | 79,141 | 79,076 | 1.00 |
+| `LRANGE_500` | 19,015 | 20,279 | 19,356 | 16,551 | 43,926 | 39,742 | 0.90 |
+| `LRANGE_600` | 15,869 | 16,558 | 15,962 | 13,360 | 38,002 | 37,986 | 1.00 |
+| `MSET` | 92,236 | 97,200 | 90,663 | 80,673 | 194,573 | **218,064** | 1.12 |
+
+Two server CPUs, depth 1 (at least 1.0 required):
+
+| Test | Redis | Valkey | Valkey, I/O threads | Dragonfly | Garnet | firn | firn / fastest |
+|---|---|---|---|---|---|---|---|
+| `PING_INLINE` | 99,356 | 95,877 | 109,262 | 111,500 | 82,776 | 109,271 | 0.98 |
+| `PING_MBULK` | 99,568 | 97,536 | 108,586 | 119,402 | 88,488 | 116,515 | 0.98 |
+| `SET` | 85,823 | 85,823 | 97,364 | 117,753 | 76,644 | 115,078 | 0.98 |
+| `GET` | 86,954 | 90,213 | 99,634 | 113,867 | 85,372 | 111,231 | 0.98 |
+| `INCR` | 92,495 | 89,316 | 103,858 | 113,123 | 84,840 | **115,651** | 1.02 |
+| `LPUSH` | 95,830 | 94,179 | 111,502 | 116,235 | 85,348 | **121,399** | 1.04 |
+| `RPUSH` | 95,981 | 95,994 | 111,650 | 114,003 | 85,483 | **118,906** | 1.04 |
+| `LPOP` | 95,778 | 92,102 | 111,332 | 114,014 | 85,293 | **116,657** | 1.02 |
+| `RPOP` | 95,778 | 93,878 | 108,804 | 116,600 | 83,977 | 114,003 | 0.98 |
+| `SADD` | 91,093 | 91,057 | 111,547 | 113,861 | 78,037 | 109,300 | 0.96 |
+| `HSET` | 91,135 | 91,122 | 110,930 | 110,920 | 72,862 | **118,655** | 1.07 |
+| `SPOP` | 96,156 | 96,171 | 121,294 | 113,203 | 24,240 | 106,124 | 0.87 |
+| `ZADD` | 65,123 | 63,604 | 71,054 | 99,181 | 49,749 | **114,003** | 1.15 |
+| `ZPOPMIN` | 93,860 | 98,214 | 113,930 | 116,000 | 87,424 | 113,954 | 0.98 |
+| `LRANGE_100` | 54,936 | 54,944 | 56,893 | 58,999 | 65,009 | **81,684** | 1.26 |
+| `LRANGE_300` | 29,505 | 28,726 | 29,525 | 33,757 | 37,962 | **44,291** | 1.17 |
+| `LRANGE_500` | 19,622 | 20,435 | 18,380 | 21,646 | 30,650 | 28,854 | 0.94 |
+| `LRANGE_600` | 16,254 | 17,074 | 16,254 | 17,504 | 26,266 | 24,387 | 0.93 |
+| `MSET` | 50,879 | 50,893 | 44,230 | 57,810 | 63,647 | **96,054** | 1.51 |
+
+One server CPU, depth 16 (at least 1.1 required):
+
+| Test | Redis | Valkey | Dragonfly | Garnet | firn | firn / fastest |
+|---|---|---|---|---|---|---|
+| `PING_INLINE` | 794,861 | 807,719 | 722,002 | 342,715 | **1,242,287** | 1.54 |
+| `PING_MBULK` | 1,022,699 | 982,985 | 672,407 | 344,812 | **1,223,761** | 1.20 |
+| `SET` | 488,756 | 493,645 | 338,566 | 232,876 | **661,882** | 1.34 |
+| `GET` | 540,312 | 540,358 | 393,828 | 247,888 | **705,843** | 1.31 |
+| `INCR` | 565,268 | 553,040 | 341,291 | 230,216 | **669,980** | 1.19 |
+| `LPUSH` | 733,941 | 669,393 | 367,947 | 203,702 | **841,672** | 1.15 |
+| `RPUSH` | 735,913 | 722,429 | 387,832 | 188,475 | **852,611** | 1.16 |
+| `LPOP` | 646,066 | 651,802 | 399,140 | 270,899 | **1,059,976** | 1.63 |
+| `RPOP` | 833,016 | 819,592 | 474,141 | 292,027 | **1,117,363** | 1.34 |
+| `SADD` | 538,983 | 559,932 | 323,613 | 223,186 | **724,664** | 1.29 |
+| `HSET` | 510,111 | 465,223 | 290,501 | 230,383 | **653,533** | 1.28 |
+| `SPOP` | 888,502 | 840,642 | 477,965 | 135,360 | **992,904** | 1.12 |
+| `ZADD` | 176,584 | 161,807 | 173,834 | 94,642 | **253,308** | 1.43 |
+| `ZPOPMIN` | 875,217 | 847,510 | 481,126 | 282,402 | **1,037,641** | 1.19 |
+| `LRANGE_100` | 107,551 | 105,010 | 52,481 | 188,101 | **320,305** | 1.70 |
+| `LRANGE_300` | 34,255 | 33,322 | 20,434 | 99,267 | **111,922** | 1.13 |
+| `LRANGE_500` | 21,349 | 20,608 | 13,076 | 58,164 | **66,028** | 1.14 |
+| `LRANGE_600` | 17,825 | 16,608 | 10,353 | 52,136 | **56,100** | 1.08 |
+| `MSET` | 105,686 | 95,343 | 79,730 | 89,026 | **143,334** | 1.36 |
+
+One server CPU, depth 1 (at least 1.0 required):
+
+| Test | Redis | Valkey | Dragonfly | Garnet | firn | firn / fastest |
+|---|---|---|---|---|---|---|
+| `PING_INLINE` | 85,350 | 84,074 | 91,822 | 20,309 | 85,443 | 0.93 |
+| `PING_MBULK` | 82,383 | 83,816 | 89,286 | 21,912 | **92,040** | 1.03 |
+| `SET` | 76,704 | 75,520 | 71,929 | 18,815 | **79,277** | 1.03 |
+| `GET` | 75,895 | 75,909 | 79,814 | 20,602 | **82,564** | 1.03 |
+| `INCR` | 77,103 | 77,122 | 71,709 | 19,568 | **80,193** | 1.04 |
+| `LPUSH` | 78,014 | 80,340 | 73,299 | 19,718 | **83,434** | 1.04 |
+| `RPUSH` | 80,462 | 79,292 | 76,524 | 19,464 | **85,068** | 1.06 |
+| `LPOP` | 79,814 | 79,808 | 75,524 | 20,060 | **82,926** | 1.04 |
+| `RPOP` | 75,980 | 81,133 | 76,713 | 20,248 | **81,231** | 1.00 |
+| `SADD` | 74,874 | 74,882 | 69,676 | 19,280 | **80,815** | 1.08 |
+| `HSET` | 74,990 | 76,158 | 68,035 | 19,883 | **79,677** | 1.05 |
+| `SPOP` | 79,620 | 79,625 | 80,249 | 12,567 | **81,050** | 1.01 |
+| `ZADD` | 56,382 | 58,192 | 57,882 | 16,421 | **60,884** | 1.05 |
+| `ZPOPMIN` | 81,814 | 82,876 | 81,829 | 19,841 | **83,710** | 1.01 |
+| `LRANGE_100` | 51,374 | 54,921 | 43,884 | 20,692 | **72,746** | 1.32 |
+| `LRANGE_300` | 27,600 | 29,931 | 26,401 | 19,248 | **56,331** | 1.88 |
+| `LRANGE_500` | 20,138 | 20,428 | 18,858 | 20,883 | **43,118** | 2.06 |
+| `LRANGE_600` | 16,855 | 17,504 | 13,817 | 20,567 | **38,696** | 1.88 |
+| `MSET` | 46,673 | 48,459 | 44,432 | 18,075 | **52,130** | 1.08 |
+
+**Verdict.** firn is faster than Redis on every test in every
+configuration, by the least on `PING_INLINE` at depth 1 on one CPU, 85,443
+against 85,350, within a clock step. It leads every competitor on 58 of the
+76. Against the criteria:
+
+- *The pipelined lead*: met on 18 of 19 tests on one CPU, where `LRANGE_600`
+  reached 1.08 of Garnet, and on 9 of 19 on two, where `SET`, `GET` and `MSET`
+  reached 1.25, 1.28 and 1.12 of Garnet, `ZADD` 1.19 of Dragonfly, the two
+  `PING` tests 1.16 and 1.12 of Dragonfly, and the ranges 0.90 to 1.09 of
+  Garnet. Without Garnet only `ZADD` and the `PING` tests fall short on two
+  CPUs.
+- *Without pipelining firn is not behind*: met on 18 of 19 on one CPU, where
+  `PING_INLINE` reached 0.93 of Dragonfly, and on 9 of 19 on two, where seven
+  tests reached 0.96 to 0.98 of Dragonfly, `SPOP` 0.87 of Valkey with I/O
+  threads, and `LRANGE_500` and `LRANGE_600` 0.94 and 0.93 of Garnet.
+- *Latency*: firn's median p99 at depth 16 is no higher than the fastest
+  competitor's on 36 of 38, the exceptions on two CPUs `MSET`, 9.20 against
+  Garnet's 7.66 ms, and `LRANGE_500`, 11.86 against 11.57.
+
+Three readings qualify the verdict:
+
+- **The ranges and possibly `PING` measure the client on two CPUs.** With the
+  client on two CPUs and two threads, firn's `LRANGE_100` at depth 16 reached
+  231,228; on one server CPU, with the client on three, it reached 320,305,
+  and at depth 1 `LRANGE_500` went from 28,854 to 43,118 the same way.
+  Garnet's ranges on two CPUs sit at or near firn's, as a shared client limit
+  would put them. Whether `PING`, at 1.5 million requests a second, is also at
+  the client's limit is not established.
+- **At depth 1 on two CPUs the margins are within this measurement's
+  resolution.** On `PING`, `SET`, `GET` and `INCR` every server there ran
+  between 76,644 and 119,402 requests a second, where at depth 16 `SET` alone
+  spans 484,330 to 979,090: at depth 1 a request's round trip through the
+  client and the kernel's loopback, the same for every server, is most of what
+  is measured, an inference from these spreads that no profile at depth 1 has
+  checked. The median ratio of a test's highest pass to its lowest was 1.09
+  for firn and 1.11 for Dragonfly there, so the six tests at 0.98 of
+  Dragonfly, one clock step, do not separate the two. `SPOP` is a real gap
+  with a known cause, a set that never shrinks (in
+  [docs/todo.md](../../../docs/todo.md) under firn).
+- **At depth 1 firn leads on 18 of 19 tests on one CPU and on 9 on two.** Two
+  drivers take one keyspace lock for every command, so its cache line moves
+  between the cores once a request; on one CPU it does not, and Dragonfly
+  keeps each connection's data on its own thread. That this is the difference
+  is a hypothesis: the lock's share at depth 16 is the 16 to 19% of spinning
+  measured above, and no profile at depth 1 has measured it. The scaling
+  stage, which removes the one lock, tests it.
+
+A head-to-head of this binary against the head's, `d3be4d91c`, is below:
+after it, firn changed only in replies to errors and `CONFIG`, a zero byte in
+a command name and `INCR`'s decimal reply, the library lost an unreachable
+branch, and the merge of `main` brought checker changes.
