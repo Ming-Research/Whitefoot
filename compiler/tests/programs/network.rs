@@ -682,7 +682,6 @@ fn remaining(connection: &std::net::TcpConnection) -> result: u8 writes(connecti
   }
   set bytes[0_u64] = 65_u8;
   let source = &bytes[0_u64..1_u64];
-  let no_deadline = None<std::time::Instant>();
   match std::net::send_once(send: &connection^.send, source: source, start: 0_u64, end: 1_u64, deadline: no_deadline) {
     Ok(value: sent) => {
       if sent != 1_u64 {
@@ -702,7 +701,6 @@ fn exercise(factory: &std::io::HandleFactory, address: &std::net::SocketAddress)
   let no_deadline = None<std::time::Instant>();
   match std::net::tcp_connect(factory: factory, address: address, deadline: no_deadline) {
     Ok(value: first) => {
-      let no_deadline = None<std::time::Instant>();
       match std::net::tcp_connect(factory: factory, address: address, deadline: no_deadline) {
         Ok(value: second) => {
           let (a, b) = cross(first: move first, second: move second);
@@ -718,7 +716,6 @@ fn exercise(factory: &std::io::HandleFactory, address: &std::net::SocketAddress)
           if exchange_status != 0_u8 {
             return exchange_status;
           }
-          let no_deadline = None<std::time::Instant>();
           match std::net::tcp_connect(factory: factory, address: address, deadline: no_deadline) {
             Ok(value: checkpoint) => {
               let checkpoint_status = remaining(connection: &checkpoint);

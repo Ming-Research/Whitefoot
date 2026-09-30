@@ -1028,9 +1028,13 @@ int wf__body_sleep_until_start(uint8_t *result, const wf_value *deadline,
 
 void wf__body_sleep_until_finish(uint8_t *result, const wf_value *deadline,
                                  wf_host_operation *operation) {
-    (void)result;
+    int64_t amount;
+    int error;
     (void)deadline;
-    (void)operation;
+    /* A context's finish reads a record its driver already completed; a
+     * sleep joined outside every context waits out the clock here. */
+    wf__completion_file_join(&operation->record, &amount, &error);
+    *result = 0;
 }
 
 void wf__body_sleep_until(uint8_t *result, const wf_value *deadline) {

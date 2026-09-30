@@ -580,6 +580,11 @@ int wf_file_adapter_init(
     atomic_init(&adapter->execute_ticks, 0);
     adapter->blocked_helpers = 0;
     adapter->live_helpers = 0;
+    /* A helper takes the next slot when it starts, and no more helpers ever
+     * start on one adapter than it has slots. */
+    adapter->helper_slots = 0;
+    memset(adapter->executing, 0, sizeof(adapter->executing));
+    memset(adapter->executing_thread, 0, sizeof(adapter->executing_thread));
     adapter->stopping = 0;
     adapter->hold_for_contexts = 0;
     adapter->helper_capacity = helper_capacity;

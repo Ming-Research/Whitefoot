@@ -436,7 +436,8 @@ static int wf_bridge_ring_park(uint64_t observed_epoch, uint32_t timeout_ms) {
             observed_epoch,
             timeout_ms
         );
-        if (park_error != 0) {
+        /* A park bounded by a deadline that passed is an ordinary return. */
+        if (park_error != 0 && park_error != ETIMEDOUT) {
             wf_bridge_fail_with_code(
                 "the io_uring target failed while parking on the ring",
                 park_error
