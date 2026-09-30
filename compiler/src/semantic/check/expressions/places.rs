@@ -24,9 +24,6 @@ use super::super::super::places::{
 };
 use super::super::references::{OWN1_ROOTED_CONSUME, WIN3_NO_TAKE};
 
-/// [TYPE-9] the restructuring a `move` of a runtime-capacity content names.
-const TYPE9_NO_CONTENT_MOVE: &str =
-    "let the Box release it at scope exit, or empty it and call free_empty(move b) [OP-14]";
 use super::super::{CheckStop, Checker, EffectSet, LocalBinding, PlaceAccess, TypedExpression};
 use super::{PlaceUseContext, PlaceUseOptions, ResolvedPlaceSet};
 
@@ -950,12 +947,29 @@ impl<'unit> TypeContext<'unit> {
                 | CheckedType::Segments { .. }
                 | CheckedType::Window { capacity: None, .. }
         ) {
+            // The last content step selects the runtime-capacity value;
+            // its prefix is the Box that can move or be released [TYPE-9].
+            let (PlaceStep::Deref, cell_path) = resolved_path
+                .split_last()
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?
+            else {
+                return Err(SemanticCompilerFailure::InvalidResolution.into());
+            };
+            let mut cell = ResolvedPlace::binding(local.binding);
+            cell.path = cell_path.to_vec();
+            let cell = self.render_resolved_place(&cell, bindings)?;
+            let window = matches!(referent, CheckedType::Window { .. });
+            let droppable = self
+                .linear_release_obligation(check_context, referent)?
+                .is_none();
             return self.declarations.issue_node(
                 SemanticRule::Type9,
                 use_node,
                 SemanticIssueKind::InlineRuntimeCapacityShape {
                     spelling: self.checked_type_name(referent)?,
-                    mechanical_fix: TYPE9_NO_CONTENT_MOVE,
+                    mechanical_fix: super::super::repairs::runtime_content_move(
+                        &cell, window, droppable,
+                    ),
                 },
             );
         }

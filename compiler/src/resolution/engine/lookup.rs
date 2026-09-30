@@ -247,6 +247,7 @@ pub(super) fn resolve_uses_deferred(
         let universe = universe_classes(use_record.role);
         let mut candidates = Vec::new();
         let mut invisible = Vec::new();
+        let mut invisible_headers_only = true;
         let mut available = HashSet::new();
         for meta in index
             .with_spelling(&use_record.spelling)
@@ -304,6 +305,13 @@ pub(super) fn resolve_uses_deferred(
                         candidates.push(candidate_target(declarations, metas, meta, *class)?);
                     } else {
                         invisible.push(declaration.diagnostic_origin(*class));
+                        invisible_headers_only &= *class == DeclarationClass::Invariant
+                            && scopes.records.get(meta.scope.index()).is_some_and(|scope| {
+                                matches!(
+                                    scope.kind(),
+                                    crate::ScopeKind::LoopLabel | crate::ScopeKind::CountedRange
+                                )
+                            });
                     }
                 }
             }
@@ -392,6 +400,13 @@ pub(super) fn resolve_uses_deferred(
                             role: use_record.role,
                             admissible,
                             origins: invisible,
+                            mechanical_fix: (use_record.role == LexicalUseRole::InvariantFact
+                                && invisible_headers_only)
+                                .then(|| {
+                                    crate::semantic::header_invariant_scope_repair(
+                                        &use_record.spelling,
+                                    )
+                                }),
                         },
                     }),
                 ));

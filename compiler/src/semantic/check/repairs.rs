@@ -29,6 +29,10 @@
 //! is no rejection [DIAG-1], but it sends the writer to the same count as
 //! [OP-9]'s repair, whose words stand next to it.
 //!
+//! Selector admission and invariant-name scope repairs also live here. The
+//! resolver calls the scope formatter with the name it has already classified;
+//! that formatter performs no semantic checking.
+//!
 //! The sentences live here, in one place, so that wording can follow evidence
 //! from agents without touching the judgments that select them.
 
@@ -44,6 +48,21 @@ use super::super::model::{
 };
 use super::super::permission::visit_read_bindings;
 use crate::NodePath;
+
+/// [FN-9] an unsupported selector cannot state this postcondition. Removing
+/// its last clause also removes a now-empty or define-only contract [FN-8].
+pub(crate) const fn postcondition_selector_repair() -> &'static str {
+    "remove this ensures clause, and remove its contract block if no requires or ensures clauses remain; an unrouted clause can name only result data admitted by [CALL-4]; a routed clause selects `when b is Ok(value: r):` for an own Result<T, E> or `when b is Some(value: r):` for an own Option<T>, where b names that result, r is fresh and payload T supplies admitted data [FN-9]; omit `b is` only when exactly one declared result has the route's enum type [CALL-4]; Err, None and user-enum variants are not postcondition routes"
+}
+
+/// [INV-1, ENT-5] the name's scope and the conclusion's survival are separate.
+/// An explicit certificate may use a surviving relation, but not its expired
+/// header name; a target AUTO already proves needs no proof block [PRF-1].
+pub(crate) fn header_invariant_scope_repair(name: &str) -> String {
+    format!(
+        "header invariant `{name}` can be named only inside its loop body [INV-1]; its conclusion survives only under the ordinary fact rules [ENT-5]: if AUTO proves this target, remove its proof block; otherwise, if an available relation with in-scope terms supplies the same premise as `{name}`, replace `{name}` in this use with `(relation)`, keeping `use` and any `k times` coefficient [PRF-1]"
+    )
+}
 
 /// Whether the checker derived a goal false or derived neither sign [ENT-4].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1120,8 +1139,8 @@ pub(super) fn range_formation(case: &GoalCase<'_>) -> String {
 }
 
 /// [OP-14] `free_empty`'s requirement that the window is empty. Skipping the
-/// release is no repair: a window left alive is released at its scope exit,
-/// which owes the same empty proof [PROV-6].
+/// consume does not discharge a linear window: it must be emptied and
+/// consumed, not abandoned at scope exit [PROV-6].
 pub(super) fn empty_run_release(case: &GoalCase<'_>) -> String {
     const EMPTY: &str = "take every element out and consume it before this call, so that its zero length is established here";
     match (case.disposition, case.terms) {
@@ -1326,6 +1345,26 @@ pub(super) fn cell_taken_apart(
         ),
         (None, _) | (_, None) => format!("{INNER}: remove this statement"),
     }
+}
+
+/// [TYPE-9] runtime-capacity content stays in its Box. Only windows have
+/// the empty-storage consume [OP-14], and only content with drop can be
+/// released at scope exit [PROV-6]. The caller supplies the typed Box path.
+pub(super) fn runtime_content_move(cell: &str, window: bool, droppable: bool) -> String {
+    let mut repair = format!(
+        "replace `move {cell}.inner` with `move {cell}` and keep the receiving value boxed, accessing its content through `.inner`"
+    );
+    if droppable {
+        repair.push_str(&format!(
+            "; if the move was intended only to release the content, remove it and let `{cell}` release at scope exit"
+        ));
+    }
+    if window {
+        repair.push_str(&format!(
+            "; to release the window explicitly instead, take every element out and consume it, establish `{cell}.inner.len == 0_u64`, and call `free_empty(window: move {cell})` [OP-14]"
+        ));
+    }
+    repair
 }
 
 /// [TYPE-2, TYPE-9] a destructuring statement naming a storage shape reads

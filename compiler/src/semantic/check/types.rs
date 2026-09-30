@@ -1529,10 +1529,7 @@ impl<'unit> TypeContext<'unit> {
         node: NodeId,
         ty: CheckedType,
     ) -> Result<(), CheckStop> {
-        // `Array<T>` is the one runtime-capacity form the checker represents
-        // today; a runtime-capacity `Slots<T>` and a `Ring` in either
-        // placement stop earlier as an unimplemented representation, which is
-        // compiler/storage-representation's checker-shapes decision.
+        // [TYPE-9] runtime arrays and segments have no inline placement.
         if !matches!(
             ty,
             CheckedType::Buffer { .. } | CheckedType::Segments { .. }
@@ -1545,7 +1542,7 @@ impl<'unit> TypeContext<'unit> {
             node,
             SemanticIssueKind::InlineRuntimeCapacityShape {
                 spelling: self.checked_type_name(ty)?,
-                mechanical_fix: "wrap it in a Box, or write the constant-capacity form",
+                mechanical_fix: "wrap it in a Box, or write the constant-capacity form".to_owned(),
             },
         )
     }
