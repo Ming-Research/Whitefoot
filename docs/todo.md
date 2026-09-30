@@ -1272,7 +1272,20 @@ rarely insert at the same place.
   does not reproduce the original disjoint gap; WF's ordinary and common-read
   ranges overlap in both cohorts. Timed-run frequencies and preparation/cache
   attribution remain open. No allocator cause is yet established; preserve
-  these evidence limits.
+  these evidence limits. The [growth-body/chain exposure trials](../research/experiments/container-representation/vector-library/RESULTS.md#growth-exposure-outcomes-dispatch-removed-append-remains-unqualified)
+  move the opaque edge to `reserve` when only the primitive is exposed, then
+  remove repeated full/partial dispatch when the chain is exposed. The latter
+  adds 224 bytes of wide vector stack stores/reloads and expands that append
+  frame from 32 to 288 bytes; only two of six matched cells pass. Complete
+  append exposure removes those spills and internal growth calls, with
+  48-byte frames, but again passes only two of six cells and increases emitted
+  WF instruction bytes from 16,160 to 17,860. Allocation/movement attribution
+  remains open; no new route or size threshold is selected. Reopen body
+  exposure with a new discriminating cost hypothesis and an account of
+  aggregate placement and duplication, preserving the native prerequisite
+  and full append comparison.
+  No general inlining policy or causal timing improvement follows from these
+  unpaired trials.
 
   The [Vector length-store diagnosis](../research/experiments/container-representation/vector-library/RESULTS.md#length-store-dependence-read-only-llvm-diagnosis)
   finds conservative header/payload dependencies in optimized take loops,

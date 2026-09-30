@@ -1,0 +1,340 @@
+Growth-body, growth-chain and complete append exposure: frozen-Z diagnostics
+
+Purpose: reproduce the specialization-versus-duplication trials registered in
+RESULTS.md. These patches, samples and evidence retire with a superseding qualified
+lowering result. No production inlining policy or representation is selected.
+
+All three trials independently start from frozen empty-anchor Z, reproduced by
+empty-payload-anchor.patch and its timing record. Body adds only two alwaysinline
+definition tokens per timed/account module (scalar/wide wf_grow). Chain adds six
+per module (wf_grow, grow_full and reserve at both widths). The final spine trial
+adds ten: that chain plus make_room and grow_vector_append at both widths.
+Exact removal restores
+each input byte for byte; replay also reproduces every output. No new assumptions,
+source edits, allocator changes or history read. Public API entries and
+resident-clone definitions receive no new attribute;
+make_room is newly tagged only in the final ten-token trial.
+
+Body fails its native prerequisite: allocation moves into reserve, but append
+still calls reserve and the repeated full/partial test survives there. No timing.
+Chain passes its revised native prerequisite: append calls make_room, whose single
+full-window test reaches malloc/realloc without a second full/partial dispatch.
+General partial reserve still has malloc/memmove/free; allocation null failures
+precede payload/capacity publication. All three trials' 19 stages have expected exits;
+all 30 accounting rows are byte-identical to Z. No failed check was retried.
+
+Native consequences (whole named bodies, including unexecuted branches):
+                             Z       body       chain      spine
+scalar reached append        28      23         13         43 instructions
+wide reached append          92      87        103        107 instructions
+scalar append frame          32      32         32         48 bytes
+wide append frame            32      32        288         48 bytes
+reached body reserve frame           48         (general reserve retained)
+reached chain make_room frame                    32 bytes
+WF object instructions     4040    3967       4339       4465
+WF instruction bytes      16160   15868      17356      17860
+Z/body wide public entry is a one-instruction tail branch to the counted instance;
+chain wide public entry itself contains the full 103-instruction body. Both spine
+public entries tail to ordinary instances containing the reported 43/107 bodies.
+Chain wide code creates/stores 14 q-register values before make_room and reloads
+seven q-register pairs afterward: 224 bytes of vector stack stores and reloads.
+Remaining scalar values stay in registers. This is neither a 256-byte bulk copy
+nor an attribution of timing. Total WF instruction bytes include alignment nops
+and exclude data/other linked objects; counted unique addresses from otool -tvV
+whitefoot-timed.o, four bytes per AArch64 instruction. Native excerpts below were
+independently checked against disassembly of the hashed images.
+
+The chain screen: one fixed ordinary-preparation launch, 840 unique rows,
+420 real plus 420 controls; exit 0 in 117.11065133428201 seconds. Minimum real
+1298834 ns; minimum control 1372 ns; RAW minimum 41 ns. Maximum cohort WF/peer
+ratio spread 5.2833827304%, peer-median spread 2.0413313275%, within 10% bounds.
+No controls subtracted or samples excluded. Scalar-16 and wide-4096 alone pass
+both cohorts (2/6 matched); the other four matched cells overlap both. All 0/1
+policy rows pass the slower peer and remain separate. No paired qualification.
+Other runs' changed peer timings forbid a causal gain or regression conclusion.
+The removed dispatch, changed spills and instruction footprint are observations,
+not measured shares of latency. Other APIs and containers remain paused.
+
+
+Final spine passes the registered native prerequisite: reached append contains
+capacity policy, malloc/realloc and placement without an internal append,
+make_room, grow, record_make or place_back call or repeated full/partial test.
+The 224-byte vector spills/reloads disappear; seed-derived record construction
+follows allocation. Both reached frames are 48 bytes and retain length in x21
+without a new assumption. Payload is reloaded; null failure precedes publication.
+General reserve still retains partial malloc/memmove/free. Object instruction
+bytes rise to 17860 (+1700 from Z); global definition exposure affects callers
+beyond measured append, so this does not isolate a single call boundary's cost.
+Spine's single fixed screen exits 0 in 116.18333562510088 seconds: all 840 unique
+rows retained (420 real, 420 controls), minimum real 1268254 ns/control 1536 ns,
+RAW 41 ns; maximum cohort WF/peer-ratio spread 7.7349544169%, peer-median
+spread 5.7915079910%. All within the existing 10% bounds; cross-launch drift is
+untested. Wide-16 cohort 1 peer outliers (Rust 538.13 ns, C++ 306.94 ns maxima)
+are retained. Only scalar-16 and wide-4096 pass both cohorts (2/6); other matched cells
+overlap both. All initial-capacity 0/1 rows pass the slower peer. No paired run,
+retry, unpaired gain/regression claim, production selection or further exposure.
+
+Exact recipe conventions (replace angle-bracket tokens before shell parsing):
+R=/private/tmp/whitefoot-container-library-complete
+V=/private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library
+Z=/private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor
+BODY_D=/private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/growth-body-exposure
+BODY_P=growth-exposure
+CHAIN_D=/private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/growth-chain-exposure
+CHAIN_P=growth-chain
+SPINE_D=/private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/append-spine-exposure
+SPINE_P=append-spine
+For each trial separately: copy the listed frozen sources to D/inputs/<copy>,
+copy its input whitefoot-{timed,account}.ll to D/, and apply the corresponding
+published patch with git apply --directory=<D> <patch>. All stage cwd values are V.
+Set WHITEFOOT_CHECK_TIMEOUT=120 for the 19 stages, in the table's exact order.
+P is the trial's stage prefix; D is its directory. Compile/link use A=timed/account.
+COMPILE: perl '<R>/.github/run-check.pl' '<P>-<A>-compile' clang -O3 -Wno-override-module -x ir -c '<D>/whitefoot-<A>.ll' -o '<D>/whitefoot-<A>.o'
+LINK: perl '<R>/.github/run-check.pl' '<P>-<A>-link' clang++ -O3 '<D>/inputs/driver-<A>.o' '<D>/whitefoot-<A>.o' '<D>/inputs/cpp-<A>.o' '<D>/inputs/rust-<A>.a' '<D>/inputs/native/ordinary_values.o' '<D>/inputs/native/sched/core.o' '<D>/inputs/native/sched/entry.o' '<D>/inputs/native/completion/runtime.o' '<D>/inputs/native/completion/file_adapter.o' '<D>/inputs/native/completion/bridge.o' '<D>/inputs/native/wf_floor.o' '<D>/inputs/native/sched/prim_host.o' '<D>/inputs/native/completion/wait_host.o' '<D>/inputs/native/completion/file_posix.o' '<D>/inputs/native/completion/linux_io_uring.o' '<D>/inputs/native/ordinary_values_ir.o' -pthread -lm '<D>/inputs/prepare-bridge.o' -liconv -lSystem -lc -lm -o '<D>/vector-costs-<A>'
+CALL: perl <R>/.github/run-check.pl <P>-<suffix> <D>/vector-costs-<A> <mode>
+ROWS: perl <R>/.github/run-check.pl <P>-account-rows sh -c "<D>/vector-costs-account growth-api-account > <D>/append-growth-accounting.csv"
+
+Stage suffix | recipe / A / mode | expected | body exit / seconds | chain exit / seconds | spine exit / seconds
+timed-compile | COMPILE / timed | 0 | 0 / 0.241186 | 0 / 0.227560 | 0 / 0.242221
+timed-link | LINK / timed | 0 | 0 / 0.129450 | 0 / 0.123605 | 0 / 0.127638
+account-compile | COMPILE / account | 0 | 0 / 0.240322 | 0 / 0.240256 | 0 / 0.235482
+account-link | LINK / account | 0 | 0 / 0.129922 | 0 / 0.130668 | 0 / 0.128777
+timed-growth-api-check | CALL / timed / growth-api-check | 0 | 0 / 0.466309 | 0 / 0.442043 | 0 / 0.463846
+timed-api-check | CALL / timed / api-check | 0 | 0 / 0.143120 | 0 / 0.136620 | 0 / 0.148393
+timed-growth-fail-values | CALL / timed / growth-api-fail-values | 1 | 1 / 0.148085 | 1 / 0.129335 | 1 / 0.128664
+timed-growth-fail-state | CALL / timed / growth-api-fail-state | 1 | 1 / 0.145917 | 1 / 0.128942 | 1 / 0.137764
+account-growth-api-check | CALL / account / growth-api-check | 0 | 0 / 0.358856 | 0 / 0.464143 | 0 / 0.364509
+account-api-check | CALL / account / api-check | 0 | 0 / 0.131446 | 0 / 0.144620 | 0 / 0.155730
+account-growth-fail-values | CALL / account / growth-api-fail-values | 1 | 1 / 0.136572 | 1 / 0.146415 | 1 / 0.149379
+account-growth-fail-state | CALL / account / growth-api-fail-state | 1 | 1 / 0.142227 | 1 / 0.147753 | 1 / 0.129483
+account-allocator-check | CALL / account / allocator-check | 0 | 0 / 0.149747 | 0 / 0.148433 | 0 / 0.131004
+account-allocator-fail-values | CALL / account / allocator-fail-values | 1 | 1 / 0.143701 | 1 / 0.151246 | 1 / 0.142219
+account-allocator-fail-accounting | CALL / account / allocator-fail-accounting | 1 | 1 / 0.141059 | 1 / 0.143530 | 1 / 0.140251
+account-api-fail-values | CALL / account / api-fail-values | 1 | 1 / 0.142526 | 1 / 0.132903 | 1 / 0.155218
+account-api-fail-allocation | CALL / account / api-fail-allocation | 1 | 1 / 0.150861 | 1 / 0.138461 | 1 / 0.164971
+timed-clock-fault | CALL / timed / growth-api-fail-clock | 1 | 1 / 0.130339 | 1 / 0.145587 | 1 / 0.149955
+account-rows | ROWS | 0 | 0 / 0.135547 | 0 / 0.147519 | 0 / 0.130601
+
+Single chain screen; cwd=R, WHITEFOOT_CHECK_TIMEOUT=240:
+perl .github/run-check.pl growth-chain-screen sh -c 'research/experiments/container-representation/vector-library/.build/growth-chain-exposure/vector-costs-timed growth-api-measure 67108864 7 8589934592 > research/experiments/container-representation/vector-library/.build/growth-chain-exposure/samples.csv'
+
+Final spine screen; cwd=R, WHITEFOOT_CHECK_TIMEOUT=240:
+perl .github/run-check.pl append-spine-screen sh -c 'research/experiments/container-representation/vector-library/.build/append-spine-exposure/vector-costs-timed growth-api-measure 67108864 7 8589934592 > research/experiments/container-representation/vector-library/.build/append-spine-exposure/samples.csv'
+
+Frozen SHA-256 inputs (same source/hash for all three trials; copy paths relative D/inputs):
+e1ce286e2e71d3d304878ed8f81a3ee93307f3d67913e50e73d8e6852e3c694c  Z/api/whitefoot-timed.ll -> whitefoot-timed.ll
+8e08f4bf349fa82ba5e04f79d8fbd458baeeacff60e11562f108a79ab043ebb4  Z/api-inputs/ecosystem/driver-timed.o -> driver-timed.o
+c35ec1f01eef08066ef381b06da6fc72ef6aba12d98a1b33c48a016de6313dd1  Z/api-inputs/ecosystem/cpp-timed.o -> cpp-timed.o
+b1eccd7d521f678bd123531708f67a1cce0f6b6fa509edb907acab53f1f11873  Z/api-inputs/ecosystem/rust-timed.a -> rust-timed.a
+7433b0ecd3d2ac3a57a692d149684fa0e50891c1cddf98631f37975d5f57d50d  Z/api/whitefoot-account.ll -> whitefoot-account.ll
+98a755bf6896da1aa130a959183ccdbb2934541500a8e1380acc77436e17beab  Z/api/driver-account.o -> driver-account.o
+7584d61db0d902bfa4b5975c5fcd2f717f9d34fa174c9ae4650f457178477de5  Z/api-inputs/ecosystem/cpp-account.o -> cpp-account.o
+f35af52b27861a01c37bf9cbdc0c103949619ba8fb3cd479812d07ed1b45c563  Z/api-inputs/ecosystem/rust-account.a -> rust-account.a
+07ebcae5ed98fa7ff1a218150170f56c961e9dbae682781b62a5878a094da58b  Z/api-inputs/native/ordinary_values.o -> native/ordinary_values.o
+0655633c69666fcce21bf67258101aedb49c914fc50a6cc8edbfe22a8315e645  Z/api-inputs/native/sched/core.o -> native/sched/core.o
+e04734d7a1ddbe9083b47570ca2854963803b88a7197628bed2ca66cb4924d5c  Z/api-inputs/native/sched/entry.o -> native/sched/entry.o
+75cb971977625c9b05adcf74b14989544ccbf61b0a81fe4843ec72226eb36c61  Z/api-inputs/native/completion/runtime.o -> native/completion/runtime.o
+1bcbb49aa9a44031faf6397e01a960b2ce5d5d02f42cc2aaecb4edc0818d8ec6  Z/api-inputs/native/completion/file_adapter.o -> native/completion/file_adapter.o
+a1def81793c4229e41586590b91d134a9a2375a6ad9d31189b8164e91aaf137b  Z/api-inputs/native/completion/bridge.o -> native/completion/bridge.o
+8342e7ea0b8d6a0817d543e8c05e807c96527393945e95597718ba9a27ce722d  Z/api-inputs/native/wf_floor.o -> native/wf_floor.o
+c3a5140b8221a57d27a510995ae37c7b33a64ebc87ec9f9286b99ece649bce45  Z/api-inputs/native/sched/prim_host.o -> native/sched/prim_host.o
+b9dbbb1485b2c3e47ef248568020130e7e27446e56be5a2c52f224bbd7a2f463  Z/api-inputs/native/completion/wait_host.o -> native/completion/wait_host.o
+f1fa09d7c0831333726c367986a3811d588e639f090435b1cbf1fce62758bf33  Z/api-inputs/native/completion/file_posix.o -> native/completion/file_posix.o
+e389769ac8c9f38af9cd00e5bc5d56d3c180dff5985fb81ddfff63dfa89eb453  Z/api-inputs/native/completion/linux_io_uring.o -> native/completion/linux_io_uring.o
+846bc08916aadbe77111a2c45aff15f33fd1fb7ffe816c198c2bf6f96dcad210  Z/api-inputs/native/ordinary_values_ir.o -> native/ordinary_values_ir.o
+b201a1b4c00d3b534a5b9df19e354d1166e3de19f24db79d8d1a805c9c7305a3  Z/api-inputs/prepare-bridge.o -> prepare-bridge.o
+b196ebd1484e688c1979efad738c697b22ec9d4e2179f851097c17e1d01ff0f8  Z/api-inputs/prepare-bridge.ll -> prepare-bridge.ll
+
+Output/artifact SHA-256
+f4e6904f2dec97d7fbaf6a3c560cc9ea829f964844ece5a46a559b82fb6f0d62  spine/whitefoot-timed.ll
+09a6d488955e209a44ac93ad08bd2346e27d2ef970627ecbbb2196e93a1a3f2b  spine/whitefoot-account.ll
+232dd36934b8954f305a7fec2afd8430f2ef869dd93792c7ff9a01940518d6fa  spine/whitefoot-timed.o
+07a863fa8195693af8a77893c62a68778738f90eecfd2f0d119f5eb6ef7c1bba  spine/whitefoot-account.o
+e6ac87ecd481bfae91e8f0ea3cf9a7dc6839004ca94f62a14bbc42fa866b57d0  spine/vector-costs-timed
+96c76d420f5af548cae29817af6462983d46e628db9f0e12de210ce8393811e8  spine/vector-costs-account
+48b130bf0174cc1a767148ad4d4c5b811049a53b163df3f8cfab7eaf21076c60  append-spine-exposure.patch
+0a0cb7a888751f3c495739696a67159e06f2356a14e74bf9bfeff26031577633  ecosystem-append-growth-spine-samples.csv
+9fd8c0753bac7946dfb467134296b5b5a89742df21b264077865dce6e5521e58  body/whitefoot-timed.ll
+2ff511853e83b7f911c768f5bd8641abc28ccfc50b7d0a68ffec552abd5ed2d4  body/whitefoot-account.ll
+33b34fab316f66067fb9f5c2e6237b451dcaf9256b8943c6d4a118cb1ca32829  body/whitefoot-timed.o
+f0e468511b0cf2a1dae761388a880dec5b92fa9bbd4c4ab82385e05883377b51  body/whitefoot-account.o
+acd7dee842f97ced7b776502f84b149964cf73d3868159bc26fa515ec1577e2d  body/vector-costs-timed
+a7b2dd3b51491dc9face78df34e126e5ffbb7db70de1f45c772229f9061a52f0  body/vector-costs-account
+429ef8bd8f38982cb171500b862f7b1f1bc1f1d4e553c48964fac451ba58e518  chain/whitefoot-timed.ll
+49060ef9be6f25777e0cbe3d69df9ee7bd847896b8f86622c7079ec985800576  chain/whitefoot-account.ll
+5f5e44defc43eac48ace456caa69709b8f00155c8a2c2b6e9e24bc49e5ceb8db  chain/whitefoot-timed.o
+d287de5c223efcc56298f496d8fc2c5eec86000b47963f99ff084e53343a8cdb  chain/whitefoot-account.o
+e8c20742fc583b3bf9611ea2bbff7a831cac05e04aefdb6ff599f7a16893a8aa  chain/vector-costs-timed
+0742684a3090d2b95da019b49f73a819eb3e4a7378d0da42f0a5056829da8136  chain/vector-costs-account
+832037876cfd1afb2351323bd66653d08de1778b2629a6ad959d650d8de463be  growth-body-exposure.patch
+a37b4562b845df3b66f92e001738afe3ec66708ec2af646a8c30f2c26bfe071a  growth-chain-exposure.patch
+e6d82837daaa475bef69d3ab7103122841afb8589fd406fb6921758f6f15f412  ecosystem-append-growth-exposure-samples.csv
+5c9a018388d81854197b7f7e6bf165aca981dd8fe354a86bc88fd9292d6ad5fb  common append-growth-accounting.csv (30 rows, equal to Z)
+
+The complete exit table above was cross-checked against every raw guard END line.
+
+Raw chain screen log:
+== START growth-chain-screen (limit 240s): sh -c research/experiments/container-representation/vector-library/.build/growth-chain-exposure/vector-costs-timed growth-api-measure 67108864 7 8589934592 > research/experiments/container-representation/vector-library/.build/growth-chain-exposure/samples.csv ==
+growth append clock: reads=200000 minimum_nonzero_ns=41 quantized=0
+== RUNNING growth-chain-screen: 30 s, child 43006, group 43006 ==
+== RUNNING growth-chain-screen: 60 s, child 43006, group 43006 ==
+== RUNNING growth-chain-screen: 90 s, child 43006, group 43006 ==
+real 117.05
+user 116.78
+sys 0.19
+== END growth-chain-screen: 117.09 s, exit 0 ==
+
+Body scalar reserve, selected predicate/allocation instructions (omitted intervals retain addresses):
+_wf_std.collections.vector.grow_vector_reserve$instance$8c4c85d67cb438a6:
+0000000100010f88	ldr	x22, [x20]
+0000000100010f8c	ldr	x21, [x20, #0x10]
+0000000100010f94	cmp	x22, x8
+0000000100010f98	b.ne	0x100010fe8
+0000000100010fa0	bl	0x1000b5e70 ; symbol stub for: _realloc
+0000000100010fc8	bl	0x1000b5b70 ; symbol stub for: _malloc
+0000000100010fec	bl	0x1000b5b70 ; symbol stub for: _malloc
+0000000100011000	bl	0x1000b5ba0 ; symbol stub for: _memmove
+0000000100011008	bl	0x1000b59f0 ; symbol stub for: _free
+
+Chain actual scalar append (complete body):
+_wf_vector_api_word_append_one:
+000000010000fe28	stp	x20, x19, [sp, #-0x20]!
+000000010000fe2c	stp	x29, x30, [sp, #0x10]
+000000010000fe30	mov	x19, x1
+000000010000fe34	mov	x20, x0
+000000010000fe38	bl	_wf_std.collections.vector.grow_vector_make_room$instance$8c4c85d67cb438a6
+000000010000fe3c	ldr	x8, [x20]
+000000010000fe40	ldr	x9, [x20, #0x10]
+000000010000fe44	str	x19, [x9, x8, lsl #3]
+000000010000fe48	add	x0, x8, #0x1
+000000010000fe4c	str	x0, [x20]
+000000010000fe50	ldp	x29, x30, [sp, #0x10]
+000000010000fe54	ldp	x20, x19, [sp], #0x20
+000000010000fe58	ret
+
+Chain scalar make_room (complete body; wide follows the same dispatch with stride256):
+_wf_std.collections.vector.grow_vector_make_room$instance$8c4c85d67cb438a6:
+00000001000126f8	stp	x20, x19, [sp, #-0x20]!
+00000001000126fc	stp	x29, x30, [sp, #0x10]
+0000000100012700	ldp	x8, x20, [x0]
+0000000100012704	cmp	x20, x8
+0000000100012708	b.ne	0x100012778
+000000010001270c	mov	x19, x0
+0000000100012710	cbz	x20, 0x100012738
+0000000100012714	cmp	x20, #0x1, lsl #12
+0000000100012718	b.hi	0x100012750
+000000010001271c	ldr	x0, [x19, #0x10]
+0000000100012720	lsl	x1, x20, #4
+0000000100012724	bl	0x1000b6440 ; symbol stub for: _realloc
+0000000100012728	cbz	x0, 0x100012788
+000000010001272c	lsl	x8, x20, #1
+0000000100012730	str	x0, [x19, #0x10]
+0000000100012734	b	0x100012774
+0000000100012738	mov	w0, #0x8
+000000010001273c	bl	0x1000b6140 ; symbol stub for: _malloc
+0000000100012740	cbz	x0, 0x100012788
+0000000100012744	str	x0, [x19, #0x10]
+0000000100012748	mov	w8, #0x1
+000000010001274c	b	0x100012774
+0000000100012750	cmp	x20, #0x2, lsl #12
+0000000100012754	b.hi	0x100012778
+0000000100012758	ldr	x0, [x19, #0x10]
+000000010001275c	mov	w1, #0x8
+0000000100012760	movk	w1, #0x1, lsl #16
+0000000100012764	bl	0x1000b6440 ; symbol stub for: _realloc
+0000000100012768	cbz	x0, 0x100012788
+000000010001276c	str	x0, [x19, #0x10]
+0000000100012770	mov	w8, #0x2001
+0000000100012774	str	x8, [x19, #0x8]
+0000000100012778	mov	w0, #0x0
+000000010001277c	ldp	x29, x30, [sp, #0x10]
+0000000100012780	ldp	x20, x19, [sp], #0x20
+0000000100012784	ret
+0000000100012788	bl	0x10000f848
+
+Chain actual wide append, selected frame/call/stack-transfer instructions:
+_wf_vector_api_record_append_one:
+000000010000fe5c	sub	sp, sp, #0x120
+000000010000fe88	str	q1, [sp, #0xd0]
+000000010000fe98	str	q1, [sp, #0xc0]
+000000010000fea8	str	q1, [sp, #0xb0]
+000000010000feb8	str	q1, [sp, #0xa0]
+000000010000fec8	str	q1, [sp, #0x90]
+000000010000fed8	str	q1, [sp, #0x80]
+000000010000fee8	str	q1, [sp, #0x70]
+000000010000fef8	str	q1, [sp, #0x60]
+000000010000ff08	str	q1, [sp, #0x50]
+000000010000ff18	str	q1, [sp, #0x40]
+000000010000ff28	str	q1, [sp, #0x30]
+000000010000ff38	str	q1, [sp, #0x20]
+000000010000ff48	str	q1, [sp, #0x10]
+000000010000ff58	str	q0, [sp]
+000000010000ff68	bl	_wf_std.collections.vector.grow_vector_make_room$instance$979fcc4ac6e818fb
+000000010000ff6c	ldr	x8, [x19]
+000000010000ff70	ldr	x9, [x19, #0x10]
+000000010000ff7c	ldp	q1, q0, [sp, #0xc0]
+000000010000ff88	ldp	q1, q0, [sp, #0xa0]
+000000010000ff94	ldp	q1, q0, [sp, #0x80]
+000000010000ffa0	ldp	q1, q0, [sp, #0x60]
+000000010000ffac	ldp	q1, q0, [sp, #0x40]
+000000010000ffb8	ldp	q1, q0, [sp, #0x20]
+000000010000ffc4	ldp	q1, q0, [sp]
+000000010000fff0	add	sp, sp, #0x120
+
+Raw final spine screen log:
+== START append-spine-screen (limit 240s): sh -c research/experiments/container-representation/vector-library/.build/append-spine-exposure/vector-costs-timed growth-api-measure 67108864 7 8589934592 > research/experiments/container-representation/vector-library/.build/append-spine-exposure/samples.csv ==
+growth append clock: reads=200000 minimum_nonzero_ns=41 quantized=0
+== RUNNING append-spine-screen: 30 s, child 61061, group 61061 ==
+== RUNNING append-spine-screen: 60 s, child 61061, group 61061 ==
+== RUNNING append-spine-screen: 90 s, child 61061, group 61061 ==
+real 116.07
+user 115.73
+sys 0.19
+== END append-spine-screen: 116.16 s, exit 0 ==
+
+Final spine reached scalar append (complete body; public entry tail-branches here):
+_wf_vector_api_append_one$instance$b2fcb9cda4b45694:
+0000000100010d58	stp	x22, x21, [sp, #-0x30]!
+0000000100010d5c	stp	x20, x19, [sp, #0x10]
+0000000100010d60	stp	x29, x30, [sp, #0x20]
+0000000100010d64	mov	x20, x1
+0000000100010d68	mov	x19, x0
+0000000100010d6c	ldp	x21, x22, [x0]
+0000000100010d70	cmp	x22, x21
+0000000100010d74	b.ne	0x100010de0
+0000000100010d78	cbz	x22, 0x100010da0
+0000000100010d7c	cmp	x22, #0x1, lsl #12
+0000000100010d80	b.hi	0x100010db8
+0000000100010d84	ldr	x0, [x19, #0x10]
+0000000100010d88	lsl	x1, x22, #4
+0000000100010d8c	bl	0x1000b6638 ; symbol stub for: _realloc
+0000000100010d90	cbz	x0, 0x100010e00
+0000000100010d94	lsl	x8, x22, #1
+0000000100010d98	str	x0, [x19, #0x10]
+0000000100010d9c	b	0x100010ddc
+0000000100010da0	mov	w0, #0x8
+0000000100010da4	bl	0x1000b6338 ; symbol stub for: _malloc
+0000000100010da8	cbz	x0, 0x100010e00
+0000000100010dac	str	x0, [x19, #0x10]
+0000000100010db0	mov	w8, #0x1
+0000000100010db4	b	0x100010ddc
+0000000100010db8	cmp	x22, #0x2, lsl #12
+0000000100010dbc	b.hi	0x100010de0
+0000000100010dc0	ldr	x0, [x19, #0x10]
+0000000100010dc4	mov	w1, #0x8
+0000000100010dc8	movk	w1, #0x1, lsl #16
+0000000100010dcc	bl	0x1000b6638 ; symbol stub for: _realloc
+0000000100010dd0	cbz	x0, 0x100010e00
+0000000100010dd4	str	x0, [x19, #0x10]
+0000000100010dd8	mov	w8, #0x2001
+0000000100010ddc	str	x8, [x19, #0x8]
+0000000100010de0	ldr	x8, [x19, #0x10]
+0000000100010de4	str	x20, [x8, x21, lsl #3]
+0000000100010de8	add	x0, x21, #0x1
+0000000100010dec	str	x0, [x19]
+0000000100010df0	ldp	x29, x30, [sp, #0x20]
+0000000100010df4	ldp	x20, x19, [sp, #0x10]
+0000000100010df8	ldp	x22, x21, [sp], #0x30
+0000000100010dfc	ret
+0000000100010e00	bl	0x10000f848
+

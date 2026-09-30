@@ -7443,3 +7443,228 @@ would need newly resolved post-call places and verified relation support;
 capacity, payload and backing identity may change, and append later changes
 length. Native load removal alone does not select production fact transport,
 the nonconforming Z representation, or a source rule. Other APIs remain paused.
+
+
+#### Shared growth-body exposure: registered append discriminator
+
+Frozen Z's append paths test that the window is full, then call a generic
+`wf_grow` body that tests full versus partial again. Test whether exposing
+that body to LLVM eliminates the redundant dispatch, without supplying any
+new proof facts. This follows the specialization-versus-duplication question
+in `compiler/prelude-records`; it is independent of the withdrawn uniform
+function-actual hint and the entry/post-call assumption trials.
+
+In the two frozen Z timed/account modules, add only `alwaysinline` to the
+scalar and wide `wf_grow` definitions. Removing those two tokens must recover
+each original module byte for byte. A forced local diagnostic answers body
+exposure directly; an optional hint could leave the boundary unchanged.
+The recorded early-inliner cost for aggregate-result wrappers remains a
+reason to inspect the output, not a production policy selected here. Keep
+all bodies, driver/peer/runtime objects, allocator operations and link order.
+
+Before timing, require both actual append paths to lose the growth-primitive
+call and its repeated full/partial comparison. Keep the valid empty-to-malloc
+and positive-full-to-realloc paths, null failure behavior, current payload
+publication, and partial-copy growth in ordinary reserve. Run the existing
+positive and deliberate-negative API/allocator/clock checks; allocation rows
+must equal Z. Record actual call paths, frames, append instruction counts,
+and total emitted WF instruction bytes. The attribute affects other callers
+of the same primitive: record duplication and placement changes rather than
+claiming to isolate the latency of one removed call. If the native criterion
+fails, retain the result and do not time it.
+
+If the native criterion passes, run one fixed ordinary-preparation screen:
+`growth-api-measure 67108864 7 8589934592`, all 840 rows, both peers, separate
+initial-capacity policy cells, and the existing RAW/duration/spread criteria.
+No new assumptions, history read, control subtraction, size threshold or
+retry. Only an all-matched-cell pass permits paired qualification. This
+experiment selects neither primitive inlining nor Z's nonconforming layout
+for production. The patch, samples and evidence live in this Vector home
+and retire with a superseding qualified lowering result; transient inputs
+live in `.build/growth-body-exposure`. Other APIs and containers stay paused.
+
+
+#### Growth-chain exposure: registered follow-up
+
+Use frozen Z again, independently of the failed two-definition trial. Add
+`alwaysinline` only to `grow_full`, `reserve`, and the growth primitive for
+each of the two element widths: six definition tokens per module. Removing
+those six tokens must restore Z exactly. This is the complete chain below
+`make_room`'s existing full-window branch. Unlike exposing only the primitive,
+it puts the fact-producing branch and allocation in one optimization body;
+`make_room` may remain outlined without losing that local relation.
+
+Keep public measured API functions, `grow_vector_append`, make/accept,
+placement operations and resident clones untagged. No new assumptions,
+allocator changes or source edits. Before timing, follow both actual append
+paths and require one full-window predicate with no second full/partial
+dispatch between that predicate and allocation. A remaining `make_room`
+call is allowed: this trial tests local specialization inside that helper,
+not elimination of every helper call. Retain valid empty allocation, full
+reallocation, null failure, and general partial reserve. Inspect wide aggregate
+copies, frames, call boundaries and total WF instruction bytes; all prior
+API/fault checks and exact Z allocation accounting must still pass.
+
+If this native criterion fails, retain it without timing. If it passes, use
+the preceding single-screen protocol unchanged, with no retries or control
+subtraction; all matched cells must pass before paired qualification. Keep
+both exposure patches and outcomes together in this experiment's record.
+Transient follow-up inputs live in `.build/growth-chain-exposure`. No
+production inlining or representation policy follows from this diagnostic.
+
+
+#### Complete library append exposure: registered final boundary trial
+
+The six-definition chain removes the duplicate full test but introduces a
+224-byte wide payload spill across `make_room`; its single screen does not
+meet the all-matched target. Test the entire library append implementation
+as one optimization body, retaining the ordinary public measured entry.
+Starting from Z, add `alwaysinline` to the preceding six definitions plus
+both `make_room` and both `grow_vector_append` definitions: ten tokens per
+module, with exact stripping back to Z. This directly exposes the two remaining
+aggregate/call boundaries; eight tokens would leave one to the heuristic.
+
+Do not tag public API entries, record construction, place_back, resident
+clones or other functions. The concrete record constructor computes values
+from a seed; ordinary LLVM may sink those computations after allocation.
+Do not manually remove copies or reorder arbitrary source constructors.
+Before timing require the reached public append implementation to contain
+capacity selection, allocation and placement without an internal append,
+make_room or grow dispatch call, no repeated full/partial test, and no
+224-byte pre-growth payload spill/reload. A public tail to its instance is
+allowed. Preserve empty malloc, full realloc, null failure, general partial
+reserve and all API/account/fault checks. Record frames, calls, aggregate
+moves and complete WF instruction bytes. If record_make or place_back
+becomes outlined, or the specified spill remains, retain the failure; do not
+extend the forced spine to more functions.
+
+Only a native/check pass permits one unchanged ordinary 840-row screen with
+the preceding duration, clock, spread and all-matched criteria. No retry or
+paired claim from separate screens. Keep this result alongside the first two
+exposure trials; `.build/append-spine-exposure` owns transient inputs. No
+production policy or language/representation change is selected by exposure.
+
+
+#### Growth exposure outcomes: dispatch removed, append remains unqualified
+
+The [two-token body patch](growth-body-exposure.patch),
+[six-token chain patch](growth-chain-exposure.patch) and
+[ten-token append patch](append-spine-exposure.patch) replay independently on
+frozen Z. Each token removal restores its timed/account input byte for byte.
+The [shared evidence record](ecosystem-append-growth-exposure-timing.txt)
+preserves input identities, exact command templates, all stage exits and native
+excerpts; the [complete CSV](ecosystem-append-growth-exposure-samples.csv)
+contains the chain trial's single screen; the [separate spine CSV](ecosystem-append-growth-spine-samples.csv)
+retains its single screen. All three trials pass their 19
+build/check stages with expected negative exits and retain all 30 Z accounting
+rows unchanged. No new proof assumptions or allocator changes are introduced.
+
+**Body-only exposure fails before timing.** Actual append now calls `reserve`,
+where the repeated full/partial comparison survives. The compiler moves the
+opaque boundary; it does not meet the registered native condition. No timing
+is run for this trial.
+
+**Chain exposure passes the native condition but fails the append target.**
+Actual append calls `make_room`; its one full-window predicate reaches
+allocation without a second full/partial dispatch. Empty malloc, full realloc,
+null failure and partial-copy general reserve remain. The changed wide append
+body stores and reloads 224 bytes of vector values across `make_room`, with
+remaining scalar values in registers. Its frame expands from 32 to 288 bytes.
+
+| Native observation | Z | Body only | Growth chain | Complete append |
+|---|---:|---:|---:|---:|
+| Reached scalar append instructions | 28 | 23 | 13 | 43 |
+| Reached wide append instructions | 92 | 87 | 103 | 107 |
+| Scalar append frame, bytes | 32 | 32 | 32 | 48 |
+| Wide append frame, bytes | 32 | 32 | 288 | 48 |
+| Total WF instruction bytes | 16160 | 15868 | 17356 | 17860 |
+
+Counts cover complete emitted bodies, including unexecuted branches. The
+Z/body wide public entry tail-branches to the counted instance; the chain
+public entry contains the full body. Complete-append public entries tail to
+the counted ordinary instances. Total instruction bytes include alignment
+nops and exclude data and other linked objects. These observations do not
+isolate a removed call's or added spill's latency.
+
+The single chain screen exits 0 in 117.111 s. All 840 unique rows remain:
+420 real and 420 controls; minimum real duration 1.298834 ms, minimum control
+1,372 ns, RAW clock minimum 41 ns. Maximum cohort WF/peer-ratio spread is
+5.2834% and peer-median spread is 2.0413%, within the existing 10% bounds.
+Medians and full seven-sample ranges follow; controls are not subtracted.
+
+| Element / initial capacity | Cohort | WF ns/append [range] | Rust ns/append [range] | C++ ns/append [range] | Against slower peer |
+|---|---:|---:|---:|---:|---|
+| 8 B / 0 | 0 | 7.84 [7.81–8.23] | 11.72 [11.70–12.03] | 10.93 [10.92–11.24] | Pass |
+| 8 B / 0 | 1 | 7.87 [7.81–8.13] | 11.76 [11.71–12.37] | 11.02 [10.91–11.28] | Pass |
+| 8 B / 1 | 0 | 18.13 [18.09–19.21] | 32.29 [32.20–33.34] | 20.47 [20.39–21.46] | Pass |
+| 8 B / 1 | 1 | 18.15 [18.11–18.24] | 32.43 [32.22–33.07] | 20.32 [20.30–20.70] | Pass |
+| 8 B / 16 | 0 | 34.42 [34.19–35.96] | 36.66 [36.55–36.87] | 25.73 [25.45–26.89] | Pass |
+| 8 B / 16 | 1 | 34.29 [34.14–35.77] | 36.69 [36.54–36.76] | 25.51 [25.38–26.53] | Pass |
+| 8 B / 256 | 0 | 101.75 [98.14–109.30] | 102.06 [100.99–105.93] | 93.66 [92.17–103.44] | Overlap |
+| 8 B / 256 | 1 | 98.61 [98.14–113.59] | 102.46 [101.20–105.68] | 95.57 [92.33–100.59] | Overlap |
+| 8 B / 4096 | 0 | 728.17 [696.57–831.01] | 743.26 [734.60–826.70] | 704.67 [702.43–766.93] | Overlap |
+| 8 B / 4096 | 1 | 744.36 [693.22–791.89] | 745.73 [735.42–819.16] | 710.80 [701.65–763.44] | Overlap |
+| 256 B / 0 | 0 | 15.07 [15.05–15.87] | 22.45 [22.23–22.96] | 15.74 [15.69–15.78] | Pass |
+| 256 B / 0 | 1 | 15.10 [15.06–15.88] | 22.39 [22.33–23.26] | 15.66 [15.64–16.34] | Pass |
+| 256 B / 1 | 0 | 50.65 [50.42–51.71] | 52.68 [52.55–53.47] | 43.23 [42.97–43.58] | Pass |
+| 256 B / 1 | 1 | 50.50 [50.30–51.53] | 52.62 [52.39–54.86] | 43.12 [43.02–45.50] | Pass |
+| 256 B / 16 | 0 | 151.66 [149.70–163.60] | 147.27 [145.90–150.19] | 140.89 [138.57–148.48] | Overlap |
+| 256 B / 16 | 1 | 150.61 [149.33–163.20] | 147.17 [145.88–150.16] | 140.68 [138.00–153.47] | Overlap |
+| 256 B / 256 | 0 | 1319.84 [1310.15–1363.57] | 1314.05 [1303.34–1345.54] | 1320.61 [1298.63–1338.09] | Overlap |
+| 256 B / 256 | 1 | 1322.18 [1308.45–1402.42] | 1313.32 [1306.32–1319.93] | 1317.67 [1299.52–1422.63] | Overlap |
+| 256 B / 4096 | 0 | 164.82 [164.24–169.01] | 161.34 [159.67–166.41] | 14814.78 [14785.13–15031.02] | Pass |
+| 256 B / 4096 | 1 | 164.98 [163.41–168.15] | 159.88 [158.57–162.02] | 14820.16 [14765.25–14869.15] | Pass |
+
+Only scalar-16 and wide-4096 pass both cohorts: **two of six matched cells**.
+The other four matched cells overlap both cohorts. All initial-capacity 0/1
+policy rows pass the slower peer and remain separate from that decision.
+The all-matched criterion fails; no paired qualification follows. Different
+peer timings across unpaired screens establish no causal improvement or
+regression. Neither primitive/chain inlining nor Z's nonconforming layout is
+selected for production. Other APIs and containers remain paused.
+
+**Complete append exposure also fails the timing target after a native pass.**
+Both reached bodies now contain capacity selection, allocation and placement
+without internal append, `make_room`, growth, record-construction or placement
+calls. The wide 224-byte vector spill/reload disappears; seed-derived record
+construction follows allocation. Both frames are 48 bytes, retaining entry
+length without a new assumption. Fresh payload reads, allocation failures and
+general partial reserve remain. WF instruction bytes increase to 17,860.
+
+The single final screen exits 0 in 116.183 s and retains all 840 unique rows:
+420 real and 420 controls. Minimum real duration is 1.268254 ms; minimum
+control is 1,536 ns; RAW minimum is 41 ns. Maximum cohort WF/peer-ratio spread
+is 7.7350% and peer-median spread is 5.7915%, within 10%. These are within-run
+checks; cross-launch drift remains untested. Wide-16 cohort 1 peer outliers
+remain in the full ranges (Rust maximum 538.13 ns, C++ 306.94 ns). Medians
+and full ranges follow.
+
+| Element / initial capacity | Cohort | WF ns/append [range] | Rust ns/append [range] | C++ ns/append [range] | Against slower peer |
+|---|---:|---:|---:|---:|---|
+| 8 B / 0 | 0 | 7.75 [7.50–7.97] | 12.07 [11.78–12.70] | 10.96 [10.92–11.58] | Pass |
+| 8 B / 0 | 1 | 7.55 [7.49–7.71] | 11.85 [11.78–12.38] | 10.96 [10.92–11.56] | Pass |
+| 8 B / 1 | 0 | 17.94 [17.87–18.00] | 32.42 [32.28–32.87] | 19.09 [19.04–19.23] | Pass |
+| 8 B / 1 | 1 | 17.91 [17.87–18.43] | 32.25 [32.22–33.70] | 19.32 [19.05–19.96] | Pass |
+| 8 B / 16 | 0 | 33.97 [33.92–34.98] | 36.61 [36.49–37.58] | 25.57 [25.27–26.26] | Pass |
+| 8 B / 16 | 1 | 34.13 [33.99–35.09] | 36.80 [36.53–38.54] | 25.44 [25.38–26.94] | Pass |
+| 8 B / 256 | 0 | 101.54 [99.66–104.38] | 104.07 [102.53–110.92] | 92.38 [91.88–97.78] | Overlap |
+| 8 B / 256 | 1 | 99.64 [99.23–105.00] | 102.98 [102.42–108.89] | 91.60 [91.03–96.35] | Overlap |
+| 8 B / 4096 | 0 | 720.61 [687.09–810.14] | 726.50 [722.90–752.75] | 726.13 [684.57–773.91] | Overlap |
+| 8 B / 4096 | 1 | 733.85 [683.73–803.15] | 729.96 [725.03–738.43] | 686.38 [681.73–734.93] | Overlap |
+| 256 B / 0 | 0 | 11.83 [11.79–12.62] | 22.40 [22.27–23.93] | 15.69 [15.63–16.32] | Pass |
+| 256 B / 0 | 1 | 11.82 [11.77–12.24] | 22.48 [22.33–23.11] | 15.65 [15.57–15.74] | Pass |
+| 256 B / 1 | 0 | 48.37 [48.11–50.63] | 53.16 [52.85–54.64] | 43.30 [43.06–44.01] | Pass |
+| 256 B / 1 | 1 | 48.27 [48.11–49.53] | 52.96 [52.76–53.16] | 43.16 [43.05–44.67] | Pass |
+| 256 B / 16 | 0 | 159.54 [146.57–162.88] | 153.27 [150.34–167.69] | 141.58 [139.09–155.69] | Overlap |
+| 256 B / 16 | 1 | 150.17 [146.54–163.41] | 154.09 [151.05–538.13] | 141.54 [138.99–306.94] | Overlap |
+| 256 B / 256 | 0 | 1316.43 [1305.35–1397.79] | 1315.10 [1300.44–1324.43] | 1313.93 [1297.59–1429.91] | Overlap |
+| 256 B / 256 | 1 | 1318.40 [1312.03–1333.34] | 1319.90 [1308.85–1322.38] | 1330.59 [1301.57–1358.57] | Overlap |
+| 256 B / 4096 | 0 | 158.97 [156.84–160.72] | 163.87 [160.21–172.23] | 14803.44 [14754.26–14827.33] | Pass |
+| 256 B / 4096 | 1 | 158.07 [154.84–163.37] | 161.41 [160.47–166.51] | 14792.38 [14757.17–15065.74] | Pass |
+
+Only scalar-16 and wide-4096 pass both cohorts: **two of six matched cells**.
+The remaining matched cells overlap both cohorts; all 0/1 policy rows pass
+the slower peer. No all-matched pass, paired qualification, retry or further
+exposure variant follows. Removing the specified calls and spills is a native
+result, not a causal timing gain. The three trials select no production policy,
+source rule or representation; other APIs and containers remain paused.
