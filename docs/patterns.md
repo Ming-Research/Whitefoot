@@ -933,7 +933,8 @@ loop {
   module's waiting function directly, execute a guarded `atomic` statement, or
   join a spawn a `let` binds. A call of your own waiting helper, a call
   through a function-kind parameter or an interface member and an unguarded
-  `atomic` statement are no wait, so call the host function in the loop itself or give the loop a rank.
+  `atomic` statement are no wait, so call the host function in the loop itself
+  or give the loop a rank.
 - When nothing in the language measures the progress, such as an output
   position a callee advances, count the loop by a bound the data gives and
   make running out of the count a defined outcome, as the DEFLATE decoder's
