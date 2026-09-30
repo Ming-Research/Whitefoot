@@ -69,9 +69,9 @@ fails is attributed with a profile before any conclusion is drawn from it.
 
 ## The baseline
 
-The subset of `tests/programs/redis_subset.wf` answers 4 of the suite's 20
-tests: `PING_MBULK`, `SET`, `GET` and `INCR`. Fourteen fail on a command it
-does not know. `PING_INLINE` and `MSET` fail because it closes the connection
+The subset, `tests/programs/redis_subset.wf` as it stood at `32a0cbf87`
+before firn replaced it, answers 4 of the suite's 20 tests: `PING_MBULK`,
+`SET`, `GET` and `INCR`. Fourteen fail on a command it does not know. `PING_INLINE` and `MSET` fail because it closes the connection
 on an inline command and on a command of more than five arguments, where Redis
 answers them.
 
@@ -105,5 +105,62 @@ slowest there.
 
 ## Design of the program
 
-(Choices are recorded here as they are made, each with its reason and the
-alternative refused.)
+`apps/firn` is a module program of six modules and about 4,900 lines;
+[its README](../../../apps/firn/README.md) lists them. Each choice below keeps
+Redis's observable behavior on the suite's commands and says what it refused.
+
+- **Keys and values are byte strings of their own length**, each a
+  `Box<Slots<u8>>`, where the subset kept keys in 48-byte arrays and values up
+  to 1,024 bytes. Redis limits neither below 512 MB, and hashing only a key's
+  own bytes is cheaper than hashing 48 positions.
+- **A key's value is one enum over the five kinds**, `Text`, `Items`,
+  `Members`, `Fields` and `Ranked`, beside its expiry, so a command on another
+  kind finds the variant and answers `WRONGTYPE`, as Redis does.
+- **The kinds are the standard library's containers**: a list is a ring
+  (`std::collections::deque`), a set and a hash are hash maps, and a sorted set
+  is an ordered map of score and member beside a hash map from member to score.
+  Containers written for firn were refused: they would duplicate the library,
+  and a gap the library shows is one to fix there. Redis's compact encodings
+  for small values (listpack, intset) have no counterpart, which costs memory
+  and possibly time; the measurement shows how much.
+- **Each connection has one `Client` record** that the command passes into its
+  atomic statement as the visitor's environment: the reply window, which grows
+  to any size, the strings and scores the command copied out of the request
+  before the statement, and the numbers a visitor reads and reports. The
+  library's containers reach a stored value only through a callback with one
+  environment, so the record is that environment; copying the arguments
+  before the statement keeps it to the keyspace's own work. Taking an entry
+  out of the keyspace and putting it back, which needs no callback, was
+  refused: it costs two hash operations per command where the callback costs
+  one.
+- **A command is found by a number packed from its name's first eight
+  letters**, compared once per known command, rather than by comparing names
+  letter by letter.
+- **The append-only file records each change as Redis 7 records it**: a
+  command as it was sent, an expiry as `PEXPIREAT`, a `SET` with an expiry as
+  `SET` then `PEXPIREAT`, and an `SPOP` as the `SREM` of the members it chose,
+  so that a replay removes the same members. `SPOP` draws from a generator
+  seeded by the clock when the server starts, as Redis seeds its own.
+- **Sorted-set scores are integers below 2^52 in magnitude.** Every score the
+  suite sends is one, and Redis prints such a score as the integer. A score
+  written as another floating-point number is refused with an error that says
+  so: reading one to the nearest double and printing it with 17 significant
+  digits, as Redis does, needs exact decimal conversion firn does not have
+  yet.
+- **A malformed request is answered with Redis's protocol error and the
+  connection is closed**, as Redis closes it, where the subset closed it
+  without an answer.
+
+Building firn found three things outside the program, recorded under
+[docs/todo.md](../../../docs/todo.md) unless fixed:
+
+- **A lowering defect, fixed.** A borrowed match binder read or written through
+  and then passed to a call was passed as a load of its field instead of the
+  field's address, and the backend refused the result as invalid IR.
+  `tests/programs/borrowed_binders.wf` fails to build without the fix.
+- **A generic operation called inside its own callback with other arguments
+  is refused as polymorphic recursion** [FN-6], although the instantiations
+  end: a hash map's lookup whose callback looks up a field in another hash
+  map. firn alternates `hash_map_edit` and `hash_map_lookup` instead.
+- **No command renders a program in canonical form** [FORM-2], which every
+  program must be in; writing firn needed the renderer the corpus test calls.

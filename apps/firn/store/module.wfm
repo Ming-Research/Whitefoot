@@ -71,7 +71,7 @@ public binding DueOrder : PriorityOrder<Due, KeyEnv> {
   compare = due_order;
 }
 
-public fn store_new() -> made: Store pure doc "An empty keyspace that keeps no append-only file.";
+public fn store_new(seed: u64) -> made: Store pure doc "An empty keyspace that keeps no append-only file, whose SPOP draws start from the seed.";
 
 public fn expired(expires: u64, now: u64) -> reached: Bool pure doc "Whether an expiry, zero for none, has been reached at now.";
 

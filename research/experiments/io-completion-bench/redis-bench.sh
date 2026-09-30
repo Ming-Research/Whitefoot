@@ -1,40 +1,50 @@
 #!/bin/sh
-# Experiments 7 and 8 of the io-model investigation: the Redis subset
-# `tests/programs/redis_subset.wf` against `redis-server`, driven by
-# `redis-benchmark`. Experiment 7 (SHARED.md) runs both with persistence
-# off; Experiment 8 (TIME-AND-FILES.md) adds both with an append-only file
-# synced every second, and the subset of the revision before expiry. It
-# builds the subset with the worktree's compiler, checks every line for
-# correctness, then measures them interleaved and prints one CSV line per
+# Measurements of firn (apps/firn) against Redis and its competitors, driven by
+# redis-benchmark: Experiments 7 and 8 of the io-model investigation (SHARED.md
+# and TIME-AND-FILES.md), run then on the subset firn grew from, and the
+# criteria of the firn investigation (research/investigations/firn/DESIGN.md).
+# It builds firn with the worktree's compiler, checks every line for
+# correctness, then measures the lines interleaved and prints one CSV line per
 # run.
 #
-#   sh redis-bench.sh             the correctness pass and the protocol
+#   sh redis-bench.sh             the correctness pass and Experiments 7 and 8
 #   sh redis-bench.sh verify      only the correctness pass
+#   sh redis-bench.sh suite       the correctness pass and the firn criteria:
+#                                 redis-benchmark's default suite on every line
 #
-# BASELINE_ROOT, when set, is a worktree of the revision before expiry with
-# its compiler built; its subset is measured as the baseline lines.
+# BASELINE_ROOT, when set, is a worktree of the revision before expiry with its
+# compiler built; its subset is measured as the baseline lines of Experiment 8.
+# DRAGONFLY and GARNET name those servers' executables; the suite skips a line
+# whose executable is absent and says so.
 #
 # The servers run pinned to SERVER_CPUS and the client to CLIENT_CPUS, so the
-# two never share a core; nothing else should run on the host meanwhile.
+# two never share a core; nothing else should run on the host meanwhile. The
+# suite runs each line both on two server CPUs (0 and 1, the client on 2 and 3)
+# and on one (0, the client on 1 to 3).
 set -e
 
 ROOT=${ROOT:-$(cd "$(dirname "$0")/../../.." && pwd)}
 OUT=${OUT:-/tmp/redis-bench}
-WHITEFOOTC=${WHITEFOOTC:-$ROOT/compiler/target/debug/whitefootc}
+WHITEFOOTC=${WHITEFOOTC:-$ROOT/compiler/target/gate/whitefootc}
 BASELINE_ROOT=${BASELINE_ROOT:-}
+DRAGONFLY=${DRAGONFLY:-dragonfly}
+GARNET=${GARNET:-garnet-server}
 SERVER_CPUS=${SERVER_CPUS:-0,1}
 CLIENT_CPUS=${CLIENT_CPUS:-2,3}
+CLIENT_THREADS=${CLIENT_THREADS:-2}
 REQUESTS=${REQUESTS:-1000000}
 ROUNDS=${ROUNDS:-2}
+PASSES=${PASSES:-3}
+SECONDS_PER_RUN=${SECONDS_PER_RUN:-12}
 # A server that closes an idle client first holds that port in TIME_WAIT for
-# a minute, and the subset's runtime does not set SO_REUSEADDR, so each run
-# starts its ports from its own process number rather than from one fixed
-# port a run a minute earlier may still hold.
+# a minute, and firn's runtime does not set SO_REUSEADDR, so each run starts
+# its ports from its own process number rather than from one fixed port a run
+# a minute earlier may still hold.
 PORT=${PORT:-$((10000 + $$ % 400 * 50))}
 MODE=${1:-bench}
 
 mkdir -p "$OUT"
-"$WHITEFOOTC" -o "$OUT/redis_subset" "$ROOT/tests/programs/redis_subset.wf"
+"$WHITEFOOTC" --graph "$ROOT/apps/firn/modules.wfg" --entry firn -o "$OUT/firn"
 baselines=
 if [ -n "$BASELINE_ROOT" ]; then
     "$BASELINE_ROOT/compiler/target/gate/whitefootc" -o "$OUT/redis_baseline" \
@@ -47,46 +57,77 @@ server=
 # when set, keeps the append-only file a previous start left.
 IDLE=
 KEEP=
+# Whether a line's server can run on this host.
+available() {
+    case $1 in
+        dragonfly-*) command -v "$DRAGONFLY" >/dev/null 2>&1 ;;
+        garnet-*) command -v "$GARNET" >/dev/null 2>&1 ;;
+        valkey*) command -v valkey-server >/dev/null 2>&1 ;;
+        *) true ;;
+    esac
+}
+# The number of CPUs in a taskset list such as 0,1.
+cpu_count() {
+    echo "$1" | tr ',' '\n' | wc -l
+}
 # Each start takes a fresh port: a stopped server's accepted connections wait
-# out TIME_WAIT on its port, and the subset's runtime does not set
-# SO_REUSEADDR.
+# out TIME_WAIT on its port, and firn's runtime does not set SO_REUSEADDR.
 start() {
     PORT=$((PORT + 1))
+    cpus=$(cpu_count "$SERVER_CPUS")
     if [ -z "$KEEP" ]; then
-        rm -rf "$OUT/appendonlydir" "$OUT/subset.aof"
+        rm -rf "$OUT/appendonlydir" "$OUT/firn.aof"
     fi
     case $1 in
         reference)
             taskset -c "$SERVER_CPUS" redis-server --port "$PORT" --save "" \
                 --appendonly no --timeout "${IDLE:-0}" --daemonize no \
-                >"$OUT/reference.log" 2>&1 &
+                >"$OUT/server.log" 2>&1 &
             ;;
         reference-aof)
             taskset -c "$SERVER_CPUS" redis-server --port "$PORT" --save "" \
                 --appendonly yes --appendfsync everysec --dir "$OUT" \
                 --timeout "${IDLE:-0}" --daemonize no \
-                >"$OUT/reference.log" 2>&1 &
+                >"$OUT/server.log" 2>&1 &
             ;;
-        subset-aof-*)
+        valkey)
+            taskset -c "$SERVER_CPUS" valkey-server --port "$PORT" --save "" \
+                --appendonly no --daemonize no >"$OUT/server.log" 2>&1 &
+            ;;
+        valkey-io)
+            taskset -c "$SERVER_CPUS" valkey-server --port "$PORT" --save "" \
+                --appendonly no --io-threads "$cpus" --io-threads-do-reads yes \
+                --daemonize no >"$OUT/server.log" 2>&1 &
+            ;;
+        dragonfly-*)
+            taskset -c "$SERVER_CPUS" "$DRAGONFLY" --port="$PORT" \
+                --proactor_threads="${1#dragonfly-}" --dbfilename= \
+                --logtostderr >"$OUT/server.log" 2>&1 &
+            ;;
+        garnet-*)
+            taskset -c "$SERVER_CPUS" "$GARNET" --port "$PORT" \
+                --bind 127.0.0.1 >"$OUT/server.log" 2>&1 &
+            ;;
+        firn-aof-*)
             (cd "$OUT" && WF_DRIVERS=${1##*-} exec taskset -c "$SERVER_CPUS" \
-                ./redis_subset "$PORT" 0 subset.aof "${IDLE:-0}") \
-                >"$OUT/subset.log" 2>&1 &
+                ./firn "$PORT" 0 firn.aof "${IDLE:-0}") \
+                >"$OUT/server.log" 2>&1 &
             ;;
-        subset-*)
-            WF_DRIVERS=${1#subset-} taskset -c "$SERVER_CPUS" \
-                "$OUT/redis_subset" "$PORT" 0 - "${IDLE:-0}" \
-                >"$OUT/subset.log" 2>&1 &
+        firn-*)
+            WF_DRIVERS=${1#firn-} taskset -c "$SERVER_CPUS" \
+                "$OUT/firn" "$PORT" 0 - "${IDLE:-0}" \
+                >"$OUT/server.log" 2>&1 &
             ;;
         baseline-*)
             WF_DRIVERS=${1#baseline-} taskset -c "$SERVER_CPUS" \
-                "$OUT/redis_baseline" "$PORT" 0 >"$OUT/subset.log" 2>&1 &
+                "$OUT/redis_baseline" "$PORT" 0 >"$OUT/server.log" 2>&1 &
             ;;
     esac
     server=$!
     tries=0
     until redis-cli -p "$PORT" PING 2>/dev/null | grep -q PONG; do
         tries=$((tries + 1))
-        if [ "$tries" -gt 200 ]; then
+        if [ "$tries" -gt 400 ]; then
             echo "$1 never answered on $PORT" >&2
             exit 1
         fi
@@ -143,9 +184,9 @@ verify_expiry() {
 # a key made persistent before its expiry holds its value, and one incremented
 # before its expiry passed is absent, as a replay that expires nothing while it
 # loads leaves them.
-# The subset stops by being killed, so the check waits 100 milliseconds for
-# its writer, which appends every 10, before stopping it; Redis flushes its
-# file when it is stopped.
+# firn stops by being killed, so the check waits 100 milliseconds for its
+# writer, which appends every 10, before stopping it; Redis flushes its file
+# when it is stopped.
 verify_restart() {
     start "$1"
     printf 'SET k1 v\nSET k2 v PX 300\nSET k3 v EX 100\nINCR n\nINCR n\nDEL k1\nSET k4 v\nSET k5 v PX 300\nPERSIST k5\nSET n2 5 PX 300\nINCR n2\n' |
@@ -231,28 +272,137 @@ EOF
     fi
 }
 
+# The firn criteria: every test of the default suite completes on the line
+# with no error reply.
+verify_suite() {
+    start "$1"
+    taskset -c "$CLIENT_CPUS" redis-benchmark -p "$PORT" -c 50 -n 20000 \
+        -r 100000 --threads "$CLIENT_THREADS" --csv >"$OUT/suite-$1.csv" \
+        2>"$OUT/suite-$1.err"
+    stop
+    tests=$(grep -c -v '^"test"' "$OUT/suite-$1.csv")
+    echo "verify-suite,$1,$tests tests"
+    if [ "$tests" != 20 ] || [ -s "$OUT/suite-$1.err" ]; then
+        fail "$1" "the default suite"
+    fi
+}
+
 measure() {
     start "$1"
     for pipeline in 1 16; do
-        taskset -c "$CLIENT_CPUS" redis-benchmark -p "$PORT" --threads 2 \
-            -c 50 -n "$REQUESTS" -r 100000 -d 16 -t set,get -P "$pipeline" \
-            --csv 2>/dev/null | grep -v '^"test"' |
+        taskset -c "$CLIENT_CPUS" redis-benchmark -p "$PORT" \
+            --threads "$CLIENT_THREADS" -c 50 -n "$REQUESTS" -r 100000 -d 16 \
+            -t set,get -P "$pipeline" --csv 2>/dev/null | grep -v '^"test"' |
             sed "s/^/$1,round $2,pipeline $pipeline,/"
     done
     stop
 }
 
-lines="reference subset-2 subset-1 $baselines reference-aof subset-aof-2"
+SUITE_TESTS="ping_inline ping_mbulk set get incr lpush rpush lpop rpop sadd hset spop zadd zpopmin lrange_100 lrange_300 lrange_500 lrange_600 mset"
+
+# One test's rate on the running server at one depth after a given number of
+# requests, the list refill of an LRANGE test left out.
+pilot_rate() {
+    taskset -c "$CLIENT_CPUS" redis-benchmark -p "$PORT" \
+        --threads "$CLIENT_THREADS" -c 50 -n "$3" -r 100000 -t "$1" -P "$2" \
+        --csv 2>/dev/null | grep -v '^"test"' | grep -v '^"LPUSH (needed' |
+        head -1 | cut -d, -f2 | tr -d '"'
+}
+
+# The requests a suite run of one test at one depth sends: SECONDS_PER_RUN
+# seconds at the faster of Redis's and firn's rate, so that every line runs at
+# least that long at the rate of the faster of them and redis-benchmark's
+# quarter-second clock reads its rate to within about 2 percent. Each rate is
+# read in two steps, 100,000 requests and then about two seconds' worth, since
+# the clock cannot read a shorter run. The pilot's rates are printed as pilot
+# lines.
+pilot() {
+    rm -f "$OUT/pilot.csv"
+    for line in reference "firn-$(cpu_count "$SERVER_CPUS")"; do
+        start "$line"
+        for pipeline in 1 16; do
+            for test in $SUITE_TESTS; do
+                first=$(pilot_rate "$test" "$pipeline" 100000)
+                requests=$(awk -v rate="$first" 'BEGIN {
+                    n = int(rate * 2); if (n < 100000) n = 100000; print n }')
+                rate=$(pilot_rate "$test" "$pipeline" "$requests")
+                echo "$line,$pipeline,$test,$rate" >>"$OUT/pilot.csv"
+            done
+        done
+        stop
+    done
+    sed 's/^/pilot,/' "$OUT/pilot.csv"
+}
+
+requests_for() {
+    awk -F, -v test="$1" -v pipeline="$2" -v seconds="$SECONDS_PER_RUN" '
+        $2 == pipeline && $3 == test { if ($4 + 0 > rate) rate = $4 + 0 }
+        END { printf "%d\n", rate * seconds + 1 }' "$OUT/pilot.csv"
+}
+
+suite_run() {
+    start "$1"
+    for pipeline in 1 16; do
+        for test in $SUITE_TESTS; do
+            requests=$(requests_for "$test" "$pipeline")
+            taskset -c "$CLIENT_CPUS" redis-benchmark -p "$PORT" \
+                --threads "$CLIENT_THREADS" -c 50 -n "$requests" -r 100000 \
+                -t "$test" -P "$pipeline" --csv 2>/dev/null |
+                grep -v '^"test"' | grep -v '^"LPUSH (needed' |
+                sed "s/^/$1,$2,$3,pipeline $pipeline,/"
+        done
+    done
+    stop
+}
+
+if [ "$MODE" = suite ]; then
+    two="reference valkey valkey-io dragonfly-2 garnet-2 firn-2"
+    one="reference valkey dragonfly-1 garnet-1 firn-1"
+    for line in $two; do
+        if available "$line"; then
+            verify_suite "$line"
+        else
+            echo "skip,$line,no executable"
+        fi
+    done
+    SERVER_CPUS=0,1
+    CLIENT_CPUS=2,3
+    CLIENT_THREADS=2
+    pilot
+    pass=1
+    while [ "$pass" -le "$PASSES" ]; do
+        SERVER_CPUS=0,1
+        CLIENT_CPUS=2,3
+        CLIENT_THREADS=2
+        for line in $two; do
+            if available "$line"; then
+                suite_run "$line" "pass $pass" "2 server CPUs"
+            fi
+        done
+        SERVER_CPUS=0
+        CLIENT_CPUS=1,2,3
+        CLIENT_THREADS=3
+        for line in $one; do
+            if available "$line"; then
+                suite_run "$line" "pass $pass" "1 server CPU"
+            fi
+        done
+        pass=$((pass + 1))
+    done
+    exit 0
+fi
+
+lines="reference firn-2 firn-1 $baselines reference-aof firn-aof-2"
 for line in $lines; do
     verify "$line"
 done
-for line in reference subset-2 reference-aof subset-aof-2; do
+for line in reference firn-2 reference-aof firn-aof-2; do
     verify_expiry "$line"
 done
-for line in reference-aof subset-aof-2; do
+for line in reference-aof firn-aof-2; do
     verify_restart "$line"
 done
-for line in reference subset-2; do
+for line in reference firn-2; do
     verify_idle "$line"
     verify_active "$line"
 done

@@ -40,14 +40,14 @@ fn due_order(env: &KeyEnv, left: &Due, right: &Due) -> order: i32 reads(left), r
   return 0_i32;
 }
 
-fn store_new() -> made: Store pure {
-  doc "An empty keyspace that keeps no append-only file.";
+fn store_new(seed: u64) -> made: Store pure {
+  doc "An empty keyspace that keeps no append-only file, whose SPOP draws start from the seed.";
   let map = hash_map_new::<Box<Slots<u8>>, Entry, ceiling>(capacity: 1024_u64);
   let due = priority_queue_new::<Due, ceiling>();
   let log = box_slots_new::<u8>(capacity: 65536_u64);
   let quiet = False();
   let running = False();
-  return Store(map: move map, due: move due, log: move log, logging: quiet, clients: 0_u64, stopping: running, random: 88172645463325252_u64);
+  return Store(map: move map, due: move due, log: move log, logging: quiet, clients: 0_u64, stopping: running, random: seed);
 }
 
 fn expired(expires: u64, now: u64) -> reached: Bool pure {

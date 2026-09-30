@@ -2,11 +2,11 @@
 
 //! The corpus is canonical by construction, not by assertion.
 //!
-//! Every `.wf` file the repository keeps as a program — the conformance cases
-//! and the program corpus — is rendered from its own derivation tree and
-//! compared with itself. A file that is canonical must reproduce its exact
-//! bytes; a file that is deliberately not must render to something else, and
-//! that something else must be canonical.
+//! Every `.wf` file the repository keeps as a program — the conformance cases,
+//! the program corpus and the deployable programs under `apps/` — is rendered
+//! from its own derivation tree and compared with itself. A file that is
+//! canonical must reproduce its exact bytes; a file that is deliberately not
+//! must render to something else, and that something else must be canonical.
 //!
 //! This is what gives the renderer a permanent reason to exist and what makes
 //! a scripted corpus migration safe: the transform may produce any layout that
@@ -27,14 +27,16 @@ use whitefoot::{
     classify_terminals, finalize, lex, parse, parse_graph, render_canonical,
 };
 
-/// The two corpus roots, reached from the compiler package.
-fn corpus_roots() -> [PathBuf; 2] {
+/// The three corpus roots, reached from the compiler package: the
+/// conformance cases, the program corpus and the deployable programs.
+fn corpus_roots() -> [PathBuf; 3] {
     let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("compiler package must live directly under the repository root");
     [
         repository.join("tests").join("conformance").join("cases"),
         repository.join("tests").join("programs"),
+        repository.join("apps"),
     ]
 }
 

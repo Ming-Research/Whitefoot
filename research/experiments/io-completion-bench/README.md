@@ -338,26 +338,34 @@ the epoll one. `NET_LINES` names a subset of `uring epoll wf` when one server
 cannot complete a run yet and the others still owe a table; the table names
 the lines it holds.
 
-`redis-bench.sh` is Experiment 7 of
+`redis-bench.sh` measures firn, the server of Redis's protocol in
+`apps/firn`, against `redis-server` and its competitors, all driven by
+`redis-benchmark`. It ran Experiment 7 of
 `research/investigations/io-model/SHARED.md` and Experiment 8 of
-`research/investigations/io-model/TIME-AND-FILES.md`: the Redis subset
-`tests/programs/redis_subset.wf` against `redis-server`, both driven by
-`redis-benchmark`, with persistence off and with an append-only file synced
-every second. It builds the subset with the worktree's compiler and, when
-`BASELINE_ROOT` names a worktree of an earlier revision with its compiler
-built, that revision's subset as the baseline lines. Every line must pass a
-correctness pass before any line reports a rate: 100,000 increments from 50
-clients reach one counter and a short command sequence answers as Redis does;
-expiry, `TTL` and `PERSIST` answer as Redis does; a restart on the file keeps
-every change and drops a key whose expiry passed meanwhile; an idle limit
-closes a silent client; and 100,000 expired keys no command reads are
-removed. It then runs `ROUNDS` interleaved passes of `SET` and `GET` without
-pipelining and with 16 requests per pipeline. The servers and the client are
-pinned to disjoint CPUs; the output is `redis-benchmark`'s CSV line per run,
-prefixed with the server line, the pass and the pipeline depth.
+`research/investigations/io-model/TIME-AND-FILES.md` on the Redis subset firn
+grew from, and runs the criteria of `research/investigations/firn/DESIGN.md`.
+It builds firn with the worktree's compiler and, when `BASELINE_ROOT` names a
+worktree of an earlier revision with its compiler built, that revision's
+subset as Experiment 8's baseline lines. Every line must pass a correctness
+pass before any line reports a rate: 100,000 increments from 50 clients reach
+one counter and a short command sequence answers as Redis does; expiry, `TTL`
+and `PERSIST` answer as Redis does; a restart on the file keeps every change
+and drops a key whose expiry passed meanwhile; an idle limit closes a silent
+client; and 100,000 expired keys no command reads are removed. By default it
+then runs `ROUNDS` interleaved passes of `SET` and `GET` without pipelining
+and with 16 requests per pipeline. With `suite` it instead checks that every
+line completes the 20 tests of `redis-benchmark`'s default suite, sizes each
+test's runs from a pilot so that each lasts at least `SECONDS_PER_RUN`
+seconds, and runs `PASSES` interleaved passes of every test at both depths,
+on two server CPUs and on one, over Redis, Valkey with and without I/O
+threads, Dragonfly and Garnet (`DRAGONFLY` and `GARNET` name their
+executables; a line whose executable is absent is skipped). The servers and
+the client are pinned to disjoint CPUs; the output is `redis-benchmark`'s CSV
+line per run, prefixed with the server line, the pass and the pipeline depth.
 `redis-samples.csv` holds the raw output of Experiment 7's runs, including its
-attribution runs, and `redis-persistence-samples.csv` that of Experiment 8.
-They are removed with the experiments' records.
+attribution runs, `redis-persistence-samples.csv` that of Experiment 8, and
+`firn-samples.csv` that of the firn investigation. They are removed with the
+experiments' records.
 
 ## Reproducing
 
@@ -376,7 +384,8 @@ They are removed with the experiments' records.
     make -C research/experiments/io-completion-bench uring-check  # the reference's own traces
     make -C research/experiments/io-completion-bench net-verify   # bytes only
     make -C research/experiments/io-completion-bench linux-net    # the TCP table
-    sh research/experiments/io-completion-bench/redis-bench.sh    # the Redis subset
+    sh research/experiments/io-completion-bench/redis-bench.sh        # firn, Experiments 7 and 8
+    sh research/experiments/io-completion-bench/redis-bench.sh suite  # firn, its criteria
 
 The TCP targets are Linux-only, as `linux` and `linux-read` are: `epoll_echo`
 and `uring_echo` are written against Linux interfaces, and the workload's

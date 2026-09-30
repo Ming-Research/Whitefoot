@@ -2780,3 +2780,28 @@ condition under which it is taken up.
   least seven runs per model trips no build or case stage. Reopen when an
   overrun is traced to a change that earlier runs on faster machines passed,
   or when clippy's variance overruns come more than about once a week.
+
+## firn
+
+- **firn lacks what a deployment needs beyond the benchmark's commands.**
+  The owner set this stage's features to the commands `redis-benchmark`'s
+  default suite sends ([firn](../research/investigations/firn/DESIGN.md#the-owners-rulings));
+  a server someone deploys in place of Redis needs more. Missing, among
+  others: `SET`'s `NX`, `XX`, `GET`, `KEEPTTL`, `EXAT` and `PXAT`, which
+  firn answers as a syntax error where Redis sets the key; sorted-set scores
+  that are not integers below 2^52, which need reading a decimal to the
+  nearest double and printing one with 17 significant digits exactly;
+  quoted arguments in inline commands; a listening address other than the
+  loopback and options by name rather than by position; `AUTH`, `SELECT`,
+  `KEYS` and `SCAN`, `INFO`, `HELLO` and RESP3, the blocking list commands,
+  `MULTI` and `EXEC`, publish and subscribe, and a random hash seed. The owner
+  sets the list for the deployment stage; reopen when this stage's
+  measurement is handed back.
+- **A set never shrinks, so `SPOP` walks ever sparser buckets.** `SPOP`
+  picks the first filled bucket from a random position, and a hash map keeps
+  its buckets after its members are removed, so after most of a large set is
+  popped each pop scans many empty buckets; Redis shrinks its table as it
+  empties. Measure `SPOP` after popping 99 of every 100 members of a
+  million-member set; if a pop costs more than a few times one on the full
+  set, shrink the map when it falls below a quarter full, which needs
+  `hash_map_rehash` to reduce capacity or a shrinking reserve in the library.

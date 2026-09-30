@@ -323,7 +323,9 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
     set idle = cvt::<u16, u64>(written_idle);
   }
   let origin = std::time::now(clock: &clock);
-  let initial = store_new();
+  let calendar = unix_nanoseconds(clock: &wall_clock);
+  let seed = cvt.wrap::<i64, u64>(calendar);
+  let initial = store_new(seed: seed);
   let keyspace = shared_new::<Store>(value: move initial);
   let failed = False();
   if name_length > 0_u64 {
