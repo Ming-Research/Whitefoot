@@ -364,6 +364,22 @@ statement and apply them all inside one; that splits every command into a
 preparing and an applying part and is left until the statement's own work
 has been reduced.
 
+### A second look, after keyed hashes
+
+One pass of the suite with the keyed build against Redis and Dragonfly on
+two server CPUs and on one (the `quick look 2` lines of
+[firn-samples.csv](../../experiments/io-completion-bench/firn-samples.csv)).
+Its runs are short, so the benchmark's 250 ms clock step is 8 to 12% of a
+rate and only large gaps are read from it. Against the criteria, `MSET` falls
+short everywhere: 0.87 times the faster competitor at depth 16 on two CPUs
+and on one, and 0.93 at depth 1 on one. On one server CPU at depth 16, where
+firn must reach 1.1 times the faster one, `SET` and `GET` only match Redis and
+`INCR`, `HSET`, `ZPOPMIN` and `SPOP` fall below it, `SPOP` to 0.73. On two
+CPUs at depth 16, `ZADD`, `SADD` and `SPOP` reach 1.09 to 1.14 of the 1.4
+required, and at depth 1 the gaps of one clock step against Dragonfly are
+within this pass's resolution. At depth 16 the list ranges lead by 2.29 to
+3.38 times and the pushes and pops by 1.13 to 2.00.
+
 ### Short strings inside the keyspace, stated before measuring
 
 A profile of the keyed build under `SET` at depth 16 put 21% of its time in
@@ -373,8 +389,9 @@ pointer, read to compare the bytes; `GET` and `INCR` then follow a third
 pointer to the value. Every such load sits inside the atomic statement, whose
 holder the other driver waits on, as the 19% spent spinning in
 `wf__shared_acquire` shows. The change: a key's bytes and a string value of
-at most 24 bytes are stored inside the bucket, a longer one in its own
-allocation as now, through one string type whose single constructor picks the
+at most 24 bytes, a hash's field values included, are stored inside the
+bucket, a longer one in its own allocation as now (list elements stay in
+allocations of their own), through one string type whose single constructor picks the
 form from the length, so that equal strings always take the same form and a
 hit compares bytes on the lines the probe already loaded. `INCR` writes its
 decimal in place. The suite's keys and members are 16 to 20 bytes and its
