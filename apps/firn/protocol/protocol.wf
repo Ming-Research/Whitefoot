@@ -262,7 +262,8 @@ fn protocol_error(client: &Client, input: &[u8], parsed: Parsed) -> result: unit
     reply_byte(client: client, value: 45_u8);
     reply_word(client: client, word: &text_dollar[0_u64..39_u64]);
     let found = byte_at(input: input, index: parsed.next);
-    reply_byte(client: client, value: found);
+    let shown = echoed(byte: found);
+    reply_byte(client: client, value: shown);
     reply_byte(client: client, value: 39_u8);
     reply_word(client: client, word: &reply_crlf[0_u64..2_u64]);
   } else if state == 4_u64 {
@@ -465,15 +466,33 @@ fn reply_word(client: &Client, word: &[u8]) -> result: unit reads(word), writes(
   return unit;
 }
 
-fn reply_raw(client: &Client, input: &[u8], start: u64, length: u64) -> result: unit reads(input), writes(client) {
-  doc "Writes bytes of the input as they are.";
-  reply_room(client: client, needed: length);
-  for @bytes (offset in 0_u64..length) {
-    let position = start +wrap offset;
-    let byte = byte_at(input: input, index: position);
-    put(client: client, value: byte);
+fn echoed(byte: u8) -> shown: u8 pure {
+  doc "A byte of the input as an error reply echoes it: carriage return and line feed become spaces, as Redis maps them, so that the reply stays one line.";
+  if byte == 13_u8 {
+    return 32_u8;
   }
-  return unit;
+  if byte == 10_u8 {
+    return 32_u8;
+  }
+  return byte;
+}
+
+fn reply_echoed(client: &Client, input: &[u8], span: Span, limit: u64) -> written: u64 reads(input), writes(client) {
+  doc "Writes at most limit bytes of an argument into an error reply as Redis formats one with %s, stopping before a zero byte and writing carriage return and line feed as spaces, and returns how many it wrote.";
+  let length = imin(span.length, limit);
+  reply_room(client: client, needed: length);
+  let written = 0_u64;
+  for @bytes (offset in 0_u64..length) {
+    let position = span.start +wrap offset;
+    let byte = byte_at(input: input, index: position);
+    if byte == 0_u8 {
+      break @bytes;
+    }
+    let shown = echoed(byte: byte);
+    put(client: client, value: shown);
+    set written = written +wrap 1_u64;
+  }
+  return written;
 }
 
 fn put_decimal(client: &Client, value: u64) -> result: unit writes(client) {
@@ -685,26 +704,19 @@ fn reply_arity(client: &Client, input: &[u8], name: Span) -> result: unit reads(
   return unit;
 }
 
-fn reply_quoted(client: &Client, input: &[u8], span: Span, limit: u64) -> result: unit reads(input), writes(client) {
-  doc "Writes at most limit bytes of an argument between single quotes.";
-  let length = imin(span.length, limit);
-  reply_room(client: client, needed: length);
+fn reply_quoted(client: &Client, input: &[u8], span: Span, limit: u64) -> written: u64 reads(input), writes(client) {
+  doc "Writes an argument between single quotes as reply_echoed writes it, and returns how many of its bytes it wrote.";
   reply_byte(client: client, value: 39_u8);
-  reply_room(client: client, needed: length);
-  for @bytes (offset in 0_u64..length) {
-    let position = span.start +wrap offset;
-    let byte = byte_at(input: input, index: position);
-    put(client: client, value: byte);
-  }
+  let written = reply_echoed(client: client, input: input, span: span, limit: limit);
   reply_byte(client: client, value: 39_u8);
-  return unit;
+  return written;
 }
 
 fn reply_unknown(client: &Client, input: &[u8], args: &Box<Slots<Span>>) -> result: unit reads(input), reads(args), writes(client) {
-  doc "Writes the error Redis replies to a command it does not know, naming the command and its first arguments: at most 128 bytes of the name, then each argument quoted and followed by a space while the arguments written stay within 128 bytes.";
+  doc "Writes the error Redis replies to a command it does not know, naming the command and its first arguments: at most 128 bytes of the name, then each argument quoted and followed by a space while the arguments written stay within 128 bytes, each as reply_echoed writes it.";
   reply_word(client: client, word: &text_unknown[0_u64..21_u64]);
   let name = arg(args: args, index: 0_u64);
-  reply_quoted(client: client, input: input, span: name, limit: 128_u64);
+  let named = reply_quoted(client: client, input: input, span: name, limit: 128_u64);
   reply_word(client: client, word: &text_beginning[0_u64..28_u64]);
   let count = args^.inner.len;
   let used = 0_u64;
@@ -714,8 +726,7 @@ fn reply_unknown(client: &Client, input: &[u8], args: &Box<Slots<Span>>) -> resu
     if room == 0_u64 {
       break @arguments;
     }
-    let shown = imin(span.length, room);
-    reply_quoted(client: client, input: input, span: span, limit: shown);
+    let shown = reply_quoted(client: client, input: input, span: span, limit: room);
     reply_byte(client: client, value: 32_u8);
     let spent = shown +wrap 3_u64;
     set used = used +wrap spent;

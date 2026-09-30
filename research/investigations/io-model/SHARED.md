@@ -84,7 +84,7 @@ atomic_stmt := "atomic" IDENT "=" "&" place ("when" expr)? block
 
 ### What the writer sees: a Redis subset
 
-The sketch as first proposed; `tests/programs/redis_subset.wf` is the checked program Experiment 7 wrote from it. `Bytes` stands for the program's own
+The sketch as first proposed; `tests/programs/redis_subset.wf` (at `32a0cbf87`; since replaced by `apps/firn`) is the checked program Experiment 7 wrote from it. `Bytes` stands for the program's own
 byte-string type, and `...` for ordinary parsing and encoding code.
 
 ```wf
@@ -335,12 +335,12 @@ that spins and retries.
 
 ### Design
 
-`tests/programs/redis_subset.wf` serves `PING`, `SET`, `GET`, `DEL` and
-`INCR` in RESP2 over TCP, pipelined requests included. Each connection runs
-in its own context, reads into its own buffer, answers every complete command
-the buffer holds with one send, and keeps an incomplete one for the next
-read. The keyspace is one `Shared<HashMap<Box<Slots<u8>>, Box<Slots<u8>>, c>>`
-from the standard library, and each command is one atomic statement over it;
+`tests/programs/redis_subset.wf` (at `32a0cbf87`; since replaced by
+`apps/firn`) serves `PING`, `SET`, `GET`, `DEL` and `INCR` in RESP2 over TCP,
+pipelined requests included. Each connection runs in its own context, reads
+into its own buffer, answers every complete command the buffer holds with one
+send, and keeps an incomplete one for the next read. The keyspace is one
+`Shared<HashMap<Box<Slots<u8>>, Box<Slots<u8>>, c>>` from the standard library, and each command is one atomic statement over it;
 parsing, encoding and the socket calls run outside the statement.
 
 ### What would distinguish the hypotheses, stated before measuring
@@ -553,7 +553,7 @@ accident, and each change was checked by making it fail once:
   reach an atomic statement with a guard; each recorded call to one of them
   starts a context as a marked call does. A call that reaches no guard still
   runs in order, so a program without guards starts no context it did not
-  mark: `redis_subset.wf` and `shared_objects.wf` start exactly one context
+  mark: `redis_subset.wf` (at `32a0cbf87`) and `shared_objects.wf` start exactly one context
   per `mustpar` in their emitted modules. With the pass disabled,
   `share-pos-guard-progress-without-marker` stops with "every context waits
   for a context that is not waiting for the host".

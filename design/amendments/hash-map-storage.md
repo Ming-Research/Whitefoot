@@ -1,7 +1,0 @@
-Node: language/data-model/hash-map-storage
-
-Decision: HashMap rebuilds before an insertion would leave three quarters or more of its buckets filled or vacated by a removal, at the same capacity when fewer than half of those are filled and at twice the capacity otherwise, within its ceiling, because its linear probing walks every filled and vacated bucket between a key's home and its place, a walk that grows without bound as the table fills, and a keyspace grown only when full ran [firn's `INCR`](../../research/investigations/firn/DESIGN.md#the-hash-maps-growth-results) at 0.61 of the rate of the same keyspace created too large to fill, where this policy runs it at 1.13 times that rate, instead of rebuilding only when no bucket is left. The map counts its vacated buckets for this, and a map below four buckets or at its ceiling still fills every bucket, so a small or ceiling-bound map keeps its exact capacity.
-
-Rejected:
-- Rebuilding only when no bucket is left, the previous policy: rejected because an insertion near that point probes almost the whole backing, and vacated buckets, which removals leave and only a rebuild clears, lengthen every later lookup without ever triggering one.
-- Counting only filled buckets toward the limit: rejected because a keyspace that removes as often as it inserts, as expiry, `DEL` and popping do, fills with vacated buckets that a lookup must walk while the filled count stays low.

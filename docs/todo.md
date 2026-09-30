@@ -2847,9 +2847,13 @@ condition under which it is taken up.
   default suite sends ([firn](../research/investigations/firn/DESIGN.md#the-owners-rulings));
   a server someone deploys in place of Redis needs more. Missing, among
   others: `SET`'s `NX`, `XX`, `GET`, `KEEPTTL`, `EXAT` and `PXAT`, which
-  firn answers as a syntax error where Redis sets the key; sorted-set scores
-  that are not integers below 2^52, which need reading a decimal to the
-  nearest double and printing one with 17 significant digits exactly;
+  firn answers as a syntax error where Redis sets the key; `SET`'s `EX` and
+  `PX` beyond 10^9 seconds or 10^12 milliseconds, which firn refuses as an
+  invalid expire time where Redis accepts them, since firn keeps expiries as
+  nanoseconds; `CONFIG GET` patterns, which firn does not match;
+  sorted-set scores that are not integers below 2^52, which need reading a
+  decimal to the nearest double and printing one with 17 significant digits
+  exactly;
   quoted arguments in inline commands; a listening address other than the
   loopback and options by name rather than by position; `AUTH`, `SELECT`,
   `KEYS` and `SCAN`, `INFO`, `HELLO` and RESP3, the blocking list commands,
@@ -2872,4 +2876,14 @@ condition under which it is taken up.
   weighs depth-1 tail latency, or when the final suite shows `SPOP` short of
   its competitors; the change is small (`hash_map_rebuild` accepting fewer
   buckets than it had while they outnumber the pairs, and a check after each
-  removal) and belongs to the pending hash map storage amendment.
+  removal) and would join the growth decision of `hash-map-storage` in the
+  design tree.
+- **`SPOP` reads the hash map's buckets.** The library has no entry that
+  returns a member at random, so firn's `pick_member`
+  (`apps/firn/commands/sets.wf`) reads the map's public bucket array and
+  matches its slot variants, which ties firn to the library's representation,
+  and takes the first filled bucket from a random position, which favors a
+  member that follows a run of empty buckets; Redis samples buckets instead.
+  A library entry that picks a filled bucket, as uniformly as its layout
+  allows, would remove both. Reopen with the library's next hash map change
+  or when a second program needs a random member.

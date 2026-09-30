@@ -265,6 +265,103 @@ fn hash_map_test_wrapping() -> result: u64 pure {
   return seen.failures;
 }
 
+fn hash_map_test_growth_put(map: &HashMap<u64, u64, 64>, key: u64, env: &HashMapHashEnv, seen: &HashMapTestSeen) -> result: unit reads(env), writes(map), writes(seen) {
+  let value = key *wrap 10_u64;
+  let outcome = hash_map_put::<HashMapIdentityKey, u64, 64>(map: map, key: key, value: value, env: env);
+  hash_map_test_scalar_outcome(outcome: outcome, expected: 0_u64, key: key, value: value, seen: seen);
+  return unit;
+}
+
+fn hash_map_test_growth_remove(map: &HashMap<u64, u64, 64>, key: u64, env: &HashMapHashEnv, seen: &HashMapTestSeen) -> result: unit reads(env), writes(map), writes(seen) {
+  let removed = hash_map_remove::<HashMapIdentityKey, u64, 64>(map: map, key: &key, env: env);
+  match removed {
+    Some(value: old_pair) => {
+      hash_map_pair_consume::<HashMapScalarConsume>(pair: old_pair, env: seen);
+    }
+    None() => {
+      hash_map_test_fail(seen: seen);
+    }
+  }
+  return unit;
+}
+
+fn hash_map_test_growth_shape(map: &HashMap<u64, u64, 64>, capacity: u64, length: u64, vacated: u64, seen: &HashMapTestSeen) -> result: unit reads(map), writes(seen) {
+  let actual_capacity = hash_map_capacity::<u64, u64, 64>(map: map);
+  if actual_capacity != capacity {
+    hash_map_test_fail(seen: seen);
+  }
+  let actual_length = hash_map_len::<u64, u64, 64>(map: map);
+  if actual_length != length {
+    hash_map_test_fail(seen: seen);
+  }
+  if map^.vacated != vacated {
+    hash_map_test_fail(seen: seen);
+  }
+  return unit;
+}
+
+fn hash_map_test_growth_expect(map: &HashMap<u64, u64, 64>, key: u64, env: &HashMapHashEnv, seen: &HashMapTestSeen) -> result: unit reads(map), reads(env), writes(seen) {
+  let expected = key *wrap 10_u64;
+  let observed = hash_map_lookup::<HashMapIdentityKey, u64, HashMapTestSeen, u64, fn hash_map_test_scalar_read, 64>(map: map, key: &key, key_env: env, visit_env: seen);
+  match observed {
+    Ok(value: found_value) => {
+      if found_value != expected {
+        hash_map_test_fail(seen: seen);
+      }
+    }
+    Err(error: absent) => {
+      hash_map_test_fail(seen: seen);
+    }
+  }
+  return unit;
+}
+
+fn hash_map_test_growth() -> result: u64 pure {
+  doc "The growth policy, observed through capacity, length and the vacated count: a map of eight buckets holds six pairs and doubles before the seventh; once removals leave 10 of its 16 buckets vacated and one filled, it rebuilds at the same capacity when an insertion would find three quarters already used, clearing the vacated count; an insertion that reuses a vacated bucket uncounts it; and a map of three buckets fills all three before it grows.";
+  let seen = HashMapTestSeen(failures: 0_u64, consumed: 0_u64, key_sum: 0_u64, value_sum: 0_u64, visits: 0_u64, observed: 0_u64);
+  let false_value = False();
+  let env = HashMapHashEnv(hostile: false_value);
+  let map = hash_map_new::<u64, u64, 64>(capacity: 8_u64);
+  for (key in 0_u64..6_u64) {
+    hash_map_test_growth_put(map: &map, key: key, env: &env, seen: &seen);
+  }
+  hash_map_test_growth_shape(map: &map, capacity: 8_u64, length: 6_u64, vacated: 0_u64, seen: &seen);
+  hash_map_test_growth_put(map: &map, key: 6_u64, env: &env, seen: &seen);
+  hash_map_test_growth_shape(map: &map, capacity: 16_u64, length: 7_u64, vacated: 0_u64, seen: &seen);
+  for (key in 7_u64..11_u64) {
+    hash_map_test_growth_put(map: &map, key: key, env: &env, seen: &seen);
+  }
+  hash_map_test_growth_shape(map: &map, capacity: 16_u64, length: 11_u64, vacated: 0_u64, seen: &seen);
+  for (key in 0_u64..10_u64) {
+    hash_map_test_growth_remove(map: &map, key: key, env: &env, seen: &seen);
+  }
+  hash_map_test_growth_shape(map: &map, capacity: 16_u64, length: 1_u64, vacated: 10_u64, seen: &seen);
+  hash_map_test_growth_put(map: &map, key: 11_u64, env: &env, seen: &seen);
+  hash_map_test_growth_shape(map: &map, capacity: 16_u64, length: 2_u64, vacated: 10_u64, seen: &seen);
+  hash_map_test_growth_put(map: &map, key: 12_u64, env: &env, seen: &seen);
+  hash_map_test_growth_shape(map: &map, capacity: 16_u64, length: 3_u64, vacated: 0_u64, seen: &seen);
+  hash_map_test_growth_remove(map: &map, key: 10_u64, env: &env, seen: &seen);
+  hash_map_test_growth_shape(map: &map, capacity: 16_u64, length: 2_u64, vacated: 1_u64, seen: &seen);
+  hash_map_test_growth_put(map: &map, key: 26_u64, env: &env, seen: &seen);
+  hash_map_test_growth_shape(map: &map, capacity: 16_u64, length: 3_u64, vacated: 0_u64, seen: &seen);
+  hash_map_test_growth_expect(map: &map, key: 11_u64, env: &env, seen: &seen);
+  hash_map_test_growth_expect(map: &map, key: 12_u64, env: &env, seen: &seen);
+  hash_map_test_growth_expect(map: &map, key: 26_u64, env: &env, seen: &seen);
+  hash_map_free::<HashMapScalarConsume, 64>(map: move map, env: &seen);
+  let small = hash_map_new::<u64, u64, 64>(capacity: 3_u64);
+  for (key in 0_u64..3_u64) {
+    hash_map_test_growth_put(map: &small, key: key, env: &env, seen: &seen);
+  }
+  hash_map_test_growth_shape(map: &small, capacity: 3_u64, length: 3_u64, vacated: 0_u64, seen: &seen);
+  hash_map_test_growth_put(map: &small, key: 3_u64, env: &env, seen: &seen);
+  hash_map_test_growth_shape(map: &small, capacity: 6_u64, length: 4_u64, vacated: 0_u64, seen: &seen);
+  hash_map_free::<HashMapScalarConsume, 64>(map: move small, env: &seen);
+  if seen.consumed != 18_u64 {
+    hash_map_test_fail(seen: &seen);
+  }
+  return seen.failures;
+}
+
 fn hash_map_test_cycle_hash(env: &HashMapHashEnv, key: &u64) -> result: u64 pure {
   return 2_u64;
 }
@@ -874,10 +971,11 @@ fn hash_map_test_units() -> result: u64 pure {
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "One representation-independent library caller covers copyable pairs, must-consume Box-owning pairs, zero-sized pairs, hostile equality, wrap, tombstones, replacement, real capacity refusal, growth, rehash, borrowed edit, owned callback results and exact cleanup. All observations use public operations rather than bucket fields or iteration order.";
+  doc "One representation-independent library caller covers copyable pairs, must-consume Box-owning pairs, zero-sized pairs, hostile equality, wrap, tombstones, replacement, real capacity refusal, growth and its thresholds, rehash, borrowed edit, owned callback results and exact cleanup. All observations use public operations rather than bucket fields or iteration order.";
   let scalar_failures = hash_map_test_scalars();
   let wrapping_failures = hash_map_test_wrapping();
   let cycle_failures = hash_map_test_cycle();
+  let growth_failures = hash_map_test_growth();
   let edit_failures = hash_map_test_edit();
   let owned_failures = hash_map_test_owned();
   let unit_failures = hash_map_test_units();
@@ -889,6 +987,9 @@ fn main() -> status: ExitStatus pure {
   }
   if cycle_failures != 0_u64 {
     return exit_status(code: 1_u8);
+  }
+  if growth_failures != 0_u64 {
+    return exit_status(code: 5_u8);
   }
   if edit_failures != 0_u64 {
     return exit_status(code: 1_u8);

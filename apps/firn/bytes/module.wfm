@@ -5,7 +5,7 @@ public struct KeyEnv {
 }
 
 public enum Bytes {
-  doc "A byte string: one of at most 24 bytes held inside its owner, a longer one in an allocation of its own. bytes_new alone chooses the form, from the length, so equal strings always have the same form.";
+  doc "A byte string: one of at most 24 bytes held inside its owner, a longer one in an allocation of its own. Every string is built by bytes_new, which chooses the form from the length, so equal strings share a form; the variants are public, so this holds by convention, and a string built in the other form would still compare equal, only more slowly.";
   Short(public bytes: Slots<u8, 24>);
   Long(public bytes: Box<Slots<u8>>);
 }
@@ -59,6 +59,6 @@ public fn key_boxed(key: Key) -> bytes: Box<Slots<u8>> pure doc "A key's string 
 
 public fn read_integer(input: &[u8], start: u64, length: u64) -> number: Integer reads(input) doc "Reads bytes of the input as a signed 64-bit decimal as Redis reads one: an optional minus sign, then digits without a leading zero unless the number is 0, and nothing else.";
 
-public fn name_code(input: &[u8], start: u64, length: u64) -> code: u64 reads(input) doc "Packs a command name's first eight bytes, letters upper-cased, little end first, into one number; a name longer than eight bytes has its top byte set to 255, and a name of no bytes is 0.";
+public fn name_code(input: &[u8], start: u64, length: u64) -> code: u64 reads(input) doc "Packs a command name's first eight bytes, letters upper-cased, little end first, into one number; a name longer than eight bytes, or one holding a zero byte, which no command's name does, has its top byte set to 255, and a name of no bytes is 0.";
 
 public fn name_is(input: &[u8], start: u64, length: u64, word: &[u8]) -> matched: Bool reads(input), reads(word) doc "Whether bytes of the input spell an upper-case word, letters in either case.";

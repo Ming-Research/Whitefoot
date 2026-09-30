@@ -60,7 +60,7 @@ public fn reply_byte(client: &Client, value: u8) -> result: unit writes(client) 
 
 public fn reply_word(client: &Client, word: &[u8]) -> result: unit reads(word), writes(client) doc "Writes every byte of a constant word.";
 
-public fn reply_raw(client: &Client, input: &[u8], start: u64, length: u64) -> result: unit reads(input), writes(client) doc "Writes bytes of the input as they are.";
+public fn reply_echoed(client: &Client, input: &[u8], span: Span, limit: u64) -> written: u64 reads(input), writes(client) doc "Writes at most limit bytes of an argument into an error reply as Redis formats one with %s, stopping before a zero byte and writing carriage return and line feed as spaces, and returns how many it wrote.";
 
 public fn reply_decimal(client: &Client, value: u64) -> result: unit writes(client) doc "Writes a number in decimal.";
 

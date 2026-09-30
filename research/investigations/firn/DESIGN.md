@@ -56,8 +56,8 @@ competitor is the one with the highest median on that test and depth.
   0.91 for `SET` and 0.95 for `GET`, so this criterion asks for more than the
   baseline held.
 - **Latency.** At depth 16 firn's median p99 is no higher than the fastest
-  competitor's, as it was in the baseline: 1.85 to 3.24 ms against 2.71 to
-  4.06 ms.
+  competitor's, as it was in the baseline, whose per-test medians were 1.96
+  to 2.90 ms against the fastest competitor's 2.75 to 3.77 ms.
 
 Each run lasts at least ten seconds, since `redis-benchmark` with several
 threads reports a rate from a clock that advances in steps of about a quarter
@@ -105,7 +105,7 @@ slowest there.
 
 ## Design of the program
 
-`apps/firn` is a module program of six modules and about 5,200 lines;
+`apps/firn` is a module program of six modules and about 5,300 lines;
 [its README](../../../apps/firn/README.md) lists them. Each choice below keeps
 Redis's observable behavior on the suite's commands and says what it refused.
 
@@ -114,8 +114,11 @@ Redis's observable behavior on the suite's commands and says what it refused.
   limits neither below 512 MB, and hashing only a key's own bytes is cheaper
   than hashing 48 positions. A string of at most 24 bytes is held inside its
   owner, a longer one in an allocation of its own (`Bytes` in the `bytes`
-  module), one constructor choosing the form from the length so that equal
-  strings always share it; list elements stay in allocations of their own.
+  module). Every string is built by `bytes_new`, which chooses the form from
+  the length so that equal strings share it; since an enum's variants are
+  public, that holds by convention, and a string built in the other form
+  would still compare equal, only more slowly. List elements stay in
+  allocations of their own.
   One allocation per string, the form kept before, was refused: its pointer
   chases and allocations fall inside the atomic statement, and holding short
   strings inline reached 1.41 times its rate on `SET` and 2.24 on `MSET`
@@ -167,7 +170,7 @@ Redis's observable behavior on the suite's commands and says what it refused.
   connection is closed**, as Redis closes it, where the subset closed it
   without an answer.
 
-Building firn found three things outside the program, recorded under
+Building firn found four things outside the program, recorded under
 [docs/todo.md](../../../docs/todo.md) unless fixed:
 
 - **A lowering defect, fixed.** A borrowed match binder read or written through
@@ -180,6 +183,34 @@ Building firn found three things outside the program, recorded under
   map. firn alternates `hash_map_edit` and `hash_map_lookup` instead.
 - **No command renders a program in canonical form** [FORM-2], which every
   program must be in; writing firn needed the renderer the corpus test calls.
+- **A length guard on a match binder is not a fact inside a loop that writes
+  through it**, so a pop guarded by the list's length is refused there; firn
+  passes the binder to a helper that takes the list as a parameter.
+
+## Correctness
+
+The *Correct* criterion rests on three observations:
+
+- The measurement script's check (`redis-bench.sh`, `verify_suite`) runs all
+  20 tests on every line before measuring and fails on an error reply or a
+  client message other than `redis-benchmark`'s warning that it could not
+  read a server's `CONFIG`; firn passes it.
+- firn's tests in `compiler/tests/programs/network.rs` compare its replies
+  byte for byte with redis-server 7.0.15's to the same requests: the value
+  types, wrong kinds, unknown commands and arity errors, strings at and past
+  the inline length, `CONFIG` and client bytes echoed in errors. Others check
+  requests and replies larger than firn's first windows, expiry, idle
+  clients and the append-only file's replay.
+- A differential script of 103 commands sent to firn and to redis-server,
+  kept outside the repository, differed only on `SET` with `XX`, one of the
+  options listed as missing in [docs/todo.md](../../../docs/todo.md) under
+  firn.
+
+A build a result names by commit is on the branch. A refused variant's code
+was not kept; its section describes it, and the drivers that ran the rounds
+were scratch scripts whose settings each block of
+[firn-samples.csv](../../experiments/io-completion-bench/firn-samples.csv)
+states in its header.
 
 ## Closing the gaps
 
@@ -188,14 +219,21 @@ Building firn found three things outside the program, recorded under
 One pass of the default suite on two server CPUs, firn at `e1e37b100`
 against Redis and Dragonfly (the `quick look` lines of
 [firn-samples.csv](../../experiments/io-completion-bench/firn-samples.csv)),
-found firn ahead on every read and pop, the lists' pushes and `PING`, and
-behind on the commands that store a new string: at depth 16 `SET`, `INCR`,
-`ZADD` and `MSET` reached 0.56 to 0.79 of the faster of Redis and Dragonfly.
-A profile of firn under `INCR` put a quarter of its time in
+found firn at depth 16 ahead of the faster of Redis and Dragonfly on `GET`,
+the pops, the lists' pushes and ranges and `PING_INLINE`, level with it on
+`PING_MBULK` and `SADD`, and behind on the commands that store: `SET`,
+`INCR`, `ZADD` and `MSET` at 0.56 to 0.79 and `HSET` at 0.92. At depth 1 it
+trailed on most commands. A profile of firn under `INCR` (`perf record -g`
+on the server for six seconds of a depth-16 run, as every profile below) put
+a quarter of its time in
 `hash_map_edit` and another third in acquiring the keyspace and the kernel's
 wake of a parked acquirer.
 
-### The hash map's growth, stated before measuring
+### The hash map's growth: the criterion
+
+The criterion below was written before the growth runs, but it was committed
+with their results, so the record cannot show that order.
+
 
 The library's hash map rebuilt only when an insertion found no bucket left,
 and its linear probing walks every filled and vacated bucket between a key's
@@ -376,10 +414,13 @@ has been reduced.
 One pass of the suite with the keyed build against Redis and Dragonfly on
 two server CPUs and on one (the `quick look 2` lines of
 [firn-samples.csv](../../experiments/io-completion-bench/firn-samples.csv)).
-Its runs are short, so the benchmark's 250 ms clock step is 8 to 12% of a
-rate and only large gaps are read from it. Against the criteria, `MSET` falls
-short everywhere: 0.87 times the faster competitor at depth 16 on two CPUs
-and on one, and 0.93 at depth 1 on one. On one server CPU at depth 16, where
+Its runs are short, so the benchmark's 250 ms clock step is 8 to 25% of a
+rate, the most at the highest rates, and only large gaps are read from it.
+Here and in the third look the faster competitor is the faster of Redis and
+Dragonfly; Valkey and Garnet run only in the full suite. Against the
+criteria, `MSET` falls short in three of the four settings: 0.87 times the
+faster competitor at depth 16 on two CPUs and on one, and 0.93 at depth 1 on
+one, while at depth 1 on two it leads by 1.11. On one server CPU at depth 16, where
 firn must reach 1.1 times the faster one, `SET` and `GET` only match Redis and
 `INCR`, `HSET`, `ZPOPMIN` and `SPOP` fall below it, `SPOP` to 0.73. On two
 CPUs at depth 16, `ZADD`, `SADD` and `SPOP` reach 1.09 to 1.14 of the 1.4
@@ -458,9 +499,11 @@ client, two threads on two CPUs, is what both reach there. On one CPU at
 depth 16 all but the pushes meet the 1.1 required, `LPUSH` at 1.00 and
 `RPUSH` at 1.03, and `LPUSH`'s p99 is 3.14 ms against Redis's 2.81. At
 depth 1 on two CPUs firn trails Dragonfly by one clock step, 0.95, on `GET`,
-the pops, `SADD` and `ZPOPMIN` and by 0.91 on `PING_MBULK`, and on one CPU
-by 0.87 on `PING_INLINE`; `SPOP` trails at depth 1 on both, 0.87 and 0.84, with
-a p99 of 1.66 ms on two CPUs against 0.93.
+the pops, `SADD` and `ZPOPMIN` and by 0.91 on `PING_MBULK`; on one CPU it
+trails by 0.87 on `PING_INLINE`, 0.94 on `PING_MBULK` and `LPUSH` and 0.97 on
+`RPUSH`, within about a clock step but below the criterion; `SPOP` trails at
+depth 1 on both, 0.87 and 0.84, with a p99 of 1.66 ms on two CPUs against
+0.93.
 
 ### List elements inline, and maps that shrink, stated before measuring
 
@@ -477,8 +520,10 @@ against the inline build with a shared control:
   when they still outnumber the pairs. `SPOP` picks the first filled bucket
   from a random position, so as a set empties without shrinking each pop
   walks more empty buckets inside the atomic statement: after `SADD` filled
-  one to 100,000 members, one pass of `SPOP` at depth 1 took up to 39 ms per
-  request. Aimed at `SPOP`, which trailed at depth 1 on both CPU counts.
+  one to 100,000 members, a single `SPOP` pass at depth 1 on two CPUs, run
+  before this criterion and not kept among the samples, reached a maximum of
+  39 ms per request. Aimed at `SPOP`, which trailed at depth 1 on both CPU
+  counts.
 
 Five interleaved rounds of four lines, *inline*, *lists*, *shrink* and
 *control* (*inline* again), each round running: on one CPU at depth 16,
@@ -521,9 +566,10 @@ any test; otherwise it is reverted.
 Medians of the five rounds (the `ls` lines of
 [firn-samples.csv](../../experiments/io-completion-bench/firn-samples.csv)):
 *inline*'s rate, and each line's ratio to that round's *inline*. A first run
-stopped in its second round when a server could not bind its port, which lay
-in the kernel's range for outgoing connections; its complete first round is
-kept and rounds 2 to 5 were run again on lower ports.
+stopped in its second round when a server could not bind its port: the port
+lay in the kernel's range for outgoing connections, where a client
+connection, lingering in TIME_WAIT, held it. Its complete first round is
+kept and rounds 2 to 5 were run again on ports below that range.
 
 | Test | inline | lists | shrink | control |
 |---|---|---|---|---|
@@ -544,9 +590,10 @@ kept and rounds 2 to 5 were run again on lower ports.
 **List elements inline: refused.** `RPUSH` gained 0.09 over *control* but
 `LPUSH` nothing, and `LRANGE_100` fell 0.13 below it and `SADD` 0.08: an
 element of 40 bytes instead of an 8-byte pointer makes the ring five times
-larger, which a range walks. The pushes' gap in the third look came from
-running after the suite's other tests: on a fresh server *inline* reached
-868,961 on `LPUSH` on one CPU, against 644,330 there.
+larger, which a range walks. On a fresh server *inline* reached 868,961 on
+`LPUSH` on one CPU, against 644,330 in the third look, where it ran after
+the suite's other tests on one server and with another driver; which of the
+two differences accounts for the gap is not established.
 
 **Maps that shrink: refused by the criterion.** `SPOP` gained 0.14 over
 *control* at depth 1 on two CPUs and 0.11 at depth 16 on one, but only 0.04

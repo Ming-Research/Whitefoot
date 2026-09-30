@@ -1438,6 +1438,37 @@ fn firn_keeps_strings_at_and_past_the_inline_length_apart() {
     assert_eq!(status, 0);
 }
 
+/// firn answers `CONFIG` with too few arguments, an unpaired option or
+/// several parameters, and echoes client bytes in its errors, as Redis does:
+/// a zero byte ends an echoed name or argument, carriage return and line feed
+/// become spaces so that an error stays one line, and a byte a malformed
+/// request holds where a dollar sign belongs is echoed the same way before
+/// the connection closes. The expected replies are redis-server 7.0.15's to
+/// the same bytes.
+#[cfg(target_os = "linux")]
+#[test]
+fn firn_answers_config_and_echoes_client_bytes_as_redis_does() {
+    let program = firn();
+    let port = free_port();
+    let text = port.to_string();
+    let child = program.spawn_on_route(true, &[text.as_bytes(), b"1"]);
+    let mut client = connect_when_ready(port);
+    client
+        .set_read_timeout(Some(Duration::from_secs(20)))
+        .expect("bound the client's waits");
+    client
+        .write_all(b"*1\r\n$6\r\nCONFIG\r\n*2\r\n$6\r\nCONFIG\r\n$3\r\nGET\r\n*3\r\n$6\r\nCONFIG\r\n$3\r\nSET\r\n$1\r\nx\r\n*5\r\n$6\r\nCONFIG\r\n$3\r\nSET\r\n$1\r\nx\r\n$1\r\ny\r\n$1\r\nz\r\n*4\r\n$6\r\nCONFIG\r\n$3\r\nSET\r\n$1\r\nx\r\n$1\r\ny\r\n*4\r\n$6\r\nCONFIG\r\n$3\r\nGET\r\n$4\r\nsave\r\n$10\r\nappendonly\r\n*5\r\n$6\r\nCONFIG\r\n$3\r\nGET\r\n$10\r\nappendonly\r\n$4\r\nsave\r\n$4\r\nsave\r\n*4\r\n$6\r\nCONFIG\r\n$3\r\nget\r\n$7\r\nnothing\r\n$4\r\nelse\r\n*3\r\n$6\r\nCONFIG\r\n$3\r\nGET\r\n$4\r\nsave\r\n*3\r\n$6\r\nCONFIG\r\n$3\r\nGET\r\n$10\r\nAPPENDONLY\r\n*3\r\n$6\r\nCONFIG\r\n$3\r\nGET\r\n$4\r\nSave\r\n*2\r\n$4\r\nGET\x00\r\n$1\r\na\r\n*3\r\n$4\r\nG\r\nT\r\n$3\r\nb\nc\r\n$3\r\nd\x00e\r\n*2\r\n$6\r\nCONFIG\r\n$4\r\nNO\nP\r\n*1\r\n\r\n")
+        .expect("send the batch");
+    expect_replies(
+        &mut client,
+        b"-ERR wrong number of arguments for 'config' command\r\n-ERR wrong number of arguments for 'config|get' command\r\n-ERR wrong number of arguments for 'config|set' command\r\n-ERR syntax error\r\n-ERR Unknown option or number of arguments for CONFIG SET - 'x'\r\n*4\r\n$10\r\nappendonly\r\n$2\r\nno\r\n$4\r\nsave\r\n$0\r\n\r\n*4\r\n$10\r\nappendonly\r\n$2\r\nno\r\n$4\r\nsave\r\n$0\r\n\r\n*0\r\n*2\r\n$4\r\nsave\r\n$0\r\n\r\n*2\r\n$10\r\nAPPENDONLY\r\n$2\r\nno\r\n*2\r\n$4\r\nSave\r\n$0\r\n\r\n-ERR unknown command 'GET', with args beginning with: 'a' \r\n-ERR unknown command 'G  T', with args beginning with: 'b c' 'd' \r\n-ERR unknown subcommand 'NO P'. Try CONFIG HELP.\r\n-ERR Protocol error: expected '$', got ' '\r\n",
+        "the CONFIG and echo batch",
+    );
+    drop(client);
+    let (status, _) = finished(child);
+    assert_eq!(status, 0);
+}
+
 /// firn reads a request larger than its first input window and writes a reply
 /// larger than its first reply window: a 100,000-byte value set in one command
 /// reads back whole, and a range of 2,000 list elements, a reply of more than

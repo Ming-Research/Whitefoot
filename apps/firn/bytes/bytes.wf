@@ -292,10 +292,10 @@ fn decimal_text(value: i64) -> made: Bytes pure {
       break @digits;
     }
   }
-  let made = slots_new::<u8, 24>();
+  let spelled = slots_new::<u8, 24>();
   if negative {
-    if made.len < made.cap {
-      place_back(window: &made, value: 45_u8);
+    if spelled.len < spelled.cap {
+      place_back(window: &spelled, value: 45_u8);
     }
   }
   for @emit (index in 0_u64..count) {
@@ -305,11 +305,14 @@ fn decimal_text(value: i64) -> made: Bytes pure {
     if from < 20_u64 {
       set glyph = digits[from];
     }
-    if made.len < made.cap {
-      place_back(window: &made, value: glyph);
+    if spelled.len < spelled.cap {
+      place_back(window: &spelled, value: glyph);
     }
   }
-  return Bytes::Short(bytes: move made);
+  let length = spelled.len;
+  let window = &spelled[0_u64..length];
+  let made = bytes_new(input: window, start: 0_u64, length: length);
+  return move made;
 }
 
 fn integer_digits(first: u8, length: u64) -> result: Integer pure {
@@ -424,12 +427,16 @@ fn upper(byte: u8) -> result: u8 pure {
 }
 
 fn name_code(input: &[u8], start: u64, length: u64) -> code: u64 reads(input) {
-  doc "Packs a command name's first eight bytes, letters upper-cased, little end first, into one number; a name longer than eight bytes has its top byte set to 255, and a name of no bytes is 0.";
+  doc "Packs a command name's first eight bytes, letters upper-cased, little end first, into one number; a name longer than eight bytes, or one holding a zero byte, which no command's name does, has its top byte set to 255, and a name of no bytes is 0.";
   let code = 0_u64;
+  let unnamed = False();
   let packed = imin(length, 8_u64);
   for @pack (offset in 0_u64..packed) {
     let position = start +wrap offset;
     let byte = byte_at(input: input, index: position);
+    if byte == 0_u8 {
+      set unnamed = True();
+    }
     let raised = upper(byte: byte);
     let wide = cvt::<u8, u64>(raised);
     let bits = offset *wrap 8_u64;
@@ -437,7 +444,9 @@ fn name_code(input: &[u8], start: u64, length: u64) -> code: u64 reads(input) {
     let placed = ishl.wrap(wide, narrow);
     set code = ior(code, placed);
   }
-  if length > 8_u64 {
+  let long = length > 8_u64;
+  let marked = bor(long, unnamed);
+  if marked {
     let top = ishl.wrap(255_u64, 56_u32);
     set code = ior(code, top);
   }
