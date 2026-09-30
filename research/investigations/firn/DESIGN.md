@@ -223,3 +223,32 @@ keyspace's size does not reach. The library now rebuilds a map before an
 insertion would leave three quarters of its buckets filled or vacated,
 counting vacated buckets so that removals cannot fill it unseen
 (`design/amendments/hash-map-storage.md`, awaiting the owner's ruling).
+
+### Keys that carry their hash, stated before measuring
+
+After the growth change, a profile of firn under `SET` at depth 16 put 21% of
+its time in acquiring the keyspace and 19% in `hash_map_try_put`, and one
+under `MSET` 25% in `hash_map_try_put`. Each probe of the linear walk compares
+the probed key's bytes, which live behind a pointer, and the key is hashed
+inside the atomic statement. The change: every key, member and field is a
+`Key` of its bytes and their hash, computed when the key is copied out of the
+request; the maps read the stored hash, and compare bytes only when the
+hashes agree. The hypothesis: the probes' pointer chases and the hashing
+inside the statement are a material part of the storing commands' cost.
+
+It is judged by two builds interleaved over five rounds of `SET`, `GET`,
+`INCR` and `ZADD` (6,000,000 requests each) and `MSET` (1,000,000) at depth
+16, so that each run lasts about ten seconds and the benchmark's 250 ms clock
+step is about 2.5% of it:
+
+- *hashed*, the library's growth change without keyed hashes (`9865500c5`);
+- *keyed*, the same with keys that carry their hash;
+- *hashed* again in each round under a second name, *control*, whose ratio to
+  *hashed* shows what the host's variation alone produces.
+
+By median over the rounds, the change is kept if *keyed* reaches at least 1.05
+times *hashed* on two of `SET`, `INCR` and `MSET`, no test falls below 0.97,
+and *control* stays within 0.97 to 1.03 of *hashed* on every test. If
+*control* strays further, the host was too noisy to decide and the rounds are
+run again. If *keyed* misses 1.05, the change is reverted: it adds eight bytes
+to every key and member and would buy nothing measured.

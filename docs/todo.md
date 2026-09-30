@@ -77,6 +77,18 @@ rarely insert at the same place.
 
 ## Checker precision and proof cost
 
+- **A length guard on a match binder is not a fact inside a loop that
+  writes through it.** Minimal witness: a function matches `held^` as
+  `List(items: list)` and, in a `for` loop, pops from `list` under
+  `if list^.inner.len > 0_u64`; `deque_pop_front` then refuses [FN-8] for want
+  of `values^.inner.len > 0`, although the guard reads exactly that place
+  just before the call. The same guard on a parameter discharges it, so firn's
+  `pop_items` passes the binder to a helper, `pop_one`, that takes the list as
+  a parameter. Find why the binder's place loses the guard fact across the loop's
+  writes, likely the fact's place key naming the binder rather than the
+  matched field, and add a conformance case that the fixed checker accepts.
+  Reopen with the next program that needs the helper.
+
 - **A widening conversion's operand is read as any affine side.**
   [ENT-2] admits `cvt::<S, D>(e)` as a relation term or comparison-origin
   operand only for e a term or constant. [FN-9] relation terms match that:
@@ -1868,6 +1880,23 @@ rarely insert at the same place.
 
 ## Modules and libraries
 
+- **A container operation that takes a callback cannot be called again
+  inside its own callback with another callback.** Minimal witness: a
+  generic `apply<F, fn visit>` called as `apply::<u64, fn outer>`, where
+  `outer` calls `apply::<u64, fn inner>`. The instances end after two, but
+  the cycle `apply` to `outer` to `apply` changes the function argument, and
+  [FN-6] deliberately refuses every such cycle. firn met it as a
+  `hash_map_lookup` on the keyspace whose callback looks a field up with
+  `hash_map_lookup` in the hash the key holds; it alternates `hash_map_edit`
+  and `hash_map_lookup` instead, which works only while two distinct
+  operations fit, and a third level of nesting, or two edits, has no such
+  way out. Two repairs are open: a library entry that reaches a stored value
+  without a callback, such as a probe that returns the bucket's index for a
+  second, bounds-checked access, or an FN-6 that admits a cycle whose
+  changed arguments come from a finite set written in the program. Reopen
+  when a program needs a third level or two edits nested, or when the
+  library's container interfaces are next revised.
+
 - **Complete the vector boundary witness when comparing independent fields.**
   The maintained GrowVector program checks the shipped vector and behavior
   drains, but does not establish LANGUAGE.md's combined public `tag`, external
@@ -2692,6 +2721,18 @@ condition under which it is taken up.
   Found while fixing the completion review of PR #145.
 
 ## Verification tooling
+
+- **No command renders a program in canonical form.** [FORM-2] refuses a
+  program that is not in canonical form, and the compiler has the renderer
+  (`render_canonical`, which the canonical corpus test calls), but neither
+  `whitefootc` nor a `make` target exposes it, so a writer repairs layout by
+  hand from the diagnostic's one marked position. Writing firn's 5,000 lines
+  needed a scratch binary over the `whitefoot` crate that rewrites files in
+  place. Add a `whitefootc --format <files>` mode that rewrites each file to
+  its rendering and fails on one that does not parse; validate that it
+  leaves every canonical corpus file unchanged and repairs a file with
+  reordered spacing. Reopen with the next program written outside the
+  corpus, or when the driver's modes are next changed.
 
 - **Nothing refuses a test that runs a compiled program without a
   deadline.** Every current test that runs a program it compiled goes
