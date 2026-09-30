@@ -21,6 +21,7 @@
 #include <sched.h>
 #include <stdarg.h>
 #include <signal.h>
+#include <spawn.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -2786,6 +2787,7 @@ static int test_a_peer_wait_never_waits_behind_peer_waits(void) {
 
 /* The harness's own path, for a case that runs a group in a child. */
 static const char *wf_harness_self;
+extern char **environ;
 
 /* The child's side of the case below: more reads of one empty pipe than there
  * are helper records.  It returns only if the adapter let the last one wait
@@ -2822,17 +2824,24 @@ static int test_peer_waits_past_the_helper_records_stop_with_a_report(
     int errors[2];
     int status = 0;
     pid_t child;
+    posix_spawn_file_actions_t actions;
+    char *arguments[4];
     CHECK(wf_harness_self != NULL);
     CHECK(pipe(errors) == 0);
-    child = fork();
-    CHECK(child >= 0);
-    if (child == 0) {
-        (void)dup2(errors[1], 2);
-        (void)close(errors[0]);
-        (void)close(errors[1]);
-        execl(wf_harness_self, wf_harness_self, scratch_directory, "peer-limit", (char *)NULL);
-        _exit(4);
-    }
+    /* Spawned rather than forked: this process has threads, and a forked
+     * child that calls anything before its exec can wait for good on a lock
+     * one of them held at the fork, which a sanitizer build's interceptors
+     * take. */
+    arguments[0] = (char *)wf_harness_self;
+    arguments[1] = (char *)scratch_directory;
+    arguments[2] = (char *)"peer-limit";
+    arguments[3] = NULL;
+    CHECK(posix_spawn_file_actions_init(&actions) == 0);
+    CHECK(posix_spawn_file_actions_adddup2(&actions, errors[1], 2) == 0);
+    CHECK(posix_spawn_file_actions_addclose(&actions, errors[0]) == 0);
+    CHECK(posix_spawn_file_actions_addclose(&actions, errors[1]) == 0);
+    CHECK(posix_spawn(&child, wf_harness_self, &actions, NULL, arguments, environ) == 0);
+    CHECK(posix_spawn_file_actions_destroy(&actions) == 0);
     CHECK(close(errors[1]) == 0);
     for (attempts = 0; attempts < 3000u; ++attempts) {
         pid_t done = waitpid(child, &status, WNOHANG);
@@ -2841,6 +2850,10 @@ static int test_peer_waits_past_the_helper_records_stop_with_a_report(
             break;
         }
         (void)nanosleep(&delay, NULL);
+    }
+    if (attempts == 3000u) {
+        (void)kill(child, SIGKILL);
+        (void)waitpid(child, &status, 0);
     }
     CHECK(attempts < 3000u);
     while (total + 1u < sizeof(report)
