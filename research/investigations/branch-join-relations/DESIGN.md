@@ -60,8 +60,8 @@ Before the new timing results, the replay retains the original 10% time/RSS
 criterion and distinguishes three observations:
 
 - `replay.py --mode verdicts` invokes the CLI on all saved probes, every
-  current conformance source, the sixteen pinned Snowghost modules and the
-  six collection modules. It records source-check outcomes, not native
+  conformance source at the pinned baseline, the sixteen pinned Snowghost
+  modules, six collection modules and reconstructed program bundles. It records source-check outcomes, not native
   execution of conformance `run` cases. Base versus all-switches-off must
   agree; every candidate difference is reported without changing the manifest.
 - `--mode cost` measures unmodified inputs with prebuilt compilers, one
@@ -106,11 +106,13 @@ when superseding evidence replaces the claims they support.
 ## Current source-verdict results
 
 The [complete source-verdict table](verdicts.csv) and
-[compiler/input identity](verdicts-identity.json) record 1,572 current
+[compiler/input identity](verdicts-identity.json) record 1,572 baseline
 conformance cases, 30 probes, sixteen Snowghost modules, six collections and
-five accepted scale inputs. Every baseline outcome equals the all-switches-off
-prototype. All original Snowghost/collection/scale inputs are accepted under
-every measured configuration. (a+) has no Snowghost rows for the reason above.
+five accepted scale inputs, plus 71 reconstructed program bundles: 1,700
+workloads and 11,813 workload/configuration pairs. Every baseline outcome
+equals the all-switches-off prototype. All original Snowghost, collection,
+scale and program inputs are accepted under every measured configuration.
+(a+) has no Snowghost/program rows for the reason above.
 The sweep was resumed after fixing its parsing of the CLI's multi-module
 diagnostic envelope; development scale inputs rejected for noncanonical
 whitespace were corrected and rechecked, not used as cost samples.
