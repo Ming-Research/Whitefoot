@@ -458,3 +458,35 @@ The constitution accepts additional proof work "within the constraints of
 required safety and practical development feasibility". Whether progress
 between waits is required safety is the owner's decision; the four gaps in
 the sample bear on feasibility.
+
+## Owner rulings
+
+- **Q15.** The owner chose the checked-descent direction, on the condition
+  that it be mandatory rather than an optional proof. An optional proof can
+  be left out, which contradicts the principle that the default shape is the
+  best shape.
+- **Q16.** The owner approved each recommendation:
+  - adopt the mandatory rule, under which every cycle carries a checked
+    descent or a wait;
+  - derive a loop's rank from its exit guard's form, and write it only
+    outside those forms;
+  - close the acyclicity gap with a ranked arena, not with counted walks;
+  - count only waiting host calls, guarded `atomic` statements and joins as
+    waits, so a spin on an unguarded `atomic` owes descent.
+- **Arena answer.** Asked whether the ranked arena is static, the owner was
+  told:
+  - walks carry no runtime cost;
+  - an arena built in index order proves its order statically;
+  - a relinkable arena such as the DOM needs the cycle check that the DOM
+    standard already requires, and Snowghost already performs in
+    `refuse_cycle`, with the rank kept proof-only.
+
+  The owner approved the next step on that basis: design the ranked arena,
+  shared ranks for mutual recursion and constant-table ranks.
+
+These rulings select the direction. The design-tree nodes and the
+specification change land together with the rule's implementation, where
+the existing decisions they replace are rewritten:
+- `design/language/effects.md`: `pure` promises nothing about termination;
+- `design/language/checks-and-proofs.md`: no added termination checker;
+- the specification's "no termination checker" sentences.
