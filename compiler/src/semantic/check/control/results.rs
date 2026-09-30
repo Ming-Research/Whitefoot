@@ -130,18 +130,11 @@ impl<'unit> Checker<'_, 'unit> {
                 .declarations
                 .use_at(check_context, node, LexicalUseRole::Construct)?;
         let written = usage.spelling().to_owned();
-        // S39 the one compiler-owned nominal this statement takes apart is
-        // the cell, whose one field is its referent: the destructuring is
-        // what takes the value out and releases the cell, and it is the
-        // existing statement rather than a new operation.
-        let cell = matches!(usage.target(), ResolvedTarget::Container(id)
-            if crate::container_nominal(id)
-                .is_some_and(|entry| entry.shape == crate::ContainerShape::Box));
         // [TYPE-2] an opaque struct has no usable constructor, and a
         // destructuring `let_stmt` whose TYPEID names one is that rule's hard
-        // error at the complete statement. `Box` is the prelude's opaque
-        // struct [TYPE-9, PRE-1], so a cell's content is reached through its
-        // member `inner` and never by taking the cell apart.
+        // error at the complete statement. This includes all four storage
+        // shapes and the cell [TYPE-9, PRE-1], before any judgment of the
+        // attempted consumed place.
         let opaque_repair = match usage.target() {
             ResolvedTarget::Source { declaration, .. } => {
                 if self.types.is_opaque_struct_declaration(declaration)? {
@@ -159,11 +152,16 @@ impl<'unit> Checker<'_, 'unit> {
                     None
                 }
             }
-            _ if cell => {
-                Some(
+            ResolvedTarget::Container(id) => {
+                let nominal = crate::container_nominal(id)
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                Some(if nominal.shape == crate::ContainerShape::Box {
                     self.types
-                        .cell_taken_apart_repair(check_context, node, place, bindings)?,
-                )
+                        .cell_taken_apart_repair(check_context, node, place, bindings)?
+                } else {
+                    self.types
+                        .storage_taken_apart_repair(check_context, node, place, bindings)?
+                })
             }
             _ => None,
         };
@@ -178,8 +176,7 @@ impl<'unit> Checker<'_, 'unit> {
             );
         }
         let source_declaration = match usage.target() {
-            ResolvedTarget::Source { declaration, .. } => Some(declaration),
-            _ if cell => None,
+            ResolvedTarget::Source { declaration, .. } => declaration,
             _ => {
                 return self
                     .types
@@ -204,10 +201,9 @@ impl<'unit> Checker<'_, 'unit> {
                 .declarations
                 .destructuring_shape_rejection(node, &written);
         };
-        if let Some(nominal_declaration) = source_declaration
-            && !self
-                .types
-                .nominal_instantiates(nominal, nominal_declaration)?
+        if !self
+            .types
+            .nominal_instantiates(nominal, source_declaration)?
         {
             return self
                 .types
@@ -215,16 +211,7 @@ impl<'unit> Checker<'_, 'unit> {
                 .destructuring_shape_rejection(node, &written);
         }
         let fields = match &self.types.nominal(nominal)?.kind {
-            CheckedNominalKind::Struct { fields } if !cell => fields.clone(),
-            CheckedNominalKind::Box {
-                referent,
-                region: Some(_),
-                ..
-            } if cell => vec![super::super::super::model::CheckedField {
-                name: "value".to_owned(),
-                ty: *referent,
-                readonly: false,
-            }],
+            CheckedNominalKind::Struct { fields } => fields.clone(),
             _ => {
                 return self
                     .types
@@ -299,16 +286,14 @@ impl<'unit> Checker<'_, 'unit> {
                 .ok_or(SemanticCompilerFailure::InvalidResolution)?;
             // [MOD-5] outside the declaring module a destructuring consume
             // binds only published fields; `..` covers the rest.
-            if !cell {
-                self.types.reject_inaccessible_field(
-                    check_context,
-                    nominal,
-                    None,
-                    ordinal,
-                    &field.name,
-                    written_binder,
-                )?;
-            }
+            self.types.reject_inaccessible_field(
+                check_context,
+                nominal,
+                None,
+                ordinal,
+                &field.name,
+                written_binder,
+            )?;
             let declaration = self
                 .types
                 .declarations
@@ -666,6 +651,49 @@ impl<'unit> TypeContext<'unit> {
         }
         Ok(releases)
     }
+    /// [TYPE-2, TYPE-9] read the storage shape's fields with the names the
+    /// rejected statement binds, retaining the consumed place's spelling.
+    /// This reads syntax only, so TYPE-2 still precedes the place's judgments.
+    fn storage_taken_apart_repair(
+        &self,
+        check_context: &CheckContext<'_>,
+        node: NodeId,
+        place: NodeId,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+    ) -> Result<String, CheckStop> {
+        let mut fields = Vec::new();
+        if let Some(list) = self
+            .declarations
+            .tree
+            .first_child_with(node, Production::FieldbindList)?
+        {
+            for binder in self
+                .declarations
+                .tree
+                .children_with(list, Production::Fieldbind)?
+            {
+                let field = self
+                    .declarations
+                    .deferred_use_at(binder, crate::DeferredUseRole::MatchField)?
+                    .spelling()
+                    .to_owned();
+                let name = self
+                    .declarations
+                    .declaration_at(binder, crate::DeclarationRole::Let)?
+                    .spelling()
+                    .to_owned();
+                fields.push((field, name));
+            }
+        }
+        let consumed = self
+            .declarations
+            .consumed_place(check_context, place, bindings)?;
+        Ok(super::super::repairs::storage_taken_apart(
+            &consumed.spelling,
+            &fields,
+        ))
+    }
+
     /// [TYPE-2, TYPE-9] the repair of a destructuring consume that names
     /// `Box`: how the statement reaches the content instead, which turns on
     /// what the consumed cell holds and on whether the place owns it. The

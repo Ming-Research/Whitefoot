@@ -13,6 +13,7 @@ use super::{CompilationFailureKind, CompilerLimits, compile};
 use crate::SourceInput;
 
 mod call_separations;
+mod storage_destructuring;
 
 /// One repair [DIAG-1], pinned with the programs it produces: a rejected
 /// source, the rule and the exact repair its rejection carries, and one
@@ -3500,7 +3501,11 @@ fn contradictory_successes(name: &str, source: &[u8]) -> Result<Vec<String>, Str
 /// contradictory.
 #[test]
 fn each_pinned_repair_is_carried_out_by_its_programs() {
-    for pair in REPAIRS.iter().chain(call_separations::CALL_SEPARATIONS) {
+    for pair in REPAIRS
+        .iter()
+        .chain(call_separations::CALL_SEPARATIONS)
+        .chain(storage_destructuring::STORAGE_DESTRUCTURING)
+    {
         let failure = compile(
             &[SourceInput::new(pair.name, pair.rejected)],
             CompilerLimits::default(),

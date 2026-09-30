@@ -1317,3 +1317,19 @@ pub(super) fn cell_taken_apart(
         (None, _) | (_, None) => format!("{INNER}: remove this statement"),
     }
 }
+
+/// [TYPE-2, TYPE-9] a destructuring statement naming a storage shape reads
+/// its readonly fields instead. Each pair retains the written field and its
+/// binder; a rest marker introduces no binding and no read.
+pub(super) fn storage_taken_apart(storage: &str, fields: &[(String, String)]) -> String {
+    const FIELDS: &str = "storage shapes expose their measures as readonly fields [TYPE-9]";
+    if fields.is_empty() {
+        return format!("{FIELDS}: remove this statement and keep using `{storage}` directly");
+    }
+    let reads = fields
+        .iter()
+        .map(|(field, binder)| format!("let {binder} = {storage}.{field};"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!("{FIELDS}: replace this statement with `{reads}`")
+}

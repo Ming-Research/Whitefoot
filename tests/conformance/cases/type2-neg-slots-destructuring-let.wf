@@ -1,0 +1,9 @@
+fn capacity(values: Slots<u64, 4>) -> result: u64 pure {
+  doc "TYPE-2 and TYPE-9 refuse taking the opaque Slots shape apart; its length and capacity are ordinary readonly field reads instead.";
+  let Slots(len: count, cap: limit) = move values;
+  return limit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

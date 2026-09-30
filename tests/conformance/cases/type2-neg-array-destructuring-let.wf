@@ -1,0 +1,9 @@
+fn length(values: &Array<u64, 4>) -> result: u64 reads(values.len) {
+  doc "TYPE-2 and TYPE-9 refuse a destructuring statement naming Array at the complete statement, before judging its attempted move through a reference.";
+  let Array(len: count) = move values;
+  return count;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
