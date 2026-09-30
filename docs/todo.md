@@ -500,6 +500,22 @@ rarely insert at the same place.
 
 ## Containers and storage lowering
 
+- **A local `slots_new::<T, N>()` clears all N slots when it is created.**
+  In Snowghost's `pkg::css::selectors`, `match_complex` creates
+  `slots_new::<Frame, 64>()` (12-byte frames) on every call, and the code
+  compiled at 290b575b clears the whole window, `memset` of 0x308 bytes,
+  before any frame is placed. Style matching calls it about 106 million
+  times on the ECMAScript specification page, and that `memset` is 21
+  percent of the style stage's instructions there (Snowghost
+  `research/investigations/concurrency/DESIGN.md`, "Style's work per
+  element"). A slot at or past the window's length is never read, so the
+  clearing buys nothing that the language exposes. Change: create an
+  inline `Slots` window without clearing the slots past its length,
+  checking first that no drop, move or bounds path reads them, and measure
+  a program that creates many short-lived windows. Not checked on a later
+  revision. Reopen with the next change to `Slots` lowering or when a
+  profile shows the clearing again.
+
 - **Validate a shared Ring wrap calculation independent of layout bounds.**
   The corrected front predecessor handles every admitted capacity. Remaining
   address-only modular additions are justified by the positive-stride target
