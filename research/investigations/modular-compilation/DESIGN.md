@@ -2080,6 +2080,29 @@ reopen adoption; missing it determines the current gap the next module-owned
 consumer-boundary experiment must remove. This run selects neither a new
 representation nor a weaker current-input equality condition.
 
+The native same-image comparison failed the direction criterion, including
+its one repeat after host inspection. Keep native cost unqualified; do not
+repeat until a passing window appears. Compiler-only entry-edit controls
+passed, and the integrated candidate remains slower in every matched entry-edit
+pair.
+Before changing the representation, rerun the existing scratch-only adapter
+omissions on the integrated source: bodies, lowerings and both. Use three
+alternating compiler-only pairs for both containers, with a five-pair
+same-image entry-edit control preceding them. Require equal LLVM at every
+step; these controls deliberately repeat library work and cannot qualify an
+implementation. Retain the previous two-thirds criterion for investigating
+one adapter first; compare the double omission directly with SHA-matched
+main to test the joint-cost explanation. Report all pairs and memory/cache
+costs, and treat any effect within the observed null variability as unresolved.
+This isolates the current gap without selecting another local cache or
+assuming historical attribution survived the newer checked model.
+
+The [current-model omission attempt](../../experiments/modular-build-cost/RESULTS.md#current-model-omission-preconditions)
+distinguished the scratch configurations and checked their outputs, but its
+preceding compiler-only null control failed the direction criterion. No timing
+comparison was admitted. The older joint-cost evidence remains historical;
+current-model dominance and the wider sharing boundary remain open.
+
 ## Recursive dependencies and generic instances
 
 ### Keep module, call and proof graphs distinct

@@ -529,17 +529,18 @@ for both dependency chains. These losses must not be averaged away against
 chain-32's faster cold construction.
 
 The actual unchanged-main comparison answers the different, user-visible
-question of whether this PR currently slows an edit build:
+question of whether that qualified revision slowed an edit build against its
+recorded main:
 
 | Workload | Native entry-edit ms | Compiler-only entry-edit ms |
 |---|---:|---:|
 | grow-vector | 227.5 / 193.8 (-14.8%) | 157.1 / 117.1 (-25.5%) |
 | hash-map | 363.4 / 336.3 (-7.5%) | 291.3 / 260.2 (-10.7%) |
 
-The complete PR is faster than unchanged main on these two workloads, but
-the matched control shows that the general hashing gain does not establish
-the module-import amendment's condition that importing costs less than the
-work saved. The owner approved the independent runtime hashing choice and
+That qualified revision was faster than its recorded unchanged main on these
+two workloads, but the matched control did not establish the import decision's
+condition that importing costs less than the work saved. The owner approved
+the independent runtime hashing choice and
 diagnostic-ground correction while retaining the Draft and the unresolved
 import-cost condition. That ruling changes design status, not these
 measurements; it does not adopt the import proposal or waive its criterion.
@@ -903,6 +904,136 @@ not a new causal run or additive savings. Inspection confirms erased Proof
 payloads and loop invariants in the key, but does not measure their share.
 No runtime-input projection is selected; its required guards and reopening
 condition remain in the investigation and TODO.
+
+### Integrated-main compiler cost
+
+The qualification protocol was recorded in the integration revision
+`7ec0a8b81c01fdac1c510d1b0e95486a6850d7ea` before these observations. Its
+source includes main `f5024250fd596b9b41e8e1b69a8366582587d756`, specification
+v0.82 and the current typed-record compatibility changes. The baseline exports
+that main and receives only the same safe runtime SHA implementation and its
+locked dependencies; no product adapter is added to it. The three-file baseline
+patch has SHA-256 digest
+`743f4ddd25d6199b42879ce1a112c0aff49d1fb2f21fdd38c4fb6dc0b43cffa6`.
+The saved executables
+have SHA-256 digests:
+
+- SHA-matched main: `83c4f3b6cb68fd90d80438dac528c8a1fb0dd5e461b57de4042fc8ce42d5909f`.
+- Integrated candidate: `cb7f60e8f31d012045e0a253ca1f86933dd15bfa8b4aaa655cf8cb7ee246f2f9`.
+
+The host was macOS 26.6.2 arm64. Five alternating pairs per container and
+mode ran serially under the shared check guard. Compiler construction and
+program execution are excluded from build latency. Entry-edit same-image
+controls must have a paired median difference within 3% and fewer than four
+of five differences in one direction. The native control failed, including
+one repeat after host inspection:
+
+| Control | GrowVector paired median | Positive pairs | HashMap paired median | Positive pairs | Verdict |
+|---|---:|---:|---:|---:|---|
+| Native same image | +2.98% | 3/5 | -1.89% | 0/5 | Fail: HashMap direction |
+| Native repeat | -0.53% | 1/5 | +1.41% | 4/5 | Fail: both directions |
+| Compiler-only same image | -0.70% | 2/5 | +0.11% | 3/5 | Pass |
+
+The first native entry-edit pairs ranged from -28.68% to +17.06% for
+GrowVector and -17.23% to -0.54% for HashMap. Native medians within 3% alone
+do not pass the recorded control. A host snapshot between runs showed active
+system and GUI background work; it does not prove the cause of earlier timing
+variation. The native comparison with matched main was not run, and there is
+no current native cost qualification or approximately 5% target claim. The
+repeat's reversed directions do not justify discarding either result or
+repeating until a passing window appears.
+
+Compiler-only measurements isolate `--emit-llvm` invocations. Baseline /
+candidate medians follow; percentages in this table compare the two medians,
+while the entry-edit interpretation below uses the median of paired ratios.
+RSS is the measured compiler process's peak, not an untimed warm lookup.
+
+| Workload | Step | Wall ms | Change | Peak RSS MiB | Cache bytes |
+|---|---|---:|---:|---:|---:|
+| grow-vector | cold | 365.385 / 383.267 | +4.89% | 51.98 / 59.00 | 1,840,980 / 4,343,650 |
+| grow-vector | warm | 12.115 / 12.878 | +6.30% | 14.06 / 15.12 | 1,840,980 / 4,343,650 |
+| grow-vector | second-entry | 92.023 / 106.022 | +15.21% | 31.53 / 36.33 | 2,132,040 / 4,636,675 |
+| grow-vector | entry-edit | 115.742 / 128.859 | +11.33% | 31.66 / 37.56 | 2,442,674 / 4,958,584 |
+| hash-map | cold | 677.320 / 766.089 | +13.11% | 74.83 / 95.97 | 4,541,138 / 14,801,390 |
+| hash-map | warm | 13.696 / 14.192 | +3.62% | 15.97 / 17.02 | 4,541,138 / 14,801,390 |
+| hash-map | second-entry | 216.542 / 256.105 | +18.27% | 50.44 / 64.48 | 5,456,881 / 15,719,098 |
+| hash-map | entry-edit | 241.226 / 287.705 | +19.27% | 50.47 / 64.27 | 6,392,272 / 16,665,768 |
+
+Every matched entry-edit pair is slower: GrowVector's paired median is
++11.33%, with a +9.50% to +13.15% range; HashMap's is +19.97%, with a +12.09%
+to +27.00% range. The passing compiler-only entry-edit null control supports
+investigating this gap. It does not make cold or warm timings precise: one
+matched GrowVector cold pair was -46.98%, and one HashMap warm pair was
++185.91%. No cold/warm performance selection follows these observations.
+Comparing percentages with the earlier compiler does not attribute a change
+to the new language features, because the measurement windows differ.
+
+The four sequences contain 320 measured samples and 160 exact paired LLVM
+comparisons. The 80 native pairs also have equal executable outputs, every
+execution returning zero; every one of their 40 entry-edit samples has actual
+unchanged-library body and lowering reuse with zero such walks. Those work
+observations do not depend on a passing timing control. Compiler-only samples
+have no native build report and do not independently establish work counts.
+
+Reproduce with the existing paired runner, `--rounds 5 --workloads grow-vector
+hash-map`, using the candidate's same path on both sides for null controls.
+Add `--compiler-only` for both pure sequences. Keep executables independent
+from subsequent builds. Raw local records are `f502-null-native.jsonl`,
+`f502-null-native-repeat.jsonl`, `f502-null-pure.jsonl` and
+`f502-matched-pure.jsonl`; the source revisions, executable digests and
+protocol identify the experiment. The wider module-owned sharing boundary
+remains unimplemented and unadopted; current-model adapter omissions are the
+next attribution control, not another selected local cache.
+
+### Current-model omission preconditions
+
+The next attribution attempt used the preceding integrated source and the
+existing scratch-only `--ablate` transformations. A setup check found that
+three scratch exports sharing one Cargo output directory had received the
+same executable bytes. No measurement used those mislabeled copies. Rebuilding
+the lowering and joint omissions in independent output directories produced
+three distinct executables. One native pair per container and
+variant then checked exact LLVM and executable results at all four steps.
+The enabled adapters still reported actual library reuse and zero library
+walks on entry edits; omitted adapters had no report rows. An empty adapter
+report does not measure how much ordinary checking/lowering work ran.
+
+| Omitted adapter | Executable SHA-256 | Source patch SHA-256 |
+|---|---|---|
+| Bodies | `5d3715d75f2eadf16a1a35185d2156ad74b237043bee38cdf5adae8ddef5a3cc` | `daffdad3debe13c9b845138c2f1698a91a4f485a6f85394e41e646babbb3eff2` |
+| Lowerings | `ae3fc2435ce62a08bd5d0f527b9c17d2ae5ca950e05bb0ff97d6c447d110f69c` | `91b320b8d0b069858ab57a225cf03f643836037fd261aac64846d9667e8cafcc` |
+| Both | `22a5dd10ead0af93e694804a1a6112ad83e2f3605119cbeb3627bb9ca216af70` | `749764bab65b4ab5816c9d94ce21dd49b178b1300f06b128c949c2478ff25cc5` |
+
+The five-pair compiler-only same-image control preceding the timing
+comparisons failed the recorded direction criterion for HashMap. GrowVector's
+entry-edit paired median was +0.17%, with three positive pairs; HashMap's was
+-1.28%, with one positive pair. Their five paired differences were:
+
+| Workload | Round 1 | Round 2 | Round 3 | Round 4 | Round 5 |
+|---|---:|---:|---:|---:|---:|
+| grow-vector | -0.23% | +1.42% | +0.17% | +3.57% | -2.47% |
+| hash-map | +0.26% | -0.91% | -1.28% | -3.62% | -3.39% |
+
+No omission timing comparisons were run,
+and no current-model adapter cost or dominance conclusion follows. This later
+control does not supply a new null result for the earlier matched-main window,
+whose entry-edit control passed; it limits this subsequent attribution window.
+There was no retry or new production optimization.
+
+The three output-control sequences contain 48 samples and 24 exact paired
+LLVM/native comparisons. The null sequence contains 80 samples and 40 exact
+paired LLVM comparisons. The guarded orchestration exited 2 on the null
+precondition; all individual compiler/runner commands exited zero. This is
+an experiment refusing to admit a timing comparison, not a repository test
+failure. The one-shot orchestration was removed after the attempt.
+
+Reproduce the output controls with `--rounds 1 --workloads grow-vector
+hash-map` against the full candidate; then run the same candidate path on
+both sides with `--rounds 5 --compiler-only` and the same workloads. Only a
+passing control admits the three-pair omission comparisons in the recorded
+protocol. Raw local records are `f502-omit-{bodies,lowerings,both}-outputs.jsonl`
+and `f502-omission-null-pure.jsonl`. Keep each exported scratch compiler's
+output directory independent and verify artifact identity before observation.
 
 ## Limits
 

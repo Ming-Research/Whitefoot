@@ -1796,7 +1796,15 @@ rarely insert at the same place.
   import decision's cost condition remains unresolved, and the owner retained
   the Draft without adopting or merging that proposal. Requalify these historical
   costs after integration with a newer main before using them to select
-  another representation. The compact-name,
+  another representation. The [integrated-main compiler comparison](../research/experiments/modular-build-cost/RESULTS.md#integrated-main-compiler-cost)
+  finds paired entry-edit overhead of +11.3% for GrowVector and +20.0% for
+  HashMap after current-model integration, with greater compiler RSS/cache
+  use. Native same-image controls failed twice, so the approximately 5%
+  native target is unqualified. Recheck adapter attribution on the current
+  model before selecting the broader sharing boundary. The [current-model
+  omission preconditions](../research/experiments/modular-build-cost/RESULTS.md#current-model-omission-preconditions)
+  checked output equality and distinct configurations, but their timing null
+  failed; no fresh adapter-cost attribution is available. The compact-name,
   invocation-memo and identity-lookup trials gave no useful gain and were
   removed. The owner directed further investigation under the same target.
   [Feature omissions](../research/experiments/modular-build-cost/RESULTS.md#feature-omission-controls)
