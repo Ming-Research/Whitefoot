@@ -51,10 +51,10 @@ void wf__body_arg_get(wf_value_result *result, const wf_value *args, uint64_t po
         return;
     }
 #if defined(_WIN32)
-    wf_text(&result->value, arguments[position],
+    wf_text(&result->ok.value, arguments[position],
             wf__windows_wcslen(arguments[position]));
 #else
-    wf_text(&result->value, arguments[position], strlen(arguments[position]));
+    wf_text(&result->ok.value, arguments[position], strlen(arguments[position]));
 #endif
 }
 
@@ -72,14 +72,14 @@ void wf__body_host_copy_bytes(wf_copy_result *result, const wf_value *value,
     memset(result, 0, sizeof(*result));
     if (bytes > end - start) {
         result->tag = 1;
-        result->error.required = bytes;
+        result->err.error.required = bytes;
         return;
     }
     if (bytes != 0) {
         memcpy(wf_window(destination, start),
                wf_value_pointer(value), (size_t)bytes);
     }
-    result->value = start + bytes;
+    result->ok.value = start + bytes;
 }
 
 #if !defined(_WIN32)
@@ -135,12 +135,12 @@ void wf__body_host_copy_utf8(wf_copy_result *result, const wf_value *value,
     memset(result, 0, sizeof(*result));
     if (measured.tag != 0) {
         result->tag = 1;
-        result->error.tag = 1;
+        result->err.error.tag = 1;
         return;
     }
     if (measured.value > end - start) {
         result->tag = 1;
-        result->error.required = measured.value;
+        result->err.error.required = measured.value;
         return;
     }
     if (measured.value != 0) {
@@ -152,7 +152,7 @@ void wf__body_host_copy_utf8(wf_copy_result *result, const wf_value *value,
                wf_value_pointer(value), (size_t)measured.value);
 #endif
     }
-    result->value = start + measured.value;
+    result->ok.value = start + measured.value;
 }
 
 void wf__body_relative_path(wf_value_result *result, const wf_value *value) {
@@ -168,7 +168,7 @@ void wf__body_relative_path(wf_value_result *result, const wf_value *value) {
         result->tag = 1;
         return;
     }
-    result->value = saved;
+    result->ok.value = saved;
 }
 
 void wf__body_exit_status(wf_value *result, uint8_t code) {
@@ -216,8 +216,8 @@ static void wf_transition(wf_value *state) {
 static void wf_error_class(wf_io_error *error, unsigned tag, int code, unsigned origin) {
     memset(error, 0, sizeof(*error));
     error->tag = tag;
-    error->detail[tag].code = (uint32_t)code;
-    error->detail[tag].origin = (uint8_t)origin;
+    error->code = (uint32_t)code;
+    error->origin = (uint8_t)origin;
 }
 
 static void wf_error(wf_io_error *error, int code, unsigned origin) {
@@ -294,8 +294,11 @@ static void wf_error(wf_io_error *error, int code, unsigned origin) {
  * factory `factory_share` relates to it name one process cell in their third
  * word, so an acquisition through any of them spends a credit of that one
  * budget; a factory built without one keeps its budget in its first word.
- * The cell is a plain counter: every acquisition and close is a waiting call,
- * and every context runs on the one thread that runs the entry [WAIT-2]. */
+ * The cell is updated atomically: every acquisition and close is a waiting
+ * call, and the contexts that make them may run on different drivers
+ * (`research/investigations/io-model/WAITS.md`, Experiment 5). A factory
+ * with its own budget belongs to one owner, and the same atomic updates
+ * serve it. */
 static uint64_t wf_handle_budget;
 
 static uint64_t *wf_factory_budget(wf_value *factory) {
@@ -306,18 +309,27 @@ static uint64_t *wf_factory_budget(wf_value *factory) {
 
 static int wf_factory_take(wf_value *factory, wf_io_error *error) {
     uint64_t *budget = wf_factory_budget(factory);
+    uint64_t credits = __atomic_load_n(budget, __ATOMIC_ACQUIRE);
     wf_transition(factory);
-    if (*budget == 0) {
-        wf_error_class(error, 21, 0, 0);
-        return 0;
+    for (;;) {
+        if (credits == 0) {
+            wf_error_class(error, 21, 0, 0);
+            return 0;
+        }
+        if (__atomic_compare_exchange_n(
+                budget, &credits, credits - 1, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+            return 1;
+        }
     }
-    *budget -= 1;
-    return 1;
 }
 
 static void wf_factory_return(wf_value *factory) {
     uint64_t *budget = wf_factory_budget(factory);
-    if (*budget != UINT64_MAX) *budget += 1;
+    uint64_t credits = __atomic_load_n(budget, __ATOMIC_ACQUIRE);
+    while (credits != UINT64_MAX
+           && !__atomic_compare_exchange_n(
+               budget, &credits, credits + 1, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+    }
 }
 
 #if defined(_WIN32)
@@ -366,12 +378,12 @@ static void wf_read_result_value(wf_read_result *result, int64_t amount,
     memset(result, 0, sizeof(*result));
     if (amount < 0) {
         result->tag = 1;
-        result->error.tag = 1;
-        wf_error(&result->error.error, error, 2);
+        result->err.error.tag = 1;
+        wf_error(&result->err.error.error, error, 2);
     } else if (amount == 0 && extent != 0) {
         result->tag = 1;
     } else {
-        result->value = start + (uint64_t)amount;
+        result->ok.value = start + (uint64_t)amount;
     }
 }
 
@@ -380,11 +392,11 @@ static void wf_write_result_value(wf_write_result *result, int64_t amount,
     memset(result, 0, sizeof(*result));
     if (amount < 0) {
         result->tag = 1;
-        wf_error(&result->error, error, 3);
+        wf_error(&result->err.error, error, 3);
     } else if (amount == 0 && extent != 0) {
         result->tag = 1;
-        wf_error_class(&result->error, 13, 0, 0);
-    } else result->value = start + (uint64_t)amount;
+        wf_error_class(&result->err.error, 13, 0, 0);
+    } else result->ok.value = start + (uint64_t)amount;
 }
 
 static void wf_transfer_read(wf_read_result *result, wf_host_operation *operation,
@@ -543,7 +555,7 @@ static int wf_open_start(wf_open_result *result, wf_value *factory,
                          unsigned expected_kind, unsigned descriptor_class,
                          wf_host_operation *operation) {
     memset(result, 0, sizeof(*result));
-    if (!wf_factory_take(factory, &result->error)) {
+    if (!wf_factory_take(factory, &result->err.error)) {
         result->tag = 1;
         return 0;
     }
@@ -570,14 +582,14 @@ static void wf_open_finish(wf_open_result *result, wf_value *factory,
         wf_factory_return(factory);
         result->tag = 1;
         if (outcome == WF_FILE_OPEN_IS_DIRECTORY)
-            wf_error_class(&result->error, 4, 0, 0);
+            wf_error_class(&result->err.error, 4, 0, 0);
         else if (outcome == WF_FILE_OPEN_OTHER_KIND)
-            wf_error_class(&result->error, 10, 0, 0);
-        else wf_error(&result->error, error,
+            wf_error_class(&result->err.error, 10, 0, 0);
+        else wf_error(&result->err.error, error,
                       outcome == WF_FILE_OPEN_STATUS_FAILED ? 4 : 1);
         return;
     }
-    wf_descriptor_value(&result->value, (int)descriptor);
+    wf_descriptor_value(&result->ok.value, (int)descriptor);
 }
 
 int wf__body_open_read_start(wf_open_result *result, wf_value *factory,
@@ -636,7 +648,7 @@ static int wf_open_component_start(wf_open_result *result, wf_value *factory,
         wf_transition(factory);
         memset(result, 0, sizeof(*result));
         result->tag = 1;
-        wf_error_class(&result->error, 9, 0, 0);
+        wf_error_class(&result->err.error, 9, 0, 0);
         return 0;
     }
     return wf_open_start(result, factory, root, operation->component,
@@ -749,7 +761,7 @@ static void wf_close_finish(wf_close_result *result, wf_value *factory, int dire
     if (direction < 0 || amount == 1) wf_factory_return(factory);
     if (error != 0) {
         result->tag = 1;
-        wf_error(&result->error, error, 8);
+        wf_error(&result->err.error, error, 8);
     }
 }
 
@@ -790,7 +802,7 @@ void wf__body_factory_share(wf_value *result, const wf_value *factory) {
 int wf__body_tcp_listen_start(wf_open_result *result, wf_value *factory,
                               const wf_value *address, wf_host_operation *operation) {
     memset(result, 0, sizeof(*result));
-    if (!wf_factory_take(factory, &result->error)) {
+    if (!wf_factory_take(factory, &result->err.error)) {
         result->tag = 1;
         return 0;
     }
@@ -809,8 +821,8 @@ void wf__body_tcp_listen_finish(wf_open_result *result, wf_value *factory,
     if (descriptor < 0) {
         wf_factory_return(factory);
         result->tag = 1;
-        wf_error(&result->error, error, 5);
-    } else wf_descriptor_value(&result->value, (int)descriptor);
+        wf_error(&result->err.error, error, 5);
+    } else wf_descriptor_value(&result->ok.value, (int)descriptor);
 }
 
 void wf__body_tcp_listen(wf_open_result *result, wf_value *factory, const wf_value *address) {
@@ -822,7 +834,7 @@ void wf__body_tcp_listen(wf_open_result *result, wf_value *factory, const wf_val
 int wf__body_tcp_connect_start(wf_connect_result *result, wf_value *factory,
                                const wf_value *address, wf_host_operation *operation) {
     memset(result, 0, sizeof(*result));
-    if (!wf_factory_take(factory, &result->error)) {
+    if (!wf_factory_take(factory, &result->err.error)) {
         result->tag = 1;
         return 0;
     }
@@ -841,10 +853,10 @@ void wf__body_tcp_connect_finish(wf_connect_result *result, wf_value *factory,
     if (descriptor < 0) {
         wf_factory_return(factory);
         result->tag = 1;
-        wf_error(&result->error, error, 7);
+        wf_error(&result->err.error, error, 7);
     } else {
-        wf_descriptor_value(&result->value.receive, (int)descriptor);
-        wf_descriptor_value(&result->value.send, (int)descriptor);
+        wf_descriptor_value(&result->ok.value.receive, (int)descriptor);
+        wf_descriptor_value(&result->ok.value.send, (int)descriptor);
     }
 }
 
@@ -858,7 +870,7 @@ int wf__body_tcp_accept_start(wf_accept_result *result, wf_value *factory,
                               wf_value *listener, wf_host_operation *operation) {
     memset(result, 0, sizeof(*result));
     wf_transition(listener);
-    if (!wf_factory_take(factory, &result->error)) {
+    if (!wf_factory_take(factory, &result->err.error)) {
         result->tag = 1;
         return 0;
     }
@@ -879,13 +891,13 @@ void wf__body_tcp_accept_finish(wf_accept_result *result, wf_value *factory,
     if (descriptor < 0) {
         wf_factory_return(factory);
         result->tag = 1;
-        wf_error(&result->error, error, 6);
+        wf_error(&result->err.error, error, 6);
     } else {
-        wf_descriptor_value(&result->value.connection.receive, (int)descriptor);
-        wf_descriptor_value(&result->value.connection.send, (int)descriptor);
-        result->value.peer.words[0] = low;
-        result->value.peer.words[1] = high;
-        result->value.peer.words[2] = tag;
+        wf_descriptor_value(&result->ok.value.connection.receive, (int)descriptor);
+        wf_descriptor_value(&result->ok.value.connection.send, (int)descriptor);
+        result->ok.value.peer.words[0] = low;
+        result->ok.value.peer.words[1] = high;
+        result->ok.value.peer.words[2] = tag;
     }
 }
 
@@ -987,8 +999,8 @@ void wf__body_directory_next_finish(wf_list_result *result, wf_value *source,
     result->next = start;
     if (amount < 0) {
         result->result.tag = 1;
-        result->result.error.tag = 1;
-        wf_error(&result->result.error.error, error, 2);
+        result->result.err.error.tag = 1;
+        wf_error(&result->result.err.error.error, error, 2);
     } else if (amount == 0 && end != start) {
         result->result.tag = 1;
     }

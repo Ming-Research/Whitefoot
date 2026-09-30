@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Structural lint for the design tree: form only. Its messages say what it checks."""
+"""Structural lint for the design tree: form, and with --require-approval the
+readiness of a changed tree. Its messages say what it checks."""
 import argparse
 import os
 import re
@@ -15,7 +16,6 @@ DATED_LINE = re.compile(r"^- 20\d\d-\d\d-\d\d")
 REJECTED_ITEM = re.compile(r"^- (.+?): rejected because (\S.*)$")
 DATE = re.compile(r"\b20[0-9]{2}-[0-9]{2}-[0-9]{2}\b")
 FIELDS = ("Decision:", "Rejected:")
-AMENDMENT_NODE = re.compile(r"^Node: ([^/\\\x00-\x1f\x7f]+(?:/[^/\\\x00-\x1f\x7f]+)*)$")
 
 
 class Lint:
@@ -36,20 +36,6 @@ class Lint:
     def discover(self):
         for tree in self.trees:
             self.discover_tree(tree)
-        self.discover_amendments()
-
-    def discover_amendments(self):
-        self.amendments = {}
-        amend_dir = os.path.join(self.root, "amendments")
-        if not os.path.isdir(amend_dir):
-            return
-        for name in sorted(os.listdir(amend_dir)):
-            path = os.path.join(amend_dir, name)
-            rel = os.path.relpath(path, self.root)
-            if not name.endswith(".md") or not os.path.isfile(path):
-                self.err(rel, "only amendment files (.md) belong under amendments")
-                continue
-            self.amendments[name[:-3]] = self.read(path)
 
     def discover_tree(self, tree):
         tree_md = os.path.join(self.root, tree + ".md")
@@ -152,25 +138,6 @@ class Lint:
         if count:
             self.decisions += decisions
             self.rejected += len(rejected)
-
-    # ---- amendments ---------------------------------------------------
-
-    def check_amendments(self):
-        for name, lines in self.amendments.items():
-            where = f"amendments/{name}"
-            node = AMENDMENT_NODE.fullmatch(lines[0]) if lines else None
-            if not node or any(part in (".", "..") or not part.strip()
-                               for part in node.group(1).split("/")):
-                self.err(where + ".md:1", "an amendment starts with 'Node: <tree path>' naming the node it amends or adds")
-                continue
-            if len(lines) < 2 or lines[1].strip():
-                self.err(where + ".md:2", "a blank line separates the Node line from the fields")
-                continue
-            self.check_node(where, [""] * 2 + lines[2:], set(), count=False)
-
-    def check_no_amendments(self):
-        if os.path.lexists(os.path.join(self.root, "amendments")):
-            self.err("amendments", "path exists; design readiness requires its removal")
 
     # ---- log -----------------------------------------------------------
 
@@ -291,8 +258,7 @@ class Lint:
             return f"{name}: {value} (base {base[name]}, {value - base[name]:+d})"
 
         print(f"{show('nodes', len(self.nodes))}  {show('depth', depth)}  "
-              f"{show('decisions', self.decisions)}  {show('rejected', self.rejected)}  "
-              f"amendments: {len(self.amendments)}")
+              f"{show('decisions', self.decisions)}  {show('rejected', self.rejected)}")
         for name, count in sorted(per_subtree.items()):
             print(f"  {name}: {count}")
 
@@ -303,19 +269,19 @@ def main():
     parser.add_argument("--trees", nargs="+", required=True,
                         help="top-level concept names to check")
     parser.add_argument("--base", default=None)
-    parser.add_argument("--require-no-amendments", action="store_true",
-                        help="fail when the amendments path exists")
+    parser.add_argument("--require-approval", action="store_true",
+                        help="readiness: a tree changed since --base needs a new, approved log entry")
     args = parser.parse_args()
     lint = Lint(args.root, args.trees)
     lint.discover()
     lint.check_nodes()
-    lint.check_amendments()
-    if args.require_no_amendments:
-        lint.check_no_amendments()
     entries = lint.check_log()
+    if args.require_approval and args.base is None:
+        lint.err("review base", "--require-approval needs --base")
     if args.base is not None:
         if lint.base_exists(args.base):
-            lint.check_diff(args.base, entries)
+            if args.require_approval:
+                lint.check_diff(args.base, entries)
             lint.base_metrics = lint.measure_base(args.base)
         else:
             lint.err("review base", f"{args.base!r} does not resolve to a commit; cannot check tree changes")

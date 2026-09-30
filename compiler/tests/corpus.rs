@@ -18,6 +18,8 @@ mod programs {
     mod binary;
     mod containers;
     #[cfg(unix)]
+    mod contexts;
+    #[cfg(unix)]
     mod hashing;
     #[cfg(unix)]
     mod heap;

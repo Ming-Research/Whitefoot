@@ -273,16 +273,22 @@ impl Vocabulary {
             // const parameter throughout the generic body.
             TermKind::ConstParameter(..)
             | TermKind::Measure(..)
-            | TermKind::EntryDatum { .. }
-            | TermKind::MeasureDatum { .. }
+            | TermKind::EntryDatum {
+                measure: Some(_), ..
+            }
+            | TermKind::MeasureDatum {
+                measure: Some(_), ..
+            }
             | TermKind::CallDatum {
                 measure: Some(_), ..
             } => Some(self.measure_atom(term, state)),
             TermKind::Place(_, _)
             | TermKind::CountedCapture { .. }
             | TermKind::IndexCapture { .. }
-            | TermKind::ResultPayload(_)
+            | TermKind::ResultPayload { .. }
             | TermKind::CommitValue { .. }
+            | TermKind::EntryDatum { .. }
+            | TermKind::MeasureDatum { .. }
             | TermKind::CallDatum { .. } => None,
         }
     }
@@ -691,22 +697,13 @@ impl Judging<'_, '_, '_> {
                             .affine
                             .facts
                             .iter()
-                            .filter(|fact| fact.inequality == inequality)
-                            // A stable witness is strictly preferable to an
-                            // active-loop assumption for the same canonical
-                            // fact. Remaining ties keep deterministic fact
-                            // insertion order and do not affect acceptance.
-                            .min_by_key(|fact| fact.active_loops.len())
+                            // [ENT-6] each predecessor's first occurrence
+                            // is its representative; the choice selects
+                            // diagnostic parents only.
+                            .find(|fact| fact.inequality == inequality)
                             .expect("a common affine inequality has one witness")
                     })
                     .collect::<Vec<_>>();
-
-                let mut active_loops = witnesses
-                    .iter()
-                    .flat_map(|fact| fact.active_loops.iter().copied())
-                    .collect::<Vec<_>>();
-                active_loops.sort_unstable_by_key(|loop_id| loop_id.0);
-                active_loops.dedup();
 
                 let first_evidence = witnesses[0].evidence;
                 let evidence = if witnesses.iter().all(|fact| fact.evidence == first_evidence) {
@@ -740,7 +737,6 @@ impl Judging<'_, '_, '_> {
                 ActiveAffineFact {
                     inequality,
                     evidence,
-                    active_loops,
                 }
             })
             .collect()

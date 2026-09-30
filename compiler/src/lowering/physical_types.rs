@@ -69,13 +69,15 @@ pub(super) fn base_elements(
                     .map(|field| field.ty),
             ),
             CheckedNominalKind::Box { referent, .. } => pending.push(*referent),
+            CheckedNominalKind::Shared { state } => pending.push(*state),
             CheckedNominalKind::Opaque => {}
         }
     }
     while let Some(ty) = pending.pop() {
         if let CheckedType::Array { element, .. }
         | CheckedType::Window { element, .. }
-        | CheckedType::Buffer { element } = ty
+        | CheckedType::Buffer { element }
+        | CheckedType::Segments { element } = ty
             && needed.insert(element.index())
         {
             pending.push(
@@ -280,6 +282,9 @@ impl<'a> PhysicalTypes<'a> {
                 referent: self.ty(referent)?,
                 release: lower_release_class(release),
             },
+            CheckedNominalKind::Shared { state } => IrNominalKind::Shared {
+                state: self.ty(state)?,
+            },
             CheckedNominalKind::Opaque => self.nominals[id.index()].kind.clone(),
         };
         self.nominals[id.index()].kind = lowered;
@@ -290,6 +295,11 @@ impl<'a> PhysicalTypes<'a> {
         match ty {
             CheckedType::Buffer { element } => {
                 return Ok(IrType::Buffer {
+                    element: self.element(element)?,
+                });
+            }
+            CheckedType::Segments { element } => {
+                return Ok(IrType::Segments {
                     element: self.element(element)?,
                 });
             }
@@ -409,6 +419,10 @@ impl<'a> PhysicalTypes<'a> {
                             }
                         }
                         (CheckedNominalKind::Opaque, CheckedNominalKind::Opaque) => {}
+                        (
+                            CheckedNominalKind::Shared { state: left },
+                            CheckedNominalKind::Shared { state: right },
+                        ) => pending.push((*left, *right)),
                         _ => return Ok(false),
                     }
                 }
@@ -456,7 +470,11 @@ impl<'a> PhysicalTypes<'a> {
                         .get(right.index())
                         .ok_or(LoweringFailure::InvalidCheckedProgram)?,
                 )),
-                (CheckedType::Buffer { element: left }, CheckedType::Buffer { element: right }) => {
+                (CheckedType::Buffer { element: left }, CheckedType::Buffer { element: right })
+                | (
+                    CheckedType::Segments { element: left },
+                    CheckedType::Segments { element: right },
+                ) => {
                     pending.push((
                         *self
                             .data

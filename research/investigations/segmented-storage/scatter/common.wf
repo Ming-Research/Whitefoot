@@ -1,0 +1,51 @@
+struct Cmd {
+  kind: u64;
+  a: u64;
+  b: u64;
+  c: u64;
+}
+
+const items: u64 = 200000_u64;
+
+const reps: u64 = 20_u64;
+
+fn mix(x: u64) -> result: u64 pure {
+  let m1 = x *wrap 11400714819323198485_u64;
+  let s1 = ishr.wrap(m1, 29_u32);
+  let m2 = ixor(m1, s1);
+  let m3 = m2 *wrap 13787848793156543929_u64;
+  let s2 = ishr.wrap(m3, 32_u32);
+  let m4 = ixor(m3, s2);
+  return m4;
+}
+
+fn count_of(item: u64) -> count: u64 pure {
+  let h = mix(x: item);
+  let r = h % 8_u64;
+  let count = r + 1_u64;
+  return count;
+}
+
+fn command(item: u64, at: u64, salt: u64) -> made: Cmd pure {
+  let key = item *wrap 16_u64;
+  let spot = key +wrap at;
+  let seed = spot +wrap salt;
+  let a = mix(x: seed);
+  let b = a *wrap 3_u64;
+  let c = ixor(a, item);
+  let kind = item % 5_u64;
+  return Cmd(kind: kind, a: a, b: b, c: c);
+}
+
+fn checksum(out: &[Cmd]) -> sum: u64 reads(out) {
+  let count = out^.len;
+  let sum = 0_u64;
+  for (i in 0_u64..count) {
+    let one = out^[i];
+    let t1 = one.a +wrap one.b;
+    let t2 = t1 +wrap one.c;
+    let t3 = t2 +wrap one.kind;
+    set sum = sum +wrap t3;
+  }
+  return sum;
+}

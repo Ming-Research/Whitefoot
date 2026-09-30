@@ -1,0 +1,94 @@
+alias ExitStatus = std::process::ExitStatus;
+alias HandleFactory = std::io::HandleFactory;
+alias InputStream = std::io::InputStream;
+alias Inputs = std::process::Inputs;
+alias OutputStream = std::io::OutputStream;
+alias close_directory = std::fs::close_directory;
+alias exit_status = std::process::exit_status;
+alias factory_share = std::io::factory_share;
+alias read_next = std::io::read_next;
+alias write_once = std::io::write_once;
+
+fn consume(factory: HandleFactory, input: InputStream, received: Shared<u64>) -> result: unit pure waits {
+  doc "Reads the standard input until 262144 bytes have arrived or the input stops, and records how many arrived.";
+  let buffer = array_filled::<u8, 4096>(value: 0_u8);
+  let count = 0_u64;
+  loop @receive {
+    if count >= 262144_u64 {
+      break @receive;
+    }
+    let window = &buffer[0_u64..4096_u64];
+    match read_next(factory: &factory, input: &input, destination: window, start: 0_u64, end: 4096_u64) {
+      Ok(value: n) => {
+        set count = count +wrap n;
+      }
+      Err(error: stop) => {
+        break @receive;
+      }
+    }
+  }
+  atomic total = &received {
+    set total^ = count;
+  }
+  return unit;
+}
+
+fn produce(factory: HandleFactory, output: OutputStream, sent: Shared<u64>) -> result: unit pure waits {
+  doc "Writes 262144 bytes to the standard output, asking for all that remain in each request, and records how many were accepted. One request is four times what a pipe holds, so it completes only while the reader drains the pipe.";
+  let chunk = array_filled::<u8, 262144>(value: 7_u8);
+  let count = 0_u64;
+  loop @send {
+    if count >= 262144_u64 {
+      break @send;
+    }
+    let window = &chunk[count..262144_u64];
+    let rest = 262144_u64 - count;
+    match write_once(factory: &factory, output: &output, source: window, start: 0_u64, end: rest) {
+      Ok(value: n) => {
+        set count = count +wrap n;
+      }
+      Err(error: problem) => {
+        break @send;
+      }
+    }
+  }
+  atomic total = &sent {
+    set total^ = count;
+  }
+  return unit;
+}
+
+fn relay(inputs: Inputs, received: &Shared<u64>, sent: &Shared<u64>) -> result: unit reads(received), reads(sent) waits {
+  doc "Spawns the reader of the standard input before the writer of the standard output. When both name one pipe, the reader waits for bytes only the writer's context supplies, so the two finish only if neither blocks the thread the other runs on [WAIT-2].";
+  let Inputs(args: unused_args, cwd: cwd, stdout: out, stderr: unused_err, handles: handles, stdin: input) = move inputs;
+  close_directory(factory: &handles, directory: move cwd);
+  let reader_factory = factory_share(factory: &handles);
+  let writer_factory = factory_share(factory: &handles);
+  let reader_total = shared_share::<u64>(shared: received);
+  let writer_total = shared_share::<u64>(shared: sent);
+  spawn consume(factory: move reader_factory, input: move input, received: move reader_total);
+  spawn produce(factory: move writer_factory, output: move out, sent: move writer_total);
+  return unit;
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  doc "Exits 0 when all 262144 bytes crossed the pipe from the writer's context to the reader's.";
+  let received = shared_new::<u64>(value: 0_u64);
+  let sent = shared_new::<u64>(value: 0_u64);
+  relay(inputs: move inputs, received: &received, sent: &sent);
+  let got = 0_u64;
+  let put = 0_u64;
+  atomic total = &received {
+    set got = total^;
+  }
+  atomic total = &sent {
+    set put = total^;
+  }
+  if got == 262144_u64 {
+    if put == 262144_u64 {
+      return exit_status(code: 0_u8);
+    }
+    return exit_status(code: 2_u8);
+  }
+  return exit_status(code: 1_u8);
+}

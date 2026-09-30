@@ -1429,6 +1429,7 @@ impl<'unit> TypeContext<'unit> {
             .is_some_and(|context| context.enclosing_loops.contains(&target.id));
         Ok(StatementResult {
             statement: CheckedStatement::Break {
+                node_path: self.declarations.tree.path(node)?.clone(),
                 target: target.id,
                 drops: self.live_affine_drops(check_context, bindings, &target.preserved, node)?,
             },

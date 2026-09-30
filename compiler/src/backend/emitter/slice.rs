@@ -158,6 +158,18 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let element_type = self.output.type_name(self.program, ty)?;
         let pointer = self.next_temporary()?;
         let element_pointer = self.next_temporary()?;
+        if self.is_memory_only(ty)? {
+            // A memory-only element is copied into its own slot
+            // (compiler/payload-enum-layout).
+            writeln!(
+                self.output,
+                "  %{pointer} = extractvalue {descriptor_type} {}, 0\n  %{element_pointer} = getelementptr inbounds {element_type}, ptr %{pointer}, i64 {}",
+                self.value_name(slice),
+                self.element_address_index(ty, &self.value_name(offset))?,
+            )
+            .map_err(|_| BackendFailure::TextEmission)?;
+            return self.copy_into_result(result, ty, &format!("%{element_pointer}"));
+        }
         writeln!(
             self.output,
             "  %{pointer} = extractvalue {descriptor_type} {}, 0\n  %{element_pointer} = getelementptr inbounds {element_type}, ptr %{pointer}, i64 {}\n  {} = load {element_type}, ptr %{element_pointer}",

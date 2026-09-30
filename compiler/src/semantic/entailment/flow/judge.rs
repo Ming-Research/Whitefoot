@@ -130,7 +130,7 @@ impl Judging<'_, '_, '_> {
         &mut self,
         callee: super::super::super::model::FunctionId,
         node_path: &crate::NodePath,
-        requires_clause: crate::NodePath,
+        (requires_clause, subject): (crate::NodePath, Option<u32>),
         goal: ConcreteGoal,
         argument_count: usize,
         (context, written): (ProofContext<'_>, &ProofFlowState),
@@ -145,10 +145,16 @@ impl Judging<'_, '_, '_> {
                 .add_root(DerivationRootKind::CallGoal(ordinal), root);
         }
         let rendered_goal = self.input.render_concrete_goal(&goal.root);
+        let range_lengths = if disposition == CallGoalDisposition::Discharged {
+            Vec::new()
+        } else {
+            self.input.range_length_readings(&goal.root)
+        };
         self.output.call_goals.push(CallGoalOutcome {
             node_path: node_path.clone(),
             callee,
             requires_clause,
+            subject,
             goal,
             rendered_goal,
             argument_count: u32::try_from(argument_count)
@@ -157,6 +163,7 @@ impl Judging<'_, '_, '_> {
             evidence,
             derivation,
             written_before: written.written_before(disposition == CallGoalDisposition::Discharged),
+            range_lengths,
         });
         (disposition, derivation)
     }
@@ -797,7 +804,7 @@ impl Analyzer<'_, '_> {
                         let (disposition, derivation) = self.judging().judge_call_goal(
                             *function,
                             call,
-                            requirement.requires_clause.clone(),
+                            (requirement.requires_clause.clone(), requirement.subject),
                             goal,
                             arguments.len(),
                             (ProofContext::new(&states.facts, &states.affine), &*states),
@@ -968,6 +975,9 @@ impl Analyzer<'_, '_> {
                 let source_subscripts = match source {
                     CheckedRangeSource::Storage(root) => self.judge_place_subscripts(root, states),
                     CheckedRangeSource::Range(_) => true,
+                    CheckedRangeSource::Element(place) => {
+                        self.judge_range_element_place(place, states)
+                    }
                 };
                 if reaches_endpoints && source_subscripts {
                     let length = match source {
@@ -979,6 +989,13 @@ impl Analyzer<'_, '_> {
                             measure: CheckedMeasure::Length,
                             root: root.clone(),
                         },
+                        CheckedRangeSource::Element(place) => {
+                            CheckedExpression::RangeElementMeasure {
+                                carrier: carrier.clone(),
+                                measure: CheckedMeasure::Length,
+                                place: place.clone(),
+                            }
+                        }
                     };
                     let formation_start = self.output.obligations.len();
                     self.judging()
@@ -1018,6 +1035,25 @@ impl Analyzer<'_, '_> {
                         }
                         self.output.obligations[outcome].range_partitions = partitions;
                     }
+                    // [REF-4, MSR-1] the range this formation names before
+                    // any binding does: every resolved place of its source
+                    // extended by its own range step, in the term identity a
+                    // requirement instantiated over the argument reads.
+                    if self.output.obligations.len() == formation_start + 2
+                        && self.judging().obligations_since_discharged(formation_start)
+                    {
+                        let (root, steps) = source.place();
+                        for mut place in self.input.places.resolve(root, &steps) {
+                            place.path.push(PlaceStep::Range(*captured));
+                            self.establish_range_length(
+                                place.term_identity(),
+                                *captured,
+                                (start, end),
+                                carrier,
+                                states,
+                            );
+                        }
+                    }
                 }
                 ExpressionJudgment {
                     prepared_call: None,
@@ -1033,6 +1069,40 @@ impl Analyzer<'_, '_> {
             | CheckedExpression::BorrowAddressed { root, .. } => {
                 let obligation_start = self.output.obligations.len();
                 let reached = self.judge_place_subscripts(root, states);
+                ExpressionJudgment {
+                    prepared_call: None,
+                    reached: reached
+                        && self
+                            .judging()
+                            .obligations_since_discharged(obligation_start),
+                }
+            }
+            // [OP-4, TYPE-9] a segment owes `i < len_of(s)` after the
+            // `Segments` place's own subscripts; the run of every element owes
+            // nothing more.
+            CheckedExpression::BorrowSegment { root, segment, .. } => {
+                let obligation_start = self.output.obligations.len();
+                let mut reached = self.judge_place_subscripts(root, states);
+                if let crate::semantic::CheckedSegmentSelect::One(index) = segment {
+                    let reaches_offset =
+                        self.judge_children_reach_parent(std::iter::once(&index.offset), states);
+                    if reached && reaches_offset {
+                        self.reasoning().establish_index_capture(
+                            index.captured,
+                            &index.offset,
+                            states,
+                        );
+                        self.judge_obligation(
+                            judged_place(root),
+                            MeasuredKind::Segments,
+                            None,
+                            &index.offset,
+                            index.obligation.clone(),
+                            states,
+                        );
+                    }
+                    reached &= reaches_offset;
+                }
                 ExpressionJudgment {
                     prepared_call: None,
                     reached: reached
@@ -1104,6 +1174,60 @@ impl Analyzer<'_, '_> {
                         && self
                             .judging()
                             .obligations_since_discharged(obligation_start),
+                }
+            }
+            // [TYPE-11] a construction owes its struct's type invariants over
+            // its field operands, judged after them as a call's
+            // requirements are, in the state before the construction.
+            CheckedExpression::ConstructStruct {
+                carrier,
+                fields,
+                invariants,
+                invariant_arguments,
+                ..
+            } if !invariants.is_empty() => {
+                let operands_reached = self.judge_children_reach_parent(fields.iter(), states);
+                let mut goals_ok = operands_reached;
+                if operands_reached {
+                    let admitted_arguments = fields
+                        .iter()
+                        .zip(invariant_arguments)
+                        .map(|(field, captured)| {
+                            matches!(
+                                captured,
+                                GoalExpression::Datum(GoalDatum::EvaluatedValue {
+                                    occurrence: EvaluatedValueOccurrence::CallArgument {
+                                        call: occurrence_call,
+                                        ..
+                                    },
+                                    ..
+                                }) if occurrence_call == carrier
+                            )
+                            .then(|| self.input.admitted_value_goal_expression(field))
+                            .flatten()
+                        })
+                        .collect::<Vec<_>>();
+                    let constructing = self.input.function.id;
+                    for invariant in invariants {
+                        let goal = ConcreteGoal::new(admitted_call_goal_expression(
+                            &invariant.goal.root,
+                            carrier,
+                            &admitted_arguments,
+                        ));
+                        let (disposition, _) = self.judging().judge_call_goal(
+                            constructing,
+                            carrier,
+                            (invariant.requires_clause.clone(), invariant.subject),
+                            goal,
+                            fields.len(),
+                            (ProofContext::new(&states.facts, &states.affine), &*states),
+                        );
+                        goals_ok &= disposition == CallGoalDisposition::Discharged;
+                    }
+                }
+                ExpressionJudgment {
+                    prepared_call: None,
+                    reached: goals_ok,
                 }
             }
             _ => {
@@ -1746,5 +1870,26 @@ pub(super) fn set_target_place(target: &CheckedSetTarget) -> Option<ResolvedPlac
             place.path.extend(path);
             Some(place)
         }
+    }
+}
+
+/// The place one checked storage root names, as [`Analyzer::judge_place_subscripts`]
+/// walks it: a holder's referent, each field, each `Box` content and each
+/// subscript by its captured offset [REF-1].
+fn judged_place(root: &CheckedContainerRoot) -> ResolvedPlace {
+    let mut path = Vec::new();
+    if root.binding().is_some_and(is_holder) {
+        path.push(PlaceStep::Deref);
+    }
+    for step in &root.path {
+        path.push(match step {
+            CheckedPlaceStep::Field(field) => PlaceStep::Field(*field),
+            CheckedPlaceStep::BoxReferent(_) => PlaceStep::Deref,
+            CheckedPlaceStep::Subscript(subscript) => PlaceStep::Index(subscript.captured),
+        });
+    }
+    ResolvedPlace {
+        root: root.root,
+        path,
     }
 }

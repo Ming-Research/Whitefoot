@@ -1,0 +1,15 @@
+struct Accounts {
+  a: u64;
+  b: u64;
+}
+
+fn peek(s: &Accounts, n: u64) -> result: u64 reads(s.a) contract {
+  requires s^.a >= n;
+} {
+  let x = s^.a - n;
+  return x;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

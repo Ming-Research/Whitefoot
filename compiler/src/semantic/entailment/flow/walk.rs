@@ -40,7 +40,6 @@ impl Reasoning<'_, '_, '_> {
                 arguments,
                 goal_arguments,
                 &[],
-                &[],
             ) else {
                 continue;
             };
@@ -138,6 +137,31 @@ impl Judging<'_, '_, '_> {
 }
 
 impl Analyzer<'_, '_> {
+    /// [TYPE-11] the type invariants of the atomic block being walked, owed
+    /// at `site`, an edge that leaves it; judged as a requirement the body
+    /// owes itself there.
+    fn judge_atomic_exit(&mut self, site: &crate::NodePath, state: &ProofFlowState) {
+        let Some(invariants) = self
+            .frames
+            .atomic
+            .as_ref()
+            .map(|frame| frame.invariants.clone())
+        else {
+            return;
+        };
+        let function = self.input.function.id;
+        for invariant in invariants {
+            self.judging().judge_call_goal(
+                function,
+                site,
+                (invariant.requires_clause.clone(), invariant.subject),
+                invariant.goal.clone(),
+                0,
+                (ProofContext::new(&state.facts, &state.affine), state),
+            );
+        }
+    }
+
     pub(super) fn walk_block(
         &mut self,
         statements: &[CheckedStatement],
@@ -574,41 +598,13 @@ impl Analyzer<'_, '_> {
                         ..
                     } = value
                     {
-                        let destination = bound_place(*binding);
-                        let term = self.reasoning().establish_captured_range_length(
-                            destination,
+                        self.establish_range_length(
+                            bound_place(*binding),
                             *captured,
-                            &mut state.affine,
+                            (start, end),
+                            node_path,
+                            state,
                         );
-                        // [ENT-3.S6] the same formation establishes
-                        // `part^.len = hi - lo` as an ordinary fact, so
-                        // a requirement stated over the range's length is
-                        // judged against the length the range has and not
-                        // merely against an affine premise.
-                        if let Some(relation) = term.and_then(|term| {
-                            captured_range_length_image(*captured, &state.affine)
-                                .filter(|image| image.terms().is_empty())
-                                .map(|image| Relation::Equal {
-                                    left: term,
-                                    right: self
-                                        .vocabulary
-                                        .terms
-                                        .intern(TermKind::Constant(image.constant_value())),
-                                    difference: 0,
-                                })
-                                .or_else(|| {
-                                    self.reasoning().range_length_relation(term, start, end)
-                                })
-                        }) {
-                            let formation = self
-                                .vocabulary
-                                .proof_event(FlowEventKind::S6, Some(node_path));
-                            state.facts.establish(
-                                &relation,
-                                &mut self.vocabulary.derivations,
-                                formation,
-                            );
-                        }
                     }
                 }
                 true
@@ -684,10 +680,21 @@ impl Analyzer<'_, '_> {
                 let judgment = self.expression_effects(scrutinee, state);
                 self.reasoning()
                     .finish_result(scrutinee, &judgment, &mut result, state);
+                // [TYPE-11] the error edge returns, leaving any atomic block.
+                self.judge_atomic_exit(node_path, state);
+                // [FN-9] and it is a selected return of every unrouted
+                // clause, judged over the state that edge leaves with.
+                self.judging().judge_postcondition_return(
+                    node_path,
+                    state,
+                    None,
+                    judgment.reached,
+                    &[],
+                );
                 self.declare(*binding);
                 if let Some(result) = result {
-                    self.vocabulary
-                        .select_result(node_path, &result, *binding, *ok_type, state);
+                    self.reasoning()
+                        .select_result(node_path, &result, *binding, state);
                 }
                 if self.input.affine_binding_type(*binding).is_some()
                     && let Some(value) = self.vocabulary.affine_unknown_integer(*ok_type)
@@ -970,7 +977,6 @@ impl Analyzer<'_, '_> {
                             evidence: AffineFactEvidence::Source(
                                 SourceAffineFactRef::SourceProof { source_ordinal },
                             ),
-                            active_loops: Vec::new(),
                         });
                     }
                     state
@@ -1049,6 +1055,8 @@ impl Analyzer<'_, '_> {
                         .finish_result(value, &judgment, result, state);
                 }
 
+                // [TYPE-11] a return inside an atomic block leaves it.
+                self.judge_atomic_exit(node_path, state);
                 self.judging().judge_postcondition_return(
                     node_path,
                     state,
@@ -1068,6 +1076,16 @@ impl Analyzer<'_, '_> {
                 let judgment = self.expression_effects(value, state);
                 self.reasoning()
                     .finish_result(value, &judgment, &mut result, state);
+                // [TYPE-11] a give to a value initializer around an atomic
+                // block leaves the block.
+                if self
+                    .frames
+                    .atomic
+                    .as_ref()
+                    .is_some_and(|frame| self.frames.gives.len() <= frame.give_depth)
+                {
+                    self.judge_atomic_exit(node_path, state);
+                }
                 if let Some((scope_depth, loop_depth, binding, result_type)) =
                     self.frames.gives.last().map(|frame| {
                         (
@@ -1115,13 +1133,105 @@ impl Analyzer<'_, '_> {
                 }
                 false
             }
-            CheckedStatement::Break { target, drops: _ } => {
+            // [SHARE-2, SHARE-3] the target is read when the statement
+            // begins; the binder then names a state no earlier fact
+            // describes, since the state belongs to no binding and other
+            // contexts' statements change it between atomic statements. The
+            // block runs at the point the statement takes effect, where the
+            // guard is true, so the guard enters it as the true arm of a
+            // Bool condition does; an evaluation that read false left no
+            // fact behind, since the guard writes nothing and the state is
+            // described afresh. The block is an ordinary scope the binder
+            // leaves with it.
+            CheckedStatement::Atomic {
+                node_path,
+                target,
+                binding,
+                guard,
+                body,
+                invariants,
+                ..
+            } => {
+                let _ = self.expression_effects(target, state);
+                let outer_scope_depth = self.frames.scopes.len();
+                self.frames.scopes.push(vec![*binding]);
+                if let Some(guard) = guard {
+                    let judgment = self.expression_effects(guard, state);
+                    if judgment.reached {
+                        let facts = self.reasoning().arm_facts(
+                            guard,
+                            crate::semantic::CheckedEnumType::Bool,
+                            &state.facts,
+                        );
+                        let event =
+                            (!facts.goals.is_empty() || facts.comparison.is_some()).then(|| {
+                                self.vocabulary
+                                    .proof_event(FlowEventKind::S1, facts.node_path.as_ref())
+                            });
+                        let held = CheckedMatchArm {
+                            tag: 1,
+                            binders: Vec::new(),
+                            covered: Vec::new(),
+                            body: Vec::new(),
+                            fallthrough_drops: Vec::new(),
+                        };
+                        self.judging()
+                            .establish_arm_entry(&held, &facts, &mut state.facts, event);
+                    }
+                }
+                // [TYPE-11] the state's type invariants hold where the block
+                // begins, as the guard does.
+                for invariant in invariants {
+                    let event = self
+                        .vocabulary
+                        .proof_event(FlowEventKind::S1, Some(&invariant.requires_clause));
+                    self.judging().establish_body_goal(
+                        invariant.goal.root.clone(),
+                        &mut state.facts,
+                        event,
+                    );
+                }
+                let enclosing = self.frames.atomic.replace(AtomicFrame {
+                    loop_depth: self.frames.loops.len(),
+                    give_depth: self.frames.gives.len(),
+                    invariants: invariants.clone(),
+                });
+                let mut continues = true;
+                for statement in body {
+                    if !continues {
+                        break;
+                    }
+                    continues = self.walk_statement(statement, state);
+                }
+                if continues {
+                    self.judge_atomic_exit(node_path, state);
+                    self.exit_scopes_to(state, outer_scope_depth);
+                }
+                self.frames.atomic = enclosing;
+                self.frames.scopes.pop();
+                continues
+            }
+            CheckedStatement::Break {
+                node_path,
+                target,
+                drops: _,
+            } => {
                 if let Some(position) = self
                     .frames
                     .loops
                     .iter()
                     .rposition(|frame| frame.id == *target)
                 {
+                    // [TYPE-11] a break of a loop around an atomic block
+                    // leaves the block.
+                    if self
+                        .frames
+                        .atomic
+                        .as_ref()
+                        .is_some_and(|frame| position < frame.loop_depth)
+                    {
+                        self.judge_atomic_exit(node_path, state);
+                    }
                     let depth = self.frames.loops[position].scope_depth;
                     let mut exit = state.clone();
                     self.exit_scopes_to(&mut exit, depth);
@@ -1264,14 +1374,13 @@ impl Analyzer<'_, '_> {
                     base_batch,
                     &mut state.affine,
                 );
-                let invariant_declarations = invariants
-                    .iter()
-                    .map(|invariant| invariant.declaration)
-                    .collect::<Vec<_>>();
                 let head_entry_images = state.entry_images.clone();
                 self.frames.loops.push(LoopFrame {
                     id: *id,
-                    invariant_declarations: invariant_declarations.clone().into_boxed_slice(),
+                    invariant_declarations: invariants
+                        .iter()
+                        .map(|invariant| invariant.declaration)
+                        .collect(),
                     scope_depth: self.frames.scopes.len(),
                     counted_binder: None,
                     invariant_atoms: HashSet::new(),
@@ -1297,15 +1406,10 @@ impl Analyzer<'_, '_> {
                 self.judging()
                     .record_loop_invariant_outcomes(*id, invariants, &base, &step, None);
 
+                // Each break state already left the loop's name scope in
+                // `exit_counted_loops_from`; its header conclusions stay.
                 let frame = self.frames.loops.pop();
-                let mut breaks = frame.map(|frame| frame.breaks).unwrap_or_default();
-                for break_state in &mut breaks {
-                    remove_active_loop_invariants(
-                        &mut break_state.affine,
-                        *id,
-                        &invariant_declarations,
-                    );
-                }
+                let breaks = frame.map(|frame| frame.breaks).unwrap_or_default();
                 let has_breaks = !breaks.is_empty();
                 // The continuation is the join over the break edges; with no
                 // break it is the contradictory all-derivable state, matching
@@ -1597,15 +1701,10 @@ impl Analyzer<'_, '_> {
                     disposition.is_none_or(|disposition| disposition == TargetDisposition::Proved)
                 });
                 let export = lower_le_upper && base_batch && step_batch && hidden_update;
+                // Each break state already left the loop's name scope in
+                // `exit_counted_loops_from`; its header conclusions stay.
                 let frame = self.frames.loops.pop();
-                let mut breaks = frame.map(|frame| frame.breaks).unwrap_or_default();
-                for break_state in &mut breaks {
-                    remove_active_loop_invariants(
-                        &mut break_state.affine,
-                        *id,
-                        &invariant_declarations,
-                    );
-                }
+                let breaks = frame.map(|frame| frame.breaks).unwrap_or_default();
 
                 // Unlike an ordinary loop, the real false-header edge always
                 // contributes. Binder and captures leave scope before it or
@@ -1649,13 +1748,12 @@ impl Analyzer<'_, '_> {
                                             .expect("loop invariant ordinal exceeds u32"),
                                     }),
                                 ),
-                                active_loops: Vec::new(),
                             };
                             exhaustion.affine.facts.push(fact);
                         }
                     }
                 }
-                remove_active_loop_invariants(&mut exhaustion.affine, *id, &invariant_declarations);
+                expire_loop_invariant_names(&mut exhaustion.affine, &invariant_declarations);
                 self.exit_scopes_to(&mut exhaustion, outer_scope_depth);
                 self.vocabulary
                     .exit_counted_capture_scope(&mut exhaustion, &range_path);
@@ -1705,20 +1803,15 @@ impl Analyzer<'_, '_> {
                 );
             }
         }
-        if arm.tag == 0
-            && let Some(result) = result
+        if let Some(result) = result
+            && arm.tag == result.success_tag
             && let Some(binder) = arm
                 .binders
                 .iter()
                 .find(|binder| binder.field == 0 && binder.mode == CheckedMode::Own)
         {
-            self.vocabulary.select_result(
-                &binder.node_path,
-                result,
-                binder.binding,
-                binder.ty,
-                &mut state,
-            );
+            self.reasoning()
+                .select_result(&binder.node_path, result, binder.binding, &mut state);
         }
         self.frames
             .scopes
@@ -1749,4 +1842,54 @@ impl Analyzer<'_, '_> {
 
 pub(super) fn expression_node_path(expression: &CheckedExpression) -> Option<&crate::NodePath> {
     expression.carrier()
+}
+
+impl Analyzer<'_, '_> {
+    /// [REF-4, MSR-1, ENT-3.S6] one formation's length, `hi - lo`, on one
+    /// place that names the formed range.
+    ///
+    /// A range's length depends on its two captured endpoints alone, so the
+    /// same equality holds whichever place names it: the binding a `let` or
+    /// `set` binds, and the anonymous range an argument forms, whose place is
+    /// its source extended by the formation's own range step. Both receive
+    /// the captured affine image and, where the difference is one
+    /// difference-bound relation [ENT-4], the ordinary L0 equality, so a
+    /// requirement relating two ranges formed at one call is judged as it is
+    /// for two named ranges.
+    pub(super) fn establish_range_length(
+        &mut self,
+        destination: ResolvedPlace,
+        captured: CapturedRange,
+        (start, end): (&CheckedExpression, &CheckedExpression),
+        node_path: &crate::NodePath,
+        state: &mut ProofFlowState,
+    ) {
+        let term = self.reasoning().establish_captured_range_length(
+            destination,
+            captured,
+            &mut state.affine,
+        );
+        let Some(term) = term else {
+            return;
+        };
+        let relation = captured_range_length_image(captured, &state.affine)
+            .filter(|image| image.terms().is_empty())
+            .map(|image| Relation::Equal {
+                left: term,
+                right: self
+                    .vocabulary
+                    .terms
+                    .intern(TermKind::Constant(image.constant_value())),
+                difference: 0,
+            })
+            .or_else(|| self.reasoning().range_length_relation(term, start, end));
+        if let Some(relation) = relation {
+            let formation = self
+                .vocabulary
+                .proof_event(FlowEventKind::S6, Some(node_path));
+            state
+                .facts
+                .establish(&relation, &mut self.vocabulary.derivations, formation);
+        }
+    }
 }

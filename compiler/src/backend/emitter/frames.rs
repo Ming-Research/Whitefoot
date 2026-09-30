@@ -59,7 +59,7 @@ const START: &str = "wf.coro.start";
 /// and the no-op coroutine it gives the entry's frame as its parent.
 pub(super) fn frame_runtime_declarations() -> Module {
     let mut module = Module::default();
-    let declarations: [(&str, &str, &[&str]); 20] = [
+    let declarations: [(&str, &str, &[&str]); 21] = [
         ("llvm.coro.id", "token", &["i32", "ptr", "ptr", "ptr"]),
         ("llvm.coro.alloc", "i1", &["token"]),
         ("llvm.coro.size.i64", "i64", &[]),
@@ -75,6 +75,7 @@ pub(super) fn frame_runtime_declarations() -> Module {
         ("wf__context_frame_release", "void", &["ptr"]),
         ("wf__context_operation", "ptr", &[]),
         ("wf__context_wait", "i32", &["ptr", "ptr"]),
+        ("wf__context_pass", "i32", &["ptr"]),
         ("wf__context_prepare", "ptr", &["i64"]),
         ("wf__context_launch", "void", &["ptr", "ptr", "ptr"]),
         ("wf__context_join_wait", "i32", &["ptr", "ptr"]),
@@ -119,7 +120,7 @@ pub(super) fn waiting_abi(
 }
 
 /// The labels one waiting call or join uses, unique by the value it defines.
-fn labels(prefix: &str, value: IrValueId) -> String {
+pub(super) fn labels(prefix: &str, value: IrValueId) -> String {
     format!("wf.{prefix}.v{}", value.ordinal())
 }
 
@@ -150,10 +151,10 @@ impl FunctionEmitter<'_, '_> {
              {HANDLE} = call ptr @llvm.coro.begin(token %wf.coro.id, ptr %wf.coro.selected)"
         )
         .map_err(|_| BackendFailure::TextEmission)?;
-        if super::contexts::keeps_context_group(self.function) {
-            self.output
-                .push_str(&super::contexts::context_group_initialization());
-        }
+        self.output
+            .push_str(&super::contexts::context_group_initialization(
+                self.function,
+            ));
         writeln!(
             self.output,
             "  br label %{}",
@@ -214,7 +215,7 @@ impl FunctionEmitter<'_, '_> {
 
     /// A suspension the frame's own call parked for: resumed, it continues
     /// in `resumed`; destroyed, it leaves by the frame's release.
-    fn emit_suspension(
+    pub(super) fn emit_suspension(
         &mut self,
         saved: &str,
         prefix: &str,
@@ -231,7 +232,7 @@ impl FunctionEmitter<'_, '_> {
 
     /// Where a waiting call constructs its result, and whether the value is
     /// then read back as an SSA value.
-    fn waiting_destination(
+    pub(super) fn waiting_destination(
         &mut self,
         result: IrValueId,
         abi: ResultAbi,
@@ -358,18 +359,28 @@ impl FunctionEmitter<'_, '_> {
         self.names(&[
             "wf__context_operation",
             "wf__context_wait",
+            "wf__context_pass",
             "llvm.coro.save",
         ]);
         self.output.symbol(start.clone());
         self.output.symbol(finish.clone());
         // The start answers 0 when it wrote the result itself, 1 when its
         // operation has already completed, and 2 when it is still pending.
+        // An answer the start gave passes through `wf__context_pass`, which
+        // reads no record and may make the context yield after a run of such
+        // answers [WAIT-2]; only a pending operation reaches the wait.
         writeln!(
             self.output,
             "  %{prefix}.operation = call ptr @wf__context_operation()\n  \
              %{prefix}.started = call i32 @{start}({arguments})\n  \
-             switch i32 %{prefix}.started, label %{prefix}.wait [ i32 0, label %{prefix}.done i32 1, label %{prefix}.finish ]\n\
-             {prefix}.wait:\n  \
+             switch i32 %{prefix}.started, label %{prefix}.wait [ i32 0, label %{prefix}.pass i32 1, label %{prefix}.passed ]"
+        )
+        .map_err(|_| BackendFailure::TextEmission)?;
+        self.emit_pass(&prefix, "pass", &format!("{prefix}.done"))?;
+        self.emit_pass(&prefix, "passed", &format!("{prefix}.finish"))?;
+        writeln!(
+            self.output,
+            "{prefix}.wait:\n  \
              %{prefix}.saved = call token @llvm.coro.save(ptr null)\n  \
              %{prefix}.parked = call i32 @wf__context_wait(ptr %{prefix}.operation, ptr {HANDLE})\n  \
              %{prefix}.suspends = icmp ne i32 %{prefix}.parked, 0\n  \
@@ -393,9 +404,40 @@ impl FunctionEmitter<'_, '_> {
         Ok(())
     }
 
-    /// [PAR-4] the join before an exit: a suspension until every context
+    /// A block `{prefix}.{name}` that counts one wait answered without
+    /// suspending and continues at `next`, or yields the context to another
+    /// ready one and continues there once it is resumed [WAIT-2].
+    fn emit_pass(&mut self, prefix: &str, name: &str, next: &str) -> Result<(), BackendFailure> {
+        writeln!(
+            self.output,
+            "{prefix}.{name}:\n  \
+             %{prefix}.{name}.saved = call token @llvm.coro.save(ptr null)\n  \
+             %{prefix}.{name}.yields = call i32 @wf__context_pass(ptr {HANDLE})\n  \
+             %{prefix}.{name}.suspends = icmp ne i32 %{prefix}.{name}.yields, 0\n  \
+             br i1 %{prefix}.{name}.suspends, label %{prefix}.{name}.yield, label %{next}\n\
+             {prefix}.{name}.yield:"
+        )
+        .map_err(|_| BackendFailure::TextEmission)?;
+        self.emit_suspension(
+            &format!("%{prefix}.{name}.saved"),
+            &format!("{prefix}.{name}"),
+            next,
+        )
+    }
+
+    /// [WAIT-3] the join before an exit: a suspension until every context
     /// this activation started has finished, when any has not.
     pub(super) fn emit_frame_join(&mut self, result: IrValueId) -> Result<(), BackendFailure> {
+        self.emit_group_join(result, super::contexts::GROUP)
+    }
+
+    /// Suspends this frame until every context counted in `group` has
+    /// finished.
+    pub(super) fn emit_group_join(
+        &mut self,
+        result: IrValueId,
+        group: &str,
+    ) -> Result<(), BackendFailure> {
         let prefix = labels("join", result);
         self.names(&["wf__context_join_wait", "llvm.coro.save"]);
         writeln!(
@@ -405,7 +447,7 @@ impl FunctionEmitter<'_, '_> {
              %{prefix}.suspends = icmp ne i32 %{prefix}.parked, 0\n  \
              br i1 %{prefix}.suspends, label %{prefix}.suspend, label %{prefix}.done\n\
              {prefix}.suspend:",
-            super::contexts::GROUP
+            group
         )
         .map_err(|_| BackendFailure::TextEmission)?;
         self.emit_suspension(
@@ -419,7 +461,7 @@ impl FunctionEmitter<'_, '_> {
 
     /// Records the runtime entries and intrinsics a frame's lines name, so a
     /// link fragment that holds this definition declares them.
-    fn names(&mut self, symbols: &[&str]) {
+    pub(super) fn names(&mut self, symbols: &[&str]) {
         for symbol in symbols {
             self.output.symbol(*symbol);
         }

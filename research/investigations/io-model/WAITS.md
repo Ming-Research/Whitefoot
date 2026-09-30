@@ -383,6 +383,297 @@ What this does not establish:
 - anything on the helper route, on another host, or at more than one driver
   thread.
 
+## Experiment 4: attributing the gap at 64 connections
+
+### Design
+
+Directed by the owner on 2026-09-28. The frame server trails
+`waiting_echo --threads 1` at 64 connections with 64-byte messages
+(Experiment 3). The same release build of `tcp_contexts.wf` (the branch head
+after `943e6663`) and the same reference, one driver thread each, 64
+connections, 2,000 round trips per connection, on the development host.
+Three observations: system calls by kind (`strace -c`), user-space
+instructions by function (`valgrind --tool=callgrind`, 200 round trips per
+connection), and the server's user and system CPU seconds (`/usr/bin/time`).
+Then one same-source change: the reference's ring is created with
+`IORING_SETUP_SINGLE_ISSUER | IORING_SETUP_DEFER_TASKRUN`, which runs the
+kernel's completion work only when the driver enters the ring to wait,
+where the runtime's ring uses `IORING_SETUP_COOP_TASKRUN`. The reference is
+rebuilt with the runtime's flag (`waiting_coop`), and the three servers are
+measured in six interleaved rounds, alternating order.
+
+Criterion, stated before the interleaved runs: the ring flag is the cause if
+the reference built with the runtime's flag falls to within 0.03 of the
+frame server's median rate, and it is not a cause if it stays within the
+reference's own run-to-run spread.
+
+### Result
+
+- System calls per round trip are the same: 128,000 `sendto` (each send is
+  tried once before the ring) and about 2,070 `io_uring_enter` for both
+  servers over 128,000 round trips.
+- User-space instructions differ by about six times: 16.2 million against
+  2.7 million over 12,800 round trips, leaving aside the frame server's
+  one-time 64 KiB window fill (`memset`, 4.2 million, once per connection).
+  About 550 instructions per round trip are the general completion engine
+  (record completion, ring submit and progress under a mutex, staging, the
+  join and dispatch), about 100 are frame allocation and release, and the
+  rest is emitted code and the operation bodies. The server's user time was
+  0.07 to 0.14 seconds against 0.03 to 0.07 for the reference, about 0.4
+  microseconds per round trip.
+- The server thread is busy for the whole run, and the difference is mostly
+  kernel time.
+
+| Server | median rate (rt/s) | median server CPU per round trip | rates per round |
+|---|---:|---:|---|
+| `waiting_echo --threads 1` | 121,722 | 7.93 µs | 123,430 109,930 120,817 124,457 122,628 112,496 |
+| the same, ring made with `COOP_TASKRUN` | 112,787 | 8.48 µs | 111,216 119,631 116,617 106,318 95,346 114,357 |
+| frame server | 98,964 | 9.80 µs | 97,744 96,037 110,625 104,321 100,184 92,357 |
+
+The criterion's first clause does not hold: the reference with the
+runtime's flag falls to 0.93 of itself, not to the frame server's 0.81, so
+the ring's task-run mode causes part of the gap, about 0.55 of the 1.87
+microseconds per round trip, and not all of it. The user-space engine
+accounts for about 0.4 microseconds, and about 0.9 microseconds of kernel
+time per round trip is not attributed; the frame server's larger working
+set, which the kernel's copies share caches with, is the untested candidate.
+
+The converse change, the runtime's ring made single-issuer with deferred
+task running, was built and hung at the first connection: the runtime reads
+its completion queue without entering the ring and parks in `epoll_wait`,
+and with deferred task running a completion reaches the queue only when the
+thread enters the ring to wait. Adopting that mode means a ring the driver
+owns and waits on directly, as the reference's does, which is also what
+several driver threads need, one ring each; the multi-driver work takes it
+up and measures it.
+
+## Experiment 5: several driver threads
+
+### Design
+
+Directed by the owner on 2026-09-28 ("run contexts on several driver threads,
+so a server can use more than one core"). The waiting runtime shape of
+Experiment 1 that met the bar ran one driver per core, each with a ring, and
+the compiled server at one driver reached 0.51, 0.30 and 0.41 of the best
+reference at its default of one thread per CPU (Experiment 2).
+
+The runtime keeps the first version's model and adds drivers:
+
+- A program starts `WF_DRIVERS` drivers, one per online CPU when it is not
+  set, the first time a context starts; the entry's thread is driver 0 and
+  runs the root context. A program that starts no context runs no second
+  driver.
+- A context is placed on a driver when it starts, round robin, and never
+  moves (revised below, after the first measurement). Each driver has its own ready queue, parked contexts, readiness
+  polls and, where the host has one, its own ring and wake runtime, so the
+  operations of a context are submitted to and reaped from its driver's
+  ring and wake it by its record's address on that thread, exactly as
+  today.
+- What crosses drivers is a start, placed on another driver, and a finish
+  that wakes a waiter on another driver. Both go through the target
+  driver's inbox under a lock, and wake the target's ring if it waits.
+- A group's count and its waiter are updated atomically; the handle budget
+  that `factory_share` relates is an atomic counter; the memory regions
+  frames come from are taken under a lock, which is rare because a
+  context's frames come from its own arena.
+- With no ring (the readiness route, and every host without one), the
+  program runs one driver, as today.
+
+The single-issuer ring mode Experiment 4 attributes part of the one-driver
+gap to is a separate later step, measured on its own.
+
+### What would distinguish the hypotheses, stated before measuring
+
+Same protocol as Experiment 3, `tcp_contexts.wf`, 64 and 1024 connections
+with 64-byte messages and 64 connections with 64 KiB messages, the
+references at their default of one thread per CPU:
+
+- The drivers scale if at four drivers the server's rate is at least 1.5
+  times its own rate at one driver at 64 and at 1024 connections.
+- The shape carries over if at four drivers it reaches at least 0.70 of the
+  best reference at 64 and at 1024 connections.
+- Adding drivers costs a program that uses one nothing measurable if the
+  one-driver build of the new runtime is within 0.05 of the current one at
+  64 connections, interleaved.
+
+### The first placement, round robin
+
+The runtime above ran the protocol once on the development host (four CPUs,
+the load generator on the same four; `WF_DRIVERS` unset gives four drivers),
+medians of five recorded passes after one warm-up, round trips per second:
+
+| Case | uring | epoll | waiting | four drivers | one driver | previous build |
+|---|---|---|---|---|---|---|
+| 1 connection | 16,911 | 17,655 | 17,684 | 14,364 | 16,644 | 17,302 |
+| 64 connections | 234,935 | 227,390 | 229,297 | 116,582 | 112,105 | 110,321 |
+| 1024 connections | 263,478 | 226,326 | 221,039 | 157,002 | 82,308 | 87,965 |
+| 64 connections, 64 KiB | 49,337 | 61,018 | 56,274 | 57,476 | 29,229 | 31,961 |
+
+Against the criteria: four drivers gave 1.04 times one driver at 64
+connections and 1.91 at 1024, so the drivers did not scale at 64; they
+reached 0.50 and 0.60 of the best reference, short of 0.70 at both; the
+one-driver build held 1.02 of the previous one at 64 connections.
+
+Two defects surfaced beside the rates. A driver thread could run before the
+entry's thread counted it and take the empty scheduler for a deadlock, which
+the last pass hit once under load and a build that paused 1 ms between the
+two steps hit every time; only the entry's driver now draws that conclusion.
+And a start raised a group's count while the group's last finisher held it
+closing, which lost the start; a start now waits for the close.
+
+A program that starts short contexts showed what the fixed placement costs
+(`research/experiments/io-completion-bench/programs/context_starts.wf`, whose
+contexts return at once). A thousand batches of a thousand starts, each batch
+joined as its function returns, ran in 0.12 seconds at one driver and 9.95 at
+four; a million bound starts, each joined by the next statement, ran in 0.12
+and 35.8 seconds. Nearly all of it was system time: each start went to a
+parked driver and woke it, and each join woke the starter back.
+
+### Revised placement: start here, and let an idle driver take work
+
+The revision keeps a driver's ring, its parked contexts and the rule that an
+operation is reaped by the driver that submitted it, and changes where a
+ready context runs:
+
+- A started context is made ready on the starter's driver, so a start and an
+  immediate join stay on one thread.
+- A driver with nothing to run takes about half of another driver's ready
+  contexts before it parks. A ready context has no operation in flight, so
+  it can run anywhere; it submits its next operation to the ring of the
+  driver that runs it and parks there. The root context stays on the entry's
+  thread.
+- A driver whose queue holds more than it runs next wakes one parked driver,
+  and only one driver is woken to look at a time; a driver that finds work
+  wakes the next.
+- A record published on a driver for the context it is running wakes no
+  other driver. The first version counted it as a publication from another
+  thread and signalled every driver, a system call per parked driver per
+  operation. Records the shared helper pool completes still reach every
+  driver, whichever driver's progress publishes them.
+
+The echo criteria above judge the revision unchanged. For the short-context
+program the revision gave 0.15 and 1.47 seconds for the batches at one and
+four drivers and 0.18 and 0.22 for the bound starts; that was observed
+before any criterion was written for it, so it is a result, not a test of
+one.
+
+### Result
+
+The revised runtime ran the protocol twice, medians of five recorded passes
+after one warm-up each, round trips per second (run 1 / run 2):
+
+| Case | uring | epoll | waiting | four drivers | one driver | previous build |
+|---|---|---|---|---|---|---|
+| 1 connection | 17,199 / 17,336 | 17,275 / 17,676 | 17,377 / 17,023 | 15,913 / 17,265 | 16,977 / 16,746 | 16,123 / 16,761 |
+| 64 connections | 229,016 / 202,068 | 201,373 / 204,288 | 210,920 / 224,830 | 194,570 / 192,684 | 110,368 / 112,664 | 107,673 / 116,347 |
+| 1024 connections | 226,342 / 248,442 | 227,024 / 246,744 | 233,092 / 226,771 | 170,912 / 197,559 | 80,754 / 92,634 | 82,520 / 85,230 |
+| 64 connections, 64 KiB | 43,993 / 45,705 | 61,938 / 61,567 | 51,886 / 57,921 | 53,319 / 55,112 | 29,576 / 30,204 | 29,424 / 29,851 |
+
+Against the criteria, run 1 and run 2:
+
+| Criterion | Bar | Run 1 | Run 2 |
+|---|---|---|---|
+| four drivers over one, 64 connections | at least 1.5 | 1.76 | 1.71 |
+| four drivers over one, 1024 connections | at least 1.5 | 2.12 | 2.13 |
+| four drivers over the best reference, 64 connections | at least 0.70 | 0.85 | 0.86 |
+| four drivers over the best reference, 1024 connections | at least 0.70 | 0.73 | 0.80 |
+| one driver over the previous build, 64 connections | within 0.05 | 1.03 | 0.97 |
+
+Every criterion holds in both runs. With 64 KiB messages four drivers moved
+0.86 and 0.90 of the best reference's bytes (epoll's, at one thread per
+CPU); at one connection four drivers held 0.94 and 1.03 of one, since a
+single connection has nothing to spread. At 64 connections the median
+round-trip latency fell from about 500 microseconds at one driver to about
+120 at four.
+
+The first placement's failure at 64 connections and the revision's pass
+have two changes between them, the placement and the end of a signal to
+every driver per operation; this experiment did not separate their shares,
+and the short-context program alone shows that the placement was needed.
+The load generator shares the four CPUs, so a host with more cores than the
+generator needs is where the drivers' own ceiling would show; Experiment 6
+maps the counts in between.
+
+## Experiment 6: what the several-driver runtime costs and where it scales
+
+### Design
+
+Directed by the owner on 2026-09-28 ("then add a task to measure performance
+properly"). Experiment 5 judged the runtime at four drivers against its
+criteria; this one maps the rest of the surface on the same host (four CPUs,
+the load generator sharing them), each point the median of five runs after
+one warm-up, interleaved across the configurations of one question:
+
+1. Scaling: `tcp_contexts.wf` at one, two, three and four drivers, 64 and
+   1024 connections with 64-byte messages.
+2. Efficiency: server CPU time per round trip at one and four drivers, 64
+   connections (`/usr/bin/time`), against `uring_echo` at its default.
+3. Memory: resident memory and mappings each idle connection adds at one and
+   four drivers, with Experiment 3's `idleload` at 1,000 and 5,000
+   connections.
+4. Start cost: `programs/context_starts.wf`, split into its batched and its
+   bound half, at one, two and four drivers.
+
+### What would distinguish the hypotheses, stated before measuring
+
+- The drivers scale with cores if each added driver up to four raises the
+  rate at 1024 connections, and the rate at four is at least 1.5 times one
+  (Experiment 5's bar); a rate that falls from three to four drivers says
+  the load generator's share of the four CPUs is the limit, not the runtime.
+- Taking work costs little if server CPU per round trip at four drivers is
+  within 1.3 times one driver's; above that, the moves between cores cost
+  more than the parallelism returns on this host.
+- Drivers cost no memory per connection if the resident memory each idle
+  connection adds at four drivers is within 10 percent of one driver's; the
+  fixed cost of a driver (its ring and run queue) is reported, not judged.
+- Start cost is reported, not judged: Experiment 5 already recorded it
+  before writing a criterion.
+
+### Result
+
+Medians of passes 2 to 6 of six, the first a warm-up; every server exited
+zero.
+
+Rate by driver count, round trips per second, with the ratio to one driver
+and the range of the five passes:
+
+| Drivers | 64 connections | 1024 connections |
+|---|---|---|
+| 1 | 105,271 (1.00; 99,108 to 113,879) | 84,119 (1.00; 70,888 to 88,254) |
+| 2 | 186,507 (1.77; 169,219 to 226,096) | 197,629 (2.35; 166,139 to 216,539) |
+| 3 | 192,127 (1.83; 169,571 to 215,693) | 177,563 (2.11; 156,301 to 201,941) |
+| 4 | 205,608 (1.95; 181,898 to 213,570) | 216,052 (2.57; 165,613 to 240,990) |
+
+Server CPU per round trip at 64 connections: 8.98 microseconds at one
+driver, 9.38 at four, and 8.28 for `uring_echo` at its default of four
+threads, whose rate in the same passes was 204,085 against the four-driver
+server's 204,225.
+
+Idle connections: each added 70.03 and 70.01 KiB of resident memory at one
+driver (1,000 and 5,000 connections) and 70.54 and 70.11 at four, and no
+mapping at either; the three added drivers cost 22 mappings and about half a
+megabyte in all, their rings and thread stacks.
+
+Short contexts, seconds of wall time for the batched and the bound half of
+`programs/context_starts.wf`: 0.15 and 0.16 at one driver, 0.92 and 0.20 at
+two, 1.35 and 0.18 at four.
+
+Against the expectations:
+
+- Scaling holds at 64 connections, each added driver raising the median, and
+  four drivers reached 2.57 times one at 1024; but at 1024 three drivers'
+  median fell below two drivers', so the stated test that every added driver
+  raises the rate does not hold. The five passes of two and three drivers
+  overlap across most of their range, and the load generator's four threads
+  share the four CPUs, so this host cannot say whether the third driver
+  costs anything; a host with CPUs to spare for the generator can.
+- Taking work costs little: four drivers used 1.04 times one driver's CPU
+  per round trip, under the 1.3 bar, and 1.13 times `uring_echo`'s.
+- Drivers cost no memory per connection: within 1 percent at both counts.
+- A batch of short contexts costs 6 to 9 times as much with more than one
+  driver, recorded in `docs/todo.md`; a bound start joined at once costs
+  what it does at one driver.
+
 ## Design
 
 Agreed with the owner in conversation on 2026-09-27; the specification text
@@ -433,8 +724,9 @@ code keeps it. A host operation that has not completed suspends the frame and
 returns to the driver; its completion makes the context ready, and the driver
 resumes the frame that suspended. A context [WAIT-2] is one chain of such
 frames. The root context runs the entry, and each context a `mustpar` start
-creates [PAR-4] runs its wrapper; one driver thread resumes every context, and
-compute tasks run on the compute workers and never wait [PAR-1, PAR-2].
+creates [PAR-4] runs its wrapper; driver threads resume the contexts (one in
+the first version, several since Experiment 5), and compute tasks run on the
+compute workers and never wait [PAR-1, PAR-2].
 
 The frame is LLVM's switched-resume coroutine: the frame starts suspended, a
 caller transfers into its callee and a finishing callee transfers back to its
@@ -520,8 +812,10 @@ Alternatives refused:
 Running a context for an unmarked independent waiting call was refused in the
 v0.76 text, because a context outlived its statement and so changed what the
 program did. Under the sequential meaning it changes only when the call's
-host effects happen, which [HOST-1] already leaves open, so v0.77 permits it;
-this compiler still runs only marked calls as contexts.
+host effects happen, which [HOST-1] already leaves open, so v0.77 permits it.
+This compiler runs every marked call as a context and, since the progress
+ruling of 2026-09-29, each unmarked one whose callee may reach an atomic
+statement's guard (`SHARED.md`, "Progress while a guard waits").
 
 ### Host effects are ordered through state, not through statement order
 
@@ -554,9 +848,10 @@ Alternatives refused:
 - A reference to the factory in the marked call: refused by the value
   parameter condition above.
 
-The accounting stays a plain counter because every context runs on one driver
-thread and only a waiting host call writes the counter, and a waiting call
-never runs on a compute worker [PAR-1, PAR-2].
+The accounting was a plain counter while every context ran on one driver
+thread; with several drivers (Experiment 5) it is an atomic counter, still
+written only by waiting host calls, which never run on a compute worker
+[PAR-1, PAR-2].
 
 The split first proposed to replace this budget does not serve the server
 this work measures, and the owner kept the shared budget under the sharing
@@ -564,6 +859,13 @@ rule as stated below
 ([Sharing between concurrent activities](#sharing-between-concurrent-activities)).
 
 ### The program means its sequential execution
+
+The owner questioned this for waiting calls on 2026-09-29.
+`CONCURRENCY-MODEL.md` finds that a bounded buffer between two contexts has
+no sequential schedule, so the sequential meaning cannot define concurrent
+I/O, and proposes that spawned contexts are concurrent while computation
+keeps this meaning; the section below stays as the grounds of the current
+rule.
 
 Agreed with the owner on 2026-09-28. The meaning of a program is the meaning
 of its sequential execution. Every concurrency the implementation adds, an
@@ -583,14 +885,71 @@ Consequences, the first two carried by kernel-spec v0.77:
   than promised by the language, is that every marked waiting call runs as a
   context of its own and its starter waits for it at the activation's exit.
 - [WAIT-2]'s progress guarantee for contexts is removed, since a sequential
-  execution of the same program is a conforming one.
-- Later: a marked waiting call may bind its result, and the starter joins it
-  where the result is first used (`docs/todo.md`).
+  execution of the same program is a conforming one. The progress ruling of
+  2026-09-29 restored one guarantee with shared objects (a draft [SHARE-3]
+  that the spawn model replaced before kernel-spec v0.82): while an atomic statement waits for its guard, the calls around
+  it run as contexts and their starters proceed, so an in-order execution
+  conforms only where no guard waits.
+- Later, carried by kernel-spec v0.78: a marked waiting call may bind its
+  result, and the starter joins it where the result is first used ([A bound
+  context is joined where its result is first used](#a-bound-context-is-joined-where-its-result-is-first-used)).
 
 Refused: a separate keyword whose meaning is that a context must start. The
-only difference it would make is a promise of progress, which the sequential
-reading does not need and which no single-implementation research compiler
-has to write into the language.
+only difference it would make is a promise of progress. The one progress
+programs turned out to need, a starter's while its call waits for a guard,
+[SHARE-3] now promises for every call the permission covers, so the keyword
+would still name nothing further.
+
+### A bound context is joined where its result is first used
+
+Directed by the owner on 2026-09-28 ("do `let a = mustpar f(…)`, joined where
+the result is first used"); kernel-spec v0.78 [WAIT-2, PAR-4]. A waiting call
+in a `let` right-hand side whose callee takes only value parameters may run
+alongside the statements after it, and it completes before its binding is
+next read, written or released and before the activation leaves. `mustpar`
+asserts that permission, as it does for an expression statement, and this
+compiler runs every marked one as a context of its own, and each unmarked one
+whose callee may reach an atomic statement's guard.
+
+Where the join stands is the compiler's choice under that rule. It is placed
+before the first later statement of the `let`'s block that may leave the
+block (`return`, `give`, `break` or error propagation out of it) or that
+names the binding, looking into loops, matches and atomic statements, and
+otherwise at the block's end. Every read, write, release and reference
+formation of the binding names it, so the join precedes every use, the
+release at the block's end included, and a context started in a loop body is
+joined before the next iteration reuses its result slot. A statement that
+waits does not end the run: two marked fetches both proceed until the
+statement that combines their results. The context writes its result into a
+slot of the starting frame, which outlives the context because the join
+precedes every exit.
+
+Evidence: `two_bound_fetches_proceed_together_on_both_routes`
+(`compiler/tests/programs/network.rs`) runs `tcp_gather.wf` against two
+servers, the first of which answers only after the second has received its
+request. It passes with the plan and fails, after 20 seconds, when every
+bound context is joined at the statement after its `let`, which is the
+sequential order.
+
+Alternatives refused:
+
+- Joining at the statement after the `let`: it loses the concurrency this
+  form exists for whenever independent work stands between the call and its
+  use, as it does in the gather above.
+- Joining inside the statement that first uses the binding, on the path that
+  reaches the use: a use in one arm of a match would define the binding on
+  that path only, and every later join would have to merge a joined and an
+  unjoined path. Joining before the whole statement costs the concurrency of
+  that statement's other arms and keeps one definition.
+- Joining only at the block's end: a use before the end would read a result
+  that has not arrived.
+
+The first plan joined before the first statement whose [PAR-1] footprint
+reached the binding, was refused (a loop, a match not rooted in a call, an
+atomic statement) or was not resolved. The progress ruling of 2026-09-29 made
+that a defect, since a starter could then wait for a context whose guard only
+the refused statement makes true (`SHARED.md`, "Progress while a guard
+waits").
 
 ### Sharing between concurrent activities
 
@@ -654,6 +1013,11 @@ needs one: an explicit shared object whose operations are whole atomic
 transactions in an unspecified order, and one whose transactions take effect
 in the order of the host completions that produced them. Both revise
 [CAP-1].
+[`SHARED.md`](SHARED.md) designs the first, at the owner's direction. Its
+atomic statements admit the very order dependence this rule refuses for a
+channel's two ends, by making the order of statements an input of the
+execution, so the rule no longer separates a channel from a shared object;
+`SHARED.md` records why the language still has no channel construct.
 
 ### What the first version keeps open
 
@@ -681,4 +1045,4 @@ addition to it, provided the first version keeps these properties:
 | Shutdown | an external signal as host input; pending operations complete as cancelled | none, given property 4 |
 | Select and timeouts | a host operation over several operations, and operations with a deadline | none |
 | Logging | each context writes its own output, or a record sink whose observation is a set of records | none |
-| Several driver threads | placement at the start of a context | none |
+| Several driver threads | a run queue per driver, starts placed on the starter's driver, idle drivers taking ready contexts (Experiment 5) | none |

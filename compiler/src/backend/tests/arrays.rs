@@ -56,7 +56,7 @@
 use super::owned_places::retain_calls;
 use super::system::with_ir;
 use super::{compile, compile_and_run, compile_rejection, emitted_function};
-use crate::target::{TargetLayout, TargetLayoutFailure, TargetObject, validate_program};
+use crate::target::{TargetLayout, TargetLayoutFailure, validate_program};
 
 fn invariant_bounded_runtime_allocation(
     construction: &str,
@@ -107,12 +107,13 @@ fn runtime_allocation_bounds_include_each_shape_header_at_target_qualification()
             let exact = host.with_runtime_allocation_limits_for_test(exact_bytes, 8);
             assert_eq!(validate_program(exact, program), Ok(()), "{shape}");
 
+            // One byte short admits 999 elements, one fewer than proved.
             let one_byte_short = host.with_runtime_allocation_limits_for_test(exact_bytes - 1, 8);
             assert_eq!(
-                validate_program(one_byte_short, program),
-                Err(TargetLayoutFailure::Unrepresentable(
-                    TargetObject::RuntimeSizedAllocation
-                )),
+                validate_program(one_byte_short, program)
+                    .err()
+                    .and_then(TargetLayoutFailure::count_excess),
+                Some((1_000, 999)),
                 "{shape}"
             );
         });
@@ -124,10 +125,10 @@ fn runtime_allocation_bounds_include_each_shape_header_at_target_qualification()
         );
         with_ir(&oversized, |program| {
             assert_eq!(
-                validate_program(host, program),
-                Err(TargetLayoutFailure::Unrepresentable(
-                    TargetObject::RuntimeSizedAllocation
-                )),
+                validate_program(host, program)
+                    .err()
+                    .and_then(TargetLayoutFailure::count_excess),
+                Some((5_000_000_000_000_000_000, (i64::MAX as u64 - header) / 2)),
                 "{shape}"
             );
         });
@@ -1717,10 +1718,10 @@ fn zero_stride_allocation_still_qualifies_headers_and_nonzero_controls() {
                 assert!(element_steps.iter().all(|line| line.ends_with("i64 0")));
             } else {
                 assert_eq!(
-                    validate_program(host, program),
-                    Err(TargetLayoutFailure::Unrepresentable(
-                        TargetObject::RuntimeSizedAllocation
-                    ))
+                    validate_program(host, program)
+                        .err()
+                        .and_then(TargetLayoutFailure::count_excess),
+                    Some((9_223_372_036_854_775_809, i64::MAX as u64 - header))
                 );
             }
         });

@@ -421,6 +421,7 @@ pub(crate) enum CheckedConversionMode {
     Checked,
     Defined,
     Wrap,
+    Nearest,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -585,6 +586,12 @@ pub(crate) enum CheckedType {
         /// construction and stored with the block [TYPE-9, MSR-1].
         capacity: Option<CheckedConst>,
     },
+    /// One `Segments<T>` [TYPE-9]: a run of segments of T whose boundaries
+    /// were fixed at construction. Its `len` is the segment count; a segment
+    /// is reached only as the range reference `&s[i]` forms [REF-4].
+    Segments {
+        element: CheckedElement,
+    },
 }
 
 /// Which of [TYPE-9]'s two window shapes a [`CheckedType::Window`] is.
@@ -629,7 +636,7 @@ impl CheckedType {
                     .is_some_and(|ty| ty.is_concrete(elements))
                     && capacity.is_none_or(|capacity| capacity.is_concrete())
             }
-            Self::Buffer { element } => elements
+            Self::Buffer { element } | Self::Segments { element } => elements
                 .get(element.index())
                 .is_some_and(|ty| ty.is_concrete(elements)),
             Self::Unit | Self::Bool | Self::Integer(_) | Self::Float(_) | Self::Nominal(_) => true,
@@ -642,6 +649,7 @@ impl CheckedType {
         match self {
             Self::Array { .. } => Some(MeasuredKind::ConstantArray),
             Self::Buffer { .. } => Some(MeasuredKind::RuntimeArray),
+            Self::Segments { .. } => Some(MeasuredKind::Segments),
             Self::Window {
                 shape: WindowShape::Slots,
                 capacity: Some(_),
@@ -765,7 +773,10 @@ impl CheckedMeasure {
                 MeasureCell::ExactTypeConstant
             }
             // `&[T]`: the range's element count, and nothing else [MSR-1].
-            (MeasuredKind::Range, Self::Length) => MeasureCell::ExactRuntime,
+            // `Segments<T>`: the segment count its block stores.
+            (MeasuredKind::Range | MeasuredKind::Segments, Self::Length) => {
+                MeasureCell::ExactRuntime
+            }
             // The one *bounded* cell of the whole table: the two front-moving
             // operations publish a `Ring`'s window origin two-sidedly and no
             // operation re-establishes it exactly [MSR-1, OP-10].
@@ -785,7 +796,8 @@ impl CheckedMeasure {
                 MeasuredKind::ConstantArray | MeasuredKind::RuntimeArray | MeasuredKind::Range,
                 Self::Capacity,
             )
-            | (MeasuredKind::Range, Self::Head) => MeasureCell::Absent,
+            | (MeasuredKind::Range | MeasuredKind::Segments, Self::Head)
+            | (MeasuredKind::Segments, Self::Capacity) => MeasureCell::Absent,
         }
     }
 }
@@ -812,6 +824,8 @@ pub(crate) enum MeasuredKind {
     RuntimeRing,
     /// `&[T]` [REF-4], whose one measure is `len`.
     Range,
+    /// `Segments<T>`, whose one measure is its segment count `len`.
+    Segments,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -932,6 +946,12 @@ pub(crate) enum CheckedNominalKind {
     },
     /// An ordinary opaque nominal has no fields or constructor.
     Opaque,
+    /// [SHARE-1] a handle to a shared object whose state has type `state`.
+    /// Like `Opaque` it has no fields or constructor; unlike it, releasing
+    /// one releases a handle, and the last release releases the state.
+    Shared {
+        state: CheckedType,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1002,7 +1022,7 @@ pub(crate) fn type_has_copy_capability(
             CheckedType::Array { element, .. } | CheckedType::Buffer { element } => {
                 pending.push(*elements.get(element.index())?);
             }
-            CheckedType::Window { .. } => return Some(false),
+            CheckedType::Window { .. } | CheckedType::Segments { .. } => return Some(false),
             CheckedType::Nominal(id) => {
                 // A nominal met again is already being judged on this walk,
                 // so it adds no part the walk has not queued.
@@ -1024,7 +1044,7 @@ pub(crate) fn type_has_copy_capability(
                             .flat_map(|variant| variant.fields.iter().map(|field| field.ty)),
                     ),
                     CheckedNominalKind::Opaque => {}
-                    CheckedNominalKind::Box { .. } => {
+                    CheckedNominalKind::Box { .. } | CheckedNominalKind::Shared { .. } => {
                         return Some(false);
                     }
                 }
@@ -1521,6 +1541,12 @@ pub(crate) struct CheckedAllocationFit {
     pub(crate) layout_ceiling: CheckedLayoutCeiling,
     /// The declared-order ordinal of the count argument.
     pub(crate) count: usize,
+    /// Where the call is written and where its count argument is, so that a
+    /// selected target that cannot hold the retained bound names the
+    /// allocation and the count to bound [STOR-6]. The checker holds the
+    /// tree that resolves the call's node; target qualification does not.
+    pub(crate) site: crate::SyntaxCoordinate,
+    pub(crate) count_site: crate::SyntaxCoordinate,
     /// Tightest numeric upper bound retained by this call's accepted OP-9
     /// derivation. Entailment installs it after proving the obligation;
     /// lowering must not proceed while it is absent.
@@ -1591,6 +1617,9 @@ pub(crate) enum CheckedRangeSource {
     Storage(CheckedContainerRoot),
     /// Re-slicing another range reference, `&part^[a..b]` [REF-4].
     Range(CheckedRangeRoot),
+    /// An indexable place below one element of the run a range reference
+    /// names, `&part^[i].field.inner[a..b]` [REF-4, OP-4].
+    Element(Box<CheckedRangeElementPlace>),
 }
 
 impl CheckedRangeSource {
@@ -1606,6 +1635,10 @@ impl CheckedRangeSource {
         match self {
             Self::Storage(root) => (root.root, root.place_path()),
             Self::Range(root) => (super::places::PlaceRoot::Binding(root.binding), Vec::new()),
+            Self::Element(place) => (
+                super::places::PlaceRoot::Binding(place.root.binding),
+                place.place_path(),
+            ),
         }
     }
 
@@ -1615,8 +1648,53 @@ impl CheckedRangeSource {
         match self {
             Self::Storage(root) => root.binding(),
             Self::Range(root) => Some(root.binding),
+            Self::Element(place) => Some(place.root.binding),
         }
     }
+}
+
+/// What one segment borrow selects: one segment, or every element [TYPE-9].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum CheckedSegmentSelect {
+    One(Box<CheckedSegmentIndex>),
+    /// `&s.all`: the run of every element, named as a range over the whole
+    /// element run whose bounds no program states, so it overlaps every
+    /// segment [OWN-7].
+    All(super::places::CapturedRange),
+}
+
+impl CheckedSegmentSelect {
+    /// The offset this selection evaluates, if any.
+    pub(crate) fn offset(&self) -> Option<&CheckedExpression> {
+        match self {
+            Self::One(index) => Some(&index.offset),
+            Self::All(_) => None,
+        }
+    }
+
+    pub(crate) fn offset_mut(&mut self) -> Option<&mut CheckedExpression> {
+        match self {
+            Self::One(index) => Some(&mut index.offset),
+            Self::All(_) => None,
+        }
+    }
+
+    /// The step this selection adds to the `Segments` place [REF-1].
+    pub(crate) const fn place_step(&self) -> super::places::PlaceStep {
+        match self {
+            Self::One(index) => super::places::PlaceStep::Index(index.captured),
+            Self::All(range) => super::places::PlaceStep::Range(*range),
+        }
+    }
+}
+
+/// The segment one `&s[i]` selects [OP-4]: its offset, the obligation
+/// `i < s.len` it owes, and the offset's immutable image [REF-1, OWN-7].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CheckedSegmentIndex {
+    pub(crate) offset: CheckedExpression,
+    pub(crate) obligation: NodePath,
+    pub(crate) captured: super::places::CapturedValue,
 }
 
 /// One typed element place in the run a range reference names [REF-4, OP-4].
@@ -1701,7 +1779,8 @@ impl CheckedRangeElementPlace {
         match self.ty {
             CheckedType::Array { element, .. }
             | CheckedType::Window { element, .. }
-            | CheckedType::Buffer { element } => Some(element),
+            | CheckedType::Buffer { element }
+            | CheckedType::Segments { element } => Some(element),
             _ => None,
         }
     }
@@ -1818,7 +1897,8 @@ impl CheckedContainerRoot {
         match self.ty {
             CheckedType::Array { element, .. }
             | CheckedType::Window { element, .. }
-            | CheckedType::Buffer { element } => Some(element),
+            | CheckedType::Buffer { element }
+            | CheckedType::Segments { element } => Some(element),
             _ => None,
         }
     }
@@ -2238,6 +2318,17 @@ pub(crate) enum CheckedExpression {
         obligation: NodePath,
         target_domain: CheckedTargetDomainObligation,
     },
+    /// [REF-4, TYPE-9] `&s[i]`, the range reference over segment i of a
+    /// `Segments<T>` place, or `&s.all`, the range reference over every
+    /// element in segment order.
+    BorrowSegment {
+        carrier: NodePath,
+        /// The `Segments<T>` place.
+        root: CheckedContainerRoot,
+        segment: CheckedSegmentSelect,
+        element: CheckedElement,
+        element_type: CheckedType,
+    },
     BoxDeref {
         carrier: NodePath,
         nominal: NominalId,
@@ -2262,6 +2353,12 @@ pub(crate) enum CheckedExpression {
         carrier: NodePath,
         nominal: NominalId,
         fields: Vec<CheckedExpression>,
+        /// [TYPE-11] each type invariant of the struct over its field
+        /// operands, judged at the construction as a call's requirement is.
+        invariants: Vec<super::goal::CheckedCallRequirement>,
+        /// [TYPE-11] the field operands' pre-construction images those goals
+        /// are instantiated over, in declared field order.
+        invariant_arguments: Vec<super::goal::GoalExpression>,
     },
     ConstructEnum {
         carrier: NodePath,
@@ -2314,6 +2411,7 @@ impl CheckedExpression {
             | Self::BoxDeref { carrier, .. }
             | Self::BoxTake { carrier, .. }
             | Self::BorrowAddressed { carrier, .. }
+            | Self::BorrowSegment { carrier, .. }
             | Self::DerefAddressed { carrier, .. }
             | Self::ConstructStruct { carrier, .. }
             | Self::ConstructEnum { carrier, .. }
@@ -2347,7 +2445,9 @@ impl CheckedExpression {
             // [TYPE-8] `&[T]` is a reference kind, not a type: the value's
             // own type is the element type and its kind is its mode, exactly
             // as a `&[T]` parameter carries them [GRAM-2, REF-4].
-            Self::RangeOf { element_type, .. } => *element_type,
+            Self::RangeOf { element_type, .. } | Self::BorrowSegment { element_type, .. } => {
+                *element_type
+            }
             Self::RangeIndex { place, .. } | Self::BorrowRangeIndex { place, .. } => place.ty,
             Self::ReadStorage { root, .. } => root.ty,
             Self::BoxDeref { referent, .. } | Self::BoxTake { referent, .. } => *referent,
@@ -2601,8 +2701,37 @@ pub(crate) enum CheckedStatement {
         backedge_drops: Vec<CheckedDrop>,
     },
     Break {
+        /// The complete `break_stmt`, the site of the type invariants an
+        /// atomic block it leaves owes there [TYPE-11].
+        node_path: NodePath,
         target: CheckedLoopId,
         drops: Vec<CheckedDrop>,
+    },
+    /// [SHARE-2] `atomic IDENT = &place (when expr)? { stmt* }`: the block
+    /// runs with exclusive access to the state of the shared object the
+    /// target names, at a point where the guard holds [SHARE-3].
+    Atomic {
+        /// The complete `atomic_stmt`, which the waiting-call record names
+        /// [WAIT-1] and which is the statement's own site.
+        node_path: NodePath,
+        /// The reference the target place forms: a `&Shared<T>` whose handle
+        /// the statement reads when it begins.
+        target: Box<CheckedExpression>,
+        /// The binder, a reference variable naming the object's state.
+        binding: BindingId,
+        /// The state type `T`.
+        state: CheckedType,
+        /// The guard, an owned `Bool` whose footprint writes no path.
+        guard: Option<Box<CheckedExpression>>,
+        body: Vec<CheckedStatement>,
+        /// The releases the block's normal end carries for its own bindings.
+        fallthrough_drops: Vec<CheckedDrop>,
+        /// Whether the block can reach its end [FN-1].
+        continues: bool,
+        /// [TYPE-11] each type invariant of the state's struct over the
+        /// binder's referent: a fact at the block's entry and an obligation
+        /// at each edge that leaves the block.
+        invariants: Vec<super::goal::CheckedCallRequirement>,
     },
 }
 
@@ -2729,8 +2858,8 @@ pub(crate) struct CheckedFunction {
     /// Finite optional [PAR-1] range questions planned from the complete
     /// structural footprints before entailment walks their first statements.
     pub(crate) permission_separation_queries: Vec<super::permission::PermissionSeparationQuery>,
-    /// [WAIT-1, PAR-4] whether this function waits, which of its calls wait,
-    /// and what its `mustpar` markers state.
+    /// [WAIT-1, WAIT-3] whether this function waits, which of its calls
+    /// wait, and which of its statements spawn.
     pub(crate) waiting: CheckedWaiting,
     /// Every mandatory obligation of the completed function, which the
     /// analysis answers one by one and acceptance requires discharged.
@@ -2742,12 +2871,11 @@ pub(crate) struct CheckedFunction {
     pub(crate) entailment: super::entailment::FunctionEntailment,
 }
 
-/// [WAIT-1, PAR-4] the waiting facts of one function body, in source order.
+/// [WAIT-1, WAIT-3] the waiting facts of one function body, in source order.
 ///
 /// Permission reads `calls` to deny overlap to a statement that waits, and
-/// the `mustpar` validation reads `independent` against the finished
-/// permission table. Lowering reads `waits` and `context_starts`; nothing else
-/// here reaches it.
+/// plans the joins of `context_starts`. Lowering reads `waits`,
+/// `context_starts` and `context_awaits`; nothing else here reaches it.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct CheckedWaiting {
     /// Whether the declaration writes `waits` [WAIT-1].
@@ -2755,24 +2883,26 @@ pub(crate) struct CheckedWaiting {
     /// Every call whose selected callee waits, by call node: through a
     /// function-kind formal, the formal's `waits` decides [WAIT-1].
     pub(crate) calls: Vec<NodePath>,
-    /// Every construct a `mustpar` marks under PAR-4's first two forms, whose
-    /// statement the permission judgment must permit.
-    pub(crate) independent: Vec<CheckedMustpar>,
-    /// Every `expr_stmt` PAR-4's third form starts in a context of its own.
+    /// Every `expr_stmt` or `let_stmt` whose call is a spawn, which starts a
+    /// context [WAIT-3].
     pub(crate) context_starts: Vec<NodePath>,
+    /// Where each `let_stmt` of `context_starts` waits for its context: the
+    /// number of statements after it in its block at which the binding is
+    /// first named or the block may be left, or `None` when no later
+    /// statement of the block is either, so the context is joined at the
+    /// block's end, as [WAIT-3] places the join. The permission analysis
+    /// fills it after the checker.
+    pub(crate) context_awaits: Vec<CheckedContextAwait>,
 }
 
-/// One `mustpar` whose statement is proved by [PAR-1] or [PAR-2].
+/// [WAIT-3] where one bound context start is joined.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct CheckedMustpar {
-    /// The marked statement: the `for_stmt`, or the `expr_stmt` or `let_stmt`
-    /// holding the marked call.
+pub(crate) struct CheckedContextAwait {
+    /// The started `let_stmt`.
     pub(crate) statement: NodePath,
-    /// The marked node a refusal cites: the `for_stmt` or the `call`.
-    pub(crate) marker: NodePath,
-    /// Whether the marker stands on a `for_stmt` [PAR-2] rather than a call
-    /// [PAR-1].
-    pub(crate) counted_loop: bool,
+    /// How many statements after it the join stands before, within its
+    /// block; `None` joins at the block's end.
+    pub(crate) before: Option<u32>,
 }
 
 /// One [OWN-7] separation question the checker could not settle by syntax.
@@ -3003,6 +3133,9 @@ pub(crate) fn expression_children(expression: &CheckedExpression) -> Vec<&Checke
         CheckedExpression::BorrowAddressed { root, .. }
         | CheckedExpression::ContainerMeasure { root, .. }
         | CheckedExpression::ReadStorage { root, .. } => root.offsets().collect(),
+        CheckedExpression::BorrowSegment { root, segment, .. } => {
+            root.offsets().chain(segment.offset()).collect()
+        }
         CheckedExpression::UserCall { arguments, .. }
         | CheckedExpression::IntegerOperation { arguments, .. }
         | CheckedExpression::FloatOperation { arguments, .. }
@@ -3036,6 +3169,10 @@ pub(crate) fn expression_children(expression: &CheckedExpression) -> Vec<&Checke
                 .chain([start.as_ref(), end.as_ref()])
                 .collect(),
             CheckedRangeSource::Range(_) => vec![start.as_ref(), end.as_ref()],
+            CheckedRangeSource::Element(place) => place
+                .offsets()
+                .chain([start.as_ref(), end.as_ref()])
+                .collect(),
         },
         CheckedExpression::ConstructStruct { fields, .. }
         | CheckedExpression::ConstructEnum { fields, .. } => fields.iter().collect(),
@@ -3171,6 +3308,23 @@ impl FunctionMentions {
                 }
                 CheckedStatement::Break { drops, .. } => {
                     self.types.extend(drops.iter().map(|drop| drop.ty));
+                }
+                CheckedStatement::Atomic {
+                    target,
+                    state,
+                    guard,
+                    body,
+                    fallthrough_drops,
+                    ..
+                } => {
+                    self.types.push(*state);
+                    self.expression(target);
+                    if let Some(guard) = guard {
+                        self.expression(guard);
+                    }
+                    self.types
+                        .extend(fallthrough_drops.iter().map(|drop| drop.ty));
+                    self.statements(body);
                 }
             }
         }

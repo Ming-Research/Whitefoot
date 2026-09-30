@@ -1,0 +1,35 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn combined_length(first: &[u32], second: &[u64]) -> result: u64 reads(first.len), reads(second.len) contract {
+  requires first^.len == second^.len;
+} {
+  doc "The requirement is a bare equality, not the writer's own two inequalities; the callee needs only that the two ranges cover the same count of elements.";
+  let total = first^.len +wrap second^.len;
+  return total;
+}
+
+fn probe(low: u64, high: u64) -> result: u64 pure {
+  doc "Two ranges over boxes of different element types share one non-zero symbolic start and end. REF-4 gives each length as high - low over the same captured endpoints, so the two lengths are equal though neither low nor high is separately known at the call.";
+  let a = box_array_filled::<u32>(count: 16_u64, value: 0_u32);
+  let b = box_array_filled::<u64>(count: 16_u64, value: 0_u64);
+  if low <= high {
+    if high <= 16_u64 {
+      let first = &a.inner[low..high];
+      let second = &b.inner[low..high];
+      let total = combined_length(first: first, second: second);
+      return total;
+    }
+  }
+  return 0_u64;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "REF-4, ENT-4, FN-8: first^.len == second^.len is discharged exactly as ENT-4 fixes L0's own equality derivability, the bound pair a-b<=0 and b-a<=0, each proved by the same route that would prove a separately written <= or >= requirement over the same two lengths; the executable observes the combined length.";
+  let total = probe(low: 3_u64, high: 9_u64);
+  if total == 12_u64 {
+  } else {
+    return exit_status(code: 201_u8);
+  }
+  return exit_status(code: 0_u8);
+}

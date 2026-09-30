@@ -228,7 +228,9 @@ impl<'unit> Checker<'_, 'unit> {
         // Borrow formation has its own path and never reaches this read.
         if matches!(
             place.ty,
-            CheckedType::Buffer { .. } | CheckedType::Window { capacity: None, .. }
+            CheckedType::Buffer { .. }
+                | CheckedType::Segments { .. }
+                | CheckedType::Window { capacity: None, .. }
         ) {
             return self.types.declarations.issue_node(
                 SemanticRule::Type9,
@@ -848,7 +850,8 @@ impl<'unit> TypeContext<'unit> {
             Some(
                 CheckedType::Array { element, .. }
                 | CheckedType::Window { element, .. }
-                | CheckedType::Buffer { element },
+                | CheckedType::Buffer { element }
+                | CheckedType::Segments { element },
             ) => Some(self.element_type(element)?),
             _ => None,
         })
@@ -909,17 +912,24 @@ impl<'unit> TypeContext<'unit> {
                         .ty
                 }
                 PlaceStep::Index(_) | PlaceStep::Range(_) => {
-                    let element = if range {
-                        ty
+                    // [TYPE-9] a segment and the run of every element are
+                    // runs of T, as a range step's referent is.
+                    let (element, run) = if range {
+                        (ty, false)
                     } else {
                         match ty {
                             CheckedType::Array { element, .. }
-                            | CheckedType::Window { element, .. } => self.element_type(element)?,
-                            CheckedType::Buffer { element } => self.element_type(element)?,
+                            | CheckedType::Window { element, .. } => {
+                                (self.element_type(element)?, false)
+                            }
+                            CheckedType::Buffer { element } => (self.element_type(element)?, false),
+                            CheckedType::Segments { element } => {
+                                (self.element_type(element)?, true)
+                            }
                             _ => return Ok(None),
                         }
                     };
-                    range = matches!(step, PlaceStep::Range(_));
+                    range = run || matches!(step, PlaceStep::Range(_));
                     element
                 }
                 PlaceStep::Measure(_) => CheckedType::Integer(IntegerType::U64),
@@ -1281,6 +1291,16 @@ impl<'unit> TypeContext<'unit> {
                     }
                     ty = PathType::Value(field.ty);
                 }
+                // [TYPE-9] a segment and the run of every element are runs
+                // of T, as a range step's referent is.
+                PlaceStep::Index(_) | PlaceStep::Range(_)
+                    if matches!(ty, PathType::Value(CheckedType::Segments { .. })) =>
+                {
+                    let PathType::Value(CheckedType::Segments { element }) = ty else {
+                        return Ok(None);
+                    };
+                    ty = PathType::Range(self.element_type(element)?);
+                }
                 PlaceStep::Index(_) => {
                     ty = PathType::Value(match ty {
                         PathType::Range(element) => element,
@@ -1421,8 +1441,17 @@ impl<'unit> TypeContext<'unit> {
                         "[{}]",
                         self.declarations.render_captured_offset(offset, bindings)?
                     ));
+                    // [TYPE-9] a segment is a run of T.
+                    let segment = !range && matches!(ty, Some(CheckedType::Segments { .. }));
                     ty = self.selected_element(ty, range)?;
-                    range = false;
+                    range = segment;
+                }
+                PlaceStep::Range(_)
+                    if !range && matches!(ty, Some(CheckedType::Segments { .. })) =>
+                {
+                    rendered.push_str(".all");
+                    ty = self.selected_element(ty, range)?;
+                    range = true;
                 }
                 PlaceStep::Range(span) => {
                     rendered.push_str(&format!(

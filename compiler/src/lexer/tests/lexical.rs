@@ -321,7 +321,7 @@ fn token_and_trivia_kinds_are_shape_only() {
 
 #[test]
 fn every_closed_operation_suffix_and_near_miss_has_the_expected_shape() {
-    for suffix in ["wrap", "defined", "checked", "sat", "strict"] {
+    for suffix in ["wrap", "defined", "checked", "sat", "strict", "nearest"] {
         let exact = format!("base.{suffix}");
         let source = bundle(&[("exact.wf", exact.as_bytes())]);
         assert!(matches!(

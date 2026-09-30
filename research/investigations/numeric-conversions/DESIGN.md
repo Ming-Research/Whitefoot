@@ -647,16 +647,105 @@ forms, integer-generic and contract composition, and rejection of false exact
 equalities after wrapping. Existing exact, checked and domain-query behavior
 must remain unchanged. These are correctness criteria, not a timing claim.
 
-Do not block the exact family on additional float result policies. A later
-rounded-to-float operation should explicitly fix nearest/ties-to-even,
-overflow to signed infinity, gradual underflow, signed zero, and cross-format
-canonical NaN; a later total float-to-integer operation should separately
-select NaN handling, rounding and saturation. The source examples establish
+Do not block the exact family on additional float result policies. The
+rounded-to-float operation is now selected in
+[Rounding conversion to float](#rounding-conversion-to-float), fixing
+nearest/ties-to-even, overflow to signed infinity, gradual underflow, signed
+zero, and cross-format canonical NaN; a later total float-to-integer operation
+should separately select NaN handling, rounding and saturation. The source examples establish
 that these are real missing/direct-interface questions, but no consumer yet
 selects their complete surface. `froundeven` cannot substitute for format
 rounding. Their semantics must not be smuggled into bare `cvt` or `.wrap`.
 General float Result facts and general backend range-assumption transport are
 also deferred; neither is necessary to implement the stated B contract.
+
+## Rounding conversion to float
+
+A consumer now selects the rounded-to-float surface deferred above. The
+Snowghost renderer parses CSS color channels in f64 and stores them as f32.
+Almost no computed channel is exact in f32: `fdiv.strict(136.0_f64,
+255.0_f64)` has no bare `cvt` to f32, and `cvt.checked` only reports that.
+Its writer implemented round-to-nearest-even from the bits with
+`reinterpret` and integer shifts; a first attempt, a `cvt.defined` guard with
+an infinity fallback, compiled and silently produced Infinity for every
+inexact channel. The same need recurs for f64 layout math stored as f32
+vertex or paint data and for u64 counts used as f64 statistics.
+
+### Criterion
+
+Recorded before comparing candidates. A candidate must:
+
+1. be total, returning the destination float for every input of every pair it
+   admits, with no obligation or Result, and cover both observed consumers
+   (f64 to f32 and integer to float) and symbolic `Int`/`Float` sources;
+2. fix one result as table data: nearest with ties to even, overflow to a
+   signed infinity, gradual underflow with the input's zero sign, and the
+   destination's canonical NaN, agreeing with `cvt` wherever its domain holds
+   so that replacing a proved `cvt` by it changes no result;
+3. carry a name that labels its checked result invariant, without a backend
+   term, and that does not misdescribe it beside its sibling interfaces;
+4. leave the exact family's domain, proofs and value images unchanged and add
+   no proof machinery; and
+5. lower to the single hardware conversion, not to a software rounding
+   sequence or a runtime branch beyond the existing NaN selection.
+
+### Candidates
+
+| Candidate | Result |
+|---|---|
+| `cvt.nearest::<Src, Dst>(x)`, all 20 pairs with a float destination | Meets 1-5. Adds the mode word `nearest`, which becomes a reserved declaration and field name like the other five |
+| `cvt.strict::<Src, Dst>(x)`, same pairs | Meets 1, 2, 4 and 5 and reserves no new word, but fails 3: bare `cvt` is the exact form, so `strict` reads as stricter than exact while it is the lossy one, and `.strict` labels float arithmetic's no-reassociation/no-contraction guarantee, which a single conversion does not have |
+| `fnarrow.strict(x)` float-table row, f64 to f32 only | Fails 1: no integer-to-float row and no symbolic endpoints (a float row has one type T), so the u64-to-f64 consumer needs a second spelling |
+| Library function rounding from the bits | Fails 5 (a software sequence of integer shifts, masks and branches per call where hardware has one conversion instruction) and 2 in practice: the observed first attempt was wrong and still compiled |
+| Make bare `cvt` round for float destinations (Rust `as`) | Fails 4: it removes the exactness domain, silently changes the meaning of accepted programs and contradicts the exact-family decision above |
+
+Alternative words for the selected surface: `round` is ambiguous (C's
+`round` rounds half away from zero, and `froundeven` rounds to an integral
+value within one format), and `even` or `rne` name only the tie rule or
+abbreviate it. `nearest` names the result invariant, the nearest
+representable value; ties to even is the language's one tie rule, shared with
+FORM-5 literal decoding and the `.strict` arithmetic.
+
+### Rules and boundaries
+
+`cvt.nearest` returns C where D holds and otherwise the rounded value R, so it
+is literally `cvt` on the exact domain. D is false for a float destination only
+on a finite value (an integer or a finite float), so R needs no NaN, infinity
+or zero case of its own. R selects among the destination's finite values and
+`±2^(E+1)`, the nearest candidate with ties to the even encoding;
+`±2^(E+1)` is even and yields the signed infinity, which reproduces IEEE 754
+roundTiesToEven overflow at the largest finite value plus half an ulp. Integer
+destinations are excluded: float-to-integer rounding needs saturation and NaN
+policy and stays in the maintained TODO.
+
+It carries no ConversionDomain obligation and establishes nothing. A float
+result has no value image in the proof fragment, and the fragment has no
+float-arithmetic or round-trip rule, so it gives no equality with its input
+and no ordering or sign fact; no such mechanism exists to reuse and none is
+added. A contract may name it, since it is pure and total [FN-8]; an identical
+executed float comparison then discharges that requirement through ordinary
+goal identity, subject to the named-argument origin boundary already in the
+TODO.
+
+### Lowering and float environment
+
+On a float destination the exact conversion already emits LLVM `sitofp`,
+`uitofp`, `fpext` or `fptrunc`, plus the canonical NaN `select` between
+formats, without a validity guard. The LLVM reference defines those
+instructions to round an inexact value "using the default rounding mode", and
+the emitter uses no constrained intrinsics, `strictfp` or fast-math flags,
+while no runtime or program operation changes the floating-point environment.
+The `.strict` float arithmetic already relies on the same assumption. The
+rounding conversion therefore reuses the exact lowering unchanged: the
+emitter validates the float destination and then emits the exact sequence.
+
+Evidence for the implementation: an integer-only rounding oracle in the
+backend float-conversion tests checks all 20 pairs on boundary, tie, overflow,
+subnormal and NaN samples natively, and self-checks that R equals C wherever
+the exact domain holds. A ties-away mutation of that oracle fails the native
+matrix. The u64 value 2^60 + 2^36 + 1 rounds to 2^60 + 2^37 in f32 but to
+2^60 when rounded through f64 first, so the matrix also refutes a lowering
+through a wider intermediate.
 
 ## Implementation sequence after owner review
 

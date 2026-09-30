@@ -505,7 +505,7 @@ impl<'unit> Checker<'_, 'unit> {
                 );
             }
             let CheckedValue::Integer { ty, bits } =
-                self.types.declarations.parse_literal(node, bytes)?
+                self.types.declarations.parse_literal(node, literal)?
             else {
                 return self.types.declarations.invalid_affine_proof(
                     owner,

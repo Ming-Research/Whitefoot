@@ -1,0 +1,91 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Item {
+  n: u64;
+  m: u64;
+  buf: Box<Array<u64>>;
+}
+
+fn set_n(item: &Item, value: u64) -> result: unit writes(item.n) {
+  doc "Writes one field of the item it was handed.";
+  set item^.n = value;
+  return unit;
+}
+
+fn fill(window: &[u64], value: u64) -> result: unit writes(window) {
+  doc "Writes value into every element of the range it was handed.";
+  let count = window^.len;
+  for (j in 0_u64..count) {
+    set window^[j] = value;
+  }
+  return unit;
+}
+
+fn by_field(items: &[Item]) -> result: unit writes(items) {
+  doc "Iteration i writes a field of element i.";
+  let count = items^.len;
+  for (i in 0_u64..count) {
+    set items^[i].m = i;
+  }
+  return unit;
+}
+
+fn by_helper(items: &[Item]) -> result: unit writes(items) {
+  doc "Iteration i hands element i to a helper that writes one of its fields.";
+  let count = items^.len;
+  for (i in 0_u64..count) {
+    let value = i +wrap 10_u64;
+    set_n(item: &items^[i], value: value);
+  }
+  return unit;
+}
+
+fn through_cell(items: &[Item]) -> result: unit writes(items) {
+  doc "Iteration i fills the buffer element i owns through its cell.";
+  let count = items^.len;
+  for (i in 0_u64..count) {
+    let size = items^[i].buf.inner.len;
+    fill(window: &items^[i].buf.inner[0_u64..size], value: i);
+  }
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "Loops whose iteration i writes only at or below element i (a field, a field through a writing helper, and a buffer the cell of the element owns) run with every result an index-order execution produces.";
+  let items = box_slots_new::<Item>(capacity: 4_u64);
+  for (k in 0_u64..4_u64) {
+    let size = k + 1_u64;
+    let buf = box_array_filled::<u64>(count: size, value: 0_u64);
+    let item = Item(n: 0_u64, m: 0_u64, buf: move buf);
+    let room = items.inner.len < items.inner.cap;
+    if room {
+      place_back(window: &items.inner, value: move item);
+    } else {
+      return exit_status(code: 1_u8);
+    }
+  }
+  let count = items.inner.len;
+  by_field(items: &items.inner[0_u64..count]);
+  by_helper(items: &items.inner[0_u64..count]);
+  through_cell(items: &items.inner[0_u64..count]);
+  let total = 0_u64;
+  for (i in 0_u64..count) {
+    let m = items.inner[i].m;
+    let n = items.inner[i].n;
+    let size = items.inner[i].buf.inner.len;
+    let last = if size > 0_u64 {
+      let at = size - 1_u64;
+      give items.inner[i].buf.inner[at];
+    } else {
+      give 0_u64;
+    }
+    set total = total +wrap m;
+    set total = total +wrap n;
+    set total = total +wrap last;
+  }
+  if total != 58_u64 {
+    return exit_status(code: 2_u8);
+  }
+  return exit_status(code: 0_u8);
+}

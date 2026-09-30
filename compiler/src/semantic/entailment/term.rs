@@ -12,7 +12,7 @@
 //! [OWN-7] overlap relation over resolved places instead, which
 //! over-approximates it [ENT-5].
 
-use super::super::model::{CheckedMeasure, IntegerType};
+use super::super::model::{CheckedMeasure, CheckedType, IntegerType};
 use super::super::places::CaptureId;
 pub(crate) use super::super::places::{PlaceRoot, PlaceStep, ResolvedPlace};
 use super::state::WordHashMap;
@@ -37,10 +37,20 @@ pub(crate) enum TermKind {
     /// An in-scope const-generic parameter with its exact written integer
     /// type [MSR-6], which supplies its implicit bounds under [ENT-2].
     ConstParameter(DeclarationId, IntegerType),
-    /// The typed payload parameter of one isolated conditional Result context.
-    /// Contexts interpret this parameter independently; selection substitutes
-    /// it away before publishing anything into ordinary flow.
-    ResultPayload(IntegerType),
+    /// One term of the private success-payload root of an isolated
+    /// conditional context [ENT-2] clause (i): the payload's own value when
+    /// `path` is empty and `measure` is `None`, and otherwise the
+    /// fragment-integer place or the measure of the measured place its owned
+    /// descendant projection reaches [CALL-4]. Contexts interpret these terms
+    /// independently; selection substitutes them away before publishing
+    /// anything into ordinary flow.
+    ResultPayload {
+        /// The success payload type the root is typed by.
+        payload: CheckedType,
+        path: Vec<PlaceStep>,
+        measure: Option<CheckedMeasure>,
+        ty: IntegerType,
+    },
     /// A tracked place [ENT-2] clause (a) whose final selected type is one
     /// fragment type, carried as the one resolved path the checker has
     /// [REF-1].
@@ -64,7 +74,8 @@ pub(crate) enum TermKind {
     /// identity; source can neither name nor mutate it. The flow visits that
     /// statement once, so this one term denotes its value in the single
     /// abstract evaluation the walk performs, as a counted header image does
-    /// for an arbitrary iteration.
+    /// for an arbitrary iteration. A `give` of a carrier names its given
+    /// value by the same kind at its own NodePath [ENT-2].
     CommitValue {
         commit_path: Vec<u32>,
         ty: IntegerType,
@@ -85,17 +96,20 @@ pub(crate) enum TermKind {
         ty: IntegerType,
     },
     /// One immutable compiler-owned entry datum [MSR-3]: the value one
-    /// [MSR-1] measure of an `own` or shared-borrow parameter had at body
-    /// entry. The formal ordinal, the operand's ordered projections and which
-    /// measure of it the datum denotes are its complete function-local
-    /// identity. No place occurs in it, so no [ENT-5] event kills it: that is
-    /// what makes an `ensures` naming a parameter's measure mean the entry
-    /// value even where the body writes that parameter back [LIV-2], and it
-    /// is the same datum a caller substitutes as that call's call datum.
+    /// [MSR-1] measure of a parameter had at body entry, or the value of one
+    /// fragment-integer place of a written reference parameter named under
+    /// `entry(parameter)`. The formal ordinal, the operand's ordered
+    /// projections and whether the datum denotes the value or one measure of
+    /// it are its complete function-local identity. No place occurs in it, so
+    /// no [ENT-5] event kills it: that is what makes an `ensures` naming a
+    /// parameter's measure mean the entry value even where the body writes
+    /// that parameter back [LIV-2], and it is the same datum a caller
+    /// substitutes as that call's call datum.
     EntryDatum {
         formal: u32,
         projections: Vec<PlaceStep>,
-        measure: CheckedMeasure,
+        measure: Option<CheckedMeasure>,
+        ty: IntegerType,
     },
     /// One immutable compiler-owned measure datum [MSR-3]: the value one
     /// [MSR-1] measure of a measured place had immediately before one
@@ -113,13 +127,17 @@ pub(crate) enum TermKind {
     /// field, payload and Box-content selections that reach the measured
     /// place where the operand is an aggregate holding one: a placement
     /// carries every measured place under its operand, so one operand mints
-    /// one datum set per such place [MSR-1].
+    /// one datum set per such place [MSR-1]. With `measure` `None` the datum
+    /// is the value of the fragment-integer place `path` reaches, which a
+    /// placement carries when that source place is a term of the state it
+    /// reads [MSR-3].
     MeasureDatum {
         statement: Vec<u32>,
         placement: MeasurePlacement,
         ordinal: u32,
         path: Vec<PlaceStep>,
-        measure: CheckedMeasure,
+        measure: Option<CheckedMeasure>,
+        ty: IntegerType,
     },
 }
 

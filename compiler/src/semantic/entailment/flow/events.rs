@@ -602,7 +602,7 @@ impl Vocabulary {
             TermKind::Zero | TermKind::Constant(_) | TermKind::ConstParameter(..) => false,
             TermKind::CountedCapture { .. }
             | TermKind::IndexCapture { .. }
-            | TermKind::ResultPayload(_)
+            | TermKind::ResultPayload { .. }
             | TermKind::CommitValue { .. }
             | TermKind::CallDatum { .. }
             | TermKind::EntryDatum { .. }
@@ -691,7 +691,7 @@ impl Reasoning<'_, '_, '_> {
             // evaluated value that no later event can change.
             TermKind::CountedCapture { .. }
             | TermKind::IndexCapture { .. }
-            | TermKind::ResultPayload(_)
+            | TermKind::ResultPayload { .. }
             | TermKind::CommitValue { .. }
             | TermKind::CallDatum { .. }
             | TermKind::EntryDatum { .. }
@@ -1044,10 +1044,11 @@ impl Reasoning<'_, '_, '_> {
                 .iter()
                 .enumerate()
                 .filter_map(|(index, image)| {
-                    // [MSR-3] a measure operand denotes the entry datum, and
-                    // no [ENT-5] event kills a datum. Only a non-measure
-                    // operand still reads the live place and can lose it.
-                    (image.datum.measure.is_none()
+                    // [MSR-3] a measure operand and an entry-qualified place
+                    // denote the entry datum, and no [ENT-5] event kills a
+                    // datum. Only an entry image still reads the live place
+                    // and can lose it.
+                    (!image.datum.immutable
                         && states.entry_images[index].is_none()
                         && self
                             .input
@@ -1281,7 +1282,9 @@ impl Analyzer<'_, '_> {
     }
 
     /// Applies capture-scope kills for every loop frame crossed by a
-    /// non-local edge. Ordinary loop frames carry no private captures.
+    /// non-local edge, and ends the lexical scope of each crossed loop's
+    /// header invariant names [INV-1]. Ordinary loop frames carry no private
+    /// captures.
     pub(super) fn exit_counted_loops_from(
         &mut self,
         states: &mut ProofFlowState,
@@ -1294,17 +1297,16 @@ impl Analyzer<'_, '_> {
             .skip(loop_depth)
             .map(|frame| {
                 (
-                    frame.id,
                     frame.capture_path.clone(),
                     frame.invariant_declarations.clone(),
                 )
             })
             .collect::<Vec<_>>();
-        for (loop_id, path, declarations) in loops {
+        for (path, declarations) in loops {
             if let Some(path) = path {
                 self.vocabulary.exit_counted_capture_scope(states, &path);
             }
-            remove_active_loop_invariants(&mut states.affine, loop_id, &declarations);
+            expire_loop_invariant_names(&mut states.affine, &declarations);
         }
     }
 }

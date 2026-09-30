@@ -172,10 +172,10 @@ fn main() -> status: std::process::ExitStatus pure {
 ///
 /// v0.59 refused this: a view element store had no map family of its own and
 /// needed the caller to hand down a range assignment. v0.60 names the shape
-/// outright — "one direct `Array` or `Slots` subscript rooted in an own
-/// binding declared outside L or reached through `^` of a reference
-/// parameter whose row declares the write" — so the helper's own loop is the
-/// ordinary single-binder affine element map.
+/// outright, and v0.81 keeps it: a subscript "rooted in an own binding
+/// declared outside L or reached through `^` of a reference parameter whose
+/// row declares the write", so the helper's own loop is the ordinary
+/// single-binder affine element map.
 #[test]
 fn a_reference_parameter_element_write_is_an_admitted_element_map() {
     let judged = permitted(RUNTIME_PARTITION_SOURCE.as_bytes(), "paint");
@@ -2603,4 +2603,278 @@ fn a_body_reference_to_iteration_own_storage_stays_permitted() {
 }
 "#;
     permitted(source, "main");
+}
+
+/// [PAR-2] v0.81: every access at or below one mapped element is in the
+/// element family, because nothing below element i is reachable from element
+/// j [TYPE-8, TYPE-9]. Each denial keeps one way two iterations still meet.
+const ELEMENT_SUBTREE_SOURCE: &str = r#"struct P {
+  n: u64;
+  m: u64;
+  buf: Box<Array<u64>>;
+}
+
+fn set_n(p: &P, v: u64) -> result: unit writes(p.n) {
+  set p^.n = v;
+  return unit;
+}
+
+fn set_both(p: &P, q: &P, v: u64) -> result: unit writes(p.n), writes(q.m) {
+  set p^.n = v;
+  set q^.m = v;
+  return unit;
+}
+
+fn fill(window: &[u64], v: u64) -> result: unit writes(window) {
+  let count = window^.len;
+  for (j in 0_u64..count) {
+    set window^[j] = v;
+  }
+  return unit;
+}
+
+fn touch_first(a: &[P]) -> result: unit writes(a) {
+  let count = a^.len;
+  if count > 0_u64 {
+    set a^[0_u64].m = 0_u64;
+  }
+  return unit;
+}
+
+fn by_field(a: &[P]) -> result: unit writes(a) {
+  let count = a^.len;
+  for (i in 0_u64..count) {
+    set a^[i].n = i;
+  }
+  return unit;
+}
+
+fn by_element_reference(a: &[P]) -> result: unit writes(a) {
+  let count = a^.len;
+  for (i in 0_u64..count) {
+    set_n(p: &a^[i], v: i);
+  }
+  return unit;
+}
+
+fn through_cell(a: &[P]) -> result: unit writes(a) {
+  let count = a^.len;
+  for (i in 0_u64..count) {
+    let size = a^[i].buf.inner.len;
+    fill(window: &a^[i].buf.inner[0_u64..size], v: i);
+  }
+  return unit;
+}
+
+fn read_other(a: &[P]) -> result: unit writes(a) {
+  let count = a^.len;
+  for (i in 1_u64..count) {
+    let before = i - 1_u64;
+    let prior = a^[before].m;
+    set a^[i].n = prior;
+  }
+  return unit;
+}
+
+fn two_maps(a: &[P]) -> result: unit writes(a) {
+  let count = a^.len;
+  if count == 0_u64 {
+    return unit;
+  }
+  let last = count - 1_u64;
+  for (i in 0_u64..last) {
+    let next = i + 1_u64;
+    set a^[i].n = i;
+    set a^[next].m = i;
+  }
+  return unit;
+}
+
+fn other_argument_unmapped(a: &[P], k: u64) -> result: unit writes(a) contract {
+  requires k < a^.len;
+} {
+  let count = a^.len;
+  for (i in 0_u64..count) {
+    set_both(p: &a^[i], q: &a^[k], v: i);
+  }
+  return unit;
+}
+
+fn whole_beside(a: &[P]) -> result: unit writes(a) {
+  let count = a^.len;
+  for (i in 0_u64..count) {
+    set a^[i].n = i;
+    touch_first(a: a);
+  }
+  return unit;
+}
+
+struct Row {
+  n: u64;
+  xs: Array<u64, 4>;
+}
+
+fn inner_root_inside_outer(rows: &[Row], j: u64) -> result: unit writes(rows) contract {
+  requires j < rows^.len;
+} {
+  let count = rows^.len;
+  for (i in 0_u64..count) {
+    set rows^[i].xs[0_u64] = 1_u64;
+    if i < 4_u64 {
+      set rows^[j].xs[i] = 2_u64;
+    }
+  }
+  return unit;
+}
+
+fn whole_row_beside_inner(rows: &[Array<u64, 4>], j: u64) -> result: unit writes(rows) contract {
+  requires j < rows^.len;
+} {
+  let count = rows^.len;
+  let fresh = array_filled::<u64, 4>(value: 0_u64);
+  for (i in 0_u64..count) {
+    set rows^[i] = fresh;
+    if i < 4_u64 {
+      set rows^[j][i] = 2_u64;
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+
+/// [PAR-2] two element maps whose roots overlap, one root inside an element
+/// of the other, reach one place from two iterations: `rows[i].xs[0]` for
+/// i = j and `rows[j].xs[i]` for i = 0 both write `rows[j].xs[0]`. Each map
+/// is injective on its own root, so only comparing the roots by overlap
+/// refuses the loop.
+#[test]
+fn element_maps_on_overlapping_roots_deny() {
+    for function in ["inner_root_inside_outer", "whole_row_beside_inner"] {
+        let refused = denied(ELEMENT_SUBTREE_SOURCE.as_bytes(), function, 2);
+        assert!(
+            matches!(refused, LoopDenial::SharedWrite { .. }),
+            "{function}: {refused:?}"
+        );
+    }
+}
+
+#[test]
+fn accesses_below_one_mapped_element_are_in_the_element_family() {
+    for function in ["by_field", "by_element_reference", "through_cell"] {
+        let judged = permitted(ELEMENT_SUBTREE_SOURCE.as_bytes(), function);
+        assert_eq!(
+            judged.actualization,
+            Some(LoopActualization::IndependentMap),
+            "{function}"
+        );
+    }
+}
+
+#[test]
+fn an_element_subtree_access_still_denies_what_reaches_another_element() {
+    for function in [
+        "read_other",
+        "two_maps",
+        "other_argument_unmapped",
+        "whole_beside",
+    ] {
+        let refused = denied(ELEMENT_SUBTREE_SOURCE.as_bytes(), function, 2);
+        assert!(
+            matches!(refused, LoopDenial::SharedWrite { .. }),
+            "{function}: {refused:?}"
+        );
+    }
+}
+
+/// [PAR-2, TYPE-9] a segment subscript is an element of the `Segments` place
+/// for the element family, so a loop filling segment i through `&s[i]` is
+/// permitted by the same rule, and the three ways of reaching another
+/// segment still deny.
+const SEGMENTS_SOURCE: &str = r#"fn fill(item: u64, window: &[u64]) -> result: unit writes(window) {
+  let count = window^.len;
+  for (j in 0_u64..count) {
+    set window^[j] = item;
+  }
+  return unit;
+}
+
+fn total(run: &[u64]) -> sum: u64 reads(run) {
+  let sum = 0_u64;
+  let count = run^.len;
+  for (j in 0_u64..count) {
+    set sum = sum +wrap run^[j];
+  }
+  return sum;
+}
+
+fn own_segment(segments: &Box<Segments<u64>>) -> result: unit writes(segments) {
+  let count = segments^.inner.len;
+  for (i in 0_u64..count) {
+    fill(item: i, window: &segments^.inner[i]);
+  }
+  return unit;
+}
+
+fn beside_all(segments: &Box<Segments<u64>>) -> result: unit writes(segments) {
+  let count = segments^.inner.len;
+  for (i in 0_u64..count) {
+    let seen = total(run: &segments^.inner.all);
+    fill(item: seen, window: &segments^.inner[i]);
+  }
+  return unit;
+}
+
+fn next_segment(segments: &Box<Segments<u64>>) -> result: unit writes(segments) {
+  let count = segments^.inner.len;
+  if count == 0_u64 {
+    return unit;
+  }
+  let last = count - 1_u64;
+  for (i in 0_u64..last) {
+    let next = i + 1_u64;
+    let seen = total(run: &segments^.inner[i]);
+    fill(item: seen, window: &segments^.inner[next]);
+  }
+  return unit;
+}
+
+fn indirect(segments: &Box<Segments<u64>>, order: &[u64]) -> result: unit reads(order), writes(segments) {
+  let count = order^.len;
+  let limit = segments^.inner.len;
+  for (i in 0_u64..count) {
+    let at = order^[i];
+    if at < limit {
+      fill(item: i, window: &segments^.inner[at]);
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+
+#[test]
+fn a_loop_filling_its_own_segment_is_an_independent_map() {
+    let judged = permitted(SEGMENTS_SOURCE.as_bytes(), "own_segment");
+    assert_eq!(
+        judged.actualization,
+        Some(LoopActualization::IndependentMap)
+    );
+}
+
+#[test]
+fn a_segment_loop_denies_the_whole_run_another_map_and_an_unmapped_offset() {
+    for function in ["beside_all", "next_segment", "indirect"] {
+        let refused = denied(SEGMENTS_SOURCE.as_bytes(), function, 2);
+        assert!(
+            matches!(refused, LoopDenial::SharedWrite { .. }),
+            "{function}: {refused:?}"
+        );
+    }
 }

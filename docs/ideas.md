@@ -550,4 +550,4 @@ would stop the work. For a consumer of checked facts, ask:
 
 Record a selected experiment and its discriminating criterion in its existing
 research home, following [How work proceeds](../AGENTS.md#how-work-proceeds)
-and the [investigation skill](skills/investigation/SKILL.md).
+and the method in [research/README.md](../research/README.md).

@@ -680,20 +680,20 @@ fn main() -> status: std::process::ExitStatus pure {
         // header, with no alignment inherited from the absent handles.
         let exact = host.with_runtime_allocation_limits_for_test(64, 8);
         assert_eq!(validate_program(exact, program), Ok(()));
+        // One byte short admits no slot, and the Ring asks for one.
         let short = host.with_runtime_allocation_limits_for_test(63, 8);
         assert_eq!(
-            validate_program(short, program),
-            Err(TargetLayoutFailure::Unrepresentable(
-                TargetObject::RuntimeSizedAllocation
-            ))
+            validate_program(short, program)
+                .err()
+                .and_then(TargetLayoutFailure::count_excess),
+            Some((1, 0))
         );
         for facts in [WindowAddressFacts::Emit, WindowAddressFacts::Withhold] {
-            assert_eq!(
+            assert!(matches!(
                 emit_llvm_with_window_address_facts(program, short, facts),
-                Err(BackendFailure::TargetLayout(
-                    TargetLayoutFailure::Unrepresentable(TargetObject::RuntimeSizedAllocation)
-                ))
-            );
+                Err(BackendFailure::TargetLayout(failure))
+                    if failure.count_excess() == Some((1, 0))
+            ));
         }
         let mut module = crate::backend::emitter::emit_llvm_with_layout(program, exact)
             .expect("the exact allocation boundary emits")
@@ -766,10 +766,10 @@ fn affine_invariant_ceiling_controls_the_exact_selected_target_boundary() {
 
         let one_byte_short = host.with_runtime_allocation_limits_for_test(2007, 8);
         assert_eq!(
-            validate_program(one_byte_short, program),
-            Err(TargetLayoutFailure::Unrepresentable(
-                TargetObject::RuntimeSizedAllocation
-            ))
+            validate_program(one_byte_short, program)
+                .err()
+                .and_then(TargetLayoutFailure::count_excess),
+            Some((1_000, 999))
         );
     });
 }

@@ -1,0 +1,46 @@
+fn fill(item: u64, window: &[u64]) -> result: unit writes(window) {
+  let count = window^.len;
+  for (j in 0_u64..count) {
+    set window^[j] = item;
+  }
+  return unit;
+}
+
+fn scatter_run(offsets: &[u64], first: u64, out: &[u64]) -> consistent: Bool reads(offsets), writes(out) {
+  let count = offsets^.len;
+  if count < 2_u64 {
+    return True();
+  }
+  if count == 2_u64 {
+    fill(item: first, window: out);
+    return True();
+  }
+  let half = count / 2_u64;
+  let base = offsets^[0_u64];
+  let split = offsets^[half];
+  let ordered = base <= split;
+  if ordered {
+  } else {
+    return False();
+  }
+  let cut = split - base;
+  let inside = cut <= out^.len;
+  if inside {
+  } else {
+    return False();
+  }
+  let length = out^.len;
+  let middle = first +wrap half;
+  let upto = half + 1_u64;
+  let left = scatter_run(offsets: &offsets^[0_u64..upto], first: first, out: &out^[0_u64..cut]);
+  let right = scatter_run(offsets: &offsets^[half..count], first: middle, out: &out^[cut..length]);
+  let both = band(left, right);
+  return both;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let offsets = box_array_filled::<u64>(count: 5_u64, value: 0_u64);
+  let out = box_array_filled::<u64>(count: 8_u64, value: 0_u64);
+  let ok = scatter_run(offsets: &offsets.inner[0_u64..5_u64], first: 0_u64, out: &out.inner[0_u64..8_u64]);
+  return std::process::exit_status(code: 0_u8);
+}

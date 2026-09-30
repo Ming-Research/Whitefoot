@@ -235,9 +235,18 @@ time.
   the compiled runtime with the hand-written shape.
 - **`wf_echo`**: `tests/programs/tcp_contexts.wf`, the maintained context
   server, built with the default flags: the entry accepts and each connection
-  is served by a context of its own [PAR-4]. Every context runs on the entry's
-  thread, so the line has one driver where the C servers default to one thread
-  per CPU; their `--threads 1` runs are the matching comparison.
+  is served by a context of its own [WAIT-3]. Its contexts run on one driver
+  thread per CPU, as the C servers default to one thread per CPU; `wf1` is the
+  same binary with `WF_DRIVERS=1`, which the C servers' `--threads 1` runs
+  match.
+
+`programs/context_starts.wf` measures what a context start and its join cost
+apart from any I/O: a thousand batches of a thousand contexts that return at
+once, each batch joined as its function returns, then a million bound starts
+each joined by the next statement. It exits zero when the bound results add
+up. `WAITS.md`, Experiment 5, compares it at one and four drivers
+(`WF_DRIVERS`), timed with `/usr/bin/time`; it goes when no experiment
+compares start costs.
 
 What the io_uring reference does that a portable server cannot, which is what
 the ratio is against:
@@ -329,6 +338,20 @@ the epoll one. `NET_LINES` names a subset of `uring epoll wf` when one server
 cannot complete a run yet and the others still owe a table; the table names
 the lines it holds.
 
+`redis-bench.sh` is Experiment 7 of
+`research/investigations/io-model/SHARED.md`: the Redis subset
+`tests/programs/redis_subset.wf` against `redis-server` with persistence off,
+both driven by `redis-benchmark`. It builds the subset with the worktree's
+compiler, requires every line to pass a correctness pass (100,000 increments
+from 50 clients reach one counter, and a short command sequence answers as
+Redis does) before any line reports a rate, and then runs `ROUNDS` interleaved
+passes of `SET` and `GET` without pipelining and with 16 requests per
+pipeline. The servers and the client are pinned to disjoint CPUs; the output
+is `redis-benchmark`'s CSV line per run, prefixed with the server line, the
+pass and the pipeline depth. `redis-samples.csv` holds the raw output of the
+experiment's runs, including its attribution runs. Both are removed with the
+experiment's record.
+
 ## Reproducing
 
     make -C research/experiments/io-completion-bench programs-check  # compile every program; the gate's `bench-programs` stage
@@ -346,6 +369,7 @@ the lines it holds.
     make -C research/experiments/io-completion-bench uring-check  # the reference's own traces
     make -C research/experiments/io-completion-bench net-verify   # bytes only
     make -C research/experiments/io-completion-bench linux-net    # the TCP table
+    sh research/experiments/io-completion-bench/redis-bench.sh    # the Redis subset
 
 The TCP targets are Linux-only, as `linux` and `linux-read` are: `epoll_echo`
 and `uring_echo` are written against Linux interfaces, and the workload's

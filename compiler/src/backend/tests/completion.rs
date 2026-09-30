@@ -404,8 +404,22 @@ fn an_unset_helper_setting_selects_a_bounded_demand_driven_pool() {
         .0;
     assert!(
         enqueue.contains("wf_file_grow_helpers_locked(")
-            && enqueue.contains("wf_file_request_is_peer_bound(&record->request)"),
+            && enqueue.contains("wf_file_request_held_locked(adapter, &record->request)"),
         "the enqueue is where growth happens, and it is what reads the kind: {enqueue}"
+    );
+    // What it reads is the kind, or, once the program runs contexts, the
+    // hold that leaves every queued request to the helpers [WAIT-2].
+    let held = adapter
+        .split_once("static int wf_file_request_held_locked(")
+        .expect("one predicate decides what the helpers are left")
+        .1
+        .split_once("\n}\n")
+        .expect("the predicate ends with the function")
+        .0;
+    assert!(
+        held.contains("adapter->hold_for_contexts != 0")
+            && held.contains("wf_file_request_is_peer_bound(request)"),
+        "the predicate reads the context hold and the kind: {held}"
     );
     // One queued request wakes one helper, never every helper, only a helper
     // that is actually asleep, and never from inside the queue lock: a signal

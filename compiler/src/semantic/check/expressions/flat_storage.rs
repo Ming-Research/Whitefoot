@@ -2005,6 +2005,9 @@ impl<'unit> TypeContext<'unit> {
             // [OP-9] a runtime-capacity `Array<T>` is `(16,8)`: a pointer and
             // a length.
             CheckedType::Buffer { .. } => finish(CheckedLayoutMagnitude::Finite(16), 8),
+            // A `Segments<T>` is reached only as `Box` content, whose cell is
+            // one pointer; this row sizes the content as a runtime array is.
+            CheckedType::Segments { .. } => finish(CheckedLayoutMagnitude::Finite(16), 8),
             // [OP-9] a constant-capacity `Slots<T, N>` repeats T's pair N
             // times and then applies the sequence rule to that block followed
             // by one `(8,8)` word, its length; a `Ring<T, N>` follows it with
@@ -2057,6 +2060,10 @@ impl<'unit> TypeContext<'unit> {
                     // [OP-9] `Box<T>` is `(8,8)`, one pointer; its `inner`
                     // field lives in the heap object and enters no sequence.
                     CheckedNominalKind::Box { .. } => finish(CheckedLayoutMagnitude::Finite(8), 8),
+                    // A handle is one pointer to its shared object [SHARE-1].
+                    CheckedNominalKind::Shared { .. } => {
+                        finish(CheckedLayoutMagnitude::Finite(8), 8)
+                    }
                     CheckedNominalKind::Opaque => finish(CheckedLayoutMagnitude::Finite(32), 16),
                     CheckedNominalKind::Struct { fields } => {
                         self.aggregate_layout_ceiling(fields.iter().map(|field| field.ty), visiting)

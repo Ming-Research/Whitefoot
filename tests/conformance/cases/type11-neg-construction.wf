@@ -1,0 +1,11 @@
+struct Table {
+  slots: Slots<u64, 8>;
+  next: u64;
+  invariant cursor(table): table.next < table.slots.len;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let slots = slots_new::<u64, 8>();
+  let table = Table(slots: move slots, next: 0_u64);
+  return std::process::exit_status(code: 0_u8);
+}

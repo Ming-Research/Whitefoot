@@ -1,0 +1,24 @@
+fn add(total: Shared<u8>, amount: u8) -> result: unit pure waits {
+  atomic sum = &total {
+    set sum^ = sum^ +wrap amount;
+  }
+  return unit;
+}
+
+fn fan(total: &Shared<u8>) -> result: unit reads(total) waits {
+  for @start (round in 0_u64..3_u64) {
+    let handle = shared_share::<u8>(shared: total);
+    spawn add(total: move handle, amount: 2_u8);
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let total = shared_new::<u8>(value: 1_u8);
+  fan(total: &total);
+  let code = 0_u8;
+  atomic sum = &total {
+    set code = sum^;
+  }
+  return std::process::exit_status(code: code);
+}

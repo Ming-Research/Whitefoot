@@ -1,0 +1,9 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+const word: Array<u8, 4> = "caf\u{e9}";
+
+fn main() -> status: ExitStatus pure {
+  doc "The length is counted in UTF-8 bytes, so caf\\u{e9} is five bytes, not four characters [CONST-2].";
+  return exit_status(code: 0_u8);
+}

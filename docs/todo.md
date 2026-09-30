@@ -25,16 +25,17 @@ rarely insert at the same place.
   from the modular conversion operation, which adds no proof family; reopen
   when a real caller needs this named-value form.
 
-- **Select direct rounded/saturated float conversion policies.** The
+- **Select a total float-to-integer conversion policy.** The
   [conversion study](../research/investigations/numeric-conversions/DESIGN.md#companion-operations-and-explicit-deferrals)
-  identifies missing direct rounded-to-float semantics and cumbersome total
-  float-to-integer compositions. A rounded-to-float candidate needs explicit
-  ties, overflow, subnormal, signed-zero and NaN rules; saturation needs its own
-  NaN and rounding choice, including nonrepresentable i64 maxima. Defer from the
-  exact-conversion implementation because these select different results and
-  no concrete consumer has selected their complete surface. Reopen for a
-  float-heavy program or owner selection; compare source and emitted/native
-  behavior before choosing spellings or claiming an improvement.
+  identifies cumbersome total float-to-integer compositions; rounding into a
+  float destination is now `cvt.nearest` [OP-6], which deliberately admits no
+  integer destination. A saturating or rounding float-to-integer operation
+  needs its own NaN, rounding-direction and saturation choice, including
+  nonrepresentable i64 maxima, and `llvm.fptosi.sat` fixes only one of those
+  choices. Defer because no concrete consumer has selected the complete
+  surface; reopen for a program that converts computed floats to integers
+  (pixel coordinates, quantization), and compare source and emitted/native
+  behavior before choosing a spelling or claiming an improvement.
 
 - **Validate float and domain evidence through saved Results.** Exact
   conversions extend integer value relations only. A checked result
@@ -75,6 +76,20 @@ rarely insert at the same place.
   extensions below remain a separate question.
 
 ## Checker precision and proof cost
+
+- **A widening conversion's operand is read as any affine side.**
+  [ENT-2] admits `cvt::<S, D>(e)` as a relation term or comparison-origin
+  operand only for e a term or constant. [FN-9] relation terms match that:
+  `postcondition_relation_datum` in `compiler/src/semantic/check/ensures.rs`
+  recurses to a datum. `goal_affine_side` in
+  `compiler/src/semantic/entailment/flow/goals.rs` instead reads the operand
+  as any affine side. Source cannot reach the difference today, because a
+  call argument is an atom [GRAM-5] (`cvt::<u32, u64>(x + 1_u32)` does not
+  parse), so a written operand is already a term or constant; the recursion
+  is sound in any case, since a widening conversion keeps the mathematical
+  value. The owner chose on 2026-09-29 to leave it. Narrow the recursion to
+  `goal_operand` or widen ENT-2, with a conformance case either way, when a
+  change lets a non-term operand reach a conversion.
 
 - **A module check's cost for a library interface still grows with the
   module's functions.** Reading `std::process`'s closure (the `std::io`,
@@ -356,7 +371,12 @@ rarely insert at the same place.
   [TYPE-2], an enum is taken apart by an own-place `match` [OWN-13], and a
   value of an unbounded type parameter can only be moved whole; the
   [beyond-memory article](articles/beyond-memory.md) shows it for
-  `ReadFile`. Pin each with a program per
+  `ReadFile`. TYPE-11's TypeInvariantWritableField repair is unpinned too:
+  a `public` field is written only in an interface record, which a
+  single-source pair cannot hold, so pinning it needs a module-form pair;
+  and FN-9's propagated-exit repair is pinned for a refuted relation only,
+  its unproved sentence still unpinned.
+  Pin each with a program per
   alternative, rewording those that fail, and move the sentences into
   `check/repairs.rs`; validate by the pair test. Found in the review of the
   opaque-struct repair; reopen with the next diagnostics change or when an
@@ -416,6 +436,59 @@ rarely insert at the same place.
   read, write and move out on such a parameter. Found in the review of the
   opaque-struct repair; reopen when a program has a reason to declare an
   opaque struct with fields, or with the next change to nominal kinds.
+
+- **An instantiated goal spells a field-read range endpoint as `?`.** An
+  FN-8 goal over a range an argument formed at the call renders an endpoint
+  that is not a literal, const or binding as `?`, as in
+  `text^[?..?].len <= 16_u64` for `&text^[span.start..span.end]`, because the
+  entailment renderer has no source text for such a capture. The repair
+  already spells those endpoints from their source occurrence and says to
+  copy them into bindings; the `instantiated_goal` payload does not. Spell
+  the capture's source occurrence there too, through the same occurrence the
+  repair reads, and pin it with the field-endpoint pair in
+  `driver::pinned_repairs`. Reopen with the next change to goal rendering.
+- **An affine bound is lost at a statement join where the binding's images
+  differ.** After a scan whose `pos <= length` is known only as an affine
+  invariant conclusion, `let result = pos; if result < start { set result = start; }`
+  cannot prove `result <= length`, although each edge satisfies it: the
+  then edge holds it in L0, the false edge only as an affine theorem, the L0
+  join drops it and [ENT-6] gives `result` a fresh atom. No local invariant
+  carries it, because the two edges' conclusions are different canonical
+  inequalities. The
+  [witness](../research/investigations/writer-lost-facts/DESIGN.md#shape-6-lockstep-arrays-and-struct-fields)
+  is the limit PR #169 records for lockstep counters. Impact: writers keep
+  both clamps or must add a header relation that makes the branch dead.
+  Candidate: at a join input, project a two-atom affine conclusion over two
+  live bindings' current images into L0 before the join; validate soundness
+  against replacement and alias controls and measure closure cost first.
+  Reopen when a consumer cannot avoid the branch.
+- **A product with a struct-field operand has no interval route.** [ENT-6]
+  gives affine value images to live own integer bindings and measures only,
+  and its interval product needs both operands' images, so after
+  `propagate parse_header(...)` publishes `header.width <= 16384_u32` and
+  `header.height <= 16384_u32`, `let stride = header.width * 4_u32;` is
+  proved but `stride * header.height` is not, and neither is a product whose
+  operand was computed from a field; copying the fields into bindings first
+  proves both. The same holds for a parameter's fields bounded by `requires`,
+  so it predates v0.80, but v0.80's field relations make it the next thing a
+  writer meets: PR #169's probe p2a predicted exit 24 and is refused at that
+  product. Impact: one `let` per field before a nonlinear product. Candidate:
+  give a tracked field place the current-value image its binding copy would
+  have, killed with the field; validate against field writes, whole-value
+  replacement and aliases, and measure closure cost. Reopen when a program
+  cannot copy the field.
+
+- **Two rejections writers meet carry no repair.** `InvalidPostconditionSelector`
+  for a route the version does not admit, such as `when Err(error: e):` or a
+  variant of a program's own enum, names neither the admitted `Ok` and `Some`
+  routes nor the result types they apply to, and `InvisibleUse` for a header
+  invariant named after its loop does not say the name's scope ended with
+  the loop body [INV-1]; the Snowghost writers reported changing result
+  types and retrying certificates, which either repair would have
+  shortened. Add a repair to each under `compiler/diagnostic-repairs`,
+  pinned with a program per alternative.
+  Found in the writer-lost-facts investigation; reopen with the next
+  diagnostics change.
 
 ## Containers and storage lowering
 
@@ -548,14 +621,17 @@ rarely insert at the same place.
   separates the one-slot cell's extra word from its helper boundary: retained
   wide removal and consumption has three 256-byte transfers in WF versus one
   in C even though both `Option<Record>` results occupy 264 bytes. The separate
-  insertion `Result<SlabHandle, Record>` occupies 280 bytes in WF's product
-  layout versus 264 in C's union ABI. Keep these distinctions when interpreting
+  insertion `Result<SlabHandle, Record>` occupied 280 bytes in WF's former
+  product layout versus 264 in C's union ABI; the union layout of
+  [compiler/payload-enum-layout](../design/compiler/payload-enum-layout.md)
+  now makes it 264 bytes, as in C, and leaves `Option<Record>` and the
+  transfer counts unchanged. Keep these distinctions when interpreting
   timing; a cell-layout change alone cannot remove these costs. Validate
   forwarding or result placement with
   the same owning return paths, failed insertion returning the offered owner,
   partial cleanup and alias controls, checking optimized transfers and
-  same-source timings on supported toolchains. Defer general enum layout and
-  call ABI changes until that experiment establishes which transfer can be
+  same-source timings on supported toolchains. Defer call ABI
+  changes until the forwarding experiment establishes which transfer can be
   removed without changing ownership; reopen with the owning-map library or
   a workload dominated by wide Slab removal.
   The [map's exhaustive returned-owner protocol](../research/investigations/containers-and-resources/X1-LIBRARY.md#generic-owning-map-trial-after-the-ring-comparison)
@@ -859,34 +935,69 @@ rarely insert at the same place.
   consumption discriminators establish their costs; do not infer its elapsed
   benefit from alias-analysis output alone.
 
-- **A target-layout failure names no allocation site or admitted bound.** A
-  program whose OP-9 proof retains a count bound the selected target cannot
-  hold, such as the language's own ceiling `u64::MAX / stride_ceiling(T)`,
-  passes checking and stops at [STOR-6] target qualification with
-  `target layout failure in TargetLayout: TargetLayout(Unrepresentable(RuntimeSizedAllocation))`,
-  which names no source site, no proved bound and no bound the target
-  admits. The numbers exist where the check fails, in the runtime-sized
-  allocation branch of the source-call validation in
-  `compiler/src/target.rs`: the retained bound, the element's target
-  stride, the descriptor header and `runtime_allocation_max()`, which give the
-  largest admitted count `(max - header) / stride`. Design: `IrSourceCall`
-  carries the call's node path, copied from the checked call during lowering;
-  a `TargetLayoutFailure` variant carries the site, the proved bound and the
-  admitted bound (the enum is `Copy` and crosses many `?` returns, so an index
-  into a side table keeps it `Copy`); the driver renders the site as a source
-  location beside the two numbers, still as a target-layout stop and never as
-  a source rejection [STOR-6]; and
-  `u16_buffer_whose_proved_count_exceeds_the_target_byte_domain_is_a_target_failure`
-  in `compiler/src/driver/tests.rs`, which pins today's stop by
-  `RuntimeSizedAllocation` in its detail, changes with it. No specification
-  change. Validate with a program that proves the OP-9 ceiling and calls the
-  allocating function from its entry: the failure names the allocation's call
-  site, the proved bound and the selected target's largest admitted count,
-  while the same program bounded below that count builds. Deferred because the
-  OP-9 repair no longer offers the ceiling as the bound to write, which closes
-  the route the [repair-wording work](../research/investigations/repair-wording/DESIGN.md#implementation)
-  found into this stop; reopen when a writer report or a program meets the
-  unlocated failure.
+- **Checking accepts a program whose build stops at target layout.** A
+  program whose [OP-9] proof retains a count bound the selected target cannot
+  hold passes `whitefootc --check` and `--check-module` and stops only when
+  built, at [STOR-6] target qualification; the stop now names the call, the
+  proved bound and the target's largest admitted count
+  (`AllocationCountExceedsTarget`), but a writer who checks before building
+  still learns of it one round late, which is what cost the Snowghost PNG
+  decoder's writer most. The specification permits a check command to
+  qualify the host target: [STOR-6] places target layout after semantic
+  publication and makes its failure no source rejection [DIAG-1], which a
+  check that also qualified the host and reported a `TargetLayout` stop
+  (never a source verdict) would respect. But `driver::check` is
+  defined as the source-verdict projection that stops before lowering, and
+  `design/compiler` records no decision on what a check command covers. Two
+  further obstacles: `--check-module` selects no entry, while target
+  qualification qualifies the lowered program an entry reaches, so a
+  module-level check has no materialization set to qualify; and qualifying
+  requires lowering, whose cost on a check has not been measured. The
+  options are qualifying the host in `--check` when an entry is selected,
+  a separate target-check option, or relying on the OP-9 repair's warning
+  that a bound near the language's limit stops at target layout. This is a
+  compiler decision for the owner; validate a chosen form with the
+  reproduction in `an_allocation_count_the_target_cannot_hold_is_located_with_its_bounds`
+  (`compiler/src/driver/pinned_repairs.rs`) stopping at check time as a
+  `TargetLayout` stop with no rule, and the check time of the corpus
+  programs before and after. Reopen when the owner rules or another writer
+  meets a build-only target stop.
+- **A target stop inside a generic function names only the template's call.**
+  The allocation-fit record captures the call and count coordinates once,
+  from the checked template body (`allocation_fit_of_call` in
+  `compiler/src/semantic/check/expressions/calls/user.rs`), and lowering
+  copies them into every monomorphized instance, so an
+  `AllocationCountExceedsTarget` stop inside a generic function points at
+  the template's allocation and not at the call that instantiated it, while
+  a source rejection in a concrete instance names a requesting call
+  [MOD-8]. Impact: a writer whose generic container helper is instantiated
+  from several sites must find which instance carries the unbounded count.
+  Change: carry the instantiating call's coordinate with each
+  monomorphized instance's allocation record and print it as the
+  requesting call. Validate with a generic allocating helper instantiated
+  from two callers, one bounded and one not, whose stop names the unbounded
+  caller. Deferred because no writer has met it; reopen when one does.
+
+- **Union-laid-out enums: deferred refinements.**
+  [compiler/payload-enum-layout](../design/compiler/payload-enum-layout.md)
+  is implemented: enums with two or more payload variants whose product does
+  not return in registers are unions of per-variant views and memory-only in
+  the backend (`Component` 168 to 40 bytes, `IoError` 228 to 12, the I/O
+  results 236--352 to 16--112; the
+  [results](../research/investigations/enum-union-layout/DESIGN.md#implementation-results)).
+  The investigation's timing criterion was met for the Slab and
+  priority-queue comparisons; its I/O half was waived by the owner because
+  the named I/O programs no longer compile. Deferred refinements, each to be
+  measured on its own: a first-class
+  word carrier so register-sized two-payload enums (at most 8 bytes saved in
+  the maintained programs) could also shrink, reopened by a workload storing
+  many of them; niche encoding, reopened with refined integer domains or a
+  workload dominated by `Option<Box<T>>`; a narrower tag, reopened by a
+  workload of enums whose views are less than 4-aligned; and an enum with one
+  payload variant that holds a union enum (`ReadStop`, `Option<IoError>`)
+  keeps the product form and is memory-only only because of that payload,
+  which is correct but copies it by memmove where its other fields alone
+  would be first-class, reopened if a measured path moves many of them.
 
 - **Separate historical container-candidate replay from current-source targets.**
   The [map comparison](../research/experiments/container-representation/map-library/RESULTS.md)
@@ -1360,7 +1471,7 @@ rarely insert at the same place.
   from that order: an oversized candidate's finished graph is transferred into
   its parent with every `IrFunction` field remapped by hand, ordinals are
   reserved late and the ledger rotates. Offer policy is spread over lowering,
-  a scalar-leaf post-pass, the emitter's lane-fit filter and the launcher, and
+  a call-grain post-pass, the emitter's lane-fit filter and the launcher, and
   the clone set is computed three times. Lowering the ordinary graph first and
   actualizing in one IR-to-IR pass whose plan the emitter only renders (the
   [architecture investigation](../research/investigations/compiler-architecture/DESIGN.md#p4-lowering-and-backend)'s P4.1) removes
@@ -1371,27 +1482,27 @@ rarely insert at the same place.
   sources. Reopen when the next parallel-lowering experiment has to change the
   split.
 
-- **Every waiting context runs on the one thread that runs the entry.**
-  The runtime keeps every context [WAIT-2] on the floor's thread with one
-  completion ring, so a server's I/O uses one core however many it has; the
-  [waiting runtime shape](../research/investigations/io-model/WAITS.md#experiment-1-the-waiting-runtime-shape-against-the-native-echo-servers)
-  that met the bar ran one ring and one set of contexts per core. Several
-  drivers need a ring each, a group count and a handle budget that another
-  thread can change, and a rule for which driver a started context joins.
-  Reopen when the echo comparison of a compiled context server against
-  `uring_echo` on the same cores shows the single driver as the limit.
+- **A short context costs about 1.5 microseconds on several drivers.** With
+  four drivers, a thousand batches of a thousand contexts that return at once
+  took 1.47 seconds against 0.15 on one driver, and 0.92 and 1.35 at two
+  and four drivers in Experiment 6
+  (`research/investigations/io-model/WAITS.md`, Experiments 5 and 6): idle drivers
+  take half of the starter's queue, and the contexts, their arenas and the
+  group count then move between cores for work of about 100 nanoseconds.
+  A start joined by the next statement stays on one driver and costs what it
+  does on one. A context that waits for the host amortizes this; one that
+  computes briefly does not. Keeping a context on the starter's driver until
+  it has run for a while, or stealing only from a queue longer than a
+  threshold, would bound it. Reopen when a program starts many contexts that
+  do little before they finish.
 
-- **A context's operation with no readiness form still blocks the thread
-  every context shares.** With other contexts live, a socket receive, send
-  or accept waits in the ring or, with no ring, for its descriptor's
-  readiness. Every other host call a context makes that the ring does not
-  take runs on that thread and blocks it: a read or write of a pipe such as
-  standard input or output, a connect to a remote peer, and on a host with no
-  ring every open, close and directory operation. A context reading a pipe
-  that another context of the same program writes would stop both. Route such
-  operations to the helper pool whenever other contexts are live, with the
-  context parked on its record; validate with two contexts joined by a pipe,
-  on both routes.
+- **Only Linux with a ring runs several drivers.** With no kernel ring (the
+  readiness route) and on Windows, every context still runs on the entry's
+  thread: the readiness route's poll list and the completion port's wait are
+  a single driver's. A second driver there needs a readiness registration per
+  driver (`epoll` or `kqueue`) and, on Windows, a completion port per driver
+  or one shared port whose completions carry their driver. Reopen when a
+  server on either route needs more than one core.
 
 - **A readiness wait and a helper's completion are found by scanning.** A
   record published on the thread that runs the contexts wakes its context by
@@ -1403,25 +1514,54 @@ rarely insert at the same place.
   many-context measurement on the helper or no-ring route attributes time to
   either pass.
 
-- **Windows contexts have not been run.** Waiting functions lower to
-  resumable frames on every target and the context driver is shared C, but
-  the Windows host job (`io-hosts.yml`) compiles it without starting a
-  context, so neither the completion port route nor the readiness route has
-  run a context there. Add a context program to that job's runs; until then
-  treat a Windows context server as unvalidated.
+- **Windows contexts run only on the completion port's route under test.**
+  The Windows host job (`io-hosts.yml`) runs the two context cases of
+  `compiler/tests/programs/network.rs`: twelve reverse-order peers each
+  served in its own context with the completion port required, and two bound
+  fetches on both routes. Without the port a Windows context's socket wait
+  is a blocking helper wait, because that host has no readiness wait, so a
+  server there holds only as many silent peers as the pool has helpers. A
+  `WSAPoll` readiness wait would give it the Linux readiness route's
+  behavior. Reopen when a Windows server has to run without the port.
+
+- **The context echo server's rate at 1024 connections and with 64 KiB
+  messages moved between sessions.** With R1 to R4 as committed,
+  `tcp_contexts.wf` ran at 0.968 of the runtime before them at 1024
+  connections (0.966 and 0.964 in two runs of 15 interleaved passes) and at
+  1.047 with 64 KiB messages; with the stop check fixed, in a later session,
+  it ran at 1.004 at 1024 connections (1.044 and 0.993) and at 0.971 with
+  64 KiB messages, while 64 connections stayed within 1% in both sessions
+  (`research/investigations/io-model/CONCURRENCY-MODEL.md`, section 10.5).
+  Whether the progress changes cost anything at those workloads is open: the
+  later session's two runs at 1024 connections differ by 5.1 points, more
+  than the 3.6 points between the sessions, and the 64 KiB figure moved 7.6
+  points the other way. Settle it by running the same two builds interleaved
+  in three or more sessions; if a loss persists, attribute it with one build
+  per change reverted, the candidates being the `wf__context_pass` call after
+  every host operation its start answered, the reap after every 64
+  resumptions, the per-driver count of host waits and the stop check's change
+  counters. Reopen when a server with more than a few hundred connections or
+  with messages of tens of KiB is measured, or before the next change to the
+  driver loop.
 
 - **The compiled context server trails the hand-written shape at 64
   connections.** At one driver thread each, `tcp_contexts.wf` held 0.88 of
-  `waiting_echo --threads 1` at 64 connections with 64-byte messages in both
-  runs of Experiment 2, and the frame build 0.84 and 0.93 in the two runs of
-  Experiment 3, beside the stackful build's 0.84 and 0.97; the gap is not
-  attributed (`research/investigations/io-model/WAITS.md`). The candidates
-  are the park path, which waits in `epoll_wait` and then enters the ring
-  where the hand-written driver enters once, the ring locks taken on every
-  submit and reap pass, and the emitted receive and send path. Attribute with
-  a `perf` profile of both servers at 64 connections before changing the
-  runtime; reopen with the next change to the context scheduler or when a
-  program's rate depends on it.
+  `waiting_echo --threads 1` in Experiment 2, 0.84 and 0.93 in Experiment 3
+  and a median 0.81 in Experiment 4, whose server CPU per round trip was
+  9.80 against 7.93 microseconds with the same system calls
+  (`research/investigations/io-model/WAITS.md`, Experiment 4). About 0.55
+  microseconds is the ring's task-run mode: the reference built with the
+  runtime's `COOP_TASKRUN` instead of `SINGLE_ISSUER | DEFER_TASKRUN` loses
+  0.55. About 0.4 is the general completion engine's user-space work (about
+  650 instructions per round trip against the reference's 195). About 0.9
+  microseconds of kernel time is unattributed. A ring the driver owns and
+  waits on directly, as the reference's, removes the first and most of the
+  second. Since Experiment 5 every driver but the entry's has a ring only its
+  own thread submits to and reaps, which is the single-issuer condition; the
+  entry's ring is also the process's, which threads that are not drivers
+  submit to, so it would need a ring of its own first. Reopen with that
+  ring, and measure the unattributed kernel time against a smaller working
+  set.
 
 - **Frame memory for a context with small state is unmeasured.** Experiment 3
   measured idle connections of `tcp_contexts.wf`, whose 64 KiB echo window
@@ -1455,6 +1595,170 @@ rarely insert at the same place.
   placements, and adopt whichever makes their time independent of the
   offset. Reopen when the next compute-regression verdict names a kernel
   whose generated code did not change.
+
+- **Every atomic statement holds its object alone.** Statements whose
+  blocks only read could share the object, but lowering always acquires for
+  writing
+  (`design/language/waiting/shared-objects.md`, the provisional exclusive
+  acquisition decision). Readers that contend then wait for one another.
+  The runtime's entries take a read request, but lowering makes none, so
+  that path runs in no program; deciding it needs a measured workload where
+  readers contend, compared with
+  a lowering that acquires for reading when the block writes no path rooted
+  at the binding. Reopen when a program's atomic statements that only read
+  are seen to queue.
+
+- **An atomic statement counts its own handle.** Each statement adds one to
+  the object's handle count before it acquires and releases it after it
+  unlocks, two atomic read-modify-writes on a shared cache line that keep the
+  object live whatever the block does with the target place [SHARE-2]. A
+  block that neither moves nor writes the target's root, which is the common
+  case and a fact the checker has, needs neither. Measure the uncontended
+  statement with and without them; reopen when atomic statements show in a
+  profile, as they may in the Redis subset.
+
+- **A shared object takes at least one 512-byte pool block.** The bridge's
+  pool serves blocks from 512 bytes up, so a `Shared<u64>` occupies 512
+  bytes. A program with one keyspace object does not notice; one with an
+  object per client or per key would. A smaller class for objects, or the
+  ordinary allocator, would fix it. Reopen when a program creates many small
+  objects.
+
+- **No test forces a shared object's handoff.** The unlock after two vain
+  wakes hands a parked statement the object (`completion/bridge.c`,
+  `WF_SHARED_HANDOFF`), and only contention on several drivers reaches that
+  branch: `shared_objects.wf` checks its sums, not that a handoff happened,
+  and the counts in `research/investigations/io-model/SHARED.md` came from a
+  hand-made counting build. A broken handoff would fail at random at best. A
+  runtime test that parks a statement, wakes it twice while another context
+  takes the object first, and checks that the third unlock grants it would
+  pin the branch; it needs a way to run the bridge's shared-object entries
+  on hand-made contexts. Reopen when the lock changes again or a handoff
+  defect is suspected.
+
+- **A bound spawn is joined before the whole statement that uses it.**
+  [WAIT-3] joins a bound spawn at the beginning of the first later statement
+  of its block that names the binding or may leave the block, so in
+  `let seen = spawn consume(…); if go { atomic … { … } return seen; }` the
+  call is joined before the `if`, and the atomic statement that would make
+  its guard true never runs. Joining on the path inside the statement instead
+  was refused because later code would merge a joined and an unjoined path
+  (`design/compiler/waiting-contexts`, the bound spawn's join). Reopen when a
+  program needs the use and the enabling statement in one compound statement.
+
+- **At most eight operations run on helper threads at once.** Once a
+  program spawns, every operation the ring does not carry runs on the helper
+  pool (`completion/bridge.c`, `wf_bridge_hold_for_contexts`), which holds at
+  most `WF_BRIDGE_MAX_HELPERS`, eight, helpers. A ninth such operation waits
+  in the queue until one returns, so nine contexts whose operations wait on
+  one another through pipes can stop although [WAIT-2] promises that they
+  proceed. On Linux the ring carries reads, opens, closes and a socket's
+  accept, connect, receive and send, so a stream write, a directory's next
+  entry, and the immediate listen and shutdown take a helper there
+  (`completion/linux_io_uring.c`, `wf_linux_io_uring_carries`); on a host
+  with no ring every file operation does. Letting the pool
+  grow past the ceiling while every helper is blocked, or carrying stream
+  writes on the ring, would remove it; validate with nine contexts paired
+  through pipes. Reopen when a program runs more than eight such waits at
+  once.
+
+- **A split loop too small to split still costs its query at every call.**
+  Snowghost's layout prototype runs `pkg::text::line_break`, whose
+  `write_run_span` loop is a synthesized range split called once per run of
+  a paragraph; its runtime work never reaches the work unit. Its layout
+  mode that hands out nothing else (L1) is 5 to 24 percent slower at two
+  and four workers than at one on every measured page. With that one loop
+  made unsplittable in a local build, the flat page's L1 took 1.52 s at
+  four workers against 1.57 s at one, where the committed build took 1.80
+  s against 1.53 s
+  ([Snowghost layout measurement](https://github.com/mbbill/Snowghost/blob/7f7542f/research/investigations/concurrency/DESIGN.md#layout-measurement)).
+  The cost is the splitter's runtime query, paid per call when workers
+  idle; the retained splitter entry of `compiler/parallel-lowering` was
+  qualified on kernels whose splits are few and large. Change to evaluate:
+  skip the query when the call's priced work is below the work unit, as the
+  caller already knows the extents it prices. Validate with the flat page's
+  L1 at one and four workers and the formal kernels' compute regression.
+  Reopen with the next range-split or dispatch change.
+
+- **Small allocations in a parallel loop slow down with more workers.** In
+  the [scatter measurement](../research/investigations/segmented-storage/DESIGN.md#measurement-where-the-outputs-go)
+  a loop allocating one small buffer per item (about 200,000 allocations
+  per repetition) took 0.71 s sequentially and 1.15 s and 0.98 s at two
+  and four workers. The heap is the platform `malloc` [STOR-8], shared by
+  every worker. Change to evaluate: per-worker allocation caches in the
+  runtime, or a bump region per split chunk for allocations that die with
+  the loop. Validate with that measurement's A2 build at one, two and four
+  workers. Reopen when a measured program's per-item allocations sit on a
+  parallel loop's critical path.
+
+- **An inline range argument does not carry its length into a routed
+  postcondition.** `box_segments_filled`'s record ensures
+  `made.inner.len == lengths^.len` on `Some`. When the argument is a
+  binding, `let run = &a.inner[0_u64..3_u64];`, the caller learns the
+  segment count 3; when the same range is formed at the argument,
+  `lengths: &a.inner[0_u64..3_u64]`, `&made.inner[2_u64]` stays unproved,
+  so writers must bind the range first
+  (`tests/conformance/cases/fn9-pos-segments-routed-count.wf` binds it).
+  The formation's endpoint images are recorded under its capture, but the
+  clause instantiation reads the argument's length only through a bound
+  holder. Change: instantiate a range argument's `len` from the
+  formation's captured length as a binding's is. Validate with the inline
+  form of that case discharging the bound. Reopen with the next change to
+  call-site clause instantiation.
+
+- **An effect-row path through a segment is typed as the whole run.** The
+  effect-row resolver (`container_element_type` in
+  `compiler/src/semantic/check/types.rs`) has no `Segments` arm, so a row
+  such as `writes(s.inner[k])` with a value parameter `k` selects the
+  `Segments` type itself instead of a run of T. No program needs such a
+  row yet: a helper takes the segment as its own `&[T]` parameter. Change:
+  give a segment index step the range selection a range step has, and add a
+  compiler test for a row naming one segment. Reopen when a writer needs a
+  row that names one segment of a run it receives whole.
+
+- **A fixed recursion budget cannot follow an unbalanced tree.** The budget
+  of `compiler/parallel-lowering/two-worlds` is now spent only at calls in
+  an actualized group, but its depth is still fixed per pool width (about
+  eight levels at four workers). Snowghost's style shape B on apollo11 has
+  its work under a few children of wide sibling runs, so the halvings above
+  it spend the levels and the heavy subtree runs sequentially: a stage
+  speedup of 1.14 at four workers, while whole runs with the budget off or
+  pinned at 24 are about 3.7 to 3.8 times faster than at one worker
+  ([recursion budget at splits](../research/investigations/call-offer-grain/DESIGN.md#the-recursion-budget-at-splits)).
+  Candidate change: refresh the budget where offered work is taken by an
+  idle worker, so depth follows demand rather than a static count; it
+  revises that node and needs a measured comparison on the formal recursive
+  kernels (quadrature, merge sort, quicksort) and shape B. Reopen with the
+  next Snowghost style measurement or recursion-budget change.
+
+- **The call-offer grain is provisional.** `--par` now offers a
+  statement-group call only when its callee reaches a cyclic call component
+  or its static work reaches the 150,000 work unit
+  ([call-offer grain](../research/investigations/call-offer-grain/DESIGN.md#implementation-results),
+  `design/compiler/parallel-lowering.md`). Two known limits no measured program exercises: a
+  non-recursive helper whose work is large only through its runtime extents
+  loses its offer, and a cheap call into a recursive component keeps one;
+  and a callee that reaches recursion only by starting a waiting context is
+  not seen as recursive, since neither this pass nor the recursion frontier
+  follows a context start as a call edge. Validate any of them by a program whose four-worker time loses to its
+  `--par-call-grain off` build; reopen when one appears.
+
+- **Offers beneath a waiting recursion carry no recursion budget.** A
+  cyclic component with a waiting member gets no budget-carrying family
+  (compiler/parallel-lowering/two-worlds), because a waiting function is a
+  resumable frame with no ordinary entry for a variant to stand behind.
+  Every activation of such a recursion therefore reaches its offers
+  unbudgeted, as a `--par-recursive-frontier off` build does. In
+  `tests/programs/wfgrep.wf` the waiting `walk` and `search_root` recursions
+  reached `name_before`'s byte-pair offers at every depth; the call grain now
+  omits those offers (static work 4), so wfgrep, the one maintained program
+  known to have such offers, no longer does, and whether one costs anything
+  is unmeasured.
+  Validate with a program whose waiting recursion reaches an offer the grain
+  keeps, timed on a deep and on a wide input against a build that withholds
+  the offer; if the unbudgeted offers cost measurable time, give waiting
+  components a budget-carrying frame variant. Reopen when such a program
+  appears.
 
 ## Platforms and host interfaces
 
@@ -1674,19 +1978,53 @@ rarely insert at the same place.
 - **The I/O research record and two runtime comments describe retired
   states.** `research/investigations/io-model/NETWORK.md` says the hand-out
   of a may-suspend call to a pool stack landed and serves `tcp_fanout.wf`'s
-  peers concurrently, which [PAR-4] contexts replace; `DESIGN.md` still says
+  peers concurrently, which spawned contexts [WAIT-3] replace; `DESIGN.md` still says
   canonical `make check` stops on a v0.37 `CANDIDATE` identity; the
   concurrency catalog's retired PAR-3 text and staged-loop sketch predate the
   current rule; the join comment in `compiler/src/backend/completion/bridge.h`
   describes pool stacks rather than contexts; the `.wf` programs under
   `research/experiments/io-completion-bench/programs/` use the retired
-  `&uniq` syntax and no longer compile; and `.github/workflows/io-bench.yml`
-  says the gate compiles those programs, which it does not. A reader following
-  any of them is misled about what runs. Mark the research passages
+  `&uniq` and `own Bool` spellings and no longer compile, so `read-bench.sh`
+  stops at its first build and the spawn work measured single-context reads
+  with a scratch loop instead
+  (`research/investigations/io-model/CONCURRENCY-MODEL.md`, section 10.5);
+  and `.github/workflows/io-bench.yml` says the gate compiles those programs,
+  which it does not. A reader following any of them is misled about what
+  runs. Mark the research passages
   superseded with a pointer to `WAITS.md`, rewrite the `bridge.h` comment
   against the context scheduler, and either migrate the benchmark programs
   and wire their compilation or delete them with the workflow sentence;
-  reopen with the next edit of any of these files.
+  reopen with the next edit of any of these files or before the next
+  read-path measurement.
+
+- **A reserved spelling used as a name does not say it is reserved.** The
+  Snowghost renderer's writers found by trial that `copy`, `is` and `checked`
+  cannot name a binder [FORM-3]: `let copy = 1_u8;` and `let is = 1_u8;` stop
+  as a grammar `UnexpectedToken` expecting an IDENT at `copy`, and
+  `let checked = 1_u8;` as `ReservedName` with `class: ModeWord` and an
+  inventory ordinal, and neither says that the spelling is a fixed atom or a
+  mode word nor which grammar uses it (`capability_bound`, `result_route`,
+  the OPNAME and `infix_op` suffixes). The rejection should name the
+  reservation and the production that owns the spelling, with a repair to
+  choose another name. Validate with a pinned probe per reservation class,
+  fixed atom and mode word, in a `let`, a parameter and a field, reading
+  that a writer renames on the first round. Reopen with the next change to
+  FORM-3 attribution or name reservation.
+
+- **A runtime-formed relative path with several components cannot be
+  opened.** `std::fs::relative_path` takes only a `HostString`, which a
+  program receives as an argument, and `open_directory` and `open_file`
+  open one component each while refusing a symbolic link at every
+  component, so a program cannot open `a/b/c` from bytes it read at run
+  time, such as a file named in data, when a directory on that path is or
+  passes through a link. The Snowghost renderer met this reading resources
+  named in its input; the related root case is the linked-directory item
+  above. Lifting it needs a specification change: a `RelativePath` formed
+  from bytes, validated as `relative_path` validates a `HostString`, or a
+  multi-component open that follows links as `open_read` does. Validate with
+  a program that reads a path from a file and opens it below a directory
+  holding a link, with an enumerated link left unfollowed. Reopen when a
+  program must open data-named files below linked directories.
 
 ## Modules and libraries
 
@@ -1776,6 +2114,19 @@ rarely insert at the same place.
 
 ## Code structure
 
+- **Five parallel substitution walkers over a type invariant.**
+  `compiler/src/semantic/check/type_invariants.rs` rewrites the invariant's
+  parameter zero with `substitute_goal`, `construct_goal`, `binder_goal`,
+  `substitute_relation` and `substitute_expanded`, one walker per
+  representation (goal, relation and expanded clause) and subject (a
+  parameter or its referent, a construction's operands, an atomic binder, an
+  exit state or a result). Each is short and has one caller, so a change to
+  the datum shape must be repeated in each. A single substitution keyed by
+  subject over the expanded clause, from which the goal and relation are then
+  formed, would leave one walker; validate by identical verdicts on the
+  `type11-*` cases. Found in the TYPE-11 review; reopen when a new subject or
+  datum shape is added, such as a fact at an element read.
+
 - **The entailment state module and its tests have outgrown one reader.**
   `compiler/src/semantic/entailment/state.rs` has 7,737 lines, including a
   1,729-line inline test module, and the tests in
@@ -1811,7 +2162,12 @@ rarely insert at the same place.
   call's `goal_regions` and a `CheckedReleaseClass` with one variant; lowering
   now asserts that the first two are empty and ignores the rest. The flow's
   `is_holder` returns `false`, so `EntryImageHolderConsume` is unreachable, and
-  `driver::check_module` has no caller. Finalize checks every parsed node
+  `driver::check_module` has no caller. `IrRuntimeTargetObligations`'s
+  `call_site_bound` is `false` in its one constructor, so the byte checks
+  `validate_target_obligation` in `compiler/src/target.rs` keeps for a direct
+  `BufferFill`, `WindowBlockNew` or `WindowGrow` node with its own bound never
+  run; every source bound is qualified per call in
+  `validate_source_call_allocations`. Finalize checks every parsed node
   against its production again, the re-verification `design/compiler.md`
   refuses. By reading, generic validation never takes its early return,
   because the prelude's generic signatures are templates in every bundle, so
@@ -1875,23 +2231,58 @@ rarely insert at the same place.
   storage as a blocker; reopen when a larger program's backend profile shows
   material retained text or rendering cost.
 
-- **Review scope misses the conformance adapter's check-integrity group.**
-  `docs/skills/completion-review/scripts/review-scope.sh` classifies every
-  `compiler/` path as code before considering test paths. An adapter-only
-  change under `compiler/tests/conformance/` therefore omits group T even
-  though AGENTS treats that adapter as conformance evidence. Include these
-  adapter/runner paths in the T trigger and cover an adapter-only diff with
-  a scope test. Until then, reviewers must add the applicable T checks by
-  judgment; the compiler-architecture review does so. Defer the tooling
-  change from that compiler migration and reopen when review-scope routing
-  is next changed, requiring both adapter-only inclusion and ordinary-code
-  exclusion to be observed.
-
 ## Open language questions
 
 Questions the owner has left open on purpose. None of them is a decision;
 each is resolved by a discussion and a tree change.
 
+- **A proof counter has no type without an overflow obligation.** Minimal
+  witness: a monitor invariant `produced - consumed == count` over a bounded
+  buffer, whose `produced` and `consumed` exist only for the proof and grow
+  without bound, so as `u64` fields each increment owes an overflow proof no
+  program can give. Ghost state, erased mathematical integers the checker
+  reasons about and the lowering never stores, would express it
+  (`research/investigations/io-model/CONCURRENCY-MODEL.md`, section 5.3);
+  the owner deferred it while spawn was built. Reopen with the first program
+  whose invariant needs such a counter.
+
+- **Type invariants stop at the direct struct type.** [TYPE-11] makes a
+  struct's invariant a requirement and postcondition of each callable whose
+  parameter or result is written as the struct, a construction's obligation,
+  and an atomic block's entry fact and exit obligation. A value of the struct
+  read from anywhere else, an element of a `Slots<Table, n>`, a field of
+  another struct or a `Box` content, gets no fact, and storing one there owes
+  nothing, so a function that returns an element must re-establish the
+  relation to satisfy its result's postcondition. Instantiating the invariant
+  at each such read is sound only once every store owes it, which the
+  module boundary of `design/language/checks-and-proofs` permits. Three
+  related choices stay open: whether a module-internal helper may take a
+  value whose invariant is broken, as SPARK's internal subprograms may;
+  whether generic structs and enums may carry invariants; and whether an
+  affine invariant (a sum of fields) is admitted through an entry snapshot
+  (`research/experiments/monitor-invariants/`). Reopen with the first program
+  that keeps invariant-bearing structs in a container, needs a repair helper,
+  or needs a sum. The standard library gains nothing from type invariants
+  until generic structs may carry them: every `lib/std` collection is
+  generic and every I/O type `opaque`. Even then little moves: of the
+  priority queue's contract clauses (`lib/std/collections/priority_queue/`,
+  interface and body), only `cap <= ceiling`, four `requires`, is a relation
+  every value keeps; the rest state one
+  operation's precondition (`index < len`, `len > 0`) or its effect
+  (`len == entry(len) + 1`), and the maintained programs repeat a field
+  relation at most twice. Reopen generic invariants when a generic type has
+  a relation every value keeps that several functions restate.
+- **A standard collection restates at every operation that its capacity is
+  unchanged.** `ensures queue^.storage.inner.cap == entry(queue)^.storage.inner.cap`
+  appears 15 times across the priority queue's interface and body
+  (`lib/std/collections/priority_queue/`), and its like 10 times in the
+  deque's and 8 in the vector's. It is no type
+  invariant, since it relates two states, and the row cannot supply it,
+  since those functions write the whole `storage`. A way to say that a
+  function preserves a measure, or a row that names the part of a window a
+  function writes, would remove most of them. Count the clauses each would
+  remove and the proofs that still hold before choosing. Reopen when a new
+  collection or a change to window operations adds more such clauses.
 - **Remaining value-evidence boundaries.** The
   [investigation](../research/investigations/result-proof-transport/DESIGN.md)
   leaves three related extensions to assess together: borrowed Result
@@ -1983,45 +2374,58 @@ each is resolved by a discussion and a tree change.
   states the identity, and with the new intervals the exact row is provable
   wherever the step would apply. Reopen when a proof needs the identity and
   the writer cannot use the exact row.
+  A width `end -wrap start` computed under the guard `start <= end` is outside
+  even that step: the guard is a relation between the operands, and the S7
+  row reads only their separate intervals, so the width stays unrelated to a
+  range length `end - start` (conformance case
+  `ref4-neg-a-wrapped-width-does-not-bound-the-range-length`); the exact
+  subtraction under the same guard is the admitted spelling.
 - **The two-premise cutoff of automatic affine derivation.** [ENT-6] tries
   zero, one, and two premises and no more without a written certificate. Why
   the line sits at two, against one or three, is not remembered and needs a
   study before it is recorded.
 
-- **Two waiting calls whose results are both used cannot overlap.** Minimal
-  witness: a waiting function makes `let a = read_at(…first file…);` and
-  then `let b = read_at(…second file…);` and combines `a` and `b`. The second
-  read starts only after the first has completed: a statement that contains
-  a waiting call has no overlap permission [PAR-1, PAR-2], and [WAIT-2]
-  lets a waiting call execute alongside later statements only as an
-  expression statement whose result it releases, so neither read can run
-  alongside the other. Before
-  kernel-spec v0.77, `--par` could hand such calls to two workers. Serving
-  independent connections does not need this; issuing several requests and
-  combining their answers does. The direction agreed with the owner
-  (`research/investigations/io-model/WAITS.md`, "The program means its
-  sequential execution") is `let a = mustpar f(…);` for a waiting `f`: run
-  the call as a context and join it where `a` is first used or where the
-  activation exits. That matches the join a `--par` call already has, and it
-  needs a result slot per context rather than one count per activation.
-  Reopen when a program needs to gather several I/O results.
-
 - **A context can neither log nor report back.** Minimal witness:
   `tcp_contexts.wf` with `serve` writing one line to standard output when
   its peer closes. `OutputStream` is `nocopy` and `Inputs` holds one
-  `stdout`, so moving it into the first marked `serve` leaves nothing to
+  `stdout`, so moving it into the first spawned `serve` leaves nothing to
   move on the next iteration; a reference parameter is refused because a
-  call executing alongside later statements outlives its statement
-  [WAIT-2]; and the marked call's result is released in its context, so
+  spawned context outlives its statement [WAIT-3]; and a spawn statement's
+  result is released in its context, so
   the starter cannot log on its behalf. A second writer of one standard
   output and the two ends of a channel both fail the sharing rule agreed
   with the owner (`research/investigations/io-model/WAITS.md`, "Sharing
   between concurrent activities"), because the order of their operations is
   observed. The admitted candidates are a context writing an output of its
   own, a record sink whose observation is the set of records rather than
-  their order, and a result that the starter joins where it uses it (the
-  entry above). Reopen when a context-serving program needs to log or
-  report.
+  their order, and a result that the starter joins where it uses it, which
+  [WAIT-3] admits as `let r = spawn f(…)` but only for a call whose starter
+  can wait for it, not for an accept loop that never ends.
+  Reopen when a context-serving program needs to log or report.
+- **ENT-3.S6 names only the bound range's length fact.** S6 establishes
+  `part^.len = hi - lo` for `let part = &P[lo..hi];`, while REF-4 states that
+  every range's one measure equals `hi - lo` and the value-image rule gives a
+  formation's length image without a binding. The checker establishes the
+  same S6 relation on the range an argument forms at its call (conformance
+  case `ref4-pos-two-ranges-formed-at-a-call-have-equal-lengths`), reading
+  REF-4 as the entitlement. Decide whether S6 should say so by naming every
+  formation, bound or not; reopen with the next amendment touching S6.
+
+- **An atomic statement over several objects.** `atomic a = &h1, b = &h2`
+  would change two objects at one point, as `MULTI`/`EXEC` across keyspaces
+  or a transfer between two accounts needs. Two handles may name one object,
+  and the checker takes `a` and `b` as disjoint roots, so two writable
+  references could reach one state. It needs either a form whose handles are
+  known distinct or a runtime rule for the aliasing case with a sound static
+  meaning (`research/investigations/io-model/SHARED.md`, "Why a statement").
+  Reopen when a program needs two objects changed together.
+
+- **A shared object's state must have drop, and cannot be taken back.**
+  `Shared<T: drop>` releases its state with its last handle; a `nodrop`
+  state, or a program that wants the value back when it holds the last
+  handle, needs a `shared_into` that returns the state and a way to state
+  that the caller's handle is the last. Reopen when a program keeps a linear
+  value in a shared object.
 
 ## Ownership redesign (candidate x1) follow-ups
 
@@ -2130,7 +2534,12 @@ condition under which it is taken up.
   full sparse-map loop still rejects its extent invariant when its
   length-preserving wrapper is inlined with an explicit extent bridge. Its
   normative classification is unresolved. The [exact controls](../research/investigations/containers-and-resources/X1-LIBRARY.md#generic-owning-map-trial-after-the-ring-comparison)
-  retain both outcomes. Reopen with contract-proof work: reduce the remaining
+  retain both outcomes. The [aggregate-postcondition probes](../research/investigations/aggregate-postconditions/DESIGN.md#separate-finding-lockstep-growth-under-a-branch)
+  reduce a related refusal to two scalars incremented together under a branch
+  in a loop, whose `invariant same: a == b` fails its backedge, and read it as
+  following from ENT-6's per-binding join images and INV-1's affine-only
+  conclusions rather than a compiler defect; Snowghost's line breaker keeps
+  its run-length guards for it. Reopen with contract-proof work: reduce the remaining
   refusal, compare it with ENT-5/ENT-6, and distinguish a compiler defect from
   a proposed rule change before implementation. Keep the admitted wrapper
   while it supplies the needed proof; validate aliases and false preservation
@@ -2337,6 +2746,20 @@ condition under which it is taken up.
   sides, judge the subscripts, then add a case whose caller publishes over
   two different offsets and must not equate them. Owner (PR #118 ruling,
   2026-09-25): later, by the same principle at each selected return.
+- **Affine premises over a reference parameter's fields do not reach the
+  body.** `requires s^.a + s^.b <= 100_u64` over the fields of `&Accounts`
+  gives the body no premise that bounds `b + n` after `let b = s^.b`, while
+  the same `requires` over value parameters does, and stated over entry
+  values tied to the fields by L0 equalities it does too. A smaller case: an
+  L0 `requires s^.a >= n` does not discharge `s^.a - n` written on the
+  place, but does after `let a = s^.a`.
+
+  `research/experiments/monitor-invariants/` holds both as probes
+  (`bank-field-premise`, `field-premise-direct`). The first is the gap of
+  "Readonly-field terms stop at L0" for a plain field: affine images of
+  place terms need kills that follow their support. A monitor invariant over
+  a sum of fields needs it, or an entry snapshot. Reopen with the object
+  invariant, or when a contract over a structure's fields needs a sum.
 - **Tracked-place offsets with projections are not captured.** ENT-2 admits
   any clause (a) term as an offset, but the compiler captures only literals,
   consts and bare bindings. A measure read such as `table[s.k].len` and a
@@ -2509,22 +2932,90 @@ condition under which it is taken up.
 
 ## Verification tooling
 
+- **Nothing refuses a test that runs a compiled program without a
+  deadline.** Every current test that runs a program it compiled goes
+  through the owned process in `compiler/tests/support/process.rs`, which
+  stops it after 60 s, but a new test that calls `Command::output`,
+  `status` or `spawn` on its executable waits without limit again, and only
+  review would notice; four such waits once held a local gate for almost
+  half an hour
+  (`research/investigations/test-economy/time-budgets.md#stop-a-program-that-never-finishes`).
+  The runtime group's C harnesses, which `compiler/Makefile` builds and
+  runs, have only the command's 30-minute deadline. Clippy's
+  `disallowed_methods` in a `compiler/clippy.toml` could refuse
+  those three methods, with an `#[allow]` at each call of the host C
+  compiler, `grep` or `awk` in the tests and at the driver's own calls of
+  the host toolchain. Validate that the lint fails on a restored
+  `Command::output` of a test program. Reopen when a new test program run
+  bypasses the owned process, or when the tests' process calls are next
+  reorganized.
+
+- **The design-tree skill's tests also test this project's CI script.**
+  `design/skill/test_lint.py` runs `.github/design-review-base.sh` in nine
+  of its cases, so a project that copies `design/skill/` gets failing tests,
+  although the skill is meant to move to another project unchanged. Move
+  those cases to a `--self-test` of `design-review-base.sh` wired into
+  `make static`, as the other `.github` scripts do, and keep only the lint's
+  own cases in the skill. Validate that each moved case still fails once for
+  its intended reason. Reopen when the skill is extracted or the CI base
+  selection changes.
 - **Static verification uses inconsistent, mutable comparison refs.** The
   root `spec-archives` target hard-codes local `main`; after a branch integrates
   current upstream, an older local ref can report multiple new archives even
-  when the PR changes no specification. Local `design-lint` instead defaults
-  to the current `origin/main` tip: if it advances past the branch's merge
-  base, new upstream nodes can appear as branch deletions and trigger missing
-  approval-log coverage. Both were observed on the ownership-surface research
-  branch; explicit checks against its actual review base retain the intended
-  obligations. The same advancing-main mismatch recurred during the container
-  branch integration: `Makefile` still defaults `DESIGN_REVIEW_BASE` to
-  `origin/main`, while `.github/design-review-base.sh` selects the work
-  branch's merge base. Select and report one pinned review base consistently
-  with `make review-scope` and the hosted event/fork-point rules. Validate old
-  local main, advancing remote main, an integrated branch and a real branch
-  amendment; retain archive
+  when the PR changes no specification. Local `design-lint` and
+  `design-ready` instead default to the current `origin/main` tip: if it
+  advances past the branch's merge base, new upstream nodes can appear as
+  branch deletions and trigger missing approval-log coverage in
+  `make design-ready`, and an upstream specification amendment makes its
+  specification half demand a `spec/log.md` entry the branch does not owe
+  (reasoned from the code, not yet observed). The first two were observed on the
+  ownership-surface research branch; explicit checks against its actual review
+  base retain the intended obligations. Select and report one pinned review
+  base consistently with hosted CI. Validate old local main, advancing remote
+  main, an integrated branch and a real branch amendment; retain archive
   immutability, version-transition and changed-node coverage checks. Reopen
   at the next workflow-maintenance change. This research uses the existing
   `DESIGN_REVIEW_BASE` override for the actual merge base and records default
   failures; it does not change the checks or another worktree's main ref.
+- **The corpus stage waits on one serial conformance walk.** Each of the
+  conformance adapter's two walks visits every conformance case on one
+  thread, 62 s and 78 s on the four-core container where it was profiled, so
+  there the corpus stage cannot drop below about 78 s at any thread count
+  while its other 91 cases need about 87 CPU-seconds
+  ([serial profile](../research/investigations/test-economy/time-budgets.md#where-the-time-goes)).
+  Splitting each walk's cases across the processors, keeping every case's
+  ordinary compiler path and verdict, would bring that stage near its 57-s
+  processor bound; the hosted runners, whose stage takes 51–97 s, are bounded
+  the same way. It is not the gate's critical path while the unit job is
+  longer; reopen when the corpus job becomes the longest or its budget trips.
+  This changes conformance evidence wiring, so the PR states it under
+  AGENTS.md rule 4.
+- **The Windows io-hosts steps have no time budget.** They run without
+  `run-check.pl`, so only their step timeouts (5 and 8 min) and the job's
+  (10 min) bound them, and the Windows job is now the longest CI job, 230–285
+  s, 171–195 s of it the Rust build and program cases step. Run those steps
+  under `run-check.pl` once its process-group handling is shown to work under
+  the runner's Git Bash, or wrap them in a small timer that writes the same
+  budget record, and give them rows in `.github/time-budgets.txt`. Reopen when
+  the Windows job grows past the gate's longest job by a minute or its step
+  timeout trips.
+- **Incremental rebuilds are not gated.** The time budgets measure hosted
+  cold builds, but daily work pays incremental rebuilds, 6–25 s per edit
+  today. A change that makes them slow, such as merging modules into one
+  large code-generation unit, passes every budget. Measure an edit's
+  incremental rebuild in CI or in `make check` if daily rebuilds grow past
+  about 30 s; validate that the measurement fails when incremental state is
+  discarded.
+- **One budget per runner class hides slow growth on faster runners.** On
+  identical compiler source the ubuntu `check/unit` stage took 123–187 s,
+  so its budget, 1.25 times the slowest run, lets a change grow a fast run by
+  about 90% before the stage trips, and the overrun may land on a later
+  change's run
+  ([budget size](../research/investigations/test-economy/time-budgets.md#the-gate)).
+  The gate's host record now prints the processor model. If the fast and
+  slow runs separate by model, give each model its own budget column, with
+  the current one kept for an unknown model, and lower the margin as far as
+  the within-model spread allows; validate that a leave-one-out over at
+  least seven runs per model trips no build or case stage. Reopen when an
+  overrun is traced to a change that earlier runs on faster machines passed,
+  or when clippy's variance overruns come more than about once a week.

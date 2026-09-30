@@ -1,0 +1,9 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+const letter: u8 = "t";
+
+fn main() -> status: ExitStatus pure {
+  doc "A STRING is not a scalar const value; a character literal is [CONST-2].";
+  return exit_status(code: 0_u8);
+}

@@ -44,6 +44,7 @@
 //!   `owned_pair_results_survive_ordinary_join_and_forced_refusal` stays in
 //!   [`run_owned_lane_cases`], which that case still drives.
 
+use super::BoundedOutput;
 use std::path::Path;
 use std::process::Command;
 
@@ -573,7 +574,7 @@ fn a_call_written_as_an_if_condition_joins_a_compute_overlap_group() {
     for workers in ["0", "1", "4"] {
         let output = Command::new(&executable)
             .env("WF_WORKERS", workers)
-            .output()
+            .bounded_output()
             .expect("run the if-condition overlap probe");
         assert_eq!(output.status.code(), Some(0), "WF_WORKERS={workers}");
         // The handed-out value's low byte and the marker the selected arm
@@ -712,7 +713,7 @@ fn a_group_joins_its_compute_members_newest_first_and_continues_at_the_oldest() 
     for workers in ["0", "1", "4"] {
         let output = Command::new(&executable)
             .env("WF_WORKERS", workers)
-            .output()
+            .bounded_output()
             .expect("run the three-member group");
         assert_eq!(
             output.status.code(),
@@ -793,7 +794,7 @@ fn an_expression_statement_pair_is_handed_out_and_joined() {
     for workers in ["0", "1", "4"] {
         let output = Command::new(&executable)
             .env("WF_WORKERS", workers)
-            .output()
+            .bounded_output()
             .expect("run the expression-statement pair");
         assert_eq!(
             output.status.code(),
@@ -817,7 +818,7 @@ fn a_mixed_fixture_reports(module: &str, expected: i32) {
     for workers in ["0", "1", "4"] {
         let output = Command::new(&executable)
             .env("WF_WORKERS", workers)
-            .output()
+            .bounded_output()
             .expect("run the mixed group");
         assert_eq!(
             output.status.code(),
@@ -1285,7 +1286,7 @@ fn linked_runtime_observes_startup_opt_out_and_a_real_worker() {
         let refused = Command::new(&counted.executable)
             .env("WF_WORKERS", setting)
             .env("WF_SCHED_REPORT", "1")
-            .output()
+            .bounded_output()
             .expect("run the invalid configuration");
         assert_eq!(
             refused.status.code(),
@@ -1455,7 +1456,7 @@ fn counted_run(executable: &Path, workers: Option<&str>) -> (u64, std::process::
     // The observer prints the core's counters after the grant line when asked,
     // so a case that fails on the count has the threads' own record beside it.
     command.env("WF_SCHED_REPORT", "1");
-    let output = command.output().expect("run the counted program");
+    let output = command.bounded_output().expect("run the counted program");
     let report = String::from_utf8_lossy(&output.stderr).into_owned();
     let granted = report
         .lines()
@@ -1774,7 +1775,7 @@ fn run_owned_lane_cases(
     let reference = Command::new(build_executable(&emit(source), &directory))
         .current_dir(&directory)
         .env("WF_WORKERS", "1")
-        .output()
+        .bounded_output()
         .expect("run the source without compute hand-outs");
     assert_eq!(
         reference.status.code(),
@@ -1803,7 +1804,7 @@ fn run_owned_lane_cases(
             .env("WF_WORKERS", workers)
             .env("WF_TEST_REFUSE_LANE", mode)
             .env_remove("WF_SCHED_REPORT")
-            .output()
+            .bounded_output()
             .expect("run the aggregate adapter with forced refusal or real lanes");
         outcomes.push((mode, output));
     }
@@ -1818,7 +1819,7 @@ fn run_owned_lane_cases(
     let missing = Command::new(broken)
         .env("WF_WORKERS", "4")
         .env("WF_TEST_REFUSE_LANE", "2")
-        .output()
+        .bounded_output()
         .expect("run one controlled missing-join path");
     assert_eq!(missing.status.code(), Some(86), "{missing:?}");
     assert!(missing.stdout.is_empty(), "{missing:?}");
@@ -2045,27 +2046,144 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure w
     );
 }
 
-/// Omitting cheap offers must preserve the last join site and the ordinary
-/// evaluation of every removed member, including members inside a mixed run.
+/// A waiting recursion that reaches a compute offer keeps the offer and gets
+/// no budget-carrying family.
+///
+/// `descend` waits and calls itself, and each level calls `pair_total`, whose
+/// two `byte_at` reads form a permitted group. Reaching that hand-out puts
+/// `descend` in the sequential clone set, which is all a cyclic component
+/// needed to be selected for a family. A variant is an ordinary definition
+/// with one trailing budget, and a waiting function is a resumable frame
+/// entered by a transfer [WAIT-1], so emitting one stopped the build with an
+/// invalid-IR failure. This is the shape of `wfgrep.wf`, whose waiting `walk`
+/// recursion reaches the byte-pair offers of `name_before`.
+///
+/// Both `--par` policies are compiled: every eligible group, where the offer
+/// and its join stay in the overlapped world and the offered read runs on a
+/// real worker, and the shipped call grain, which omits the two reads as
+/// below the work unit. Neither gives the waiting component a budget family,
+/// the excluded component is named in the ledger, and the recursion computes
+/// the same total in both worlds.
 #[test]
-fn scalar_leaf_control_keeps_mixed_chain_results_and_join_boundary() {
+fn a_waiting_recursion_that_reaches_an_offer_gets_no_budget_family() {
+    const SOURCE: &[u8] = br#"fn byte_at(store: &[u8], index: u64) -> result: u8 reads(store) {
+  let spare = store^.len;
+  let inside = index < spare;
+  if inside {
+    let value = store^[index];
+    return value;
+  }
+  return 0_u8;
+}
+
+fn pair_total(store: &[u8], at: u64) -> result: u64 reads(store) {
+  let next = at +wrap 1_u64;
+  let first = byte_at(store: store, index: at);
+  let second = byte_at(store: store, index: next);
+  let wide_first = cvt::<u8, u64>(first);
+  let wide_second = cvt::<u8, u64>(second);
+  return wide_first +wrap wide_second;
+}
+
+fn descend(store: &[u8], remaining: u64) -> result: u64 reads(store) waits {
+  if remaining == 0_u64 {
+    return 0_u64;
+  }
+  let here = pair_total(store: store, at: remaining);
+  let fewer = remaining -wrap 1_u64;
+  let below = descend(store: store, remaining: fewer);
+  return here +wrap below;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let cells = box_array_filled::<u8>(count: 64_u64, value: 3_u8);
+  let view = &cells.inner[0_u64..64_u64];
+  let total = descend(store: view, remaining: 20_u64);
+  if total == 120_u64 {
+    return std::process::exit_status(code: 0_u8);
+  }
+  return std::process::exit_status(code: 1_u8);
+}
+"#;
+    let every_group = emit_with_overlap(SOURCE);
+    let shipped = super::emit_lowered(SOURCE, crate::OverlapLowering::OnWithCallGrain);
+    let pair = function_body(&every_group, "@wf_pair_total");
+    assert!(
+        pair.contains("call void @wf__par_publish(") && pair.contains("call void @wf__par_join("),
+        "the byte pair must still be handed out and joined:\n{pair}"
+    );
+    assert!(
+        !function_body(&shipped, "@wf_pair_total").contains("call void @wf__par_publish("),
+        "the call grain omits the two reads below the work unit"
+    );
+    for module in [&every_group, &shipped] {
+        assert!(
+            budget_symbols(module).is_empty(),
+            "a waiting component must get no budget variant: {:?}",
+            budget_symbols(module)
+        );
+    }
+    assert!(
+        clone_symbols(&every_group).contains(&"@wf__par_seq_descend".to_owned()),
+        "the waiting recursion keeps its sequential clone: {:?}",
+        clone_symbols(&every_group)
+    );
+    assert!(
+        clone_symbols(&shipped).is_empty(),
+        "with every offer omitted no function reaches a hand-out, so none is cloned: {:?}",
+        clone_symbols(&shipped)
+    );
+    let ledger = super::compile_permission_ledger(SOURCE);
+    assert!(
+        ledger.iter().any(|line| line
+            == "PAR frontier    component(descend)  excluded: descend is a waiting function"),
+        "the excluded component must be named with its reason: {ledger:?}"
+    );
+
+    let directory = test_directory();
+    let counted = CountedProgram::link(&every_group, &directory);
+    let (granted, parallel) = counted.run(Some("4"));
+    assert_eq!(parallel.status.code(), Some(0), "{parallel:?}");
+    assert!(granted > 0, "the offered read must enter a real worker");
+    for workers in ["1", "0"] {
+        let (granted, output) = counted.run(Some(workers));
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "WF_WORKERS={workers}: {output:?}"
+        );
+        assert_eq!(
+            granted, 0,
+            "WF_WORKERS={workers} selects the sequential world"
+        );
+    }
+    std::fs::remove_dir_all(&directory).expect("remove the test directory");
+}
+
+/// Omitting offers below the call grain must preserve the last join site and
+/// the ordinary evaluation of every removed member, including members inside
+/// a mixed run. `counted` recurses, so its offers stay; `increment` is a few
+/// instructions and loses its offers; `e`, the join site, is never published.
+#[test]
+fn call_grain_keeps_mixed_chain_results_and_join_boundary() {
     let source = br#"fn increment(x: u64) -> result: u64 pure {
   return x +wrap 1_u64;
 }
 
-fn counted(x: u64) -> result: u64 pure {
-  let value = x;
-  for (i in 0_u64..17_u64) {
-    set value = value +wrap i;
+fn counted(x: u64, steps: u64) -> result: u64 pure {
+  if steps == 0_u64 {
+    return x;
   }
-  return value;
+  let fewer = steps -wrap 1_u64;
+  let below = counted(x: x, steps: fewer);
+  return below +wrap steps;
 }
 
 fn mixed(x: u64) -> result: u64 pure {
   let a = increment(x: x);
-  let b = counted(x: x);
+  let b = counted(x: x, steps: 16_u64);
   let c = increment(x: x);
-  let d = counted(x: x);
+  let d = counted(x: x, steps: 16_u64);
   let e = increment(x: x);
   let first = a +wrap b;
   let second = c +wrap d;
@@ -2082,12 +2200,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#;
     let all = super::emit_lowered(source, crate::OverlapLowering::On);
-    let filtered = super::emit_lowered(
-        source,
-        crate::OverlapLowering::OnWithoutSmallScalarLeaves {
-            maximum_operations: 1,
-        },
-    );
+    let filtered = super::emit_lowered(source, crate::OverlapLowering::OnWithCallGrain);
     assert_eq!(
         function_body(&all, "@wf_mixed")
             .matches("call void @wf__par_publish(")
@@ -2113,22 +2226,121 @@ fn main() -> status: std::process::ExitStatus pure {
     let renamed = String::from_utf8(source.to_vec())
         .unwrap()
         .replace("increment", "renamed_leaf");
-    let renamed = super::emit_lowered(
-        renamed.as_bytes(),
-        crate::OverlapLowering::OnWithoutSmallScalarLeaves {
-            maximum_operations: 1,
-        },
-    );
+    let renamed = super::emit_lowered(renamed.as_bytes(), crate::OverlapLowering::OnWithCallGrain);
     assert_eq!(
         function_body(&renamed, "@wf_mixed")
             .matches("call void @wf__par_publish(")
             .count(),
         2
     );
+    let (_, ledger) = crate::compile_with_permission_ledger(
+        &[crate::SourceInput::new("test.wf", source)],
+        crate::CompilerLimits::default(),
+        crate::OverlapLowering::OnWithCallGrain,
+    )
+    .expect("the mixed chain compiles");
+    assert_eq!(
+        ledger
+            .iter()
+            .filter(|line| line.starts_with(
+                "PAR actualization  mixed  call grain: omitted offer of increment (static work "
+            ))
+            .count(),
+        2,
+        "each omitted offer is named with its callee's static work: {ledger:?}"
+    );
+}
+
+/// A permitted recursive pair whose lane frame exceeds the runtime slot hands
+/// nothing out, and the ledger says which offer and how many bytes. The same
+/// recursion with a 192-byte argument fits and is handed out with no such line;
+/// with a 256-byte argument the frame is 304 bytes: 288 of arguments, the
+/// `Bool` result, and the `u64` budget its variant carries into its own
+/// component.
+#[test]
+fn a_call_group_over_the_lane_slot_is_named_in_the_ledger() {
+    let source = |words: usize| {
+        format!(
+            "struct Big {{
+  words: Array<u64, {words}>;
+}}
+
+fn fill(out: &[u64], lo: u64, hi: u64, parent: Big) -> ok: Bool writes(out) {{
+  let length = out^.len;
+  if hi <= lo {{
+    return length == 0_u64;
+  }}
+  let count = hi - lo;
+  if count == 1_u64 {{
+    if length == 0_u64 {{
+      return False();
+    }}
+    set out^[0_u64] = lo;
+    return True();
+  }}
+  let half = count / 2_u64;
+  let within = half <= length;
+  if within {{
+  }} else {{
+    return False();
+  }}
+  let middle = lo + half;
+  let first = &out^[0_u64..half];
+  let second = &out^[half..length];
+  let left = fill(out: first, lo: lo, hi: middle, parent: parent);
+  let right = fill(out: second, lo: middle, hi: hi, parent: parent);
+  let both = band(left, right);
+  return both;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  let cells = box_array_filled::<u64>(count: 8_u64, value: 0_u64);
+  let whole = &cells.inner[0_u64..8_u64];
+  let words = array_filled::<u64, {words}>(value: 0_u64);
+  let big = Big(words: words);
+  let ok = fill(out: whole, lo: 0_u64, hi: 8_u64, parent: big);
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+        )
+    };
+    let lane_lines = |ledger: &[String]| {
+        ledger
+            .iter()
+            .filter(|line| line.contains("lane frame:"))
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let fits = source(24);
+    let fits_ledger = super::compile_permission_ledger(fits.as_bytes());
+    assert!(lane_lines(&fits_ledger).is_empty(), "{fits_ledger:?}");
+    assert!(
+        emit_with_overlap(fits.as_bytes()).contains("call void @wf__par_publish("),
+        "a frame with a 192-byte argument fits the slot and is handed out"
+    );
+    let wide = source(32);
+    let wide_ledger = super::compile_permission_ledger(wide.as_bytes());
+    assert!(
+        wide_ledger
+            .iter()
+            .any(|line| line.contains("PAR permitted") && line.contains("pair(fill, fill)")),
+        "the pair stays permitted: {wide_ledger:?}"
+    );
+    assert_eq!(
+        lane_lines(&wide_ledger),
+        vec![
+            "PAR actualization  fill  lane frame: offer of fill needs 304 bytes aligned to 8, over the 256-byte lane slot; its group of 1 offers runs as ordinary calls"
+                .to_owned()
+        ]
+    );
+    assert!(
+        !emit_with_overlap(wide.as_bytes()).contains("call void @wf__par_publish("),
+        "nothing is handed out"
+    );
 }
 
 #[test]
-fn scalar_leaf_control_drops_small_offers_without_clones() {
+fn call_grain_drops_small_offers_without_clones() {
     let source = br#"fn twice(x: u64) -> result: u64 pure {
   return x +wrap x;
 }
@@ -2143,24 +2355,67 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 1_u8);
 }
 "#;
-    let filtered = super::emit_lowered(
-        source,
-        crate::OverlapLowering::OnWithoutSmallScalarLeaves {
-            maximum_operations: 1,
-        },
-    );
+    let filtered = super::emit_lowered(source, crate::OverlapLowering::OnWithCallGrain);
     let sequential = super::emit_lowered(source, crate::OverlapLowering::Off);
     assert_eq!(
         filtered, sequential,
         "pruning every offer must recover the ordinary module"
     );
-    let retained = super::emit_lowered(
-        source,
-        crate::OverlapLowering::OnWithoutSmallScalarLeaves {
-            maximum_operations: 0,
-        },
-    );
+    let retained = super::emit_lowered(source, crate::OverlapLowering::On);
     assert!(module_requires_parallel_runtime(&retained));
+}
+
+/// The recursion budget bounds how deep offers nest, so only a call in a group
+/// spends a level. `tree` descends a spine of forty lone calls before it
+/// splits; were each of them to spend a level, the default budget would be
+/// gone before the first split and every pair below it would run inline.
+#[test]
+fn only_a_group_member_spends_a_recursion_budget_level() {
+    let source = br#"fn tree(n: u64, spine: u64) -> result: u64 pure contract {
+  requires n <= 6_u64;
+} {
+  if spine > 0_u64 {
+    let fewer = spine - 1_u64;
+    let below = tree(n: n, spine: fewer);
+    return below;
+  }
+  if n == 0_u64 {
+    return 1_u64;
+  }
+  let m = n - 1_u64;
+  let left = tree(n: m, spine: 0_u64);
+  let right = tree(n: m, spine: 0_u64);
+  return left +wrap right;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let result = tree(n: 6_u64, spine: 40_u64);
+  if result == 64_u64 {
+    return std::process::exit_status(code: 0_u8);
+  }
+  return std::process::exit_status(code: 1_u8);
+}
+"#;
+    let module = emit_with_overlap(source);
+    let body = function_body(&module, "@wf__par_budget_tree");
+    let calls: Vec<&str> = body
+        .lines()
+        .filter(|line| line.contains("call i64 @wf__par_budget_tree("))
+        .collect();
+    let passed = |budget: &str| {
+        calls
+            .iter()
+            .filter(|line| line.ends_with(&format!(", i64 {budget})")))
+            .count()
+    };
+    // The spine call passes its levels on; the inline member and its refused
+    // edge spend one. The published member spends its level in the thunk.
+    assert_eq!(passed("%wf.budget"), 1, "{body}");
+    assert_eq!(passed("%wf.budget.next"), 2, "{body}");
+    assert_eq!(calls.len(), 3, "{body}");
+    assert!(body.contains("call void @wf__par_publish("), "{body}");
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
 }
 
 /// One pinned budget, as the matrix below writes it.
@@ -2302,17 +2557,15 @@ fn main() -> status: std::process::ExitStatus pure {{
                 let policy = if let Some(budget) = budget {
                     crate::OverlapLowering::OnWithRecursionBudget {
                         budget,
-                        maximum_scalar_leaf_operations: Some(16),
+                        call_grain: crate::CallGrain::WorkUnit,
                         sequential_refusal: sequential,
                     }
                 } else if sequential {
                     crate::OverlapLowering::OnWithSequentialRefusal {
-                        maximum_scalar_leaf_operations: Some(16),
+                        call_grain: crate::CallGrain::WorkUnit,
                     }
                 } else {
-                    crate::OverlapLowering::OnWithoutSmallScalarLeaves {
-                        maximum_operations: 16,
-                    }
+                    crate::OverlapLowering::OnWithCallGrain
                 };
                 let family = budget != Some(crate::RecursionBudget::Off);
                 let module = super::emit_lowered(source.as_bytes(), policy);
@@ -2401,7 +2654,7 @@ fn main() -> status: std::process::ExitStatus pure {{
                         let output = Command::new(&executable)
                             .env("WF_TEST_ONE_GRANT", if granted { "1" } else { "0" })
                             .env("WF_TEST_BUDGET", derived.to_string())
-                            .output()
+                            .bounded_output()
                             .expect("run deterministic refusal schedule");
                         assert!(output.status.success(), "{output:?}");
                         // Full binary tree: 31 internal calls. With no grants
@@ -2460,16 +2713,16 @@ fn main() -> status: std::process::ExitStatus pure {
     let reference = emit_with_overlap(source);
     for policy in [
         crate::OverlapLowering::OnWithSequentialRefusal {
-            maximum_scalar_leaf_operations: None,
+            call_grain: crate::CallGrain::Every,
         },
         crate::OverlapLowering::OnWithRecursionBudget {
             budget: crate::RecursionBudget::Pinned(std::num::NonZeroU8::new(3).unwrap()),
-            maximum_scalar_leaf_operations: None,
+            call_grain: crate::CallGrain::Every,
             sequential_refusal: false,
         },
         crate::OverlapLowering::OnWithRecursionBudget {
             budget: crate::RecursionBudget::Off,
-            maximum_scalar_leaf_operations: None,
+            call_grain: crate::CallGrain::Every,
             sequential_refusal: false,
         },
     ] {
@@ -2590,7 +2843,7 @@ fn layout_folds_preserve_permissions_and_each_execute_a_worker() {
     let executable = build_linked_executable(&observed, Some(&host), &[], &directory);
     let output = Command::new(executable)
         .env("WF_WORKERS", "4")
-        .output()
+        .bounded_output()
         .expect("run observed layout");
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     assert_eq!(output.stdout, b"420a993efa7437a1 41fa962893d45299\n");

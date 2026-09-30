@@ -43,6 +43,7 @@
 //! owns keeps the generated fixture on the spec version the module is written
 //! against.
 
+use super::BoundedOutput;
 use std::process::Command;
 
 use super::parallel::{CountedProgram, clone_symbols, function_body, identical};
@@ -981,7 +982,7 @@ fn a_split_loop_carries_its_captures_and_a_second_combine() {
 
     let directory = test_directory();
     let reference = Command::new(build_executable(&unsplit, &directory))
-        .output()
+        .bounded_output()
         .expect("run the module that splits nothing");
     assert_eq!(reference.status.code(), Some(0));
     assert_eq!(reference.stdout.len(), 8);
@@ -991,7 +992,7 @@ fn a_split_loop_carries_its_captures_and_a_second_combine() {
     for workers in ["1", "4"] {
         let output = Command::new(&executable)
             .env("WF_WORKERS", workers)
-            .output()
+            .bounded_output()
             .expect("run the split program");
         assert_eq!(output.status.code(), Some(0), "WF_WORKERS={workers}");
         runs.push((format!("WF_WORKERS={workers}"), output.stdout));
@@ -1136,7 +1137,7 @@ fn an_aligned_nominal_payload_capture_handles_empty_and_mixed_measure_element_pa
 
     let directory = test_directory();
     let reference = Command::new(build_executable(&unsplit, &directory))
-        .output()
+        .bounded_output()
         .expect("run the unsplit nominal-element map");
     assert_eq!(reference.status.code(), Some(0), "{reference:?}");
     assert!(reference.stdout.is_empty());
@@ -1145,7 +1146,7 @@ fn an_aligned_nominal_payload_capture_handles_empty_and_mixed_measure_element_pa
     for workers in ["0", "1", "4"] {
         let output = Command::new(&executable)
             .env("WF_WORKERS", workers)
-            .output()
+            .bounded_output()
             .expect("run the split nominal-element map");
         assert_eq!(
             output.status.code(),
@@ -1218,7 +1219,7 @@ fn nested_boxed_array_payload_reductions_preserve_the_unsplit_result() {
 
     let directory = test_directory();
     let reference = Command::new(build_executable(&unsplit, &directory))
-        .output()
+        .bounded_output()
         .expect("run the unsplit nested reductions");
     assert_eq!(reference.status.code(), Some(0), "{reference:?}");
     assert!(reference.stdout.is_empty());
@@ -1227,7 +1228,7 @@ fn nested_boxed_array_payload_reductions_preserve_the_unsplit_result() {
     for workers in ["0", "1", "4"] {
         let output = Command::new(&executable)
             .env("WF_WORKERS", workers)
-            .output()
+            .bounded_output()
             .expect("run the nested split reductions");
         assert_eq!(
             output.status.code(),
@@ -1262,7 +1263,9 @@ fn nested_boxed_array_payload_reductions_preserve_the_unsplit_result() {
         if zero {
             command.env("WF_TEST_ZERO_BUDGET", "1");
         }
-        let output = command.output().expect("run observed nested loop budget");
+        let output = command
+            .bounded_output()
+            .expect("run observed nested loop budget");
         assert_eq!(output.status.code(), Some(0), "zero={zero}: {output:?}");
         assert_eq!(output.stdout, reference.stdout);
     }
@@ -1354,7 +1357,7 @@ fn an_independent_map_joins_and_preserves_its_outer_buffer() {
 
     let directory = test_directory();
     let reference = Command::new(build_executable(&unsplit, &directory))
-        .output()
+        .bounded_output()
         .expect("run the map that splits nothing");
     assert_eq!(reference.status.code(), Some(0));
     assert_eq!(reference.stdout.len(), 400000);
@@ -1364,7 +1367,7 @@ fn an_independent_map_joins_and_preserves_its_outer_buffer() {
     for workers in ["0", "1", "4"] {
         let output = Command::new(&executable)
             .env("WF_WORKERS", workers)
-            .output()
+            .bounded_output()
             .expect("run the split map");
         assert_eq!(output.status.code(), Some(0), "WF_WORKERS={workers}");
         assert_eq!(output.stdout.len(), 400000, "WF_WORKERS={workers}");
@@ -1387,7 +1390,9 @@ fn an_independent_map_joins_and_preserves_its_outer_buffer() {
         if zero {
             command.env("WF_TEST_ZERO_BUDGET", "1");
         }
-        let output = command.output().expect("run observed Unit-map loop budget");
+        let output = command
+            .bounded_output()
+            .expect("run observed Unit-map loop budget");
         assert_eq!(output.status.code(), Some(0), "zero={zero}: {output:?}");
         assert_eq!(output.stdout, runs[0].1);
     }
@@ -1410,7 +1415,7 @@ fn a_borrowed_read_modify_map_preserves_the_sequential_bytes() {
 
     let directory = test_directory();
     let reference = Command::new(build_executable(&unsplit, &directory))
-        .output()
+        .bounded_output()
         .expect("run the sequential holder map");
     assert_eq!(reference.status.code(), Some(0));
     assert_eq!(reference.stdout.len(), 400000);
@@ -1420,7 +1425,7 @@ fn a_borrowed_read_modify_map_preserves_the_sequential_bytes() {
     for workers in ["0", "1", "4"] {
         let output = Command::new(&executable)
             .env("WF_WORKERS", workers)
-            .output()
+            .bounded_output()
             .expect("run the split holder map");
         assert_eq!(output.status.code(), Some(0), "WF_WORKERS={workers}");
         assert_eq!(output.stdout.len(), 400000, "WF_WORKERS={workers}");
@@ -1495,14 +1500,14 @@ fn an_expression_statement_row_map_is_split_and_keeps_its_rows() {
     let split = emit_with_overlap(EXPRESSION_STATEMENT_ROWS);
     let directory = test_directory();
     let reference = Command::new(build_executable(&unsplit, &directory))
-        .output()
+        .bounded_output()
         .expect("run the row map that splits nothing");
     assert_eq!(reference.status.code(), Some(0), "{reference:?}");
     let executable = build_executable(&split, &directory);
     for workers in ["0", "1", "4"] {
         let output = Command::new(&executable)
             .env("WF_WORKERS", workers)
-            .output()
+            .bounded_output()
             .expect("run the split row map");
         assert_eq!(
             output.status.code(),
@@ -1538,7 +1543,7 @@ fn a_map_and_reduction_preserves_both_results() {
 
     let directory = test_directory();
     let reference = Command::new(build_executable(&unsplit, &directory))
-        .output()
+        .bounded_output()
         .expect("run the combined loop that splits nothing");
     assert_eq!(reference.status.code(), Some(0));
     assert_eq!(reference.stdout.len(), 400008);
@@ -1548,7 +1553,7 @@ fn a_map_and_reduction_preserves_both_results() {
     for workers in ["0", "1", "4"] {
         let output = Command::new(&executable)
             .env("WF_WORKERS", workers)
-            .output()
+            .bounded_output()
             .expect("run the combined split loop");
         assert_eq!(output.status.code(), Some(0), "WF_WORKERS={workers}");
         runs.push((format!("WF_WORKERS={workers}"), output.stdout));
@@ -1955,7 +1960,7 @@ fn every_admitted_combine_splits_and_publishes_the_unsplit_bytes() {
 
     let directory = test_directory();
     let reference = Command::new(build_executable(&unsplit, &directory))
-        .output()
+        .bounded_output()
         .expect("run the module that splits nothing");
     assert_eq!(reference.status.code(), Some(0));
     assert_eq!(
@@ -2013,7 +2018,7 @@ __attribute__((constructor)) static void register_rows(void) { atexit(report_row
     let output = Command::new(executable)
         .env("WF_WORKERS", "4")
         .env("WF_SPLIT_WORK", "1")
-        .output()
+        .bounded_output()
         .expect("run all controlled combine rows");
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     assert!(output.stderr.is_empty(), "{output:?}");
@@ -2155,7 +2160,7 @@ __attribute__((constructor)) static void register_report(void) { atexit(report);
         if positive {
             command.env("WF_TEST_POSITIVE_BUDGET", "1");
         }
-        let output = command.output().expect("run composed split loops");
+        let output = command.bounded_output().expect("run composed split loops");
         assert_eq!(
             output.status.code(),
             Some(0),
@@ -2213,7 +2218,9 @@ __attribute__((constructor)) static void register_report(void) { atexit(report);
         if positive {
             command.env("WF_TEST_POSITIVE_BUDGET", "1");
         }
-        let output = command.output().expect("run controlled degenerate ranges");
+        let output = command
+            .bounded_output()
+            .expect("run controlled degenerate ranges");
         assert_eq!(
             output.status.code(),
             Some(0),
@@ -2371,7 +2378,7 @@ fn a_loop_whose_frame_is_too_wide_declines_and_says_so() {
         for workers in ["1", "4"] {
             let output = Command::new(&executable)
                 .env("WF_WORKERS", workers)
-                .output()
+                .bounded_output()
                 .expect("run reused ordinary outer loop");
             assert_eq!(
                 output.status.code(),

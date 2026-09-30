@@ -1,0 +1,24 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Counter {
+  count: u8;
+}
+
+fn make_counter(start: u8) -> made: Box<Counter> pure contract {
+  requires start <= 100_u8;
+  ensures made.inner.count <= 100_u8;
+} {
+  doc "CALL-4: a Box's content is reached by its inner step, so made.inner.count is a datum. The write through the box sets the field the returned place hands back.";
+  let zero = Counter(count: 0_u8);
+  let boxed = box_new::<Counter>(value: zero);
+  set boxed.inner.count = start;
+  return move boxed;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The published bound makes doubling the field safe.";
+  let made = make_counter(start: 7_u8);
+  let doubled = made.inner.count * 2_u8;
+  return exit_status(code: doubled);
+}

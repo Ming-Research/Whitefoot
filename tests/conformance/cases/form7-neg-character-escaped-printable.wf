@@ -1,0 +1,8 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  doc "A printable ASCII character is written as its raw byte, so \\u{41} is not the spelling of A [FORM-7].";
+  let a = '\u{41}'_u8;
+  return exit_status(code: 0_u8);
+}

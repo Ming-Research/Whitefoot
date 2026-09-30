@@ -1,0 +1,15 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn first(segments: &Box<Segments<u64>>) -> value: u64 reads(segments) contract {
+  requires segments^.inner.len > 0_u64;
+} {
+  doc "A Segments is not an indexable base: its subscript selects a segment, which is reached only as the range reference &s[i] forms, so reading it as an element is refused at the subscript.";
+  let value = segments^.inner[0_u64];
+  return value;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The element read above is refused by OP-4.";
+  return exit_status(code: 0_u8);
+}
