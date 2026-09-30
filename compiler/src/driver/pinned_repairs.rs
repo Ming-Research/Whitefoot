@@ -1857,6 +1857,144 @@ fn main() -> status: std::process::ExitStatus pure {
     // negation of one of the target's bounds [MSR-4].
     // -------------------------------------------------------------------
     RepairPair {
+        name: "len-field-in-header-factor.wf",
+        rejected: include_bytes!("../../../tests/conformance/cases/inv1-neg-len-field-factor.wf"),
+        rule: "INV-1",
+        sentences: &[
+            "\n  reason: an affine factor selects a field or an element of a place\n",
+            "\n  mechanical_fix: bind the integer value with a `let` and use that binding\n",
+        ],
+        repaired: &[br#"struct Bounds {
+  len: u64;
+}
+
+const limits: Bounds = Bounds(len: 4_u64);
+
+fn main() -> status: std::process::ExitStatus pure {
+  let length = limits.len;
+  for (
+    i in 0_u64..4_u64,
+    invariant bounded: 0_u64 <= length
+  ) {
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "cap-field-in-reference-factor.wf",
+        rejected: include_bytes!("../../../tests/conformance/cases/inv1-neg-cap-field-factor.wf"),
+        rule: "INV-1",
+        sentences: &[
+            "\n  reason: an affine factor selects a field or an element of a place\n",
+            "\n  mechanical_fix: bind the integer value with a `let` and use that binding\n",
+        ],
+        repaired: &[br#"struct Bounds {
+  cap: u32;
+}
+
+fn inspect(limits: &Bounds) -> result: u32 reads(limits.cap) {
+  let capacity = limits^.cap;
+  invariant bounded: 0_u32 <= capacity;
+  return limits^.cap;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let limits = Bounds(cap: 4_u32);
+  let capacity = inspect(limits: &limits);
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "head-field-in-indexed-factor.wf",
+        rejected: include_bytes!("../../../tests/conformance/cases/inv1-neg-head-field-factor.wf"),
+        rule: "INV-1",
+        sentences: &[
+            "\n  reason: an affine factor selects a field or an element of a place\n",
+            "\n  mechanical_fix: bind the integer value with a `let` and use that binding\n",
+        ],
+        repaired: &[br#"struct Bounds {
+  head: u8;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let initial = Bounds(head: 4_u8);
+  let limits = array_filled::<Bounds, 2>(value: initial);
+  let head = limits[1_u64].head;
+  invariant bounded: head <= 255_u8;
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "measure-named-field-in-proof-source.wf",
+        rejected: include_bytes!("../../../tests/conformance/cases/prf1-neg-measure-named-field-factor.wf"),
+        rule: "PRF-1",
+        sentences: &[
+            "\n  reason: an affine factor selects a field or an element of a place\n",
+            "\n  mechanical_fix: bind the integer value with a `let` and use that binding\n",
+        ],
+        repaired: &[br#"struct Bounds {
+  len: u64;
+}
+
+fn combine(first: u64, second: u64, third: u64, limits: Bounds, second_limit: u64, third_limit: u64) -> result: u8 pure contract {
+  requires first <= limits.len;
+  requires second <= second_limit;
+  requires third <= third_limit;
+} {
+  let length = limits.len;
+  invariant combined: first + second + third <= length + second_limit + third_limit {
+    use (first <= length);
+    use (second <= second_limit);
+    use (third <= third_limit);
+  }
+  return 0_u8;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let limits = Bounds(len: 4_u64);
+  let answer = combine(first: 1_u64, second: 2_u64, third: 3_u64, limits: limits, second_limit: 5_u64, third_limit: 6_u64);
+  return std::process::exit_status(code: answer);
+}
+"#],
+    },
+    // [MSR-1, TYPE-5] a measured type supplies only its declared measures.
+    RepairPair {
+        name: "absent-array-measure-in-factor.wf",
+        rejected: include_bytes!("../../../tests/conformance/cases/type5-neg-absent-array-measure-in-factor.wf"),
+        rule: "TYPE-5",
+        sentences: &[
+            "\n  expected: a measured place whose measure table has this row\n",
+            "\n  found: Array<u8, 2>\n",
+        ],
+        repaired: &[br#"fn main() -> status: std::process::ExitStatus pure {
+  let values = array_filled::<u8, 2>(value: 0_u8);
+  invariant same: values.len == values.len;
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "absent-runtime-array-measure-in-factor.wf",
+        rejected: include_bytes!("../../../tests/conformance/cases/type5-neg-absent-runtime-array-measure-in-factor.wf"),
+        rule: "TYPE-5",
+        sentences: &[
+            "\n  expected: a measured place whose measure table has this row\n",
+            "\n  found: Array<u8>\n",
+        ],
+        repaired: &[br#"fn inspect(values: &Box<Array<u8>>) -> result: u8 pure {
+  invariant same: values^.inner.len == values^.inner.len;
+  return 0_u8;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
         name: "local-invariant-refuted.wf",
         rejected: br#"fn main() -> status: std::process::ExitStatus pure {
   let x = 255_u8;
