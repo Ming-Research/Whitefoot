@@ -6,8 +6,8 @@ performance qualification follows only after the individual APIs qualify.
 
 | Active append path | Established evidence | Remaining qualification |
 |---|---|---|
-| Spare capacity | Earlier paired native comparison passed all six cells against the slower peer | Reconfirm with the repaired RAW-clock instrument on the final implementation |
-| Capacity growth | Boundary-length reuse removes a load; its paired timing establishes no gain. Split-payload, inline-owner, entry-equality and empty-anchor screens each pass only two of six matched cells. The empty-anchor screen's capacity-zero policies beat both peers | Finish representation/fact attribution and all-cell paired comparison; initial-capacity policy cells remain separately visible |
+| Spare capacity | Frozen A/B images passed all six cells in the paired RAW-clock comparison; this does not qualify H or production code | Reconfirm on the final source-compiled implementation |
+| Capacity growth | Repeated unchanged-H measurements pass three of six canonical cells; scalar4096, wide16 and wide256 remain unresolved. H is a hand-edited IR prototype. The exact-H C native probe supplies no new optimization selection | Qualify a source-compiled implementation and every matched cell; keep initial-capacity policy cells separately visible |
 
 The [inline-owner experiment](#inline-runtime-slots-owner-registered-descriptor-placement-discriminator)
 changes only descriptor placement relative to the retained split-payload
@@ -8724,3 +8724,82 @@ diagnostic. It selects no optimization or production policy, relaxes no
 criterion and changes no earlier verdict. No further run followed. H's spare
 timing and generic source ABI remain unqualified; other APIs remain paused
 until append qualifies, with all APIs preceding a full container workload.
+
+#### Exact-H C append twin: registered native-only discriminator
+
+The retained C controls do not implement H's exact public append operation:
+they use header storage, runtime layout arguments or a different timed
+boundary. Test one ordinary typed C expression of H as an independent lowering
+reference, not a guaranteed performance floor. No timing is authorized.
+
+Use specialized scalar/256-byte entry points with the same descriptor address
+and seed ABI and exact 24-byte `{len, cap, payload}` layout. Preserve H's valid
+domain, 8193 capacity ceiling, empty-anchor behavior, doubling capped at 8193
+(including full capacity 4097), full-positive copy at old bytes at most 2048
+and realloc above it. Preserve NULL exhaustion before retirement/publication,
+old-prefix copy extent, free-before-publication, payload/cap publication before
+new-value construction, and final length publication/return. Spare append must
+allocate nothing. Use no restrict, optimizer assumptions, explicit cold hints,
+branch weights or new allocator policy. Ordinary C local values may express
+pointer flow and conditional capacity selection; no facts are added to WF.
+
+Compile this one source directly at the same native Clang -O3 target settings
+as H, separately emitting optimized LLVM for inspection. Do not compile that
+optimized LLVM again to produce the measured native object: this avoids an
+extra optimizer pass. Under the serialized guard, inspect the native object
+against frozen H's reached public append paths, including its forwarding
+branch. Record small, large, saturating, empty and spare paths: executed
+loads/stores, conditionals, calls, register saves/frames, constructor stores
+and publication order. Compare all emitted instructions separately from
+executed successful paths; no allocator-internal cost follows from counts.
+
+A useful new lead must remove concrete executed memory traffic, a payload
+copy/spill, helper call or redundant branch while preserving the contract.
+A J-sized register shuffle or three-instruction saving alone supplies no
+new timing rationale; stop the native probe without another C permutation.
+Any route, extent, publication or failure mismatch also stops. Report source
+and object hashes, exact compile commands, direct statuses and native evidence
+to the root before any correctness or timing expansion.
+
+The source and native artifacts belong only to `.build/append-c-twin` in this
+Vector experiment. They serve this independent lowering-quality control and
+are removed or superseded when a production append implementation qualifies.
+No production compiler, library, specification, tree, other API or ranked
+harness changes are part of this probe.
+
+#### Exact-H C append twin: native-only outcome
+
+The retained [63-line C reference](append-c-twin.c) and
+[native evidence/replay commands](ecosystem-append-c-twin-native.txt) show no
+useful overall native advantage over H. After the native-only stop, the exact
+source and compact record are retained here for replay; compiled intermediates
+remain in scratch. This retention changes no experiment criterion. C removes
+one full-path payload reload,
+coalesces cap/payload stores, and replaces the saturation branch with conditional
+selection. However, its frame grows from 64 to 80 bytes, adding a saved register
+pair and 32 bytes of stack save/load traffic. Allocator calls and the wide
+constructor's 15 vector stores plus two scalar stores remain unchanged.
+
+| Successful path | H scalar/wide instructions | C scalar/wide instructions | H/C conditionals |
+| --- | ---: | ---: | ---: |
+| Large realloc | 33/97 | 35/99 | 5/4 |
+| Small copy | 39/103 | 45/109 | 5/4 |
+| Saturating full capacity | 33/97 | 35/99 | 5/4 |
+| Empty | 27/91 | 33/97 | 3/3 |
+| Spare | 19/83 | 21/85 | 1/1 |
+
+Counts include H's public forwarding branch and exclude allocator internals.
+The evidence retains every reached PC, frames, publication and constructor
+shape, optimized C IR observations and call relocations. Smaller static C bodies
+are not fewer executed instructions. No missing allocator attribute or TBAA
+cause is inferred.
+
+All six guarded compile/inspection stages terminated 0. Two were a comment-only
+recompile after correcting the valid domain to `len<=cap`, `len<8193` and
+qualified backing: larger-cap spare calls already worked unchanged. Both native
+object and optimized IR reproduced byte-identically. A read-only reducer parsing
+failure and its correction are retained separately. No runtime correctness,
+NULL-preservation, ownership or timing tests were run, and no C permutation
+followed. C is an independent reference, not a proven performance floor or a
+selected implementation. Vector append remains unqualified; other APIs do not
+advance.

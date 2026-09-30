@@ -3585,6 +3585,15 @@ condition under which it is taken up.
   isolated processor-model cause. Keep the tests and budgets unchanged; the
   next published head supplies the next CI observation.
 
+  The [4d6641c45 Linux corpus job](https://github.com/mbbill/Whitefoot/actions/runs/36791591539/job/110145715292)
+  likewise passes all 131 cases, but its 95.74 s build exceeds the 95 s
+  budget. The [preceding 61229c993 job](https://github.com/mbbill/Whitefoot/actions/runs/36789881763/job/110140089314)
+  builds the identical compiler/tests/CI trees in 56.00 s. Both use Rust
+  1.98.1; their host records name Xeon Platinum 8573C and EPYC 9V45,
+  respectively. Test execution also differs, 92.14 versus 66.31 s. This
+  extends the host-variation evidence without isolating a processor cause;
+  retain the failed observation and the unchanged budgets.
+
 - **Vector append comparisons do not fully balance variant order.** The
   [growth driver](../research/experiments/container-representation/vector-library/vector-costs.c)
   rotates three variants with `(sample + offset) % 3` and reverses the second

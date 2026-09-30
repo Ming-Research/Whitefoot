@@ -1,0 +1,272 @@
+Exact-H C append twin: native-only independent lowering reference
+Scope: ordinary typed C scalar/256B append, compared to frozen H. No runtime correctness or performance execution, no linked candidate, no production/compiler/library/specification change. Six guarded compile/inspection stages exited0; the two final compiles only corrected a domain comment and reproduced both object and optimizedIR byte-exact. Stop without a C permutation or timing: the dataflow changes do not demonstrate a useful native reduction overall.
+Question and preregistration: RESULTS, Exact-H C append twin. Existing header-based or runtime-layout C controls do not implement this contract. Retained append-c-twin.c serves this explicit one-shot replay below; supersede/remove it when a production append implementation qualifies. C is a reference, not a guaranteed floor. No restrict/assume/cold hint or allocator-policy change was written.
+Contract: 24B {len,cap,payload}; descriptor-address+seed arguments, length return. Valid len<=cap, len<8193 and qualified initialized backing. Full calls imply cap<=8192; larger-cap spare calls work unchanged. Empty uses fresh allocation of one element without freeing its non-owning anchor. Positive full capacity doubles, capped at8193; cap4097..8192 takes that saturated capacity. Old initialized bytes<=2048 choose malloc/NULL/memcpy/free; larger choose realloc/NULL. NULL reports the same20-byte heap record via the partial-write loop and aborts before copying, retirement or owner publication. Source publishes payload then cap, constructs seed/seed+word in backing, then publishes/returns len+1. No other API is implemented here.
+Observed C changes: retained payload SSA phi removes one full-path descriptor load; a paired STP coalesces cap/payload writes. Saturation uses umin/select, emitted CSEL/CSINC instead of H saturation branch. C instead saves selected new capacity across allocator calls and uses an80B frame/five saved pairs versus H64B/four pairs: +32B paired stack save/load traffic. Both store three owner words; H full loads four owner words versus C three. Empty/spare load three in both. No offered-value spill or allocator/helper-call reduction.
+C computes oldbyte length with LSL before comparing2048; H directly compares cap256/8. C unsigned byte arithmetic remains wrapping outside the admitted full domain, while H rawIR multiplication carries nuw; do not turn this into an unregistered C assumption. Inferred Clang allocator attributes are not evidence of a missing WF allocator attribute: WF optimization already infers malloc properties. No TBAA causality is asserted.
+Both wide constructors perform15 constant page/load/vector-add groups,15 unaligned16B stores at8+16k and scalar stores0/248. C interleaves compute/store through q1; H computes vectors then stores. No copied temporary record, new payload spill or constructor work removal. Native C pairs capacity/payload publication before any element store; no intervening observable call, and source order remains payload then cap.
+Executed successful instructions, including H public forwarding and excluding libc internals:
+route | H scalar/wide | C scalar/wide | H/C conditional branches | calls in either
+large | 33/97 | 35/99 | 5/4 | _realloc
+small | 39/103 | 45/109 | 5/4 | _malloc, _memcpy, _free
+saturating | 33/97 | 35/99 | 5/4 | _realloc
+empty | 27/91 | 33/97 | 3/3 | _malloc
+spare | 19/83 | 21/85 | 1/1 | none
+Large means positive full cap<=4096 above byte cutoff; small is below/equal cutoff; saturated is full4097..8192; empty0/0; spare len<cap. Every counted allocation succeeds. No failure path is used to improve these counts. Static append bodies H59/123 plus two public forwarding instructions versus C51/115; fewer static instructions coexist with more executed work in every inspected path. Whole H WF-object versus two-function C-object code size is not a like-for-like comparison.
+
+Exact path PCs, read from disassembly without timing (hex; consecutive ranges inclusive):
+C-word-large: 0-58,c0-c4,98-bc
+C-word-saturating: 0-58,c0-c4,98-bc
+C-word-small: 0-88,98-bc
+C-word-empty: 0-4c,8c-bc
+C-word-spare: 0-2c,9c-bc
+C-record-large: 108-160,2c8-2cc,1a0-2c4
+C-record-saturating: 108-160,2c8-2cc,1a0-2c4
+C-record-small: 108-190,1a0-2c4
+C-record-empty: 108-154,194-2c4
+C-record-spare: 108-134,1a4-2c4
+H-word-large: 10000f714,1000107ac-1000107e8,100010854-100010890
+H-word-small: 10000f714,1000107ac-100010810,100010864-100010890
+H-word-empty: 10000f714,1000107ac-1000107d0,100010814-100010828,10001086c-100010890
+H-word-spare: 10000f714,1000107ac-1000107cc,100010870-100010890
+H-word-saturating: 10000f714,1000107ac-1000107d8,10001082c-100010850,10001086c-100010890
+H-record-large: 10000f718,100010898-1000108d4,100010940-100010a7c
+H-record-small: 10000f718,100010898-1000108fc,100010950-100010a7c
+H-record-empty: 10000f718,100010898-1000108bc,100010900-100010914,100010958-100010a7c
+H-record-spare: 10000f718,100010898-1000108b8,10001095c-100010a7c
+H-record-saturating: 10000f718,100010898-1000108c4,100010918-10001093c,100010958-100010a7c
+Count method: follow the listed successful branches, count each visited disassembly instruction, classify b.*/cbz/cbnz as conditionals; BL targets use Mach-O relocations for C. H source is small-copy-growth/H-native.asm, reached symbols wf_vector_api_append_one$instance$b2fcb9cda4b45694 and694069a978d9626c plus public entries f714/f718. C starts0 and108. All output/module/object hashes below pin this mapping.
+
+Toolchain: Apple clang21.0.0 (clang-2100.3.34.2), native target arm64-apple-darwin25.6.0; emitted IR triple arm64-apple-macosx26.0.0. Same native clang -O3 target settings as H. C11/Wall/Wextra/Werror are source checking options. OptimizedIR is emitted separately; the native object is compiled directly from C, with no second IR optimizer pass.
+Portable replay (same toolchain/host target for exact native comparison):
+export R=/path/to/checkout
+V="$R/research/experiments/container-representation/vector-library"
+D="$V/.build/append-c-twin"
+mkdir -p "$D"
+cp "$V/append-c-twin.c" "$D/append-c-twin.c"
+export WHITEFOOT_CHECK_TIMEOUT=120
+perl "$R/.github/run-check.pl" append-c-twin-native clang -std=c11 -O3 -Wall -Wextra -Werror -c "$D/append-c-twin.c" -o "$D/append-c-twin.o"
+perl "$R/.github/run-check.pl" append-c-twin-optimized-ir clang -std=c11 -O3 -Wall -Wextra -Werror -S -emit-llvm "$D/append-c-twin.c" -o "$D/append-c-twin.ll"
+perl "$R/.github/run-check.pl" append-c-twin-disassemble otool -tvV "$D/append-c-twin.o"
+perl "$R/.github/run-check.pl" append-c-twin-relocations otool -rv "$D/append-c-twin.o"
+H replay/provenance is retained in small-copy-growth.patch and ecosystem-append-growth-small-copy-timing.txt. Do not rebuild the production compiler to reproduce this native-only C probe. IR hashes include the source path; reproduce original path or compare code after accounting for module/source filename strings.
+
+Direct stages (including guard costs), original exact argv:
+native: exit0, 0.128567s; perl ${R}/.github/run-check.pl append-c-twin-native clang -std=c11 -O3 -Wall -Wextra -Werror -c ${R}/research/experiments/container-representation/vector-library/.build/append-c-twin/append-c-twin.c -o ${R}/research/experiments/container-representation/vector-library/.build/append-c-twin/append-c-twin.o
+optimized-ir: exit0, 0.130898s; perl ${R}/.github/run-check.pl append-c-twin-optimized-ir clang -std=c11 -O3 -Wall -Wextra -Werror -S -emit-llvm ${R}/research/experiments/container-representation/vector-library/.build/append-c-twin/append-c-twin.c -o ${R}/research/experiments/container-representation/vector-library/.build/append-c-twin/append-c-twin.ll
+disassemble: exit0, 0.132394s; perl ${R}/.github/run-check.pl append-c-twin-disassemble otool -tvV ${R}/research/experiments/container-representation/vector-library/.build/append-c-twin/append-c-twin.o
+relocations: exit0, 0.126217s; perl ${R}/.github/run-check.pl append-c-twin-relocations otool -rv ${R}/research/experiments/container-representation/vector-library/.build/append-c-twin/append-c-twin.o
+domain-comment-native: exit0, 0.123138s; perl ${R}/.github/run-check.pl append-c-twin-domain-comment-native clang -std=c11 -O3 -Wall -Wextra -Werror -c ${R}/research/experiments/container-representation/vector-library/.build/append-c-twin/append-c-twin.c -o ${R}/research/experiments/container-representation/vector-library/.build/append-c-twin/append-c-twin.o
+domain-comment-optimized-ir: exit0, 0.128541s; perl ${R}/.github/run-check.pl append-c-twin-domain-comment-optimized-ir clang -std=c11 -O3 -Wall -Wextra -Werror -S -emit-llvm ${R}/research/experiments/container-representation/vector-library/.build/append-c-twin/append-c-twin.c -o ${R}/research/experiments/container-representation/vector-library/.build/append-c-twin/append-c-twin.ll
+Original comment incorrectly narrowed capacity to<=8193. Code already handles larger-cap spare calls; corrected only that comment, preserving original source/object/IR snapshots. Correction results: {"native_object_byte_equal": true, "optimized_ir_byte_equal": true, "before": {"append-c-twin.c": "5c54af92919dbd9d01469bcfd76a401bb6d625079e964f2ebfd8aa5fef07c08a", "append-c-twin.o": "d7fd4ae44f8acf9ef050d051d0a788f13704823ab220d4d8e104cbd65d067b7f", "append-c-twin.ll": "9f0b5006bd9b581c5ffe8016f87559a541a60f227903593e26fc64a9262e0a8f"}, "after": {"append-c-twin.c": "4f1e6d2300fb3382fbcecce7f6314631a154ecd855a489ec1453258d9b5e59b2", "append-c-twin.o": "d7fd4ae44f8acf9ef050d051d0a788f13704823ab220d4d8e104cbd65d067b7f", "append-c-twin.ll": "9f0b5006bd9b581c5ffe8016f87559a541a60f227903593e26fc64a9262e0a8f"}}
+Read-only reduction failure retained: initial reducer exit1/KeyError192 used newline-matching whitespace and omitted realloc at0xc0 after ret. Horizontal-whitespace parsing corrected it; no source, native or test requirement changed and no native command was repeated for that error.
+
+Input H pins and final C identities:
+26e66b2e9b0f5aa020384d64f0c53010f107f364cca4c6850fba6d1735edea1e research/experiments/container-representation/vector-library/.build/small-copy-growth/H-timed
+37212ffc56682eecb3560e08f0769e9f7ab32f0faa59d656aa92d57575695412 research/experiments/container-representation/vector-library/.build/small-copy-growth/whitefoot-timed.ll
+a36e01cfc06ccd77837107817cf59e1aadea2486ada9889502324f2dc75c2baa research/experiments/container-representation/vector-library/.build/small-copy-growth/H-native.asm
+4f1e6d2300fb3382fbcecce7f6314631a154ecd855a489ec1453258d9b5e59b2 append-c-twin.c
+d7fd4ae44f8acf9ef050d051d0a788f13704823ab220d4d8e104cbd65d067b7f append-c-twin.o
+9f0b5006bd9b581c5ffe8016f87559a541a60f227903593e26fc64a9262e0a8f append-c-twin.ll
+
+Complete C native instruction section, call relocations follow:
+_c_twin_word_append_one:
+0000000000000000	stp	x26, x25, [sp, #-0x50]!
+0000000000000004	stp	x24, x23, [sp, #0x10]
+0000000000000008	stp	x22, x21, [sp, #0x20]
+000000000000000c	stp	x20, x19, [sp, #0x30]
+0000000000000010	stp	x29, x30, [sp, #0x40]
+0000000000000014	add	x29, sp, #0x40
+0000000000000018	mov	x20, x1
+000000000000001c	mov	x19, x0
+0000000000000020	ldp	x24, x8, [x0]
+0000000000000024	ldr	x0, [x0, #0x10]
+0000000000000028	cmp	x24, x8
+000000000000002c	b.ne	0x9c
+0000000000000030	lsl	x8, x24, #1
+0000000000000034	mov	w9, #0x2001
+0000000000000038	cmp	x8, #0x2, lsl #12
+000000000000003c	csel	x8, x8, x9, ls
+0000000000000040	cmp	x24, #0x0
+0000000000000044	csinc	x25, x8, xzr, ne
+0000000000000048	lsl	x1, x25, #3
+000000000000004c	cbz	x24, 0x8c
+0000000000000050	lsl	x21, x24, #3
+0000000000000054	cmp	x21, #0x800
+0000000000000058	b.hi	0xc0
+000000000000005c	mov	x23, x0
+0000000000000060	mov	x0, x1
+0000000000000064	bl	0x64
+0000000000000068	cbz	x0, 0xc8
+000000000000006c	mov	x22, x0
+0000000000000070	mov	x1, x23
+0000000000000074	mov	x2, x21
+0000000000000078	bl	0x78
+000000000000007c	mov	x0, x23
+0000000000000080	bl	0x80
+0000000000000084	mov	x0, x22
+0000000000000088	b	0x98
+000000000000008c	mov	x0, x1
+0000000000000090	bl	0x90
+0000000000000094	cbz	x0, 0xc8
+0000000000000098	stp	x25, x0, [x19, #0x8]
+000000000000009c	str	x20, [x0, x24, lsl #3]
+00000000000000a0	add	x0, x24, #0x1
+00000000000000a4	str	x0, [x19]
+00000000000000a8	ldp	x29, x30, [sp, #0x40]
+00000000000000ac	ldp	x20, x19, [sp, #0x30]
+00000000000000b0	ldp	x22, x21, [sp, #0x20]
+00000000000000b4	ldp	x24, x23, [sp, #0x10]
+00000000000000b8	ldp	x26, x25, [sp], #0x50
+00000000000000bc	ret
+00000000000000c0	bl	0xc0
+00000000000000c4	cbnz	x0, 0x98
+00000000000000c8	bl	0xc8
+_exhausted:
+00000000000000cc	stp	x20, x19, [sp, #-0x20]!
+00000000000000d0	stp	x29, x30, [sp, #0x10]
+00000000000000d4	add	x29, sp, #0x10
+00000000000000d8	adrp	x19, 0 ; 0x0
+00000000000000dc	add	x19, x19, #0x0
+00000000000000e0	mov	w20, #0x14
+00000000000000e4	mov	x0, x19
+00000000000000e8	mov	x1, x20
+00000000000000ec	bl	0xec
+00000000000000f0	subs	x20, x20, x0
+00000000000000f4	b.eq	0x104
+00000000000000f8	add	x19, x19, x0
+00000000000000fc	cmp	x0, #0x0
+0000000000000100	b.gt	0xe4
+0000000000000104	bl	0x104
+_c_twin_record_append_one:
+0000000000000108	stp	x26, x25, [sp, #-0x50]!
+000000000000010c	stp	x24, x23, [sp, #0x10]
+0000000000000110	stp	x22, x21, [sp, #0x20]
+0000000000000114	stp	x20, x19, [sp, #0x30]
+0000000000000118	stp	x29, x30, [sp, #0x40]
+000000000000011c	add	x29, sp, #0x40
+0000000000000120	mov	x20, x1
+0000000000000124	mov	x19, x0
+0000000000000128	ldp	x24, x8, [x0]
+000000000000012c	ldr	x0, [x0, #0x10]
+0000000000000130	cmp	x24, x8
+0000000000000134	b.ne	0x1a4
+0000000000000138	lsl	x8, x24, #1
+000000000000013c	mov	w9, #0x2001
+0000000000000140	cmp	x8, #0x2, lsl #12
+0000000000000144	csel	x8, x8, x9, ls
+0000000000000148	cmp	x24, #0x0
+000000000000014c	csinc	x25, x8, xzr, ne
+0000000000000150	lsl	x1, x25, #8
+0000000000000154	cbz	x24, 0x194
+0000000000000158	lsl	x21, x24, #8
+000000000000015c	cmp	x21, #0x800
+0000000000000160	b.hi	0x2c8
+0000000000000164	mov	x23, x0
+0000000000000168	mov	x0, x1
+000000000000016c	bl	0x16c
+0000000000000170	cbz	x0, 0x2d0
+0000000000000174	mov	x22, x0
+0000000000000178	mov	x1, x23
+000000000000017c	mov	x2, x21
+0000000000000180	bl	0x180
+0000000000000184	mov	x0, x23
+0000000000000188	bl	0x188
+000000000000018c	mov	x0, x22
+0000000000000190	b	0x1a0
+0000000000000194	mov	x0, x1
+0000000000000198	bl	0x198
+000000000000019c	cbz	x0, 0x2d0
+00000000000001a0	stp	x25, x0, [x19, #0x8]
+00000000000001a4	dup.2d	v0, x20
+00000000000001a8	add	x8, x0, x24, lsl #8
+00000000000001ac	str	x20, [x8]
+00000000000001b0	adrp	x9, 0 ; 0x0
+00000000000001b4	ldr	q1, [x9]
+00000000000001b8	add.2d	v1, v0, v1
+00000000000001bc	stur	q1, [x8, #0x8]
+00000000000001c0	adrp	x9, 0 ; 0x0
+00000000000001c4	ldr	q1, [x9]
+00000000000001c8	add.2d	v1, v0, v1
+00000000000001cc	stur	q1, [x8, #0x18]
+00000000000001d0	adrp	x9, 0 ; 0x0
+00000000000001d4	ldr	q1, [x9]
+00000000000001d8	add.2d	v1, v0, v1
+00000000000001dc	stur	q1, [x8, #0x28]
+00000000000001e0	adrp	x9, 0 ; 0x0
+00000000000001e4	ldr	q1, [x9]
+00000000000001e8	add.2d	v1, v0, v1
+00000000000001ec	stur	q1, [x8, #0x38]
+00000000000001f0	adrp	x9, 0 ; 0x0
+00000000000001f4	ldr	q1, [x9]
+00000000000001f8	add.2d	v1, v0, v1
+00000000000001fc	stur	q1, [x8, #0x48]
+0000000000000200	adrp	x9, 0 ; 0x0
+0000000000000204	ldr	q1, [x9]
+0000000000000208	add.2d	v1, v0, v1
+000000000000020c	stur	q1, [x8, #0x58]
+0000000000000210	adrp	x9, 0 ; 0x0
+0000000000000214	ldr	q1, [x9]
+0000000000000218	add.2d	v1, v0, v1
+000000000000021c	stur	q1, [x8, #0x68]
+0000000000000220	adrp	x9, 0 ; 0x0
+0000000000000224	ldr	q1, [x9]
+0000000000000228	add.2d	v1, v0, v1
+000000000000022c	stur	q1, [x8, #0x78]
+0000000000000230	adrp	x9, 0 ; 0x0
+0000000000000234	ldr	q1, [x9]
+0000000000000238	add.2d	v1, v0, v1
+000000000000023c	stur	q1, [x8, #0x88]
+0000000000000240	adrp	x9, 0 ; 0x0
+0000000000000244	ldr	q1, [x9]
+0000000000000248	add.2d	v1, v0, v1
+000000000000024c	stur	q1, [x8, #0x98]
+0000000000000250	adrp	x9, 0 ; 0x0
+0000000000000254	ldr	q1, [x9]
+0000000000000258	add.2d	v1, v0, v1
+000000000000025c	stur	q1, [x8, #0xa8]
+0000000000000260	adrp	x9, 0 ; 0x0
+0000000000000264	ldr	q1, [x9]
+0000000000000268	add.2d	v1, v0, v1
+000000000000026c	stur	q1, [x8, #0xb8]
+0000000000000270	adrp	x9, 0 ; 0x0
+0000000000000274	ldr	q1, [x9]
+0000000000000278	add.2d	v1, v0, v1
+000000000000027c	stur	q1, [x8, #0xc8]
+0000000000000280	adrp	x9, 0 ; 0x0
+0000000000000284	ldr	q1, [x9]
+0000000000000288	add.2d	v1, v0, v1
+000000000000028c	stur	q1, [x8, #0xd8]
+0000000000000290	adrp	x9, 0 ; 0x0
+0000000000000294	ldr	q1, [x9]
+0000000000000298	add.2d	v0, v0, v1
+000000000000029c	stur	q0, [x8, #0xe8]
+00000000000002a0	add	x9, x20, #0x1f
+00000000000002a4	str	x9, [x8, #0xf8]
+00000000000002a8	add	x0, x24, #0x1
+00000000000002ac	str	x0, [x19]
+00000000000002b0	ldp	x29, x30, [sp, #0x40]
+00000000000002b4	ldp	x20, x19, [sp, #0x30]
+00000000000002b8	ldp	x22, x21, [sp, #0x20]
+00000000000002bc	ldp	x24, x23, [sp, #0x10]
+00000000000002c0	ldp	x26, x25, [sp], #0x50
+00000000000002c4	ret
+00000000000002c8	bl	0x2c8
+00000000000002cc	cbnz	x0, 0x1a0
+00000000000002d0	bl	0x2d0
+C call relocation sites:
+000002d0 True  long   True   BR26    False     _exhausted
+000002c8 True  long   True   BR26    False     _realloc
+00000198 True  long   True   BR26    False     _malloc
+00000188 True  long   True   BR26    False     _free
+00000180 True  long   True   BR26    False     _memcpy
+0000016c True  long   True   BR26    False     _malloc
+00000104 True  long   True   BR26    False     _abort
+000000ec True  long   True   BR26    False     _wf_resource_write
+000000c8 True  long   True   BR26    False     _exhausted
+000000c0 True  long   True   BR26    False     _realloc
+00000090 True  long   True   BR26    False     _malloc
+00000080 True  long   True   BR26    False     _free
+00000078 True  long   True   BR26    False     _memcpy
+00000064 True  long   True   BR26    False     _malloc
+Conclusion: one fewer descriptor load/conditional and paired metadata stores accompany larger frames and more executed instructions. This does not establish runtime benefit; no useful overall C-floor advantage is demonstrated. No runtime correctness/NULL/ownership tests or timing were executed. Append remains unqualified; no other API advances.
