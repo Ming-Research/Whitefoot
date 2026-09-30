@@ -2228,8 +2228,7 @@ condition under which it is taken up.
   syntax investigation while the owned rebase meets that contract; reopen
   when selecting its reference counterpart. Do not manufacture an impossible
   branch or weaken a postcondition to complete the comparison.
-- **Conditional measure preservation is a branch-join limit; a rule is
-  proposed.** A counted-loop control calling a length/capacity-preserving
+- **Conditional measure controls expose a branch-join limit.** A counted-loop control calling a length/capacity-preserving
   helper in only one arm rejects its backedge facts, as do lockstep growth
   under a branch and a binary search that updates `low` in one arm and `high`
   in the other. The [branch-join investigation](../research/investigations/branch-join-relations/DESIGN.md)
@@ -2240,12 +2239,18 @@ condition under which it is taken up.
   reason and is admitted by capturing the extent before the branch; the full
   loop the [exact controls](../research/investigations/containers-and-resources/X1-LIBRARY.md#generic-owning-map-trial-after-the-ring-comparison)
   record as still refused with an explicit extent bridge is written in
-  retired syntax and was not reproduced. The investigation recommends that a
-  proved unit-coefficient invariant also establish its L0 relation, as ENT-3.S4
-  does for a requirement, and separately two midpoint rows for ENT-3.S7, with
-  their probes, census and negatives; its five-sample checking-cost timing
-  was not run and remains before implementation. Keep the admitted wrapper
-  and captures while they supply the proof; reopen on the owner's ruling.
+  retired syntax and was not reproduced. A prototype that also establishes a
+  proved unit-coefficient invariant as an L0 relation admits the complete
+  line-break and CSS rewrites; with two midpoint rows it admits loop searches.
+  Its [cost replay](../research/investigations/branch-join-relations/DESIGN.md#current-cost-results)
+  does not qualify the proposals: HTML tree-building peak RSS exceeds the
+  recorded 10% criterion under the invariant projection, and Vector's inert
+  control itself exceeds that threshold, so its row-only result cannot be
+  attributed to the candidate. Keep the admitted wrapper and captures.
+  Reopen rule selection when a real consumer needs the simpler source, after
+  attributing memory growth and repeating the affected comparisons with a
+  qualified control; retain the original time/RSS criterion and source-rule
+  negatives. Reduce and classify the full sparse-map loop separately.
 - **Owning HashMap has a remaining large-value performance gap.** The
   [matched comparison](../research/experiments/container-representation/map-library/RESULTS.md)
   exercises the actual generic library, including must-consume pairs, without

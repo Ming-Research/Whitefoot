@@ -43,8 +43,8 @@ function whose `requires` carry the relations a loop could not.
 The question is which relations should survive a join, under [ENT-1]'s
 constraints: automatic derivation is specification-fixed, deterministic and
 terminating, no solver takes part, and harder proofs arrive as written `use`
-steps [PRF-1]. This record edits no specification, design tree or compiler;
-its recommendation goes to the owner.
+steps [PRF-1]. This record leaves the specification, design tree and production compiler
+unchanged; its research conclusion goes to the owner.
 
 ## Current replay protocol
 
@@ -55,6 +55,9 @@ PR #178's `f892d870ece812c9950f054016b63520f17f1dbe` revision. The new base
 already retains loop-exit facts and supports text literals, so the prototype
 no longer emulates either change. Its switches remain research-only; no
 production compiler or specification is changed by this investigation.
+The `a`, `ap` and `b` configurations enable only their respective join switch;
+`rows` enables both midpoint switches, and `b_rows` combines (b) with them.
+The historical (a+) plus rows combination below is not part of this replay.
 
 Before the new timing results, the replay retains the original 10% time/RSS
 criterion and distinguishes three observations:
@@ -115,7 +118,11 @@ scale and program inputs are accepted under every measured configuration.
 (a+) has no Snowghost/program rows for the reason above.
 The sweep was resumed after fixing its parsing of the CLI's multi-module
 diagnostic envelope; development scale inputs rejected for noncanonical
-whitespace were corrected and rechecked, not used as cost samples.
+whitespace were corrected and rechecked, not used as cost samples. The
+identity records the final replay recipe and executable hashes; the verdict
+rows were collected across those runner repairs, with unchanged compiler
+binaries and the final input bytes for each retained row. The cost matrix is
+a fresh invocation of that final recipe.
 
 The candidate changes exactly the six conformance source verdicts listed in
 the historical [evaluation](#evaluation-against-the-criterion): (a), (a+) and
@@ -158,11 +165,73 @@ analytic reason above. All scale controls remain accepted.
 
 These observations establish source-proof benefit on complete modules. They
 are not native execution tests, timings of the rewrites, or a claim that the
-new patch recovers every historical census edit. The initial development
-rewrites' contract ordering and conditional spelling were corrected before
-these semantic outcomes were recorded. Two requested pauses interrupted the
-font replay; only completed compiler outcomes were retained and missing pairs
-were resumed with unchanged inputs.
+new patch recovers every historical census edit. Only completed compiler
+outcomes enter the table; interrupted invocations were resumed for missing
+pairs with unchanged inputs. All reported refusals are semantic proof
+obligations, not syntax failures.
+
+## Current cost results
+
+The [raw samples](cost.csv) and [run identity](cost-identity.json) record a
+fresh complete run on an Apple M1 Pro with 32 GiB RAM, macOS 26.6.2 arm64.
+It contains 29 workloads, 185 workload/configuration pairs and 1,110 samples:
+one warmup and five measured rounds per pair. Every accepted/rejected count
+in every round matches the companion source-verdict table. Compiler builds
+and temporary input extraction are outside the measured CLI intervals.
+
+Ratios below divide each configuration by the base on the same workload.
+Time is the median of rounds 1–5; RSS is their maximum per-process peak.
+The maxima summarize all 29 workloads for each configuration, except (a+),
+whose declared scope is the eleven collection/scale workloads. Raw aggregate
+program/corpus time is the sum of its individual CLI checks, and RSS is the
+largest child peak, not the sum of separate processes.
+
+| Configuration | Largest time ratio (workload) | Largest RSS ratio (workload) |
+|---|---|---|
+| All switches off | 1.030 (`snowghost/css::rules`) | 1.103 (`collections/vector`) |
+| (a) | 1.482 (`chain/64`) | 1.159 (`snowghost/html::tree_builder`) |
+| (a+) | 107.254 (`chain/64`) | 1.092 (`collections/vector`) |
+| (b) | 1.048 (`collections/vector`) | 1.113 (`snowghost/html::tree_builder`) |
+| Rows | 1.033 (`chain/8`) | 1.123 (`collections/vector`) |
+| (b) + rows | 1.024 (`snowghost/text::line_break`) | 1.113 (`snowghost/html::tree_builder`) |
+
+The (b), rows and combined time ratios stay within 10% on this matrix. The
+RSS criterion is not qualified:
+
+- On `html::tree_builder`, base peak RSS is 2,685,419,520 bytes; (b) reaches
+  2,988,507,136 bytes (1.113 times), and (b) plus rows reaches 2,988,949,504
+  bytes (1.113 times). The inert prototype is 1.040 times the base.
+- On Vector, base peak RSS is 16,105,472 bytes; the inert prototype reaches
+  17,760,256 bytes (1.103 times), and rows reaches 18,087,936 bytes (1.123
+  times). The inert control itself crosses the 10% line here. This prevents
+  attributing the row-only difference to the proposed inference; it does not
+  establish that the candidate meets the original absolute criterion.
+
+These are observed maxima from five samples, not an attribution of every
+byte to a rule or a universal memory overhead. Keep both the first-run
+results and the control limitation. Before implementation, investigate the
+memory difference and repeat the affected comparisons with a qualified inert
+control; do not change the denominator, discard samples or relax 10% to make
+this run qualify. The reconstructed program/scale inventory also retains
+the historical coverage limitation stated above.
+
+The finite scale reconstruction supplies the following growth observations.
+It does not by itself establish an asymptotic bound; the analytic bounds in
+the candidate definitions remain separate grounds.
+
+| Counters | Base median seconds | (a) / base | (a+) / base | (b) / base | Rows / base | (b) + rows / base |
+|---|---:|---:|---:|---:|---:|---:|
+| 4 | 0.009235 | 0.975 | 1.060 | 0.971 | 0.999 | 0.977 |
+| 8 | 0.010963 | 1.016 | 2.090 | 1.023 | 1.033 | 0.981 |
+| 16 | 0.017707 | 1.138 | 8.778 | 0.993 | 0.992 | 0.993 |
+| 32 | 0.050646 | 1.342 | 39.428 | 0.990 | 0.987 | 0.995 |
+| 64 | 0.279134 | 1.482 | 107.254 | 0.992 | 1.008 | 0.996 |
+
+The (a+) measured growth confirms its exclusion independently of the lost
+historical chain generator. Candidate (a) also becomes slower on the larger
+family members, in addition to failing the binary-search proof requirement.
+The measured (b) and rows scale ratios remain close to the base, while their
+memory qualification above remains unresolved.
 
 ## Reproduce the current replay
 
@@ -196,7 +265,7 @@ compiler or source input. Tool failures stop the script rather than becoming
 source rejections. Multi-module source diagnostics are retained from the CLI's
 per-module stdout alongside its JSON driver summary.
 
-## Method
+## Historical method (v0.78)
 
 - **Rules read.** [ENT-2] through [ENT-6] of specification v0.78, above all
   [ENT-5]'s joins and loop rule and [ENT-6]'s image join and affine-premise
@@ -754,7 +823,10 @@ loop-exit sites), rows 2, (a+) not measured on Snowghost.
 
 ## Cost
 
-### Method
+This section retains the historical v0.78 protocol and observations. The
+[completed pinned replay](#current-cost-results) supplies the new measurements.
+
+### Historical method (v0.78)
 
 As in the result-proof-transport record: prebuilt gate-profile compilers; for
 each workload one warmup round and five measured rounds, the configurations
@@ -865,15 +937,23 @@ recursions, none of which v0.78 or the #172 emulation removes: met. (a)
 removes the four URL clamps and the merge-sort recursion: met, though (a)
 fails clause 1. The rows remove the two `span - 1` midpoints: met.
 
-**4. Cost.** Not evaluated: the five-sample timing was not run. The stated
-bounds of (b), (a) and the rows are within the closure's; the bound of (a+)
-is not. The single runs of (a+) on `lib/std/collections` (up to 4.6 times
-v0.78) would fail the 10% clause if the timing confirmed them.
+**4. Cost.** The original v0.78 study did not run its five-sample method.
+The stated bounds of (b), (a) and the rows are within the closure's; the bound
+of (a+) is not. The [current replay](#current-cost-results) does not qualify
+(b) or the rows under the recorded 10% time/RSS criterion. Its memory results
+and inert-control limit prevent an implementation recommendation based on
+this record, even though the source-proof benefit is reproduced.
 
 ## Recommendation
 
-Implement (b), and the two midpoint rows as a separate change. Do not
-implement (a) or (a+); defer (c).
+Retain (b) and the two midpoint rows as unadopted proposals. Their source-proof
+benefit is reproduced, but the [current cost replay](#current-cost-results)
+does not meet the recorded qualification criterion. Do not start production
+implementation on this evidence alone: first attribute the memory results
+and repeat the affected comparisons with a qualified inert control. Keep
+(a) rejected on its semantic gap, (a+) on its work bound and measured growth,
+and (c) deferred. These measurements support further cost attribution before
+a language amendment.
 
 **(b)** acts where the relation is lost. b3, b4 and b6 lose it twice: at the
 write, because [ENT-5]'s pre-kill closure carries only L0 facts and an
@@ -885,9 +965,8 @@ existing weakest-bound join keeps it. It adds no join rule, enumerates no path
 and searches nothing: one or two L0 establishments per proved target. It is
 the only prototyped join rule within the closure's bound that meets clauses 1
 to 3 of the criterion (see [Evaluation](#evaluation-against-the-criterion));
-clause 4 awaits the five-sample timing, so the recommendation is conditional
-on it. A writer can predict it: a
-proved comparison of terms behaves after its proof as the same comparison
+clause 4 is not qualified by the current memory observations. A writer can
+predict its source rule: a proved comparison of terms behaves after its proof as the same comparison
 does after a guard. It follows recorded decisions: [ENT-3.S4] gives a
 requirement's comparison its L0 relation, and the automatic-facts node keeps a
 conditional value's common bounds with "the existing difference-bound join"
@@ -913,10 +992,11 @@ about stored element values, which the fact language excludes.
   b3, b4 and p3n, the CSS scans and the line-break lockstep rejected, and every
   item it removes (b) also removes.
 - **(a+), the tightest bound per pair at every join.** Rejected on cost:
-  its bound exceeds the closure's, and single runs on `lib/std/collections`
-  took 1.6 to 4.6 times as long as v0.78. Its one gain over (b) with the rows
-  is the unannotated loop binary search, one written line. Unconfirmed by the
-  five-sample method.
+  its bound exceeds the closure's. The current five-sample reconstruction
+  reaches 107.254 times the base at 64 counters; its collection times also
+  exceed the 10% criterion. The historical (a+) plus rows combination saved
+  one written line over (b) plus rows in an unannotated loop search; that
+  combined configuration was not replayed here.
 - **(c), written join relations.** Deferred rather than rejected. Under (b) a
   unit-coefficient relation needs no new form (an arm-end `invariant`, probe
   b6); (c) acts only at joins, so it cannot help where a relation dies at a
@@ -951,7 +1031,8 @@ about stored element values, which the fact language excludes.
 
 ## Where the decision goes
 
-If the owner accepts the recommendation, the implementing branch carries:
+If the owner later selects a cost-qualified language proposal, its
+implementing branch carries:
 
 - **Design tree.** A direct edit of the live node
   `design/language/checks-and-proofs/automatic-facts.md` on the draft branch,
@@ -988,5 +1069,6 @@ If the owner accepts the recommendation, the implementing branch carries:
   length-preserving call (cm1), the chain (p3n) and the two rows (m4, m7);
   negatives from n1 to n6 and m5; and each flip criterion 2 lists, replaced as
   it requires.
-- **Guidance.** `docs/patterns.md` P8 can show the binary-search loop, and the
-  todo item this record answers closes.
+- **Guidance.** `docs/patterns.md` P8 can show the binary-search loop. Update
+  the TODO for the validated controls; retain the full sparse-map diagnosis
+  until that separate loop has been reproduced and classified.

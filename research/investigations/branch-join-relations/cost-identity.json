@@ -1,0 +1,18 @@
+{
+  "compiler_source": "4459df880b04a7e87f46398969e1382b52637af0",
+  "base_sha256": "419c1aa4108d8bfcd4c5a0c8df806bcd3060811911760fce8c959f8a0abb16cd",
+  "prototype_sha256": "78a8d09b7ac57b7bab819e0f320c837822d3e7b7fd8a811f7db4e7eed38c0377",
+  "patch_sha256": "90c025743974a216a8a3b67efa49c940fba6f26f11b950b74322be9412dc8ec0",
+  "script_sha256": "05701f0e61aaa2e2cba42148d9f04e81f2b39fb8ad0aa856cf90f6122370022f",
+  "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+  "python": "3.14.7",
+  "mode": "cost",
+  "samples": 5,
+  "rewrites_sha256": "5fb2e9b35b6c528597e1c6682915ee230d10082078606a99fa4d59741c7fa7a3",
+  "snowghost_revisions": [
+    "dc0defad7f9e096c29c4fb9b4ace42eec652fbbb",
+    "5edc2f73dcf5817b832916a5d18b48fc8ff9327b",
+    "2377817586b7939e552f9ede6e01c5adc21fb0b9",
+    "3773a1d8aec3a54e5c0c2135c0c518ed5befffca"
+  ]
+}
