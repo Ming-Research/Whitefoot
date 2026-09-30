@@ -1,0 +1,15 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn nested(strip: &[Array<u64, 4>], i: u64) -> result: u64 writes(strip) contract {
+  requires i < strip^.len;
+} {
+  let part = &strip^[i][1_u64..3_u64];
+  let replacement = array_filled::<u64, 4>(value: 9_u64);
+  set strip^[i] = replacement;
+  return part^[0_u64];
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}
