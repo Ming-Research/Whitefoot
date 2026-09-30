@@ -351,6 +351,20 @@ When the head's instant has passed, the driver ends that context's wait:
   the operation completes through its ordinary completion path with either
   its own outcome or `DeadlinePassed`.
 
+The deadline reaches the record before any engine sees it: the operation's
+body hands it to the runtime just before the submit
+(`wf__completion_next_deadline`), and the submit stores it in the record it
+fills. The dispatch then keeps a bounded operation off the driver thread,
+which is the thread that has to end it. An operation the ring does not take
+would otherwise be made in place on that thread when no other context is
+running, and a blocking call made there could not be ended by the thread
+blocked in it. A socket receive, send or accept goes to the readiness route,
+where the driver waits for the descriptor; any other operation goes to the
+helpers, as every operation does once contexts run. A pool pinned to zero
+helpers has no other thread, so there the operation ends when the host
+answers (`docs/todo.md`, "A pinned pool of zero helpers cannot end a blocking
+operation at its deadline").
+
 The contexts counted as waiting on the host (`host_waits`) include those
 waiting on a deadline, so a program whose only pending wait is a sleep is not
 taken for one that can take no step. `wait_host.c` builds its own wait's end
@@ -364,7 +378,8 @@ from the monotonic clock.
 | Linux ring | read, accept, connect, receive, send | `IORING_OP_ASYNC_CANCEL` for the record's key | a cancelled request completes with `-ECANCELED` and transfers nothing; one that finished first completes with its result |
 | readiness, no ring | receive, send, accept | the driver stops polling the descriptor and completes the record | the transfer is a nonblocking call made only after readiness; a record completed by the deadline made none |
 | helper thread, POSIX | stream read and write, connect without a ring | a signal, installed without restart, sent to the helper until it acknowledges | an interrupted blocking call returns `EINTR` before transferring; one that transferred returns its count |
-| helper thread, Windows | accept, stream read and write | `CancelSynchronousIo` on the helper, repeated until it acknowledges | an aborted call reports `ERROR_OPERATION_ABORTED` with no transfer |
+| helper thread, Windows | stream read and write | `CancelSynchronousIo` on the helper, repeated until it acknowledges | an aborted call reports `ERROR_OPERATION_ABORTED` with no transfer |
+| helper thread, Windows | accept | the helper waits for its listener with `WSAPoll` in slices of at most 50 milliseconds and gives up once the deadline has passed, since `CancelSynchronousIo` does not end a blocking `accept` | the accept is made only after the listener reported a connection, and the listener is the program's alone, so the connection is still there |
 | IOCP, Windows | connect, receive, send | `CancelIoEx` for the record's overlapped | as the ring |
 
 A readiness wait alone is not enough for a stream: standard input may be

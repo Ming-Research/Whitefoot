@@ -3174,10 +3174,6 @@ static wf_completion_record *wf_bridge_begin(void *record) {
     return held;
 }
 
-/* Hands the record to whichever engine can take it, in the one order every
- * submit uses: the ring where it has a form for this kind, then the bounded
- * adapter, and the engine here when neither applies.  Every path ends in a
- * record the runtime owns, so there is nothing to answer. */
 /* Completes a socket transfer here when the host answers it without waiting:
  * the operation's outcome is the host's own, and nothing parks, wakes, or
  * crosses a ring for an answer that was already there. */
@@ -3196,10 +3192,6 @@ static int wf_bridge_transfer_now(wf_completion_record *record) {
     return 1;
 }
 
-/* Whether a socket operation this thread would otherwise block in has to
- * wait for its descriptor's readiness instead: other contexts share the
- * thread [WAIT-2], and no ring took the operation.  Its join waits for the
- * descriptor and then makes the operation, which cannot wait by then. */
 /* Whether a kind is one the readiness route makes: a socket transfer or an
  * accept, which a descriptor's readiness answers. */
 static int wf_bridge_readiness_kind(const wf_completion_record *record) {
@@ -3213,6 +3205,10 @@ static int wf_bridge_readiness_kind(const wf_completion_record *record) {
     }
 }
 
+/* Whether a socket operation this thread would otherwise block in has to
+ * wait for its descriptor's readiness instead: other contexts share the
+ * thread [WAIT-2], and no ring took the operation.  Its join waits for the
+ * descriptor and then makes the operation, which cannot wait by then. */
 static int wf_bridge_waits_for_readiness(const wf_completion_record *record) {
     if (atomic_load_explicit(&wf_context_live, memory_order_relaxed) == 0u
         || !wf_file_readiness_supported()) {
@@ -3221,6 +3217,11 @@ static int wf_bridge_waits_for_readiness(const wf_completion_record *record) {
     return wf_bridge_readiness_kind(record);
 }
 
+/* Hands the record to whichever engine can take it, in the one order every
+ * submit uses: the ring where it has a form for this kind, then the readiness
+ * route for a socket operation that must not block this thread, then the
+ * bounded adapter, and the engine here when none applies.  Every path ends in
+ * a record the runtime owns, so there is nothing to answer. */
 static void wf_bridge_dispatch(wf_completion_record *record) {
     int bounded = atomic_load_explicit(&record->deadline, memory_order_relaxed) != 0;
     if (wf_bridge_file_request_is_empty(&record->request)) {

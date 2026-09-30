@@ -484,6 +484,21 @@ rarely insert at the same place.
   Found in the writer-lost-facts investigation; reopen with the next
   diagnostics change.
 
+- **An opaque struct's capabilities ignore its fields.** The checker gives
+  every opaque struct a module declares the field-less host representation
+  (`CheckedNominalKind::Opaque`), whose capabilities come from its modifiers
+  alone, while [TYPE-2] and [PROV-6] give an opaque struct the capabilities
+  its fields give it: `opaque struct Holder { item: Box<u8>; }` without a
+  modifier is copy to the checker and affine to the specification. No such
+  struct has a value [TYPE-2], so the gap shows only in a generic bound or a
+  second use checked against a declared type, and `Instant`, the one opaque
+  struct with a field, has a copy field and no modifier, where the two agree.
+  Its layout is also the 32-byte host representation rather than its fields'.
+  Give an opaque struct with fields the ordinary struct kind with a refused
+  constructor. Validate with conformance cases that pass such a struct where
+  `T: copy` is required and use it twice, both rejected, and with `Instant`
+  unchanged. Reopen with the next change to opaque structs or `std::time`.
+
 ## Containers and storage lowering
 
 - **Validate a shared Ring wrap calculation independent of layout bounds.**
@@ -1744,6 +1759,43 @@ rarely insert at the same place.
   holding a link, with an enumerated link left unfollowed. Reopen when a
   program must open data-named files below linked directories.
 
+- **Files can only be appended.** `std::fs` opens a file for appending,
+  appends, syncs and closes it [PRE-2], and has no positioned write,
+  truncation, rename, removal, directory creation, directory sync, create rule
+  other than create-if-missing, or way to descend into a subdirectory for
+  writing. A program cannot rewrite a log compactly, as Redis's
+  `BGREWRITEAOF` writes a new file, syncs it, renames it over the old one and
+  syncs the directory, nor clean up a file it made; the append-only surface
+  was chosen as the one the persistent programs in view needed
+  (`research/investigations/io-model/TIME-AND-FILES.md`, "Writable
+  directories and append-only files"). Each addition is a specification
+  change to `std::fs` taking the write half. Validate with a program that
+  rewrites its log through a new file and a rename, and survives being
+  stopped between the two steps with one of the two files whole. Reopen when
+  a program must rewrite or remove what it wrote.
+
+- **A pinned pool of zero helpers cannot end a blocking operation at its
+  deadline.** An operation with a deadline that the ring and the readiness
+  route do not carry, such as a read of standard input without a ring, goes
+  to the helpers so the driver thread stays free to end it; with
+  `WF_IO_HELPERS=0` the waiting thread is the queue's only engine and makes
+  the call itself, so the operation ends only when the host answers. The
+  deadline's promise [PRE-2] still holds, since it bounds when
+  `DeadlinePassed` may appear and not how soon, but the program waits past
+  its deadline. Either refuse a deadline-bearing operation that setting would
+  block, or document the setting as unbounded. Validate with the
+  `stdin_deadline.wf` program under `WF_IO_HELPERS=0` without a ring. Reopen
+  with the next change to the helper settings.
+
+- **A clock's readings cannot be replaced for a test.** `now` and the
+  deadline heap read the host's monotonic clock, so a program's behavior at
+  a deadline is tested by waiting for it: the deadline programs and cases
+  sleep for tens of milliseconds and cannot show an order of events that
+  needs a clock to stand still. A test build could answer the clock from a
+  script, as the completion harness already scripts `wf_file_monotonic_ns`.
+  Reopen when a test needs a deadline order that real time cannot produce
+  reliably.
+
 ## Modules and libraries
 
 - **Finish and qualify the modular incremental design.** The module
@@ -2116,6 +2168,20 @@ each is resolved by a discussion and a tree change.
   handle, needs a `shared_into` that returns the state and a way to state
   that the caller's handle is the last. Reopen when a program keeps a linear
   value in a shared object.
+
+- **An atomic statement's guard cannot be bounded by a time.** A context
+  waiting for a guard [SHARE-3] wakes only when another context changes the
+  object, and no deadline or sleep races it, so a context that must act on
+  whichever comes first, work arriving or a time passing, polls: the Redis
+  subset's append-only file writer wakes every few milliseconds to move the
+  buffered changes out instead of waiting for them
+  (`research/investigations/io-model/TIME-AND-FILES.md`, "What is left
+  out"). A deadline on the guard's wait, with a guard-false outcome, would
+  express it without polling. Validate with the writer rewritten to wait on
+  its buffer with a one-second deadline, comparing its wakeups and latency
+  with the polling one. Reopen when a program must wake on the earlier of an
+  object's change and a time, or when the polling writer's cost shows in a
+  profile.
 
 ## Ownership redesign (candidate x1) follow-ups
 
