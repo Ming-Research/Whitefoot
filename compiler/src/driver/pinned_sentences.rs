@@ -325,7 +325,7 @@ fn main() -> status: std::process::ExitStatus pure {
     // -------------------------------------------------------------------
     Probe {
         name: "prelude-range-residual.wf",
-        source: br#"fn main(out: std::io::OutputStream, factory: std::io::HandleFactory) -> status: std::process::ExitStatus pure waits {
+        source: br#"fn main(out: std::io::OutputStream, factory: std::io::HandleFactory) -> status: std::process::ExitStatus pure must_wait {
   let header = array_filled::<u8, 4>(value: 65_u8);
   let payload = array_filled::<u8, 9>(value: 66_u8);
   let wide = payload.len;

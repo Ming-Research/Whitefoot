@@ -1,0 +1,30 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+alias Instant = std::time::Instant;
+
+fn maybe_pause(deadline: Instant, skip: Bool) -> result: unit pure may_wait {
+  doc "Waits only when skip is false.";
+  if skip {
+    return unit;
+  }
+  std::time::sleep_until(deadline: deadline);
+  return unit;
+}
+
+fn drive<fn step(deadline: Instant, skip: Bool) -> result: unit pure must_wait>(deadline: Instant) -> result: unit pure must_wait {
+  doc "Calls its formal once.";
+  let skip = False();
+  step(deadline: deadline, skip: skip);
+  return unit;
+}
+
+fn run(clock: std::time::Clock) -> result: unit pure must_wait {
+  doc "Supplies a may_wait function where the formal writes must_wait [FN-4].";
+  let now = std::time::now(clock: &clock);
+  drive::<fn maybe_pause>(deadline: now);
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

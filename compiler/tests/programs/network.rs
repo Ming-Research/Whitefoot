@@ -655,7 +655,7 @@ const CROSSED_CONNECTIONS: &str = r#"fn cross(first: std::net::TcpConnection, se
   return move a, move b;
 }
 
-fn close_pair(factory: &std::io::HandleFactory, connection: std::net::TcpConnection, receive_first: Bool) -> result: u8 writes(factory) waits {
+fn close_pair(factory: &std::io::HandleFactory, connection: std::net::TcpConnection, receive_first: Bool) -> result: u8 writes(factory) must_wait {
   let std::net::TcpConnection(receive: receive, send: send) = move connection;
   let failed = 0_u8;
   if receive_first {
@@ -692,7 +692,7 @@ fn close_pair(factory: &std::io::HandleFactory, connection: std::net::TcpConnect
   return failed;
 }
 
-fn remaining(connection: &std::net::TcpConnection) -> result: u8 writes(connection.receive), writes(connection.send) waits {
+fn remaining(connection: &std::net::TcpConnection) -> result: u8 writes(connection.receive), writes(connection.send) must_wait {
   let bytes = slots_new::<u8, 1>();
   place_back(window: &bytes, value: 0_u8);
   let destination = &bytes[0_u64..1_u64];
@@ -725,7 +725,7 @@ fn remaining(connection: &std::net::TcpConnection) -> result: u8 writes(connecti
   return 0_u8;
 }
 
-fn exercise(factory: &std::io::HandleFactory, address: &std::net::SocketAddress) -> result: u8 reads(address), writes(factory) waits {
+fn exercise(factory: &std::io::HandleFactory, address: &std::net::SocketAddress) -> result: u8 reads(address), writes(factory) must_wait {
   let receive_first = True();
   let send_first = False();
   let no_deadline = None<std::time::Instant>();
@@ -772,7 +772,7 @@ fn exercise(factory: &std::io::HandleFactory, address: &std::net::SocketAddress)
   }
 }
 
-fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure must_wait {
   let std::process::Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: handles, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &handles, directory: move cwd_write);

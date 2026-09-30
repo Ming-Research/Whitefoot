@@ -2130,18 +2130,6 @@ rarely insert at the same place.
 
 ## Open language questions
 
-- **A loop that waits only through a source helper owes a rank.** [TERM-1]
-  counts a call as a wait only when a host module declares the waiting
-  function, because a source function may declare `waits` and return at
-  once. A server loop whose waits sit in a helper of its own module must
-  call the host function itself or write a rank.
-  - Change: count a call of a function of the same module that waits on
-    every path to each edge leaving it, the least set closed under that
-    rule, or a boundary atom stating it that the definition is checked
-    against [MOD-8].
-  - Reopen with the first program whose never-ending loop waits through a
-    helper.
-
 - **Recursion carries no checked progress yet.** [TERM-1] covers loops;
   a recursive call is unchecked, so `pure` still promises nothing about
   termination and the constitution's "unintended nontermination may remain"
@@ -2149,6 +2137,11 @@ rarely insert at the same place.
   - Change: a TERM-2 rule for recursion, with ranks shared across a recursive component and
     structural descent through owned arguments, as
     `research/investigations/termination/ARENA.md` plans.
+  - A recursive `must_wait` function whose only wait is its own call,
+    `fn f() must_wait { f(); }`, satisfies [WAIT-1] without ever waiting,
+    and a waiting function whose only waiting call is recursive satisfies
+    its colour the same way; TERM-2 closes both, since such a recursion
+    has no progress.
   - Reopen as the next step of the termination work.
 
 Questions the owner has left open on purpose. None of them is a decision;
@@ -2190,6 +2183,30 @@ each is resolved by a discussion and a tree change.
   (`len == entry(len) + 1`), and the maintained programs repeat a field
   relation at most twice. Reopen generic invariants when a generic type has
   a relation every value keeps that several functions restate.
+- **A type invariant does not hold at every point a value is observed.**
+  Minimal witness: `struct Span { start: u64; end: u64; invariant ok(s):
+  s.start <= s.end; }` and `fn len_at(v: &Slots<Span, n>, i: u64) -> u64
+  { let s = v^[i]; return s.end - s.start; }`, which is refused, because
+  in `Span`'s module `set v^[i].start = 100;` may break the relation
+  without owing it back. Admitting the fact at every read needs a point
+  at which every store and field write re-establishes the invariant, and
+  three designs place that point differently: SPARK checks it at the
+  boundary of every subprogram visible outside the package; Spec#'s
+  `expose` names a block inside which the object may be broken and at
+  whose end the invariant is checked; and an observation-point rule
+  checks it wherever the value can next be read from outside the writing
+  statement sequence. A large struct whose three fields must change
+  together constrains the choice: rebuilding the whole struct to keep the
+  relation is either impossible or too costly, so the design must admit a
+  multi-field update whose intermediate states break the relation. The
+  index-relative link form of the termination work
+  (`research/investigations/termination/ARENA.md`, Q17) depends on it,
+  since its rank is a relation stored in each arena element; until this
+  is settled, work that needs the fact states it as a contract or
+  re-checks it at run time. Change: an investigation comparing the three
+  placements on the maintained programs and Snowghost's DOM arena.
+  Reopen when the termination work reaches Q17, or with the first
+  program that keeps invariant-bearing structs in a container.
 - **A standard collection restates at every operation that its capacity is
   unchanged.** `ensures queue^.storage.inner.cap == entry(queue)^.storage.inner.cap`
   appears 15 times across the priority queue's interface and body

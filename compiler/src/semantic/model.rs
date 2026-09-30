@@ -2919,10 +2919,11 @@ pub(crate) struct CheckedFunction {
 /// `context_starts` and `context_awaits`; nothing else here reaches it.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct CheckedWaiting {
-    /// Whether the declaration writes `waits` [WAIT-1].
+    /// Whether the declaration writes a waiting kind, `may_wait` or
+    /// `must_wait` [WAIT-1]; both lower alike.
     pub(crate) waits: bool,
     /// Every call whose selected callee waits, by call node: through a
-    /// function-kind formal, the formal's `waits` decides [WAIT-1].
+    /// function-kind formal, the formal's waiting kind decides [WAIT-1].
     pub(crate) calls: Vec<NodePath>,
     /// Every `expr_stmt` or `let_stmt` whose call is a spawn, which starts a
     /// context [WAIT-3].

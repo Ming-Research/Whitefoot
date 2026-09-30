@@ -7,7 +7,7 @@ alias close_directory_source = std::fs::close_directory_source;
 alias exit_status = std::process::exit_status;
 alias open_directory_source = std::fs::open_directory_source;
 
-fn open_two(factory: &HandleFactory, directory: &DirectoryRead) -> result: unit reads(directory), writes(factory) waits {
+fn open_two(factory: &HandleFactory, directory: &DirectoryRead) -> result: unit reads(directory), writes(factory) must_wait {
   doc "PRE-2 opens pass the same HandleFactory reference twice in sequence and share one DirectoryRead reference; each resulting linear source is explicitly closed. Read/read overlap on the directory is admitted and the two writes of the factory are in different statements.";
   let first = open_directory_source(factory: factory, directory: directory);
   let second = open_directory_source(factory: factory, directory: directory);
@@ -28,7 +28,7 @@ fn open_two(factory: &HandleFactory, directory: &DirectoryRead) -> result: unit 
   return unit;
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+fn main(inputs: Inputs) -> status: ExitStatus pure must_wait {
   let Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: factory, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &factory, directory: move cwd_write);

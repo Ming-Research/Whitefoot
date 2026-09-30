@@ -1,7 +1,7 @@
 alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
-fn poll(cell: &Shared<u64>) -> result: u64 reads(cell) waits {
+fn poll(cell: &Shared<u64>) -> result: u64 reads(cell) may_wait {
   doc "An unguarded atomic statement takes effect at once and is no wait, so polling with one makes no progress [TERM-1, SHARE-3].";
   let seen = 0_u64;
   loop {

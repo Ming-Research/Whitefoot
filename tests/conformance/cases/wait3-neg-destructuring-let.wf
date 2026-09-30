@@ -1,4 +1,4 @@
-fn halves(total: Shared<u8>) -> (low: u8, high: u8) pure waits {
+fn halves(total: Shared<u8>) -> (low: u8, high: u8) pure may_wait {
   let seen = 0_u8;
   atomic value = &total {
     set seen = value^;
@@ -6,7 +6,7 @@ fn halves(total: Shared<u8>) -> (low: u8, high: u8) pure waits {
   return seen, seen +wrap 1_u8;
 }
 
-fn main() -> status: std::process::ExitStatus pure waits {
+fn main() -> status: std::process::ExitStatus pure may_wait {
   let total = shared_new::<u8>(value: 3_u8);
   let (low, high) = spawn halves(total: move total);
   let sum = low +wrap high;

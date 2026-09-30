@@ -1,7 +1,7 @@
 alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
-fn bump_many(counter: Shared<u64>) -> result: unit pure waits {
+fn bump_many(counter: Shared<u64>) -> result: unit pure may_wait {
   for @bump (index in 0_u64..20000_u64) {
     atomic count = &counter {
       set count^ = count^ +wrap 1_u64;
@@ -10,7 +10,7 @@ fn bump_many(counter: Shared<u64>) -> result: unit pure waits {
   return unit;
 }
 
-fn count_together(counter: &Shared<u64>) -> result: unit reads(counter) waits {
+fn count_together(counter: &Shared<u64>) -> result: unit reads(counter) may_wait {
   for @start (index in 0_u64..16_u64) {
     let handle = shared_share::<u64>(shared: counter);
     spawn bump_many(counter: move handle);
@@ -18,7 +18,7 @@ fn count_together(counter: &Shared<u64>) -> result: unit reads(counter) waits {
   return unit;
 }
 
-fn produce(queue: Shared<Ring<u64, 8>>) -> result: unit pure waits {
+fn produce(queue: Shared<Ring<u64, 8>>) -> result: unit pure may_wait {
   for @put (index in 0_u64..5000_u64) {
     atomic items = &queue when items^.len < items^.cap {
       place_back(window: items, value: index);
@@ -27,7 +27,7 @@ fn produce(queue: Shared<Ring<u64, 8>>) -> result: unit pure waits {
   return unit;
 }
 
-fn consume(queue: Shared<Ring<u64, 8>>, total: Shared<u64>) -> result: unit pure waits {
+fn consume(queue: Shared<Ring<u64, 8>>, total: Shared<u64>) -> result: unit pure may_wait {
   for @get (index in 0_u64..5000_u64) {
     let got = 0_u64;
     atomic items = &queue when items^.len > 0_u64 {
@@ -40,7 +40,7 @@ fn consume(queue: Shared<Ring<u64, 8>>, total: Shared<u64>) -> result: unit pure
   return unit;
 }
 
-fn pass_along(queue: &Shared<Ring<u64, 8>>, total: &Shared<u64>) -> result: unit reads(queue), reads(total) waits {
+fn pass_along(queue: &Shared<Ring<u64, 8>>, total: &Shared<u64>) -> result: unit reads(queue), reads(total) may_wait {
   for @start (index in 0_u64..4_u64) {
     let produced = shared_share::<Ring<u64, 8>>(shared: queue);
     spawn produce(queue: move produced);
@@ -51,7 +51,7 @@ fn pass_along(queue: &Shared<Ring<u64, 8>>, total: &Shared<u64>) -> result: unit
   return unit;
 }
 
-fn main() -> status: ExitStatus pure waits {
+fn main() -> status: ExitStatus pure may_wait {
   doc "Shared objects reached from many contexts at once: sixteen contexts add to one counter, and four producers and four consumers pass values through one guarded queue. Every order of their atomic statements gives the same sums, so the status is 0 on every driver count and names the first wrong sum otherwise.";
   let counter = shared_new::<u64>(value: 0_u64);
   count_together(counter: &counter);

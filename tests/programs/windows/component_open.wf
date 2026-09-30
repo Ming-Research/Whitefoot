@@ -108,7 +108,7 @@ fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
   }
 }
 
-fn discard_open_result(factory: &HandleFactory, outcome: Result<ReadFile, IoError>) -> result: unit writes(factory) waits {
+fn discard_open_result(factory: &HandleFactory, outcome: Result<ReadFile, IoError>) -> result: unit writes(factory) may_wait {
   doc "Consumes an open result the program will not use, closing the handle it may carry.";
   match move outcome {
     Ok(value: file) => {
@@ -120,7 +120,7 @@ fn discard_open_result(factory: &HandleFactory, outcome: Result<ReadFile, IoErro
   return unit;
 }
 
-fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, files: &HandleFactory) -> status: ExitStatus reads(args), reads(cwd), writes(out), writes(files) waits {
+fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, files: &HandleFactory) -> status: ExitStatus reads(args), reads(cwd), writes(out), writes(files) may_wait {
   doc "Copies two target-native argument names into frame-resident byte runs, opens them without following terminal links, and publishes their first bytes.";
   let name_a = array_filled::<u8, 8>(value: 125_u8);
   let name_b = array_filled::<u8, 8>(value: 125_u8);
@@ -308,7 +308,7 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, files: &Handle
   }
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+fn main(inputs: Inputs) -> status: ExitStatus pure must_wait {
   doc "PRE-1 ordinary Inputs are destructured once; the referenced operation chain returns before the initial directory is explicitly closed on every exit.";
   let Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: unused_stderr, handles: files, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;

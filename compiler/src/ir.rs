@@ -1611,7 +1611,8 @@ pub struct IrFunction {
     pub(crate) counted_ranges: Vec<IrCountedRange>,
     pub(crate) overlaps: Vec<IrOverlap>,
     pub(crate) synthesis: Option<IrSynthesis>,
-    /// [WAIT-1] whether the function waits: its declaration writes `waits`,
+    /// [WAIT-1] whether the function waits: its declaration writes a waiting
+    /// kind,
     /// or it is the wrapper a context start runs. The backend lowers such a
     /// function to a resumable frame and every call of it to a transfer.
     pub(crate) waits: bool,

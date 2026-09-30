@@ -7,7 +7,7 @@ nocopy struct Node {
   next: Option<Shared<Node>>;
 }
 
-fn main() -> status: std::process::ExitStatus pure waits {
+fn main() -> status: std::process::ExitStatus pure may_wait {
   let counter = shared_new::<u64>(value: 2_u64);
   let holder = Holder(counter: move counter);
   atomic count = &holder.counter {

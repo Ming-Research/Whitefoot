@@ -12,6 +12,7 @@ mod matches;
 mod progress;
 mod proofs;
 mod results;
+mod waiting;
 
 use crate::syntax::NodeId;
 use crate::{

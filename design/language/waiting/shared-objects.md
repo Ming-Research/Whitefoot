@@ -4,7 +4,7 @@ Decision: An atomic statement counts as a waiting call, and its block and guard 
 
 Decision: A handle is `nocopy`, `shared_share` makes another, and the state is released with the last handle, because contexts finish in an order the program does not know, so no one binding can own the state, instead of an owner context whose end releases the object while others may still hold it; [STOR-3] leaves the state's release to [SHARE-1], since no binding owns it.
 
-Decision: The object's state is a path of no effect row, so a function that changes it declares `waits` and a read of the handle place it reaches the object through, because the state belongs to no binding and no caller and its changes take effect in the atomic order, an input of the execution like a host's effects, instead of a row entry naming the object.
+Decision: The object's state is a path of no effect row, so a function that changes it declares a waiting kind and a read of the handle place it reaches the object through, because the state belongs to no binding and no caller and its changes take effect in the atomic order, an input of the execution like a host's effects, instead of a row entry naming the object.
 
 Decision: The object stays live until the statement completes whatever its block does with the target place, because the statement holds a handle of its own, instead of reading the target again when the block ends, which would refuse a block that moves or replaces the handle it was reached through.
 

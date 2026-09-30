@@ -102,7 +102,7 @@ fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
   }
 }
 
-fn advance(first: &DirectorySource, second: &DirectorySource, destination: &[u8]) -> result: unit writes(first), writes(second), writes(destination) waits contract {
+fn advance(first: &DirectorySource, second: &DirectorySource, destination: &[u8]) -> result: unit writes(first), writes(second), writes(destination) must_wait contract {
   requires 1024_u64 <= destination^.len;
 } {
   doc "Advances two enumerations into one destination, so a call must prove its three substituted write paths pairwise disjoint.";
@@ -111,7 +111,7 @@ fn advance(first: &DirectorySource, second: &DirectorySource, destination: &[u8]
   return unit;
 }
 
-fn exercise(cwd: &DirectoryRead, files: &HandleFactory) -> status: ExitStatus reads(cwd), writes(files) waits {
+fn exercise(cwd: &DirectoryRead, files: &HandleFactory) -> status: ExitStatus reads(cwd), writes(files) may_wait {
   doc "directory_next writes the source it advances, so the two source arguments of one call must be proved distinct. This negative case deliberately supplies one enumeration for both, and the pairwise call-site check rejects the overlapping substituted write paths.";
   let entries = slots_new::<u8, 1024>();
   for @scratch (
@@ -137,7 +137,7 @@ fn exercise(cwd: &DirectoryRead, files: &HandleFactory) -> status: ExitStatus re
   }
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+fn main(inputs: Inputs) -> status: ExitStatus pure may_wait {
   doc "PRE-2 ordinary Inputs are destructured once; the operation chain returns before the initial directory is explicitly closed on every exit.";
   let Inputs(args: unused_args, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: files, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;

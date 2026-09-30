@@ -8352,9 +8352,11 @@ fn main() -> status: std::process::ExitStatus pure {
 // witnesses through the same requires path as a WF function body.
 // ---------------------------------------------------------------------
 
-fn range_contract_source(contract: &str, body: &str) -> String {
+/// `kind` is the waiting kind the body shows [WAIT-1]: `must_wait` when every
+/// path calls the host's `write_once`.
+fn range_contract_source(contract: &str, body: &str, kind: &str) -> String {
     format!(
-        "const endpoints: Array<u64, 2> =[0_u64, 0_u64];\n\nfn publish(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], start: u64, end: u64) -> result: unit reads(source), writes(factory), writes(output) waits{contract} {{\n{body}  return unit;\n}}\n"
+        "const endpoints: Array<u64, 2> =[0_u64, 0_u64];\n\nfn publish(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], start: u64, end: u64) -> result: unit reads(source), writes(factory), writes(output) {kind}{contract} {{\n{body}  return unit;\n}}\n"
     )
 }
 
@@ -8363,6 +8365,7 @@ fn a_failed_endpoint_expression_prevents_unreached_call_requirements() {
     let source = range_contract_source(
         "",
         "  let no_deadline = None<std::time::Instant>();\n  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: 0_u64, end: endpoints[2_u64], deadline: no_deadline);\n",
+        "must_wait",
     );
     let outcomes = obligations(source.as_bytes(), "publish");
     let [endpoint_index] = outcomes.as_slice() else {
@@ -8381,6 +8384,7 @@ fn one_ordinary_call_retains_two_independent_ordered_range_requirements() {
     let source = range_contract_source(
         "",
         "  let no_deadline = None<std::time::Instant>();\n  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: start, end: end, deadline: no_deadline);\n",
+        "must_wait",
     );
     let outcomes = call_goals(source.as_bytes(), "publish");
     assert_eq!(outcomes.len(), 2);
@@ -8408,6 +8412,7 @@ fn ordinary_source_relations_discharge_both_signature_ranges() {
     let source = range_contract_source(
         " contract {\n  requires start <= end;\n  requires end <= source^.len;\n}",
         "  let no_deadline = None<std::time::Instant>();\n  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: start, end: end, deadline: no_deadline);\n",
+        "must_wait",
     );
     with_semantics(source.as_bytes(), |outcome| {
         let SemanticOutcome::Complete(checked) = outcome else {
@@ -8455,6 +8460,7 @@ fn indexed_guards_discharge_structurally_identical_signature_ranges() {
     let source = range_contract_source(
         "",
         "  let no_deadline = None<std::time::Instant>();\n  let capacity = source^.len;\n  if endpoints[0_u64] <= endpoints[1_u64] {\n    if endpoints[1_u64] <= capacity {\n      let outcome = std::io::write_once(factory: factory, output: output, source: source, start: endpoints[0_u64], end: endpoints[1_u64], deadline: no_deadline);\n    }\n  }\n",
+        "may_wait",
     );
     let ranges = call_goals(source.as_bytes(), "publish");
     assert_eq!(ranges.len(), 2);
@@ -8500,6 +8506,7 @@ fn a_nonterm_endpoint_is_never_replaced_by_the_zero_term() {
     let source = range_contract_source(
         "",
         "  let no_deadline = None<std::time::Instant>();\n  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: 1_u64, end: endpoints[0_u64], deadline: no_deadline);\n",
+        "must_wait",
     );
     let ranges = call_goals(source.as_bytes(), "publish");
     assert_eq!(ranges.len(), 2);
@@ -8522,7 +8529,7 @@ fn a_transfer_endpoint_is_bounded_by_end_and_not_beyond_it() {
 
 const table: Array<u8, count> =[0_u8, 0_u8, 0_u8, 0_u8];
 
-fn under(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8]) -> result: unit reads(source), writes(factory), writes(output) waits {
+fn under(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8]) -> result: unit reads(source), writes(factory), writes(output) may_wait {
   let source_length = source^.len;
   let enough = 3_u64 <= source_length;
   if enough {
@@ -8538,7 +8545,7 @@ fn under(factory: &std::io::HandleFactory, output: &std::io::OutputStream, sourc
   return unit;
 }
 
-fn exact(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8]) -> result: unit reads(source), writes(factory), writes(output) waits {
+fn exact(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8]) -> result: unit reads(source), writes(factory), writes(output) may_wait {
   let source_length = source^.len;
   let enough = 4_u64 <= source_length;
   if enough {
@@ -8660,7 +8667,7 @@ fn a_named_boundary_outcome_uses_the_same_numeric_evidence_as_source_calls() {
 
 const table: Array<u8, count> =[0_u8, 0_u8, 0_u8, 0_u8];
 
-fn deferred(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], limit: u64) -> result: unit reads(source), writes(factory), writes(output) waits contract {
+fn deferred(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], limit: u64) -> result: unit reads(source), writes(factory), writes(output) must_wait contract {
   define capacity = source^.len;
   requires 3_u64 <= capacity;
 } {
@@ -8676,7 +8683,7 @@ fn deferred(factory: &std::io::HandleFactory, output: &std::io::OutputStream, so
   return unit;
 }
 
-fn killed(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], limit: u64) -> result: unit reads(source), writes(factory), writes(output) waits contract {
+fn killed(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], limit: u64) -> result: unit reads(source), writes(factory), writes(output) must_wait contract {
   define capacity = source^.len;
   requires limit <= capacity;
 } {
@@ -8718,7 +8725,7 @@ fn a_read_at_endpoint_is_observed_on_its_own_outcome_variant() {
     // PRE-1 read_at uses Result and an ordinary selected ensures.
     let source = br#"const table: Array<u8, 4> =[0_u8, 0_u8, 0_u8, 0_u8];
 
-fn main(factory: &std::io::HandleFactory, file: &std::fs::ReadFile, destination: &[u8]) -> result: unit writes(factory), writes(file), writes(destination) waits contract {
+fn main(factory: &std::io::HandleFactory, file: &std::fs::ReadFile, destination: &[u8]) -> result: unit writes(factory), writes(file), writes(destination) must_wait contract {
   requires 3_u64 <= destination^.len;
 } {
   match std::fs::read_at(factory: factory, file: file, destination: destination, file_offset: 0_u64, start: 0_u64, end: 3_u64) {

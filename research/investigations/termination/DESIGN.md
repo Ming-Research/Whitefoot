@@ -488,6 +488,31 @@ the sample bear on feasibility.
   The owner approved the next step on that basis: design the ranked arena,
   shared ranks for mutual recursion and constant-table ranks.
 
+- **Q23 to Q32.** After the loop rule was implemented, the owner approved:
+  - the written rank `decreases R` (Q23);
+  - ranks derived from every leading exit test, operands with exact sums
+    and literal multiples, and no rank from a general `==` exit (Q24 to Q26);
+  - structural descent tried before a derived rank, and descent decided at
+    the backedge (Q28, Q29);
+  - carrying the relations a loop owes through joins (Q30), on the
+    condition that its cost is measured;
+  - `swap` exchanging measures (Q31);
+  - the hash map's stale window, allocated only when a rebuild fails (Q32).
+- **Q34.** The owner rejected counting only direct host calls as waits,
+  since a helper two calls above the host is the common shape, and ruled
+  that the waiting kind splits into two keywords: `may_wait` when a path of
+  the body does not wait and `must_wait` when every path does, both checked
+  at the definition, with [WAIT-1] checked both ways like an effect row.
+  A route-qualified kind was refused.
+- **Q35.** Type invariants that hold at every point, not only at call
+  boundaries, are deferred to `docs/todo.md`; work that depends on them goes
+  around them for now.
+- **Cut point.** The owner chose to land the loop rule now and migrate
+  Snowghost to it, with the loops that no form covers yet (arena links,
+  state machines, fields through references) bounded by a runtime counter
+  over a bound the data gives, each marked for replacement; recursion,
+  Forest and field atoms follow as separate work.
+
 These rulings select the direction; [ARENA.md](ARENA.md) designs the forms
 they call for. The design-tree nodes and the
 specification change land together with the rule's implementation, where

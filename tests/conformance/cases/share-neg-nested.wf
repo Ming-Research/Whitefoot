@@ -1,4 +1,4 @@
-fn main() -> status: std::process::ExitStatus pure waits {
+fn main() -> status: std::process::ExitStatus pure may_wait {
   let first = shared_new::<u8>(value: 0_u8);
   let second = shared_new::<u8>(value: 0_u8);
   atomic outer = &first {

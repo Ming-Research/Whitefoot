@@ -1,1 +1,1 @@
-public fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits doc "Says hi and reports how many bytes were written.";
+public fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure must_wait doc "Says hi and reports how many bytes were written.";

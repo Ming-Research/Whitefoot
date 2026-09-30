@@ -90,15 +90,23 @@ the walk is counted by the list's length; this is a gap, recorded in
 ## Waits
 
 The first implementation counted a call of any function that declares
-`waits` as a wait, as [WAIT-1] classifies calls. Review found that a source
+`waits` as a wait, as [WAIT-1] classified calls. Review found that a source
 function may declare `waits` and return at once, so `loop { pause(); }` was
-accepted as waiting; a spawn written as a statement also counted, although it
-is joined only when its activation leaves. The rule now counts only a call of
-a host module's waiting function, a guarded atomic statement and a `let`
-spawn's join, as ruling Q16 names them. The two `@commands` loops of
-`redis_subset.wf` had passed only because each calls the source function
-`execute`; they process a buffer and now write `decreases held - consumed`,
-with a malformed-parse exit when the parser does not advance.
+accepted as waiting, because [WAIT-1] was checked in one direction only. A
+second attempt counted only direct calls of host functions; the owner
+refused it (Q34), since a loop that waits through a helper is the common
+shape. The waiting kind now splits into `may_wait` and `must_wait`, checked
+both ways at the definition, and a loop's wait is a call of a `must_wait`
+function, a guarded atomic statement or a `let` spawn's join.
+
+The corpus migration replaced every `waits` with `may_wait` and then applied
+the compiler's `must_wait` repair until none remained. Afterwards `tests/`
+writes `must_wait` 194 times and `may_wait` 142 times (`grep -row` over its
+`.wf` and `.wfm` files, the new conformance cases included). Five sources
+declared a waiting kind over a body that never waits, each a helper in a
+test of spawns, frames or atomic statements; each now executes a real wait.
+The two `@commands` loops of `redis_subset.wf` process a buffer rather than
+wait, and write `decreases held - consumed`.
 
 ## Joins
 

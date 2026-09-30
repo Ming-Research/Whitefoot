@@ -193,7 +193,7 @@ vfield_list  := vfield ("," vfield)*
 vfield       := "public"? IDENT ":" type
 fn_decl      := "fn" IDENT generics? "(" param_list? ")"
                 "->" ( result_binding | "(" result_binding ("," result_binding)+ ")" )
-                effects "waits"? contract_block? ( ";" | doc | "{" doc? stmt* "}" )
+                effects ("may_wait" | "must_wait")? contract_block? ( ";" | doc | "{" doc? stmt* "}" )
 result_binding:= IDENT ":" rtype
 contract_block:= "contract" "{" contract_define* requires_clause* ensures_clause* "}"
 contract_define:= "define" IDENT "=" expr ";"
@@ -204,7 +204,7 @@ interface_decl  := "interface" TYPEID generics? "{" doc? (fn_sig ";")* "}"
 binding_decl  := "binding" TYPEID ":" (pack_use | type_path targs?) "{" doc? fn_bind* "}"
 fn_sig       := "fn" IDENT "(" param_list? ")"
                 "->" (result_binding | "(" result_binding ("," result_binding)+ ")")
-                effects "waits"? contract_block?
+                effects ("may_wait" | "must_wait")? contract_block?
 pack_use     := TYPEID targs?
 function_arg := "fn" callee ("::" targs)?
 const_decl   := "const" IDENT ":" type "=" cvalue ";"
@@ -1223,7 +1223,7 @@ One quantity, one spelling: there is no reader operation beside the place form [
 
 ## 8. Functions, generics, contracts
 
-[FN-1] A concrete function's callable boundary states everything ordinary callers need: parameter modes and types, the ordered result list's modes and types, one formal-path state-effect row, whether it waits [WAIT-1], the ordered [FN-8] requirement GoalTemplates, the ordered verified [FN-9] normal-result RelationTemplates.
+[FN-1] A concrete function's callable boundary states everything ordinary callers need: parameter modes and types, the ordered result list's modes and types, one formal-path state-effect row, its waiting kind [WAIT-1], the ordered [FN-8] requirement GoalTemplates, the ordered verified [FN-9] normal-result RelationTemplates.
 A function returns owned values only [GRAM-3, REF-3]; a position found by a search is returned as an index with its bounds relation in `ensures` [FN-9].
 Every result binder's spelling is mandatory but ignored by callable-signature equality and denotes no runtime storage.
 
@@ -1318,7 +1318,7 @@ A supplied function may refine the formal signature rather than match it.
 Parameter and result counts, modes, and exact types must agree in order; parameter and result binder spellings are not signature identity.
 The actual's declared row must be a subset of the formal's after parameter-ordinal and path normalization; a row states exactly what the body does [EFF-2], so a read-only function cannot declare a write.
 The actual's own declaration must independently satisfy EFF-1 and exhibit exactly its own row under EFF-2.
-An actual that waits [WAIT-1] requires a formal that waits; a formal that waits admits an actual that does not.
+An actual that waits [WAIT-1] requires a formal that waits, and a formal that writes `must_wait` requires an actual that writes `must_wait`; a formal that writes `may_wait` admits an actual of either kind and one that does not wait.
 The actual's `requires` must be weaker than the formal's and its `ensures` stronger, and each actual's requirements and ensures have the ordinary FN-8/FN-9 formation and verification boundary, including PRE-1 and PRE-2 declarations.
 Weaker and stronger are decided by a fixed finite check inside the existing affine entailment fragment [ENT-1, MSR-4] and by no solver: for each actual `requires` goal, the formal's `requires` set must discharge it under [MSR-4]'s disposition with the formal's own set as the only premises; for each formal `ensures` relation, the actual's `ensures` set must discharge it with the actual's own set as the only premises.
 The check is deterministic and terminating because both sets are finite and each query exhausts [ENT-6]'s fixed families.
@@ -1497,9 +1497,12 @@ A failed condition is a hard error citing FN-10 at the marked `call`, naming the
 An unmarked call carries no tail-transfer guarantee. The guarantee bounds only stack retained by the marked transfer, not the stack or heap used by argument evaluation, release, or the rest of the program, and does not prove termination.
 
 [WAIT-1] Waiting functions.
-The optional `waits` atom after the effect row of a `fn_decl` or `fn_sig` [GRAM-2] declares a waiting function; it is part of the callable boundary [FN-1] and is not an effect entry [EFF-1].
-A call is a waiting call when its callee resolves to a waiting function, directly, through a named interface member, or through a function-kind parameter whose `fn_sig` carries `waits` [FN-3, FN-5].
+The optional `may_wait` or `must_wait` atom after the effect row of a `fn_decl` or `fn_sig` [GRAM-2] declares a waiting function and its waiting kind; the atom is part of the callable boundary [FN-1] and is not an effect entry [EFF-1].
+A call is a waiting call when its callee resolves to a waiting function, directly, through a named interface member, or through a function-kind parameter whose `fn_sig` carries either atom [FN-3, FN-5]; an `atomic_stmt` is a waiting call as well [SHARE-2].
 A waiting call is admitted only in the body of a waiting function; a waiting call in the body of a function that does not wait is a hard error citing WAIT-1 at that `call`, with a repair [DIAG-1].
+A wait is a spawn [WAIT-3], an `atomic_stmt` that has a guard [SHARE-2], or a waiting call that is not a spawn and whose resolved `fn_decl` or `fn_sig` writes `must_wait`.
+The body of a `fn_decl` that writes either atom executes a waiting call, and it writes `must_wait` exactly when every path from the start of its body to a `return_stmt` or a propagating exit [ERR-3] executes a wait before that exit, where an ordinary `loop_stmt` is left only by a `break_stmt` that leaves it, a counted `for_stmt` may run its body no time, and a wait in a `return_stmt`'s expression or a `propagate` initializer executes before its exit.
+A `fn_decl` whose body executes no waiting call and writes either atom, one whose body has a path to an exit that executes no wait and writes `must_wait`, and one whose body executes a wait on every such path and writes `may_wait` are each a hard error citing WAIT-1 at the `fn_decl`, with a repair.
 A waiting function is an ordinary function in every other judgment: its parameters, results, row, contracts, ownership and proofs are checked as any other function's, and a waiting call executes as an ordinary call [FN-1] in its caller's context unless it is spawned [WAIT-3].
 The entry [FN-7] may be a waiting function, and a waiting entry runs in the root context [WAIT-2].
 
@@ -2392,7 +2395,7 @@ pkg::process: [pkg::io, pkg::text, pkg::fs, pkg::time];
 A host module has no implementation record, and its interface record is exactly the text below. Each function it declares is an ordinary callable boundary whose definition the build supplies and must satisfy the declared boundary [SCOPE-3], exactly as a PRE-1 function record's is; calls neither inspect nor classify that definition, and its requirement templates and postconditions are discharged and instantiated as PRE-1's are.
 A host handle is an opaque struct [TYPE-2] a host module declares with no fields: it has a host-supplied representation, its release is empty [STOR-3], and only a host function returns one.
 An opaque struct a host module declares with fields, `Instant` alone, has the representation and capabilities its fields give it [PROV-6]; its fields are private to a module with no implementation record [MOD-6], and only a host function returns one.
-A host function that carries `waits` [WAIT-1] completes once the host has produced its outcome, and its context may wait for the host meanwhile [WAIT-2]; a host function that does not wait completes without waiting for the host.
+A host function that writes `must_wait` [WAIT-1] completes once the host has produced its outcome, and its context may wait for the host meanwhile [WAIT-2]; a host function that does not wait completes without waiting for the host.
 The host has one monotonic clock, whose reading never decreases, and every `Instant` is one of its readings or an instant `instant_after` forms from one. `now` writes its `Clock`, which orders two reads through one clock [HOST-1]; reads through two clocks that `clock_share` relates are ordered only as [HOST-1] orders them. A context executes its waiting calls one at a time and no statement overlaps one [WAIT-2, PAR-1], so a `now` it executes after `sleep_until(d)` has completed, or after an operation has produced `DeadlinePassed` for `d`, returns a reading not before `d`. The calendar time `unix_nanoseconds` reads is a separate host value, which the host may move in either direction between reads.
 A host function with a parameter `deadline: Option<Instant>` bounds its wait by it. With `None` the function waits as it would without the parameter. With `Some(d)`, an outcome the host has not produced before the monotonic clock reaches `d` is produced then as `DeadlinePassed`, carried by `ReadFailed` where the error type is `ReadStop`, and the function has transferred nothing: it read, wrote, received or sent no byte and accepted or opened no connection; the call then completes as every waiting call completes once its outcome has been produced [WAIT-2]. `DeadlinePassed` is produced in no other way. A function whose own outcome the host produces while `d` is reached produces that outcome instead, so a deadline never discards a completed transfer; which of the two outcomes a context observes is an input of the execution [WAIT-2].
 Which of the bytes `sync_file` hands to the host's durability mechanism survive a failure of the host is outside this specification [SCOPE-3].
@@ -2424,7 +2427,7 @@ public fn nanoseconds_from(earlier: Instant, later: Instant) -> result: u64 pure
 
 public fn instant_reached(deadline: Instant, instant: Instant) -> result: Bool pure doc "Returns whether instant is at or after deadline.";
 
-public fn sleep_until(deadline: Instant) -> result: unit pure waits doc "Completes once the monotonic clock has reached deadline.";
+public fn sleep_until(deadline: Instant) -> result: unit pure must_wait doc "Completes once the monotonic clock has reached deadline.";
 
 public fn unix_nanoseconds(clock: &WallClock) -> result: i64 reads(clock) doc "Returns the calendar time as nanoseconds since 1970-01-01T00:00:00Z.";
 ```
@@ -2482,14 +2485,14 @@ public enum ReadStop {
 
 public fn factory_share(factory: &HandleFactory) -> result: HandleFactory reads(factory) doc "Returns a factory that draws on the same host handle budget as factory; an acquisition through either spends a credit of that one budget and a close through either returns one.";
 
-public fn write_once(factory: &HandleFactory, output: &OutputStream, source: &[u8], start: u64, end: u64, deadline: Option<Instant>) -> result: Result<u64, IoError> reads(source), writes(factory), writes(output) waits contract {
+public fn write_once(factory: &HandleFactory, output: &OutputStream, source: &[u8], start: u64, end: u64, deadline: Option<Instant>) -> result: Result<u64, IoError> reads(source), writes(factory), writes(output) must_wait contract {
   requires start <= end;
   requires end <= source^.len;
   ensures when Ok(value: next): start <= next;
   ensures when Ok(value: next): next <= end;
 } doc "Writes bytes of source from start toward end to output with one host write; Ok carries the index after the last byte written, and DeadlinePassed reports that deadline passed with no byte written.";
 
-public fn read_next(factory: &HandleFactory, input: &InputStream, destination: &[u8], start: u64, end: u64, deadline: Option<Instant>) -> result: Result<u64, ReadStop> writes(factory), writes(input), writes(destination) waits contract {
+public fn read_next(factory: &HandleFactory, input: &InputStream, destination: &[u8], start: u64, end: u64, deadline: Option<Instant>) -> result: Result<u64, ReadStop> writes(factory), writes(input), writes(destination) must_wait contract {
   requires start <= end;
   requires end <= destination^.len;
   ensures when Ok(value: next): start <= next;
@@ -2588,57 +2591,57 @@ public enum ListStop {
 
 public fn relative_path(value: HostString) -> result: Result<RelativePath, PathError> pure doc "Returns value as a path relative to a directory, or PathInvalid when it cannot name one.";
 
-public fn open_read(factory: &HandleFactory, root: &DirectoryRead, path: &RelativePath) -> result: Result<ReadFile, IoError> reads(root), reads(path), writes(factory) waits doc "Opens the file at path below root for reading.";
+public fn open_read(factory: &HandleFactory, root: &DirectoryRead, path: &RelativePath) -> result: Result<ReadFile, IoError> reads(root), reads(path), writes(factory) must_wait doc "Opens the file at path below root for reading.";
 
-public fn read_at(factory: &HandleFactory, file: &ReadFile, destination: &[u8], file_offset: u64, start: u64, end: u64) -> result: Result<u64, ReadStop> writes(factory), writes(file), writes(destination) waits contract {
+public fn read_at(factory: &HandleFactory, file: &ReadFile, destination: &[u8], file_offset: u64, start: u64, end: u64) -> result: Result<u64, ReadStop> writes(factory), writes(file), writes(destination) must_wait contract {
   requires start <= end;
   requires end <= destination^.len;
   ensures when Ok(value: next): start <= next;
   ensures when Ok(value: next): next <= end;
 } doc "Reads bytes of file at file_offset into destination from start toward end with one host read; Ok carries the index after the last byte read, and ReadEnd reports the end of the file.";
 
-public fn open_directory(factory: &HandleFactory, root: &DirectoryRead, name: &[u8], start: u64, end: u64) -> result: Result<DirectoryRead, IoError> reads(root), reads(name), writes(factory) waits contract {
+public fn open_directory(factory: &HandleFactory, root: &DirectoryRead, name: &[u8], start: u64, end: u64) -> result: Result<DirectoryRead, IoError> reads(root), reads(name), writes(factory) must_wait contract {
   requires start <= end;
   requires end <= name^.len;
 } doc "Opens the directory that the bytes of name from start to end name below root.";
 
-public fn open_directory_source(factory: &HandleFactory, directory: &DirectoryRead) -> result: Result<DirectorySource, IoError> reads(directory), writes(factory) waits doc "Opens the listing of the entries of directory.";
+public fn open_directory_source(factory: &HandleFactory, directory: &DirectoryRead) -> result: Result<DirectorySource, IoError> reads(directory), writes(factory) must_wait doc "Opens the listing of the entries of directory.";
 
-public fn directory_next(source: &DirectorySource, destination: &[u8], start: u64, end: u64) -> (result: Result<unit, ListStop>, next: u64, entries: u64) writes(source), writes(destination) waits contract {
+public fn directory_next(source: &DirectorySource, destination: &[u8], start: u64, end: u64) -> (result: Result<unit, ListStop>, next: u64, entries: u64) writes(source), writes(destination) must_wait contract {
   requires start <= end;
   requires end <= destination^.len;
   ensures start <= next;
   ensures next <= end;
 } doc "Writes the names of the next entries of source into destination from start toward end; next is the index after the bytes written, entries counts the names, and ListEnd reports that no entry remains.";
 
-public fn open_file(factory: &HandleFactory, root: &DirectoryRead, name: &[u8], start: u64, end: u64) -> result: Result<ReadFile, IoError> reads(root), reads(name), writes(factory) waits contract {
+public fn open_file(factory: &HandleFactory, root: &DirectoryRead, name: &[u8], start: u64, end: u64) -> result: Result<ReadFile, IoError> reads(root), reads(name), writes(factory) must_wait contract {
   requires start <= end;
   requires end <= name^.len;
 } doc "Opens the file that the bytes of name from start to end name below root for reading.";
 
-public fn open_append(factory: &HandleFactory, root: &DirectoryWrite, name: &[u8], start: u64, end: u64) -> result: Result<WriteFile, IoError> reads(root), reads(name), writes(factory) waits contract {
+public fn open_append(factory: &HandleFactory, root: &DirectoryWrite, name: &[u8], start: u64, end: u64) -> result: Result<WriteFile, IoError> reads(root), reads(name), writes(factory) must_wait contract {
   requires start <= end;
   requires end <= name^.len;
 } doc "Opens the file that the bytes of name from start to end name below root for appending, creating it empty when no entry has that name.";
 
-public fn append_once(factory: &HandleFactory, file: &WriteFile, source: &[u8], start: u64, end: u64) -> result: Result<u64, IoError> reads(source), writes(factory), writes(file) waits contract {
+public fn append_once(factory: &HandleFactory, file: &WriteFile, source: &[u8], start: u64, end: u64) -> result: Result<u64, IoError> reads(source), writes(factory), writes(file) must_wait contract {
   requires start <= end;
   requires end <= source^.len;
   ensures when Ok(value: next): start <= next;
   ensures when Ok(value: next): next <= end;
 } doc "Appends bytes of source from start toward end to the end of file with one host write; Ok carries the index after the last byte appended.";
 
-public fn sync_file(factory: &HandleFactory, file: &WriteFile) -> result: Result<unit, IoError> writes(factory), writes(file) waits doc "Hands every byte appended to file before this call to the host's durability mechanism; Ok reports that the host accepted them.";
+public fn sync_file(factory: &HandleFactory, file: &WriteFile) -> result: Result<unit, IoError> writes(factory), writes(file) must_wait doc "Hands every byte appended to file before this call to the host's durability mechanism; Ok reports that the host accepted them.";
 
-public fn close_read(factory: &HandleFactory, file: ReadFile) -> result: Result<unit, IoError> writes(factory) waits doc "Closes file.";
+public fn close_read(factory: &HandleFactory, file: ReadFile) -> result: Result<unit, IoError> writes(factory) must_wait doc "Closes file.";
 
-public fn close_write(factory: &HandleFactory, file: WriteFile) -> result: Result<unit, IoError> writes(factory) waits doc "Closes file.";
+public fn close_write(factory: &HandleFactory, file: WriteFile) -> result: Result<unit, IoError> writes(factory) must_wait doc "Closes file.";
 
-public fn close_directory(factory: &HandleFactory, directory: DirectoryRead) -> result: Result<unit, IoError> writes(factory) waits doc "Closes directory.";
+public fn close_directory(factory: &HandleFactory, directory: DirectoryRead) -> result: Result<unit, IoError> writes(factory) must_wait doc "Closes directory.";
 
-public fn close_directory_write(factory: &HandleFactory, directory: DirectoryWrite) -> result: Result<unit, IoError> writes(factory) waits doc "Closes the write half of a directory.";
+public fn close_directory_write(factory: &HandleFactory, directory: DirectoryWrite) -> result: Result<unit, IoError> writes(factory) must_wait doc "Closes the write half of a directory.";
 
-public fn close_directory_source(factory: &HandleFactory, source: DirectorySource) -> result: Result<unit, IoError> writes(factory) waits doc "Closes the directory listing source.";
+public fn close_directory_source(factory: &HandleFactory, source: DirectorySource) -> result: Result<unit, IoError> writes(factory) must_wait doc "Closes the directory listing source.";
 ```
 
 `std::net`, the record `net/module.wfm`:
@@ -2675,31 +2678,31 @@ public fn socket_address_v4(a: u8, b: u8, c: u8, d: u8, port: u16) -> result: So
 
 public fn socket_address_v6(a: u16, b: u16, c: u16, d: u16, e: u16, f: u16, g: u16, h: u16, port: u16) -> result: SocketAddress pure doc "Returns the IPv6 socket address whose eight groups are a to h, with port.";
 
-public fn tcp_listen(factory: &HandleFactory, address: &SocketAddress) -> result: Result<TcpListener, IoError> reads(address), writes(factory) waits doc "Opens a TCP listener bound to address.";
+public fn tcp_listen(factory: &HandleFactory, address: &SocketAddress) -> result: Result<TcpListener, IoError> reads(address), writes(factory) must_wait doc "Opens a TCP listener bound to address.";
 
-public fn tcp_accept(factory: &HandleFactory, listener: &TcpListener, deadline: Option<Instant>) -> result: Result<AcceptedConnection, IoError> writes(factory), writes(listener) waits doc "Accepts the next connection on listener and returns it with the address of its peer; DeadlinePassed reports that deadline passed with no connection accepted.";
+public fn tcp_accept(factory: &HandleFactory, listener: &TcpListener, deadline: Option<Instant>) -> result: Result<AcceptedConnection, IoError> writes(factory), writes(listener) must_wait doc "Accepts the next connection on listener and returns it with the address of its peer; DeadlinePassed reports that deadline passed with no connection accepted.";
 
-public fn tcp_connect(factory: &HandleFactory, address: &SocketAddress, deadline: Option<Instant>) -> result: Result<TcpConnection, IoError> reads(address), writes(factory) waits doc "Opens a TCP connection to address; DeadlinePassed reports that deadline passed with no connection opened.";
+public fn tcp_connect(factory: &HandleFactory, address: &SocketAddress, deadline: Option<Instant>) -> result: Result<TcpConnection, IoError> reads(address), writes(factory) must_wait doc "Opens a TCP connection to address; DeadlinePassed reports that deadline passed with no connection opened.";
 
-public fn receive_next(receive: &TcpReceive, destination: &[u8], start: u64, end: u64, deadline: Option<Instant>) -> result: Result<u64, ReadStop> writes(receive), writes(destination) waits contract {
+public fn receive_next(receive: &TcpReceive, destination: &[u8], start: u64, end: u64, deadline: Option<Instant>) -> result: Result<u64, ReadStop> writes(receive), writes(destination) must_wait contract {
   requires start <= end;
   requires end <= destination^.len;
   ensures when Ok(value: next): start <= next;
   ensures when Ok(value: next): next <= end;
 } doc "Receives bytes into destination from start toward end with one host receive; Ok carries the index after the last byte received, ReadEnd reports that the peer finished sending, and DeadlinePassed reports that deadline passed with no byte received.";
 
-public fn send_once(send: &TcpSend, source: &[u8], start: u64, end: u64, deadline: Option<Instant>) -> result: Result<u64, IoError> reads(source), writes(send) waits contract {
+public fn send_once(send: &TcpSend, source: &[u8], start: u64, end: u64, deadline: Option<Instant>) -> result: Result<u64, IoError> reads(source), writes(send) must_wait contract {
   requires start <= end;
   requires end <= source^.len;
   ensures when Ok(value: next): start <= next;
   ensures when Ok(value: next): next <= end;
 } doc "Sends bytes of source from start toward end with one host send; Ok carries the index after the last byte sent, and DeadlinePassed reports that deadline passed with no byte sent.";
 
-public fn close_listener(factory: &HandleFactory, listener: TcpListener) -> result: Result<unit, IoError> writes(factory) waits doc "Closes listener.";
+public fn close_listener(factory: &HandleFactory, listener: TcpListener) -> result: Result<unit, IoError> writes(factory) must_wait doc "Closes listener.";
 
-public fn close_receive(factory: &HandleFactory, receive: TcpReceive) -> result: Result<unit, IoError> writes(factory) waits doc "Closes the receiving half of a connection.";
+public fn close_receive(factory: &HandleFactory, receive: TcpReceive) -> result: Result<unit, IoError> writes(factory) must_wait doc "Closes the receiving half of a connection.";
 
-public fn close_send(factory: &HandleFactory, send: TcpSend) -> result: Result<unit, IoError> writes(factory) waits doc "Closes the sending half of a connection.";
+public fn close_send(factory: &HandleFactory, send: TcpSend) -> result: Result<unit, IoError> writes(factory) must_wait doc "Closes the sending half of a connection.";
 ```
 
 `std::process`, the record `process/module.wfm`:
@@ -3644,7 +3647,7 @@ A resolved but unavailable named source, undischarged or malformed relation sour
 Each `loop_stmt` whose body can reach its header again [FN-1] makes progress in one of the following forms, taken in this order; the first that applies is the loop's form.
 
 1. **Written rank.** The header begins with a `loop_rank` `decreases R`. R is formed as a `header_invariant`'s `affine_expr` is, over the same operands [INV-1]. Every normal edge from the body back to the header owes `R' < R0` and `0 <= R'`, where `R0` is R's value when the iteration began and `R'` its value on that edge.
-2. **Waiting.** Every path from the start of the body back to the header executes a wait: a call, not a spawn, whose callee resolves directly [WAIT-1] to a waiting function a host module declares [PRE-2], an `atomic_stmt` that has a guard [SHARE-2], or a `let_stmt` whose call is a spawn, whose context is joined before any edge leaves that statement's block [WAIT-3]. The loop owes nothing more.
+2. **Waiting.** Every path from the start of the body back to the header executes a wait [WAIT-1] other than a spawn that is the call of an `expr_stmt`, which is joined only when its activation leaves [WAIT-3]. The loop owes nothing more.
 3. **Structural descent.** Every normal edge from the body back to the header rebinds a reference binding c [REF-1] to a place that extends the place c named when the iteration began by struct-field, payload, `Box` `inner` and subscript steps, at least one of them a `Box` `inner` step, and the body contains no `set_stmt` whose target is not a reference rebinding and whose type is not `unit`, `Bool`, an integer or a float, and no call whose effect row writes anything [EFF-1]. The loop owes nothing more.
 4. **Derived rank.** The body's exit tests derive ranks by the table below, and every normal edge from the body back to the header owes `R' < R0`, with `R0` and `R'` as in form 1, for one of those ranks R, the same for every edge.
 
@@ -3663,7 +3666,6 @@ The continuing relation is the condition when the exit block is the `else` block
 Every other continuing relation derives no rank.
 Only a test that continues leads toward the header, and its continuing relation holds there, so a rank's values at the tests of it that continue are nonnegative and strictly decreasing, and the loop reaches an exit in finitely many iterations.
 No leading statement before a test writes one of its operands, since an operation [OP-1] and a construction [GRAM-8] write nothing, so `R0` is the rank's value at its test.
-Each wait of form 2 is a point at which [WAIT-2] has a context wait before its next step; a call of a function a source record defines executes in its caller's context, and a call through an interface member or a function-kind parameter may reach an actual that does not wait [FN-4].
 A structural descent lowers the number of `Box` cells in the value c names at each iteration's start: the rebinding enters one of them, and no statement of the body can add one to any value.
 
 A `loop_stmt` that can reach its header again and makes progress in none of these forms is a hard error citing TERM-1 at the `loop_stmt`, with a repair [DIAG-1].

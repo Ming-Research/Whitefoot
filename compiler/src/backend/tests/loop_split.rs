@@ -323,7 +323,7 @@ fn folded(salt: u64, rounds: u64, stride: u64) -> result: u64 pure {
   return total;
 }
 
-fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure must_wait {
   let std::process::Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
@@ -389,7 +389,7 @@ fn mapped() -> result: Box<Array<u8>> pure {
   return move out;
 }
 
-fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure must_wait {
   let std::process::Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
@@ -1890,7 +1890,7 @@ fn admitted_combine_source() -> Vec<u8> {
     }
     let width = 8 * ADMITTED_COMBINES.len();
     source.push_str(&format!(
-        "\nfn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {{\n  \
+        "\nfn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure must_wait {{\n  \
          let std::process::Inputs(args: unused_args, cwd: cwd_directory, stdout: out, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;\n  \
          let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;\n  \
          std::fs::close_directory_write(factory: &factory, directory: move cwd_write);\n  \

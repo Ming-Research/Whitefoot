@@ -1730,7 +1730,7 @@ fn an_out_of_bounds_range_reference_read_is_an_op4_compile_rejection() {
 /// and the process publishes exactly the bytes the fill loop wrote.
 #[test]
 fn a_range_reference_over_a_frame_resident_window_reaches_its_own_slots() {
-    let source = br#"fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+    let source = br#"fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure must_wait {
   doc "Publishes a frame-resident window through a range reference held until the linked write returns.";
   let std::process::Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;

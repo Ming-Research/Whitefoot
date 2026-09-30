@@ -11,7 +11,7 @@ fn make() -> table: Table pure {
   return move made;
 }
 
-fn given(table: Shared<Table>, flag: Bool) -> result: u64 pure waits {
+fn given(table: Shared<Table>, flag: Bool) -> result: u64 pure may_wait {
   let picked = if flag {
     atomic t = &table {
       set t^.next = 9_u64;
@@ -23,7 +23,7 @@ fn given(table: Shared<Table>, flag: Bool) -> result: u64 pure waits {
   return picked;
 }
 
-fn main() -> status: std::process::ExitStatus pure waits {
+fn main() -> status: std::process::ExitStatus pure may_wait {
   let initial = make();
   let table = shared_new::<Table>(value: move initial);
   let yes = True();

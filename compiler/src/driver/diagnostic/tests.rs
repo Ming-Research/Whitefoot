@@ -155,7 +155,7 @@ fn a_supplied_requirement_is_quoted_from_its_declaring_record() {
         ),
         "{detail}"
     );
-    let host = br#"fn walk(factory: &std::io::HandleFactory, root: &std::fs::DirectoryRead, name: &[u8]) -> result: u8 reads(root), reads(name), writes(factory) waits {
+    let host = br#"fn walk(factory: &std::io::HandleFactory, root: &std::fs::DirectoryRead, name: &[u8]) -> result: u8 reads(root), reads(name), writes(factory) must_wait {
   match std::fs::open_file(factory: factory, root: root, name: name, start: 0_u64, end: 1_u64) {
     Ok(value: handle) => {
       std::fs::close_read(factory: factory, file: move handle);

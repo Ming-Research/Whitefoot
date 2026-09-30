@@ -1,15 +1,17 @@
 alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
+alias Instant = std::time::Instant;
 
-fn weight(value: u8) -> result: u8 pure waits {
-  doc "Returns value from a started context.";
-  return value;
+fn nap(until: Instant) -> result: u8 pure must_wait {
+  doc "Waits until the instant in a started context.";
+  std::time::sleep_until(deadline: until);
+  return 7_u8;
 }
 
-fn gather() -> result: unit pure waits {
-  doc "A spawn bound by a let is joined before any edge leaves its block, and a join is a point at which the context waits for the started one whatever that context does, so every path back to the header waits [TERM-1, WAIT-2, WAIT-3].";
+fn gather(until: Instant) -> result: unit pure must_wait {
+  doc "A spawn bound by a let is joined before any edge leaves its block, and the join is a wait [WAIT-1], so every path back to the header waits [TERM-1, WAIT-3].";
   loop {
-    let started = spawn weight(value: 7_u8);
+    let started = spawn nap(until: until);
     let seen = started +wrap 1_u8;
   }
   return unit;

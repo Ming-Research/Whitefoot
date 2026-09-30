@@ -6,8 +6,8 @@
 
 use crate::syntax::NodeId;
 use crate::{
-    DeclarationId, FixedTerminal, Production, SemanticCompilerFailure, SemanticIssueKind,
-    SemanticRule, TerminalPredicate,
+    FixedTerminal, Production, SemanticCompilerFailure, SemanticIssueKind, SemanticRule,
+    TerminalPredicate,
 };
 
 use super::{CheckContext, CheckStop, Checker, DeclarationInventory, FunctionSignature};
@@ -27,26 +27,6 @@ const SPAWN_POSITION: &str =
     "a spawn is the call of an expression statement or of an ordinary let right-hand side";
 
 impl DeclarationInventory<'_> {
-    /// [PRE-2] whether a host module of the standard library declares the
-    /// function, whose definition the build supplies.
-    pub(super) fn declares_host_function(
-        &self,
-        declaration: DeclarationId,
-    ) -> Result<bool, CheckStop> {
-        let module = self
-            .resolved
-            .declaration(declaration)
-            .ok_or(SemanticCompilerFailure::InvalidResolution)?
-            .module();
-        let bundle = self.resolved.syntax().classified_bundle().source_bundle();
-        Ok(module
-            .and_then(|module| bundle.module(module))
-            .is_some_and(|module| {
-                module.package() == crate::Package::Standard
-                    && crate::library::is_host_module(module.path())
-            }))
-    }
-
     pub(super) fn is_spawn(&self, node: NodeId) -> Result<bool, CheckStop> {
         Ok(self
             .tree

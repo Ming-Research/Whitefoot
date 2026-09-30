@@ -1162,6 +1162,16 @@ impl<'unit> Checker<'_, 'unit> {
                 })
                 .unwrap_or_else(|| format!("{base}$instance${}", id.0))
         };
+        // [WAIT-1] the declaration's waiting kind, written after its row.
+        let wait_token = |terminal| {
+            self.types
+                .declarations
+                .tree
+                .direct_token_with(template.node, crate::TerminalPredicate::Fixed(terminal))
+                .map(|token| token.is_some())
+        };
+        let may_wait = wait_token(crate::FixedTerminal::MayWait)?;
+        let must_wait = wait_token(crate::FixedTerminal::MustWait)?;
         Ok(FunctionSignature {
             id,
             declaration: template.declaration,
@@ -1176,15 +1186,8 @@ impl<'unit> Checker<'_, 'unit> {
             result_list,
             effects_node: effects,
             declared_effects,
-            waits: self
-                .types
-                .declarations
-                .tree
-                .direct_token_with(
-                    template.node,
-                    crate::TerminalPredicate::Fixed(crate::FixedTerminal::Waits),
-                )?
-                .is_some(),
+            waits: may_wait || must_wait,
+            must_wait,
             formal_parameter: None,
             substitution,
         })

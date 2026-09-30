@@ -2,7 +2,7 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 alias Instant = std::time::Instant;
 
-fn tick(clock: std::time::Clock) -> result: unit pure waits {
+fn tick(clock: std::time::Clock) -> result: unit pure must_wait {
   doc "Every path back to the header calls sleep_until, a host module's waiting function, so the loop owes no rank [TERM-1, PRE-2].";
   loop {
     let now = std::time::now(clock: &clock);

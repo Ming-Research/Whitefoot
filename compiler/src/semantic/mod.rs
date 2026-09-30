@@ -1108,6 +1108,17 @@ pub enum SemanticIssueKind {
         /// The repair [DIAG-1].
         mechanical_fix: &'static str,
     },
+    /// A waiting kind the declaration writes that its body's paths do not
+    /// show [WAIT-1].
+    WaitKindMismatch {
+        /// The kind the declaration writes, `may_wait` or `must_wait`.
+        declared: &'static str,
+        /// What the body's paths show: `no wait`, `a path to an exit that
+        /// executes no wait` or `a wait on every path to an exit`.
+        body: &'static str,
+        /// The repair [DIAG-1].
+        mechanical_fix: &'static str,
+    },
     /// An atomic statement's target is not a place of type `Shared<T>`
     /// [SHARE-2].
     AtomicTargetNotShared {

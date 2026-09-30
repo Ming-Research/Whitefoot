@@ -1,4 +1,4 @@
-fn main() -> status: std::process::ExitStatus pure waits {
+fn main() -> status: std::process::ExitStatus pure may_wait {
   let cell = shared_new::<u8>(value: 3_u8);
   let local = 0_u8;
   let view = &local;

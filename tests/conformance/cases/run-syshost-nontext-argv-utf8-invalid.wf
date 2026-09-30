@@ -6,7 +6,7 @@ alias exit_status = std::process::exit_status;
 alias host_copy_utf8 = std::text::host_copy_utf8;
 alias host_utf8_len = std::text::host_utf8_len;
 
-fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+fn main(inputs: Inputs) -> status: ExitStatus pure must_wait {
   doc "The ordinary host_copy_utf8 implementation reports invalid text for the arranged non-UTF-8 argument. The outcome is a normal enum match; no semantic operand class or target qualification applies.";
   let Inputs(args: args, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;

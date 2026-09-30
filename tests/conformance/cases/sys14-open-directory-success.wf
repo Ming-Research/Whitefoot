@@ -99,7 +99,7 @@ fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
   }
 }
 
-fn exercise(cwd: &DirectoryRead, files: &HandleFactory) -> status: ExitStatus reads(cwd), writes(files) waits {
+fn exercise(cwd: &DirectoryRead, files: &HandleFactory) -> status: ExitStatus reads(cwd), writes(files) must_wait {
   doc "The ordinary open_directory operation returns a linear DirectoryRead for an existing component; the program uses and explicitly closes the returned owner through its factory.";
   let name = slots_new::<u8, 3>();
   place_back(window: &name, value: 115_u8);
@@ -208,7 +208,7 @@ fn exercise(cwd: &DirectoryRead, files: &HandleFactory) -> status: ExitStatus re
   }
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+fn main(inputs: Inputs) -> status: ExitStatus pure must_wait {
   doc "PRE-2 ordinary Inputs are destructured once; the borrowed operation chain returns before the initial directory is explicitly closed on every exit.";
   let Inputs(args: unused_args, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: files, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;

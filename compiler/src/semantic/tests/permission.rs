@@ -2527,9 +2527,9 @@ fn a_scrutinee_call_written_first_with_independent_arms_forms_a_pair() {
 fn bound_await(body: &str) -> Option<u32> {
     let source = format!(
         "fn observe(value: &u64) -> result: u64 reads(value) {{\n  return value^;\n}}\n\n\
-         fn weigh(factory: std::io::HandleFactory, directory: std::fs::DirectoryRead, weight: u64) -> result: u64 pure waits {{\n  \
+         fn weigh(factory: std::io::HandleFactory, directory: std::fs::DirectoryRead, weight: u64) -> result: u64 pure must_wait {{\n  \
          std::fs::close_directory(factory: &factory, directory: move directory);\n  return weight;\n}}\n\n\
-         fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {{\n  \
+         fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure must_wait {{\n  \
          let std::process::Inputs(args: unused_args, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;\n  \
          let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;\n  \
          std::fs::close_directory_write(factory: &handles, directory: move cwd_write);\n  \
@@ -2626,12 +2626,19 @@ fn a_bound_context_runs_on_through_a_compound_statement_that_names_nothing_it_ho
 /// written whole: `weigh` waits and returns its argument, `guarded` waits on
 /// an atomic statement's guard, and `pair` returns two results.
 fn started_await(body: &str) -> Option<u32> {
+    started_await_of_kind(body, "must_wait")
+}
+
+/// [`started_await`] for a `main` of the given waiting kind [WAIT-1]: a body
+/// with a path to its exit that starts no context writes `may_wait`.
+fn started_await_of_kind(body: &str, kind: &str) -> Option<u32> {
     let source = format!(
-        "fn weigh(weight: u64) -> result: u64 pure waits {{\n  return weight;\n}}\n\n\
-         fn guarded(cell: Shared<u64>) -> result: u64 pure waits {{\n  let seen = 0_u64;\n  \
+        "fn weigh(weight: u64) -> result: u64 pure may_wait {{\n  let cell = shared_new::<u64>(value: weight);\n  \
+         atomic value = &cell {{\n    set value^ = weight;\n  }}\n  return weight;\n}}\n\n\
+         fn guarded(cell: Shared<u64>) -> result: u64 pure must_wait {{\n  let seen = 0_u64;\n  \
          atomic value = &cell when value^ != 0_u64 {{\n    set seen = value^;\n  }}\n  return seen;\n}}\n\n\
          fn pair(value: u64) -> (low: u64, high: u64) pure {{\n  return value, value;\n}}\n\n\
-         fn main() -> status: std::process::ExitStatus pure waits {{\n{body}\n  \
+         fn main() -> status: std::process::ExitStatus pure {kind} {{\n{body}\n  \
          return std::process::exit_status(code: 0_u8);\n}}\n"
     );
     with_semantics(source.as_bytes(), |outcome| {
@@ -2679,10 +2686,11 @@ fn a_bound_context_is_joined_before_a_give_that_leaves_its_block() {
     );
     // A `give` of the arm the `let` stands in leaves its block.
     assert_eq!(
-        started_await(
+        started_await_of_kind(
             "  let limit = 5_u64;\n  let picked = if limit > 3_u64 {\n    \
              let bound = spawn weigh(weight: 7_u64);\n    let other = 2_u64;\n    give other;\n  \
-             } else {\n    give 2_u64;\n  }\n  let total = picked +wrap 1_u64;"
+             } else {\n    give 2_u64;\n  }\n  let total = picked +wrap 1_u64;",
+            "may_wait"
         ),
         Some(2)
     );
@@ -2792,10 +2800,17 @@ fn a_bound_spawn_runs_on_through_a_destructuring_let_that_names_nothing() {
 /// [WAIT-2] how many statements of `main` and of `relay` start a context
 /// when neither spawns, given the atomic statement `worker` holds.
 fn unspawned_starts(atomic: &str) -> usize {
+    // [WAIT-1] only a guarded atomic statement is a wait, so the chain waits
+    // on every path exactly when the worker's statement has a guard.
+    let kind = if atomic.contains(" when ") {
+        "must_wait"
+    } else {
+        "may_wait"
+    };
     let source = format!(
-        "fn worker(cell: Shared<u8>) -> result: unit pure waits {{\n  let seen = 0_u8;\n  {atomic}\n  return unit;\n}}\n\n\
-         fn relay(cell: Shared<u8>) -> result: unit pure waits {{\n  worker(cell: move cell);\n  return unit;\n}}\n\n\
-         fn main() -> status: std::process::ExitStatus pure waits {{\n  \
+        "fn worker(cell: Shared<u8>) -> result: unit pure {kind} {{\n  let seen = 0_u8;\n  {atomic}\n  return unit;\n}}\n\n\
+         fn relay(cell: Shared<u8>) -> result: unit pure {kind} {{\n  worker(cell: move cell);\n  return unit;\n}}\n\n\
+         fn main() -> status: std::process::ExitStatus pure {kind} {{\n  \
          let cell = shared_new::<u8>(value: 1_u8);\n  \
          let other = shared_share::<u8>(shared: &cell);\n  \
          relay(cell: move other);\n  \
@@ -2832,12 +2847,12 @@ fn a_call_that_is_not_spawned_starts_no_context_whatever_its_callee_holds() {
 
 #[test]
 fn a_bound_context_unused_in_its_block_is_joined_at_the_block_end() {
-    let source = br#"fn weigh(factory: std::io::HandleFactory, directory: std::fs::DirectoryRead, weight: u64) -> result: u64 pure waits {
+    let source = br#"fn weigh(factory: std::io::HandleFactory, directory: std::fs::DirectoryRead, weight: u64) -> result: u64 pure must_wait {
   std::fs::close_directory(factory: &factory, directory: move directory);
   return weight;
 }
 
-fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure must_wait {
   let std::process::Inputs(args: unused_args, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &handles, directory: move cwd_write);

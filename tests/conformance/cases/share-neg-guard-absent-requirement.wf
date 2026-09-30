@@ -1,4 +1,4 @@
-fn main() -> status: std::process::ExitStatus pure waits {
+fn main() -> status: std::process::ExitStatus pure may_wait {
   let empty = ring_new::<u64, 4>();
   let queue = shared_new::<Ring<u64, 4>>(value: move empty);
   let got = 0_u64;

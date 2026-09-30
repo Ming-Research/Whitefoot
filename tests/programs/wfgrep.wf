@@ -335,7 +335,7 @@ fn copy_range(destination: &[u8], at: u64, source: &[u8], from: u64, to: u64) ->
   return target;
 }
 
-fn publish_all(factory: &HandleFactory, output: &OutputStream, source: &[u8], length: u64) -> result: Result<unit, IoError> reads(source), writes(factory), writes(output) waits contract {
+fn publish_all(factory: &HandleFactory, output: &OutputStream, source: &[u8], length: u64) -> result: Result<unit, IoError> reads(source), writes(factory), writes(output) may_wait contract {
   define source_length = source^.len;
   requires length <= source_length;
 } {
@@ -665,7 +665,7 @@ fn shift_input_tail(input: &[u8], available: u64, scan: u64) -> result: ShiftedT
   return accepted;
 }
 
-fn publish_oversized(factory: &HandleFactory, out: &OutputStream, path: &[u8], path_length: u64, line_number: u64, scratch: &[u8], input: &[u8], scan: u64, stop: u64) -> result: u8 reads(path), reads(input), writes(factory), writes(out), writes(scratch) waits {
+fn publish_oversized(factory: &HandleFactory, out: &OutputStream, path: &[u8], path_length: u64, line_number: u64, scratch: &[u8], input: &[u8], scan: u64, stop: u64) -> result: u8 reads(path), reads(input), writes(factory), writes(out), writes(scratch) may_wait {
   doc "Publishes one `PATH:LINE:TEXT` record too long for the output batch straight from where its bytes already are: the path from its range, the line number through the emptied batch, and the line from the read window. The caller has published everything batched before it, so records stay in order. The result is 0, or the output status of the refused write.";
   let path_room = path^.len;
   let path_fits = path_length <= path_room;
@@ -729,7 +729,7 @@ fn publish_oversized(factory: &HandleFactory, out: &OutputStream, path: &[u8], p
   return 6_u8;
 }
 
-fn search_file(factory: &HandleFactory, file: &ReadFile, pattern: &[u8], pattern_length: u64, path: &[u8], path_length: u64, out: &OutputStream) -> result: u8 reads(pattern), reads(path), writes(factory), writes(file), writes(out) waits {
+fn search_file(factory: &HandleFactory, file: &ReadFile, pattern: &[u8], pattern_length: u64, path: &[u8], path_length: u64, out: &OutputStream) -> result: u8 reads(pattern), reads(path), writes(factory), writes(file), writes(out) may_wait {
   doc "Reads one open file and publishes `PATH:LINE:TEXT` for every line that holds the literal pattern bytes. The read window starts at 4096 bytes and doubles whenever one incomplete line fills it, so a line of any length up to widen_window's ceiling is searched and published whole, as a real grep does; the output batch stays 8192 bytes, and a record too long for it is published by publish_oversized. The low four bits of the result are the status (0, a read status of io_class, 6 for a line past the ceiling, or an output status of output_class) and the bit 16 reports a match. Both windows are boxed runtime-capacity windows, and the read window's range reference is formed again at the top of every chunk because widening remakes the cell [TYPE-9, REF-2, REF-4].";
   let input_cell = zeroed_bytes(count: 4096_u64);
   let batch_cell = zeroed_bytes(count: 8192_u64);
@@ -928,11 +928,11 @@ fn search_file(factory: &HandleFactory, file: &ReadFile, pattern: &[u8], pattern
   return packed;
 }
 
-fn open_source_from_factory(factory: &HandleFactory, directory: &DirectoryRead) -> result: Result<DirectorySource, IoError> reads(directory), writes(factory) waits {
+fn open_source_from_factory(factory: &HandleFactory, directory: &DirectoryRead) -> result: Result<DirectorySource, IoError> reads(directory), writes(factory) must_wait {
   return open_directory_source(factory: factory, directory: directory);
 }
 
-fn open_file_from_factory(factory: &HandleFactory, root: &DirectoryRead, name: &[u8], start: u64, end: u64) -> result: Result<ReadFile, IoError> reads(root), reads(name), writes(factory) waits contract {
+fn open_file_from_factory(factory: &HandleFactory, root: &DirectoryRead, name: &[u8], start: u64, end: u64) -> result: Result<ReadFile, IoError> reads(root), reads(name), writes(factory) must_wait contract {
   define ordered = start <= end;
   define capacity = name^.len;
   define within = end <= capacity;
@@ -942,7 +942,7 @@ fn open_file_from_factory(factory: &HandleFactory, root: &DirectoryRead, name: &
   return open_file(factory: factory, root: root, name: name, start: start, end: end);
 }
 
-fn open_directory_from_factory(factory: &HandleFactory, root: &DirectoryRead, name: &[u8], start: u64, end: u64) -> result: Result<DirectoryRead, IoError> reads(root), reads(name), writes(factory) waits contract {
+fn open_directory_from_factory(factory: &HandleFactory, root: &DirectoryRead, name: &[u8], start: u64, end: u64) -> result: Result<DirectoryRead, IoError> reads(root), reads(name), writes(factory) must_wait contract {
   define ordered = start <= end;
   define capacity = name^.len;
   define within = end <= capacity;
@@ -999,7 +999,7 @@ fn keep_entry(records: &Box<Slots<u8>>, starts: &Box<Slots<u64>>, entries: &[u8]
   return True();
 }
 
-fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_length: u64, pattern: &[u8], pattern_length: u64, out: &OutputStream, err: &OutputStream) -> result: u8 reads(dir), reads(prefix), reads(pattern), writes(factory), writes(out), writes(err) waits {
+fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_length: u64, pattern: &[u8], pattern_length: u64, out: &OutputStream, err: &OutputStream) -> result: u8 reads(dir), reads(prefix), reads(pattern), writes(factory), writes(out), writes(err) may_wait {
   doc "Enumerates one directory in sorted order, searches the regular files it names, and descends into the subdirectories it names. Every entry is collected by keep_entry before sorting, so no fixed entry count truncates a directory; a directory past the collection ceiling is reported and left unsearched. The record and offset stores start at 4096 bytes and 512 entries, so only a larger directory pays for growth. The child display path is sized from the prefix, so a subdirectory is refused only past a 65536-byte display path, and that refusal is reported. The descent carries no source-level depth limit; stack availability remains outside this version's portable result model. The result packs 1 for a match, 2 for a reported failure, and 4 or 8 when standard output refused a write, a broken pipe or any other refusal; an output refusal stops the whole search, since nothing more can be published.";
   let matched = 0_u8;
   let failed = 0_u8;
@@ -1433,7 +1433,7 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
   return packed;
 }
 
-fn search_root(factory: &HandleFactory, dir: &DirectoryRead, name: &[u8], from: u64, length: u64, prefix: &[u8], prefix_length: u64, pattern: &[u8], pattern_length: u64, out: &OutputStream, err: &OutputStream) -> result: RootSearch reads(dir), reads(name), reads(prefix), reads(pattern), writes(factory), writes(out), writes(err) waits {
+fn search_root(factory: &HandleFactory, dir: &DirectoryRead, name: &[u8], from: u64, length: u64, prefix: &[u8], prefix_length: u64, pattern: &[u8], pattern_length: u64, out: &OutputStream, err: &OutputStream) -> result: RootSearch reads(dir), reads(name), reads(prefix), reads(pattern), writes(factory), writes(out), writes(err) may_wait {
   doc "Opens the search root named by name[from..length) one component at a time below dir and walks the last one. open_directory opens exactly one component and refuses a separator, so a root such as `tests/programs` is reached by opening `tests` and then `programs` below it, each intermediate directory closed on the way back; empty components from repeated or trailing separators are skipped, as path resolution does. The result is walk's packed outcome, or the io_class status of the first component that could not be opened, or 5 when no component remains.";
   let name_room = name^.len;
   let start = from;
@@ -1524,7 +1524,7 @@ fn search_root(factory: &HandleFactory, dir: &DirectoryRead, name: &[u8], from: 
   }
 }
 
-fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputStream, files: &HandleFactory) -> status: ExitStatus reads(args), reads(cwd), writes(out), writes(err), writes(files) waits {
+fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputStream, files: &HandleFactory) -> status: ExitStatus reads(args), reads(cwd), writes(out), writes(err), writes(files) may_wait {
   doc "Searches one directory tree, or one regular file, named by a relative root and publishes `PATH:LINE:TEXT` for the lines holding the literal pattern bytes; 0 matched, 1 none, 2 error. The root may have any number of components; the display prefix is the root as written without its trailing separators, as grep prints it. Every bound that remains is reported on standard error rather than truncating silently: a root or pattern past 4096 bytes, a line past widen_window's ceiling, a directory past keep_entry's collection ceiling, and a subdirectory past walk's display-path ceiling. A refused write to standard output stops the search and is reported once against standard output, never against a searched path.";
   let pattern_cell = zeroed_bytes(count: 4096_u64);
   let pattern = &pattern_cell.inner[0_u64..4096_u64];
@@ -1760,7 +1760,7 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputSt
   return exit_status(code: 0_u8);
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+fn main(inputs: Inputs) -> status: ExitStatus pure must_wait {
   doc "PRE-1 ordinary Inputs are destructured once; the borrowed operation chain returns before the initial directory is explicitly closed on every exit.";
   let Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: files, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;

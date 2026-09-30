@@ -143,9 +143,13 @@ struct FunctionSignature {
     result_list: Option<NominalId>,
     effects_node: NodeId,
     declared_effects: EffectSet,
-    /// [WAIT-1] whether the declaration writes `waits`: a waiting function,
-    /// whose calls are admitted only in the body of another waiting function.
+    /// [WAIT-1] whether the declaration writes `may_wait` or `must_wait`: a
+    /// waiting function, whose calls are admitted only in the body of another
+    /// waiting function.
     waits: bool,
+    /// [WAIT-1] whether the declaration writes `must_wait`: every path of its
+    /// body to an exit waits, so every call of it is a wait [TERM-1].
+    must_wait: bool,
     /// A callable hypothesis used only while checking generic source spelling.
     /// Concrete calls always select a verified source function instead.
     formal_parameter: Option<generics::GenericParameterKey>,
@@ -593,10 +597,9 @@ struct BodyChecker {
     /// [WAIT-1, WAIT-3] the waiting calls and spawns of the function being
     /// checked, published with its finished body.
     waiting: super::model::CheckedWaiting,
-    /// [TERM-1] the calls of the function being checked that wait for the
-    /// host: a call, not a spawn, of a waiting function a host module
-    /// declares [PRE-2].
-    host_waits: Vec<NodePath>,
+    /// [WAIT-1, TERM-1] the calls of the function being checked, not
+    /// spawns, whose callee writes `must_wait`: each is a wait.
+    must_wait_calls: Vec<NodePath>,
     /// [TERM-1, WAIT-3] the `let_stmt`s whose call is a spawn: each joins
     /// its context before any edge leaves the `let_stmt`'s block.
     spawn_joins: Vec<NodePath>,
@@ -1884,6 +1887,9 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 .flatten()
                 .collect()
         };
+        if !declaration_only {
+            self.check_wait_kind(signature, &checked.statements)?;
+        }
         let function = CheckedFunction {
             formal_hypothesis: signature.formal_parameter.is_some(),
             id: signature.id,

@@ -221,7 +221,7 @@ fn bs_push_decimal(s: &Box<Slots<u8>>, capacity: u64, value: u64, digits: u64, t
   return unit;
 }
 
-fn publish_all(factory: &HandleFactory, output: &OutputStream, source: &[u8], length: u64) -> result: Result<unit, IoError> reads(source), writes(factory), writes(output) waits contract {
+fn publish_all(factory: &HandleFactory, output: &OutputStream, source: &[u8], length: u64) -> result: Result<unit, IoError> reads(source), writes(factory), writes(output) may_wait contract {
   define source_length = source^.len;
   requires length <= source_length;
 } {
@@ -246,7 +246,7 @@ fn publish_all(factory: &HandleFactory, output: &OutputStream, source: &[u8], le
   return Ok<unit, IoError>(value: unit);
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+fn main(inputs: Inputs) -> status: ExitStatus pure must_wait {
   doc "Builds one byte string from const runs, grows its backing cell, concatenates, searches it, and publishes the measured report.";
   let Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;

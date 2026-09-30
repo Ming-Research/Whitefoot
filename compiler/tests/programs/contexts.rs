@@ -81,21 +81,21 @@ const GUARD_CYCLE: &[u8] = b"struct Flags {
   right: u64;
 }
 
-fn left_side(flags: Shared<Flags>) -> result: unit pure waits {
+fn left_side(flags: Shared<Flags>) -> result: unit pure must_wait {
   atomic state = &flags when state^.right != 0_u64 {
     set state^.left = 1_u64;
   }
   return unit;
 }
 
-fn right_side(flags: Shared<Flags>) -> result: unit pure waits {
+fn right_side(flags: Shared<Flags>) -> result: unit pure must_wait {
   atomic state = &flags when state^.left != 0_u64 {
     set state^.right = 1_u64;
   }
   return unit;
 }
 
-fn main() -> status: std::process::ExitStatus pure waits {
+fn main() -> status: std::process::ExitStatus pure must_wait {
   let start = Flags(left: 0_u64, right: 0_u64);
   let flags = shared_new::<Flags>(value: start);
   let first = shared_share::<Flags>(shared: &flags);
@@ -106,7 +106,7 @@ fn main() -> status: std::process::ExitStatus pure waits {
 }
 ";
 
-const OWN_GUARD: &[u8] = b"fn wait_then_set(cell: Shared<u64>) -> result: unit pure waits {
+const OWN_GUARD: &[u8] = b"fn wait_then_set(cell: Shared<u64>) -> result: unit pure must_wait {
   atomic value = &cell when value^ != 0_u64 {
     set value^ = 2_u64;
   }
@@ -116,7 +116,7 @@ const OWN_GUARD: &[u8] = b"fn wait_then_set(cell: Shared<u64>) -> result: unit p
   return unit;
 }
 
-fn main() -> status: std::process::ExitStatus pure waits {
+fn main() -> status: std::process::ExitStatus pure must_wait {
   let cell = shared_new::<u64>(value: 0_u64);
   let handle = shared_share::<u64>(shared: &cell);
   spawn wait_then_set(cell: move handle);
@@ -149,20 +149,22 @@ fn a_program_that_can_take_no_step_stops_with_a_report_on_every_driver_count() {
     }
 }
 
-const HANDLE_RESULT: &[u8] = b"fn keep(directory: std::fs::DirectoryRead) -> result: std::fs::DirectoryRead pure waits {
+const HANDLE_RESULT: &[u8] = b"fn keep(directory: std::fs::DirectoryRead, until: std::time::Instant) -> result: std::fs::DirectoryRead pure must_wait {
+  std::time::sleep_until(deadline: until);
   return move directory;
 }
 
-fn close(handles: &std::io::HandleFactory, directory: std::fs::DirectoryRead) -> result: unit writes(handles) waits {
+fn close(handles: &std::io::HandleFactory, directory: std::fs::DirectoryRead) -> result: unit writes(handles) must_wait {
   std::fs::close_directory(factory: handles, directory: move directory);
   return unit;
 }
 
-fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
-  let std::process::Inputs(args: unused_args, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure must_wait {
+  let std::process::Inputs(args: unused_args, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: clock, wall_clock: unused_wall_clock) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &handles, directory: move cwd_write);
-  let back = spawn keep(directory: move cwd);
+  let now = std::time::now(clock: &clock);
+  let back = spawn keep(directory: move cwd, until: now);
   close(handles: &handles, directory: move back);
   return std::process::exit_status(code: 0_u8);
 }

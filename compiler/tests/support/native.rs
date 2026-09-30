@@ -62,7 +62,7 @@ pub(crate) fn wide_frame_source(depth: u64, slots: u64) -> Vec<u8> {
   return a +wrap b;
 }}
 
-fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {{
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure must_wait {{
   let std::process::Inputs(args: args, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &factory, directory: move cwd_write);

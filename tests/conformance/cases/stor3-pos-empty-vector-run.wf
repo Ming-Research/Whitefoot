@@ -3,7 +3,7 @@ alias Inputs = std::process::Inputs;
 alias close_directory = std::fs::close_directory;
 alias exit_status = std::process::exit_status;
 
-fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+fn main(inputs: Inputs) -> status: ExitStatus pure must_wait {
   doc "A zero-capacity heap window reports zero length and exits normally. Exact release accounting belongs to runtime ledger tests.";
   let Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;

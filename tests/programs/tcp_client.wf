@@ -153,7 +153,7 @@ fn parse_port(digits: &[u8], length: u64) -> result: u16 reads(digits) {
   return port;
 }
 
-fn send_all(send: &TcpSend, source: &[u8], length: u64) -> result: Result<unit, IoError> reads(source), writes(send) waits contract {
+fn send_all(send: &TcpSend, source: &[u8], length: u64) -> result: Result<unit, IoError> reads(source), writes(send) may_wait contract {
   define source_length = source^.len;
   requires length <= source_length;
 } {
@@ -178,7 +178,7 @@ fn send_all(send: &TcpSend, source: &[u8], length: u64) -> result: Result<unit, 
   return Ok<unit, IoError>(value: unit);
 }
 
-fn publish_all(factory: &HandleFactory, output: &OutputStream, source: &[u8], length: u64) -> result: Result<unit, IoError> reads(source), writes(factory), writes(output) waits contract {
+fn publish_all(factory: &HandleFactory, output: &OutputStream, source: &[u8], length: u64) -> result: Result<unit, IoError> reads(source), writes(factory), writes(output) may_wait contract {
   define source_length = source^.len;
   requires length <= source_length;
 } {
@@ -203,7 +203,7 @@ fn publish_all(factory: &HandleFactory, output: &OutputStream, source: &[u8], le
   return Ok<unit, IoError>(value: unit);
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+fn main(inputs: Inputs) -> status: ExitStatus pure must_wait {
   doc "Connects to the loopback port named by the invocation, sends eight bytes through the connection's sending direction, and publishes every byte the peer returns through its receiving direction until the peer stops sending. Each direction is an ordinary linear owner [PRE-1, PROV-6]. The argument scratch, the receive chunk and the eight-byte payload are three inline Slots windows of this frame, and each call reaches one of them through a range reference whose interference the declared rows decide [TYPE-9, REF-4, EFF-5].";
   let Inputs(args: args, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;

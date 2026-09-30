@@ -6,7 +6,7 @@ fn peek(cell: &Shared<u8>) -> result: u8 reads(cell) {
   return seen;
 }
 
-fn main() -> status: std::process::ExitStatus pure waits {
+fn main() -> status: std::process::ExitStatus pure may_wait {
   let cell = shared_new::<u8>(value: 3_u8);
   let seen = peek(cell: &cell);
   return std::process::exit_status(code: seen);

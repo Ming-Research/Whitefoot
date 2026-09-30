@@ -1,11 +1,13 @@
-fn keep(directory: std::fs::DirectoryRead) -> result: std::fs::DirectoryRead pure waits {
+fn keep(directory: std::fs::DirectoryRead, until: std::time::Instant) -> result: std::fs::DirectoryRead pure must_wait {
+  std::time::sleep_until(deadline: until);
   return move directory;
 }
 
-fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
-  let std::process::Inputs(args: unused_args, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: unused_handles, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure may_wait {
+  let std::process::Inputs(args: unused_args, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: unused_handles, stdin: unused_stdin, clock: clock, wall_clock: unused_wall_clock) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &unused_handles, directory: move cwd_write);
-  spawn keep(directory: move cwd);
+  let now = std::time::now(clock: &clock);
+  spawn keep(directory: move cwd, until: now);
   return std::process::exit_status(code: 0_u8);
 }

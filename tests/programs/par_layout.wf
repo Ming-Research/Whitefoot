@@ -190,7 +190,7 @@ fn spell_hex(destination: &[u8], at: u64, value: u64) -> result: u64 writes(dest
   return limit;
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+fn main(inputs: Inputs) -> status: ExitStatus pure must_wait {
   doc "Publishes both layout results once for correctness. Explicit extra arguments select 800 repetitions per batch for manual benchmarks; the complete invocation count selects the batch count. Both forms finish at the same seed and publish the same bits. The metric table is one boxed runtime-capacity window and the report is one inline window of this frame [TYPE-9].";
   let Inputs(args: args, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;

@@ -6,7 +6,7 @@ alias exit_status = std::process::exit_status;
 alias host_bytes_len = std::text::host_bytes_len;
 alias host_copy_bytes = std::text::host_copy_bytes;
 
-fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+fn main(inputs: Inputs) -> status: ExitStatus pure must_wait {
   doc "The ordinary host_copy_bytes implementation preserves the arranged raw argument bytes, returns absolute endpoint three and leaves the byte beyond the transferred prefix unchanged. Its range admission uses ordinary requires clauses.";
   let Inputs(args: args, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;

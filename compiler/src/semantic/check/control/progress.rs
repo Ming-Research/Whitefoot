@@ -66,11 +66,11 @@ impl<'unit> Checker<'_, 'unit> {
         if let Some(rank) = written {
             return written_rank_progress(rank, counters);
         }
-        let waits = Waits {
-            host_calls: &self.body.host_waits,
-            spawn_joins: &self.body.spawn_joins,
+        let sites = super::waiting::WaitSites {
+            must_wait_calls: &self.body.must_wait_calls,
+            joins: &self.body.spawn_joins,
         };
-        if block_waits(statements, &waits, id) {
+        if super::waiting::iteration_waits(statements, &sites) {
             return Ok(CheckedLoopProgress::Waits);
         }
         // A structural descent owes no proof, so it is tried before a rank
@@ -712,69 +712,4 @@ fn affine_form(
 /// [GRAM-9], so a call can stand only at an initializer's top.
 fn calls_anything(expression: &CheckedExpression) -> bool {
     matches!(expression, CheckedExpression::UserCall { .. })
-}
-
-/// [TERM-1] the waits of the function being checked: its calls that wait for
-/// the host and its `let_stmt` spawns, each joined within its block.
-struct Waits<'body> {
-    host_calls: &'body [NodePath],
-    spawn_joins: &'body [NodePath],
-}
-
-/// [TERM-1, PRE-2, WAIT-3] whether every path through `statements` that can
-/// reach the loop's header again executes a call that waits for the host, a
-/// guarded atomic statement or a spawn's join.
-fn block_waits(statements: &[CheckedStatement], waits: &Waits<'_>, id: CheckedLoopId) -> bool {
-    for statement in statements {
-        if statement_waits(statement, waits, id) {
-            return true;
-        }
-        if leaves_iteration(statement) {
-            return true;
-        }
-    }
-    false
-}
-
-fn statement_waits(statement: &CheckedStatement, waits: &Waits<'_>, id: CheckedLoopId) -> bool {
-    let below = |node: &NodePath| {
-        waits
-            .host_calls
-            .iter()
-            .any(|call: &NodePath| call.components().starts_with(node.components()))
-    };
-    let joins = |node: &NodePath| {
-        waits
-            .spawn_joins
-            .iter()
-            .any(|join: &NodePath| join.components().starts_with(node.components()))
-    };
-    match statement {
-        CheckedStatement::Let { node_path, .. }
-        | CheckedStatement::DestructuringLet { node_path, .. } => {
-            below(node_path) || joins(node_path)
-        }
-        CheckedStatement::PropagateLet { node_path, .. }
-        | CheckedStatement::Set { node_path, .. }
-        | CheckedStatement::Evaluate { node_path, .. }
-        | CheckedStatement::DropExpression { node_path, .. } => below(node_path),
-        // An unguarded atomic statement takes effect at once; only a guard
-        // makes the context wait for another's step [SHARE-3].
-        CheckedStatement::Atomic { guard, .. } => guard.is_some(),
-        CheckedStatement::Match {
-            scrutinee, arms, ..
-        } => {
-            matches!(scrutinee, CheckedExpression::UserCall { call, .. } if below(call))
-                || arms.iter().all(|arm| block_waits(&arm.body, waits, id))
-        }
-        _ => false,
-    }
-}
-
-/// A statement after which no path of this iteration reaches the header.
-fn leaves_iteration(statement: &CheckedStatement) -> bool {
-    matches!(
-        statement,
-        CheckedStatement::Break { .. } | CheckedStatement::Return { .. }
-    )
 }

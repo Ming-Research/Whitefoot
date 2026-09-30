@@ -17,18 +17,22 @@ use super::{compile, compile_and_run};
 #[test]
 fn returning_waiting_calls_do_not_grow_the_native_stack() {
     let llvm = compile(
-        br#"fn step(value: u64) -> result: u64 pure waits {
+        br#"fn step(value: u64, cell: &Shared<u64>) -> result: u64 reads(cell) may_wait {
+  atomic state = &cell^ {
+    set state^ = value;
+  }
   return value +wrap 1_u64;
 }
 
-fn main() -> status: std::process::ExitStatus pure waits {
+fn main() -> status: std::process::ExitStatus pure may_wait {
+  let cell = shared_new::<u64>(value: 0_u64);
   let total = 0_u64;
   let index = 0_u64;
   loop @spin {
     if index >= 100000000_u64 {
       break @spin;
     }
-    let next = step(value: index);
+    let next = step(value: index, cell: &cell);
     set total = total +wrap next;
     set index = index +wrap 1_u64;
   }
@@ -56,7 +60,7 @@ fn main() -> status: std::process::ExitStatus pure waits {
 #[test]
 fn a_deep_waiting_recursion_keeps_its_frames_in_the_arena() {
     let llvm = compile(
-        br#"fn depth(remaining: u64) -> result: u64 pure waits {
+        br#"fn depth(remaining: u64) -> result: u64 pure may_wait {
   if remaining == 0_u64 {
     return 0_u64;
   }
@@ -65,7 +69,7 @@ fn a_deep_waiting_recursion_keeps_its_frames_in_the_arena() {
   return below +wrap 1_u64;
 }
 
-fn main() -> status: std::process::ExitStatus pure waits {
+fn main() -> status: std::process::ExitStatus pure may_wait {
   let reached = depth(remaining: 1000000_u64);
   if reached == 1000000_u64 {
     return std::process::exit_status(code: 0_u8);

@@ -158,7 +158,7 @@ fn main() -> status: std::process::ExitStatus pure {
 
 #[test]
 fn unproved_prelude_endpoints_reject_under_fn8() {
-    let source = br#"fn publish(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], start: u64, end: u64) -> result: unit reads(source), writes(factory), writes(output) waits {
+    let source = br#"fn publish(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], start: u64, end: u64) -> result: unit reads(source), writes(factory), writes(output) must_wait {
   let no_deadline = None<std::time::Instant>();
   match std::io::write_once(factory: factory, output: output, source: source, start: start, end: end, deadline: no_deadline) {
     Ok(value: next) => {

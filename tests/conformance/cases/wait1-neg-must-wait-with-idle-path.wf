@@ -1,0 +1,16 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+alias Instant = std::time::Instant;
+
+fn maybe_pause(skip: Bool, until: Instant) -> result: unit pure must_wait {
+  doc "Writes must_wait, but the path that returns when skip is true executes no wait [WAIT-1].";
+  if skip {
+    return unit;
+  }
+  std::time::sleep_until(deadline: until);
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

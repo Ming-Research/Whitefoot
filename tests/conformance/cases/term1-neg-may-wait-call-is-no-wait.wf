@@ -1,0 +1,24 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+alias Instant = std::time::Instant;
+
+fn maybe_pause(skip: Bool, until: Instant) -> result: unit pure may_wait {
+  doc "Waits only when skip is false, so a call of it is no wait [WAIT-1].";
+  if skip {
+    return unit;
+  }
+  std::time::sleep_until(deadline: until);
+  return unit;
+}
+
+fn spin(skip: Bool, until: Instant) -> result: unit pure may_wait {
+  doc "The loop calls a may_wait function, which can return without waiting, so the loop has no wait on every path and no rank [TERM-1].";
+  loop {
+    maybe_pause(skip: skip, until: until);
+  }
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

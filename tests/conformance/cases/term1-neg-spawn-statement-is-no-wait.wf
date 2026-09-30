@@ -1,7 +1,7 @@
 alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
-fn start_forever(until: std::time::Instant) -> result: unit pure waits {
+fn start_forever(until: std::time::Instant) -> result: unit pure may_wait {
   doc "Called directly, the host function sleep_until is a wait, but a spawn of it written as an expression statement is joined only when the activation leaves, so the loop's paths back to the header never wait [TERM-1, WAIT-3].";
   loop {
     spawn std::time::sleep_until(deadline: until);

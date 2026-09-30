@@ -3,7 +3,7 @@ fn claim(value: &u8) -> result: Bool writes(value) {
   return True();
 }
 
-fn main() -> status: std::process::ExitStatus pure waits {
+fn main() -> status: std::process::ExitStatus pure may_wait {
   let cell = shared_new::<u8>(value: 0_u8);
   atomic value = &cell when claim(value: value) {
     set value^ = 2_u8;

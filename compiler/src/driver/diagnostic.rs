@@ -892,6 +892,7 @@ impl Report for SemanticIssueKind {
             UndischargedLoopProgress { required_relation, disposition, mechanical_fix };
             ReturnMismatch;
             WaitingCallOutsideWaitingFunction { callee, context, mechanical_fix };
+            WaitKindMismatch { declared, body, mechanical_fix };
             AtomicTargetNotShared { found, mechanical_fix };
             WaitInsideAtomic { construct, mechanical_fix };
             AtomicGuardWrites { mechanical_fix };
