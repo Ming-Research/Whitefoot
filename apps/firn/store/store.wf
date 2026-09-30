@@ -1,9 +1,10 @@
+alias Bytes = pkg::bytes::Bytes;
 alias Key = pkg::bytes::Key;
 alias KeyEnv = pkg::bytes::KeyEnv;
 alias Span = pkg::protocol::Span;
 alias Keyed = pkg::bytes::Keyed;
 alias byte_at = pkg::bytes::byte_at;
-alias bytes_compare = pkg::bytes::bytes_compare;
+alias bytes_order = pkg::bytes::bytes_order;
 alias hash_map_lookup = std::collections::hash_map::hash_map_lookup;
 alias hash_map_new = std::collections::hash_map::hash_map_new;
 alias hash_map_remove = std::collections::hash_map::hash_map_remove;
@@ -26,7 +27,7 @@ fn rank_compare(env: &KeyEnv, left: &Rank, right: &Rank) -> order: i32 reads(lef
   if after {
     return 1_i32;
   }
-  let order = bytes_compare(left: &left^.member.bytes, right: &right^.member.bytes);
+  let order = bytes_order(left: &left^.member.bytes, right: &right^.member.bytes);
   return order;
 }
 
@@ -209,15 +210,22 @@ fn log_input(log: &Box<Slots<u8>>, input: &[u8], span: Span) -> result: unit rea
   return unit;
 }
 
-fn log_stored(log: &Box<Slots<u8>>, stored: &Box<Slots<u8>>) -> result: unit reads(stored), writes(log) {
+fn log_text(log: &Box<Slots<u8>>, text: &Bytes) -> result: unit reads(text), writes(log) {
   doc "Appends a stored string as a RESP bulk string.";
-  let length = stored^.inner.len;
-  log_length(log: log, length: length);
-  for @copy (index in 0_u64..length) {
-    let byte = stored^.inner[index];
-    log_byte(log: log, value: byte);
+  match text^ {
+    Short(bytes: short) => {
+      let length = short^.len;
+      let window = &short^[0_u64..length];
+      let span = Span(start: 0_u64, length: length);
+      log_input(log: log, input: window, span: span);
+    }
+    Long(bytes: long) => {
+      let length = long^.inner.len;
+      let window = &long^.inner[0_u64..length];
+      let span = Span(start: 0_u64, length: length);
+      log_input(log: log, input: window, span: span);
+    }
   }
-  log_crlf(log: log);
   return unit;
 }
 

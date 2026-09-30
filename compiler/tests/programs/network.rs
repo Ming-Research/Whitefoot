@@ -1350,6 +1350,94 @@ fn firn_answers_the_value_types_as_redis_does() {
     assert_eq!(status, 0);
 }
 
+/// firn keeps strings of at most 24 bytes inside the keyspace and longer ones
+/// in allocations of their own. Keys, members, fields and values of exactly 24
+/// bytes and of 25 bytes sharing those 24, and a key differing from them only
+/// in its last byte, stay distinct in every kind of value, and a number that
+/// `INCR` rewrites to a different length reads back whole; the expected replies
+/// are redis-server 7.0.15's to the same requests.
+#[cfg(target_os = "linux")]
+#[test]
+fn firn_keeps_strings_at_and_past_the_inline_length_apart() {
+    let program = firn();
+    let port = free_port();
+    let text = port.to_string();
+    let child = program.spawn_on_route(true, &[text.as_bytes(), b"1"]);
+    let mut client = connect_when_ready(port);
+    client
+        .set_read_timeout(Some(Duration::from_secs(20)))
+        .expect("bound the client's waits");
+    let at = format!("{}x", "a".repeat(23));
+    let past = format!("{at}y");
+    let other = format!("{}z", "a".repeat(23));
+    let (a, b, c) = (at.as_str(), past.as_str(), other.as_str());
+    let short_value = "v".repeat(24);
+    let long_value = "v".repeat(25);
+    let (v24, v25) = (short_value.as_str(), long_value.as_str());
+    let wide = format!("1{}", "0".repeat(25));
+    let mut batch = Vec::new();
+    for request in [
+        vec!["SET", a, "1"],
+        vec!["SET", b, "2"],
+        vec!["SET", c, "3"],
+        vec!["GET", a],
+        vec!["GET", b],
+        vec!["GET", c],
+        vec!["INCR", a],
+        vec!["INCR", b],
+        vec!["GET", a],
+        vec!["GET", b],
+        vec!["SET", "k", v24],
+        vec!["GET", "k"],
+        vec!["SET", "k", v25],
+        vec!["GET", "k"],
+        vec!["SET", "k", v24],
+        vec!["GET", "k"],
+        vec!["SET", "m", "9223372036854775806"],
+        vec!["INCR", "m"],
+        vec!["INCR", "m"],
+        vec!["GET", "m"],
+        vec!["SET", "neg", "-9223372036854775807"],
+        vec!["INCR", "neg"],
+        vec!["GET", "neg"],
+        vec!["SET", "wide", wide.as_str()],
+        vec!["INCR", "wide"],
+        vec!["SADD", "s", a, b, c, a],
+        vec!["SCARD", "s"],
+        vec!["SREM", "s", a],
+        vec!["SCARD", "s"],
+        vec!["SREM", "s", a, b],
+        vec!["SCARD", "s"],
+        vec!["HSET", "h", a, v25, b, v24],
+        vec!["HGET", "h", a],
+        vec!["HGET", "h", b],
+        vec!["HGET", "h", c],
+        vec!["ZADD", "z", "1", a, "2", b, "3", c],
+        vec!["ZSCORE", "z", b],
+        vec!["ZADD", "z", "0", b],
+        vec!["ZPOPMIN", "z", "2"],
+        vec!["LPUSH", "l", a, b],
+        vec!["LRANGE", "l", "0", "-1"],
+        vec!["EXISTS", a, b, c],
+        vec!["DEL", a, b],
+        vec!["EXISTS", a, b, c],
+        vec!["MSET", a, v25, b, v24],
+        vec!["GET", a],
+        vec!["GET", b],
+    ] {
+        batch.extend(resp(&request));
+    }
+    client.write_all(&batch).expect("send the batch");
+    expect_replies(
+        &mut client,
+        b"+OK\r\n+OK\r\n+OK\r\n$1\r\n1\r\n$1\r\n2\r\n$1\r\n3\r\n:2\r\n:3\r\n$1\r\n2\r\n$1\r\n3\r\n+OK\r\n$24\r\nvvvvvvvvvvvvvvvvvvvvvvvv\r\n+OK\r\n$25\r\nvvvvvvvvvvvvvvvvvvvvvvvvv\r\n+OK\r\n$24\r\nvvvvvvvvvvvvvvvvvvvvvvvv\r\n+OK\r\n:9223372036854775807\r\n-ERR increment or decrement would overflow\r\n$19\r\n9223372036854775807\r\n+OK\r\n:-9223372036854775806\r\n$20\r\n-9223372036854775806\r\n+OK\r\n-ERR value is not an integer or out of range\r\n:3\r\n:3\r\n:1\r\n:2\r\n:1\r\n:1\r\n:2\r\n$25\r\nvvvvvvvvvvvvvvvvvvvvvvvvv\r\n$24\r\nvvvvvvvvvvvvvvvvvvvvvvvv\r\n$-1\r\n:3\r\n$1\r\n2\r\n:0\r\n*4\r\n$25\r\naaaaaaaaaaaaaaaaaaaaaaaxy\r\n$1\r\n0\r\n$24\r\naaaaaaaaaaaaaaaaaaaaaaax\r\n$1\r\n1\r\n:2\r\n*2\r\n$25\r\naaaaaaaaaaaaaaaaaaaaaaaxy\r\n$24\r\naaaaaaaaaaaaaaaaaaaaaaax\r\n:3\r\n:2\r\n:1\r\n+OK\r\n$25\r\nvvvvvvvvvvvvvvvvvvvvvvvvv\r\n$24\r\nvvvvvvvvvvvvvvvvvvvvvvvv\r\n",
+        "the strings around the inline length",
+    );
+    drop(client);
+    let (status, _) = finished(child);
+    assert_eq!(status, 0);
+}
+
 /// firn reads a request larger than its first input window and writes a reply
 /// larger than its first reply window: a 100,000-byte value set in one command
 /// reads back whole, and a range of 2,000 list elements, a reply of more than

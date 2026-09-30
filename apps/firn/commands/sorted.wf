@@ -32,12 +32,12 @@ alias push_item = pkg::protocol::push_item;
 alias push_score = pkg::protocol::push_score;
 alias read_integer = pkg::bytes::read_integer;
 alias reply_array = pkg::protocol::reply_array;
-alias reply_bulk = pkg::protocol::reply_bulk;
 alias reply_bulk_decimal = pkg::protocol::reply_bulk_decimal;
 alias reply_error = pkg::protocol::reply_error;
 alias reply_integer = pkg::protocol::reply_integer;
 alias reply_nil = pkg::protocol::reply_nil;
 alias reply_wrong_type = pkg::protocol::reply_wrong_type;
+alias reply_text = pkg::protocol::reply_text;
 
 const word_inf: Array<u8, 3> =[73_u8, 78_u8, 70_u8];
 
@@ -423,7 +423,7 @@ fn pop_lowest(env: &Client, key: &Key, value: &Entry) -> kind: u64 writes(env), 
           Some(value: rank) => {
             let removed = ordered_map_remove::<RankOrder, unit, ceiling>(map: &sorted^.order, key: &rank, env: &keys);
             let dropped = hash_map_remove::<Keyed, f64, ceiling>(map: &sorted^.scores, key: &rank.member, env: &keys);
-            reply_bulk(client: env, stored: &rank.member.bytes);
+            reply_text(client: env, text: &rank.member.bytes);
             let whole = score_integer(score: rank.score);
             reply_bulk_decimal(client: env, value: whole);
           }

@@ -1,4 +1,5 @@
 alias HashMap = std::collections::hash_map::HashMap;
+alias Bytes = pkg::bytes::Bytes;
 alias Key = pkg::bytes::Key;
 alias KeyEnv = pkg::bytes::KeyEnv;
 alias OrderedKey = std::collections::ordered_map::OrderedKey;
@@ -22,10 +23,10 @@ public struct Sorted {
 }
 
 public enum Value {
-  Text(public bytes: Box<Slots<u8>>);
+  Text(public bytes: Bytes);
   Items(public items: Box<Ring<Box<Slots<u8>>>>);
   Members(public members: HashMap<Key, unit, ceiling>);
-  Fields(public fields: HashMap<Key, Box<Slots<u8>>, ceiling>);
+  Fields(public fields: HashMap<Key, Bytes, ceiling>);
   Ranked(public ranked: Sorted);
 }
 
@@ -84,7 +85,7 @@ public fn log_word(log: &Box<Slots<u8>>, word: &[u8]) -> result: unit reads(word
 
 public fn log_input(log: &Box<Slots<u8>>, input: &[u8], span: Span) -> result: unit reads(input), writes(log) doc "Appends an argument of the input as a RESP bulk string.";
 
-public fn log_stored(log: &Box<Slots<u8>>, stored: &Box<Slots<u8>>) -> result: unit reads(stored), writes(log) doc "Appends a stored string as a RESP bulk string.";
+public fn log_text(log: &Box<Slots<u8>>, text: &Bytes) -> result: unit reads(text), writes(log) doc "Appends a stored string as a RESP bulk string.";
 
 public fn log_decimal(log: &Box<Slots<u8>>, value: u64) -> result: unit writes(log) doc "Appends a number as a RESP bulk string of its decimal digits.";
 

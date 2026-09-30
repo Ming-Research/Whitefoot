@@ -22,16 +22,16 @@ alias hash_map_remove = std::collections::hash_map::hash_map_remove;
 alias log_command = pkg::store::log_command;
 alias log_count = pkg::store::log_count;
 alias log_input = pkg::store::log_input;
-alias log_stored = pkg::store::log_stored;
 alias log_word = pkg::store::log_word;
 alias push_item = pkg::protocol::push_item;
 alias read_integer = pkg::bytes::read_integer;
 alias reply_array = pkg::protocol::reply_array;
-alias reply_bulk = pkg::protocol::reply_bulk;
 alias reply_error = pkg::protocol::reply_error;
 alias reply_integer = pkg::protocol::reply_integer;
 alias reply_nil = pkg::protocol::reply_nil;
 alias reply_wrong_type = pkg::protocol::reply_wrong_type;
+alias reply_text = pkg::protocol::reply_text;
+alias log_text = pkg::store::log_text;
 
 const word_srem: Array<u8, 4> =[83_u8, 82_u8, 69_u8, 77_u8];
 
@@ -287,7 +287,7 @@ fn pop_members(env: &Client, key: &Key, value: &Entry) -> kind: u64 writes(env),
         match move picked {
           Some(value: member) => {
             let pair = hash_map_remove::<Keyed, unit, ceiling>(map: set_of, key: &member, env: &env^.keys);
-            reply_bulk(client: env, stored: &member.bytes);
+            reply_text(client: env, text: &member.bytes);
             push_item(client: env, item: move member);
           }
           None() => {
@@ -365,7 +365,7 @@ fn run_spop(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client
         log_input(log: &state^.log, input: input, span: key_span);
         for @members (index in 0_u64..popped) {
           if index < client^.items.inner.len {
-            log_stored(log: &state^.log, stored: &client^.items.inner[index].bytes);
+            log_text(log: &state^.log, text: &client^.items.inner[index].bytes);
           }
         }
       }

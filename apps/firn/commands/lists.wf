@@ -12,7 +12,6 @@ alias arg = pkg::protocol::arg;
 alias ceiling = pkg::store::ceiling;
 alias copy_key = pkg::bytes::copy_key;
 alias clear_items = pkg::protocol::clear_items;
-alias key_bytes = pkg::bytes::key_bytes;
 alias deque_new = std::collections::deque::deque_new;
 alias deque_pop_back = std::collections::deque::deque_pop_back;
 alias deque_pop_front = std::collections::deque::deque_pop_front;
@@ -33,6 +32,7 @@ alias reply_integer = pkg::protocol::reply_integer;
 alias reply_nil = pkg::protocol::reply_nil;
 alias reply_nil_array = pkg::protocol::reply_nil_array;
 alias reply_wrong_type = pkg::protocol::reply_wrong_type;
+alias key_boxed = pkg::bytes::key_boxed;
 
 const text_positive: Array<u8, 43> =[69_u8, 82_u8, 82_u8, 32_u8, 118_u8, 97_u8, 108_u8, 117_u8, 101_u8, 32_u8, 105_u8, 115_u8, 32_u8, 111_u8, 117_u8, 116_u8, 32_u8, 111_u8, 102_u8, 32_u8, 114_u8, 97_u8, 110_u8, 103_u8, 101_u8, 44_u8, 32_u8, 109_u8, 117_u8, 115_u8, 116_u8, 32_u8, 98_u8, 101_u8, 32_u8, 112_u8, 111_u8, 115_u8, 105_u8, 116_u8, 105_u8, 118_u8, 101_u8];
 
@@ -78,7 +78,7 @@ fn push_all(list: &Box<Ring<Box<Slots<u8>>>>, client: &Client, front: Bool) -> r
   loop @elements {
     if client^.items.inner.len > 0_u64 {
       let prepared = take_back(window: &client^.items.inner);
-      let element = key_bytes(key: move prepared);
+      let element = key_boxed(key: move prepared);
       list_room(list: list);
       if list^.inner.len < list^.inner.cap {
         if front {

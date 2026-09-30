@@ -4,10 +4,16 @@ public struct KeyEnv {
   doc "The environment firn's key protocols take. It holds nothing: every key carries the hash it was made with.";
 }
 
+public enum Bytes {
+  doc "A byte string: one of at most 24 bytes held inside its owner, a longer one in an allocation of its own. bytes_new alone chooses the form, from the length, so equal strings always have the same form.";
+  Short(public bytes: Slots<u8, 24>);
+  Long(public bytes: Box<Slots<u8>>);
+}
+
 public struct Key {
   doc "A string with its hash, computed once when the key is made, so that a hash map neither hashes it again nor compares the bytes of two keys whose hashes differ.";
   public hash: u64;
-  public bytes: Box<Slots<u8>>;
+  public bytes: Bytes;
 }
 
 public struct Integer {
@@ -18,7 +24,21 @@ public struct Integer {
 
 public fn byte_at(input: &[u8], index: u64) -> result: u8 reads(input) doc "Reads one byte, or zero at a position the range does not hold.";
 
-public fn bytes_compare(left: &Box<Slots<u8>>, right: &Box<Slots<u8>>) -> order: i32 reads(left), reads(right) doc "Orders two strings byte by byte as unsigned values, a proper prefix first: -1, 0 or 1.";
+public fn bytes_new(input: &[u8], start: u64, length: u64) -> made: Bytes reads(input) doc "Copies bytes of the input from a position into a string of its own, held inline when it has at most 24 bytes; a position the input does not hold reads as zero.";
+
+public fn bytes_copy(bytes: &Bytes) -> made: Bytes reads(bytes) doc "A copy of a string.";
+
+public fn bytes_length(bytes: &Bytes) -> length: u64 reads(bytes) doc "How many bytes a string holds.";
+
+public fn bytes_same(left: &Bytes, right: &Bytes) -> equal: Bool reads(left), reads(right) doc "Whether two strings hold the same bytes.";
+
+public fn bytes_order(left: &Bytes, right: &Bytes) -> order: i32 reads(left), reads(right) doc "Orders two strings byte by byte as unsigned values, a proper prefix first: -1, 0 or 1.";
+
+public fn bytes_boxed(bytes: Bytes) -> made: Box<Slots<u8>> pure doc "A string in an allocation of its own, for a container of such strings.";
+
+public fn bytes_integer(bytes: &Bytes) -> number: Integer reads(bytes) doc "Reads a string as read_integer reads bytes of the input.";
+
+public fn decimal_text(value: i64) -> made: Bytes pure doc "A string holding a number in decimal, with a leading minus sign when it is negative.";
 
 public fn key_hash(env: &KeyEnv, key: &Key) -> hash: u64 reads(key) doc "The hash a key carries.";
 
@@ -31,21 +51,13 @@ public binding Keyed : HashMapKey<Key, KeyEnv> {
 
 public fn make_key(input: &[u8], start: u64, length: u64) -> made: Key reads(input) doc "Copies bytes of the input into a key with the FNV-1a hash of its bytes, the hash every key of firn carries.";
 
-public fn key_of(bytes: Box<Slots<u8>>) -> made: Key pure doc "A string made into a key with the FNV-1a hash of its bytes.";
-
 public fn copy_key(key: &Key) -> made: Key reads(key) doc "A copy of a key, its hash kept.";
 
-public fn key_bytes(key: Key) -> bytes: Box<Slots<u8>> pure doc "A key's string, its hash dropped, for a value that is stored where no hash map looks it up.";
+public fn key_text(key: Key) -> bytes: Bytes pure doc "A key's string, its hash dropped, for a value that is stored where no hash map looks it up.";
 
-public fn copy_bytes(input: &[u8], start: u64, length: u64) -> made: Box<Slots<u8>> reads(input) doc "Copies the bytes of the input from a position into a string of its own; a position the input does not hold reads as zero. No request carries an argument of 2^62 bytes, the most a string holds; a longer one copies as the empty string.";
-
-public fn same_bytes(input: &[u8], start: u64, length: u64, stored: &Box<Slots<u8>>) -> equal: Bool reads(input), reads(stored) doc "Whether the bytes of the input from a position spell the stored string.";
-
-public fn decimal_bytes(value: i64) -> made: Box<Slots<u8>> pure doc "A string holding a number in decimal, with a leading minus sign when it is negative.";
+public fn key_boxed(key: Key) -> bytes: Box<Slots<u8>> pure doc "A key's string in an allocation of its own, its hash dropped, for a list element or a hash's value.";
 
 public fn read_integer(input: &[u8], start: u64, length: u64) -> number: Integer reads(input) doc "Reads bytes of the input as a signed 64-bit decimal as Redis reads one: an optional minus sign, then digits without a leading zero unless the number is 0, and nothing else.";
-
-public fn stored_integer(stored: &Box<Slots<u8>>) -> number: Integer reads(stored) doc "Reads a stored string as read_integer reads bytes of the input.";
 
 public fn name_code(input: &[u8], start: u64, length: u64) -> code: u64 reads(input) doc "Packs a command name's first eight bytes, letters upper-cased, little end first, into one number; a name longer than eight bytes has its top byte set to 255, and a name of no bytes is 0.";
 

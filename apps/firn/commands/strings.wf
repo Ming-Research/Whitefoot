@@ -10,10 +10,7 @@ alias Value = pkg::store::Value;
 alias arg = pkg::protocol::arg;
 alias ceiling = pkg::store::ceiling;
 alias clear_items = pkg::protocol::clear_items;
-alias copy_bytes = pkg::bytes::copy_bytes;
 alias copy_key = pkg::bytes::copy_key;
-alias key_bytes = pkg::bytes::key_bytes;
-alias decimal_bytes = pkg::bytes::decimal_bytes;
 alias expired = pkg::store::expired;
 alias hash_map_edit = std::collections::hash_map::hash_map_edit;
 alias hash_map_lookup = std::collections::hash_map::hash_map_lookup;
@@ -23,10 +20,7 @@ alias log_count = pkg::store::log_count;
 alias log_input = pkg::store::log_input;
 alias log_word = pkg::store::log_word;
 alias name_is = pkg::bytes::name_is;
-alias push_item = pkg::protocol::push_item;
 alias read_integer = pkg::bytes::read_integer;
-alias reply_array = pkg::protocol::reply_array;
-alias reply_bulk = pkg::protocol::reply_bulk;
 alias reply_bulk_input = pkg::protocol::reply_bulk_input;
 alias reply_error = pkg::protocol::reply_error;
 alias reply_integer = pkg::protocol::reply_integer;
@@ -35,7 +29,12 @@ alias reply_ok = pkg::protocol::reply_ok;
 alias reply_raw = pkg::protocol::reply_raw;
 alias reply_word = pkg::protocol::reply_word;
 alias reply_wrong_type = pkg::protocol::reply_wrong_type;
-alias stored_integer = pkg::bytes::stored_integer;
+alias Bytes = pkg::bytes::Bytes;
+alias bytes_new = pkg::bytes::bytes_new;
+alias key_text = pkg::bytes::key_text;
+alias bytes_integer = pkg::bytes::bytes_integer;
+alias decimal_text = pkg::bytes::decimal_text;
+alias reply_text = pkg::protocol::reply_text;
 
 const word_set: Array<u8, 3> =[83_u8, 69_u8, 84_u8];
 
@@ -106,7 +105,7 @@ fn text_value(env: &Client, key: &Key, value: &Entry) -> kind: u64 reads(value),
   }
   match value^.value {
     Text(bytes: stored) => {
-      reply_bulk(client: env, stored: stored);
+      reply_text(client: env, text: stored);
       set env^.state = state_done;
       return 1_u64;
     }
@@ -151,7 +150,7 @@ fn run_get(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client:
   return unit;
 }
 
-fn put_text(state: &Store, key: Key, value: Box<Slots<u8>>, expires: u64, env: &KeyEnv) -> stored: Bool reads(env), writes(state) {
+fn put_text(state: &Store, key: Key, value: Bytes, expires: u64, env: &KeyEnv) -> stored: Bool reads(env), writes(state) {
   doc "Stores a string under a key, replacing any value it held, and reports whether the keyspace had room.";
   let text = Value::Text(bytes: move value);
   let held_entry = Entry(value: move text, expires: expires);
@@ -205,7 +204,7 @@ fn run_set(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client:
   let key_span = arg(args: args, index: 1_u64);
   let value_span = arg(args: args, index: 2_u64);
   let key = key_at(input: input, args: args, index: 1_u64);
-  let value = copy_bytes(input: input, start: value_span.start, length: value_span.length);
+  let value = bytes_new(input: input, start: value_span.start, length: value_span.length);
   let expires = 0_u64;
   if ttl_ms != 0_u64 {
     let ttl_ns = ttl_ms *wrap 1000000_u64;
@@ -250,7 +249,7 @@ fn run_mset(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client
       if pending >= 2_u64 {
         let key = take_back(window: &client^.items.inner);
         let prepared = take_back(window: &client^.items.inner);
-        let value = key_bytes(key: move prepared);
+        let value = key_text(key: move prepared);
         let put = put_text(state: &state^, key: move key, value: move value, expires: 0_u64, env: env);
         if put {
         } else {
@@ -282,7 +281,7 @@ fn bump_value(env: &Counted, key: &Key, value: &Entry) -> result: u64 writes(env
   }
   match value^.value {
     Text(bytes: stored) => {
-      let number = stored_integer(stored: stored);
+      let number = bytes_integer(bytes: stored);
       if number.state != 1_u64 {
         set env^.state = 5_u64;
         return 5_u64;
@@ -292,7 +291,7 @@ fn bump_value(env: &Counted, key: &Key, value: &Entry) -> result: u64 writes(env
         return 6_u64;
       }
       let bumped = number.value +wrap 1_i64;
-      let fresh = decimal_bytes(value: bumped);
+      let fresh = decimal_text(value: bumped);
       set stored^ = move fresh;
       set env^.value = bumped;
       set env^.state = state_done;
@@ -336,7 +335,7 @@ fn run_incr(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client
       }
     }
     if fresh_needed {
-      let fresh = decimal_bytes(value: 1_i64);
+      let fresh = decimal_text(value: 1_i64);
       let owned_key = copy_key(key: &key);
       let put = put_text(state: &state^, key: move owned_key, value: move fresh, expires: 0_u64, env: env);
       if put {

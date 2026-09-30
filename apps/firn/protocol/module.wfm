@@ -1,3 +1,4 @@
+alias Bytes = pkg::bytes::Bytes;
 alias Key = pkg::bytes::Key;
 alias KeyEnv = pkg::bytes::KeyEnv;
 
@@ -68,6 +69,8 @@ public fn reply_integer(client: &Client, value: i64) -> result: unit writes(clie
 public fn reply_array(client: &Client, count: u64) -> result: unit writes(client) doc "Writes the header of a RESP array of count elements.";
 
 public fn reply_bulk(client: &Client, stored: &Box<Slots<u8>>) -> result: unit reads(stored), writes(client) doc "Writes a stored string as a RESP bulk string.";
+
+public fn reply_text(client: &Client, text: &Bytes) -> result: unit reads(text), writes(client) doc "Writes a stored string as a RESP bulk string.";
 
 public fn reply_bulk_input(client: &Client, input: &[u8], start: u64, length: u64) -> result: unit reads(input), writes(client) doc "Writes bytes of the input as a RESP bulk string.";
 

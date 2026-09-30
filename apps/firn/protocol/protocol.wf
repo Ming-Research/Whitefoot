@@ -1,3 +1,4 @@
+alias Bytes = pkg::bytes::Bytes;
 alias Key = pkg::bytes::Key;
 alias KeyEnv = pkg::bytes::KeyEnv;
 alias byte_at = pkg::bytes::byte_at;
@@ -552,6 +553,23 @@ fn reply_bulk(client: &Client, stored: &Box<Slots<u8>>) -> result: unit reads(st
   }
   put(client: client, value: 13_u8);
   put(client: client, value: 10_u8);
+  return unit;
+}
+
+fn reply_text(client: &Client, text: &Bytes) -> result: unit reads(text), writes(client) {
+  doc "Writes a stored string as a RESP bulk string.";
+  match text^ {
+    Short(bytes: short) => {
+      let length = short^.len;
+      let window = &short^[0_u64..length];
+      reply_bulk_input(client: client, input: window, start: 0_u64, length: length);
+    }
+    Long(bytes: long) => {
+      let length = long^.inner.len;
+      let window = &long^.inner[0_u64..length];
+      reply_bulk_input(client: client, input: window, start: 0_u64, length: length);
+    }
+  }
   return unit;
 }
 

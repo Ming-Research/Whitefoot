@@ -13,30 +13,20 @@ fn key_hash(env: &KeyEnv, key: &Key) -> hash: u64 reads(key) {
 }
 
 fn key_equal(env: &KeyEnv, left: &Key, right: &Key) -> equal: Bool reads(left), reads(right) {
-  doc "Two keys are equal when their hashes, lengths and every byte are.";
+  doc "Two keys are equal when their hashes and their bytes are.";
   if left^.hash != right^.hash {
     return False();
   }
-  let length = left^.bytes.inner.len;
-  if length != right^.bytes.inner.len {
-    return False();
-  }
-  for @bytes (index in 0_u64..length) {
-    let first = left^.bytes.inner[index];
-    let second = right^.bytes.inner[index];
-    if first != second {
-      return False();
-    }
-  }
-  return True();
+  let same = bytes_same(left: &left^.bytes, right: &right^.bytes);
+  return same;
 }
 
-fn string_hash(bytes: &Box<Slots<u8>>) -> hash: u64 reads(bytes) {
-  doc "FNV-1a over a string's bytes.";
+fn window_hash(input: &[u8], start: u64, length: u64) -> hash: u64 reads(input) {
+  doc "FNV-1a over bytes of the input from a position.";
   let hash = 14695981039346656037_u64;
-  let length = bytes^.inner.len;
-  for @bytes (index in 0_u64..length) {
-    let byte = bytes^.inner[index];
+  for @bytes (offset in 0_u64..length) {
+    let position = start +wrap offset;
+    let byte = byte_at(input: input, index: position);
     let wide = cvt::<u8, u64>(byte);
     let folded = ixor(hash, wide);
     set hash = folded *wrap 1099511628211_u64;
@@ -46,45 +36,137 @@ fn string_hash(bytes: &Box<Slots<u8>>) -> hash: u64 reads(bytes) {
 
 fn make_key(input: &[u8], start: u64, length: u64) -> made: Key reads(input) {
   doc "Copies bytes of the input into a key with the FNV-1a hash of its bytes, the hash every key of firn carries.";
-  let bytes = copy_bytes(input: input, start: start, length: length);
-  let hash = string_hash(bytes: &bytes);
-  return Key(hash: hash, bytes: move bytes);
-}
-
-fn key_of(bytes: Box<Slots<u8>>) -> made: Key pure {
-  doc "A string made into a key with the FNV-1a hash of its bytes.";
-  let hash = string_hash(bytes: &bytes);
+  let hash = window_hash(input: input, start: start, length: length);
+  let bytes = bytes_new(input: input, start: start, length: length);
   return Key(hash: hash, bytes: move bytes);
 }
 
 fn copy_key(key: &Key) -> made: Key reads(key) {
   doc "A copy of a key, its hash kept.";
-  let length = key^.bytes.inner.len;
-  let window = &key^.bytes.inner[0_u64..length];
-  let bytes = copy_bytes(input: window, start: 0_u64, length: length);
+  let bytes = bytes_copy(bytes: &key^.bytes);
   return Key(hash: key^.hash, bytes: move bytes);
 }
 
-fn key_bytes(key: Key) -> bytes: Box<Slots<u8>> pure {
+fn key_text(key: Key) -> bytes: Bytes pure {
   doc "A key's string, its hash dropped, for a value that is stored where no hash map looks it up.";
   let Key(hash: dropped, bytes: bytes) = move key;
   return move bytes;
 }
 
-fn bytes_compare(left: &Box<Slots<u8>>, right: &Box<Slots<u8>>) -> order: i32 reads(left), reads(right) {
-  doc "Orders two strings byte by byte as unsigned values, a proper prefix first: -1, 0 or 1.";
-  let left_length = left^.inner.len;
-  let right_length = right^.inner.len;
+fn key_boxed(key: Key) -> bytes: Box<Slots<u8>> pure {
+  doc "A key's string in an allocation of its own, its hash dropped, for a list element or a hash's value.";
+  let Key(hash: dropped, bytes: bytes) = move key;
+  let boxed = bytes_boxed(bytes: move bytes);
+  return move boxed;
+}
+
+fn bytes_new(input: &[u8], start: u64, length: u64) -> made: Bytes reads(input) {
+  doc "Copies bytes of the input from a position into a string of its own, held inline when it has at most 24 bytes; a position the input does not hold reads as zero.";
+  if length <= 24_u64 {
+    let short = slots_new::<u8, 24>();
+    for @copy (offset in 0_u64..length) {
+      let position = start +wrap offset;
+      let byte = byte_at(input: input, index: position);
+      if short.len < short.cap {
+        place_back(window: &short, value: byte);
+      }
+    }
+    return Bytes::Short(bytes: move short);
+  }
+  let long = copy_bytes(input: input, start: start, length: length);
+  return Bytes::Long(bytes: move long);
+}
+
+fn bytes_copy(bytes: &Bytes) -> made: Bytes reads(bytes) {
+  doc "A copy of a string.";
+  match bytes^ {
+    Short(bytes: short) => {
+      let length = short^.len;
+      let window = &short^[0_u64..length];
+      let made = bytes_new(input: window, start: 0_u64, length: length);
+      return move made;
+    }
+    Long(bytes: long) => {
+      let length = long^.inner.len;
+      let window = &long^.inner[0_u64..length];
+      let made = bytes_new(input: window, start: 0_u64, length: length);
+      return move made;
+    }
+  }
+}
+
+fn bytes_length(bytes: &Bytes) -> length: u64 reads(bytes) {
+  doc "How many bytes a string holds.";
+  match bytes^ {
+    Short(bytes: short) => {
+      return short^.len;
+    }
+    Long(bytes: long) => {
+      return long^.inner.len;
+    }
+  }
+}
+
+fn windows_equal(left: &[u8], right: &[u8]) -> equal: Bool reads(left), reads(right) {
+  doc "Whether two ranges hold the same bytes.";
+  let length = left^.len;
+  if length != right^.len {
+    return False();
+  }
+  for @bytes (index in 0_u64..length) {
+    let first = left^[index];
+    let second = byte_at(input: right, index: index);
+    if first != second {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn same_as(window: &[u8], other: &Bytes) -> equal: Bool reads(window), reads(other) {
+  doc "Whether a range holds the bytes of a string.";
+  match other^ {
+    Short(bytes: short) => {
+      let length = short^.len;
+      let right = &short^[0_u64..length];
+      let equal = windows_equal(left: window, right: right);
+      return equal;
+    }
+    Long(bytes: long) => {
+      let length = long^.inner.len;
+      let right = &long^.inner[0_u64..length];
+      let equal = windows_equal(left: window, right: right);
+      return equal;
+    }
+  }
+}
+
+fn bytes_same(left: &Bytes, right: &Bytes) -> equal: Bool reads(left), reads(right) {
+  doc "Whether two strings hold the same bytes.";
+  match left^ {
+    Short(bytes: short) => {
+      let length = short^.len;
+      let window = &short^[0_u64..length];
+      let equal = same_as(window: window, other: right);
+      return equal;
+    }
+    Long(bytes: long) => {
+      let length = long^.inner.len;
+      let window = &long^.inner[0_u64..length];
+      let equal = same_as(window: window, other: right);
+      return equal;
+    }
+  }
+}
+
+fn windows_order(left: &[u8], right: &[u8]) -> order: i32 reads(left), reads(right) {
+  doc "Orders two ranges byte by byte as unsigned values, a proper prefix first: -1, 0 or 1.";
+  let left_length = left^.len;
+  let right_length = right^.len;
   let shorter = imin(left_length, right_length);
   for @bytes (index in 0_u64..shorter) {
-    let first = 0_u8;
-    if index < left_length {
-      set first = left^.inner[index];
-    }
-    let second = 0_u8;
-    if index < right_length {
-      set second = right^.inner[index];
-    }
+    let first = byte_at(input: left, index: index);
+    let second = byte_at(input: right, index: index);
     if first < second {
       return -1_i32;
     }
@@ -99,6 +181,75 @@ fn bytes_compare(left: &Box<Slots<u8>>, right: &Box<Slots<u8>>) -> order: i32 re
     return 1_i32;
   }
   return 0_i32;
+}
+
+fn order_against(window: &[u8], other: &Bytes) -> order: i32 reads(window), reads(other) {
+  doc "Orders a range against a string as windows_order orders two ranges.";
+  match other^ {
+    Short(bytes: short) => {
+      let length = short^.len;
+      let right = &short^[0_u64..length];
+      let order = windows_order(left: window, right: right);
+      return order;
+    }
+    Long(bytes: long) => {
+      let length = long^.inner.len;
+      let right = &long^.inner[0_u64..length];
+      let order = windows_order(left: window, right: right);
+      return order;
+    }
+  }
+}
+
+fn bytes_order(left: &Bytes, right: &Bytes) -> order: i32 reads(left), reads(right) {
+  doc "Orders two strings byte by byte as unsigned values, a proper prefix first: -1, 0 or 1.";
+  match left^ {
+    Short(bytes: short) => {
+      let length = short^.len;
+      let window = &short^[0_u64..length];
+      let order = order_against(window: window, other: right);
+      return order;
+    }
+    Long(bytes: long) => {
+      let length = long^.inner.len;
+      let window = &long^.inner[0_u64..length];
+      let order = order_against(window: window, other: right);
+      return order;
+    }
+  }
+}
+
+fn bytes_boxed(bytes: Bytes) -> made: Box<Slots<u8>> pure {
+  doc "A string in an allocation of its own, for a container of such strings.";
+  match move bytes {
+    Short(bytes: short) => {
+      let length = short.len;
+      let window = &short[0_u64..length];
+      let made = copy_bytes(input: window, start: 0_u64, length: length);
+      return move made;
+    }
+    Long(bytes: long) => {
+      return move long;
+    }
+  }
+}
+
+fn bytes_integer(bytes: &Bytes) -> number: Integer reads(bytes) {
+  doc "Reads a string as read_integer reads bytes of the input.";
+  match bytes^ {
+    Short(bytes: short) => {
+      let length = short^.len;
+      let window = &short^[0_u64..length];
+      let number = read_integer(input: window, start: 0_u64, length: length);
+      return number;
+    }
+    Long(bytes: long) => {
+      let length = long^.inner.len;
+      let window = &long^.inner[0_u64..length];
+      let number = read_integer(input: window, start: 0_u64, length: length);
+      return number;
+    }
+  }
 }
 
 fn copy_bytes(input: &[u8], start: u64, length: u64) -> made: Box<Slots<u8>> reads(input) {
@@ -118,23 +269,7 @@ fn copy_bytes(input: &[u8], start: u64, length: u64) -> made: Box<Slots<u8>> rea
   return move empty;
 }
 
-fn same_bytes(input: &[u8], start: u64, length: u64, stored: &Box<Slots<u8>>) -> equal: Bool reads(input), reads(stored) {
-  doc "Whether the bytes of the input from a position spell the stored string.";
-  if length != stored^.inner.len {
-    return False();
-  }
-  for @compare (offset in 0_u64..length) {
-    let position = start +wrap offset;
-    let byte = byte_at(input: input, index: position);
-    let kept = stored^.inner[offset];
-    if byte != kept {
-      return False();
-    }
-  }
-  return True();
-}
-
-fn decimal_bytes(value: i64) -> made: Box<Slots<u8>> pure {
+fn decimal_text(value: i64) -> made: Bytes pure {
   doc "A string holding a number in decimal, with a leading minus sign when it is negative.";
   let negative = value < 0_i64;
   let magnitude = cvt.wrap::<i64, u64>(value);
@@ -157,10 +292,10 @@ fn decimal_bytes(value: i64) -> made: Box<Slots<u8>> pure {
       break @digits;
     }
   }
-  let made = box_slots_new::<u8>(capacity: 21_u64);
+  let made = slots_new::<u8, 24>();
   if negative {
-    if made.inner.len < made.inner.cap {
-      place_back(window: &made.inner, value: 45_u8);
+    if made.len < made.cap {
+      place_back(window: &made, value: 45_u8);
     }
   }
   for @emit (index in 0_u64..count) {
@@ -170,11 +305,11 @@ fn decimal_bytes(value: i64) -> made: Box<Slots<u8>> pure {
     if from < 20_u64 {
       set glyph = digits[from];
     }
-    if made.inner.len < made.inner.cap {
-      place_back(window: &made.inner, value: glyph);
+    if made.len < made.cap {
+      place_back(window: &made, value: glyph);
     }
   }
-  return move made;
+  return Bytes::Short(bytes: move made);
 }
 
 fn integer_digits(first: u8, length: u64) -> result: Integer pure {
@@ -274,14 +409,6 @@ fn read_integer(input: &[u8], start: u64, length: u64) -> number: Integer reads(
   let plus = False();
   let summed = read_digits(input: input, start: start, length: length, negative: plus);
   return summed;
-}
-
-fn stored_integer(stored: &Box<Slots<u8>>) -> number: Integer reads(stored) {
-  doc "Reads a stored string as read_integer reads bytes of the input.";
-  let length = stored^.inner.len;
-  let window = &stored^.inner[0_u64..length];
-  let number = read_integer(input: window, start: 0_u64, length: length);
-  return number;
 }
 
 fn upper(byte: u8) -> result: u8 pure {
