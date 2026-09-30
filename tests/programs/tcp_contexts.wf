@@ -75,7 +75,8 @@ fn send_all(send: &TcpSend, source: &[u8], length: u64) -> result: Result<unit, 
     } else {
       break @sending;
     }
-    match send_once(send: send, source: source, start: sent, end: length) {
+    let no_deadline = None<std::time::Instant>();
+    match send_once(send: send, source: source, start: sent, end: length, deadline: no_deadline) {
       Ok(value: next) => {
         set sent = next;
       }
@@ -101,7 +102,8 @@ fn serve(connection: TcpConnection, factory: HandleFactory) -> result: unit pure
   loop @chunks {
     let available = 0_u64;
     let ended = 0_u8;
-    match receive_next(receive: &connection.receive, destination: sink, start: 0_u64, end: held) {
+    let no_deadline = None<std::time::Instant>();
+    match receive_next(receive: &connection.receive, destination: sink, start: 0_u64, end: held, deadline: no_deadline) {
       Ok(value: endpoint) => {
         set available = endpoint;
       }
@@ -154,7 +156,9 @@ fn argument(args: &std::text::Args, position: u64, window: &[u8]) -> result: u64
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "Listens on the loopback port the first argument names and serves each accepted connection in a context of its own [WAIT-3], echoing until its peer stops sending. The second argument is how many connections to accept; zero accepts until the listener fails. Every started context completes before main returns.";
-  let Inputs(args: args, cwd: unused_cwd, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin) = move inputs;
+  let Inputs(args: args, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
+  std::fs::close_directory_write(factory: &handles, directory: move unused_cwd_write);
   close_directory(factory: &handles, directory: move unused_cwd);
   let digits = slots_new::<u8, 16>();
   for @fill_digits (
@@ -186,7 +190,8 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
             break @accepting;
           }
         }
-        match tcp_accept(factory: &handles, listener: &listener) {
+        let no_deadline = None<std::time::Instant>();
+        match tcp_accept(factory: &handles, listener: &listener, deadline: no_deadline) {
           Ok(value: next) => {
             let AcceptedConnection(connection: connection, peer: unused_peer) = move next;
             let factory = factory_share(factory: &handles);

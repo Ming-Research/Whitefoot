@@ -5,7 +5,9 @@ alias exit_status = std::process::exit_status;
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "PRE-2: the invocation arrives as one ordinary Inputs struct. Whole destructuring exposes ordinary fields; cwd is explicitly consumed through close_directory. There is no heap value to hand in, no input-label order and no implicit native release.";
-  let Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: factory, stdin: input) = move inputs;
+  let Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: factory, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
+  std::fs::close_directory_write(factory: &factory, directory: move cwd_write);
   close_directory(factory: &factory, directory: move cwd);
   return exit_status(code: 0_u8);
 }

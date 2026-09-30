@@ -1667,7 +1667,8 @@ fn exhaustion_facts_prove_both_ordinary_range_requirements() {
     set start = end;
     set end = end + 1_u64;
   }
-  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: start, end: end);
+  let no_deadline = None<std::time::Instant>();
+  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: start, end: end, deadline: no_deadline);
   return unit;
 }
 

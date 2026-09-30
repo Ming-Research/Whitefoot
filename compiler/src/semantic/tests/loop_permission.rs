@@ -2040,7 +2040,8 @@ fn a_direct_read_state_transition_writes_enclosing_storage() {
 } {
   let total = 0_u64;
   for @scan (i in 0_u64..4_u64) {
-    let outcome = std::io::read_next(factory: factory, input: input, destination: destination, start: 0_u64, end: 1_u64);
+    let no_deadline = None<std::time::Instant>();
+    let outcome = std::io::read_next(factory: factory, input: input, destination: destination, start: 0_u64, end: 1_u64, deadline: no_deadline);
     set total = total +wrap 1_u64;
   }
   return unit;

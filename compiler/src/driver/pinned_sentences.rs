@@ -330,7 +330,8 @@ fn main() -> status: std::process::ExitStatus pure {
   let payload = array_filled::<u8, 9>(value: 66_u8);
   let wide = payload.len;
   let view = &header[0_u64..4_u64];
-  let sent = std::io::write_once(factory: &factory, output: &out, source: view, start: 0_u64, end: wide);
+  let no_deadline = None<std::time::Instant>();
+  let sent = std::io::write_once(factory: &factory, output: &out, source: view, start: 0_u64, end: wide, deadline: no_deadline);
   return std::process::exit_status(code: 0_u8);
 }
 "#,

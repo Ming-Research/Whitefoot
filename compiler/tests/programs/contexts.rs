@@ -158,7 +158,9 @@ fn close(handles: &std::io::HandleFactory, directory: std::fs::DirectoryRead) ->
 }
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
-  let std::process::Inputs(args: unused_args, cwd: cwd, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin) = move inputs;
+  let std::process::Inputs(args: unused_args, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
+  std::fs::close_directory_write(factory: &handles, directory: move cwd_write);
   let back = spawn keep(directory: move cwd);
   close(handles: &handles, directory: move back);
   return std::process::exit_status(code: 0_u8);

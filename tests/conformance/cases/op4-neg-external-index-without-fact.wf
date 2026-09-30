@@ -6,7 +6,9 @@ alias exit_status = std::process::exit_status;
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "An ordinary function result is an ordinary symbolic runtime value, not a fact source. Using it directly as a window index leaves the bounds Goal unproved, so OP-4 rejects before lowering.";
-  let Inputs(args: arg_list, cwd: root, handles: entry_factory, ..) = move inputs;
+  let Inputs(args: arg_list, cwd: root_directory, handles: entry_factory, ..) = move inputs;
+  let std::fs::Directory(read: root, write: root_write) = move root_directory;
+  std::fs::close_directory_write(factory: &entry_factory, directory: move root_write);
   close_directory(factory: &entry_factory, directory: move root);
   let index = args_count(args: &arg_list);
   let values = array_filled::<u8, 4>(value: 0_u8);

@@ -19,6 +19,10 @@ pub(crate) const GRAPH: &str = include_str!("../../lib/std/modules.wfg");
 /// each module's interface record first [MOD-2].
 pub(crate) const RECORDS: &[(&str, &str)] = &[
     (
+        "std/time/module.wfm",
+        include_str!("../../lib/std/time/module.wfm"),
+    ),
+    (
         "std/io/module.wfm",
         include_str!("../../lib/std/io/module.wfm"),
     ),
@@ -93,11 +97,12 @@ pub(crate) const RECORDS: &[(&str, &str)] = &[
 /// is the library's own statement of them, and a test holds this table to
 /// what forming that record gives.
 pub(crate) const MODULES: &[(&str, &[&str])] = &[
-    ("io", &[]),
+    ("time", &[]),
+    ("io", &["time"]),
     ("text", &[]),
     ("fs", &["io", "text"]),
-    ("net", &["io"]),
-    ("process", &["io", "text", "fs"]),
+    ("net", &["io", "time"]),
+    ("process", &["io", "text", "fs", "time"]),
     ("collections::vector", &[]),
     ("collections::deque", &[]),
     ("collections::slab", &[]),
@@ -234,7 +239,7 @@ pub(crate) fn records(
 /// The host modules [PRE-2], by their paths below the standard library: the
 /// modules whose functions have no Whitefoot definition, the build supplying
 /// each from the runtime units.
-pub(crate) const HOST_MODULES: &[&str] = &["io", "text", "fs", "net", "process"];
+pub(crate) const HOST_MODULES: &[&str] = &["time", "io", "text", "fs", "net", "process"];
 
 /// Reports whether a standard library module at `path` is a host module.
 pub(crate) fn is_host_module(path: &[String]) -> bool {
@@ -260,6 +265,57 @@ mod tests {
 
     fn library_root() -> std::path::PathBuf {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../lib/std")
+    }
+
+    /// `ordinary_values.h` names `IoError`'s tags in the order the `io`
+    /// record declares its variants, the order that numbers them [PRE-2]:
+    /// the C side reads and writes tags by these names, so a variant added,
+    /// removed or moved in one list and not the other would give a host
+    /// failure another variant's name.
+    #[test]
+    fn the_runtime_names_every_io_error_tag_in_the_record_order() {
+        let record = RECORDS
+            .iter()
+            .find(|(path, _)| *path == "std/io/module.wfm")
+            .expect("the io record is carried")
+            .1;
+        let start = record
+            .find("public enum IoError {")
+            .expect("the io record declares IoError");
+        let end = start
+            + record[start..]
+                .find("\n}")
+                .expect("the IoError declaration closes");
+        let variants = record[start..end]
+            .lines()
+            .skip(1)
+            .filter_map(|line| line.trim().split('(').next())
+            .filter(|name| !name.is_empty())
+            .map(|name| {
+                let mut tag = String::from("WF_IO_");
+                for (index, character) in name.chars().enumerate() {
+                    if index > 0 && character.is_ascii_uppercase() {
+                        tag.push('_');
+                    }
+                    tag.push(character.to_ascii_uppercase());
+                }
+                tag
+            })
+            .collect::<Vec<_>>();
+        let header = include_str!("backend/ordinary_values.h");
+        let start = header
+            .find("enum wf_io_error_tag {")
+            .expect("the runtime header declares the tag enum");
+        let end = start + header[start..].find('}').expect("the tag enum closes");
+        let tags = header[start..end]
+            .lines()
+            .skip(1)
+            .map(|line| line.trim().trim_end_matches(','))
+            .filter(|tag| !tag.is_empty())
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        assert_eq!(variants.len(), 29, "IoError's variant count");
+        assert_eq!(tags, variants);
     }
 
     /// Every record of the library's directory is carried, and nothing else,

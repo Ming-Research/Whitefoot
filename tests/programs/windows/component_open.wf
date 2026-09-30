@@ -54,6 +54,9 @@ fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
     TimedOut(code: native_code, origin: native_origin) => {
       return False();
     }
+    DeadlinePassed() => {
+      return False();
+    }
     BrokenPipe(code: native_code, origin: native_origin) => {
       return False();
     }
@@ -243,7 +246,8 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, files: &Handle
                           set pair[0_u64] = data_a[0_u64];
                           set pair[1_u64] = data_b[0_u64];
                           let published_window = &pair[0_u64..2_u64];
-                          match write_once(factory: files, output: out, source: published_window, start: 0_u64, end: 2_u64) {
+                          let no_deadline = None<std::time::Instant>();
+                          match write_once(factory: files, output: out, source: published_window, start: 0_u64, end: 2_u64, deadline: no_deadline) {
                             Ok(value: published) => {
                               if published == 2_u64 {
                                 close_read(factory: files, file: move file_b);
@@ -306,7 +310,9 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, files: &Handle
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "PRE-1 ordinary Inputs are destructured once; the referenced operation chain returns before the initial directory is explicitly closed on every exit.";
-  let Inputs(args: args, cwd: cwd, stdout: out, stderr: unused_stderr, handles: files, stdin: unused_stdin) = move inputs;
+  let Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: unused_stderr, handles: files, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
+  std::fs::close_directory_write(factory: &files, directory: move cwd_write);
   let outcome = exercise(args: &args, cwd: &cwd, out: &out, files: &files);
   close_directory(factory: &files, directory: move cwd);
   return move outcome;

@@ -5,6 +5,22 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-09-30 Complete a bounded wait even under a pinned pool, and record the switch it makes
+
+Nodes: compiler/waiting-contexts/bounded-waits, compiler/waiting-contexts, compiler/completion-runtime, language/data-model/opaque-struct, language/system-interface/clocks, language/system-interface/deadlines, language/system-interface/writable-directory, language/system-interface/outcome-typing
+
+Owner-approved: 2026-09-30, the owner approved decision cards 6 to 9 of the completion review's findings as recommended ("all agreed", written in Chinese): card 6 took the pinned-pool exception, card 7 option B, and card 8 the opaque-struct wording.
+
+Summary: compiler/waiting-contexts/bounded-waits now states that an operation with a deadline that reaches the helpers switches the program to the policy the first context other than the root switches it to, because a program that bounds a wait waits on another party, refusing a helper that retires after that one operation until a program shows the handoff cost; and that a pool `WF_IO_HELPERS` pins grows by one helper when none is free to take such an operation, the waiting thread of a pool pinned at zero leaving it to that helper, because [PRE-2] now produces the outcome once the deadline is reached, which the thread inside the operation cannot bring about. compiler/waiting-contexts and compiler/completion-runtime name the switch where they said only a context started it. language/data-model/opaque-struct says a host function forms every opaque struct its module declares, handles and values such as `Instant` alike, as [TYPE-2] does since v0.83. The other nodes named here are the previous entry's, which this branch also brings to main. This ruling authorizes no merge.
+
+## 2026-09-30 Give programs clocks, deadlines and append-only files
+
+Nodes: language/system-interface/clocks, language/system-interface/deadlines, language/system-interface/writable-directory, language/system-interface/outcome-typing, compiler/waiting-contexts/bounded-waits
+
+Owner-approved: 2026-09-30, the owner ruled Q23 B, Q24 A, Q25 D and Q26 A in the session, then Q27 to Q30 as recommended ("Q27 agreed. Q28 agreed Q29 agreed Q30 agreed", written in Chinese), and approved the handoff's decision cards 1 to 5, one per node named here, with the specification's revisions ("all approved", written in Chinese).
+
+Summary: language/system-interface/clocks gives the entry a monotonic `Clock` and a calendar `WallClock` in `Inputs`, makes a monotonic reading an `Instant`, an opaque copyable struct with one private field that only host functions form, has `now` write its clock so that [HOST-1] orders two reads through it, keeps every `Instant` operation total, and gives `sleep_until` and every deadline an `Instant` and no clock. language/system-interface/deadlines puts `deadline: Option<Instant>` on the six operations that may wait on another party, reported as `DeadlinePassed()` only once the clock has reached it and with nothing transferred, and none on file operations. language/system-interface/writable-directory splits `Inputs.cwd` into a read half and a write half that close separately, so closing the write half weakens it, and admits only appending, with `sync_file` promising the hand-off to the host's durability mechanism and no crash model. language/system-interface/outcome-typing replaces its `IoError` decision so that `DeadlinePassed`, which no host produces, carries no code. compiler/waiting-contexts/bounded-waits keeps each driver's deadlines in a heap only its thread touches, bounds every park and poll by its head, cancels through the route that holds the operation, and routes an operation with a deadline off the driver thread. Grounds: [the design](../research/investigations/io-model/TIME-AND-FILES.md) and its Experiment 8. This ruling authorizes no merge.
+
 ## 2026-09-30 Grow the helper pool past its ceiling while every helper waits on a peer
 
 Nodes: compiler/waiting-contexts, compiler/completion-runtime

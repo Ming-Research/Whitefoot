@@ -1732,7 +1732,9 @@ fn an_out_of_bounds_range_reference_read_is_an_op4_compile_rejection() {
 fn a_range_reference_over_a_frame_resident_window_reaches_its_own_slots() {
     let source = br#"fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
   doc "Publishes a frame-resident window through a range reference held until the linked write returns.";
-  let std::process::Inputs(args: unused_args, cwd: unused_cwd, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin) = move inputs;
+  let std::process::Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
+  std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
   std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
   let page = slots_new::<u8, 4>();
   for @fill (
@@ -1743,7 +1745,8 @@ fn a_range_reference_over_a_frame_resident_window_reaches_its_own_slots() {
     place_back(window: &page, value: 65_u8);
   }
   let window = &page[0_u64..4_u64];
-  match std::io::write_once(factory: &entry_factory, output: &out, source: window, start: 0_u64, end: 4_u64) {
+  let no_deadline = None<std::time::Instant>();
+  match std::io::write_once(factory: &entry_factory, output: &out, source: window, start: 0_u64, end: 4_u64, deadline: no_deadline) {
     Ok(value: written) => {
       if written != 4_u64 {
         return std::process::exit_status(code: 1_u8);

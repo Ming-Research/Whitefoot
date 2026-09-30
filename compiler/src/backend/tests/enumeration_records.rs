@@ -286,7 +286,8 @@ const PUBLISH_ONE_BATCH: &[u8] = br#"fn exercise(cwd: &std::fs::DirectoryRead, o
           }
         }
       }
-      match std::io::write_once(factory: files, output: out, source: window, start: 0_u64, end: available) {
+      let no_deadline = None<std::time::Instant>();
+      match std::io::write_once(factory: files, output: out, source: window, start: 0_u64, end: available, deadline: no_deadline) {
         Ok(value: written) => {
         }
         Err(error: problem) => {
@@ -304,7 +305,9 @@ const PUBLISH_ONE_BATCH: &[u8] = br#"fn exercise(cwd: &std::fs::DirectoryRead, o
 }
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
-  let std::process::Inputs(args: unused_args, cwd: cwd, stdout: out, stderr: unused_stderr, handles: files, stdin: unused_stdin) = move inputs;
+  let std::process::Inputs(args: unused_args, cwd: cwd_directory, stdout: out, stderr: unused_stderr, handles: files, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
+  std::fs::close_directory_write(factory: &files, directory: move cwd_write);
   let outcome = exercise(cwd: &cwd, out: &out, files: &files);
   std::fs::close_directory(factory: &files, directory: move cwd);
   return move outcome;

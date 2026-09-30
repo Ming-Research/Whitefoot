@@ -108,6 +108,12 @@ typedef struct wf_file_adapter {
     /* One entry record per helper, written by the starting thread under the
      * queue lock before the helper exists and never written again. */
     wf_prim_thread helper_threads[WF_FILE_HELPER_RECORDS];
+    /* What each helper is executing and the thread to interrupt when a
+     * deadline ends it [PRE-2], by the slot a helper takes when it starts;
+     * written and read under the queue lock. */
+    struct wf_completion_record *executing[WF_FILE_HELPER_RECORDS];
+    uintptr_t executing_thread[WF_FILE_HELPER_RECORDS];
+    size_t helper_slots;
     /* Helpers that have started and not yet returned, maintained under the
      * queue lock.  Shutdown waits for this to reach zero rather than joining
      * threads by handle: the helpers are detached, as every thread this
@@ -325,6 +331,34 @@ int wf_file_connection_release(int descriptor);
  * record before it announces sleep. */
 uint64_t wf_file_monotonic_ns(void);
 
+/* Deadlines on a helper's operation [PRE-2].  A driver whose context's
+ * deadline has passed asks the adapter to give the operation up: one still
+ * queued completes at once with the cancellation error, and one a helper is
+ * executing is interrupted in its host call, which the leaf then ends with no
+ * retry because the record's deadline has fired.  Returns nonzero while a
+ * helper still holds the operation, so the driver asks again. */
+int wf_file_adapter_cancel(wf_file_adapter *adapter, struct wf_completion_record *record);
+
+/* Whether the operation the calling thread is executing has had its deadline
+ * fire, so an interrupted host call is its end rather than a retry. */
+int wf_file_running_cancelled(void);
+
+/* The deadline of the operation the calling thread is executing, zero for
+ * none, and the step a leaf takes when it sees that deadline pass itself:
+ * the record's deadline fires exactly as the driver fires it. */
+uint64_t wf_file_running_deadline(void);
+void wf_file_running_fire(void);
+
+/* The error a cancelled operation completes with, and whether an error is
+ * one a cancellation produces: the platform leaf's answer. */
+int wf_file_cancelled_error(void);
+int wf_file_error_is_cancellation(int error_code);
+
+/* The calling thread as the leaf interrupts it, and the interruption: a
+ * signal without restart on POSIX, `CancelSynchronousIo` on Windows. */
+uintptr_t wf_file_thread_self(void);
+void wf_file_thread_interrupt(uintptr_t thread);
+
 /* Stores one execution's answer into the record and publishes it: the status
  * bytes go to the destination the request named, the head goes into the
  * record, and `wf_completion_record_complete` stores DONE and wakes the
@@ -389,6 +423,14 @@ int wf_file_adapter_hold_for_contexts(
     wf_file_adapter *adapter,
     int grow_for_peers
 );
+
+/* Starts one more helper, past the cap and past a pinned count, when no
+ * helper is free to take an operation with a deadline: there is none, or
+ * every one is inside a request that may wait on a peer.  The thread that
+ * must end such an operation at its deadline [PRE-2] cannot be the one inside
+ * it, so this is the one place a pinned pool grows; the runtime calls it
+ * before submitting such an operation to a pinned pool. */
+int wf_file_adapter_grow_for_deadline(wf_file_adapter *adapter);
 
 /* Read without the queue lock. Zero means the calling thread is itself the
  * only engine this queue has. */

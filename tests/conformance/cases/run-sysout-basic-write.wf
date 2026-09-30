@@ -6,7 +6,9 @@ alias write_once = std::io::write_once;
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "The ordinary write_once signature takes its output and shared invocation factory state by reference and declares the writes in its row. Its linked implementation makes one output attempt and returns the absolute accepted endpoint.";
-  let Inputs(args: unused_args, cwd: unused_cwd, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin) = move inputs;
+  let Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
+  std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
   close_directory(factory: &entry_factory, directory: move unused_cwd);
   let bytes = slots_new::<u8, 5>();
   for @fill (
@@ -17,7 +19,8 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
     place_back(window: &bytes, value: 65_u8);
   }
   let payload = &bytes[0_u64..5_u64];
-  match write_once(factory: &entry_factory, output: &out, source: payload, start: 0_u64, end: 5_u64) {
+  let no_deadline = None<std::time::Instant>();
+  match write_once(factory: &entry_factory, output: &out, source: payload, start: 0_u64, end: 5_u64, deadline: no_deadline) {
     Ok(value: written) => {
       let complete = written == 5_u64;
       if complete {

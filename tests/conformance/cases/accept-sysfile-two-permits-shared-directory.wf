@@ -29,7 +29,9 @@ fn open_two(factory: &HandleFactory, directory: &DirectoryRead) -> result: unit 
 }
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: factory, stdin: input) = move inputs;
+  let Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: factory, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
+  std::fs::close_directory_write(factory: &factory, directory: move cwd_write);
   open_two(factory: &factory, directory: &cwd);
   close_directory(factory: &factory, directory: move cwd);
   return exit_status(code: 0_u8);
