@@ -1,0 +1,13 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn walk() -> result: u64 pure {
+  let before = 3_u64;
+  let after = 1_u64;
+  invariant progress: after < before;
+  return after;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

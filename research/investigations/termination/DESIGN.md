@@ -449,7 +449,7 @@ distinct gaps:
      turn such spins into rejections.
 4. **Mutual recursion and table ranks.** The rule needs a rank shared across
    a component. The tree builder also needs a rank read from a constant
-   table. Neither has a design yet.
+   table. [ARENA.md](ARENA.md) takes up both.
 
 If the rule is adopted, the constitution's Safety sentence "Logic errors,
 including unintended nontermination, may remain" narrows to exclude
@@ -484,7 +484,8 @@ the sample bear on feasibility.
   The owner approved the next step on that basis: design the ranked arena,
   shared ranks for mutual recursion and constant-table ranks.
 
-[ARENA.md](ARENA.md) designs the forms these rulings call for. These rulings select the direction. The design-tree nodes and the
+These rulings select the direction; [ARENA.md](ARENA.md) designs the forms
+they call for. The design-tree nodes and the
 specification change land together with the rule's implementation, where
 the existing decisions they replace are rewritten:
 - `design/language/effects.md`: `pure` promises nothing about termination;
