@@ -21,6 +21,7 @@
 #else
 #include <fcntl.h>
 #include <signal.h>
+#include <time.h>
 #include <unistd.h>
 #endif
 
@@ -221,69 +222,69 @@ static void wf_error_class(wf_io_error *error, unsigned tag, int code, unsigned 
 }
 
 static void wf_error(wf_io_error *error, int code, unsigned origin) {
-    unsigned tag = 27;
+    unsigned tag = WF_IO_OTHER;
 #if defined(_WIN32)
     switch ((unsigned)code) {
-    case ERROR_FILE_NOT_FOUND: case ERROR_PATH_NOT_FOUND: tag = 0; break;
-    case ERROR_ACCESS_DENIED: case ERROR_NETWORK_ACCESS_DENIED: case ERROR_PRIVILEGE_NOT_HELD: tag = 1; break;
-    case ERROR_ALREADY_EXISTS: case ERROR_FILE_EXISTS: tag = 2; break;
-    case ERROR_DIRECTORY: tag = 3; break;
-    case ERROR_DIR_NOT_EMPTY: tag = 5; break;
-    case ERROR_WRITE_PROTECT: tag = 6; break;
-    case ERROR_SHARING_VIOLATION: case ERROR_LOCK_VIOLATION: case ERROR_BUSY: tag = 7; break;
-    case ERROR_INVALID_PARAMETER: tag = 8; break;
-    case ERROR_INVALID_NAME: case ERROR_BAD_PATHNAME: case ERROR_FILENAME_EXCED_RANGE: tag = 9; break;
-    case ERROR_INVALID_FUNCTION: case ERROR_NOT_SUPPORTED: case ERROR_CALL_NOT_IMPLEMENTED: tag = 10; break;
-    case ERROR_TIMEOUT: case ERROR_SEM_TIMEOUT: tag = 11; break;
-    case ERROR_BROKEN_PIPE: case ERROR_NO_DATA: case ERROR_PIPE_NOT_CONNECTED: tag = 12; break;
-    case ERROR_CONNECTION_REFUSED: tag = 15; break;
-    case ERROR_NETNAME_DELETED: tag = 16; break;
-    case ERROR_CONNECTION_ABORTED: tag = 16; break;
-    case ERROR_REQUEST_ABORTED: tag = 17; break;
-    case ERROR_NOT_CONNECTED: tag = 18; break;
-    case 10048: tag = 19; break; /* WSAEADDRINUSE. */
-    case 10049: tag = 20; break; /* WSAEADDRNOTAVAIL. */
-    case ERROR_TOO_MANY_OPEN_FILES: case ERROR_NOT_ENOUGH_MEMORY: case ERROR_OUTOFMEMORY: case ERROR_NO_SYSTEM_RESOURCES: tag = 21; break;
-    case ERROR_FILE_TOO_LARGE: tag = 22; break;
-    case ERROR_DISK_FULL: case ERROR_HANDLE_DISK_FULL: tag = 23; break;
-    case ERROR_NOT_ENOUGH_QUOTA: tag = 24; break;
-    case ERROR_NOT_SAME_DEVICE: tag = 25; break;
-    case ERROR_NOT_READY: case ERROR_CRC: case ERROR_GEN_FAILURE: case ERROR_IO_DEVICE: tag = 26; break;
+    case ERROR_FILE_NOT_FOUND: case ERROR_PATH_NOT_FOUND: tag = WF_IO_NOT_FOUND; break;
+    case ERROR_ACCESS_DENIED: case ERROR_NETWORK_ACCESS_DENIED: case ERROR_PRIVILEGE_NOT_HELD: tag = WF_IO_PERMISSION_DENIED; break;
+    case ERROR_ALREADY_EXISTS: case ERROR_FILE_EXISTS: tag = WF_IO_ALREADY_EXISTS; break;
+    case ERROR_DIRECTORY: tag = WF_IO_NOT_DIRECTORY; break;
+    case ERROR_DIR_NOT_EMPTY: tag = WF_IO_DIRECTORY_NOT_EMPTY; break;
+    case ERROR_WRITE_PROTECT: tag = WF_IO_READ_ONLY; break;
+    case ERROR_SHARING_VIOLATION: case ERROR_LOCK_VIOLATION: case ERROR_BUSY: tag = WF_IO_RESOURCE_BUSY; break;
+    case ERROR_INVALID_PARAMETER: tag = WF_IO_INVALID_INPUT; break;
+    case ERROR_INVALID_NAME: case ERROR_BAD_PATHNAME: case ERROR_FILENAME_EXCED_RANGE: tag = WF_IO_INVALID_PATH; break;
+    case ERROR_INVALID_FUNCTION: case ERROR_NOT_SUPPORTED: case ERROR_CALL_NOT_IMPLEMENTED: tag = WF_IO_UNSUPPORTED; break;
+    case ERROR_TIMEOUT: case ERROR_SEM_TIMEOUT: tag = WF_IO_TIMED_OUT; break;
+    case ERROR_BROKEN_PIPE: case ERROR_NO_DATA: case ERROR_PIPE_NOT_CONNECTED: tag = WF_IO_BROKEN_PIPE; break;
+    case ERROR_CONNECTION_REFUSED: tag = WF_IO_CONNECTION_REFUSED; break;
+    case ERROR_NETNAME_DELETED: tag = WF_IO_CONNECTION_RESET; break;
+    case ERROR_CONNECTION_ABORTED: tag = WF_IO_CONNECTION_RESET; break;
+    case ERROR_REQUEST_ABORTED: tag = WF_IO_CONNECTION_ABORTED; break;
+    case ERROR_NOT_CONNECTED: tag = WF_IO_NOT_CONNECTED; break;
+    case 10048: tag = WF_IO_ADDRESS_IN_USE; break; /* WSAEADDRINUSE. */
+    case 10049: tag = WF_IO_ADDRESS_UNAVAILABLE; break; /* WSAEADDRNOTAVAIL. */
+    case ERROR_TOO_MANY_OPEN_FILES: case ERROR_NOT_ENOUGH_MEMORY: case ERROR_OUTOFMEMORY: case ERROR_NO_SYSTEM_RESOURCES: tag = WF_IO_RESOURCE_EXHAUSTED; break;
+    case ERROR_FILE_TOO_LARGE: tag = WF_IO_FILE_TOO_LARGE; break;
+    case ERROR_DISK_FULL: case ERROR_HANDLE_DISK_FULL: tag = WF_IO_NO_SPACE; break;
+    case ERROR_NOT_ENOUGH_QUOTA: tag = WF_IO_QUOTA_EXCEEDED; break;
+    case ERROR_NOT_SAME_DEVICE: tag = WF_IO_CROSS_DEVICE; break;
+    case ERROR_NOT_READY: case ERROR_CRC: case ERROR_GEN_FAILURE: case ERROR_IO_DEVICE: tag = WF_IO_DEVICE_FAILURE; break;
     default: break;
     }
     wf_error_class(error, tag, code, origin);
 #else
     switch (code) {
-    case ENOENT: tag = 0; break;
-    case EACCES: case EPERM: tag = 1; break;
-    case EEXIST: tag = 2; break;
-    case ENOTDIR: tag = 3; break;
-    case EISDIR: tag = 4; break;
-    case ENOTEMPTY: tag = 5; break;
-    case EROFS: tag = 6; break;
-    case EBUSY: case ETXTBSY: tag = 7; break;
-    case EINVAL: tag = 8; break;
-    case ENAMETOOLONG: case ELOOP: tag = 9; break;
-    case ENOSYS: case ENOTSUP: tag = 10; break;
+    case ENOENT: tag = WF_IO_NOT_FOUND; break;
+    case EACCES: case EPERM: tag = WF_IO_PERMISSION_DENIED; break;
+    case EEXIST: tag = WF_IO_ALREADY_EXISTS; break;
+    case ENOTDIR: tag = WF_IO_NOT_DIRECTORY; break;
+    case EISDIR: tag = WF_IO_IS_DIRECTORY; break;
+    case ENOTEMPTY: tag = WF_IO_DIRECTORY_NOT_EMPTY; break;
+    case EROFS: tag = WF_IO_READ_ONLY; break;
+    case EBUSY: case ETXTBSY: tag = WF_IO_RESOURCE_BUSY; break;
+    case EINVAL: tag = WF_IO_INVALID_INPUT; break;
+    case ENAMETOOLONG: case ELOOP: tag = WF_IO_INVALID_PATH; break;
+    case ENOSYS: case ENOTSUP: tag = WF_IO_UNSUPPORTED; break;
 #if EOPNOTSUPP != ENOTSUP
-    case EOPNOTSUPP: tag = 10; break;
+    case EOPNOTSUPP: tag = WF_IO_UNSUPPORTED; break;
 #endif
-    case ETIMEDOUT: tag = 11; break;
-    case EPIPE: tag = 12; break;
-    case ECONNREFUSED: tag = 15; break;
-    case ECONNRESET: tag = 16; break;
-    case ECONNABORTED: tag = 17; break;
-    case ENOTCONN: tag = 18; break;
-    case EADDRINUSE: tag = 19; break;
-    case EADDRNOTAVAIL: tag = 20; break;
-    case EMFILE: case ENFILE: case ENOMEM: case ENOBUFS: tag = 21; break;
-    case EFBIG: case EOVERFLOW: tag = 22; break;
-    case ENOSPC: tag = 23; break;
+    case ETIMEDOUT: tag = WF_IO_TIMED_OUT; break;
+    case EPIPE: tag = WF_IO_BROKEN_PIPE; break;
+    case ECONNREFUSED: tag = WF_IO_CONNECTION_REFUSED; break;
+    case ECONNRESET: tag = WF_IO_CONNECTION_RESET; break;
+    case ECONNABORTED: tag = WF_IO_CONNECTION_ABORTED; break;
+    case ENOTCONN: tag = WF_IO_NOT_CONNECTED; break;
+    case EADDRINUSE: tag = WF_IO_ADDRESS_IN_USE; break;
+    case EADDRNOTAVAIL: tag = WF_IO_ADDRESS_UNAVAILABLE; break;
+    case EMFILE: case ENFILE: case ENOMEM: case ENOBUFS: tag = WF_IO_RESOURCE_EXHAUSTED; break;
+    case EFBIG: case EOVERFLOW: tag = WF_IO_FILE_TOO_LARGE; break;
+    case ENOSPC: tag = WF_IO_NO_SPACE; break;
 #ifdef EDQUOT
-    case EDQUOT: tag = 24; break;
+    case EDQUOT: tag = WF_IO_QUOTA_EXCEEDED; break;
 #endif
-    case EXDEV: tag = 25; break;
-    case EIO: case ENXIO: case ENODEV: tag = 26; break;
+    case EXDEV: tag = WF_IO_CROSS_DEVICE; break;
+    case EIO: case ENXIO: case ENODEV: tag = WF_IO_DEVICE_FAILURE; break;
     default: break;
     }
     wf_error_class(error, tag, code, origin);
@@ -313,7 +314,7 @@ static int wf_factory_take(wf_value *factory, wf_io_error *error) {
     wf_transition(factory);
     for (;;) {
         if (credits == 0) {
-            wf_error_class(error, 21, 0, 0);
+            wf_error_class(error, WF_IO_RESOURCE_EXHAUSTED, 0, 0);
             return 0;
         }
         if (__atomic_compare_exchange_n(
@@ -337,6 +338,10 @@ static void wf_factory_return(wf_value *factory) {
 #define WF_OPEN_DIRECTORY_FLAGS 0
 #define WF_OPEN_COMPONENT_DIRECTORY_FLAGS 1
 #define WF_OPEN_COMPONENT_FILE_FLAGS 1
+#define WF_OPEN_APPEND_FLAGS 1
+#define WF_OPEN_APPEND_MODE 0u
+#define WF_OPEN_APPEND_HAS_MODE 0u
+#define WF_OPEN_APPEND_CLASS WF_WINDOWS_DESCRIPTOR_CLASS_WRITE_FILE
 #elif defined(__APPLE__)
 #define WF_COMPONENT_BYTES 1023u
 #define WF_OPEN_DIRECTORY_FLAGS O_DIRECTORY
@@ -347,6 +352,15 @@ static void wf_factory_return(wf_value *factory) {
 #define WF_OPEN_DIRECTORY_FLAGS O_DIRECTORY
 #define WF_OPEN_COMPONENT_DIRECTORY_FLAGS (O_DIRECTORY | O_NOFOLLOW)
 #define WF_OPEN_COMPONENT_FILE_FLAGS (O_NOFOLLOW | O_NONBLOCK)
+#endif
+#if !defined(_WIN32)
+/* A file opened for appending is created readable and writable by everyone
+ * the process's file-creation mask allows, as `open` with `O_CREAT` and a
+ * shell's redirection create one. */
+#define WF_OPEN_APPEND_FLAGS (O_WRONLY | O_APPEND | O_CREAT | O_NOFOLLOW | O_NONBLOCK)
+#define WF_OPEN_APPEND_MODE 0666u
+#define WF_OPEN_APPEND_HAS_MODE 1u
+#define WF_OPEN_APPEND_CLASS 0u
 #endif
 
 /* The block a waiting context keeps for its one pending host operation
@@ -373,6 +387,27 @@ _Static_assert(sizeof(wf_host_operation) <= WF_CONTEXT_OPERATION_BYTES,
 _Static_assert(_Alignof(wf_host_operation) <= WF_CONTEXT_OPERATION_ALIGN,
                "the host operation must not out-align the block a context keeps");
 
+/* The reading of the monotonic clock an `Option<Instant>` deadline names,
+ * or zero for none [PRE-2].  The latest instant is no deadline: the clock
+ * never reaches it, and the record reserves it for a fired one. */
+static uint64_t wf_deadline_reading(const wf_deadline *deadline) {
+    uint64_t reading;
+    if (deadline == NULL || deadline->tag != WF_OPTION_SOME) return 0;
+    reading = deadline->value.words[0];
+    if (reading == WF_COMPLETION_DEADLINE_FIRED) return 0;
+    return reading == 0 ? 1 : reading;
+}
+
+/* Hands the deadline to the submit that follows, and answers for the
+ * submitted operation. */
+static void wf_before_submit(const wf_deadline *deadline) {
+    wf__completion_next_deadline(wf_deadline_reading(deadline));
+}
+
+static int wf_submitted(wf_host_operation *operation) {
+    return wf__completion_pending(&operation->record) ? 2 : 1;
+}
+
 static void wf_read_result_value(wf_read_result *result, int64_t amount,
                                  int error, uint64_t start, uint64_t extent) {
     memset(result, 0, sizeof(*result));
@@ -395,7 +430,7 @@ static void wf_write_result_value(wf_write_result *result, int64_t amount,
         wf_error(&result->err.error, error, 3);
     } else if (amount == 0 && extent != 0) {
         result->tag = 1;
-        wf_error_class(&result->err.error, 13, 0, 0);
+        wf_error_class(&result->err.error, WF_IO_WRITE_ZERO, 0, 0);
     } else result->ok.value = start + (uint64_t)amount;
 }
 
@@ -404,6 +439,13 @@ static void wf_transfer_read(wf_read_result *result, wf_host_operation *operatio
     int64_t amount;
     int error;
     wf__completion_file_join(&operation->record, &amount, &error);
+    if (wf__completion_deadline_passed(&operation->record)) {
+        memset(result, 0, sizeof(*result));
+        result->tag = 1;
+        result->err.error.tag = 1;
+        wf_error_class(&result->err.error.error, WF_IO_DEADLINE_PASSED, 0, 0);
+        return;
+    }
     wf_read_result_value(result, amount, error, start, end - start);
 }
 
@@ -412,6 +454,12 @@ static void wf_transfer_write(wf_write_result *result, wf_host_operation *operat
     int64_t amount;
     int error;
     wf__completion_file_join(&operation->record, &amount, &error);
+    if (wf__completion_deadline_passed(&operation->record)) {
+        memset(result, 0, sizeof(*result));
+        result->tag = 1;
+        wf_error_class(&result->err.error, WF_IO_DEADLINE_PASSED, 0, 0);
+        return;
+    }
     wf_write_result_value(result, amount, error, start, end - start);
 }
 
@@ -448,112 +496,131 @@ void wf__body_read_at(wf_read_result *result, wf_value *factory, wf_value *file,
 
 int wf__body_read_next_start(wf_read_result *result, wf_value *factory, wf_value *input,
                              wf_view *destination, uint64_t start, uint64_t end,
-                             wf_host_operation *operation) {
+                             const wf_deadline *deadline, wf_host_operation *operation) {
     (void)result;
     wf_transition(factory);
     wf_transition(input);
+    wf_before_submit(deadline);
     wf__completion_file_read_submit(wf_descriptor(input),
         wf_window(destination, start), end - start, &operation->record);
-    return wf__completion_pending(&operation->record) ? 2 : 1;
+    return wf_submitted(operation);
 }
 
 void wf__body_read_next_finish(wf_read_result *result, wf_value *factory, wf_value *input,
                                wf_view *destination, uint64_t start, uint64_t end,
-                               wf_host_operation *operation) {
+                               const wf_deadline *deadline, wf_host_operation *operation) {
     (void)factory;
     (void)input;
     (void)destination;
+    (void)deadline;
     wf_transfer_read(result, operation, start, end);
 }
 
 void wf__body_read_next(wf_read_result *result, wf_value *factory, wf_value *input,
-                  wf_view *destination, uint64_t start, uint64_t end) {
+                  wf_view *destination, uint64_t start, uint64_t end,
+                  const wf_deadline *deadline) {
     wf_host_operation operation;
-    if (wf__body_read_next_start(result, factory, input, destination, start, end, &operation))
-        wf__body_read_next_finish(result, factory, input, destination, start, end, &operation);
+    if (wf__body_read_next_start(result, factory, input, destination, start, end, deadline,
+                                 &operation))
+        wf__body_read_next_finish(result, factory, input, destination, start, end, deadline,
+                                  &operation);
 }
 
 int wf__body_write_once_start(wf_write_result *result, wf_value *factory, wf_value *output,
                               const wf_view *source, uint64_t start, uint64_t end,
-                              wf_host_operation *operation) {
+                              const wf_deadline *deadline, wf_host_operation *operation) {
     (void)result;
     wf_transition(factory);
     wf_transition(output);
+    wf_before_submit(deadline);
     wf__completion_file_write_submit(wf_descriptor(output),
         wf_window(source, start), end - start, &operation->record);
-    return wf__completion_pending(&operation->record) ? 2 : 1;
+    return wf_submitted(operation);
 }
 
 void wf__body_write_once_finish(wf_write_result *result, wf_value *factory, wf_value *output,
                                 const wf_view *source, uint64_t start, uint64_t end,
-                                wf_host_operation *operation) {
+                                const wf_deadline *deadline, wf_host_operation *operation) {
     (void)factory;
     (void)output;
     (void)source;
+    (void)deadline;
     wf_transfer_write(result, operation, start, end);
 }
 
 void wf__body_write_once(wf_write_result *result, wf_value *factory, wf_value *output,
-                   const wf_view *source, uint64_t start, uint64_t end) {
+                   const wf_view *source, uint64_t start, uint64_t end,
+                   const wf_deadline *deadline) {
     wf_host_operation operation;
-    if (wf__body_write_once_start(result, factory, output, source, start, end, &operation))
-        wf__body_write_once_finish(result, factory, output, source, start, end, &operation);
+    if (wf__body_write_once_start(result, factory, output, source, start, end, deadline,
+                                  &operation))
+        wf__body_write_once_finish(result, factory, output, source, start, end, deadline,
+                                   &operation);
 }
 
 int wf__body_receive_next_start(wf_read_result *result, wf_value *receive,
                                 wf_view *destination, uint64_t start, uint64_t end,
-                                wf_host_operation *operation) {
+                                const wf_deadline *deadline, wf_host_operation *operation) {
     (void)result;
     wf_transition(receive);
+    wf_before_submit(deadline);
     wf__completion_socket_receive_submit(wf_descriptor(receive),
         wf_window(destination, start), end - start, &operation->record);
-    return wf__completion_pending(&operation->record) ? 2 : 1;
+    return wf_submitted(operation);
 }
 
 void wf__body_receive_next_finish(wf_read_result *result, wf_value *receive,
                                   wf_view *destination, uint64_t start, uint64_t end,
-                                  wf_host_operation *operation) {
+                                  const wf_deadline *deadline, wf_host_operation *operation) {
     (void)receive;
     (void)destination;
+    (void)deadline;
     wf_transfer_read(result, operation, start, end);
 }
 
 void wf__body_receive_next(wf_read_result *result, wf_value *receive,
-                     wf_view *destination, uint64_t start, uint64_t end) {
+                     wf_view *destination, uint64_t start, uint64_t end,
+                     const wf_deadline *deadline) {
     wf_host_operation operation;
-    if (wf__body_receive_next_start(result, receive, destination, start, end, &operation))
-        wf__body_receive_next_finish(result, receive, destination, start, end, &operation);
+    if (wf__body_receive_next_start(result, receive, destination, start, end, deadline,
+                                    &operation))
+        wf__body_receive_next_finish(result, receive, destination, start, end, deadline,
+                                     &operation);
 }
 
 int wf__body_send_once_start(wf_write_result *result, wf_value *send,
                              const wf_view *source, uint64_t start, uint64_t end,
-                             wf_host_operation *operation) {
+                             const wf_deadline *deadline, wf_host_operation *operation) {
     (void)result;
     wf_transition(send);
+    wf_before_submit(deadline);
     wf__completion_socket_send_submit(wf_descriptor(send),
         wf_window(source, start), end - start, &operation->record);
-    return wf__completion_pending(&operation->record) ? 2 : 1;
+    return wf_submitted(operation);
 }
 
 void wf__body_send_once_finish(wf_write_result *result, wf_value *send,
                                const wf_view *source, uint64_t start, uint64_t end,
-                               wf_host_operation *operation) {
+                               const wf_deadline *deadline, wf_host_operation *operation) {
     (void)send;
     (void)source;
+    (void)deadline;
     wf_transfer_write(result, operation, start, end);
 }
 
 void wf__body_send_once(wf_write_result *result, wf_value *send,
-                  const wf_view *source, uint64_t start, uint64_t end) {
+                  const wf_view *source, uint64_t start, uint64_t end,
+                  const wf_deadline *deadline) {
     wf_host_operation operation;
-    if (wf__body_send_once_start(result, send, source, start, end, &operation))
-        wf__body_send_once_finish(result, send, source, start, end, &operation);
+    if (wf__body_send_once_start(result, send, source, start, end, deadline, &operation))
+        wf__body_send_once_finish(result, send, source, start, end, deadline, &operation);
 }
 
-static int wf_open_start(wf_open_result *result, wf_value *factory,
-                         const wf_value *root, const void *path, int flags,
-                         unsigned expected_kind, unsigned descriptor_class,
-                         wf_host_operation *operation) {
+static int wf_open_start_mode(wf_open_result *result, wf_value *factory,
+                              const wf_value *root, const void *path, int flags,
+                              unsigned mode, unsigned has_mode,
+                              unsigned expected_kind, unsigned descriptor_class,
+                              wf_host_operation *operation) {
     memset(result, 0, sizeof(*result));
     if (!wf_factory_take(factory, &result->err.error)) {
         result->tag = 1;
@@ -562,13 +629,21 @@ static int wf_open_start(wf_open_result *result, wf_value *factory,
 #if !defined(_WIN32)
     (void)descriptor_class;
 #endif
-    wf__completion_file_open_at_submit(wf_descriptor(root), path, flags, 0, 0,
+    wf__completion_file_open_at_submit(wf_descriptor(root), path, flags, mode, has_mode,
         expected_kind,
 #if defined(_WIN32)
         descriptor_class,
 #endif
         &operation->record);
     return wf__completion_pending(&operation->record) ? 2 : 1;
+}
+
+static int wf_open_start(wf_open_result *result, wf_value *factory,
+                         const wf_value *root, const void *path, int flags,
+                         unsigned expected_kind, unsigned descriptor_class,
+                         wf_host_operation *operation) {
+    return wf_open_start_mode(result, factory, root, path, flags, 0, 0,
+                              expected_kind, descriptor_class, operation);
 }
 
 static void wf_open_finish(wf_open_result *result, wf_value *factory,
@@ -582,9 +657,9 @@ static void wf_open_finish(wf_open_result *result, wf_value *factory,
         wf_factory_return(factory);
         result->tag = 1;
         if (outcome == WF_FILE_OPEN_IS_DIRECTORY)
-            wf_error_class(&result->err.error, 4, 0, 0);
+            wf_error_class(&result->err.error, WF_IO_IS_DIRECTORY, 0, 0);
         else if (outcome == WF_FILE_OPEN_OTHER_KIND)
-            wf_error_class(&result->err.error, 10, 0, 0);
+            wf_error_class(&result->err.error, WF_IO_UNSUPPORTED, 0, 0);
         else wf_error(&result->err.error, error,
                       outcome == WF_FILE_OPEN_STATUS_FAILED ? 4 : 1);
         return;
@@ -648,7 +723,7 @@ static int wf_open_component_start(wf_open_result *result, wf_value *factory,
         wf_transition(factory);
         memset(result, 0, sizeof(*result));
         result->tag = 1;
-        wf_error_class(&result->err.error, 9, 0, 0);
+        wf_error_class(&result->err.error, WF_IO_INVALID_PATH, 0, 0);
         return 0;
     }
     return wf_open_start(result, factory, root, operation->component,
@@ -706,6 +781,101 @@ void wf__body_open_file(wf_open_result *result, wf_value *factory, const wf_valu
     wf_host_operation operation;
     if (wf__body_open_file_start(result, factory, root, name, start, end, &operation))
         wf__body_open_file_finish(result, factory, root, name, start, end, &operation);
+}
+
+/* [PRE-2] opens a file below a directory's write half for appending,
+ * creating it when no entry has the name. */
+int wf__body_open_append_start(wf_open_result *result, wf_value *factory,
+                               const wf_value *root, const wf_view *name,
+                               uint64_t start, uint64_t end,
+                               wf_host_operation *operation) {
+    if (!wf_component(operation->component, name, start, end)) {
+        wf_transition(factory);
+        memset(result, 0, sizeof(*result));
+        result->tag = 1;
+        wf_error_class(&result->err.error, WF_IO_INVALID_PATH, 0, 0);
+        return 0;
+    }
+    return wf_open_start_mode(result, factory, root, operation->component,
+        WF_OPEN_APPEND_FLAGS, WF_OPEN_APPEND_MODE, WF_OPEN_APPEND_HAS_MODE,
+        WF_FILE_EXPECT_REGULAR, WF_OPEN_APPEND_CLASS, operation);
+}
+
+void wf__body_open_append_finish(wf_open_result *result, wf_value *factory,
+                                 const wf_value *root, const wf_view *name,
+                                 uint64_t start, uint64_t end,
+                                 wf_host_operation *operation) {
+    (void)root;
+    (void)name;
+    (void)start;
+    (void)end;
+    wf_open_finish(result, factory, operation);
+}
+
+void wf__body_open_append(wf_open_result *result, wf_value *factory, const wf_value *root,
+                          const wf_view *name, uint64_t start, uint64_t end) {
+    wf_host_operation operation;
+    if (wf__body_open_append_start(result, factory, root, name, start, end, &operation))
+        wf__body_open_append_finish(result, factory, root, name, start, end, &operation);
+}
+
+/* [PRE-2] one host write at the end of a file opened for appending. */
+int wf__body_append_once_start(wf_write_result *result, wf_value *factory, wf_value *file,
+                               const wf_view *source, uint64_t start, uint64_t end,
+                               wf_host_operation *operation) {
+    (void)result;
+    wf_transition(factory);
+    wf_transition(file);
+    wf__completion_file_append_submit(wf_descriptor(file),
+        wf_window(source, start), end - start, &operation->record);
+    return wf__completion_pending(&operation->record) ? 2 : 1;
+}
+
+void wf__body_append_once_finish(wf_write_result *result, wf_value *factory, wf_value *file,
+                                 const wf_view *source, uint64_t start, uint64_t end,
+                                 wf_host_operation *operation) {
+    (void)factory;
+    (void)file;
+    (void)source;
+    wf_transfer_write(result, operation, start, end);
+}
+
+void wf__body_append_once(wf_write_result *result, wf_value *factory, wf_value *file,
+                          const wf_view *source, uint64_t start, uint64_t end) {
+    wf_host_operation operation;
+    if (wf__body_append_once_start(result, factory, file, source, start, end, &operation))
+        wf__body_append_once_finish(result, factory, file, source, start, end, &operation);
+}
+
+/* [PRE-2] hands the file's appended bytes to the host's durability
+ * mechanism; its outcome is the host's answer and nothing more. */
+int wf__body_sync_file_start(wf_close_result *result, wf_value *factory, wf_value *file,
+                             wf_host_operation *operation) {
+    (void)result;
+    wf_transition(factory);
+    wf_transition(file);
+    wf__completion_file_sync_submit(wf_descriptor(file), &operation->record);
+    return wf__completion_pending(&operation->record) ? 2 : 1;
+}
+
+void wf__body_sync_file_finish(wf_close_result *result, wf_value *factory, wf_value *file,
+                               wf_host_operation *operation) {
+    int64_t amount;
+    int error;
+    (void)factory;
+    (void)file;
+    wf__completion_file_join(&operation->record, &amount, &error);
+    memset(result, 0, sizeof(*result));
+    if (amount < 0) {
+        result->tag = 1;
+        wf_error(&result->err.error, error, 9);
+    }
+}
+
+void wf__body_sync_file(wf_close_result *result, wf_value *factory, wf_value *file) {
+    wf_host_operation operation;
+    if (wf__body_sync_file_start(result, factory, file, &operation))
+        wf__body_sync_file_finish(result, factory, file, &operation);
 }
 
 int wf__body_open_directory_source_start(wf_open_result *result, wf_value *factory,
@@ -783,7 +953,9 @@ static void wf_close_finish(wf_close_result *result, wf_value *factory, int dire
     }
 
 WF_CLOSE_BODY(close_read, -1)
+WF_CLOSE_BODY(close_write, -1)
 WF_CLOSE_BODY(close_directory, -1)
+WF_CLOSE_BODY(close_directory_write, -1)
 WF_CLOSE_BODY(close_directory_source, -1)
 WF_CLOSE_BODY(close_listener, -1)
 WF_CLOSE_BODY(close_receive, WF_SOCKET_DIRECTION_RECEIVE)
@@ -797,6 +969,84 @@ void wf__body_factory_share(wf_value *result, const wf_value *factory) {
     result->words[2] = factory->words[2] != 0
         ? factory->words[2]
         : (uint64_t)(uintptr_t)&factory->words[0];
+}
+
+/* [PRE-2] `std::time`.  A clock handle carries nothing: the host has one
+ * monotonic clock and one calendar time, and a handle is the authority to
+ * read one of them.  An `Instant` holds its reading in nanoseconds in its
+ * first word, the one representation a deadline hands the runtime. */
+void wf__body_clock_share(wf_value *result, const wf_value *clock) {
+    (void)clock;
+    memset(result, 0, sizeof(*result));
+}
+
+void wf__body_wall_clock_share(wf_value *result, const wf_value *clock) {
+    (void)clock;
+    memset(result, 0, sizeof(*result));
+}
+
+void wf__body_now(wf_value *result, wf_value *clock) {
+    wf_transition(clock);
+    memset(result, 0, sizeof(*result));
+    result->words[0] = wf__completion_monotonic_ns();
+}
+
+void wf__body_instant_after(wf_value *result, const wf_value *instant, uint64_t nanoseconds) {
+    uint64_t reading = instant->words[0];
+    memset(result, 0, sizeof(*result));
+    result->words[0] = nanoseconds > UINT64_MAX - reading ? UINT64_MAX : reading + nanoseconds;
+}
+
+uint64_t wf__body_nanoseconds_from(const wf_value *earlier, const wf_value *later) {
+    return later->words[0] > earlier->words[0] ? later->words[0] - earlier->words[0] : 0;
+}
+
+_Bool wf__body_instant_reached(const wf_value *deadline, const wf_value *instant) {
+    return instant->words[0] >= deadline->words[0];
+}
+
+int64_t wf__body_unix_nanoseconds(const wf_value *clock) {
+    (void)clock;
+#if defined(_WIN32)
+    /* 100-nanosecond intervals since 1601-01-01, which is 11,644,473,600
+     * seconds before the Unix epoch. */
+    FILETIME now;
+    uint64_t intervals;
+    GetSystemTimePreciseAsFileTime(&now);
+    intervals = ((uint64_t)now.dwHighDateTime << 32) | now.dwLowDateTime;
+    return ((int64_t)intervals - INT64_C(116444736000000000)) * 100;
+#else
+    struct timespec now;
+    if (clock_gettime(CLOCK_REALTIME, &now) != 0) return 0;
+    return (int64_t)now.tv_sec * INT64_C(1000000000) + (int64_t)now.tv_nsec;
+#endif
+}
+
+/* [PRE-2] waits for the monotonic clock alone: the record has no host
+ * operation, and the driver completes it at the deadline. */
+int wf__body_sleep_until_start(uint8_t *result, const wf_value *deadline,
+                               wf_host_operation *operation) {
+    uint64_t reading = deadline->words[0];
+    (void)result;
+    wf__completion_sleep_submit(reading == 0 ? 1 : reading, &operation->record);
+    return wf__completion_pending(&operation->record) ? 2 : 1;
+}
+
+void wf__body_sleep_until_finish(uint8_t *result, const wf_value *deadline,
+                                 wf_host_operation *operation) {
+    int64_t amount;
+    int error;
+    (void)deadline;
+    /* A context's finish reads a record its driver already completed; a
+     * sleep joined outside every context waits out the clock here. */
+    wf__completion_file_join(&operation->record, &amount, &error);
+    *result = 0;
+}
+
+void wf__body_sleep_until(uint8_t *result, const wf_value *deadline) {
+    wf_host_operation operation;
+    if (wf__body_sleep_until_start(result, deadline, &operation))
+        wf__body_sleep_until_finish(result, deadline, &operation);
 }
 
 int wf__body_tcp_listen_start(wf_open_result *result, wf_value *factory,
@@ -832,66 +1082,79 @@ void wf__body_tcp_listen(wf_open_result *result, wf_value *factory, const wf_val
 }
 
 int wf__body_tcp_connect_start(wf_connect_result *result, wf_value *factory,
-                               const wf_value *address, wf_host_operation *operation) {
+                               const wf_value *address, const wf_deadline *deadline,
+                               wf_host_operation *operation) {
     memset(result, 0, sizeof(*result));
     if (!wf_factory_take(factory, &result->err.error)) {
         result->tag = 1;
         return 0;
     }
+    wf_before_submit(deadline);
     wf__completion_socket_connect_submit(address->words[0], address->words[1],
                                          (uint32_t)address->words[2], &operation->record);
-    return wf__completion_pending(&operation->record) ? 2 : 1;
+    return wf_submitted(operation);
 }
 
 void wf__body_tcp_connect_finish(wf_connect_result *result, wf_value *factory,
-                                 const wf_value *address, wf_host_operation *operation) {
+                                 const wf_value *address, const wf_deadline *deadline,
+                                 wf_host_operation *operation) {
     int64_t descriptor;
     int error;
     (void)address;
+    (void)deadline;
     wf__completion_file_join(&operation->record, &descriptor, &error);
     memset(result, 0, sizeof(*result));
     if (descriptor < 0) {
         wf_factory_return(factory);
         result->tag = 1;
-        wf_error(&result->err.error, error, 7);
+        if (wf__completion_deadline_passed(&operation->record))
+            wf_error_class(&result->err.error, WF_IO_DEADLINE_PASSED, 0, 0);
+        else wf_error(&result->err.error, error, 7);
     } else {
         wf_descriptor_value(&result->ok.value.receive, (int)descriptor);
         wf_descriptor_value(&result->ok.value.send, (int)descriptor);
     }
 }
 
-void wf__body_tcp_connect(wf_connect_result *result, wf_value *factory, const wf_value *address) {
+void wf__body_tcp_connect(wf_connect_result *result, wf_value *factory, const wf_value *address,
+                          const wf_deadline *deadline) {
     wf_host_operation operation;
-    if (wf__body_tcp_connect_start(result, factory, address, &operation))
-        wf__body_tcp_connect_finish(result, factory, address, &operation);
+    if (wf__body_tcp_connect_start(result, factory, address, deadline, &operation))
+        wf__body_tcp_connect_finish(result, factory, address, deadline, &operation);
 }
 
 int wf__body_tcp_accept_start(wf_accept_result *result, wf_value *factory,
-                              wf_value *listener, wf_host_operation *operation) {
+                              wf_value *listener, const wf_deadline *deadline,
+                              wf_host_operation *operation) {
     memset(result, 0, sizeof(*result));
     wf_transition(listener);
     if (!wf_factory_take(factory, &result->err.error)) {
         result->tag = 1;
         return 0;
     }
+    wf_before_submit(deadline);
     wf__completion_socket_accept_submit(wf_descriptor(listener), &operation->record);
-    return wf__completion_pending(&operation->record) ? 2 : 1;
+    return wf_submitted(operation);
 }
 
 void wf__body_tcp_accept_finish(wf_accept_result *result, wf_value *factory,
-                                wf_value *listener, wf_host_operation *operation) {
+                                wf_value *listener, const wf_deadline *deadline,
+                                wf_host_operation *operation) {
     int64_t descriptor;
     int error;
     uint64_t low, high;
     uint32_t tag;
     (void)listener;
+    (void)deadline;
     wf__completion_socket_accept_join(&operation->record, &descriptor, &error,
                                       &low, &high, &tag);
     memset(result, 0, sizeof(*result));
     if (descriptor < 0) {
         wf_factory_return(factory);
         result->tag = 1;
-        wf_error(&result->err.error, error, 6);
+        if (wf__completion_deadline_passed(&operation->record))
+            wf_error_class(&result->err.error, WF_IO_DEADLINE_PASSED, 0, 0);
+        else wf_error(&result->err.error, error, 6);
     } else {
         wf_descriptor_value(&result->ok.value.connection.receive, (int)descriptor);
         wf_descriptor_value(&result->ok.value.connection.send, (int)descriptor);
@@ -901,10 +1164,11 @@ void wf__body_tcp_accept_finish(wf_accept_result *result, wf_value *factory,
     }
 }
 
-void wf__body_tcp_accept(wf_accept_result *result, wf_value *factory, wf_value *listener) {
+void wf__body_tcp_accept(wf_accept_result *result, wf_value *factory, wf_value *listener,
+                         const wf_deadline *deadline) {
     wf_host_operation operation;
-    if (wf__body_tcp_accept_start(result, factory, listener, &operation))
-        wf__body_tcp_accept_finish(result, factory, listener, &operation);
+    if (wf__body_tcp_accept_start(result, factory, listener, deadline, &operation))
+        wf__body_tcp_accept_finish(result, factory, listener, deadline, &operation);
 }
 
 #if !defined(_WIN32)
@@ -946,7 +1210,16 @@ int wf__ordinary_inputs(wf_inputs *inputs, int argc, void *argv) {
     wf_descriptor_value(&inputs->in, STDIN_FILENO);
 #endif
     if (cwd < 0) return 0;
-    wf_descriptor_value(&inputs->cwd, cwd);
+    wf_descriptor_value(&inputs->cwd_read, cwd);
+    /* The write half is a descriptor of its own on the same directory, so
+     * each half closes alone [PRE-2]. */
+#if defined(_WIN32)
+    cwd = wf__windows_open_cwd(NULL, 0);
+#else
+    cwd = fcntl(cwd, F_DUPFD_CLOEXEC, 0);
+#endif
+    if (cwd < 0) return 0;
+    wf_descriptor_value(&inputs->cwd_write, cwd);
     wf_text(&inputs->args, argv, argc > 0 ? (uint64_t)(unsigned)argc : 0);
     wf_handle_budget = capacity;
     inputs->handles.words[2] = (uint64_t)(uintptr_t)&wf_handle_budget;

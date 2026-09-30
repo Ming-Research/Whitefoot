@@ -67,27 +67,27 @@ entry:
   ret void
 }
 
-declare i32 @wf__body_write_once_start(ptr, ptr, ptr, ptr, i64, i64, ptr)
+declare i32 @wf__body_write_once_start(ptr, ptr, ptr, ptr, i64, i64, ptr, ptr)
 
-define i32 @wf_std.io.write_once.start(ptr %result, ptr %factory, ptr %output, ptr %source.data, i64 %source.len, i64 %start, i64 %end, ptr %operation) {
+define i32 @wf_std.io.write_once.start(ptr %result, ptr %factory, ptr %output, ptr %source.data, i64 %source.len, i64 %start, i64 %end, ptr %deadline, ptr %operation) {
 entry:
   %view = alloca { ptr, i64 }, align 8
   store ptr %source.data, ptr %view, align 8
   %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
   store i64 %source.len, ptr %view.len, align 8
-  %state = call i32 @wf__body_write_once_start(ptr %result, ptr %factory, ptr %output, ptr %view, i64 %start, i64 %end, ptr %operation)
+  %state = call i32 @wf__body_write_once_start(ptr %result, ptr %factory, ptr %output, ptr %view, i64 %start, i64 %end, ptr %deadline, ptr %operation)
   ret i32 %state
 }
 
-declare void @wf__body_write_once_finish(ptr, ptr, ptr, ptr, i64, i64, ptr)
+declare void @wf__body_write_once_finish(ptr, ptr, ptr, ptr, i64, i64, ptr, ptr)
 
-define void @wf_std.io.write_once.finish(ptr %result, ptr %factory, ptr %output, ptr %source.data, i64 %source.len, i64 %start, i64 %end, ptr %operation) {
+define void @wf_std.io.write_once.finish(ptr %result, ptr %factory, ptr %output, ptr %source.data, i64 %source.len, i64 %start, i64 %end, ptr %deadline, ptr %operation) {
 entry:
   %view = alloca { ptr, i64 }, align 8
   store ptr %source.data, ptr %view, align 8
   %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
   store i64 %source.len, ptr %view.len, align 8
-  call void @wf__body_write_once_finish(ptr %result, ptr %factory, ptr %output, ptr %view, i64 %start, i64 %end, ptr %operation)
+  call void @wf__body_write_once_finish(ptr %result, ptr %factory, ptr %output, ptr %view, i64 %start, i64 %end, ptr %deadline, ptr %operation)
   ret void
 }
 
@@ -163,75 +163,75 @@ entry:
   ret void
 }
 
-declare i32 @wf__body_read_next_start(ptr, ptr, ptr, ptr, i64, i64, ptr)
+declare i32 @wf__body_read_next_start(ptr, ptr, ptr, ptr, i64, i64, ptr, ptr)
 
-define i32 @wf_std.io.read_next.start(ptr %result, ptr %factory, ptr %input, ptr %destination.data, i64 %destination.len, i64 %start, i64 %end, ptr %operation) {
+define i32 @wf_std.io.read_next.start(ptr %result, ptr %factory, ptr %input, ptr %destination.data, i64 %destination.len, i64 %start, i64 %end, ptr %deadline, ptr %operation) {
 entry:
   %view = alloca { ptr, i64 }, align 8
   store ptr %destination.data, ptr %view, align 8
   %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
   store i64 %destination.len, ptr %view.len, align 8
-  %state = call i32 @wf__body_read_next_start(ptr %result, ptr %factory, ptr %input, ptr %view, i64 %start, i64 %end, ptr %operation)
+  %state = call i32 @wf__body_read_next_start(ptr %result, ptr %factory, ptr %input, ptr %view, i64 %start, i64 %end, ptr %deadline, ptr %operation)
   ret i32 %state
 }
 
-declare void @wf__body_read_next_finish(ptr, ptr, ptr, ptr, i64, i64, ptr)
+declare void @wf__body_read_next_finish(ptr, ptr, ptr, ptr, i64, i64, ptr, ptr)
 
-define void @wf_std.io.read_next.finish(ptr %result, ptr %factory, ptr %input, ptr %destination.data, i64 %destination.len, i64 %start, i64 %end, ptr %operation) {
+define void @wf_std.io.read_next.finish(ptr %result, ptr %factory, ptr %input, ptr %destination.data, i64 %destination.len, i64 %start, i64 %end, ptr %deadline, ptr %operation) {
 entry:
   %view = alloca { ptr, i64 }, align 8
   store ptr %destination.data, ptr %view, align 8
   %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
   store i64 %destination.len, ptr %view.len, align 8
-  call void @wf__body_read_next_finish(ptr %result, ptr %factory, ptr %input, ptr %view, i64 %start, i64 %end, ptr %operation)
+  call void @wf__body_read_next_finish(ptr %result, ptr %factory, ptr %input, ptr %view, i64 %start, i64 %end, ptr %deadline, ptr %operation)
   ret void
 }
 
-declare i32 @wf__body_receive_next_start(ptr, ptr, ptr, i64, i64, ptr)
+declare i32 @wf__body_receive_next_start(ptr, ptr, ptr, i64, i64, ptr, ptr)
 
-define i32 @wf_std.net.receive_next.start(ptr %result, ptr %receive, ptr %destination.data, i64 %destination.len, i64 %start, i64 %end, ptr %operation) {
+define i32 @wf_std.net.receive_next.start(ptr %result, ptr %receive, ptr %destination.data, i64 %destination.len, i64 %start, i64 %end, ptr %deadline, ptr %operation) {
 entry:
   %view = alloca { ptr, i64 }, align 8
   store ptr %destination.data, ptr %view, align 8
   %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
   store i64 %destination.len, ptr %view.len, align 8
-  %state = call i32 @wf__body_receive_next_start(ptr %result, ptr %receive, ptr %view, i64 %start, i64 %end, ptr %operation)
+  %state = call i32 @wf__body_receive_next_start(ptr %result, ptr %receive, ptr %view, i64 %start, i64 %end, ptr %deadline, ptr %operation)
   ret i32 %state
 }
 
-declare void @wf__body_receive_next_finish(ptr, ptr, ptr, i64, i64, ptr)
+declare void @wf__body_receive_next_finish(ptr, ptr, ptr, i64, i64, ptr, ptr)
 
-define void @wf_std.net.receive_next.finish(ptr %result, ptr %receive, ptr %destination.data, i64 %destination.len, i64 %start, i64 %end, ptr %operation) {
+define void @wf_std.net.receive_next.finish(ptr %result, ptr %receive, ptr %destination.data, i64 %destination.len, i64 %start, i64 %end, ptr %deadline, ptr %operation) {
 entry:
   %view = alloca { ptr, i64 }, align 8
   store ptr %destination.data, ptr %view, align 8
   %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
   store i64 %destination.len, ptr %view.len, align 8
-  call void @wf__body_receive_next_finish(ptr %result, ptr %receive, ptr %view, i64 %start, i64 %end, ptr %operation)
+  call void @wf__body_receive_next_finish(ptr %result, ptr %receive, ptr %view, i64 %start, i64 %end, ptr %deadline, ptr %operation)
   ret void
 }
 
-declare i32 @wf__body_send_once_start(ptr, ptr, ptr, i64, i64, ptr)
+declare i32 @wf__body_send_once_start(ptr, ptr, ptr, i64, i64, ptr, ptr)
 
-define i32 @wf_std.net.send_once.start(ptr %result, ptr %send, ptr %source.data, i64 %source.len, i64 %start, i64 %end, ptr %operation) {
+define i32 @wf_std.net.send_once.start(ptr %result, ptr %send, ptr %source.data, i64 %source.len, i64 %start, i64 %end, ptr %deadline, ptr %operation) {
 entry:
   %view = alloca { ptr, i64 }, align 8
   store ptr %source.data, ptr %view, align 8
   %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
   store i64 %source.len, ptr %view.len, align 8
-  %state = call i32 @wf__body_send_once_start(ptr %result, ptr %send, ptr %view, i64 %start, i64 %end, ptr %operation)
+  %state = call i32 @wf__body_send_once_start(ptr %result, ptr %send, ptr %view, i64 %start, i64 %end, ptr %deadline, ptr %operation)
   ret i32 %state
 }
 
-declare void @wf__body_send_once_finish(ptr, ptr, ptr, i64, i64, ptr)
+declare void @wf__body_send_once_finish(ptr, ptr, ptr, i64, i64, ptr, ptr)
 
-define void @wf_std.net.send_once.finish(ptr %result, ptr %send, ptr %source.data, i64 %source.len, i64 %start, i64 %end, ptr %operation) {
+define void @wf_std.net.send_once.finish(ptr %result, ptr %send, ptr %source.data, i64 %source.len, i64 %start, i64 %end, ptr %deadline, ptr %operation) {
 entry:
   %view = alloca { ptr, i64 }, align 8
   store ptr %source.data, ptr %view, align 8
   %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
   store i64 %source.len, ptr %view.len, align 8
-  call void @wf__body_send_once_finish(ptr %result, ptr %send, ptr %view, i64 %start, i64 %end, ptr %operation)
+  call void @wf__body_send_once_finish(ptr %result, ptr %send, ptr %view, i64 %start, i64 %end, ptr %deadline, ptr %operation)
   ret void
 }
 
@@ -407,35 +407,35 @@ entry:
   ret void
 }
 
-declare i32 @wf__body_tcp_accept_start(ptr, ptr, ptr, ptr)
+declare i32 @wf__body_tcp_accept_start(ptr, ptr, ptr, ptr, ptr)
 
-define i32 @wf_std.net.tcp_accept.start(ptr %result, ptr %factory, ptr %listener, ptr %operation) {
+define i32 @wf_std.net.tcp_accept.start(ptr %result, ptr %factory, ptr %listener, ptr %deadline, ptr %operation) {
 entry:
-  %state = call i32 @wf__body_tcp_accept_start(ptr %result, ptr %factory, ptr %listener, ptr %operation)
+  %state = call i32 @wf__body_tcp_accept_start(ptr %result, ptr %factory, ptr %listener, ptr %deadline, ptr %operation)
   ret i32 %state
 }
 
-declare void @wf__body_tcp_accept_finish(ptr, ptr, ptr, ptr)
+declare void @wf__body_tcp_accept_finish(ptr, ptr, ptr, ptr, ptr)
 
-define void @wf_std.net.tcp_accept.finish(ptr %result, ptr %factory, ptr %listener, ptr %operation) {
+define void @wf_std.net.tcp_accept.finish(ptr %result, ptr %factory, ptr %listener, ptr %deadline, ptr %operation) {
 entry:
-  call void @wf__body_tcp_accept_finish(ptr %result, ptr %factory, ptr %listener, ptr %operation)
+  call void @wf__body_tcp_accept_finish(ptr %result, ptr %factory, ptr %listener, ptr %deadline, ptr %operation)
   ret void
 }
 
-declare i32 @wf__body_tcp_connect_start(ptr, ptr, ptr, ptr)
+declare i32 @wf__body_tcp_connect_start(ptr, ptr, ptr, ptr, ptr)
 
-define i32 @wf_std.net.tcp_connect.start(ptr %result, ptr %factory, ptr %address, ptr %operation) {
+define i32 @wf_std.net.tcp_connect.start(ptr %result, ptr %factory, ptr %address, ptr %deadline, ptr %operation) {
 entry:
-  %state = call i32 @wf__body_tcp_connect_start(ptr %result, ptr %factory, ptr %address, ptr %operation)
+  %state = call i32 @wf__body_tcp_connect_start(ptr %result, ptr %factory, ptr %address, ptr %deadline, ptr %operation)
   ret i32 %state
 }
 
-declare void @wf__body_tcp_connect_finish(ptr, ptr, ptr, ptr)
+declare void @wf__body_tcp_connect_finish(ptr, ptr, ptr, ptr, ptr)
 
-define void @wf_std.net.tcp_connect.finish(ptr %result, ptr %factory, ptr %address, ptr %operation) {
+define void @wf_std.net.tcp_connect.finish(ptr %result, ptr %factory, ptr %address, ptr %deadline, ptr %operation) {
 entry:
-  call void @wf__body_tcp_connect_finish(ptr %result, ptr %factory, ptr %address, ptr %operation)
+  call void @wf__body_tcp_connect_finish(ptr %result, ptr %factory, ptr %address, ptr %deadline, ptr %operation)
   ret void
 }
 
@@ -485,6 +485,174 @@ define void @wf_std.net.close_send.finish(ptr %result, ptr %factory, ptr %send, 
 entry:
   call void @wf__body_close_send_finish(ptr %result, ptr %factory, ptr %send, ptr %operation)
   ret void
+}
+
+declare i32 @wf__body_open_append_start(ptr, ptr, ptr, ptr, i64, i64, ptr)
+
+define i32 @wf_std.fs.open_append.start(ptr %result, ptr %factory, ptr %root, ptr %name.data, i64 %name.len, i64 %start, i64 %end, ptr %operation) {
+entry:
+  %view = alloca { ptr, i64 }, align 8
+  store ptr %name.data, ptr %view, align 8
+  %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
+  store i64 %name.len, ptr %view.len, align 8
+  %state = call i32 @wf__body_open_append_start(ptr %result, ptr %factory, ptr %root, ptr %view, i64 %start, i64 %end, ptr %operation)
+  ret i32 %state
+}
+
+declare void @wf__body_open_append_finish(ptr, ptr, ptr, ptr, i64, i64, ptr)
+
+define void @wf_std.fs.open_append.finish(ptr %result, ptr %factory, ptr %root, ptr %name.data, i64 %name.len, i64 %start, i64 %end, ptr %operation) {
+entry:
+  %view = alloca { ptr, i64 }, align 8
+  store ptr %name.data, ptr %view, align 8
+  %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
+  store i64 %name.len, ptr %view.len, align 8
+  call void @wf__body_open_append_finish(ptr %result, ptr %factory, ptr %root, ptr %view, i64 %start, i64 %end, ptr %operation)
+  ret void
+}
+
+declare i32 @wf__body_append_once_start(ptr, ptr, ptr, ptr, i64, i64, ptr)
+
+define i32 @wf_std.fs.append_once.start(ptr %result, ptr %factory, ptr %file, ptr %source.data, i64 %source.len, i64 %start, i64 %end, ptr %operation) {
+entry:
+  %view = alloca { ptr, i64 }, align 8
+  store ptr %source.data, ptr %view, align 8
+  %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
+  store i64 %source.len, ptr %view.len, align 8
+  %state = call i32 @wf__body_append_once_start(ptr %result, ptr %factory, ptr %file, ptr %view, i64 %start, i64 %end, ptr %operation)
+  ret i32 %state
+}
+
+declare void @wf__body_append_once_finish(ptr, ptr, ptr, ptr, i64, i64, ptr)
+
+define void @wf_std.fs.append_once.finish(ptr %result, ptr %factory, ptr %file, ptr %source.data, i64 %source.len, i64 %start, i64 %end, ptr %operation) {
+entry:
+  %view = alloca { ptr, i64 }, align 8
+  store ptr %source.data, ptr %view, align 8
+  %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
+  store i64 %source.len, ptr %view.len, align 8
+  call void @wf__body_append_once_finish(ptr %result, ptr %factory, ptr %file, ptr %view, i64 %start, i64 %end, ptr %operation)
+  ret void
+}
+
+declare i32 @wf__body_sync_file_start(ptr, ptr, ptr, ptr)
+
+define i32 @wf_std.fs.sync_file.start(ptr %result, ptr %factory, ptr %file, ptr %operation) {
+entry:
+  %state = call i32 @wf__body_sync_file_start(ptr %result, ptr %factory, ptr %file, ptr %operation)
+  ret i32 %state
+}
+
+declare void @wf__body_sync_file_finish(ptr, ptr, ptr, ptr)
+
+define void @wf_std.fs.sync_file.finish(ptr %result, ptr %factory, ptr %file, ptr %operation) {
+entry:
+  call void @wf__body_sync_file_finish(ptr %result, ptr %factory, ptr %file, ptr %operation)
+  ret void
+}
+
+declare i32 @wf__body_close_write_start(ptr, ptr, ptr, ptr)
+
+define i32 @wf_std.fs.close_write.start(ptr %result, ptr %factory, ptr %file, ptr %operation) {
+entry:
+  %state = call i32 @wf__body_close_write_start(ptr %result, ptr %factory, ptr %file, ptr %operation)
+  ret i32 %state
+}
+
+declare void @wf__body_close_write_finish(ptr, ptr, ptr, ptr)
+
+define void @wf_std.fs.close_write.finish(ptr %result, ptr %factory, ptr %file, ptr %operation) {
+entry:
+  call void @wf__body_close_write_finish(ptr %result, ptr %factory, ptr %file, ptr %operation)
+  ret void
+}
+
+declare i32 @wf__body_close_directory_write_start(ptr, ptr, ptr, ptr)
+
+define i32 @wf_std.fs.close_directory_write.start(ptr %result, ptr %factory, ptr %directory, ptr %operation) {
+entry:
+  %state = call i32 @wf__body_close_directory_write_start(ptr %result, ptr %factory, ptr %directory, ptr %operation)
+  ret i32 %state
+}
+
+declare void @wf__body_close_directory_write_finish(ptr, ptr, ptr, ptr)
+
+define void @wf_std.fs.close_directory_write.finish(ptr %result, ptr %factory, ptr %directory, ptr %operation) {
+entry:
+  call void @wf__body_close_directory_write_finish(ptr %result, ptr %factory, ptr %directory, ptr %operation)
+  ret void
+}
+
+declare i32 @wf__body_sleep_until_start(ptr, ptr, ptr)
+
+define i32 @wf_std.time.sleep_until.start(ptr %result, ptr %deadline, ptr %operation) {
+entry:
+  %state = call i32 @wf__body_sleep_until_start(ptr %result, ptr %deadline, ptr %operation)
+  ret i32 %state
+}
+
+declare void @wf__body_sleep_until_finish(ptr, ptr, ptr)
+
+define void @wf_std.time.sleep_until.finish(ptr %result, ptr %deadline, ptr %operation) {
+entry:
+  call void @wf__body_sleep_until_finish(ptr %result, ptr %deadline, ptr %operation)
+  ret void
+}
+
+declare void @wf__body_clock_share(ptr, ptr)
+
+define void @wf_std.time.clock_share(ptr %result, ptr %clock) {
+entry:
+  call void @wf__body_clock_share(ptr %result, ptr %clock)
+  ret void
+}
+
+declare void @wf__body_wall_clock_share(ptr, ptr)
+
+define void @wf_std.time.wall_clock_share(ptr %result, ptr %clock) {
+entry:
+  call void @wf__body_wall_clock_share(ptr %result, ptr %clock)
+  ret void
+}
+
+declare void @wf__body_now(ptr, ptr)
+
+define void @wf_std.time.now(ptr %result, ptr %clock) {
+entry:
+  call void @wf__body_now(ptr %result, ptr %clock)
+  ret void
+}
+
+declare void @wf__body_instant_after(ptr, ptr, i64)
+
+define void @wf_std.time.instant_after(ptr %result, ptr %instant, i64 %nanoseconds) {
+entry:
+  call void @wf__body_instant_after(ptr %result, ptr %instant, i64 %nanoseconds)
+  ret void
+}
+
+declare i64 @wf__body_nanoseconds_from(ptr, ptr)
+
+define i64 @wf_std.time.nanoseconds_from(ptr %earlier, ptr %later) {
+entry:
+  %value = call i64 @wf__body_nanoseconds_from(ptr %earlier, ptr %later)
+  ret i64 %value
+}
+
+declare zeroext i1 @wf__body_instant_reached(ptr, ptr)
+
+define i1 @wf_std.time.instant_reached(ptr %deadline, ptr %instant) {
+entry:
+  %value = call zeroext i1 @wf__body_instant_reached(ptr %deadline, ptr %instant)
+  ret i1 %value
+}
+
+declare i64 @wf__body_unix_nanoseconds(ptr)
+
+define i64 @wf_std.time.unix_nanoseconds(ptr %clock) {
+entry:
+  %value = call i64 @wf__body_unix_nanoseconds(ptr %clock)
+  ret i64 %value
 }
 
 declare void @wf__body_exit_status(ptr, i8 zeroext)

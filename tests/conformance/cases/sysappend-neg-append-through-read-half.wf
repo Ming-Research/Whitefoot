@@ -1,0 +1,13 @@
+fn append_below(factory: &std::io::HandleFactory, root: &std::fs::DirectoryRead, name: &[u8]) -> result: u8 reads(root), reads(name), writes(factory) waits contract {
+  requires 1_u64 <= name^.len;
+} {
+  match std::fs::open_append(factory: factory, root: root, name: name, start: 0_u64, end: 1_u64) {
+    Ok(value: file) => {
+      std::fs::close_write(factory: factory, file: move file);
+      return 0_u8;
+    }
+    Err(error: problem) => {
+      return 1_u8;
+    }
+  }
+}

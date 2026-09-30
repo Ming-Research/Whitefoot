@@ -28,7 +28,8 @@ fn publish_all(factory: &HandleFactory, output: &OutputStream, source: &[u8], le
     } else {
       break @publish;
     }
-    match write_once(factory: factory, output: output, source: source, start: sent, end: length) {
+    let no_deadline = None<std::time::Instant>();
+    match write_once(factory: factory, output: output, source: source, start: sent, end: length, deadline: no_deadline) {
       Ok(value: next) => {
         set sent = next;
       }
@@ -507,7 +508,9 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputSt
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "PRE-1 ordinary Inputs are destructured once; the referenced operation chain returns before the initial directory is explicitly closed on every exit.";
-  let Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: files, stdin: unused_stdin) = move inputs;
+  let Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: files, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
+  std::fs::close_directory_write(factory: &files, directory: move cwd_write);
   let outcome = exercise(args: &args, cwd: &cwd, out: &out, err: &err, files: &files);
   close_directory(factory: &files, directory: move cwd);
   return move outcome;

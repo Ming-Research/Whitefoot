@@ -48,6 +48,9 @@ fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
     TimedOut(code: native_code, origin: native_origin) => {
       return False();
     }
+    DeadlinePassed() => {
+      return False();
+    }
     BrokenPipe(code: native_code, origin: native_origin) => {
       return False();
     }
@@ -147,7 +150,9 @@ fn exercise(cwd: &DirectoryRead, files: &HandleFactory) -> status: ExitStatus re
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "PRE-2 ordinary Inputs are destructured once, the rest covered by the rest marker; the referenced operation chain returns before the initial directory is explicitly closed.";
-  let Inputs(cwd: root, handles: files, ..) = move inputs;
+  let Inputs(cwd: root_directory, handles: files, ..) = move inputs;
+  let std::fs::Directory(read: root, write: root_write) = move root_directory;
+  std::fs::close_directory_write(factory: &files, directory: move root_write);
   let outcome = exercise(cwd: &root, files: &files);
   close_directory(factory: &files, directory: move root);
   return move outcome;
