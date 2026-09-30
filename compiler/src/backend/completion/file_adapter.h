@@ -39,22 +39,24 @@
 extern "C" {
 #endif
 
-/* The most helpers one adapter may ever hold.
+/* The most helpers one adapter's demand-driven pool may grow to.
  *
- * It is here rather than at the caller because it sizes storage this record
- * carries: one `wf_prim_thread` per helper, which is where a helper's entry
- * pair lives for the life of that helper (`../sched/prim.h`, P1). The caller
- * still states its own bound at `wf_file_adapter_init`, and a bound above this
- * one is refused rather than clamped, because a caller asking for more helpers
- * than this adapter can hold is asking for a pool it will not get. */
+ * The caller still states its own bound at `wf_file_adapter_init`, and a
+ * bound above this one is refused rather than clamped, because a caller asking
+ * for a larger pool is asking for one it will not get.  Only the growth for
+ * peers (`wf_file_adapter_hold_for_contexts`) passes it, into the records
+ * below. */
 #define WF_FILE_MAX_HELPERS 8u
 
 /* The most helpers one adapter may hold in all, counting those it starts past
  * its cap because every helper it has is inside a wait on a peer
- * (`wf_file_adapter_hold_for_contexts`).  It sizes the same storage: one
- * `wf_prim_thread` per helper for the life of that helper.  A program with
- * more waits on another of its own contexts on helper threads at once than
- * this is stopped with a report, as other runtime resources are [SCOPE-3]. */
+ * (`wf_file_adapter_hold_for_contexts`).  It sizes storage this record
+ * carries: one `wf_prim_thread` per helper, which is where a helper's entry
+ * pair lives for the life of that helper (`../sched/prim.h`, P1).  A program
+ * with more waits on another of its own contexts on helper threads at once
+ * than this is stopped with a report, as other runtime resources are
+ * [SCOPE-3].  The count is provisional: far above the three standard streams
+ * and one accept per listener a program has now, and 4 KiB of records. */
 #define WF_FILE_HELPER_RECORDS 256u
 _Static_assert(
     WF_FILE_MAX_HELPERS <= WF_FILE_HELPER_RECORDS,
@@ -92,8 +94,9 @@ typedef struct wf_file_adapter {
     /* Mutated only under queue_lock, and atomic so the decline check can read
      * it without taking the lock. */
     _Atomic size_t queue_count;
-    /* Grown under the queue lock by a submitting thread and read without it by
-     * a thread deciding whether it is itself this queue's engine. */
+    /* Grown under the queue lock by a submitting thread, or by a helper growing
+     * the pool for peers, and read without it by a thread deciding whether it
+     * is itself this queue's engine. */
     _Atomic size_t helper_count;
     size_t helper_cap;
     /* Helpers currently asleep on the queue condition, maintained under the
@@ -128,9 +131,10 @@ typedef struct wf_file_adapter {
      * queue lock; see `wf_file_adapter_hold_for_contexts`. */
     unsigned grow_for_peers;
     size_t peer_waits;
-    /* How many helpers this adapter may ever hold.  It is the caller's stated
-     * bound on the pool rather than the policy's wish, so it, and not the wish,
-     * is what bounds the ceiling `wf_file_adapter_set_helper_cap` installs. */
+    /* How many helpers the demand-driven pool may grow to.  It is the caller's
+     * stated bound on the pool rather than the policy's wish, so it, and not
+     * the wish, is what bounds the ceiling `wf_file_adapter_set_helper_cap`
+     * installs; only the growth for peers passes it. */
     size_t helper_capacity;
     /* Whether every field above has been published.  It is atomic because the
      * direct execution route reads it on a thread that has run no
@@ -149,12 +153,11 @@ typedef struct wf_file_adapter {
 /* helper_count is policy, not a fixed architecture constant; zero selects
  * joiner-driven single-thread progress.
  *
- * helper_capacity is how many helpers this adapter may ever hold: the pool may
- * later be told to grow, and this is the bound that says how far.  It is
- * refused below helper_count and above WF_FILE_MAX_HELPERS, which is the
- * number of entry records this record carries.  The helper threads themselves are the
- * platform's, started through `wf_prim_thread_start` and detached, so no
- * caller owns storage for them. */
+ * helper_capacity is how many helpers the demand-driven pool may hold: the
+ * pool may later be told to grow, and this is the bound that says how far.  It
+ * is refused below helper_count and above WF_FILE_MAX_HELPERS.  The helper
+ * threads themselves are the platform's, started through
+ * `wf_prim_thread_start` and detached, so no caller owns storage for them. */
 int wf_file_adapter_init(
     wf_file_adapter *adapter,
     wf_completion_runtime *runtime,
@@ -360,8 +363,8 @@ size_t wf_file_adapter_queued(const wf_file_adapter *adapter);
  * A cap above the `helper_capacity` given to init is clamped to it rather than
  * refused: the caller is stating a policy, and the bound it gave at init is the
  * fact that limits it.  The clamp is the difference between a pool that stops
- * growing and one that grows past the number of helpers this adapter was told
- * it may ever hold. */
+ * growing and one whose demand grows it past the bound this adapter was told;
+ * only the growth for peers passes that bound. */
 int wf_file_adapter_set_helper_cap(wf_file_adapter *adapter, size_t cap);
 
 /* From now on, treats every queued request as peer-bound: a submission grows
@@ -390,6 +393,10 @@ int wf_file_adapter_hold_for_contexts(
 /* Read without the queue lock. Zero means the calling thread is itself the
  * only engine this queue has. */
 size_t wf_file_adapter_helper_count(const wf_file_adapter *adapter);
+
+/* How many helpers are inside a request that may wait on a peer, read under
+ * the queue lock. */
+size_t wf_file_adapter_peer_waits(wf_file_adapter *adapter);
 
 /* Stops admission and drains accepted queue entries before waiting for the
  * helpers to leave.  With zero helpers, the calling thread performs the bounded

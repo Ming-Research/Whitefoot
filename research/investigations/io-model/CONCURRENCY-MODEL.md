@@ -953,7 +953,9 @@ nine pipes, nine one-byte reads submitted to an adapter that holds requests
 for contexts, then nine one-byte writes. On f5024250f one read and every write
 stayed queued behind eight blocked reads, and the case failed after its 10 s
 bound (`test_a_peer_wait_never_waits_behind_peer_waits` in
-`compiler/src/backend/completion/harness.c`).
+`compiler/src/backend/completion/harness.c`). Its opens are not among them:
+a regular file opens without blocking and a directory open refuses a FIFO,
+so an open waits for the host alone.
 
 The rule: once contexts run, a queued request is never left behind a pool
 whose every helper is inside a request that may wait on a peer, that is a
@@ -967,14 +969,24 @@ drains. The pool then never holds more helpers than the ceiling plus the
 program's outstanding peer waits. Records for 256 helpers bound it, and a
 program past them, or one the host refuses a thread, stops with a report,
 which [SCOPE-3] allows for a runtime resource where waiting in the queue would
-stop it with none. A pinned `WF_IO_HELPERS` keeps its count, as R1 records.
+stop it with none. The count is provisional: far above the three streams and
+one accept per listener a program has now, and 4 KiB of records; a helper
+between publishing its result and leaving the count still counts, so the stop
+can come one request early at the boundary. A pinned `WF_IO_HELPERS` keeps its
+count, as R1 records.
 
-With the rule, the witness passes, and the same requests on a pinned pool
-stay behind its eight helpers until the test writes each pipe itself. The
-harness groups the gate runs and three ThreadSanitizer runs of the adapter
-group passed. The rule adds a lock round trip after each helper execution of
-such a request, only while contexts run; the measured programs make none on
-helpers on Linux, where their sockets use the ring.
+With the rule, the witness passes. The case also waits for the count of
+helpers in such waits to return to zero and shows that one more pair on free
+helpers adds none, submits a ninth read to eight helpers already inside reads
+and sees that submission start the ninth helper, and shows a pinned pool
+keeping its eight. A second case runs 257 reads of one empty pipe in a child
+and sees it abort with the adapter's line. Three mutants fail them: the
+count never decremented, no growth at submission, and no stop at the
+records' end. The harness groups the gate runs and three ThreadSanitizer
+runs of the adapter group passed. The count costs one lock round trip after
+each helper execution of such a request, counted whether or not contexts
+run; the Redis subset and the context echo server use none of their standard
+streams, and their sockets use the ring on Linux.
 
 Alternatives:
 - A readiness-driven adapter, one `poll`, `kqueue` or `WSAPoll` over every

@@ -1238,9 +1238,26 @@ rarely insert at the same place.
   served in its own context with the completion port required, and two bound
   fetches on both routes. Without the port a Windows context's socket wait
   is a blocking helper wait, because that host has no readiness wait, so a
-  server there holds only as many silent peers as the pool has helpers. A
-  `WSAPoll` readiness wait would give it the Linux readiness route's
-  behavior. Reopen when a Windows server has to run without the port.
+  server there holds a helper thread per silent peer, up to the adapter's 256
+  helper records, past which it stops with a report. A `WSAPoll` readiness
+  wait would give it the Linux readiness route's behavior. Reopen when a
+  Windows server has to run without the port.
+
+- **A wait on another context on a helper costs a thread.** Once contexts
+  run, a stream write, a stream read and a connect on a host with no ring,
+  and an accept on Windows run on helper threads, and the pool grows past its eight
+  helpers while every helper is inside such a wait
+  (`completion/file_adapter.c`, `wf_file_grow_for_peers_locked`). Each such
+  wait in flight holds a thread, and a program with more than 256 at once
+  stops with a report (`research/investigations/io-model/CONCURRENCY-MODEL.md`,
+  section 10.6). A readiness-driven adapter, one `poll`, `kqueue` or
+  `WSAPoll` over every queued descriptor made where an idle thread already
+  parks, would hold none; it needs a port per host, cannot make standard
+  streams shared with other processes nonblocking safely, and needs an
+  overlapped accept on Windows. Validate by the 257-read harness case running
+  to completion on one thread and by the context echo server's rate on the
+  no-ring route. Reopen when a program needs more than a few hundred such
+  waits at once or a profile shows their threads.
 
 - **The context echo server's rate at 1024 connections and with 64 KiB
   messages moved between sessions.** With R1 to R4 as committed,

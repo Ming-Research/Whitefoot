@@ -7,7 +7,9 @@
  * and lives in one leaf per platform: `file_posix.c` and `file_windows.c`.
  * Nothing in this unit makes a host call of its own -- its threads come from
  * `wf_prim_thread_start` and its lock and condition from the platform's one
- * wait set -- so there is no `#if` here and no header of a host in it.
+ * wait set -- so there is no `#if` here and no header of a host in it; its one
+ * fail-stop writes a line through the C library and aborts, as the other
+ * units' do.
  */
 
 #include "file_adapter.h"
@@ -611,9 +613,9 @@ int wf_file_adapter_set_helper_cap(wf_file_adapter *adapter, size_t cap) {
     if (!wf_file_adapter_initialized(adapter)) {
         return EINVAL;
     }
-    /* The policy asks for a ceiling; the caller's storage decides how much of
-     * it exists.  A cap above the bound init was given would let the pool grow
-     * past the number of helpers this adapter was told it may ever hold. */
+    /* The policy asks for a ceiling; the bound init was given decides how
+     * much of it exists.  A cap above it would let demand grow the pool past
+     * that bound. */
     if (cap > adapter->helper_capacity) {
         cap = adapter->helper_capacity;
     }
@@ -621,6 +623,17 @@ int wf_file_adapter_set_helper_cap(wf_file_adapter *adapter, size_t cap) {
     adapter->helper_cap = cap;
     wf_completion_wait_unlock(&adapter->queue_wait);
     return 0;
+}
+
+size_t wf_file_adapter_peer_waits(wf_file_adapter *adapter) {
+    size_t waits;
+    if (!wf_file_adapter_initialized(adapter)) {
+        return 0;
+    }
+    wf_completion_wait_lock(&adapter->queue_wait);
+    waits = adapter->peer_waits;
+    wf_completion_wait_unlock(&adapter->queue_wait);
+    return waits;
 }
 
 size_t wf_file_adapter_helper_count(const wf_file_adapter *adapter) {

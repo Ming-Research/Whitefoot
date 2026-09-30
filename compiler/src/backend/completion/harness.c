@@ -31,6 +31,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -2600,13 +2601,61 @@ static int harness_await_all(wf_completion_record *records, unsigned count) {
     return 0;
 }
 
+/* Waits, bounded, until `adapter` counts exactly `waits` helpers inside a
+ * request that may wait on a peer. */
+static int harness_await_peer_waits(wf_file_adapter *adapter, size_t waits) {
+    struct timespec delay = {.tv_sec = 0, .tv_nsec = 1000000};
+    unsigned attempts;
+    for (attempts = 0; attempts < 10000u; ++attempts) {
+        if (wf_file_adapter_peer_waits(adapter) == waits) {
+            return 1;
+        }
+        (void)nanosleep(&delay, NULL);
+    }
+    return 0;
+}
+
+/* A one-byte read of `descriptor` into `byte`, or a one-byte write of it. */
+static void harness_pipe_request(
+    wf_completion_record *record,
+    int writes,
+    int descriptor,
+    unsigned char *byte
+) {
+    harness_record_init(record, writes ? WF_FILE_WRITE : WF_FILE_READ);
+    if (writes) {
+        record->request.operation.write.descriptor = descriptor;
+        record->request.operation.write.buffer = byte;
+        record->request.operation.write.count = 1;
+    } else {
+        record->request.operation.read.descriptor = descriptor;
+        record->request.operation.read.buffer = byte;
+        record->request.operation.read.count = 1;
+    }
+}
+
+/* An adapter at the bridge's ceiling that holds requests for contexts. */
+static int harness_contexts_adapter(
+    wf_file_adapter *adapter,
+    wf_completion_runtime *runtime,
+    int grow_for_peers
+) {
+    CHECK(wf_file_adapter_init(adapter, runtime, WF_FILE_MAX_HELPERS, 0) == 0);
+    CHECK(wf_file_adapter_set_helper_cap(adapter, WF_FILE_MAX_HELPERS) == 0);
+    CHECK(wf_file_adapter_hold_for_contexts(adapter, grow_for_peers) == 0);
+    return 0;
+}
+
 /* Once contexts run, a request that may wait on another context is never
  * left behind a pool whose every helper is inside such a wait [WAIT-2].
  *
  * Nine readers of nine empty pipes are submitted first, so on the eight
  * helpers of the ceiling one reader and every writer would wait in the
  * queue behind eight reads whose writers never run.  With the pool allowed
- * to grow for peers, every read ends with its writer's byte; a pinned pool
+ * to grow for peers, every read ends with its writer's byte, the count of
+ * helpers in such waits returns to zero, and a pool with free helpers grows
+ * no further.  The growth happens where the count reaches the pool: at the
+ * submission that finds eight helpers already inside reads.  A pinned pool
  * keeps its eight. */
 static int test_a_peer_wait_never_waits_behind_peer_waits(void) {
     wf_completion_runtime runtime;
@@ -2615,29 +2664,28 @@ static int test_a_peer_wait_never_waits_behind_peer_waits(void) {
     unsigned char landed[WF_PEER_PIPES];
     unsigned char sent[WF_PEER_PIPES];
     int pipes[WF_PEER_PIPES][2];
+    size_t grown;
     unsigned index;
 
     CHECK(wf_completion_runtime_init(&runtime) == 0);
-    CHECK(wf_file_adapter_init(&adapter, &runtime, WF_FILE_MAX_HELPERS, 0) == 0);
-    CHECK(wf_file_adapter_set_helper_cap(&adapter, WF_FILE_MAX_HELPERS) == 0);
-    CHECK(wf_file_adapter_hold_for_contexts(&adapter, 1) == 0);
     for (index = 0; index < WF_PEER_PIPES; ++index) {
         CHECK(pipe(pipes[index]) == 0);
         landed[index] = 0;
         sent[index] = (unsigned char)(index + 1u);
-        harness_record_init(&records[index], WF_FILE_READ);
-        records[index].request.operation.read.descriptor = pipes[index][0];
-        records[index].request.operation.read.buffer = &landed[index];
-        records[index].request.operation.read.count = 1;
-        CHECK(wf_file_adapter_submit(&adapter, &records[index]) == WF_FILE_TARGET_OWNS);
     }
-    for (index = 0; index < WF_PEER_PIPES; ++index) {
-        wf_completion_record *writer = &records[WF_PEER_PIPES + index];
-        harness_record_init(writer, WF_FILE_WRITE);
-        writer->request.operation.write.descriptor = pipes[index][1];
-        writer->request.operation.write.buffer = &sent[index];
-        writer->request.operation.write.count = 1;
-        CHECK(wf_file_adapter_submit(&adapter, writer) == WF_FILE_TARGET_OWNS);
+
+    /* Every read before any write. */
+    CHECK(harness_contexts_adapter(&adapter, &runtime, 1) == 0);
+    for (index = 0; index < 2u * WF_PEER_PIPES; ++index) {
+        unsigned pipe_index = index % WF_PEER_PIPES;
+        int writes = index >= WF_PEER_PIPES;
+        harness_pipe_request(
+            &records[index],
+            writes,
+            pipes[pipe_index][writes],
+            writes ? &sent[pipe_index] : &landed[pipe_index]
+        );
+        CHECK(wf_file_adapter_submit(&adapter, &records[index]) == WF_FILE_TARGET_OWNS);
     }
     CHECK(harness_await_all(records, 2u * WF_PEER_PIPES));
     for (index = 0; index < WF_PEER_PIPES; ++index) {
@@ -2645,30 +2693,68 @@ static int test_a_peer_wait_never_waits_behind_peer_waits(void) {
         CHECK(records[index].result.value == 1);
         CHECK(landed[index] == sent[index]);
     }
-    CHECK(wf_file_adapter_helper_count(&adapter) > WF_FILE_MAX_HELPERS);
+    grown = wf_file_adapter_helper_count(&adapter);
+    CHECK(grown > WF_FILE_MAX_HELPERS);
+    /* Every helper left its wait, and one more pair on free helpers adds
+     * none. */
+    CHECK(harness_await_peer_waits(&adapter, 0));
+    harness_pipe_request(&records[0], 0, pipes[0][0], &landed[0]);
+    harness_pipe_request(&records[1], 1, pipes[0][1], &sent[0]);
+    CHECK(wf_file_adapter_submit(&adapter, &records[0]) == WF_FILE_TARGET_OWNS);
+    CHECK(wf_file_adapter_submit(&adapter, &records[1]) == WF_FILE_TARGET_OWNS);
+    CHECK(harness_await_all(records, 2u));
+    CHECK(harness_await_peer_waits(&adapter, 0));
+    CHECK(wf_file_adapter_helper_count(&adapter) == grown);
+    CHECK(wf_file_adapter_shutdown(&adapter) == 0);
+
+    /* Eight reads inside eight helpers, then the ninth: its own submission
+     * starts the ninth helper, since no helper will take from the queue. */
+    CHECK(harness_contexts_adapter(&adapter, &runtime, 1) == 0);
+    for (index = 0; index < WF_FILE_MAX_HELPERS; ++index) {
+        harness_pipe_request(&records[index], 0, pipes[index][0], &landed[index]);
+        CHECK(wf_file_adapter_submit(&adapter, &records[index]) == WF_FILE_TARGET_OWNS);
+    }
+    CHECK(harness_await_peer_waits(&adapter, WF_FILE_MAX_HELPERS));
+    CHECK(wf_file_adapter_helper_count(&adapter) == WF_FILE_MAX_HELPERS);
+    harness_pipe_request(
+        &records[WF_FILE_MAX_HELPERS],
+        0,
+        pipes[WF_FILE_MAX_HELPERS][0],
+        &landed[WF_FILE_MAX_HELPERS]
+    );
+    CHECK(
+        wf_file_adapter_submit(&adapter, &records[WF_FILE_MAX_HELPERS])
+        == WF_FILE_TARGET_OWNS
+    );
+    CHECK(wf_file_adapter_helper_count(&adapter) == WF_FILE_MAX_HELPERS + 1u);
+    for (index = 0; index < WF_PEER_PIPES; ++index) {
+        harness_pipe_request(
+            &records[WF_PEER_PIPES + index],
+            1,
+            pipes[index][1],
+            &sent[index]
+        );
+        CHECK(
+            wf_file_adapter_submit(&adapter, &records[WF_PEER_PIPES + index])
+            == WF_FILE_TARGET_OWNS
+        );
+    }
+    CHECK(harness_await_all(records, 2u * WF_PEER_PIPES));
     CHECK(wf_file_adapter_shutdown(&adapter) == 0);
 
     /* A pinned pool keeps its count: the same requests leave the ninth read
      * and every writer queued behind eight helpers, until this thread writes
      * each pipe itself. */
-    CHECK(wf_file_adapter_init(&adapter, &runtime, WF_FILE_MAX_HELPERS, 0) == 0);
-    CHECK(wf_file_adapter_set_helper_cap(&adapter, WF_FILE_MAX_HELPERS) == 0);
-    CHECK(wf_file_adapter_hold_for_contexts(&adapter, 0) == 0);
+    CHECK(harness_contexts_adapter(&adapter, &runtime, 0) == 0);
     for (index = 0; index < 2u * WF_PEER_PIPES; ++index) {
-        harness_record_init(
+        unsigned pipe_index = index % WF_PEER_PIPES;
+        int writes = index >= WF_PEER_PIPES;
+        harness_pipe_request(
             &records[index],
-            index < WF_PEER_PIPES ? WF_FILE_READ : WF_FILE_WRITE
+            writes,
+            pipes[pipe_index][writes],
+            writes ? &sent[pipe_index] : &landed[pipe_index]
         );
-        if (index < WF_PEER_PIPES) {
-            records[index].request.operation.read.descriptor = pipes[index][0];
-            records[index].request.operation.read.buffer = &landed[index];
-            records[index].request.operation.read.count = 1;
-        } else {
-            unsigned pipe_index = index - WF_PEER_PIPES;
-            records[index].request.operation.write.descriptor = pipes[pipe_index][1];
-            records[index].request.operation.write.buffer = &sent[pipe_index];
-            records[index].request.operation.write.count = 1;
-        }
         CHECK(wf_file_adapter_submit(&adapter, &records[index]) == WF_FILE_TARGET_OWNS);
     }
     {
@@ -2695,6 +2781,79 @@ static int test_a_peer_wait_never_waits_behind_peer_waits(void) {
         CHECK(close(pipes[index][1]) == 0);
     }
     CHECK(wf_completion_runtime_destroy(&runtime) == 0);
+    return 0;
+}
+
+/* The harness's own path, for a case that runs a group in a child. */
+static const char *wf_harness_self;
+
+/* The child's side of the case below: more reads of one empty pipe than there
+ * are helper records.  It returns only if the adapter let the last one wait
+ * in the queue. */
+static int wf_peer_limit_child(void) {
+    static wf_completion_record reads[WF_FILE_HELPER_RECORDS + 1u];
+    static unsigned char bytes[WF_FILE_HELPER_RECORDS + 1u];
+    wf_completion_runtime runtime;
+    wf_file_adapter adapter;
+    int descriptors[2];
+    unsigned index;
+    CHECK(pipe(descriptors) == 0);
+    CHECK(wf_completion_runtime_init(&runtime) == 0);
+    CHECK(harness_contexts_adapter(&adapter, &runtime, 1) == 0);
+    for (index = 0; index < WF_FILE_HELPER_RECORDS + 1u; ++index) {
+        harness_pipe_request(&reads[index], 0, descriptors[0], &bytes[index]);
+        CHECK(wf_file_adapter_submit(&adapter, &reads[index]) == WF_FILE_TARGET_OWNS);
+    }
+    (void)sleep(20u);
+    return 3;
+}
+
+/* A program with more waits on its own contexts on helper threads than the
+ * adapter has records for stops with a report [SCOPE-3]; waiting in the queue
+ * would stop it with none.  The child aborts with the adapter's line. */
+static int test_peer_waits_past_the_helper_records_stop_with_a_report(
+    const char *scratch_directory
+) {
+    struct timespec delay = {.tv_sec = 0, .tv_nsec = 10000000};
+    char report[512];
+    ssize_t length;
+    size_t total = 0;
+    unsigned attempts;
+    int errors[2];
+    int status = 0;
+    pid_t child;
+    CHECK(wf_harness_self != NULL);
+    CHECK(pipe(errors) == 0);
+    child = fork();
+    CHECK(child >= 0);
+    if (child == 0) {
+        (void)dup2(errors[1], 2);
+        (void)close(errors[0]);
+        (void)close(errors[1]);
+        execl(wf_harness_self, wf_harness_self, scratch_directory, "peer-limit", (char *)NULL);
+        _exit(4);
+    }
+    CHECK(close(errors[1]) == 0);
+    for (attempts = 0; attempts < 3000u; ++attempts) {
+        pid_t done = waitpid(child, &status, WNOHANG);
+        CHECK(done >= 0);
+        if (done == child) {
+            break;
+        }
+        (void)nanosleep(&delay, NULL);
+    }
+    CHECK(attempts < 3000u);
+    while (total + 1u < sizeof(report)
+           && (length = read(errors[0], report + total, sizeof(report) - 1u - total)) > 0) {
+        total += (size_t)length;
+    }
+    report[total] = '\0';
+    CHECK(close(errors[0]) == 0);
+    CHECK(WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT);
+    CHECK(
+        strstr(report, "whitefoot completion: more host operations waited on other contexts at once than the runtime has helper threads for")
+        != NULL
+    );
     return 0;
 }
 
@@ -2816,10 +2975,14 @@ int main(int argc, char **argv) {
         }                                                                     \
     } while (0)
     if (argc != 2 && argc != 3) {
-        fprintf(stderr, "usage: %s SCRATCH_DIRECTORY [all|core|bridge|adapter|cache|ordinary-text|ordinary-io]\n", argv[0]);
+        fprintf(stderr, "usage: %s SCRATCH_DIRECTORY [all|core|bridge|adapter|cache|ordinary-text|ordinary-io|peer-limit]\n", argv[0]);
         return 2;
     }
     const char *group = argc == 3 ? argv[2] : "all";
+    wf_harness_self = argv[0];
+    if (strcmp(group, "peer-limit") == 0) {
+        return wf_peer_limit_child();
+    }
     int all = strcmp(group, "all") == 0;
     int core = all || strcmp(group, "core") == 0;
     int bridge = all || strcmp(group, "bridge") == 0;
@@ -2874,6 +3037,7 @@ int main(int argc, char **argv) {
         RUN_TEST(test_directory_progress_is_internal());
         RUN_TEST(test_a_peer_bound_request_is_left_to_a_helper());
         RUN_TEST(test_a_peer_wait_never_waits_behind_peer_waits());
+        RUN_TEST(test_peer_waits_past_the_helper_records_stop_with_a_report(argv[1]));
         RUN_TEST(test_readiness_refusal_is_not_a_terminal_outcome());
         RUN_TEST(test_single_thread_file_progress(argv[1]));
         RUN_TEST(test_pool_stays_empty_when_operations_do_not_wait(argv[1]));

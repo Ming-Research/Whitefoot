@@ -190,8 +190,9 @@ static void wf_bridge_helper_policy(size_t *initial, size_t *cap) {
      * helper does not occupy a CPU. The three-CPU macOS comparisons in
      * research/investigations/io-model/RESULTS.md found useful width at four
      * and eight helpers. They support going beyond CPU count, not eight as a
-     * universal optimum. Eight remains the provisional helper storage limit;
-     * the queued operation count is not bounded by it. */
+     * universal optimum. Eight remains the provisional ceiling on demand;
+     * the queued operation count is not bounded by it, and once contexts run
+     * the pool passes it while every helper waits on a peer. */
     *cap = WF_BRIDGE_MAX_HELPERS;
     *initial = 0u;
 }
@@ -1891,9 +1892,9 @@ void *wf__context_prepare(uint64_t bytes) {
 static void wf_drivers_begin(void);
 
 /* The first context other than the root makes every operation the ring does
- * not carry a helper's: a scheduler thread inside a pipe's read or write, a
- * connect, or an open on a host with no ring would stop every context it
- * runs, the peer the operation waits on among them [WAIT-2].  The pool may
+ * not carry a helper's: a scheduler thread inside a pipe's read or write or a
+ * connect would stop every context it runs, the peer the operation waits on
+ * among them [WAIT-2].  The pool may
  * then grow to the bridge's ceiling even beside a ready ring, whose default
  * pool is empty, and past it while every helper is inside a wait on a peer
  * (`wf_file_adapter_hold_for_contexts`); a written WF_IO_HELPERS keeps its
