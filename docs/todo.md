@@ -545,9 +545,12 @@ rarely insert at the same place.
   The subsequent [ordinary controller composition](../research/experiments/container-representation/vector-library/RESULTS.md#ordinary-controller-composition-scalar-suffix-three-losses-prevent-selection)
   passes complete correctness and release checks but regresses scalar suffix-3
   at all three populations, so its four useful gains do not select that
-  source rewrite. Inspect the changed outer-cycle dataflow before another
-  candidate; the baseline scalar tail already inlines, and this result does
-  not justify restoring a uniform hint.
+  source rewrite. The separately qualified
+  [countdown batch controller](../research/experiments/container-representation/vector-library/RESULTS.md#countdown-batch-controller-balanced-pair-selects-caller-composition)
+  changes that outer live-state dataflow, recovers the original scalar cycle
+  count and passes the full balanced no-loss screen with three scalar
+  suffix-two gains. Only this caller composition is selected; the baseline
+  scalar tail already inlines, and neither result justifies a uniform hint.
   The recognizer's
   existence neither settles that performance tradeoff nor justifies extending
   its equivalence domain.
@@ -926,8 +929,16 @@ rarely insert at the same place.
   that cause is established; reopen for a workload dominated by these cycles.
   The [paired samples and limits](../research/experiments/container-representation/vector-library/RESULTS.md)
   are the starting evidence, not a claim of uniform improvement.
+  The selected countdown caller now has balanced-order peer-target counts
+  19/1/16 and 25/1/10 with every raw sample retained. Scalar growth/16 remains
+  the sole candidate deficit, about 1.08–1.09× C++ and 1.10–1.12× Rust; it
+  does not reach the changed suffix controller. Reopen that cause next with
+  the existing growth body/native allocation evidence and original workload,
+  preserving all capacity/growth policies and the refused nullable alternative.
+  Wide suffix-one's raw improvements remain paired-instability inconclusive;
+  no selected general lowering or isolated digest-cost percentage follows.
 
-  The current-module [Rust/C++ comparison](../research/experiments/container-representation/vector-library/RESULTS.md#fresh-practical-timing)
+  The historical module [Rust/C++ comparison](../research/experiments/container-representation/vector-library/RESULTS.md#fresh-practical-timing)
   reproduces a material gap at ordinary O3: 4096-element scalar reserved/reuse
   traces cost 2.136–2.175 times Rust Vec, and wide one-element suffix cycles
   cost 2.843–2.865 times Rust and 2.714–2.728 times C++ std::vector. The latter

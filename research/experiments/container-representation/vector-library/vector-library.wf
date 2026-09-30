@@ -131,6 +131,42 @@ fn vector_library_tail_work<interface VectorElement<T>>(values: &GrowVector<T, 8
   return unit;
 }
 
+fn vector_library_suffix_cycles<interface VectorElement<T>>(values: &GrowVector<T, 8193>, retained: u64, removed: u64, rounds: u64, seed: u64, initial_checksum: u64) -> result: u64 writes(values.storage) contract {
+  requires values^.storage.inner.len >= retained;
+  requires values^.storage.inner.len <= retained;
+  requires retained + removed <= 8192_u64;
+  ensures values^.storage.inner.len == retained;
+} {
+  let checksum = initial_checksum;
+  let pending = rounds;
+  let next_seed = seed;
+  loop @cycles (
+    invariant prefix_length: values^.storage.inner.len == retained
+  ) {
+    if pending <= 0_u64 {
+      break @cycles;
+    }
+    let next = next_seed;
+    let digest = VectorDigest(value: next);
+    for @suffix (
+      suffix_index in 0_u64..removed,
+      invariant suffix_length_lo: values^.storage.inner.len >= retained + suffix_index,
+      invariant suffix_length_hi: values^.storage.inner.len <= retained + suffix_index
+    ) {
+      let suffix_base = next +wrap retained;
+      let suffix_seed = suffix_base +wrap suffix_index;
+      let suffix_value = VectorElement::make(seed: suffix_seed);
+      let suffix_length = grow_vector_append::<T, 8193>(values: values, value: move suffix_value);
+    }
+    grow_vector_truncate::<T, VectorDigest, fn VectorElement::accept, 8193>(values: values, retained: retained, env: &digest);
+    let prefix = checksum *wrap 257_u64;
+    set checksum = prefix +wrap digest.value;
+    set next_seed = next_seed +wrap 1_u64;
+    set pending = pending - 1_u64;
+  }
+  return checksum;
+}
+
 fn vector_library_trace<interface VectorElement<T>>(count: u64, rounds: u64, seed: u64, path: u64) -> result: u64 pure contract {
   requires count <= 8192_u64;
 } {
@@ -159,16 +195,7 @@ fn vector_library_trace<interface VectorElement<T>>(count: u64, rounds: u64, see
       let value = VectorElement::make(seed: next);
       let length = grow_vector_append::<T, 8193>(values: &values, value: move value);
     }
-    for @cycles (
-      round in 0_u64..rounds,
-      invariant prefix_length: values.storage.inner.len == retained
-    ) {
-      let next = seed +wrap round;
-      let digest = VectorDigest(value: next);
-      vector_library_tail_work::<VectorElement<T>>(values: &values, retained: retained, removed: removed, seed: next, digest: &digest);
-      let prefix = checksum *wrap 257_u64;
-      set checksum = prefix +wrap digest.value;
-    }
+    set checksum = vector_library_suffix_cycles::<VectorElement<T>>(values: &values, retained: retained, removed: removed, rounds: rounds, seed: seed, initial_checksum: checksum);
     let final = VectorDigest(value: seed);
     grow_vector_drain::<T, VectorDigest, fn VectorElement::accept, 8193>(values: &values, env: &final);
     grow_vector_free_empty::<T, 8193>(values: move values);

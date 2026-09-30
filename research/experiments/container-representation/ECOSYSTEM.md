@@ -157,8 +157,11 @@ five families on one revision. Their supported conclusions are:
 
 ### Latest retained-image observations, 2026-09-28
 
-The following reductions use each family's latest retained implementation
-image, not rejected candidates. They are not one measurement of the current
+The following snapshot retains each family's selected image as observed on
+2026-09-28, excluding rejected candidates. The later selected Vector
+[countdown caller composition](vector-library/RESULTS.md#countdown-batch-controller-balanced-pair-selects-caller-composition)
+has separate balanced-order target reductions of 19/1/16 and 25/1/10; no
+pooled count replaces them. These are not one measurement of the current
 head: Vector, Deque and OrderedMap have later observations; HashMap and
 PriorityQueue retain the original comparison. P/D/I means qualified sample-range pass, deficit or
 inconclusive, with the same duration and cohort-stability screens described
@@ -276,6 +279,38 @@ observations pass, but the three qualified losses prevent selection. The
 source remains unchanged. Both raw sample sets and the original screen's
 qualification remain available; neither this trial nor the occupancy sweep
 is a fresh five-family current-head result.
+
+### Outer Vector batch controller: countdown criterion and balanced result
+
+After the direct-composition and counted-batch refusals, the next source
+criterion targeted only the private outer controller's live seed/trip-bound
+state. The rejected inner terminal remaining-count spelling was not reused.
+The native screen required the full scalar no-growth path to be no larger
+than the original `21 + 16 × removed`, with no compensating hot branch,
+owner transfer, spill or call; wide constants must remain outside repeated
+cycles, with direct backing stores/SIMD and no new snapshot or hot spill.
+The admitted source initializes a remaining-round count and rolling wrapping
+seed, preserving all operations, zero-round/zero-suffix behavior, callback
+order and final cleanup. No public API, compiler, policy or rule changes.
+
+Current122 WF emission, SHA-256 `0118a820...`, admits the original source and
+passes that native screen. The full original-control/candidate timed/account
+matrix, ledger and checksum/cleanup fault checks pass using unchanged retained
+runtime and native peers. Before timing, A1,B1,B2,A2 was fixed with A=original
+unbatched control, B=qualified countdown, each `measure 1048576 7`. Both full
+pairs use unchanged reducers and duration/stability screens; a combined
+gain/loss must qualify in both orders and both cohorts. Any useful qualified
+loss in either pair refuses selection; all other paired results remain
+inconclusive, with every raw row and peer target reported separately.
+
+The [complete balanced result](vector-library/RESULTS.md#countdown-batch-controller-balanced-pair-selects-caller-composition)
+selects only caller composition: scalar suffix-2 at 16/256/4096 gains in both
+orders, with zero qualified useful losses. The other 33 useful paired cells
+are inconclusive, including wide suffix-1 whose large raw reductions fail
+stability in the reverse ordering. Candidate peer-target P/D/I is 19/1/16 and
+25/1/10; scalar growth/16 remains a deficit in both. This is current122 WF
+source emission with retained harness/runtime/peers, not a fresh current-head
+five-family result. The old refused sources and samples remain unchanged.
 
 ### Actual compiler factor isolation: criterion and result
 

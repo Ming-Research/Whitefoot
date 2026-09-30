@@ -5094,8 +5094,125 @@ the public identity record documents portable prefixes for those locations.
 CSV-only reproduction uses `../summarize-ecosystem.pl --complete` and
 `--targets` per arm, then the unchanged paired rule: disjoint ranges in both
 cohorts, every paired WF sample at least 1 ms, and at most 10% cohort
-median-ratio spread. No source repair, additional timing pair or production
-caller change follows this rejection.
+median-ratio spread. This rejected counted controller is not repaired or
+retimed. The separately qualified countdown successor below changes the
+outer live-state dataflow and preserves this original refusal.
+
+### Countdown batch controller: balanced pair selects caller composition
+
+The experiment witness now uses a private generic batch helper with a
+remaining-round countdown and rolling wrapping seed. Three scalar suffix-two
+cells gain in both process orders, with no qualified useful loss in either
+pair. This selects caller/source decomposition only: public GrowVector
+operations, compiler/library, capacity/growth policy and specification stay
+unchanged. The standard-peer target remains incomplete.
+
+The [exact two-hunk patch](source-batch-countdown.patch), against
+`998f32d201f6946a8cc90fc3d6569b033282a8db`, preserves imports, all append/truncate
+and callback/digest order, zero rounds/zero suffix, wrapping seeds and final
+cleanup. The integrated source equals the measured candidate, SHA-256
+`25f8827d4c959eef3d124fb3f477d59de12c55e78d56fe5b77f3be00a317bb88`.
+This changes the outer controller, unlike the refused inner remaining-count
+probe; the earlier direct-composition and counted-batch refusals remain.
+The [identity record](ecosystem-batch-countdown-identities.json) retains the
+prospective criteria, exact commands/statuses, input/image hashes and replay.
+
+Frozen575 first rejects the source with FN-9; current122 CLI
+`0118a8206ee7e811e7c903b6e7b340754c50107ff7e454aadb48751481dc9f74`
+admits the original bytes unchanged. ENT-5 specifies the break-edge join in
+both versions; no rule or compiler change is made here. These are current122
+WF source emissions with retained harness/runtime/native peers, not an
+all-current-main test. Original baseline assembly matches the retained image.
+
+The preregistered native criterion passes: scalar no-growth work is exactly
+`21 + 16 × removed` (69 at suffix-three, including the digest `mov`), without
+new hot branch, owner-slot transfer, spill or call. Against the earlier batch,
+only two of 59 functions change; scalar helper frame/instructions are
+144 B/130→128 B/128, wide 368 B/183→352 B/178. Wide constants stay outside
+cycles, direct stores/SIMD remain, and seven Q-pair reloads still transfer
+224 bytes per nonempty truncate. No elapsed share follows from these counts.
+All four full 1,260-configuration/8,820-execution checks pass; four checksum
+and two cleanup faults reject as expected. Both 294-row instrumented ledgers
+match retained accounting exactly; that is not timed allocation traffic.
+
+Before timing, A1,B1,B2,A2 was fixed: A=original unbatched control, B=countdown,
+each `measure 1048576 7`, one continuous 420-second guard. The raw
+[A1](ecosystem-batch-countdown-control1-samples.csv),
+[B1](ecosystem-batch-countdown-candidate1-samples.csv),
+[B2](ecosystem-batch-countdown-candidate2-samples.csv) and
+[A2](ecosystem-batch-countdown-control2-samples.csv) retain all 16,464 rows,
+both cohorts, sample IDs 0–6 and all seven variants. Direct exits are all 0
+at 81.959/80.767/80.011/80.910 s; outer exit 0/324.022 s, empty stderr and
+231 unchanged timing pins. Construction/check costs remain separate in the
+identity record. No sample is pooled, excluded or native-scaled.
+
+The unchanged reducers qualify A1/B1 and A2/B2 independently: separated WF
+ranges in both cohorts, every WF sample ≥1 ms, ratio spread ≤10%. A combined
+gain/loss must qualify in both orders; overlap/instability stays inconclusive.
+Any useful qualified loss in either pair would refuse selection. All
+[42 paired outcomes](ecosystem-batch-countdown-paired.csv) remain available.
+
+| Consistent useful gain | B1/A1, cohorts 0 / 1 | B2/A2, cohorts 0 / 1 |
+|---|---:|---:|
+| Scalar suffix-2, 16 | 0.861432 / 0.825542 | 0.852364 / 0.830821 |
+| Scalar suffix-2, 256 | 0.831904 / 0.830028 | 0.839527 / 0.842226 |
+| Scalar suffix-2, 4096 | 0.822899 / 0.810796 | 0.839747 / 0.835334 |
+
+All other 33 useful paired cells are inconclusive: reserved/growth/reuse at
+both widths/all populations (18), scalar suffix-1/3 at all populations (6),
+and wide suffix-1/2/3 at all populations (9). No useful cell is short.
+The old scalar suffix-3/16 loss now overlaps in both orders and passes both
+peer targets; it is not a qualified paired gain. Wide suffix-1 has large raw
+reductions, but reverse-order spreads of 15.617/23.868/21.103% at 16/256/4096
+fail stability; pair 1 at 4096 also fails. Three wide suffix-zero controls
+gain in both pairs but remain unranked; three scalar controls are short/overlap.
+
+| Peer target P/D/I, plus six unranked each | A1 | B1 | A2 | B2 |
+|---|---:|---:|---:|---:|
+| Pass / deficit / inconclusive | 13 / 3 / 20 | 19 / 1 / 16 | 16 / 4 / 16 | 25 / 1 / 10 |
+
+The sole candidate deficit in both orders is **scalar growth/16**, which
+never reaches the changed suffix controller:
+
+| Process / cohort | WF / Rust | WF / C++ |
+|---|---:|---:|
+| B1 / 0 | 1.122712 | 1.092160 |
+| B1 / 1 | 1.102578 | 1.081357 |
+| B2 / 0 | 1.124530 | 1.087458 |
+| B2 / 1 | 1.122324 | 1.091259 |
+
+Every candidate peer-target inconclusive cell in either order is listed below
+(I=inconclusive, P=pass); all other useful cells pass except growth/16 above.
+
+| Bytes | Path | Count | B1 | B2 |
+|---:|---|---:|---:|---:|
+| 8 | reserved | 16 | I | I |
+| 8 | reserved | 256 | I | P |
+| 8 | suffix-1 | 16 | I | P |
+| 8 | suffix-1 | 256 | I | I |
+| 8 | suffix-1 | 4096 | I | I |
+| 8 | suffix-2 | 16 | I | P |
+| 256 | reserved | 16 | I | P |
+| 256 | growth | 16 | I | I |
+| 256 | growth | 256 | I | P |
+| 256 | growth | 4096 | I | I |
+| 256 | reuse | 256 | P | I |
+| 256 | suffix-1 | 16 | I | P |
+| 256 | suffix-1 | 4096 | I | P |
+| 256 | suffix-2 | 16 | I | I |
+| 256 | suffix-2 | 256 | I | I |
+| 256 | suffix-2 | 4096 | I | I |
+| 256 | suffix-3 | 16 | I | I |
+
+Native drift is retained, not used to normalize WF: Rust/C++ ranges are
+0.964458–1.064744 / 0.943060–1.030963 in pair 1 and
+0.965218–1.039604 / 0.957608–1.074914 in pair 2. Direct-C varies more,
+0.733756–1.384268 and 0.965457–1.367265, especially scalar suffix-2/256.
+All per-cell drift, bounds and qualification reasons remain in the identity
+record. CSV replay uses the maintained `../summarize-ecosystem.pl --complete`
+and `--targets` per process, then the unchanged paired reducer per full pair.
+Exact O3/link/observer commands and the original failure/native/behavior logs
+are pinned in the record. No rerun of this unchanged candidate is scheduled.
 
 ### Aggregate-only opening shifts: full paired refusal
 
@@ -5360,9 +5477,10 @@ coverage and explicit positive-path costs before another performance selection.
 
 A frozen compiler prototype based on `1226083e2375044483109c17bcc46a7c652f44bf`
 makes newly created zero-extent runtime Array/Slots/Ring owners physically
-null while keeping logical ownership and the one-pointer Box layout. Nonnull
-includes real zero-capacity linked owners, which still release; capacity is
-never the ownership tag. Central read, write, release and payload operations
+null while keeping logical ownership and the one-pointer Box layout. Here
+zero extent means logical capacity/count zero: positive-capacity zero-sized
+elements retain a real header. Nonnull includes real zero-capacity linked
+owners, which still release; capacity is never the ownership tag. Central read, write, release and payload operations
 handle null. This is an unselected physical ABI proposal, with no source rule,
 specification or design-tree change. The [final compiler source patch](nullable-zero-owner.patch),
 [accounting expectation delta](nullable-zero-owner-account.patch) and
