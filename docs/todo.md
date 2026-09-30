@@ -490,18 +490,6 @@ rarely insert at the same place.
   Reopen when a program cannot copy the field, or with the next change to
   struct invariants.
 
-- **Two rejections writers meet carry no repair.** `InvalidPostconditionSelector`
-  for a route the version does not admit, such as `when Err(error: e):` or a
-  variant of a program's own enum, names neither the admitted `Ok` and `Some`
-  routes nor the result types they apply to, and `InvisibleUse` for a header
-  invariant named after its loop does not say the name's scope ended with
-  the loop body [INV-1]; the Snowghost writers reported changing result
-  types and retrying certificates, which either repair would have
-  shortened. Add a repair to each under `compiler/diagnostic-repairs`,
-  pinned with a program per alternative.
-  Found in the writer-lost-facts investigation; reopen with the next
-  diagnostics change.
-
 - **An opaque struct's capabilities ignore its fields.** The checker gives
   every opaque struct a module declares the field-less host representation
   (`CheckedNominalKind::Opaque`), whose capabilities come from its modifiers
@@ -527,7 +515,9 @@ rarely insert at the same place.
 - **The container inventory's comments predate Segments.**
   `compiler/src/resolution/kernel.rs` describes `ContainerShape` as three
   storage shapes and a cell and `ContainerNominal::shape` as one of four,
-  although the enum includes `Segments`. This misstates the inventory for a
+  although the enum includes `Segments`; `DeclarationMeta::container` in
+  `compiler/src/resolution/engine.rs` repeats the four-shape inventory.
+  This misstates the inventory for a
   reader adding a consumer. Update those descriptions when the nominal
   inventory is next edited; the storage-destructuring repair uses its actual
   identities and needs no inventory change.
@@ -881,6 +871,27 @@ rarely insert at the same place.
   keeps the product form and is memory-only only because of that payload,
   which is correct but copies it by memmove where its other fields alone
   would be first-class, reopened if a measured path moves many of them.
+
+- **A local `slots_new::<T, N>()` clears all N slots when it is created.**
+  Snowghost's `match_complex` (`renderer/css/selectors/match.wf`) creates
+  `slots_new::<Frame, 64>()`, 12-byte frames, on every call, and the code
+  compiled at 290b575b clears the whole window first: its
+  `proto_style_seq` driver calls `memset` for 0x308 bytes, 64 frames and
+  the length word, at the function's start. In a callgrind profile of one
+  style computation on the ECMAScript specification page (Snowghost
+  58fa8ee's `proto_layout_seq`, collection limited to `compute_styles`),
+  106 million calls made that `memset` 21 percent of the instructions
+  (Snowghost `research/investigations/concurrency/DESIGN.md`, "Style's
+  work per element"); Snowghost's rule index (ec21b7c) has since cut the
+  calls, so the share is smaller now and not measured. [WIN-1] leaves every
+  slot past `len` holding nothing and [OP-13] starts a `slots_new` window
+  empty, and no access reads past `len`, so the clearing is not observable.
+  Change: create an inline `Slots` window without clearing the slots past
+  its length, checking first that no drop, move or bounds path in the
+  lowering reads them, and measure a program that creates many
+  short-lived windows. Not checked on a later revision. Reopen with the
+  next change to `Slots` lowering or when a profile shows the clearing
+  again.
 
 ## Parallel lowering and runtime
 

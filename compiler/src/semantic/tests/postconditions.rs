@@ -2645,7 +2645,7 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_rule(
         source,
         SemanticRule::Fn9,
-        SemanticIssueKind::InvalidPostconditionSelector,
+        SemanticIssueKind::invalid_postcondition_selector(),
     );
 }
 
@@ -2670,7 +2670,7 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_rule(
         source,
         SemanticRule::Fn9,
-        SemanticIssueKind::InvalidPostconditionSelector,
+        SemanticIssueKind::invalid_postcondition_selector(),
     );
 }
 
@@ -2773,7 +2773,7 @@ fn main() -> status: std::process::ExitStatus pure {
         assert_eq!(issue.rule(), SemanticRule::Fn9);
         assert_eq!(
             issue.kind(),
-            &SemanticIssueKind::InvalidPostconditionSelector
+            &SemanticIssueKind::invalid_postcondition_selector()
         );
         let SemanticLocation::SourceNode(_, coordinate) = issue.location();
         let start = usize::try_from(coordinate.start().value()).expect("offset fits");
@@ -2800,7 +2800,7 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_rule(
         source,
         SemanticRule::Fn9,
-        SemanticIssueKind::InvalidPostconditionSelector,
+        SemanticIssueKind::invalid_postcondition_selector(),
     );
 }
 
@@ -2843,7 +2843,7 @@ fn main() -> result: i32 pure {
     assert_rule(
         source,
         SemanticRule::Fn9,
-        SemanticIssueKind::InvalidPostconditionSelector,
+        SemanticIssueKind::invalid_postcondition_selector(),
     );
 }
 
@@ -2862,7 +2862,7 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_rule(
         source,
         SemanticRule::Fn9,
-        SemanticIssueKind::InvalidPostconditionSelector,
+        SemanticIssueKind::invalid_postcondition_selector(),
     );
 }
 
@@ -2931,7 +2931,7 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_rule(
         source,
         SemanticRule::Fn9,
-        SemanticIssueKind::InvalidPostconditionSelector,
+        SemanticIssueKind::invalid_postcondition_selector(),
     );
 }
 
@@ -2954,7 +2954,7 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_rule(
         source,
         SemanticRule::Fn9,
-        SemanticIssueKind::InvalidPostconditionSelector,
+        SemanticIssueKind::invalid_postcondition_selector(),
     );
 }
 
@@ -3018,7 +3018,7 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_rule(
         source,
         SemanticRule::Fn9,
-        SemanticIssueKind::InvalidPostconditionSelector,
+        SemanticIssueKind::invalid_postcondition_selector(),
     );
 }
 
@@ -3041,7 +3041,7 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_rule(
         source,
         SemanticRule::Fn9,
-        SemanticIssueKind::InvalidPostconditionSelector,
+        SemanticIssueKind::invalid_postcondition_selector(),
     );
 }
 
@@ -3107,7 +3107,7 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_rule(
         source,
         SemanticRule::Fn9,
-        SemanticIssueKind::InvalidPostconditionSelector,
+        SemanticIssueKind::invalid_postcondition_selector(),
     );
 }
 
