@@ -363,3 +363,31 @@ remaining form of the idea is to prepare every command of a read outside the
 statement and apply them all inside one; that splits every command into a
 preparing and an applying part and is left until the statement's own work
 has been reduced.
+
+### Short strings inside the keyspace, stated before measuring
+
+A profile of the keyed build under `SET` at depth 16 put 21% of its time in
+`hash_map_try_put`, nearly all of it on two loads that miss the cache: the
+probed bucket's tag, and, on a hit, the stored key's length behind its
+pointer, read to compare the bytes; `GET` and `INCR` then follow a third
+pointer to the value. Every such load sits inside the atomic statement, whose
+holder the other driver waits on, as the 19% spent spinning in
+`wf__shared_acquire` shows. The change: a key's bytes and a string value of
+at most 24 bytes are stored inside the bucket, a longer one in its own
+allocation as now, through one string type whose single constructor picks the
+form from the length, so that equal strings always take the same form and a
+hit compares bytes on the lines the probe already loaded. `INCR` writes its
+decimal in place. The suite's keys and members are 16 to 20 bytes and its
+values 3, so each keeps no allocation of its own, while the bucket grows
+from its present 88 bytes; the measurement reports the new size and the
+memory per key.
+
+It is judged by *inline*, the keyed build with this change, against *keyed*,
+with *keyed* again as *control*, interleaved over five rounds of `SET`,
+`GET`, `INCR`, `HSET`, `SADD` and `ZADD` (6,000,000 requests each) and
+`MSET` (1,000,000) at depth 16. The ratios are taken per round, *inline* and
+*control* each over that round's *keyed*, and their medians decide: the
+change is kept if *inline* reaches at least 1.15 on two of `SET`, `INCR` and
+`MSET` and at least 0.90 on every test, the run counting if *control* stays
+within 0.88 to 1.12; otherwise it is reverted. The resident memory of each
+server after its `SET` test is recorded beside the rates.
