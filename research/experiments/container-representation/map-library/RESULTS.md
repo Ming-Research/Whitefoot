@@ -867,6 +867,150 @@ instrumented accounting were completed separately before the one timing
 pair. Whole-command wall costs are not operation latencies. No sample was
 removed and no rescue rerun occurred.
 
+### Prospective two-span cyclic probing
+
+This ordinary-source factor starts from source
+`7abd6bb34746b7b983b83103c68ee429b24859bb` and frozen CLI SHA-256
+`5753999f224f89a9a99e0399b76bfd7b92cd53d5f22b0d204df4f2ec3ffbc20b`.
+It replaces the repeated cyclic-index calculation with two consecutive
+bounded scans, `[home, capacity)` followed by `[0, home)`. The question is
+whether executed unit-stride scans reduce the baseline's per-bucket address
+work without changing its buckets, probe sequence or ownership protocol.
+The rejected group controls and the separate consuming-projection factor are
+not inputs. Preparation and source/native review precede any execution or
+timing; no result is selected by this criterion.
+
+The candidate changes find, lookup, edit, try-put and occupancy migration;
+remove inherits find. The obsolete private index helper may disappear, with
+that removal recorded in the complete function inventory. Hash/equality
+order and counts, first-deleted reuse, first-vacant termination, replacement
+before refusal, public capacity, exact allocation extents, growth trigger,
+ceiling, descending migration and cleanup stay. Empty capacity still reaches
+the source hash call where the baseline does. Range arithmetic must admit
+the existing full integer domain without a new capacity restriction or a
+`home + capacity` intermediate. Workload routing and native peers stay frozen.
+
+The isolated baseline module carrier must first reproduce every original raw
+definition, type, attribute and used callee under an explicit bijective name
+mapping, and every original optimized native body, including the fixture main
+and four trace/geometry ABI bodies. Entry plumbing and wholly unused extern
+declarations are inventoried separately; absent implementation bodies are
+never normalized away. The source factor then passes a native gate only if
+the executed inner scans lose per-bucket wrap selection without new calls,
+tag reloads, payload transfers or query outlining. Increased text, frame
+traffic, or changed helper placement remains adverse evidence.
+
+Correctness retains the complete practical/occupancy controls, exact baseline
+allocation tuples, geometry, owning/refusal witnesses and their fault controls.
+A separate small witness covers zero, tiny, irregular, full and tombstone
+tables, environments changed between operations, non-reflexive/asymmetric
+equality, first-deleted reuse and full negative probes. Hash/equality have
+read-only rows: an untimed instrumented image may observe callback entry order,
+but no hidden counter mutation is presented as an ordinary callback effect or
+as timed work. Expected traces and allocation lifetimes are calculated
+independently of candidate output and receive deliberate wrong-order/count
+controls. Later timing, if authorized, retains the complete existing matrix,
+identical physical capacities, all peers and all adverse/inconclusive cells;
+a selected subset or a repaired group-candidate comparison cannot establish
+this source factor's benefit.
+
+**Outcome: rejected by the native gate before program execution.** The
+five-scan candidate removes the inner wrap selection, but both emitted
+remove specializations acquire a call to find and a second bucket-tag load
+after its returned index. The wide practical trace also acquires two calls
+to remove. Those are registered falsifiers; no correctness image, allocation
+observer or timing run followed, and no runtime speedup or regression is
+claimed. The library and live design remain unchanged.
+
+The admitted source forms span-local endpoints for `[home, capacity)` and
+`[0, home)` without computing `home + capacity`. It changes five functions,
+removes only the private probe helper and retains the other 14 bodies and
+public module exactly. For positive capacity, concatenating those ranges
+gives the original cyclic sequence, and all indices and final increments
+stay within the original unsigned domain. The source retains the original
+callback sites, enum matches, returned owners, first-deleted selection and
+terminal branches. All ten practical/new/retained ownership source graphs
+admit. An independent arithmetic oracle checked 2,145 complete small
+sequences and 173 boundary positions through `u64` maximum; omission of the
+suffix end, omission of prefix zero and reversal of the prefix each failed.
+The new callback-order and allocation observer was prepared but not run;
+source admission and arithmetic do not establish its runtime observations.
+
+Every admission attempt is retained. Initial graph/trivia/binder authoring
+errors were repaired before the owning graph exposed an `INV-1` backedge
+rejection in the loop-carried endpoint spelling. Adding even
+`invariant home_low: home >= 0_u64` did not admit that form. The final
+span-local endpoint spelling needs no such header facts and admits the
+unchanged capacity domain. A separate bounded reduction isolates the frozen
+diagnostic to a standalone zero-ceiling Map instantiation: otherwise
+identical ceilings 8 and 17 admit, as do the small loop controls. The full
+library remains in that reduction, so its rule-level cause is unresolved;
+the [source-limit finding](../../../../docs/todo.md) records
+the `ENT-2`/`INV-1` classification work without calling it a compiler defect.
+
+The isolated baseline reproduced all 131 original raw definitions and 36
+types under the explicit symbol bijection, and all 106 original optimized
+native bodies, including the fixture main and four trace/geometry ABI
+bodies. Three entry-plumbing bodies, the added cold carrier entry and 18
+wholly unused extern declarations have separate inventories; no live body
+was omitted. Native construction used Apple Clang 21.0.0
+(`clang-2100.3.34.2`, `arm64-apple-darwin25.6.0`) with the frozen CLI above;
+all six direct commands exited zero and their inputs remained unchanged.
+The observed worktree head was
+`a1b4c4aaa8b65dd11471786fdf5fabecce6ff86d`; the library and workload inputs
+remain the separately verified `7abd6bb` bytes.
+
+The complete baseline/candidate native inventory has 110/109 bodies: 91
+unchanged, 18 changed, one removed private helper and none added. Raw
+definitions are 135/134, with the same 36 types. Static instruction counts
+include returns and exclude alignment and constants; the complete totals
+are 8,480/8,524, or 33,920/34,096 unpadded instruction bytes. These are not
+linked-image sizes or operation costs. Representative changed bodies are:
+
+| Native body | Instructions, baseline → candidate | Prologue reservation, bytes | Boundary observation |
+|---|---:|---:|---|
+| lookup, each of two instances | 61 → 77 | 0 → 0 | still inline in both traces |
+| edit, each of two instances | 63 → 79 | 0 → 0 | still inline in both traces |
+| find, each of two instances | 65 → 79 | 0 → 0 | newly called by emitted remove |
+| scalar remove | 70 → 33 | 0 → 32 | new find call and tag reload |
+| wide remove | 105 → 114 | 0 → 48 | new find call and tag reload |
+| scalar practical trace | 1,216 → 1,361 | 672 → 672 | removal stays inline; calls unchanged |
+| wide practical trace | 2,457 → 2,207 | 8,048 → 7,904 | two new remove call sites |
+
+The span selector unrolls into a suffix using a unit-stride index and
+multiply-add addressing, then a prefix advancing a bucket pointer by 24 or
+272 bytes. The old wrap compare/select/add disappears; the initial
+division/remainder, query router, hash/equality and enum decisions remain.
+Successful lookup/edit can recompute the bucket address after the spans
+join. Rebuild calls and frames remain unchanged. Wide try-put has two
+static exchange sites for mutually exclusive replacement and insertion,
+not two exchanges per operation. The smaller wide trace/frame follows its
+changed helper placement and cannot be counted as a benefit after the gate
+failure.
+
+The [frozen evidence](ecosystem-two-span-evidence.tar.gz) retains the criterion,
+all admitted and rejected sources, direct exits/costs, before/after identities,
+raw IR and assembly, exact carrier comparisons, full function inventory,
+arithmetic/fault results, unexecuted semantic observers and invariant
+reductions. The original private reduction omitted operand-free returns and
+emitted unused load/store fields fixed at zero. Its original bytes are
+retained under `original-reductions/`; the corrected reducer includes returns
+and removes those invalid fields. No claim uses the zeros. CFI offsets and
+actual prologue reservations are kept distinct. The archive index hashes
+every entry and maps historical scratch paths to its relative files.
+
+The [zero-context replay](ecosystem-two-span-replay.patch), SHA-256
+`032256ea273f449dbc1a402f33840721223d4533fe54f8c6e76712da7c40c0f7`,
+changes the pinned source hash
+`35b5ed66fdd683f6c9dc8f93d019b7f1b8069cc4a48d020d6de406d04d98c7e9`
+to `dbae3eb36ce9451e315ac2ae42791b8fdb057c4423fc27a21ed3da47b1f59b71`.
+Forward and reverse replay both reproduced those bytes. In an isolated
+checkout of the source pin, apply it with
+`git apply --unidiff-zero --directory=lib/std/collections <patch>`.
+The native gate rejects this complete five-scan factor. A future query-only
+factor would need its own source and criterion; it would not revise this
+outcome or supply missing runtime evidence for it.
+
 ### Query dispatch and inlining in the practical image
 
 Read-only inspection of the retained practical `map-timed` image, SHA-256
@@ -2451,3 +2595,220 @@ dirty linked destinations, selected variants, partial windows and parallel
 argument/result cleanup. Assertions requiring omitted aggregate clears or
 descriptor-only stores were retired with the rejected optimization; their
 replacement checks require baseline clearing and defined active values.
+
+### Consuming-projection storage: broad refusal and strict local result
+
+The strict local-only candidate passes its separately registered native,
+correctness and normal/retained mechanism screens: both wide capacity4096/
+count3584 replacement targets qualify under both hash series, with no
+qualified paired loss in Map or triggered Slab. This supports the next
+current-main implementation discriminator; it does not select general compiler
+policy or complete the ordinary Rust/C++ target. All observations below use
+the frozen compiler lineage, not current-main execution. No language rule,
+public ABI, Map source API, inactive initialization or inline policy changes.
+
+The [evidence archive](consumed-projection-local-evidence.tar.gz), SHA-256
+`68c44e36bbbf3a012c4262d80ac7e7bdf2ee4468773bcb21c4f2272c72bd321b`,
+retains the original prospective section, broad refusal and unexecuted
+three-arm protocol, strict registration, native/correctness inventories, all
+24 raw timings and their clocks, statuses, complete cells/peers/transitions,
+and source/image pins. `INDEX.json` distinguishes original identities from
+hashes of the redacted public bytes. All timing samples remain byte-identical;
+empty correctness logs are elided with their empty-byte hashes/statuses retained.
+Preparation records describe their original then-unexecuted state. There is
+one cross-family archive, rather than a second active research document.
+
+The [source replay](consumed-projection-local-replay.patch), SHA-256
+`61d80ae3c515014b998b6038f4fc9ef903908ff6f421a0ad75417fa34f040fdf`,
+applies with `git apply --unidiff-zero` to
+`6da90dba09db335c0ea9158fa075f3aecc27e309` and reproduces all nine frozen
+candidate compiler files. The included focused-test fixture repair preserves
+the production storage prefix byte for byte; it does not rebuild or change
+the timed CLI. The archive also retains the original broad freeze and
+local-only delta for stepwise replay. This historical overlay is not a
+current-main implementation. Keep these artifacts while they supply this
+comparison's evidence and replay; a successor can retire them with history retained.
+
+#### Broad forwarding refuses the native screen
+
+The original prospective factor allowed some synchronous call consumers to
+receive an interior field address. Its broad CLI
+`f575555aa641f6cbd2aa70f08f3ff5a1969381c13e9811a4e3958715b044270c`
+passed exact-image value/ownership controls but fails the no-extra-transfer
+native criterion. Retained wide free changes from tag-first access and a
+Filled-only 256-byte register copy to a 272-byte complete-parent transfer
+before the tag test, including Vacant/Deleted iterations; its frame grows
+320→336 bytes. Retained wide rebuild gains an additional 264-byte capture
+before exchange and grows 656→928 bytes, while retaining retry restoration.
+The complete paired function differences remain in the archive. This is
+additional physical representation traffic, not a demonstrated source-level
+uninitialized read: active-variant checks and original initialization remain.
+
+Exposing a parent's interior to a callee keeps otherwise removable complete
+parent transfers alive in these optimized bodies. A producer-name blacklist
+or predicted inlining does not establish the needed native outcome. The broad
+form stays refused, and its prospective A/A plus three-arm timing protocol
+was never run. The earlier link to an unavailable broad storage amendment is
+removed here; no absent amendment or live-tree ruling is inferred.
+
+#### Strict eligibility and independent correctness
+
+The separate local variant keeps the original complete-parent layout, checked
+consume-root/active-variant facts, privacy, exposure, distinct-field and
+original-CFG fixed-point liveness checks. It adds one conservative condition:
+reject forwarding if any `IrOperation::Call` uses any member of the projected
+storage group as an argument, including calls that might later inline.
+Further local projections can borrow; an aggregate crossing a call keeps its
+independent snapshot. The existing storage planner and allocation-root query
+own the change; `FieldReuse`, call-entry capture and source ownership remain
+unchanged. No second liveness engine, IR or language exception is introduced.
+
+Baseline CLI SHA-256 is
+`5753999f224f89a9a99e0399b76bfd7b92cd53d5f22b0d204df4f2ec3ffbc20b`;
+strict CLI SHA-256 is
+`5f36879094dd1cc2531989af7b80ef30282dda70ea0229dec9200d438d264e33`.
+Both selected Pair264 projection transfers disappear from the ordinary wide
+Replaced path in normal and retained images. The complete Enum272 parent,
+return extent/ABI, tag guards, remaining constructor copy and independent
+Record256 call captures remain. Map free/rebuild native bodies reproduce
+baseline in both modes, removing the broad failure. Wide trace frames change
+8,048→6,128 normal and 6,800→5,168 retained; each put changes 1,136→864.
+Slab removes three Handle16 projections without adding bulk or expanded
+transfers; Vector and PriorityQueue bodies reproduce baseline. The archive
+retains all changed functions, outside-body constants, source-block transfers
+and native controls. Smaller frames and removed copies do not isolate a
+share of elapsed runtime.
+
+CLI construction costs 62.62 s; native continuation has 61 direct zero
+statuses and costs 8.21 s, separate from execution. The corrected focused
+harness runs 28 storage and 36 owned-place cases. Exact-image correctness
+retains 236 direct commands: 56 constructions, 75 positive executions and
+105 intentional failure controls, all matching their expected statuses.
+All 18 Map accounting/occupancy/geometry ledgers match baseline bytes; owning
+ordinary/observed sequential/parallel runs retain their release identities.
+Slab, Vector and PriorityQueue oracles, normal/retained checks and wrong-value/
+cleanup controls remain independent observations. Source/test admission,
+retained-link ordering and focused-fixture authoring failures and repairs are
+retained; the successful runs do not erase them. No timing failed or was retried.
+
+#### Complete registered normal and retained measurements
+
+Each stage preserves twelve fixed timings and twelve preceding pinned clocks:
+primary Map B0→C0→C1→B1, independent occupancy in the same order, then
+Slab B/run0→C/run0→C/run1→B/run1 with both internal cohorts. All eleven
+Map/Slab CSV samples 0–10 are ranked; Map's two warmups are unrecorded.
+There is no pooling, outlier removal, sample renumbering or favorable-cohort
+selection. Per stage, 25,520 Map plus 4,752 Slab rows have exact schemas/keys
+and matched non-time work/checksums. Both continuous outer guards exit 0:
+719.82 s normal and 828.70 s retained. All 48 direct clock/timing statuses
+and 24 nested guard statuses are 0, all clock quantum observations are
+1,000 ns, and normal's 197 / retained's 259 pins remain unchanged. The child
+`guard_absent=false` records its live inherited outer owner.
+
+The factor screen uses medians of paired same-sample raw ratios and ratios
+normalized by each C peer. It requires raw and every C-normalized direction
+beyond `M=max(3%, Q, every native raw/normalized drift across all groups)`
+in every group. Q uses the shortest participating WF/native interval and
+largest clock quantum: `((t+q)/(t-q))^2 - 1`. All relevant intervals must
+be at least 1 ms, ratio spread is `max/min - 1` and at most 10%, and native
+raw peer drift above 10% leaves attribution unresolved. Raw-only adverse
+directions remain visible. Slab retains both window-C and tagged-C
+normalizations and all four outer-run/cohort groups. No peer drift is subtracted.
+
+| Mode / matrix | Cells | Qualified gain | Qualified loss | Inconclusive |
+|---|---:|---:|---:|---:|
+| normal / primary | 84 | 11 | 0 | 73 |
+| normal / occupancy | 32 | 4 | 0 | 28 |
+| normal / slab | 18 | 0 | 0 | 18 |
+| retained / primary | 84 | 7 | 0 | 77 |
+| retained / occupancy | 32 | 4 | 0 | 28 |
+| retained / slab | 18 | 0 | 0 | 18 |
+
+| Registered wide primary replacement | Paired raw C/B range | Direct-C-normalized range | M |
+|---|---:|---:|---:|
+| normal, aligned-hash | 0.860354–0.865987 | 0.846527–0.878813 | 0.038846 |
+| normal, native-default | 0.862666–0.866379 | 0.863203–0.868352 | 0.040153 |
+| retained, aligned-hash | 0.878633–0.890281 | 0.882953–0.895151 | 0.030000 |
+| retained, native-default | 0.889938–0.894037 | 0.890574–0.916079 | 0.030000 |
+
+These are 13.36–13.96% raw normal and 10.60–12.14% raw retained gains.
+All four independent wide occupancy replacement capacities 4096/5120/6144/
+8192 also qualify in both modes. Six non-target scalar paths (hit, miss,
+remove-churn, edit, fill and reserve), plus scalar replacement, retain all
+42 primary and 16 occupancy negative-control cells per mode, with no qualified
+gain/loss. Wide hit/miss/edit has changed enclosing frames and no qualified
+factor gain. Normal Slab has seven wide duration-qualified cells, retained
+has nine; none exceeds the raw and both-normalization envelopes in all
+groups. All nine scalar Slab cells are sub-1ms in both modes.
+
+#### Ordinary peer targets and adverse transitions
+
+The ordinary target compares each arm independently with its median-slower
+Rust/standard-C++ peer. It uses complete sample ranges and maintained
+duration/cohort qualifications, separate from the paired factor screen.
+The unchanged maintained reducer agrees on every primary target status,
+reason, selected peer and minimum interval in both arms/modes. Its `--complete`
+matrix lacks occupancy, so the independent occupancy reader applies the same
+algorithm after frozen complete-key checks. Slab's control driver has no
+Rust/C++ peers; no such target is invented.
+
+Counts below are pass/deficit/inconclusive. Retained helper-boundary results
+are diagnostics; they do not replace normal public-use target evidence or
+represent source application gains. Every individual peer ratio is retained.
+
+| Mode / matrix / arm | Against Rust | Against C++ | Slower-standard target |
+|---|---:|---:|---:|
+| normal / primary / B | 12/47/25 | 7/46/31 | 18/34/32 |
+| normal / primary / C | 15/51/18 | 10/47/27 | 22/36/26 |
+| normal / occupancy / B | 0/19/13 | 0/7/25 | 0/7/25 |
+| normal / occupancy / C | 0/17/15 | 2/12/18 | 2/11/19 |
+| retained / primary / B | 7/73/4 | 8/71/5 | 14/62/8 |
+| retained / primary / C | 6/74/4 | 6/72/6 | 11/65/8 |
+| retained / occupancy / B | 0/32/0 | 0/25/7 | 0/25/7 |
+| retained / occupancy / C | 0/31/1 | 0/28/4 | 0/27/5 |
+
+Normal loses one pass: scalar fill-free at capacity4096/count3584,
+native-default, becomes sample-overlap inconclusive. Its paired raw ratios
+are 1.009372/0.980732, normalized 1.006899/1.013698, with M=0.106121.
+The native-identical control retains an adverse cohort-0 target upper bound
+2.544294. Normal also records eight primary and six occupancy new-deficit
+flags. None is automatically a qualified paired-factor regression.
+
+Retained loses four primary passes, all native-identical scalar capacity3/
+count2 cells. Each is pass→inconclusive; no pass→deficit occurs in either mode.
+
+| Retained lost pass | Hash | Reason | Paired raw cohorts 0 / 1 | C-normalized cohorts 0 / 1 | M |
+|---|---|---|---:|---:|---:|
+| fill-free | aligned-hash | sample-overlap-or-tie | 1.001388 / 0.992509 | 1.008142 / 1.005252 | 0.046626 |
+| miss | native-default | sample-overlap-or-tie | 1.001979 / 0.992772 | 0.996459 / 1.003727 | 0.085172 |
+| replace-old-value | native-default | sample-overlap-or-tie | 1.011058 / 1.021112 | 0.997841 / 0.982238 | 0.068799 |
+| reserve-more-entries | native-default | selected-peer-unstable;target-cohort-unstable | 1.070489 / 0.987430 | 1.073530 / 0.991505 | 0.047885 |
+
+The retained reserve control has one +7.05% raw cohort and one −1.26%
+cohort; its ordinary peer/cohort qualification fails. The retained fill
+control preserves its cohort-0 target upper bound 2.096635. Retained also has
+eight new deficit flags (four primary/four occupancy), including the small
+wide native-default replacement cell, which improves under the paired factor
+screen while becoming a separately qualified ordinary-target deficit. These
+classifications depend on separate distributions and peers; a deficit flag
+is not the definition of a paired-factor loss. All exact keys, reasons, raw/
+normalized ratios and peer bounds remain in both complete 116-row transition
+tables. Unresolved peer drift remains a limitation, not a rescue.
+
+Per mode the archive supplies 15,136 sample pairs, 304 cohort groups, all
+134 cell decisions, 232 ordinary targets and 464 individual Rust/C++
+comparisons. The retained reader reuses the normal arithmetic unchanged;
+its identity-only diff is recorded. A preliminary retained postflight
+assertion wrongly expected empty wrapper stderr and failed on `/usr/bin/time`'s
+real/user/sys lines; its corrected check requires exactly those lines,
+while all clock/timing stderr remains empty. That reader failure is preserved
+and caused no native replay or criterion change.
+
+CSV replay and source/native prerequisites are in the archive's `REPLAY.md`.
+The native mechanism and both-mode measurement criterion are met for this
+frozen local-only form, with no A/A or isolation of arbitrary temporal,
+arm/cohort, layout, allocator or ASLR effects. The broad A/A proposal remains
+unexecuted and is not claimed satisfied. Current-main waiting/context
+boundaries, grammar/layout adaptation, complete correctness and native
+qualification are the next discriminator. No size threshold, timing retry or
+final general-policy selection follows this evidence alone.

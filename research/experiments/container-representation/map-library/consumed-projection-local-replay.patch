@@ -1,0 +1,1339 @@
+--- a/compiler/src/backend/emitter.rs
++++ b/compiler/src/backend/emitter.rs
+@@ -977 +977 @@
+-                && storage.field_destination(slot).is_none()
++                && storage.allocation_root(slot) == slot
+@@ -2155,0 +2156 @@
++                ..
+--- a/compiler/src/backend/emitter/places.rs
++++ b/compiler/src/backend/emitter/places.rs
+@@ -4,2 +4,3 @@
+-//! plan can reuse dead value storage, but reads still produce value snapshots;
+-//! only explicit address operations expose a mutable place. This module owns
++//! plan can reuse dead value storage; a qualified private projection can borrow
++//! its complete parent's immutable field. Other reads produce value snapshots,
++//! and only explicit address operations expose a mutable place. This module owns
+@@ -8,0 +10 @@
++use crate::IrPlaceStep;
+@@ -220 +222,3 @@
+-                self.load_place_result(result, ty, &address)?;
++                if !self.is_forwarded_projection(result) {
++                    self.load_place_result(result, ty, &address)?;
++                }
+@@ -230,0 +235 @@
++                ..
+@@ -252 +257,3 @@
+-                self.load_place_result(result, ty, &address)?;
++                if !self.is_forwarded_projection(result) {
++                    self.load_place_result(result, ty, &address)?;
++                }
+@@ -536,0 +544,25 @@
++        if let Some(place) = self.storage.projection_destination(slot).cloned() {
++            let mut address = self.slot_place(place.parent_slot)?;
++            for step in place.path {
++                let (nominal, field) = match step {
++                    IrPlaceStep::Field { nominal, field } => (nominal, field as usize),
++                    IrPlaceStep::EnumVariant {
++                        nominal,
++                        variant,
++                        field,
++                    } => {
++                        let IrNominalKind::Enum { variants } = self.nominal(nominal)?.kind() else {
++                            return Err(BackendFailure::InvalidIr);
++                        };
++                        (
++                            nominal,
++                            variant_field_base(variants, variant)? + field as usize,
++                        )
++                    }
++                    _ => return Err(BackendFailure::InvalidIr),
++                };
++                address =
++                    self.aggregate_field_pointer(IrType::Nominal(nominal), &address, field)?;
++            }
++            return Ok(address);
++        }
+@@ -545,0 +578,6 @@
++    }
++
++    fn is_forwarded_projection(&self, value: IrValueId) -> bool {
++        self.storage
++            .slot(value)
++            .is_some_and(|slot| self.storage.projection_destination(slot).is_some())
+--- a/compiler/src/backend/emitter/runs.rs
++++ b/compiler/src/backend/emitter/runs.rs
+@@ -595,2 +595,2 @@
+-    /// The run's capacity: a `FixedVector`'s type constant, or a `Vector`'s
+-    /// own descriptor word.
++    /// A Slots or Ring capacity: its type constant for fixed storage, or
++    /// its own descriptor word for runtime-capacity storage.
+--- a/compiler/src/backend/storage.rs
++++ b/compiler/src/backend/storage.rs
+@@ -8 +8,5 @@
+-//! Loads and ordinary projections remain snapshots. A consumed call input and
++//! Loads and ordinary projections remain snapshots. A private consuming
++//! projection may borrow a complete parent's field while original CFG liveness
++//! proves that parent cannot be rewritten. Call operands keep their projection
++//! snapshots: exposing an interior pointer can retain an otherwise removable
++//! complete-parent transfer. A consumed call input and
+@@ -17 +21 @@
+-    IrFunction, IrInstruction, IrNominalId, IrNominalKind, IrOperation, IrProgram,
++    IrFunction, IrInstruction, IrNominalId, IrNominalKind, IrOperation, IrPlaceStep, IrProgram,
+@@ -59,0 +64,9 @@
++    projections: Vec<Option<ProjectionDestination>>,
++}
++
++/// An immutable projection borrows a typed path in one complete private
++/// allocation. Its source and every CFG copy have no other physical writer.
++#[derive(Clone, Debug)]
++pub(super) struct ProjectionDestination {
++    pub(super) parent_slot: usize,
++    pub(super) path: Vec<IrPlaceStep>,
+@@ -103,0 +117 @@
++                projections: Vec::new(),
+@@ -128,0 +143 @@
++        plan.select_projection_destinations(function, &graph);
+@@ -154,2 +169,6 @@
+-    /// Field placements have depth one and never redirect an existing binding
+-    /// destination. The complete allocation, not its child, owns the frame slot.
++    pub(super) fn projection_destination(&self, slot: usize) -> Option<&ProjectionDestination> {
++        self.projections.get(slot).and_then(Option::as_ref)
++    }
++
++    /// Both placement forms point to a complete allocation. Projection paths
++    /// are flattened; neither form redirects an existing binding destination.
+@@ -158 +177,211 @@
+-            .map_or(slot, |field| field.parent_slot)
++            .map(|field| field.parent_slot)
++            .or_else(|| {
++                self.projection_destination(slot)
++                    .map(|place| place.parent_slot)
++            })
++            .unwrap_or(slot)
++    }
++
++    fn select_projection_destinations(&mut self, function: &IrFunction, graph: &FlowGraph) {
++        if !graph.coalesce {
++            return;
++        }
++        let mut members = vec![BTreeSet::new(); self.slots.len()];
++        let mut producers = vec![Vec::new(); self.slots.len()];
++        for (value, slot) in self.values.iter().enumerate() {
++            if let Some(slot) = slot {
++                members[*slot].insert(value);
++            }
++        }
++        for block in function.blocks() {
++            for instruction in block.instructions() {
++                if let IrInstruction::Define {
++                    result, operation, ..
++                } = instruction
++                    && let Some(slot) = self.slot(*result)
++                {
++                    producers[slot].push((*result, operation));
++                }
++            }
++        }
++        // A slot with one producer and only identity edge transfers has no
++        // hidden writes from coloring, call-result reuse or phi assignment.
++        let private: Vec<_> = (0..self.slots.len())
++            .map(|slot| {
++                producers[slot].len() == 1
++                    && !self.is_exposed(slot)
++                    && self.destination(slot).is_none()
++                    && self.field_destination(slot).is_none()
++                    && !self
++                        .fields
++                        .iter()
++                        .flatten()
++                        .any(|field| field.parent_slot == slot)
++                    && !function
++                        .parameters()
++                        .iter()
++                        .any(|(value, _)| self.slot(*value) == Some(slot))
++                    && graph
++                        .blocks
++                        .iter()
++                        .flat_map(|block| &block.transfers)
++                        .all(|(a, b)| members[slot].contains(a) == members[slot].contains(b))
++            })
++            .collect();
++        let entering = graph.live_in();
++        for block in function.blocks() {
++            for instruction in block.instructions() {
++                let IrInstruction::Define {
++                    result, operation, ..
++                } = instruction
++                else {
++                    continue;
++                };
++                let (aggregate, step) = match operation {
++                    IrOperation::ProjectStruct {
++                        aggregate,
++                        nominal,
++                        field,
++                        consume_root: true,
++                    } => (
++                        *aggregate,
++                        IrPlaceStep::Field {
++                            nominal: *nominal,
++                            field: *field,
++                        },
++                    ),
++                    IrOperation::ProjectVariant {
++                        aggregate,
++                        nominal,
++                        variant,
++                        field,
++                        consume_root: true,
++                    } => (
++                        *aggregate,
++                        IrPlaceStep::EnumVariant {
++                            nominal: *nominal,
++                            variant: *variant,
++                            field: *field,
++                        },
++                    ),
++                    _ => continue,
++                };
++                let (Some(parent), Some(child)) = (self.slot(aggregate), self.slot(*result)) else {
++                    continue;
++                };
++                if parent == child
++                    || !private[parent]
++                    || !private[child]
++                    || !self.projection_only_parent(function, parent)
++                    || !self.projection_stays_local(function, child)
++                {
++                    continue;
++                }
++                let mut destination = if let Some(place) = self.projection_destination(parent) {
++                    place.clone()
++                } else if matches!(
++                    producers[parent][0].1,
++                    IrOperation::Call { .. }
++                        | IrOperation::ConstructStruct { .. }
++                        | IrOperation::ConstructEnum { .. }
++                ) {
++                    ProjectionDestination {
++                        parent_slot: parent,
++                        path: Vec::new(),
++                    }
++                } else {
++                    continue;
++                };
++                // Complete backing remains an ordinary function-frame object.
++                // Its sole producer may run again in a loop, so check the
++                // original fixed-point liveness, including producer operands.
++                let root = index(producers[destination.parent_slot][0].0);
++                if graph.producer_overwrites_live(root, &members[child], &entering) {
++                    continue;
++                }
++                destination.path.push(step);
++                self.projections[child] = Some(destination);
++            }
++        }
++    }
++
++    /// An enum tag test and distinct field reads exhaust the parent's uses.
++    /// Consumption is an independent retained checked fact; this use proof
++    /// cannot turn an ordinary Copy read into a consuming projection.
++    fn projection_only_parent(&self, function: &IrFunction, parent: usize) -> bool {
++        let owns = |value| self.slot(value) == Some(parent);
++        let mut fields = BTreeSet::new();
++        let mut matched = false;
++        for block in function.blocks() {
++            for instruction in block.instructions() {
++                if !instruction.operands().into_iter().any(owns) {
++                    continue;
++                }
++                let key = match instruction {
++                    IrInstruction::Define {
++                        operation:
++                            IrOperation::ProjectStruct {
++                                aggregate,
++                                nominal,
++                                field,
++                                ..
++                            },
++                        ..
++                    } if owns(*aggregate) => (nominal.index(), None, *field),
++                    IrInstruction::Define {
++                        operation:
++                            IrOperation::ProjectVariant {
++                                aggregate,
++                                nominal,
++                                variant,
++                                field,
++                                ..
++                            },
++                        ..
++                    } if owns(*aggregate) => (nominal.index(), Some(*variant), *field),
++                    _ => return false,
++                };
++                if !fields.insert(key) {
++                    return false;
++                }
++            }
++            match block.terminator() {
++                IrTerminator::Jump { drops, .. } => {
++                    if drops.iter().any(|drop| match drop.subject() {
++                        crate::IrDropSubject::Value(value) | crate::IrDropSubject::Place(value) => {
++                            owns(value)
++                        }
++                    }) {
++                        return false;
++                    }
++                }
++                IrTerminator::Match { scrutinee, .. } if owns(*scrutinee) => {
++                    if matched {
++                        return false;
++                    }
++                    matched = true;
++                }
++                terminator if terminator.operands().into_iter().any(owns) => return false,
++                _ => {}
++            }
++        }
++        true
++    }
++
++    /// Keep an independent capture at every call boundary, including calls
++    /// that may later inline. This is a conservative placement choice, not a
++    /// source ownership restriction or a promise about the native optimizer.
++    fn projection_stays_local(&self, function: &IrFunction, child: usize) -> bool {
++        function
++            .blocks()
++            .iter()
++            .flat_map(|block| block.instructions())
++            .all(|instruction| match instruction {
++                IrInstruction::Define {
++                    operation: IrOperation::Call { arguments, .. },
++                    ..
++                } => arguments
++                    .iter()
++                    .all(|value| self.slot(*value) != Some(child)),
++                _ => true,
++            })
+@@ -601,0 +831 @@
++        let projections = vec![None; slots.len()];
+@@ -614,0 +845 @@
++            projections,
+@@ -685,0 +917,26 @@
++    fn producer_overwrites_live(
++        &self,
++        producer: usize,
++        borrowed: &BTreeSet<usize>,
++        entering: &[BTreeSet<usize>],
++    ) -> bool {
++        for block in &self.blocks {
++            let mut live = self.live_after(block, entering);
++            for instruction in block.instructions.iter().rev() {
++                if instruction.result == Some(producer)
++                    && live
++                        .iter()
++                        .chain(&instruction.operands)
++                        .any(|value| borrowed.contains(value))
++                {
++                    return true;
++                }
++                if let Some(result) = instruction.result {
++                    live.remove(&result);
++                }
++                live.extend(instruction.operands.iter().copied());
++            }
++        }
++        false
++    }
++
+@@ -965,0 +1223,303 @@
++    }
++
++    #[test]
++    fn projection_borrow_checks_reentry_and_producer_operands() {
++        let child = BTreeSet::from([1, 2]);
++        let mut entry = block(&[], vec![define(4, &[], None)], &[4]);
++        entry.successors.push(1);
++        entry.transfers.push((2, 4));
++        let mut body = block(
++            &[2],
++            vec![
++                define(0, &[], None),
++                define(3, &[2], None),
++                define(1, &[0], None),
++            ],
++            &[1],
++        );
++        body.successors.push(1);
++        body.transfers.push((2, 1));
++        let mut graph = FlowGraph {
++            entry_parameters: Vec::new(),
++            blocks: vec![entry, body],
++            coalesce: true,
++        };
++        assert!(
++            graph.producer_overwrites_live(0, &child, &graph.live_in()),
++            "the next parent must not overwrite the previous payload"
++        );
++        graph.blocks[1].instructions.swap(0, 1);
++        assert!(
++            !graph.producer_overwrites_live(0, &child, &graph.live_in()),
++            "the previous payload was consumed before the next parent"
++        );
++        graph.blocks[1].instructions[1].operands.push(2);
++        assert!(
++            graph.producer_overwrites_live(0, &child, &graph.live_in()),
++            "a constructor must read an overlapping operand before writing its result"
++        );
++    }
++
++    #[test]
++    fn owned_variant_projection_keeps_local_fields_and_call_captures_separate() {
++        with_program(
++            br#"nocopy struct Wide {
++  words: Array<u64, 32>;
++}
++
++nocopy struct Pair {
++  marker: u8;
++  value: Wide;
++}
++
++nocopy enum Packet {
++  Empty();
++  Held(reason: Bool, pair: Pair);
++}
++
++fn build(seed: u64) -> result: Packet pure {
++  let words = array_filled::<u64, 32>(value: seed);
++  let value = Wide(words: words);
++  let pair = Pair(marker: 7_u8, value: move value);
++  let reason = seed == 5_u64;
++  return Packet::Held(reason: reason, pair: move pair);
++}
++
++fn consume(value: Wide) -> result: u64 pure {
++  return value.words[0_u64];
++}
++
++fn relay(seed: u64) -> result: u64 pure {
++  let packet = build(seed: seed);
++  match move packet {
++    Empty() => {
++      return 0_u64;
++    }
++    Held(reason: selected_reason, pair: selected_pair) => {
++      let bias = 0_u64;
++      if selected_reason {
++        set bias = 1_u64;
++      } else {
++        set bias = 2_u64;
++      }
++      let Pair(marker: found_marker, value: selected_value) = move selected_pair;
++      let observed = consume(value: move selected_value);
++      return observed +wrap bias;
++    }
++  }
++}
++
++fn inspect_local(seed: u64) -> result: u64 pure {
++  let packet = build(seed: seed);
++  match move packet {
++    Empty() => {
++      return 0_u64;
++    }
++    Held(reason: selected_reason, pair: selected_pair) => {
++      let Pair(marker: found_marker, value: selected_value) = move selected_pair;
++      let Wide(words: selected_words) = move selected_value;
++      return selected_words[0_u64];
++    }
++  }
++}
++
++fn main() -> status: std::process::ExitStatus pure {
++  return std::process::exit_status(code: 0_u8);
++}
++"#,
++            |program| {
++                let function = program
++                    .functions()
++                    .iter()
++                    .find(|function| function.name() == "relay")
++                    .expect("relay");
++                let plan = FunctionStoragePlan::build(program, function).expect("plan");
++                let variants: Vec<_> = function
++                    .blocks()
++                    .iter()
++                    .flat_map(|block| block.instructions())
++                    .filter_map(|instruction| match instruction {
++                        IrInstruction::Define {
++                            operation: IrOperation::ProjectVariant { consume_root, .. },
++                            ..
++                        } => Some(*consume_root),
++                        _ => None,
++                    })
++                    .collect();
++                assert!(!variants.is_empty());
++                assert!(
++                    variants.into_iter().all(|consumed| consumed),
++                    "the checked consuming match reaches each payload projection"
++                );
++                let forwarded: Vec<_> = plan.projections.iter().flatten().collect();
++                assert_eq!(
++                    forwarded.len(),
++                    1,
++                    "the local Pair view forwards, while the called Wide keeps its capture"
++                );
++                assert_eq!(forwarded[0].path.len(), 1);
++                for place in forwarded {
++                    assert_eq!(plan.allocation_root(place.parent_slot), place.parent_slot);
++                    assert!(plan.destination(place.parent_slot).is_none());
++                }
++                let local = program
++                    .functions()
++                    .iter()
++                    .find(|function| function.name() == "inspect_local")
++                    .expect("local observer");
++                let local_plan = FunctionStoragePlan::build(program, local).expect("local plan");
++                let forwarded: Vec<_> = local_plan.projections.iter().flatten().collect();
++                assert_eq!(forwarded.len(), 2, "both local owning fields forward");
++                assert!(forwarded.iter().any(|place| place.path.len() == 2));
++            },
++        );
++    }
++
++    #[test]
++    fn constructed_projection_keeps_a_call_capture_and_an_independent_copy() {
++        with_program(
++            br#"struct Data {
++  words: Array<u64, 4>;
++}
++
++nocopy struct Pair {
++  marker: u8;
++  value: Data;
++}
++
++fn consume(value: Data) -> result: u64 pure {
++  return value.words[0_u64];
++}
++
++fn relay(seed: u64) -> result: u64 pure {
++  let words = array_filled::<u64, 4>(value: seed);
++  let original = Data(words: words);
++  let pair = Pair(marker: 3_u8, value: original);
++  let Pair(marker: selected_marker, value: selected_value) = move pair;
++  let observed = consume(value: selected_value);
++  return observed +wrap original.words[3_u64];
++}
++
++fn inspect_local(seed: u64) -> result: u64 pure {
++  let words = array_filled::<u64, 4>(value: seed);
++  let original = Data(words: words);
++  let pair = Pair(marker: 3_u8, value: original);
++  let Pair(marker: selected_marker, value: selected_value) = move pair;
++  let selected_words = selected_value.words;
++  let observed = selected_words[0_u64];
++  return observed +wrap original.words[3_u64];
++}
++
++fn main() -> status: std::process::ExitStatus pure {
++  let called = relay(seed: 9_u64);
++  let local = inspect_local(seed: 11_u64);
++  if called != 18_u64 {
++    return std::process::exit_status(code: 1_u8);
++  }
++  if local != 22_u64 {
++    return std::process::exit_status(code: 2_u8);
++  }
++  return std::process::exit_status(code: 0_u8);
++}
++"#,
++            |program| {
++                for (name, expected_forwarding) in [("relay", false), ("inspect_local", true)] {
++                    let function = program
++                        .functions()
++                        .iter()
++                        .find(|function| function.name() == name)
++                        .expect("selected observer");
++                    let plan = FunctionStoragePlan::build(program, function).expect("plan");
++                    let projected: Vec<_> = function
++                        .blocks()
++                        .iter()
++                        .flat_map(|block| block.instructions())
++                        .filter_map(|instruction| match instruction {
++                            IrInstruction::Define {
++                                result,
++                                operation:
++                                    IrOperation::ProjectStruct {
++                                        consume_root: true, ..
++                                    },
++                                ..
++                            } => plan.slot(*result),
++                            _ => None,
++                        })
++                        .collect();
++                    assert_eq!(projected.len(), 1, "one aggregate consuming field");
++                    assert_eq!(
++                        plan.projection_destination(projected[0]).is_some(),
++                        expected_forwarding,
++                        "{name}: an address handed to a call keeps its independent snapshot"
++                    );
++                }
++            },
++        );
++    }
++
++    #[test]
++    fn a_nonconsuming_copy_match_keeps_its_payload_snapshot() {
++        with_program(
++            br#"struct Payload {
++  words: Array<u64, 32>;
++}
++
++enum Packet {
++  Held(payload: Payload);
++}
++
++fn build(seed: u64) -> result: Packet pure {
++  let words = array_filled::<u64, 32>(value: seed);
++  let payload = Payload(words: words);
++  return Packet::Held(payload: payload);
++}
++
++fn relay(seed: u64) -> result: Payload pure {
++  let packet = build(seed: seed);
++  match packet {
++    Held(payload: selected) => {
++      return selected;
++    }
++  }
++}
++
++fn main() -> status: std::process::ExitStatus pure {
++  let value = relay(seed: 7_u64);
++  if value.words[0_u64] != 7_u64 {
++    return std::process::exit_status(code: 1_u8);
++  }
++  return std::process::exit_status(code: 0_u8);
++}
++"#,
++            |program| {
++                let function = program
++                    .functions()
++                    .iter()
++                    .find(|function| function.name() == "relay")
++                    .expect("relay");
++                let variants: Vec<_> = function
++                    .blocks()
++                    .iter()
++                    .flat_map(|block| block.instructions())
++                    .filter_map(|instruction| match instruction {
++                        IrInstruction::Define {
++                            result,
++                            operation: IrOperation::ProjectVariant { consume_root, .. },
++                            ..
++                        } => Some((*result, *consume_root)),
++                        _ => None,
++                    })
++                    .collect();
++                assert_eq!(variants.len(), 1);
++                assert!(
++                    !variants[0].1,
++                    "an ordinary Copy match retains its nonconsuming source role"
++                );
++                let plan = FunctionStoragePlan::build(program, function).expect("plan");
++                let child = plan.slot(variants[0].0).expect("stored payload");
++                assert!(
++                    plan.projection_destination(child).is_none(),
++                    "private storage and no consuming calls do not authorize forwarding"
++                );
++            },
++        );
+--- a/compiler/src/backend/tests/owned_places.rs
++++ b/compiler/src/backend/tests/owned_places.rs
+@@ -85,0 +86,293 @@
++fn consumed_projection_branches_preserve_payloads_and_residual_cleanup() {
++    let source = br#"nocopy struct Payload {
++  owner: Box<u64>;
++  words: Array<u64, 32>;
++}
++
++nocopy struct Pair<T> {
++  marker: u8;
++  value: T;
++}
++
++enum Packet {
++  Empty(stamp: u16);
++  Held(reason: Bool, pair: Pair<Payload>, residual: Box<u64>);
++}
++
++fn build(seed: u64, empty: Bool) -> result: Packet pure {
++  if empty {
++    return Packet::Empty(stamp: 513_u16);
++  }
++  let owner_value = seed +wrap 1_u64;
++  let residual_value = seed +wrap 2_u64;
++  let owner = box_new::<u64>(value: owner_value);
++  let residual = box_new::<u64>(value: residual_value);
++  let words = array_filled::<u64, 32>(value: seed);
++  let value = Payload(owner: move owner, words: words);
++  let pair = Pair<Payload>(marker: 7_u8, value: move value);
++  let reason = seed == 5_u64;
++  return Packet::Held(reason: reason, pair: move pair, residual: move residual);
++}
++
++fn stamp(value: &u64, bias: u64) -> result: unit writes(value) {
++  set value^ = value^ +wrap bias;
++  return unit;
++}
++
++fn consume(value: Payload) -> result: u64 pure {
++  let first = value.words[0_u64];
++  let last = value.words[31_u64];
++  let held = value.owner.inner;
++  let endpoints = first +wrap last;
++  return endpoints +wrap held;
++}
++
++fn relay(seed: u64, empty: Bool) -> result: u64 pure {
++  let packet = build(seed: seed, empty: empty);
++  match move packet {
++    Empty(stamp: seen) => {
++      return cvt::<u16, u64>(seen);
++    }
++    Held(reason: selected_reason, pair: selected_pair, ..) => {
++      let bias = 0_u64;
++      if selected_reason {
++        stamp(value: &bias, bias: 1_u64);
++      } else {
++        stamp(value: &bias, bias: 2_u64);
++      }
++      let Pair(marker: found_marker, value: selected_payload) = move selected_pair;
++      if found_marker != 7_u8 {
++        return 0_u64;
++      }
++      let observed = consume(value: move selected_payload);
++      return observed +wrap bias;
++    }
++  }
++}
++
++fn main() -> status: std::process::ExitStatus pure {
++  let nonempty_case = 0_u64 == 1_u64;
++  let empty_case = 0_u64 == 0_u64;
++  let first = relay(seed: 5_u64, empty: nonempty_case);
++  if first != 17_u64 {
++    return std::process::exit_status(code: 1_u8);
++  }
++  let second = relay(seed: 9_u64, empty: nonempty_case);
++  if second != 30_u64 {
++    return std::process::exit_status(code: 2_u8);
++  }
++  let empty = relay(seed: 0_u64, empty: empty_case);
++  if empty != 513_u64 {
++    return std::process::exit_status(code: 3_u8);
++  }
++  return std::process::exit_status(code: 0_u8);
++}
++"#;
++    let mut checked_faults = false;
++    for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
++        let module = super::emit_lowered(source, overlap);
++        for module in [module.clone(), retain_calls(&module)] {
++            let observed = module
++                .replace("@malloc(", "@wf_test_allocate(")
++                .replace("@free(", "@wf_test_release(");
++            let output = compile_link_and_run(&observed, Some(&allocation_observer(4, 0)), &[]);
++            assert_eq!(output.status.code(), Some(0), "{output:?}");
++            assert_eq!(output.stdout, b"A1;A2;F2;F1;A3;A4;F4;F3;");
++            assert!(output.stderr.is_empty(), "{output:?}");
++            if !checked_faults {
++                let missing_cleanup = observed
++                    .lines()
++                    .filter(|line| !line.trim_start().starts_with("call void @wf_test_release("))
++                    .collect::<Vec<_>>()
++                    .join("\n");
++                assert_ne!(missing_cleanup, observed);
++                let output =
++                    compile_link_and_run(&missing_cleanup, Some(&allocation_observer(4, 0)), &[]);
++                assert_eq!(output.status.code(), Some(0), "{output:?}");
++                assert_eq!(output.stdout, b"A1;A2;A3;A4;");
++                assert!(output.stderr.is_empty(), "{output:?}");
++
++                let wrong_payload = observed.replace("i16 513", "i16 512");
++                assert_ne!(wrong_payload, observed);
++                let output =
++                    compile_link_and_run(&wrong_payload, Some(&allocation_observer(4, 0)), &[]);
++                assert_eq!(output.status.code(), Some(3), "{output:?}");
++                assert_eq!(output.stdout, b"A1;A2;F2;F1;A3;A4;F4;F3;");
++                assert!(output.stderr.is_empty(), "{output:?}");
++                checked_faults = true;
++            }
++        }
++    }
++}
++
++#[test]
++fn projected_copy_stays_a_snapshot_before_a_call_writes_the_parent() {
++    let source = br#"struct Payload {
++  words: Array<u64, 32>;
++}
++
++enum Packet {
++  Held(payload: Payload);
++  Empty();
++}
++
++fn change(packet: &Packet, snapshot: Payload) -> result: u64 writes(packet) {
++  match packet^ {
++    Held(payload: selected_payload) => {
++      set selected_payload^.words[0_u64] = 99_u64;
++    }
++    Empty() => {
++    }
++  }
++  return snapshot.words[0_u64];
++}
++
++fn main() -> status: std::process::ExitStatus pure {
++  let words = array_filled::<u64, 32>(value: 7_u64);
++  let payload = Payload(words: words);
++  let packet = Packet::Held(payload: payload);
++  match packet {
++    Held(payload: captured) => {
++      let seen = change(packet: &packet, snapshot: captured);
++      if seen != 7_u64 {
++        return std::process::exit_status(code: 1_u8);
++      }
++    }
++    Empty() => {
++      return std::process::exit_status(code: 2_u8);
++    }
++  }
++  match packet {
++    Held(payload: updated) => {
++      if updated.words[0_u64] != 99_u64 {
++        return std::process::exit_status(code: 3_u8);
++      }
++    }
++    Empty() => {
++      return std::process::exit_status(code: 4_u8);
++    }
++  }
++  return std::process::exit_status(code: 0_u8);
++}
++"#;
++    let module = compile(source);
++    assert_success(&module);
++    assert_success(&retain_calls(&module));
++}
++
++#[test]
++fn a_loop_carried_payload_survives_the_next_parent_construction() {
++    let source = br#"nocopy struct Payload {
++  words: Array<u64, 32>;
++}
++
++nocopy enum Packet {
++  Held(payload: Payload);
++}
++
++fn make(seed: u64) -> result: Packet pure {
++  let words = array_filled::<u64, 32>(value: seed);
++  let payload = Payload(words: words);
++  return Packet::Held(payload: move payload);
++}
++
++fn consume(payload: Payload) -> result: u64 pure {
++  return payload.words[0_u64];
++}
++
++fn main() -> status: std::process::ExitStatus pure {
++  let words = array_filled::<u64, 32>(value: 41_u64);
++  let previous = Payload(words: words);
++  let total = 0_u64;
++  for (index in 0_u64..3_u64) {
++    let seed = index +wrap 7_u64;
++    let packet = make(seed: seed);
++    let old = consume(payload: move previous);
++    set total = total +wrap old;
++    match move packet {
++      Held(payload: next) => {
++        set previous = move next;
++      }
++    }
++  }
++  let last = consume(payload: move previous);
++  if total != 56_u64 {
++    return std::process::exit_status(code: 1_u8);
++  }
++  if last != 9_u64 {
++    return std::process::exit_status(code: 2_u8);
++  }
++  return std::process::exit_status(code: 0_u8);
++}
++"#;
++    let module = compile(source);
++    assert_success(&module);
++    assert_success(&retain_calls(&module));
++}
++
++#[test]
++fn a_returned_projection_preserves_the_callers_smaller_result_extent() {
++    let module = compile(
++        br#"nocopy struct Payload {
++  words: Array<u64, 32>;
++}
++
++nocopy enum Packet {
++  Held(prefix: u8, payload: Payload, suffix: u64);
++}
++
++fn build(seed: u64) -> result: Packet pure {
++  let words = array_filled::<u64, 32>(value: seed);
++  let payload = Payload(words: words);
++  return Packet::Held(prefix: 7_u8, payload: move payload, suffix: 513_u64);
++}
++
++fn relay(seed: u64) -> result: Payload pure {
++  let packet = build(seed: seed);
++  match move packet {
++    Held(prefix: before, payload: selected, suffix: after) => {
++      return move selected;
++    }
++  }
++}
++
++fn main() -> status: std::process::ExitStatus pure {
++  return std::process::exit_status(code: 0_u8);
++}
++"#,
++    )
++    .replace("@main(", "@wf_test_unused_main(");
++    let host = r#"#include <stdint.h>
++#include <stdlib.h>
++typedef struct { uint64_t words[32]; } Payload;
++typedef struct { uint64_t before[4]; Payload value; uint64_t after[4]; } Guarded;
++extern void wf_relay(Payload *, uint64_t);
++int main(int argc, char **argv) {
++    Guarded held;
++    unsigned fault = argc > 1 ? (unsigned)atoi(argv[1]) : 0;
++    for (unsigned i = 0; i < 4; ++i) held.before[i] = held.after[i] = 0x1122334455667788;
++    for (unsigned i = 0; i < 32; ++i) held.value.words[i] = 0;
++    wf_relay(&held.value, 37);
++    if (fault == 1) held.after[0] = 0;
++    if (fault == 2) held.value.words[31] = 0;
++    for (unsigned i = 0; i < 4; ++i)
++        if (held.before[i] != 0x1122334455667788 || held.after[i] != 0x1122334455667788) return 91;
++    for (unsigned i = 0; i < 32; ++i) if (held.value.words[i] != 37) return 92;
++    return 0;
++}
++"#;
++    for module in [module.clone(), retain_calls(&module)] {
++        for (argument, status) in [
++            (b"0".as_slice(), 0),
++            (b"1".as_slice(), 91),
++            (b"2".as_slice(), 92),
++        ] {
++            let output = compile_link_and_run(&module, Some(host), &[argument]);
++            assert_eq!(output.status.code(), Some(status), "{output:?}");
++            assert!(output.stdout.is_empty(), "{output:?}");
++            assert!(output.stderr.is_empty(), "{output:?}");
++        }
++    }
++}
++
++#[test]
+@@ -1055,0 +1349,3 @@
++  for (index in 0_u64..32_u64) {
++    set words[index] = value +wrap index;
++  }
+@@ -1061 +1357 @@
+-  requires first < second;
++  requires first < values^.len;
+@@ -1066,8 +1361,0 @@
+-  return unit;
+-}
+-
+-fn same(values: &Ring<Row, 3>, index: u64) -> result: unit writes(values) contract {
+-  requires index < values^.len;
+-  ensures values^.len == entry(values)^.len;
+-} {
+-  swap(first: &values^[index], second: &values^[index]);
+@@ -1088 +1376 @@
+-  same(values: &values, index: 1_u64);
++  exchange(values: &values, first: 1_u64, second: 1_u64);
+@@ -1099 +1387,4 @@
+-    if values[0_u64].words[index] != 11_u64 {
++    let expected_first = 11_u64 +wrap index;
++    let expected_second = 33_u64 +wrap index;
++    let expected_third = 22_u64 +wrap index;
++    if values[0_u64].words[index] != expected_first {
+@@ -1102 +1393 @@
+-    if values[1_u64].words[index] != 33_u64 {
++    if values[1_u64].words[index] != expected_second {
+@@ -1105 +1396 @@
+-    if values[2_u64].words[index] != 22_u64 {
++    if values[2_u64].words[index] != expected_third {
+@@ -1117,0 +1409,53 @@
++    let host = allocation_observer(3, 0);
++    for emitted in [module.clone(), retain_calls(&module)] {
++        let observed = emitted
++            .replace("@malloc(", "@wf_test_allocate(")
++            .replace("@free(", "@wf_test_release(");
++        let output = compile_link_and_run(&observed, Some(&host), &[]);
++        assert_eq!(output.status.code(), Some(0), "{output:?}");
++        assert!(output.stderr.is_empty(), "{output:?}");
++        let text = std::str::from_utf8(&output.stdout).unwrap();
++        let mut records = text.split_terminator(';').collect::<Vec<_>>();
++        records.sort_unstable();
++        assert_eq!(records, ["A1", "A2", "A3", "F1", "F2", "F3"]);
++    }
++}
++
++#[test]
++fn zero_sized_swap_preserves_both_adjacent_fields() {
++    let module = compile(
++        br#"nocopy struct Empty {
++  bytes: Array<u64, 0>;
++}
++
++struct Envelope {
++  before: u64;
++  empty: Empty;
++  after: u64;
++}
++
++fn main() -> status: std::process::ExitStatus pure {
++  let left_bytes = array_filled::<u64, 0>(value: 0_u64);
++  let left_empty = Empty(bytes: left_bytes);
++  let left = Envelope(before: 11_u64, empty: move left_empty, after: 17_u64);
++  let right_bytes = array_filled::<u64, 0>(value: 0_u64);
++  let right_empty = Empty(bytes: right_bytes);
++  let right = Envelope(before: 23_u64, empty: move right_empty, after: 29_u64);
++  swap(first: &left.empty, second: &right.empty);
++  swap(first: &left.empty, second: &left.empty);
++  if left.before != 11_u64 {
++    return std::process::exit_status(code: 1_u8);
++  }
++  if left.after != 17_u64 {
++    return std::process::exit_status(code: 2_u8);
++  }
++  if right.before != 23_u64 {
++    return std::process::exit_status(code: 3_u8);
++  }
++  if right.after != 29_u64 {
++    return std::process::exit_status(code: 4_u8);
++  }
++  return std::process::exit_status(code: 0_u8);
++}
++"#,
++    );
+@@ -1119,0 +1464,118 @@
++}
++
++/// Fully initialized native representations make padding/inactive bytes an
++/// independent byte oracle. Active owners remain valid, and ordinary WF
++/// cleanup must release exactly the owner selected by the exchanged tag.
++#[test]
++fn fixed_swap_preserves_padded_enum_bytes_and_active_cleanup() {
++    let module = compile(
++        br#"enum Packet {
++  Held(marker: u8, owner: Box<u64>, bytes: Array<u8, 17>);
++  Empty(stamp: u16);
++}
++
++fn exchange_packets(values: &Slots<Packet, 2>, first: u64, second: u64) -> result: unit writes(values) contract {
++  requires first < values^.len;
++  requires second < values^.len;
++  ensures values^.len == entry(values)^.len;
++} {
++  swap(first: &values^[first], second: &values^[second]);
++  return unit;
++}
++
++fn consume_packets(values: Slots<Packet, 2>) -> result: u64 pure {
++  return 0_u64;
++}
++
++fn main() -> status: std::process::ExitStatus pure {
++  return std::process::exit_status(code: 0_u8);
++}
++"#,
++    )
++    .replace("@main(", "@wf_test_unused_main(")
++    .replace("@free(", "@wf_test_release(");
++    let host = r#"#include <stddef.h>
++#include <stdint.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++typedef struct {
++    uint32_t tag;
++    uint8_t marker;
++    uint64_t *owner;
++    uint8_t bytes[17];
++    uint16_t stamp;
++} Packet;
++typedef struct { uint64_t len; Packet values[2]; } Slots;
++typedef struct { uint64_t before; Slots slots; uint64_t after; } Guarded;
++_Static_assert(sizeof(Packet) == 40 && offsetof(Packet, owner) == 8
++    && offsetof(Packet, bytes) == 16 && offsetof(Packet, stamp) == 34, "qualified Packet layout");
++extern uint8_t wf_exchange_packets(Slots *, uint64_t, uint64_t);
++extern uint64_t wf_consume_packets(Slots *);
++static uint64_t *held;
++static unsigned released, fault;
++static void fail(const char *reason) { fprintf(stderr, "%s\n", reason); exit(93); }
++void wf_test_release(void *pointer) {
++    if (pointer != held || released != 0) fail("active owner identity");
++    if (fault == 2) return;
++    ++released;
++    free(pointer);
++}
++int main(int argc, char **argv) {
++    fault = argc > 1 ? (unsigned)atoi(argv[1]) : 0;
++    for (unsigned position = 0; position < 2; ++position) {
++        Guarded guarded;
++        memset(&guarded, 0x39, sizeof guarded);
++        guarded.before = UINT64_C(0x123456789abcdef0);
++        guarded.after = UINT64_C(0xfedcba9876543210);
++        guarded.slots.len = 2;
++        held = malloc(sizeof *held);
++        if (held == NULL) fail("fixture allocation");
++        *held = 71 + position;
++        released = 0;
++        for (unsigned i = 0; i < 2; ++i) {
++            Packet *p = &guarded.slots.values[i];
++            memset(p, i ? 0xa7 : 0x5b, sizeof *p);
++            p->tag = i == position ? 0 : 1;
++            if (i == position) {
++                p->marker = 13 + position;
++                p->owner = held;
++                for (unsigned n = 0; n < 17; ++n) p->bytes[n] = (uint8_t)(n * 7 + position);
++            } else p->stamp = 513;
++        }
++        Slots expected;
++        memcpy(&expected, &guarded.slots, sizeof expected);
++        wf_exchange_packets(&guarded.slots, position, position);
++        if (memcmp(&expected, &guarded.slots, sizeof expected)) fail("same-slot representation");
++        memcpy(&expected.values[0], &guarded.slots.values[1], sizeof(Packet));
++        memcpy(&expected.values[1], &guarded.slots.values[0], sizeof(Packet));
++        if (fault == 1) ((unsigned char *)&expected.values[0])[7] ^= 1;
++        wf_exchange_packets(&guarded.slots, 0, 1);
++        if (memcmp(&expected, &guarded.slots, sizeof expected)) fail("padded enum representation");
++        if (fault == 3) guarded.after ^= 1;
++        if (guarded.before != UINT64_C(0x123456789abcdef0)
++            || guarded.after != UINT64_C(0xfedcba9876543210)) fail("adjacent canary");
++        if (guarded.slots.values[1 - position].owner != held || *held != 71 + position)
++            fail("active pointer representation");
++        if (wf_consume_packets(&guarded.slots) != 0 || released != 1) fail("active owner cleanup");
++    }
++    return 0;
++}
++"#;
++    for emitted in [module.clone(), retain_calls(&module)] {
++        let output = compile_link_and_run(&emitted, Some(host), &[]);
++        assert_eq!(output.status.code(), Some(0), "{output:?}");
++        assert!(
++            output.stdout.is_empty() && output.stderr.is_empty(),
++            "{output:?}"
++        );
++        for (fault, diagnostic) in [
++            (b"1".as_slice(), "padded enum representation\n"),
++            (b"2".as_slice(), "active owner cleanup\n"),
++            (b"3".as_slice(), "adjacent canary\n"),
++        ] {
++            let output = compile_link_and_run(&emitted, Some(host), &[fault]);
++            assert_eq!(output.status.code(), Some(93), "{output:?}");
++            assert_eq!(output.stderr, diagnostic.as_bytes(), "{output:?}");
++        }
++    }
+--- a/compiler/src/backend/tests/windows.rs
++++ b/compiler/src/backend/tests/windows.rs
+@@ -168,0 +169,151 @@
++        }
++    }
++}
++
++/// Back placement preserves payload order and descriptor values when it fills
++/// the last vacancy or crosses the physical end. Header-only storage also
++/// admits capacities outside the signed domain. These expectations come from
++/// the source operations and do not depend on optional LLVM facts.
++#[test]
++fn ring_back_placement_preserves_wrapping_and_unsigned_measures() {
++    let mut source = String::new();
++    for (name, constructor, window) in [
++        ("fixed", "ring_new::<u64, 4>()", "values"),
++        (
++            "runtime",
++            "box_ring_new::<u64>(capacity: 4_u64)",
++            "values.inner",
++        ),
++    ] {
++        source.push_str(&format!(
++            r#"fn {name}() -> result: u8 pure {{
++  let values = {constructor};
++  place_back(window: &{window}, value: 10_u64);
++  place_back(window: &{window}, value: 20_u64);
++  place_back(window: &{window}, value: 30_u64);
++  place_back(window: &{window}, value: 40_u64);
++  if {window}.len != 4_u64 {{
++    return 1_u8;
++  }}
++  let first = take_front(window: &{window});
++  if first != 10_u64 {{
++    return 2_u8;
++  }}
++  if {window}.head != 1_u64 {{
++    return 3_u8;
++  }}
++  if {window}.len != 3_u64 {{
++    return 4_u8;
++  }}
++  place_back(window: &{window}, value: 50_u64);
++  if {window}.len != 4_u64 {{
++    return 5_u8;
++  }}
++  if {window}.head != 1_u64 {{
++    return 6_u8;
++  }}
++  if {window}.cap != 4_u64 {{
++    return 7_u8;
++  }}
++  let second = take_front(window: &{window});
++  let third = take_front(window: &{window});
++  let fourth = take_front(window: &{window});
++  let fifth = take_front(window: &{window});
++  if second != 20_u64 {{
++    return 8_u8;
++  }}
++  if third != 30_u64 {{
++    return 9_u8;
++  }}
++  if fourth != 40_u64 {{
++    return 10_u8;
++  }}
++  if fifth != 50_u64 {{
++    return 11_u8;
++  }}
++  if {window}.len != 0_u64 {{
++    return 12_u8;
++  }}
++  if {window}.head != 1_u64 {{
++    return 13_u8;
++  }}
++  if {window}.cap != 4_u64 {{
++    return 14_u8;
++  }}
++  return 0_u8;
++}}
++
++"#,
++        ));
++    }
++    for (name, constructor, window) in [
++        (
++            "large_fixed",
++            "ring_new::<Array<u64, 0>, 9223372036854775809>()",
++            "values",
++        ),
++        (
++            "large_runtime",
++            "box_ring_new::<Array<u64, 0>>(capacity: 9223372036854775809_u64)",
++            "values.inner",
++        ),
++    ] {
++        source.push_str(&format!(
++            r#"fn {name}() -> result: u8 pure {{
++  let values = {constructor};
++  let empty = array_filled::<u64, 0>(value: 0_u64);
++  place_back(window: &{window}, value: empty);
++  if {window}.len != 1_u64 {{
++    return 15_u8;
++  }}
++  if {window}.head != 0_u64 {{
++    return 16_u8;
++  }}
++  if {window}.cap != 9223372036854775809_u64 {{
++    return 17_u8;
++  }}
++  let removed = take_back(window: &{window});
++  if {window}.len != 0_u64 {{
++    return 18_u8;
++  }}
++  if {window}.head != 0_u64 {{
++    return 19_u8;
++  }}
++  return 0_u8;
++}}
++
++"#,
++        ));
++    }
++    source.push_str("fn main() -> status: std::process::ExitStatus pure {\n");
++    for name in ["fixed", "runtime", "large_fixed", "large_runtime"] {
++        source.push_str(&format!(
++            "  let {name}_result = {name}();\n  if {name}_result != 0_u8 {{\n    return std::process::exit_status(code: {name}_result);\n  }}\n"
++        ));
++    }
++    source.push_str("  return std::process::exit_status(code: 0_u8);\n}\n");
++    let modules = with_ir(source.as_bytes(), |program| {
++        let target = TargetLayout::host().expect("supported target");
++        [WindowAddressFacts::Emit, WindowAddressFacts::Withhold].map(|facts| {
++            let mut module = emit_llvm_with_window_address_facts(program, target, facts)
++                .expect("all fact observations qualify the same admitted storage")
++                .into_string();
++            module.push_str(
++                &crate::driver::launcher::render(program, "main")
++                    .expect("ordinary test launcher")
++                    .render(),
++            );
++            module
++        })
++    });
++    for module in &modules {
++        for retained in [false, true] {
++            let observed = if retained {
++                super::owned_places::retain_calls(module)
++            } else {
++                module.clone()
++            };
++            let output = super::compile_and_run(&observed);
++            assert_eq!(output.status.code(), Some(0), "{output:?}");
++            assert!(output.stdout.is_empty(), "{output:?}");
++            assert!(output.stderr.is_empty(), "{output:?}");
+--- a/compiler/src/ir.rs
++++ b/compiler/src/ir.rs
+@@ -1075,0 +1076,3 @@
++        /// The checked scrutinee consumes its enclosing binding. Absence of
++        /// this fact, including a direct computed scrutinee, permits no reuse.
++        consume_root: bool,
+--- a/compiler/src/lowering/builder.rs
++++ b/compiler/src/lowering/builder.rs
+@@ -573,0 +574,8 @@
++fn consumes_projection_root(expression: &CheckedExpression) -> bool {
++    matches!(
++        lower_source_argument(expression),
++        IrSourceArgument::Binding { consume_root: true }
++            | IrSourceArgument::Projection { consume_root: true }
++    )
++}
++
+@@ -1314,0 +1323 @@
++            consumes_projection_root(scrutinee_expression),
+@@ -1328,0 +1338 @@
++        consume_root: bool,
+@@ -1396,0 +1407 @@
++                            consume_root,
+@@ -1416,0 +1428 @@
++                            consume_root,
+--- a/compiler/src/lowering/builder/results.rs
++++ b/compiler/src/lowering/builder/results.rs
+@@ -31,0 +32 @@
++        let consume_root = super::consumes_projection_root(scrutinee);
+@@ -62,0 +64 @@
++                consume_root,
+@@ -87,0 +90 @@
++                consume_root,
