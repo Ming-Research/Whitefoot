@@ -6209,3 +6209,106 @@ These historical comparisons are provisional and do not isolate a cause.
 Paired qualification was deliberately not run after this fixed-target
 failure. No realloc in-place frequency or allocator/header cause is inferred.
 Append remains open; no other API or whole-Vector timing advances.
+
+#### Append allocation extent and payload offset: registered discriminator
+
+This plain-C attribution isolates six controls at old capacity 4096 and
+8 B/256 B elements: malloc/copy/free or realloc, crossed with allocation
+extra/payload offset (0,0), (16,0), (16,16). All call one external noinline
+runtime-argument kernel, separately compiled without LTO; external descriptors
+hold all metadata. Each append doubles capacity, preserves the entire old
+payload and constructs one element. Setup, full content/state oracle and
+cleanup lie outside the raw timed grow-and-append intervals. Native code must
+show one shared kernel before timing. Last-old-payload corruption, wrong post
+capacity and 1 us clock quantization must each fail their respective check.
+
+Before measurement, fix contexts=max(1,min(1024,1048576/(old_payload+256))),
+shared across all six arms; work is 64 MiB scalar and 8 GiB wide, with
+cycles=ceil(work/(contexts*(old_payload+256))). Use seven samples and two
+reverse/rotated cohorts, retaining every row without pilots or retries.
+Darwin RAW clock must be nondecreasing with actual minimum nonzero increment
+at most 100 ns. Each accumulated real sample must reach 1 ms; otherwise that
+sample is unresolved. No interval subtraction is used. Disjoint sample
+envelopes in the same direction in BOTH cohorts support an extent or offset
+effect for this program; overlap in either cohort leaves that comparison
+unresolved. Compare (0,0) with (16,0) for extent, and (16,0) with (16,16) for
+offset, separately by route and element size. This is neither a causal share
+of the WF gap nor a source-program performance gain.
+
+A separate untimed observation uses allocator-requested extents unchanged,
+Darwin malloc_size and an integer address captured before growth; it reports
+whether the address moved, not physical bytes copied. The source
+[append-allocation-layout.c](append-allocation-layout.c), its opt-in Make
+targets and retained raw samples/log serve this allocation discriminator and
+are retired with its superseding experiment. Ordinary WF/peer inputs and the
+compiler are unchanged; the cached rejected compiler is not used.
+
+The fixed launch retained [all 168 unique raw rows](append-allocation-layout-samples.csv)
+and [build/fault/native/observation/timing records](append-allocation-layout-timing.txt).
+It ended in 64.12 s with exit 1: twelve wide realloc(0,0) samples were below 1 ms
+(minimum 0.895879 ms). Those samples and comparisons involving them remain
+unresolved; there was no retiming. Other cells passed the duration threshold.
+Scalar used 31 contexts × 66 cycles (2046 operations/sample); wide used 1 × 8191.
+The RAW clock minimum nonzero increment was 41 ns. Both element widths and
+all six arms passed the full content/state check; deliberate last-old-payload,
+capacity and clock faults failed at their intended checks. Initial compilation
+failed because strict POSIX feature selection hid Darwin declarations; the
+retained log includes that failure and the corrected successful build.
+
+The table gives cohort 0 / cohort 1 medians, in ns/append, followed by each
+cohort's full seven-sample envelope. Route 0 is malloc/copy/free; route 1 is
+realloc. All intervals include clock/call/loop overhead without subtraction.
+
+| Element | Route | Extra / offset | Median c0 / c1 | Envelope c0 / c1 |
+|---|---:|---|---|---|
+| 8 B | 0 | 0 / 0 | 642.49 / 631.89 | 628.09–729.45 / 618.50–655.63 |
+| 8 B | 0 | 16 / 0 | 2108.99 / 2056.65 | 2037.45–2219.80 / 2035.37–2152.60 |
+| 8 B | 0 | 16 / 16 | 2171.78 / 2142.41 | 2127.18–2185.83 / 2111.56–2235.89 |
+| 8 B | 1 | 0 / 0 | 686.77 / 679.15 | 671.57–712.85 / 673.00–762.42 |
+| 8 B | 1 | 16 / 0 | 4070.65 / 3959.35 | 3954.39–4151.94 / 3945.12–4205.79 |
+| 8 B | 1 | 16 / 16 | 4069.63 / 3968.70 | 3964.55–4113.43 / 3933.65–4215.38 |
+| 256 B | 0 | 0 / 0 | 22773.06 / 22739.87 | 22628.57–23371.88 / 22714.01–22896.40 |
+| 256 B | 0 | 16 / 0 | 22863.62 / 22800.49 | 22726.44–23162.89 / 22692.90–23063.87 |
+| 256 B | 0 | 16 / 16 | 23141.12 / 23186.79 | 22862.65–23264.31 / 23054.12–26869.81 |
+| 256 B | 1 | 0 / 0 | 110.85 / 111.00 | 109.37–125.77 / 109.78–163.98; under-duration |
+| 256 B | 1 | 16 / 0 | 23172.58 / 23200.82 | 22990.97–23391.44 / 23119.24–23347.57 |
+| 256 B | 1 | 16 / 16 | 23550.18 / 23442.90 | 23373.26–23589.26 / 23349.53–23602.86 |
+
+Adding 16 allocation bytes at fixed offset 0 produces disjoint slower envelopes
+in both scalar cohorts, for both allocation routes. The scalar offset change
+has overlapping envelopes on both routes. Wide malloc/copy/free extent and
+offset comparisons overlap. Wide realloc extent remains unresolved by the
+duration criterion; its offset comparison overlaps in cohort 0, so also remains
+unresolved. Thus this diagnostic supports a scalar allocation-extent effect,
+without establishing an offset effect or resolving the wide-cell question.
+
+The separate untimed trace contains one observation per arm, not a movement
+frequency. Scalar requests 32768→65536 have usable sizes 32768→65536;
+requests 32784→65552 have usable sizes 49152→81920. Wide requests 1048576→2097152
+have usable sizes 1048576→2097152; adding 16 bytes gives 1064960→2113536.
+All malloc/copy/free observations moved. Realloc moved for scalar(0,0) and
+wide(16,0)/(16,16), and kept the address for scalar(16,0)/(16,16) and wide(0,0).
+These are separate single traces, not the timed operations' allocation
+histories, and do not measure physical copying.
+
+This diagnostic used Clang -O2, while the actual API harness uses -O3. Native
+inspection before timing found one shared kernel, runtime route/extent/offset
+arguments, external malloc/realloc/memmove/free calls and the same kernel call
+inside the timed loop. A later isolated -O3 helper build, without retiming,
+showed matching successful-path instructions and relocations through return;
+the sole instruction difference before return targets the cold malloc-failure
+block, whose layout differs. The literal vector contents match at different
+section addresses. The caller was not compared at -O3. No actual WF program
+was changed, no fraction of its measured gap is attributed, and no compiler
+optimization or peer-performance result follows from these C controls.
+
+Reproduce from the repository root (no Whitefoot compiler build required):
+
+```sh
+perl .github/run-check.pl append-layout-build make -C research/experiments/container-representation/vector-library -j2 append-layout-check
+nm research/experiments/container-representation/vector-library/.build/append-allocation-layout/append-layout
+otool -tvV research/experiments/container-representation/vector-library/.build/append-allocation-layout/helper.o
+otool -rv research/experiments/container-representation/vector-library/.build/append-allocation-layout/caller.o
+perl .github/run-check.pl append-layout-observe research/experiments/container-representation/vector-library/.build/append-allocation-layout/append-layout observe
+perl .github/run-check.pl append-layout-measure sh -c 'research/experiments/container-representation/vector-library/.build/append-allocation-layout/append-layout measure > /private/tmp/append-layout-replay.csv'
+```

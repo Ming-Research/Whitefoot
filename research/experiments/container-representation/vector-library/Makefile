@@ -192,3 +192,29 @@ ecosystem-measure: $(ECO_BUILD)/vector-costs-timed$(EXE)
 ecosystem-append-measure: $(ECO_BUILD)/vector-costs-timed$(EXE)
 	$(ECO_BUILD)/vector-costs-timed$(EXE) api-measure $(APPEND_WORK) $(ECO_REPEATS) > '$(APPEND_SAMPLE_FILE)'
 	@echo 'Raw spare-capacity append samples: $(APPEND_SAMPLE_FILE)'
+
+# Opt-in plain-C append layout discriminator; no compiler/runtime inputs.
+LAYOUT_BUILD ?= $(BUILD)/append-allocation-layout
+LAYOUT_FLAGS := -std=c11 -O2 -Wall -Wextra -Werror -fno-lto
+.PHONY: append-layout-build append-layout-check append-layout-measure
+$(LAYOUT_BUILD):
+	mkdir -p $@
+$(LAYOUT_BUILD)/helper.o: append-allocation-layout.c Makefile | $(LAYOUT_BUILD)
+	$(CLANG) $(LAYOUT_FLAGS) -DLAYOUT_HELPER -c $< -o $@
+$(LAYOUT_BUILD)/caller.o: append-allocation-layout.c Makefile | $(LAYOUT_BUILD)
+	$(CLANG) $(LAYOUT_FLAGS) -c $< -o $@
+$(LAYOUT_BUILD)/append-layout: $(LAYOUT_BUILD)/helper.o $(LAYOUT_BUILD)/caller.o
+	$(CLANG) -fno-lto $^ -o $@
+append-layout-build: $(LAYOUT_BUILD)/append-layout
+append-layout-check: append-layout-build
+	$(LAYOUT_BUILD)/append-layout check
+	@set -eu; for fault in payload capacity clock; do \
+	  log=$(LAYOUT_BUILD)/fail-$$fault.txt; \
+	  if $(LAYOUT_BUILD)/append-layout fail-$$fault > "$$log" 2>&1; then \
+	    cat "$$log"; echo "fault $$fault unexpectedly passed"; exit 1; \
+	  else status=$$?; test "$$status" = 1; fi; \
+	  case $$fault in payload) expected='old payload';; capacity) expected='post capacity';; clock) expected='clock precision';; esac; \
+	  grep -Fx "append layout: $$expected" "$$log"; \
+	done
+append-layout-measure: append-layout-build
+	$(LAYOUT_BUILD)/append-layout measure
