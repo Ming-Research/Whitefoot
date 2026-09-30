@@ -29,6 +29,10 @@
 //! is no rejection [DIAG-1], but it sends the writer to the same count as
 //! [OP-9]'s repair, whose words stand next to it.
 //!
+//! Selector admission and invariant-name scope repairs also live here. The
+//! resolver calls the scope formatter with the name it has already classified;
+//! that formatter performs no semantic checking.
+//!
 //! The sentences live here, in one place, so that wording can follow evidence
 //! from agents without touching the judgments that select them.
 
@@ -44,6 +48,21 @@ use super::super::model::{
 };
 use super::super::permission::visit_read_bindings;
 use crate::NodePath;
+
+/// [FN-9] an unsupported selector cannot state this postcondition. Removing
+/// its last clause also removes a now-empty or define-only contract [FN-8].
+pub(crate) const fn postcondition_selector_repair() -> &'static str {
+    "remove this ensures clause, and remove its contract block if no requires or ensures clauses remain; an unrouted clause can name only result data admitted by [CALL-4]; a routed clause selects only `when Ok(value: r):` for an own Result<T, E> or `when Some(value: r):` for an own Option<T>, with a fresh r and a payload T that supplies admitted data [FN-9]; Err, None and user-enum variants are not postcondition routes"
+}
+
+/// [INV-1, ENT-5] the name's scope and the conclusion's survival are separate.
+/// An explicit certificate may use a surviving relation, but not its expired
+/// header name; a target AUTO already proves needs no proof block [PRF-1].
+pub(crate) fn header_invariant_scope_repair(name: &str) -> String {
+    format!(
+        "header invariant `{name}` can be named only inside its loop body [INV-1]; its conclusion survives only under the ordinary fact rules [ENT-5]: if AUTO proves this target, remove its proof block; otherwise replace this use of `{name}` with an available relation-form premise whose terms are in scope, keeping its coefficient [PRF-1]"
+    )
+}
 
 /// Whether the checker derived a goal false or derived neither sign [ENT-4].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

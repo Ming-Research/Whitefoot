@@ -1129,6 +1129,9 @@ pub enum ResolutionIssueKind {
         admissible: Vec<DeclarationClass>,
         /// Ordered invisible declaration origins.
         origins: Vec<DeclarationOrigin>,
+        /// A repair selected from the hidden declarations' actual scope,
+        /// when that scope has a specific repair.
+        mechanical_fix: Option<String>,
     },
     /// Labels with this spelling exist in the function but do not enclose use.
     NonEnclosingLabel {

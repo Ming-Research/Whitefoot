@@ -474,22 +474,12 @@ rarely insert at the same place.
   Reopen when a program cannot copy the field, or with the next change to
   struct invariants.
 
-- **Two rejections writers meet carry no repair.** `InvalidPostconditionSelector`
-  for a route the version does not admit, such as `when Err(error: e):` or a
-  variant of a program's own enum, names neither the admitted `Ok` and `Some`
-  routes nor the result types they apply to, and `InvisibleUse` for a header
-  invariant named after its loop does not say the name's scope ended with
-  the loop body [INV-1]; the Snowghost writers reported changing result
-  types and retrying certificates, which either repair would have
-  shortened. Add a repair to each under `compiler/diagnostic-repairs`,
-  pinned with a program per alternative.
-  Found in the writer-lost-facts investigation; reopen with the next
-  diagnostics change.
-
 - **The container inventory's comments predate Segments.**
   `compiler/src/resolution/kernel.rs` describes `ContainerShape` as three
   storage shapes and a cell and `ContainerNominal::shape` as one of four,
-  although the enum includes `Segments`. This misstates the inventory for a
+  although the enum includes `Segments`; `DeclarationMeta::container` in
+  `compiler/src/resolution/engine.rs` repeats the four-shape inventory.
+  This misstates the inventory for a
   reader adding a consumer. Update those descriptions when the nominal
   inventory is next edited; the storage-destructuring repair uses its actual
   identities and needs no inventory change.
