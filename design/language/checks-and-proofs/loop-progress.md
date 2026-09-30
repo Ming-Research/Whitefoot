@@ -19,6 +19,6 @@ Decision: At a join inside a loop's body each relation the loop owes at its back
 Rejected:
 - Counted walks for link structures: rejected because a counted walk adds a runtime branch and an unprovable outcome to every walk, and ranked storage proves the order statically (ruling Q16).
 - Deriving a rank from an equality exit with an order activated beside it: rejected because the order at the backedge is not provable from the disequality the test continues with, as the reverted prototype showed.
-- Treating an unguarded atomic statement as a wait: rejected because it takes effect at once, so a spin on one never yields progress (ruling Q16).
+- Treating an unguarded atomic statement as a wait: rejected because it waits only for its own point of effect, never for another context's step, so a spin on one never yields progress (ruling Q16).
 - Counting a call of a source function that waits on every path, found by a least fixpoint over the module's functions: rejected because the ruling names host calls and it would make a caller's acceptance read a callee's body across the call boundary; a loop that waits through a helper in its own module writes a rank or calls the host function itself.
 - Re-proving every fact at every join: rejected because it enumerates candidates the source did not name, as the [join investigation](../../../research/investigations/branch-join-relations/DESIGN.md#rejected-alternatives) found; only the relations a loop already owes are candidates.
