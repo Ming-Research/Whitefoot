@@ -1,0 +1,271 @@
+Scalar-4096 preparation history: frozen empty-anchor Z inputs
+
+Purpose: registered dependency test of ordinary preparation versus a common read.
+This independent driver patch, samples and record retire with superseding
+allocation/preparation attribution evidence. No compiler or source rule change.
+
+Reproduction: apply empty-payload-history.patch directly to the Z measured driver
+produced by empty-payload-anchor.patch, independently of empty-payload-census.patch.
+Patch replay reproduced vector-costs-history.c byte for byte. Keep the frozen
+WF/peer/runtime objects unchanged. Exact original paths and commands follow; the
+preceding Z record gives compiler and frozen-object reproduction.
+
+Instrument: scalar count/capacity 4096, stride 8, 31 contexts, 66 cycles, 2046
+real append operations per row, 64 MiB work budget, seven samples, two reversed
+cohort orders. History order alternates by sample within each peer. History 0
+uses ordinary preparation; history 1 additionally invokes history_read for every
+owner before the start clock, in both the real and snapshot-control arms.
+This helper decodes the frozen descriptor, calls the peer's ordinary snapshot,
+checks metadata, performs 4096 volatile payload loads and verifies the independent
+checksum. Thus the condition changes the entire pre-call sequence, not just a
+cache read. Preparation, this helper, complete post-call checks and cleanup lie
+outside timing. No cache-level attribution follows from this experiment.
+
+Native read-only verification: otool -tvV on the hashed image reproduced the
+retained _history_read excerpt byte for byte. The native helper calls the ordinary
+snapshot at 0x1000100e0; 0x100010128..138 is its load/multiply-add loop with 8-byte
+steps to 32768, followed by the separate arithmetic oracle and comparison. It
+contains no allocation or payload store. Full excerpt retained below.
+
+Results: screen exit 0; outer elapsed 5.4530426249839365 seconds (guard 5.44 s).
+All 168 unique (history,cohort,variant,sample,control) rows are preserved: 84 real
+and 84 controls. Minimum accumulated real interval 1279747 ns; minimum control
+1500 ns. Clock minimum 41 ns, not quantized. Maximum cohort peer-median spread
+0.7273880613%; maximum WF/peer-ratio spread 0.7737387034%, below the existing 10%
+bounds. No controls subtracted, samples excluded, criterion changed, or retry.
+Medians and full seven-sample ranges below are elapsed_ns / operations.
+
+| Preparation | Cohort | WF ns/append [range] | Rust ns/append [range] | C++ ns/append [range] |
+|---|---:|---:|---:|---:|
+| Ordinary | 0 | 711.32 [683.25–777.52] | 658.08 [642.15–765.78] | 655.47 [648.01–697.03] |
+| Ordinary | 1 | 708.64 [666.89–847.67] | 656.91 [641.23–712.51] | 652.51 [648.95–668.50] |
+| Common read | 0 | 668.40 [665.02–708.07] | 632.96 [625.49–640.31] | 651.85 [646.34–764.89] |
+| Common read | 1 | 668.09 [663.27–727.96] | 629.74 [626.89–634.39] | 656.59 [652.07–702.04] |
+
+Outcome: UNRESOLVED. Ordinary WF envelopes overlap both peer envelopes in each
+cohort, so the original disjoint gap is not reproduced here. WF common-read and
+ordinary envelopes also overlap in both cohorts. Common-read WF remains disjoint
+slower than Rust in both cohorts and overlaps C++. Lower WF common-read medians
+do not satisfy the registered attribution criterion. This screen establishes
+neither a cause of the earlier gap nor general append qualification.
+
+Artifact SHA-256
+533424b7fd2e2191adf6b9691ab623e47a3cf44ebf9a4e30b80eabf73f59666b  empty-payload-history.patch
+309709aee6f9e41f4c316bbcb519b7181871642b43743453e2d786f9ac6e1ce7  ecosystem-append-growth-empty-history-samples.csv
+3eda0e78e18008d4996a746b069cbe9c484880eeb374e2aa282ff3809d7c037a  vector-costs-history
+
+Frozen input SHA-256
+c4a56aae931baef214180f8e8075a2fe9ec9fa470421ee3446f0d935aa3848c5  /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/history/vector-costs-history.c
+ec126907c9b488dcbc6ed99ddf06296306315fe34a273e6d7e2e0c6c3fc7c038  /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/measured-vector-costs.c
+526f14ad338abb1e59516b254860322245c3c9168e6df327e108b8f330ddd124  /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api/whitefoot-timed.o
+c35ec1f01eef08066ef381b06da6fc72ef6aba12d98a1b33c48a016de6313dd1  /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/ecosystem/cpp-timed.o
+b1eccd7d521f678bd123531708f67a1cce0f6b6fa509edb907acab53f1f11873  /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/ecosystem/rust-timed.a
+07ebcae5ed98fa7ff1a218150170f56c961e9dbae682781b62a5878a094da58b  /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/ordinary_values.o
+0655633c69666fcce21bf67258101aedb49c914fc50a6cc8edbfe22a8315e645  /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/sched/core.o
+e04734d7a1ddbe9083b47570ca2854963803b88a7197628bed2ca66cb4924d5c  /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/sched/entry.o
+75cb971977625c9b05adcf74b14989544ccbf61b0a81fe4843ec72226eb36c61  /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/completion/runtime.o
+1bcbb49aa9a44031faf6397e01a960b2ce5d5d02f42cc2aaecb4edc0818d8ec6  /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/completion/file_adapter.o
+a1def81793c4229e41586590b91d134a9a2375a6ad9d31189b8164e91aaf137b  /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/completion/bridge.o
+8342e7ea0b8d6a0817d543e8c05e807c96527393945e95597718ba9a27ce722d  /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/wf_floor.o
+c3a5140b8221a57d27a510995ae37c7b33a64ebc87ec9f9286b99ece649bce45  /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/sched/prim_host.o
+b9dbbb1485b2c3e47ef248568020130e7e27446e56be5a2c52f224bbd7a2f463  /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/completion/wait_host.o
+f1fa09d7c0831333726c367986a3811d588e639f090435b1cbf1fce62758bf33  /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/completion/file_posix.o
+e389769ac8c9f38af9cd00e5bc5d56d3c180dff5985fb81ddfff63dfa89eb453  /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/completion/linux_io_uring.o
+846bc08916aadbe77111a2c45aff15f33fd1fb7ffe816c198c2bf6f96dcad210  /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/ordinary_values_ir.o
+b201a1b4c00d3b534a5b9df19e354d1166e3de19f24db79d8d1a805c9c7305a3  /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/prepare-bridge.o
+
+Exact build/check command sequence (WHITEFOOT_CHECK_TIMEOUT=120)
+cwd: /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library
+perl /private/tmp/whitefoot-container-library-complete/.github/run-check.pl history-driver-compile clang -std=c11 -O3 -Wall -Wextra -Werror -DECOSYSTEM -DWF_SPLIT_SLOTS_PAYLOAD=1 -DWF_SPLIT_SLOTS_REALLOC=1 -DWF_INLINE_SLOTS_OWNER=1 -DWF_EMPTY_PAYLOAD_ANCHOR=1 -c /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/history/vector-costs-history.c -o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/history/driver.o
+exit: 0; expected: 0; outer runner seconds: 0.97802700009197
+
+cwd: /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library
+perl /private/tmp/whitefoot-container-library-complete/.github/run-check.pl history-link clang++ -O3 /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/history/driver.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api/whitefoot-timed.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/ecosystem/cpp-timed.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/ecosystem/rust-timed.a /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/ordinary_values.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/sched/core.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/sched/entry.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/completion/runtime.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/completion/file_adapter.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/completion/bridge.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/wf_floor.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/sched/prim_host.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/completion/wait_host.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/completion/file_posix.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/completion/linux_io_uring.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/ordinary_values_ir.o -pthread -lm /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/prepare-bridge.o -liconv -lSystem -lc -lm -o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/history/vector-costs-history
+exit: 0; expected: 0; outer runner seconds: 0.12516812467947602
+
+cwd: /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library
+perl /private/tmp/whitefoot-container-library-complete/.github/run-check.pl history-checksum-fault /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/history/vector-costs-history growth-history-fail-checksum
+exit: 1; expected: 1; outer runner seconds: 0.4546633749268949
+
+cwd: /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library
+perl /private/tmp/whitefoot-container-library-complete/.github/run-check.pl history-check /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/history/vector-costs-history growth-history-check
+exit: 0; expected: 0; outer runner seconds: 0.16064170794561505
+
+cwd: /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library
+perl /private/tmp/whitefoot-container-library-complete/.github/run-check.pl history-clock-fault /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/history/vector-costs-history growth-api-fail-clock
+exit: 1; expected: 1; outer runner seconds: 0.1488077905960381
+
+Single screen command (WHITEFOOT_CHECK_TIMEOUT=240)
+cwd: /private/tmp/whitefoot-container-library-complete
+perl .github/run-check.pl scalar4096-history-screen sh -c 'research/experiments/container-representation/vector-library/.build/empty-payload-anchor/history/vector-costs-history growth-history-measure > research/experiments/container-representation/vector-library/.build/empty-payload-anchor/history/samples.csv'
+exit: 0; outer runner seconds: 5.4530426249839365
+
+--- Raw history-driver-compile.log ---
+== START history-driver-compile (limit 120s): clang -std=c11 -O3 -Wall -Wextra -Werror -DECOSYSTEM -DWF_SPLIT_SLOTS_PAYLOAD=1 -DWF_SPLIT_SLOTS_REALLOC=1 -DWF_INLINE_SLOTS_OWNER=1 -DWF_EMPTY_PAYLOAD_ANCHOR=1 -c /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/history/vector-costs-history.c -o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/history/driver.o ==
+real 0.92
+user 0.89
+sys 0.02
+== END history-driver-compile: 0.96 s, exit 0 ==
+
+--- Raw history-link.log ---
+== START history-link (limit 120s): clang++ -O3 /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/history/driver.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api/whitefoot-timed.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/ecosystem/cpp-timed.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/ecosystem/rust-timed.a /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/ordinary_values.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/sched/core.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/sched/entry.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/completion/runtime.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/completion/file_adapter.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/completion/bridge.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/wf_floor.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/sched/prim_host.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/completion/wait_host.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/completion/file_posix.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/completion/linux_io_uring.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/ordinary_values_ir.o -pthread -lm /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/prepare-bridge.o -liconv -lSystem -lc -lm -o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/history/vector-costs-history ==
+ld: warning: ignoring duplicate libraries: '-lSystem', '-lm'
+real 0.05
+user 0.09
+sys 0.04
+== END history-link: 0.11 s, exit 0 ==
+
+--- Raw history-checksum-fault.log ---
+== START history-checksum-fault (limit 120s): /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/history/vector-costs-history growth-history-fail-checksum ==
+vector library costs: history common read independent checksum
+real 0.36
+user 0.00
+sys 0.00
+== END history-checksum-fault: 0.43 s, exit 1 ==
+
+--- Raw history-check.log ---
+== START history-check (limit 120s): /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/history/vector-costs-history growth-history-check ==
+history common read: all three scalar APIs passed
+real 0.00
+user 0.00
+sys 0.00
+== END history-check: 0.11 s, exit 0 ==
+
+--- Raw history-clock-fault.log ---
+== START history-clock-fault (limit 120s): /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/history/vector-costs-history growth-api-fail-clock ==
+growth append clock: reads=200000 minimum_nonzero_ns=1000 quantized=1
+vector library costs: growth append clock precision
+real 0.01
+user 0.00
+sys 0.00
+== END history-clock-fault: 0.11 s, exit 1 ==
+
+--- Raw screen.log ---
+== START scalar4096-history-screen (limit 240s): sh -c research/experiments/container-representation/vector-library/.build/empty-payload-anchor/history/vector-costs-history growth-history-measure > research/experiments/container-representation/vector-library/.build/empty-payload-anchor/history/samples.csv ==
+growth append clock: reads=200000 minimum_nonzero_ns=41 quantized=0
+real 5.38
+user 5.36
+sys 0.01
+== END scalar4096-history-screen: 5.44 s, exit 0 ==
+
+--- Raw common-read-native.asm ---
+_history_read:
+0000000100010048	sub	sp, sp, #0x70
+000000010001004c	stp	x24, x23, [sp, #0x30]
+0000000100010050	stp	x22, x21, [sp, #0x40]
+0000000100010054	stp	x20, x19, [sp, #0x50]
+0000000100010058	stp	x29, x30, [sp, #0x60]
+000000010001005c	add	x29, sp, #0x60
+0000000100010060	mov	x20, x4
+0000000100010064	mov	x19, x3
+0000000100010068	mov	x8, x1
+000000010001006c	ldp	x21, x10, [x1]
+0000000100010070	ldr	x9, [x1, #0x10]
+0000000100010074	cbz	w2, 0x100010090
+0000000100010078	cmp	w2, #0x1
+000000010001007c	b.ne	0x1000100a0
+0000000100010080	mov	x22, x9
+0000000100010084	mov	x23, x21
+0000000100010088	mov	x21, x10
+000000010001008c	b	0x1000100cc
+0000000100010090	mov	x22, x21
+0000000100010094	mov	x23, x10
+0000000100010098	mov	x21, x9
+000000010001009c	b	0x1000100cc
+00000001000100a0	cmp	x9, x10
+00000001000100a4	ccmp	x10, x21, #0x0, hs
+00000001000100a8	b.lo	0x1000101c8
+00000001000100ac	sub	x10, x10, x21
+00000001000100b0	tst	x10, #0x7
+00000001000100b4	b.ne	0x1000101c8
+00000001000100b8	sub	x9, x9, x21
+00000001000100bc	tst	x9, #0x7
+00000001000100c0	b.ne	0x1000101c8
+00000001000100c4	lsr	x22, x10, #3
+00000001000100c8	lsr	x23, x9, #3
+00000001000100cc	movi.2d	v0, #0000000000000000
+00000001000100d0	stp	q0, q0, [sp, #0x10]
+00000001000100d4	ldr	x9, [x0, #0x28]
+00000001000100d8	add	x1, sp, #0x10
+00000001000100dc	mov	x0, x8
+00000001000100e0	blr	x9
+00000001000100e4	ldr	x8, [sp, #0x28]
+00000001000100e8	ldr	x9, [sp, #0x10]
+00000001000100ec	cmp	x0, #0x1, lsl #12
+00000001000100f0	ccmp	x8, #0x1, #0x0, eq
+00000001000100f4	ccmp	x9, x22, #0x0, eq
+00000001000100f8	b.ne	0x10001019c
+00000001000100fc	cmp	x23, #0x1, lsl #12
+0000000100010100	b.ne	0x10001019c
+0000000100010104	ldr	x8, [sp, #0x18]
+0000000100010108	cmp	x8, #0x1, lsl #12
+000000010001010c	b.ne	0x10001019c
+0000000100010110	cmp	x22, #0x1, lsl #12
+0000000100010114	b.ne	0x10001019c
+0000000100010118	cbz	x21, 0x10001019c
+000000010001011c	mov	x9, #0x0
+0000000100010120	mov	w10, #0x83
+0000000100010124	mov	x8, x19
+0000000100010128	ldr	x11, [x21, x9]
+000000010001012c	madd	x8, x8, x10, x11
+0000000100010130	add	x9, x9, #0x8
+0000000100010134	cmp	x9, #0x8, lsl #12
+0000000100010138	b.ne	0x100010128
+000000010001013c	mov	x9, #-0x1000
+0000000100010140	mov	w11, #0x83
+0000000100010144	mov	x12, x19
+0000000100010148	mov	x10, x12
+000000010001014c	add	x12, x19, x9
+0000000100010150	madd	x12, x10, x11, x12
+0000000100010154	add	x12, x12, #0x1, lsl #12
+0000000100010158	adds	x9, x9, #0x1
+000000010001015c	b.lo	0x100010148
+0000000100010160	mov	w11, w20
+0000000100010164	eor	x8, x8, x11
+0000000100010168	mov	w11, #0x83
+000000010001016c	neg	x8, x8
+0000000100010170	madd	x8, x10, x11, x8
+0000000100010174	add	x9, x19, x9
+0000000100010178	add	x8, x8, x9
+000000010001017c	cmn	x8, #0xfff
+0000000100010180	b.ne	0x1000101f4
+0000000100010184	ldp	x29, x30, [sp, #0x60]
+0000000100010188	ldp	x20, x19, [sp, #0x50]
+000000010001018c	ldp	x22, x21, [sp, #0x40]
+0000000100010190	ldp	x24, x23, [sp, #0x30]
+0000000100010194	add	sp, sp, #0x70
+0000000100010198	ret
+000000010001019c	adrp	x8, 230 ; 0x1000f6000
+00000001000101a0	ldr	x8, [x8, #0xb38] ; literal pool symbol address: ___stderrp
+00000001000101a4	ldr	x0, [x8]
+00000001000101a8	adrp	x8, 186 ; 0x1000ca000
+00000001000101ac	add	x8, x8, #0xd85 ; literal pool for: "history descriptor agrees with ordinary snapshot"
+00000001000101b0	str	x8, [sp]
+00000001000101b4	adrp	x1, 186 ; 0x1000ca000
+00000001000101b8	add	x1, x1, #0x918 ; literal pool for: "vector library costs: %s\n"
+00000001000101bc	bl	0x1000b6908 ; symbol stub for: _fprintf
+00000001000101c0	mov	w0, #0x1
+00000001000101c4	bl	0x1000b6890 ; symbol stub for: _exit
+00000001000101c8	adrp	x8, 230 ; 0x1000f6000
+00000001000101cc	ldr	x8, [x8, #0xb38] ; literal pool symbol address: ___stderrp
+00000001000101d0	ldr	x0, [x8]
+00000001000101d4	adrp	x8, 186 ; 0x1000ca000
+00000001000101d8	add	x8, x8, #0xd60 ; literal pool for: "history frozen C++ descriptor extent"
+00000001000101dc	str	x8, [sp]
+00000001000101e0	adrp	x1, 186 ; 0x1000ca000
+00000001000101e4	add	x1, x1, #0x918 ; literal pool for: "vector library costs: %s\n"
+00000001000101e8	bl	0x1000b6908 ; symbol stub for: _fprintf
+00000001000101ec	mov	w0, #0x1
+00000001000101f0	bl	0x1000b6890 ; symbol stub for: _exit
+00000001000101f4	adrp	x8, 230 ; 0x1000f6000
+00000001000101f8	ldr	x8, [x8, #0xb38] ; literal pool symbol address: ___stderrp
+00000001000101fc	ldr	x0, [x8]
+0000000100010200	adrp	x8, 186 ; 0x1000ca000
+0000000100010204	add	x8, x8, #0xdb6 ; literal pool for: "history common read independent checksum"
+0000000100010208	str	x8, [sp]
+000000010001020c	adrp	x1, 186 ; 0x1000ca000
+0000000100010210	add	x1, x1, #0x918 ; literal pool for: "vector library costs: %s\n"
+0000000100010214	bl	0x1000b6908 ; symbol stub for: _fprintf
+0000000100010218	mov	w0, #0x1
+000000010001021c	bl	0x1000b6890 ; symbol stub for: _exit
+

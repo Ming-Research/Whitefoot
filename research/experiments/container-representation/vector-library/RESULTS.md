@@ -7199,3 +7199,140 @@ with the current clock, another API, or whole-container performance.
 - Candidate CLI SHA-256: `d01ae503322ea77fe208ca28dacb747c0b689fa4a7b5257dccd1054944252754`.
 - Timed image SHA-256: `98fe87e2f530b9b8ff8327742e132ec6df82e200b994f8ba8c6383173fe32c75`.
 - Restored production CLI SHA-256: `5e8d37585a06e7b7040b43032b1cd5d4f41cce16d0e91aa77b35e7d0e83c74ac`.
+
+
+#### Scalar-4096 native allocation census: registered discriminator
+
+The empty-anchor screen still loses scalar-4096 growth despite equal requested
+payload extents (32768 to 65536 bytes). The timed public WF path reaches the
+same libc realloc route as Rust; the WF path has fewer calls and instructions.
+This does not prove lower latency, but does not support a simple excess-call
+explanation. Requested-byte accounting has not observed native usable extents
+or whether realloc preserves the payload address.
+
+Before another layout or lowering change, run one untimed native census using
+the frozen empty-anchor WF and peer objects. Reuse the existing preparation,
+append, complete-content oracle and destruction operations at scalar capacity
+4096, 31 contexts, seed 101, one cycle, with the two existing cohort orders
+(WF/Rust/C++ and C++/Rust/WF). Record each old/new payload address as an integer,
+requested and native usable bytes, and whether the address changed. Decode
+only these frozen native descriptor ABIs; cross-check their length/capacity
+against the ordinary snapshot operation before and after append. Allocate all
+observation storage before preparing the context batch, print only after its
+cleanup, and never inspect an old pointer after its allocation is released.
+Do not insert allocator headers, replace malloc/realloc or take timings.
+
+Equal native size classes and address-change profiles would refute the simple
+hypothesis that WF loses because it crosses a larger class or moves more often
+in this census. A difference identifies setup/allocator state to investigate;
+it does not establish any fraction of the timed gap. This short instrumented
+run cannot establish the timed runs' movement frequencies or refute cache-state
+effects. Keep every context, both peers and both orders; no selection or retry.
+The census adapter is a research-only patch over the existing Vector driver,
+with a reproducible build/check command and an explicit command-line caller.
+It and its observations live in this experiment and retire with superseding
+allocation-attribution evidence. A corrupted descriptor observation must fail
+before the positive census is credited. No compiler or language change is
+selected, and no other API or container is advanced.
+
+
+#### Scalar-4096 census outcome: equal extents and movement in both orders
+
+The [driver-only patch](empty-payload-census.patch),
+[complete observations](ecosystem-append-growth-empty-census-observations.csv) and
+[commands, input hashes and raw runner output](ecosystem-append-growth-empty-census-record.txt)
+retain the single registered census. The patch replays exactly over Z's frozen
+measured driver; WF, Rust, C++ and runtime objects remain frozen. Compile and
+link exit 0; the deliberately corrupted descriptor observation exits 1 before
+the positive census exits 0. The clean CSV is the contiguous header and all 186
+rows extracted from that guarded run, without a rerun.
+
+| Cohort | Position | Variant | Contexts | Changed addresses | Usable bytes, before → after |
+|---|---:|---|---:|---:|---:|
+| 0 | 0 | whitefoot | 31 | 31 | 32768 → 65536 |
+| 0 | 1 | rust-vec | 31 | 31 | 32768 → 65536 |
+| 0 | 2 | cpp-std-vector | 31 | 31 | 32768 → 65536 |
+| 1 | 0 | cpp-std-vector | 31 | 31 | 32768 → 65536 |
+| 1 | 1 | rust-vec | 31 | 31 | 32768 → 65536 |
+| 1 | 2 | whitefoot | 31 | 31 | 32768 → 65536 |
+
+Every row changes length 4096 → 4097 and capacity 4096 → 8192; requested bytes
+also change 32768 → 65536. Thus WF neither occupies a larger native usable
+extent nor changes addresses more often than either peer in this census.
+This refutes those two simple explanations for these observations only. It
+establishes neither the timed runs' movement frequencies nor the absence of
+allocator, preparation-history or cache effects. No timing, compiler change,
+source rule or representation adoption follows; append remains unqualified.
+
+
+#### Scalar-4096 preparation history: registered discriminator
+
+The native census found the same usable extents and address changes in every
+WF/Rust/C++ context. It does not explain the remaining scalar-4096 timing gap.
+Preparation still differs: WF and Rust populate through their own generated
+loops, so equal contents and allocation requests do not imply equal cache
+state on entry to append. Test this dependency without another compiler change.
+
+Use one diagnostic image with the frozen empty-anchor WF and native peers,
+the same scalar-4096 append operation, 31 contexts, existing seeds and 64 MiB
+work budget. Compare the unchanged preparation against a common C read of all
+initialized payload words immediately before the timed batch. The read uses
+only the frozen live-payload descriptor ABI, visits each word through volatile
+loads in the same order for all peers, and verifies its checksum against the
+independent existing oracle. It allocates nothing and mutates neither owner
+nor payload. Preparation, this optional read, complete post-call checking and
+cleanup remain outside timing. A deliberately corrupted warm-read checksum
+must fail. Use the existing RAW-clock check and retain snapshot controls.
+
+Run one fixed launch, two opposite cohort orders, seven samples per history
+condition and peer, alternating which history condition runs first by sample.
+Only this scalar-4096 diagnostic cell runs: no whole-API qualification follows.
+Retain all 168 real/control rows (84 real), require the existing duration and
+spread conditions, and do not subtract controls or retry. Report both peers
+and both histories. If the gap changes materially between the two histories
+with separated sample envelopes in both cohorts, preparation history is a
+performance dependency worth isolating; this does not identify a particular
+cache level or explain the original gap's entire cost. If ranges overlap,
+record the dependency as unresolved. The ordinary-preparation arm must still
+show the original gap before a disappearance can support that attribution.
+No warm-read result replaces the normal API benchmark or selects a source
+change. The temporary driver patch, samples and commands belong beside the
+census in this experiment and retire with superseding attribution evidence.
+
+
+#### Scalar-4096 history outcome: attribution remains unresolved
+
+The [independent driver patch](empty-payload-history.patch),
+[all 168 samples](ecosystem-append-growth-empty-history-samples.csv) and
+[instrument, native excerpt, hashes and commands](ecosystem-append-growth-empty-history-record.txt)
+retain the single fixed launch. The patch replays exactly against Z's measured
+driver, independently of the census patch, with unchanged WF/peer/runtime
+objects. Build, link and the three-peer positive check exit 0; corrupted
+checksum and coarsened-clock checks each exit 1. The screen exits 0 in 5.453 s.
+
+All 84 real rows exceed 1 ms (minimum 1.279747 ms); all 84 snapshot controls
+remain in the CSV (minimum 1,500 ns). The RAW clock observes a 41 ns minimum
+step. Maximum cohort peer-median spread is 0.7274%, and maximum WF/peer-ratio
+spread is 0.7737%, within the existing 10% bounds. Values below are medians
+and complete seven-sample ranges, without control subtraction.
+
+| Preparation | Cohort | WF ns/append [range] | Rust ns/append [range] | C++ ns/append [range] |
+|---|---:|---:|---:|---:|
+| Ordinary | 0 | 711.32 [683.25–777.52] | 658.08 [642.15–765.78] | 655.47 [648.01–697.03] |
+| Ordinary | 1 | 708.64 [666.89–847.67] | 656.91 [641.23–712.51] | 652.51 [648.95–668.50] |
+| Common read | 0 | 668.40 [665.02–708.07] | 632.96 [625.49–640.31] | 651.85 [646.34–764.89] |
+| Common read | 1 | 668.09 [663.27–727.96] | 629.74 [626.89–634.39] | 656.59 [652.07–702.04] |
+
+**Unresolved under the registered criterion.** The ordinary-preparation WF
+ranges overlap both peers in both cohorts, so this diagnostic image does not
+reproduce the earlier disjoint scalar-4096 gap. WF's common-read and ordinary
+ranges also overlap in both cohorts. The common-read arm still places WF
+disjointly above Rust in both cohorts and overlaps C++. Its lower WF medians
+therefore do not establish the proposed preparation-history attribution.
+
+The common-read arm adds an ordinary snapshot, descriptor/metadata checks,
+a volatile full-payload read and an independent checksum oracle before each
+timed batch. The native helper retains the load loop and oracle. This changes
+the complete pre-call sequence; it does not isolate a cache level. No retry,
+criterion change or cause claim follows. The result neither replaces the
+normal API screen nor qualifies append or any representation for adoption.

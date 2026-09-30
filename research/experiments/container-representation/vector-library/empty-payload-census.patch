@@ -1,0 +1,117 @@
+--- a/research/experiments/container-representation/vector-library/vector-costs.c
++++ b/research/experiments/container-representation/vector-library/vector-costs.c
+@@ -17,6 +17,9 @@
+ #include <windows.h>
+ #else
+ #include <time.h>
++#if defined(__APPLE__)
++#include <malloc/malloc.h>
++#endif
+ #endif
+ 
+ #ifndef WF_INLINE_SLOTS_OWNER
+@@ -917,6 +920,89 @@
+     if (!report) puts("vector append growth: scalar/256B, five capacities, three APIs passed");
+ }
+ 
++
++#if defined(__APPLE__) && !defined(ACCOUNT_ONLY)
++typedef struct {
++    uintptr_t address;
++    uint64_t length, capacity;
++    size_t requested, usable;
++} CensusPayload;
++
++// Frozen Z ABIs only: WF {len,cap,ptr}, Rust {cap,ptr,len},
++// libc++ {begin,end,end_capacity}. Inspect copies, never mutate owners.
++static CensusPayload census_payload(const ApiOperations *api, ApiStorage *owner,
++                                    unsigned variant, bool corrupt) {
++    _Static_assert(sizeof(uintptr_t) == 8 && sizeof(ApiStorage) >= 24,
++                   "census frozen three-word descriptor ABI");
++    uintptr_t words[3];
++    memcpy(words, owner, sizeof words);
++    CensusPayload result = {0};
++    if (variant == 0) {
++        result.length = words[0]; result.capacity = words[1];
++        result.address = words[2];
++    } else if (variant == 1) {
++        result.length = words[2]; result.capacity = words[0];
++        result.address = words[1];
++    } else {
++        require(words[2] >= words[1] && words[1] >= words[0]
++                && (words[1] - words[0]) % 8 == 0
++                && (words[2] - words[0]) % 8 == 0,
++                "census frozen C++ descriptor extent");
++        result.address = words[0];
++        result.length = (words[1] - words[0]) / 8;
++        result.capacity = (words[2] - words[0]) / 8;
++    }
++    if (corrupt) result.length ^= 1;
++    ApiObservation snapshot = {0};
++    uint64_t length = api->snapshot(owner, &snapshot);
++    require(length == snapshot.length && snapshot.valid == 1
++            && snapshot.checksum == 0 && result.length == snapshot.length
++            && result.capacity == snapshot.capacity,
++            "census descriptor agrees with ordinary snapshot");
++    require(result.address != 0 && result.capacity <= SIZE_MAX / 8,
++            "census live payload extent");
++    result.requested = (size_t)result.capacity * 8;
++    result.usable = malloc_size((const void *)result.address);
++    require(result.usable >= result.requested, "census native usable extent");
++    return result;
++}
++
++static void growth_native_census(bool corrupt) {
++    enum { CONTEXTS = 31 };
++    ApiStorage owners[CONTEXTS];
++    CensusPayload before[CONTEXTS], after[CONTEXTS];
++    uint64_t returned[CONTEXTS];
++    puts("cohort,position,variant,context,seed,old_length,old_capacity,new_length,new_capacity,old_address,new_address,old_requested,new_requested,old_usable,new_usable,moved");
++    for (unsigned cohort = 0; cohort < 2; ++cohort)
++        for (unsigned position = 0; position < 3; ++position) {
++            const unsigned variant = cohort ? 2 - position : position;
++            const ApiOperations *api = &append_api[0][variant];
++            for (size_t k = 0; k < CONTEXTS; ++k)
++                require(growth_prepare(api, &owners[k], 4096, 101 + k) == 4096,
++                        "census initial capacity");
++            for (size_t k = 0; k < CONTEXTS; ++k)
++                before[k] = census_payload(api, &owners[k], variant, corrupt);
++            for (size_t k = 0; k < CONTEXTS; ++k)
++                returned[k] = api->append_one(&owners[k], 101 + k + 4096);
++            for (size_t k = 0; k < CONTEXTS; ++k)
++                after[k] = census_payload(api, &owners[k], variant, false);
++            for (size_t k = 0; k < CONTEXTS; ++k) {
++                require(growth_inspect_reset(api, &owners[k], 4096, 101 + k,
++                                            returned[k], false, false) == 8192,
++                        "census post capacity");
++                (void)api->destroy(&owners[k]);
++            }
++            for (size_t k = 0; k < CONTEXTS; ++k)
++                printf("%u,%u,%s,%zu,%zu,%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64
++                       ",0x%" PRIxPTR ",0x%" PRIxPTR ",%zu,%zu,%zu,%zu,%u\n",
++                       cohort, position, api->name, k, 101 + k,
++                       before[k].length, before[k].capacity, after[k].length, after[k].capacity,
++                       before[k].address, after[k].address, before[k].requested, after[k].requested,
++                       before[k].usable, after[k].usable, before[k].address != after[k].address);
++        }
++}
++#endif
++
+ #if !defined(ACCOUNT_ONLY)
+ static void append_inspect_batch(const ApiOperations *api, ApiStorage *owners,
+                                  size_t contexts, uint64_t count, uint64_t capacity,
+@@ -1225,6 +1311,14 @@
+         check_accounting(WHITEFOOT, true, 3, 1, 1);
+     }
+ #else
++#if defined(__APPLE__)
++    else if (strcmp(argv[1], "growth-native-census") == 0) {
++        require(argc == 2, "census argument count"); growth_native_census(false);
++    }
++    else if (strcmp(argv[1], "growth-native-census-fail-descriptor") == 0) {
++        require(argc == 2, "census fault argument count"); growth_native_census(true);
++    }
++#endif
+     else if (strcmp(argv[1], "growth-api-fail-clock") == 0) {
+         require(argc == 2, "growth-api-fail-clock argument count");
+         growth_clock_check(true);

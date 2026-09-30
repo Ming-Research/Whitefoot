@@ -1264,8 +1264,15 @@ rarely insert at the same place.
   still a nonconforming research layout. Reopen with a discriminating
   hypothesis for remaining positive-capacity append costs, including
   allocator/setup-state attribution before another layout change, and a
-  complete representation/lifetime qualification. No allocator cause is yet
-  established; preserve these evidence limits.
+  complete representation/lifetime qualification. The
+  [scalar-4096 native census](../research/experiments/container-representation/vector-library/RESULTS.md#scalar-4096-census-outcome-equal-extents-and-movement-in-both-orders)
+  finds equal usable extents and address changes in all 31 contexts per peer
+  and order. It refutes differing size classes or movement counts in that
+  census only. The [preparation-history discriminator](../research/experiments/container-representation/vector-library/RESULTS.md#scalar-4096-history-outcome-attribution-remains-unresolved)
+  does not reproduce the original disjoint gap; WF's ordinary and common-read
+  ranges overlap in both cohorts. Timed-run frequencies and preparation/cache
+  attribution remain open. No allocator cause is yet established; preserve
+  these evidence limits.
 
   The [Vector length-store diagnosis](../research/experiments/container-representation/vector-library/RESULTS.md#length-store-dependence-read-only-llvm-diagnosis)
   finds conservative header/payload dependencies in optimized take loops,
@@ -3519,6 +3526,16 @@ condition under which it is taken up.
   least seven runs per model trips no build or case stage. Reopen when an
   overrun is traced to a change that earlier runs on faster machines passed,
   or when clippy's variance overruns come more than about once a week.
+
+  The [63f2c0685 Linux unit job](https://github.com/mbbill/Whitefoot/actions/runs/36757483524/job/110031390661)
+  passes all 1,912 cases in 103.51 s, but its 140.87 s build and 244.61 s total
+  exceed the 135 s and 235 s budgets. The
+  [preceding 52f982 job](https://github.com/mbbill/Whitefoot/actions/runs/36753958765/job/110019446011)
+  has identical compiler, tests and `.github` trees: build 86.73 s, test stage
+  70.95 s and total 157.79 s. Both use Rust 1.98.1; their recorded processors
+  differ (EPYC 7763 versus 9V74). This is host-variation evidence, not an
+  isolated processor-model cause. Keep the tests and budgets unchanged; the
+  next published head supplies the next CI observation.
 
 - **Qualify the clock at each container API's individual timing window.**
   The Vector growth pilot on the current macOS host reports 1,000 ns for
