@@ -3226,8 +3226,16 @@ condition under which it is taken up.
   lose their length-versus-capacity branch, while the ceiling guard remains.
   Its single screen still passes only two of six matched cells; the branch
   removal does not meet the append target and establishes no paired gain or
-  regression. Production transport remains unresolved. Reopen when a generic
-  retained relation and a discriminating measured case justify that work.
+  regression. The independent [post-call preserved-length diagnostic](../research/experiments/container-representation/vector-library/RESULTS.md#post-call-preserved-length-outcome-load-removed-append-remains-unqualified)
+  supplies `make_room` exit length equal to entry length on normal return,
+  rather than F's entry `len == cap`. Both actual append paths lose their
+  post-growth length reload without a new runtime comparison, but their
+  frames grow from 32 to 48 bytes and only one of six matched cells passes
+  both cohorts. This unpaired screen selects no production transport and
+  establishes no gain or regression against the earlier screens. Reopen when
+  a generic retained relation and a discriminating measured case justify that
+  work; newly resolve post-call places, including equal-length whole-owner
+  replacement, without retaining stale payload identity.
   Retain and lower proved entry-measure relations generically, with explicit
   support and mutation boundaries, rather than recognizing this helper's name.
   Require a complete target-fact mapping, unchanged acceptance and target

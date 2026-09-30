@@ -1,0 +1,52 @@
+--- a/whitefoot-timed.ll
++++ b/whitefoot-timed.ll
+@@ -1911,7 +1911,11 @@
+ 
+ define i64 @wf_std.collections.vector.grow_vector_append$instance$8c4c85d67cb438a6(ptr noalias nonnull captures(none) dereferenceable(24) %v0, i64 %v1) #0 {
+ entry:
++  %length.before.room = load i64, ptr %v0, align 8
+   %v2 = call i8 @wf_std.collections.vector.grow_vector_make_room$instance$8c4c85d67cb438a6(ptr %v0)
++  %length.after.room = load i64, ptr %v0, align 8
++  %length.room.preserved = icmp eq i64 %length.after.room, %length.before.room
++  call void @llvm.assume(i1 %length.room.preserved)
+   %t0 = getelementptr inbounds %wf.t.4fe45f1358b41568, ptr %v0, i32 0, i32 0
+   %v3 = getelementptr i8, ptr %t0, i64 0
+   %v4 = getelementptr i8, ptr %v3, i64 0
+@@ -2310,7 +2314,11 @@
+ entry:
+   %wf.slot.0 = alloca %wf.t.ac26c585c4167c7a, align 8
+   call void @llvm.memmove.p0.p0.i64(ptr %wf.slot.0, ptr %wf.arg.v1, i64 ptrtoint (ptr getelementptr (%wf.t.ac26c585c4167c7a, ptr null, i32 1) to i64), i1 false)
++  %length.before.room = load i64, ptr %v0, align 8
+   %v2 = call i8 @wf_std.collections.vector.grow_vector_make_room$instance$979fcc4ac6e818fb(ptr %v0)
++  %length.after.room = load i64, ptr %v0, align 8
++  %length.room.preserved = icmp eq i64 %length.after.room, %length.before.room
++  call void @llvm.assume(i1 %length.room.preserved)
+   %t0 = getelementptr inbounds %wf.t.c59a17969695b1c4, ptr %v0, i32 0, i32 0
+   %v3 = getelementptr i8, ptr %t0, i64 0
+   %v4 = getelementptr i8, ptr %v3, i64 0
+--- a/whitefoot-account.ll
++++ b/whitefoot-account.ll
+@@ -1911,7 +1911,11 @@
+ 
+ define i64 @wf_std.collections.vector.grow_vector_append$instance$8c4c85d67cb438a6(ptr noalias nonnull captures(none) dereferenceable(24) %v0, i64 %v1) #0 {
+ entry:
++  %length.before.room = load i64, ptr %v0, align 8
+   %v2 = call i8 @wf_std.collections.vector.grow_vector_make_room$instance$8c4c85d67cb438a6(ptr %v0)
++  %length.after.room = load i64, ptr %v0, align 8
++  %length.room.preserved = icmp eq i64 %length.after.room, %length.before.room
++  call void @llvm.assume(i1 %length.room.preserved)
+   %t0 = getelementptr inbounds %wf.t.4fe45f1358b41568, ptr %v0, i32 0, i32 0
+   %v3 = getelementptr i8, ptr %t0, i64 0
+   %v4 = getelementptr i8, ptr %v3, i64 0
+@@ -2310,7 +2314,11 @@
+ entry:
+   %wf.slot.0 = alloca %wf.t.ac26c585c4167c7a, align 8
+   call void @llvm.memmove.p0.p0.i64(ptr %wf.slot.0, ptr %wf.arg.v1, i64 ptrtoint (ptr getelementptr (%wf.t.ac26c585c4167c7a, ptr null, i32 1) to i64), i1 false)
++  %length.before.room = load i64, ptr %v0, align 8
+   %v2 = call i8 @wf_std.collections.vector.grow_vector_make_room$instance$979fcc4ac6e818fb(ptr %v0)
++  %length.after.room = load i64, ptr %v0, align 8
++  %length.room.preserved = icmp eq i64 %length.after.room, %length.before.room
++  call void @llvm.assume(i1 %length.room.preserved)
+   %t0 = getelementptr inbounds %wf.t.c59a17969695b1c4, ptr %v0, i32 0, i32 0
+   %v3 = getelementptr i8, ptr %t0, i64 0
+   %v4 = getelementptr i8, ptr %v3, i64 0

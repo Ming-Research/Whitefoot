@@ -7336,3 +7336,110 @@ timed batch. The native helper retains the load loop and oracle. This changes
 the complete pre-call sequence; it does not isolate a cache level. No retry,
 criterion change or cause claim follows. The result neither replaces the
 normal API screen nor qualifies append or any representation for adoption.
+
+
+#### Post-call preserved length: registered fact-transport discriminator
+
+The actual empty-anchor append paths reload owner length after growth; Rust
+retains its pre-growth length. The ordinary `grow_vector_make_room` contract
+explicitly proves exit length equal to entry length, as do `grow_full` and
+`reserve` (grow-vector.wf). FN-9 checks that normal-return relation and
+ENT-3.S12 publishes it after the call's effects and invalidations. This is a
+different fact from the earlier F entry equality between length and capacity.
+
+In frozen Z timed/accounting LLVM only, surround the existing make_room call
+in exactly the scalar and wide ordinary grow_vector_append bodies with a
+length load immediately before, another immediately after, and an llvm.assume
+that those two SSA values are equal. The stable inline descriptor has length
+at byte zero. Keep the existing call, place_back and returned-length code
+unchanged. Add no full-entry equality, capacity bound, invariant-memory tag,
+inline hint or allocator change; removing the four added instructions at
+each site must recover each input module byte for byte. Every other function
+body, peer/driver object and link order remains unchanged.
+
+The relation applies only at normal continuation of this call. Later append
+changes length; post-append length is not equal to entry length. Capacity and
+payload may change and must be loaded afresh as needed. Generic production
+transport would need newly resolved post-call places and verified relation
+support, including whole-owner replacement with equal length but a different
+backing; this diagnostic selects no callee-name rule or stale pointer reuse.
+
+Before timing require both actual scalar/wide append paths to lose their
+post-growth owner-length load, use the preserved number for indexing and
+increment, and emit no new runtime comparison. Inspect reached call paths,
+register saves/spills and frame changes. Keep the changed payload reads,
+first malloc, positive realloc, partial-prefix copy/free and allocation-failure
+handling. Require existing spare/growth content, state, allocator and negative
+controls. If native loads remain or checks fail, retain the failed result and
+stop before timing. Fewer loads alone is not a performance conclusion.
+
+Only after those checks, run one fixed ordinary-preparation screen with
+`growth-api-measure 67108864 7 8589934592`, keeping all 840 rows, both peers,
+controls and separate initial-capacity policy cells under the existing RAW,
+duration and spread conditions. Do not introduce the history read, subtract
+controls or retry. Only an all-matched-cell pass opens paired qualification;
+otherwise retain the failure without an unpaired speedup claim. Patch, native
+evidence and any samples belong to this Vector experiment and retire with
+superseding generic-contract transport evidence. No source rule, compiler
+implementation, other API or container is advanced by this diagnostic.
+
+
+#### Post-call preserved-length outcome: load removed, append remains unqualified
+
+The [replay patch](post-call-length.patch), [complete samples](ecosystem-append-growth-post-call-length-samples.csv)
+and [commands, identities, checks and native evidence](ecosystem-append-growth-post-call-length-timing.txt)
+retain the single diagnostic. In each frozen Z module, stripping four added
+instructions at each of two call sites recovers the input byte for byte.
+All other IR and frozen driver/peer/runtime objects are unchanged. All 19
+build/check stages have their expected exits; all 30 accounting rows match Z.
+
+Both actual append paths lose their post-growth length load, preserve entry
+length in `x21` for indexing and increment, and reload the payload pointer.
+The added equality produces no runtime comparison. Saving `x21`/`x22` expands
+each append frame from 32 to 48 bytes; the called growth primitive remains
+48 bytes. Allocation and failure paths remain intact. Thus the relation
+changes the desired native dependency while also changing register saves.
+
+The fixed screen exits 0 in 116.602 s with all 840 rows: 420 real and 420
+snapshot controls. Minimum real duration is 1.290682 ms; minimum control is
+1,454 ns; the RAW clock observes 41 ns. Maximum cohort peer-median spread is
+2.3283%, and maximum WF/peer-ratio spread is 2.1905%, within the existing 10%
+bounds. Values are medians and complete seven-sample ranges; controls are
+retained without subtraction. Initial-capacity 0/1 policy cells remain separate.
+
+| Element / initial capacity | Cohort | WF ns/append [range] | Rust ns/append [range] | C++ ns/append [range] | Against slower peer |
+|---|---:|---:|---:|---:|---|
+| 8 B / 0 | 0 | 8.46 [8.45–8.77] | 11.73 [11.70–12.11] | 10.94 [10.91–11.01] | Pass |
+| 8 B / 0 | 1 | 8.48 [8.46–8.98] | 11.79 [11.74–12.46] | 10.95 [10.92–11.45] | Pass |
+| 8 B / 1 | 0 | 18.47 [18.45–18.76] | 32.55 [32.24–33.49] | 19.18 [19.06–19.31] | Pass |
+| 8 B / 1 | 1 | 18.56 [18.49–19.91] | 32.46 [32.30–32.76] | 19.18 [19.07–19.43] | Pass |
+| 8 B / 16 | 0 | 35.38 [34.50–37.27] | 36.90 [36.70–38.62] | 25.60 [25.47–26.48] | Overlap |
+| 8 B / 16 | 1 | 34.98 [34.58–36.62] | 36.88 [36.71–39.03] | 25.62 [25.42–27.15] | Pass |
+| 8 B / 256 | 0 | 101.59 [100.73–104.13] | 103.64 [102.41–107.95] | 95.24 [92.53–97.19] | Overlap |
+| 8 B / 256 | 1 | 101.46 [100.99–103.50] | 102.77 [102.07–107.47] | 93.07 [91.50–97.47] | Overlap |
+| 8 B / 4096 | 0 | 715.30 [680.90–842.99] | 661.80 [655.77–805.47] | 655.22 [648.26–677.89] | Overlap |
+| 8 B / 4096 | 1 | 707.87 [699.35–836.47] | 663.82 [653.47–733.44] | 653.02 [647.75–676.12] | Overlap |
+| 256 B / 0 | 0 | 12.93 [12.90–13.42] | 22.34 [22.29–23.40] | 15.65 [15.58–16.31] | Pass |
+| 256 B / 0 | 1 | 12.92 [12.87–13.23] | 22.34 [22.26–23.28] | 15.70 [15.57–16.25] | Pass |
+| 256 B / 1 | 0 | 49.44 [48.96–51.20] | 53.20 [52.54–55.30] | 43.11 [42.86–44.57] | Pass |
+| 256 B / 1 | 1 | 49.39 [49.07–50.36] | 52.92 [52.74–54.33] | 43.27 [42.85–44.87] | Pass |
+| 256 B / 16 | 0 | 150.99 [149.55–164.36] | 151.95 [149.13–162.13] | 143.57 [141.04–160.88] | Overlap |
+| 256 B / 16 | 1 | 149.45 [148.00–155.42] | 150.36 [149.19–162.78] | 142.31 [141.29–144.20] | Overlap |
+| 256 B / 256 | 0 | 1318.24 [1296.70–1485.27] | 1312.93 [1309.75–1393.43] | 1311.56 [1292.15–1400.77] | Overlap |
+| 256 B / 256 | 1 | 1321.54 [1306.41–1342.71] | 1315.06 [1309.70–1359.74] | 1315.06 [1306.28–1327.58] | Overlap |
+| 256 B / 4096 | 0 | 161.37 [159.61–162.48] | 162.85 [161.11–165.91] | 14866.62 [14766.19–15067.78] | Pass |
+| 256 B / 4096 | 1 | 161.09 [158.18–163.01] | 162.40 [157.57–163.98] | 14885.08 [14822.21–14907.27] | Pass |
+
+**Only one of six matched cells passes both cohorts:** wide-4096. Scalar-16
+overlaps in cohort 0 and passes in cohort 1; every other matched cell overlaps
+in both. Scalar-4096 overlaps Rust while remaining disjointly slower than C++
+in both cohorts. All 0/1 policy rows pass the slower-peer comparison. The
+all-matched criterion fails, so no paired qualification follows. This result
+establishes no gain or regression against earlier unpaired screens.
+
+The supplied relation is `make_room` exit length equal to entry length on
+normal return, distinct from F's full-entry `len == cap`. A general lowering
+would need newly resolved post-call places and verified relation support;
+capacity, payload and backing identity may change, and append later changes
+length. Native load removal alone does not select production fact transport,
+the nonconforming Z representation, or a source rule. Other APIs remain paused.

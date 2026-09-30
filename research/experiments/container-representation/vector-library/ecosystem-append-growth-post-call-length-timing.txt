@@ -1,0 +1,515 @@
+Post-call preserved length: frozen Z fact-transport diagnostic
+
+Purpose: reproduce the registered contract-transport trial; retire this patch,
+record and samples when superseding generic-contract transport evidence replaces
+it. This is a post-lowering experiment on the nonconforming Z layout. No production
+compiler change, new source rule, or paired performance conclusion.
+
+Inputs: frozen empty-anchor Z timed/accounting LLVM and its driver, peer, bridge
+and runtime objects. Z reproduction is recorded in empty-payload-anchor.patch and
+ecosystem-append-growth-empty-anchor-timing.txt. This trial is independent of F's
+entry len==cap relation, the allocation census and preparation-history patch.
+
+Reproduction: copy the two frozen input whitefoot-{timed,account}.ll files into a
+fresh directory, then git apply --directory=<directory> post-call-length.patch.
+The exact input hashes below distinguish this diagnostic from a new emission.
+Patch replay reproduced both outputs byte for byte. Each module has four added
+instructions at each of exactly two grow_vector_append make_room call sites:
+load entry length, load exit length, compare those SSA values, llvm.assume equality.
+Removing exactly those eight instructions recovers each input byte for byte.
+The ordinary make_room contract proves this relation on normal return only;
+append subsequently changes length. This licenses neither invariant memory nor
+reuse of a former payload pointer. Generic transport must newly resolve post-call
+places and track relation support, including equal-length whole-owner replacement.
+No callee-name production rule is selected. All other IR, peer/driver/bridge/runtime
+object bytes and original runtime link order are retained.
+
+Native observation: both reached scalar and wide append bodies preserve entry
+length in x21 across wf_grow, use it for indexing and increment, and omit the
+post-growth owner-length load. Payload is loaded afresh from owner offset 16.
+The compiler adds an x21/x22 save pair: append frames grow from 32 to 48 bytes;
+the reached primitive frame remains 48 bytes. The wide public wrapper still tail
+branches to its append specialization; capacity policy remains inlined in the
+append paths. Existing comparison/conditional-branch opcode sequences are
+unchanged; the added LLVM equality does not produce a runtime comparison.
+The scalar before/after excerpts and selected wide instructions follow. They were
+verified against otool -tvV of the frozen diagnostic image; the prior scalar
+excerpt comes from Z's retained native record. Primitive excerpts were also checked
+for fresh payload reads, first malloc, positive realloc, partial memmove/free and
+null-failure checks before publication. No inline directive or allocation change.
+
+All 19 recorded build/check stages have their expected terminal exit. Positive
+spare/growth and allocator checks pass; value/state/account/allocation and clock
+faults reject. All 30 growth-accounting rows are byte-identical to Z; retained below.
+The single fixed ordinary-preparation screen exits 0 in 116.60213058395311 seconds
+(guard 116.58 s), retaining 840 unique rows: 420 real and 420 snapshot controls. Minimum
+real 1290682 ns, minimum control 1454 ns, RAW minimum 41 ns. Maximum cohort peer-median
+spread 2.3282503899%; maximum WF/peer-ratio spread 2.1905242820%, within 10% bounds.
+No history read, subtraction, omitted row, retry or paired comparison.
+
+Outcome: only wide-4096 passes the slower-peer criterion in both cohorts (1/6
+matched cells). Scalar-16 overlaps in cohort 0 and passes in cohort 1; the other
+matched cells overlap in both. Scalar-4096 overlaps Rust but remains disjoint
+slower than C++ in both cohorts. All 0/1 initial-capacity policy rows pass their
+slower-peer comparison and stay separate from the matched-capacity decision.
+Removing the load is insufficient for the append target. Counts from separate
+unpaired screens establish no gain or regression against Z, B or F.
+
+| Element / initial capacity | Cohort | WF ns/append [range] | Rust ns/append [range] | C++ ns/append [range] | Against slower peer |
+|---|---:|---:|---:|---:|---|
+| 8 B / 0 | 0 | 8.46 [8.45–8.77] | 11.73 [11.70–12.11] | 10.94 [10.91–11.01] | Pass |
+| 8 B / 0 | 1 | 8.48 [8.46–8.98] | 11.79 [11.74–12.46] | 10.95 [10.92–11.45] | Pass |
+| 8 B / 1 | 0 | 18.47 [18.45–18.76] | 32.55 [32.24–33.49] | 19.18 [19.06–19.31] | Pass |
+| 8 B / 1 | 1 | 18.56 [18.49–19.91] | 32.46 [32.30–32.76] | 19.18 [19.07–19.43] | Pass |
+| 8 B / 16 | 0 | 35.38 [34.50–37.27] | 36.90 [36.70–38.62] | 25.60 [25.47–26.48] | Overlap |
+| 8 B / 16 | 1 | 34.98 [34.58–36.62] | 36.88 [36.71–39.03] | 25.62 [25.42–27.15] | Pass |
+| 8 B / 256 | 0 | 101.59 [100.73–104.13] | 103.64 [102.41–107.95] | 95.24 [92.53–97.19] | Overlap |
+| 8 B / 256 | 1 | 101.46 [100.99–103.50] | 102.77 [102.07–107.47] | 93.07 [91.50–97.47] | Overlap |
+| 8 B / 4096 | 0 | 715.30 [680.90–842.99] | 661.80 [655.77–805.47] | 655.22 [648.26–677.89] | Overlap |
+| 8 B / 4096 | 1 | 707.87 [699.35–836.47] | 663.82 [653.47–733.44] | 653.02 [647.75–676.12] | Overlap |
+| 256 B / 0 | 0 | 12.93 [12.90–13.42] | 22.34 [22.29–23.40] | 15.65 [15.58–16.31] | Pass |
+| 256 B / 0 | 1 | 12.92 [12.87–13.23] | 22.34 [22.26–23.28] | 15.70 [15.57–16.25] | Pass |
+| 256 B / 1 | 0 | 49.44 [48.96–51.20] | 53.20 [52.54–55.30] | 43.11 [42.86–44.57] | Pass |
+| 256 B / 1 | 1 | 49.39 [49.07–50.36] | 52.92 [52.74–54.33] | 43.27 [42.85–44.87] | Pass |
+| 256 B / 16 | 0 | 150.99 [149.55–164.36] | 151.95 [149.13–162.13] | 143.57 [141.04–160.88] | Overlap |
+| 256 B / 16 | 1 | 149.45 [148.00–155.42] | 150.36 [149.19–162.78] | 142.31 [141.29–144.20] | Overlap |
+| 256 B / 256 | 0 | 1318.24 [1296.70–1485.27] | 1312.93 [1309.75–1393.43] | 1311.56 [1292.15–1400.77] | Overlap |
+| 256 B / 256 | 1 | 1321.54 [1306.41–1342.71] | 1315.06 [1309.70–1359.74] | 1315.06 [1306.28–1327.58] | Overlap |
+| 256 B / 4096 | 0 | 161.37 [159.61–162.48] | 162.85 [161.11–165.91] | 14866.62 [14766.19–15067.78] | Pass |
+| 256 B / 4096 | 1 | 161.09 [158.18–163.01] | 162.40 [157.57–163.98] | 14885.08 [14822.21–14907.27] | Pass |
+
+Artifact SHA-256
+d9e054d546767b392286d13f74c1f0d5ce1fb784afcdd21edc5ae60c9acccd33  post-call-length.patch
+fcd1cda57c4b29bb7590525efc02644f343b789aeb40d4e2b854a021ebcc1519  ecosystem-append-growth-post-call-length-samples.csv
+3b6e7e0cfef2d9e00bdd6c14eb4b8829cd3863fa09a48242345eea9f69fdccef  whitefoot-timed.ll
+9df08b7301f43a19daf3b67a87f646c4deaf78abedd997edafd075929b7f2403  whitefoot-timed.o
+be44c6be8c66c20b0646a5a16ed1feb4f68593f36dc5d8c6343406902f473b2e  whitefoot-account.ll
+bb459ba5bee71b90f48842953315aa4d63faf2ce78a88efa1f1dbeda432f4ed9  whitefoot-account.o
+32dc817ac8cbccb40ce3d22fcbad9224c23dc079cfeec317d9c08a736dd5a21c  vector-costs-timed
+d8fcea2f543303cf3d586af4d4d6a86bfda286813f6f4286a2602e816568c71a  vector-costs-account
+
+Verified frozen inputs (source and copy independently checked)
+e1ce286e2e71d3d304878ed8f81a3ee93307f3d67913e50e73d8e6852e3c694c  /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api/whitefoot-timed.ll
+  copy: /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/whitefoot-timed.ll
+8e08f4bf349fa82ba5e04f79d8fbd458baeeacff60e11562f108a79ab043ebb4  /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/ecosystem/driver-timed.o
+  copy: /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/driver-timed.o
+c35ec1f01eef08066ef381b06da6fc72ef6aba12d98a1b33c48a016de6313dd1  /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/ecosystem/cpp-timed.o
+  copy: /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/cpp-timed.o
+b1eccd7d521f678bd123531708f67a1cce0f6b6fa509edb907acab53f1f11873  /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/ecosystem/rust-timed.a
+  copy: /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/rust-timed.a
+7433b0ecd3d2ac3a57a692d149684fa0e50891c1cddf98631f37975d5f57d50d  /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api/whitefoot-account.ll
+  copy: /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/whitefoot-account.ll
+98a755bf6896da1aa130a959183ccdbb2934541500a8e1380acc77436e17beab  /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api/driver-account.o
+  copy: /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/driver-account.o
+7584d61db0d902bfa4b5975c5fcd2f717f9d34fa174c9ae4650f457178477de5  /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/ecosystem/cpp-account.o
+  copy: /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/cpp-account.o
+f35af52b27861a01c37bf9cbdc0c103949619ba8fb3cd479812d07ed1b45c563  /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/ecosystem/rust-account.a
+  copy: /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/rust-account.a
+07ebcae5ed98fa7ff1a218150170f56c961e9dbae682781b62a5878a094da58b  /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/ordinary_values.o
+  copy: /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/ordinary_values.o
+0655633c69666fcce21bf67258101aedb49c914fc50a6cc8edbfe22a8315e645  /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/sched/core.o
+  copy: /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/sched/core.o
+e04734d7a1ddbe9083b47570ca2854963803b88a7197628bed2ca66cb4924d5c  /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/sched/entry.o
+  copy: /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/sched/entry.o
+75cb971977625c9b05adcf74b14989544ccbf61b0a81fe4843ec72226eb36c61  /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/completion/runtime.o
+  copy: /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/completion/runtime.o
+1bcbb49aa9a44031faf6397e01a960b2ce5d5d02f42cc2aaecb4edc0818d8ec6  /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/completion/file_adapter.o
+  copy: /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/completion/file_adapter.o
+a1def81793c4229e41586590b91d134a9a2375a6ad9d31189b8164e91aaf137b  /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/completion/bridge.o
+  copy: /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/completion/bridge.o
+8342e7ea0b8d6a0817d543e8c05e807c96527393945e95597718ba9a27ce722d  /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/wf_floor.o
+  copy: /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/wf_floor.o
+c3a5140b8221a57d27a510995ae37c7b33a64ebc87ec9f9286b99ece649bce45  /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/sched/prim_host.o
+  copy: /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/sched/prim_host.o
+b9dbbb1485b2c3e47ef248568020130e7e27446e56be5a2c52f224bbd7a2f463  /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/completion/wait_host.o
+  copy: /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/completion/wait_host.o
+f1fa09d7c0831333726c367986a3811d588e639f090435b1cbf1fce62758bf33  /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/completion/file_posix.o
+  copy: /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/completion/file_posix.o
+e389769ac8c9f38af9cd00e5bc5d56d3c180dff5985fb81ddfff63dfa89eb453  /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/completion/linux_io_uring.o
+  copy: /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/completion/linux_io_uring.o
+846bc08916aadbe77111a2c45aff15f33fd1fb7ffe816c198c2bf6f96dcad210  /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/native/ordinary_values_ir.o
+  copy: /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/ordinary_values_ir.o
+b201a1b4c00d3b534a5b9df19e354d1166e3de19f24db79d8d1a805c9c7305a3  /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/prepare-bridge.o
+  copy: /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/prepare-bridge.o
+b196ebd1484e688c1979efad738c697b22ec9d4e2179f851097c17e1d01ff0f8  /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/api-inputs/prepare-bridge.ll
+  copy: /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/prepare-bridge.ll
+
+Exact command sequence (WHITEFOOT_CHECK_TIMEOUT=120)
+cwd: /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library
+perl /private/tmp/whitefoot-container-library-complete/.github/run-check.pl post-length-timed-compile clang -O3 -Wno-override-module -x ir -c /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/whitefoot-timed.ll -o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/whitefoot-timed.o
+exit: 0; expected: 0; outer runner seconds: 0.23330050008371472
+
+cwd: /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library
+perl /private/tmp/whitefoot-container-library-complete/.github/run-check.pl post-length-timed-link clang++ -O3 /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/driver-timed.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/whitefoot-timed.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/cpp-timed.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/rust-timed.a /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/ordinary_values.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/sched/core.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/sched/entry.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/completion/runtime.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/completion/file_adapter.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/completion/bridge.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/wf_floor.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/sched/prim_host.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/completion/wait_host.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/completion/file_posix.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/completion/linux_io_uring.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/ordinary_values_ir.o -pthread -lm /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/prepare-bridge.o -liconv -lSystem -lc -lm -o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/vector-costs-timed
+exit: 0; expected: 0; outer runner seconds: 0.1300343330949545
+
+cwd: /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library
+perl /private/tmp/whitefoot-container-library-complete/.github/run-check.pl post-length-account-compile clang -O3 -Wno-override-module -x ir -c /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/whitefoot-account.ll -o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/whitefoot-account.o
+exit: 0; expected: 0; outer runner seconds: 0.23960362514480948
+
+cwd: /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library
+perl /private/tmp/whitefoot-container-library-complete/.github/run-check.pl post-length-account-link clang++ -O3 /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/driver-account.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/whitefoot-account.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/cpp-account.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/rust-account.a /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/ordinary_values.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/sched/core.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/sched/entry.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/completion/runtime.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/completion/file_adapter.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/completion/bridge.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/wf_floor.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/sched/prim_host.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/completion/wait_host.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/completion/file_posix.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/completion/linux_io_uring.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/ordinary_values_ir.o -pthread -lm /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/prepare-bridge.o -liconv -lSystem -lc -lm -o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/vector-costs-account
+exit: 0; expected: 0; outer runner seconds: 0.1211477923206985
+
+cwd: /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library
+perl /private/tmp/whitefoot-container-library-complete/.github/run-check.pl post-length-timed-growth-api-check /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/vector-costs-timed growth-api-check
+exit: 0; expected: 0; outer runner seconds: 0.4618637911044061
+
+cwd: /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library
+perl /private/tmp/whitefoot-container-library-complete/.github/run-check.pl post-length-timed-api-check /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/vector-costs-timed api-check
+exit: 0; expected: 0; outer runner seconds: 0.14999141730368137
+
+cwd: /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library
+perl /private/tmp/whitefoot-container-library-complete/.github/run-check.pl post-length-timed-growth-fail-values /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/vector-costs-timed growth-api-fail-values
+exit: 1; expected: 1; outer runner seconds: 0.12854366702958941
+
+cwd: /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library
+perl /private/tmp/whitefoot-container-library-complete/.github/run-check.pl post-length-timed-growth-fail-state /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/vector-costs-timed growth-api-fail-state
+exit: 1; expected: 1; outer runner seconds: 0.138026415836066
+
+cwd: /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library
+perl /private/tmp/whitefoot-container-library-complete/.github/run-check.pl post-length-account-growth-api-check /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/vector-costs-account growth-api-check
+exit: 0; expected: 0; outer runner seconds: 0.36462141713127494
+
+cwd: /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library
+perl /private/tmp/whitefoot-container-library-complete/.github/run-check.pl post-length-account-api-check /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/vector-costs-account api-check
+exit: 0; expected: 0; outer runner seconds: 0.16136637516319752
+
+cwd: /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library
+perl /private/tmp/whitefoot-container-library-complete/.github/run-check.pl post-length-account-growth-fail-values /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/vector-costs-account growth-api-fail-values
+exit: 1; expected: 1; outer runner seconds: 0.15426158299669623
+
+cwd: /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library
+perl /private/tmp/whitefoot-container-library-complete/.github/run-check.pl post-length-account-growth-fail-state /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/vector-costs-account growth-api-fail-state
+exit: 1; expected: 1; outer runner seconds: 0.14270183444023132
+
+cwd: /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library
+perl /private/tmp/whitefoot-container-library-complete/.github/run-check.pl post-length-account-allocator-check /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/vector-costs-account allocator-check
+exit: 0; expected: 0; outer runner seconds: 0.13067458337172866
+
+cwd: /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library
+perl /private/tmp/whitefoot-container-library-complete/.github/run-check.pl post-length-account-allocator-fail-values /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/vector-costs-account allocator-fail-values
+exit: 1; expected: 1; outer runner seconds: 0.1382518745958805
+
+cwd: /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library
+perl /private/tmp/whitefoot-container-library-complete/.github/run-check.pl post-length-account-allocator-fail-accounting /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/vector-costs-account allocator-fail-accounting
+exit: 1; expected: 1; outer runner seconds: 0.1438966658897698
+
+cwd: /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library
+perl /private/tmp/whitefoot-container-library-complete/.github/run-check.pl post-length-account-api-fail-values /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/vector-costs-account api-fail-values
+exit: 1; expected: 1; outer runner seconds: 0.1424515419639647
+
+cwd: /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library
+perl /private/tmp/whitefoot-container-library-complete/.github/run-check.pl post-length-account-api-fail-allocation /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/vector-costs-account api-fail-allocation
+exit: 1; expected: 1; outer runner seconds: 0.1485627917572856
+
+cwd: /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library
+perl /private/tmp/whitefoot-container-library-complete/.github/run-check.pl post-length-timed-clock-fault /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/vector-costs-timed growth-api-fail-clock
+exit: 1; expected: 1; outer runner seconds: 0.14787066681310534
+
+cwd: /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library
+perl /private/tmp/whitefoot-container-library-complete/.github/run-check.pl post-length-account-rows sh -c '/private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/vector-costs-account growth-api-account > /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/append-growth-accounting.csv'
+exit: 0; expected: 0; outer runner seconds: 0.13453391660004854
+
+Single screen command (WHITEFOOT_CHECK_TIMEOUT=240)
+cwd: /private/tmp/whitefoot-container-library-complete
+perl .github/run-check.pl post-call-length-screen sh -c 'research/experiments/container-representation/vector-library/.build/post-call-length/vector-costs-timed growth-api-measure 67108864 7 8589934592 > research/experiments/container-representation/vector-library/.build/post-call-length/samples.csv'
+exit: 0; outer runner seconds: 116.60213058395311
+
+--- Raw post-length-timed-compile.log ---
+== START post-length-timed-compile (limit 120s): clang -O3 -Wno-override-module -x ir -c /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/whitefoot-timed.ll -o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/whitefoot-timed.o ==
+real 0.18
+user 0.16
+sys 0.01
+== END post-length-timed-compile: 0.21 s, exit 0 ==
+
+--- Raw post-length-timed-link.log ---
+== START post-length-timed-link (limit 120s): clang++ -O3 /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/driver-timed.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/whitefoot-timed.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/cpp-timed.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/rust-timed.a /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/ordinary_values.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/sched/core.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/sched/entry.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/completion/runtime.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/completion/file_adapter.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/completion/bridge.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/wf_floor.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/sched/prim_host.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/completion/wait_host.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/completion/file_posix.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/completion/linux_io_uring.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/ordinary_values_ir.o -pthread -lm /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/prepare-bridge.o -liconv -lSystem -lc -lm -o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/vector-costs-timed ==
+ld: warning: ignoring duplicate libraries: '-lSystem', '-lm'
+real 0.06
+user 0.09
+sys 0.03
+== END post-length-timed-link: 0.11 s, exit 0 ==
+
+--- Raw post-length-account-compile.log ---
+== START post-length-account-compile (limit 120s): clang -O3 -Wno-override-module -x ir -c /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/whitefoot-account.ll -o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/whitefoot-account.o ==
+real 0.17
+user 0.16
+sys 0.01
+== END post-length-account-compile: 0.22 s, exit 0 ==
+
+--- Raw post-length-account-link.log ---
+== START post-length-account-link (limit 120s): clang++ -O3 /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/driver-account.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/whitefoot-account.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/cpp-account.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/rust-account.a /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/ordinary_values.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/sched/core.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/sched/entry.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/completion/runtime.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/completion/file_adapter.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/completion/bridge.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/wf_floor.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/sched/prim_host.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/completion/wait_host.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/completion/file_posix.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/completion/linux_io_uring.o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/native/ordinary_values_ir.o -pthread -lm /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/inputs/prepare-bridge.o -liconv -lSystem -lc -lm -o /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/vector-costs-account ==
+ld: warning: ignoring duplicate libraries: '-lSystem', '-lm'
+real 0.05
+user 0.09
+sys 0.03
+== END post-length-account-link: 0.10 s, exit 0 ==
+
+--- Raw post-length-timed-growth-api-check.log ---
+== START post-length-timed-growth-api-check (limit 120s): /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/vector-costs-timed growth-api-check ==
+growth append clock: reads=200000 minimum_nonzero_ns=41 quantized=0
+growth append policy: whitefoot bytes=8 requested=0 initial=0 length=1 capacity=1
+growth append policy: rust-vec bytes=8 requested=0 initial=0 length=1 capacity=4
+growth append policy: cpp-std-vector bytes=8 requested=0 initial=0 length=1 capacity=1
+growth append policy: whitefoot bytes=256 requested=0 initial=0 length=1 capacity=1
+growth append policy: rust-vec bytes=256 requested=0 initial=0 length=1 capacity=4
+growth append policy: cpp-std-vector bytes=256 requested=0 initial=0 length=1 capacity=1
+growth append policy: whitefoot bytes=8 requested=1 initial=1 length=2 capacity=2
+growth append policy: rust-vec bytes=8 requested=1 initial=1 length=2 capacity=4
+growth append policy: cpp-std-vector bytes=8 requested=1 initial=1 length=2 capacity=2
+growth append policy: whitefoot bytes=256 requested=1 initial=1 length=2 capacity=2
+growth append policy: rust-vec bytes=256 requested=1 initial=1 length=2 capacity=4
+growth append policy: cpp-std-vector bytes=256 requested=1 initial=1 length=2 capacity=2
+vector append growth: scalar/256B, five capacities, three APIs passed
+real 0.37
+user 0.00
+sys 0.00
+== END post-length-timed-growth-api-check: 0.44 s, exit 0 ==
+
+--- Raw post-length-timed-api-check.log ---
+== START post-length-timed-api-check (limit 120s): /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/vector-costs-timed api-check ==
+vector spare append: scalar/256B, five counts, three APIs passed
+real 0.00
+user 0.00
+sys 0.00
+== END post-length-timed-api-check: 0.11 s, exit 0 ==
+
+--- Raw post-length-timed-growth-fail-values.log ---
+== START post-length-timed-growth-fail-values (limit 120s): /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/vector-costs-timed growth-api-fail-values ==
+vector library costs: growth append full values and checksum
+real 0.00
+user 0.00
+sys 0.00
+== END post-length-timed-growth-fail-values: 0.11 s, exit 1 ==
+
+--- Raw post-length-timed-growth-fail-state.log ---
+== START post-length-timed-growth-fail-state (limit 120s): /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/vector-costs-timed growth-api-fail-state ==
+vector library costs: growth append post state
+real 0.00
+user 0.00
+sys 0.00
+== END post-length-timed-growth-fail-state: 0.11 s, exit 1 ==
+
+--- Raw post-length-account-growth-api-check.log ---
+== START post-length-account-growth-api-check (limit 120s): /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/vector-costs-account growth-api-check ==
+growth append policy: whitefoot bytes=8 requested=0 initial=0 length=1 capacity=1
+growth append policy: rust-vec bytes=8 requested=0 initial=0 length=1 capacity=4
+growth append policy: cpp-std-vector bytes=8 requested=0 initial=0 length=1 capacity=1
+growth append policy: whitefoot bytes=256 requested=0 initial=0 length=1 capacity=1
+growth append policy: rust-vec bytes=256 requested=0 initial=0 length=1 capacity=4
+growth append policy: cpp-std-vector bytes=256 requested=0 initial=0 length=1 capacity=1
+growth append policy: whitefoot bytes=8 requested=1 initial=1 length=2 capacity=2
+growth append policy: rust-vec bytes=8 requested=1 initial=1 length=2 capacity=4
+growth append policy: cpp-std-vector bytes=8 requested=1 initial=1 length=2 capacity=2
+growth append policy: whitefoot bytes=256 requested=1 initial=1 length=2 capacity=2
+growth append policy: rust-vec bytes=256 requested=1 initial=1 length=2 capacity=4
+growth append policy: cpp-std-vector bytes=256 requested=1 initial=1 length=2 capacity=2
+vector append growth: scalar/256B, five capacities, three APIs passed
+real 0.27
+user 0.00
+sys 0.00
+== END post-length-account-growth-api-check: 0.33 s, exit 0 ==
+
+--- Raw post-length-account-api-check.log ---
+== START post-length-account-api-check (limit 120s): /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/vector-costs-account api-check ==
+vector spare append: scalar/256B, five counts, three APIs passed
+real 0.00
+user 0.00
+sys 0.00
+== END post-length-account-api-check: 0.11 s, exit 0 ==
+
+--- Raw post-length-account-growth-fail-values.log ---
+== START post-length-account-growth-fail-values (limit 120s): /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/vector-costs-account growth-api-fail-values ==
+vector library costs: growth append full values and checksum
+real 0.00
+user 0.00
+sys 0.00
+== END post-length-account-growth-fail-values: 0.11 s, exit 1 ==
+
+--- Raw post-length-account-growth-fail-state.log ---
+== START post-length-account-growth-fail-state (limit 120s): /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/vector-costs-account growth-api-fail-state ==
+vector library costs: growth append post state
+real 0.00
+user 0.00
+sys 0.00
+== END post-length-account-growth-fail-state: 0.11 s, exit 1 ==
+
+--- Raw post-length-account-allocator-check.log ---
+== START post-length-account-allocator-check (limit 120s): /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/vector-costs-account allocator-check ==
+vector allocator observer: preserved bytes, alignment and exact ledger passed
+real 0.00
+user 0.00
+sys 0.00
+== END post-length-account-allocator-check: 0.11 s, exit 0 ==
+
+--- Raw post-length-account-allocator-fail-values.log ---
+== START post-length-account-allocator-fail-values (limit 120s): /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/vector-costs-account allocator-fail-values ==
+vector library costs: reallocation observer preserved bytes
+real 0.00
+user 0.00
+sys 0.00
+== END post-length-account-allocator-fail-values: 0.11 s, exit 1 ==
+
+--- Raw post-length-account-allocator-fail-accounting.log ---
+== START post-length-account-allocator-fail-accounting (limit 120s): /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/vector-costs-account allocator-fail-accounting ==
+vector library costs: reallocation observer exact ledger
+real 0.00
+user 0.00
+sys 0.00
+== END post-length-account-allocator-fail-accounting: 0.11 s, exit 1 ==
+
+--- Raw post-length-account-api-fail-values.log ---
+== START post-length-account-api-fail-values (limit 120s): /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/vector-costs-account api-fail-values ==
+vector library costs: spare append full values and checksum
+real 0.00
+user 0.00
+sys 0.00
+== END post-length-account-api-fail-values: 0.11 s, exit 1 ==
+
+--- Raw post-length-account-api-fail-allocation.log ---
+== START post-length-account-api-fail-allocation (limit 120s): /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/vector-costs-account api-fail-allocation ==
+vector library costs: spare append zero allocation
+real 0.00
+user 0.00
+sys 0.00
+== END post-length-account-api-fail-allocation: 0.11 s, exit 1 ==
+
+--- Raw post-length-timed-clock-fault.log ---
+== START post-length-timed-clock-fault (limit 120s): /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/vector-costs-timed growth-api-fail-clock ==
+growth append clock: reads=200000 minimum_nonzero_ns=1000 quantized=1
+vector library costs: growth append clock precision
+real 0.01
+user 0.00
+sys 0.00
+== END post-length-timed-clock-fault: 0.11 s, exit 1 ==
+
+--- Raw post-length-account-rows.log ---
+== START post-length-account-rows (limit 120s): sh -c /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/vector-costs-account growth-api-account > /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/post-call-length/append-growth-accounting.csv ==
+real 0.00
+user 0.00
+sys 0.00
+== END post-length-account-rows: 0.11 s, exit 0 ==
+
+--- Raw screen.log ---
+== START post-call-length-screen (limit 240s): sh -c research/experiments/container-representation/vector-library/.build/post-call-length/vector-costs-timed growth-api-measure 67108864 7 8589934592 > research/experiments/container-representation/vector-library/.build/post-call-length/samples.csv ==
+growth append clock: reads=200000 minimum_nonzero_ns=41 quantized=0
+== RUNNING post-call-length-screen: 30 s, child 4151, group 4151 ==
+== RUNNING post-call-length-screen: 60 s, child 4151, group 4151 ==
+== RUNNING post-call-length-screen: 90 s, child 4151, group 4151 ==
+real 116.48
+user 116.19
+sys 0.20
+== END post-call-length-screen: 116.58 s, exit 0 ==
+
+--- Raw append-growth-accounting.csv ---
+contract,element_bytes,requested_capacity,initial_capacity,variant,length,capacity,requests,reallocations,releases,requested_bytes,live_before,live_after
+append-growth-o3,8,16,16,whitefoot,17,32,1,1,0,256,128,256
+append-growth-o3,8,16,16,rust-vec,17,32,1,1,0,256,128,256
+append-growth-o3,8,16,16,cpp-std-vector,17,32,1,0,1,256,128,256
+append-growth-o3,256,16,16,whitefoot,17,32,1,1,0,8192,4096,8192
+append-growth-o3,256,16,16,rust-vec,17,32,1,1,0,8192,4096,8192
+append-growth-o3,256,16,16,cpp-std-vector,17,32,1,0,1,8192,4096,8192
+append-growth-o3,8,256,256,whitefoot,257,512,1,1,0,4096,2048,4096
+append-growth-o3,8,256,256,rust-vec,257,512,1,1,0,4096,2048,4096
+append-growth-o3,8,256,256,cpp-std-vector,257,512,1,0,1,4096,2048,4096
+append-growth-o3,256,256,256,whitefoot,257,512,1,1,0,131072,65536,131072
+append-growth-o3,256,256,256,rust-vec,257,512,1,1,0,131072,65536,131072
+append-growth-o3,256,256,256,cpp-std-vector,257,512,1,0,1,131072,65536,131072
+append-growth-o3,8,4096,4096,whitefoot,4097,8192,1,1,0,65536,32768,65536
+append-growth-o3,8,4096,4096,rust-vec,4097,8192,1,1,0,65536,32768,65536
+append-growth-o3,8,4096,4096,cpp-std-vector,4097,8192,1,0,1,65536,32768,65536
+append-growth-o3,256,4096,4096,whitefoot,4097,8192,1,1,0,2097152,1048576,2097152
+append-growth-o3,256,4096,4096,rust-vec,4097,8192,1,1,0,2097152,1048576,2097152
+append-growth-o3,256,4096,4096,cpp-std-vector,4097,8192,1,0,1,2097152,1048576,2097152
+append-growth-o3,8,0,0,whitefoot,1,1,1,0,0,8,0,8
+append-growth-o3,8,0,0,rust-vec,1,4,1,0,0,32,0,32
+append-growth-o3,8,0,0,cpp-std-vector,1,1,1,0,0,8,0,8
+append-growth-o3,256,0,0,whitefoot,1,1,1,0,0,256,0,256
+append-growth-o3,256,0,0,rust-vec,1,4,1,0,0,1024,0,1024
+append-growth-o3,256,0,0,cpp-std-vector,1,1,1,0,0,256,0,256
+append-growth-o3,8,1,1,whitefoot,2,2,1,1,0,16,8,16
+append-growth-o3,8,1,1,rust-vec,2,4,1,1,0,32,8,32
+append-growth-o3,8,1,1,cpp-std-vector,2,2,1,0,1,16,8,16
+append-growth-o3,256,1,1,whitefoot,2,2,1,1,0,512,256,512
+append-growth-o3,256,1,1,rust-vec,2,4,1,1,0,1024,256,1024
+append-growth-o3,256,1,1,cpp-std-vector,2,2,1,0,1,512,256,512
+
+--- Z scalar before ---
+_wf_vector_api_word_append_one:
+000000010000feac	stp	x20, x19, [sp, #-0x20]!
+000000010000feb0	stp	x29, x30, [sp, #0x10]
+000000010000feb4	mov	x20, x1
+000000010000feb8	mov	x19, x0
+000000010000febc	ldp	x9, x8, [x0]
+000000010000fec0	cmp	x8, x9
+000000010000fec4	b.ne	0x10000ff00
+000000010000fec8	cbz	x8, 0x10000fedc
+000000010000fecc	cmp	x8, #0x1, lsl #12
+000000010000fed0	b.hi	0x10000fee4
+000000010000fed4	lsl	x1, x8, #1
+000000010000fed8	b	0x10000fef4
+000000010000fedc	mov	w1, #0x1
+000000010000fee0	b	0x10000fef4
+000000010000fee4	mov	x9, x8
+000000010000fee8	cmp	x8, #0x2, lsl #12
+000000010000feec	b.hi	0x10000ff00
+000000010000fef0	mov	w1, #0x2001
+000000010000fef4	mov	x0, x19
+000000010000fef8	bl	_wf_grow$instance$e194368921a477a7
+000000010000fefc	ldr	x9, [x19]
+000000010000ff00	ldr	x8, [x19, #0x10]
+000000010000ff04	str	x20, [x8, x9, lsl #3]
+000000010000ff08	add	x0, x9, #0x1
+000000010000ff0c	str	x0, [x19]
+000000010000ff10	ldp	x29, x30, [sp, #0x10]
+000000010000ff14	ldp	x20, x19, [sp], #0x20
+000000010000ff18	ret
+
+--- Post-call scalar after ---
+_wf_vector_api_word_append_one:
+000000010000feac	stp	x22, x21, [sp, #-0x30]!
+000000010000feb0	stp	x20, x19, [sp, #0x10]
+000000010000feb4	stp	x29, x30, [sp, #0x20]
+000000010000feb8	mov	x20, x1
+000000010000febc	mov	x19, x0
+000000010000fec0	ldp	x21, x8, [x0]
+000000010000fec4	cmp	x8, x21
+000000010000fec8	b.ne	0x10000fefc
+000000010000fecc	cbz	x21, 0x10000fee0
+000000010000fed0	cmp	x21, #0x1, lsl #12
+000000010000fed4	b.hi	0x10000fee8
+000000010000fed8	lsl	x1, x21, #1
+000000010000fedc	b	0x10000fef4
+000000010000fee0	mov	w1, #0x1
+000000010000fee4	b	0x10000fef4
+000000010000fee8	cmp	x21, #0x2, lsl #12
+000000010000feec	b.hi	0x10000fefc
+000000010000fef0	mov	w1, #0x2001
+000000010000fef4	mov	x0, x19
+000000010000fef8	bl	_wf_grow$instance$e194368921a477a7
+000000010000fefc	ldr	x8, [x19, #0x10]
+000000010000ff00	str	x20, [x8, x21, lsl #3]
+000000010000ff04	add	x0, x21, #0x1
+000000010000ff08	str	x0, [x19]
+000000010000ff0c	ldp	x29, x30, [sp, #0x20]
+000000010000ff10	ldp	x20, x19, [sp, #0x10]
+000000010000ff14	ldp	x22, x21, [sp], #0x30
+000000010000ff18	ret
+
+--- Post-call wide selected instructions (addresses preserve omitted intervals) ---
+_wf_vector_api_append_one$instance$694069a978d9626c:
+0000000100010d5c	stp	x22, x21, [sp, #-0x30]!
+0000000100010d60	stp	x20, x19, [sp, #0x10]
+0000000100010d64	stp	x29, x30, [sp, #0x20]
+0000000100010d70	ldp	x21, x8, [x0]
+0000000100010da8	bl	_wf_grow$instance$04ee659886c12146
+0000000100010e68	ldr	x9, [x19, #0x10]
+0000000100010e6c	add	x9, x9, x21, lsl #8
+0000000100010eb4	add	x0, x21, #0x1
+0000000100010eb8	str	x0, [x19]
+0000000100010ebc	ldp	x29, x30, [sp, #0x20]
+0000000100010ec0	ldp	x20, x19, [sp, #0x10]
+0000000100010ec4	ldp	x22, x21, [sp], #0x30
+0000000100010ec8	ret
+
