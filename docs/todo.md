@@ -575,6 +575,15 @@ rarely insert at the same place.
   Capacity zero is not an allocation-ownership tag. Account for any new
   metadata or runtime checks on positive-capacity hot paths; do not revive the
   old patch.
+  A separate [nullable-owner prototype](../research/experiments/container-representation/vector-library/RESULTS.md#nullable-zero-extent-owner-allocation-gain-useful-regressions-refuse-selection)
+  covers the measured Vector owner/linked ABI path and removes the zero
+  request, but its full pair has 14 qualified useful losses against four
+  gains; repeated scalar reuse roughly doubles. The preregistered no-loss
+  condition refuses it. Its immutable READ-only fallback fails the native
+  append-promotion/frame screen before behavior or timing. Reopen only with
+  a general nonnull hot-path lowering that passes a discriminating native
+  screen, then complete real-worker and all-bin lifetime qualification before
+  any representation selection.
   The surviving native empty allocation/free pair occurs per reserved/growing
   round; optimized reuse/suffix construction already omits it, unlike the
   instrumented ledger. Local fresh-allocation coalescing is an unimplemented

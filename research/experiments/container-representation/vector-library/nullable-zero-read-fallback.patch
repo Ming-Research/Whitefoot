@@ -1,0 +1,21 @@
+--- candidate.timed.ll
++++ read-fallback.timed.ll
+@@ -77,14 +77,13 @@
+ %wf.t.4fe45f1358b41568 = type { ptr }
+ %wf.t.c59a17969695b1c4 = type { ptr }
+ 
++@wf.runtime.shape.zero_read = private constant [3 x i64] zeroinitializer, align 8
++
+ define private i64 @wf.runtime.shape.read(ptr %block, i64 %word) alwaysinline #0 {
+ entry:
+   %empty = icmp eq ptr %block, null
+-  br i1 %empty, label %zero, label %real
+-zero:
+-  ret i64 0
+-real:
+-  %address = getelementptr inbounds i64, ptr %block, i64 %word
++  %header = select i1 %empty, ptr @wf.runtime.shape.zero_read, ptr %block
++  %address = getelementptr inbounds i64, ptr %header, i64 %word
+   %value = load i64, ptr %address
+   ret i64 %value
+ }

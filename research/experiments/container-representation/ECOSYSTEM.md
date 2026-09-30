@@ -478,6 +478,16 @@ standard-peer targets remain inconclusive. The separate unchanged-IR
 `-sink-insts-to-avoid-spills` option produces byte-identical native code.
 Neither diagnostic selects a production compiler policy or completes Vector.
 
+The [nullable zero-extent owner trial](vector-library/RESULTS.md#nullable-zero-extent-owner-allocation-gain-useful-regressions-refuse-selection)
+on a frozen current122 compiler removes each fresh empty owner request while
+preserving real zero-capacity linked owners and the existing Vector content/
+accounting oracles. Its one full pair has four qualified useful gains and 14
+losses; scalar growth/count 16 improves about 8%, but repeated scalar reuse
+roughly doubles. The preregistered no-loss condition refuses this physical
+representation. An immutable READ-only fallback also fails its native
+promotion/frame screen before any link or timing. The source patch, exact
+identities and all raw samples are retained; neither variant is integrated.
+
 ### Next discriminator: ordinary register-allocation spill splitting
 
 The native save-placement result permits one code-generation screen, not a

@@ -1,0 +1,1905 @@
+diff --git a/compiler/src/backend/emitter.rs b/compiler/src/backend/emitter.rs
+--- a/compiler/src/backend/emitter.rs
++++ b/compiler/src/backend/emitter.rs
+@@ -16,6 +16,7 @@
+ mod frames;
+ mod frontier;
+ mod integer;
++mod nullable_shapes;
+ mod operations;
+ mod parallel;
+ pub(super) mod places;
+@@ -350,6 +351,12 @@
+     text.text("\n");
+     emit_nominal_declarations(&mut text, program, target)?;
+     emit_global_constants(&mut text, program)?;
++    if cleanup::program_types(program)?
++        .into_iter()
++        .any(nullable_shapes::is_nullable_shape)
++    {
++        text.append(nullable_shapes::helpers()?);
++    }
+     // An allocation this host refuses is the heap twin of an exhausted stack,
+     // and it gets the same treatment: one record naming the resource class,
+     // written once, before a defined abort. The bytes carry no `rule_id`, no
+diff --git a/compiler/src/backend/emitter/buffer.rs b/compiler/src/backend/emitter/buffer.rs
+--- a/compiler/src/backend/emitter/buffer.rs
++++ b/compiler/src/backend/emitter/buffer.rs
+@@ -1,11 +1,10 @@
+ //! Emission of the runtime-capacity `Array<T>` [TYPE-9] and its readers.
+ //!
+-//! The shape is one heap block `[len | elements]`
+-//! (compiler/storage-representation): [TYPE-9] stores a `Box`'s content "in
+-//! exactly one heap object the `Box` value owns" and [STOR-3] reclaims it
+-//! with "one compiler-derived heap free", so the cell pointer *is* the block
+-//! pointer, one `malloc` builds it, one `free` reclaims it, and every element
+-//! address is one `inbounds` step past the header. An `Array`'s `len` equals
++//! A real shape is one heap block `[len | elements]`: the thin owner points
++//! at its allocation base, and one `free` reclaims that block. A null owner
++//! physically elides the zero-length block while retaining the checked
++//! logical Box and release [TYPE-9, STOR-1, STOR-3, STOR-8]. Shared shape
++//! readers report zero without dereferencing null. An `Array`'s `len` equals
+ //! its `cap` [WIN-1], so the one runtime number is stored once, exactly as a
+ //! boxed `Slots` stores `len` and `cap` and a boxed `Ring` stores `head`
+ //! beside them.
+@@ -100,7 +99,7 @@
+ 
+     /// Projects the first-element address carried by a synthesized task
+     /// capture. This changes only the compiler's internal capture ABI; the
+-    /// source Box value remains the allocation-base pointer.
++    /// source Box value remains its thin owner, null or an allocation base.
+     pub(super) fn emit_runtime_box_payload(
+         &mut self,
+         result: IrValueId,
+@@ -114,16 +113,17 @@
+             return Err(BackendFailure::InvalidIr);
+         }
+         let block = self.buffer_block_type(nominal)?;
+-        {
+-            let emitted_type_1 = self.output.type_name(self.program, block)?;
+-            writeln!(
+-                self.output,
+-                "  {} = getelementptr inbounds {}, ptr {}, i64 0, i32 {ELEMENTS_FIELD}, i64 0",
+-                self.value_name(result),
+-                emitted_type_1,
+-                self.value_name(owner)
+-            )
+-        }
++        let pointer = self.shape_payload(
++            block,
++            &self.value_name(owner),
++            "null",
++            ELEMENTS_FIELD as usize,
++        )?;
++        writeln!(
++            self.output,
++            "  {} = getelementptr i8, ptr {pointer}, i64 0",
++            self.value_name(result)
++        )
+         .map_err(|_| BackendFailure::TextEmission)
+     }
+ 
+@@ -142,21 +142,18 @@
+             return Err(BackendFailure::InvalidIr);
+         }
+         let block = self.buffer_block_type(nominal)?;
+-        let negative_header = self.next_temporary()?;
+         let header_size = self.buffer_header_size(block)?;
++        let pointer = self.shape_owner(&self.value_name(payload), &header_size)?;
+         writeln!(
+             self.output,
+-            "  %{negative_header} = sub i64 0, {}\n  {} = getelementptr inbounds i8, ptr {}, i64 %{negative_header}",
+-            header_size,
+-            self.value_name(result),
+-            self.value_name(payload),
++            "  {} = getelementptr i8, ptr {pointer}, i64 0",
++            self.value_name(result)
+         )
+         .map_err(|_| BackendFailure::TextEmission)
+     }
+ 
+-    /// [OP-13] `box_array_filled`: one block `[len | elements]`, every
+-    /// element holding the supplied copy value, and the cell that owns it,
+-    /// which is that same pointer.
++    /// [OP-13] `box_array_filled`: null for count zero, otherwise one block
++    /// `[len | elements]`, with every element holding the supplied copy value.
+     pub(super) fn emit_buffer_fill(
+         &mut self,
+         result: IrValueId,
+@@ -190,8 +187,8 @@
+         self.emit_buffer_block(result, block, element, length, Some(value))
+     }
+ 
+-    /// One allocation of `header + count * stride` bytes, the `len` word, and
+-    /// the element loop.
++    /// A positive count allocates `header + count * stride` bytes, stores
++    /// `len`, and fills the elements. Count zero produces null directly.
+     ///
+     /// The count's product with the stride is representable: [OP-9]'s
+     /// accepted site proved `n <= floor((2^64 - 1) / stride_ceiling(T))` and
+@@ -223,10 +220,19 @@
+         let body = buffer_fill_body_label(result);
+         let done = buffer_fill_done_label(result);
+         let count = self.value_name(length);
+-        let address = self.value_name(result);
+-        {
+-            write!(self.output, "  %{element_bytes} = mul nuw i64 {count}, {stride}\n  %{bytes} = add nuw i64 %{element_bytes}, {header}\n  br label %{allocate}\n").map_err(|_| BackendFailure::TextEmission)?;
+-            self.output.open_block(allocate.to_string());
++        let result_name = self.value_name(result);
++        let address = format!("{result_name}.fresh");
++        let empty = format!("buffer.fill.empty.v{}", result.ordinal());
++        let zero = self.next_temporary()?;
++        writeln!(
++            self.output,
++            "  %{zero} = icmp eq i64 {count}, 0\n  br i1 %{zero}, label %{empty}, label %{allocate}"
++        )?;
++        self.output.open_block(empty.clone());
++        writeln!(self.output, "  br label %{done}")?;
++        self.output.open_block(allocate.to_string());
++        {
++            write!(self.output, "  %{element_bytes} = mul nuw i64 {count}, {stride}\n  %{bytes} = add nuw i64 %{element_bytes}, {header}\n").map_err(|_| BackendFailure::TextEmission)?;
+             {
+                 self.output.symbol("malloc");
+                 write!(
+@@ -276,6 +282,10 @@
+             )
+             .map_err(|_| BackendFailure::TextEmission)?;
+             self.output.open_block(done.to_string());
++            writeln!(
++                self.output,
++                "  {result_name} = phi ptr [ null, %{empty} ], [ {address}, %{head} ]"
++            )?;
+             Ok::<_, BackendFailure>(())
+         }
+     }
+@@ -298,11 +308,11 @@
+         }
+         let (block, _) = self.buffer_block(buffer)?;
+         let address = self.addressed_storage_pointer(buffer)?;
+-        let length_address = self.aggregate_field_pointer(block, &address, LENGTH_FIELD)?;
++        let length = self.shape_word(block, &address, LENGTH_FIELD)?;
+         writeln!(
+             self.output,
+-            "  {} = load i64, ptr {length_address}",
+-            self.value_name(result),
++            "  {} = add i64 {length}, 0",
++            self.value_name(result)
+         )
+         .map_err(|_| BackendFailure::TextEmission)
+     }
+@@ -403,13 +413,14 @@
+             {
+                 let block = IrType::Buffer { element };
+                 let address = self.addressed_storage_pointer(buffer)?;
+-                let length_address = self.aggregate_field_pointer(block, &address, LENGTH_FIELD)?;
+-                let length = self.next_temporary()?;
+-                writeln!(self.output, "  %{length} = load i64, ptr {length_address}")
+-                    .map_err(|_| BackendFailure::TextEmission)?;
+-                let zero = "0".to_owned();
+-                let first = self.buffer_element_pointer(block, &address, &zero)?;
+-                (format!("%{length}"), first)
++                let length = self.shape_word(block, &address, LENGTH_FIELD)?;
++                let first = self.shape_payload(
++                    block,
++                    &address,
++                    &self.value_name(buffer),
++                    ELEMENTS_FIELD as usize,
++                )?;
++                (length, first)
+             }
+             Some(IrType::Address(IrAddressed::Array {
+                 element,
+diff --git a/compiler/src/backend/emitter/cleanup.rs b/compiler/src/backend/emitter/cleanup.rs
+--- a/compiler/src/backend/emitter/cleanup.rs
++++ b/compiler/src/backend/emitter/cleanup.rs
+@@ -203,6 +203,17 @@
+         signature.references = output.references.clone();
+     }
+     output.open_block("entry".to_owned());
++    let nullable = super::nullable_shapes::is_nullable_shape(ty);
++    let walk_entry = if nullable {
++        output.push_str(
++            "  %empty = icmp eq ptr %value, null\n  br i1 %empty, label %done, label %real\n",
++        );
++        output.open_block("real".to_owned());
++        "real"
++    } else {
++        "entry"
++    };
++
+     let element = match ty {
+         IrType::Buffer { element } => {
+             writeln!(
+@@ -311,7 +322,7 @@
+     {
+         writeln!(output, "  br label %walk").map_err(|_| BackendFailure::TextEmission)?;
+         output.open_block("walk".to_string());
+-        write!(output, "  %index = phi i64 [ 0, %entry ], [ %next, %body ]\n  %continue = icmp ult i64 %index, %length\n  br i1 %continue, label %body, label %done\n").map_err(|_| BackendFailure::TextEmission)?;
++        write!(output, "  %index = phi i64 [ 0, %{walk_entry} ], [ %next, %body ]\n  %continue = icmp ult i64 %index, %length\n  br i1 %continue, label %body, label %done\n").map_err(|_| BackendFailure::TextEmission)?;
+         output.open_block("body".to_string());
+         write!(output, "  %raw = add i64 %origin, %index\n  %over = icmp uge i64 %raw, %capacity\n  %reduced = sub i64 %raw, %capacity\n  %physical = select i1 %over, i64 %reduced, i64 %raw\n  %element.pointer = getelementptr inbounds {element_llvm}, ptr %pointer, i64 {address_index}\n").map_err(|_| BackendFailure::TextEmission)?;
+     };
+@@ -568,6 +579,7 @@
+         field_ty: IrType,
+     },
+     FreePointer(String),
++    FreeNullableShape(String),
+ }
+ 
+ pub(super) fn emit_cleanup(
+@@ -599,6 +611,12 @@
+                     writeln!(output, "  call void @free(ptr {pointer})")
+                 }
+                 .map_err(|_| BackendFailure::TextEmission)?;
++            }
++            CleanupJob::FreeNullableShape(pointer) => {
++                let release = super::nullable_shapes::RELEASE;
++                output.symbol(release);
++                writeln!(output, "  call void @{release}(ptr {pointer})")
++                    .map_err(|_| BackendFailure::TextEmission)?;
+             }
+             CleanupJob::Field {
+                 aggregate_ty,
+@@ -790,16 +808,15 @@
+                         // [PROV-6, STOR-3] release the referent first, then
+                         // free the cell back to the one heap.
+                         IrNominalKind::Box { referent, release } => {
+-                            // A boxed runtime-capacity shape is thin: the
+-                            // cell pointer is the block, whose header and
+-                            // elements are the same allocation
+-                            // (compiler/storage-representation), which is
+-                            // what [TYPE-9]'s "exactly one heap object" and
+-                            // [STOR-3]'s "one compiler-derived heap free"
+-                            // say. Loading the block would read past its
+-                            // declared zero-length element array, so its
+-                            // walk takes the pointer and the cell's own free
+-                            // is the block's.
++                            // A boxed runtime-capacity shape is thin. A real
++                            // block has one header-first allocation; a null
++                            // Array/Slots/Ring owner elides only its physical
++                            // zero-extent block. The checked logical Box and
++                            // release remain [TYPE-9, STOR-1, STOR-3, STOR-8].
++                            // Its walk takes the owner directly, skipping null,
++                            // then its release frees a real block exactly once.
++                            // Loading a whole runtime block would read past
++                            // its declared zero-length element array.
+                             // A `Segments` block holds copy elements
+                             // [OP-13], so its release is the free alone.
+                             if matches!(referent, IrType::Segments { .. }) {
+@@ -813,7 +830,7 @@
+                                 IrType::Window { capacity: None, .. } | IrType::Buffer { .. }
+                             ) {
+                                 if *release == IrReleaseClass::General {
+-                                    jobs.push(CleanupJob::FreePointer(operand.clone()));
++                                    jobs.push(CleanupJob::FreeNullableShape(operand.clone()));
+                                 }
+                                 match referent {
+                                     IrType::Window { element, .. } | IrType::Buffer { element } => {
+diff --git a/compiler/src/backend/emitter/parallel.rs b/compiler/src/backend/emitter/parallel.rs
+--- a/compiler/src/backend/emitter/parallel.rs
++++ b/compiler/src/backend/emitter/parallel.rs
+@@ -878,11 +878,7 @@
+                 )?;
+                 let pointer =
+                     self.referent_storage_pointer(IrAddressed::Buffer { element }, pointer)?;
+-                let address = self.aggregate_field_pointer(block, &pointer, 0)?;
+-                let result = format!("%{}", self.next_temporary()?);
+-                writeln!(self.output, "  {result} = load i64, ptr {address}")
+-                    .map_err(|_| BackendFailure::TextEmission)?;
+-                result
++                self.shape_word(block, &pointer, 0)?
+             }
+             IrWorkEstimate::Length(value) => {
+                 let ty = self.value_type(*value).ok_or(BackendFailure::InvalidIr)?;
+@@ -892,11 +888,7 @@
+                 if let IrType::Address(IrAddressed::Buffer { element }) = ty {
+                     let block = IrType::Buffer { element };
+                     let address = self.addressed_storage_pointer(*value)?;
+-                    let length_address = self.aggregate_field_pointer(block, &address, 0)?;
+-                    let result = format!("%{}", self.next_temporary()?);
+-                    writeln!(self.output, "  {result} = load i64, ptr {length_address}")
+-                        .map_err(|_| BackendFailure::TextEmission)?;
+-                    return Ok(result);
++                    return self.shape_word(block, &address, 0);
+                 }
+                 if !matches!(ty, IrType::Range { .. }) {
+                     return Err(BackendFailure::InvalidIr);
+diff --git a/compiler/src/backend/emitter/runs.rs b/compiler/src/backend/emitter/runs.rs
+--- a/compiler/src/backend/emitter/runs.rs
++++ b/compiler/src/backend/emitter/runs.rs
+@@ -212,10 +212,10 @@
+                     let address = self
+                         .run_storage(container)?
+                         .ok_or(BackendFailure::InvalidIr)?;
+-                    let pointer = self.aggregate_field_pointer(container_type, &address, 0)?;
++                    let word = self.shape_word(container_type, &address, 0)?;
+                     writeln!(
+                         self.output,
+-                        "  {} = load i64, ptr {pointer}",
++                        "  {} = add i64 {word}, 0",
+                         self.value_name(result)
+                     )
+                     .map_err(|_| BackendFailure::TextEmission)
+@@ -284,6 +284,10 @@
+         let Some(shape) = RunShape::of(run_type) else {
+             return Err(BackendFailure::InvalidIr);
+         };
++        // REF-4 admits Slots ranges. Ring ranges have no source formation.
++        if shape.shape != IrWindowShape::Slots {
++            return Err(BackendFailure::InvalidIr);
++        }
+         if shape.element_type(self.program)?
+             != self
+                 .program
+@@ -294,12 +298,27 @@
+         }
+         let head = self.window_origin(shape, run_type, run)?;
+         let length = self.run_word(run_type, run, shape.length_field())?;
+-        let pointer = self.element_pointer(result, shape, run_type, run, &head)?;
++        let pointer = if shape.capacity.is_none() {
++            // WIN-1 fixes the Slots origin at zero; the empty placeholder
++            // addresses the live owner slot, with no payload displacement.
++            let block = self.run_storage(run)?.ok_or(BackendFailure::InvalidIr)?;
++            self.shape_payload(
++                run_type,
++                &block,
++                &self.value_name(run),
++                shape.slots_field() as usize,
++            )?
++        } else {
++            format!(
++                "%{}",
++                self.element_pointer(result, shape, run_type, run, &head)?
++            )
++        };
+         let descriptor_type = self.output.type_name(self.program, ty)?;
+         let partial = self.next_temporary()?;
+         writeln!(
+             self.output,
+-            "  %{partial} = insertvalue {descriptor_type} zeroinitializer, ptr %{pointer}, 0\n  {} = insertvalue {descriptor_type} %{partial}, i64 {length}, 1",
++            "  %{partial} = insertvalue {descriptor_type} zeroinitializer, ptr {pointer}, 0\n  {} = insertvalue {descriptor_type} %{partial}, i64 {length}, 1",
+             self.value_name(result),
+         )
+         .map_err(|_| BackendFailure::TextEmission)
+@@ -359,14 +378,12 @@
+         let run_type = self.run_value_type(run)?;
+         let shape = RunShape::of(run_type).ok_or(BackendFailure::InvalidIr)?;
+         let destination = self.run_storage(run)?.ok_or(BackendFailure::InvalidIr)?;
+-        let length_address =
+-            self.aggregate_field_pointer(run_type, &destination, shape.length_field() as usize)?;
+-        writeln!(
+-            self.output,
+-            "  store i64 {}, ptr {length_address}",
+-            self.value_name(retained)
+-        )
+-        .map_err(|_| BackendFailure::TextEmission)?;
++        self.store_shape_word(
++            run_type,
++            &destination,
++            shape.length_field() as usize,
++            &self.value_name(retained),
++        )?;
+         self.emit_constant(result, ty, IrConstant::Unit)
+     }
+ 
+@@ -476,21 +493,16 @@
+             head.ok_or(BackendFailure::InvalidIr)?
+         };
+         let destination = self.run_storage(run)?.ok_or(BackendFailure::InvalidIr)?;
+-        let length_address =
+-            self.aggregate_field_pointer(run_type, &destination, shape.length_field() as usize)?;
+-        writeln!(
+-            self.output,
+-            "  store i64 %{new_length}, ptr {length_address}"
+-        )
+-        .map_err(|_| BackendFailure::TextEmission)?;
+-        // Only a `Ring` stores a window origin [WIN-1]; a `Slots` window
+-        // begins at slot zero and no operation moves it, so a front
+-        // operation over one is no row of [OP-10] this emitter can serve.
++        self.store_shape_word(
++            run_type,
++            &destination,
++            shape.length_field() as usize,
++            &format!("%{new_length}"),
++        )?;
++        // A nullable zero-capacity Ring can only receive zero-count stores;
++        // positive boundary operations require a live slot under OP-10.
+         if let Some(field) = shape.head_field() {
+-            let head_address =
+-                self.aggregate_field_pointer(run_type, &destination, field as usize)?;
+-            writeln!(self.output, "  store i64 {new_head}, ptr {head_address}")
+-                .map_err(|_| BackendFailure::TextEmission)?;
++            self.store_shape_word(run_type, &destination, field as usize, &new_head)?;
+         } else if row.front() {
+             return Err(BackendFailure::InvalidIr);
+         }
+@@ -594,10 +606,7 @@
+         let llvm = self.output.type_name(self.program, run_type)?;
+         let word = self.next_temporary()?;
+         if let Some(address) = self.run_storage(run)? {
+-            let pointer = self.aggregate_field_pointer(run_type, &address, field as usize)?;
+-            writeln!(self.output, "  %{word} = load i64, ptr {pointer}")
+-                .map_err(|_| BackendFailure::TextEmission)?;
+-            return Ok(format!("%{word}"));
++            return self.shape_word(run_type, &address, field as usize);
+         }
+         writeln!(
+             self.output,
+@@ -857,10 +866,12 @@
+         )
+         .map_err(|_| BackendFailure::TextEmission)?;
+         let storage = self.run_storage(run)?.ok_or(BackendFailure::InvalidIr)?;
+-        let length_address =
+-            self.aggregate_field_pointer(run_type, &storage, shape.length_field() as usize)?;
+-        writeln!(self.output, "  store i64 %{moved}, ptr {length_address}")
+-            .map_err(|_| BackendFailure::TextEmission)?;
++        self.store_shape_word(
++            run_type,
++            &storage,
++            shape.length_field() as usize,
++            &format!("%{moved}"),
++        )?;
+         self.emit_constant(result, ty, IrConstant::Unit)
+     }
+ 
+@@ -1000,39 +1011,30 @@
+         )
+         .map_err(|_| BackendFailure::TextEmission)?;
+         let source_storage = self.run_storage(source)?.ok_or(BackendFailure::InvalidIr)?;
+-        let source_length_address = self.aggregate_field_pointer(
++        self.store_shape_word(
+             source_type,
+             &source_storage,
+             source_shape.length_field() as usize,
+-        )?;
+-        writeln!(
+-            self.output,
+-            "  store i64 {index}, ptr {source_length_address}"
+-        )
+-        .map_err(|_| BackendFailure::TextEmission)?;
++            &index,
++        )?;
+         let destination_storage = self
+             .run_storage(destination)?
+             .ok_or(BackendFailure::InvalidIr)?;
+-        let destination_length_address = self.aggregate_field_pointer(
++        self.store_shape_word(
+             destination_type,
+             &destination_storage,
+             destination_shape.length_field() as usize,
+-        )?;
+-        writeln!(
+-            self.output,
+-            "  store i64 %{grown}, ptr {destination_length_address}"
+-        )
+-        .map_err(|_| BackendFailure::TextEmission)?;
++            &format!("%{grown}"),
++        )?;
+         self.emit_constant(result, ty, IrConstant::Unit)
+     }
+ 
+-    /// [OP-13] one runtime-capacity window block and the cell that owns it.
++    /// [OP-13] one runtime-capacity window owner, initially empty.
+     ///
+-    /// The block is `[len | cap | head? | slots]` in one allocation, so the
+-    /// cell pointer is the block pointer and every later access reaches the
+-    /// header and the slots through one address
+-    /// (compiler/storage-representation). The window starts empty, which is
+-    /// exactly what the row's `ensures` publishes.
++    /// Capacity zero produces null. A positive-capacity block is
++    /// `[len | cap | head? | slots]` in one allocation, with its owner pointing
++    /// at the header. Shared readers and writers handle null without a
++    /// header access. The source row's `ensures` is unchanged.
+     pub(super) fn emit_window_block_new(
+         &mut self,
+         result: IrValueId,
+@@ -1066,12 +1068,26 @@
+         let slots_bytes = self.next_temporary()?;
+         let bytes = self.next_temporary()?;
+         let nonnull = self.next_temporary()?;
++        let empty = format!("window.block.empty.v{}", result.ordinal());
++        let allocate = format!("window.block.allocate.v{}", result.ordinal());
++        let done = format!("window.block.done.v{}", result.ordinal());
++        let result_name = self.value_name(result);
++        let fresh = format!("{result_name}.fresh");
++        let zero = self.next_temporary()?;
++        writeln!(
++            self.output,
++            "  %{zero} = icmp eq i64 {}, 0\n  br i1 %{zero}, label %{empty}, label %{allocate}",
++            self.value_name(capacity)
++        )?;
++        self.output.open_block(empty.clone());
++        writeln!(self.output, "  br label %{done}")?;
++        self.output.open_block(allocate);
+         let ready = window_block_ready_label(result);
+         let oom = window_block_oom_label(result);
+         {
+             let emission_argument_0 = self.value_name(capacity);
+-            let emission_argument_1 = self.value_name(result);
+-            let emission_argument_2 = self.value_name(result);
++            let emission_argument_1 = fresh.clone();
++            let emission_argument_2 = fresh.clone();
+ 
+             {
+                 self.output.symbol("malloc");
+@@ -1090,7 +1106,7 @@
+             }?;
+             self.output.open_block(ready.to_string());
+         };
+-        let block_address = self.value_name(result);
++        let block_address = fresh.clone();
+         let length_address = self.aggregate_field_pointer(
+             block_type,
+             &block_address,
+@@ -1113,6 +1129,12 @@
+             writeln!(self.output, "  store i64 0, ptr {head_address}")
+                 .map_err(|_| BackendFailure::TextEmission)?;
+         }
++        writeln!(self.output, "  br label %{done}")?;
++        self.output.open_block(done);
++        writeln!(
++            self.output,
++            "  {result_name} = phi ptr [ null, %{empty} ], [ {fresh}, %{ready} ]"
++        )?;
+         let _ = block;
+         Ok(())
+     }
+@@ -1120,10 +1142,10 @@
+     /// [OP-10] `grow`: the cell's content is remade whole at the new
+     /// capacity.
+     ///
+-    /// One allocation, one copy of the header and the filled slots, one
+-    /// free, and the cell's pointer slot takes the new block. [STOR-7] makes
+-    /// the copying route legal at every value, because no judgment depends
+-    /// on the block's address.
++    /// Positive capacity allocates a block, copies its filled slots, releases
++    /// the old real block and replaces the owner slot. Zero capacity releases
++    /// a real zero block and stores null. [STOR-7] makes the copying route
++    /// legal because no judgment depends on the block's address.
+     pub(super) fn emit_window_grow(
+         &mut self,
+         result: IrValueId,
+@@ -1156,14 +1178,26 @@
+         writeln!(self.output, "  %{old} = load ptr, ptr {cell_address}")
+             .map_err(|_| BackendFailure::TextEmission)?;
+         let old_block = format!("%{old}");
+-        let old_length_address =
+-            self.aggregate_field_pointer(block_type, &old_block, shape.length_field() as usize)?;
+-        let length = self.next_temporary()?;
+-        writeln!(
+-            self.output,
+-            "  %{length} = load i64, ptr {old_length_address}"
+-        )
+-        .map_err(|_| BackendFailure::TextEmission)?;
++        let length = self.shape_word(block_type, &old_block, shape.length_field() as usize)?;
++        let empty = format!("window.grow.empty.v{}", result.ordinal());
++        let allocate = format!("window.grow.allocate.v{}", result.ordinal());
++        let copy = format!("window.grow.copy.v{}", result.ordinal());
++        let release_old = format!("window.grow.release.v{}", result.ordinal());
++        let done = format!("window.grow.done.v{}", result.ordinal());
++        let zero = self.next_temporary()?;
++        let release = nullable_shapes::RELEASE;
++        self.output.symbol(release);
++        writeln!(
++            self.output,
++            "  %{zero} = icmp eq i64 {}, 0\n  br i1 %{zero}, label %{empty}, label %{allocate}",
++            self.value_name(capacity)
++        )?;
++        self.output.open_block(empty);
++        writeln!(
++            self.output,
++            "  call void @{release}(ptr %{old})\n  store ptr null, ptr {cell_address}\n  br label %{done}"
++        )?;
++        self.output.open_block(allocate);
+         let slots_bytes = self.next_temporary()?;
+         let bytes = self.next_temporary()?;
+         let fresh = self.next_temporary()?;
+@@ -1195,7 +1229,7 @@
+             self.aggregate_field_pointer(block_type, &fresh_block, shape.length_field() as usize)?;
+         writeln!(
+             self.output,
+-            "  store i64 %{length}, ptr {fresh_length_address}"
++            "  store i64 {length}, ptr {fresh_length_address}"
+         )
+         .map_err(|_| BackendFailure::TextEmission)?;
+         let capacity_field = shape.capacity_field().ok_or(BackendFailure::InvalidIr)?;
+@@ -1210,24 +1244,36 @@
+         // The filled slots move as bytes: no value's judgment depends on its
+         // address [STOR-7], and a `Slots` window begins at slot zero, so the
+         // filled prefix is one contiguous extent.
++        let has_elements = self.next_temporary()?;
++        writeln!(
++            self.output,
++            "  %{has_elements} = icmp ne i64 {length}, 0\n  br i1 %{has_elements}, label %{copy}, label %{release_old}"
++        )?;
++        self.output.open_block(copy);
+         let old_slots = self.next_temporary()?;
+         let fresh_slots = self.next_temporary()?;
+         let moved = self.next_temporary()?;
+         let block = self.output.type_name(self.program, block_type)?;
+         writeln!(
+             self.output,
+-            "  %{old_slots} = getelementptr inbounds {block}, ptr %{old}, i64 0, i32 {slots}, i64 0\n  %{fresh_slots} = getelementptr inbounds {block}, ptr %{fresh}, i64 0, i32 {slots}, i64 0\n  %{moved} = mul nuw i64 %{length}, {element_size}",
++            "  %{old_slots} = getelementptr inbounds {block}, ptr %{old}, i64 0, i32 {slots}, i64 0\n  %{fresh_slots} = getelementptr inbounds {block}, ptr %{fresh}, i64 0, i32 {slots}, i64 0\n  %{moved} = mul nuw i64 {length}, {element_size}",
+             slots = shape.slots_field(),
+         )
+         .map_err(|_| BackendFailure::TextEmission)?;
+         self.intrinsics.insert(IntrinsicDeclaration::MemoryMove);
+         self.output.symbol("llvm.memmove.p0.p0.i64");
+-        self.output.symbol("free");
+-        writeln!(
+-            self.output,
+-            "  call void @llvm.memmove.p0.p0.i64(ptr %{fresh_slots}, ptr %{old_slots}, i64 %{moved}, i1 false)\n  call void @free(ptr %{old})\n  store ptr %{fresh}, ptr {cell_address}"
++
++        writeln!(
++            self.output,
++            "  call void @llvm.memmove.p0.p0.i64(ptr %{fresh_slots}, ptr %{old_slots}, i64 %{moved}, i1 false)\n  br label %{release_old}"
+         )
+         .map_err(|_| BackendFailure::TextEmission)?;
++        self.output.open_block(release_old);
++        writeln!(
++            self.output,
++            "  call void @{release}(ptr %{old})\n  store ptr %{fresh}, ptr {cell_address}\n  br label %{done}"
++        )?;
++        self.output.open_block(done);
+         self.emit_constant(result, ty, IrConstant::Unit)
+     }
+ 
+@@ -1242,14 +1288,19 @@
+         if ty != IrType::Unit || self.value_type(value) != Some(IrType::Nominal(nominal)) {
+             return Err(BackendFailure::InvalidIr);
+         }
+-        let IrNominalKind::Box { .. } = self.nominal(nominal)?.kind() else {
+-            return Err(BackendFailure::InvalidIr);
+-        };
+-        {
+-            self.output.symbol("free");
++        let IrNominalKind::Box { referent, .. } = self.nominal(nominal)?.kind() else {
++            return Err(BackendFailure::InvalidIr);
++        };
++        let release = if nullable_shapes::is_nullable_shape(*referent) {
++            nullable_shapes::RELEASE
++        } else {
++            "free"
++        };
++        {
++            self.output.symbol(release);
+             writeln!(
+                 self.output,
+-                "  call void @free(ptr {})",
++                "  call void @{release}(ptr {})",
+                 self.value_name(value)
+             )
+         }
+diff --git a/compiler/src/backend/emitter/slice.rs b/compiler/src/backend/emitter/slice.rs
+--- a/compiler/src/backend/emitter/slice.rs
++++ b/compiler/src/backend/emitter/slice.rs
+@@ -22,24 +22,16 @@
+         if element != buffer_element {
+             return Err(BackendFailure::InvalidIr);
+         }
+-        let block_type = self.output.type_name(
+-            self.program,
+-            IrType::Buffer {
+-                element: buffer_element,
+-            },
+-        )?;
++        let block = IrType::Buffer {
++            element: buffer_element,
++        };
+         let descriptor_type = self.output.type_name(self.program, ty)?;
+         let address = self.addressed_storage_pointer(buffer)?;
+-        let pointer = self.next_temporary()?;
+-        let length_address = self.next_temporary()?;
+-        let length = self.next_temporary()?;
++        let length = self.shape_word(block, &address, 0)?;
++        let pointer = self.shape_payload(block, &address, &self.value_name(buffer), 1)?;
+         let partial = self.next_temporary()?;
+-        writeln!(
+-            self.output,
+-            "  %{pointer} = getelementptr inbounds {block_type}, ptr {address}, i64 0, i32 1, i64 0\n  %{length_address} = getelementptr inbounds {block_type}, ptr {address}, i32 0, i32 0\n  %{length} = load i64, ptr %{length_address}\n  %{partial} = insertvalue {descriptor_type} zeroinitializer, ptr %{pointer}, 0\n  {} = insertvalue {descriptor_type} %{partial}, i64 %{length}, 1",
+-            self.value_name(result),
+-        )
+-        .map_err(|_| BackendFailure::TextEmission)
++        writeln!(self.output, "  %{partial} = insertvalue {descriptor_type} zeroinitializer, ptr {pointer}, 0\n  {} = insertvalue {descriptor_type} %{partial}, i64 {length}, 1", self.value_name(result))
++            .map_err(|_| BackendFailure::TextEmission)
+     }
+ 
+     pub(super) fn emit_slice_range(
+diff --git a/compiler/src/backend/emitter/nullable_shapes.rs b/compiler/src/backend/emitter/nullable_shapes.rs
+new file mode 100644
+--- /dev/null
++++ b/compiler/src/backend/emitter/nullable_shapes.rs
+@@ -0,0 +1,167 @@
++//! Physical elision of zero-extent runtime Array/Slots/Ring blocks.
++//!
++//! Null is the sole virtual-owner tag. Nonnull includes ordinary linked
++//! zero-extent allocations, which must still be read and released normally.
++//! References address live owner slots; this module never creates shared
++//! writable headers. Checked source operations and target qualification remain.
++
++use super::*;
++
++pub(super) const READ: &str = "wf.runtime.shape.read";
++pub(super) const WRITE: &str = "wf.runtime.shape.write";
++pub(super) const RELEASE: &str = "wf.runtime.shape.release";
++const PAYLOAD: &str = "wf.runtime.shape.payload";
++const OWNER: &str = "wf.runtime.shape.owner";
++
++pub(super) const fn is_nullable_shape(ty: IrType) -> bool {
++    matches!(
++        ty,
++        IrType::Buffer { .. } | IrType::Window { capacity: None, .. }
++    )
++}
++
++/// Compiler-private helpers keep all physical tag handling in one place.
++/// Inlining is ordinary lowering of these operations, not a source call rule.
++pub(super) fn helpers() -> Result<Module, BackendFailure> {
++    let mut module = Module::default();
++    for (name, result, arguments, body, symbols) in [
++        (
++            READ,
++            "i64",
++            vec![
++                Parameter::named("ptr", "%block"),
++                Parameter::named("i64", "%word"),
++            ],
++            "  %empty = icmp eq ptr %block, null\n  br i1 %empty, label %zero, label %real\nzero:\n  ret i64 0\nreal:\n  %address = getelementptr inbounds i64, ptr %block, i64 %word\n  %value = load i64, ptr %address\n  ret i64 %value\n",
++            vec![],
++        ),
++        (
++            WRITE,
++            "void",
++            vec![
++                Parameter::named("ptr", "%block"),
++                Parameter::named("i64", "%word"),
++                Parameter::named("i64", "%value"),
++            ],
++            "  %empty = icmp eq ptr %block, null\n  br i1 %empty, label %done, label %real\nreal:\n  %address = getelementptr inbounds i64, ptr %block, i64 %word\n  store i64 %value, ptr %address\n  br label %done\ndone:\n  ret void\n",
++            vec![],
++        ),
++        (
++            RELEASE,
++            "void",
++            vec![Parameter::named("ptr", "%block")],
++            "  %empty = icmp eq ptr %block, null\n  br i1 %empty, label %done, label %real\nreal:\n  call void @free(ptr %block)\n  br label %done\ndone:\n  ret void\n",
++            vec!["free"],
++        ),
++        (
++            PAYLOAD,
++            "ptr",
++            vec![
++                Parameter::named("ptr", "%block"),
++                Parameter::named("ptr", "%fallback"),
++                Parameter::named("i64", "%header"),
++            ],
++            "  %empty = icmp eq ptr %block, null\n  br i1 %empty, label %zero, label %real\nzero:\n  ret ptr %fallback\nreal:\n  %address = getelementptr inbounds i8, ptr %block, i64 %header\n  ret ptr %address\n",
++            vec![],
++        ),
++        (
++            OWNER,
++            "ptr",
++            vec![
++                Parameter::named("ptr", "%payload"),
++                Parameter::named("i64", "%header"),
++            ],
++            "  %empty = icmp eq ptr %payload, null\n  br i1 %empty, label %zero, label %real\nzero:\n  ret ptr null\nreal:\n  %negative = sub i64 0, %header\n  %address = getelementptr inbounds i8, ptr %payload, i64 %negative\n  ret ptr %address\n",
++            vec![],
++        ),
++    ] {
++        let mut signature = Signature::new(name, result, arguments);
++        signature.linkage = Linkage::Private;
++        signature.suffix = " alwaysinline".to_owned();
++        let mut output = FunctionBody::default();
++        output.open_block("entry".to_owned());
++        output.instructions(body, &symbols);
++        module.define(signature.define(output, "")?);
++    }
++    Ok(module)
++}
++
++impl FunctionEmitter<'_, '_> {
++    pub(super) fn shape_word(
++        &mut self,
++        shape: IrType,
++        block: &str,
++        field: usize,
++    ) -> Result<String, BackendFailure> {
++        let word = self.next_temporary()?;
++        if is_nullable_shape(shape) {
++            self.output.symbol(READ);
++            writeln!(
++                self.output,
++                "  %{word} = call i64 @{READ}(ptr {block}, i64 {field})"
++            )?;
++        } else {
++            let address = self.aggregate_field_pointer(shape, block, field)?;
++            writeln!(self.output, "  %{word} = load i64, ptr {address}")?;
++        }
++        Ok(format!("%{word}"))
++    }
++
++    pub(super) fn store_shape_word(
++        &mut self,
++        shape: IrType,
++        block: &str,
++        field: usize,
++        value: &str,
++    ) -> Result<(), BackendFailure> {
++        if is_nullable_shape(shape) {
++            self.output.symbol(WRITE);
++            writeln!(
++                self.output,
++                "  call void @{WRITE}(ptr {block}, i64 {field}, i64 {value})"
++            )?;
++        } else {
++            let address = self.aggregate_field_pointer(shape, block, field)?;
++            writeln!(self.output, "  store i64 {value}, ptr {address}")?;
++        }
++        Ok(())
++    }
++
++    /// Empty ranges borrow their nonnull owner slot; captures use null.
++    pub(super) fn shape_payload(
++        &mut self,
++        block_type: IrType,
++        block: &str,
++        fallback: &str,
++        elements_field: usize,
++    ) -> Result<String, BackendFailure> {
++        if !is_nullable_shape(block_type) {
++            return Err(BackendFailure::InvalidIr);
++        }
++        let llvm = self.output.type_name(self.program, block_type)?;
++        let header = format!(
++            "ptrtoint (ptr getelementptr ({llvm}, ptr null, i64 0, i32 {elements_field}) to i64)"
++        );
++        let pointer = self.next_temporary()?;
++        self.output.symbol(PAYLOAD);
++        writeln!(
++            self.output,
++            "  %{pointer} = call ptr @{PAYLOAD}(ptr {block}, ptr {fallback}, i64 {header})"
++        )?;
++        Ok(format!("%{pointer}"))
++    }
++
++    pub(super) fn shape_owner(
++        &mut self,
++        payload: &str,
++        header: &str,
++    ) -> Result<String, BackendFailure> {
++        let pointer = self.next_temporary()?;
++        self.output.symbol(OWNER);
++        writeln!(
++            self.output,
++            "  %{pointer} = call ptr @{OWNER}(ptr {payload}, i64 {header})"
++        )?;
++        Ok(format!("%{pointer}"))
++    }
++}
+diff --git a/compiler/src/backend/tests.rs b/compiler/src/backend/tests.rs
+--- a/compiler/src/backend/tests.rs
++++ b/compiler/src/backend/tests.rs
+@@ -34,6 +34,7 @@
+ mod integer_extended;
+ mod integer_negation;
+ mod loop_split;
++mod nullable_shapes;
+ mod owned_places;
+ mod parallel;
+ /// Union-laid-out payload enums (compiler/payload-enum-layout).
+diff --git a/compiler/src/backend/tests/nullable_shapes.rs b/compiler/src/backend/tests/nullable_shapes.rs
+new file mode 100644
+index 0000000..fed4fec
+--- /dev/null
++++ b/compiler/src/backend/tests/nullable_shapes.rs
+@@ -0,0 +1,605 @@
++//! Independent native ledgers for nullable owners and ordinary linked results.
++//! This candidate-only ABI fixture supplies both virtual and real zero owners.
++//! The retained control requires real zero owners at its native boundaries.
++
++use super::owned_places::retain_calls;
++use super::{
++    BoundedOutput, build_linked_executable, compile_rejection, emit_lowered, test_directory,
++};
++use crate::OverlapLowering;
++use std::process::Command;
++
++const SOURCE: &[u8] = br#"struct Bundle {
++  slots: Box<Slots<u64>>;
++  ring: Box<Ring<u64>>;
++  array: Box<Array<u64>>;
++  marker: u64;
++}
++
++struct Envelope {
++  values: Bundle;
++  tail: Box<u64>;
++}
++
++enum Carrier {
++  Absent();
++  Held(values: Bundle);
++}
++
++nodrop struct Ticket {
++  value: u64;
++}
++
++fn make_bundle(count: u64) -> made: Bundle pure contract {
++  requires count <= 17_u64;
++  ensures made.slots.inner.cap == count;
++  ensures made.slots.inner.len == 0_u64;
++  ensures made.ring.inner.cap == count;
++  ensures made.ring.inner.len == 0_u64;
++  ensures made.ring.inner.head == 0_u64;
++  ensures made.array.inner.len == count;
++} {
++  let slots = box_slots_new::<u64>(capacity: count);
++  let ring = box_ring_new::<u64>(capacity: count);
++  let array = box_array_filled::<u64>(count: count, value: 9_u64);
++  return Bundle(slots: move slots, ring: move ring, array: move array, marker: 0_u64);
++}
++
++fn linked_bundle(real: u64) -> made: Bundle pure contract {
++  ensures made.slots.inner.cap == 0_u64;
++  ensures made.slots.inner.len == 0_u64;
++  ensures made.ring.inner.cap == 0_u64;
++  ensures made.ring.inner.len == 0_u64;
++  ensures made.ring.inner.head == 0_u64;
++  ensures made.array.inner.len == 0_u64;
++} {
++  let result = make_bundle(count: 0_u64);
++  return move result;
++}
++
++fn linked_range(values: &[u64]) -> result: u64 reads(values) {
++  return values^.len;
++}
++
++fn consume_owned(array: Box<Array<Box<u64>>>, slots: Box<Slots<Box<u64>>>, ring: Box<Ring<Box<u64>>>) -> result: unit pure {
++  return unit;
++}
++
++fn consume_bundle(values: Bundle) -> result: unit pure {
++  return unit;
++}
++
++fn make_slots(count: u64) -> made: Box<Slots<u64>> pure contract {
++  requires count <= 17_u64;
++} {
++  return box_slots_new::<u64>(capacity: count);
++}
++
++fn consume_slots(values: Box<Slots<u64>>) -> result: unit pure {
++  return unit;
++}
++
++fn consume_bytes(values: Box<Array<u8>>) -> result: unit pure {
++  return unit;
++}
++
++fn grow_empty(values: &Box<Slots<u64>>, capacity: u64) -> result: unit writes(values) contract {
++  requires values^.inner.cap == 0_u64;
++  requires capacity <= 17_u64;
++} {
++  grow(cell: values, capacity: capacity);
++  return unit;
++}
++
++fn range_last(values: &[u64]) -> result: u64 reads(values) {
++  if values^.len > 0_u64 {
++    let last = values^.len - 1_u64;
++    return values^[last];
++  }
++  return 0_u64;
++}
++
++fn capture_empty(values: &Box<Array<u64>>, output: &Array<u64, 512>) -> result: u64 reads(values), writes(output) {
++  for (index in 0_u64..512_u64) {
++    set output^[index] = values^.inner.len;
++  }
++  return output^[511_u64];
++}
++
++fn zero_trip(values: &Box<Array<u64>>) -> result: u64 reads(values) {
++  let hash = 0_u64;
++  for (index in 0_u64..values^.inner.len) {
++    set hash = hash +wrap values^.inner[index];
++  }
++  return hash;
++}
++
++fn scan(values: &Box<Array<u8>>) -> result: u64 reads(values) {
++  let mark = 88_u8;
++  let seen = 0_u64;
++  let stop = values^.inner.len;
++  let cursor = 0_u64;
++  loop @walk {
++    let done = cursor >= stop;
++    if done {
++      break @walk;
++    }
++    let byte = values^.inner[cursor];
++    let newline = byte == 10_u8;
++    if newline {
++      set seen = seen +wrap 1_u64;
++    }
++    let lead = byte == mark;
++    if lead {
++      set seen = seen +wrap 2_u64;
++    }
++    set cursor = cursor +wrap 1_u64;
++  }
++  return seen;
++}
++
++fn relay(values: Carrier) -> made: Carrier pure waits {
++  return move values;
++}
++
++fn waiting_owners() -> result: u64 pure waits {
++  let real = linked_bundle(real: 1_u64);
++  let empty = linked_bundle(real: 0_u64);
++  let real_carrier = Carrier::Held(values: move real);
++  let started = spawn relay(values: move real_carrier);
++  let empty_carrier = Carrier::Held(values: move empty);
++  spawn relay(values: move empty_carrier);
++  match move started {
++    Absent() => {
++      return 1_u64;
++    }
++    Held(values: kept) => {
++      if kept.slots.inner.cap != 0_u64 {
++        return 2_u64;
++      }
++      if kept.ring.inner.head != 0_u64 {
++        return 3_u64;
++      }
++      if kept.array.inner.len != 0_u64 {
++        return 4_u64;
++      }
++      return 0_u64;
++    }
++  }
++}
++
++fn finish() -> result: u64 pure {
++  return 0_u64;
++}
++
++fn run() -> result: u64 pure {
++  let fresh = make_bundle(count: 0_u64);
++  let real = linked_bundle(real: 1_u64);
++  let empty = linked_bundle(real: 0_u64);
++  let temporary = make_bundle(count: 0_u64);
++  consume_bundle(values: move temporary);
++  grow(cell: &real.slots, capacity: 0_u64);
++  append(destination: &empty.ring.inner, source: &real.ring.inner);
++  split_off(source: &empty.ring.inner, index: 0_u64, destination: &real.ring.inner);
++  let selected_alias = &fresh.slots.inner;
++  swap(first: selected_alias, second: &real.slots.inner);
++  swap(first: selected_alias, second: selected_alias);
++  if selected_alias^.cap != 0_u64 {
++    return 1_u64;
++  }
++  if selected_alias^.len != 0_u64 {
++    return 2_u64;
++  }
++  let slice = &empty.array.inner[0_u64..empty.array.inner.len];
++  let slice_count = linked_range(values: slice);
++  if slice_count != 0_u64 {
++    return 3_u64;
++  }
++  let suffix = &slice^[0_u64..0_u64];
++  let suffix_count = linked_range(values: suffix);
++  if suffix_count != 0_u64 {
++    return 4_u64;
++  }
++  let slots_slice = &empty.slots.inner[0_u64..empty.slots.inner.len];
++  let slots_count = linked_range(values: slots_slice);
++  if slots_count != 0_u64 {
++    return 5_u64;
++  }
++  set fresh.slots = box_slots_new::<u64>(capacity: 0_u64);
++  let first = box_slots_new::<u64>(capacity: 0_u64);
++  let second = box_slots_new::<u64>(capacity: 0_u64);
++  append(destination: &first.inner, source: &second.inner);
++  split_off(source: &first.inner, index: 0_u64, destination: &second.inner);
++  grow(cell: &first, capacity: 0_u64);
++  grow(cell: &first, capacity: 0_u64);
++  grow(cell: &first, capacity: 1_u64);
++  place_back(window: &first.inner, value: 7_u64);
++  let content = &second.inner;
++  swap(first: content, second: &first.inner);
++  if content^.len != 1_u64 {
++    return 6_u64;
++  }
++  if content^.len > 0_u64 {
++    if content^[0_u64] != 7_u64 {
++      return 7_u64;
++    }
++  }
++  let explicit = box_slots_new::<u64>(capacity: 0_u64);
++  free_empty(window: move explicit);
++  let linear = box_slots_new::<Ticket>(capacity: 0_u64);
++  free_empty(window: move linear);
++  let linear_ring = box_ring_new::<Ticket>(capacity: 0_u64);
++  free_empty(window: move linear_ring);
++  let seed = array_filled::<u64, 0>(value: 0_u64);
++  let zero_stride = box_ring_new::<Array<u64, 0>>(capacity: 3_u64);
++  place_front(window: &zero_stride.inner, value: seed);
++  let taken = take_front(window: &zero_stride.inner);
++  if zero_stride.inner.head != 0_u64 {
++    return 8_u64;
++  }
++  let zero_array = box_array_filled::<Array<u64, 0>>(count: 5_u64, value: seed);
++  if zero_array.inner.len != 5_u64 {
++    return 9_u64;
++  }
++  let ranged = box_slots_new::<u64>(capacity: 3_u64);
++  place_back(window: &ranged.inner, value: 11_u64);
++  place_back(window: &ranged.inner, value: 22_u64);
++  let before = &ranged.inner[1_u64..2_u64];
++  let before_last = range_last(values: before);
++  if before_last != 22_u64 {
++    return 11_u64;
++  }
++  grow(cell: &ranged, capacity: 5_u64);
++  let after = &ranged.inner[1_u64..2_u64];
++  let after_last = range_last(values: after);
++  if after_last != 22_u64 {
++    return 12_u64;
++  }
++  let nested_values = linked_bundle(real: 1_u64);
++  let tail = box_new::<u64>(value: 99_u64);
++  let envelope = Envelope(values: move nested_values, tail: move tail);
++  let nested = box_new::<Envelope>(value: move envelope);
++  let selected = move nested.inner.values.slots;
++  if selected.inner.cap != 0_u64 {
++    return 10_u64;
++  }
++  return 0_u64;
++}
++
++fn main() -> status: std::process::ExitStatus pure waits {
++  let run_result = run();
++  if run_result != 0_u64 {
++    return std::process::exit_status(code: 1_u8);
++  }
++  let waiting_result = waiting_owners();
++  if waiting_result != 0_u64 {
++    return std::process::exit_status(code: 3_u8);
++  }
++  let finish_result = finish();
++  if finish_result != 0_u64 {
++    return std::process::exit_status(code: 2_u8);
++  }
++  return std::process::exit_status(code: 0_u8);
++}
++"#;
++
++// A real block is poisoned and padded, then quarantined after release. Thus
++// duplicated frees and writes past the actual extent cannot hide in reuse.
++const HOST: &str = r#"#include <stdint.h>
++#include <stddef.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <stdatomic.h>
++static atomic_flag latch = ATOMIC_FLAG_INIT;
++static void *blocks[64];
++static size_t sizes[64];
++static unsigned dead[64], allocated, released;
++static unsigned linked_real, linked_zero, range_calls, finish_calls, observer_failed;
++static void **refused_slot;
++static void *refused_owner;
++static unsigned refusal_armed;
++static void fail(const char *reason) { observer_failed = 1; fprintf(stderr, "%s\n", reason); exit(94); }
++static void observe_completed_entry(void) {
++  if (!observer_failed && (linked_real != 3 || linked_zero != 2 || range_calls != 3 || finish_calls != 1)) fail("linked owner route");
++}
++__attribute__((constructor)) static void observe_native_routes(void) {
++  if (atexit(observe_completed_entry) != 0) abort();
++}
++static int fault(const char *wanted) {
++  const char *value = getenv("WF_NULLABLE_FAULT");
++  return value != NULL && strcmp(value, wanted) == 0;
++}
++static void lock(void) { while (atomic_flag_test_and_set(&latch)) {} }
++static void unlock(void) { atomic_flag_clear(&latch); }
++void *wf_nullable_allocate(uint64_t size) {
++  if (refusal_armed) {
++    if (*refused_slot != refused_owner) fail("refusal owner changed");
++    if (refused_owner != NULL) {
++      unsigned i;
++      for (i = 0; i < allocated && blocks[i] != refused_owner; ++i) {}
++      if (i == allocated || dead[i]) fail("refusal owner released");
++    }
++    fputs(refused_owner ? "refused-real-owner-live\n" : "refused-null-owner-live\n", stdout);
++    fflush(stdout);
++    return NULL;
++  }
++  void *p = malloc((size_t)size + 64);
++  if (!p) abort();
++  memset(p, 0xa5, (size_t)size + 64);
++  lock();
++  if (allocated == 64) abort();
++  blocks[allocated] = p; sizes[allocated] = (size_t)size; ++allocated;
++  unlock();
++  return p;
++}
++void wf_nullable_release(void *p) {
++  lock();
++  unsigned i;
++  for (i = 0; i < allocated && blocks[i] != p; ++i) {}
++  if (p == NULL || i == allocated || dead[i]) fail("owner identity");
++  const unsigned char *guard = (const unsigned char *)p + sizes[i];
++  for (unsigned j = 0; j < 64; ++j) if (guard[j] != 0xa5) fail("allocation guard");
++  if (fault("skip-release")) { unlock(); return; }
++  dead[i] = 1; ++released;
++  unlock();
++}
++// Four scalar leaves force the source compiler's destination result ABI.
++struct bundle { void *slots, *ring, *array; uint64_t marker; };
++_Static_assert(sizeof(void *) == 8 && sizeof(uint64_t) == 8, "admitted word sizes");
++_Static_assert(offsetof(struct bundle, slots) == 0, "Slots owner offset");
++_Static_assert(offsetof(struct bundle, ring) == 8, "Ring owner offset");
++_Static_assert(offsetof(struct bundle, array) == 16, "Array owner offset");
++_Static_assert(offsetof(struct bundle, marker) == 24, "marker offset");
++_Static_assert(sizeof(struct bundle) == 32, "four-word destination result");
++void wf_linked_bundle(struct bundle *out, uint64_t real) {
++  lock();
++  if (real) ++linked_real; else ++linked_zero;
++  unlock();
++  memset(out, 0x9b, sizeof(*out));
++  out->slots = out->ring = out->array = NULL;
++  out->marker = 0;
++  if (real) {
++    out->slots = wf_nullable_allocate(16); memset(out->slots, 0, 16);
++    out->ring = wf_nullable_allocate(24); memset(out->ring, 0, 24);
++    out->array = wf_nullable_allocate(8); memset(out->array, 0, 8);
++  }
++}
++void wf__par_seq_linked_bundle(struct bundle *out, uint64_t real) {
++  if (fault("seq-stub") && real == 0) { memset(out, 0, sizeof(*out)); return; }
++  wf_linked_bundle(out, real);
++}
++uint64_t wf_linked_range(const uint64_t *data, uint64_t count) {
++  if (!fault("range-route")) { lock(); ++range_calls; unlock(); }
++  if (data == NULL || count != 0) abort();
++  return count;
++}
++uint64_t wf__par_seq_linked_range(const uint64_t *data, uint64_t count) {
++  return wf_linked_range(data, count);
++}
++extern unsigned char wf_consume_owned(void *, void *, void *);
++extern void wf_make_bundle(struct bundle *, uint64_t);
++extern unsigned char wf_consume_bundle(struct bundle *);
++extern void *wf_make_slots(uint64_t);
++extern unsigned char wf_consume_slots(void *);
++extern unsigned char wf_consume_bytes(void *);
++extern unsigned char wf_grow_empty(void **, uint64_t);
++extern uint64_t wf_capture_empty(void **, uint64_t *);
++extern uint64_t wf_zero_trip(void **);
++extern uint64_t wf_scan(void **);
++uint64_t wf_finish(void) {
++  if (!fault("finish-route")) { lock(); ++finish_calls; unlock(); }
++  struct bundle made;
++  memset(&made, 0x9b, sizeof(made));
++  wf_make_bundle(&made, 0);
++  if (fault("destination")) made.marker = 1;
++  if (made.slots || made.ring || made.array || made.marker) fail("destination owner");
++  wf_consume_bundle(&made);
++  void *slots = wf_make_slots(0);
++  if (slots != NULL) abort();
++  wf_consume_slots(slots);
++  void *none = NULL;
++  if (wf_scan(&none) != 0) fail("empty probe");
++  uint64_t *bytes = wf_nullable_allocate(8);
++  bytes[0] = 0;
++  void *byte_owner = bytes;
++  if (wf_scan(&byte_owner) != 0) fail("real zero probe");
++  wf_consume_bytes(bytes);
++  bytes = wf_nullable_allocate(41); bytes[0] = 33;
++  memset((unsigned char *)bytes + 8, 97, 33);
++  ((unsigned char *)bytes)[8 + 15] = 10;
++  ((unsigned char *)bytes)[8 + 30] = 88;
++  byte_owner = bytes;
++  if (wf_scan(&byte_owner) != 3) fail("positive probe");
++  wf_consume_bytes(bytes);
++  uint64_t output[512];
++  for (unsigned i = 0; i < 512; ++i) output[i] = i + 1;
++  if (wf_capture_empty(&none, output) != 0 || wf_zero_trip(&none) != 0) abort();
++  for (unsigned i = 0; i < 512; ++i) if (output[i] != 0) abort();
++  wf_consume_owned(NULL, NULL, NULL);
++  uint64_t *a = wf_nullable_allocate(8), *s = wf_nullable_allocate(16), *r = wf_nullable_allocate(24);
++  a[0] = s[0] = s[1] = r[0] = r[1] = r[2] = 0;
++  wf_consume_owned(a, s, r);
++  uint64_t *child_a = wf_nullable_allocate(8), *child_s = wf_nullable_allocate(8), *child_r = wf_nullable_allocate(8);
++  *child_a = 11; *child_s = 22; *child_r = 33;
++  a = wf_nullable_allocate(16); s = wf_nullable_allocate(24); r = wf_nullable_allocate(40);
++  a[0] = 1; memcpy(a + 1, &child_a, 8);
++  s[0] = 1; s[1] = 1; memcpy(s + 2, &child_s, 8);
++  r[0] = 1; r[1] = 2; r[2] = 1; memcpy(r + 4, &child_r, 8);
++  if (fault("guard")) ((unsigned char *)r)[40] ^= 1;
++  wf_consume_owned(a, s, r);
++  if (fault("double-release")) wf_nullable_release(a);
++  if (fault("null-release")) wf_nullable_release(NULL);
++  if (allocated != 27 || released != allocated) fail("owner ledger");
++  if (fault("refuse-null") || fault("refuse-real") || fault("lost-owner")) {
++    void *owner = NULL;
++    if (!fault("refuse-null")) {
++      owner = wf_nullable_allocate(16);
++      memset(owner, 0, 16);
++    }
++    refused_owner = owner; refused_slot = &owner; refusal_armed = 1;
++    if (fault("lost-owner")) owner = NULL;
++    wf_grow_empty(&owner, 1);
++    fail("refused growth returned");
++  }
++  for (unsigned i = 0; i < allocated; ++i) free(blocks[i]);
++  return 0;
++}
++uint64_t wf__par_seq_finish(void) { return wf_finish(); }
++"#;
++
++fn definition_header<'a>(module: &'a str, symbol: &str) -> &'a str {
++    module
++        .lines()
++        .find(|line| line.starts_with("define ") && line.contains(&format!(" @{symbol}(")))
++        .expect("ordinary source definition")
++}
++
++fn link_definition(module: &str, symbol: &str) -> String {
++    let ordinary = definition_header(module, symbol);
++    let sequential = format!("wf__par_seq_{}", symbol.strip_prefix("wf_").unwrap());
++    let mut linked = module.to_owned();
++    for target in [symbol, sequential.as_str()] {
++        let Some(header) = linked
++            .lines()
++            .find(|line| line.starts_with("define ") && line.contains(&format!(" @{target}(")))
++        else {
++            assert_eq!(target, sequential, "ordinary native binding must exist");
++            continue;
++        };
++        assert_eq!(
++            header
++                .replace(&format!("@{target}("), &format!("@{symbol}("))
++                .replace(" noinline", ""),
++            ordinary.replace(" noinline", ""),
++            "the C sequential forwarder must have the ordinary ABI"
++        );
++        let start = linked.find(header).unwrap();
++        let end = linked[start..].find("\n}").unwrap() + start + 2;
++        let declaration = header
++            .replacen("define ", "declare ", 1)
++            .strip_suffix(" {")
++            .unwrap()
++            .to_owned();
++        linked = format!("{}{}{}", &linked[..start], declaration, &linked[end..]);
++    }
++    linked
++}
++
++#[test]
++fn nullable_shapes_preserve_linked_real_zero_owners_and_nested_lifecycle() {
++    for overlap in [OverlapLowering::Off, OverlapLowering::On] {
++        let llvm = emit_lowered(SOURCE, overlap);
++        assert!(
++            llvm.contains("load <16 x i8>"),
++            "the byte scan must reach wide-probe lowering"
++        );
++        for symbol in ["wf_make_bundle", "wf_linked_bundle"] {
++            let header = definition_header(&llvm, symbol);
++            assert!(
++                header.starts_with(&format!("define void @{symbol}(ptr %wf.result, i64 ")),
++                "native destination must be the first argument: {header}"
++            );
++        }
++        let scalar = definition_header(&llvm, "wf_make_slots");
++        assert!(
++            scalar.starts_with("define ptr @wf_make_slots(i64 "),
++            "{scalar}"
++        );
++        for (retained, llvm) in [(false, llvm.clone()), (true, retain_calls(&llvm))] {
++            let mut linked = llvm;
++            for symbol in ["wf_linked_bundle", "wf_linked_range", "wf_finish"] {
++                linked = link_definition(&linked, symbol);
++            }
++            let observed = linked
++                .replace("@malloc(", "@wf_nullable_allocate(")
++                .replace("@free(", "@wf_nullable_release(");
++            let directory = test_directory();
++            let executable = build_linked_executable(&observed, Some(HOST), &[], &directory);
++            let output = Command::new(&executable)
++                .env("WF_WORKERS", "0")
++                .bounded_output()
++                .expect("run nullable lifecycle");
++            assert_eq!(output.status.code(), Some(0), "{output:?}");
++            assert!(
++                output.stdout.is_empty() && output.stderr.is_empty(),
++                "{output:?}"
++            );
++            eprintln!(
++                "nullable lifecycle {overlap:?} retained={retained} success: {}",
++                output.status
++            );
++            for (fault, reason) in [
++                ("destination", "destination owner\n"),
++                ("skip-release", "owner ledger\n"),
++                ("guard", "allocation guard\n"),
++                ("double-release", "owner identity\n"),
++                ("null-release", "owner identity\n"),
++                ("lost-owner", "refusal owner changed\n"),
++                ("range-route", "linked owner route\n"),
++                ("finish-route", "linked owner route\n"),
++            ] {
++                let output = Command::new(&executable)
++                    .env("WF_WORKERS", "0")
++                    .env("WF_NULLABLE_FAULT", fault)
++                    .bounded_output()
++                    .expect("run lifecycle observer failure control");
++                assert_eq!(output.status.code(), Some(94), "{fault}: {output:?}");
++                assert_eq!(output.stderr, reason.as_bytes(), "{fault}: {output:?}");
++                assert!(output.stdout.is_empty(), "{fault}: {output:?}");
++                eprintln!(
++                    "nullable lifecycle {overlap:?} retained={retained} {fault}: {}",
++                    output.status
++                );
++            }
++            if overlap == OverlapLowering::On {
++                // Bypass only a zero-result sequential binding. The 27-owner
++                // ledger still balances, so only the route observation fails.
++                let output = Command::new(&executable)
++                    .env("WF_WORKERS", "0")
++                    .env("WF_NULLABLE_FAULT", "seq-stub")
++                    .bounded_output()
++                    .expect("run restored zero-result sequential stub");
++                assert_eq!(output.status.code(), Some(94), "{output:?}");
++                assert_eq!(output.stderr, b"linked owner route\n", "{output:?}");
++                assert!(output.stdout.is_empty(), "{output:?}");
++                eprintln!(
++                    "nullable lifecycle {overlap:?} retained={retained} seq-stub: {}",
++                    output.status
++                );
++            }
++            for (fault, trace) in [
++                ("refuse-null", b"refused-null-owner-live\n".as_slice()),
++                ("refuse-real", b"refused-real-owner-live\n".as_slice()),
++            ] {
++                use std::os::unix::process::ExitStatusExt;
++                let output = Command::new(&executable)
++                    .env("WF_WORKERS", "0")
++                    .env("WF_NULLABLE_FAULT", fault)
++                    .bounded_output()
++                    .expect("run positive-growth allocation refusal");
++                assert_eq!(output.status.signal(), Some(6), "{fault}: {output:?}");
++                assert_eq!(output.stdout, trace, "{fault}: {output:?}");
++                super::exhaustion::assert_resource_record(&output.stderr, "heap");
++                eprintln!(
++                    "nullable lifecycle {overlap:?} retained={retained} {fault}: {}",
++                    output.status
++                );
++            }
++            std::fs::remove_dir_all(directory).expect("remove nullable lifecycle image");
++        }
++    }
++}
++
++const SHRINK: &[u8] = br#"fn main() -> status: std::process::ExitStatus pure {
++  let values = box_slots_new::<u64>(capacity: 1_u64);
++  grow(cell: &values, capacity: 0_u64);
++  return std::process::exit_status(code: 0_u8);
++}
++"#;
++
++#[test]
++fn nullable_shapes_do_not_admit_shrinking_positive_capacity_to_zero() {
++    let failure = compile_rejection(SHRINK);
++    assert_eq!(failure.rule_id(), Some("FN-8"), "{failure}");
++}
+diff --git a/compiler/src/backend/tests/arrays.rs b/compiler/src/backend/tests/arrays.rs
+--- a/compiler/src/backend/tests/arrays.rs
++++ b/compiler/src/backend/tests/arrays.rs
+@@ -1555,10 +1555,12 @@
+     let module = retain_calls(&compile(source))
+         .replace("@malloc(", "@wf_test_allocate(")
+         .replace("@free(", "@wf_test_release(");
+-    let observer = super::owned_places::allocation_observer(3, 0);
++    // The count-zero owner is null; the populated rows and positive logical
++    // zero-stride Array remain two independent real allocations.
++    let observer = super::owned_places::allocation_observer(2, 0);
+     let output = super::compile_link_and_run(&module, Some(&observer), &[]);
+     assert_eq!(output.status.code(), Some(0), "{output:?}");
+-    assert_eq!(output.stdout, b"A1;A2;A3;F3;F2;F1;", "{output:?}");
++    assert_eq!(output.stdout, b"A1;A2;F2;F1;", "{output:?}");
+     assert!(output.stderr.is_empty(), "{output:?}");
+ }
+ 
+diff --git a/compiler/src/backend/tests/windows.rs b/compiler/src/backend/tests/windows.rs
+--- a/compiler/src/backend/tests/windows.rs
++++ b/compiler/src/backend/tests/windows.rs
+@@ -41,6 +41,13 @@
+ 
+ use super::system::with_ir;
+ use super::*;
++
++/// Count each logical owner release route at its source edge. The guarded
++/// helper frees a real runtime block; a direct free remains for other Boxes.
++fn owner_release_sites(body: &str) -> usize {
++    body.matches("call void @free").count()
++        + body.matches("call void @wf.runtime.shape.release").count()
++}
+ 
+ /// The baseline clears the complete empty-window representation, including
+ /// every descriptor word. This checks the shared row, not its callers.
+@@ -961,8 +968,8 @@
+         .expect("SET-1 must commit one element store");
+     assert!(rhs < store);
+     assert!(!main.contains("call void @wf_trap"));
+-    assert_eq!(main.matches("call void @free").count(), 1);
+-    assert!(!make.contains("call void @free"));
++    assert_eq!(owner_release_sites(main), 1);
++    assert_eq!(owner_release_sites(make), 0);
+ 
+     // The proved count ceiling times the u16 stride fits the selected target's
+     // byte domain. Target layout therefore admits the dynamic allocation and
+@@ -1101,7 +1108,7 @@
+     // Three release sites: the early return and the final return each carry
+     // the cell the scope holds, and the loop break carries the body-scope
+     // cell it leaves [STOR-3, LIV-1].
+-    assert_eq!(cleanup.matches("call void @free").count(), 3);
++    assert_eq!(owner_release_sites(cleanup), 3);
+     let output = compile_and_run(&llvm);
+     assert!(output.status.success());
+     assert!(output.stdout.is_empty());
+@@ -1118,8 +1125,8 @@
+     let main = emitted_function(&llvm, "main");
+     assert!(fill.contains("store i64"));
+     assert!(fold.contains("load i64"));
+-    assert!(!fill.contains("call void @free"));
+-    assert!(!fold.contains("call void @free"));
++    assert_eq!(owner_release_sites(fill), 0);
++    assert_eq!(owner_release_sites(fold), 0);
+     // Both declared length requirements and the counted-range binder facts are
+     // checked before lowering. Neither helper retains a runtime proof check.
+     assert_eq!(fill.matches("call void @wf_trap").count(), 0);
+@@ -1145,9 +1152,9 @@
+         .collect::<Vec<_>>();
+     assert_eq!(exits.len(), 6);
+     for exit in exits {
+-        assert_eq!(exit.matches("call void @free").count(), 2, "{exit}");
++        assert_eq!(owner_release_sites(exit), 2, "{exit}");
+     }
+-    assert_eq!(main.matches("call void @free").count(), 12);
++    assert_eq!(owner_release_sites(main), 12);
+     assert!(main.contains("call i8 @wf_fill"));
+     assert!(main.contains("call i64 @wf_fold"));
+ 
+@@ -1214,9 +1221,9 @@
+     assert!(observe.starts_with("define i64 @wf_observe(ptr "));
+     assert!(main.contains("call i8 @wf_update(ptr "));
+     assert!(main.contains("call i64 @wf_observe(ptr "));
+-    assert!(!update.contains("call void @free"));
+-    assert!(!observe.contains("call void @free"));
+-    assert_eq!(main.matches("call void @free").count(), 2);
++    assert_eq!(owner_release_sites(update), 0);
++    assert_eq!(owner_release_sites(observe), 0);
++    assert_eq!(owner_release_sites(main), 2);
+ 
+     let output = compile_and_run(&llvm);
+     assert!(output.status.success());
+@@ -1298,8 +1305,8 @@
+                 .contains(", i64 %v2)")
+         );
+     }
+-    assert!(!build_body.contains("call void @free"));
+-    assert!(!checksum_body.contains("call void @free"));
++    assert_eq!(owner_release_sites(build_body), 0);
++    assert_eq!(owner_release_sites(checksum_body), 0);
+     // Bounds and arithmetic failures are typed results rather than written
+     // proofs, so build and checksum contain no trap edge. Main owns two
+     // `Box<Slots<u64>>` cells and releases both on each of its five exits.
+@@ -1317,9 +1324,9 @@
+         .collect::<Vec<_>>();
+     assert_eq!(exits.len(), 5);
+     for exit in exits {
+-        assert_eq!(exit.matches("call void @free").count(), 2, "{exit}");
++        assert_eq!(owner_release_sites(exit), 2, "{exit}");
+     }
+-    assert_eq!(main.matches("call void @free").count(), 10);
++    assert_eq!(owner_release_sites(main), 10);
+ }
+ 
+ /// The case counts lines, words and bytes over two chunks and combines the
+@@ -1425,7 +1432,7 @@
+         );
+     }
+     assert!(!llvm.contains("call ptr @malloc"));
+-    assert!(!llvm.contains("call void @free"));
++    assert_eq!(owner_release_sites(&llvm), 0);
+ }
+ 
+ #[test]
+@@ -1578,12 +1585,12 @@
+     // return edge carries exactly four run releases. Allocation identities
+     // and their order are checked by the owned-place execution controls.
+     let release = emitted_function(&llvm, "release");
+-    assert_eq!(release.matches("call void @free").count(), 4);
++    assert_eq!(owner_release_sites(release), 4);
+     // Allocation is total [STOR-8], so `main` has no refusal arm to hold a
+     // partly built owner on: its one edge hands the whole owner to `release`
+     // and carries no release of its own.
+     let main = emitted_function(&llvm, "main");
+-    assert_eq!(main.matches("call void @free").count(), 0);
++    assert_eq!(owner_release_sites(main), 0);
+     let output = compile_and_run(&llvm);
+     assert!(output.status.success());
+     assert!(output.stdout.is_empty());
+@@ -1623,15 +1630,10 @@
+     let take = emitted_function(&llvm, "take");
+     // Three residual siblings released where the projected field left
+     // [WIN-3, PROV-6].
+-    assert_eq!(take.matches("call void @free").count(), 3);
++    assert_eq!(owner_release_sites(take), 3);
+     // One retained cell released in `main`. Allocation is total [STOR-8], so
+     // there are no refusal arms holding partly built owners.
+-    assert_eq!(
+-        emitted_function(&llvm, "main")
+-            .matches("call void @free")
+-            .count(),
+-        1
+-    );
++    assert_eq!(owner_release_sites(emitted_function(&llvm, "main")), 1);
+     let output = compile_and_run(&llvm);
+     assert!(output.status.success());
+     assert!(output.stdout.is_empty());
+@@ -1667,7 +1669,7 @@
+     assert!(!llvm.contains("@wf.drop.buffer"));
+     assert!(!llvm.contains("@wf.drop.run"));
+     let main = emitted_function(&llvm, "main");
+-    assert_eq!(main.matches("call void @free").count(), 1);
++    assert_eq!(owner_release_sites(main), 1);
+     let output = compile_and_run(&llvm);
+     assert!(output.status.success());
+     assert!(output.stdout.is_empty());
+@@ -1718,6 +1720,10 @@
+     let llvm = compile(source);
+     assert_eq!(llvm.matches("call ptr @malloc").count(), 1);
+     assert_eq!(llvm.matches("call void @free").count(), 1);
++    assert_eq!(
++        llvm.matches("call void @wf.runtime.shape.release").count(),
++        1
++    );
+ 
+     let output = compile_and_run(&llvm);
+     assert!(output.status.success());
+diff --git a/compiler/src/backend/tests/exhaustion.rs b/compiler/src/backend/tests/exhaustion.rs
+--- a/compiler/src/backend/tests/exhaustion.rs
++++ b/compiler/src/backend/tests/exhaustion.rs
+@@ -1332,13 +1332,15 @@
+ }
+ 
+ /// [STOR-3] fixes a window's release as each element's release in ascending
+-/// logical index order. Its enclosing `Box` then performs the one heap free,
++/// logical index order. Its enclosing `Box` then releases its thin owner,
+ /// and a window inside a cycle follows the same walk as any other.
+ ///
+ /// The run action walks the live elements but frees no separate backing:
+ /// [TYPE-9] places a runtime-capacity `Slots` only inside its `Box`, and
+ /// [STOR-1] gives that pair exactly one heap object. The enclosing owner action
+-/// therefore calls the run action and then frees the cell [STOR-3].
++/// therefore calls the run action and then releases the owner [STOR-3]. The
++/// nullable representation elides only a null owner's physical zero block;
++/// every real block, including a zero-capacity block, is still freed once.
+ ///
+ /// The order is pinned where it is chosen because nothing downstream can see
+ /// it: [STOR-3] gives memory reclamation the empty effect row. Walking the
+@@ -1361,7 +1363,9 @@
+     };
+     let buffer_drop = definition_body(&module, run_definition.trim_end_matches(" #0 {"));
+     assert!(
+-        buffer_drop.contains("%index = phi i64 [ 0, %entry ], [ %next, %body ]")
++        buffer_drop.contains("%empty = icmp eq ptr %value, null")
++            && buffer_drop.contains("br i1 %empty, label %done, label %real")
++            && buffer_drop.contains("%index = phi i64 [ 0, %real ], [ %next, %body ]")
+             && buffer_drop.contains("%next = add i64 %index, 1"),
+         "the elements must be released from index zero upward: {buffer_drop}"
+     );
+@@ -1387,11 +1391,14 @@
+         "the element must be loaded before its release action: {buffer_drop}"
+     );
+     assert!(
+-        body.contains("br label %walk") && !body.contains("call void @free("),
++        body.contains("br label %walk")
++            && !body.contains("call void @free(")
++            && !body.contains("call void @wf.runtime.shape.release("),
+         "the element loop returns to its header and frees no enclosing cell: {body}"
+     );
+     assert!(
+-        !buffer_drop.contains("call void @free("),
++        !buffer_drop.contains("call void @free(")
++            && !buffer_drop.contains("call void @wf.runtime.shape.release("),
+         "Slots has no storage reclamation separate from its Box: {buffer_drop}"
+     );
+     let owner_drop = module
+@@ -1399,18 +1406,31 @@
+         .find(|body| {
+             body.starts_with("define private void @wf.drop.")
+                 && body.contains("call void @wf.drop.run.")
+-                && body.contains("call void @free(")
++                && body.contains("call void @wf.runtime.shape.release(")
+         })
+         .expect("the enclosing owner releases the run and its one Box cell");
+     let elements = owner_drop
+         .find("call void @wf.drop.run.")
+         .expect("the owner calls the run release");
+     let cell = owner_drop
+-        .find("call void @free(")
+-        .expect("the owner frees the Box cell");
++        .find("call void @wf.runtime.shape.release(")
++        .expect("the owner releases the Box cell");
+     assert!(
+         elements < cell,
+         "every element must be released before the Box cell that holds it: {owner_drop}"
++    );
++    assert_eq!(
++        owner_drop
++            .matches("call void @wf.runtime.shape.release(")
++            .count(),
++        1
++    );
++    let reclaim = definition_body(&module, "define private void @wf.runtime.shape.release(");
++    assert!(
++        reclaim.contains("%empty = icmp eq ptr %block, null")
++            && reclaim.contains("br i1 %empty, label %done, label %real")
++            && reclaim.matches("call void @free(ptr %block)").count() == 1,
++        "each real owner must be reclaimed exactly once: {reclaim}"
+     );
+ }
+ 
+diff --git a/compiler/src/backend/tests/loop_split.rs b/compiler/src/backend/tests/loop_split.rs
+--- a/compiler/src/backend/tests/loop_split.rs
++++ b/compiler/src/backend/tests/loop_split.rs
+@@ -1041,7 +1041,8 @@
+     );
+ 
+     let block_type = format!("{{ i64, [0 x {element_type}] }}");
+-    let forward = format!("getelementptr inbounds {block_type}, ptr ");
++    let forward =
++        format!("ptrtoint (ptr getelementptr ({block_type}, ptr null, i64 0, i32 1) to i64)");
+     let outer = function_body(module, "@wf_mapped");
+     let projection = outer
+         .find(&forward)
+@@ -1055,8 +1056,12 @@
+         "payload projection must precede the split:\n{outer}"
+     );
+     assert!(
+-        outer[projection..].contains("i64 0, i32 1, i64 0"),
+-        "the forward operation must select the first array element:\n{outer}"
++        outer.lines().any(|line| {
++            line.contains("call ptr @wf.runtime.shape.payload(")
++                && line.contains("ptr null, i64 ")
++                && line.contains(&forward)
++        }),
++        "the guarded forward operation must select the first element or null:\n{outer}"
+     );
+ 
+     let offset =
+@@ -1067,9 +1072,9 @@
+     );
+     assert!(
+         chunk.contains(&format!(
+-            "getelementptr inbounds i8, ptr {captured_payload}, i64 %"
++            "call ptr @wf.runtime.shape.owner(ptr {captured_payload}, i64 {offset})"
+         )),
+-        "the chunk must reconstruct a local owner from its payload parameter:\n{chunk}"
++        "the chunk must reconstruct a local owner, preserving null payloads:\n{chunk}"
+     );
+ }
+ 
+@@ -1104,11 +1109,14 @@
+         .expect("Aligned must retain its padding-sensitive nominal LLVM type");
+     let block_type = format!("{{ i64, [0 x {aligned_type}] }}");
+     let outer = function_body(&split, "@wf_mapped");
+-    let forward = format!("getelementptr inbounds {block_type}, ptr ");
++    let forward =
++        format!("ptrtoint (ptr getelementptr ({block_type}, ptr null, i64 0, i32 1) to i64)");
+     assert_eq!(
+         outer
+             .lines()
+-            .filter(|line| line.contains(&forward) && line.contains("i64 0, i32 1, i64 0"))
++            .filter(|line| {
++                line.contains("call ptr @wf.runtime.shape.payload(") && line.contains(&forward)
++            })
+             .count(),
+         3,
+         "the fitting ABI retains both used payloads and its original unused transport:\n{outer}"
+@@ -1122,6 +1130,10 @@
+         3,
+         "the fitting chunk retains its original reconstruction without acquiring cleanup:\n{chunk}"
+     );
++    assert_eq!(
++        chunk.matches("call ptr @wf.runtime.shape.owner(").count(),
++        3
++    );
+     assert!(
+         chunk.lines().any(|line| {
+             line.contains(&format!("getelementptr inbounds {block_type}, ptr "))
+@@ -1130,10 +1142,16 @@
+         "the live payload must still reach ordinary indexed element lowering:\n{chunk}"
+     );
+     assert!(
+-        chunk.lines().any(|line| line.contains("load i64, ptr ")),
++        chunk
++            .lines()
++            .any(|line| line.contains("call i64 @wf.runtime.shape.read(")),
+         "the reconstructed empty owner must still support its len read:\n{chunk}"
+     );
+     assert!(!chunk.contains("call void @free("), "{chunk}");
++    assert!(
++        !chunk.contains("call void @wf.runtime.shape.release("),
++        "{chunk}"
++    );
+ 
+     let directory = test_directory();
+     let reference = Command::new(build_executable(&unsplit, &directory))
+@@ -1320,13 +1338,19 @@
+ 
+     // Captures are proof-scoped aliases, not source owners. Neither helper may
+     // release the captured descriptor, while each selectable outer main owns
+-    // and frees exactly the buffer returned after the joined loop.
+-    //
+-    // KEPT AS WRITTEN for the lowering port: the `@free` counts are the
+-    // emitted release shape of one `Box<Array<u8>>` per return path [STOR-3].
+-    // If the release lowering of a boxed run changes, re-derive the counts.
++    // and releases exactly the buffer returned after the joined loop. The
++    // shared thin-owner release performs one free for each real block and
++    // skips the null zero extent; count that release per source exit [STOR-3].
+     assert!(!chunk.contains("call void @free("), "{chunk}");
+     assert!(!splitter.contains("call void @free("), "{splitter}");
++    assert!(
++        !chunk.contains("call void @wf.runtime.shape.release("),
++        "{chunk}"
++    );
++    assert!(
++        !splitter.contains("call void @wf.runtime.shape.release("),
++        "{splitter}"
++    );
+     for outer in ["@wf_main", "@wf__par_seq_main"] {
+         let body = function_body(&split, outer);
+         // The entry waits, so each source return leaves by a branch to the
+@@ -1340,7 +1364,7 @@
+                 releases_in_block = 0;
+                 block = label;
+             }
+-            releases_in_block += usize::from(line.contains("call void @free("));
++            releases_in_block += usize::from(line.contains("call void @wf.runtime.shape.release("));
+             let instruction = line.trim_start();
+             if instruction == "br label %wf.coro.final"
+                 || (instruction.starts_with("ret ") && block != "wf.coro.suspended")
+diff --git a/compiler/src/backend/tests/runtime_content_swap.rs b/compiler/src/backend/tests/runtime_content_swap.rs
+--- a/compiler/src/backend/tests/runtime_content_swap.rs
++++ b/compiler/src/backend/tests/runtime_content_swap.rs
+@@ -35,7 +35,9 @@
+ 
+ #[test]
+ fn runtime_content_swap_moves_the_complete_zero_capacity_value() {
+-    let host = allocation_observer(2, 0).replace(
++    // Null backs the zero-capacity owner; the occupied owner is still one
++    // independently observed allocation and exactly one matching release.
++    let host = allocation_observer(1, 0).replace(
+         "void *allocation = malloc(size);",
+         "void *allocation = malloc(size + 64);\n    if (allocation != NULL) memset(allocation, 0xa5, size + 64);",
+     );
+@@ -49,7 +51,7 @@
+         let text = std::str::from_utf8(&output.stdout).unwrap();
+         let mut records = text.split_terminator(';').collect::<Vec<_>>();
+         records.sort_unstable();
+-        assert_eq!(records, ["A1", "A2", "F1", "F2"], "{output:?}");
++        assert_eq!(records, ["A1", "F1"], "{output:?}");
+     }
+ }
+ 

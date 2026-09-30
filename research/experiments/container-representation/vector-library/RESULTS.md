@@ -5355,3 +5355,61 @@ fix default growth-16. The [H1/H2 realloc refusals](#h-realloc-for-runtime-slots
 and [common-caller small-allocation losses](#hbyte-allocation-byte-attribution-through-one-common-caller)
 also remain in force. Reopening any alternative requires complete cleanup/ABI
 coverage and explicit positive-path costs before another performance selection.
+
+### Nullable zero-extent owner: allocation gain, useful regressions refuse selection
+
+A frozen compiler prototype based on `1226083e2375044483109c17bcc46a7c652f44bf`
+makes newly created zero-extent runtime Array/Slots/Ring owners physically
+null while keeping logical ownership and the one-pointer Box layout. Nonnull
+includes real zero-capacity linked owners, which still release; capacity is
+never the ownership tag. Central read, write, release and payload operations
+handle null. This is an unselected physical ABI proposal, with no source rule,
+specification or design-tree change. The [final compiler source patch](nullable-zero-owner.patch),
+[accounting expectation delta](nullable-zero-owner-account.patch) and
+[identities](ecosystem-nullable-owner-identities.json) pin the source, compiler,
+toolchain, native inputs, commands and measured images. The final patch includes
+the focused fixture's grammar/routing repairs: its test binary was rebuilt after
+those fixture-only changes, while the measured emitter bytes were unchanged.
+
+The linked lifecycle fixture passes its two focused `gate` tests with
+`WF_WORKERS=0`: four positive mode/retained combinations preserve the exact
+27-allocation/release ledger, and routing, guard, skip-release, double-release,
+lost-owner and refusal controls fail as expected. Real-worker transport is not
+qualified. Baseline and candidate timed/account images each pass the
+unchanged 1,260-configuration/seven-variant content oracle; all four checksum
+and two cleanup fault controls fail as intended. In the 294-row account output,
+all 252 peer rows are identical and all 42 WF rows match the independently
+derived one request/release and 16-byte reduction per source zero constructor,
+including the registered peak exceptions. O3 timed round code removes one
+`calloc` and one `free` for each width, but positive append adds a per-iteration
+null test and length reload; wide constants also reload from stack. These
+native observations do not isolate an elapsed-time percentage.
+
+One full control-then-candidate `measure 1048576 7` pair ran without retry,
+81.776/81.163 s, each retaining 4,116 raw rows and 588 groups. The
+[control](ecosystem-nullable-owner-control-samples.csv) and
+[candidate](ecosystem-nullable-owner-candidate-samples.csv) retain every sample
+and outlier. All 36 useful cells satisfy the existing duration and stability
+screens: **four qualified gains, 14 qualified losses, 18 overlaps**. Scalar
+growth/count 16 improves to `0.920115/0.920393` times control across cohorts;
+scalar reserved/count 16 worsens to `1.286597/1.291788`, and scalar reuse
+spans `2.007–2.127` times control. All three wide suffix-one cells gain
+(`0.545–0.673` times control), although the baseline already elides the empty
+allocation on that path, so their gain is not attributed to the removed
+header. The six suffix-zero controls remain unranked. Fresh slower-standard
+totals move from 18 pass/3 deficit/15 inconclusive to 5/16/15, plus six
+unranked each. The 14 useful losses refuse the unchanged no-loss criterion;
+the representation is not selected. Remaining shape/transport coverage is
+unqualified.
+
+A separate [IR-only READ fallback](nullable-zero-read-fallback.patch) selects
+a private immutable three-word zero header for null before loading; ownership,
+write, release, payload and caller paths remain unchanged. Its patch applies
+to the candidate timed raw IR identified in the identity record, not to
+compiler source. Both full-module O3 native commands exit 0, but the
+predeclared code screen fails: scalar and wide append use per-iteration
+`cmp`/`csel`/`ldp` plus a separate real-header length load, scalar work's
+frame grows 64→80 bytes and wide tail's 288→304. Wide constants recover
+register residency, but the nonnull append path does not regain length
+promotion. This variant stopped before linking, behavior execution or timing.
+No shared mutable header, owner policy or fallback was adopted.
