@@ -58,8 +58,8 @@ def prepare(scratch, snowghost):
         # checked as written. Explicit guards are required in the base.
         declarations = '\n'.join(f'  let x{i} = limit;' for i in range(n))
         invariants = ',\n'.join(f'    invariant bound{i}: x{i} <= limit' for i in range(n))
-        body = '\n'.join(f'    if x{i} > 0_u64 {{ set x{i} = x{i} - 1_u64; }}\n    invariant local{i}: x{i} <= limit;' for i in range(n))
-        text = f'fn chain(limit: u64) -> result: unit pure {{\n{declarations}\n  loop (\n{invariants}\n  ) {{\n    if x0 == 0_u64 {{ break; }}\n{body}\n  }}\n  return unit;\n}}\n'
+        body = '\n'.join(f'    if x{i} > 0_u64 {{\n      set x{i} = x{i} - 1_u64;\n    }}\n    invariant local{i}: x{i} <= limit;' for i in range(n))
+        text = f'fn chain(limit: u64) -> result: unit pure {{\n{declarations}\n  loop (\n{invariants}\n  ) {{\n    if x0 == 0_u64 {{\n      break;\n    }}\n{body}\n  }}\n  return unit;\n}}\n'
         path = scratch / f'chain-{n}.wf'
         path.write_text(text)
         jobs[f'chain/{n}'] = ['--check', str(path)]
@@ -96,12 +96,22 @@ def invoke(binary, flags, args):
         child.returncode = os.waitstatus_to_exitcode(status)
         err.seek(0)
         detail = err.read().decode()
+        out.seek(0)
+        output = out.read().decode()
         if child.returncode == 0:
             verdict = 'accepted'
         else:
             try:
                 diagnostic = json.loads(detail)
-                verdict = ':'.join(str(diagnostic[k]) for k in ('category', 'rule', 'kind'))
+                if diagnostic.get('category') == 'Verdict':
+                    # --check-modules prints each diagnostic on stdout, with
+                    # a JSON driver summary on stderr even in JSON mode.
+                    failures = sorted(set(re.findall(r'error\[([A-Z]+-\d+)\]: (\w+)', output)))
+                    if not failures:
+                        raise ValueError('module verdict has no source diagnostic')
+                    verdict = 'Source:' + '|'.join(':'.join(f) for f in failures)
+                else:
+                    verdict = ':'.join(str(diagnostic[k]) for k in ('category', 'rule', 'kind'))
             except (ValueError, KeyError) as error:
                 raise RuntimeError(f'compiler stop {child.returncode}: {detail}') from error
         rss = usage.ru_maxrss if platform.system() == 'Darwin' else usage.ru_maxrss * 1024
@@ -115,6 +125,7 @@ def main():
     parser.add_argument('--snowghost', required=True, type=Path)
     parser.add_argument('--output', required=True, type=Path)
     parser.add_argument('--mode', choices=('verdicts', 'cost', 'rewrites'), required=True)
+    parser.add_argument('--resume', action='store_true', help='append missing verdict pairs from an interrupted run')
     parser.add_argument('--samples', type=int, default=5)
     options = parser.parse_args()
     if options.samples < 1:
@@ -143,15 +154,24 @@ def main():
                 workloads['rewrite/merge_sort'] = ['--check', str(source / 'merge_sort.wf')]
             else:
                 workloads = {**probes, **jobs, **corpus}
-            with (options.output / (options.mode + '.csv')).open('w') as file:
+            output = options.output / (options.mode + '.csv')
+            done = set()
+            if options.resume and output.exists():
+                with output.open() as previous:
+                    done = {(row['workload'], row['configuration']) for row in csv.DictReader(previous)}
+            with output.open('a' if done else 'w') as file:
                 writer = csv.writer(file, lineterminator='\n')
-                writer.writerow(['workload', 'configuration', 'verdict', 'exit'])
+                if not done:
+                    writer.writerow(['workload', 'configuration', 'verdict', 'exit'])
                 for i, (name, args) in enumerate(workloads.items()):
                     for config, flags in CONFIGS.items():
+                        if (name, config) in done:
+                            continue
                         if config == 'ap' and name.startswith('snowghost/'):
                             continue
                         verdict, code, _, _ = invoke(options.base if config == 'base' else options.prototype, flags, args)
                         writer.writerow([name, config, verdict, code])
+                        file.flush()
                     file.flush()
                     if i % 100 == 0:
                         file.flush()

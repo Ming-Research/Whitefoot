@@ -1,58 +1,3 @@
---- a/3773a1d/renderer/font/cmap.wf
-+++ b/3773a1d/renderer/font/cmap.wf
-@@ -277,27 +277,31 @@
-   requires low <= high;
-   requires high <= face^.characters.ranges.inner.len;
- } {
--  doc "Binary-searches the compiled cmap ranges from low up to high, which are sorted and disjoint, for the one holding scalar, and returns the glyph it maps scalar to, or 0 when none holds it. Each step halves the span in a guaranteed tail call.";
--  if low >= high {
--    return 0_u16;
--  }
--  let span = high - low;
--  let less = span - 1_u64;
--  let half = less / 2_u64;
--  let middle = low + half;
--  let range = face^.characters.ranges.inner[middle];
--  let first = range.first;
--  let last = range.last;
--  if scalar < first {
--    return musttail find_glyph(face: face, scalar: scalar, low: low, high: middle);
--  }
--  if scalar > last {
--    let next = middle + 1_u64;
--    return musttail find_glyph(face: face, scalar: scalar, low: next, high: high);
--  }
--  let distance = scalar - first;
--  let glyph = mapped_glyph(face: face, range: range, distance: distance);
--  return glyph;
-+  loop (
-+    invariant ordered: low <= high,
-+    invariant within: high <= face^.characters.ranges.inner.len
-+  ) {
-+    if low >= high { return 0_u16; }
-+    let span = high - low;
-+    let half = span / 2_u64;
-+    let middle = low + half;
-+    invariant inside: middle < high;
-+    let range = face^.characters.ranges.inner[middle];
-+    let first = range.first;
-+    let last = range.last;
-+    if scalar < first {
-+      set high = middle;
-+    } else {
-+      if scalar > last {
-+        set low = middle + 1_u64;
-+      } else {
-+        let distance = scalar - first;
-+        let glyph = mapped_glyph(face: face, range: range, distance: distance);
-+        return glyph;
-+      }
-+    }
-+  }
-+  return 0_u16;
- }
- 
- fn mapped_glyph(face: &Face, range: CmapRange, distance: u32) -> result: u16 reads(face) {
 --- a/dc0defa/renderer/text/line_break/runs.wf
 +++ b/dc0defa/renderer/text/line_break/runs.wf
 @@ -115,37 +115,49 @@
@@ -171,7 +116,7 @@
      let absorbable = is_absorbable(raw: raw);
 --- a/dc0defa/renderer/text/line_break/line_break.wf
 +++ b/dc0defa/renderer/text/line_break/line_break.wf
-@@ -56,8 +56,10 @@
+@@ -56,43 +56,37 @@
  
  fn write_runs(runs: &Runs, decisions: &Box<Slots<u8>>, opportunities: &[BreakOpportunity]) -> result: unit reads(runs), reads(decisions.inner), writes(opportunities) contract {
    requires runs^.classes.inner.len >= 1_u64;
@@ -181,9 +126,9 @@
 -  doc "Walks every run and writes its span into opportunities: internal positions Prohibited, and the run's own final position either the decided inter-run boundary (from decisions) or, for the last run, Mandatory (LB3, the end of text). build_runs keeps starts/ends/classes the same length by construction (runs.wf's push_run and its loop invariants), but that fact is a within-function proof of build_runs's own body and this checker has no cross-call route to re-publish a plain (non-measure-typed) parameter's derived length facts to a later, separate call; the length and span guards below are therefore the real per-index admission checks this call needs, not defensive slack, and build_runs's construction is exactly what keeps every one of them true for the runs it produces.";
 +  doc "Writes each proved run index; stored span contents still require their ordinary bounds checks.";
    let run_count = runs^.classes.inner.len;
-   let starts_len = runs^.starts.inner.len;
-   let ends_len = runs^.ends.inner.len;
-@@ -65,10 +67,6 @@
+-  let starts_len = runs^.starts.inner.len;
+-  let ends_len = runs^.ends.inner.len;
+   let decisions_len = decisions^.inner.len;
    let opp_len = opportunities^.len;
    let last_run = run_count - 1_u64;
    for (r in 0_u64..run_count) {
@@ -191,65 +136,110 @@
 -    let end_ok = r < ends_len;
 -    if start_ok {
 -      if end_ok {
-         let start = runs^.starts.inner[r];
-         let end = runs^.ends.inner[r];
-         let has_span = end >= 1_u64;
-@@ -94,8 +92,6 @@
+-        let start = runs^.starts.inner[r];
+-        let end = runs^.ends.inner[r];
+-        let has_span = end >= 1_u64;
+-        if has_span {
+-          let last_pos = end - 1_u64;
+-          let ordered = start <= last_pos;
+-          let inside = last_pos < opp_len;
+-          if ordered {
+-            if inside {
+-              let is_last = r == last_run;
+-              let final_value = if is_last {
+-                give opp_mandatory;
+-              } else {
+-                let has_decision = r < decisions_len;
+-                if has_decision {
+-                  let value = decisions^.inner[r];
+-                  give value;
+-                } else {
+-                  give opp_allowed;
+-                }
+-              }
+-              write_run_span(opportunities: opportunities, start: start, last_pos: last_pos, final_value: final_value);
++    let start = runs^.starts.inner[r];
++    let end = runs^.ends.inner[r];
++    let has_span = end >= 1_u64;
++    if has_span {
++      let last_pos = end - 1_u64;
++      let ordered = start <= last_pos;
++      let inside = last_pos < opp_len;
++      if ordered {
++        if inside {
++          let is_last = r == last_run;
++          let final_value = if is_last {
++            give opp_mandatory;
++          } else {
++            let has_decision = r < decisions_len;
++            if has_decision {
++              let value = decisions^.inner[r];
++              give value;
++            } else {
++              give opp_allowed;
              }
            }
++          write_run_span(opportunities: opportunities, start: start, last_pos: last_pos, final_value: final_value);
          }
--      }
--    }
-   }
-   return unit;
- }
---- a/whitefoot/merge_sort.wf
-+++ b/whitefoot/merge_sort.wf
-@@ -1,24 +1,5 @@
- alias ExitStatus = std::process::ExitStatus;
- alias exit_status = std::process::exit_status;
--
--fn search_step(input: &[u64], lower: u64, upper: u64, key: u64) -> (next_lower: u64, next_upper: u64) reads(input) contract {
--  requires input^.len <= 16777216_u64;
--  requires lower < upper;
--  requires upper <= input^.len;
--  ensures next_lower <= next_upper;
--  ensures next_upper <= input^.len;
--} {
--  let last = upper - 1_u64;
--  let span = last - lower;
--  let half = span / 2_u64;
--  let middle = lower + half;
--  let value = input^[middle];
--  if value < key {
--    let first = middle + 1_u64;
--    return first, upper;
--  }
--  return lower, middle;
--}
- 
- fn lower_bound(input: &[u64], key: u64) -> result: u64 reads(input) contract {
-   requires input^.len <= 16777216_u64;
-@@ -34,9 +15,16 @@
-     if lower >= upper {
-       return lower;
+       }
      }
--    let (next_lower, next_upper) = search_step(input: input, lower: lower, upper: upper, key: key);
--    set lower = next_lower;
--    set upper = next_upper;
-+    let span = upper - lower;
-+    let half = span / 2_u64;
-+    let middle = lower + half;
-+    invariant inside: middle < upper;
-+    let value = input^[middle];
-+    if value < key {
-+      set lower = middle + 1_u64;
-+    } else {
-+      set upper = middle;
+--- a/3773a1d/renderer/font/cmap.wf
++++ b/3773a1d/renderer/font/cmap.wf
+@@ -277,27 +277,33 @@
+   requires low <= high;
+   requires high <= face^.characters.ranges.inner.len;
+ } {
+-  doc "Binary-searches the compiled cmap ranges from low up to high, which are sorted and disjoint, for the one holding scalar, and returns the glyph it maps scalar to, or 0 when none holds it. Each step halves the span in a guaranteed tail call.";
+-  if low >= high {
+-    return 0_u16;
+-  }
+-  let span = high - low;
+-  let less = span - 1_u64;
+-  let half = less / 2_u64;
+-  let middle = low + half;
+-  let range = face^.characters.ranges.inner[middle];
+-  let first = range.first;
+-  let last = range.last;
+-  if scalar < first {
+-    return musttail find_glyph(face: face, scalar: scalar, low: low, high: middle);
+-  }
+-  if scalar > last {
+-    let next = middle + 1_u64;
+-    return musttail find_glyph(face: face, scalar: scalar, low: next, high: high);
+-  }
+-  let distance = scalar - first;
+-  let glyph = mapped_glyph(face: face, range: range, distance: distance);
+-  return glyph;
++  loop (
++    invariant ordered: low <= high,
++    invariant within: high <= face^.characters.ranges.inner.len
++  ) {
++    if low >= high {
++      return 0_u16;
 +    }
-   }
-   return count;
++    let span = high - low;
++    let half = span / 2_u64;
++    let middle = low + half;
++    invariant inside: middle < high;
++    let range = face^.characters.ranges.inner[middle];
++    let first = range.first;
++    let last = range.last;
++    if scalar < first {
++      set high = middle;
++    } else {
++      if scalar > last {
++        set low = middle + 1_u64;
++      } else {
++        let distance = scalar - first;
++        let glyph = mapped_glyph(face: face, range: range, distance: distance);
++        return glyph;
++      }
++    }
++  }
++  return 0_u16;
  }
+ 
+ fn mapped_glyph(face: &Face, range: CmapRange, distance: u32) -> result: u16 reads(face) {
 --- a/dc0defa/renderer/css/rules/scan.wf
 +++ b/dc0defa/renderer/css/rules/scan.wf
 @@ -67,7 +67,10 @@
@@ -338,3 +328,50 @@
    return safe;
  }
  
+--- a/whitefoot/merge_sort.wf
++++ b/whitefoot/merge_sort.wf
+@@ -1,24 +1,5 @@
+ alias ExitStatus = std::process::ExitStatus;
+ alias exit_status = std::process::exit_status;
+-
+-fn search_step(input: &[u64], lower: u64, upper: u64, key: u64) -> (next_lower: u64, next_upper: u64) reads(input) contract {
+-  requires input^.len <= 16777216_u64;
+-  requires lower < upper;
+-  requires upper <= input^.len;
+-  ensures next_lower <= next_upper;
+-  ensures next_upper <= input^.len;
+-} {
+-  let last = upper - 1_u64;
+-  let span = last - lower;
+-  let half = span / 2_u64;
+-  let middle = lower + half;
+-  let value = input^[middle];
+-  if value < key {
+-    let first = middle + 1_u64;
+-    return first, upper;
+-  }
+-  return lower, middle;
+-}
+ 
+ fn lower_bound(input: &[u64], key: u64) -> result: u64 reads(input) contract {
+   requires input^.len <= 16777216_u64;
+@@ -34,9 +15,16 @@
+     if lower >= upper {
+       return lower;
+     }
+-    let (next_lower, next_upper) = search_step(input: input, lower: lower, upper: upper, key: key);
+-    set lower = next_lower;
+-    set upper = next_upper;
++    let span = upper - lower;
++    let half = span / 2_u64;
++    let middle = lower + half;
++    invariant inside: middle < upper;
++    let value = input^[middle];
++    if value < key {
++      set lower = middle + 1_u64;
++    } else {
++      set upper = middle;
++    }
+   }
+   return count;
+ }

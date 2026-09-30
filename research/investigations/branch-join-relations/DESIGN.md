@@ -90,11 +90,43 @@ replay still needs that missing evidence before claiming the original
 criterion was met. Counts from this workload inventory are neither a general
 usage distribution nor a substitute for the rule's semantic grounds.
 
+The replay requires Python 3.12 or newer and a Unix host with `wait4`.
 Python here only extracts pinned source, invokes the compiler, and records
 outcomes and OS resource usage. It implements no acceptance rule. Run it
 explicitly under `.github/run-check.pl`; it is not a formal gate dependency.
 The replay script, patches and result data serve this investigation and retire
 when superseding evidence replaces the claims they support.
+
+## Reproduce the current replay
+
+Create two clean scratch worktrees at
+`4459df880b04a7e87f46398969e1382b52637af0`. In one, apply this directory's
+`prototype.patch` with `git apply`; leave the other unmodified. Build each
+with `make -C compiler build` (the target takes the shared check lock).
+Clone `https://github.com/mbbill/Snowghost.git` into a scratch checkout; the
+script extracts the four full commit IDs it records, not its current branch.
+From this Whitefoot checkout, with the following shell variables naming the
+built executables, Snowghost checkout and a fresh output directory:
+
+```sh
+for mode in verdicts rewrites cost; do
+  perl .github/run-check.pl branch-join-replay \
+    python3 research/investigations/branch-join-relations/replay.py \
+      --base "$replay_base" --prototype "$replay_prototype" \
+      --snowghost "$replay_snowghost" --output "$replay_output" --mode "$mode"
+done
+```
+
+Round 0 of `cost.csv` is warmup; summarize rounds 1–5 by median wall time
+and maximum RSS per workload/configuration. Divide each candidate by `base`
+on that same workload. Keep `off` as an inert-prototype control. Each identity
+JSON records executable, patch and replay-script hashes, the compiler source,
+the host and the pinned Snowghost revisions. A source-verdict sweep may use
+`--resume` after an interrupted invocation; it appends only missing recorded
+workload/configuration pairs. Use a fresh output directory after changing a
+compiler or source input. Tool failures stop the script rather than becoming
+source rejections. Multi-module source diagnostics are retained from the CLI's
+per-module stdout alongside its JSON driver summary.
 
 ## Method
 
@@ -110,7 +142,7 @@ when superseding evidence replaces the claims they support.
 - **Compilers.** The base is the gate-profile `whitefootc` of `9c4579fba`
   (specification v0.78, this branch's base). The prototype is a scratch copy
   of the same tree with six switches, each read from one environment variable
-  and off by default; [prototype.patch](prototype.patch) is its complete diff:
+  and off by default; [the historical prototype patch](https://github.com/mbbill/Whitefoot/blob/f892d870ece812c9950f054016b63520f17f1dbe/research/investigations/branch-join-relations/prototype.patch) is its complete diff:
 
   | Switch | Emulates |
   |---|---|
