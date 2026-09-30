@@ -59,7 +59,7 @@ def prepare(scratch, snowghost):
         declarations = '\n'.join(f'  let x{i} = limit;' for i in range(n))
         invariants = ',\n'.join(f'    invariant bound{i}: x{i} <= limit' for i in range(n))
         body = '\n'.join(f'    if x{i} > 0_u64 {{ set x{i} = x{i} - 1_u64; }}\n    invariant local{i}: x{i} <= limit;' for i in range(n))
-        text = f'fn chain(limit: u64) -> result: unit pure {{\n{declarations}\n  loop (\n{invariants}\n  ) {{\n{body}\n    return unit;\n  }}\n  return unit;\n}}\n'
+        text = f'fn chain(limit: u64) -> result: unit pure {{\n{declarations}\n  loop (\n{invariants}\n  ) {{\n    if x0 == 0_u64 {{ break; }}\n{body}\n  }}\n  return unit;\n}}\n'
         path = scratch / f'chain-{n}.wf'
         path.write_text(text)
         jobs[f'chain/{n}'] = ['--check', str(path)]
@@ -114,31 +114,45 @@ def main():
     parser.add_argument('--prototype', required=True, type=Path)
     parser.add_argument('--snowghost', required=True, type=Path)
     parser.add_argument('--output', required=True, type=Path)
-    parser.add_argument('--mode', choices=('verdicts', 'cost'), required=True)
+    parser.add_argument('--mode', choices=('verdicts', 'cost', 'rewrites'), required=True)
     parser.add_argument('--samples', type=int, default=5)
     options = parser.parse_args()
     if options.samples < 1:
         parser.error('--samples must be positive')
     options.output.mkdir(parents=True, exist_ok=True)
-    metadata = {'compiler_source': subprocess.check_output(['git', '-C', str(ROOT), 'rev-parse', 'origin/main'], text=True).strip(),
+    metadata = {'compiler_source': '4459df880b04a7e87f46398969e1382b52637af0',
                 'base_sha256': digest(options.base), 'prototype_sha256': digest(options.prototype),
                 'patch_sha256': digest(HERE / 'prototype.patch'), 'script_sha256': digest(__file__),
                 'platform': platform.platform(), 'python': platform.python_version(),
-                'mode': options.mode, 'samples': options.samples, 'snowghost_revisions': list(SNAPSHOTS)}
+                'mode': options.mode, 'samples': options.samples, 'rewrites_sha256': digest(HERE / 'rewrites.patch'), 'snowghost_revisions': list(SNAPSHOTS)}
     (options.output / (options.mode + '-identity.json')).write_text(json.dumps(metadata, indent=2) + '\n')
     with tempfile.TemporaryDirectory(prefix='branch-join-') as temporary:
         jobs = prepare(Path(temporary), options.snowghost)
         corpus = cases()
         probes = {'probe/' + p.stem: ['--check', str(p)] for p in sorted((HERE / 'probes').glob('*.wf'))}
-        if options.mode == 'verdicts':
-            workloads = {**probes, **jobs, **corpus}
-            with (options.output / 'verdicts.csv').open('w') as file:
+        if options.mode in ('verdicts', 'rewrites'):
+            if options.mode == 'rewrites':
+                source = Path(temporary) / 'whitefoot'
+                source.mkdir()
+                (source / 'merge_sort.wf').write_bytes((ROOT / 'tests/programs/compute/merge_sort.wf').read_bytes())
+                subprocess.run(['patch', '--batch', '--fuzz=0', '-p1', '-d', temporary,
+                                '-i', str(HERE / 'rewrites.patch')], check=True, stdout=subprocess.DEVNULL)
+                workloads = {name: args for name, args in jobs.items()
+                             if name in ('snowghost/text::line_break', 'snowghost/font',
+                                         'snowghost/css::rules', 'snowghost/css::selectors') or name.startswith('chain/')}
+                workloads['rewrite/merge_sort'] = ['--check', str(source / 'merge_sort.wf')]
+            else:
+                workloads = {**probes, **jobs, **corpus}
+            with (options.output / (options.mode + '.csv')).open('w') as file:
                 writer = csv.writer(file, lineterminator='\n')
                 writer.writerow(['workload', 'configuration', 'verdict', 'exit'])
                 for i, (name, args) in enumerate(workloads.items()):
                     for config, flags in CONFIGS.items():
+                        if config == 'ap' and name.startswith('snowghost/'):
+                            continue
                         verdict, code, _, _ = invoke(options.base if config == 'base' else options.prototype, flags, args)
                         writer.writerow([name, config, verdict, code])
+                    file.flush()
                     if i % 100 == 0:
                         file.flush()
                         print(f'verdicts {i + 1}/{len(workloads)}: {name}', flush=True)
@@ -151,7 +165,7 @@ def main():
                 writer.writerow(['workload', 'round', 'configuration', 'wall_seconds', 'max_rss_bytes', 'accepted', 'rejected'])
                 for name, commands in workloads.items():
                     for sample in range(options.samples + 1):
-                        names = list(CONFIGS)
+                        names = [c for c in CONFIGS if c != 'ap' or name.startswith(('chain/', 'collections/'))]
                         names = names[sample % len(names):] + names[:sample % len(names)]
                         for config in names:
                             elapsed = 0.0

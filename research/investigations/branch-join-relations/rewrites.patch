@@ -250,3 +250,91 @@
    }
    return count;
  }
+--- a/dc0defa/renderer/css/rules/scan.wf
++++ b/dc0defa/renderer/css/rules/scan.wf
+@@ -67,7 +67,10 @@
+ } {
+   doc "Advances at past every top-level Whitespace component up to limit.";
+   let pos = at;
+-  loop @ws {
++  loop @ws (
++    invariant lower: pos >= at,
++    invariant upper: pos <= limit
++  ) {
+     let more = pos < limit;
+     if more {
+     } else {
+@@ -83,7 +86,7 @@
+     let next = step_advance(step: step, at: pos, limit: limit);
+     set pos = next;
+   }
+-  let safe = clamp_between(x: pos, lo: at, hi: limit);
++  let safe = pos;
+   return safe;
+ }
+ 
+@@ -95,7 +98,10 @@
+ } {
+   doc "Advances start to the first top-level Semicolon component at or before limit, or to limit when there is none; a Function or block is skipped whole, never inspected for a semicolon inside it.";
+   let pos = start;
+-  loop @scan {
++  loop @scan (
++    invariant lower: pos >= start,
++    invariant upper: pos <= limit
++  ) {
+     let more = pos < limit;
+     if more {
+     } else {
+@@ -110,7 +116,7 @@
+     let next = step_advance(step: step, at: pos, limit: limit);
+     set pos = next;
+   }
+-  let safe = clamp_between(x: pos, lo: start, hi: limit);
++  let safe = pos;
+   return safe;
+ }
+ 
+@@ -154,7 +160,10 @@
+ } {
+   doc "Consumes an at-rule's prelude and optional block from start to limit, per CSS Syntax 5.4.2: the prelude runs to the first top-level Semicolon, which it consumes, or BraceBlock, which it assigns as the block; reaching limit without either ends the at-rule with no block.";
+   let pos = start;
+-  loop @prelude {
++  loop @prelude (
++    invariant lower: pos >= start,
++    invariant upper: pos <= limit
++  ) {
+     let more = pos < limit;
+     if more {
+     } else {
+@@ -184,7 +193,7 @@
+     }
+     set pos = next;
+   }
+-  let safe = clamp_between(x: pos, lo: start, hi: limit);
++  let safe = pos;
+   let prelude_range = range32(from: start, to: safe);
+   let no_block = None<ComponentRange>();
+   let item = RuleItem::AtRule(name: name, prelude: prelude_range, block: no_block);
+--- a/dc0defa/renderer/css/selectors/scan.wf
++++ b/dc0defa/renderer/css/selectors/scan.wf
+@@ -606,7 +606,10 @@
+ } {
+   doc "Advances at past every top-level Whitespace component up to limit, skipping whole nested Function/block contents without inspecting them (none of which is itself whitespace at this level).";
+   let pos = at;
+-  loop @ws {
++  loop @ws (
++    invariant lower: pos >= at,
++    invariant upper: pos <= limit
++  ) {
+     let more = pos < limit;
+     if more {
+     } else {
+@@ -621,7 +624,7 @@
+       break @ws;
+     }
+   }
+-  let safe = clamp_between(x: pos, lo: at, hi: limit);
++  let safe = pos;
+   return safe;
+ }
+ 

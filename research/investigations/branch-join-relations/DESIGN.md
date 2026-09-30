@@ -71,7 +71,11 @@ criterion and distinguishes three observations:
   conformance source set. (a+) already exceeds the original analytic work
   bound, so its cost replay is limited to the collections and the scale
   family; a full Snowghost cost pass cannot make it eligible. Its semantic
-  conformance sweep still runs. No noisy single sample selects a rule.
+  conformance sweep still runs. Its extra Snowghost verdict checks were stopped
+  after `proto::style` exceeded three minutes on one core under `WF_JOIN_AP=1`;
+  that interruption is not a language rejection and supplies no completed
+  timing sample. The remaining replay omits (a+) on Snowghost, not from the
+  probes or conformance source sweep. No noisy single sample selects a rule.
 - The scale family has 4, 8, 16, 32 and 64 independently guarded counters,
   each with a header bound and a local invariant, including a continuing
   backedge. This is a newly specified reconstruction, not the lost original
