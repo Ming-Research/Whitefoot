@@ -1,0 +1,279 @@
+Concrete relocation loop: append code-generation trial
+
+Purpose: reproduce the registered concrete scalar/wide relocation trial; retain
+until superseded by qualified relocation lowering. Sole API: Vector append.
+Dependencies: ecosystem-append-growth-full-route-timing.txt and its replay patch
+reconstruct exact B. Earlier compiler overlays/frozen CLI remain prerequisites;
+this record does not substitute production compiler output. No production,
+specification, source-acceptance, representation or allocator policy is selected.
+
+Only B's two full-positive memcpy calls in each module change to an internal
+always-inline helper, with guarded 64-byte chunks then guarded 8-byte words.
+Each chunk loads four 16-byte vectors before storing them. Access alignment is 1;
+there are no new alias promises, volatile accesses or optimizer barriers in the
+candidate. Concrete inputs are i64 and {[32 x i64]}: integral words without
+padding or pointers, byte count divisible by 8, not necessarily 64. Pointer-bearing
+relocation is not qualified. Allocation, NULL refusal, exact copy extent, old
+payload free, descriptor publication, empty and partial paths remain as B.
+
+Native evidence (otool -tvV, public append tails followed to reached instances):
+                             B       loop
+scalar complete instructions  59       157
+wide complete instructions   123       139
+scalar/wide frame bytes       80/80     80/80
+scalar conditional branches    7        22
+wide conditional branches      7         9
+all WF instruction bytes      18996     24888 (+5892, +31.017056%)
+Counts include whole emitted bodies/alignment nops, not only executed paths; data
+and other linked objects are excluded. Both reached full routes inline two ldp-q /
+two stp-q operations per 64-byte chunk, no external copy/helper call and no
+q-register stack payload spill. Wide construction follows copy/free. Scalar has
+LLVM-generated tail/versioning code; matched 16/256/4096 capacities use 64-byte
+chunks and a zero-remainder branch. Wide stride 256 eliminates the word tail.
+Malloc's NULL branch precedes copying/free/publication. There is no established
+binding to a particular platform memcpy implementation or dispatch-cost cause.
+
+Correctness evidence, direct exits independently checked against guard END lines:
+Four candidate build/link stages exit 0. Fifteen existing API/account executions
+return expected exits, including deliberate value/state/allocation/clock faults.
+All 30 account rows are byte-identical to B. Expanded boundary driver changes only
+its capacity array to 16,256,4096,0,1,2,7,8,9,15,17,63,64,65: 84 width/peer cases.
+Correct boundary and ASan runs exit 0; independent boundary value fault exits 1.
+The success message still says five capacities; the actual expanded array has 14.
+ASan instruments the account driver and all 103 WF definitions, while peer/runtime
+objects are reused unsanitized; this is not a fully sanitized linked program.
+Missing-tail mutant removes the word store and exits 1 with:
+  vector library costs: growth append full values and checksum
+Extra-word mutant adds a volatile read only to preserve the deliberate bad access:
+  ERROR: AddressSanitizer: heap-buffer-overflow
+  READ of size 8
+  0 bytes after 144-byte region (16-byte account header + 128-byte old payload)
+  frame: wf_vector_api_append_one$instance$b2fcb9cda4b45694+0xea8
+The orchestration expected exit 1 but ASan aborted with 134; the orchestrator exits
+1. This mismatch remains recorded, with no retry or replacement expectation.
+The required actual invalid-read diagnostic is present despite retained external
+symbolizer/atos warnings. Do not describe all runner stages as expected passes.
+
+Focused scalar helper qualification adapts B's observed IR and observer only;
+source fixture bytes are unchanged. Only u64 grow e194368921a477a7 calls the exact
+candidate helper. A pre-copy hook checks identity/liveness/extent but does not
+copy; old-payload retirement compares actual new initialized bytes before free.
+Normal execution exits 0. Real scalar malloc NULL exits 73 after confirming old
+descriptor/payload preserved, no copy/free/publication; first-allocation NULL exits
+74 with the empty descriptor preserved. u8, ZST and Box<u64> grow bodies remain
+unchanged; Box copying still uses the prior observer memcpy and establishes no
+new pointer-copy property. No new focused mutants are claimed.
+
+Replay (replace angle-bracket tokens before shell parsing; no production edits)
+R=<repository-root>
+V=<repository-root>/research/experiments/container-representation/vector-library
+B=<scratch-root>/full-growth-route
+D=<scratch-root>/concrete-relocation-loop
+C=<scratch-root>/concrete-relocation-loop/checks
+F=<scratch-root>/concrete-relocation-loop/focused
+H=<scratch-root>/append-growth-baseline
+Logical scratch-root is V/.build. Use a fresh D with checks/ and focused/.
+Copy B/whitefoot-{timed,account}.ll, B/driver-account.o and B/inputs into D.
+Copy B/focused/{focused-fixture.wf,focused-observed.ll,observer.c} into F.
+In D: patch -p1 < <V>/concrete-relocation-loop.patch
+Copy B/vector-costs-route.c to C/vector-costs-boundaries.c, then:
+  patch <C>/vector-costs-boundaries.c < <C>/driver.patch
+Create sanitizer IR exactly, cwd=D:
+python3 - <<'REPLAY'
+from pathlib import Path
+import re
+p=Path('.')
+s=(p/'whitefoot-account.ll').read_text()
+s,n=re.subn(r'^(define [^\n]*?) \{$',r'\1 sanitize_address {',s,flags=re.M)
+assert n==103
+(p/'checks/whitefoot-asan.ll').write_text(s)
+REPLAY
+Copy C/whitefoot-asan.ll to C/whitefoot-{missing-tail,extra-word}-asan.ll.
+For each mutant, patch its copy using C/{missing-tail,extra-word}.patch.
+Correct sanitized compilation reads C/whitefoot-asan.ll; its object is named
+whitefoot-correct-asan.o. This recipe regenerates sanitizer-only attributes rather
+than retaining a 901-line repetitive patch. Verify the hashes below before use.
+
+Commands below reproduce the actual stage invocations. WHITEFOOT_CHECK_TIMEOUT=120.
+API cwd=V; focused cwd=R. G means perl <R>/.github/run-check.pl <stage>.
+N expands, in exactly this order, under D/inputs/native/:
+ordinary_values.o sched/core.o sched/entry.o completion/runtime.o
+completion/file_adapter.o completion/bridge.o wf_floor.o sched/prim_host.o
+completion/wait_host.o completion/file_posix.o completion/linux_io_uring.o
+ordinary_values_ir.o
+Q expands, in exactly this order, under H/native/:
+ordinary_values.o ordinary_values_ir.o wf_floor.o completion/bridge.o
+completion/file_adapter.o completion/file_posix.o completion/linux_io_uring.o
+completion/runtime.o completion/wait_host.o sched/core.o sched/entry.o sched/prim_host.o
+Do not reorder objects/libraries. N/Q stand for separate path arguments.
+
+01 relocation-loop-timed-compile: G clang -O3 -Wno-override-module -x ir -c <D>/whitefoot-timed.ll -o <D>/whitefoot-timed.o
+02 relocation-loop-timed-link: G clang++ -O3 <D>/inputs/driver-timed.o <D>/whitefoot-timed.o <D>/inputs/cpp-timed.o <D>/inputs/rust-timed.a N -pthread -lm <D>/inputs/prepare-bridge.o -liconv -lSystem -lc -lm -o <D>/vector-costs-timed
+03 relocation-loop-account-compile: G clang -O3 -Wno-override-module -x ir -c <D>/whitefoot-account.ll -o <D>/whitefoot-account.o
+04 relocation-loop-account-link: G clang++ -O3 <D>/driver-account.o <D>/whitefoot-account.o <D>/inputs/cpp-account.o <D>/inputs/rust-account.a N -pthread -lm <D>/inputs/prepare-bridge.o -liconv -lSystem -lc -lm -o <D>/vector-costs-account
+05 relocation-check-timed-growth-api-check: G <D>/vector-costs-timed growth-api-check
+06 relocation-check-timed-api-check: G <D>/vector-costs-timed api-check
+07 relocation-check-timed-growth-fail-values: G <D>/vector-costs-timed growth-api-fail-values
+08 relocation-check-timed-growth-fail-state: G <D>/vector-costs-timed growth-api-fail-state
+09 relocation-check-account-growth-api-check: G <D>/vector-costs-account growth-api-check
+10 relocation-check-account-api-check: G <D>/vector-costs-account api-check
+11 relocation-check-account-growth-fail-values: G <D>/vector-costs-account growth-api-fail-values
+12 relocation-check-account-growth-fail-state: G <D>/vector-costs-account growth-api-fail-state
+13 relocation-check-account-allocator-check: G <D>/vector-costs-account allocator-check
+14 relocation-check-account-allocator-fail-values: G <D>/vector-costs-account allocator-fail-values
+15 relocation-check-account-allocator-fail-accounting: G <D>/vector-costs-account allocator-fail-accounting
+16 relocation-check-account-api-fail-values: G <D>/vector-costs-account api-fail-values
+17 relocation-check-account-api-fail-allocation: G <D>/vector-costs-account api-fail-allocation
+18 relocation-check-timed-clock-fault: G <D>/vector-costs-timed growth-api-fail-clock
+19 relocation-check-account-rows: G sh -c "<D>/vector-costs-account growth-api-account > <C>/append-growth-accounting.csv"
+20 relocation-boundary-driver: G clang -std=c11 -O3 -Wall -Wextra -Werror -DECOSYSTEM -DWF_SPLIT_SLOTS_PAYLOAD=1 -DWF_SPLIT_SLOTS_REALLOC=1 -DWF_INLINE_SLOTS_OWNER=1 -DWF_EMPTY_PAYLOAD_ANCHOR=1 -DWF_FULL_GROWTH_MALLOC_COPY=1 -DACCOUNT_ONLY -c <C>/vector-costs-boundaries.c -o <C>/driver-boundaries.o
+21 relocation-boundary-link: G clang++ -O3 <C>/driver-boundaries.o <D>/whitefoot-account.o <D>/inputs/cpp-account.o <D>/inputs/rust-account.a N -pthread -lm <D>/inputs/prepare-bridge.o -liconv -lSystem -lc -lm -o <C>/vector-costs-boundaries
+22 relocation-boundary-check: G <C>/vector-costs-boundaries growth-api-check
+23 relocation-boundary-values-fault: G <C>/vector-costs-boundaries growth-api-fail-values
+24 relocation-asan-driver: G clang -std=c11 -O3 -Wall -Wextra -Werror -DECOSYSTEM -DWF_SPLIT_SLOTS_PAYLOAD=1 -DWF_SPLIT_SLOTS_REALLOC=1 -DWF_INLINE_SLOTS_OWNER=1 -DWF_EMPTY_PAYLOAD_ANCHOR=1 -DWF_FULL_GROWTH_MALLOC_COPY=1 -DACCOUNT_ONLY -fsanitize=address -fno-omit-frame-pointer -g -c <C>/vector-costs-boundaries.c -o <C>/driver-boundaries-asan.o
+25 relocation-correct-asan-compile: G clang -O3 -Wno-override-module -fsanitize=address -fno-omit-frame-pointer -g -x ir -c <C>/whitefoot-asan.ll -o <C>/whitefoot-correct-asan.o
+26 relocation-correct-asan-link: G clang++ -fsanitize=address -O3 <C>/driver-boundaries-asan.o <C>/whitefoot-correct-asan.o <D>/inputs/cpp-account.o <D>/inputs/rust-account.a N -pthread -lm <D>/inputs/prepare-bridge.o -liconv -lSystem -lc -lm -o <C>/vector-costs-correct-asan
+27 relocation-correct-asan-check: G <C>/vector-costs-correct-asan growth-api-check
+28 relocation-missing-tail-asan-compile: G clang -O3 -Wno-override-module -fsanitize=address -fno-omit-frame-pointer -g -x ir -c <C>/whitefoot-missing-tail-asan.ll -o <C>/whitefoot-missing-tail-asan.o
+29 relocation-missing-tail-asan-link: G clang++ -fsanitize=address -O3 <C>/driver-boundaries-asan.o <C>/whitefoot-missing-tail-asan.o <D>/inputs/cpp-account.o <D>/inputs/rust-account.a N -pthread -lm <D>/inputs/prepare-bridge.o -liconv -lSystem -lc -lm -o <C>/vector-costs-missing-tail-asan
+30 relocation-missing-tail-asan-check: G <C>/vector-costs-missing-tail-asan growth-api-check
+31 relocation-extra-word-asan-compile: G clang -O3 -Wno-override-module -fsanitize=address -fno-omit-frame-pointer -g -x ir -c <C>/whitefoot-extra-word-asan.ll -o <C>/whitefoot-extra-word-asan.o
+32 relocation-extra-word-asan-link: G clang++ -fsanitize=address -O3 <C>/driver-boundaries-asan.o <C>/whitefoot-extra-word-asan.o <D>/inputs/cpp-account.o <D>/inputs/rust-account.a N -pthread -lm <D>/inputs/prepare-bridge.o -liconv -lSystem -lc -lm -o <C>/vector-costs-extra-word-asan
+33 relocation-extra-word-asan-check: G <C>/vector-costs-extra-word-asan growth-api-check
+34 loop-focused-build: G clang -std=c11 -O3 -Wall -Wextra -Werror -Wno-override-module <F>/focused-observed.ll <F>/observer.c Q -pthread -lm -o <F>/focused-native
+35 loop-focused-normal: G <F>/focused-native
+36 loop-focused-scalar-failure: G <F>/focused-native scalar-failure
+37 loop-focused-first-failure: G <F>/focused-native first-failure
+
+Stage | actual / originally expected | outer seconds
+01 | 0 / 0 | 0.455882375
+02 | 0 / 0 | 0.134077542
+03 | 0 / 0 | 0.340206125
+04 | 0 / 0 | 0.128263041
+05 | 0 / 0 | 0.455308584
+06 | 0 / 0 | 0.135805875
+07 | 1 / 1 | 0.134759208
+08 | 1 / 1 | 0.138571666
+09 | 0 / 0 | 0.480433375
+10 | 0 / 0 | 0.163146958
+11 | 1 / 1 | 0.139014708
+12 | 1 / 1 | 0.131771875
+13 | 0 / 0 | 0.143715000
+14 | 1 / 1 | 0.146833000
+15 | 1 / 1 | 0.149248584
+16 | 1 / 1 | 0.148767958
+17 | 1 / 1 | 0.143164625
+18 | 1 / 1 | 0.132084750
+19 | 0 / 0 | 0.121648375
+20 | 0 / 0 | 0.682110917
+21 | 0 / 0 | 0.127840000
+22 | 0 / 0 | 0.347094583
+23 | 1 / 1 | 0.157828250
+24 | 0 / 0 | 1.011163000
+25 | 0 / 0 | 0.775752041
+26 | 0 / 0 | 0.135357542
+27 | 0 / 0 | 0.451150291
+28 | 0 / 0 | 0.569974667
+29 | 0 / 0 | 0.131185333
+30 | 1 / 1 | 0.348315167
+31 | 0 / 0 | 0.779598208
+32 | 0 / 0 | 0.126171791
+33 | 134 / 1 | 0.347172666
+34 | 0 / 0 | 0.236314792
+35 | 0 / 0 | 0.459334292
+36 | 73 / 73 | 0.183687083
+37 | 74 / 74 | 0.144784375
+
+SHA-256 input/output identities (linked non-WF object copies match B):
+B/timed input 2a239e8c4d7e1623b7f177b146943767b50deed382b553d12f7e4a4274a2c7bc
+B/account input ebde1b8930364faf533c755abefb355215179cfe084d11e28771cee360fdc720
+B/focused IR input 4ae04ab0154482f286b1535824034b2a0ec4e5d148e34743f3f888da2cf0f77c
+B/observer input 0eeb90e0d650164c452566805bb085221ecb018e67d6b43ebf4eb1cdd3b86eb6
+loop/timed IR b98de39d08032de2f768824f5ba90bc47f7d89f9a3d84452eb88cb9007a18f22
+loop/account IR e9a7385967179386dd196a0c8572cdf5fedecd0c6b53e6d98f43b0950e1f5e26
+loop/sanitized IR 8d25d0e70a1ceda122acf63f789da2a835b7fab53209ed60ad877b93c9e29929
+loop/focused IR 7b257da9170b084efe38804d990cffd045c3df23f4031fdea0f45185d4538025
+loop/timed image 1153d67fce63d5acb631228b407b32c07e908f0542b23e93b7479fc2f3aad2bf
+loop/account image a536d595ebd68393f1762227502dc1a9ac05e0aa64adfb17956fdf066ca03701
+replay patch 9187e0e3de0eea0f00606d99a1beb7fa01fe10a3e0094179b3d9c42fe9a92b6f
+
+Actual scalar full route excerpt (frame 80 bytes; tail/publication below):
+0000000100011200	bl	0x1000b7eac ; symbol stub for: _malloc
+0000000100011204	cbz	x0, 0x100011434
+0000000100011208	mov	x22, x0
+000000010001120c	lsl	x24, x25, #1
+0000000100011210	lsl	x8, x25, #3
+0000000100011214	mov	x12, x21
+0000000100011218	mov	x11, x0
+000000010001121c	cmp	x25, #0x8
+0000000100011220	b.lo	0x10001124c
+0000000100011224	ldp	q0, q1, [x12]
+0000000100011228	ldp	q2, q3, [x12, #0x20]
+000000010001122c	stp	q0, q1, [x11]
+0000000100011230	stp	q2, q3, [x11, #0x20]
+0000000100011234	add	x11, x11, #0x40
+0000000100011238	add	x12, x12, #0x40
+000000010001123c	sub	x8, x8, #0x40
+0000000100011240	cmp	x8, #0x3f
+0000000100011244	b.hi	0x100011224
+0000000100011248	cbz	x8, 0x1000113fc
+00000001000113e4	mov	x9, x12
+00000001000113e8	mov	x10, x11
+00000001000113ec	ldr	x11, [x9], #0x8
+00000001000113f0	str	x11, [x10], #0x8
+00000001000113f4	subs	x8, x8, #0x8
+00000001000113f8	b.ne	0x1000113ec
+00000001000113fc	mov	x0, x21
+0000000100011400	bl	0x1000b7d2c ; symbol stub for: _free
+0000000100011404	str	x22, [x19, #0x10]
+0000000100011408	str	x24, [x19, #0x8]
+
+Replay verification: the retained patch plus sanitizer transform reconstruct both
+modules, the boundary driver, both mutants and focused IR/observer byte-for-byte.
+All manifest source/copy bytes and unique WF object instruction counts were checked.
+
+Single fixed timing screen (cwd=R, WHITEFOOT_CHECK_TIMEOUT=240):
+perl <R>/.github/run-check.pl relocation-loop-screen sh -c "<D>/vector-costs-timed growth-api-measure 67108864 7 8589934592 > <D>/samples.csv"
+Direct exit 0; outer elapsed 118.77099604159594 seconds.
+Raw guard: == END relocation-loop-screen: 118.76 s, exit 0 ==
+RAW probe: reads=200000 minimum_nonzero_ns=41 quantized=0.
+All 840 unique rows retained: 420 real / 420 controls, 60 real groups of 7 samples.
+Minimum real elapsed 1.313533 ms; all real samples exceed 1 ms.
+Maximum cohort WF/peer median-ratio spread 3.050019167%; maximum peer cohort
+median spread 2.302697148%, both below the original 10% bounds. Repeated-launch
+drift is untested. No filtering, control subtraction, rerun or budget change.
+
+Full 20-cell report: ns/append median [all seven samples min..max].
+P means complete WF range below peer; L means above; O means overlapping.
+Qualification uses the median-slower peer in each cohort, both cohorts required.
+Element/count/cohort | WF | Rust | C++ | vs Rust/C++ | slower-peer qualification
+8/0/0 | 7.83 [7.79..8.20] | 12.06 [11.76..12.65] | 11.00 [10.91..11.26] | P/P | Pass
+8/0/1 | 7.80 [7.79..7.83] | 11.79 [11.76..11.85] | 10.93 [10.92..11.01] | P/P | Pass
+8/1/0 | 16.34 [16.27..16.63] | 32.53 [32.24..34.46] | 19.42 [19.18..19.69] | P/P | Pass
+8/1/1 | 16.30 [16.26..17.02] | 32.41 [32.29..33.76] | 19.31 [19.15..20.44] | P/P | Pass
+8/16/0 | 20.39 [20.28..21.99] | 36.71 [36.60..37.67] | 25.52 [25.41..25.58] | P/P | Pass
+8/16/1 | 20.40 [20.21..20.47] | 36.80 [36.68..38.28] | 25.44 [25.40..26.46] | P/P | Pass
+8/256/0 | 84.07 [83.57..91.58] | 104.62 [102.13..114.11] | 91.33 [90.91..93.35] | P/O | Pass
+8/256/1 | 85.51 [82.44..88.63] | 105.04 [102.22..111.23] | 92.98 [91.06..99.69] | P/P | Pass
+8/4096/0 | 799.41 [773.19..863.58] | 737.09 [732.91..748.60] | 723.81 [719.25..784.23] | L/O | Fail
+8/4096/1 | 787.41 [770.83..823.50] | 736.90 [733.97..756.38] | 725.64 [719.37..731.65] | L/L | Fail
+256/0/0 | 12.13 [12.06..12.93] | 22.38 [22.28..22.91] | 15.74 [15.65..15.89] | P/P | Pass
+256/0/1 | 12.14 [12.07..12.39] | 22.31 [22.26..22.86] | 15.70 [15.68..15.95] | P/P | Pass
+256/1/0 | 32.77 [32.39..33.73] | 52.89 [52.60..55.55] | 43.14 [42.56..43.69] | P/P | Pass
+256/1/1 | 32.56 [32.49..33.40] | 52.80 [52.55..52.89] | 42.97 [42.96..43.44] | P/P | Pass
+256/16/0 | 147.40 [141.16..160.70] | 150.11 [148.79..154.72] | 146.18 [142.30..154.14] | O/O | Fail
+256/16/1 | 146.22 [141.01..153.76] | 153.45 [150.40..159.57] | 143.52 [142.17..153.73] | O/O | Fail
+256/256/0 | 1519.57 [1481.68..1578.98] | 1322.14 [1304.22..1340.26] | 1330.88 [1316.95..1422.02] | L/L | Fail
+256/256/1 | 1486.39 [1467.84..1582.89] | 1327.37 [1320.61..1348.91] | 1319.16 [1296.90..1411.64] | L/L | Fail
+256/4096/0 | 22226.24 [22103.62..22323.73] | 161.62 [160.45..164.06] | 14857.15 [14745.06..14911.45] | L/L | Fail
+256/4096/1 | 22197.34 [22122.81..22240.63] | 162.57 [160.36..163.43] | 14833.86 [14788.73..15045.53] | L/L | Fail
+
+Outcome: reject this concrete loop against the registered append-growth target.
+Only scalar16 and scalar256 pass both cohorts (2/6 matched cells). Wide16 overlaps;
+scalar4096 loses to median-slower Rust; wide256 and wide4096 lose to both peers.
+All four capacity0/1 policy cells pass separately. Mandatory wide4096 copy remains:
+WF about 22.2 us, C++ about 14.8 us, Rust about 162 ns; it is not removed as an outlier.
+No paired comparison with B was run, so no speedup/regression attribution follows
+from other screens. No further loop permutation or production policy is selected;
+append growth remains unqualified and other APIs have not advanced.
+Raw CSV SHA-256 5a2889bf009399840bed6847b2dc49cea75bfd2c78d1c6defa59ac8793660a61

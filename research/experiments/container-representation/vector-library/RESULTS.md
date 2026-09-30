@@ -7870,3 +7870,101 @@ The existing account checks preserve zero allocation during spare append.
 This completes the registered spare screen for these frozen research images;
 growth remains unqualified, so append as a whole and the representation remain
 unselected. No other API, compiler or specification change follows.
+
+
+#### Concrete relocation loop: registered append code-generation trial
+
+The remaining growth cells have no established extra payload copy or hidden
+WF helper dispatch. Test one concrete alternative to B's generic memcpy call,
+without changing the allocator route or selecting a size threshold. Start from
+exact full-growth-route B and replace only its two full-positive copies with
+one internal always-inline helper: guarded 64-byte chunks (four 16-byte vector
+loads followed by four stores), then guarded 8-byte words for the remaining
+prefix. Use ordinary nonvolatile accesses with conservative alignment and no
+new alias promises or optimizer barriers. Both frozen element representations
+are integral u64 words: i64 and `{[32 x i64]}`, with no padding or pointers.
+The byte count is a multiple of eight; do not assume a multiple of 64. Each
+access is guarded by its remaining extent. This concrete trial establishes
+nothing about padded, pointer-bearing or other target representations.
+
+Keep malloc, NULL refusal before copying, old owner on refusal, exact extents,
+free and descriptor publication unchanged. Empty and partial growth remain as
+B. The question is whether exposing this loop improves actual relocation code;
+no runtime binding from libSystem memcpy to a particular inspected platform
+implementation has been established, so do not claim its internal dispatch
+cost as the cause.
+
+Compile this single candidate and inspect both reached append bodies first.
+The native prerequisite is an inline vector/word relocation loop, no external
+copy call or new helper boundary on the changed full route, no new payload
+spill, and unchanged allocation/failure/publication order. Record branches,
+frames and total WF code size. If LLVM restores memcpy or these conditions
+fail, retain the failure without timing or adding barriers to rescue it.
+
+If native prerequisites pass, reuse the existing API/account and failure
+checks and additionally exercise scalar lengths around chunk boundaries
+(2,7,8,9,15,17,63,64,65) with unchanged independent content/capacity/cleanup
+oracles. Keep the original checks; these are extra correctness cases, not a
+smaller timing workload. A sanitized candidate must detect deliberate missing
+tail content and an extra-word read beyond the old allocation before timing.
+No owning-pointer copy claim follows from reusing B's unchanged owner tests.
+
+Only after these prerequisites, one existing all-cell growth screen
+`growth-api-measure 67108864 7 8589934592` may test the candidate, retaining all
+840 rows and both peers, including the mandatory 1 MiB copy counterexample.
+The original duration, stability and range-separation targets remain. A single
+screen cannot establish a paired gain or select a production copy policy; a
+failure selects no further loop permutation. Pairing needs a separately
+recorded discriminator if the screen supplies a reason to continue.
+
+Transient modules and expanded correctness driver belong to
+`.build/concrete-relocation-loop`. Retain a replay patch and compact native,
+correctness and any timing record in this Vector home until superseded by
+qualified relocation lowering. This experiment changes neither production
+code, source acceptance, a language rule, nor another API.
+
+
+#### Concrete relocation loop outcome: native prerequisite passes, growth target fails
+
+The [replay patch](concrete-relocation-loop.patch) and
+[compact native/check/timing record](ecosystem-append-growth-relocation-loop-timing.txt)
+reproduce the integral-word trial from frozen full-growth B. Native copy calls
+become inline vector/word loops, with no new payload spill and unchanged
+80-byte frames. Complete scalar/wide bodies grow from 59/123 to 157/139
+instructions; total WF instruction bytes grow 18,996 to 24,888 (**31.02%**).
+This qualifies neither pointer-bearing relocation nor production lowering.
+
+Boundary and sanitized positive checks pass; missing-tail content fails the
+independent oracle. The extra-word mutant reports an actual ASan eight-byte
+out-of-bounds read. Its runner expected exit 1 but received 134, so the
+orchestrator exits 1; that mismatch and diagnostic are retained without retry.
+Focused real NULL checks preserve scalar/full and empty owners (exits 73/74).
+All 30 account rows match B. The record preserves all direct stage exits.
+
+The single fixed screen exits 0 in 118.771 s. The
+[complete CSV](ecosystem-append-growth-relocation-loop-samples.csv) retains all
+840 rows (420 real, 420 controls), with minimum real duration 1.313533 ms and
+RAW precision 41 ns. Maximum cohort ratio/peer-median spreads are 3.050%/2.303%,
+within the original 10% bounds. The table gives ranges of the two cohort
+medians in ns/append; qualification uses complete sample ranges, retained in
+the record, against the median-slower peer in both cohorts.
+
+| Element / full capacity | WF | Rust | C++ | Growth qualification |
+|---|---:|---:|---:|---|
+| 8 B / 16 | 20.39–20.40 | 36.71–36.80 | 25.44–25.52 | Pass |
+| 8 B / 256 | 84.07–85.51 | 104.62–105.04 | 91.33–92.98 | Pass |
+| 8 B / 4096 | 787.41–799.41 | 736.90–737.09 | 723.81–725.64 | Fail |
+| 8 B / 0 | 7.80–7.83 | 11.79–12.06 | 10.93–11.00 | Policy pass |
+| 8 B / 1 | 16.30–16.34 | 32.41–32.53 | 19.31–19.42 | Policy pass |
+| 256 B / 16 | 146.22–147.40 | 150.11–153.45 | 143.52–146.18 | Overlap |
+| 256 B / 256 | 1486.39–1519.57 | 1322.14–1327.37 | 1319.16–1330.88 | Fail |
+| 256 B / 4096 | 22197.34–22226.24 | 161.62–162.57 | 14833.86–14857.15 | Fail |
+| 256 B / 0 | 12.13–12.14 | 22.31–22.38 | 15.70–15.74 | Policy pass |
+| 256 B / 1 | 32.56–32.77 | 52.80–52.89 | 42.97–43.14 | Policy pass |
+
+**Reject this loop:** only scalar 16/256 pass the matched target (**2/6**).
+The four capacity-0/1 policy cells pass separately; the mandatory 1 MiB copy
+counterexample remains. This single screen establishes no paired gain or
+regression against B, no memcpy dispatch-cost cause, and no copy threshold.
+No further loop permutation is selected. Append growth remains unqualified;
+no representation, production/specification change or other API is advanced.

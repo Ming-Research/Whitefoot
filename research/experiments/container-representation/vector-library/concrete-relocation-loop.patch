@@ -1,0 +1,271 @@
+--- a/whitefoot-timed.ll
++++ b/whitefoot-timed.ll
+@@ -3345,7 +3345,7 @@
+   unreachable
+ window.block.ready.v2.realloc:
+   %route.copy.bytes = mul nuw i64 %t3, ptrtoint (ptr getelementptr (i64, ptr null, i64 1) to i64)
+-  call void @llvm.memcpy.p0.p0.i64(ptr %t14, ptr %t5, i64 %route.copy.bytes, i1 false)
++  call void @wf_relocate_words64(ptr %t14, ptr %t5, i64 %route.copy.bytes)
+   call void @free(ptr %t5)
+   br label %window.block.ready.v2
+ window.grow.partial.v2:
+@@ -3428,7 +3428,7 @@
+   unreachable
+ window.block.ready.v2.realloc:
+   %route.copy.bytes = mul nuw i64 %t3, ptrtoint (ptr getelementptr (%wf.t.ac26c585c4167c7a, ptr null, i64 1) to i64)
+-  call void @llvm.memcpy.p0.p0.i64(ptr %t14, ptr %t5, i64 %route.copy.bytes, i1 false)
++  call void @wf_relocate_words64(ptr %t14, ptr %t5, i64 %route.copy.bytes)
+   call void @free(ptr %t5)
+   br label %window.block.ready.v2
+ window.grow.partial.v2:
+@@ -3883,3 +3883,48 @@
+   %status = call i32 @wf__floor_run(i32 %argc, ptr %argv)
+   ret i32 %status
+ }
++
++define internal void @wf_relocate_words64(ptr %destination, ptr %source, i64 %bytes) alwaysinline {
++entry:
++  br label %chunks
++chunks:
++  %dst = phi ptr [ %destination, %entry ], [ %dst.next, %copy.chunk ]
++  %src = phi ptr [ %source, %entry ], [ %src.next, %copy.chunk ]
++  %remaining = phi i64 [ %bytes, %entry ], [ %remaining.next, %copy.chunk ]
++  %has.chunk = icmp uge i64 %remaining, 64
++  br i1 %has.chunk, label %copy.chunk, label %words
++copy.chunk:
++  %src16 = getelementptr i8, ptr %src, i64 16
++  %src32 = getelementptr i8, ptr %src, i64 32
++  %src48 = getelementptr i8, ptr %src, i64 48
++  %a = load <2 x i64>, ptr %src, align 1
++  %b = load <2 x i64>, ptr %src16, align 1
++  %c = load <2 x i64>, ptr %src32, align 1
++  %d = load <2 x i64>, ptr %src48, align 1
++  %dst16 = getelementptr i8, ptr %dst, i64 16
++  %dst32 = getelementptr i8, ptr %dst, i64 32
++  %dst48 = getelementptr i8, ptr %dst, i64 48
++  store <2 x i64> %a, ptr %dst, align 1
++  store <2 x i64> %b, ptr %dst16, align 1
++  store <2 x i64> %c, ptr %dst32, align 1
++  store <2 x i64> %d, ptr %dst48, align 1
++  %dst.next = getelementptr i8, ptr %dst, i64 64
++  %src.next = getelementptr i8, ptr %src, i64 64
++  %remaining.next = sub i64 %remaining, 64
++  br label %chunks
++words:
++  %word.dst = phi ptr [ %dst, %chunks ], [ %word.dst.next, %copy.word ]
++  %word.src = phi ptr [ %src, %chunks ], [ %word.src.next, %copy.word ]
++  %word.remaining = phi i64 [ %remaining, %chunks ], [ %word.remaining.next, %copy.word ]
++  %has.word = icmp uge i64 %word.remaining, 8
++  br i1 %has.word, label %copy.word, label %done
++copy.word:
++  %word = load i64, ptr %word.src, align 1
++  store i64 %word, ptr %word.dst, align 1
++  %word.dst.next = getelementptr i8, ptr %word.dst, i64 8
++  %word.src.next = getelementptr i8, ptr %word.src, i64 8
++  %word.remaining.next = sub i64 %word.remaining, 8
++  br label %words
++done:
++  ret void
++}
+--- a/whitefoot-account.ll
++++ b/whitefoot-account.ll
+@@ -3345,7 +3345,7 @@
+   unreachable
+ window.block.ready.v2.realloc:
+   %route.copy.bytes = mul nuw i64 %t3, ptrtoint (ptr getelementptr (i64, ptr null, i64 1) to i64)
+-  call void @llvm.memcpy.p0.p0.i64(ptr %t14, ptr %t5, i64 %route.copy.bytes, i1 false)
++  call void @wf_relocate_words64(ptr %t14, ptr %t5, i64 %route.copy.bytes)
+   call void @wf_cost_release(ptr %t5)
+   br label %window.block.ready.v2
+ window.grow.partial.v2:
+@@ -3428,7 +3428,7 @@
+   unreachable
+ window.block.ready.v2.realloc:
+   %route.copy.bytes = mul nuw i64 %t3, ptrtoint (ptr getelementptr (%wf.t.ac26c585c4167c7a, ptr null, i64 1) to i64)
+-  call void @llvm.memcpy.p0.p0.i64(ptr %t14, ptr %t5, i64 %route.copy.bytes, i1 false)
++  call void @wf_relocate_words64(ptr %t14, ptr %t5, i64 %route.copy.bytes)
+   call void @wf_cost_release(ptr %t5)
+   br label %window.block.ready.v2
+ window.grow.partial.v2:
+@@ -3883,3 +3883,48 @@
+   %status = call i32 @wf__floor_run(i32 %argc, ptr %argv)
+   ret i32 %status
+ }
++
++define internal void @wf_relocate_words64(ptr %destination, ptr %source, i64 %bytes) alwaysinline {
++entry:
++  br label %chunks
++chunks:
++  %dst = phi ptr [ %destination, %entry ], [ %dst.next, %copy.chunk ]
++  %src = phi ptr [ %source, %entry ], [ %src.next, %copy.chunk ]
++  %remaining = phi i64 [ %bytes, %entry ], [ %remaining.next, %copy.chunk ]
++  %has.chunk = icmp uge i64 %remaining, 64
++  br i1 %has.chunk, label %copy.chunk, label %words
++copy.chunk:
++  %src16 = getelementptr i8, ptr %src, i64 16
++  %src32 = getelementptr i8, ptr %src, i64 32
++  %src48 = getelementptr i8, ptr %src, i64 48
++  %a = load <2 x i64>, ptr %src, align 1
++  %b = load <2 x i64>, ptr %src16, align 1
++  %c = load <2 x i64>, ptr %src32, align 1
++  %d = load <2 x i64>, ptr %src48, align 1
++  %dst16 = getelementptr i8, ptr %dst, i64 16
++  %dst32 = getelementptr i8, ptr %dst, i64 32
++  %dst48 = getelementptr i8, ptr %dst, i64 48
++  store <2 x i64> %a, ptr %dst, align 1
++  store <2 x i64> %b, ptr %dst16, align 1
++  store <2 x i64> %c, ptr %dst32, align 1
++  store <2 x i64> %d, ptr %dst48, align 1
++  %dst.next = getelementptr i8, ptr %dst, i64 64
++  %src.next = getelementptr i8, ptr %src, i64 64
++  %remaining.next = sub i64 %remaining, 64
++  br label %chunks
++words:
++  %word.dst = phi ptr [ %dst, %chunks ], [ %word.dst.next, %copy.word ]
++  %word.src = phi ptr [ %src, %chunks ], [ %word.src.next, %copy.word ]
++  %word.remaining = phi i64 [ %remaining, %chunks ], [ %word.remaining.next, %copy.word ]
++  %has.word = icmp uge i64 %word.remaining, 8
++  br i1 %has.word, label %copy.word, label %done
++copy.word:
++  %word = load i64, ptr %word.src, align 1
++  store i64 %word, ptr %word.dst, align 1
++  %word.dst.next = getelementptr i8, ptr %word.dst, i64 8
++  %word.src.next = getelementptr i8, ptr %word.src, i64 8
++  %word.remaining.next = sub i64 %word.remaining, 8
++  br label %words
++done:
++  ret void
++}
+--- a/focused/focused-observed.ll
++++ b/focused/focused-observed.ll
+@@ -160,6 +160,7 @@
+ declare void @llvm.assume(i1)
+ declare void @llvm.memmove.p0.p0.i64(ptr, ptr, i64, i1 immarg)
+ declare void @wf_observe_full_copy(ptr, ptr, i64)
++declare void @wf_observe_scalar_copy_begin(ptr, ptr, i64)
+ 
+ define internal void @wf_owner_identity.body(ptr %wf.result, ptr %wf.arg.v0) #0 {
+ entry:
+@@ -2058,7 +2059,8 @@
+   unreachable
+ window.block.ready.v2.realloc:
+   %route.copy.bytes = mul nuw i64 %t3, ptrtoint (ptr getelementptr (i64, ptr null, i64 1) to i64)
+-  call void @wf_observe_full_copy(ptr %t14, ptr %t5, i64 %route.copy.bytes)
++  call void @wf_observe_scalar_copy_begin(ptr %t14, ptr %t5, i64 %route.copy.bytes)
++  call void @wf_relocate_words64(ptr %t14, ptr %t5, i64 %route.copy.bytes)
+   call void @wf_observe_release(ptr %t5)
+   br label %window.block.ready.v2
+ window.grow.partial.v2:
+@@ -2108,3 +2110,48 @@
+   %status = call i32 @wf__floor_run(i32 %argc, ptr %argv)
+   ret i32 %status
+ }
++
++define internal void @wf_relocate_words64(ptr %destination, ptr %source, i64 %bytes) alwaysinline {
++entry:
++  br label %chunks
++chunks:
++  %dst = phi ptr [ %destination, %entry ], [ %dst.next, %copy.chunk ]
++  %src = phi ptr [ %source, %entry ], [ %src.next, %copy.chunk ]
++  %remaining = phi i64 [ %bytes, %entry ], [ %remaining.next, %copy.chunk ]
++  %has.chunk = icmp uge i64 %remaining, 64
++  br i1 %has.chunk, label %copy.chunk, label %words
++copy.chunk:
++  %src16 = getelementptr i8, ptr %src, i64 16
++  %src32 = getelementptr i8, ptr %src, i64 32
++  %src48 = getelementptr i8, ptr %src, i64 48
++  %a = load <2 x i64>, ptr %src, align 1
++  %b = load <2 x i64>, ptr %src16, align 1
++  %c = load <2 x i64>, ptr %src32, align 1
++  %d = load <2 x i64>, ptr %src48, align 1
++  %dst16 = getelementptr i8, ptr %dst, i64 16
++  %dst32 = getelementptr i8, ptr %dst, i64 32
++  %dst48 = getelementptr i8, ptr %dst, i64 48
++  store <2 x i64> %a, ptr %dst, align 1
++  store <2 x i64> %b, ptr %dst16, align 1
++  store <2 x i64> %c, ptr %dst32, align 1
++  store <2 x i64> %d, ptr %dst48, align 1
++  %dst.next = getelementptr i8, ptr %dst, i64 64
++  %src.next = getelementptr i8, ptr %src, i64 64
++  %remaining.next = sub i64 %remaining, 64
++  br label %chunks
++words:
++  %word.dst = phi ptr [ %dst, %chunks ], [ %word.dst.next, %copy.word ]
++  %word.src = phi ptr [ %src, %chunks ], [ %word.src.next, %copy.word ]
++  %word.remaining = phi i64 [ %remaining, %chunks ], [ %word.remaining.next, %copy.word ]
++  %has.word = icmp uge i64 %word.remaining, 8
++  br i1 %has.word, label %copy.word, label %done
++copy.word:
++  %word = load i64, ptr %word.src, align 1
++  store i64 %word, ptr %word.dst, align 1
++  %word.dst.next = getelementptr i8, ptr %word.dst, i64 8
++  %word.src.next = getelementptr i8, ptr %word.src, i64 8
++  %word.remaining.next = sub i64 %word.remaining, 8
++  br label %words
++done:
++  ret void
++}
+--- a/focused/observer.c
++++ b/focused/observer.c
+@@ -59,12 +59,20 @@
+     (void)bytes; (void)find(pointer); ++remakes;
+     require(0,"full-growth route must not realloc"); return NULL;
+ }
+-void wf_observe_full_copy(void *destination, const void *source, uint64_t bytes) {
++static void validate_full_copy(void *destination, const void *source, uint64_t bytes) {
+     require(!failing && !first_failing,"copy before successful full-growth allocation");
+     struct allocation *old=find((void *)source), *fresh=find(destination);
+     require((selected==0 || selected==11) && copies++==0 && old==&allocations[0]
+             && old->live && fresh->live && old!=fresh && bytes==16
+             && old->bytes==16 && fresh->bytes==32,"exact initialized full-growth copy");
++
++}
++void wf_observe_scalar_copy_begin(void *destination, const void *source, uint64_t bytes) {
++    require(selected==11,"concrete relocation helper is scalar-only");
++    validate_full_copy(destination,source,bytes);
++}
++void wf_observe_full_copy(void *destination, const void *source, uint64_t bytes) {
++    validate_full_copy(destination,source,bytes);
+     memcpy(destination,source,(size_t)bytes);
+ #ifdef CORRUPT_COPY_ORDER
+     unsigned char temporary[8];
+--- /dev/null
++++ b/checks/driver.patch
+@@ -0,0 +1,11 @@
++--- a/vector-costs-route.c
+++++ b/vector-costs-boundaries.c
++@@ -832,7 +832,7 @@
++ }
++ 
++ static void growth_check(bool fail_values, bool fail_state, bool report) {
++-    const uint64_t capacities[] = {16, 256, 4096, 0, 1};
+++    const uint64_t capacities[] = {16, 256, 4096, 0, 1, 2, 7, 8, 9, 15, 17, 63, 64, 65};
++     const uint64_t seed = UINT64_MAX - 7;
++ #if defined(ACCOUNT_ONLY)
++     if (report)
+--- /dev/null
++++ b/checks/missing-tail.patch
+@@ -0,0 +1,10 @@
++--- a/whitefoot-asan.ll
+++++ b/whitefoot-missing-tail-asan.ll
++@@ -3920,7 +3920,6 @@
++   br i1 %has.word, label %copy.word, label %done
++ copy.word:
++   %word = load i64, ptr %word.src, align 1
++-  store i64 %word, ptr %word.dst, align 1
++   %word.dst.next = getelementptr i8, ptr %word.dst, i64 8
++   %word.src.next = getelementptr i8, ptr %word.src, i64 8
++   %word.remaining.next = sub i64 %word.remaining, 8
+--- /dev/null
++++ b/checks/extra-word.patch
+@@ -0,0 +1,10 @@
++--- a/whitefoot-asan.ll
+++++ b/whitefoot-extra-word-asan.ll
++@@ -3926,5 +3926,7 @@
++   %word.remaining.next = sub i64 %word.remaining, 8
++   br label %words
++ done:
+++  %fault.end = getelementptr i8, ptr %source, i64 %bytes
+++  %fault.read = load volatile i64, ptr %fault.end, align 1
++   ret void
++ }
