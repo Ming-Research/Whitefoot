@@ -899,7 +899,7 @@ impl Report for SemanticIssueKind {
             UnreachableStatement;
             FunctionFallthrough;
             InvalidRequires;
-            InvalidPostconditionSelector;
+            InvalidPostconditionSelector { mechanical_fix };
             AmbiguousResultRoute { mechanical_fix };
             InvalidPostconditionFields { required_fields };
             PostconditionCandidateNotFresh { spelling, conflicts };
@@ -942,7 +942,7 @@ impl Report for ResolutionIssue {
             ReservedName { spelling, declaration_role, class, inventory_ordinal };
             MatchBinderFreshness { spelling, paired_field, earlier_binder, arm_entry_conflicts };
             DeclarationCollision { spelling, conflicts, mechanical_fix };
-            InvisibleUse { spelling, role, admissible, origins };
+            InvisibleUse { spelling, role, admissible, origins, mechanical_fix };
             NonEnclosingLabel { spelling, role, origins };
             ModuleProgramHeapDeclaration;
             MisplacedAlias;

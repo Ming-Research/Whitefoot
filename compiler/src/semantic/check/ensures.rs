@@ -1622,8 +1622,10 @@ impl<'unit> DeclarationInventory<'unit> {
                         | SelectorAdmissionType::Symbolic
                         | SelectorAdmissionType::Aggregate
                 ) {
-                    return self
-                        .issue_selector(record, SemanticIssueKind::InvalidPostconditionSelector);
+                    return self.issue_selector(
+                        record,
+                        SemanticIssueKind::invalid_postcondition_selector(),
+                    );
                 }
                 record
                     .result_binders
@@ -1635,8 +1637,10 @@ impl<'unit> DeclarationInventory<'unit> {
                     admission,
                     SelectorAdmissionType::SuccessPayload | SelectorAdmissionType::Symbolic
                 ) {
-                    return self
-                        .issue_selector(record, SemanticIssueKind::InvalidPostconditionSelector);
+                    return self.issue_selector(
+                        record,
+                        SemanticIssueKind::invalid_postcondition_selector(),
+                    );
                 }
                 // [FN-9] the route names the success variant of the routed
                 // ordinal's own type: `Ok` of a Result, `Some` of an Option.
@@ -1644,8 +1648,10 @@ impl<'unit> DeclarationInventory<'unit> {
                     .iter()
                     .any(|variant| record.variant_target == Some(ResolvedTarget::Prelude(*variant)))
                 {
-                    return self
-                        .issue_selector(record, SemanticIssueKind::InvalidPostconditionSelector);
+                    return self.issue_selector(
+                        record,
+                        SemanticIssueKind::invalid_postcondition_selector(),
+                    );
                 }
                 let Some(field) = record.fields.first() else {
                     return self.issue_selector(
@@ -1739,7 +1745,7 @@ impl<'unit> TypeContext<'unit> {
                     return Checker::issue_origin(
                         SemanticRule::Fn9,
                         &origin,
-                        SemanticIssueKind::InvalidPostconditionSelector,
+                        SemanticIssueKind::invalid_postcondition_selector(),
                     );
                 }
             },
@@ -2814,7 +2820,7 @@ impl<'unit> TypeContext<'unit> {
             else {
                 return self
                     .declarations
-                    .issue_selector(record, SemanticIssueKind::InvalidPostconditionSelector);
+                    .issue_selector(record, SemanticIssueKind::invalid_postcondition_selector());
             };
             return u32::try_from(named)
                 .map_err(|_| SemanticCompilerFailure::CounterOverflow.into());
@@ -2885,7 +2891,7 @@ impl<'unit> TypeContext<'unit> {
         {
             return self
                 .declarations
-                .issue_selector(record, SemanticIssueKind::InvalidPostconditionSelector);
+                .issue_selector(record, SemanticIssueKind::invalid_postcondition_selector());
         }
 
         // [CALL-4] a route applies to exactly one declared result ordinal:
