@@ -8077,3 +8077,60 @@ has a large deficit to Rust and overlaps C++. Complete append growth remains
 unqualified. This unpaired screen establishes neither an improvement against
 B/control nor a general refutation of earlier placement. No production rule,
 representation, next ordering permutation or other API is selected.
+
+
+#### Native allocation binding: registered append attribution audit
+
+The next question is which native entries the frozen append executable really
+calls. Cached-library disassembly shows a possible distinction: libc++abi's
+operator new supplies a type identifier to malloc_type_malloc, while WF's
+malloc entry derives a caller identifier. On modern zone versions both can
+reach the same default-zone typed-allocation function. Static imports and
+weak symbol coalescing do not prove runtime resolution, zone selection, or a
+performance cause.
+
+Run one guarded, untimed `growth-api-check` on the frozen full-growth-route B
+image with `DYLD_PRINT_BINDINGS=1` and `DYLD_PRINT_LIBRARIES=1`. Preserve its
+hash, exact command, exit, and diagnostic output. Require actual binding lines
+for operator new/delete and malloc/free/realloc before claiming their resolved
+entry images; missing output leaves that binding unresolved. Successful value
+checks do not establish which zone is used. This diagnostic changes neither
+the API workload nor its ranking, and its elapsed time is not a performance
+sample. Do not infer allocator cost or distinct backends from entry names.
+
+Transient output belongs to `.build/append-allocation-binding`, until a compact
+binding outcome is retained in this Vector record. Any further live dispatch
+inspection or profiling needs its own bounded method before execution; no
+allocator policy, new code-generation variant or other API is selected here.
+
+The single diagnostic completed with exit 0; the wrapper reported 0.11 s
+(untimed diagnostic, not an append performance sample). Its before/after
+executable SHA-256 was unchanged:
+`8e583b5524e22ff8190095908f69308d660f2f203ab1be3356bf5848e73043a8`.
+`growth-api-check` passed scalar/256-byte payloads, five capacities and all
+three APIs. The actual dyld bindings were:
+
+| Executable import | Resolved image | Runtime address in this launch |
+| --- | --- | --- |
+| `_malloc` | `libsystem_malloc.dylib` | `0x186499ce8` |
+| `_free` | `libsystem_malloc.dylib` | `0x18649a6b8` |
+| `_realloc` | `libsystem_malloc.dylib` | `0x18649b888` |
+| `__Znwm` | `libc++abi.dylib` | `0x18665e7b4` |
+| `__ZdlPv` | `libc++abi.dylib` | `0x1866494b4` |
+
+Loaded image UUIDs were `D969A907-3E43-3951-9365-8C2DB3812E9D`
+for libsystem_malloc and `F38A9C58-22AB-3798-BBAE-8DCD9CC0CE27`
+for libc++abi. The weak new/delete imports resolved to those cached bodies;
+no unresolved binding remains among the five entries. These observations do
+not identify the live zone callback or attribute any timing gap to allocation.
+They select no allocator, layout or compiler change. Growth remains unqualified.
+
+Reproduce after reconstructing the frozen B image above:
+
+```sh
+WHITEFOOT_CHECK_TIMEOUT=120 perl .github/run-check.pl append-allocation-binding env DYLD_PRINT_BINDINGS=1 DYLD_PRINT_LIBRARIES=1 research/experiments/container-representation/vector-library/.build/full-growth-route/vector-costs-timed growth-api-check
+```
+
+The transient directory holds `binding-status.json`, `binding.stdout` and
+`binding.stderr`; addresses are launch-specific and are not a regression oracle.
+No ranked timing was taken, and no other API was exercised in this audit.
