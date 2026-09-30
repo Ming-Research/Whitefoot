@@ -112,21 +112,23 @@ rarely insert at the same place.
   at most 1.1 times H1, verdicts unchanged. Reopen when check time limits an
   experiment.
 
-- **A small module check is mostly parsing the prelude again.** Checking a
-  one-function module that names no library module executes 66.9 million
-  instructions, of which parsing takes 24.0 million and finalizing 16.5
-  million, and 97 percent of the bytes parsed are the 24 prelude records
-  (4,425 bytes against the module's 105); the parser's arm selection
-  (`row_score` under `select_arm` in `compiler/src/syntax/parser/diagnostic.rs`)
-  alone takes 13.9 million, since it scans every row of a decision
-  ([library-modules measurements](../research/investigations/library-modules/DESIGN.md#measurements-of-the-implemented-split),
-  W1 under callgrind). Impact: a fixed cost of every check and composition,
-  now the largest part of a small module check. Change: select a decision's
-  arm through an index by the first token's terminals instead of a scan, and
-  parse the prelude, which the compiler fixes at build time, once per
-  process rather than once per check. Validate with the same callgrind
-  comparison and unchanged parse outcomes over the corpus. Reopen when check
-  time limits an experiment.
+- **Each check still re-parses the fixed prelude.** The earlier
+  [library-modules measurements](../research/investigations/library-modules/DESIGN.md#measurements-of-the-implemented-split)
+  found 97 percent of a one-function module's parsed bytes in the 24 prelude
+  records (4,425 bytes against the module's 105). Arm selection now indexes
+  rows by the first token's full membership, and terminal-set iteration visits
+  set bits; the
+  [matched macOS comparison](../research/experiments/modular-build-cost/RESULTS.md#parser-row-lookup-cleanup)
+  reduces a small check's paired median by 12.4 percent, but the prelude is
+  still parsed per check. Impact: fixed repeated work in every module check
+  and composition. Change: retain its parsing once per process, relocating
+  source/token identities because prelude records follow writer records,
+  and preserving explicit resource-ceiling accounting. The relocation's
+  representation and benefit remain unmeasured. Validate unchanged verdicts,
+  derivations, locations and diagnostics across different writer bundles and
+  limits, with a matched checking-cost improvement over this indexed baseline.
+  Defer the representation change from the row-lookup cleanup; reopen when
+  check time limits an experiment.
 
 - **Some ENT-3 sources read no measure operand.** S5/S6 copies, S1
   comparisons, S11 counted captures, every S7 operation row and a checked
