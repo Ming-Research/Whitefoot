@@ -414,7 +414,7 @@ impl Analyzer<'_, '_> {
                 let mut path = to.path.clone();
                 path.extend_from_slice(&place.path[from.path.len()..]);
                 let target = ResolvedPlace {
-                    root: to.root.clone(),
+                    root: to.root,
                     path,
                 };
                 moved.push(ExchangedMeasure {

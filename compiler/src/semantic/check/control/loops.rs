@@ -990,8 +990,10 @@ impl<'unit> Checker<'_, 'unit> {
         let progress = self.loop_progress(
             id,
             node,
-            written_rank,
-            descends,
+            super::progress::ProgressEvidence {
+                written: written_rank,
+                descends,
+            },
             &checked.statements,
             checked.can_continue,
             counters,

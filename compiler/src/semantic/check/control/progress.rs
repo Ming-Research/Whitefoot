@@ -33,6 +33,14 @@ enum Rank {
     Gap { low: Operand, high: Operand },
 }
 
+/// What the checker knows of a loop's progress before reading its body: the
+/// rank its header writes and whether a reference cursor descends into owned
+/// structure on every backedge.
+pub(super) struct ProgressEvidence {
+    pub(super) written: Option<CheckedAffineExpression>,
+    pub(super) descends: bool,
+}
+
 /// One rank operand: its affine form and the read that produced it.
 #[derive(Clone)]
 struct Operand {
@@ -46,8 +54,7 @@ impl<'unit> Checker<'_, 'unit> {
         &mut self,
         id: CheckedLoopId,
         node: NodeId,
-        written: Option<CheckedAffineExpression>,
-        descends: bool,
+        header: ProgressEvidence,
         statements: &[CheckedStatement],
         can_continue: bool,
         counters: &mut ControlCounters<'_>,
@@ -55,6 +62,7 @@ impl<'unit> Checker<'_, 'unit> {
         if !can_continue {
             return Ok(CheckedLoopProgress::NoBackedge);
         }
+        let ProgressEvidence { written, descends } = header;
         if let Some(rank) = written {
             return written_rank_progress(rank, counters);
         }
