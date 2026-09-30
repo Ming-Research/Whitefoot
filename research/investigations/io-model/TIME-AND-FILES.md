@@ -42,9 +42,9 @@ and Q23 to Q25 by approving the recommendations below ("all agreed"):
   handed to the host's durability mechanism; the specification says nothing
   about what survives a crash.
 
-Four smaller choices remain inside those rulings. Each is a card in
-[the choices awaiting the owner](#choices-awaiting-the-owner); the surface
-below follows the recommendation of each.
+Four smaller choices inside those rulings followed, each a card in
+[the choices the owner ruled](#choices-the-owner-ruled); the owner approved
+all four as recommended on 2026-09-30, and the surface below follows them.
 
 ## Surface
 
@@ -165,8 +165,8 @@ takes its next step.
 File operations take no deadline. They wait on the host's storage, not on a
 party that may never answer (Q24 A).
 
-**Whether a deadline outcome is an `IoError` variant** is card 3; the
-alternative is `TimedOut` with a reserved origin.
+**That a deadline outcome is an `IoError` variant** is card 3; the
+refused alternative is `TimedOut` with a reserved origin.
 
 ### Writable directories and append-only files
 
@@ -243,8 +243,8 @@ public struct Inputs {
 }
 ```
 
-`cwd` holds both halves of the working directory; `clock` and `wall_clock`
-are the two clocks of card 2. The runtime supplies the write half on every
+`cwd` holds both halves of the working directory (card 4); `clock` and
+`wall_clock` are the two clocks of card 2. The runtime supplies the write half on every
 host; a host that refuses the working directory to writing still hands a
 write half, and every write through it reports that host's refusal.
 
@@ -265,7 +265,10 @@ pkg::process: [pkg::io, pkg::text, pkg::fs, pkg::time];
 The graph stays acyclic: `time` depends on nothing, `io` on `time`, and every
 other row on modules above it.
 
-## Choices awaiting the owner
+## Choices the owner ruled
+
+The owner approved each card below as recommended on 2026-09-30 ("Q27
+agreed. Q28 agreed, Q29 agreed, Q30 agreed", written in Chinese).
 
 **Card 1 (Q27): how is `Instant` declared?** Recommended: an opaque struct
 with one private `u64` field, as above; copy through its field, formed only by
