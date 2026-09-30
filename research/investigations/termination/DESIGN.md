@@ -41,13 +41,19 @@ it without a rank, and that call can occur only in a function that declares
 `waits` [WAIT-1]. Divergence is therefore visible in the signature that
 already carries it, and nothing is optional.
 
-Koka's `div` effect is the nearest precedent: functions are total unless
-their type carries `div`, which is inferred and propagates to callers. The
-candidate differs in three ways. Whitefoot would never infer divergence from
-a missing proof, so a loop without evidence is a rejection, not a widened
-type. The marker is the existing `waits`, which a caller already sees, and
-not a new effect. And a waiting function still owes progress between its
-waits.
+Koka's `div` effect is the nearest precedent
+([the Koka book](https://koka-lang.github.io/koka/doc/book.html), "Effect
+Typing" and its recursive `fib` example). A Koka function is total unless its
+type carries `div`. When the inference engine cannot prove that a recursive
+function terminates, it adds `div` to the function's type, and the effect
+propagates to callers. There is no written rank.
+
+The candidate differs in four ways:
+
+- A missing proof is a rejection, not a widened type.
+- The marker is the existing `waits`, not a new effect.
+- A waiting function still owes progress between its waits.
+- A writer can supply a rank that no fixed check finds.
 
 ## Prior design
 
@@ -55,11 +61,15 @@ The deferred [fixed-resource investigation](../fixed-resource-execution/DESIGN.m
 drafted a `decreases` rank:
 
 - one written scalar `u64` rank per loop or recursive function;
-- descent proved on every backedge, or at every self call, against an erased
-  entry snapshot;
+- for a loop, descent proved on every backedge against the current
+  iteration's header rank;
+- for a self call, descent proved against an erased snapshot of the rank at
+  the caller's entry;
 - the proof uses the existing INV-1 and PRF-1 machinery, with no inference;
-- mutual recursion, lexicographic ranks and structural measures were deferred
-  "until needed".
+- rank expressions are affine, and calls, moves and side effects are
+  excluded from them;
+- mutual recursion and "richer measures" were deferred "until needed", and
+  "wider or lexicographic measures require a later admission change".
 
 Its rank was optional, because it served a requested completion report. This
 investigation asks whether that design, or a named extension of it, suffices
@@ -69,8 +79,9 @@ Two facts of the current language keep the analysis finite:
 
 - A function-kind parameter is a compile-time parameter, never a value
   [FN-3], so every call reaches a concrete instance. The call graph after
-  instantiation is static, and D7's instantiation rule (`design/language/generics.md`)
-  already keeps it finite.
+  instantiation is static. The instantiation-cycle decision in
+  `design/language/generics.md` keeps it finite: a cycle must forward its
+  argument vector unchanged.
 - A counted `for` has `u64` endpoints and a compiler-owned binder that source
   cannot write [SET-1], so it terminates when its body does.
 
@@ -132,10 +143,31 @@ descent invariant into a sample of real loops and compiling them.
 ## Results
 
 The census was run after the criteria above were committed (0d5d42ab).
-Its per-entry records are in `runs/`.
+Its per-entry records are in `runs/`:
+
 - **Loops.** `runs/loops.tsv` has one row per `loop`.
-- **Recursion.** `runs/recursion.tsv` has one row per recursive component. A component that merged same-named functions of separate programs is split into its real parts.
-- **Classification.** Each entry was read by a mid-sized model working against a fixed rubric. I spot-checked the entries that decide a criterion; the rest are recorded, not rechecked.
+- **Recursion.** `runs/recursion.tsv` has one row per recursive component.
+  A component that merged same-named functions of separate programs is split
+  into its real parts.
+- **Tree builder.** `runs/reprocess/` holds the reprocess-edge analysis. It
+  is an agent's working report with its model scripts.
+- **Hang witness.** `runs/hang/` holds the hang reproduction.
+- **Sample.** `runs/sample/` holds the real-loop sample.
+
+Each census entry was classified by a mid-sized model against a fixed rubric,
+and the classifications are recorded, not independently rechecked. I rechecked
+by tool only the facts that decide a criterion: the hang reproduction, the
+reprocess edge count, and the sample.
+
+The census programs were written to exercise the compiler, so their class
+frequencies say what kinds of loops occur, not how often real programs need
+each kind. They are evidence that a form is needed. They do not weigh one
+form against another.
+
+The classification is fallible. At 09d33ba, loop 15 (`process_token`'s
+reprocess loop) did not terminate, yet the loop census classed it C7
+"terminating" with medium confidence after sampling some modes. Only the
+recursion census, which ran the code, found the hang.
 
 ### Loops
 
@@ -152,66 +184,138 @@ Its per-entry records are in `runs/`.
 | C10 other | 1 | 1 | 2 |
 | **All** | **358** | **146** | **504** |
 
-- **A scalar `u64` rank covers 460 loops (91 percent).** These are the C1 to C3 loops, 345 of the 358 in Snowghost.
-  - 294 of them need only facts local to the loop: its exit guard and its update.
-  - 166 also need a callee fact, typically that a callee advances a cursor (`next_char`, `read_at`) or pops exactly one element (`pop_open_if_any`). Several such facts are stated only in prose: `next_char`, `line_end`, `run_end`, `find_min_codepoint_at_least`, and the strict advance of `send_once`, `write_once` and `read_at`. None is a contract `ensures` today.
-- **The waiting rule covers 25 loops.** These are server, pipe, file and directory loops that make a waiting call every iteration. Some would also have a scalar rank. The write and read loops whose contracts allow a call to make no progress (`start <= next <= end`) terminate only under this rule.
+- **C1 to C3: a scalar `u64` rank (460 loops).**
+  - The rubric's `needs` field splits them roughly into 294 whose descent
+    follows from the loop's own guard and update, and 166 that also need a
+    callee fact.
+  - The split is approximate. It keys on the field's first word, so a few
+    purely arithmetic entries land in the second group, and a few that rest
+    on a library contract such as `take_back`'s land in the first.
+  - The callee facts are typically a cursor advance (`next_char`, `read_at`)
+    or a single pop (`pop_open_if_any`). Several are stated only in prose,
+    not as a contract `ensures`: `next_char`, `line_end`, `run_end`,
+    `find_min_codepoint_at_least`, and the strict advance of `send_once`,
+    `write_once` and `read_at`.
+- **C9: an iteration that waits (25 loops).**
+  - Kinds: server, pipe, file and directory loops; busy and poll loops
+    around an `atomic` statement; background loops that sleep.
+  - Under the candidate rule they are admitted and need not terminate.
+  - The write and read loops need that admission for a second reason: their
+    contracts (`start <= next <= end`) let a call make no progress.
+  - `poll_contexts` spins on an unguarded `atomic` statement. It is admitted
+    only because [WAIT-2] counts every atomic statement as a wait.
 - **The other 19 loops need more than a scalar rank:**
-  - lexicographic ranks: the 6 C7 loops and `walk_rules`, although one C7 loop, `match_complex`, orders arena positions and so also needs the acyclicity fact below;
-  - descent through owned links: the 5 C5 loops;
-  - an acyclicity fact that no current rule can state: the 4 C6 loops and `expand_cp`;
-  - rewriting: the 2 C10 loops.
+  - lexicographic ranks: the 6 C7 loops and `walk_rules`. One C7 loop,
+    `match_complex`, orders arena positions, so it also needs the
+    acyclicity fact below.
+  - descent through owned links: the 5 C5 loops.
+  - an acyclicity fact about index links or input data: the 4 C6 loops and
+    `expand_cp`.
+  - rewriting: the 2 C10 loops, a two-state flag and `hash_map_rebuild`'s
+    pigeonhole argument.
 
 ### Recursion
 
-The name-based call graph found 45 candidate components.
-- One is an artifact: a loop label read as a call.
-- Four merged same-named functions from separate programs and split into 11 rows.
+The name-based call graph found 45 candidate components:
+
+- one is an artifact, a loop label read as a call;
+- four merged same-named functions from separate programs and split into 11
+  rows.
 
 That leaves 51 real rows.
 
-| Class | Snowghost | Whitefoot | Total |
-|---|---:|---:|---:|
-| C1 cursor | 7 | 4 | 11 |
-| C2 countdown | 10 | 7 | 17 |
-| C5 owned structure | 5 | 11 | 16 |
-| C7 lexicographic | 2 | 1 | 3 |
-| C6 arena | 2 | 0 | 2 |
-| C10 other | 2 | 0 | 2 |
+| Class | Snowghost | Whitefoot | Total | of which mutual |
+|---|---:|---:|---:|---:|
+| C1 cursor | 7 | 4 | 11 | 2 |
+| C2 countdown | 10 | 7 | 17 | 2 |
+| C5 owned structure | 5 | 11 | 16 | 3 |
+| C7 lexicographic | 2 | 1 | 3 | 2 |
+| C6 arena | 2 | 0 | 2 | 2 |
+| C10 other | 2 | 0 | 2 | 1 |
 
-Structural descent through owned data matters far more for recursion than for loops.
-- Layout, style profiling, the ordered map and the tree programs all recurse into an owned child.
-- Ownership already makes such a tree finite and acyclic, so the descent needs no numeric measure.
-- The two C10 rows:
-  - `decompose` follows an external Unicode table whose acyclicity is a fact about data.
-  - A static cycle between `mode_in_body` and `mode_in_template` is infeasible, because its two edges need different token kinds.
+- **Owned structure.** Descent through owned data is common in recursion:
+  layout, style profiling, the ordered map and the tree programs all recurse
+  into an owned child. Ownership already makes such a tree finite and
+  acyclic.
+- **Mutual recursion.** 12 of the 51 rows are components of several
+  functions. The fixed-resource draft left these unsupported. A mandatory
+  rule needs one rank shared by every entry of the component, with descent
+  on every edge inside it.
+- **C10.**
+  - `decompose` follows an external Unicode table whose acyclicity is a fact
+    about data.
+  - The static cycle between `mode_in_body` and `mode_in_template` is
+    infeasible, because its two edges need different token kinds. A static
+    rule sees the cycle anyway, so the code must be restructured or given a
+    rank.
 
 ### The tree builder (criteria 2 and 3)
 
-- **Criterion 2 holds.** Before the fix, the breakout path for an end tag at an integration point returned to the loop header with the parser state unchanged. The recursion census rediscovered this independently. It built Snowghost main at 09d33ba, which lacks the fix, and six inputs timed out, including `<svg><desc></br>` and `<math><mtext></br>`. The fixed driver parses both correctly. No measure falls on an edge that leaves the state unchanged, so every sound rule rejects the pre-fix program.
-- **Criterion 3 holds, but not with a scalar rank.** `runs/reprocess/reprocess.md` lists all 51 edges on which the fixed tree builder reprocesses a token, and checks a measure against them. The count is confirmed: 49 `True` literals in the mode files, and none among the 39 returns of `in_body_start_tag`. The measure is lexicographic:
+**Criterion 2 holds.**
+
+- `runs/hang/` reproduces the witness. The tree-construction oracle driver
+  was built at Snowghost 09d33ba, before the fix, and at 1120edf, the head of
+  Snowghost PR #22, with `whitefootc --graph modules.wfg --entry
+  html_tree_oracle` from Snowghost's pinned compiler, 290b575b.
+- Each of six inputs ran under a 20-second limit. They put an end tag `br`
+  or `p` at each kind of integration point: `foreignObject`, `desc`, `mi`,
+  `mtext` and `annotation-xml`.
+- The 09d33ba driver produced no result for any of the six. The 1120edf
+  driver produced the expected tree for all six.
+- On the hanging path the parser state is unchanged when the loop returns to
+  its header, so no measure falls, and every sound rule rejects the program.
+
+**Criterion 3 is not demonstrated.**
+
+- `runs/reprocess/reprocess.md` lists the 51 edges on which the tree builder
+  at 1120edf reprocesses a token. The count is confirmed by tool: 49 `True`
+  literals in the mode files, and none among the 39 returns of
+  `in_body_start_tag`.
+- It gives a lexicographic measure:
 
   `(templates on the open-element stack, R[token class][mode], open-element stack depth)`
 
-  `R` is a fixed table of 21 modes by 13 token classes.
-  - No rank per mode alone works, because pairs such as in-body and after-body need opposite orders for different end tags.
-  - The template count and the stack depth are needed because `<table>` and end-of-file reprocess through reset edges.
-  - One token reprocesses at most 6 times, except end-of-file (open templates + 2) and `<table>` (stack depth + 5).
+  Here `R` is a constant table of 21 modes by 13 token classes.
+- `check.py` checks the measure against a hand transcription of the edges,
+  not against the program, and nothing was compiled.
+- The measure needs three things the checker cannot express today:
+  - a lexicographic rank;
+  - a rank read from a constant table: the fixed-resource draft admits only
+    affine rank expressions, and no probe has tried a table read;
+  - a template counter that the program would maintain beside the stack.
+- No rank per mode alone works. Pairs such as in-body and after-body need
+  opposite orders for different end tags.
+- Per token, the analysis bounds the iterations at 6, except:
+  - end-of-file: at most `6 + 4 × templates`, and `templates + 2` is
+    attained;
+  - `<table>`: at most `depth + 5`.
+- With scalar ranks alone, the writer's recourse is a counted retry of at
+  most `6 + 4 × templates + depth + 5` iterations, which covers each of these
+  bounds. Its exhaustion outcome would be dead code that the checker cannot
+  prove dead.
 
-  The edge table is a hand transcription, and `check.py` checks the measure against that transcription, not against the compiled program.
+### Checking cost (criterion 4)
 
-So the fixed tree builder is provable, but only with a lexicographic rank, a rank read from a constant table, and a template counter the program maintains. With scalar ranks alone, the writer's recourse is a counted retry. Its bound is `7 + templates + depth`, and exhausting it is an explicit outcome that the analysis shows is never reached.
+Each rank form is a deterministic check with no search and no inferred
+measure:
 
-### Checking cost and authoring (criteria 4 and 5)
+- **Scalar and lexicographic descent:** INV-1 queries at each backedge or
+  call inside the component.
+- **Owned descent:** a syntactic check that the argument is a proper owned
+  part of a parameter.
+- **The waiting rule:** a check that a waiting call occurs on every path back
+  to the header.
 
-Each rank form stays deterministic and polynomial:
-- scalar and lexicographic descent are checked by INV-1 queries at each backedge or call;
-- owned descent is a syntactic check that the argument is a proper owned part of a parameter;
-- the waiting rule is a check that a waiting call occurs on every path back to the header.
+Per concrete instance, each adds work linear in the loops and calls it
+checks. The checks run on every concrete instance, so they inherit the
+instantiation fan-out recorded in `docs/todo.md`: acyclic instantiation can
+multiply instances exponentially in source size. Nothing in this record
+measures checking time.
 
-None of them searches or infers a measure.
+### Authoring (observation 5)
 
-Probes against the current checker at 7ad65dc7 are in `runs/probes/`. A descent invariant `before < index` or `after < before` was written after the update.
+**Probes.** Synthetic probes are in `runs/probes/`, compiled with the gate
+compiler built at 7ad65dc7. Each writes a descent invariant after the update.
 
 | Probe | Shape | Result |
 |---|---|---|
@@ -219,27 +323,60 @@ Probes against the current checker at 7ad65dc7 are in `runs/probes/`. A descent 
 | p2 | `set index = index + 1_u64` after `index < need` | proved |
 | p4 | callee with `ensures next > pos` | proved |
 | p5 | `take_back` on a `Slots` window | proved |
-| p3e | advance 1 or 3 through a value `if`, clamped by an `if` that sets `pos` | proved |
+| p3e | advance 1 or 3 through a value `if`, then `if` sets `pos` to `length` or `pos + advance` | descent proved; the loop's `pos <= length` header invariant is not preserved |
 | n1 | `set index = index +wrap 0_u64` (control) | refuted |
 | p3 | Snowghost's `pos +wrap advance` then clamp (`url/host.wf`) | unproved |
 | p3b, p3c | a mutable `step` clamped through a join | unproved: `1 <= step` is lost at the join |
 
-- **p3 is right to fail.** Near `u64::MAX` the wrapped sum is smaller than `pos`, so that loop does not terminate. A mandatory rule rejects that idiom, and the writer must use a non-wrapping advance.
-- **p3b and p3c** repeat the join loss recorded in the [writer-lost facts investigation](../writer-lost-facts/DESIGN.md).
-- The local C1 to C3 shapes needed no `use` step.
+p3 is right to fail. Near `u64::MAX` the wrapped sum is smaller than `pos`,
+so that loop does not terminate.
+
+**Real-loop sample.** `runs/sample/` samples 20 Snowghost C1 to C3 loops from
+09d33ba, drawn with seed 20260930 from the 221 outside `oracle/` and
+`tools/`. Each gets a snapshot at the top of its body and a descent
+invariant at its end, and its module is checked with Snowghost's pinned
+compiler. Two proved loops with the invariant reversed are refuted, as a
+control.
+
+| Outcome | Loops |
+|---|---:|
+| descent proved with no `use` step | 10 |
+| rank not expressible: `buffer^.index`, a field read through a reference, "is not a measure" | 3 |
+| callee advance not in a contract (`next_char`, `peek_pp`) | 3 |
+| a fact lost at a join or at an inner loop's exit | 3 |
+| an operation fact missing: `ishr.wrap(e, 1)` is smaller than a nonzero `e` | 1 |
+
+Half the sample needs no written step. The other half splits into four
+distinct gaps:
+
+- the rank vocabulary must admit fields read through references;
+- progress facts must move from prose into `ensures`;
+- joins drop facts, the shape in the
+  [writer-lost facts investigation](../writer-lost-facts/DESIGN.md);
+- the operation table lacks a halving fact.
 
 ## Found along the way
 
-- **Snowghost `tools/normalization_tables/expand.wf`, `expand_cp`.** It loops forever on a decomposition cycle in its input, such as a code point that decomposes to itself, because each pop is matched by a push. The tool reads the Unicode data at build time.
-- **Snowghost `html/tree_builder/insert.wf`, `move_all_children`.** It loops forever if its source and destination are the same node. Both callers pass distinct nodes.
-- **Whitefoot `lib/std/collections/hash_map`, `hash_map_rebuild`.** Its re-insertion loop ends only by a pigeonhole argument in its documentation: the probe visits every bucket, and fewer buckets are occupied than exist. No contract carries that argument.
-- **Snowghost `foreign.wf`.** `process_foreign_content` returns "reprocess" for end-of-file, which would loop if the dispatcher ever sent end-of-file to foreign content; today it does not. The template-mode pop on end-of-file does nothing on an empty stack, so its termination rests on the template count.
-- **Contracts.** Many cursor and I/O contracts state progress only in prose, or allow no progress (`start <= next <= end`). A mandatory rule turns each into a missing `ensures`.
+- **Snowghost `tools/normalization_tables/expand.wf`, `expand_cp`.** It loops
+  forever on a decomposition cycle in its input, such as a code point that
+  decomposes to itself, because each pop is matched by a push. The tool
+  reads the Unicode data at build time. Disposition: reported to the owner
+  with this record, for Snowghost's own tracking.
+- **Snowghost `html/tree_builder/insert.wf`, `move_all_children`.** It loops
+  forever if its source and destination are the same node. Both callers pass
+  distinct nodes. Disposition: reported to the owner, as above.
+- **Snowghost `foreign.wf`.** `process_foreign_content` returns "reprocess"
+  for end-of-file, which would loop if the dispatcher ever sent end-of-file
+  to foreign content; today it does not. Disposition: reported to the owner,
+  as above.
+- **Whitefoot `hash_map_rebuild`.** Its re-insertion loop ends only by a
+  pigeonhole argument in its documentation. Disposition: added to
+  `docs/todo.md`.
+- **Prose-only progress facts.** Many cursor and I/O contracts state
+  progress only in prose, or allow no progress. They matter only under a
+  mandatory rule, so they stay here as evidence for that rule.
 
 ## Verdict against the criteria
-
-Mandatory progress is viable for the census scope, with three measure forms
-beyond the scalar rank and one rewrite:
 
 | Form | Loops | Recursion |
 |---|---:|---:|
@@ -247,15 +384,69 @@ beyond the scalar rank and one rewrite:
 | a waiting call on every iteration (C9) | 25 | 0 |
 | descent through owned data (C5) | 5 | 16 |
 | lexicographic rank (C7 except `match_complex`, `walk_rules`) | 6 | 3 |
-| counted walk with an explicit outcome (C6, `match_complex`, `expand_cp`, `decompose`) | 6 | 3 |
+| an acyclicity fact about index links or data (C6, `match_complex`, `expand_cp`, `decompose`) | 6 | 3 |
 | rewrite (C10) | 2 | 1 |
 
-- **Criterion 1 holds with these forms, except for arena acyclicity.** No rule, current or proposed, can state that index links in a storage are acyclic: a quantified storage invariant is a refused alternative in `design/language/checks-and-proofs.md`. The nine arena and external-data sites therefore need a counted walk. They include `match_complex`, whose lexicographic measure is over arena positions. The walk takes at most the arena's length in steps, with an outcome for exhaustion. A later "ranked arena" type, whose link writes prove a rank order, could replace the counted walk if its cost is justified.
-- **Criteria 2 and 3 hold.** The fixed tree builder needs the lexicographic form and a constant rank table, as shown above.
-- **Criterion 4 holds.** Every form is a fixed deterministic check.
+- **One mechanism does not cover everything.** A scalar rank covers 460 of
+  504 loops and 28 of 51 recursive rows.
+- **A family of rank forms, with one gap.** A single rule, "every cycle
+  carries a checked descent or a wait", covers every other entry except nine
+  sites. It needs three forms beyond the scalar rank: lexicographic,
+  owned-structural and waiting. It also needs shared ranks for mutual
+  recursion.
+- **Criterion 1 is not met for the nine sites.** They need to know that
+  index links in a storage, or an input table, are acyclic.
+  - No current rule can state that. A quantified storage invariant is a
+    refused alternative in `design/language/checks-and-proofs.md`.
+  - The criterion named "an arena whose links are checked to point one way"
+    as a possible extension, but this record did not design or test one.
+  - A counted walk (at most the arena's length in steps) would make each
+    site terminate. That is a rewrite outside the criterion: it adds a
+    runtime counter and an outcome the checker cannot prove unreachable.
+- **Criterion 2 holds.**
+- **Criterion 3 is not demonstrated.** A measure exists on paper, but it
+  needs a lexicographic rank read from a constant table, and nothing
+  compiled it.
+- **Criterion 4 holds for the forms described.** The checking cost is
+  unmeasured and inherits the known instantiation fan-out.
 
 ## Open design choices
 
-1. **Written or derived ranks.** The fixed-resource draft required a written rank everywhere and inferred nothing. For a mandatory rule that means a `decreases` clause on each of the 504 loops. A specification-fixed derivation could instead read a rank from the exit guard's form: `a < b` gives `b - a`, `x != 0` gives `x`, `w.len == 0` gives `w.len`. It is syntactic, with no search, the same kind of fixed family [ENT-1] already uses. The derived rank is proved like a written one, and a loop outside those forms writes its own. The 294 local C1 to C3 loops would then need no annotation.
-2. **Waits as the only divergence.** Under the candidate rule, a function that does not wait always returns. A `waits` function returns, or waits again, in finitely many steps. There is no separate divergence effect.
-3. **Constitution.** The sentence "Logic errors, including unintended nontermination, may remain" would narrow to exclude nontermination between waits, and the [WAIT-2] premise would become a theorem.
+1. **Arena acyclicity.** A ranked arena would carry the acyclicity proof;
+   counted walks would not.
+   - A ranked arena is a library or language type whose link writes prove an
+     order, such as a parent's rank being below its child's. The proof
+     stays static, but the type must be designed and paid for at every link
+     write.
+   - A counted walk keeps today's data structures but adds a runtime branch
+     and an unprovable outcome to every such walk.
+   - This choice decides whether one rule covers the nine sites.
+2. **Written or derived ranks.** The fixed-resource draft required a written
+   rank and inferred nothing.
+   - A specification-fixed derivation could read a rank from the exit
+     guard's form: `a < b` gives `b - a`, `x != 0` gives `x`, `w.len == 0`
+     gives `w.len`. It is syntactic and involves no search, like the fixed
+     families of [ENT-1]. A loop outside those forms writes its own rank.
+   - The derived form makes the common loop's default shape carry no
+     annotation.
+   - The written form makes every loop's argument visible in its text, and
+     keeps the rule free of guard-pattern matching.
+3. **What counts as a wait.** The candidate rule admits a loop because it
+   waits, not because it progresses.
+   - A waiting call that completes at once without progress, such as a read
+     that returns `next == start`, satisfies the rule forever. So does a
+     spin on an unguarded `atomic`.
+   - A separate divergence effect would instead mark such functions
+     explicitly.
+   - Excluding unguarded `atomic` statements from the waits that count would
+     turn such spins into rejections.
+4. **Mutual recursion and table ranks.** The rule needs a rank shared across
+   a component. The tree builder also needs a rank read from a constant
+   table. Neither has a design yet.
+
+If the rule is adopted, the constitution's Safety sentence "Logic errors,
+including unintended nontermination, may remain" narrows to exclude
+nontermination between waits, and the [WAIT-2] premise becomes a theorem.
+The constitution already accepts additional proof work that serves its
+objectives, which weighs for the rule. The practical-feasibility condition,
+measured here as the four gaps in the sample, weighs on how it is built.

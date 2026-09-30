@@ -898,6 +898,26 @@ rarely insert at the same place.
   next change to `Slots` lowering or when a profile shows the clearing
   again.
 
+- **`hash_map_rebuild` ends its re-insertion loop only by a prose
+  argument.** In `lib/std/collections/hash_map/hash-map.wf`, the `@owner`
+  loop retries while its one-slot `pending` window is full.
+  - The `for @vacancy` scan can finish without finding an available bucket.
+    The loop then returns to its header with `pending` unchanged and repeats
+    the same scan forever.
+  - The function's documentation rules this out with a pigeonhole argument:
+    the probe visits every bucket, and the new capacity is at least the old
+    bucket count.
+  - No contract or checked fact carries that argument. A change to
+    `hash_map_probe` or to the capacity check would therefore turn a rebuild
+    into an endless loop, with no rejection.
+  - Change: make an exhausted scan a defined outcome of the loop, or state
+    the probe's coverage as a checked fact.
+  - Validate with a probe that skips one bucket, which must then fail
+    visibly instead of hanging.
+  - Found by the census in `research/investigations/termination/`. Reopen
+    with the next change to the hash map's probing, or when loops must carry
+    termination evidence.
+
 ## Parallel lowering and runtime
 
 - **Validate reuse of selected-target element layouts during emission.**

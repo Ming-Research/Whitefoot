@@ -1,0 +1,8 @@
+pkg::css::syntax: rejected: ./css/syntax/numbers.wf:191:7: error[INV-1]: UndischargedLocalInvariant
+  source:       invariant term_progress_321: term_before_321 < pos;
+  marker:       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  name: term_progress_321
+  disposition: Unproved
+  mechanical_fix: `term_progress_321` is not proved from the facts that reach it: establish them before it, add `use` steps naming the facts it follows from, or weaken it
+pkg::css::syntax: further failures may follow the last listed one
+whitefootc: rejected: pkg::css::syntax

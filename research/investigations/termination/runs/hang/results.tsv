@@ -1,0 +1,13 @@
+driver	input	result
+oracle_09d33ba	<svg><foreignObject></br>	no result within 20 s
+oracle_1120edf	<svg><foreignObject></br>	exit 0: html_tree: 1 cases, 1 passed, 0 failed, 0 excluded
+oracle_09d33ba	<svg><foreignObject></p>	no result within 20 s
+oracle_1120edf	<svg><foreignObject></p>	exit 0: html_tree: 1 cases, 1 passed, 0 failed, 0 excluded
+oracle_09d33ba	<svg><desc></br>	no result within 20 s
+oracle_1120edf	<svg><desc></br>	exit 0: html_tree: 1 cases, 1 passed, 0 failed, 0 excluded
+oracle_09d33ba	<math><mi></p>	no result within 20 s
+oracle_1120edf	<math><mi></p>	exit 0: html_tree: 1 cases, 1 passed, 0 failed, 0 excluded
+oracle_09d33ba	<math><mtext></br>	no result within 20 s
+oracle_1120edf	<math><mtext></br>	exit 0: html_tree: 1 cases, 1 passed, 0 failed, 0 excluded
+oracle_09d33ba	<math><annotation-xml encoding="text/html"></p>	no result within 20 s
+oracle_1120edf	<math><annotation-xml encoding="text/html"></p>	exit 0: html_tree: 1 cases, 1 passed, 0 failed, 0 excluded
