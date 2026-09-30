@@ -484,7 +484,7 @@ the sample bear on feasibility.
   The owner approved the next step on that basis: design the ranked arena,
   shared ranks for mutual recursion and constant-table ranks.
 
-These rulings select the direction. The design-tree nodes and the
+[ARENA.md](ARENA.md) designs the forms these rulings call for. These rulings select the direction. The design-tree nodes and the
 specification change land together with the rule's implementation, where
 the existing decisions they replace are rewritten:
 - `design/language/effects.md`: `pure` promises nothing about termination;
