@@ -793,6 +793,20 @@ rarely insert at the same place.
   retained input/result aliasing may exchange an outgoing copy for an incoming
   capture, so removing the final copy alone is not a performance result.
 
+  A separate, unselected lead is backend promotion of the pending sift value
+  while preserving every comparison and position report's order, value and
+  index, distinct from the refused deferred or reordered rotation.
+  [STOR-7, REF-3/4 and EFF-5](../spec/kernel-spec.md) make addresses
+  unobservable, prevent reference escape and separate the callback
+  environments' accessed state from queue writes, giving grounds to
+  investigate physical residency without changing source acceptance or API.
+  The generic owner domain and every ordinary exit's materialization and
+  cleanup still need proof; contexts, waits, unknown transport and the CFG
+  carrying that owner remain obligations. Lazy capture at the first exchange
+  would add no transfers when `k = 0`; `k + 2` instead of `3k` for `k >= 1`
+  is only a prospective transfer discriminator, not a measured result or
+  selected mechanism. Reopen after the current one-time placement screen.
+
 - **Small results beyond the per-leaf register budget still use a
   destination.** A stored result returns in registers only when its scalar
   leaves fit the x86-64 budget of three integer-class words and two floating
