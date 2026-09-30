@@ -489,12 +489,16 @@ typedef struct {
     uint64_t (*append_batch)(void *, uint64_t, uint64_t);
     uint64_t (*inspect_reset)(void *, uint64_t, uint64_t, ApiObservation *);
     uint8_t (*destroy)(void *);
+    uint64_t (*append_one)(void *, uint64_t);
+    uint64_t (*snapshot)(void *, ApiObservation *);
     const char *name;
 } ApiOperations;
 #define DECLARE_APPEND_OPERATIONS(prefix, width)                            \
     extern uint64_t prefix##_##width##_append_batch(void *, uint64_t, uint64_t); \
     extern uint64_t prefix##_##width##_inspect_reset(void *, uint64_t, uint64_t, ApiObservation *); \
-    extern uint8_t prefix##_##width##_destroy(void *)
+    extern uint8_t prefix##_##width##_destroy(void *);                        \
+    extern uint64_t prefix##_##width##_append_one(void *, uint64_t);          \
+    extern uint64_t prefix##_##width##_snapshot(void *, ApiObservation *)
 #define DECLARE_APPEND_API(prefix, width)                                   \
     extern void prefix##_##width##_prepare(uint64_t, void *);               \
     DECLARE_APPEND_OPERATIONS(prefix, width)
@@ -513,14 +517,17 @@ DECLARE_APPEND_API(cpp_vector_api, word);
 DECLARE_APPEND_API(cpp_vector_api, record);
 #define APPEND_API(prefix, width, label) { prefix##_##width##_prepare,       \
     prefix##_##width##_append_batch, prefix##_##width##_inspect_reset,       \
-    prefix##_##width##_destroy, label }
+    prefix##_##width##_destroy, prefix##_##width##_append_one,               \
+    prefix##_##width##_snapshot, label }
 static const ApiOperations append_api[2][3] = {
     { { wf_vector_api_word_prepare_slot, wf_vector_api_word_append_batch,
-        wf_vector_api_word_inspect_reset, wf_vector_api_word_destroy, "whitefoot" },
+        wf_vector_api_word_inspect_reset, wf_vector_api_word_destroy,
+        wf_vector_api_word_append_one, wf_vector_api_word_snapshot, "whitefoot" },
       APPEND_API(rust_vector_api, word, "rust-vec"),
       APPEND_API(cpp_vector_api, word, "cpp-std-vector") },
     { { wf_vector_api_record_prepare_slot, wf_vector_api_record_append_batch,
-        wf_vector_api_record_inspect_reset, wf_vector_api_record_destroy, "whitefoot" },
+        wf_vector_api_record_inspect_reset, wf_vector_api_record_destroy,
+        wf_vector_api_record_append_one, wf_vector_api_record_snapshot, "whitefoot" },
       APPEND_API(rust_vector_api, record, "rust-vec"),
       APPEND_API(cpp_vector_api, record, "cpp-std-vector") }
 };
@@ -589,6 +596,117 @@ static void append_check(bool fail_values, bool fail_allocation) {
         }
     }
     puts("vector spare append: scalar/256B, five counts, three APIs passed");
+}
+
+static uint64_t growth_prepare(const ApiOperations *api, ApiStorage *owner,
+                               uint64_t requested, uint64_t seed) {
+    api->prepare(requested, owner);
+    ApiObservation state = {0};
+    uint64_t length = api->snapshot(owner, &state);
+    if (requested >= 16 && state.capacity != requested)
+        fprintf(stderr, "growth append capacity: %s requested=%" PRIu64
+                " observed=%" PRIu64 "\n", api->name, requested, state.capacity);
+    require(length == 0 && state.length == 0 && state.valid == 1
+            && state.checksum == 0 && state.capacity >= requested
+            && state.capacity < CEILING, "growth append reserved state");
+    if (requested >= 16)
+        require(state.capacity == requested, "growth append matched initial capacity");
+    const uint64_t initial = state.capacity;
+    require(api->append_batch(owner, initial, seed) == initial,
+            "growth append prepared length");
+    length = api->snapshot(owner, &state);
+    require(length == initial && state.length == initial
+            && state.capacity == initial && state.checksum == 0 && state.valid == 1,
+            "growth append prepared state");
+    return initial;
+}
+
+static uint64_t growth_inspect_reset(const ApiOperations *api, ApiStorage *owner,
+                                     uint64_t initial, uint64_t seed,
+                                     uint64_t returned, bool wide, bool fail_state) {
+    ApiObservation state = {0};
+    uint64_t length = api->snapshot(owner, &state);
+    const uint64_t expected_length = initial + 1 + fail_state;
+    if (initial >= 16 && state.capacity != 2 * initial)
+        fprintf(stderr, "growth append capacity: %s bytes=%zu old=%" PRIu64
+                " new=%" PRIu64 " expected=%" PRIu64 "\n", api->name,
+                wide ? sizeof(Record) : sizeof(uint64_t), initial, state.capacity,
+                2 * initial);
+    require(returned == initial + 1 && length == expected_length
+            && state.length == expected_length && state.capacity > initial
+            && state.valid == 1 && state.checksum == 0
+            && (initial < 16 || state.capacity == 2 * initial),
+            "growth append post state");
+    ApiObservation actual = {0};
+    uint64_t valid = api->inspect_reset(owner, initial + 1, seed, &actual);
+    require(valid == 1 && actual.valid == 1 && actual.length == initial + 1
+            && actual.capacity == state.capacity
+            && actual.checksum == append_oracle(initial + 1, seed, wide),
+            "growth append full values and checksum");
+    ApiObservation reset = {0};
+    require(api->snapshot(owner, &reset) == 0 && reset.length == 0
+            && reset.capacity == state.capacity && reset.valid == 1,
+            "growth append reset state");
+    observed = actual.checksum;
+    return state.capacity;
+}
+
+static void growth_check(bool fail_values, bool fail_state, bool report) {
+    const uint64_t capacities[] = {16, 256, 4096, 0, 1};
+    const uint64_t seed = UINT64_MAX - 7;
+#if defined(ACCOUNT_ONLY)
+    if (report)
+        puts("contract,element_bytes,requested_capacity,initial_capacity,variant,length,capacity,requests,reallocations,releases,requested_bytes,live_before,live_after");
+#else
+    (void)report;
+#endif
+    for (size_t n = 0; n < sizeof capacities / sizeof capacities[0]; ++n)
+        for (unsigned wide = 0; wide < 2; ++wide)
+            for (unsigned variant = 0; variant < 3; ++variant) {
+                const ApiOperations *api = &append_api[wide][variant];
+                const size_t stride = wide ? sizeof(Record) : sizeof(uint64_t);
+                reset_accounting();
+                ApiStorage owner;
+                uint64_t initial = growth_prepare(api, &owner, capacities[n], seed);
+#if defined(ACCOUNT_ONLY)
+                ApiAccount before = append_account_snapshot();
+                const size_t header = variant == 0 ? 16 : 0;
+                require(before.live == header + initial * stride,
+                        "growth append initial live bytes");
+#endif
+                uint64_t length = api->append_one(&owner, seed + initial + fail_values);
+#if defined(ACCOUNT_ONLY)
+                ApiAccount after = append_account_snapshot();
+#endif
+                uint64_t capacity = growth_inspect_reset(api, &owner, initial, seed,
+                                                         length, wide != 0, fail_state);
+#if defined(ACCOUNT_ONLY)
+                require(after.requests > before.requests && after.bytes > before.bytes
+                        && after.live == header + capacity * stride
+                        && after.requests - before.requests
+                            == after.releases - before.releases
+                               + after.reallocations - before.reallocations
+                               + (initial == 0 && variant != 0),
+                        "growth append allocation ledger");
+                if (report)
+                    printf("append-growth-o3,%zu,%" PRIu64 ",%" PRIu64 ",%s,%" PRIu64 ",%" PRIu64 ",%zu,%zu,%zu,%zu,%zu,%zu\n",
+                           stride, capacities[n], initial, api->name, length, capacity,
+                           after.requests - before.requests,
+                           after.reallocations - before.reallocations,
+                           after.releases - before.releases, after.bytes - before.bytes,
+                           before.live, after.live);
+#endif
+                if (capacities[n] < 16 && !report)
+                    printf("growth append policy: %s bytes=%zu requested=%" PRIu64
+                           " initial=%" PRIu64 " length=%" PRIu64 " capacity=%" PRIu64 "\n",
+                           api->name, stride, capacities[n], initial, length, capacity);
+                (void)api->destroy(&owner);
+#if defined(ACCOUNT_ONLY)
+                require(live_bytes == 0 && requests == releases + realloc_requests,
+                        "growth append complete cleanup");
+#endif
+            }
+    if (!report) puts("vector append growth: scalar/256B, five capacities, three APIs passed");
 }
 
 #if !defined(ACCOUNT_ONLY)
@@ -790,6 +908,9 @@ int main(int argc, char **argv) {
     require(argc >= 2, "usage: vector ecosystem check|account|measure work samples");
     if (strcmp(argv[1], "check") == 0) { require(argc == 2, "check argument count"); check(); }
     else if (strcmp(argv[1], "api-check") == 0) { require(argc == 2, "api-check argument count"); append_check(false, false); }
+    else if (strcmp(argv[1], "growth-api-check") == 0) { require(argc == 2, "growth-api-check argument count"); growth_check(false, false, false); }
+    else if (strcmp(argv[1], "growth-api-fail-values") == 0) { require(argc == 2, "growth-api-fail-values argument count"); growth_check(true, false, false); }
+    else if (strcmp(argv[1], "growth-api-fail-state") == 0) { require(argc == 2, "growth-api-fail-state argument count"); growth_check(false, true, false); }
     else if (strcmp(argv[1], "api-fail-values") == 0) { require(argc == 2, "api-fail-values argument count"); append_check(true, false); }
     else if (strcmp(argv[1], "fail-checksum") == 0) {
         uint64_t actual = checked_run(WHITEFOOT, true, 3, 1, 17, 1);
@@ -797,6 +918,7 @@ int main(int argc, char **argv) {
     }
 #if defined(ACCOUNT_ONLY)
     else if (strcmp(argv[1], "account") == 0) { require(argc == 2, "account argument count"); account(); }
+    else if (strcmp(argv[1], "growth-api-account") == 0) { require(argc == 2, "growth-api-account argument count"); growth_check(false, false, true); }
     else if (strcmp(argv[1], "api-fail-allocation") == 0) { require(argc == 2, "api-fail-allocation argument count"); append_check(false, true); }
     else if (strcmp(argv[1], "fail-cleanup") == 0) {
         (void)checked_run(WHITEFOOT, true, 3, 1, 17, 1);

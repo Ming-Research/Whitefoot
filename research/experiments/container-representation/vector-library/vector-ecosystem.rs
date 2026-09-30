@@ -174,6 +174,23 @@ unsafe fn api_append_batch<T: Element>(storage: *mut c_void, count: u64, seed: u
     values.len() as u64
 }
 
+unsafe fn api_append_one<T: Element>(storage: *mut c_void, seed: u64) -> u64 {
+    let values = unsafe { &mut *storage.cast::<Vec<T>>() };
+    values.push(T::make(seed));
+    values.len() as u64
+}
+
+unsafe fn api_snapshot<T>(storage: *mut c_void, observation: &mut ApiObservation) -> u64 {
+    let values = unsafe { &*storage.cast::<Vec<T>>() };
+    *observation = ApiObservation {
+        length: values.len() as u64,
+        capacity: values.capacity() as u64,
+        checksum: 0,
+        valid: 1,
+    };
+    values.len() as u64
+}
+
 unsafe fn api_inspect_reset<T: ApiElement>(
     storage: *mut c_void,
     count: u64,
@@ -204,7 +221,7 @@ unsafe fn api_destroy<T>(storage: *mut c_void) -> u8 {
 }
 
 macro_rules! api_exports {
-    ($element:ty, $prepare:ident, $append:ident, $inspect:ident, $destroy:ident) => {
+    ($element:ty, $prepare:ident, $append:ident, $one:ident, $snapshot:ident, $inspect:ident, $destroy:ident) => {
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn $prepare(capacity: u64, storage: *mut c_void) {
             unsafe { api_prepare::<$element>(capacity, storage) }
@@ -214,6 +231,19 @@ macro_rules! api_exports {
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn $append(storage: *mut c_void, count: u64, seed: u64) -> u64 {
             unsafe { api_append_batch::<$element>(storage, count, seed) }
+        }
+
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn $one(storage: *mut c_void, seed: u64) -> u64 {
+            unsafe { api_append_one::<$element>(storage, seed) }
+        }
+
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn $snapshot(
+            storage: *mut c_void,
+            observation: *mut ApiObservation,
+        ) -> u64 {
+            unsafe { api_snapshot::<$element>(storage, &mut *observation) }
         }
 
         #[unsafe(no_mangle)]
@@ -237,6 +267,8 @@ api_exports!(
     u64,
     rust_vector_api_word_prepare,
     rust_vector_api_word_append_batch,
+    rust_vector_api_word_append_one,
+    rust_vector_api_word_snapshot,
     rust_vector_api_word_inspect_reset,
     rust_vector_api_word_destroy
 );
@@ -244,6 +276,8 @@ api_exports!(
     Record,
     rust_vector_api_record_prepare,
     rust_vector_api_record_append_batch,
+    rust_vector_api_record_append_one,
+    rust_vector_api_record_snapshot,
     rust_vector_api_record_inspect_reset,
     rust_vector_api_record_destroy
 );

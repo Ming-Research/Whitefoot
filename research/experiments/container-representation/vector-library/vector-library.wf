@@ -327,6 +327,24 @@ fn vector_api_append_batch<interface VectorApiElement<T>>(values: &GrowVector<T,
   return values^.storage.inner.len;
 }
 
+fn vector_api_append_one<interface VectorApiElement<T>>(values: &GrowVector<T, 8193>, seed: u64) -> length: u64 writes(values.storage) contract {
+  requires values^.storage.inner.len < 8193_u64;
+  ensures length == values^.storage.inner.len;
+  ensures values^.storage.inner.len == entry(values)^.storage.inner.len + 1_u64;
+} {
+  let value = VectorApiElement::make(seed: seed);
+  let appended = grow_vector_append::<T, 8193>(values: values, value: move value);
+  return appended;
+}
+
+fn vector_api_snapshot<interface VectorApiElement<T>>(values: &GrowVector<T, 8193>, observation: &VectorApiObservation) -> length: u64 reads(values.storage), writes(observation) {
+  set observation^.length = values^.storage.inner.len;
+  set observation^.capacity = values^.storage.inner.cap;
+  set observation^.checksum = 0_u64;
+  set observation^.valid = 1_u64;
+  return values^.storage.inner.len;
+}
+
 fn vector_api_inspect_reset<interface VectorApiElement<T>>(values: &GrowVector<T, 8193>, count: u64, seed: u64, observation: &VectorApiObservation) -> valid: u64 writes(values.storage), writes(observation) contract {
   ensures values^.storage.inner.len == 0_u64;
 } {
@@ -370,6 +388,32 @@ fn vector_api_record_append_batch(values: &GrowVector<VectorRecord, 8193>, count
   ensures values^.storage.inner.len == count;
 } {
   return vector_api_append_batch::<ApiRecordElement>(values: values, count: count, seed: seed);
+}
+
+fn vector_api_word_append_one(values: &GrowVector<u64, 8193>, seed: u64) -> length: u64 writes(values.storage) contract {
+  requires values^.storage.inner.len < 8193_u64;
+  ensures length == values^.storage.inner.len;
+  ensures values^.storage.inner.len == entry(values)^.storage.inner.len + 1_u64;
+} {
+  let appended = vector_api_append_one::<ApiWordElement>(values: values, seed: seed);
+  return appended;
+}
+
+fn vector_api_record_append_one(values: &GrowVector<VectorRecord, 8193>, seed: u64) -> length: u64 writes(values.storage) contract {
+  requires values^.storage.inner.len < 8193_u64;
+  ensures length == values^.storage.inner.len;
+  ensures values^.storage.inner.len == entry(values)^.storage.inner.len + 1_u64;
+} {
+  let appended = vector_api_append_one::<ApiRecordElement>(values: values, seed: seed);
+  return appended;
+}
+
+fn vector_api_word_snapshot(values: &GrowVector<u64, 8193>, observation: &VectorApiObservation) -> length: u64 reads(values.storage), writes(observation) {
+  return vector_api_snapshot::<ApiWordElement>(values: values, observation: observation);
+}
+
+fn vector_api_record_snapshot(values: &GrowVector<VectorRecord, 8193>, observation: &VectorApiObservation) -> length: u64 reads(values.storage), writes(observation) {
+  return vector_api_snapshot::<ApiRecordElement>(values: values, observation: observation);
 }
 
 fn vector_api_word_inspect_reset(values: &GrowVector<u64, 8193>, count: u64, seed: u64, observation: &VectorApiObservation) -> valid: u64 writes(values.storage), writes(observation) contract {

@@ -66,6 +66,20 @@ std::uint64_t api_append_batch(void *storage, std::uint64_t count,
     return values.size();
 }
 
+template<class T>
+std::uint64_t api_append_one(void *storage, std::uint64_t seed) {
+    auto &values = *static_cast<Vector<T> *>(storage);
+    values.emplace_back(seed);
+    return values.size();
+}
+
+template<class T>
+std::uint64_t api_snapshot(void *storage, ApiObservation *observation) {
+    const auto &values = *static_cast<const Vector<T> *>(storage);
+    *observation = {values.size(), values.capacity(), 0, 1};
+    return values.size();
+}
+
 bool api_inspect(std::uint64_t value, std::uint64_t expected, std::uint64_t &digest) {
     consume(digest, value);
     return value == expected;
@@ -190,6 +204,15 @@ extern "C" std::uint64_t cpp_vector_api_word_append_batch(void *storage,
     return api_append_batch<std::uint64_t>(storage, count, seed);
 }
 
+extern "C" std::uint64_t cpp_vector_api_word_append_one(void *storage, std::uint64_t seed) {
+    return api_append_one<std::uint64_t>(storage, seed);
+}
+
+extern "C" std::uint64_t cpp_vector_api_word_snapshot(void *storage,
+                                                     ApiObservation *observation) {
+    return api_snapshot<std::uint64_t>(storage, observation);
+}
+
 extern "C" std::uint64_t cpp_vector_api_word_inspect_reset(void *storage,
                                                            std::uint64_t count,
                                                            std::uint64_t seed,
@@ -209,6 +232,15 @@ extern "C" std::uint64_t cpp_vector_api_record_append_batch(void *storage,
                                                             std::uint64_t count,
                                                             std::uint64_t seed) {
     return api_append_batch<Record>(storage, count, seed);
+}
+
+extern "C" std::uint64_t cpp_vector_api_record_append_one(void *storage, std::uint64_t seed) {
+    return api_append_one<Record>(storage, seed);
+}
+
+extern "C" std::uint64_t cpp_vector_api_record_snapshot(void *storage,
+                                                       ApiObservation *observation) {
+    return api_snapshot<Record>(storage, observation);
 }
 
 extern "C" std::uint64_t cpp_vector_api_record_inspect_reset(void *storage,

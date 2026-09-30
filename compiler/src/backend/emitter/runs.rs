@@ -1196,7 +1196,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     /// [OP-10] `grow`: the cell's content is remade whole at the new
     /// capacity.
     ///
-    /// One allocation, one copy of the header and the filled slots, one
+    /// One allocation, header stores and one filled-prefix byte copy, one
     /// free, and the cell's pointer slot takes the new block. [STOR-7] makes
     /// the copying route legal at every value, because no judgment depends
     /// on the block's address.

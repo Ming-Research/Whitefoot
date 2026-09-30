@@ -523,6 +523,20 @@ rarely insert at the same place.
   inventory is next edited; the storage-destructuring repair uses its actual
   identities and needs no inventory change.
 
+- **Measured direct-call returns require an intermediate result binding.**
+  The growth-append comparison wrapper's `return grow_vector_append::<T,
+  8193>(values: values, value: move value);` cannot discharge an ensures
+  relating its returned length to the mutated vector under the current FN-9
+  return-datum boundary; naming the call result and returning that name works
+  with identical contracts. The paired direct/bound-return tests in
+  `compiler/src/semantic/tests/postconditions.rs` already cover this boundary.
+  Impact: ordinary forwarding wrappers require an extra source binding, though
+  the optimized append code retains no extra work. Reopen with return-contract
+  ergonomics, compare direct and bound forms including refuted and recursive
+  contracts, and decide whether a broader return datum is warranted. Any
+  expansion of accepted source needs a specification decision; do not change
+  that boundary as part of the container timing experiment.
+
 ## Containers and storage lowering
 
 - **Check measure-fact transport when wrapping a runtime-content Box.** A new

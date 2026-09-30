@@ -5949,3 +5949,66 @@ compiler's output (both SHA256
 `75b909699ef952625a132482c14453641daacef1a0ae9eb9dc90658c70a78d0f`).
 The timed program therefore keeps the measured code after this refactor;
 no second timing series was substituted.
+
+#### Append that triggers growth: correctness and native checkpoint
+
+Vector remains first: qualify one API, including its distinct spare/growth
+paths, before the next API; whole-Vector timing follows per-API qualification.
+This checkpoint adds ordinary scalar/wide `append_one` and nonmutating
+length/capacity snapshots. Preparation fills an empty vector outside timing;
+the new append-one entry accepts nonzero length. The old empty-only batch
+contract is unchanged. Exact full prestate, new length, capacity, every word,
+wrapping checksum and cleanup pass all 30 cases in both timed/account images.
+Wrong offered payload and wrong expected postlength each fail with status 1
+and their specific diagnostics in both images; existing spare checks/faults
+also pass.
+
+| Requested initial capacity | Observed initial capacity, all three | WF / Rust / C++ postcapacity, both widths |
+|---|---|---|
+| 0 | 0 | 1 / 4 / 1 |
+| 1 | 1 | 2 / 4 / 2 |
+| 16 / 256 / 4096 | 16 / 256 / 4096 | All double to 32 / 512 / 8192 |
+
+The [30-row allocation record](ecosystem-append-growth-baseline-account.csv)
+snapshots append only and verifies zero live bytes after destruction.
+For matched nonempty capacity N and width E, WF requests `16+2NE` bytes
+(one request, no realloc, one release); C++ requests `2NE` (1/0/1);
+Rust requests `2NE` (one request counted as realloc, no release). The initial
+0/1 cases retain their different ordinary policies. These accounting-image
+events do not establish timed Rust's in-place-reallocation frequency.
+Keep this raw file with the checkpoint when consolidating; it is not a gate.
+
+The first direct `return grow_vector_append::<T, 8193>(...)` spelling failed
+`FN-9: InvalidPostconditionReturn` at line336 (check exit1, 0.609 seconds;
+emission unstarted). Binding the result with `let` before returning it in the
+three new append-one functions preserves every contract and passes check/emit
+in 0.162/0.164 seconds. Failed bytes and diagnostics remain in the existing
+scratch home; no specification or compiler rule changes for this repair.
+
+| Actual append-one native body | Direct frame | Full-growth path |
+|---|---|---|
+| WF, scalar/wide | 32 B | malloc, payload memmove, free; 16 B backing header |
+| Rust, scalar/wide | 48 B | Allocator realloc; allocation when empty |
+| C++, scalar/wide | 80 B | New backing, new value construction, prefix relocation, old release |
+
+All three construct wide payload directly in its final slot; there is no WF
+256 B staging copy. These are new append-one bodies, not old batch evidence;
+frames and allocator calls do not attribute elapsed cost. Native codegen/opt
+exit0 under a 1.114-second guard. Harness construction exits0 in 2.16 seconds;
+growth checks/account/spare checks exit0 in 0.87/0.11/0.11 seconds, outer
+guard0/3.44 seconds. Emitting CLI SHA256 is
+`9a3ac1cec5eed4a7a41aeced4f12b31cf81b5d34d6d72b9fdfe2d27de2973da5`.
+
+Growth timing is **not run or implemented at this checkpoint**. Next, inspect
+and measure this baseline with two independent launches, each with both
+cohorts and seven samples, covering all ten cells (0/1 policy-labelled;
+16/256/4096 matched); reserve paired ABBA for an actual candidate. Keep the
+1 ms floor for real appends, 10% spread/peer-drift bounds and disjoint-range
+target. A separately labelled duration-only pilot starts at 64 MiB with one
+sample; settle the final copied-bytes budget plus fixed per-call allowance
+only from real-operation durations, without ratio tuning. Bound context
+footprint, recreate every full owner before its next measured append, and
+keep fill, post-oracle and destruction outside the clock. Read-only snapshot
+controls remain raw, labelled and unsubtracted; their tiny durations are not
+subject to the real-append floor. Neither this checkpoint nor the completed
+spare path establishes whole append or whole Vector completion.

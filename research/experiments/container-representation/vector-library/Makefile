@@ -68,9 +68,10 @@ ECO_WORK ?= 1048576
 ECO_REPEATS ?= 7
 APPEND_WORK ?= 4194304
 APPEND_SAMPLE_FILE ?= $(ECO_BUILD)/append-measurements.csv
+GROWTH_ACCOUNT ?= $(ECO_BUILD)/append-growth-accounting.csv
 include ../ecosystem.mk
 
-.PHONY: ecosystem-build ecosystem-check ecosystem-account ecosystem-measure ecosystem-append-check ecosystem-append-measure
+.PHONY: ecosystem-build ecosystem-check ecosystem-account ecosystem-measure ecosystem-append-check ecosystem-append-measure ecosystem-append-growth-check ecosystem-append-growth-account
 .SECONDARY: $(ECO_BUILD)/whitefoot-timed.ll $(ECO_BUILD)/whitefoot-account.ll \
             $(ECO_BUILD)/whitefoot-timed.o $(ECO_BUILD)/whitefoot-account.o \
             $(ECO_BUILD)/driver-timed.o $(ECO_BUILD)/driver-account.o \
@@ -109,6 +110,22 @@ ecosystem-append-check: ecosystem-build
 	 done
 	grep -Fx 'vector library costs: spare append full values and checksum' $(ECO_BUILD)/api-fail-values.txt
 	grep -Fx 'vector library costs: spare append zero allocation' $(ECO_BUILD)/api-fail-allocation.txt
+
+ecosystem-append-growth-check: ecosystem-build
+	$(ECO_BUILD)/vector-costs-timed$(EXE) growth-api-check
+	$(ECO_BUILD)/vector-costs-account$(EXE) growth-api-check
+	@set -eu; for image in timed account; do for fault in values state; do \
+	  log='$(ECO_BUILD)/growth-api-fail-'$$image'-'$$fault'.txt'; \
+	  if $(ECO_BUILD)/vector-costs-$$image$(EXE) growth-api-fail-$$fault > "$$log" 2>&1; then \
+	    echo "Append growth $$image $$fault fault was accepted" >&2; exit 1; \
+	  else status=$$?; test "$$status" = 1; fi; \
+	  case $$fault in values) message='growth append full values and checksum' ;; state) message='growth append post state' ;; esac; \
+	  grep -Fx "vector library costs: $$message" "$$log"; \
+	 done; done
+
+ecosystem-append-growth-account: $(ECO_BUILD)/vector-costs-account$(EXE)
+	$(ECO_BUILD)/vector-costs-account$(EXE) growth-api-account > '$(GROWTH_ACCOUNT)'
+	@echo 'Append growth allocation observations: $(GROWTH_ACCOUNT)'
 
 ecosystem-check: ecosystem-build
 	$(ECO_BUILD)/vector-costs-timed$(EXE) check
