@@ -611,7 +611,14 @@ static void concurrent_half_close_probe(wf_inputs *inputs, int send_first) {
  * each append at its end, is handed to durability, and reads back through the
  * read half; opening it again appends rather than truncating. */
 static void append_probe(wf_inputs *inputs) {
-    wf_view name = { (void *)"appended", 8 };
+    /* A path component is UTF-16 on Windows, as the file probe's is. */
+#if defined(_WIN32)
+    static const uint16_t component[] = { 'a','p','p','e','n','d','e','d' };
+    wf_view name = { (void *)component, sizeof(component) };
+#else
+    static const unsigned char component[] = "appended";
+    wf_view name = { (void *)component, sizeof(component) - 1 };
+#endif
     wf_view source = { (void *)"abcde", 5 };
     unsigned char bytes[8];
     wf_view destination = { bytes, sizeof bytes };
