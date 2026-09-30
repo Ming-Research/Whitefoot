@@ -2744,9 +2744,9 @@ condition under which it is taken up.
   a proposed rule change before implementation. Keep the admitted wrapper
   while it supplies the needed proof; validate aliases and false preservation
   claims as well as checking cost for any improvement.
-- **Classify the zero-ceiling Map invariant rejection.** Frozen compiler
-  SHA-256 `5753999f224f89a9a99e0399b76bfd7b92cd53d5f22b0d204df4f2ec3ffbc20b`
-  rejects the two-span migration header
+- **Classify the zero-ceiling Map invariant rejection.** The frozen compiler
+  identified in the [two-span experiment](../research/experiments/container-representation/map-library/RESULTS.md#prospective-two-span-cyclic-probing)
+  rejects the migration header
   `invariant home_low: home >= 0_u64` with `INV-1`, Backedge,
   `required_relation: 0_u64 <= home`, `disposition: Unproved`. The retained
   standalone `invariant-isolation/map-zero/witness.wf` instantiates
