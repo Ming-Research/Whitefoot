@@ -4,7 +4,7 @@ alias exit_status = std::process::exit_status;
 alias kinds = pkg::kinds;
 
 fn bounded(entries: &Array<Entry, 4>, i: u64, n: u64) -> result: u64 reads(entries) contract {
-  requires entries^[i].weight <= n;
+  requires entries^[i].head <= n;
 } {
   return n;
 }

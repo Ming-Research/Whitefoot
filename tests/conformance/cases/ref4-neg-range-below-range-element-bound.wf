@@ -1,0 +1,13 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn nested(strip: &[Array<u64, 4>], i: u64) -> result: u64 reads(strip[i]) contract {
+  requires i < strip^.len;
+} {
+  let part = &strip^[i][1_u64..5_u64];
+  return part^.len;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}
