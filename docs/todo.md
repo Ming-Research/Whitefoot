@@ -497,6 +497,28 @@ rarely insert at the same place.
   Found in the writer-lost-facts investigation; reopen with the next
   diagnostics change.
 
+- **An opaque struct's capabilities ignore its fields.** The checker gives
+  every opaque struct a module declares the field-less host representation
+  (`CheckedNominalKind::Opaque`), whose capabilities come from its modifiers
+  alone, while [TYPE-2] and [PROV-6] give an opaque struct the capabilities
+  its fields give it: `opaque struct Holder { item: Box<u8>; }` without a
+  modifier is copy to the checker and affine to the specification. No such
+  struct has a value [TYPE-2], so the gap shows only in a generic bound or a
+  second use checked against a declared type, and `Instant`, the one opaque
+  struct with a field, has a copy field and no modifier, where the two agree.
+  Its layout is also the 32-byte host representation rather than its fields'.
+  Give an opaque struct with fields the ordinary struct kind with a refused
+  constructor. The same representation cites the wrong rule for `Instant`'s
+  field: `instant.ticks` is rejected as TYPE-5, "expected a source struct",
+  where [TYPE-2] makes the field private to a module with no implementation
+  record [MOD-6], and destructuring an `Instant` reaches a repair sentence
+  no conformance case covers. Validate with conformance cases that pass such
+  a struct where `T: copy` is required and use it twice, both rejected, that
+  read `instant.ticks` and are rejected citing MOD-6, and that destructure an
+  `Instant` and are rejected citing TYPE-2 with its repair, with `Instant`
+  otherwise unchanged. Reopen with the next change to opaque structs or
+  `std::time`.
+
 - **The container inventory's comments predate Segments.**
   `compiler/src/resolution/kernel.rs` describes `ContainerShape` as three
   storage shapes and a cell and `ContainerNominal::shape` as one of four,
@@ -506,6 +528,21 @@ rarely insert at the same place.
   identities and needs no inventory change.
 
 ## Containers and storage lowering
+
+- **A hash map offers no sample or bounded visit.**
+  `std::collections::hash_map` visits every pair (`hash_map_each`) and
+  nothing less, so a program that must look at a few pairs at a time, as
+  Redis samples keys with an expiry, either scans the whole map inside one
+  atomic statement, holding every other context for the scan, or keeps a
+  second structure beside it: the Redis subset keeps a priority queue of
+  expiries, one entry per expiry set, including those a later command
+  replaced (`research/investigations/io-model/TIME-AND-FILES.md`,
+  Experiment 8). A visit that starts at a position and returns the position
+  the next visit resumes at would express sampling and incremental scans,
+  as Redis's `SCAN`. Validate with a `SCAN`-style program over a map that
+  changes between visits, every pair present throughout reported at least
+  once. Reopen when a program must walk a shared map without holding it for
+  the whole walk.
 
 - **Validate a shared Ring wrap calculation independent of layout bounds.**
   The corrected front predecessor handles every admitted capacity. Remaining
@@ -1725,7 +1762,10 @@ rarely insert at the same place.
   current rule; the join comment in `compiler/src/backend/completion/bridge.h`
   describes pool stacks rather than contexts; the `.wf` programs under
   `research/experiments/io-completion-bench/programs/` use the retired
-  `&uniq` and `own Bool` spellings and no longer compile, so `read-bench.sh`
+  `&uniq` and `own Bool` spellings and no longer compile, as do
+  `park-on-miss-measurements/programs/grid_split.wf`, the
+  `wfgrep-double-walk/shapes/` programs and the programs
+  `differential-fuzz/src/generator.rs` writes, so `read-bench.sh`
   stops at its first build and the spawn work measured single-context reads
   with a scratch loop instead
   (`research/investigations/io-model/CONCURRENCY-MODEL.md`, section 10.5);
@@ -1766,6 +1806,30 @@ rarely insert at the same place.
   a program that reads a path from a file and opens it below a directory
   holding a link, with an enumerated link left unfollowed. Reopen when a
   program must open data-named files below linked directories.
+
+- **Files can only be appended.** `std::fs` opens a file for appending,
+  appends, syncs and closes it [PRE-2], and has no positioned write,
+  truncation, rename, removal, directory creation, directory sync, create rule
+  other than create-if-missing, or way to descend into a subdirectory for
+  writing. A program cannot rewrite a log compactly, as Redis's
+  `BGREWRITEAOF` writes a new file, syncs it, renames it over the old one and
+  syncs the directory, nor clean up a file it made; the append-only surface
+  was chosen as the one the persistent programs in view needed
+  (`research/investigations/io-model/TIME-AND-FILES.md`, "Writable
+  directories and append-only files"). Each addition is a specification
+  change to `std::fs` taking the write half. Validate with a program that
+  rewrites its log through a new file and a rename, and survives being
+  stopped between the two steps with one of the two files whole. Reopen when
+  a program must rewrite or remove what it wrote.
+
+- **A clock's readings cannot be replaced for a test.** `now` and the
+  deadline heap read the host's monotonic clock, so a program's behavior at
+  a deadline is tested by waiting for it: the deadline programs and cases
+  sleep for tens of milliseconds and cannot show an order of events that
+  needs a clock to stand still. A test build could answer the clock from a
+  script, as the completion harness already scripts `wf_file_monotonic_ns`.
+  Reopen when a test needs a deadline order that real time cannot produce
+  reliably.
 
 ## Modules and libraries
 
@@ -2152,6 +2216,20 @@ each is resolved by a discussion and a tree change.
   handle, needs a `shared_into` that returns the state and a way to state
   that the caller's handle is the last. Reopen when a program keeps a linear
   value in a shared object.
+
+- **An atomic statement's guard cannot be bounded by a time.** A context
+  waiting for a guard [SHARE-3] wakes only when another context changes the
+  object, and no deadline or sleep races it, so a context that must act on
+  whichever comes first, work arriving or a time passing, polls: the Redis
+  subset's append-only file writer wakes every few milliseconds to move the
+  buffered changes out instead of waiting for them
+  (`research/investigations/io-model/TIME-AND-FILES.md`, "What is left
+  out"). A deadline on the guard's wait, with a guard-false outcome, would
+  express it without polling. Validate with the writer rewritten to wait on
+  its buffer with a one-second deadline, comparing its wakeups and latency
+  with the polling one. Reopen when a program must wake on the earlier of an
+  object's change and a time, or when the polling writer's cost shows in a
+  profile.
 
 ## Ownership redesign (candidate x1) follow-ups
 

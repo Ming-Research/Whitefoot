@@ -26,6 +26,8 @@
 #include <limits.h>
 #include <netinet/tcp.h>
 #include <poll.h>
+#include <pthread.h>
+#include <signal.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -136,6 +138,7 @@ static wf_file_result wf_file_execute_once(wf_file_request *request) {
         }
         break;
     case WF_FILE_WRITE:
+    case WF_FILE_APPEND:
         if (request->operation.write.count > (size_t)SSIZE_MAX) {
             result.head.error_code = EINVAL;
             return result;
@@ -264,6 +267,28 @@ static wf_file_result wf_file_execute_once(wf_file_request *request) {
         break;
     case WF_FILE_CLOSE:
         result.head.value = close(request->operation.close.descriptor);
+        break;
+    /* The file was opened with O_APPEND, so each write lands at its end. */
+    case WF_FILE_APPEND:
+        result.head.value = write(
+            request->operation.write.descriptor,
+            request->operation.write.buffer,
+            request->operation.write.count
+        );
+        break;
+    /* The host's own interface for handing written bytes to durable storage
+     * [PRE-2]: Darwin's fsync hands them only to the drive's cache, and
+     * F_FULLFSYNC is what asks the drive; a file system that refuses it gets
+     * the fsync it does support. */
+    case WF_FILE_SYNC:
+#if defined(__APPLE__)
+        result.head.value = fcntl(request->operation.close.descriptor, F_FULLFSYNC);
+        if (result.head.value < 0 && (errno == ENOTSUP || errno == ENOTTY || errno == EINVAL)) {
+            result.head.value = fsync(request->operation.close.descriptor);
+        }
+#else
+        result.head.value = fdatasync(request->operation.close.descriptor);
+#endif
         break;
 #if defined(WF_FILE_HAS_DIRECTORY_NEXT)
     case WF_FILE_DIRECTORY_NEXT:
@@ -442,8 +467,41 @@ static int wf_file_wait_ready(const wf_file_request *request) {
     }
     do {
         waited = WF_COMPLETION_POLL(&descriptor, 1, -1);
-    } while (waited < 0 && errno == EINTR);
+    } while (waited < 0 && errno == EINTR && !wf_file_running_cancelled());
     return waited > 0 ? 0 : errno;
+}
+
+/* Deadlines [PRE-2].  A helper inside a host call is interrupted by SIGURG,
+ * which no program receives and whose handler, installed without restart,
+ * does nothing but make the call return EINTR. */
+int wf_file_cancelled_error(void) {
+    return ECANCELED;
+}
+
+int wf_file_error_is_cancellation(int error_code) {
+    return error_code == ECANCELED || error_code == EINTR;
+}
+
+static void wf_file_interrupted(int signal_number) {
+    (void)signal_number;
+}
+
+static void wf_file_install_interrupt(void) {
+    struct sigaction action;
+    memset(&action, 0, sizeof(action));
+    action.sa_handler = wf_file_interrupted;
+    (void)sigemptyset(&action.sa_mask);
+    (void)sigaction(SIGURG, &action, NULL);
+}
+
+uintptr_t wf_file_thread_self(void) {
+    static pthread_once_t installed = PTHREAD_ONCE_INIT;
+    (void)pthread_once(&installed, wf_file_install_interrupt);
+    return (uintptr_t)pthread_self();
+}
+
+void wf_file_thread_interrupt(uintptr_t thread) {
+    (void)pthread_kill((pthread_t)thread, SIGURG);
 }
 
 wf_file_result wf_file_execute_direct(wf_file_request *request) {
@@ -462,6 +520,15 @@ wf_file_result wf_file_execute_direct(wf_file_request *request) {
             return result;
         }
         switch (request->kind) {
+        /* An append or a sync of a regular file never waits for readiness,
+         * and carries no deadline, so an interruption by some other signal
+         * is retried and any other refusal is its answer. */
+        case WF_FILE_APPEND:
+        case WF_FILE_SYNC:
+            if (result.head.error_code == EINTR) {
+                continue;
+            }
+            return result;
         case WF_FILE_READ:
         case WF_FILE_WRITE:
         case WF_FILE_PREAD:
@@ -483,6 +550,11 @@ wf_file_result wf_file_execute_direct(wf_file_request *request) {
             return result;
         }
         if (result.head.error_code == EINTR) {
+            /* An interruption is retried, except the one a passed deadline
+             * sent, which ends the operation with nothing transferred. */
+            if (wf_file_running_cancelled()) {
+                return result;
+            }
             continue;
         }
         if (result.head.error_code != EAGAIN

@@ -51,6 +51,9 @@ fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
     TimedOut(code: native_code, origin: native_origin) => {
       return False();
     }
+    DeadlinePassed() => {
+      return False();
+    }
     BrokenPipe(code: native_code, origin: native_origin) => {
       return False();
     }
@@ -108,9 +111,10 @@ fn pump(receive: &TcpReceive, send: &TcpSend, scratch: &[u8]) -> result: u8 writ
 } {
   doc "Reads one chunk from the receiving direction and sends it back through the sending direction, holding both directions at once.";
   let outcome = 0_u8;
-  match receive_next(receive: receive, destination: scratch, start: 0_u64, end: 64_u64) {
+  let no_deadline = None<std::time::Instant>();
+  match receive_next(receive: receive, destination: scratch, start: 0_u64, end: 64_u64, deadline: no_deadline) {
     Ok(value: endpoint) => {
-      match send_once(send: send, source: scratch, start: 0_u64, end: endpoint) {
+      match send_once(send: send, source: scratch, start: 0_u64, end: endpoint, deadline: no_deadline) {
         Ok(value: accepted) => {
         }
         Err(error: problem) => {
@@ -133,7 +137,9 @@ fn pump(receive: &TcpReceive, send: &TcpSend, scratch: &[u8]) -> result: u8 writ
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "The ordinary TcpConnection receive and send fields are disjoint places. The call substitutes one write path per field and the pairwise check proves them distinct by their different field steps; no target classification authorizes overlap.";
-  let Inputs(args: unused_args, cwd: unused_cwd, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin) = move inputs;
+  let Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
+  std::fs::close_directory_write(factory: &handles, directory: move unused_cwd_write);
   close_directory(factory: &handles, directory: move unused_cwd);
   let scratch = slots_new::<u8, 64>();
   for @fill (
@@ -145,7 +151,8 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   }
   let window = &scratch[0_u64..64_u64];
   let address = socket_address_v4(a: 127_u8, b: 0_u8, c: 0_u8, d: 1_u8, port: 9101_u16);
-  match tcp_connect(factory: &handles, address: &address) {
+  let no_deadline = None<std::time::Instant>();
+  match tcp_connect(factory: &handles, address: &address, deadline: no_deadline) {
     Ok(value: link) => {
       let outcome = 0_u8;
       set outcome = pump(receive: &link.receive, send: &link.send, scratch: window);

@@ -46,6 +46,12 @@
 #ifndef FILE_SYNCHRONOUS_IO_NONALERT
 #define FILE_SYNCHRONOUS_IO_NONALERT 0x00000020UL
 #endif
+#ifndef FILE_OPEN_IF
+#define FILE_OPEN_IF 0x00000003UL
+#endif
+#ifndef FILE_NON_DIRECTORY_FILE
+#define FILE_NON_DIRECTORY_FILE 0x00000040UL
+#endif
 #ifndef FILE_OPEN_REPARSE_POINT
 #define FILE_OPEN_REPARSE_POINT 0x00200000UL
 #endif
@@ -1045,7 +1051,9 @@ int wf__windows_completion_file_open_at_worker(
         || !wf_windows_handle_valid(root)
         || (expected_kind == WF_WINDOWS_EXPECT_REGULAR
             && descriptor_class
-                != WF_WINDOWS_DESCRIPTOR_CLASS_READ_FILE)
+                != WF_WINDOWS_DESCRIPTOR_CLASS_READ_FILE
+            && descriptor_class
+                != WF_WINDOWS_DESCRIPTOR_CLASS_WRITE_FILE)
         || (expected_kind == WF_WINDOWS_EXPECT_DIRECTORY
             && descriptor_class
                 != WF_WINDOWS_DESCRIPTOR_CLASS_DIRECTORY_ROOT
@@ -1087,7 +1095,10 @@ int wf__windows_completion_file_open_at_worker(
     memset(&io_status, 0, sizeof(io_status));
 
     desired_access = FILE_READ_ATTRIBUTES | SYNCHRONIZE;
-    if (expected_kind == WF_WINDOWS_EXPECT_REGULAR) {
+    if (descriptor_class == WF_WINDOWS_DESCRIPTOR_CLASS_WRITE_FILE) {
+        desired_access |= FILE_APPEND_DATA;
+        create_options |= FILE_SYNCHRONOUS_IO_NONALERT | FILE_NON_DIRECTORY_FILE;
+    } else if (expected_kind == WF_WINDOWS_EXPECT_REGULAR) {
         desired_access |= FILE_READ_DATA;
     } else if (expected_kind == WF_WINDOWS_EXPECT_DIRECTORY) {
         desired_access |= FILE_LIST_DIRECTORY | FILE_TRAVERSE;
@@ -1104,7 +1115,7 @@ int wf__windows_completion_file_open_at_worker(
         NULL,
         0,
         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-        FILE_OPEN,
+        descriptor_class == WF_WINDOWS_DESCRIPTOR_CLASS_WRITE_FILE ? FILE_OPEN_IF : FILE_OPEN,
         create_options,
         NULL,
         0
@@ -1165,7 +1176,12 @@ int wf__windows_completion_file_open_at_worker(
         *open_outcome = outcome;
         return -1;
     }
-    descriptor = wf_windows_adopt_handle(opened, _O_RDONLY | _O_BINARY);
+    descriptor = wf_windows_adopt_handle(
+        opened,
+        descriptor_class == WF_WINDOWS_DESCRIPTOR_CLASS_WRITE_FILE
+            ? _O_WRONLY | _O_APPEND | _O_BINARY
+            : _O_RDONLY | _O_BINARY
+    );
     if (descriptor < 0) {
         *error_code = wf_windows_error_code;
         return -1;

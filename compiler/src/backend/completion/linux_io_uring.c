@@ -930,6 +930,10 @@ static void wf_linux_complete_record(
     wf_completion_record_complete(record);
 }
 
+/* The `user_data` of a cancellation's own completion, which names no record:
+ * a record is aligned, so no record lives at this address. */
+#define WF_LINUX_CANCEL_TAG ((uint64_t)1u)
+
 static int wf_linux_publish_completion(
     wf_linux_io_uring_adapter *adapter,
     const struct io_uring_cqe *completion,
@@ -939,9 +943,27 @@ static int wf_linux_publish_completion(
         (wf_completion_record *)(uintptr_t)completion->user_data;
 
     *terminal_published = 0;
+    if (completion->user_data == WF_LINUX_CANCEL_TAG) {
+        /* Whether the kernel found the operation or it had already
+         * finished, the record's own completion reports the outcome. */
+        return 0;
+    }
     if (record == NULL
         || atomic_load_explicit(&record->issued, memory_order_acquire) == 0) {
         return EPROTO;
+    }
+
+    if (atomic_load_explicit(&record->deadline, memory_order_acquire)
+            == WF_COMPLETION_DEADLINE_FIRED
+        && (completion->res == -ECANCELED || completion->res == -EINTR
+            || completion->res == -EAGAIN
+            || (record->ring.waiting_readiness != 0 && completion->res >= 0))) {
+        /* Its deadline passed before it transferred anything [PRE-2]: a
+         * refusal, an interruption or a readiness it was re-armed for is not
+         * retried, and the operation ends cancelled. */
+        *terminal_published = 1;
+        wf_linux_complete_record(adapter, record, -ECANCELED);
+        return 0;
     }
 
     if (wf_linux_transfer_kind(record->request.kind)) {
@@ -967,6 +989,39 @@ static int wf_linux_publish_completion(
     *terminal_published = 1;
     wf_linux_complete_record(adapter, record, completion->res);
     return 0;
+}
+
+int wf_linux_io_uring_cancel(
+    wf_linux_io_uring_adapter *adapter,
+    wf_completion_record *record
+) {
+    int error;
+    unsigned tail;
+    unsigned ring_index;
+    struct io_uring_sqe *submission;
+    if (adapter == NULL || adapter->initialized == 0 || record == NULL) {
+        return EINVAL;
+    }
+    (void)pthread_mutex_lock(&adapter->submission_lock);
+    error = wf_linux_make_room_locked(adapter);
+    if (error == 0) {
+        tail = wf_linux_load_relaxed(adapter->submission_tail);
+        ring_index = tail & *adapter->submission_mask;
+        submission = &adapter->submission_entries[ring_index];
+        memset(submission, 0, sizeof(*submission));
+        submission->opcode = IORING_OP_ASYNC_CANCEL;
+        submission->fd = -1;
+        submission->addr = (uint64_t)(uintptr_t)record;
+        submission->user_data = WF_LINUX_CANCEL_TAG;
+        adapter->submission_array[ring_index] = ring_index;
+        wf_linux_store_release(adapter->submission_tail, tail + 1u);
+        error = wf_linux_kick_locked(adapter);
+    }
+    (void)pthread_mutex_unlock(&adapter->submission_lock);
+    if (error != 0) {
+        wf_linux_record_progress_error(adapter, error);
+    }
+    return error;
 }
 
 int wf_linux_io_uring_progress(

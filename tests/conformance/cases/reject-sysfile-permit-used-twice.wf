@@ -15,7 +15,9 @@ fn close_twice(factory: &HandleFactory, file: ReadFile) -> result: unit writes(f
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "The caller closes the initial directory exactly once.";
-  let Inputs(cwd: root, handles: factory, ..) = move inputs;
+  let Inputs(cwd: root_directory, handles: factory, ..) = move inputs;
+  let std::fs::Directory(read: root, write: root_write) = move root_directory;
+  std::fs::close_directory_write(factory: &factory, directory: move root_write);
   close_directory(factory: &factory, directory: move root);
   return exit_status(code: 0_u8);
 }

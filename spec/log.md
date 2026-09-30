@@ -11,6 +11,22 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-09-30 v0.83: a deadline completes the wait, and each clock and sync fact is stated once
+
+Rules: changed PRE-2
+
+Owner-approved: 2026-09-30, the owner approved decision cards 6 and 9 of the completion review's findings as recommended ("all agreed", written in Chinese).
+
+Summary: PRE-2 stated only when `DeadlinePassed` may appear, which a call that never returned also satisfied; it now states that an outcome the host has not produced before the clock reaches the deadline is produced then as `DeadlinePassed` with nothing transferred, so the call completes as [WAIT-2] completes every waiting call whose outcome has been produced, and that `DeadlinePassed` arises in no other way. The ordering of two `now` reads through one clock, the completion of `sleep_until` and the promise of `sync_file` were each stated in PRE-2's prose and again in the record's doc string; the prose keeps what the doc strings do not say, and its sentence on `sync_file`, which lacked a verb, now states only what lies outside this specification. Selection ground: a deadline that bounds nothing is no bound, and each normative fact is stated once.
+
+## 2026-09-30 v0.83: clocks, deadlines and append-only files
+
+Rules: changed PRE-2, TYPE-2
+
+Owner-approved: 2026-09-30, in the session, written in Chinese: the rulings Q23 B, Q24 A, Q25 D and Q26 A, then Q27 to Q30 as recommended ("Q27 agreed. Q28 agreed Q29 agreed Q30 agreed"), and the handoff that showed each rule change against v0.82 with its before and after behavior ("all approved").
+
+Summary: PRE-2 adds a sixth host module, `std::time`, with a monotonic `Clock`, a calendar `WallClock`, an `Instant` that only host functions form, `now`, total `Instant` arithmetic, `sleep_until` and `unix_nanoseconds`; it gives `read_next`, `write_once`, `tcp_accept`, `tcp_connect`, `receive_next` and `send_once` a last parameter `deadline: Option<Instant>`, whose passing is `IoError::DeadlinePassed()` only once the clock has reached it and only when nothing was transferred; it splits `Inputs.cwd` into a `Directory` of a read half and a write half, adds `clock` and `wall_clock` to `Inputs`, and adds appending, syncing and closing a file below the write half, with `sync_file` promising only the hand-off to the host's durability mechanism. TYPE-2 lets a host function form every opaque struct a host module declares, not only its handles, and gives an opaque struct a host module declares with fields, `Instant` alone, the representation and capabilities its fields give it. Selection ground: the owner's rulings above; [the design](../research/investigations/io-model/TIME-AND-FILES.md).
+
 ## 2026-09-30 v0.82: shared objects, type invariants and spawn
 
 Rules: added SHARE-1, SHARE-2, SHARE-3, TYPE-11, WAIT-3; retired PAR-4; changed CALL-6, CAP-1, DIAG-1, ENT-2, ENT-3, FN-9, FORM-2, GIVE-1, GRAM-2, GRAM-4, GRAM-5, OP-1, PRE-1, REF-1, SET-1, STOR-3, TYPE-6, WAIT-1, WAIT-2
