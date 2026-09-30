@@ -1,5 +1,20 @@
 # Growable vector library costs
 
+Current execution order is one container and one API at a time. Vector append
+is active; other Vector APIs and container families are paused. Complete-trace
+performance qualification follows only after the individual APIs qualify.
+
+| Active append path | Established evidence | Remaining qualification |
+|---|---|---|
+| Spare capacity | Earlier paired native comparison passed all six cells against the slower peer | Reconfirm with the repaired RAW-clock instrument on the final implementation |
+| Capacity growth | Boundary-length reuse removes a load; its paired timing establishes no gain. The separate-payload realloc prototype passes only two of six matched cells | Finish representation attribution and all-cell paired comparison; initial-capacity policy cells remain separately visible |
+
+The [inline-owner experiment](#inline-runtime-slots-owner-registered-descriptor-placement-discriminator)
+changes only descriptor placement relative to the retained split-payload
+prototype, preserving its allocated empty placeholder. Neither prototype is
+a production layout or a completed append optimization. Dated results below
+apply to their recorded revisions and measurement conditions.
+
 The current Vector library source retains [source discriminator F](#f-paired-timing-useful-improvements-without-a-separated-regression).
 The current compiler retains provisional terminal-owned-consumption lowering.
 The owner withdrew uniform function-actual `inlinehint` emission after the
@@ -6722,3 +6737,164 @@ SHA-256 identities:
 - B timed image: `b2beba8cf19113948643eba4aeac07a9fbba7191f397deccc530cbc469aafc6c`.
 - A samples: `76c7596c5ed827447b86176ac415734eb3104ab73dbe908cbd27fcccfe4fb840`.
 - B samples: `100175461d6878cd03c1bf195d77f06810a4ed7b3880b21714bc3c6b62c32d2f`.
+
+
+#### Inline runtime-Slots owner: registered descriptor-placement discriminator
+
+The append-only sequence continues with one representation variable. Compared
+with the frozen split-payload/realloc overlay plus boundary-length reuse,
+represent a runtime-capacity `Box<Slots<T>>` by an inline three-word
+`{length, capacity, payload}` owner instead of a pointer to a separately
+allocated three-word descriptor. Keep the same payload extent, one-byte
+allocated empty/zero-stride placeholder, full-run realloc, partial-run
+initialized-prefix copy, source, capacity policy and public operations. Do not
+introduce nullable-empty storage in this comparison. Fixed Slots and other
+shapes keep their existing representation. The hypothesis is that removing
+the descriptor-pointer load and descriptor allocation improves append costs;
+the falsifier is unchanged native dependencies or timings that still miss the
+peer target. Wider owner transport is a cost to measure, not an assumed win.
+
+This is a nonconforming research overlay: TYPE-9/STOR-1/STOR-3, OP-9's
+Box ceiling and the storage-representation decision require separate owner
+consideration before adoption. No specification, live tree, source acceptance
+rule or production layout is changed by retaining its patch. Reuse the existing
+stored-aggregate parameter/result machinery rather than a benchmark-specific
+ABI. Ordinary and linked signatures must agree. Whole moves, exchanges, nested
+cleanup and runtime-content references must refer to the inline descriptor;
+cleanup may release its payload but never its stack descriptor.
+
+Before timing, require existing spare/growth API correctness and allocator
+accounting, forced moved/in-place/failed growth, nested owning elements, partial
+growth, zero capacity/stride, and empty-range/empty-release checks. Add an
+ordinary linked round trip for the widened owner and inspect its parameter
+and result ABI; retain a deliberately wrong content/release observation that
+fails. The native single-append paths must eliminate the extra descriptor
+pointer load and preserve needed reloads across calls. If qualification fails,
+fix the prototype or stop before measuring; do not change normative verdicts.
+Real-worker lifetime qualification remains mandatory before representation
+adoption and is not claimed by this append-only screen.
+
+Use the existing RAW-clock instrument and fixed command
+`growth-api-measure 67108864 7 8589934592` once, retaining both cohorts, seven
+samples and every control without subtraction or retry. Apply the existing
+duration, peer-drift and disjoint-range criteria to all six matched cells;
+report the capacity-zero/one policy cells separately. Only if every matched
+cell passes, proceed to a preregistered A/B/B/A comparison against the frozen
+length-reuse split-payload image with the same driver and peer objects. A failed
+screen cannot qualify append, let alone a layout or all of Vector. Spare
+append still requires current-clock confirmation; no other API is advanced.
+
+The overlay and focused fixtures belong to this existing Vector experiment;
+retain the reproducible patch and observations here and retire them when a
+superseding representation experiment makes them redundant. Scratch builds
+stay in its ignored `.build/inline-slots-owner` directory.
+
+
+Outcome: the screen does not qualify the complete append API. The prototype
+removes the descriptor-pointer load and descriptor allocation, but only scalar
+capacity 16 and wide capacity 4096 pass the registered slower-peer range
+criterion in both cohorts. The four other matched cells overlap. The
+zero-capacity cells still lose. No follow-up pair or retry ran; this independent
+screen establishes neither a paired speedup nor a loss versus the previous
+layout. In particular, removing the indirection is insufficient evidence to
+select a widened owner.
+
+The existing aggregate ABI passes owned arguments by content pointer and,
+on the measured AArch64 host, returns these three scalar words in registers. The setup-only LLVM bridge
+calls the ordinary public prepare entry and stores its result directly in
+24-byte caller storage. Timed mutation receives that storage directly. Native
+append now begins by loading length/capacity from its parameter rather than
+loading a descriptor pointer first; the needed length reload after growth
+remains. Full growth reallocates only the payload, while partial growth copies
+the initialized prefix. All 30 accounting rows pass; WF's ten growth rows
+observe one realloc, no explicit free, and no heap descriptor overhead. Rust
+and C++ timed/account objects are byte-identical to the preceding overlay.
+
+| Stage | Wall time | Result |
+|---|---:|---|
+| Gate-profile candidate CLI build, two jobs | 37.17 s | Exit 0 |
+| API emission | 0.76 s | Exit 0 |
+| API build, spare/growth correctness, accounting and faults | 3.08 s | Exit 0 |
+| Focused native build / execution | 0.23 / 0.45 s | Exit 0 / 0 |
+| Failed realloc observation | 0.17 s | Expected exit 73; caller descriptor and payload intact |
+| Linked-counterpart build / execution | 0.26 / 0.36 s | Exit 0 / 0 |
+| Valid-pointer order mutant build / execution | 0.26 / 0.35 s | Exit 0 / expected 1 |
+| Registered growth screen | 116.93 s | Exit 0; target not met |
+| Restored production CLI build | 37.99 s | Exit 0; bytes match frozen production |
+
+Focused checks cover twelve in-place/moving cases, nested owners and exact
+releases, partial growth with untouched spare bytes, zero capacity/stride,
+empty ranges/free_empty, and a whole runtime-content exchange followed by
+cleanup. The owned round trip runs once with a WF body and once with an
+exact-public-signature LLVM bridge to a C body, checking transferred descriptor
+words and complete payload. This is a **post-lowering linked ABI counterpart**;
+it does not independently qualify source declaration formation or arbitrary
+linked modules. Worker lifetimes and wider containing-layout ceilings remain
+unqualified. No production-layout or specification adoption follows.
+
+All 840 unique samples are retained: 420 real intervals and 420 snapshot
+controls, with no subtraction. The minimum real duration is 1.279395 ms; the
+RAW clock increment is 41 ns. This is one launch, so repeated-launch drift
+is untested. Values below are median [minimum–maximum] ns/append. Capacity
+zero and one are separate initial-policy cells, not matched-growth evidence.
+
+| Bytes / capacity | Cohort | WF | Rust | C++ | Screen |
+|---|---:|---|---|---|---|
+| 8 / 16 | 0 | 35.07 [34.92–36.44] | 36.91 [36.74–38.51] | 25.50 [25.46–26.44] | PASS |
+| 8 / 16 | 1 | 35.09 [34.84–35.26] | 36.81 [36.68–37.02] | 25.50 [25.44–26.26] | PASS |
+| 256 / 16 | 0 | 148.01 [147.27–175.65] | 150.72 [149.04–162.01] | 141.38 [140.77–143.53] | OVERLAP |
+| 256 / 16 | 1 | 148.42 [146.81–154.75] | 150.50 [149.36–156.22] | 143.31 [141.50–175.06] | OVERLAP |
+| 8 / 256 | 0 | 100.90 [99.42–105.60] | 103.58 [101.42–106.49] | 93.27 [92.52–98.21] | OVERLAP |
+| 8 / 256 | 1 | 100.53 [99.87–102.92] | 103.17 [101.06–106.18] | 94.08 [91.91–99.79] | OVERLAP |
+| 256 / 256 | 0 | 1314.01 [1308.09–1321.74] | 1311.15 [1301.53–1325.80] | 1314.61 [1308.13–1339.45] | OVERLAP |
+| 256 / 256 | 1 | 1346.18 [1306.36–1407.81] | 1330.85 [1307.53–1374.35] | 1321.70 [1293.84–1409.06] | OVERLAP |
+| 8 / 4096 | 0 | 707.23 [691.02–808.57] | 679.82 [672.37–743.16] | 644.96 [638.60–736.72] | OVERLAP |
+| 8 / 4096 | 1 | 703.14 [687.42–779.10] | 677.83 [669.86–760.20] | 645.06 [638.85–653.57] | OVERLAP |
+| 256 / 4096 | 0 | 158.80 [157.20–159.00] | 160.01 [158.84–161.77] | 14817.90 [14806.48–14863.08] | PASS |
+| 256 / 4096 | 1 | 159.74 [156.20–163.80] | 162.25 [160.17–163.21] | 14784.48 [14753.05–14850.48] | PASS |
+| 8 / 0 | 0 | 18.57 [18.43–31.44] | 12.03 [11.74–12.36] | 11.00 [10.95–11.53] | LOSE |
+| 8 / 0 | 1 | 18.48 [18.39–18.69] | 11.75 [11.71–11.78] | 11.02 [10.93–11.27] | LOSE |
+| 256 / 0 | 0 | 34.30 [34.14–35.17] | 22.35 [22.28–23.42] | 15.55 [15.47–15.98] | LOSE |
+| 256 / 0 | 1 | 34.42 [34.21–36.20] | 22.35 [22.24–23.46] | 15.58 [15.49–16.36] | LOSE |
+| 8 / 1 | 0 | 18.62 [18.54–18.73] | 32.40 [32.28–33.29] | 19.19 [19.10–19.99] | PASS |
+| 8 / 1 | 1 | 18.54 [18.50–18.85] | 32.58 [32.23–34.07] | 19.17 [19.11–20.05] | PASS |
+| 256 / 1 | 0 | 49.25 [49.11–51.14] | 52.85 [52.73–54.26] | 42.99 [42.83–43.22] | PASS |
+| 256 / 1 | 1 | 49.19 [48.81–50.60] | 52.70 [52.59–54.95] | 43.10 [42.81–45.01] | PASS |
+
+The remaining work stays on append: distinguish its remaining growth-call
+branches and empty-storage allocation route before choosing another change,
+and reconfirm spare append with the current clock on the selected implementation.
+This result does not justify returning to whole-container timing yet.
+
+Evidence: [reproducible overlay](inline-slots-owner.patch),
+[all samples](ecosystem-append-growth-inline-owner-samples.csv), and
+[commands, native code, checks and accounting](ecosystem-append-growth-inline-owner-timing.txt).
+The patch applies to `b7d386c193134cfe90505c80c445d2ef4d48ddae`; independent
+replay reproduces all eleven files byte for byte. It includes seven compiler
+files, the candidate-only C driver, the focused source/observer and the
+setup-only bridge. All implementation inputs were restored before publication.
+The frozen candidate CLI is `4a725290f8c1889a63540083cc5db03f255943397b6aa3965eaa053eae7d73a0`;
+its timed image is `bef6ccb99661e944ce3d75cf92070d92d0178d4528955c07f42f9c1384f30fbe`.
+
+To reproduce, apply the patch on the named base, build the gate CLI with two
+jobs, and emit `vector-library.wf` into an isolated BUILD. Compile the supplied
+`prepare-bridge.ll` with clang O3. Use the existing ecosystem build/spare/growth
+check/account targets with `WF_SPLIT_SLOTS_PAYLOAD=1`,
+`WF_SPLIT_SLOTS_REALLOC=1`, and `WF_INLINE_SLOTS_OWNER=1` in ECO_CFLAGS,
+linking the bridge object through NATIVE_LINK_FLAGS along with ordinary runtime
+flags. The retained check log gives exact commands. The focused fixture uses
+the recorded allocator bindings and ordinary runtime objects; the linked
+counterpart substitutes the bridge printed in the evidence log. Run only the
+registered timing command after checks. This research patch is not conforming
+production source; do not run normative gates expecting its Box layout to pass.
+No specification or live-tree revision was made.
+
+- SHA-256 `inline-slots-owner.patch`: `94b9510c97dad761fb625ef37bbc78b20d3ff63e8bf9df65dac12c9d95952a39`.
+
+- SHA-256 `ecosystem-append-growth-inline-owner-samples.csv`: `f78d3be0a4de24302371acf1274d4e1d8430ccb10c68510806b3c6c636e82270`.
+
+- SHA-256 `ecosystem-append-growth-inline-owner-timing.txt`: `36a6f349e9795f88af2c750d4a5eeade395dce21cf590e12628748005bc21ab3`.
+
+The restored-source record passes guarded `make static` in 32.76 s. Independent
+scoped review checked the implementation/fixture and retained evidence; this
+checkpoint does not claim a new full local canonical gate.

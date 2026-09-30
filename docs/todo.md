@@ -1249,6 +1249,15 @@ rarely insert at the same place.
   Keep the deferred general representation study separate, and close this item
   only when the relevant costs and chosen tradeoffs have discriminating evidence.
 
+  The [inline runtime-Slots owner screen](../research/experiments/container-representation/vector-library/RESULTS.md#inline-runtime-slots-owner-registered-descriptor-placement-discriminator)
+  removes the descriptor-pointer load and heap descriptor while retaining the
+  separate payload, full realloc and allocated empty placeholder. It qualifies
+  only two of six matched growth-append cells and does not justify selection.
+  Source and post-lowering linked ownership checks pass; worker lifetimes and
+  changed containing-layout ceilings remain open. Reopen with a discriminating
+  hypothesis for the remaining growth branches or empty allocation route,
+  preserving those qualifications instead of repeating the same layout screen.
+
   The [Vector length-store diagnosis](../research/experiments/container-representation/vector-library/RESULTS.md#length-store-dependence-read-only-llvm-diagnosis)
   finds conservative header/payload dependencies in optimized take loops,
   despite length already being held in SSA. The qualified physical-index fact

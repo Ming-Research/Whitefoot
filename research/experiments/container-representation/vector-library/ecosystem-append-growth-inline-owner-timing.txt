@@ -1,0 +1,724 @@
+Inline runtime-Slots owner append discriminator
+Base: b7d386c193134cfe90505c80c445d2ef4d48ddae
+Research overlay only; production source restored after the screen.
+
+
+=== cli-build.log ===
+== START research-inline-slots-cli (limit 120s): cargo build --manifest-path compiler/Cargo.toml --profile gate --locked --offline --bin whitefootc ==
+   Compiling whitefoot v0.1.0 (<repository-root>/compiler)
+== RUNNING research-inline-slots-cli: 30 s, child 47444, group 47444 ==
+    Finished `gate` profile [optimized] target(s) in 37.14s
+real 37.16
+user 67.77
+sys 1.64
+== END research-inline-slots-cli: 37.17 s, exit 0 ==
+
+=== api-emit.log ===
+== START inline-slots-api-emit (limit 120s): make -C research/experiments/container-representation/vector-library -j2 BUILD=.build/inline-slots-owner/api WHITEFOOTC=<repository-root>/research/experiments/container-representation/vector-library/.build/inline-slots-owner/whitefootc-inline .build/inline-slots-owner/api/vector-library.raw.ll ==
+mkdir -p .build/inline-slots-owner/api
+<repository-root>/research/experiments/container-representation/vector-library/.build/inline-slots-owner/whitefootc-inline --emit-llvm vector-library.wf -o .build/inline-slots-owner/api/vector-library.raw.ll
+real 0.67
+user 0.17
+sys 0.01
+== END inline-slots-api-emit: 0.76 s, exit 0 ==
+
+=== prepare-bridge-build.log ===
+== START inline-slots-prepare-bridge (limit 120s): clang -O3 -Wno-override-module -x ir -c research/experiments/container-representation/vector-library/.build/inline-slots-owner/prepare-bridge.ll -o research/experiments/container-representation/vector-library/.build/inline-slots-owner/prepare-bridge.o ==
+real 0.02
+user 0.01
+sys 0.00
+== END inline-slots-prepare-bridge: 0.11 s, exit 0 ==
+
+=== api-check.log ===
+== START inline-slots-api-check (limit 120s): make -C research/experiments/container-representation/vector-library -j2 BUILD=.build/inline-slots-owner/api WHITEFOOTC=<repository-root>/research/experiments/container-representation/vector-library/.build/inline-slots-owner/whitefootc-inline ECO_CFLAGS=-std=c11 -O3 -Wall -Wextra -Werror -DWF_SPLIT_SLOTS_PAYLOAD=1 -DWF_SPLIT_SLOTS_REALLOC=1 -DWF_INLINE_SLOTS_OWNER=1 NATIVE_LINK_FLAGS=-pthread -lm <repository-root>/research/experiments/container-representation/vector-library/.build/inline-slots-owner/prepare-bridge.o ecosystem-build ecosystem-append-growth-check ecosystem-append-check ecosystem-append-growth-account ==
+mkdir -p .build/inline-slots-owner/api/ecosystem
+mkdir -p .build/inline-slots-owner/api/native/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/ordinary_values.c -o .build/inline-slots-owner/api/native/ordinary_values.o
+mkdir -p .build/inline-slots-owner/api/native/sched/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/sched/core.c -o .build/inline-slots-owner/api/native/sched/core.o
+mkdir -p .build/inline-slots-owner/api/native/sched/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/sched/entry.c -o .build/inline-slots-owner/api/native/sched/entry.o
+mkdir -p .build/inline-slots-owner/api/native/completion/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/completion/runtime.c -o .build/inline-slots-owner/api/native/completion/runtime.o
+mkdir -p .build/inline-slots-owner/api/native/completion/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/completion/file_adapter.c -o .build/inline-slots-owner/api/native/completion/file_adapter.o
+mkdir -p .build/inline-slots-owner/api/native/completion/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/completion/bridge.c -o .build/inline-slots-owner/api/native/completion/bridge.o
+mkdir -p .build/inline-slots-owner/api/native/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/wf_floor.c -o .build/inline-slots-owner/api/native/wf_floor.o
+mkdir -p .build/inline-slots-owner/api/native/sched/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/sched/prim_host.c -o .build/inline-slots-owner/api/native/sched/prim_host.o
+mkdir -p .build/inline-slots-owner/api/native/completion/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/completion/wait_host.c -o .build/inline-slots-owner/api/native/completion/wait_host.o
+mkdir -p .build/inline-slots-owner/api/native/completion/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/completion/file_posix.c -o .build/inline-slots-owner/api/native/completion/file_posix.o
+mkdir -p .build/inline-slots-owner/api/native/completion/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/completion/linux_io_uring.c -o .build/inline-slots-owner/api/native/completion/linux_io_uring.o
+mkdir -p .build/inline-slots-owner/api/native/
+clang -O2 -Wno-override-module -x ir -c <repository-root>/compiler/src/backend/ordinary_values.ll -o .build/inline-slots-owner/api/native/ordinary_values_ir.o
+sed -e 's/@malloc(/@wf_cost_allocate(/g' -e 's/@realloc(/@wf_cost_reallocate(/g' \
+	    -e 's/@free(/@wf_cost_release(/g' \
+	    -e 's/@main(/@wf_fixture_main(/g' \
+	    -e 's/^declare ptr @wf_cost_allocate(i64)$/declare noalias nonnull ptr @wf_cost_allocate(i64)/' .build/inline-slots-owner/api/vector-library.raw.ll > .build/inline-slots-owner/api/ecosystem/whitefoot-account.ll
+note: link against the following native artifacts when linking against this static library. The order and any duplication can be significant on some platforms
+
+note: native-static-libs: -lSystem -lc -lm
+
+sed 's/@main(/@wf_fixture_main(/g' .build/inline-slots-owner/api/vector-library.raw.ll > .build/inline-slots-owner/api/ecosystem/whitefoot-timed.ll
+clang -O3 -Wno-override-module -x ir -c .build/inline-slots-owner/api/ecosystem/whitefoot-account.ll -o .build/inline-slots-owner/api/ecosystem/whitefoot-account.o
+clang -O3 -Wno-override-module -x ir -c .build/inline-slots-owner/api/ecosystem/whitefoot-timed.ll -o .build/inline-slots-owner/api/ecosystem/whitefoot-timed.o
+note: link against the following native artifacts when linking against this static library. The order and any duplication can be significant on some platforms
+
+note: native-static-libs: -lSystem -lc -lm
+
+clang++ -O3 .build/inline-slots-owner/api/ecosystem/driver-account.o .build/inline-slots-owner/api/ecosystem/whitefoot-account.o \
+	  .build/inline-slots-owner/api/ecosystem/cpp-account.o .build/inline-slots-owner/api/ecosystem/rust-account.a .build/inline-slots-owner/api/native/ordinary_values.o .build/inline-slots-owner/api/native/sched/core.o .build/inline-slots-owner/api/native/sched/entry.o .build/inline-slots-owner/api/native/completion/runtime.o .build/inline-slots-owner/api/native/completion/file_adapter.o .build/inline-slots-owner/api/native/completion/bridge.o .build/inline-slots-owner/api/native/wf_floor.o .build/inline-slots-owner/api/native/sched/prim_host.o .build/inline-slots-owner/api/native/completion/wait_host.o .build/inline-slots-owner/api/native/completion/file_posix.o .build/inline-slots-owner/api/native/completion/linux_io_uring.o .build/inline-slots-owner/api/native/ordinary_values_ir.o \
+	  -pthread -lm <repository-root>/research/experiments/container-representation/vector-library/.build/inline-slots-owner/prepare-bridge.o -liconv -lSystem -lc -lm -o .build/inline-slots-owner/api/ecosystem/vector-costs-account
+ld: warning: ignoring duplicate libraries: '-lSystem', '-lm'
+.build/inline-slots-owner/api/ecosystem/vector-costs-account growth-api-account > '.build/inline-slots-owner/api/ecosystem/append-growth-accounting.csv'
+clang++ -O3 .build/inline-slots-owner/api/ecosystem/driver-timed.o .build/inline-slots-owner/api/ecosystem/whitefoot-timed.o \
+	  .build/inline-slots-owner/api/ecosystem/cpp-timed.o .build/inline-slots-owner/api/ecosystem/rust-timed.a .build/inline-slots-owner/api/native/ordinary_values.o .build/inline-slots-owner/api/native/sched/core.o .build/inline-slots-owner/api/native/sched/entry.o .build/inline-slots-owner/api/native/completion/runtime.o .build/inline-slots-owner/api/native/completion/file_adapter.o .build/inline-slots-owner/api/native/completion/bridge.o .build/inline-slots-owner/api/native/wf_floor.o .build/inline-slots-owner/api/native/sched/prim_host.o .build/inline-slots-owner/api/native/completion/wait_host.o .build/inline-slots-owner/api/native/completion/file_posix.o .build/inline-slots-owner/api/native/completion/linux_io_uring.o .build/inline-slots-owner/api/native/ordinary_values_ir.o \
+	  -pthread -lm <repository-root>/research/experiments/container-representation/vector-library/.build/inline-slots-owner/prepare-bridge.o -liconv -lSystem -lc -lm -o .build/inline-slots-owner/api/ecosystem/vector-costs-timed
+ld: warning: ignoring duplicate libraries: '-lSystem', '-lm'
+.build/inline-slots-owner/api/ecosystem/vector-costs-timed growth-api-check
+Append growth allocation observations: .build/inline-slots-owner/api/ecosystem/append-growth-accounting.csv
+.build/inline-slots-owner/api/ecosystem/vector-costs-timed api-check
+vector spare append: scalar/256B, five counts, three APIs passed
+.build/inline-slots-owner/api/ecosystem/vector-costs-account api-check
+growth append clock: reads=200000 minimum_nonzero_ns=41 quantized=0
+growth append policy: whitefoot bytes=8 requested=0 initial=0 length=1 capacity=1
+growth append policy: rust-vec bytes=8 requested=0 initial=0 length=1 capacity=4
+growth append policy: cpp-std-vector bytes=8 requested=0 initial=0 length=1 capacity=1
+growth append policy: whitefoot bytes=256 requested=0 initial=0 length=1 capacity=1
+growth append policy: rust-vec bytes=256 requested=0 initial=0 length=1 capacity=4
+growth append policy: cpp-std-vector bytes=256 requested=0 initial=0 length=1 capacity=1
+growth append policy: whitefoot bytes=8 requested=1 initial=1 length=2 capacity=2
+growth append policy: rust-vec bytes=8 requested=1 initial=1 length=2 capacity=4
+growth append policy: cpp-std-vector bytes=8 requested=1 initial=1 length=2 capacity=2
+growth append policy: whitefoot bytes=256 requested=1 initial=1 length=2 capacity=2
+growth append policy: rust-vec bytes=256 requested=1 initial=1 length=2 capacity=4
+growth append policy: cpp-std-vector bytes=256 requested=1 initial=1 length=2 capacity=2
+vector append growth: scalar/256B, five capacities, three APIs passed
+.build/inline-slots-owner/api/ecosystem/vector-costs-account growth-api-check
+vector spare append: scalar/256B, five counts, three APIs passed
+growth append policy: whitefoot bytes=8 requested=0 initial=0 length=1 capacity=1
+growth append policy: rust-vec bytes=8 requested=0 initial=0 length=1 capacity=4
+growth append policy: cpp-std-vector bytes=8 requested=0 initial=0 length=1 capacity=1
+growth append policy: whitefoot bytes=256 requested=0 initial=0 length=1 capacity=1
+growth append policy: rust-vec bytes=256 requested=0 initial=0 length=1 capacity=4
+growth append policy: cpp-std-vector bytes=256 requested=0 initial=0 length=1 capacity=1
+growth append policy: whitefoot bytes=8 requested=1 initial=1 length=2 capacity=2
+growth append policy: rust-vec bytes=8 requested=1 initial=1 length=2 capacity=4
+growth append policy: cpp-std-vector bytes=8 requested=1 initial=1 length=2 capacity=2
+growth append policy: whitefoot bytes=256 requested=1 initial=1 length=2 capacity=2
+growth append policy: rust-vec bytes=256 requested=1 initial=1 length=2 capacity=4
+growth append policy: cpp-std-vector bytes=256 requested=1 initial=1 length=2 capacity=2
+vector append growth: scalar/256B, five capacities, three APIs passed
+.build/inline-slots-owner/api/ecosystem/vector-costs-account allocator-check
+vector allocator observer: preserved bytes, alignment and exact ledger passed
+grep -Fx 'vector library costs: spare append full values and checksum' .build/inline-slots-owner/api/ecosystem/api-fail-values.txt
+vector library costs: spare append full values and checksum
+grep -Fx 'vector library costs: spare append zero allocation' .build/inline-slots-owner/api/ecosystem/api-fail-allocation.txt
+vector library costs: reallocation observer preserved bytes
+vector library costs: spare append zero allocation
+vector library costs: reallocation observer exact ledger
+vector library costs: growth append clock precision
+vector library costs: growth append full values and checksum
+vector library costs: growth append post state
+vector library costs: growth append full values and checksum
+vector library costs: growth append post state
+real 3.05
+user 4.28
+sys 0.66
+== END inline-slots-api-check: 3.08 s, exit 0 ==
+
+=== api-identities.txt ===
+4a725290f8c1889a63540083cc5db03f255943397b6aa3965eaa053eae7d73a0 research/experiments/container-representation/vector-library/.build/inline-slots-owner/whitefootc-inline
+b196ebd1484e688c1979efad738c697b22ec9d4e2179f851097c17e1d01ff0f8 research/experiments/container-representation/vector-library/.build/inline-slots-owner/prepare-bridge.ll
+b201a1b4c00d3b534a5b9df19e354d1166e3de19f24db79d8d1a805c9c7305a3 research/experiments/container-representation/vector-library/.build/inline-slots-owner/prepare-bridge.o
+bef6ccb99661e944ce3d75cf92070d92d0178d4528955c07f42f9c1384f30fbe research/experiments/container-representation/vector-library/.build/inline-slots-owner/api/ecosystem/vector-costs-timed
+35495f877239a3a785c96a0eba3c90978422a3b941311d0c73f843e85aad5d8c research/experiments/container-representation/vector-library/.build/inline-slots-owner/api/ecosystem/vector-costs-account
+cpp-timed.o byte-identical to boundary-length-reuse/a2-api/ecosystem: True
+cpp-account.o byte-identical to boundary-length-reuse/a2-api/ecosystem: True
+rust-timed.a byte-identical to boundary-length-reuse/a2-api/ecosystem: True
+rust-account.a byte-identical to boundary-length-reuse/a2-api/ecosystem: True
+
+=== replay.txt ===
+Byte-exact replay of all 11 patch files from b7d386c193134cfe90505c80c445d2ef4d48ddae verified.
+
+=== focused-initial-rejection.txt ===
+First emission exited 1, GRAM-3 UnexpectedToken at value: own Box; current parameter spelling omits own. Corrected source uses value: Box. No verdict edited.
+
+=== native-statuses.json ===
+[
+  {
+    "stage": "inline-native-build",
+    "command": [
+      "perl",
+      ".github/run-check.pl",
+      "inline-native-build",
+      "clang",
+      "-std=c11",
+      "-O3",
+      "-Wall",
+      "-Wextra",
+      "-Werror",
+      "-Wno-override-module",
+      "research/experiments/container-representation/vector-library/.build/inline-slots-owner/focused-observed.ll",
+      "research/experiments/container-representation/vector-library/.build/inline-slots-owner/observer.c",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/ordinary_values.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/ordinary_values_ir.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/wf_floor.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/bridge.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/file_adapter.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/file_posix.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/linux_io_uring.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/runtime.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/wait_host.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/sched/core.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/sched/entry.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/sched/prim_host.o",
+      "-pthread",
+      "-lm",
+      "-o",
+      "research/experiments/container-representation/vector-library/.build/inline-slots-owner/focused-native"
+    ],
+    "exit": 0,
+    "expected": 0,
+    "seconds": 0.23130658268928528
+  },
+  {
+    "stage": "inline-native-normal",
+    "command": [
+      "perl",
+      ".github/run-check.pl",
+      "inline-native-normal",
+      "research/experiments/container-representation/vector-library/.build/inline-slots-owner/focused-native"
+    ],
+    "exit": 0,
+    "expected": 0,
+    "seconds": 0.4498018748126924
+  },
+  {
+    "stage": "inline-native-failure",
+    "command": [
+      "perl",
+      ".github/run-check.pl",
+      "inline-native-failure",
+      "research/experiments/container-representation/vector-library/.build/inline-slots-owner/focused-native",
+      "failure"
+    ],
+    "exit": 73,
+    "expected": 73,
+    "seconds": 0.1666820840910077
+  },
+  {
+    "stage": "inline-linked-build",
+    "command": [
+      "perl",
+      ".github/run-check.pl",
+      "inline-linked-build",
+      "clang",
+      "-std=c11",
+      "-O3",
+      "-Wall",
+      "-Wextra",
+      "-Werror",
+      "-Wno-override-module",
+      "-DEXPECT_LINKED_TRANSFER",
+      "research/experiments/container-representation/vector-library/.build/inline-slots-owner/focused-linked.ll",
+      "research/experiments/container-representation/vector-library/.build/inline-slots-owner/observer.c",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/ordinary_values.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/ordinary_values_ir.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/wf_floor.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/bridge.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/file_adapter.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/file_posix.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/linux_io_uring.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/runtime.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/wait_host.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/sched/core.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/sched/entry.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/sched/prim_host.o",
+      "-pthread",
+      "-lm",
+      "-o",
+      "research/experiments/container-representation/vector-library/.build/inline-slots-owner/focused-linked"
+    ],
+    "exit": 0,
+    "expected": 0,
+    "seconds": 0.2602455001324415
+  },
+  {
+    "stage": "inline-linked-normal",
+    "command": [
+      "perl",
+      ".github/run-check.pl",
+      "inline-linked-normal",
+      "research/experiments/container-representation/vector-library/.build/inline-slots-owner/focused-linked"
+    ],
+    "exit": 0,
+    "expected": 0,
+    "seconds": 0.3563301251269877
+  },
+  {
+    "stage": "inline-native-mutant-build",
+    "command": [
+      "perl",
+      ".github/run-check.pl",
+      "inline-native-mutant-build",
+      "clang",
+      "-std=c11",
+      "-O3",
+      "-Wall",
+      "-Wextra",
+      "-Werror",
+      "-Wno-override-module",
+      "-DCORRUPT_PRESERVED_ORDER",
+      "research/experiments/container-representation/vector-library/.build/inline-slots-owner/focused-observed.ll",
+      "research/experiments/container-representation/vector-library/.build/inline-slots-owner/observer.c",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/ordinary_values.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/ordinary_values_ir.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/wf_floor.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/bridge.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/file_adapter.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/file_posix.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/linux_io_uring.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/runtime.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/wait_host.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/sched/core.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/sched/entry.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/sched/prim_host.o",
+      "-pthread",
+      "-lm",
+      "-o",
+      "research/experiments/container-representation/vector-library/.build/inline-slots-owner/focused-native-mutant"
+    ],
+    "exit": 0,
+    "expected": 0,
+    "seconds": 0.2577293748036027
+  },
+  {
+    "stage": "inline-native-mutant",
+    "command": [
+      "perl",
+      ".github/run-check.pl",
+      "inline-native-mutant",
+      "research/experiments/container-representation/vector-library/.build/inline-slots-owner/focused-native-mutant"
+    ],
+    "exit": 1,
+    "expected": 1,
+    "seconds": 0.35143062518909574
+  }
+]
+
+=== inline-native-normal.log ===
+== START inline-native-normal (limit 1800s): research/experiments/container-representation/vector-library/.build/inline-slots-owner/focused-native ==
+inline Slots: 12 in-place/moving nested/partial/cap0/ZST/empty cases; exact releases
+== END inline-native-normal: 0.42 s, exit 0 ==
+real 0.33
+user 0.00
+sys 0.00
+
+=== inline-native-failure.log ===
+== START inline-native-failure (limit 1800s): research/experiments/container-representation/vector-library/.build/inline-slots-owner/focused-native failure ==
+inline Slots: NULL preserves caller descriptor and payload
+== END inline-native-failure: 0.11 s, exit 73 ==
+real 0.00
+user 0.00
+sys 0.00
+
+=== inline-linked-normal.log ===
+== START inline-linked-normal (limit 1800s): research/experiments/container-representation/vector-library/.build/inline-slots-owner/focused-linked ==
+inline Slots: 12 in-place/moving nested/partial/cap0/ZST/empty cases; exact releases
+== END inline-linked-normal: 0.33 s, exit 0 ==
+real 0.23
+user 0.00
+sys 0.00
+
+=== inline-native-mutant.log ===
+== START inline-native-mutant (limit 1800s): research/experiments/container-representation/vector-library/.build/inline-slots-owner/focused-native-mutant ==
+== END inline-native-mutant: 0.32 s, exit 1 ==
+inline Slots observer: source content/header assertion
+real 0.25
+user 0.00
+sys 0.00
+
+=== prepare-bridge-native.asm ===
+_wf_vector_api_word_prepare_slot:
+00000001000ae0c0	stp	x20, x19, [sp, #-0x20]!
+00000001000ae0c4	stp	x29, x30, [sp, #0x10]
+00000001000ae0c8	mov	x19, x1
+00000001000ae0cc	bl	_wf_vector_api_word_prepare
+00000001000ae0d0	stp	x0, x1, [x19]
+00000001000ae0d4	str	x2, [x19, #0x10]
+00000001000ae0d8	ldp	x29, x30, [sp, #0x10]
+00000001000ae0dc	ldp	x20, x19, [sp], #0x20
+00000001000ae0e0	ret
+_wf_vector_api_record_prepare_slot:
+00000001000ae0e4	stp	x20, x19, [sp, #-0x20]!
+00000001000ae0e8	stp	x29, x30, [sp, #0x10]
+00000001000ae0ec	mov	x19, x1
+00000001000ae0f0	bl	_wf_vector_api_record_prepare
+00000001000ae0f4	stp	x0, x1, [x19]
+00000001000ae0f8	str	x2, [x19, #0x10]
+00000001000ae0fc	ldp	x29, x30, [sp, #0x10]
+00000001000ae100	ldp	x20, x19, [sp], #0x20
+00000001000ae104	ret
+
+=== append-native.asm ===
+_wf_vector_api_word_append_one:
+000000010000fea0	stp	x20, x19, [sp, #-0x20]!
+000000010000fea4	stp	x29, x30, [sp, #0x10]
+000000010000fea8	mov	x20, x1
+000000010000feac	mov	x19, x0
+000000010000feb0	ldp	x8, x9, [x0]
+000000010000feb4	cmp	x9, x8
+000000010000feb8	b.ne	0x10000fec8
+000000010000febc	mov	x0, x19
+000000010000fec0	bl	_wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6
+000000010000fec4	ldr	x8, [x19]
+000000010000fec8	ldr	x9, [x19, #0x10]
+000000010000fecc	str	x20, [x9, x8, lsl #3]
+000000010000fed0	add	x0, x8, #0x1
+000000010000fed4	str	x0, [x19]
+000000010000fed8	ldp	x29, x30, [sp, #0x10]
+000000010000fedc	ldp	x20, x19, [sp], #0x20
+000000010000fee0	ret
+_wf_vector_api_record_append_one:
+000000010000fee4	b	_wf_vector_api_append_one$instance$694069a978d9626c
+_wf_vector_api_append_one$instance$b2fcb9cda4b45694:
+0000000100010bb8	stp	x20, x19, [sp, #-0x20]!
+0000000100010bbc	stp	x29, x30, [sp, #0x10]
+0000000100010bc0	mov	x20, x1
+0000000100010bc4	mov	x19, x0
+0000000100010bc8	ldp	x8, x9, [x0]
+0000000100010bcc	cmp	x9, x8
+0000000100010bd0	b.ne	0x100010be0
+0000000100010bd4	mov	x0, x19
+0000000100010bd8	bl	_wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6
+0000000100010bdc	ldr	x8, [x19]
+0000000100010be0	ldr	x9, [x19, #0x10]
+0000000100010be4	str	x20, [x9, x8, lsl #3]
+0000000100010be8	add	x0, x8, #0x1
+0000000100010bec	str	x0, [x19]
+0000000100010bf0	ldp	x29, x30, [sp, #0x10]
+0000000100010bf4	ldp	x20, x19, [sp], #0x20
+0000000100010bf8	ret
+_wf_vector_api_append_one$instance$694069a978d9626c:
+0000000100010bfc	stp	x20, x19, [sp, #-0x20]!
+0000000100010c00	stp	x29, x30, [sp, #0x10]
+0000000100010c04	mov	x20, x1
+0000000100010c08	mov	x19, x0
+0000000100010c0c	ldp	x8, x9, [x0]
+0000000100010c10	cmp	x9, x8
+0000000100010c14	b.ne	0x100010c24
+0000000100010c18	mov	x0, x19
+0000000100010c1c	bl	_wf_std.collections.vector.grow_vector_grow_full$instance$979fcc4ac6e818fb
+0000000100010c20	ldr	x8, [x19]
+0000000100010c24	dup.2d	v0, x20
+0000000100010c28	add	x9, x20, #0x1f
+0000000100010c2c	adrp	x10, 166 ; 0x1000b6000
+0000000100010c30	ldr	q1, [x10, #0x1d0]
+0000000100010c34	add.2d	v1, v0, v1
+0000000100010c38	adrp	x10, 166 ; 0x1000b6000
+0000000100010c3c	ldr	q2, [x10, #0x1c0]
+0000000100010c40	add.2d	v2, v0, v2
+0000000100010c44	adrp	x10, 166 ; 0x1000b6000
+0000000100010c48	ldr	q3, [x10, #0x1b0]
+0000000100010c4c	add.2d	v3, v0, v3
+0000000100010c50	adrp	x10, 166 ; 0x1000b6000
+0000000100010c54	ldr	q4, [x10, #0x1a0]
+0000000100010c58	add.2d	v4, v0, v4
+0000000100010c5c	adrp	x10, 166 ; 0x1000b6000
+0000000100010c60	ldr	q5, [x10, #0x190]
+0000000100010c64	add.2d	v5, v0, v5
+0000000100010c68	adrp	x10, 166 ; 0x1000b6000
+0000000100010c6c	ldr	q6, [x10, #0x180]
+0000000100010c70	add.2d	v6, v0, v6
+0000000100010c74	adrp	x10, 166 ; 0x1000b6000
+0000000100010c78	ldr	q7, [x10, #0x170]
+0000000100010c7c	add.2d	v7, v0, v7
+0000000100010c80	adrp	x10, 166 ; 0x1000b6000
+0000000100010c84	ldr	q16, [x10, #0x160]
+0000000100010c88	add.2d	v16, v0, v16
+0000000100010c8c	adrp	x10, 166 ; 0x1000b6000
+0000000100010c90	ldr	q17, [x10, #0x150]
+0000000100010c94	add.2d	v17, v0, v17
+0000000100010c98	adrp	x10, 166 ; 0x1000b6000
+0000000100010c9c	ldr	q18, [x10, #0x140]
+0000000100010ca0	add.2d	v18, v0, v18
+0000000100010ca4	adrp	x10, 166 ; 0x1000b6000
+0000000100010ca8	ldr	q19, [x10, #0x130]
+0000000100010cac	add.2d	v19, v0, v19
+0000000100010cb0	adrp	x10, 166 ; 0x1000b6000
+0000000100010cb4	ldr	q20, [x10, #0x120]
+0000000100010cb8	add.2d	v20, v0, v20
+0000000100010cbc	adrp	x10, 166 ; 0x1000b6000
+0000000100010cc0	ldr	q21, [x10, #0x110]
+0000000100010cc4	add.2d	v21, v0, v21
+0000000100010cc8	adrp	x10, 166 ; 0x1000b6000
+0000000100010ccc	ldr	q22, [x10, #0x100]
+0000000100010cd0	add.2d	v22, v0, v22
+0000000100010cd4	adrp	x10, 166 ; 0x1000b6000
+0000000100010cd8	ldr	q23, [x10, #0xf0]
+0000000100010cdc	add.2d	v0, v0, v23
+0000000100010ce0	ldr	x10, [x19, #0x10]
+0000000100010ce4	add	x10, x10, x8, lsl #8
+0000000100010ce8	str	x20, [x10]
+0000000100010cec	stur	q0, [x10, #0x8]
+0000000100010cf0	stur	q22, [x10, #0x18]
+0000000100010cf4	stur	q21, [x10, #0x28]
+0000000100010cf8	stur	q20, [x10, #0x38]
+0000000100010cfc	stur	q19, [x10, #0x48]
+0000000100010d00	stur	q18, [x10, #0x58]
+0000000100010d04	stur	q17, [x10, #0x68]
+0000000100010d08	stur	q16, [x10, #0x78]
+0000000100010d0c	stur	q7, [x10, #0x88]
+0000000100010d10	stur	q6, [x10, #0x98]
+0000000100010d14	stur	q5, [x10, #0xa8]
+0000000100010d18	stur	q4, [x10, #0xb8]
+0000000100010d1c	stur	q3, [x10, #0xc8]
+0000000100010d20	stur	q2, [x10, #0xd8]
+0000000100010d24	stur	q1, [x10, #0xe8]
+0000000100010d28	str	x9, [x10, #0xf8]
+0000000100010d2c	add	x0, x8, #0x1
+0000000100010d30	str	x0, [x19]
+0000000100010d34	ldp	x29, x30, [sp, #0x10]
+0000000100010d38	ldp	x20, x19, [sp], #0x20
+0000000100010d3c	ret
+
+=== growth-native.asm ===
+_wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6:
+00000001000129dc	stp	x24, x23, [sp, #-0x40]!
+00000001000129e0	stp	x22, x21, [sp, #0x10]
+00000001000129e4	stp	x20, x19, [sp, #0x20]
+00000001000129e8	stp	x29, x30, [sp, #0x30]
+00000001000129ec	mov	x19, x0
+00000001000129f0	ldr	x22, [x0, #0x8]
+00000001000129f4	cbz	x22, 0x100012a28
+00000001000129f8	cmp	x22, #0x1, lsl #12
+00000001000129fc	b.hi	0x100012a5c
+0000000100012a00	ldr	x23, [x19]
+0000000100012a04	ldr	x20, [x19, #0x10]
+0000000100012a08	lsl	x1, x22, #4
+0000000100012a0c	cmp	x23, x22
+0000000100012a10	b.ne	0x100012a90
+0000000100012a14	mov	x0, x20
+0000000100012a18	bl	0x1000b5d08 ; symbol stub for: _realloc
+0000000100012a1c	mov	x21, x0
+0000000100012a20	cbnz	x0, 0x100012ab4
+0000000100012a24	b	0x100012b2c
+0000000100012a28	ldr	x22, [x19]
+0000000100012a2c	ldr	x20, [x19, #0x10]
+0000000100012a30	cbz	x22, 0x100012ac0
+0000000100012a34	mov	w0, #0x8
+0000000100012a38	bl	0x1000b5a08 ; symbol stub for: _malloc
+0000000100012a3c	cbz	x0, 0x100012b2c
+0000000100012a40	mov	x21, x0
+0000000100012a44	lsl	x2, x22, #3
+0000000100012a48	mov	x1, x20
+0000000100012a4c	bl	0x1000b5a38 ; symbol stub for: _memmove
+0000000100012a50	mov	x0, x20
+0000000100012a54	bl	0x1000b5888 ; symbol stub for: _free
+0000000100012a58	b	0x100012ad4
+0000000100012a5c	cmp	x22, #0x2, lsl #12
+0000000100012a60	b.hi	0x100012b14
+0000000100012a64	ldr	x23, [x19]
+0000000100012a68	ldr	x20, [x19, #0x10]
+0000000100012a6c	cmp	x23, x22
+0000000100012a70	b.ne	0x100012ae0
+0000000100012a74	mov	x0, x20
+0000000100012a78	mov	w1, #0x8
+0000000100012a7c	movk	w1, #0x1, lsl #16
+0000000100012a80	bl	0x1000b5d08 ; symbol stub for: _realloc
+0000000100012a84	mov	x21, x0
+0000000100012a88	cbnz	x0, 0x100012b08
+0000000100012a8c	b	0x100012b2c
+0000000100012a90	mov	x0, x1
+0000000100012a94	bl	0x1000b5a08 ; symbol stub for: _malloc
+0000000100012a98	cbz	x0, 0x100012b2c
+0000000100012a9c	mov	x21, x0
+0000000100012aa0	lsl	x2, x23, #3
+0000000100012aa4	mov	x1, x20
+0000000100012aa8	bl	0x1000b5a38 ; symbol stub for: _memmove
+0000000100012aac	mov	x0, x20
+0000000100012ab0	bl	0x1000b5888 ; symbol stub for: _free
+0000000100012ab4	lsl	x8, x22, #1
+0000000100012ab8	str	x21, [x19, #0x10]
+0000000100012abc	b	0x100012b10
+0000000100012ac0	mov	x0, x20
+0000000100012ac4	mov	w1, #0x8
+0000000100012ac8	bl	0x1000b5d08 ; symbol stub for: _realloc
+0000000100012acc	mov	x21, x0
+0000000100012ad0	cbz	x0, 0x100012b2c
+0000000100012ad4	str	x21, [x19, #0x10]
+0000000100012ad8	mov	w8, #0x1
+0000000100012adc	b	0x100012b10
+0000000100012ae0	mov	w0, #0x8
+0000000100012ae4	movk	w0, #0x1, lsl #16
+0000000100012ae8	bl	0x1000b5a08 ; symbol stub for: _malloc
+0000000100012aec	cbz	x0, 0x100012b2c
+0000000100012af0	mov	x21, x0
+0000000100012af4	lsl	x2, x23, #3
+0000000100012af8	mov	x1, x20
+0000000100012afc	bl	0x1000b5a38 ; symbol stub for: _memmove
+0000000100012b00	mov	x0, x20
+0000000100012b04	bl	0x1000b5888 ; symbol stub for: _free
+0000000100012b08	str	x21, [x19, #0x10]
+0000000100012b0c	mov	w8, #0x2001
+0000000100012b10	str	x8, [x19, #0x8]
+0000000100012b14	mov	w0, #0x0
+0000000100012b18	ldp	x29, x30, [sp, #0x30]
+0000000100012b1c	ldp	x20, x19, [sp, #0x20]
+0000000100012b20	ldp	x22, x21, [sp, #0x10]
+0000000100012b24	ldp	x24, x23, [sp], #0x40
+0000000100012b28	ret
+0000000100012b2c	bl	0x10000f848
+_wf_std.collections.vector.grow_vector_grow_full$instance$979fcc4ac6e818fb:
+0000000100012b30	stp	x24, x23, [sp, #-0x40]!
+0000000100012b34	stp	x22, x21, [sp, #0x10]
+0000000100012b38	stp	x20, x19, [sp, #0x20]
+0000000100012b3c	stp	x29, x30, [sp, #0x30]
+0000000100012b40	mov	x19, x0
+0000000100012b44	ldr	x22, [x0, #0x8]
+0000000100012b48	cbz	x22, 0x100012b7c
+0000000100012b4c	cmp	x22, #0x1, lsl #12
+0000000100012b50	b.hi	0x100012bb0
+0000000100012b54	ldr	x23, [x19]
+0000000100012b58	ldr	x20, [x19, #0x10]
+0000000100012b5c	lsl	x1, x22, #9
+0000000100012b60	cmp	x23, x22
+0000000100012b64	b.ne	0x100012be4
+0000000100012b68	mov	x0, x20
+0000000100012b6c	bl	0x1000b5d08 ; symbol stub for: _realloc
+0000000100012b70	mov	x21, x0
+0000000100012b74	cbnz	x0, 0x100012c08
+0000000100012b78	b	0x100012c80
+0000000100012b7c	ldr	x22, [x19]
+0000000100012b80	ldr	x20, [x19, #0x10]
+0000000100012b84	cbz	x22, 0x100012c14
+0000000100012b88	mov	w0, #0x100
+0000000100012b8c	bl	0x1000b5a08 ; symbol stub for: _malloc
+0000000100012b90	cbz	x0, 0x100012c80
+0000000100012b94	mov	x21, x0
+0000000100012b98	lsl	x2, x22, #8
+0000000100012b9c	mov	x1, x20
+0000000100012ba0	bl	0x1000b5a38 ; symbol stub for: _memmove
+0000000100012ba4	mov	x0, x20
+0000000100012ba8	bl	0x1000b5888 ; symbol stub for: _free
+0000000100012bac	b	0x100012c28
+0000000100012bb0	cmp	x22, #0x2, lsl #12
+0000000100012bb4	b.hi	0x100012c68
+0000000100012bb8	ldr	x23, [x19]
+0000000100012bbc	ldr	x20, [x19, #0x10]
+0000000100012bc0	cmp	x23, x22
+0000000100012bc4	b.ne	0x100012c34
+0000000100012bc8	mov	x0, x20
+0000000100012bcc	mov	w1, #0x100
+0000000100012bd0	movk	w1, #0x20, lsl #16
+0000000100012bd4	bl	0x1000b5d08 ; symbol stub for: _realloc
+0000000100012bd8	mov	x21, x0
+0000000100012bdc	cbnz	x0, 0x100012c5c
+0000000100012be0	b	0x100012c80
+0000000100012be4	mov	x0, x1
+0000000100012be8	bl	0x1000b5a08 ; symbol stub for: _malloc
+0000000100012bec	cbz	x0, 0x100012c80
+0000000100012bf0	mov	x21, x0
+0000000100012bf4	lsl	x2, x23, #8
+0000000100012bf8	mov	x1, x20
+0000000100012bfc	bl	0x1000b5a38 ; symbol stub for: _memmove
+0000000100012c00	mov	x0, x20
+0000000100012c04	bl	0x1000b5888 ; symbol stub for: _free
+0000000100012c08	lsl	x8, x22, #1
+0000000100012c0c	str	x21, [x19, #0x10]
+0000000100012c10	b	0x100012c64
+0000000100012c14	mov	x0, x20
+0000000100012c18	mov	w1, #0x100
+0000000100012c1c	bl	0x1000b5d08 ; symbol stub for: _realloc
+0000000100012c20	mov	x21, x0
+0000000100012c24	cbz	x0, 0x100012c80
+0000000100012c28	str	x21, [x19, #0x10]
+0000000100012c2c	mov	w8, #0x1
+0000000100012c30	b	0x100012c64
+0000000100012c34	mov	w0, #0x100
+0000000100012c38	movk	w0, #0x20, lsl #16
+0000000100012c3c	bl	0x1000b5a08 ; symbol stub for: _malloc
+0000000100012c40	cbz	x0, 0x100012c80
+0000000100012c44	mov	x21, x0
+0000000100012c48	lsl	x2, x23, #8
+0000000100012c4c	mov	x1, x20
+0000000100012c50	bl	0x1000b5a38 ; symbol stub for: _memmove
+0000000100012c54	mov	x0, x20
+0000000100012c58	bl	0x1000b5888 ; symbol stub for: _free
+0000000100012c5c	str	x21, [x19, #0x10]
+0000000100012c60	mov	w8, #0x2001
+0000000100012c64	str	x8, [x19, #0x8]
+0000000100012c68	mov	w0, #0x0
+0000000100012c6c	ldp	x29, x30, [sp, #0x30]
+0000000100012c70	ldp	x20, x19, [sp, #0x20]
+0000000100012c74	ldp	x22, x21, [sp, #0x10]
+0000000100012c78	ldp	x24, x23, [sp], #0x40
+0000000100012c7c	ret
+0000000100012c80	bl	0x10000f848
+
+=== append-growth-screen-timing.txt ===
+== START inline-slots-append-growth-screen (limit 240s): sh -c research/experiments/container-representation/vector-library/.build/inline-slots-owner/api/ecosystem/vector-costs-timed growth-api-measure 67108864 7 8589934592 > research/experiments/container-representation/vector-library/.build/inline-slots-owner/append-growth-screen-samples.csv ==
+growth append clock: reads=200000 minimum_nonzero_ns=41 quantized=0
+== RUNNING inline-slots-append-growth-screen: 30 s, child 67710, group 67710 ==
+== RUNNING inline-slots-append-growth-screen: 60 s, child 67710, group 67710 ==
+== RUNNING inline-slots-append-growth-screen: 90 s, child 67710, group 67710 ==
+real 116.84
+user 116.55
+sys 0.18
+== END inline-slots-append-growth-screen: 116.93 s, exit 0 ==
+
+=== allocation ledger ===
+contract,element_bytes,requested_capacity,initial_capacity,variant,length,capacity,requests,reallocations,releases,requested_bytes,live_before,live_after
+append-growth-o3,8,16,16,whitefoot,17,32,1,1,0,256,128,256
+append-growth-o3,8,16,16,rust-vec,17,32,1,1,0,256,128,256
+append-growth-o3,8,16,16,cpp-std-vector,17,32,1,0,1,256,128,256
+append-growth-o3,256,16,16,whitefoot,17,32,1,1,0,8192,4096,8192
+append-growth-o3,256,16,16,rust-vec,17,32,1,1,0,8192,4096,8192
+append-growth-o3,256,16,16,cpp-std-vector,17,32,1,0,1,8192,4096,8192
+append-growth-o3,8,256,256,whitefoot,257,512,1,1,0,4096,2048,4096
+append-growth-o3,8,256,256,rust-vec,257,512,1,1,0,4096,2048,4096
+append-growth-o3,8,256,256,cpp-std-vector,257,512,1,0,1,4096,2048,4096
+append-growth-o3,256,256,256,whitefoot,257,512,1,1,0,131072,65536,131072
+append-growth-o3,256,256,256,rust-vec,257,512,1,1,0,131072,65536,131072
+append-growth-o3,256,256,256,cpp-std-vector,257,512,1,0,1,131072,65536,131072
+append-growth-o3,8,4096,4096,whitefoot,4097,8192,1,1,0,65536,32768,65536
+append-growth-o3,8,4096,4096,rust-vec,4097,8192,1,1,0,65536,32768,65536
+append-growth-o3,8,4096,4096,cpp-std-vector,4097,8192,1,0,1,65536,32768,65536
+append-growth-o3,256,4096,4096,whitefoot,4097,8192,1,1,0,2097152,1048576,2097152
+append-growth-o3,256,4096,4096,rust-vec,4097,8192,1,1,0,2097152,1048576,2097152
+append-growth-o3,256,4096,4096,cpp-std-vector,4097,8192,1,0,1,2097152,1048576,2097152
+append-growth-o3,8,0,0,whitefoot,1,1,1,1,0,8,1,8
+append-growth-o3,8,0,0,rust-vec,1,4,1,0,0,32,0,32
+append-growth-o3,8,0,0,cpp-std-vector,1,1,1,0,0,8,0,8
+append-growth-o3,256,0,0,whitefoot,1,1,1,1,0,256,1,256
+append-growth-o3,256,0,0,rust-vec,1,4,1,0,0,1024,0,1024
+append-growth-o3,256,0,0,cpp-std-vector,1,1,1,0,0,256,0,256
+append-growth-o3,8,1,1,whitefoot,2,2,1,1,0,16,8,16
+append-growth-o3,8,1,1,rust-vec,2,4,1,1,0,32,8,32
+append-growth-o3,8,1,1,cpp-std-vector,2,2,1,0,1,16,8,16
+append-growth-o3,256,1,1,whitefoot,2,2,1,1,0,512,256,512
+append-growth-o3,256,1,1,rust-vec,2,4,1,1,0,1024,256,1024
+append-growth-o3,256,1,1,cpp-std-vector,2,2,1,0,1,512,256,512
+
+=== fixture instrumentation ===
+Replace the private wf_resource_abort definition with a declaration of wf_observe_abort before binding malloc/realloc/free to wf_observe_allocate/reallocate/release. Rename main to wf_fixture_main and wf__main_body to wf__fixture_body. The linked counterpart replaces only public wf_owner_identity with the following same-signature bridge; the original WF caller still invokes that public symbol. This tests a post-lowering linked ABI counterpart, not source fn_sig formation.
+declare void @wf_observe_transfer(ptr, ptr)
+define { i64, i64, ptr } @wf_owner_identity(ptr %input) {
+entry:
+  %output = alloca { i64, i64, ptr }, align 8
+  call void @wf_observe_transfer(ptr %output, ptr %input)
+  %result = load { i64, i64, ptr }, ptr %output, align 8
+  ret { i64, i64, ptr } %result
+}
+
+=== authoring corrections ===
+An added helper first used obsolete own parameter spelling (GRAM-3), then the added exchange helper lacked a required blank line (FORM-2). Corrected source emits successfully; neither is a counterfactual compiler failure. The interrupted fixture agent had not written files; root authored the retained fixture and observer.
+
+=== production restoration ===
+All seven compiler files and vector-costs.c restored byte-for-byte to base. Guarded gate CLI rebuild: 37.99 s, exit 0. Restored CLI SHA256 5e8d37585a06e7b7040b43032b1cd5d4f41cce16d0e91aa77b35e7d0e83c74ac matches frozen production.
