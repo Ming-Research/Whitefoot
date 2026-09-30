@@ -1,0 +1,74 @@
+| mode | Chars | S_col | S_grp | S_tr | S_cell | S_table | S_other | E_html | E_tbl | E_other | Comment | Doctype | EOF |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| Initial | 1 | 5 | 5 | 5 | 5 | 5 | 5 | 6 | 1 | 5 | 0 | 0 | 5 |
+| BeforeHtml | 0 | 4 | 4 | 4 | 4 | 4 | 4 | 5 | 0 | 4 | 0 | 0 | 4 |
+| BeforeHead | 0 | 3 | 3 | 3 | 3 | 3 | 3 | 4 | 0 | 3 | 0 | 0 | 3 |
+| InHead | 0 | 2 | 2 | 2 | 2 | 2 | 2 | 3 | 0 | 2 | 0 | 0 | 2 |
+| InHeadNoscript | 1 | 3 | 3 | 3 | 3 | 3 | 3 | 0 | 0 | 3 | 0 | 0 | 3 |
+| AfterHead | 0 | 1 | 1 | 1 | 1 | 1 | 1 | 2 | 0 | 1 | 0 | 0 | 1 |
+| InBody | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 |
+| Text | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 6 |
+| InTable | 1 | 1 | 0 | 1 | 2 | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| InTableText | 0 | 4 | 3 | 2 | 3 | 5 | 1 | 1 | 3 | 1 | 1 | 1 | 1 |
+| InCaption | 0 | 2 | 1 | 2 | 3 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 |
+| InColumnGroup | 0 | 0 | 1 | 2 | 3 | 4 | 1 | 1 | 1 | 1 | 0 | 0 | 0 |
+| InTableBody | 1 | 2 | 1 | 0 | 1 | 4 | 0 | 0 | 1 | 0 | 0 | 0 | 0 |
+| InRow | 1 | 3 | 2 | 1 | 0 | 4 | 0 | 0 | 2 | 0 | 0 | 0 | 0 |
+| InCell | 0 | 4 | 3 | 2 | 1 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 0 |
+| InTemplate | 0 | 1 | 1 | 1 | 1 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
+| AfterBody | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 0 | 1 | 1 | 0 | 0 | 0 |
+| InFrameset | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| AfterFrameset | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| AfterAfterBody | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 2 | 1 | 1 | 0 | 0 | 0 |
+| AfterAfterFrameset | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+checked (edge,class,from,to) tuples (excluding E34): 207 bad: [] SCC-tuples using D: 13
+1 Chars:R-1..1
+2 S_col:R-1..1; S_grp:R-1..1; S_tr:R-1..1; S_cell:R-1..1; S_table:R-1..1; S_other:R-1..1
+3 E_html:R-1..1; E_tbl:R-1..1; E_other:R-1..1
+4 EOF:R-1..1
+5 S_col:R-1..1; S_grp:R-1..1; S_tr:R-1..1; S_cell:R-1..1; S_table:R-1..1; S_other:R-1..1
+6 E_html:R-1..1; E_other:R-1..1
+7 EOF:R-1..1
+8 S_col:R-1..1; S_grp:R-1..1; S_tr:R-1..1; S_cell:R-1..1; S_table:R-1..1; S_other:R-1..1
+9 E_html:R-1..1; E_other:R-1..1
+10 EOF:R-1..1
+11 S_col:R-1..1; S_grp:R-1..1; S_tr:R-1..1; S_cell:R-1..1; S_table:R-1..1; S_other:R-1..1
+12 E_html:R-1..1; E_other:R-1..1
+13 EOF:R-1..1
+14 S_col:R-1..1; S_grp:R-1..1; S_tr:R-1..1; S_cell:R-1..1; S_table:R-1..1; S_other:R-1..1
+15 E_other:R-1..1
+16 Chars:R-1..1
+17 EOF:R-1..1
+18 EOF:R-1..6
+19 S_col:R-1..1; S_grp:R-1..1; S_tr:R-1..1; S_cell:R-1..1; S_table:R-1..1; S_other:R-1..1
+20 E_html:R-1..1; E_other:R-1..1
+21 EOF:R-1..1
+22 Chars:R-1..1
+23 S_col:R-1..1; S_grp:R-1..1; S_tr:R-1..1; S_cell:R-1..1; S_table:R-1..1; S_other:R-1..1
+24 E_tbl:R-1..1; E_other:R-1..1
+25 S_col:R-1..1; S_grp:R-1..1; S_tr:R-1..1; S_cell:R-1..1; S_table:R-1..1; S_other:R-1..1
+26 Chars:R-1..1
+27 E_html:R-1..1; E_tbl:R-1..1; E_other:R-1..1
+28 E_html:R-1..1
+29 S_grp:R-1..1
+30 S_col:R-1..1
+31 S_tr:R-1..1
+32 S_cell:R-1..1
+33 S_other:R-1..1; S_table:R-1..1
+35 Chars:R-1..1
+36 S_col:R-1..1
+37 S_tr:R-1..1; S_cell:R-1..1
+38 S_table:D
+39 S_col:R-1..3; S_grp:R-1..3; S_tr:R-1..2; S_cell:R-1..3; S_table:R-1..1; S_other:R-1..1; E_html:R-1..1; E_tbl:R-1..3; E_other:R-1..1; Comment:R-1..1; Doctype:R-1..1; EOF:R-1..1
+40 S_cell:R-1..1
+41 S_grp:R-1..1; S_col:R-1..1
+42 E_tbl:R-1..1
+43 S_grp:R-1..1; S_col:R-1..1; S_tr:R-1..1
+44 E_tbl:R-1..1
+45 E_tbl:R-1..1
+46 E_tbl:R-1..1
+47 S_grp:R-1..1; S_col:R-1..1; S_cell:R-1..1; S_tr:R-1..1
+48 E_tbl:R-1..1
+49 S_grp:R-1..1; S_col:R-1..1; S_cell:R-1..1; S_tr:R-1..1
+50 S_grp:R-1..1; S_tr:R-1..1; S_cell:R-1..1; S_table:D; S_other:R-1..1
+51 E_html:R-1..1; E_tbl:R-1..1; E_other:R-1..1
