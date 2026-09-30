@@ -1,0 +1,34 @@
+fn fill(item: u64, window: &[u64]) -> result: unit writes(window) {
+  let count = window^.len;
+  for (j in 0_u64..count) {
+    set window^[j] = item;
+  }
+  return unit;
+}
+
+fn scatter(offsets: &[u64], out: &[u64]) -> result: unit reads(offsets), writes(out) {
+  let count = offsets^.len;
+  if count == 0_u64 {
+    return unit;
+  }
+  let last = count - 1_u64;
+  for (i in 0_u64..last) {
+    let next = i + 1_u64;
+    let start = offsets^[i];
+    let end = offsets^[next];
+    let ordered = start <= end;
+    let inside = end <= out^.len;
+    let usable = band(ordered, inside);
+    if usable {
+      fill(item: i, window: &out^[start..end]);
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let offsets = box_array_filled::<u64>(count: 5_u64, value: 0_u64);
+  let out = box_array_filled::<u64>(count: 8_u64, value: 0_u64);
+  scatter(offsets: &offsets.inner[0_u64..5_u64], out: &out.inner[0_u64..8_u64]);
+  return std::process::exit_status(code: 0_u8);
+}

@@ -16,7 +16,7 @@ use crate::{
 
 use super::super::entailment::{
     CallGoalDisposition, FunctionEntailment, ObligationFamily, PostconditionDisposition,
-    SourceProofCertificateFailure, TermRead,
+    RangeEndpointReading, SourceProofCertificateFailure, TermRead,
 };
 use super::super::goal::{GoalExpression, GoalOperation};
 use super::super::model::{CheckedFunction, CheckedNumericType, FunctionId};
@@ -425,9 +425,10 @@ impl<'unit> TypeContext<'unit> {
                 | SemanticRule::Ref4,
                 RecordAnswer::Obligation(index),
             ) => self.undischarged_obligation(function, record.rule, index),
-            (SemanticRule::Fn8 | SemanticRule::Op14, RecordAnswer::CallGoal(index)) => {
-                self.undischarged_call_requirement(function, record.rule, index)
-            }
+            (
+                SemanticRule::Fn8 | SemanticRule::Op14 | SemanticRule::Type11,
+                RecordAnswer::CallGoal(index),
+            ) => self.undischarged_call_requirement(function, record.rule, index),
             (SemanticRule::Fn9, RecordAnswer::Postcondition(index)) => {
                 self.undischarged_postcondition(function, index)
             }
@@ -616,10 +617,6 @@ impl<'unit> TypeContext<'unit> {
             .get(index)
             .ok_or(SemanticCompilerFailure::InvalidResolution)?;
         let location = self.declarations.source_location(&outcome.node_path)?;
-        let signature = self
-            .signatures
-            .get(outcome.callee.0 as usize)
-            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
         let disposition = match outcome.disposition {
             CallGoalDisposition::Discharged => {
                 return Err(SemanticCompilerFailure::InvalidResolution.into());
@@ -661,7 +658,58 @@ impl<'unit> TypeContext<'unit> {
             });
         }
         let requires_clause = self.declarations.node_location(&outcome.requires_clause)?;
-        let mechanical_fix = repairs::call_requirement(&case);
+        // [TYPE-11] a construction's type invariant is judged as a
+        // requirement the constructing body owes itself, and reported as
+        // that invariant.
+        if rule == SemanticRule::Type11 {
+            return Ok(SemanticIssue {
+                rule,
+                location,
+                kind: SemanticIssueKind::UndischargedTypeInvariant {
+                    type_invariant: requires_clause,
+                    instantiated_goal: outcome.rendered_goal.clone(),
+                    disposition,
+                    // A construction is a `call`; every other site is an
+                    // edge leaving an atomic block.
+                    mechanical_fix: if self
+                        .declarations
+                        .tree
+                        .node_with_path(&outcome.node_path)
+                        .map(|node| self.declarations.tree.production(node))
+                        .transpose()?
+                        == Some(Production::Call)
+                    {
+                        repairs::construction_invariant(&case)
+                    } else {
+                        repairs::atomic_exit_invariant(&case)
+                    },
+                },
+                request: None,
+            });
+        }
+        let signature = self
+            .signatures
+            .get(outcome.callee.0 as usize)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        let ranges = outcome
+            .range_lengths
+            .iter()
+            .map(|reading| {
+                let start = self.range_endpoint_spelling(&reading.start)?;
+                let end = self.range_endpoint_spelling(&reading.end)?;
+                Ok(repairs::RangeLength {
+                    range: format!("{}[{}..{}]", reading.base, start.0, end.0),
+                    start,
+                    end,
+                    difference_goal: reading.difference_goal.clone(),
+                })
+            })
+            .collect::<Result<Vec<_>, CheckStop>>()?;
+        let mechanical_fix = repairs::call_requirement(
+            &case,
+            &ranges,
+            repairs::range_goal_shape(&outcome.goal.root),
+        );
         Ok(SemanticIssue {
             rule: SemanticRule::Fn8,
             location,
@@ -676,6 +724,26 @@ impl<'unit> TypeContext<'unit> {
             )),
             request: None,
         })
+    }
+    /// [REF-4, DIAG-1] one range endpoint as a repair spells it, and whether
+    /// a relation can name it. An endpoint no relation names is spelled from
+    /// the source occurrence that evaluated it, a field or element read that
+    /// the writer copies into a binding.
+    fn range_endpoint_spelling(
+        &self,
+        endpoint: &RangeEndpointReading,
+    ) -> Result<(String, bool), CheckStop> {
+        match endpoint {
+            RangeEndpointReading::Spelled(spelling) => Ok((spelling.clone(), true)),
+            RangeEndpointReading::Unspelled(Some(occurrence)) => {
+                let node = usize::try_from(*occurrence)
+                    .ok()
+                    .and_then(NodeId::from_index)
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                Ok((self.declarations.tree.source_spelling(node)?, false))
+            }
+            RangeEndpointReading::Unspelled(None) => Ok(("?".to_owned(), false)),
+        }
     }
     /// [FN-9] the first failed exit of one relation, or its missing exit.
     fn undischarged_postcondition(
@@ -737,14 +805,25 @@ impl<'unit> TypeContext<'unit> {
                     selector: self.declarations.node_location(&proof.selector)?,
                     relation: exit.residual.clone(),
                     disposition,
-                    mechanical_fix: repairs::postcondition(
-                        repair,
-                        repairs::returns_call_result(
-                            function,
-                            &exit.statement,
-                            &self.editable_functions()?,
-                        ),
-                    ),
+                    mechanical_fix: if self
+                        .declarations
+                        .tree
+                        .node_with_path(&exit.statement)
+                        .map(|node| self.declarations.tree.production(node))
+                        .transpose()?
+                        == Some(Production::ReturnStmt)
+                    {
+                        repairs::postcondition(
+                            repair,
+                            repairs::returns_call_result(
+                                function,
+                                &exit.statement,
+                                &self.editable_functions()?,
+                            ),
+                        )
+                    } else {
+                        repairs::propagated_postcondition(repair)
+                    },
                 },
             )),
             request: None,

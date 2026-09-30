@@ -146,11 +146,14 @@ build:
 test-build:
 	$(CHECK_RUN) compiler/test-build $(CARGO) test --profile gate --all-targets --no-run --locked --offline
 
+# The library's own tests build only the library in test mode. The CLI's tests
+# link the ordinary library, which the corpus harness builds anyway, so they
+# run with the corpus instead of costing the unit group a second library build.
 test-build-unit:
-	$(CHECK_RUN) compiler/test-build-unit $(CARGO) test --profile gate --lib --bins --no-run --locked --offline
+	$(CHECK_RUN) compiler/test-build-unit $(CARGO) test --profile gate --lib --no-run --locked --offline
 
 test-build-corpus:
-	$(CHECK_RUN) compiler/test-build-corpus $(CARGO) test --profile gate --test '*' --no-run --locked --offline
+	$(CHECK_RUN) compiler/test-build-corpus $(CARGO) test --profile gate --bins --test '*' --no-run --locked --offline
 
 format:
 	$(CARGO) fmt --all -- --check
@@ -165,15 +168,16 @@ test:
 
 _test: test-build test-unit test-corpus
 
-# Private compiler/CLI obligations. Cargo selects their owning harnesses.
+# Private compiler obligations in the library's own test modules.
 test-unit:
-	$(NO_CORE_DUMPS) $(CHECK_RUN) compiler/test-unit $(CARGO) test --profile gate --lib --bins --locked --offline
+	$(NO_CORE_DUMPS) $(CHECK_RUN) compiler/test-unit $(CARGO) test --profile gate --lib --locked --offline
 
 # Every integration target is discovered by Cargo, so adding one cannot fall
-# out of a copied target list. The shared corpus owns programs, conformance and
-# canonical rendering; no baseline compiler or timed comparison is involved.
+# out of a copied target list. The shared corpus owns programs, conformance,
+# canonical rendering and the CLI's own tests; no baseline compiler or timed
+# comparison is involved.
 test-corpus:
-	$(NO_CORE_DUMPS) $(CHECK_RUN) compiler/test-corpus $(CARGO) test --profile gate --test '*' --locked --offline
+	$(NO_CORE_DUMPS) $(CHECK_RUN) compiler/test-corpus $(CARGO) test --profile gate --bins --test '*' --locked --offline
 
 docs:
 	RUSTDOCFLAGS="-D warnings" $(CARGO) doc --no-deps --locked --offline

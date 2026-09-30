@@ -44,6 +44,8 @@ pub(crate) enum ObligationSubject {
     CallRequirement {
         callee: FunctionId,
         requires_clause: NodePath,
+        /// [TYPE-11] the requirement's subject ordinal.
+        subject: Option<u32>,
     },
     /// One source-written loop invariant's induction [INV-1].
     LoopInvariant,

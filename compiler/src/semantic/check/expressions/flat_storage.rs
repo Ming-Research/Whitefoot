@@ -373,14 +373,14 @@ impl<'unit> Checker<'_, 'unit> {
             false,
         )?;
         let Some(measured) = measured_kind_of(place.root.ty) else {
-            return self.types.declarations.issue_node(
-                SemanticRule::Type5,
-                node,
-                SemanticIssueKind::type_mismatch(
-                    "a measured place [MSR-1]",
-                    self.types.checked_type_name(place.root.ty)?,
-                ),
-            );
+            let field = self.extend_storage_place(
+                context,
+                place,
+                &suffixes[suffixes.len() - 1..],
+                bindings,
+                options.loop_depth,
+            )?;
+            return self.check_storage_read(check_context, node, node, field, bindings, options);
         };
         if matches!(
             measure.cell(measured),
@@ -440,7 +440,7 @@ impl<'unit> Checker<'_, 'unit> {
         suffixes: &[NodeId],
         subscript: usize,
         measure: CheckedMeasure,
-        bindings: &HashMap<DeclarationId, LocalBinding>,
+        bindings: &mut HashMap<DeclarationId, LocalBinding>,
         options: PlaceUseOptions,
     ) -> Result<TypedExpression, CheckStop> {
         let FunctionContext { check_context, .. } = context;
@@ -486,13 +486,8 @@ impl<'unit> Checker<'_, 'unit> {
                     true,
                 )?;
                 let Some(measured) = measured_kind_of(selected_type) else {
-                    return self.types.declarations.issue_node(
-                        SemanticRule::Type5,
-                        use_node,
-                        SemanticIssueKind::type_mismatch(
-                            "a measured place [MSR-1]",
-                            self.types.checked_type_name(selected_type)?,
-                        ),
+                    return self.check_index_use(
+                        context, use_node, place, suffixes, subscript, bindings, options,
                     );
                 };
                 if matches!(measure.cell(measured), MeasureCell::Absent) {
@@ -583,13 +578,20 @@ impl<'unit> Checker<'_, 'unit> {
             options.loop_depth,
         )?;
         let Some(measured) = measured_kind_of(container.root.ty) else {
-            return self.types.declarations.issue_node(
-                SemanticRule::Type5,
+            let field = self.extend_storage_place(
+                context,
+                container,
+                &suffixes[suffixes.len() - 1..],
+                bindings,
+                options.loop_depth,
+            )?;
+            return self.check_storage_read(
+                check_context,
                 use_node,
-                SemanticIssueKind::type_mismatch(
-                    "a measured place [MSR-1]",
-                    self.types.checked_type_name(container.root.ty)?,
-                ),
+                place,
+                field,
+                bindings,
+                options,
             );
         };
         if matches!(measure.cell(measured), MeasureCell::Absent) {
@@ -2005,6 +2007,9 @@ impl<'unit> TypeContext<'unit> {
             // [OP-9] a runtime-capacity `Array<T>` is `(16,8)`: a pointer and
             // a length.
             CheckedType::Buffer { .. } => finish(CheckedLayoutMagnitude::Finite(16), 8),
+            // A `Segments<T>` is reached only as `Box` content, whose cell is
+            // one pointer; this row sizes the content as a runtime array is.
+            CheckedType::Segments { .. } => finish(CheckedLayoutMagnitude::Finite(16), 8),
             // [OP-9] a constant-capacity `Slots<T, N>` repeats T's pair N
             // times and then applies the sequence rule to that block followed
             // by one `(8,8)` word, its length; a `Ring<T, N>` follows it with
@@ -2057,6 +2062,10 @@ impl<'unit> TypeContext<'unit> {
                     // [OP-9] `Box<T>` is `(8,8)`, one pointer; its `inner`
                     // field lives in the heap object and enters no sequence.
                     CheckedNominalKind::Box { .. } => finish(CheckedLayoutMagnitude::Finite(8), 8),
+                    // A handle is one pointer to its shared object [SHARE-1].
+                    CheckedNominalKind::Shared { .. } => {
+                        finish(CheckedLayoutMagnitude::Finite(8), 8)
+                    }
                     CheckedNominalKind::Opaque => finish(CheckedLayoutMagnitude::Finite(32), 16),
                     CheckedNominalKind::Struct { fields } => {
                         self.aggregate_layout_ceiling(fields.iter().map(|field| field.ty), visiting)

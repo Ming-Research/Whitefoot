@@ -1,20 +1,24 @@
 ---
 name: design-tree
-description: Record, propose or apply design decisions in the project's design tree, and define the design checks of Design Correspondence Review (DCR). Use when a task chooses between viable alternatives the tree should record (a new or changed language rule included), edits the design tree, its amendments or its log, applies an owner's ruling, or reviews an implementation against recorded decisions. Not for implementing a recorded decision unchanged or for a routine fix.
+description: Keep a project's design decisions in a design tree, bring every decision that needs the owner to the owner, and review an implementation against the recorded decisions. Use when a task makes or changes a choice between viable alternatives, edits the design tree or its log, asks the owner to decide anything, hands finished work back to the owner, or reviews design and implementation for correspondence (DCR). Not for implementing a recorded decision unchanged or for a routine fix.
 ---
 
 # Design tree
 
 A design tree records the decisions a project is built on: what was chosen,
 because of what, instead of what. It is organized by concept, not by code
-structure. It holds only owner-approved decisions; unapproved choices remain
-amendments beside it. Git holds history; the log provides concise traceability.
+structure. The project's main line holds only decisions the owner approved;
+a draft branch may change the tree freely, and the owner's approval, recorded
+in the log, is what lets that branch become ready. Git holds history; the log
+records the approvals.
 
-Use project-appropriate locations and concept names for three roles:
+The project maps these roles to its own paths:
 
 - Live tree: one file per node, with children in a directory of the same name.
-- Amendments: proposed additions, replacements, or retirements of decisions.
-- Change log: one short entry per approved tree change, newest first.
+- Change log: one entry per approved change, newest first.
+- Research record: where derivations, measurements and comparisons live.
+- Maintained TODO: where deferred work is recorded.
+- Form check and readiness check: the `lint.py` invocations below.
 
 ## Node format
 
@@ -50,7 +54,7 @@ and never record a proposal or an agent's default as a settled decision.
 
 ## Keeping the tree lean
 
-Apply three filters to every proposed tree revision:
+Apply three filters to every tree change:
 
 1. Decision, not description. Remove `Decision:` lines without `because` or
    `instead of`.
@@ -62,191 +66,196 @@ Apply three filters to every proposed tree revision:
 Keep each decision concise: retain the choice, its decisive reason or refused
 alternative (or both), and the qualifications needed to preserve its meaning.
 Put detailed derivations, measurements, comparisons and implementation
-mechanics in the relevant existing `research/` record and link directly to
-that section. A long `Decision:` line is still a long explanation. The tree
-must explain the choice without requiring the reader to open the link;
-the linked record supplies the supporting detail.
+mechanics in the relevant research record and link directly to that section.
+A long `Decision:` line is still a long explanation. The tree must explain the
+choice without requiring the reader to open the link; the linked record
+supplies the supporting detail.
 
-Every tree diff review reports node count, depth, and net change; the lint
-prints them against the review base.
+## Changes and approval
 
-## Amendments
+On a draft branch, change the live tree directly, in the same work as the
+implementation it governs, and keep the two consistent as the work goes.
+Writing a decision does not approve it. The owner approves at the end, when
+the finished work is handed back (Workflow step 4), and approves only the
+decisions shown.
 
-Keep all proposed tree revisions in `design/amendments/`, the sole temporary
-amendment directory. Research and implementation continue on the Draft PR;
-only live-tree edits wait for the owner's explicit approval. Present the
-complete revision, naming the nodes and decisions added, replaced or retired.
-Approval to perform the work, or approval preceding that proposal, does not
-authorize its tree edit or approval log entry.
-
-An amendment file starts with `Node: <tree path>`, then a blank line and the
-node form. Identify any decision replaced or retired and explain why. Keep
-amendments current so the owner can review the complete outstanding revision.
-
-When approved, apply only the revision shown to the owner, make its approval
-the newest log entry with the required `Owner-approved:` field, and remove the
-accepted amendment. When rejected, add a log entry naming the node, what was
-proposed, and why it was refused, remove the amendment, and adjust the design
-and implementation to the ruling. Later revisions, including material changes
-to an approved proposal, must be shown again and receive their own approval.
-After all rulings are applied, remove the amendment directory itself. Removing
-or relocating an unresolved proposal does not resolve its required ruling.
+After the owner has ruled on every decision of the branch that needs a
+ruling, write one log entry for the approved change and only then mark the
+branch ready. The readiness check fails while the tree differs from the base
+without such an entry, so unapproved changes cannot reach the main line. A
+change made after approval, other than one the owner directed, is shown and
+approved again. When the owner refuses a change, revise or revert it; keep a
+refused alternative worth remembering as a `Rejected:` item. Approval of the
+tree does not authorize a merge; the project's merge rules decide that.
 
 ## Log format
 
-The log records every ruling on the tree, each approved revision and each
-refused amendment, and anything else a later reader must be able to find.
 Each entry has a `## <date> <title>` heading, a `Nodes:` line listing every
-node touched or ruled on, and a concise `Summary:` paragraph with the
-conclusion, its reasons, and the ruling it records. An entry that accompanies
-a live-tree change also has `Owner-approved: <approval>` between `Nodes:` and
-`Summary:`. Its value briefly identifies the owner's explicit approval of the
-proposed revision; the field is an assertion about that approval, not a place
-for the agent to request it or infer it from the task. The approval entry must
-be the newest entry and must name every changed node. Refused amendments do
-not use `Owner-approved:`. Cite data, measurements, and evidence at their
-source under the project's research record instead of reproducing them. Git
-supplies the detailed history. When parallel branches add entries, retain
-both, newest first.
+node added, changed or retired, an `Owner-approved:` line identifying the
+owner's approval of the handoff in the owner's words, and a concise `Summary:`
+paragraph with the change and its reasons. That approval covers every node
+the entry names: those in its cards and those in its other tree edits. Write the entry only
+after that approval; the field records it and never requests or infers it.
+The newest entry must be new on the branch and name every changed node. Cite
+data and evidence at their source in the research record instead of
+reproducing them. When parallel branches add entries, keep both, newest
+first.
+
+## Owner decisions
+
+The owner decides in the conversation, in the owner's language. A decision
+the owner makes lands in the tree, as a node added, changed or retired or as
+a refused option under `Rejected:`, so every decision awaiting the owner is
+a tree change, and all of them form one ledger kept in the conversation.
+An entry may come from a choice made while working, a review finding, an open
+research question or a direction the owner gave in passing. The scope of the
+work is agreed before starting (below); a change to it is reported in the
+handoff's status, not as an entry.
+
+- **Entries.** Each gets an ID, `Q1`, `Q2` and on, never renumbered or reused.
+  It stays open until the owner answers that ID. A discussion that moves past
+  an entry leaves it open; superseding or withdrawing one needs the owner's
+  agreement too.
+- **Restate.** After every owner reply, list every ID with its status, for
+  example "Q1, Q2 approved; Q3 approved with a change; Q4, Q5 not yet
+  discussed". When the owner states a direction in passing, say which entry
+  it became and whether it is taken as a ruling.
+- **Before starting.** Discuss every choice that sets the direction of the
+  work. While a matter that could change it substantially is unclear, keep
+  discussing; do not start.
+- **After starting.** Work through to completion. A question that arises is
+  sent to the owner with a recommendation and work continues on that
+  recommendation; the entry stays open and returns at handoff.
+- **Batch.** Bring every open entry to the owner once, at handoff: review
+  findings go only there, and a question sent while working returns there.
+  Never bring rulings one round at a time.
+- Re-read this skill before a handoff; a copy loaded early in a long session
+  may predate a change to it.
+
+A handoff presents, in this order:
+
+1. **Status.** For each thing the owner asked for: done, done on a
+   recommendation still open (name the ID), changed from the agreed scope
+   (how and why), or not started. Research that recommends work is not that
+   work.
+2. **Decision cards.** One per open decision the branch adds, changes or
+   retires, oldest first, each after the cards it depends on; a card is that
+   decision's tree change. A decision the owner already ruled on needs no
+   card; the restated ledger shows it approved. End with one line naming
+   every open ID and stating that no other decision is open. A card opens
+   with its ID and the question in bold, then three parts:
+   - Problem: the problem itself, for a reader who has not seen the work:
+     what the component or rule does, what goes wrong or stays open, and the
+     concrete evidence. Explain each project term at first use.
+   - Options: A, B and on, the recommended one marked. Each says what it
+     does and what it costs, then why it is recommended or why not.
+   - Confidence N/5: 5 when evidence settles it, 1 when it rests on judgment,
+     with the reason and what could overturn it.
+
+   The tree records the ruling: the chosen option becomes the node's
+   `Decision:` and each refused option worth remembering a `Rejected:` item,
+   with the reasons the card gave.
+3. **Other tree edits.** A node edit that changes no decision, such as a
+   rewording, needs no card but is listed here: the node, what changed and
+   why, one bullet each. Write "none" when there is none.
+4. The parts the project adds, such as its other approved artifacts, the
+   validation run, the review's scope and the findings it fixed, and what the
+   work found along the way. They cite a card by its ID instead of repeating
+   its reasons.
+
+Write each part as bullets under its bold name; a table's narrow columns bury
+reasoning.
 
 ## Workflow
 
-1. Research, implement and validate continuously on a Draft PR. Keep proposed
-   tree changes in amendments; pending approval does not block this work.
-2. Once the agreed implementation and evidence are ready, run DCR against the
-   live tree, amendments and implementation together. Present the reviewed
-   proposals, and any findings awaiting direction, to the owner, then await
-   the ruling.
-3. Apply the ruling to the tree, log and affected implementation; remove the
-   resolved amendments and their directory. Recheck affected work and run CI.
-4. Only after all proposals are resolved and the final revision's required CI
-   is green, mark the PR ready and await the owner's merge. A new pending tree
-   revision returns the PR to Draft. Design approval does not authorize merge.
-
-During design and implementation, examine responsibilities, interfaces,
-representations and affected consumers for both design gaps and clear
-opportunities for a better design or greater capability, even when the current
-design is valid. Surface each concrete opportunity in the existing PR or
-investigation, stating its expected benefit, cost, affected scope and uncertainty;
-recommend addressing, deferring or declining it, with reasons. Fix in-scope gaps
-and selected improvements. Record deferred gaps and opportunities in the
-project's maintained TODO, including those whose benefit or feasibility is
-unverified: validation is itself a task. State their impact, uncertainty,
-validation criterion, deferral reason and reopening condition. Reconsider as
-implementation reveals new information or later work touches these opportunities.
-Keep this proportional to the current work.
-
-List each concern and opportunity in the PR's *Found along the way* section
-as you find it, with its disposition and reason, and summarize them when
-handing back work; when none were found, one line naming the assessed scope
-suffices. This does not replace amendment or DCR explanations.
+1. Settle the direction with the owner (Owner decisions).
+2. Implement, change the tree and validate on a draft pull request. Examine
+   responsibilities, interfaces, representations and affected consumers for
+   design gaps and clear opportunities for a better design, even when the
+   current design is valid. Fix in-scope gaps and selected improvements;
+   record deferred ones in the maintained TODO with impact, uncertainty,
+   validation criterion and reopening condition, proportional to the work.
+   List each in the pull request with its disposition (fixed, deferred or
+   declined) and reason, so the owner sees it.
+3. At completion, run DCR once, or the project's review that includes it.
+   Fix every finding, including those that change the tree or another
+   approved artifact; a fix that changes a decision becomes a ledger entry,
+   and one that changes the agreed scope goes into the handoff's status.
+   Review again only a fix that became a ledger entry or rewrote logic or
+   behavior beyond a local repair, and only what it touched; recheck other
+   fixes yourself and list them at handoff.
+4. Hand off (Owner decisions). The owner rules on every open card.
+5. Write the log entry, mark ready once the readiness check and the project's
+   CI pass, and leave the merge to the project's merge rules.
 
 ## Design Correspondence Review (DCR)
 
-Run the bidirectional review below when asked for `dcr` and at Workflow step 2,
-before submitting the completed work for owner ruling. Amendments are review
-inputs at this point, not a reason to refuse DCR. Opening a Draft PR or
-publishing intermediate progress needs no review. A task without proposed
-tree changes still needs DCR before completion. Where the project's completion
-review includes these checks, running it is the DCR; no second DCR is required
-just to apply the exact reviewed and approved revision.
+A separate, read-only reviewer that did not implement the change, normally a
+small or mid-sized model with bounded inputs, reads the actual artifacts and
+reports scope, revision, findings, evidence and uncertainty. It applies the
+design checks G1–G3 and the correspondence checks DC1–DC4 below to the tree
+diff, the complete work diff and the relevant existing nodes and ancestors.
+A task without tree changes still gets DCR at completion. DCR approves
+nothing.
 
-Use a separate, read-only reviewer that did not implement the change,
-normally a small or mid-sized model with bounded inputs. It reads actual
-artifacts and reports scope, revision, findings, evidence, and uncertainty.
+### Design checks
 
-Route each finding by what resolving it would change. A finding whose
-resolution would change a design decision or amendment, a specification
-rule, or the agreed scope goes to the owner with the primary agent's
-assessment and recommended response, and waits for direction, including
-during unattended work. Fix every other
-finding (form, wording, a broken reference, missing evidence or coverage),
-recheck the affected items and report it. DCR never authorizes a tree change.
+G1. Decision test. Check each added or changed node against the node format
+and leanness filters. Report descriptions without decisions, circular refusal
+reasons, and choices or grounds that require the source record to understand.
 
-Before awaiting owner input, give a self-contained handoff in the owner's
-language. Lead with one decision card per amendment and per finding awaiting
-direction, laid out as the project's handoff procedure prescribes (in
-Whitefoot, the owner-handoff skill), naming the node, the current and proposed
-decision, and the recommended ruling with its reason. Report the DCR revision
-and scope and the findings fixed; say when none were found within scope. Links
-and amendment counts support this account but do not replace it. A clean DCR
-does not approve the proposals or make the Draft PR ready. Recheck affected
-items after directed changes, reusing unaffected review. Tests and merge rules
-belong to the project.
-
-## Lint
-
-Use project structural validation. The bundled `lint.py` checks form, not
-design quality. Its layout has one root node file and optional child
-directory per concept, with `amendments/` and `log.md` beside the roots.
-Supply the project's paths, live concept names, and review base; amendments
-may propose new concepts. When the live tree differs from the base, the
-newest log entry must itself be new, name every changed node, and contain a
-nonempty `Owner-approved:` field; pending amendments need no log entry.
-The field records an assertion; lint cannot authenticate the owner's approval.
-An explicit `--base` must resolve to a commit or lint fails. Omitting it checks
-form only, without checking tree changes against a prior revision. A CI caller
-must choose a base that exposes the changes under review; for a main push,
-comparing the updated main ref with itself checks no changes.
-
-    python3 -B <skill-directory>/lint.py --root <design-directory> --trees <concept-name> --base <review-base>
-
-In Whitefoot, `make design-lint` checks form during draft work. The separate
-`make design-ready` uses `--require-no-amendments` and fails if
-`design/amendments/` exists, even empty. CI runs this readiness check on
-pull requests that are ready for review and on main
-(`.github/workflows/design-readiness.yml`); a draft shows it skipped, so
-pending proposals never turn draft CI red. It must pass before the PR
-becomes ready.
-
-## Design checks
-
-Use these during discussion and DCR; discussion needs neither finished
-implementation nor an independent gate at every exchange.
-
-G1. Decision test. Check each added or changed node or amendment against
-the node format and leanness filters. Report descriptions without decisions,
-circular refusal reasons, and choices or grounds that require the source
-record to understand.
-
-G2. Consistency scan. Check changed nodes and amendments against ancestors
-and siblings, extending to related decisions as needed. A change governing a
-whole concept requires reading its subtree. Report nodes read and conflicts,
-narrowings, or broken dependencies, naming both sides.
+G2. Consistency scan. Check changed nodes against ancestors and siblings,
+extending to related decisions as needed. A change governing a whole concept
+requires reading its subtree. Report nodes read and conflicts, narrowings, or
+broken dependencies, naming both sides.
 
 G3. Architectural fit. Check that structural choices received the Workflow
 assessment when made or revised, and that the result is visible to the owner.
 Report concrete gaps or clear improvement opportunities left without an
-assessment or disposition, including deferred opportunities or their validation
-missing from the maintained TODO. Do not demand speculative generality or
-reconstruct a missing rationale after coding.
+assessment or disposition, including deferred opportunities or their
+validation missing from the maintained TODO. Do not demand speculative
+generality or reconstruct a missing rationale after coding.
 
-## Correspondence: design and implementation
+### Correspondence: design and implementation
 
 Inputs: the agreed delivery scope, its design commitments including relevant
-existing nodes and ancestors, proposed revisions, the complete work diff,
-resulting artifacts, and validation. Do not limit review to the tree diff.
-Here, code means whichever artifact implements a decision, including a
-specification or configuration. Extend into affected consumers as needed.
+existing nodes and ancestors, the complete work diff, resulting artifacts, and
+validation. Here, code means whichever artifact implements a decision,
+including a specification or configuration. Extend into affected consumers as
+needed.
 
 DC1. Decisions in code. For each changed region embodying a design choice,
-name its node or amendment. Report unrecorded choices as missing amendments;
+name its node. Report a choice with no node as a missing tree change;
 ordinary implementation steps need no record.
 
 DC2. Contradiction. Report code that contradicts a decision or implements a
-refused alternative, naming any amendment proposing that change. Without an
-amendment it is drift.
+refused alternative without a tree change that replaces the decision.
 
 DC3. Orphaned support. For deleted code, identify decisions that lose their
 implementation. Report a retired approach missing its rejection rationale,
 and rejected approaches still implemented.
 
 DC4. Missing or partial implementation. For each design commitment in scope,
-including existing nodes and pending revisions, identify support for its
-required behavior and conditions. Report missing or partial paths,
-placeholders, and insufficient evidence; a related function alone is not
-proof of completion. Exclude unrelated or explicitly deferred designs unless
-the deferral contradicts the agreed scope or completion claim.
+identify support for its required behavior and conditions. Report missing or
+partial paths, placeholders, and insufficient evidence; a related function
+alone is not proof of completion. Exclude unrelated or explicitly deferred
+designs unless the deferral contradicts the agreed scope or completion claim.
+
+## Lint
+
+`lint.py` checks form, not design quality. Its layout has one root node file
+and optional child directory per concept, with `log.md` beside the roots.
+
+    python3 -B <skill-directory>/lint.py --root <design-directory> --trees <concept> ... [--base <base>] [--require-approval]
+
+Without `--base` it checks form only. With `--base` it also prints node count,
+depth and decision counts against the base, which a tree review reports. With
+`--require-approval` it is the readiness check: when the tree differs from the
+base, the newest log entry must be new, name every changed node and carry a
+nonempty `Owner-approved:`. The field is an assertion that lint cannot
+authenticate; the owner reads the log before merging. A `--base` must resolve
+to a commit, and a caller must choose one that exposes the changes under
+review: for a push to the main line, the revision before the push.
 
 ## Translation: run on request
 

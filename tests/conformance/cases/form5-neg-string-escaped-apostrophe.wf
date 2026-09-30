@@ -1,0 +1,9 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+const text: Array<u8, 1> = "\'";
+
+fn main() -> status: ExitStatus pure {
+  doc "A STRING escapes its own quote only; an apostrophe is written raw [FORM-5].";
+  return exit_status(code: 0_u8);
+}

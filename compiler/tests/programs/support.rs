@@ -17,7 +17,7 @@ use whitefoot::{
 };
 
 use crate::support::{CLANG, COMPILE_ARGUMENTS, LINK_LIBRARIES, append_runtime_objects};
-pub(super) use crate::support::{ProgramChild, run_command};
+pub(super) use crate::support::{ProgramChild, output_within, run_command};
 
 static NEXT_EXECUTION: AtomicU64 = AtomicU64::new(0);
 
@@ -71,14 +71,12 @@ fn owned_children_capture_both_channels_and_enforce_their_deadline() {
     assert_eq!(output.status.code(), Some(7));
     assert_eq!(output.stdout, b"out");
     assert_eq!(output.stderr, b"err");
-    let mut command = Command::new("/bin/sh");
-    command.args(["-c", "exec sleep 30"]);
-    let child = ProgramChild::spawn_with_limit(&mut command, Duration::from_millis(50))
-        .expect("spawn deadline control");
     let started = Instant::now();
-    let error = child
-        .wait_with_output()
-        .expect_err("deadline must stop the child");
+    let error = output_within(
+        Command::new("/bin/sh").args(["-c", "exec sleep 30"]),
+        Duration::from_millis(50),
+    )
+    .expect_err("deadline must stop the child");
     assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
     assert!(started.elapsed() < Duration::from_secs(2));
 }
@@ -225,7 +223,7 @@ fn try_compile_programs_with_overlap_mode(
 }
 
 /// Compiles one corpus program with the [PAR-1 candidate] overlap lowering
-/// switched on without scalar-leaf suppression (`--par-scalar-leaf-limit off`).
+/// switched on with every permitted call offered (`--par-call-grain off`).
 ///
 /// [`compile_program`] is the shipped default and hands nothing out, so a case
 /// about actualization has to name this entry. The two differ in the emitted
@@ -247,9 +245,9 @@ pub fn compile_programs_with_overlap(names: &[&str]) -> whitefoot::LlvmModule {
 
 /// Compiles named sources with the ordinary `whitefootc --par` policy.
 ///
-/// The CLI suppresses eligible scalar leaves of at most 16 operations, unlike
-/// [`compile_programs_with_overlap`], which intentionally actualizes every
-/// eligible group for tests of the general lowering path.
+/// The CLI offers a call only when its callee reaches recursion or the work
+/// unit, unlike [`compile_programs_with_overlap`], which intentionally
+/// actualizes every eligible group for tests of the general lowering path.
 pub fn compile_sources_with_cli_parallel_defaults(
     sources: &[(&str, &[u8])],
 ) -> whitefoot::LlvmModule {
@@ -261,9 +259,7 @@ pub fn compile_sources_with_cli_parallel_defaults(
         compile_with_overlap(
             &inputs,
             CompilerLimits::default(),
-            OverlapLowering::OnWithoutSmallScalarLeaves {
-                maximum_operations: 16,
-            },
+            OverlapLowering::OnWithCallGrain,
         )
         .expect("integration sources must compile")
     })
@@ -592,6 +588,55 @@ impl CompiledProgram {
             .expect("input writer thread")
             .expect("fill input pipe");
         output
+    }
+
+    /// Runs the program with its standard input and its standard output both
+    /// one pipe, so what it writes it can read back, under the given runtime
+    /// settings. The program is the pipe's only reader and only writer.
+    pub fn run_with_own_pipe(&self, settings: &[(&str, &str)]) -> Output {
+        let (reader, writer) = std::io::pipe().expect("create the program's pipe");
+        let mut command = Command::new(&self.executable);
+        command
+            .current_dir(&self.directory)
+            .stdin(Stdio::from(reader))
+            .stdout(Stdio::from(writer))
+            .stderr(Stdio::piped())
+            .env_remove("WF_IO_NO_NATIVE_RING")
+            .env_remove("WF_DRIVERS");
+        for (name, value) in settings {
+            command.env(name, value);
+        }
+        ProgramChild::spawn(&mut command)
+            .expect("spawn own-pipe program")
+            .wait_with_output()
+            .expect("finish own-pipe program")
+    }
+
+    /// Runs the program with its standard input a regular file holding
+    /// `bytes`, under the given runtime settings.
+    pub fn run_with_file_input_and_settings(
+        &self,
+        bytes: &[u8],
+        settings: &[(&str, &str)],
+    ) -> Output {
+        let path = self.directory.join("standard-input");
+        std::fs::write(&path, bytes).expect("write the input fixture");
+        let file = std::fs::File::open(&path).expect("open the input fixture");
+        let mut command = Command::new(&self.executable);
+        command
+            .current_dir(&self.directory)
+            .stdin(Stdio::from(file))
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .env_remove("WF_IO_NO_NATIVE_RING")
+            .env_remove("WF_DRIVERS");
+        for (name, value) in settings {
+            command.env(name, value);
+        }
+        ProgramChild::spawn(&mut command)
+            .expect("spawn file-input program")
+            .wait_with_output()
+            .expect("finish file-input program")
     }
 
     /// Runs the program with its standard input redirected from a regular

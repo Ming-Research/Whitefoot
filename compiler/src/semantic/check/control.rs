@@ -5,6 +5,7 @@ use crate::semantic::check::TypeContext;
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 
+mod atomic;
 mod commit;
 mod loops;
 mod matches;
@@ -24,6 +25,7 @@ use super::super::model::{
 use super::references::{InvalidationEvent, REF3_RETURN_AN_INDEX, ReferenceInfo};
 use super::{CheckStop, Checker, EffectSet, LocalBinding};
 use crate::semantic::places::PlaceRoot;
+pub(super) use atomic::SHARE2_WAIT_OUTSIDE_THE_BLOCK;
 pub(super) use commit::CommitReadOut;
 use loops::{BreakState, LoopContext};
 
@@ -461,6 +463,7 @@ impl<'unit> Checker<'_, 'unit> {
                 self.check_counted_range(context, node, bindings, counters, scope)
             }
             Production::BreakStmt => self.types.check_break(check_context, node, bindings, scope),
+            Production::AtomicStmt => self.check_atomic(context, node, bindings, counters, scope),
             _ => Err(SemanticCompilerFailure::InvalidCanonicalTree.into()),
         }
     }

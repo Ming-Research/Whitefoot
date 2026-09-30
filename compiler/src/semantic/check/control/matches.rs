@@ -340,31 +340,17 @@ impl<'unit> Checker<'_, 'unit> {
         self.check_conditional(context, node, bindings, counters, scope, value_delivery)
     }
 
-    /// The conditional body shared by both forms.
-    ///
-    /// `opens_delivery` is not "this is a `value_if`": [GIVE-1] gives an
-    /// else-if chain one delivery set belonging to the chain's binding, so
-    /// only the outermost `value_if` opens the context and every chained one
-    /// contributes to it, exactly as a statement `match` propagates `give`s.
-    fn check_conditional(
+    /// [GRAM-6] the condition judgment of an `if`, which an atomic
+    /// statement's guard takes as well [SHARE-2].
+    pub(super) fn check_condition(
         &mut self,
         context: FunctionContext<'_, '_>,
-        node: NodeId,
+        expression_node: NodeId,
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
-        counters: &mut ControlCounters<'_>,
-        scope: ControlScope<'_>,
-        opens_delivery: bool,
-    ) -> Result<MatchResult, CheckStop> {
-        let FunctionContext { check_context, .. } = context;
-        let value_if = self.types.declarations.tree.production(node)? == Production::ValueIf;
-        let expression_node = self
-            .types
-            .declarations
-            .tree
-            .first_child_with(node, Production::Expr)?
-            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+        loop_depth: usize,
+    ) -> Result<super::super::TypedExpression, CheckStop> {
         let condition =
-            self.check_match_expression(context, expression_node, bindings, scope.loops.len())?;
+            self.check_match_expression(context, expression_node, bindings, loop_depth)?;
         // [TYPE-7] exclusivity, which [GRAM-6] keeps: a condition reached
         // through a holder is the implicit read, and its own `own Bool`
         // judgment forms no rejection. `RequiredReferent::Enum` already
@@ -393,6 +379,34 @@ impl<'unit> Checker<'_, 'unit> {
                 },
             );
         }
+        Ok(condition)
+    }
+
+    /// The conditional body shared by both forms.
+    ///
+    /// `opens_delivery` is not "this is a `value_if`": [GIVE-1] gives an
+    /// else-if chain one delivery set belonging to the chain's binding, so
+    /// only the outermost `value_if` opens the context and every chained one
+    /// contributes to it, exactly as a statement `match` propagates `give`s.
+    fn check_conditional(
+        &mut self,
+        context: FunctionContext<'_, '_>,
+        node: NodeId,
+        bindings: &mut HashMap<DeclarationId, LocalBinding>,
+        counters: &mut ControlCounters<'_>,
+        scope: ControlScope<'_>,
+        opens_delivery: bool,
+    ) -> Result<MatchResult, CheckStop> {
+        let FunctionContext { check_context, .. } = context;
+        let value_if = self.types.declarations.tree.production(node)? == Production::ValueIf;
+        let expression_node = self
+            .types
+            .declarations
+            .tree
+            .first_child_with(node, Production::Expr)?
+            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+        let condition =
+            self.check_condition(context, expression_node, bindings, scope.loops.len())?;
         // The exact owned Bool judgment gives the same non-escaping header
         // boundary as an owned enum match [OWN-6, GRAM-6].
         let blocks = self.types.declarations.tree.conditional_blocks(node)?;
@@ -794,7 +808,7 @@ impl<'unit> Checker<'_, 'unit> {
     /// cross that boundary. A normal edge, `give`, and `break` carry separate
     /// ownership maps, while a delivered reference is accumulated separately
     /// in its [`GiveContext`]; all four must observe the same exit.
-    fn invalidate_control_exits(
+    pub(super) fn invalidate_control_exits(
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         give_states: &mut [HashMap<DeclarationId, LocalBinding>],
         break_states: &mut [BreakState],

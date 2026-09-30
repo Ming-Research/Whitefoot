@@ -1,0 +1,33 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Atom {
+  index: u64;
+  tag: u8;
+}
+
+struct Table {
+  spans: Box<Slots<u32>>;
+}
+
+fn intern(table: &Table, key: u32) -> atom: Atom writes(table) contract {
+  requires table^.spans.inner.len < table^.spans.inner.cap;
+  ensures atom.index < table^.spans.inner.len;
+} {
+  doc "CALL-4: the published relation is over the result field atom.index.";
+  let at = table^.spans.inner.len;
+  place_back(window: &table^.spans.inner, value: key);
+  return Atom(index: at, tag: 0_u8);
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "A write to a sibling field overlaps nothing the relation is supported by [MSR-2, ENT-5], so atom.index keeps its bound after set atom.tag and the subscript discharges.";
+  let spans = box_slots_new::<u32>(capacity: 4_u64);
+  let table = Table(spans: move spans);
+  let atom = intern(table: &table, key: 9_u32);
+  set atom.tag = 5_u8;
+  let span = table.spans.inner[atom.index];
+  let code = cvt.wrap::<u32, u8>(span);
+  let tagged = code +wrap atom.tag;
+  return exit_status(code: tagged);
+}

@@ -246,11 +246,13 @@ promise.wf:8:5: error[FN-9]: UndischargedPostcondition
   mechanical_fix: the postcondition is not proved where this `return` delivers its value: add a `requires` over the parameters the value is computed from, prove the bound before the return with an `invariant` whose `use` steps name the facts it follows from, or state a postcondition the body proves
 ```
 
-An `ensures` is one comparison. One side is an integer result, the integer
-inside an `Ok` result, or the length of storage the function changes. The
-other may also be a parameter, another result, a length or a constant.
-Either side may add a constant. It cannot state more than that, so what a
-function computes beyond such bounds is still read from its body.
+An `ensures` is one comparison. One side is an integer result or an integer
+field of a struct result, the integer inside an `Ok` or `Some` result or a
+field of it, or the length or an integer field of storage the function
+changes. The other may also be a parameter, another result, a length or a
+constant, and an integer may be widened to a larger type to meet the other
+side. Either side may add a constant. It cannot state more than that, so what
+a function computes beyond such bounds is still read from its body.
 
 ## 5. Interfaces
 

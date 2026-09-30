@@ -298,7 +298,9 @@ fn type_holds_heap(
     visited: &mut HashSet<NominalId>,
 ) -> bool {
     match ty {
-        CheckedType::Buffer { .. } | CheckedType::Window { capacity: None, .. } => true,
+        CheckedType::Buffer { .. }
+        | CheckedType::Window { capacity: None, .. }
+        | CheckedType::Segments { .. } => true,
         CheckedType::Array { element, .. } | CheckedType::Window { element, .. } => program
             .elements
             .get(element.index())
@@ -320,6 +322,9 @@ fn type_holds_heap(
                     .iter()
                     .flat_map(|variant| &variant.fields)
                     .any(|field| type_holds_heap(program, field.ty, visited)),
+                Some(CheckedNominalKind::Shared { state }) => {
+                    type_holds_heap(program, *state, visited)
+                }
                 Some(CheckedNominalKind::Opaque) | None => false,
             }
         }

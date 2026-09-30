@@ -13,8 +13,9 @@ use super::super::super::super::goal::{
     EvaluatedValueOccurrence, GoalDatum, GoalExpression, GoalOperation, GoalProjection,
 };
 use super::super::super::super::model::{
-    BindingId, CheckedCallContract, CheckedCallSeparation, CheckedEffectStep, CheckedEffects,
-    CheckedExpression, CheckedMode, CheckedNominalKind, CheckedStatePath, CheckedType,
+    BindingId, CheckedCallContract, CheckedCallSeparation, CheckedCallSeparationPositions,
+    CheckedEffectStep, CheckedEffects, CheckedExpression, CheckedMode, CheckedNominalKind,
+    CheckedStatePath, CheckedType,
 };
 use super::super::super::super::places::{
     CaptureId, CapturedRange, CapturedTerm, CapturedValue, PlaceRoot, PlaceStep, ResolvedPlace,
@@ -240,11 +241,23 @@ impl<'unit> Checker<'_, 'unit> {
                 },
             );
         }
+        // [SHARE-2] an atomic statement's guard and block contain no waiting
+        // call, so the object is never held while its context waits.
+        if signature.waits && self.body.atomic_depth > 0 {
+            return self.types.declarations.issue_node(
+                SemanticRule::Share2,
+                node,
+                SemanticIssueKind::WaitInsideAtomic {
+                    construct: "a waiting call",
+                    mechanical_fix: super::super::super::control::SHARE2_WAIT_OUTSIDE_THE_BLOCK,
+                },
+            );
+        }
         if signature.waits {
             let call = self.types.declarations.tree.path(node)?.clone();
             self.body.waiting.calls.push(call);
-            if self.types.declarations.is_mustpar_marked(node)? {
-                self.check_waiting_mustpar(check_context, node, signature)?;
+            if self.types.declarations.is_spawn(node)? {
+                self.check_spawn(check_context, node, signature)?;
             }
         }
         let target = signature.id;
@@ -277,6 +290,7 @@ impl<'unit> Checker<'_, 'unit> {
         }
         let mut arguments = Vec::with_capacity(fields.len());
         let mut argument_nodes = Vec::with_capacity(fields.len());
+        let mut argument_atoms = Vec::with_capacity(fields.len());
         let mut goal_arguments = Vec::with_capacity(fields.len());
         // [EFF-5] each actual's resolved path set, in parameter order. The set
         // has more than one member only where the actual is a reference a
@@ -435,6 +449,7 @@ impl<'unit> Checker<'_, 'unit> {
                 bindings,
             )?);
             argument_nodes.push(self.types.declarations.tree.path(atom)?.clone());
+            argument_atoms.push(atom);
             actual_paths.push(paths);
             actual_captures.push(
                 self.body.note_capture(
@@ -524,7 +539,9 @@ impl<'unit> Checker<'_, 'unit> {
                 requirements: Vec::new(),
                 result,
                 result_borrow: None,
-                allocation: self.types.allocation_fit_of_call(signature)?,
+                allocation: self
+                    .types
+                    .allocation_fit_of_call(signature, node, &argument_atoms)?,
             },
             mode: result_mode,
             // [REF-3] no call delivers a reference: FN-1 returns owned values
@@ -729,14 +746,40 @@ impl<'unit> Checker<'_, 'unit> {
                 if let Some((positions, window)) =
                     Checker::separable_by_position(&left.place, &right.place)
                 {
+                    // [OWN-7] positions below different range frames are
+                    // relative to those frames. Name the range pair the
+                    // proof actually compares, rather than descendant runs
+                    // whose endpoints can already satisfy the printed repair.
+                    let mut left_diagnostic = left.place.clone();
+                    let mut right_diagnostic = right.place.clone();
+                    if matches!(
+                        positions.first(),
+                        Some(CheckedCallSeparationPositions::Ranges(..))
+                    ) && let Some(depth) = left
+                        .place
+                        .path
+                        .iter()
+                        .zip(&right.place.path)
+                        .position(|(first, second)| {
+                            matches!((first, second), (PlaceStep::Range(_), PlaceStep::Range(_)))
+                                && first != second
+                        })
+                    {
+                        left_diagnostic.path.truncate(depth + 1);
+                        right_diagnostic.path.truncate(depth + 1);
+                    }
                     self.body.call_separations.push(CheckedCallSeparation {
                         site: self.types.declarations.tree.path(node)?.clone(),
                         exchange,
                         reference_use: None,
                         positions,
                         window,
-                        left_spelling: self.types.render_resolved_place(&left.place, bindings)?,
-                        right_spelling: self.types.render_resolved_place(&right.place, bindings)?,
+                        left_spelling: self
+                            .types
+                            .render_resolved_place(&left_diagnostic, bindings)?,
+                        right_spelling: self
+                            .types
+                            .render_resolved_place(&right_diagnostic, bindings)?,
                         one_argument: left.argument == right.argument,
                     });
                     continue;
@@ -903,10 +946,14 @@ impl<'unit> TypeContext<'unit> {
     /// stored type is that cell's and its count is its second argument. The
     /// constant-capacity rows allocate nothing at runtime and the cell row
     /// `box_new` allocates exactly one value, so neither carries the
-    /// obligation.
+    /// obligation. `node` is the call and `atoms` its argument atoms in
+    /// declared order, whose coordinates the record keeps for a target that
+    /// cannot hold the retained bound [STOR-6].
     fn allocation_fit_of_call(
         &self,
         signature: &FunctionSignature,
+        node: NodeId,
+        atoms: &[NodeId],
     ) -> Result<Option<super::super::super::super::model::CheckedAllocationFit>, CheckStop> {
         let (count, cell) = match signature.name.as_str() {
             "box_array_filled" | "box_slots_new" | "box_ring_new" => (0, signature.result),
@@ -936,12 +983,19 @@ impl<'unit> TypeContext<'unit> {
             }
             None => return Err(SemanticCompilerFailure::InvalidResolution.into()),
         };
+        let tree = &self.declarations.tree;
+        let count_atom = atoms
+            .get(count)
+            .copied()
+            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
         Ok(Some(
             super::super::super::super::model::CheckedAllocationFit {
                 cell,
                 element,
                 layout_ceiling,
                 count,
+                site: tree.coordinate(node)?,
+                count_site: tree.coordinate(count_atom)?,
                 source_length_upper_bound: None,
             },
         ))
@@ -1595,7 +1649,7 @@ impl<'unit> DeclarationInventory<'unit> {
     /// [STOR-8] a compilation unit carrying the no-heap declaration cannot
     /// call an allocating prelude row.
     ///
-    /// The five rows the rule names are exactly the allocating [OP-13] and
+    /// The six rows the rule names are exactly the allocating [OP-13] and
     /// [OP-10] records that take a cell from the heap; `slots_new`,
     /// `ring_new` and `array_filled` build frame-resident shapes and are not
     /// among them.

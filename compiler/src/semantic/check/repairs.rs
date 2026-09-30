@@ -24,6 +24,11 @@
 //! whether the consumed place owns its value and, for a cell, on its content,
 //! since those decide which source change can be carried out.
 //!
+//! So do the words of the fix a [STOR-6] target-layout stop carries when the
+//! selected target cannot hold an allocation's proved count bound. That stop
+//! is no rejection [DIAG-1], but it sends the writer to the same count as
+//! [OP-9]'s repair, whose words stand next to it.
+//!
 //! The sentences live here, in one place, so that wording can follow evidence
 //! from agents without touching the judgments that select them.
 
@@ -58,10 +63,15 @@ pub(super) enum GoalTerms {
     /// The goal reads the value one argument has inside the call itself,
     /// which no fact can name [FN-8].
     CallArgument(u32),
-    /// The goal reads a value only its own occurrence identifies, or a range
-    /// formed where it is used: no condition has it as its goal origin and
-    /// no fact names it until a `let` binds it [ENT-2, ENT-3].
+    /// The goal reads a value only its own occurrence identifies, or an
+    /// element of a range formed where it is used: no condition has it as
+    /// its goal origin and no fact names it until a `let` binds it [ENT-2,
+    /// ENT-3].
     Unnamed,
+    /// The goal reads the `len` of a range an argument formed at the call,
+    /// which is the difference of that range's endpoints [REF-4]: the
+    /// requirement bounds that difference.
+    RangeLength,
     /// The goal reads a computed or local value, or an element, which a
     /// condition naming the same admitted expression establishes [ENT-3].
     Computed,
@@ -120,6 +130,8 @@ struct Reads<'a> {
     parameter: bool,
     computed: bool,
     unnamed: bool,
+    /// Some measure read is the `len` of a range formed at the call.
+    range_length: bool,
     argument: Option<u32>,
     /// Some read goes through a reference parameter, which executable code
     /// that repeats it must declare in the row [EFF-2].
@@ -141,6 +153,7 @@ impl<'a> Reads<'a> {
             parameter: false,
             computed: false,
             unnamed: false,
+            range_length: false,
             argument: None,
             referenced: false,
             bindings: Vec::new(),
@@ -244,8 +257,10 @@ impl<'a> Reads<'a> {
                     ..
                 },
             ) => self.datum(datum),
+            // [REF-4] the `len` of a range formed at its use is the
+            // difference of its endpoints, which the repair names.
             GoalExpression::Datum(GoalDatum::Place { projections, .. }) if ranged(projections) => {
-                self.unnamed = true;
+                self.range_length = true;
             }
             _ => self.computed = true,
         }
@@ -258,6 +273,9 @@ impl<'a> Reads<'a> {
                 ..
             } => GoalTerms::CallArgument(argument),
             Self { unnamed: true, .. } => GoalTerms::Unnamed,
+            Self {
+                range_length: true, ..
+            } => GoalTerms::RangeLength,
             Self {
                 parameter: true,
                 computed: false,
@@ -407,6 +425,15 @@ fn collect_definitions(
                 definitions.push(Definition::of(*binder, &[lower, upper], editable));
                 collect_definitions(body, give, editable, definitions);
             }
+            CheckedStatement::Atomic {
+                binding,
+                target,
+                body,
+                ..
+            } => {
+                definitions.push(Definition::of(*binding, &[target], editable));
+                collect_definitions(body, give, editable, definitions);
+            }
             CheckedStatement::Evaluate { .. }
             | CheckedStatement::DropExpression { .. }
             | CheckedStatement::Proof(_)
@@ -448,9 +475,9 @@ fn returned_value<'a>(
         CheckedStatement::Match { arms, .. } | CheckedStatement::ValueMatchLet { arms, .. } => {
             arms.iter().find_map(|arm| returned_value(&arm.body, path))
         }
-        CheckedStatement::Loop { body, .. } | CheckedStatement::CountedRange { body, .. } => {
-            returned_value(body, path)
-        }
+        CheckedStatement::Loop { body, .. }
+        | CheckedStatement::CountedRange { body, .. }
+        | CheckedStatement::Atomic { body, .. } => returned_value(body, path),
         _ => None,
     })
 }
@@ -498,6 +525,49 @@ pub(super) fn is_source_relation(goal: &GoalExpression) -> bool {
         _ => false,
     };
     relation && arguments.iter().all(is_source_atom)
+}
+
+/// The shape of a goal over the `len` of ranges formed at the call: one
+/// comparison whose operands are source atoms or such lengths, so that, with
+/// each length written as its endpoint difference, it is the text of a
+/// condition, or any other goal.
+pub(super) fn range_goal_shape(goal: &GoalExpression) -> RangeGoalShape {
+    let GoalExpression::Operation {
+        row: GoalOperation::Integer { operation, .. },
+        arguments,
+        ..
+    } = goal
+    else {
+        return RangeGoalShape::Other;
+    };
+    let operands = arguments.iter().all(|argument| {
+        is_source_atom(argument)
+            || matches!(
+                argument,
+                GoalExpression::Operation {
+                    row: GoalOperation::ContainerMeasure { .. }
+                        | GoalOperation::ArrayMeasure { .. }
+                        | GoalOperation::BufferMeasure { .. },
+                    arguments,
+                    ..
+                } if matches!(
+                    arguments.as_slice(),
+                    [GoalExpression::Datum(GoalDatum::Place { projections, .. })]
+                        if ranged(projections)
+                )
+            )
+    });
+    match operation {
+        _ if !operands => RangeGoalShape::Other,
+        CheckedIntegerOperation::Equal | CheckedIntegerOperation::NotEqual => {
+            RangeGoalShape::Equality
+        }
+        CheckedIntegerOperation::Less
+        | CheckedIntegerOperation::LessEqual
+        | CheckedIntegerOperation::Greater
+        | CheckedIntegerOperation::GreaterEqual => RangeGoalShape::Comparison,
+        _ => RangeGoalShape::Other,
+    }
 }
 
 fn is_source_atom(expression: &GoalExpression) -> bool {
@@ -634,9 +704,130 @@ impl GoalCase<'_> {
 
 const SKIP: &str = "where skipping it is the intended behavior";
 
-/// [FN-8] an ordinary call's requirement.
-pub(super) fn call_requirement(case: &GoalCase<'_>) -> String {
+/// [REF-4] one range an argument formed at the call whose `len` an unproved
+/// requirement reads, as its repair spells it.
+pub(super) struct RangeLength {
+    /// The range as the instantiated goal spells it.
+    pub(super) range: String,
+    /// Each endpoint's source spelling, and whether it is a literal, const
+    /// or binding, which a relation can name.
+    pub(super) start: (String, bool),
+    pub(super) end: (String, bool),
+    /// The goal with each such `len` written as its endpoint difference.
+    pub(super) difference_goal: Option<String>,
+}
+
+impl RangeLength {
+    /// The range's length in source terms: its end when it starts at zero,
+    /// otherwise the exact difference of its endpoints [REF-4].
+    fn difference(&self) -> String {
+        if self.start.0 == "0_u64" {
+            self.end.0.clone()
+        } else {
+            format!("{} - {}", self.end.0, self.start.0)
+        }
+    }
+}
+
+/// The shape of an unproved goal over range lengths, which selects the
+/// route its repair can carry out.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum RangeGoalShape {
+    /// One ordering or equality whose operands are atoms or such lengths:
+    /// written with each length as its difference, it is a condition.
+    Comparison,
+    /// One `==` or `!=` of that shape. With a length that is the difference
+    /// of two distinct endpoints it has no difference-bound form [ENT-4].
+    Equality,
+    /// Any other goal.
+    Other,
+}
+
+/// [FN-8, REF-4] an unproved requirement over the `len` of ranges formed at
+/// the call. Each length is the difference of its endpoints, so the
+/// requirement bounds that difference; the routes name it, and ask for it
+/// computed with the exact subtraction, because a `-wrap` difference is a
+/// fresh value no relation ties to the endpoints [ENT-3].
+fn range_length_routes(
+    case: &GoalCase<'_>,
+    ranges: &[RangeLength],
+    shape: RangeGoalShape,
+) -> String {
+    let bind = "or bind the range with one preceding `let`, use the binding in the call, and establish the relation over the binding";
+    let wrap = "a `-wrap` difference carries no relation to the range's length";
+    // An endpoint no relation names: a field or element read, say. Its
+    // range's length is a difference of values no fact names until a `let`
+    // binds each of them.
+    if let Some(range) = ranges.iter().find(|range| !range.start.1 || !range.end.1) {
+        let unnamed = [&range.start, &range.end]
+            .into_iter()
+            .filter(|endpoint| !endpoint.1)
+            .map(|endpoint| format!("`{}`", endpoint.0))
+            .collect::<Vec<_>>();
+        let (subject, pronoun) = if unnamed.len() == 1 {
+            (
+                format!("endpoint {} is not a binding", unnamed.join("")),
+                "it",
+            )
+        } else {
+            (
+                format!("endpoints {} are not bindings", unnamed.join(" and ")),
+                "each",
+            )
+        };
+        return format!(
+            "`{}.len` is the difference of its endpoints [REF-4], and its {subject}, so no fact names that difference: copy {pronoun} into a `let` binding before the call and form the range from the bindings, then, where the start is at most the end, bind the difference of the bindings with the exact `-` ({wrap}) and establish the requirement over it",
+            range.range,
+        );
+    }
+    let lengths = ranges
+        .iter()
+        .map(|range| format!("`{}.len` is `{}`", range.range, range.difference()))
+        .collect::<Vec<_>>()
+        .join(" and ");
+    let goal = ranges
+        .first()
+        .and_then(|range| range.difference_goal.as_deref())
+        .unwrap_or(case.text);
+    let subtracted = ranges
+        .iter()
+        .filter(|range| range.start.0 != "0_u64")
+        .collect::<Vec<_>>();
+    match (shape, subtracted.as_slice()) {
+        (RangeGoalShape::Comparison | RangeGoalShape::Equality, []) => format!(
+            "{lengths} [REF-4], so this call needs `{goal}`: guard the call with `if {goal}` {SKIP}; {bind}"
+        ),
+        (RangeGoalShape::Equality, [range, ..]) => format!(
+            "{lengths} [REF-4], so this call needs `{goal}`, and an equality over the difference of two distinct endpoints has no difference-bound form [ENT-4]: where the start is at most the end, bind each such difference with the exact `-`, as `let width = {};` ({wrap}), bind its range with one preceding `let`, as `let part = &{};`, and pass `&part^[0_u64..width]` in its place, whose length is `width` itself; then establish the requirement over those bindings",
+            range.difference(),
+            range.range,
+        ),
+        (RangeGoalShape::Comparison, [range]) => {
+            let difference = range.difference();
+            let guarded = goal.replacen(&difference, "width", 1);
+            format!(
+                "{lengths} [REF-4], so this call needs `{goal}`: where `{} <= {}` holds, bind the difference with the exact `-`, `let width = {difference};` ({wrap}), and guard the call with `if {guarded}` {SKIP}; {bind}",
+                range.start.0, range.end.0,
+            )
+        }
+        _ => format!(
+            "{lengths} [REF-4], so this call needs `{goal}`: where each start is at most its end, bind each difference with the exact `-` ({wrap}) and establish the requirement over those bindings before the call; {bind}"
+        ),
+    }
+}
+
+/// [FN-8] an ordinary call's requirement. `ranges` are the ranges formed at
+/// the call whose `len` the goal reads, and `shape` is the goal's shape
+/// over them.
+pub(super) fn call_requirement(
+    case: &GoalCase<'_>,
+    ranges: &[RangeLength],
+    shape: RangeGoalShape,
+) -> String {
     match (case.disposition, case.terms) {
+        (Disposition::Unproved, GoalTerms::RangeLength) if !ranges.is_empty() => {
+            range_length_routes(case, ranges, shape)
+        }
         (Disposition::Refuted, _) => format!(
             "`{}` is false for the values that reach this call, so no fact can establish it here: pass arguments that satisfy it, or change the statements or requirements that fix those values",
             case.text
@@ -644,12 +835,51 @@ pub(super) fn call_requirement(case: &GoalCase<'_>) -> String {
         (Disposition::Unproved, GoalTerms::CallArgument(argument)) => format!(
             "argument #{argument} is evaluated inside the call, where no fact names its value: bind it with one preceding `let`, establish the requirement over that binding, and pass the binding, borrowing it when the parameter is a reference"
         ),
-        (Disposition::Unproved, GoalTerms::Unnamed) => case.unnamed_route("call"),
+        (Disposition::Unproved, GoalTerms::Unnamed | GoalTerms::RangeLength) => {
+            case.unnamed_route("call")
+        }
         (Disposition::Unproved, GoalTerms::Parameters) => case.parameter_routes("call", SKIP),
         (Disposition::Unproved, GoalTerms::Computed) => format!(
             "`{}` is not proved before this call: {}",
             case.text,
             case.computed_routes("call", SKIP)
+        ),
+    }
+}
+
+/// [TYPE-11] a construction's type invariant over its field operands.
+pub(super) fn construction_invariant(case: &GoalCase<'_>) -> String {
+    match case.disposition {
+        Disposition::Refuted => format!(
+            "`{}` is false for the operands this construction receives: construct the value from operands that satisfy it, or change the statements that fix those operands",
+            case.text
+        ),
+        Disposition::Unproved => format!(
+            "`{}` is not proved before this construction: establish it over the operands first, with a `requires`, an `if` or an `invariant` over the locals they are read from, and then construct the value",
+            case.text
+        ),
+    }
+}
+
+/// [TYPE-11] a type invariant a `const` initializer's construction owes,
+/// which its written field values decide exactly.
+pub(super) fn constant_construction_invariant(text: &str) -> String {
+    format!(
+        "`{text}` is false for the field values this constant writes: write values that satisfy it, or declare the constant with a struct that states no such invariant"
+    )
+}
+
+/// [TYPE-11] a type invariant of an object's state at an edge that leaves
+/// an atomic block.
+pub(super) fn atomic_exit_invariant(case: &GoalCase<'_>) -> String {
+    match case.disposition {
+        Disposition::Refuted => format!(
+            "`{}` is false where the block leaves the object's state: restore it before this edge, or leave the block where it holds",
+            case.text
+        ),
+        Disposition::Unproved => format!(
+            "`{}` is not proved where the block leaves the object's state: restore it before this edge, writing the fields it relates so the block shows it holds, or prove it with an `invariant` whose `use` steps name the facts it follows from",
+            case.text
         ),
     }
 }
@@ -666,6 +896,19 @@ pub(super) fn postcondition(disposition: Disposition, called: bool) -> &'static 
         }
         (Disposition::Unproved, false) => {
             "the postcondition is not proved where this `return` delivers its value: add a `requires` over the parameters the value is computed from, prove the bound before the return with an `invariant` whose `use` steps name the facts it follows from, or state a postcondition the body proves"
+        }
+    }
+}
+
+/// [FN-9, ERR-3] a relation at a propagated error exit, which returns the
+/// propagated outcome with the state the body has reached there.
+pub(super) fn propagated_postcondition(disposition: Disposition) -> &'static str {
+    match disposition {
+        Disposition::Refuted => {
+            "the state this `propagate` leaves the function with makes the postcondition false: restore the places it relates before the `propagate`, or state a postcondition every exit satisfies"
+        }
+        Disposition::Unproved => {
+            "the postcondition is not proved where this `propagate` leaves the function: establish it before the `propagate`, writing the places it relates or proving it with an `invariant` whose `use` steps name the facts it follows from, or state a postcondition every exit satisfies"
         }
     }
 }
@@ -689,7 +932,10 @@ pub(super) fn integer_domain(case: &GoalCase<'_>, forms: Option<&str>) -> String
         (Disposition::Unproved, GoalTerms::Parameters) => {
             format!("{}{total}", case.parameter_routes("operation", SKIP))
         }
-        (Disposition::Unproved, GoalTerms::Unnamed | GoalTerms::CallArgument(_)) => {
+        (
+            Disposition::Unproved,
+            GoalTerms::Unnamed | GoalTerms::RangeLength | GoalTerms::CallArgument(_),
+        ) => {
             format!("{}{total}", case.unnamed_route("operation"))
         }
         (Disposition::Unproved, GoalTerms::Computed) => format!(
@@ -719,7 +965,10 @@ pub(super) fn conversion_domain(
                 case.parameter_routes("conversion", SKIP)
             )
         }
-        (Disposition::Unproved, GoalTerms::Unnamed | GoalTerms::CallArgument(_)) => {
+        (
+            Disposition::Unproved,
+            GoalTerms::Unnamed | GoalTerms::RangeLength | GoalTerms::CallArgument(_),
+        ) => {
             format!("{}; or {fallible}", case.unnamed_route("conversion"))
         }
         (Disposition::Unproved, _) if integer_source => format!(
@@ -744,9 +993,10 @@ pub(super) fn bounds(case: &GoalCase<'_>, constant_offset: bool) -> String {
             refuted_index(constant_offset, false)
         ),
         (Disposition::Unproved, GoalTerms::Parameters) => case.parameter_routes("access", SKIP),
-        (Disposition::Unproved, GoalTerms::Unnamed | GoalTerms::CallArgument(_)) => {
-            case.unnamed_route("access")
-        }
+        (
+            Disposition::Unproved,
+            GoalTerms::Unnamed | GoalTerms::RangeLength | GoalTerms::CallArgument(_),
+        ) => case.unnamed_route("access"),
         (Disposition::Unproved, GoalTerms::Computed) => format!(
             "`{}` is not proved here: {}",
             case.text,
@@ -816,7 +1066,10 @@ pub(super) fn allocation_fit(case: &GoalCase<'_>) -> String {
             "with N the largest count the program needs, add `requires {count} <= N;` to the `contract` of `{}`, which each caller then establishes; or {guard}. {limit}",
             case.function
         ),
-        (Disposition::Unproved, GoalTerms::Unnamed | GoalTerms::CallArgument(_)) => format!(
+        (
+            Disposition::Unproved,
+            GoalTerms::Unnamed | GoalTerms::RangeLength | GoalTerms::CallArgument(_),
+        ) => format!(
             "`{count}` reads a value no fact can name until a `let` binds it: bind that value with one preceding `let`, use the binding in the allocation, and bound the binding by the largest count the program needs. {limit}"
         ),
         (Disposition::Unproved, GoalTerms::Computed) => {
@@ -832,6 +1085,20 @@ pub(super) fn allocation_fit(case: &GoalCase<'_>) -> String {
     }
 }
 
+/// [STOR-6] the fix a target-layout stop carries when an allocating call's
+/// retained count bound exceeds the largest count the selected target
+/// admits. The stop is no rejection and cites no rule [DIAG-1], but its words
+/// live beside [OP-9]'s because both send the writer to the same count: the
+/// target qualifies the bound the checked program proves, so the fix is a
+/// tighter proof where the count is computed. Target qualification does not
+/// know what the count reads, so the sentence offers each form that bounds
+/// it; `limit` is the largest count the target admits.
+pub(crate) fn target_allocation_count(count: &str, limit: u64) -> String {
+    format!(
+        "with N the largest count the program needs, at most {limit}, bound `{count}` by N before this call: add `requires {count} <= N;` to the `contract` of the function whose parameter it is, which each caller then establishes; state the bound in the `ensures` of the function whose result it is; or guard the allocation with `if {count} <= N` where refusing a larger count is the intended behavior"
+    )
+}
+
 /// [REF-4] one range-formation conjunct.
 pub(super) fn range_formation(case: &GoalCase<'_>) -> String {
     match (case.disposition, case.terms) {
@@ -840,9 +1107,10 @@ pub(super) fn range_formation(case: &GoalCase<'_>) -> String {
             case.text
         ),
         (Disposition::Unproved, GoalTerms::Parameters) => case.parameter_routes("range", SKIP),
-        (Disposition::Unproved, GoalTerms::Unnamed | GoalTerms::CallArgument(_)) => {
-            case.unnamed_route("range")
-        }
+        (
+            Disposition::Unproved,
+            GoalTerms::Unnamed | GoalTerms::RangeLength | GoalTerms::CallArgument(_),
+        ) => case.unnamed_route("range"),
         (Disposition::Unproved, GoalTerms::Computed) => format!(
             "`{}` is not proved here: {}",
             case.text,

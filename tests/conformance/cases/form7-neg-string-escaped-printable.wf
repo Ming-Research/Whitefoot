@@ -1,0 +1,9 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+const text: Array<u8, 1> = "\u{41}";
+
+fn main() -> status: ExitStatus pure {
+  doc "Inside a STRING a printable ASCII character is written as its raw byte [FORM-7].";
+  return exit_status(code: 0_u8);
+}

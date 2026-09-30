@@ -1,0 +1,831 @@
+alias AcceptedConnection = std::net::AcceptedConnection;
+alias ExitStatus = std::process::ExitStatus;
+alias HandleFactory = std::io::HandleFactory;
+alias HashMap = std::collections::hash_map::HashMap;
+alias HashMapKey = std::collections::hash_map::HashMapKey;
+alias Inputs = std::process::Inputs;
+alias IoError = std::io::IoError;
+alias TcpConnection = std::net::TcpConnection;
+alias TcpSend = std::net::TcpSend;
+alias arg_get = std::text::arg_get;
+alias args_count = std::text::args_count;
+alias close_directory = std::fs::close_directory;
+alias close_listener = std::net::close_listener;
+alias close_receive = std::net::close_receive;
+alias close_send = std::net::close_send;
+alias exit_status = std::process::exit_status;
+alias factory_share = std::io::factory_share;
+alias hash_map_edit = std::collections::hash_map::hash_map_edit;
+alias hash_map_lookup = std::collections::hash_map::hash_map_lookup;
+alias hash_map_new = std::collections::hash_map::hash_map_new;
+alias hash_map_put = std::collections::hash_map::hash_map_put;
+alias hash_map_remove = std::collections::hash_map::hash_map_remove;
+alias host_copy_utf8 = std::text::host_copy_utf8;
+alias receive_next = std::net::receive_next;
+alias send_once = std::net::send_once;
+alias socket_address_v4 = std::net::socket_address_v4;
+alias tcp_accept = std::net::tcp_accept;
+alias tcp_listen = std::net::tcp_listen;
+
+const word_ping: Array<u8, 4> =[80_u8, 73_u8, 78_u8, 71_u8];
+
+const word_set: Array<u8, 3> =[83_u8, 69_u8, 84_u8];
+
+const word_get: Array<u8, 3> =[71_u8, 69_u8, 84_u8];
+
+const word_del: Array<u8, 3> =[68_u8, 69_u8, 76_u8];
+
+const word_incr: Array<u8, 4> =[73_u8, 78_u8, 67_u8, 82_u8];
+
+const reply_pong: Array<u8, 7> =[43_u8, 80_u8, 79_u8, 78_u8, 71_u8, 13_u8, 10_u8];
+
+const reply_ok: Array<u8, 5> =[43_u8, 79_u8, 75_u8, 13_u8, 10_u8];
+
+const reply_nil: Array<u8, 5> =[36_u8, 45_u8, 49_u8, 13_u8, 10_u8];
+
+const reply_crlf: Array<u8, 2> =[13_u8, 10_u8];
+
+const reply_unknown: Array<u8, 22> =[45_u8, 69_u8, 82_u8, 82_u8, 32_u8, 117_u8, 110_u8, 107_u8, 110_u8, 111_u8, 119_u8, 110_u8, 32_u8, 99_u8, 111_u8, 109_u8, 109_u8, 97_u8, 110_u8, 100_u8, 13_u8, 10_u8];
+
+const reply_arguments: Array<u8, 32> =[45_u8, 69_u8, 82_u8, 82_u8, 32_u8, 119_u8, 114_u8, 111_u8, 110_u8, 103_u8, 32_u8, 110_u8, 117_u8, 109_u8, 98_u8, 101_u8, 114_u8, 32_u8, 111_u8, 102_u8, 32_u8, 97_u8, 114_u8, 103_u8, 117_u8, 109_u8, 101_u8, 110_u8, 116_u8, 115_u8, 13_u8, 10_u8];
+
+const reply_integer: Array<u8, 46> =[45_u8, 69_u8, 82_u8, 82_u8, 32_u8, 118_u8, 97_u8, 108_u8, 117_u8, 101_u8, 32_u8, 105_u8, 115_u8, 32_u8, 110_u8, 111_u8, 116_u8, 32_u8, 97_u8, 110_u8, 32_u8, 105_u8, 110_u8, 116_u8, 101_u8, 103_u8, 101_u8, 114_u8, 32_u8, 111_u8, 114_u8, 32_u8, 111_u8, 117_u8, 116_u8, 32_u8, 111_u8, 102_u8, 32_u8, 114_u8, 97_u8, 110_u8, 103_u8, 101_u8, 13_u8, 10_u8];
+
+const reply_long: Array<u8, 44> =[45_u8, 69_u8, 82_u8, 82_u8, 32_u8, 107_u8, 101_u8, 121_u8, 32_u8, 111_u8, 114_u8, 32_u8, 118_u8, 97_u8, 108_u8, 117_u8, 101_u8, 32_u8, 116_u8, 111_u8, 111_u8, 32_u8, 108_u8, 111_u8, 110_u8, 103_u8, 32_u8, 102_u8, 111_u8, 114_u8, 32_u8, 116_u8, 104_u8, 105_u8, 115_u8, 32_u8, 115_u8, 101_u8, 114_u8, 118_u8, 101_u8, 114_u8, 13_u8, 10_u8];
+
+const reply_full: Array<u8, 20> =[45_u8, 69_u8, 82_u8, 82_u8, 32_u8, 107_u8, 101_u8, 121_u8, 115_u8, 112_u8, 97_u8, 99_u8, 101_u8, 32_u8, 102_u8, 117_u8, 108_u8, 108_u8, 13_u8, 10_u8];
+
+struct Key {
+  bytes: Array<u8, 48>;
+  length: u64;
+}
+
+struct KeyEnv {
+  seed: u64;
+}
+
+struct Store {
+  map: HashMap<Key, Box<Slots<u8>>, 4194304>;
+}
+
+struct Copied {
+  bytes: Array<u8, 1024>;
+  length: u64;
+}
+
+struct Counted {
+  value: u64;
+}
+
+struct Number {
+  value: u64;
+  next: u64;
+  state: u64;
+}
+
+struct Command {
+  state: u64;
+  count: u64;
+  next: u64;
+  first_start: u64;
+  first_length: u64;
+  second_start: u64;
+  second_length: u64;
+  third_start: u64;
+  third_length: u64;
+}
+
+fn byte_at(input: &[u8], index: u64) -> result: u8 reads(input) {
+  doc "Reads one byte, or zero at a position the range does not hold.";
+  if index < input^.len {
+    let value = input^[index];
+    return value;
+  }
+  return 0_u8;
+}
+
+fn put_byte(output: &[u8], at: u64, value: u8) -> result: u64 writes(output) {
+  doc "Writes one byte at a position and returns the position after it; a position the range does not hold keeps the byte out.";
+  if at < output^.len {
+    set output^[at] = value;
+    let after = at +wrap 1_u64;
+    return after;
+  }
+  return at;
+}
+
+fn put_word(output: &[u8], at: u64, word: &[u8]) -> result: u64 reads(word), writes(output) {
+  doc "Writes every byte of a constant word from a position and returns the position after it.";
+  let position = at;
+  let count = word^.len;
+  for @word (offset in 0_u64..count) {
+    let byte = word^[offset];
+    set position = put_byte(output: output, at: position, value: byte);
+  }
+  return position;
+}
+
+fn put_decimal(output: &[u8], at: u64, value: u64) -> result: u64 writes(output) {
+  doc "Writes a number in decimal from a position and returns the position after it.";
+  let digits = array_filled::<u8, 20>(value: 0_u8);
+  let count = 0_u64;
+  let rest = value;
+  loop @digits {
+    let low = rest % 10_u64;
+    let narrow = cvt.wrap::<u64, u8>(low);
+    let glyph = narrow +wrap 48_u8;
+    if count < 20_u64 {
+      set digits[count] = glyph;
+      set count = count +wrap 1_u64;
+    }
+    set rest = rest / 10_u64;
+    if rest == 0_u64 {
+      break @digits;
+    }
+  }
+  let position = at;
+  for @emit (index in 0_u64..count) {
+    let back = count -wrap index;
+    let from = back -wrap 1_u64;
+    let glyph = 48_u8;
+    if from < 20_u64 {
+      set glyph = digits[from];
+    }
+    set position = put_byte(output: output, at: position, value: glyph);
+  }
+  return position;
+}
+
+fn read_number(input: &[u8], start: u64, held: u64) -> result: Number reads(input) {
+  doc "Reads a decimal number ended by CR LF from a position. State 1 is a number, 0 means the bytes held end before it does, and 2 is a malformed one.";
+  let value = 0_u64;
+  let index = start;
+  let digits = 0_u64;
+  loop @digits {
+    if index >= held {
+      return Number(value: 0_u64, next: index, state: 0_u64);
+    }
+    let byte = byte_at(input: input, index: index);
+    if byte == 13_u8 {
+      break @digits;
+    }
+    let low = byte >= 48_u8;
+    let high = byte <= 57_u8;
+    let digit = band(low, high);
+    if digit {
+    } else {
+      return Number(value: 0_u64, next: index, state: 2_u64);
+    }
+    if digits >= 18_u64 {
+      return Number(value: 0_u64, next: index, state: 2_u64);
+    }
+    let offset = byte -wrap 48_u8;
+    let wide = cvt::<u8, u64>(offset);
+    let scaled = value *wrap 10_u64;
+    set value = scaled +wrap wide;
+    set digits = digits +wrap 1_u64;
+    set index = index +wrap 1_u64;
+  }
+  let after = index +wrap 1_u64;
+  if after >= held {
+    return Number(value: 0_u64, next: index, state: 0_u64);
+  }
+  let feed = byte_at(input: input, index: after);
+  if feed != 10_u8 {
+    return Number(value: 0_u64, next: index, state: 2_u64);
+  }
+  if digits == 0_u64 {
+    return Number(value: 0_u64, next: index, state: 2_u64);
+  }
+  let next = after +wrap 1_u64;
+  return Number(value: value, next: next, state: 1_u64);
+}
+
+fn unfinished(state: u64) -> result: Command pure {
+  doc "A command that is not complete in the bytes held (state 0) or is malformed (state 2).";
+  return Command(state: state, count: 0_u64, next: 0_u64, first_start: 0_u64, first_length: 0_u64, second_start: 0_u64, second_length: 0_u64, third_start: 0_u64, third_length: 0_u64);
+}
+
+fn parse_command(input: &[u8], start: u64, held: u64) -> result: Command reads(input) {
+  doc "Parses one RESP2 array of one to three bulk strings from a position. State 1 is a complete command whose arguments are positions in the input, 0 means the bytes held end before it does, and 2 is a malformed one.";
+  if start >= held {
+    return unfinished(state: 0_u64);
+  }
+  let marker = byte_at(input: input, index: start);
+  if marker != 42_u8 {
+    return unfinished(state: 2_u64);
+  }
+  let header_start = start +wrap 1_u64;
+  let header = read_number(input: input, start: header_start, held: held);
+  if header.state != 1_u64 {
+    return unfinished(state: header.state);
+  }
+  let count = header.value;
+  let few = count < 1_u64;
+  let many = count > 3_u64;
+  let outside = bor(few, many);
+  if outside {
+    return unfinished(state: 2_u64);
+  }
+  let position = header.next;
+  let first_start = 0_u64;
+  let first_length = 0_u64;
+  let second_start = 0_u64;
+  let second_length = 0_u64;
+  let third_start = 0_u64;
+  let third_length = 0_u64;
+  for @arguments (ordinal in 0_u64..count) {
+    if position >= held {
+      return unfinished(state: 0_u64);
+    }
+    let dollar = byte_at(input: input, index: position);
+    if dollar != 36_u8 {
+      return unfinished(state: 2_u64);
+    }
+    let length_start = position +wrap 1_u64;
+    let length = read_number(input: input, start: length_start, held: held);
+    if length.state != 1_u64 {
+      return unfinished(state: length.state);
+    }
+    if length.value > 16384_u64 {
+      return unfinished(state: 2_u64);
+    }
+    let data_start = length.next;
+    let data_end = data_start +wrap length.value;
+    let closed = data_end +wrap 2_u64;
+    if closed > held {
+      return unfinished(state: 0_u64);
+    }
+    let carriage = byte_at(input: input, index: data_end);
+    let after_data = data_end +wrap 1_u64;
+    let feed = byte_at(input: input, index: after_data);
+    let carriage_bad = carriage != 13_u8;
+    let feed_bad = feed != 10_u8;
+    let bad = bor(carriage_bad, feed_bad);
+    if bad {
+      return unfinished(state: 2_u64);
+    }
+    if ordinal == 0_u64 {
+      set first_start = data_start;
+      set first_length = length.value;
+    } else if ordinal == 1_u64 {
+      set second_start = data_start;
+      set second_length = length.value;
+    } else {
+      set third_start = data_start;
+      set third_length = length.value;
+    }
+    set position = closed;
+  }
+  return Command(state: 1_u64, count: count, next: position, first_start: first_start, first_length: first_length, second_start: second_start, second_length: second_length, third_start: third_start, third_length: third_length);
+}
+
+fn name_is(input: &[u8], start: u64, length: u64, word: &[u8]) -> result: Bool reads(input), reads(word) {
+  doc "Whether the argument at a position spells a command word, letters in either case.";
+  if length != word^.len {
+    return False();
+  }
+  for @compare (offset in 0_u64..length) {
+    let position = start +wrap offset;
+    let byte = byte_at(input: input, index: position);
+    let upper = iand(byte, 223_u8);
+    let expected = word^[offset];
+    if upper != expected {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn key_hash(env: &KeyEnv, key: &Key) -> result: u64 reads(env), reads(key) {
+  doc "FNV-1a over the key's length and its 48 byte positions, which hold zero past its length.";
+  let hash = ixor(14695981039346656037_u64, env^.seed);
+  let mixed = ixor(hash, key^.length);
+  set hash = mixed *wrap 1099511628211_u64;
+  for @bytes (index in 0_u64..48_u64) {
+    let byte = key^.bytes[index];
+    let wide = cvt::<u8, u64>(byte);
+    let folded = ixor(hash, wide);
+    set hash = folded *wrap 1099511628211_u64;
+  }
+  return hash;
+}
+
+fn key_equal(env: &KeyEnv, left: &Key, right: &Key) -> result: Bool reads(left), reads(right) {
+  doc "Two keys are equal when their lengths and every byte position are.";
+  if left^.length != right^.length {
+    return False();
+  }
+  for @bytes (index in 0_u64..48_u64) {
+    let first = left^.bytes[index];
+    let second = right^.bytes[index];
+    if first != second {
+      return False();
+    }
+  }
+  return True();
+}
+
+binding KeyBytes : HashMapKey<Key, KeyEnv> {
+  hash = key_hash;
+  equal = key_equal;
+}
+
+fn make_key(input: &[u8], start: u64, length: u64) -> result: Key reads(input) {
+  doc "Copies a key of at most 48 bytes out of the input, zero past its length.";
+  let bytes = array_filled::<u8, 48>(value: 0_u8);
+  for @copy (offset in 0_u64..48_u64) {
+    if offset < length {
+      let position = start +wrap offset;
+      let byte = byte_at(input: input, index: position);
+      set bytes[offset] = byte;
+    }
+  }
+  return Key(bytes: bytes, length: length);
+}
+
+fn make_value(input: &[u8], start: u64, length: u64) -> made: Box<Slots<u8>> reads(input) contract {
+  requires length <= 1024_u64;
+} {
+  doc "Copies a value of at most 1024 bytes out of the input into a string of its own.";
+  let made = box_slots_new::<u8>(capacity: length);
+  for @copy (offset in 0_u64..length) {
+    let position = start +wrap offset;
+    let byte = byte_at(input: input, index: position);
+    if made.inner.len < made.inner.cap {
+      place_back(window: &made.inner, value: byte);
+    }
+  }
+  return move made;
+}
+
+fn decimal_value(value: u64) -> made: Box<Slots<u8>> pure {
+  doc "A string holding a number in decimal.";
+  let digits = array_filled::<u8, 20>(value: 0_u8);
+  let count = 0_u64;
+  let rest = value;
+  loop @digits {
+    let low = rest % 10_u64;
+    let narrow = cvt.wrap::<u64, u8>(low);
+    let glyph = narrow +wrap 48_u8;
+    if count < 20_u64 {
+      set digits[count] = glyph;
+      set count = count +wrap 1_u64;
+    }
+    set rest = rest / 10_u64;
+    if rest == 0_u64 {
+      break @digits;
+    }
+  }
+  let made = box_slots_new::<u8>(capacity: 20_u64);
+  for @emit (index in 0_u64..count) {
+    let back = count -wrap index;
+    let from = back -wrap 1_u64;
+    let glyph = 48_u8;
+    if from < 20_u64 {
+      set glyph = digits[from];
+    }
+    if made.inner.len < made.inner.cap {
+      place_back(window: &made.inner, value: glyph);
+    }
+  }
+  return move made;
+}
+
+fn copy_value(env: &Copied, key: &Key, value: &Box<Slots<u8>>) -> result: u64 reads(value), writes(env) {
+  doc "Copies a stored value of at most 1024 bytes out of the keyspace, and returns its length.";
+  let length = value^.inner.len;
+  if length > 1024_u64 {
+    set env^.length = 0_u64;
+    return length;
+  }
+  for @copy (index in 0_u64..length) {
+    let byte = value^.inner[index];
+    set env^.bytes[index] = byte;
+  }
+  set env^.length = length;
+  return length;
+}
+
+fn bump_value(env: &Counted, key: &Key, value: &Box<Slots<u8>>) -> result: Bool writes(env), writes(value) {
+  doc "Adds one to a stored decimal number in place; false leaves a value that is not one unchanged.";
+  let length = value^.inner.len;
+  let few = length < 1_u64;
+  let many = length > 18_u64;
+  let outside = bor(few, many);
+  if outside {
+    return False();
+  }
+  let number = 0_u64;
+  for @digits (index in 0_u64..length) {
+    let byte = value^.inner[index];
+    let low = byte >= 48_u8;
+    let high = byte <= 57_u8;
+    let digit = band(low, high);
+    if digit {
+    } else {
+      return False();
+    }
+    let offset = byte -wrap 48_u8;
+    let wide = cvt::<u8, u64>(offset);
+    let scaled = number *wrap 10_u64;
+    set number = scaled +wrap wide;
+  }
+  let bumped = number +wrap 1_u64;
+  let fresh = decimal_value(value: bumped);
+  set value^ = move fresh;
+  set env^.value = bumped;
+  return True();
+}
+
+fn run_set(store: &Shared<Store>, input: &[u8], command: &Command, output: &[u8], at: u64, env: &KeyEnv) -> result: u64 reads(store), reads(input), reads(command), reads(env), writes(output) waits {
+  doc "SET key value: stores the value under the key in one atomic statement.";
+  let key_long = command^.second_length > 48_u64;
+  let value_long = command^.third_length > 1024_u64;
+  let long = bor(key_long, value_long);
+  if long {
+    let after = put_word(output: output, at: at, word: &reply_long[0_u64..44_u64]);
+    return after;
+  }
+  let key = make_key(input: input, start: command^.second_start, length: command^.second_length);
+  let value = make_value(input: input, start: command^.third_start, length: command^.third_length);
+  let stored = True();
+  atomic state = &store^ {
+    let put = hash_map_put::<KeyBytes, Box<Slots<u8>>, 4194304>(map: &state^.map, key: key, value: move value, env: env);
+    match move put {
+      HashMapInserted() => {
+      }
+      HashMapReturned(reason: why, pair: returned) => {
+        match why {
+          HashMapReplaced() => {
+          }
+          HashMapFull() => {
+            set stored = False();
+          }
+        }
+      }
+    }
+  }
+  if stored {
+    let after = put_word(output: output, at: at, word: &reply_ok[0_u64..5_u64]);
+    return after;
+  }
+  let after = put_word(output: output, at: at, word: &reply_full[0_u64..20_u64]);
+  return after;
+}
+
+fn run_get(store: &Shared<Store>, input: &[u8], command: &Command, output: &[u8], at: u64, env: &KeyEnv, copied: &Copied) -> result: u64 reads(store), reads(input), reads(command), reads(env), writes(output), writes(copied) waits {
+  doc "GET key: copies the value out in one atomic statement, then encodes it as a bulk string.";
+  if command^.second_length > 48_u64 {
+    let after = put_word(output: output, at: at, word: &reply_nil[0_u64..5_u64]);
+    return after;
+  }
+  let key = make_key(input: input, start: command^.second_start, length: command^.second_length);
+  let found = Err<u64, unit>(error: unit);
+  atomic state = &store^ {
+    set found = hash_map_lookup::<KeyBytes, Box<Slots<u8>>, Copied, u64, fn copy_value, 4194304>(map: &state^.map, key: &key, key_env: env, visit_env: copied);
+  }
+  match found {
+    Ok(value: length) => {
+      let position = put_byte(output: output, at: at, value: 36_u8);
+      set position = put_decimal(output: output, at: position, value: length);
+      set position = put_word(output: output, at: position, word: &reply_crlf[0_u64..2_u64]);
+      let copied_length = copied^.length;
+      if copied_length <= 1024_u64 {
+        for @bytes (index in 0_u64..copied_length) {
+          let byte = copied^.bytes[index];
+          set position = put_byte(output: output, at: position, value: byte);
+        }
+      }
+      set position = put_word(output: output, at: position, word: &reply_crlf[0_u64..2_u64]);
+      return position;
+    }
+    Err(error: absent) => {
+      let after = put_word(output: output, at: at, word: &reply_nil[0_u64..5_u64]);
+      return after;
+    }
+  }
+}
+
+fn run_del(store: &Shared<Store>, input: &[u8], command: &Command, output: &[u8], at: u64, env: &KeyEnv) -> result: u64 reads(store), reads(input), reads(command), reads(env), writes(output) waits {
+  doc "DEL key: removes the key in one atomic statement and answers how many keys it removed.";
+  let removed = 0_u64;
+  if command^.second_length <= 48_u64 {
+    let key = make_key(input: input, start: command^.second_start, length: command^.second_length);
+    atomic state = &store^ {
+      let pair = hash_map_remove::<KeyBytes, Box<Slots<u8>>, 4194304>(map: &state^.map, key: &key, env: env);
+      match move pair {
+        Some(value: gone) => {
+          set removed = 1_u64;
+        }
+        None() => {
+        }
+      }
+    }
+  }
+  let position = put_byte(output: output, at: at, value: 58_u8);
+  set position = put_decimal(output: output, at: position, value: removed);
+  set position = put_word(output: output, at: position, word: &reply_crlf[0_u64..2_u64]);
+  return position;
+}
+
+fn run_incr(store: &Shared<Store>, input: &[u8], command: &Command, output: &[u8], at: u64, env: &KeyEnv) -> result: u64 reads(store), reads(input), reads(command), reads(env), writes(output) waits {
+  doc "INCR key: adds one to the stored number, or stores 1 for an absent key, in one atomic statement.";
+  if command^.second_length > 48_u64 {
+    let after = put_word(output: output, at: at, word: &reply_long[0_u64..44_u64]);
+    return after;
+  }
+  let key = make_key(input: input, start: command^.second_start, length: command^.second_length);
+  let counted = Counted(value: 0_u64);
+  let valid = True();
+  atomic state = &store^ {
+    let edited = hash_map_edit::<KeyBytes, Box<Slots<u8>>, Counted, Bool, fn bump_value, 4194304>(map: &state^.map, key: &key, key_env: env, edit_env: &counted);
+    match edited {
+      Ok(value: fine) => {
+        set valid = fine;
+      }
+      Err(error: absent) => {
+        let fresh = decimal_value(value: 1_u64);
+        let put = hash_map_put::<KeyBytes, Box<Slots<u8>>, 4194304>(map: &state^.map, key: key, value: move fresh, env: env);
+        set counted.value = 1_u64;
+      }
+    }
+  }
+  if valid {
+    let position = put_byte(output: output, at: at, value: 58_u8);
+    set position = put_decimal(output: output, at: position, value: counted.value);
+    set position = put_word(output: output, at: position, word: &reply_crlf[0_u64..2_u64]);
+    return position;
+  }
+  let after = put_word(output: output, at: at, word: &reply_integer[0_u64..46_u64]);
+  return after;
+}
+
+fn execute(store: &Shared<Store>, input: &[u8], command: &Command, output: &[u8], at: u64, env: &KeyEnv, copied: &Copied) -> result: u64 reads(store), reads(input), reads(command), reads(env), writes(output), writes(copied) waits {
+  doc "Answers one parsed command into the output from a position and returns the position after the answer.";
+  let start = command^.first_start;
+  let length = command^.first_length;
+  let count = command^.count;
+  if name_is(input: input, start: start, length: length, word: &word_ping[0_u64..4_u64]) {
+    let after = put_word(output: output, at: at, word: &reply_pong[0_u64..7_u64]);
+    return after;
+  }
+  if name_is(input: input, start: start, length: length, word: &word_get[0_u64..3_u64]) {
+    if count == 2_u64 {
+      let after = run_get(store: store, input: input, command: command, output: output, at: at, env: env, copied: copied);
+      return after;
+    }
+  } else if name_is(input: input, start: start, length: length, word: &word_set[0_u64..3_u64]) {
+    if count == 3_u64 {
+      let after = run_set(store: store, input: input, command: command, output: output, at: at, env: env);
+      return after;
+    }
+  } else if name_is(input: input, start: start, length: length, word: &word_incr[0_u64..4_u64]) {
+    if count == 2_u64 {
+      let after = run_incr(store: store, input: input, command: command, output: output, at: at, env: env);
+      return after;
+    }
+  } else if name_is(input: input, start: start, length: length, word: &word_del[0_u64..3_u64]) {
+    if count == 2_u64 {
+      let after = run_del(store: store, input: input, command: command, output: output, at: at, env: env);
+      return after;
+    }
+  } else {
+    let after = put_word(output: output, at: at, word: &reply_unknown[0_u64..22_u64]);
+    return after;
+  }
+  let after = put_word(output: output, at: at, word: &reply_arguments[0_u64..32_u64]);
+  return after;
+}
+
+fn send_all(send: &TcpSend, source: &[u8], length: u64) -> result: Result<unit, IoError> reads(source), writes(send) waits contract {
+  define source_length = source^.len;
+  requires length <= source_length;
+} {
+  doc "Sends one prefix of the source range, reattempting until the connection has accepted every byte or refused it.";
+  let sent = 0_u64;
+  loop @sending {
+    let pending = sent < length;
+    if pending {
+    } else {
+      break @sending;
+    }
+    match send_once(send: send, source: source, start: sent, end: length) {
+      Ok(value: next) => {
+        set sent = next;
+      }
+      Err(error: problem) => {
+        return Err<unit, IoError>(error: problem);
+      }
+    }
+  }
+  return Ok<unit, IoError>(value: unit);
+}
+
+fn keep_rest(input: &[u8], from: u64, held: u64) -> result: u64 writes(input) {
+  doc "Moves the bytes of an incomplete command to the front of the input and returns how many it moved.";
+  let kept = 0_u64;
+  if from < held {
+    set kept = held -wrap from;
+  }
+  for @move_bytes (offset in 0_u64..kept) {
+    let source = from +wrap offset;
+    let byte = byte_at(input: input, index: source);
+    let unused = put_byte(output: input, at: offset, value: byte);
+  }
+  return kept;
+}
+
+fn serve(connection: TcpConnection, factory: HandleFactory, store: Shared<Store>) -> result: unit pure waits {
+  doc "Serves one client in a context of its own: reads requests into its input, answers every complete command the input holds with one send, and keeps an incomplete one for the next read.";
+  let env = KeyEnv(seed: 0_u64);
+  let blank = array_filled::<u8, 1024>(value: 0_u8);
+  let copied = Copied(bytes: blank, length: 0_u64);
+  let input_window = slots_new::<u8, 16384>();
+  for @fill_input (
+    at in 0_u64..16384_u64,
+    invariant grown_input: input_window.len == at
+  ) {
+    place_back(window: &input_window, value: 0_u8);
+  }
+  let output_window = slots_new::<u8, 16384>();
+  for @fill_output (
+    at in 0_u64..16384_u64,
+    invariant grown_output: output_window.len == at
+  ) {
+    place_back(window: &output_window, value: 0_u8);
+  }
+  let input = &input_window[0_u64..16384_u64];
+  let output = &output_window[0_u64..16384_u64];
+  let held = 0_u64;
+  loop @requests {
+    if held >= 16384_u64 {
+      break @requests;
+    }
+    let ended = False();
+    match receive_next(receive: &connection.receive, destination: input, start: held, end: 16384_u64) {
+      Ok(value: next) => {
+        set held = next;
+      }
+      Err(error: stop) => {
+        set ended = True();
+      }
+    }
+    if ended {
+      break @requests;
+    }
+    let consumed = 0_u64;
+    let written = 0_u64;
+    let broken = False();
+    loop @commands {
+      let command = parse_command(input: input, start: consumed, held: held);
+      if command.state == 0_u64 {
+        break @commands;
+      }
+      if command.state == 2_u64 {
+        set broken = True();
+        break @commands;
+      }
+      set written = execute(store: &store, input: input, command: &command, output: output, at: written, env: &env, copied: &copied);
+      set consumed = command.next;
+      if written > 12288_u64 {
+        let bounded = written;
+        if bounded > 16384_u64 {
+          set bounded = 16384_u64;
+        }
+        match send_all(send: &connection.send, source: output, length: bounded) {
+          Ok(value: delivered) => {
+          }
+          Err(error: problem) => {
+            set broken = True();
+            break @commands;
+          }
+        }
+        set written = 0_u64;
+      }
+    }
+    if written > 0_u64 {
+      let bounded = written;
+      if bounded > 16384_u64 {
+        set bounded = 16384_u64;
+      }
+      match send_all(send: &connection.send, source: output, length: bounded) {
+        Ok(value: delivered) => {
+        }
+        Err(error: problem) => {
+          set broken = True();
+        }
+      }
+    }
+    if broken {
+      break @requests;
+    }
+    set held = keep_rest(input: input, from: consumed, held: held);
+  }
+  let TcpConnection(receive: closing_receive, send: closing_send) = move connection;
+  close_receive(factory: &factory, receive: move closing_receive);
+  close_send(factory: &factory, send: move closing_send);
+  return unit;
+}
+
+fn parse_port(digits: &[u8], length: u64) -> result: u16 reads(digits) {
+  doc "Reads one decimal port out of the argument bytes; a byte that is not a digit ends the number.";
+  let port = 0_u16;
+  for @scan (index in 0_u64..length) {
+    let byte = byte_at(input: digits, index: index);
+    let low = byte >= 48_u8;
+    let high = byte <= 57_u8;
+    let digit = band(low, high);
+    if digit {
+    } else {
+      return port;
+    }
+    let value = byte -wrap 48_u8;
+    let widened = cvt::<u8, u16>(value);
+    let scaled = port *wrap 10_u16;
+    set port = scaled +wrap widened;
+  }
+  return port;
+}
+
+fn argument(args: &std::text::Args, position: u64, window: &[u8]) -> result: u64 reads(args), writes(window) contract {
+  requires 16_u64 <= window^.len;
+} {
+  doc "Copies one invocation argument into the window and returns its length, or zero when it is absent or does not fit.";
+  let carried = 0_u64;
+  match arg_get(args: args, position: position) {
+    Ok(value: text) => {
+      match host_copy_utf8(value: &text, destination: window, start: 0_u64, end: 16_u64) {
+        Ok(value: written) => {
+          set carried = written;
+        }
+        Err(error: problem) => {
+          set carried = 0_u64;
+        }
+      }
+    }
+    Err(error: problem) => {
+      set carried = 0_u64;
+    }
+  }
+  return carried;
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  doc "A Redis subset: PING, SET, GET, DEL and INCR in RESP2 over TCP, with pipelining. It listens on the loopback port the first argument names and serves each accepted client in a context of its own over one keyspace, a shared object every client reaches through atomic statements. The second argument is how many clients to accept; zero accepts until the listener fails.";
+  let Inputs(args: args, cwd: unused_cwd, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin) = move inputs;
+  close_directory(factory: &handles, directory: move unused_cwd);
+  let digits = slots_new::<u8, 16>();
+  for @fill_digits (
+    at in 0_u64..16_u64,
+    invariant grown_digits: digits.len == at
+  ) {
+    place_back(window: &digits, value: 0_u8);
+  }
+  let window = &digits[0_u64..16_u64];
+  let arguments = args_count(args: &args);
+  if arguments < 3_u64 {
+    return exit_status(code: 1_u8);
+  }
+  let port_length = argument(args: &args, position: 1_u64, window: window);
+  if port_length == 0_u64 {
+    return exit_status(code: 2_u8);
+  }
+  let port = parse_port(digits: window, length: port_length);
+  let count_length = argument(args: &args, position: 2_u64, window: window);
+  let written_count = parse_port(digits: window, length: count_length);
+  let count = cvt::<u16, u64>(written_count);
+  let map = hash_map_new::<Key, Box<Slots<u8>>, 4194304>(capacity: 1024_u64);
+  let initial = Store(map: move map);
+  let keyspace = shared_new::<Store>(value: move initial);
+  let address = socket_address_v4(a: 127_u8, b: 0_u8, c: 0_u8, d: 1_u8, port: port);
+  match tcp_listen(factory: &handles, address: &address) {
+    Ok(value: listener) => {
+      let accepted = 0_u64;
+      loop @accepting {
+        if count != 0_u64 {
+          if accepted >= count {
+            break @accepting;
+          }
+        }
+        match tcp_accept(factory: &handles, listener: &listener) {
+          Ok(value: next) => {
+            let AcceptedConnection(connection: connection, peer: unused_peer) = move next;
+            let factory = factory_share(factory: &handles);
+            let handle = shared_share::<Store>(shared: &keyspace);
+            spawn serve(connection: move connection, factory: move factory, store: move handle);
+          }
+          Err(error: problem) => {
+            break @accepting;
+          }
+        }
+        set accepted = accepted +wrap 1_u64;
+      }
+      close_listener(factory: &handles, listener: move listener);
+    }
+    Err(error: problem) => {
+      return exit_status(code: 3_u8);
+    }
+  }
+  return exit_status(code: 0_u8);
+}

@@ -1,0 +1,13 @@
+fn make(low: u64, high: u64) -> pair: Pair pure contract {
+  requires low <= high;
+} {
+  let made = Pair(first: low, second: high);
+  return made;
+}
+
+fn span(p: &Pair) -> result: u64 reads(p) {
+  let a = p^.first;
+  let b = p^.second;
+  let d = b - a;
+  return d;
+}

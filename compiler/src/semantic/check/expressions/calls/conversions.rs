@@ -38,14 +38,22 @@ impl<'unit> Checker<'_, 'unit> {
             );
         }
         let [source, destination] = self.numeric_type_arguments(context, node, true)?;
-        if mode == CheckedConversionMode::Wrap
-            && [source, destination].iter().any(|endpoint| {
-                !matches!(
-                    endpoint,
-                    CheckedNumericType::Integer(_) | CheckedNumericType::GenericInteger(_)
-                )
-            })
-        {
+        // [OP-6] endpoint domains: wrapping admits integer endpoints only, and
+        // rounding admits any numeric source with a float destination.
+        let integer = |endpoint: CheckedNumericType| {
+            matches!(
+                endpoint,
+                CheckedNumericType::Integer(_) | CheckedNumericType::GenericInteger(_)
+            )
+        };
+        let outside_endpoint_domain = match mode {
+            CheckedConversionMode::Wrap => !integer(source) || !integer(destination),
+            CheckedConversionMode::Nearest => integer(destination),
+            CheckedConversionMode::Exact
+            | CheckedConversionMode::Checked
+            | CheckedConversionMode::Defined => false,
+        };
+        if outside_endpoint_domain {
             return self.types.declarations.issue_node(
                 SemanticRule::Op1,
                 node,
@@ -53,7 +61,9 @@ impl<'unit> Checker<'_, 'unit> {
             );
         }
         let result = match mode {
-            CheckedConversionMode::Exact | CheckedConversionMode::Wrap => destination.ty(),
+            CheckedConversionMode::Exact
+            | CheckedConversionMode::Wrap
+            | CheckedConversionMode::Nearest => destination.ty(),
             CheckedConversionMode::Defined => CheckedType::Bool,
             CheckedConversionMode::Checked => {
                 let error =

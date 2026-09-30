@@ -1,0 +1,26 @@
+struct Table {
+  next: u64;
+}
+
+fn needs(t: &Table) -> result: u64 pure contract {
+  requires t^.next <= 5_u64;
+} {
+  return 1_u64;
+}
+
+fn step(t: &Table, outcome: Result<u8, unit>) -> result: Result<u8, unit> writes(t.next) contract {
+  ensures t^.next <= 5_u64;
+} {
+  set t^.next = 99_u64;
+  let inner = propagate outcome;
+  set t^.next = 0_u64;
+  return Ok<u8, unit>(value: inner);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let table = Table(next: 0_u64);
+  let bad = Err<u8, unit>(error: unit);
+  let r = step(t: &table, outcome: bad);
+  let got = needs(t: &table);
+  return std::process::exit_status(code: 0_u8);
+}

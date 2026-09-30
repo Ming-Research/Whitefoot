@@ -1,0 +1,29 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn overshoot(data: &[u8], start: u64) -> result: u64 reads(data) contract {
+  requires start <= data^.len;
+  ensures result <= data^.len;
+} {
+  doc "The retained header conclusion is a theorem about the image pos had at the head. The write before the first break gives pos a new image that the theorem does not bound, so the postcondition is not proved on that edge [ENT-5, FN-9].";
+  let length = data^.len;
+  let pos = start;
+  loop (
+    invariant bounded: pos <= length
+  ) {
+    if pos >= length {
+      set pos = pos +wrap 1_u64;
+      break;
+    }
+    let byte = data^[pos];
+    if byte != 32_u8 {
+      break;
+    }
+    set pos = pos + 1_u64;
+  }
+  return pos;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

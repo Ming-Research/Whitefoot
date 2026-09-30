@@ -269,7 +269,6 @@ impl Reasoning<'_, '_, '_> {
                                     .expect("loop invariant ordinal exceeds u32"),
                             },
                         )),
-                        active_loops: vec![loop_id],
                     });
                 }
             }
@@ -492,14 +491,14 @@ impl Judging<'_, '_, '_> {
     }
 }
 
-pub(super) fn remove_active_loop_invariants(
+/// [INV-1] a header invariant's name leaves lexical scope with the loop
+/// body. Its proved conclusions stay in the affine sequence: each is a
+/// theorem over the value images of the iteration that took the exit, and
+/// the ordinary all-predecessor join decides whether it survives [ENT-5].
+pub(super) fn expire_loop_invariant_names(
     state: &mut AffineFlowState,
-    loop_id: CheckedLoopId,
     declarations: &[crate::DeclarationId],
 ) {
-    state
-        .facts
-        .retain(|fact| !fact.active_loops.contains(&loop_id));
     for declaration in declarations {
         state.published_invariants.remove(declaration);
     }

@@ -148,7 +148,7 @@ fn argument(args: &std::text::Args, position: u64, window: &[u8]) -> result: u64
 }
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  doc "Fetches one byte from each of the two loopback ports the arguments name and exits with their sum. Each fetch is marked `mustpar` and bound [PAR-4, WAIT-2], so the two exchanges may proceed together and each is joined where its byte is first used.";
+  doc "Fetches one byte from each of the two loopback ports the arguments name and exits with their sum. Each fetch is a bound spawn [WAIT-3], so the two exchanges proceed together and each is joined at the first statement that uses its byte.";
   let Inputs(args: args, cwd: unused_cwd, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin) = move inputs;
   close_directory(factory: &handles, directory: move unused_cwd);
   let digits = slots_new::<u8, 16>();
@@ -171,8 +171,8 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let second_address = socket_address_v4(a: 127_u8, b: 0_u8, c: 0_u8, d: 1_u8, port: second_port);
   let first_factory = factory_share(factory: &handles);
   let second_factory = factory_share(factory: &handles);
-  let first = mustpar fetch(factory: move first_factory, address: move first_address, request: 1_u8);
-  let second = mustpar fetch(factory: move second_factory, address: move second_address, request: 2_u8);
+  let first = spawn fetch(factory: move first_factory, address: move first_address, request: 1_u8);
+  let second = spawn fetch(factory: move second_factory, address: move second_address, request: 2_u8);
   let total = first +wrap second;
   return exit_status(code: total);
 }

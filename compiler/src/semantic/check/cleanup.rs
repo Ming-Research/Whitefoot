@@ -98,6 +98,23 @@ impl<'unit> TypeContext<'unit> {
                 CheckedStatement::Break { drops, .. } => {
                     self.validate_drop_release_graphs(drops)?;
                 }
+                // [SHARE-1] the statement's end may release the state, as the
+                // release of a handle does.
+                CheckedStatement::Atomic {
+                    target,
+                    guard,
+                    body,
+                    fallthrough_drops,
+                    ..
+                } => {
+                    self.validate_expression_release_graphs(target)?;
+                    self.release_graph_nodes(target.ty())?;
+                    if let Some(guard) = guard {
+                        self.validate_expression_release_graphs(guard)?;
+                    }
+                    self.validate_release_graphs(body)?;
+                    self.validate_drop_release_graphs(fallthrough_drops)?;
+                }
             }
         }
         Ok(())
@@ -162,13 +179,26 @@ impl<'unit> TypeContext<'unit> {
                     self.validate_expression_release_graphs(offset)?;
                 }
             }
+            CheckedExpression::BorrowSegment { root, segment, .. } => {
+                for offset in root.offsets().chain(segment.offset()) {
+                    self.validate_expression_release_graphs(offset)?;
+                }
+            }
             CheckedExpression::RangeOf {
                 source, start, end, ..
             } => {
-                if let crate::semantic::CheckedRangeSource::Storage(root) = source {
-                    for offset in root.offsets() {
-                        self.validate_expression_release_graphs(offset)?;
+                match source {
+                    crate::semantic::CheckedRangeSource::Storage(root) => {
+                        for offset in root.offsets() {
+                            self.validate_expression_release_graphs(offset)?;
+                        }
                     }
+                    crate::semantic::CheckedRangeSource::Element(place) => {
+                        for offset in place.offsets() {
+                            self.validate_expression_release_graphs(offset)?;
+                        }
+                    }
+                    crate::semantic::CheckedRangeSource::Range(_) => {}
                 }
                 self.validate_expression_release_graphs(start)?;
                 self.validate_expression_release_graphs(end)?;
@@ -208,7 +238,8 @@ impl<'unit> TypeContext<'unit> {
                 | CheckedType::Generic(_) => {}
                 CheckedType::Array { .. }
                 | CheckedType::Buffer { .. }
-                | CheckedType::Window { .. } => {
+                | CheckedType::Window { .. }
+                | CheckedType::Segments { .. } => {
                     // [OWN-1, STOR-3] an `Array` of copy elements is copy and
                     // a copy value has an empty release.
                     if !self.is_copy_type(check_context, current)? {
@@ -244,7 +275,8 @@ impl<'unit> TypeContext<'unit> {
                         }
                         CheckedNominalKind::Enum { .. }
                         | CheckedNominalKind::Box { .. }
-                        | CheckedNominalKind::Opaque => {
+                        | CheckedNominalKind::Opaque
+                        | CheckedNominalKind::Shared { .. } => {
                             drops.push((path, current));
                         }
                     }
@@ -280,6 +312,7 @@ impl<'unit> TypeContext<'unit> {
                 | CheckedType::Array { .. }
                 | CheckedType::Buffer { .. }
                 | CheckedType::Window { .. }
+                | CheckedType::Segments { .. }
                     if selected =>
                 {
                     return Err(SemanticCompilerFailure::InvalidResolution.into());
@@ -293,7 +326,8 @@ impl<'unit> TypeContext<'unit> {
                 CheckedType::Generic(_)
                 | CheckedType::Array { .. }
                 | CheckedType::Buffer { .. }
-                | CheckedType::Window { .. } => {
+                | CheckedType::Window { .. }
+                | CheckedType::Segments { .. } => {
                     if !self.is_copy_type(check_context, current)? {
                         drops.push((path, current));
                     }

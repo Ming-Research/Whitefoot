@@ -148,9 +148,17 @@ pub(crate) fn select_arm(
     work: &mut Work,
 ) -> Result<DecisionSelection, DiagnosticResult> {
     let mut selected = None;
-    for row in decision.rows() {
+    let first = tokens.get(cursor).map(|token| token.terminals());
+    let predicates = first
+        .into_iter()
+        .flat_map(|terminals| terminals.iter().map(LookaheadPredicate::Terminal))
+        .chain(first.is_none().then_some(LookaheadPredicate::SourceEnd));
+    for row in predicates.flat_map(|predicate| decision.rows_starting_with(predicate)) {
         work.spend(1).map_err(DiagnosticResult::Resource)?;
-        if row_score(*row, tokens, cursor).map_err(DiagnosticResult::Compiler)? != 2 {
+        let second = row.position(1).ok_or(DiagnosticResult::Compiler(
+            ParseCompilerFailure::InvalidGrammarData,
+        ))?;
+        if !accepts(second.predicate(), tokens, cursor, 1).map_err(DiagnosticResult::Compiler)? {
             continue;
         }
         match selected {

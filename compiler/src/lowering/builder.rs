@@ -2,7 +2,9 @@ use std::collections::{HashMap, HashSet};
 
 use crate::target::TargetLayout;
 
+mod atomic;
 mod buffers;
+mod call_grain;
 mod contexts;
 mod loops;
 mod prelude;
@@ -10,7 +12,6 @@ mod probe;
 mod ranges;
 mod results;
 mod runs;
-mod scalar_grain;
 mod split;
 mod storage;
 mod targets;
@@ -75,21 +76,14 @@ pub(crate) fn lower_checked_from(
         OverlapLowering::Off => None,
         OverlapLowering::OnWithRecursionBudget { budget, .. } => Some(budget),
         OverlapLowering::On
-        | OverlapLowering::OnWithSequentialRefusal { .. }
-        | OverlapLowering::OnWithoutSmallScalarLeaves { .. } => Some(RecursionBudget::default()),
+        | OverlapLowering::OnWithCallGrain
+        | OverlapLowering::OnWithSequentialRefusal { .. } => Some(RecursionBudget::default()),
     };
-    let scalar_leaf_limit = match overlap {
-        OverlapLowering::OnWithoutSmallScalarLeaves { maximum_operations } => {
-            Some(maximum_operations)
-        }
-        OverlapLowering::OnWithSequentialRefusal {
-            maximum_scalar_leaf_operations,
-        }
-        | OverlapLowering::OnWithRecursionBudget {
-            maximum_scalar_leaf_operations,
-            ..
-        } => maximum_scalar_leaf_operations,
-        _ => None,
+    let call_grain = match overlap {
+        OverlapLowering::Off | OverlapLowering::On => CallGrain::Every,
+        OverlapLowering::OnWithCallGrain => CallGrain::WorkUnit,
+        OverlapLowering::OnWithSequentialRefusal { call_grain }
+        | OverlapLowering::OnWithRecursionBudget { call_grain, .. } => call_grain,
     };
     let overlap = match overlap {
         OverlapLowering::Off => OverlapLowering::Off,
@@ -151,7 +145,7 @@ pub(crate) fn lower_checked_from(
     // module a compiler with no such lowering emits.
     let permission = match overlap {
         OverlapLowering::On
-        | OverlapLowering::OnWithoutSmallScalarLeaves { .. }
+        | OverlapLowering::OnWithCallGrain
         | OverlapLowering::OnWithSequentialRefusal { .. }
         | OverlapLowering::OnWithRecursionBudget { .. } => Some(&checked.data.permission),
         OverlapLowering::Off => None,
@@ -201,9 +195,9 @@ pub(crate) fn lower_checked_from(
     let loop_candidate_constructions = synthesis.borrow().candidate_constructions;
     let (synthesized, mut actualization) = synthesis.into_inner().finish()?;
     functions.extend(synthesized);
-    split::assign_weights(&mut functions);
-    if let Some(limit) = scalar_leaf_limit {
-        scalar_grain::prune(&mut functions, limit, &mut actualization);
+    let weights = split::assign_weights(&mut functions);
+    if call_grain == CallGrain::WorkUnit {
+        call_grain::prune(&mut functions, &weights, &mut actualization);
     }
     Ok(IrProgram {
         nominals,
@@ -397,6 +391,9 @@ fn lower_nominals(
                     referent: lower_type(erasure, *referent)?,
                     release: lower_release_class(*release),
                 },
+                CheckedNominalKind::Shared { state } => IrNominalKind::Shared {
+                    state: lower_type(erasure, *state)?,
+                },
                 CheckedNominalKind::Opaque => IrNominalKind::Opaque,
             };
             Ok(IrNominal {
@@ -544,9 +541,9 @@ fn contains_tail_transfer(statements: &[CheckedStatement]) -> bool {
         CheckedStatement::Match { arms, .. } | CheckedStatement::ValueMatchLet { arms, .. } => {
             arms.iter().any(|arm| contains_tail_transfer(&arm.body))
         }
-        CheckedStatement::Loop { body, .. } | CheckedStatement::CountedRange { body, .. } => {
-            contains_tail_transfer(body)
-        }
+        CheckedStatement::Loop { body, .. }
+        | CheckedStatement::CountedRange { body, .. }
+        | CheckedStatement::Atomic { body, .. } => contains_tail_transfer(body),
         _ => false,
     })
 }
@@ -569,7 +566,8 @@ fn lower_source_argument(argument: &CheckedExpression) -> IrSourceArgument {
         },
         CheckedExpression::BorrowAddressed { .. }
         | CheckedExpression::BorrowRangeIndex { .. }
-        | CheckedExpression::RangeOf { .. } => IrSourceArgument::Borrow,
+        | CheckedExpression::RangeOf { .. }
+        | CheckedExpression::BorrowSegment { .. } => IrSourceArgument::Borrow,
         CheckedExpression::ReadStorage { .. }
         | CheckedExpression::DerefAddressed { .. }
         | CheckedExpression::ArrayIndex { .. }
@@ -626,6 +624,7 @@ fn lower_borrow_mode_type(
                 | IrNominalKind::Enum { .. }
                 | IrNominalKind::Box { .. }
                 | IrNominalKind::Opaque
+                | IrNominalKind::Shared { .. }
         )
     {
         return Ok(ty);
@@ -690,14 +689,17 @@ struct IrBuilder<'program> {
     synthesis: &'program SynthesisCell,
     /// The source function this body belongs to, for the actualization ledger.
     function_name: &'program str,
-    /// [PAR-4] the statements of this body that start a context. Empty in
+    /// [WAIT-3] the statements of this body that start a context. Empty in
     /// every synthesized function: a wrapper, chunk or splitter starts none.
     context_starts: Vec<NodePath>,
-    /// [WAIT-2] for each marked waiting `let`, how many statements after it
+    /// [WAIT-3] for each bound spawn, how many statements after it
     /// its context is awaited, or `None` for its block's end.
     context_awaits: Vec<(NodePath, Option<u32>)>,
     /// The bound contexts started and not yet awaited, innermost block last.
     pending_contexts: Vec<contexts::PendingContext>,
+    /// [SHARE-2] the atomic statements whose blocks enclose the statement
+    /// being lowered, innermost last.
+    atomics: Vec<atomic::AtomicRegion>,
 }
 
 #[derive(Clone)]
@@ -705,6 +707,9 @@ struct GiveTarget {
     block: IrBlockId,
     result: IrType,
     carried_bindings: Vec<BindingId>,
+    /// How many atomic statements enclose the value initializer; a `give`
+    /// leaves every one deeper [SHARE-2].
+    atomic_depth: usize,
 }
 
 impl<'program> IrBuilder<'program> {
@@ -754,6 +759,7 @@ impl<'program> IrBuilder<'program> {
             context_starts: Vec::new(),
             context_awaits: Vec::new(),
             pending_contexts: Vec::new(),
+            atomics: Vec::new(),
         };
         let (entry, parameters) = builder.new_block(&[])?;
         if !parameters.is_empty() {
@@ -1025,7 +1031,7 @@ impl<'program> IrBuilder<'program> {
             }
             self.await_contexts_before(outer_pending, index)?;
             match statement {
-                // [WAIT-2] a marked waiting `let`: its call runs as a context
+                // [WAIT-3] a bound spawn: its call runs as a context
                 // and its binding is defined where the plan awaits it.
                 CheckedStatement::Let {
                     node_path,
@@ -1192,7 +1198,8 @@ impl<'program> IrBuilder<'program> {
                             .tail_entry
                             .ok_or(LoweringFailure::InvalidCheckedProgram)?;
                         // A self transfer replaces this activation, which is
-                        // an exit [PAR-4].
+                        // an exit [WAIT-3, SHARE-2].
+                        self.leave_atomics(0)?;
                         self.join_contexts()?;
                         self.terminate(IrTerminator::Jump {
                             target,
@@ -1203,6 +1210,9 @@ impl<'program> IrBuilder<'program> {
                     }
                     let value = self.expression(value)?;
                     let drops = self.lower_drops(drops)?;
+                    // The objects are unlocked before the join, so a context
+                    // this activation waits for can reach them [SHARE-2].
+                    self.leave_atomics(0)?;
                     self.join_contexts()?;
                     self.terminate(IrTerminator::Return { value, drops })?;
                 }
@@ -1218,6 +1228,7 @@ impl<'program> IrBuilder<'program> {
                     arguments.push(value);
                     arguments.extend(self.binding_values(&target.carried_bindings)?);
                     let drops = self.lower_drops(drops)?;
+                    self.leave_atomics(target.atomic_depth)?;
                     self.terminate(IrTerminator::Jump {
                         target: target.block,
                         arguments,
@@ -1252,7 +1263,7 @@ impl<'program> IrBuilder<'program> {
                     backedge_drops,
                     give_target.clone(),
                 )?,
-                CheckedStatement::Break { target, drops } => {
+                CheckedStatement::Break { target, drops, .. } => {
                     let target = self
                         .loops
                         .iter()
@@ -1262,12 +1273,30 @@ impl<'program> IrBuilder<'program> {
                         .ok_or(LoweringFailure::InvalidCheckedProgram)?;
                     let arguments = self.binding_values(&target.carried_bindings)?;
                     let drops = self.lower_drops(drops)?;
+                    self.leave_atomics(target.atomic_depth)?;
                     self.terminate(IrTerminator::Jump {
                         target: target.block,
                         arguments,
                         drops,
                     })?;
                 }
+                CheckedStatement::Atomic {
+                    target,
+                    binding,
+                    state,
+                    guard,
+                    body,
+                    fallthrough_drops,
+                    ..
+                } => self.lower_atomic(
+                    target,
+                    *binding,
+                    *state,
+                    guard.as_deref(),
+                    body,
+                    fallthrough_drops,
+                    give_target.clone(),
+                )?,
                 CheckedStatement::Match {
                     scrutinee,
                     enum_type,
@@ -1329,7 +1358,7 @@ impl<'program> IrBuilder<'program> {
                 }
             }
         }
-        // [WAIT-2] a context no later statement of its block used is joined
+        // [WAIT-3] a context no later statement of its block used is joined
         // at the block's end, before the block's releases and its successor.
         if self.current.is_some() {
             self.await_contexts_before(outer_pending, usize::MAX)?;
@@ -1506,6 +1535,7 @@ impl<'program> IrBuilder<'program> {
                     block: *block,
                     result: ty,
                     carried_bindings: carried_bindings.clone(),
+                    atomic_depth: self.atomic_depth(),
                 }),
                 None => outer_give_target.clone(),
             };
@@ -1618,6 +1648,8 @@ impl<'program> IrBuilder<'program> {
                             source_length_upper_bound: allocation
                                 .source_length_upper_bound()
                                 .ok_or(LoweringFailure::InvalidCheckedProgram)?,
+                            site: allocation.site,
+                            count_site: allocation.count_site,
                         })
                     })
                     .transpose()?;
@@ -1861,6 +1893,12 @@ impl<'program> IrBuilder<'program> {
                 end,
                 ..
             } => self.lower_range_of(source, start, end, *element),
+            CheckedExpression::BorrowSegment {
+                root,
+                segment,
+                element,
+                ..
+            } => self.lower_segment_borrow(root, segment, *element),
             CheckedExpression::RangeMeasure { measure, root } => {
                 match fixed_measure(*measure, MeasuredKind::Range) {
                     Some(constant) => self.lower_fixed_measure(constant),
@@ -2157,7 +2195,10 @@ impl<'program> IrBuilder<'program> {
                 }
                 // An opaque system resource has no writer-visible field, so no
                 // struct path reaches through one.
-                IrNominalKind::Enum { .. } | IrNominalKind::Box { .. } | IrNominalKind::Opaque => {
+                IrNominalKind::Enum { .. }
+                | IrNominalKind::Box { .. }
+                | IrNominalKind::Opaque
+                | IrNominalKind::Shared { .. } => {
                     return Err(LoweringFailure::InvalidCheckedProgram);
                 }
             };
@@ -2200,7 +2241,10 @@ impl<'program> IrBuilder<'program> {
             }
             // An opaque system resource has no writer-visible field, so no
             // struct path reaches through one.
-            IrNominalKind::Enum { .. } | IrNominalKind::Box { .. } | IrNominalKind::Opaque => {
+            IrNominalKind::Enum { .. }
+            | IrNominalKind::Box { .. }
+            | IrNominalKind::Opaque
+            | IrNominalKind::Shared { .. } => {
                 return Err(LoweringFailure::InvalidCheckedProgram);
             }
         };

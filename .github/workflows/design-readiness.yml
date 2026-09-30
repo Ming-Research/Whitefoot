@@ -1,11 +1,12 @@
-# No pending design amendment reaches main.
+# Nothing unapproved reaches main.
 #
-# `make design-ready` fails while `design/amendments/` exists, which is the
-# normal state of a draft whose proposals await the owner's ruling under the
-# design-tree skill. On every push it painted most draft gate runs red with
-# nothing to fix, so a red run stopped meaning a defect. It runs here where its
-# answer decides something: a pull request that is ready for review, and main.
-# A draft shows the job as skipped; marking it ready runs the check.
+# On a draft branch the agent changes the design tree and the specification
+# freely. `make design-ready` fails while either differs from its base without
+# a new owner-approved entry in its change log (`design/log.md`,
+# `spec/log.md`), which the agent writes only after the owner approves. A draft
+# shows the job as skipped, so work in progress never turns it red; it runs
+# where its answer decides something: a pull request that is ready for
+# review, and main.
 name: design-readiness
 
 on:
@@ -49,5 +50,5 @@ jobs:
           echo "DESIGN_REVIEW_BASE=$design_review_base" >> "$GITHUB_ENV"
           git log --oneline -1 "$design_review_base"
 
-      - name: Require settled design amendments
+      - name: Require owner approval of tree and specification changes
         run: make design-ready

@@ -1,0 +1,4 @@
+pkg::pairs: [];
+pkg: [pkg::pairs, std::process];
+
+entry main = pkg::main;

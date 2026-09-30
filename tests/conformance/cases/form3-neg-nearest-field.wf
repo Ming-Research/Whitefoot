@@ -1,0 +1,7 @@
+struct Sample {
+  nearest: f32;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

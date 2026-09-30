@@ -1,5 +1,5 @@
-fn make_node(first: u64, count: u64, weight: u64) -> made: Node pure {
+fn make_node(first: u64, len: u64, weight: u64) -> made: Node pure {
   doc "Inside its declaring module a readonly field is an ordinary field, so the construction supplies it.";
-  let made = Node(first: first, count: count, weight: weight);
+  let made = Node(first: first, len: len, weight: weight);
   return made;
 }

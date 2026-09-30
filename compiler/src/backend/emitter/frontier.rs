@@ -92,10 +92,7 @@ impl RecursiveFrontiers {
         let mut component_of = vec![None; functions.len()];
         let mut components = Vec::new();
         let mut families = 0_usize;
-        for (id, mut component) in super::super::graph::components(&edges)
-            .into_iter()
-            .enumerate()
-        {
+        for (id, mut component) in crate::cycles::components(&edges).into_iter().enumerate() {
             let cyclic = component.len() > 1 || edges[component[0]].contains(&component[0]);
             if !cyclic {
                 continue;
@@ -113,8 +110,17 @@ impl RecursiveFrontiers {
                 // these at once is named by the one a reader can act on: a
                 // splitter is synthesized *and* has no clone, and the first of
                 // those is why.
+                //
+                // A variant is an ordinary definition with one trailing
+                // budget. A waiting function is a resumable frame entered by a
+                // transfer [WAIT-1] (`frames`), so it has no ordinary entry
+                // for a variant to stand behind, and the emitter builds none.
+                // Its component keeps the ordinary lowering and reaches its
+                // offers without a budget, as a family switched off does.
                 if function.synthesis().is_some() {
                     Some(format!("{name} is a synthesized loop function"))
+                } else if function.waits() {
+                    Some(format!("{name} is a waiting function"))
                 } else if !u32::try_from(ordinal).is_ok_and(|i| clones.contains(&i)) {
                     Some(format!("{name} has no sequential clone"))
                 } else {
@@ -182,7 +188,9 @@ impl RecursiveFrontiers {
     }
 
     /// The symbol a call made inside a budgeted world names, and whether that
-    /// call spends one level of the caller's budget.
+    /// call stays inside the component and so carries the caller's budget.
+    /// Whether it also spends a level is the caller's to decide, by whether the
+    /// call belongs to a group it hands out from.
     ///
     /// A call that stays inside the component names the callee's variant and
     /// carries the remaining budget; a call that leaves it names the callee's
@@ -190,7 +198,7 @@ impl RecursiveFrontiers {
     /// the budget's value: the world below the cut is selected by the callee's
     /// own entry test, so the caller emits one call and no branch.
     pub(super) fn callee(&self, ordinal: u32, name: &str, grain: Grain) -> (String, bool) {
-        if self.spends(ordinal, grain) {
+        if self.stays(ordinal, grain) {
             (recursion_budget_symbol(name), true)
         } else {
             (source_symbol(name), false)
@@ -198,10 +206,10 @@ impl RecursiveFrontiers {
     }
 
     /// Whether a call from this world to that callee stays inside the
-    /// component, and so spends one level of the caller's budget. The frame of
-    /// a published callback is sized from this, because such a callback
-    /// carries the budget through the frame the offer fills.
-    pub(super) fn spends(&self, ordinal: u32, grain: Grain) -> bool {
+    /// component, and so carries the caller's budget. The frame of a published
+    /// callback is sized from this, because such a callback carries the budget
+    /// through the frame the offer fills.
+    pub(super) fn stays(&self, ordinal: u32, grain: Grain) -> bool {
         self.component_of.get(ordinal as usize).copied().flatten() == Some(grain.component)
     }
 

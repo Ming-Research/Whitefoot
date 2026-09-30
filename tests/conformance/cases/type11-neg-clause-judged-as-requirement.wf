@@ -1,0 +1,11 @@
+struct P {
+  a: u64;
+  flag: Bool;
+  invariant i(p): p.flag == True();
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let t = True();
+  let x = P(a: 1_u64, flag: t);
+  return std::process::exit_status(code: 0_u8);
+}

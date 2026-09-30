@@ -1,0 +1,42 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn skip_spaces(data: &[u8], start: u64) -> result: u64 reads(data) contract {
+  requires start <= data^.len;
+  ensures result <= data^.len;
+} {
+  doc "Both breaks leave the loop at a head whose proved header conclusion bounds pos, and nothing writes pos between that head and either break. The conclusion follows each exit edge as a local invariant's would, so the join keeps it and the postcondition is proved without a clamp [ENT-5, INV-1].";
+  let length = data^.len;
+  let pos = start;
+  loop (
+    invariant bounded: pos <= length
+  ) {
+    if pos >= length {
+      break;
+    }
+    let byte = data^[pos];
+    if byte != 32_u8 {
+      break;
+    }
+    set pos = pos + 1_u64;
+  }
+  return pos;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "One scan stops at a nonspace byte and one runs to the end; each result is observed.";
+  let bytes = array_filled::<u8, 4>(value: 32_u8);
+  set bytes[2_u64] = 65_u8;
+  let view = &bytes[0_u64..4_u64];
+  let stop = skip_spaces(data: view, start: 0_u64);
+  if stop == 2_u64 {
+  } else {
+    return exit_status(code: 201_u8);
+  }
+  let end = skip_spaces(data: view, start: 3_u64);
+  if end == 4_u64 {
+  } else {
+    return exit_status(code: 202_u8);
+  }
+  return exit_status(code: 0_u8);
+}

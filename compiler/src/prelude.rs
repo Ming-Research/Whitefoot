@@ -6,8 +6,8 @@
 use crate::source::PreludeSource;
 
 pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
-    // [PRE-1] writes the three storage shapes first, then the cell. [TYPE-2]
-    // makes each of the four an opaque struct
+    // [PRE-1] writes the four storage shapes first, then the cell. [TYPE-2]
+    // makes each of the five an opaque struct
     // with a constructor entry that exists to be refused, and [TYPE-9] keeps
     // their element storage compiler-owned: a declaration can state neither
     // the elements nor the omitted-capacity form, so what the body carries is
@@ -50,7 +50,17 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 }
 "#,
     ),
-    // [PRE-1] writes the cell after the three shapes. [TYPE-2] makes it an
+    // `Segments` has no constant-capacity form, so its declaration carries no
+    // capacity parameter; its one measure is the segment count [MSR-1].
+    (
+        "prelude/Segments.wf",
+        PreludeSource::Opaque,
+        r#"opaque nocopy struct Segments<T> {
+  readonly len: u64;
+}
+"#,
+    ),
+    // [PRE-1] writes the cell after the four shapes. [TYPE-2] makes it an
     // opaque struct with one field and a constructor
     // entry that exists to be refused.
     //
@@ -63,6 +73,16 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
         PreludeSource::Opaque,
         r#"opaque nocopy struct Box<T> {
   inner: T;
+}
+"#,
+    ),
+    // [SHARE-1]'s handle: the state lives in the shared object, not in the
+    // handle, so the record declares no field; `T: drop` because the last
+    // handle's release drops the state.
+    (
+        "prelude/Shared.wf",
+        PreludeSource::Opaque,
+        r#"opaque nocopy struct Shared<T: drop> {
 }
 "#,
     ),
@@ -104,6 +124,14 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
         PreludeSource::Function,
         r#"fn box_array_filled<T: copy>(count: u64, value: T) -> result: Box<Array<T>> pure contract {
   ensures result.inner.len == count;
+};
+"#,
+    ),
+    (
+        "prelude/box_segments_filled.wf",
+        PreludeSource::Function,
+        r#"fn box_segments_filled<T: copy>(lengths: &[u64], value: T) -> result: Option<Box<Segments<T>>> reads(lengths) contract {
+  ensures when Some(value: made): made.inner.len == lengths^.len;
 };
 "#,
     ),
@@ -244,6 +272,18 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 "#,
     ),
     (
+        "prelude/shared_new.wf",
+        PreludeSource::Function,
+        r#"fn shared_new<T: drop>(value: T) -> result: Shared<T> pure;
+"#,
+    ),
+    (
+        "prelude/shared_share.wf",
+        PreludeSource::Function,
+        r#"fn shared_share<T: drop>(shared: &Shared<T>) -> result: Shared<T> reads(shared);
+"#,
+    ),
+    (
         "prelude/free_empty.wf",
         PreludeSource::Function,
         r#"fn free_empty<W>(window: W) -> result: unit pure contract {
@@ -307,10 +347,11 @@ mod tests {
             .filter(|function| function.body.is_none())
             .count();
         // [PRE-1] keeps no host record: the host signatures are the standard
-        // library's [PRE-2], which this unit names none of. The twenty
+        // library's [PRE-2], which this unit names none of. The twenty-two
         // compiler-owned rows — the nine construction functions [OP-13], the
-        // nine window operations [OP-10], `swap` [OP-11] and `free_empty`
-        // [OP-14] — are every one of them generic, so [FN-2] gives them a
+        // nine window operations [OP-10], `swap` [OP-11], `free_empty`
+        // [OP-14], `shared_new` and `shared_share` [SHARE-1] — are every one
+        // of them generic, so [FN-2] gives them a
         // ordinary checked function only per concrete instance and this unit, which
         // calls none of them, has no instance of any.
         assert_eq!(signatures, 0);

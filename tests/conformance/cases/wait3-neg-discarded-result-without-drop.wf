@@ -1,0 +1,9 @@
+fn keep(directory: std::fs::DirectoryRead) -> result: std::fs::DirectoryRead pure waits {
+  return move directory;
+}
+
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  let std::process::Inputs(args: unused_args, cwd: cwd, stdout: unused_stdout, stderr: unused_stderr, handles: unused_handles, stdin: unused_stdin) = move inputs;
+  spawn keep(directory: move cwd);
+  return std::process::exit_status(code: 0_u8);
+}

@@ -1,0 +1,37 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Runs {
+  count: u64;
+  classes: Box<Slots<u8>>;
+}
+
+fn empty_runs(capacity: u64) -> result: Runs pure contract {
+  ensures result.count == result.classes.inner.len;
+} {
+  doc "CALL-4: the count field and the measure of the classes content are both data of the result.";
+  let classes = box_slots_new::<u8>(capacity: capacity);
+  let runs = Runs(count: 0_u64, classes: move classes);
+  return move runs;
+}
+
+fn pass(runs: Runs) -> result: Runs pure {
+  doc "No contract: the returned value carries no relation [CALL-2].";
+  return move runs;
+}
+
+fn count_matches(runs: &Runs) -> result: u64 reads(runs) contract {
+  requires runs^.count == runs^.classes.inner.len;
+} {
+  doc "The requirement the caller must discharge.";
+  return runs^.count;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "Consuming the destination kills the relation over its fields [ENT-5]; the value the uncontracted call hands back has none [CALL-2], so the requirement is rejected.";
+  let runs = empty_runs(capacity: 4_u64);
+  let back = pass(runs: move runs);
+  let count = count_matches(runs: &back);
+  let code = cvt.wrap::<u64, u8>(count);
+  return exit_status(code: code);
+}
