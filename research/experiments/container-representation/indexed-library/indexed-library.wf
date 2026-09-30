@@ -1,3 +1,6 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 struct IndexedCostLog {
   values: Box<Slots<u64>>;
   digest: u64;
@@ -19,11 +22,11 @@ interface IndexedCostElement<T> {
 }
 
 fn indexed_cost_word(env: &IndexedCostLog, value: u64) -> result: unit writes(env) {
-  let prefix = deref(env).digest *wrap 131_u64;
-  set deref(env).digest = prefix +wrap value;
-  set deref(env).used = deref(env).used +wrap 1_u64;
-  if deref(env).values.inner.len < deref(env).values.inner.cap {
-    place_back(window: &deref(env).values.inner, value: value);
+  let prefix = env^.digest *wrap 131_u64;
+  set env^.digest = prefix +wrap value;
+  set env^.used = env^.used +wrap 1_u64;
+  if env^.values.inner.len < env^.values.inner.cap {
+    place_back(window: &env^.values.inner, value: value);
   }
   return unit;
 }
@@ -33,7 +36,7 @@ fn indexed_cost_small_make(identity: u64, seed: u64) -> value: IndexedCostWord p
 }
 
 fn indexed_cost_small_observe(env: &IndexedCostLog, value: &IndexedCostWord) -> result: unit reads(value), writes(env) {
-  indexed_cost_word(env: env, value: deref(value).identity);
+  indexed_cost_word(env: env, value: value^.identity);
   return unit;
 }
 
@@ -55,7 +58,7 @@ fn indexed_cost_wide_make(identity: u64, seed: u64) -> value: IndexedCostWide pu
 
 fn indexed_cost_wide_observe(env: &IndexedCostLog, value: &IndexedCostWide) -> result: unit reads(value), writes(env) {
   for (index in 0_u64..32_u64) {
-    indexed_cost_word(env: env, value: deref(value).words[index]);
+    indexed_cost_word(env: env, value: value^.words[index]);
   }
   return unit;
 }
@@ -153,8 +156,8 @@ fn indexed_cost_consume<interface IndexedCostElement<T>>(env: &IndexedCostLog, v
 
 fn indexed_cost_observe<interface IndexedCostElement<T>>(env: &IndexedCostLog, value: &Record<T>) -> result: unit reads(value), writes(env) {
   indexed_cost_word(env: env, value: 5_u64);
-  indexed_cost_word(env: env, value: deref(value).id);
-  IndexedCostElement::observe(env: env, value: &deref(value).payload);
+  indexed_cost_word(env: env, value: value^.id);
+  IndexedCostElement::observe(env: env, value: &value^.payload);
   return unit;
 }
 
@@ -178,7 +181,7 @@ fn indexed_cost_insert<interface IndexedCostElement<T>>(store: &RecordStore<T, 8
   let inserted = record_store_insert::<T, 8192, 18446744073709551615>(store: store, id: id, payload: move payload);
   match move inserted {
     Ok(value: handle) => {
-      let done = RecordDone();
+      let done = RecordStatus::RecordDone();
       indexed_cost_outcome(env: env, operation: 1_u64, id: id, status: done);
       indexed_cost_handle(env: env, handle: handle);
       let attached = record_store_attach::<T, 8192, 18446744073709551615>(store: store, handle: handle);
@@ -187,7 +190,7 @@ fn indexed_cost_insert<interface IndexedCostElement<T>>(store: &RecordStore<T, 8
       indexed_cost_outcome(env: env, operation: 4_u64, id: id, status: scheduled);
     }
     Err(error: refused) => {
-      let full = RecordFull();
+      let full = RecordStatus::RecordFull();
       indexed_cost_outcome(env: env, operation: 1_u64, id: id, status: full);
       indexed_cost_accept::<IndexedCostElement<T>>(env: env, id: id, payload: move refused);
     }
@@ -199,7 +202,7 @@ fn indexed_cost_lookup<T>(store: &RecordStore<T, 8192, 18446744073709551615>, en
   let found = record_store_lookup::<T, 8192, 18446744073709551615>(store: store, id: id);
   match found {
     Ok(value: handle) => {
-      let done = RecordDone();
+      let done = RecordStatus::RecordDone();
       indexed_cost_outcome(env: env, operation: 3_u64, id: id, status: done);
       indexed_cost_handle(env: env, handle: handle);
       return Ok<RecordHandle, RecordStatus>(value: handle);
@@ -215,7 +218,7 @@ fn indexed_cost_delete<interface IndexedCostElement<T>>(store: &RecordStore<T, 8
   let deleted = record_store_delete::<T, 8192, 18446744073709551615>(store: store, handle: handle);
   match move deleted {
     Ok(value: old) => {
-      let done = RecordDone();
+      let done = RecordStatus::RecordDone();
       indexed_cost_outcome(env: env, operation: 9_u64, id: id, status: done);
       indexed_cost_consume::<IndexedCostElement<T>>(env: env, value: move old);
     }
@@ -260,7 +263,7 @@ fn indexed_cost_trace<interface IndexedCostElement<T>>(count: u64, seed: u64, re
           let visited = record_store_visit::<T, IndexedCostLog, unit, fn indexed_cost_observe::<IndexedCostElement<T>>, 8192, 18446744073709551615>(store: &store, handle: handle, env: env);
           match visited {
             Ok(value: done) => {
-              let present = RecordDone();
+              let present = RecordStatus::RecordDone();
               indexed_cost_outcome(env: env, operation: 12_u64, id: id, status: present);
             }
             Err(error: status) => {
@@ -377,7 +380,7 @@ fn indexed_cost_trace<interface IndexedCostElement<T>>(count: u64, seed: u64, re
     indexed_cost_word(env: env, value: expired);
   }
   record_store_free::<T, IndexedCostLog, fn indexed_cost_consume::<IndexedCostElement<T>>, 8192, 18446744073709551615>(store: move store, env: env);
-  return deref(env).digest;
+  return env^.digest;
 }
 
 fn indexed_cost_small_trace(count: u64, seed: u64, retained: u64, path: u64, env: &IndexedCostLog) -> result: u64 writes(env) contract {

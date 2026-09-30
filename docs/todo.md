@@ -730,6 +730,20 @@ rarely insert at the same place.
   The [paired samples and limits](../research/experiments/container-representation/vector-library/RESULTS.md)
   are the starting evidence, not a claim of uniform improvement.
 
+- **Historical container comparisons need an explicit replay scope.** The
+  current-library Slab, Vector, Deque, PriorityQueue and shared Indexed
+  harnesses use the compiler's embedded `std::collections` records. The Map
+  alternative-representation and Ordered insertion experiments, and Indexed's
+  standalone-heap mode, still use retired syntax, flat library paths or pinned
+  source overlays. Their dated results remain historical evidence; those
+  modes are not current-compiler replay tools. Reopen only when a selected
+  representation or insertion comparison needs them: port the complete
+  source/overlay/identity path, preserve the original operation and retained
+  call-boundary contracts, and run its independent correctness controls before
+  new timing. Until then, use the recorded revision for historical replay;
+  partial syntax edits would break its pinned source identities without
+  establishing a usable current experiment.
+
 - **Inactive-payload omission has measured optimizer regressions.** The
   destination-construction candidate removes the owning map's 264-byte vacant
   payload clear and its local pending-window clear while preserving active

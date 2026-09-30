@@ -1,3 +1,17 @@
+alias PriorityQueue = std::collections::priority_queue::PriorityQueue;
+alias priority_queue_new = std::collections::priority_queue::priority_queue_new;
+alias priority_queue_len = std::collections::priority_queue::priority_queue_len;
+alias priority_queue_reserve = std::collections::priority_queue::priority_queue_reserve;
+alias priority_queue_push = std::collections::priority_queue::priority_queue_push;
+alias priority_queue_peek = std::collections::priority_queue::priority_queue_peek;
+alias priority_queue_pop = std::collections::priority_queue::priority_queue_pop;
+alias priority_queue_replace_top = std::collections::priority_queue::priority_queue_replace_top;
+alias priority_queue_heapify = std::collections::priority_queue::priority_queue_heapify;
+alias priority_queue_drain = std::collections::priority_queue::priority_queue_drain;
+alias priority_queue_free = std::collections::priority_queue::priority_queue_free;
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
 struct PriorityCostDigest {
   value: u64;
 }
@@ -26,23 +40,23 @@ fn priority_cost_word_make(seed: u64) -> value: u64 pure {
 }
 
 fn priority_cost_word_accept(env: &PriorityCostDigest, value: u64) -> result: unit writes(env) {
-  let prefix = deref(env).value *wrap 131_u64;
-  set deref(env).value = prefix +wrap value;
+  let prefix = env^.value *wrap 131_u64;
+  set env^.value = prefix +wrap value;
   return unit;
 }
 
 fn priority_cost_word_compare(env: &PriorityCostOrder, left: &u64, right: &u64) -> order: i32 reads(left), reads(right) {
-  if deref(left) < deref(right) {
+  if left^ < right^ {
     return -1_i32;
   }
-  if deref(left) > deref(right) {
+  if left^ > right^ {
     return 1_i32;
   }
   return 0_i32;
 }
 
 fn priority_cost_word_observe(env: &PriorityCostDigest, value: &u64) -> result: u64 reads(value) {
-  return deref(value);
+  return value^;
 }
 
 fn priority_cost_record_make(seed: u64) -> value: PriorityCostRecord pure {
@@ -57,24 +71,24 @@ fn priority_cost_record_accept(env: &PriorityCostDigest, value: PriorityCostReco
   let PriorityCostRecord(words: words) = move value;
   for (index in 0_u64..32_u64) {
     let word = words[index];
-    let prefix = deref(env).value *wrap 131_u64;
-    set deref(env).value = prefix +wrap word;
+    let prefix = env^.value *wrap 131_u64;
+    set env^.value = prefix +wrap word;
   }
   return unit;
 }
 
 fn priority_cost_record_compare(env: &PriorityCostOrder, left: &PriorityCostRecord, right: &PriorityCostRecord) -> order: i32 reads(left), reads(right) {
-  if deref(left).words[0_u64] < deref(right).words[0_u64] {
+  if left^.words[0_u64] < right^.words[0_u64] {
     return -1_i32;
   }
-  if deref(left).words[0_u64] > deref(right).words[0_u64] {
+  if left^.words[0_u64] > right^.words[0_u64] {
     return 1_i32;
   }
   return 0_i32;
 }
 
 fn priority_cost_record_observe(env: &PriorityCostDigest, value: &PriorityCostRecord) -> result: u64 reads(value) {
-  return deref(value).words[0_u64];
+  return value^.words[0_u64];
 }
 
 binding PriorityCostWord : PriorityCostElement<u64> {
@@ -111,17 +125,28 @@ fn priority_cost_prefix<interface PriorityCostElement<T>>(count: u64, seed: u64)
   return move storage;
 }
 
+fn priority_cost_cleanup<interface PriorityCostElement<T>>(storage: Box<Slots<T>>, env: &PriorityCostDigest) -> result: unit writes(env) {
+  loop @release {
+    if storage.inner.len == 0_u64 {
+      break @release;
+    }
+    let value = take_back(window: &storage.inner);
+    PriorityCostElement::accept(env: env, value: move value);
+  }
+  free_empty(window: move storage);
+  return unit;
+}
+
 fn priority_cost_trace<interface PriorityCostElement<T>>(count: u64, rounds: u64, seed: u64, path: u64) -> result: u64 pure contract {
   requires count <= 4096_u64;
 } {
-  doc "The cleanup path needs no heap ordering: its raw initialized prefix is consumed in reverse physical order without comparisons. Other paths consume through the queue's ordered drain.";
+  doc "The cleanup path consumes the raw initialized prefix in reverse physical order without comparisons. Other paths consume through the queue's ordered drain.";
   let digest = PriorityCostDigest(value: seed);
   let order = PriorityCostOrder();
   if path >= 3_u64 {
     let storage = priority_cost_prefix::<PriorityCostElement<T>>(count: count, seed: seed);
     if path == 4_u64 {
-      let queue = PriorityQueue<T, 4096>(storage: move storage);
-      priority_queue_free::<T, PriorityCostDigest, fn PriorityCostElement::accept, 4096>(queue: move queue, env: &digest);
+      priority_cost_cleanup::<PriorityCostElement<T>>(storage: move storage, env: &digest);
       return digest.value;
     }
     let queue = priority_queue_heapify::<T, PriorityCostOrder, fn PriorityCostElement::compare, 4096>(storage: move storage, env: &order);
