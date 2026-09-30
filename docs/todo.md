@@ -2835,7 +2835,10 @@ condition under which it is taken up.
   quoted arguments in inline commands; a listening address other than the
   loopback and options by name rather than by position; `AUTH`, `SELECT`,
   `KEYS` and `SCAN`, `INFO`, `HELLO` and RESP3, the blocking list commands,
-  `MULTI` and `EXEC`, publish and subscribe, and a random hash seed. The owner
+  `MULTI` and `EXEC`, publish and subscribe, a random hash seed, and a
+  listener that a restarted server can bind while the stopped one's
+  connections wait out TIME_WAIT, which needs the runtime's `tcp_listen` to
+  set `SO_REUSEADDR` as Redis does. The owner
   sets the list for the deployment stage; reopen when this stage's
   measurement is handed back.
 - **A set never shrinks, so `SPOP` walks ever sparser buckets.** `SPOP`
