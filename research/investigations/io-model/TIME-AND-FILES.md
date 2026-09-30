@@ -61,11 +61,11 @@ public opaque struct Instant {
   ticks: u64;
 }
 
-public fn clock_share(clock: &Clock) -> result: Clock reads(clock) doc "Returns a clock that reads the same monotonic time as clock.";
+public fn clock_share(clock: &Clock) -> result: Clock reads(clock) doc "Returns a clock that reads the same monotonic clock as clock.";
 
 public fn wall_clock_share(clock: &WallClock) -> result: WallClock reads(clock) doc "Returns a wall clock that reads the same calendar time as clock.";
 
-public fn now(clock: &Clock) -> result: Instant writes(clock) doc "Returns the current instant of the monotonic clock, which is not before any instant an earlier read through clock returned.";
+public fn now(clock: &Clock) -> result: Instant writes(clock) doc "Returns the current reading of the monotonic clock, not before any reading an earlier call through clock returned.";
 
 public fn instant_after(instant: Instant, nanoseconds: u64) -> result: Instant pure doc "Returns the instant nanoseconds after instant, or the latest instant when that lies beyond it.";
 
@@ -75,7 +75,7 @@ public fn instant_reached(deadline: Instant, instant: Instant) -> result: Bool p
 
 public fn sleep_until(deadline: Instant) -> result: unit pure waits doc "Completes once the monotonic clock has reached deadline.";
 
-public fn unix_nanoseconds(clock: &WallClock) -> result: i64 reads(clock) doc "Returns the calendar time as nanoseconds since 1970-01-01T00:00:00Z, which the host may move in either direction between reads.";
+public fn unix_nanoseconds(clock: &WallClock) -> result: i64 reads(clock) doc "Returns the calendar time as nanoseconds since 1970-01-01T00:00:00Z.";
 ```
 
 **Why each operation has the row it has.**
@@ -125,6 +125,23 @@ reads the field, since `std::time` has no implementation record; the host
 functions form and read it. The one specification change this needs is that
 a host function forms every opaque struct a host module declares, not only
 its handles [TYPE-2].
+
+**Borrowed names.** `Instant` means what Rust's `std::time::Instant` means:
+an opaque, copyable reading of a monotonic clock, compared and subtracted
+only against other readings, whose `duration_since` saturates at zero as
+`nanoseconds_from` does. Java's `java.time.Instant` names a point on the
+calendar timeline instead, which is `WallClock`'s meaning here, where a
+calendar reading is a plain count of nanoseconds. `Clock` follows neither
+language: Java's `Clock` supplies calendar instants and can be replaced for
+a test, and Rust has no clock value; here a `Clock` is the capability to
+read the monotonic clock, and it cannot be replaced (`docs/todo.md`, "A
+clock's readings cannot be replaced for a test"). `sleep_until` waits for a
+monotonic reading, as Tokio's `sleep_until` and Rust's unstable
+`std::thread::sleep_until` do. `sync_file` promises what POSIX `fdatasync`
+and Rust's `File::sync_data` promise, the hand-off of the written bytes to
+the host's durability mechanism, and no more; it names a file because
+syncing a directory, which Redis's rewrite of its file needs, is a separate
+operation this version leaves out.
 
 ### Deadlines on the operations that wait on a peer
 
@@ -200,7 +217,7 @@ public fn sync_file(factory: &HandleFactory, file: &WriteFile) -> result: Result
 
 public fn close_write(factory: &HandleFactory, file: WriteFile) -> result: Result<unit, IoError> writes(factory) waits doc "Closes file.";
 
-public fn close_directory_write(factory: &HandleFactory, directory: DirectoryWrite) -> result: Result<unit, IoError> writes(factory) waits doc "Closes the write authority over a directory.";
+public fn close_directory_write(factory: &HandleFactory, directory: DirectoryWrite) -> result: Result<unit, IoError> writes(factory) waits doc "Closes the write half of a directory.";
 ```
 
 - **Two halves, one struct.** `Directory` is an ordinary struct of two
@@ -291,8 +308,9 @@ same separation ("wall and monotonic time remain distinct",
 both, and each of its functions needs only one: expiry runs on the monotonic
 clock, and the append-only file records absolute calendar times so that a
 later run can replay them. The alternative, one `Clock` with both reads, is
-one field fewer and loses that separation. Confidence 3/5: the benefit is
-real but small, and no current program would be wrong under one clock.
+one field fewer and loses that separation. Confidence 3/5: one clock with
+both reads would also be correct; the separation only narrows what a
+function given a clock may depend on.
 
 **Card 3 (Q29): how is a passed deadline reported?** Recommended: a new
 variant `IoError::DeadlinePassed()`. A passed deadline is the program's own
@@ -437,8 +455,10 @@ a context of its own wakes ten times a second and removes expired keys.
 - **What time a command sees.** An expiry is a monotonic reading, kept as
   nanoseconds from an `Instant` read at start. A client's context reads both
   clocks once per received batch of commands, and every command of the
-  batch sees those readings, as Redis reads its cached time once per
-  iteration of its event loop.
+  batch sees those readings. Redis reads the time for each command: sent in
+  one write, `SET k v PX 50`, `DEBUG SLEEP 0.2` and `GET k` answer nil from
+  `redis-server` 7.0.15, where the subset, reading once for the batch,
+  would still find the key.
 
 With a third argument naming a file, the subset appends every command that
 changes the keyspace to that file in Redis's own format, as `appendonly yes`
@@ -449,10 +469,17 @@ with `appendfsync everysec` does:
   order the keyspace took them.
 - A writer context moves the buffer out every 10 milliseconds, appends it to
   the file and syncs the file when a second has passed since the last sync.
-- An expiry is written as `PEXPIREAT` with an absolute calendar time in
-  milliseconds, as Redis 7 writes it, and replay converts it back into a
-  monotonic reading from the two clocks' current readings, removing a key
-  whose calendar expiry has passed.
+- An expiry that `EXPIRE`, `PEXPIRE` or `PEXPIREAT` sets is written as
+  `PEXPIREAT` with an absolute calendar time in milliseconds, as Redis 7
+  writes it; a `SET` with an expiry is written as `SET` followed by
+  `PEXPIREAT`, where Redis writes one `SET` with `PXAT`.
+- Replay, as Redis's loading does, expires no key while it runs. An expiry
+  whose calendar time has passed is kept as one already reached, so the
+  commands after it in the file apply as they applied when they were
+  written, a `PERSIST` still finding its key and an `INCR` still counting
+  from the stored value, and lazy and active expiry remove such a key once
+  the subset listens. A future expiry becomes a monotonic reading from the
+  two clocks' current readings.
 - At start, the subset replays the file before it listens.
 
 A reply may leave before its change reaches the file. `everysec` already
@@ -475,10 +502,18 @@ Where the subset answers differently from Redis:
 
 - An expiry is at most 10^9 seconds or 10^12 milliseconds ahead; Redis
   accepts any that does not overflow its millisecond clock. A negative
-  expiry is refused as not an integer; Redis removes the key.
+  expiry is refused as not an integer, where Redis answers a negative
+  `EXPIRE` by removing the key and a negative `SET ... EX` with its
+  invalid-expire-time error.
 - A key removed because it expired is not written to the file as `DEL`, as
-  Redis writes it; replay removes it anyway, since its `PEXPIREAT` has
-  passed.
+  Redis writes it; replay keeps it as expired, and lazy and active expiry
+  remove it once the subset listens.
+- The clocks are read once per received batch rather than for each
+  command, and a `SET` with an expiry is written to the file as two
+  commands rather than one.
+- A key whose expiry did not fit the queue of expiries, which holds
+  4,194,304 entries counting those a later command replaced, is removed
+  only when a command finds it expired.
 - `SET` takes only `EX` and `PX`; `NX`, `XX`, `KEEPTTL` and `GET` are
   syntax errors.
 
@@ -514,13 +549,14 @@ drawn from it.
 
 ### Results
 
-`redis-bench.sh` at 3b7a263e7, the subset at c97dbdc7c, and as the
-baseline lines the subset at 7edc86591, the revision before this work,
-built with that revision's compiler. Requests per second, two passes; the
-raw output is
+Two runs on the host of Experiment 7: 4 CPUs (Intel Xeon at 2.80 GHz),
+Linux 6.18, redis-server and redis-benchmark 7.0.15, clang 18.1.3. The
+baseline lines are the subset at 7edc86591, the revision before this work,
+built with that revision's compiler. Requests per second, two passes each;
+the raw output of both runs and of the attribution below is
 `research/experiments/io-completion-bench/redis-persistence-samples.csv`.
-The host is Experiment 7's: 4 CPUs (Intel Xeon at 2.80 GHz), Linux 6.18,
-redis-server and redis-benchmark 7.0.15, clang 18.1.3.
+
+The first run, `redis-bench.sh` at 3b7a263e7 and the subset at c97dbdc7c:
 
 | Line | `SET` | `GET` | `SET`, 16 per pipeline | `GET`, 16 per pipeline |
 |---|---|---|---|---|
@@ -532,44 +568,88 @@ redis-server and redis-benchmark 7.0.15, clang 18.1.3.
 | redis-server, everysec | 86,919 / 81,599 | 88,818 / 88,865 | 363,108 / 362,582 | 571,102 / 570,776 |
 | subset, 2 drivers, everysec | 121,153 / 124,938 | 121,153 / 121,153 | 799,361 / 499,500 | 999,001 / 799,361 |
 
-- **Correct: met.** Every line passed Experiment 7's pass. On both servers,
-  with and without the file, the expiry sequence answered `OK OK -1 -2 1 100
-  1 -1 0`, a positive `PTTL` of 90 to 93 milliseconds, then absent and -2.
-  After a restart on the file both answered absent, absent, `v`, 2 and `v`
-  for a removed key, a key whose 300-millisecond expiry passed while
-  stopped, a key with 100 seconds left, a key incremented twice and a key
-  without an expiry, with 99 seconds left on the third. A client silent
-  past a one-second limit was closed after 1.00 seconds by the subset and
-  1.92 by Redis.
-- **Expiry costs little: met.** Without pipelining the subset reached 1.00
-  and 1.00 times the baseline for `SET` and 0.97 and 0.97 for `GET` on two
-  drivers, and 1.07 and 0.96 for `SET` and 0.95 and 0.98 for `GET` on one.
-  The host ran slower than for Experiment 7's second run, whose subset on
-  two drivers made 153,775 and 166,583 `SET`s against today's baseline of
-  117,592, which is why the criterion compares within one session.
-- **Persistence keeps up: met.** With `everysec` on both, the subset on two
-  drivers reached 1.39 and 1.53 times the reference for `SET` without
-  pipelining and 2.20 and 1.38 times with 16 per pipeline.
-- **Active expiry removes keys: met.** Of 100,000 keys set with `PX 1000`,
-  none was left 1.06 seconds after the last set on the subset, and 72 after
-  1.42 seconds on Redis.
+The completion review then found the replay wrong for a sequence the first
+run's restart check did not contain: the subset removed a key while
+replaying a `PEXPIREAT` whose time had passed, so a key made persistent
+before that time was lost and a key incremented before it counted again
+from one, where Redis keeps both as they were written. The replay now
+expires nothing while it loads (the design above), the restart check adds
+both sequences, and the rerun measured the fixed program, `redis-bench.sh`
+and the subset at 32a0cbf87:
 
-An earlier attempt stopped in its correctness pass: the subset could not
-listen on a port that the previous run's idle check had left in `TIME_WAIT`
-by closing the client itself, since both runs started from one fixed port.
-The script now starts each run's ports from its process number.
+| Line | `SET` | `GET` | `SET`, 16 per pipeline | `GET`, 16 per pipeline |
+|---|---|---|---|---|
+| redis-server | 90,860 / 95,175 | 97,532 / 92,971 | 499,500 / 499,251 | 570,776 / 570,776 |
+| subset, 2 drivers | 111,062 / 121,153 | 121,153 / 124,953 | 799,361 / 798,722 | 797,448 / 999,001 |
+| subset, 1 driver | 85,041 / 88,857 | 90,860 / 86,934 | 571,102 / 571,102 | 666,223 / 665,779 |
+| baseline, 2 drivers | 114,234 / 121,153 | 117,592 / 124,938 | 999,001 / 798,722 | 798,722 / 799,361 |
+| baseline, 1 driver | 90,876 / 85,085 | 90,868 / 97,523 | 571,102 / 570,776 | 666,223 / 571,102 |
+| redis-server, everysec | 85,048 / 81,593 | 90,835 / 90,843 | 362,713 / 399,361 | 570,451 / 571,102 |
+| subset, 2 drivers, everysec | 121,153 / 117,592 | 114,207 / 124,922 | 570,451 / 665,779 | 1,041,667 / 799,361 |
+
+`redis-benchmark` reports a rate from a run of one million requests, and
+the rates cluster at a few levels about a quarter second of run time apart:
+999,001, 799,361, 665,779, 570,776 and 499,500 are one million requests in
+1.00, 1.25, 1.50, 1.75 and 2.00 seconds. With 16 per pipeline one level is
+15 to 25 percent of the rate, so a difference of one level is within the
+instrument's resolution; without pipelining, where a run takes 10 to 12
+seconds, a level is about 2.5 percent.
+
+- **Correct: met in both runs.** Every line passed Experiment 7's pass. On
+  both servers, with and without the file, the expiry sequence answered
+  `OK OK -1 -2 1 100 1 -1 0`, a positive `PTTL` of 90 to 93 milliseconds,
+  then absent and -2. After a restart on the file both answered, in the
+  rerun, absent, absent, `v`, 2, `v`, `v` and absent for a removed key, a
+  key whose 300-millisecond expiry passed while stopped, a key with 100
+  seconds left, a key incremented twice, a key without an expiry, a key
+  made persistent before its expiry, and a key incremented before its
+  expiry passed, with 99 seconds left on the third. A client silent past a
+  one-second limit was closed after 1.00 seconds by the subset in both
+  runs, and after 1.92 and 1.72 by Redis.
+- **Expiry costs little: met by the median, not by every pass.** Without
+  pipelining the first run's subset reached 1.00 and 1.00 times the
+  baseline for `SET` and 0.97 and 0.97 for `GET` on two drivers, and 1.07
+  and 0.96 for `SET` and 0.95 and 0.98 for `GET` on one; the rerun's reached
+  0.97 and 1.00, 1.03 and 1.00 on two drivers and 0.94 and 1.04, 1.00 and
+  0.89 on one. The one pass under 0.9 was attributed by six more
+  interleaved passes of the two one-driver lines, which put the subset at a
+  median of 0.93 times the baseline for `SET` and 0.97 for `GET`, with 5 of
+  the 24 single pairs under 0.9. At one driver a command now costs a few
+  percent more, the reading of both clocks per received batch and the
+  expiry fields among it, which one pass's noise can take under the bar; at
+  two drivers no cost shows. The host ran slower than for Experiment 7's
+  second run, whose subset on two drivers made 153,775 and 166,583 `SET`s
+  against these baselines of 114,234 to 121,153, which is why the criterion
+  compares within one session.
+- **Persistence keeps up: met in both runs.** With `everysec` on both, the
+  subset on two drivers reached 1.39 and 1.53, then 1.42 and 1.44, times
+  the reference for `SET` without pipelining, and 2.20 and 1.38, then 1.57
+  and 1.67, times with 16 per pipeline.
+- **Active expiry removes keys: met in both runs.** Of 100,000 keys set with
+  `PX 1000`, none was left 1.06 and 1.10 seconds after the last set on the
+  subset, and 72 after 1.42 and 1.43 seconds on Redis.
+
+An earlier attempt at the first run stopped in its correctness pass: the
+subset could not listen on a port that the previous run's idle check had
+left in `TIME_WAIT` by closing the client itself, since both runs started
+from one fixed port. The script now starts each run's ports from its
+process number.
 
 What this shows, and what it does not. The clock, the deadline on
 `receive_next`, `sleep_until` and the append-only file were enough to write
 expiry, an append-only file and an idle limit in the language, with no
 change beyond the ruled surface, and the program keeps Redis's rates on this
-host with them. The comparison with persistence is not like for like: Redis
-writes its buffer to the file before it replies, while the subset replies
-and leaves the write to a context that runs every 10 milliseconds. Redis
-with `everysec` loses a quarter to a third of its pipelined `SET` rate to
-that write, and the subset loses none; in exchange a killed subset loses up to
-10 milliseconds of changes it acknowledged, and a killed Redis none, while a
-host that fails costs either up to about a second. Waking the writer when
-changes arrive, rather than polling, while still syncing within a second
-when none do, needs a guard wait that a time can bound (`docs/todo.md`, "An
-atomic statement's guard cannot be bounded by a time"). The subset is 1,804 lines, most of them RESP parsing and encoding.
+host with them. The file costs both servers about alike: with 16 per
+pipeline Redis lost 20 to 36 percent of its `SET` rate to it across the two
+runs, and the subset none in one pass and 17 to 38 percent in the other
+three, a level or two of the instrument. What differs is when a reply
+leaves: Redis writes its buffer to the file before it replies, while the
+subset replies and leaves the write to a context that runs every 10
+milliseconds, so a killed subset loses up to 10 milliseconds of changes it
+acknowledged and a killed Redis none, while a host that fails costs either
+up to about a second. Waking the writer when changes arrive, rather than
+polling, while still syncing within a second when none do, needs a guard
+wait that a time can bound (`docs/todo.md`, "An atomic statement's guard
+cannot be bounded by a time"). The subset is 1,821 lines, against the 830
+of Experiment 7's; expiry, the append-only file and its replay are most of
+the difference.

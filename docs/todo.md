@@ -509,9 +509,16 @@ rarely insert at the same place.
   struct with a field, has a copy field and no modifier, where the two agree.
   Its layout is also the 32-byte host representation rather than its fields'.
   Give an opaque struct with fields the ordinary struct kind with a refused
-  constructor. Validate with conformance cases that pass such a struct where
-  `T: copy` is required and use it twice, both rejected, and with `Instant`
-  unchanged. Reopen with the next change to opaque structs or `std::time`.
+  constructor. The same representation cites the wrong rule for `Instant`'s
+  field: `instant.ticks` is rejected as TYPE-5, "expected a source struct",
+  where [TYPE-2] makes the field private to a module with no implementation
+  record [MOD-6], and destructuring an `Instant` reaches a repair sentence
+  no conformance case covers. Validate with conformance cases that pass such
+  a struct where `T: copy` is required and use it twice, both rejected, that
+  read `instant.ticks` and are rejected citing MOD-6, and that destructure an
+  `Instant` and are rejected citing TYPE-2 with its repair, with `Instant`
+  otherwise unchanged. Reopen with the next change to opaque structs or
+  `std::time`.
 
 ## Containers and storage lowering
 
@@ -1748,7 +1755,10 @@ rarely insert at the same place.
   current rule; the join comment in `compiler/src/backend/completion/bridge.h`
   describes pool stacks rather than contexts; the `.wf` programs under
   `research/experiments/io-completion-bench/programs/` use the retired
-  `&uniq` and `own Bool` spellings and no longer compile, so `read-bench.sh`
+  `&uniq` and `own Bool` spellings and no longer compile, as do
+  `park-on-miss-measurements/programs/grid_split.wf`, the
+  `wfgrep-double-walk/shapes/` programs and the programs
+  `differential-fuzz/src/generator.rs` writes, so `read-bench.sh`
   stops at its first build and the spawn work measured single-context reads
   with a scratch loop instead
   (`research/investigations/io-model/CONCURRENCY-MODEL.md`, section 10.5);

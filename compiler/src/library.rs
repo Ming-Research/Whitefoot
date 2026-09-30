@@ -267,6 +267,57 @@ mod tests {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../lib/std")
     }
 
+    /// `ordinary_values.h` names `IoError`'s tags in the order the `io`
+    /// record declares its variants, the order that numbers them [PRE-2]:
+    /// the C side reads and writes tags by these names, so a variant added,
+    /// removed or moved in one list and not the other would give a host
+    /// failure another variant's name.
+    #[test]
+    fn the_runtime_names_every_io_error_tag_in_the_record_order() {
+        let record = RECORDS
+            .iter()
+            .find(|(path, _)| *path == "std/io/module.wfm")
+            .expect("the io record is carried")
+            .1;
+        let start = record
+            .find("public enum IoError {")
+            .expect("the io record declares IoError");
+        let end = start
+            + record[start..]
+                .find("\n}")
+                .expect("the IoError declaration closes");
+        let variants = record[start..end]
+            .lines()
+            .skip(1)
+            .filter_map(|line| line.trim().split('(').next())
+            .filter(|name| !name.is_empty())
+            .map(|name| {
+                let mut tag = String::from("WF_IO_");
+                for (index, character) in name.chars().enumerate() {
+                    if index > 0 && character.is_ascii_uppercase() {
+                        tag.push('_');
+                    }
+                    tag.push(character.to_ascii_uppercase());
+                }
+                tag
+            })
+            .collect::<Vec<_>>();
+        let header = include_str!("backend/ordinary_values.h");
+        let start = header
+            .find("enum wf_io_error_tag {")
+            .expect("the runtime header declares the tag enum");
+        let end = start + header[start..].find('}').expect("the tag enum closes");
+        let tags = header[start..end]
+            .lines()
+            .skip(1)
+            .map(|line| line.trim().trim_end_matches(','))
+            .filter(|tag| !tag.is_empty())
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        assert_eq!(variants.len(), 29, "IoError's variant count");
+        assert_eq!(tags, variants);
+    }
+
     /// Every record of the library's directory is carried, and nothing else,
     /// so adding a module without listing it here cannot go unnoticed. A
     /// record is a `.wf`, `module.wfm` or `modules.wfg` file [MOD-2]; the

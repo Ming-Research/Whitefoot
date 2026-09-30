@@ -23,8 +23,9 @@ typedef struct { void *data; uint64_t length; } wf_view;
  * none, so one struct is all of them. */
 typedef struct { uint32_t tag; uint32_t code; uint8_t origin; } wf_io_error;
 /* `IoError`'s variants in the order `io/module.wfm` declares them [PRE-2],
- * which is the order that numbers their tags; a test holds the two lists
- * equal. */
+ * which is the order that numbers their tags;
+ * `library::tests::the_runtime_names_every_io_error_tag_in_the_record_order`
+ * holds the two lists equal. */
 enum wf_io_error_tag {
     WF_IO_NOT_FOUND,
     WF_IO_PERMISSION_DENIED,

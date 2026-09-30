@@ -539,8 +539,8 @@ std::fs::close_directory_write(factory: &factory, directory: move cwd_write);
 std::fs::close_directory(factory: &factory, directory: move cwd);
 ```
 
-The host declarations belong to the standard library modules `std::io`,
-`std::text`, `std::fs`, `std::net` and `std::process` [PRE-2]. Write their
+The host declarations belong to the standard library modules `std::time`,
+`std::io`, `std::text`, `std::fs`, `std::net` and `std::process` [PRE-2]. Write their
 `std` paths, or give a record an alias header for the names it uses often
 [MOD-4, MOD-10].
 
