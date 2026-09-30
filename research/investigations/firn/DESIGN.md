@@ -494,3 +494,24 @@ median exceeds *control*'s by at least 0.08 on `SPOP` at depth 1 on both CPU
 counts, its median `SPOP` p99 at depth 1 is lower than *inline*'s on both,
 and it falls below *control*'s by no more than 0.08 on any test. A change
 that is not kept is reverted.
+
+### One descent for a rank known to be absent, stated before measuring
+
+`ZADD` on a member already held removes its old rank and puts its new one;
+the library's `ordered_map_put` first descends to find a pair to replace and
+then descends again to insert, so an update costs three descents of the
+B-tree inside the atomic statement, and on two CPUs at depth 16 `ZADD`
+reached 1.25 of the 1.4 required. A new rank is never held, since each
+member has one rank and its old one was just removed. The change: a library
+entry, `ordered_map_insert`, that descends once, inserting the pair or
+returning it when it meets an equal key, and firn's `ZADD` inserts its ranks
+through it. `ordered_map_put` is unchanged, so the replacements whose cost
+refused the earlier single-descent put are not on this path.
+
+Five interleaved rounds of *inline*, *insert* (the inline build with this
+change) and *control* (*inline* again): `ZADD` at depth 16 on two CPUs and
+on one (4,000,000 requests), then `ZPOPMIN` (4,000,000) on the same server,
+and `ZADD` at depth 1 on two CPUs (600,000). *insert* is kept if its median
+ratio to each round's *inline* exceeds *control*'s by at least 0.08 on
+`ZADD` at depth 16 on two CPUs and falls below it by no more than 0.08 on
+any test; otherwise it is reverted.
