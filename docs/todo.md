@@ -3231,7 +3231,9 @@ condition under which it is taken up.
   qualified Ring payload-address
   `llvm.assume` is measured in the [Deque comparison](../research/experiments/container-representation/deque-library/RESULTS.md);
   its remaining costs are tracked above. Not emitted: `memory(argmem: ...)` (the
-  IR carries neither the declared row nor the allocation fact), scoped
+  IR retains per-call allocation bounds and readonly-reference markers,
+  but not a complete transitive memory-effects summary; the semantic model's
+  EFF-3 `allocates` fact is not itself such a summary), scoped
   alias metadata and `llvm.loop.parallel_accesses` (the emitter has no
   metadata table). Build the metadata subsystem as its own step with a
   before/after benchmark.

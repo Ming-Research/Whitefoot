@@ -8607,3 +8607,120 @@ This is one exploratory pair, not repeatable qualification. Any future adopted
 candidate needs its own spare-path timing. Only Vector append spare/growth is
 in scope; other APIs remain paused until append qualifies, and all APIs must
 qualify before a full container workload measurement.
+
+#### Frozen-H stability: registered A/A diagnostic
+
+The H→J pair left every H/J range overlapping, despite J's smaller large-path
+frame. Inspecting the actual timed caller found one common seven-instruction
+append loop for all peers; preparation, reset and destruction remain outside
+the clock. Before another implementation change, test whether longer aggregate
+observations of unchanged H resolve or reproduce the remaining growth cells.
+This diagnoses measurement stability, not an optimization, a new ranking rule
+or a retroactive revision of any earlier verdict.
+
+Use the existing `.build/small-copy-growth/H-timed` executable, SHA256
+`26e66b2e9b0f5aa020384d64f0c53010f107f364cca4c6850fba6d1735edea1e`,
+without rebuilding or changing the driver, WF/peer/runtime objects, allocator,
+seeds, call ABI or preparation. Run exactly two sequential fresh processes,
+H1 then H2, each with `growth-api-measure 268435456 9 8589934592` under the
+exclusive heavy-command guard. Set the limit to 1,200 seconds per process
+before launch, conservatively above four times the preceding approximately
+155-second screen. Preserve direct exits, wall time and before/after hashes.
+Root review of this preregistration precedes heavy execution.
+
+The existing eleven cells remain unchanged: scalar 16/224/256/288/4096 and
+wide 7/8/9/16/256/4096. The ordinary byte budget rises from 64 to 256 MiB;
+wide4096 remains at 8 GiB. This increases the number of freshly prepared
+batches summed into each sample, through the existing ceiling formula. It
+does not enlarge an individual timed batch, its live footprint or its clock
+interval. In particular, scalar4096/wide16/wide256 still have 31/240/15 contexts.
+It also does not increase the nine statistical samples per cohort or assert
+that sequential allocator histories are statistically independent.
+
+Retain both rotating/reverse cohorts, three occurrences of each implementation
+position per cohort, all three implementations and all snapshot controls. Each launch
+must retain all 1,188 rows, including 594 real and 594 control rows. Do not
+subtract controls. Ordinary-cell real aggregate intervals must actually reach
+at least 4 ms; wide4096 must reach at least 1 ms. The existing nondecreasing
+RAW-clock probe must report a nonzero increment at most 100 ns. Keep the
+existing per-cell WF/peer cohort-median-ratio spread at most 10% for each peer,
+and require each peer's corresponding cohort median to drift at most 10%
+between H1 and H2, using H1 as denominator. Report every failed prerequisite;
+longer prescribed work does not excuse an observed duration or stability miss.
+
+Apply the unchanged [conservative target](../ECOSYSTEM.md#optimization-criterion)
+separately to every cell and launch: select the median-slower Rust/C++ peer
+within each cohort, then require the complete WF range below that peer's
+complete range in both cohorts. Report both peers separately, including
+one-peer wins. A repeatable target pass in this diagnostic requires both H1
+and H2 to pass with all prerequisites. A robust deficit requires the complete
+WF range above both standard-peer ranges in both cohorts; report whether that
+also repeats across launches. All overlaps and failed qualifications remain
+unresolved. Also report H1/H2 range directions to expose drift in the unchanged
+implementation. Observed ranges are not confidence intervals; no favorable
+median, pooling, outlier removal or post-hoc tolerance replaces this test.
+
+Reuse H's recorded correctness and ownership evidence. Before these launches,
+verify its input/image hashes and rerun only the existing timed
+`growth-api-check` and account `api-check` positive commands under the guard;
+no new observer framework or compiler build is needed. Any actual prerequisite
+failure stops the diagnostic with its evidence retained. Execute only these
+two fixed launches, with no adaptive retry, filtering, threshold choice or
+follow-on implementation variant.
+
+Transient outputs belong to `.build/append-stability`. Retain complete raw
+samples and one compact replay/evidence record in this Vector experiment when
+finished; no source patch exists because executable code is unchanged. This
+diagnostic does not qualify H's spare timing or generic source ABI, select a
+production policy, or authorize another API. Vector append's spare and growth
+paths remain separate; other APIs wait until append qualifies, and all APIs
+precede a full container workload measurement.
+
+#### Frozen-H stability: outcome
+
+[Complete observations](ecosystem-append-growth-stability-samples.csv) and the
+[compact timing record](ecosystem-append-growth-stability-timing.txt) retain the
+two unchanged-image launches. H1/H2 terminated 0 in 204.999/203.839 seconds;
+all frozen pins and before/after executable hashes matched. The two bounded
+positive checks passed. No code was rebuilt and no source patch exists.
+
+Each launch retains 1,188 rows, including 594 real and 594 snapshot controls,
+with exact capacities, registered cycles and balanced positions. Both RAW
+probes report 41 ns. Minimum ordinary real aggregate intervals were
+5.312253/5.158587 ms; wide4096 minima were 1.189559/1.246619 ms. Maximum
+WF/peer cohort-ratio spread was 5.760%, and interlaunch peer median drift
+6.903%. All registered instrument and stability prerequisites passed; the
+individual timed-batch footprint remained unchanged.
+
+Medians are ns/append, cohort 0/cohort 1. Full ranges and separate peer verdicts
+are retained in the timing record. P means the registered target passes in
+both cohorts of that launch; U means unresolved.
+
+| Cell | H1 WF | H2 WF | Rust H1→H2 | C++ H1→H2 | H1/H2 target |
+| --- | ---: | ---: | ---: | ---: | --- |
+| 8 B × 16 | 22.70/22.59 | 23.00/23.19 | 37.49/37.21 → 38.10/37.69 | 26.01/26.13 → 26.36/26.28 | P/P |
+| 8 B × 224 | 83.36/84.12 | 87.58/87.22 | 98.53/98.82 → 101.40/99.99 | 90.79/89.30 → 92.37/94.37 | P/U |
+| 8 B × 256 | 89.21/90.54 | 91.29/91.84 | 103.93/103.89 → 106.28/105.49 | 95.71/95.76 → 96.67/96.63 | P/P |
+| 8 B × 288 | 113.08/108.48 | 107.23/107.81 | 111.97/108.87 → 111.40/111.88 | 101.54/98.36 → 96.35/99.15 | U/U |
+| 8 B × 4096 | 727.06/729.55 | 712.31/692.54 | 695.64/707.93 → 691.78/707.03 | 665.08/658.81 → 648.53/643.65 | U/U |
+| 256 B × 7 | 87.81/89.21 | 87.35/87.88 | 100.98/103.30 → 101.64/104.01 | 91.31/92.72 → 90.25/91.14 | P/P |
+| 256 B × 8 | 93.09/92.25 | 92.95/95.30 | 107.39/108.08 → 107.63/107.62 | 95.23/95.31 → 96.16/96.05 | P/P |
+| 256 B × 9 | 110.96/108.62 | 108.94/109.62 | 111.19/111.34 → 111.03/111.02 | 101.43/98.81 → 99.83/100.00 | U/U |
+| 256 B × 16 | 155.30/148.78 | 152.39/154.21 | 154.98/156.49 → 154.13/153.92 | 146.03/145.92 → 147.79/145.70 | U/U |
+| 256 B × 256 | 1347.98/1344.68 | 1348.66/1343.37 | 1357.61/1343.39 → 1329.91/1339.69 | 1368.96/1357.10 → 1352.73/1338.21 | U/U |
+| 256 B × 4096 | 158.47/154.33 | 157.77/158.44 | 169.91/156.46 → 167.72/167.25 | 15047.05/14823.83 → 14906.53/14833.81 | P/P |
+
+The same 3/6 canonical targets pass in both launches: scalar16/256 and
+wide4096. Neighbor wide7/8 also pass twice. Scalar224 passes H1 but remains
+unresolved in H2; its 144.70 ns high sample is retained. All eleven H1/H2 WF
+ranges overlap in both cohorts. Longer aggregate observations therefore did
+not resolve scalar4096, wide16 or wide256, which still overlap Rust throughout.
+Scalar4096 is separated slower than C++ in both H1 cohorts and H2 cohort1,
+but overlaps C++ in H2 cohort0. No cell meets the robust deficit test against
+both standard peers. Overlap does not establish equivalence.
+
+This confirms the stated passes only within this registered two-launch
+diagnostic. It selects no optimization or production policy, relaxes no
+criterion and changes no earlier verdict. No further run followed. H's spare
+timing and generic source ABI remain unqualified; other APIs remain paused
+until append qualifies, with all APIs preceding a full container workload.
