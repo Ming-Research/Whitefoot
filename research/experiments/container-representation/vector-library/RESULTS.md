@@ -6448,3 +6448,130 @@ with a second build defining `CORRUPT_PRESERVED_ORDER`; require exits 0, 73 and 
 respectively. This instrumentation observes the candidate; it is not a native
 implementation or language mechanism. Retire these prototype artifacts with
 their superseding representation experiment.
+
+#### Full-run reallocation of the separate payload: registered next discriminator
+
+The preceding split-payload screen leaves wide growth near C++ and far behind
+Rust's reallocation route. The earlier rejected realloc variant requested
+header-plus-payload bytes; this variant instead tests realloc at the now-matched
+payload extent, keeping the same stable descriptor, source, capacity policy,
+O3 API harness and peers. This changed extent is the reason to reopen that
+experiment, not an adoption of the rejected blanket representation.
+
+Only a full runtime Slots run (len equals cap) uses realloc of the payload.
+Partial runs retain the previous malloc/initialized-prefix-copy/free path.
+Both routes preserve descriptor identity and check allocation failure before
+publishing the payload pointer or capacity. Zero extents retain the allocated
+one-byte placeholder and nonnull range ABI. The prototype remains explicitly
+nonconforming to TYPE-9/STOR-1; no specification or live-tree change is selected.
+
+Before timing, require the existing API checks and an observer that forces both
+in-place and moving reallocation, validates nested-owner contents and releases,
+keeps the partial-run spare-byte check, and rejects the deliberate content fault.
+A failed grow must leave the old owner, descriptor and payload intact before the
+floor observer. The candidate-only allocation ledger distinguishes realloc from
+fresh allocation; ordinary baseline expectations remain unchanged. Inspect the
+actual native full branch for payload-only realloc and absence of an explicit
+prefix copy/free; partial growth must still retain its copy/free path.
+
+Run one screen with the same fixed command `growth-api-measure 67108864 7
+8589934592`, two cohorts and seven samples, retaining every row. The previous
+instrument and disjoint-range criteria still apply to every matched cell.
+Proceed to paired qualification only if all matched cells pass; otherwise stop
+qualification and attribute the remaining cells. Do not retry a failed screen,
+subtract controls, infer a paired speedup, or select a representation from it.
+
+
+Outcome: the registered screen ran once and did not qualify the complete API.
+The gate-profile CLI build took 15.56 s; existing API build, correctness and
+accounting checks passed in 3.37 s. The focused native observer passed all
+12 in-place/moving cases (nested owners, partial growth, zero capacity, zero
+stride, empty range and empty release). The failed realloc route exited 73
+with the old owner, descriptor and payload intact; the deliberate nested-owner
+order fault exited 1. The normal run exited 0. These are default source
+lowering/O3 witnesses; the observer simulates allocator outcomes in small
+physical allocations, not real allocator performance or a full semantic gate.
+
+The full native growth path calls realloc on the payload, requesting exactly
+new capacity times element stride, with no explicit prefix copy or free.
+The partial path retains malloc, initialized-prefix memmove and free. Both
+helpers retain a 64-byte frame and a len-versus-cap recheck. All ten WF account
+rows have one request, one realloc and no explicit release; live storage is
+payload plus the stable 24-byte descriptor. Constructor/placeholder allocations
+remain outside this append interval and remain future API obligations.
+
+The fixed screen exited 0 in 117.36 s. All 840 rows are retained: 420 real
+intervals (minimum 1.270505 ms) and 420 snapshot controls, with no subtraction.
+The RAW clock minimum increment was 41 ns. Values below are median
+[minimum–maximum] ns/append; PASS requires the entire WF range to be below
+the cohort's median-slower peer range, in both cohorts for a matched cell.
+
+| Element / old capacity | Cohort | WF | Rust | C++ | Screen |
+|---|---:|---|---|---|---|
+| 8 B / 16 | 0 | 35.22 [35.09–36.08] | 36.90 [36.70–38.19] | 25.48 [25.36–26.99] | PASS |
+| 8 B / 16 | 1 | 35.26 [35.00–36.65] | 36.76 [36.66–38.28] | 26.00 [25.38–26.53] | PASS |
+| 8 B / 256 | 0 | 102.03 [101.18–106.03] | 102.61 [102.05–115.27] | 93.63 [91.95–99.58] | OVERLAP |
+| 8 B / 256 | 1 | 101.47 [100.52–107.78] | 104.44 [102.55–108.51] | 93.25 [91.68–94.08] | OVERLAP |
+| 8 B / 4096 | 0 | 750.63 [691.39–925.79] | 684.28 [671.41–738.80] | 653.00 [642.06–704.41] | OVERLAP |
+| 8 B / 4096 | 1 | 712.73 [694.22–772.81] | 676.81 [666.63–719.37] | 655.43 [647.66–685.34] | OVERLAP |
+| 256 B / 16 | 0 | 151.68 [146.66–170.79] | 148.22 [146.67–157.94] | 139.63 [138.03–146.48] | OVERLAP |
+| 256 B / 16 | 1 | 148.38 [147.08–158.78] | 147.13 [145.91–159.58] | 139.16 [138.32–146.95] | OVERLAP |
+| 256 B / 256 | 0 | 1322.22 [1313.01–1363.93] | 1315.34 [1308.50–1356.24] | 1317.48 [1291.87–1376.25] | OVERLAP |
+| 256 B / 256 | 1 | 1319.00 [1315.82–1414.08] | 1323.55 [1309.30–1416.74] | 1319.32 [1295.54–1372.78] | OVERLAP |
+| 256 B / 4096 | 0 | 159.47 [155.11–161.08] | 162.86 [161.31–165.77] | 14887.86 [14823.51–14932.98] | PASS |
+| 256 B / 4096 | 1 | 156.37 [155.42–157.13] | 161.45 [160.31–163.52] | 14856.73 [14819.50–14902.17] | PASS |
+
+Only scalar capacity 16 and wide capacity 4096 pass both cohorts. Wide-4096
+WF is now near Rust and well below C++ in this screen, while scalar 256/4096
+and wide 16/256 do not establish a repeatable advantage over the slower peer.
+The complete append API therefore remains unqualified; no paired
+baseline/candidate qualification was run and no representation is selected.
+The difference from the preceding independent malloc/copy/free screen is not
+reported as a paired speedup or causal percentage. Matching the payload
+extent and realloc route is useful evidence for large growth, not grounds for
+blanket adoption across sizes, construction/destruction or other APIs.
+
+Initial-growth policy cells remain separate:
+
+| Element / old capacity | Cohort | WF | Rust | C++ | Screen |
+|---|---:|---|---|---|---|
+| 8 B / 0 | 0 | 18.63 [18.52–19.78] | 11.86 [11.77–12.30] | 10.95 [10.92–11.31] | LOSE |
+| 8 B / 0 | 1 | 18.56 [18.45–19.37] | 11.93 [11.77–12.38] | 11.07 [10.92–11.40] | LOSE |
+| 8 B / 1 | 0 | 18.61 [18.55–18.70] | 32.34 [32.24–32.63] | 20.48 [20.37–21.05] | PASS |
+| 8 B / 1 | 1 | 18.60 [18.56–19.58] | 32.48 [32.29–33.69] | 20.46 [20.38–20.51] | PASS |
+| 256 B / 0 | 0 | 34.97 [34.72–35.98] | 22.76 [22.41–23.01] | 15.61 [15.52–15.86] | LOSE |
+| 256 B / 0 | 1 | 34.88 [34.77–35.80] | 22.51 [22.47–23.60] | 15.69 [15.59–16.31] | LOSE |
+| 256 B / 1 | 0 | 49.58 [49.29–50.40] | 52.75 [52.40–53.24] | 43.13 [42.99–43.85] | PASS |
+| 256 B / 1 | 1 | 49.76 [49.42–51.10] | 52.54 [52.35–53.93] | 43.02 [42.70–44.26] | PASS |
+
+Both zero-capacity cells lose to both peers. WF's allocated nonnull placeholder
+and the peers' empty representations differ; this result cannot be hidden by
+the matched-capacity table. Capacity-one policies also differ as the retained
+account table records. No extra launch was used to seek a favorable result.
+
+Evidence: [prototype patch](split-slots-payload-realloc.patch),
+[all samples](ecosystem-append-growth-split-payload-realloc-samples.csv), and
+[build/check/account/native/timing log](ecosystem-append-growth-split-payload-realloc-timing.txt).
+The patch applies to `8eee797a53211e1086740950797c765a677ae64f`; independent
+replay reproduced all seven files byte for byte. It preserves the four compiler
+files, candidate ledger and both focused fixture inputs. The five implementation
+files were restored to that base before publication; the patch is an explicitly
+nonconforming research prototype, not a production compiler change.
+
+Frozen SHA-256 identities:
+
+- Patch: `3f51d23caab18567cc12de07274ea9d357d7651f13afae81b67690b76a8b89c0`.
+- Candidate CLI: `1e43a2bec4fdf5e84011777c6838e39917fbebd265c6c97390156cf4209c2b7e`.
+- Timed image: `5efc26fed2a63f2d8e6bc7e521bf64b0586491fc181de3f58070100e29673ab0`.
+- Samples: `e33a17ab80c94daf7e787816379c62eae472dfea8c80e06bce3ce90de74a73b1`.
+
+Reproduce using the preceding split-payload procedure on the named base with
+this patch and isolated BUILD, adding both explicit observer flags
+`-DWF_SPLIT_SLOTS_PAYLOAD=1 -DWF_SPLIT_SLOTS_REALLOC=1` to ECO_CFLAGS.
+The existing build/check/account targets and fixed timing command are unchanged.
+For the focused fixture, additionally bind realloc to wf_observe_reallocate;
+the retained commands and observer supply the forced routes. These artifacts
+serve the append allocation-route experiment and retire with its superseding
+representation evidence. No specification, acceptance rule or live-tree
+revision was made. A separately noticed redundant entry-contract branch is
+recorded in TODO; it was not changed in this experiment.

@@ -3189,6 +3189,19 @@ condition under which it is taken up.
   alias metadata and `llvm.loop.parallel_accesses` (the emitter has no
   metadata table). Build the metadata subsystem as its own step with a
   before/after benchmark.
+  The [Vector full-growth helper](../lib/std/collections/vector/grow-vector.wf)
+  also exposes a scalar-contract case: `len < ceiling` and `cap <= len`, with
+  the Slots window invariant, imply `len == cap < ceiling`. The
+  [split-payload native record](../research/experiments/container-representation/vector-library/ecosystem-append-growth-split-payload-timing.txt)
+  still contains the capacity-above-8192 return guard in the ceiling-8193
+  instance. This is redundant source control flow, not an inserted safety
+  check; its runtime cost has not been isolated. Reopen after the append
+  allocation-route discriminator if helper instructions remain material.
+  Retain and lower proved entry-measure relations generically, with explicit
+  support and mutation boundaries, rather than recognizing this helper's name.
+  Require a complete target-fact mapping, unchanged acceptance and target
+  qualification, negatives for stale facts after writes, and a measured
+  before/after result before selecting that optimization.
 - **Subscripted integer places as terms.** A place with subscripts is a
   term only when its last step is a readonly field, a measure or a writer's
   own (v0.71, [investigation](../research/investigations/readonly-field-terms/DESIGN.md#alternatives)).

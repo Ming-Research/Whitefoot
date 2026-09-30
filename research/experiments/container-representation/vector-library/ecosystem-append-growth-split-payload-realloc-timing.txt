@@ -1,0 +1,568 @@
+A2: separate payload, full-run realloc; research prototype only. Base 8eee797a53211e1086740950797c765a677ae64f.
+No specification or production implementation change.
+
+=== compiler-build.log ===
+== START split-slots-realloc-cli-build (limit 185s): cargo build --manifest-path compiler/Cargo.toml --profile gate --bin whitefootc --locked --offline -j2 ==
+   Compiling whitefoot v0.1.0 (<repository-root>/compiler)
+    Finished `gate` profile [optimized] target(s) in 15.50s
+real 15.53
+user 23.10
+sys 1.29
+== END split-slots-realloc-cli-build: 15.56 s, exit 0 ==
+
+=== api-check.log ===
+== START split-slots-realloc-api-check (limit 1800s): make -C research/experiments/container-representation/vector-library -j2 BUILD=.build/split-slots-payload-realloc/api WHITEFOOTC=<repository-root>/research/experiments/container-representation/vector-library/.build/split-slots-payload-realloc/whitefootc-candidate ECO_CFLAGS=-std=c11 -O3 -Wall -Wextra -Werror -DWF_SPLIT_SLOTS_PAYLOAD=1 -DWF_SPLIT_SLOTS_REALLOC=1 ecosystem-build ecosystem-append-growth-check ecosystem-append-check ecosystem-append-growth-account ==
+mkdir -p .build/split-slots-payload-realloc/api/ecosystem
+mkdir -p .build/split-slots-payload-realloc/api
+<repository-root>/research/experiments/container-representation/vector-library/.build/split-slots-payload-realloc/whitefootc-candidate --emit-llvm vector-library.wf -o .build/split-slots-payload-realloc/api/vector-library.raw.ll
+mkdir -p .build/split-slots-payload-realloc/api/native/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/ordinary_values.c -o .build/split-slots-payload-realloc/api/native/ordinary_values.o
+mkdir -p .build/split-slots-payload-realloc/api/native/sched/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/sched/core.c -o .build/split-slots-payload-realloc/api/native/sched/core.o
+mkdir -p .build/split-slots-payload-realloc/api/native/sched/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/sched/entry.c -o .build/split-slots-payload-realloc/api/native/sched/entry.o
+mkdir -p .build/split-slots-payload-realloc/api/native/completion/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/completion/runtime.c -o .build/split-slots-payload-realloc/api/native/completion/runtime.o
+mkdir -p .build/split-slots-payload-realloc/api/native/completion/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/completion/file_adapter.c -o .build/split-slots-payload-realloc/api/native/completion/file_adapter.o
+mkdir -p .build/split-slots-payload-realloc/api/native/completion/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/completion/bridge.c -o .build/split-slots-payload-realloc/api/native/completion/bridge.o
+mkdir -p .build/split-slots-payload-realloc/api/native/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/wf_floor.c -o .build/split-slots-payload-realloc/api/native/wf_floor.o
+mkdir -p .build/split-slots-payload-realloc/api/native/sched/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/sched/prim_host.c -o .build/split-slots-payload-realloc/api/native/sched/prim_host.o
+mkdir -p .build/split-slots-payload-realloc/api/native/completion/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/completion/wait_host.c -o .build/split-slots-payload-realloc/api/native/completion/wait_host.o
+mkdir -p .build/split-slots-payload-realloc/api/native/completion/
+mkdir -p .build/split-slots-payload-realloc/api/native/completion/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/completion/file_posix.c -o .build/split-slots-payload-realloc/api/native/completion/file_posix.o
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/completion/linux_io_uring.c -o .build/split-slots-payload-realloc/api/native/completion/linux_io_uring.o
+mkdir -p .build/split-slots-payload-realloc/api/native/
+clang -O2 -Wno-override-module -x ir -c <repository-root>/compiler/src/backend/ordinary_values.ll -o .build/split-slots-payload-realloc/api/native/ordinary_values_ir.o
+sed -e 's/@malloc(/@wf_cost_allocate(/g' -e 's/@realloc(/@wf_cost_reallocate(/g' \
+	    -e 's/@free(/@wf_cost_release(/g' \
+	    -e 's/@main(/@wf_fixture_main(/g' \
+	    -e 's/^declare ptr @wf_cost_allocate(i64)$/declare noalias nonnull ptr @wf_cost_allocate(i64)/' .build/split-slots-payload-realloc/api/vector-library.raw.ll > .build/split-slots-payload-realloc/api/ecosystem/whitefoot-account.ll
+note: link against the following native artifacts when linking against this static library. The order and any duplication can be significant on some platforms
+
+note: native-static-libs: -lSystem -lc -lm
+
+sed 's/@main(/@wf_fixture_main(/g' .build/split-slots-payload-realloc/api/vector-library.raw.ll > .build/split-slots-payload-realloc/api/ecosystem/whitefoot-timed.ll
+clang -O3 -Wno-override-module -x ir -c .build/split-slots-payload-realloc/api/ecosystem/whitefoot-account.ll -o .build/split-slots-payload-realloc/api/ecosystem/whitefoot-account.o
+clang -O3 -Wno-override-module -x ir -c .build/split-slots-payload-realloc/api/ecosystem/whitefoot-timed.ll -o .build/split-slots-payload-realloc/api/ecosystem/whitefoot-timed.o
+note: link against the following native artifacts when linking against this static library. The order and any duplication can be significant on some platforms
+
+note: native-static-libs: -lSystem -lc -lm
+
+clang++ -O3 .build/split-slots-payload-realloc/api/ecosystem/driver-account.o .build/split-slots-payload-realloc/api/ecosystem/whitefoot-account.o \
+	  .build/split-slots-payload-realloc/api/ecosystem/cpp-account.o .build/split-slots-payload-realloc/api/ecosystem/rust-account.a .build/split-slots-payload-realloc/api/native/ordinary_values.o .build/split-slots-payload-realloc/api/native/sched/core.o .build/split-slots-payload-realloc/api/native/sched/entry.o .build/split-slots-payload-realloc/api/native/completion/runtime.o .build/split-slots-payload-realloc/api/native/completion/file_adapter.o .build/split-slots-payload-realloc/api/native/completion/bridge.o .build/split-slots-payload-realloc/api/native/wf_floor.o .build/split-slots-payload-realloc/api/native/sched/prim_host.o .build/split-slots-payload-realloc/api/native/completion/wait_host.o .build/split-slots-payload-realloc/api/native/completion/file_posix.o .build/split-slots-payload-realloc/api/native/completion/linux_io_uring.o .build/split-slots-payload-realloc/api/native/ordinary_values_ir.o \
+	  -pthread -lm -liconv -lSystem -lc -lm -o .build/split-slots-payload-realloc/api/ecosystem/vector-costs-account
+ld: warning: ignoring duplicate libraries: '-lSystem', '-lm'
+.build/split-slots-payload-realloc/api/ecosystem/vector-costs-account growth-api-account > '.build/split-slots-payload-realloc/api/ecosystem/append-growth-accounting.csv'
+clang++ -O3 .build/split-slots-payload-realloc/api/ecosystem/driver-timed.o .build/split-slots-payload-realloc/api/ecosystem/whitefoot-timed.o \
+	  .build/split-slots-payload-realloc/api/ecosystem/cpp-timed.o .build/split-slots-payload-realloc/api/ecosystem/rust-timed.a .build/split-slots-payload-realloc/api/native/ordinary_values.o .build/split-slots-payload-realloc/api/native/sched/core.o .build/split-slots-payload-realloc/api/native/sched/entry.o .build/split-slots-payload-realloc/api/native/completion/runtime.o .build/split-slots-payload-realloc/api/native/completion/file_adapter.o .build/split-slots-payload-realloc/api/native/completion/bridge.o .build/split-slots-payload-realloc/api/native/wf_floor.o .build/split-slots-payload-realloc/api/native/sched/prim_host.o .build/split-slots-payload-realloc/api/native/completion/wait_host.o .build/split-slots-payload-realloc/api/native/completion/file_posix.o .build/split-slots-payload-realloc/api/native/completion/linux_io_uring.o .build/split-slots-payload-realloc/api/native/ordinary_values_ir.o \
+	  -pthread -lm -liconv -lSystem -lc -lm -o .build/split-slots-payload-realloc/api/ecosystem/vector-costs-timed
+ld: warning: ignoring duplicate libraries: '-lSystem', '-lm'
+.build/split-slots-payload-realloc/api/ecosystem/vector-costs-timed growth-api-check
+Append growth allocation observations: .build/split-slots-payload-realloc/api/ecosystem/append-growth-accounting.csv
+.build/split-slots-payload-realloc/api/ecosystem/vector-costs-timed api-check
+vector spare append: scalar/256B, five counts, three APIs passed
+.build/split-slots-payload-realloc/api/ecosystem/vector-costs-account api-check
+growth append clock: reads=200000 minimum_nonzero_ns=41 quantized=0
+growth append policy: whitefoot bytes=8 requested=0 initial=0 length=1 capacity=1
+growth append policy: rust-vec bytes=8 requested=0 initial=0 length=1 capacity=4
+growth append policy: cpp-std-vector bytes=8 requested=0 initial=0 length=1 capacity=1
+growth append policy: whitefoot bytes=256 requested=0 initial=0 length=1 capacity=1
+growth append policy: rust-vec bytes=256 requested=0 initial=0 length=1 capacity=4
+growth append policy: cpp-std-vector bytes=256 requested=0 initial=0 length=1 capacity=1
+growth append policy: whitefoot bytes=8 requested=1 initial=1 length=2 capacity=2
+growth append policy: rust-vec bytes=8 requested=1 initial=1 length=2 capacity=4
+growth append policy: cpp-std-vector bytes=8 requested=1 initial=1 length=2 capacity=2
+growth append policy: whitefoot bytes=256 requested=1 initial=1 length=2 capacity=2
+growth append policy: rust-vec bytes=256 requested=1 initial=1 length=2 capacity=4
+growth append policy: cpp-std-vector bytes=256 requested=1 initial=1 length=2 capacity=2
+vector append growth: scalar/256B, five capacities, three APIs passed
+.build/split-slots-payload-realloc/api/ecosystem/vector-costs-account growth-api-check
+vector spare append: scalar/256B, five counts, three APIs passed
+growth append policy: whitefoot bytes=8 requested=0 initial=0 length=1 capacity=1
+growth append policy: rust-vec bytes=8 requested=0 initial=0 length=1 capacity=4
+growth append policy: cpp-std-vector bytes=8 requested=0 initial=0 length=1 capacity=1
+growth append policy: whitefoot bytes=256 requested=0 initial=0 length=1 capacity=1
+growth append policy: rust-vec bytes=256 requested=0 initial=0 length=1 capacity=4
+growth append policy: cpp-std-vector bytes=256 requested=0 initial=0 length=1 capacity=1
+growth append policy: whitefoot bytes=8 requested=1 initial=1 length=2 capacity=2
+growth append policy: rust-vec bytes=8 requested=1 initial=1 length=2 capacity=4
+growth append policy: cpp-std-vector bytes=8 requested=1 initial=1 length=2 capacity=2
+growth append policy: whitefoot bytes=256 requested=1 initial=1 length=2 capacity=2
+growth append policy: rust-vec bytes=256 requested=1 initial=1 length=2 capacity=4
+growth append policy: cpp-std-vector bytes=256 requested=1 initial=1 length=2 capacity=2
+vector append growth: scalar/256B, five capacities, three APIs passed
+.build/split-slots-payload-realloc/api/ecosystem/vector-costs-account allocator-check
+vector allocator observer: preserved bytes, alignment and exact ledger passed
+vector library costs: reallocation observer preserved bytes
+grep -Fx 'vector library costs: spare append full values and checksum' .build/split-slots-payload-realloc/api/ecosystem/api-fail-values.txt
+vector library costs: spare append full values and checksum
+grep -Fx 'vector library costs: spare append zero allocation' .build/split-slots-payload-realloc/api/ecosystem/api-fail-allocation.txt
+vector library costs: spare append zero allocation
+vector library costs: reallocation observer exact ledger
+vector library costs: growth append clock precision
+vector library costs: growth append full values and checksum
+vector library costs: growth append post state
+vector library costs: growth append full values and checksum
+vector library costs: growth append post state
+real 3.28
+user 4.43
+sys 0.68
+== END split-slots-realloc-api-check: 3.37 s, exit 0 ==
+
+Read-only artifact identity and account audit after terminal build/check:
+1e43a2bec4fdf5e84011777c6838e39917fbebd265c6c97390156cf4209c2b7e  research/experiments/container-representation/vector-library/.build/split-slots-payload-realloc/whitefootc-candidate
+5efc26fed2a63f2d8e6bc7e521bf64b0586491fc181de3f58070100e29673ab0  research/experiments/container-representation/vector-library/.build/split-slots-payload-realloc/api/ecosystem/vector-costs-timed
+9df4ed07728c1b97db9da79e8d0643b65b69e4b3b0ff9a377c4bcb8437b81af6  research/experiments/container-representation/vector-library/.build/split-slots-payload-realloc/api/ecosystem/vector-costs-account
+30 unique account rows; all10 WF rows have one request/one realloc/no explicit release, payload-only requested bytes, descriptor24 retained in live bytes.
+
+=== api/ecosystem/configuration.txt ===
+vector
+<repository-root>/research/experiments/container-representation/vector-library/.build/split-slots-payload-realloc/whitefootc-candidate
+clang
+clang++
+rustc
+vector-ecosystem.rs
+vector-ecosystem.cpp
+-DECOSYSTEM
+-std=c11 -O3 -Wall -Wextra -Werror -DWF_SPLIT_SLOTS_PAYLOAD=1 -DWF_SPLIT_SLOTS_REALLOC=1
+-std=c++20 -O3 -DNDEBUG -Wall -Wextra -Werror
+--edition=2024 -C opt-level=3 -C panic=abort -D warnings
+-O3
+-liconv -lSystem -lc -lm
+
+
+
+
+Apple clang version 21.0.0 (clang-2100.3.34.2)
+Target: arm64-apple-darwin25.6.0
+Thread model: posix
+InstalledDir: /Library/Developer/CommandLineTools/usr/bin
+Apple clang version 21.0.0 (clang-2100.3.34.2)
+Target: arm64-apple-darwin25.6.0
+Thread model: posix
+InstalledDir: /Library/Developer/CommandLineTools/usr/bin
+rustc 1.98.1 (48a229cea 2026-09-01)
+binary: rustc
+commit-hash: 48a229ceaefd4985c50990b14116b6d856af0985
+commit-date: 2026-09-01
+host: aarch64-apple-darwin
+release: 1.98.1
+LLVM version: 22.1.8
+
+=== api/ecosystem/append-growth-accounting.csv ===
+contract,element_bytes,requested_capacity,initial_capacity,variant,length,capacity,requests,reallocations,releases,requested_bytes,live_before,live_after
+append-growth-o3,8,16,16,whitefoot,17,32,1,1,0,256,152,280
+append-growth-o3,8,16,16,rust-vec,17,32,1,1,0,256,128,256
+append-growth-o3,8,16,16,cpp-std-vector,17,32,1,0,1,256,128,256
+append-growth-o3,256,16,16,whitefoot,17,32,1,1,0,8192,4120,8216
+append-growth-o3,256,16,16,rust-vec,17,32,1,1,0,8192,4096,8192
+append-growth-o3,256,16,16,cpp-std-vector,17,32,1,0,1,8192,4096,8192
+append-growth-o3,8,256,256,whitefoot,257,512,1,1,0,4096,2072,4120
+append-growth-o3,8,256,256,rust-vec,257,512,1,1,0,4096,2048,4096
+append-growth-o3,8,256,256,cpp-std-vector,257,512,1,0,1,4096,2048,4096
+append-growth-o3,256,256,256,whitefoot,257,512,1,1,0,131072,65560,131096
+append-growth-o3,256,256,256,rust-vec,257,512,1,1,0,131072,65536,131072
+append-growth-o3,256,256,256,cpp-std-vector,257,512,1,0,1,131072,65536,131072
+append-growth-o3,8,4096,4096,whitefoot,4097,8192,1,1,0,65536,32792,65560
+append-growth-o3,8,4096,4096,rust-vec,4097,8192,1,1,0,65536,32768,65536
+append-growth-o3,8,4096,4096,cpp-std-vector,4097,8192,1,0,1,65536,32768,65536
+append-growth-o3,256,4096,4096,whitefoot,4097,8192,1,1,0,2097152,1048600,2097176
+append-growth-o3,256,4096,4096,rust-vec,4097,8192,1,1,0,2097152,1048576,2097152
+append-growth-o3,256,4096,4096,cpp-std-vector,4097,8192,1,0,1,2097152,1048576,2097152
+append-growth-o3,8,0,0,whitefoot,1,1,1,1,0,8,25,32
+append-growth-o3,8,0,0,rust-vec,1,4,1,0,0,32,0,32
+append-growth-o3,8,0,0,cpp-std-vector,1,1,1,0,0,8,0,8
+append-growth-o3,256,0,0,whitefoot,1,1,1,1,0,256,25,280
+append-growth-o3,256,0,0,rust-vec,1,4,1,0,0,1024,0,1024
+append-growth-o3,256,0,0,cpp-std-vector,1,1,1,0,0,256,0,256
+append-growth-o3,8,1,1,whitefoot,2,2,1,1,0,16,32,40
+append-growth-o3,8,1,1,rust-vec,2,4,1,1,0,32,8,32
+append-growth-o3,8,1,1,cpp-std-vector,2,2,1,0,1,16,8,16
+append-growth-o3,256,1,1,whitefoot,2,2,1,1,0,512,280,536
+append-growth-o3,256,1,1,rust-vec,2,4,1,1,0,1024,256,1024
+append-growth-o3,256,1,1,cpp-std-vector,2,2,1,0,1,512,256,512
+
+=== fixture-emission.log ===
+real 0.02
+user 0.01
+sys 0.00
+
+=== native-statuses.json ===
+[
+  {
+    "stage": "native-build",
+    "command": [
+      "perl",
+      ".github/run-check.pl",
+      "split-slots-realloc-native-build",
+      "clang",
+      "-std=c11",
+      "-O3",
+      "-Wall",
+      "-Wextra",
+      "-Werror",
+      "-Wno-override-module",
+      "research/experiments/container-representation/vector-library/.build/split-slots-payload-realloc/focused-observed.ll",
+      "research/experiments/container-representation/vector-library/.build/split-slots-payload-realloc/observer.c",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/ordinary_values.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/ordinary_values_ir.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/wf_floor.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/bridge.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/file_adapter.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/file_posix.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/linux_io_uring.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/runtime.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/wait_host.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/sched/core.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/sched/entry.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/sched/prim_host.o",
+      "-pthread",
+      "-lm",
+      "-o",
+      "research/experiments/container-representation/vector-library/.build/split-slots-payload-realloc/focused-native"
+    ],
+    "direct_exit": 0,
+    "expected_exit": 0,
+    "wall_seconds": 0.23908979073166847
+  },
+  {
+    "stage": "native-normal",
+    "command": [
+      "perl",
+      ".github/run-check.pl",
+      "split-slots-realloc-native-normal",
+      "research/experiments/container-representation/vector-library/.build/split-slots-payload-realloc/focused-native"
+    ],
+    "direct_exit": 0,
+    "expected_exit": 0,
+    "wall_seconds": 0.4681345419958234
+  },
+  {
+    "stage": "native-failure",
+    "command": [
+      "perl",
+      ".github/run-check.pl",
+      "split-slots-realloc-native-failure",
+      "research/experiments/container-representation/vector-library/.build/split-slots-payload-realloc/focused-native",
+      "failure"
+    ],
+    "direct_exit": 73,
+    "expected_exit": 73,
+    "wall_seconds": 0.16394895780831575
+  },
+  {
+    "stage": "native-mutant-build",
+    "command": [
+      "perl",
+      ".github/run-check.pl",
+      "split-slots-realloc-native-mutant-build",
+      "clang",
+      "-std=c11",
+      "-O3",
+      "-Wall",
+      "-Wextra",
+      "-Werror",
+      "-Wno-override-module",
+      "research/experiments/container-representation/vector-library/.build/split-slots-payload-realloc/focused-observed.ll",
+      "research/experiments/container-representation/vector-library/.build/split-slots-payload-realloc/observer.c",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/ordinary_values.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/ordinary_values_ir.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/wf_floor.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/bridge.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/file_adapter.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/file_posix.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/linux_io_uring.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/runtime.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/wait_host.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/sched/core.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/sched/entry.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/sched/prim_host.o",
+      "-pthread",
+      "-lm",
+      "-DCORRUPT_PRESERVED_ORDER",
+      "-o",
+      "research/experiments/container-representation/vector-library/.build/split-slots-payload-realloc/focused-native-mutant"
+    ],
+    "direct_exit": 0,
+    "expected_exit": 0,
+    "wall_seconds": 0.24189695809036493
+  },
+  {
+    "stage": "native-mutant",
+    "command": [
+      "perl",
+      ".github/run-check.pl",
+      "split-slots-realloc-native-mutant",
+      "research/experiments/container-representation/vector-library/.build/split-slots-payload-realloc/focused-native-mutant"
+    ],
+    "direct_exit": 1,
+    "expected_exit": 1,
+    "wall_seconds": 0.35389224998652935
+  }
+]
+
+=== native-build.log ===
+== START split-slots-realloc-native-build (limit 60s): clang -std=c11 -O3 -Wall -Wextra -Werror -Wno-override-module research/experiments/container-representation/vector-library/.build/split-slots-payload-realloc/focused-observed.ll research/experiments/container-representation/vector-library/.build/split-slots-payload-realloc/observer.c research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/ordinary_values.o research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/ordinary_values_ir.o research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/wf_floor.o research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/bridge.o research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/file_adapter.o research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/file_posix.o research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/linux_io_uring.o research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/runtime.o research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/wait_host.o research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/sched/core.o research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/sched/entry.o research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/sched/prim_host.o -pthread -lm -o research/experiments/container-representation/vector-library/.build/split-slots-payload-realloc/focused-native ==
+real 0.12
+user 0.11
+sys 0.05
+== END split-slots-realloc-native-build: 0.22 s, exit 0 ==
+
+=== native-normal.log ===
+== START split-slots-realloc-native-normal (limit 60s): research/experiments/container-representation/vector-library/.build/split-slots-payload-realloc/focused-native ==
+split Slots realloc: 12 in-place/moving nested/partial/cap0/ZST/empty cases; exact releases
+real 0.39
+user 0.00
+sys 0.00
+== END split-slots-realloc-native-normal: 0.44 s, exit 0 ==
+
+=== native-failure.log ===
+== START split-slots-realloc-native-failure (limit 60s): research/experiments/container-representation/vector-library/.build/split-slots-payload-realloc/focused-native failure ==
+split Slots realloc: NULL preserves owner, descriptor and payload
+real 0.00
+user 0.00
+sys 0.00
+== END split-slots-realloc-native-failure: 0.11 s, exit 73 ==
+
+=== native-mutant-build.log ===
+== START split-slots-realloc-native-mutant-build (limit 60s): clang -std=c11 -O3 -Wall -Wextra -Werror -Wno-override-module research/experiments/container-representation/vector-library/.build/split-slots-payload-realloc/focused-observed.ll research/experiments/container-representation/vector-library/.build/split-slots-payload-realloc/observer.c research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/ordinary_values.o research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/ordinary_values_ir.o research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/wf_floor.o research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/bridge.o research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/file_adapter.o research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/file_posix.o research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/linux_io_uring.o research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/runtime.o research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/wait_host.o research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/sched/core.o research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/sched/entry.o research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/sched/prim_host.o -pthread -lm -DCORRUPT_PRESERVED_ORDER -o research/experiments/container-representation/vector-library/.build/split-slots-payload-realloc/focused-native-mutant ==
+real 0.12
+user 0.12
+sys 0.04
+== END split-slots-realloc-native-mutant-build: 0.22 s, exit 0 ==
+
+=== native-mutant.log ===
+== START split-slots-realloc-native-mutant (limit 60s): research/experiments/container-representation/vector-library/.build/split-slots-payload-realloc/focused-native-mutant ==
+split Slots realloc observer: source content/header assertion
+real 0.25
+user 0.00
+sys 0.00
+== END split-slots-realloc-native-mutant: 0.33 s, exit 1 ==
+
+=== growth-native.asm ===
+000000000000320c <_wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6>:
+    320c:      	stp	x24, x23, [sp, #-0x40]!
+    3210:      	stp	x22, x21, [sp, #0x10]
+    3214:      	stp	x20, x19, [sp, #0x20]
+    3218:      	stp	x29, x30, [sp, #0x30]
+    321c:      	ldr	x21, [x0]
+    3220:      	ldr	x22, [x21, #0x8]
+    3224:      	cbz	x22, 0x3258 <_wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6+0x4c>
+    3228:      	cmp	x22, #0x1, lsl #12      ; =0x1000
+    322c:      	b.hi	0x328c <_wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6+0x80>
+    3230:      	ldr	x23, [x21]
+    3234:      	ldr	x19, [x21, #0x10]
+    3238:      	lsl	x1, x22, #4
+    323c:      	cmp	x23, x22
+    3240:      	b.ne	0x32c0 <_wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6+0xb4>
+    3244:      	mov	x0, x19
+    3248:      	bl	0x3248 <_wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6+0x3c>
+		0000000000003248:  ARM64_RELOC_BRANCH26	_realloc
+    324c:      	mov	x20, x0
+    3250:      	cbnz	x0, 0x32e4 <_wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6+0xd8>
+    3254:      	b	0x335c <_wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6+0x150>
+    3258:      	ldr	x22, [x21]
+    325c:      	ldr	x19, [x21, #0x10]
+    3260:      	cbz	x22, 0x32f0 <_wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6+0xe4>
+    3264:      	mov	w0, #0x8                ; =8
+    3268:      	bl	0x3268 <_wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6+0x5c>
+		0000000000003268:  ARM64_RELOC_BRANCH26	_malloc
+    326c:      	cbz	x0, 0x335c <_wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6+0x150>
+    3270:      	mov	x20, x0
+    3274:      	lsl	x2, x22, #3
+    3278:      	mov	x1, x19
+    327c:      	bl	0x327c <_wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6+0x70>
+		000000000000327c:  ARM64_RELOC_BRANCH26	_memmove
+    3280:      	mov	x0, x19
+    3284:      	bl	0x3284 <_wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6+0x78>
+		0000000000003284:  ARM64_RELOC_BRANCH26	_free
+    3288:      	b	0x3304 <_wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6+0xf8>
+    328c:      	cmp	x22, #0x2, lsl #12      ; =0x2000
+    3290:      	b.hi	0x3344 <_wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6+0x138>
+    3294:      	ldr	x23, [x21]
+    3298:      	ldr	x19, [x21, #0x10]
+    329c:      	cmp	x23, x22
+    32a0:      	b.ne	0x3310 <_wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6+0x104>
+    32a4:      	mov	x0, x19
+    32a8:      	mov	w1, #0x8                ; =8
+    32ac:      	movk	w1, #0x1, lsl #16
+    32b0:      	bl	0x32b0 <_wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6+0xa4>
+		00000000000032b0:  ARM64_RELOC_BRANCH26	_realloc
+    32b4:      	mov	x20, x0
+    32b8:      	cbnz	x0, 0x3338 <_wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6+0x12c>
+    32bc:      	b	0x335c <_wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6+0x150>
+    32c0:      	mov	x0, x1
+    32c4:      	bl	0x32c4 <_wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6+0xb8>
+		00000000000032c4:  ARM64_RELOC_BRANCH26	_malloc
+    32c8:      	cbz	x0, 0x335c <_wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6+0x150>
+    32cc:      	mov	x20, x0
+    32d0:      	lsl	x2, x23, #3
+    32d4:      	mov	x1, x19
+    32d8:      	bl	0x32d8 <_wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6+0xcc>
+		00000000000032d8:  ARM64_RELOC_BRANCH26	_memmove
+    32dc:      	mov	x0, x19
+    32e0:      	bl	0x32e0 <_wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6+0xd4>
+		00000000000032e0:  ARM64_RELOC_BRANCH26	_free
+    32e4:      	lsl	x8, x22, #1
+    32e8:      	str	x20, [x21, #0x10]
+    32ec:      	b	0x3340 <_wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6+0x134>
+    32f0:      	mov	x0, x19
+    32f4:      	mov	w1, #0x8                ; =8
+    32f8:      	bl	0x32f8 <_wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6+0xec>
+		00000000000032f8:  ARM64_RELOC_BRANCH26	_realloc
+    32fc:      	mov	x20, x0
+    3300:      	cbz	x0, 0x335c <_wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6+0x150>
+    3304:      	str	x20, [x21, #0x10]
+    3308:      	mov	w8, #0x1                ; =1
+    330c:      	b	0x3340 <_wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6+0x134>
+    3310:      	mov	w0, #0x8                ; =8
+    3314:      	movk	w0, #0x1, lsl #16
+    3318:      	bl	0x3318 <_wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6+0x10c>
+		0000000000003318:  ARM64_RELOC_BRANCH26	_malloc
+    331c:      	cbz	x0, 0x335c <_wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6+0x150>
+    3320:      	mov	x20, x0
+    3324:      	lsl	x2, x23, #3
+    3328:      	mov	x1, x19
+    332c:      	bl	0x332c <_wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6+0x120>
+		000000000000332c:  ARM64_RELOC_BRANCH26	_memmove
+    3330:      	mov	x0, x19
+    3334:      	bl	0x3334 <_wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6+0x128>
+		0000000000003334:  ARM64_RELOC_BRANCH26	_free
+    3338:      	str	x20, [x21, #0x10]
+    333c:      	mov	w8, #0x2001             ; =8193
+    3340:      	str	x8, [x21, #0x8]
+    3344:      	mov	w0, #0x0                ; =0
+    3348:      	ldp	x29, x30, [sp, #0x30]
+    334c:      	ldp	x20, x19, [sp, #0x20]
+    3350:      	ldp	x22, x21, [sp, #0x10]
+    3354:      	ldp	x24, x23, [sp], #0x40
+    3358:      	ret
+    335c:      	bl	0x335c <_wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6+0x150>
+		000000000000335c:  ARM64_RELOC_BRANCH26	l_wf_resource_abort
+
+
+0000000000003360 <_wf_std.collections.vector.grow_vector_grow_full$instance$979fcc4ac6e818fb>:
+    3360:      	stp	x24, x23, [sp, #-0x40]!
+    3364:      	stp	x22, x21, [sp, #0x10]
+    3368:      	stp	x20, x19, [sp, #0x20]
+    336c:      	stp	x29, x30, [sp, #0x30]
+    3370:      	ldr	x21, [x0]
+    3374:      	ldr	x22, [x21, #0x8]
+    3378:      	cbz	x22, 0x33ac <_wf_std.collections.vector.grow_vector_grow_full$instance$979fcc4ac6e818fb+0x4c>
+    337c:      	cmp	x22, #0x1, lsl #12      ; =0x1000
+    3380:      	b.hi	0x33e0 <_wf_std.collections.vector.grow_vector_grow_full$instance$979fcc4ac6e818fb+0x80>
+    3384:      	ldr	x23, [x21]
+    3388:      	ldr	x19, [x21, #0x10]
+    338c:      	lsl	x1, x22, #9
+    3390:      	cmp	x23, x22
+    3394:      	b.ne	0x3414 <_wf_std.collections.vector.grow_vector_grow_full$instance$979fcc4ac6e818fb+0xb4>
+    3398:      	mov	x0, x19
+    339c:      	bl	0x339c <_wf_std.collections.vector.grow_vector_grow_full$instance$979fcc4ac6e818fb+0x3c>
+		000000000000339c:  ARM64_RELOC_BRANCH26	_realloc
+    33a0:      	mov	x20, x0
+    33a4:      	cbnz	x0, 0x3438 <_wf_std.collections.vector.grow_vector_grow_full$instance$979fcc4ac6e818fb+0xd8>
+    33a8:      	b	0x34b0 <_wf_std.collections.vector.grow_vector_grow_full$instance$979fcc4ac6e818fb+0x150>
+    33ac:      	ldr	x22, [x21]
+    33b0:      	ldr	x19, [x21, #0x10]
+    33b4:      	cbz	x22, 0x3444 <_wf_std.collections.vector.grow_vector_grow_full$instance$979fcc4ac6e818fb+0xe4>
+    33b8:      	mov	w0, #0x100              ; =256
+    33bc:      	bl	0x33bc <_wf_std.collections.vector.grow_vector_grow_full$instance$979fcc4ac6e818fb+0x5c>
+		00000000000033bc:  ARM64_RELOC_BRANCH26	_malloc
+    33c0:      	cbz	x0, 0x34b0 <_wf_std.collections.vector.grow_vector_grow_full$instance$979fcc4ac6e818fb+0x150>
+    33c4:      	mov	x20, x0
+    33c8:      	lsl	x2, x22, #8
+    33cc:      	mov	x1, x19
+    33d0:      	bl	0x33d0 <_wf_std.collections.vector.grow_vector_grow_full$instance$979fcc4ac6e818fb+0x70>
+		00000000000033d0:  ARM64_RELOC_BRANCH26	_memmove
+    33d4:      	mov	x0, x19
+    33d8:      	bl	0x33d8 <_wf_std.collections.vector.grow_vector_grow_full$instance$979fcc4ac6e818fb+0x78>
+		00000000000033d8:  ARM64_RELOC_BRANCH26	_free
+    33dc:      	b	0x3458 <_wf_std.collections.vector.grow_vector_grow_full$instance$979fcc4ac6e818fb+0xf8>
+    33e0:      	cmp	x22, #0x2, lsl #12      ; =0x2000
+    33e4:      	b.hi	0x3498 <_wf_std.collections.vector.grow_vector_grow_full$instance$979fcc4ac6e818fb+0x138>
+    33e8:      	ldr	x23, [x21]
+    33ec:      	ldr	x19, [x21, #0x10]
+    33f0:      	cmp	x23, x22
+    33f4:      	b.ne	0x3464 <_wf_std.collections.vector.grow_vector_grow_full$instance$979fcc4ac6e818fb+0x104>
+    33f8:      	mov	x0, x19
+    33fc:      	mov	w1, #0x100              ; =256
+    3400:      	movk	w1, #0x20, lsl #16
+    3404:      	bl	0x3404 <_wf_std.collections.vector.grow_vector_grow_full$instance$979fcc4ac6e818fb+0xa4>
+		0000000000003404:  ARM64_RELOC_BRANCH26	_realloc
+    3408:      	mov	x20, x0
+    340c:      	cbnz	x0, 0x348c <_wf_std.collections.vector.grow_vector_grow_full$instance$979fcc4ac6e818fb+0x12c>
+    3410:      	b	0x34b0 <_wf_std.collections.vector.grow_vector_grow_full$instance$979fcc4ac6e818fb+0x150>
+    3414:      	mov	x0, x1
+    3418:      	bl	0x3418 <_wf_std.collections.vector.grow_vector_grow_full$instance$979fcc4ac6e818fb+0xb8>
+		0000000000003418:  ARM64_RELOC_BRANCH26	_malloc
+    341c:      	cbz	x0, 0x34b0 <_wf_std.collections.vector.grow_vector_grow_full$instance$979fcc4ac6e818fb+0x150>
+    3420:      	mov	x20, x0
+    3424:      	lsl	x2, x23, #8
+    3428:      	mov	x1, x19
+    342c:      	bl	0x342c <_wf_std.collections.vector.grow_vector_grow_full$instance$979fcc4ac6e818fb+0xcc>
+		000000000000342c:  ARM64_RELOC_BRANCH26	_memmove
+    3430:      	mov	x0, x19
+    3434:      	bl	0x3434 <_wf_std.collections.vector.grow_vector_grow_full$instance$979fcc4ac6e818fb+0xd4>
+		0000000000003434:  ARM64_RELOC_BRANCH26	_free
+    3438:      	lsl	x8, x22, #1
+    343c:      	str	x20, [x21, #0x10]
+    3440:      	b	0x3494 <_wf_std.collections.vector.grow_vector_grow_full$instance$979fcc4ac6e818fb+0x134>
+    3444:      	mov	x0, x19
+    3448:      	mov	w1, #0x100              ; =256
+    344c:      	bl	0x344c <_wf_std.collections.vector.grow_vector_grow_full$instance$979fcc4ac6e818fb+0xec>
+		000000000000344c:  ARM64_RELOC_BRANCH26	_realloc
+    3450:      	mov	x20, x0
+    3454:      	cbz	x0, 0x34b0 <_wf_std.collections.vector.grow_vector_grow_full$instance$979fcc4ac6e818fb+0x150>
+    3458:      	str	x20, [x21, #0x10]
+    345c:      	mov	w8, #0x1                ; =1
+    3460:      	b	0x3494 <_wf_std.collections.vector.grow_vector_grow_full$instance$979fcc4ac6e818fb+0x134>
+    3464:      	mov	w0, #0x100              ; =256
+    3468:      	movk	w0, #0x20, lsl #16
+    346c:      	bl	0x346c <_wf_std.collections.vector.grow_vector_grow_full$instance$979fcc4ac6e818fb+0x10c>
+		000000000000346c:  ARM64_RELOC_BRANCH26	_malloc
+    3470:      	cbz	x0, 0x34b0 <_wf_std.collections.vector.grow_vector_grow_full$instance$979fcc4ac6e818fb+0x150>
+    3474:      	mov	x20, x0
+    3478:      	lsl	x2, x23, #8
+    347c:      	mov	x1, x19
+    3480:      	bl	0x3480 <_wf_std.collections.vector.grow_vector_grow_full$instance$979fcc4ac6e818fb+0x120>
+		0000000000003480:  ARM64_RELOC_BRANCH26	_memmove
+    3484:      	mov	x0, x19
+    3488:      	bl	0x3488 <_wf_std.collections.vector.grow_vector_grow_full$instance$979fcc4ac6e818fb+0x128>
+		0000000000003488:  ARM64_RELOC_BRANCH26	_free
+    348c:      	str	x20, [x21, #0x10]
+    3490:      	mov	w8, #0x2001             ; =8193
+    3494:      	str	x8, [x21, #0x8]
+    3498:      	mov	w0, #0x0                ; =0
+    349c:      	ldp	x29, x30, [sp, #0x30]
+    34a0:      	ldp	x20, x19, [sp, #0x20]
+    34a4:      	ldp	x22, x21, [sp, #0x10]
+    34a8:      	ldp	x24, x23, [sp], #0x40
+    34ac:      	ret
+    34b0:      	bl	0x34b0 <_wf_std.collections.vector.grow_vector_grow_full$instance$979fcc4ac6e818fb+0x150>
+		00000000000034b0:  ARM64_RELOC_BRANCH26	l_wf_resource_abort
+
+
+=== Frozen artifacts, SHA-256 ===
+3f51d23caab18567cc12de07274ea9d357d7651f13afae81b67690b76a8b89c0  research/experiments/container-representation/vector-library/split-slots-payload-realloc.patch
+1e43a2bec4fdf5e84011777c6838e39917fbebd265c6c97390156cf4209c2b7e  research/experiments/container-representation/vector-library/.build/split-slots-payload-realloc/whitefootc-candidate
+5efc26fed2a63f2d8e6bc7e521bf64b0586491fc181de3f58070100e29673ab0  research/experiments/container-representation/vector-library/.build/split-slots-payload-realloc/api/ecosystem/vector-costs-timed
+9df4ed07728c1b97db9da79e8d0643b65b69e4b3b0ff9a377c4bcb8437b81af6  research/experiments/container-representation/vector-library/.build/split-slots-payload-realloc/api/ecosystem/vector-costs-account
+58b0366b115161e7edb4b7e804e907684fb9c02a9ce33d3e6f84cc4d1b4e7cb0  research/experiments/container-representation/vector-library/.build/split-slots-payload-realloc/focused-native
+2ed58299c43f8e7388a5c5e56573b18cdd554d0ecefc7480b6b70e6bab4aead9  research/experiments/container-representation/vector-library/.build/split-slots-payload-realloc/focused-native-mutant
+
+=== append-growth-screen-timing.txt ===
+== START split-slots-realloc-append-growth-screen (limit 240s): sh -c research/experiments/container-representation/vector-library/.build/split-slots-payload-realloc/api/ecosystem/vector-costs-timed growth-api-measure 67108864 7 8589934592 > research/experiments/container-representation/vector-library/.build/split-slots-payload-realloc/append-growth-screen-samples.csv ==
+growth append clock: reads=200000 minimum_nonzero_ns=41 quantized=0
+== RUNNING split-slots-realloc-append-growth-screen: 30 s, child 36046, group 36046 ==
+== RUNNING split-slots-realloc-append-growth-screen: 60 s, child 36046, group 36046 ==
+== RUNNING split-slots-realloc-append-growth-screen: 90 s, child 36046, group 36046 ==
+real 117.34
+user 116.93
+sys 0.31
+== END split-slots-realloc-append-growth-screen: 117.36 s, exit 0 ==
