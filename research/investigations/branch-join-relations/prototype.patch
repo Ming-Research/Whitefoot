@@ -1,7 +1,58 @@
-diff -ruN a/compiler/src/semantic/entailment/flow/domain.rs b/compiler/src/semantic/entailment/flow/domain.rs
+diff --git a/compiler/src/semantic/entailment/flow.rs b/compiler/src/semantic/entailment/flow.rs
+index 9b2348f5a..7697cf7d0 100644
+--- a/compiler/src/semantic/entailment/flow.rs
++++ b/compiler/src/semantic/entailment/flow.rs
+@@ -26,6 +26,45 @@
+ //! [PRF-1] [`certificates`], the [`walk`], the [`loop_summary`], and
+ //! canonical [`render`]ing.
+ 
++/// Research prototype switches for the branch-join investigation. Each reads
++/// one environment variable once; every switch off is the unmodified checker.
++pub(crate) mod proto {
++    use std::sync::OnceLock;
++    fn flag(cell: &'static OnceLock<bool>, name: &str) -> bool {
++        *cell.get_or_init(|| std::env::var_os(name).is_some_and(|value| value == "1"))
++    }
++    /// (b) a proved invariant's unit-coefficient target is also an L0 fact.
++    pub(crate) fn join_b() -> bool {
++        static CELL: OnceLock<bool> = OnceLock::new();
++        flag(&CELL, "WF_JOIN_B")
++    }
++    /// (a) at every join input, project affine premises that are a difference
++    /// of two candidates' current images into L0 before the L0 join.
++    pub(crate) fn join_a() -> bool {
++        static CELL: OnceLock<bool> = OnceLock::new();
++        flag(&CELL, "WF_JOIN_A")
++    }
++    /// (a+) at every join input, bound every pair of candidates, one of whose
++    /// images differs across the inputs, by the tightest constant AUTO's
++    /// families prove, and establish it in L0 before the L0 join.
++    pub(crate) fn join_ap() -> bool {
++        static CELL: OnceLock<bool> = OnceLock::new();
++        flag(&CELL, "WF_JOIN_AP")
++    }
++    /// S7: `/` and `ishr` publish `r < a` when a0 >= 1 and the divisor or
++    /// shift is at least 2 or 1.
++    pub(crate) fn mid_div() -> bool {
++        static CELL: OnceLock<bool> = OnceLock::new();
++        flag(&CELL, "WF_MID_DIV")
++    }
++    /// S7: exact `-` result bounds also read the operands' closed difference.
++    pub(crate) fn mid_sub() -> bool {
++        static CELL: OnceLock<bool> = OnceLock::new();
++        flag(&CELL, "WF_MID_SUB")
++    }
++
++}
++
+ mod certificates;
+ mod conversions;
+ mod domain;
+diff --git a/compiler/src/semantic/entailment/flow/domain.rs b/compiler/src/semantic/entailment/flow/domain.rs
+index ad01907aa..b45b922cd 100644
 --- a/compiler/src/semantic/entailment/flow/domain.rs
 +++ b/compiler/src/semantic/entailment/flow/domain.rs
-@@ -896,6 +896,29 @@
+@@ -892,6 +892,29 @@ impl Judging<'_, '_, '_> {
          for state in &mut promoted {
              self.vocabulary.promote_flow_contradiction(state);
          }
@@ -31,11 +82,10 @@ diff -ruN a/compiler/src/semantic/entailment/flow/domain.rs b/compiler/src/seman
          let contributing = promoted
              .iter()
              .filter(|state| !state.facts.all_derivable)
-@@ -941,6 +964,243 @@
-         }
+@@ -938,6 +961,243 @@ impl Judging<'_, '_, '_> {
      }
  }
-+
+ 
 +impl Reasoning<'_, '_, '_> {
 +    /// Prototype (a): every affine premise whose coefficient vector is the
 +    /// difference of two L0 candidates' current images becomes that L0
@@ -272,13 +322,15 @@ diff -ruN a/compiler/src/semantic/entailment/flow/domain.rs b/compiler/src/seman
 +        }
 +    }
 +}
- 
++
  /// Returns the one deterministic premise traversal used by every affine
  /// consumer: insertion order with later occurrences of the same canonical
-diff -ruN a/compiler/src/semantic/entailment/flow/invariants.rs b/compiler/src/semantic/entailment/flow/invariants.rs
+ /// inequality removed, regardless of evidence category.
+diff --git a/compiler/src/semantic/entailment/flow/invariants.rs b/compiler/src/semantic/entailment/flow/invariants.rs
+index 552ed2106..748fb2a0f 100644
 --- a/compiler/src/semantic/entailment/flow/invariants.rs
 +++ b/compiler/src/semantic/entailment/flow/invariants.rs
-@@ -460,6 +460,50 @@
+@@ -459,6 +459,50 @@ impl Reasoning<'_, '_, '_> {
      }
  }
  
@@ -329,25 +381,11 @@ diff -ruN a/compiler/src/semantic/entailment/flow/invariants.rs b/compiler/src/s
  impl Judging<'_, '_, '_> {
      pub(super) fn record_loop_invariant_outcomes(
          &mut self,
-@@ -497,9 +541,11 @@
-     loop_id: CheckedLoopId,
-     declarations: &[crate::DeclarationId],
- ) {
--    state
--        .facts
--        .retain(|fact| !fact.active_loops.contains(&loop_id));
-+    if !super::proto::loop_exit() {
-+        state
-+            .facts
-+            .retain(|fact| !fact.active_loops.contains(&loop_id));
-+    }
-     for declaration in declarations {
-         state.published_invariants.remove(declaration);
-     }
-diff -ruN a/compiler/src/semantic/entailment/flow/operation_facts.rs b/compiler/src/semantic/entailment/flow/operation_facts.rs
+diff --git a/compiler/src/semantic/entailment/flow/operation_facts.rs b/compiler/src/semantic/entailment/flow/operation_facts.rs
+index 884c75ab9..e1f75d410 100644
 --- a/compiler/src/semantic/entailment/flow/operation_facts.rs
 +++ b/compiler/src/semantic/entailment/flow/operation_facts.rs
-@@ -106,7 +106,7 @@
+@@ -106,7 +106,7 @@ impl Interval {
          Self::new(self.low.min(other.low), self.high.max(other.high))
      }
  
@@ -356,7 +394,7 @@ diff -ruN a/compiler/src/semantic/entailment/flow/operation_facts.rs b/compiler/
          let low = self.low.max(other.low);
          let high = self.high.min(other.high);
          (low <= high).then_some(Self::new(low, high))
-@@ -420,7 +420,9 @@
+@@ -420,7 +420,9 @@ fn table(
                  let part = hull2(a, divisor, i128::checked_div)?;
                  hull = Some(hull.map_or(part, |hull| hull.join(part)));
              }
@@ -367,7 +405,7 @@ diff -ruN a/compiler/src/semantic/entailment/flow/operation_facts.rs b/compiler/
                  vec![at_most(0, 0)]
              } else {
                  Vec::new()
-@@ -529,7 +531,9 @@
+@@ -529,7 +531,9 @@ fn table(
              let hull = hull2(a, amounts, |value, amount| {
                  Some(value >> u32::try_from(amount).ok()?)
              })?;
@@ -378,10 +416,11 @@ diff -ruN a/compiler/src/semantic/entailment/flow/operation_facts.rs b/compiler/
                  vec![at_most(0, 0)]
              } else {
                  Vec::new()
-diff -ruN a/compiler/src/semantic/entailment/flow/sources.rs b/compiler/src/semantic/entailment/flow/sources.rs
+diff --git a/compiler/src/semantic/entailment/flow/sources.rs b/compiler/src/semantic/entailment/flow/sources.rs
+index 3b584fdf4..1122701bf 100644
 --- a/compiler/src/semantic/entailment/flow/sources.rs
 +++ b/compiler/src/semantic/entailment/flow/sources.rs
-@@ -1162,13 +1162,43 @@
+@@ -1380,13 +1380,43 @@ impl Analyzer<'_, '_> {
              // the domain decision consumed; that decision is the parent.
              parents = vec![*domain];
          }
@@ -426,7 +465,7 @@ diff -ruN a/compiler/src/semantic/entailment/flow/sources.rs b/compiler/src/sema
          if facts.bounds.is_none() && facts.relations.is_empty() {
              return None;
          }
-@@ -1201,7 +1231,7 @@
+@@ -1419,7 +1449,7 @@ impl Analyzer<'_, '_> {
                  let proof = self
                      .vocabulary
                      .establish_operation_fact(state, result, term, high, event, &parents);
@@ -435,10 +474,11 @@ diff -ruN a/compiler/src/semantic/entailment/flow/sources.rs b/compiler/src/sema
                      dividend_order = Some(proof);
                  }
              }
-diff -ruN a/compiler/src/semantic/entailment/flow/walk.rs b/compiler/src/semantic/entailment/flow/walk.rs
+diff --git a/compiler/src/semantic/entailment/flow/walk.rs b/compiler/src/semantic/entailment/flow/walk.rs
+index f230b5c71..3658c94e5 100644
 --- a/compiler/src/semantic/entailment/flow/walk.rs
 +++ b/compiler/src/semantic/entailment/flow/walk.rs
-@@ -977,6 +977,10 @@
+@@ -983,6 +983,10 @@ impl Analyzer<'_, '_> {
                          .affine
                          .published_invariants
                          .insert(proof.declaration, target);
@@ -449,7 +489,7 @@ diff -ruN a/compiler/src/semantic/entailment/flow/walk.rs b/compiler/src/semanti
                  }
                  self.output.source_proofs.push(SourceProofOutcome {
                      node_path: proof.node_path.clone(),
-@@ -1264,6 +1268,12 @@
+@@ -1374,6 +1378,12 @@ impl Analyzer<'_, '_> {
                      base_batch,
                      &mut state.affine,
                  );
@@ -459,10 +499,10 @@ diff -ruN a/compiler/src/semantic/entailment/flow/walk.rs b/compiler/src/semanti
 +                            .project_invariant_l0(&invariant.relation, &mut state.facts);
 +                    }
 +                }
-                 let invariant_declarations = invariants
-                     .iter()
-                     .map(|invariant| invariant.declaration)
-@@ -1461,6 +1471,12 @@
+                 let head_entry_images = state.entry_images.clone();
+                 self.frames.loops.push(LoopFrame {
+                     id: *id,
+@@ -1565,6 +1575,12 @@ impl Analyzer<'_, '_> {
                      base_batch,
                      &mut state.affine,
                  );
@@ -475,58 +515,3 @@ diff -ruN a/compiler/src/semantic/entailment/flow/walk.rs b/compiler/src/semanti
  
                  let head = state.clone();
                  let invariant_declarations = invariants
-diff -ruN a/compiler/src/semantic/entailment/flow.rs b/compiler/src/semantic/entailment/flow.rs
---- a/compiler/src/semantic/entailment/flow.rs
-+++ b/compiler/src/semantic/entailment/flow.rs
-@@ -26,6 +26,51 @@
- //! [PRF-1] [`certificates`], the [`walk`], the [`loop_summary`], and
- //! canonical [`render`]ing.
- 
-+/// Research prototype switches for the branch-join investigation. Each reads
-+/// one environment variable once; every switch off is the unmodified checker.
-+pub(crate) mod proto {
-+    use std::sync::OnceLock;
-+    fn flag(cell: &'static OnceLock<bool>, name: &str) -> bool {
-+        *cell.get_or_init(|| std::env::var_os(name).is_some_and(|value| value == "1"))
-+    }
-+    /// (b) a proved invariant's unit-coefficient target is also an L0 fact.
-+    pub(crate) fn join_b() -> bool {
-+        static CELL: OnceLock<bool> = OnceLock::new();
-+        flag(&CELL, "WF_JOIN_B")
-+    }
-+    /// (a) at every join input, project affine premises that are a difference
-+    /// of two candidates' current images into L0 before the L0 join.
-+    pub(crate) fn join_a() -> bool {
-+        static CELL: OnceLock<bool> = OnceLock::new();
-+        flag(&CELL, "WF_JOIN_A")
-+    }
-+    /// (a+) at every join input, bound every pair of candidates, one of whose
-+    /// images differs across the inputs, by the tightest constant AUTO's
-+    /// families prove, and establish it in L0 before the L0 join.
-+    pub(crate) fn join_ap() -> bool {
-+        static CELL: OnceLock<bool> = OnceLock::new();
-+        flag(&CELL, "WF_JOIN_AP")
-+    }
-+    /// S7: `/` and `ishr` publish `r < a` when a0 >= 1 and the divisor or
-+    /// shift is at least 2 or 1.
-+    pub(crate) fn mid_div() -> bool {
-+        static CELL: OnceLock<bool> = OnceLock::new();
-+        flag(&CELL, "WF_MID_DIV")
-+    }
-+    /// S7: exact `-` result bounds also read the operands' closed difference.
-+    pub(crate) fn mid_sub() -> bool {
-+        static CELL: OnceLock<bool> = OnceLock::new();
-+        flag(&CELL, "WF_MID_SUB")
-+    }
-+    /// Emulation of the approved loop-exit ruling (v0.79): header invariant
-+    /// conclusions are not removed on edges leaving their loop; only the
-+    /// invariant names leave scope.
-+    pub(crate) fn loop_exit() -> bool {
-+        static CELL: OnceLock<bool> = OnceLock::new();
-+        flag(&CELL, "WF_LOOP_EXIT")
-+    }
-+}
-+
- mod certificates;
- mod conversions;
- mod domain;

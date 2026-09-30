@@ -46,20 +46,51 @@ terminating, no solver takes part, and harder proofs arrive as written `use`
 steps [PRF-1]. This record edits no specification, design tree or compiler;
 its recommendation goes to the owner.
 
-## Status
+## Current replay protocol
 
-The session ended before the investigation was complete. Done: the probe
-diagnoses, the prototype of (a), (a+), (b) and the two midpoint rows, all 30
-probes under every configuration, the conformance sweep of (a), (b) and the
-rows, and the in-place census of every Snowghost module, `lib/std/collections`
-and `tests/programs`. Partial: the targeted census (the line-break, binary
-search and merge-sort rewrites were checked; the CSS scan rewrites were written
-but their verdicts were not retained, so they are not counted) and cost (the
-conformance sweep's paired single pass, and single unpaired runs of (a+)).
-Not run: the five-sample timing of [Cost](#cost) on the corpus and every census
-module, the (a+) conformance sweep, and (a+) on the Snowghost modules. The
-recommendation below rests on the probes, the sweep and the census; criterion
-4 is not yet evaluated for any candidate.
+The original v0.78 observations below are historical. The maintained
+`prototype.patch` now applies to compiler source
+`4459df880b04a7e87f46398969e1382b52637af0` (v0.82); the original patch is in
+PR #178's `f892d870ece812c9950f054016b63520f17f1dbe` revision. The new base
+already retains loop-exit facts and supports text literals, so the prototype
+no longer emulates either change. Its switches remain research-only; no
+production compiler or specification is changed by this investigation.
+
+Before the new timing results, the replay retains the original 10% time/RSS
+criterion and distinguishes three observations:
+
+- `replay.py --mode verdicts` invokes the CLI on all saved probes, every
+  current conformance source, the sixteen pinned Snowghost modules and the
+  six collection modules. It records source-check outcomes, not native
+  execution of conformance `run` cases. Base versus all-switches-off must
+  agree; every candidate difference is reported without changing the manifest.
+- `--mode cost` measures unmodified inputs with prebuilt compilers, one
+  warmup and five measured rounds, rotating configuration order. Each row
+  gives summed process wall time and maximum per-process RSS. Base, switches
+  off, (a), (b), rows and (b)+rows run on every module and the complete
+  conformance source set. (a+) already exceeds the original analytic work
+  bound, so its cost replay is limited to the collections and the scale
+  family; a full Snowghost cost pass cannot make it eligible. Its semantic
+  conformance sweep still runs. No noisy single sample selects a rule.
+- The scale family has 4, 8, 16, 32 and 64 independently guarded counters,
+  each with a header bound and a local invariant, including a continuing
+  backedge. This is a newly specified reconstruction, not the lost original
+  chain generator. The full-module rewrites in `rewrites.patch` are likewise
+  explicit new witnesses, not recovered bytes of the earlier scratch edits.
+
+The lost census automation and its exact 80 program bundles have not been
+recovered. The new replay does not silently claim to satisfy that part of the
+original cost criterion or reproduce its historical counts. A failed measured
+criterion is enough to withhold an implementation recommendation; a passing
+replay still needs that missing evidence before claiming the original
+criterion was met. Counts from this workload inventory are neither a general
+usage distribution nor a substitute for the rule's semantic grounds.
+
+Python here only extracts pinned source, invokes the compiler, and records
+outcomes and OS resource usage. It implements no acceptance rule. Run it
+explicitly under `.github/run-check.pl`; it is not a formal gate dependency.
+The replay script, patches and result data serve this investigation and retire
+when superseding evidence replaces the claims they support.
 
 ## Method
 
@@ -818,8 +849,9 @@ about stored element values, which the fact language excludes.
 
 If the owner accepts the recommendation, the implementing branch carries:
 
-- **Design tree.** An amendment in `design/amendments/` naming
-  `design/language/checks-and-proofs/automatic-facts.md`, with two decisions.
+- **Design tree.** A direct edit of the live node
+  `design/language/checks-and-proofs/automatic-facts.md` on the draft branch,
+  with two decisions.
   The first states (b) beside the body-entry requirement decision it mirrors:
   a proved invariant target that normalizes to one unit-coefficient difference
   bound over terms also establishes that L0 relation with ordinary support,
@@ -830,7 +862,7 @@ If the owner accepts the recommendation, the implementing branch carries:
   node's refused "difference interval of every result against every operand":
   the `-` row reads one closed bound the state already holds and narrows the
   result's interval, where the refused alternative published a new relation
-  per operand. The ruling is logged in `design/log.md`.
+  per operand. The ruling is logged in `design/log.md` only after owner approval.
 - **Specification.**
   - [INV-1], at "On success its normalized target and immutable value images
     become one published affine fact after the statement": a target that
