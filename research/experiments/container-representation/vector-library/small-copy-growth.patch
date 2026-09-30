@@ -1,0 +1,787 @@
+--- a/vector-costs-route.c
++++ b/vector-costs-small-copy.c
+@@ -675,6 +675,9 @@
+ #ifndef WF_FULL_GROWTH_MALLOC_COPY
+ #define WF_FULL_GROWTH_MALLOC_COPY 0
+ #endif
++#ifndef WF_SMALL_COPY_GROWTH
++#define WF_SMALL_COPY_GROWTH 0
++#endif
+ #ifndef WF_EMPTY_PAYLOAD_ANCHOR
+ #define WF_EMPTY_PAYLOAD_ANCHOR 0
+ #endif
+@@ -783,13 +786,13 @@
+     api->prepare(requested, owner);
+     ApiObservation state = {0};
+     uint64_t length = api->snapshot(owner, &state);
+-    if (requested >= 16 && state.capacity != requested)
++    if (requested >= 2 && state.capacity != requested)
+         fprintf(stderr, "growth append capacity: %s requested=%" PRIu64
+                 " observed=%" PRIu64 "\n", api->name, requested, state.capacity);
+     require(length == 0 && state.length == 0 && state.valid == 1
+             && state.checksum == 0 && state.capacity >= requested
+             && state.capacity < CEILING, "growth append reserved state");
+-    if (requested >= 16)
++    if (requested >= 2)
+         require(state.capacity == requested, "growth append matched initial capacity");
+     const uint64_t initial = state.capacity;
+     require(api->append_batch(owner, initial, seed) == initial,
+@@ -807,7 +810,7 @@
+     ApiObservation state = {0};
+     uint64_t length = api->snapshot(owner, &state);
+     const uint64_t expected_length = initial + 1 + fail_state;
+-    if (initial >= 16 && state.capacity != 2 * initial)
++    if (initial >= 2 && state.capacity != 2 * initial)
+         fprintf(stderr, "growth append capacity: %s bytes=%zu old=%" PRIu64
+                 " new=%" PRIu64 " expected=%" PRIu64 "\n", api->name,
+                 wide ? sizeof(Record) : sizeof(uint64_t), initial, state.capacity,
+@@ -815,7 +818,7 @@
+     require(returned == initial + 1 && length == expected_length
+             && state.length == expected_length && state.capacity > initial
+             && state.valid == 1 && state.checksum == 0
+-            && (initial < 16 || state.capacity == 2 * initial),
++            && (initial < 2 || state.capacity == 2 * initial),
+             "growth append post state");
+     ApiObservation actual = {0};
+     uint64_t valid = api->inspect_reset(owner, initial + 1, seed, &actual);
+@@ -832,7 +835,7 @@
+ }
+ 
+ static void growth_check(bool fail_values, bool fail_state, bool report) {
+-    const uint64_t capacities[] = {16, 256, 4096, 0, 1};
++    const uint64_t capacities[2][8] = {{0, 1, 16, 224, 256, 288, 4096, 0}, {0, 1, 7, 8, 9, 16, 256, 4096}};
+     const uint64_t seed = UINT64_MAX - 7;
+ #if defined(ACCOUNT_ONLY)
+     if (report)
+@@ -840,14 +843,14 @@
+ #else
+     (void)report;
+ #endif
+-    for (size_t n = 0; n < sizeof capacities / sizeof capacities[0]; ++n)
+-        for (unsigned wide = 0; wide < 2; ++wide)
++    for (unsigned wide = 0; wide < 2; ++wide)
++        for (size_t n = 0; n < (wide ? 8u : 7u); ++n)
+             for (unsigned variant = 0; variant < 3; ++variant) {
+                 const ApiOperations *api = &append_api[wide][variant];
+                 const size_t stride = wide ? sizeof(Record) : sizeof(uint64_t);
+                 reset_accounting();
+                 ApiStorage owner;
+-                uint64_t initial = growth_prepare(api, &owner, capacities[n], seed);
++                uint64_t initial = growth_prepare(api, &owner, capacities[wide][n], seed);
+ #if defined(ACCOUNT_ONLY)
+                 ApiAccount before = append_account_snapshot();
+                 const size_t header = variant == 0
+@@ -880,7 +883,8 @@
+                         ? initial * stride : !WF_EMPTY_PAYLOAD_ANCHOR;
+                     const size_t new_payload = capacity != 0 && stride != 0
+                         ? capacity * stride : !WF_EMPTY_PAYLOAD_ANCHOR;
+-                    const bool full_resize = WF_SPLIT_SLOTS_REALLOC && !WF_FULL_GROWTH_MALLOC_COPY;
++                    const bool full_resize = WF_SPLIT_SLOTS_REALLOC && !WF_FULL_GROWTH_MALLOC_COPY
++                        && (!WF_SMALL_COPY_GROWTH || old_payload > 2048);
+                     const size_t resize = full_resize && old_payload != 0;
+                     const size_t release = !full_resize && old_payload != 0;
+                     require(after.requests == before.requests + 1
+@@ -895,16 +899,16 @@
+ #endif
+                 if (report)
+                     printf("append-growth-o3,%zu,%" PRIu64 ",%" PRIu64 ",%s,%" PRIu64 ",%" PRIu64 ",%zu,%zu,%zu,%zu,%zu,%zu\n",
+-                           stride, capacities[n], initial, api->name, length, capacity,
++                           stride, capacities[wide][n], initial, api->name, length, capacity,
+                            after.requests - before.requests,
+                            after.reallocations - before.reallocations,
+                            after.releases - before.releases, after.bytes - before.bytes,
+                            before.live, after.live);
+ #endif
+-                if (capacities[n] < 16 && !report)
++                if (capacities[wide][n] < 16 && !report)
+                     printf("growth append policy: %s bytes=%zu requested=%" PRIu64
+                            " initial=%" PRIu64 " length=%" PRIu64 " capacity=%" PRIu64 "\n",
+-                           api->name, stride, capacities[n], initial, length, capacity);
++                           api->name, stride, capacities[wide][n], initial, length, capacity);
+                 (void)api->destroy(&owner);
+ #if defined(ACCOUNT_ONLY)
+                 require(live_bytes == 0 && requests == releases + realloc_requests,
+@@ -1011,13 +1015,13 @@
+ }
+ 
+ static void growth_measure(uint64_t work_bytes, unsigned samples, uint64_t large_work_bytes) {
+-    const uint64_t capacities[] = {0, 1, 16, 256, 4096};
++    const uint64_t capacities[2][6] = {{16, 224, 256, 288, 4096, 0}, {7, 8, 9, 16, 256, 4096}};
+     // Sizing allowance only; it neither models latency nor adjusts a sample.
+     const uint64_t allowance = 256;
+     puts("contract,cohort,element_bytes,count,variant,sample,control,contexts,payload_bytes,descriptor_bytes,cycles,operations,elapsed_ns,initial_capacity,capacity,work_bytes,allowance_bytes");
+     for (unsigned wide = 0; wide < 2; ++wide)
+-        for (size_t n = 0; n < sizeof capacities / sizeof capacities[0]; ++n) {
+-            const uint64_t requested = capacities[n];
++        for (size_t n = 0; n < (wide ? 6u : 5u); ++n) {
++            const uint64_t requested = capacities[wide][n];
+             const size_t stride = wide ? sizeof(Record) : sizeof(uint64_t);
+             const uint64_t budget = wide && requested == 4096 ? large_work_bytes : work_bytes;
+             uint64_t initial_caps[3], post_caps[3];
+--- a/whitefoot-timed.ll
++++ b/whitefoot-timed.ll
+@@ -3337,13 +3337,28 @@
+   br i1 %t7, label %window.grow.full.v2, label %window.grow.partial.v2
+ window.grow.full.v2:
+   %t13 = mul nuw i64 %v1, ptrtoint (ptr getelementptr (i64, ptr null, i64 1) to i64)
+-  %t14 = call ptr @realloc(ptr %t5, i64 %t13)
+-  %t15 = icmp ne ptr %t14, null
+-  br i1 %t15, label %window.block.ready.v2.realloc, label %window.block.oom.v2.realloc
++  %route.old.bytes = mul nuw i64 %t3, ptrtoint (ptr getelementptr (i64, ptr null, i64 1) to i64)
++  %route.small = icmp ule i64 %route.old.bytes, 2048
++  br i1 %route.small, label %route.copy.allocate, label %route.resize
++route.copy.allocate:
++  %route.fresh = call ptr @malloc(i64 %t13)
++  %route.fresh.ok = icmp ne ptr %route.fresh, null
++  br i1 %route.fresh.ok, label %route.copy.ready, label %window.block.oom.v2.realloc
++route.copy.ready:
++  call void @llvm.memcpy.p0.p0.i64(ptr %route.fresh, ptr %t5, i64 %route.old.bytes, i1 false)
++  call void @free(ptr %t5)
++  br label %window.block.ready.v2.realloc
++route.resize:
++  %route.resized = call ptr @realloc(ptr %t5, i64 %t13)
++  %t15 = icmp ne ptr %route.resized, null
++  br i1 %t15, label %route.resize.ready, label %window.block.oom.v2.realloc
++route.resize.ready:
++  br label %window.block.ready.v2.realloc
+ window.block.oom.v2.realloc:
+   call void @wf_resource_abort()
+   unreachable
+ window.block.ready.v2.realloc:
++  %t14 = phi ptr [ %route.fresh, %route.copy.ready ], [ %route.resized, %route.resize.ready ]
+   br label %window.block.ready.v2
+ window.grow.partial.v2:
+   %t16 = mul nuw i64 %v1, ptrtoint (ptr getelementptr (i64, ptr null, i64 1) to i64)
+@@ -3417,13 +3432,28 @@
+   br i1 %t7, label %window.grow.full.v2, label %window.grow.partial.v2
+ window.grow.full.v2:
+   %t13 = mul nuw i64 %v1, ptrtoint (ptr getelementptr (%wf.t.ac26c585c4167c7a, ptr null, i64 1) to i64)
+-  %t14 = call ptr @realloc(ptr %t5, i64 %t13)
+-  %t15 = icmp ne ptr %t14, null
+-  br i1 %t15, label %window.block.ready.v2.realloc, label %window.block.oom.v2.realloc
++  %route.old.bytes = mul nuw i64 %t3, ptrtoint (ptr getelementptr (%wf.t.ac26c585c4167c7a, ptr null, i64 1) to i64)
++  %route.small = icmp ule i64 %route.old.bytes, 2048
++  br i1 %route.small, label %route.copy.allocate, label %route.resize
++route.copy.allocate:
++  %route.fresh = call ptr @malloc(i64 %t13)
++  %route.fresh.ok = icmp ne ptr %route.fresh, null
++  br i1 %route.fresh.ok, label %route.copy.ready, label %window.block.oom.v2.realloc
++route.copy.ready:
++  call void @llvm.memcpy.p0.p0.i64(ptr %route.fresh, ptr %t5, i64 %route.old.bytes, i1 false)
++  call void @free(ptr %t5)
++  br label %window.block.ready.v2.realloc
++route.resize:
++  %route.resized = call ptr @realloc(ptr %t5, i64 %t13)
++  %t15 = icmp ne ptr %route.resized, null
++  br i1 %t15, label %route.resize.ready, label %window.block.oom.v2.realloc
++route.resize.ready:
++  br label %window.block.ready.v2.realloc
+ window.block.oom.v2.realloc:
+   call void @wf_resource_abort()
+   unreachable
+ window.block.ready.v2.realloc:
++  %t14 = phi ptr [ %route.fresh, %route.copy.ready ], [ %route.resized, %route.resize.ready ]
+   br label %window.block.ready.v2
+ window.grow.partial.v2:
+   %t16 = mul nuw i64 %v1, ptrtoint (ptr getelementptr (%wf.t.ac26c585c4167c7a, ptr null, i64 1) to i64)
+--- a/whitefoot-account.ll
++++ b/whitefoot-account.ll
+@@ -3337,13 +3337,28 @@
+   br i1 %t7, label %window.grow.full.v2, label %window.grow.partial.v2
+ window.grow.full.v2:
+   %t13 = mul nuw i64 %v1, ptrtoint (ptr getelementptr (i64, ptr null, i64 1) to i64)
+-  %t14 = call ptr @wf_cost_reallocate(ptr %t5, i64 %t13)
+-  %t15 = icmp ne ptr %t14, null
+-  br i1 %t15, label %window.block.ready.v2.realloc, label %window.block.oom.v2.realloc
++  %route.old.bytes = mul nuw i64 %t3, ptrtoint (ptr getelementptr (i64, ptr null, i64 1) to i64)
++  %route.small = icmp ule i64 %route.old.bytes, 2048
++  br i1 %route.small, label %route.copy.allocate, label %route.resize
++route.copy.allocate:
++  %route.fresh = call ptr @wf_cost_allocate(i64 %t13)
++  %route.fresh.ok = icmp ne ptr %route.fresh, null
++  br i1 %route.fresh.ok, label %route.copy.ready, label %window.block.oom.v2.realloc
++route.copy.ready:
++  call void @llvm.memcpy.p0.p0.i64(ptr %route.fresh, ptr %t5, i64 %route.old.bytes, i1 false)
++  call void @wf_cost_release(ptr %t5)
++  br label %window.block.ready.v2.realloc
++route.resize:
++  %route.resized = call ptr @wf_cost_reallocate(ptr %t5, i64 %t13)
++  %t15 = icmp ne ptr %route.resized, null
++  br i1 %t15, label %route.resize.ready, label %window.block.oom.v2.realloc
++route.resize.ready:
++  br label %window.block.ready.v2.realloc
+ window.block.oom.v2.realloc:
+   call void @wf_resource_abort()
+   unreachable
+ window.block.ready.v2.realloc:
++  %t14 = phi ptr [ %route.fresh, %route.copy.ready ], [ %route.resized, %route.resize.ready ]
+   br label %window.block.ready.v2
+ window.grow.partial.v2:
+   %t16 = mul nuw i64 %v1, ptrtoint (ptr getelementptr (i64, ptr null, i64 1) to i64)
+@@ -3417,13 +3432,28 @@
+   br i1 %t7, label %window.grow.full.v2, label %window.grow.partial.v2
+ window.grow.full.v2:
+   %t13 = mul nuw i64 %v1, ptrtoint (ptr getelementptr (%wf.t.ac26c585c4167c7a, ptr null, i64 1) to i64)
+-  %t14 = call ptr @wf_cost_reallocate(ptr %t5, i64 %t13)
+-  %t15 = icmp ne ptr %t14, null
+-  br i1 %t15, label %window.block.ready.v2.realloc, label %window.block.oom.v2.realloc
++  %route.old.bytes = mul nuw i64 %t3, ptrtoint (ptr getelementptr (%wf.t.ac26c585c4167c7a, ptr null, i64 1) to i64)
++  %route.small = icmp ule i64 %route.old.bytes, 2048
++  br i1 %route.small, label %route.copy.allocate, label %route.resize
++route.copy.allocate:
++  %route.fresh = call ptr @wf_cost_allocate(i64 %t13)
++  %route.fresh.ok = icmp ne ptr %route.fresh, null
++  br i1 %route.fresh.ok, label %route.copy.ready, label %window.block.oom.v2.realloc
++route.copy.ready:
++  call void @llvm.memcpy.p0.p0.i64(ptr %route.fresh, ptr %t5, i64 %route.old.bytes, i1 false)
++  call void @wf_cost_release(ptr %t5)
++  br label %window.block.ready.v2.realloc
++route.resize:
++  %route.resized = call ptr @wf_cost_reallocate(ptr %t5, i64 %t13)
++  %t15 = icmp ne ptr %route.resized, null
++  br i1 %t15, label %route.resize.ready, label %window.block.oom.v2.realloc
++route.resize.ready:
++  br label %window.block.ready.v2.realloc
+ window.block.oom.v2.realloc:
+   call void @wf_resource_abort()
+   unreachable
+ window.block.ready.v2.realloc:
++  %t14 = phi ptr [ %route.fresh, %route.copy.ready ], [ %route.resized, %route.resize.ready ]
+   br label %window.block.ready.v2
+ window.grow.partial.v2:
+   %t16 = mul nuw i64 %v1, ptrtoint (ptr getelementptr (%wf.t.ac26c585c4167c7a, ptr null, i64 1) to i64)
+--- a/focused-observed.ll
++++ b/nested-observed.ll
+@@ -1800,16 +1800,28 @@
+   br i1 %t7, label %window.grow.full.v2, label %window.grow.partial.v2
+ window.grow.full.v2:
+   %t13 = mul nuw i64 %v1, ptrtoint (ptr getelementptr (ptr, ptr null, i64 1) to i64)
+-  %t14 = call ptr @wf_observe_allocate(i64 %t13)
+-  %t15 = icmp ne ptr %t14, null
+-  br i1 %t15, label %window.block.ready.v2.realloc, label %window.block.oom.v2.realloc
++  %route.old.bytes = mul nuw i64 %t3, ptrtoint (ptr getelementptr (ptr, ptr null, i64 1) to i64)
++  %route.small = icmp ule i64 %route.old.bytes, 2048
++  br i1 %route.small, label %route.copy.allocate, label %route.resize
++route.copy.allocate:
++  %route.fresh = call ptr @wf_observe_allocate(i64 %t13)
++  %route.fresh.ok = icmp ne ptr %route.fresh, null
++  br i1 %route.fresh.ok, label %route.copy.ready, label %window.block.oom.v2.realloc
++route.copy.ready:
++  call void @wf_observe_full_copy(ptr %route.fresh, ptr %t5, i64 %route.old.bytes)
++  call void @wf_observe_release(ptr %t5)
++  br label %window.block.ready.v2.realloc
++route.resize:
++  %route.resized = call ptr @wf_observe_reallocate(ptr %t5, i64 %t13)
++  %t15 = icmp ne ptr %route.resized, null
++  br i1 %t15, label %route.resize.ready, label %window.block.oom.v2.realloc
++route.resize.ready:
++  br label %window.block.ready.v2.realloc
+ window.block.oom.v2.realloc:
+   call void @wf_observe_abort()
+   unreachable
+ window.block.ready.v2.realloc:
+-  %route.copy.bytes = mul nuw i64 %t3, ptrtoint (ptr getelementptr (ptr, ptr null, i64 1) to i64)
+-  call void @wf_observe_full_copy(ptr %t14, ptr %t5, i64 %route.copy.bytes)
+-  call void @wf_observe_release(ptr %t5)
++  %t14 = phi ptr [ %route.fresh, %route.copy.ready ], [ %route.resized, %route.resize.ready ]
+   br label %window.block.ready.v2
+ window.grow.partial.v2:
+   %t16 = mul nuw i64 %v1, ptrtoint (ptr getelementptr (ptr, ptr null, i64 1) to i64)
+@@ -1883,16 +1895,28 @@
+   br i1 %t7, label %window.grow.full.v2, label %window.grow.partial.v2
+ window.grow.full.v2:
+   %t13 = mul nuw i64 %v1, ptrtoint (ptr getelementptr (i8, ptr null, i64 1) to i64)
+-  %t14 = call ptr @wf_observe_allocate(i64 %t13)
+-  %t15 = icmp ne ptr %t14, null
+-  br i1 %t15, label %window.block.ready.v2.realloc, label %window.block.oom.v2.realloc
++  %route.old.bytes = mul nuw i64 %t3, ptrtoint (ptr getelementptr (i8, ptr null, i64 1) to i64)
++  %route.small = icmp ule i64 %route.old.bytes, 2048
++  br i1 %route.small, label %route.copy.allocate, label %route.resize
++route.copy.allocate:
++  %route.fresh = call ptr @wf_observe_allocate(i64 %t13)
++  %route.fresh.ok = icmp ne ptr %route.fresh, null
++  br i1 %route.fresh.ok, label %route.copy.ready, label %window.block.oom.v2.realloc
++route.copy.ready:
++  call void @wf_observe_full_copy(ptr %route.fresh, ptr %t5, i64 %route.old.bytes)
++  call void @wf_observe_release(ptr %t5)
++  br label %window.block.ready.v2.realloc
++route.resize:
++  %route.resized = call ptr @wf_observe_reallocate(ptr %t5, i64 %t13)
++  %t15 = icmp ne ptr %route.resized, null
++  br i1 %t15, label %route.resize.ready, label %window.block.oom.v2.realloc
++route.resize.ready:
++  br label %window.block.ready.v2.realloc
+ window.block.oom.v2.realloc:
+   call void @wf_observe_abort()
+   unreachable
+ window.block.ready.v2.realloc:
+-  %route.copy.bytes = mul nuw i64 %t3, ptrtoint (ptr getelementptr (i8, ptr null, i64 1) to i64)
+-  call void @wf_observe_full_copy(ptr %t14, ptr %t5, i64 %route.copy.bytes)
+-  call void @wf_observe_release(ptr %t5)
++  %t14 = phi ptr [ %route.fresh, %route.copy.ready ], [ %route.resized, %route.resize.ready ]
+   br label %window.block.ready.v2
+ window.grow.partial.v2:
+   %t16 = mul nuw i64 %v1, ptrtoint (ptr getelementptr (i8, ptr null, i64 1) to i64)
+@@ -2050,16 +2074,28 @@
+   br i1 %t7, label %window.grow.full.v2, label %window.grow.partial.v2
+ window.grow.full.v2:
+   %t13 = mul nuw i64 %v1, ptrtoint (ptr getelementptr (i64, ptr null, i64 1) to i64)
+-  %t14 = call ptr @wf_observe_allocate(i64 %t13)
+-  %t15 = icmp ne ptr %t14, null
+-  br i1 %t15, label %window.block.ready.v2.realloc, label %window.block.oom.v2.realloc
++  %route.old.bytes = mul nuw i64 %t3, ptrtoint (ptr getelementptr (i64, ptr null, i64 1) to i64)
++  %route.small = icmp ule i64 %route.old.bytes, 2048
++  br i1 %route.small, label %route.copy.allocate, label %route.resize
++route.copy.allocate:
++  %route.fresh = call ptr @wf_observe_allocate(i64 %t13)
++  %route.fresh.ok = icmp ne ptr %route.fresh, null
++  br i1 %route.fresh.ok, label %route.copy.ready, label %window.block.oom.v2.realloc
++route.copy.ready:
++  call void @wf_observe_full_copy(ptr %route.fresh, ptr %t5, i64 %route.old.bytes)
++  call void @wf_observe_release(ptr %t5)
++  br label %window.block.ready.v2.realloc
++route.resize:
++  %route.resized = call ptr @wf_observe_reallocate(ptr %t5, i64 %t13)
++  %t15 = icmp ne ptr %route.resized, null
++  br i1 %t15, label %route.resize.ready, label %window.block.oom.v2.realloc
++route.resize.ready:
++  br label %window.block.ready.v2.realloc
+ window.block.oom.v2.realloc:
+   call void @wf_observe_abort()
+   unreachable
+ window.block.ready.v2.realloc:
+-  %route.copy.bytes = mul nuw i64 %t3, ptrtoint (ptr getelementptr (i64, ptr null, i64 1) to i64)
+-  call void @wf_observe_full_copy(ptr %t14, ptr %t5, i64 %route.copy.bytes)
+-  call void @wf_observe_release(ptr %t5)
++  %t14 = phi ptr [ %route.fresh, %route.copy.ready ], [ %route.resized, %route.resize.ready ]
+   br label %window.block.ready.v2
+ window.grow.partial.v2:
+   %t16 = mul nuw i64 %v1, ptrtoint (ptr getelementptr (i64, ptr null, i64 1) to i64)
+--- a/whitefoot-timed.ll
++++ b/api-observed.ll
+@@ -106,9 +106,9 @@
+ }
+ 
+ declare void @abort() noreturn
+-declare ptr @malloc(i64)
+-declare ptr @realloc(ptr, i64)
+-declare void @free(ptr)
++declare ptr @wf_policy_allocate(i64)
++declare ptr @wf_policy_reallocate(ptr, i64)
++declare void @wf_policy_release(ptr)
+ 
+ define private void @wf_resource_record_abort(ptr %message, i64 %length) noreturn #0 {
+ entry:
+@@ -131,14 +131,15 @@
+   unreachable
+ }
+ 
++declare void @wf_policy_abort() noreturn
+ define private void @wf_resource_abort() noreturn #0 {
+ entry:
+-  call void @wf_resource_record_abort(ptr @.wf_resource.heap, i64 20)
++  call void @wf_policy_abort()
+   unreachable
+ }
+ 
+ declare void @llvm.assume(i1)
+-declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1 immarg)
++declare void @wf_policy_copy(ptr, ptr, i64, i1)
+ declare void @llvm.memmove.p0.p0.i64(ptr, ptr, i64, i1 immarg)
+ 
+ define i64 @wf_vector_word_make(i64 %v0) #0 {
+@@ -810,7 +811,7 @@
+ slots.release.drop.10:
+   %drop.11 = getelementptr inbounds { i64, i64, ptr }, ptr %drop.5, i64 0, i32 2
+   %drop.12 = load ptr, ptr %drop.11
+-  call void @free(ptr %drop.12)
++  call void @wf_policy_release(ptr %drop.12)
+   br label %slots.release.done.drop.10
+ slots.release.done.drop.10:
+   ; drop %v38
+@@ -949,7 +950,7 @@
+ slots.release.drop.25:
+   %drop.26 = getelementptr inbounds { i64, i64, ptr }, ptr %drop.20, i64 0, i32 2
+   %drop.27 = load ptr, ptr %drop.26
+-  call void @free(ptr %drop.27)
++  call void @wf_policy_release(ptr %drop.27)
+   br label %slots.release.done.drop.25
+ slots.release.done.drop.25:
+   ; drop %v121
+@@ -1179,7 +1180,7 @@
+ slots.release.drop.10:
+   %drop.11 = getelementptr inbounds { i64, i64, ptr }, ptr %drop.5, i64 0, i32 2
+   %drop.12 = load ptr, ptr %drop.11
+-  call void @free(ptr %drop.12)
++  call void @wf_policy_release(ptr %drop.12)
+   br label %slots.release.done.drop.10
+ slots.release.done.drop.10:
+   ; drop %v38
+@@ -1318,7 +1319,7 @@
+ slots.release.drop.25:
+   %drop.26 = getelementptr inbounds { i64, i64, ptr }, ptr %drop.20, i64 0, i32 2
+   %drop.27 = load ptr, ptr %drop.26
+-  call void @free(ptr %drop.27)
++  call void @wf_policy_release(ptr %drop.27)
+   br label %slots.release.done.drop.25
+ slots.release.done.drop.25:
+   ; drop %v121
+@@ -2223,7 +2224,7 @@
+ slots.release.drop.10:
+   %drop.11 = getelementptr inbounds { i64, i64, ptr }, ptr %drop.5, i64 0, i32 2
+   %drop.12 = load ptr, ptr %drop.11
+-  call void @free(ptr %drop.12)
++  call void @wf_policy_release(ptr %drop.12)
+   br label %slots.release.done.drop.10
+ slots.release.done.drop.10:
+   ; drop %v16
+@@ -2607,7 +2608,7 @@
+ slots.release.drop.10:
+   %drop.11 = getelementptr inbounds { i64, i64, ptr }, ptr %drop.5, i64 0, i32 2
+   %drop.12 = load ptr, ptr %drop.11
+-  call void @free(ptr %drop.12)
++  call void @wf_policy_release(ptr %drop.12)
+   br label %slots.release.done.drop.10
+ slots.release.done.drop.10:
+   ; drop %v16
+@@ -2662,7 +2663,7 @@
+   %t3 = icmp eq i64 %t0, 0
+   br i1 %t3, label %window.block.ready.v1.payload.new.empty, label %window.block.ready.v1.payload.new.allocate
+ window.block.ready.v1.payload.new.allocate:
+-  %t1 = call ptr @malloc(i64 %t0)
++  %t1 = call ptr @wf_policy_allocate(i64 %t0)
+   %t2 = icmp ne ptr %t1, null
+   br i1 %t2, label %window.block.ready.v1.payload.new, label %window.block.oom.v1.payload.new
+ window.block.oom.v1.payload.new:
+@@ -2844,7 +2845,7 @@
+   %t3 = icmp eq i64 %t0, 0
+   br i1 %t3, label %window.block.ready.v1.payload.new.empty, label %window.block.ready.v1.payload.new.allocate
+ window.block.ready.v1.payload.new.allocate:
+-  %t1 = call ptr @malloc(i64 %t0)
++  %t1 = call ptr @wf_policy_allocate(i64 %t0)
+   %t2 = icmp ne ptr %t1, null
+   br i1 %t2, label %window.block.ready.v1.payload.new, label %window.block.oom.v1.payload.new
+ window.block.oom.v1.payload.new:
+@@ -3274,7 +3275,7 @@
+ slots.release.drop.5:
+   %drop.6 = getelementptr inbounds { i64, i64, ptr }, ptr %wf.slot.0, i64 0, i32 2
+   %drop.7 = load ptr, ptr %drop.6
+-  call void @free(ptr %drop.7)
++  call void @wf_policy_release(ptr %drop.7)
+   br label %slots.release.done.drop.5
+ slots.release.done.drop.5:
+   %v1 = select i1 true, i8 0, i8 0
+@@ -3296,7 +3297,7 @@
+ slots.release.drop.5:
+   %drop.6 = getelementptr inbounds { i64, i64, ptr }, ptr %wf.slot.0, i64 0, i32 2
+   %drop.7 = load ptr, ptr %drop.6
+-  call void @free(ptr %drop.7)
++  call void @wf_policy_release(ptr %drop.7)
+   br label %slots.release.done.drop.5
+ slots.release.done.drop.5:
+   %v1 = select i1 true, i8 0, i8 0
+@@ -3319,7 +3320,7 @@
+   %t11 = icmp eq i64 %t8, 0
+   br i1 %t11, label %window.block.ready.v2.payload.empty.empty, label %window.block.ready.v2.payload.empty.allocate
+ window.block.ready.v2.payload.empty.allocate:
+-  %t9 = call ptr @malloc(i64 %t8)
++  %t9 = call ptr @wf_policy_allocate(i64 %t8)
+   %t10 = icmp ne ptr %t9, null
+   br i1 %t10, label %window.block.ready.v2.payload.empty, label %window.block.oom.v2.payload.empty
+ window.block.oom.v2.payload.empty:
+@@ -3341,15 +3342,15 @@
+   %route.small = icmp ule i64 %route.old.bytes, 2048
+   br i1 %route.small, label %route.copy.allocate, label %route.resize
+ route.copy.allocate:
+-  %route.fresh = call ptr @malloc(i64 %t13)
++  %route.fresh = call ptr @wf_policy_allocate(i64 %t13)
+   %route.fresh.ok = icmp ne ptr %route.fresh, null
+   br i1 %route.fresh.ok, label %route.copy.ready, label %window.block.oom.v2.realloc
+ route.copy.ready:
+-  call void @llvm.memcpy.p0.p0.i64(ptr %route.fresh, ptr %t5, i64 %route.old.bytes, i1 false)
+-  call void @free(ptr %t5)
++  call void @wf_policy_copy(ptr %route.fresh, ptr %t5, i64 %route.old.bytes, i1 false)
++  call void @wf_policy_release(ptr %t5)
+   br label %window.block.ready.v2.realloc
+ route.resize:
+-  %route.resized = call ptr @realloc(ptr %t5, i64 %t13)
++  %route.resized = call ptr @wf_policy_reallocate(ptr %t5, i64 %t13)
+   %t15 = icmp ne ptr %route.resized, null
+   br i1 %t15, label %route.resize.ready, label %window.block.oom.v2.realloc
+ route.resize.ready:
+@@ -3362,7 +3363,7 @@
+   br label %window.block.ready.v2
+ window.grow.partial.v2:
+   %t16 = mul nuw i64 %v1, ptrtoint (ptr getelementptr (i64, ptr null, i64 1) to i64)
+-  %t17 = call ptr @malloc(i64 %t16)
++  %t17 = call ptr @wf_policy_allocate(i64 %t16)
+   %t18 = icmp ne ptr %t17, null
+   br i1 %t18, label %window.block.ready.v2.payload.partial, label %window.block.oom.v2.payload.partial
+ window.block.oom.v2.payload.partial:
+@@ -3371,7 +3372,7 @@
+ window.block.ready.v2.payload.partial:
+   %t19 = mul nuw i64 %t3, ptrtoint (ptr getelementptr (i64, ptr null, i64 1) to i64)
+   call void @llvm.memmove.p0.p0.i64(ptr %t17, ptr %t5, i64 %t19, i1 false)
+-  call void @free(ptr %t5)
++  call void @wf_policy_release(ptr %t5)
+   br label %window.block.ready.v2
+ window.block.ready.v2:
+   %t20 = phi ptr [ %t14, %window.block.ready.v2.realloc ], [ %t17, %window.block.ready.v2.payload.partial ], [ %t12, %window.block.ready.v2.payload.empty.done ]
+@@ -3414,7 +3415,7 @@
+   %t11 = icmp eq i64 %t8, 0
+   br i1 %t11, label %window.block.ready.v2.payload.empty.empty, label %window.block.ready.v2.payload.empty.allocate
+ window.block.ready.v2.payload.empty.allocate:
+-  %t9 = call ptr @malloc(i64 %t8)
++  %t9 = call ptr @wf_policy_allocate(i64 %t8)
+   %t10 = icmp ne ptr %t9, null
+   br i1 %t10, label %window.block.ready.v2.payload.empty, label %window.block.oom.v2.payload.empty
+ window.block.oom.v2.payload.empty:
+@@ -3436,15 +3437,15 @@
+   %route.small = icmp ule i64 %route.old.bytes, 2048
+   br i1 %route.small, label %route.copy.allocate, label %route.resize
+ route.copy.allocate:
+-  %route.fresh = call ptr @malloc(i64 %t13)
++  %route.fresh = call ptr @wf_policy_allocate(i64 %t13)
+   %route.fresh.ok = icmp ne ptr %route.fresh, null
+   br i1 %route.fresh.ok, label %route.copy.ready, label %window.block.oom.v2.realloc
+ route.copy.ready:
+-  call void @llvm.memcpy.p0.p0.i64(ptr %route.fresh, ptr %t5, i64 %route.old.bytes, i1 false)
+-  call void @free(ptr %t5)
++  call void @wf_policy_copy(ptr %route.fresh, ptr %t5, i64 %route.old.bytes, i1 false)
++  call void @wf_policy_release(ptr %t5)
+   br label %window.block.ready.v2.realloc
+ route.resize:
+-  %route.resized = call ptr @realloc(ptr %t5, i64 %t13)
++  %route.resized = call ptr @wf_policy_reallocate(ptr %t5, i64 %t13)
+   %t15 = icmp ne ptr %route.resized, null
+   br i1 %t15, label %route.resize.ready, label %window.block.oom.v2.realloc
+ route.resize.ready:
+@@ -3457,7 +3458,7 @@
+   br label %window.block.ready.v2
+ window.grow.partial.v2:
+   %t16 = mul nuw i64 %v1, ptrtoint (ptr getelementptr (%wf.t.ac26c585c4167c7a, ptr null, i64 1) to i64)
+-  %t17 = call ptr @malloc(i64 %t16)
++  %t17 = call ptr @wf_policy_allocate(i64 %t16)
+   %t18 = icmp ne ptr %t17, null
+   br i1 %t18, label %window.block.ready.v2.payload.partial, label %window.block.oom.v2.payload.partial
+ window.block.oom.v2.payload.partial:
+@@ -3466,7 +3467,7 @@
+ window.block.ready.v2.payload.partial:
+   %t19 = mul nuw i64 %t3, ptrtoint (ptr getelementptr (%wf.t.ac26c585c4167c7a, ptr null, i64 1) to i64)
+   call void @llvm.memmove.p0.p0.i64(ptr %t17, ptr %t5, i64 %t19, i1 false)
+-  call void @free(ptr %t5)
++  call void @wf_policy_release(ptr %t5)
+   br label %window.block.ready.v2
+ window.block.ready.v2:
+   %t20 = phi ptr [ %t14, %window.block.ready.v2.realloc ], [ %t17, %window.block.ready.v2.payload.partial ], [ %t12, %window.block.ready.v2.payload.empty.done ]
+@@ -3624,10 +3625,10 @@
+ entry:
+   %wf.slot.0 = alloca %wf.t.ac26c585c4167c7a, align 8
+   %wf.slot.1 = alloca %wf.t.ac26c585c4167c7a, align 8
+-  call void @llvm.memcpy.p0.p0.i64(ptr %wf.slot.0, ptr %v0, i64 ptrtoint (ptr getelementptr (%wf.t.ac26c585c4167c7a, ptr null, i32 1) to i64), i1 false)
+-  call void @llvm.memcpy.p0.p0.i64(ptr %wf.slot.1, ptr %v1, i64 ptrtoint (ptr getelementptr (%wf.t.ac26c585c4167c7a, ptr null, i32 1) to i64), i1 false)
+-  call void @llvm.memcpy.p0.p0.i64(ptr %v0, ptr %wf.slot.1, i64 ptrtoint (ptr getelementptr (%wf.t.ac26c585c4167c7a, ptr null, i32 1) to i64), i1 false)
+-  call void @llvm.memcpy.p0.p0.i64(ptr %v1, ptr %wf.slot.0, i64 ptrtoint (ptr getelementptr (%wf.t.ac26c585c4167c7a, ptr null, i32 1) to i64), i1 false)
++  call void @wf_policy_copy(ptr %wf.slot.0, ptr %v0, i64 ptrtoint (ptr getelementptr (%wf.t.ac26c585c4167c7a, ptr null, i32 1) to i64), i1 false)
++  call void @wf_policy_copy(ptr %wf.slot.1, ptr %v1, i64 ptrtoint (ptr getelementptr (%wf.t.ac26c585c4167c7a, ptr null, i32 1) to i64), i1 false)
++  call void @wf_policy_copy(ptr %v0, ptr %wf.slot.1, i64 ptrtoint (ptr getelementptr (%wf.t.ac26c585c4167c7a, ptr null, i32 1) to i64), i1 false)
++  call void @wf_policy_copy(ptr %v1, ptr %wf.slot.0, i64 ptrtoint (ptr getelementptr (%wf.t.ac26c585c4167c7a, ptr null, i32 1) to i64), i1 false)
+   %v4 = select i1 true, i8 0, i8 0
+   ret i8 %v4
+ }
+@@ -3886,14 +3887,14 @@
+ attributes #0 = { "probe-stack"="__chkstk_darwin" }
+ define weak i32 @wf__floor_run(i32 %argc, ptr %argv) #0 {
+ entry:
+-  %status = call i32 @wf__main_body(i32 %argc, ptr %argv) noinline
++  %status = call i32 @wf__fixture_body(i32 %argc, ptr %argv) noinline
+   ret i32 %status
+ }
+ 
+ 
+ declare i8 @wf__ordinary_exit_code(ptr)
+ 
+-define i32 @wf__main_body(i32 %argc, ptr %argv) #0 {
++define i32 @wf__fixture_body(i32 %argc, ptr %argv) #0 {
+ entry:
+   %status = alloca { i128, i128 }, align 16
+   call void @"wf_main"(ptr %status)
+--- /dev/null
++++ b/api-observer.c
+@@ -0,0 +1,90 @@
++/* Independent actual public-append observer; allocation bookkeeping is untimed. */
++#include <stdint.h>
++#include <stdbool.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++struct descriptor { uint64_t len, cap; unsigned char *payload; };
++struct guarded { uint64_t before[2]; struct descriptor value; uint64_t after[2]; };
++extern uint64_t wf_vector_api_word_append_one(struct descriptor *, uint64_t);
++extern uint64_t wf_vector_api_record_append_one(struct descriptor *, uint64_t);
++extern uint64_t wf_vector_api_word_destroy(struct descriptor *);
++extern uint64_t wf_vector_api_record_destroy(struct descriptor *);
++extern int wf__floor_run(int,char **);
++static struct guarded owner, original;
++static unsigned char *old, *fresh, *snapshot;
++static size_t stride, count, bytes, new_bytes, requests, copies, releases, resizes;
++static bool refuse, resize_route, old_live, fresh_live;
++static void require(bool okay,const char *message) {
++    if(!okay) { fprintf(stderr,"small-copy observer: %s\n",message); exit(1); }
++}
++static void unchanged(void) {
++    require(memcmp(&owner,&original,sizeof owner)==0,"descriptor and canaries before publication");
++    require(old_live && memcmp(old,snapshot,bytes+stride)==0,"complete old payload and guard unchanged");
++}
++void *wf_policy_allocate(uint64_t n) {
++    require(!resize_route && requests++==0 && n==new_bytes,"expected single malloc and exact extent");
++    unchanged(); if(refuse) return NULL;
++    fresh=malloc((size_t)n); require(fresh!=NULL,"observer fresh backing");
++    memset(fresh,0xa6,(size_t)n); fresh_live=true; return fresh;
++}
++void *wf_policy_reallocate(void *p,uint64_t n) {
++    require(resize_route && requests++==0 && p==old && n==new_bytes,"expected single realloc and exact extent");
++    unchanged(); ++resizes; if(refuse) return NULL;
++    /* Force a moved successful realloc, preserving the complete initialized prefix.
++       This is allocator instrumentation, not a measured implementation change. */
++    fresh=malloc((size_t)n); require(fresh!=NULL,"observer resize backing");
++    memset(fresh,0xa6,(size_t)n); memcpy(fresh,old,bytes); fresh_live=true; old_live=false;
++    return fresh;
++}
++void wf_policy_copy(void *to,const void *from,uint64_t n,bool vol) {
++    require(!resize_route && !refuse && requests==1 && copies++==0 && releases==0
++            && fresh_live && to==fresh && from==old && n==bytes && !vol,"exact initialized copy after malloc success");
++    unchanged(); memcpy(to,from,(size_t)n);
++#ifdef CORRUPT_COPY
++    fresh[bytes-1]^=1;
++#endif
++}
++void wf_policy_release(void *p) {
++    require(!refuse,"no release after NULL");
++    if(p==old) {
++        require(!resize_route && old_live && copies==1 && releases==0,"old retirement after full copy");
++        unchanged(); require(memcmp(fresh,snapshot,bytes)==0,"entire copied prefix before retirement");
++        old_live=false;
++    } else {
++        require(p==fresh && fresh_live && !old_live,"final payload cleanup exactly once");
++        fresh_live=false;
++    }
++    ++releases;
++}
++_Noreturn void wf_policy_abort(void) {
++    require(refuse && requests==1 && copies==0 && releases==0 && resizes==(size_t)resize_route
++            && !fresh_live,"NULL route has no copy/retirement/publication");
++    unchanged(); puts("small-copy actual append: NULL preserves all old state"); exit(73);
++}
++int wf__main_body(int argc,char **argv) {
++    require(argc==5,"usage: stride count malloc|realloc positive|null");
++    stride=(size_t)strtoull(argv[1],NULL,10); count=(size_t)strtoull(argv[2],NULL,10);
++    require((stride==8 || stride==256) && count>0 && count<=4096,"known dimensions");
++    require(!strcmp(argv[3],"malloc") || !strcmp(argv[3],"realloc"),"known route");
++    require(!strcmp(argv[4],"positive") || !strcmp(argv[4],"null"),"known mode");
++    resize_route=!strcmp(argv[3],"realloc"); refuse=!strcmp(argv[4],"null");
++    bytes=count*stride; new_bytes=2*bytes; old=malloc(bytes+stride); snapshot=malloc(bytes+stride);
++    require(old && snapshot,"initial backing and independent snapshot"); memset(old,0xa6,bytes+stride);
++    for(size_t i=0;i<count;++i)for(size_t j=0;j<stride/8;++j) { uint64_t x=17+i+j; memcpy(old+i*stride+j*8,&x,8); }
++    memcpy(snapshot,old,bytes+stride); old_live=true;
++    owner=(struct guarded){{17,29},{count,count,old},{31,47}}; original=owner;
++    uint64_t result=(stride==8?wf_vector_api_word_append_one:wf_vector_api_record_append_one)(&owner.value,101);
++    require(!refuse && result==count+1 && owner.value.len==count+1 && owner.value.cap==count*2
++            && owner.value.payload==fresh,"returned append descriptor");
++    require(!memcmp(owner.before,original.before,sizeof owner.before)
++            && !memcmp(owner.after,original.after,sizeof owner.after),"descriptor canaries after append");
++    require(!memcmp(fresh,snapshot,bytes),"entire initialized prefix value/order");
++    for(size_t j=0;j<stride/8;++j) { uint64_t x; memcpy(&x,fresh+bytes+j*8,8); require(x==101+j,"all new element fields"); }
++    for(size_t i=bytes+stride;i<new_bytes;++i)require(fresh[i]==0xa6,"remaining spare bytes untouched");
++    require(requests==1 && copies==!resize_route && resizes==resize_route && releases==!resize_route,"exact selected-route ledger");
++    (void)(stride==8?wf_vector_api_word_destroy:wf_vector_api_record_destroy)(&owner.value);
++    require(!old_live && !fresh_live && releases==(resize_route?1u:2u),"full final cleanup");
++    free(old);free(fresh);free(snapshot);puts("small-copy actual append: contents/state/route/cleanup passed");return 0;
++}
++int main(int argc,char **argv) { return wf__floor_run(argc,argv); }
+--- a/nested-observed.ll
++++ b/early-free.ll
+@@ -1804,6 +1804,7 @@
+   %route.small = icmp ule i64 %route.old.bytes, 2048
+   br i1 %route.small, label %route.copy.allocate, label %route.resize
+ route.copy.allocate:
++  call void @wf_observe_release(ptr %t5)
+   %route.fresh = call ptr @wf_observe_allocate(i64 %t13)
+   %route.fresh.ok = icmp ne ptr %route.fresh, null
+   br i1 %route.fresh.ok, label %route.copy.ready, label %window.block.oom.v2.realloc
+@@ -1899,6 +1900,7 @@
+   %route.small = icmp ule i64 %route.old.bytes, 2048
+   br i1 %route.small, label %route.copy.allocate, label %route.resize
+ route.copy.allocate:
++  call void @wf_observe_release(ptr %t5)
+   %route.fresh = call ptr @wf_observe_allocate(i64 %t13)
+   %route.fresh.ok = icmp ne ptr %route.fresh, null
+   br i1 %route.fresh.ok, label %route.copy.ready, label %window.block.oom.v2.realloc
+@@ -2078,6 +2080,7 @@
+   %route.small = icmp ule i64 %route.old.bytes, 2048
+   br i1 %route.small, label %route.copy.allocate, label %route.resize
+ route.copy.allocate:
++  call void @wf_observe_release(ptr %t5)
+   %route.fresh = call ptr @wf_observe_allocate(i64 %t13)
+   %route.fresh.ok = icmp ne ptr %route.fresh, null
+   br i1 %route.fresh.ok, label %route.copy.ready, label %window.block.oom.v2.realloc
+--- a/nested-observed.ll
++++ b/early-publish.ll
+@@ -1804,6 +1804,7 @@
+   %route.small = icmp ule i64 %route.old.bytes, 2048
+   br i1 %route.small, label %route.copy.allocate, label %route.resize
+ route.copy.allocate:
++  store ptr null, ptr %t2
+   %route.fresh = call ptr @wf_observe_allocate(i64 %t13)
+   %route.fresh.ok = icmp ne ptr %route.fresh, null
+   br i1 %route.fresh.ok, label %route.copy.ready, label %window.block.oom.v2.realloc
+@@ -1899,6 +1900,7 @@
+   %route.small = icmp ule i64 %route.old.bytes, 2048
+   br i1 %route.small, label %route.copy.allocate, label %route.resize
+ route.copy.allocate:
++  store ptr null, ptr %t2
+   %route.fresh = call ptr @wf_observe_allocate(i64 %t13)
+   %route.fresh.ok = icmp ne ptr %route.fresh, null
+   br i1 %route.fresh.ok, label %route.copy.ready, label %window.block.oom.v2.realloc
+@@ -2078,6 +2080,7 @@
+   %route.small = icmp ule i64 %route.old.bytes, 2048
+   br i1 %route.small, label %route.copy.allocate, label %route.resize
+ route.copy.allocate:
++  store ptr null, ptr %t2
+   %route.fresh = call ptr @wf_observe_allocate(i64 %t13)
+   %route.fresh.ok = icmp ne ptr %route.fresh, null
+   br i1 %route.fresh.ok, label %route.copy.ready, label %window.block.oom.v2.realloc
+--- a/api-observed.ll
++++ b/api-early-publish.ll
+@@ -3342,6 +3342,7 @@
+   %route.small = icmp ule i64 %route.old.bytes, 2048
+   br i1 %route.small, label %route.copy.allocate, label %route.resize
+ route.copy.allocate:
++  store ptr null, ptr %t2
+   %route.fresh = call ptr @wf_policy_allocate(i64 %t13)
+   %route.fresh.ok = icmp ne ptr %route.fresh, null
+   br i1 %route.fresh.ok, label %route.copy.ready, label %window.block.oom.v2.realloc
+@@ -3350,6 +3351,7 @@
+   call void @wf_policy_release(ptr %t5)
+   br label %window.block.ready.v2.realloc
+ route.resize:
++  store ptr null, ptr %t2
+   %route.resized = call ptr @wf_policy_reallocate(ptr %t5, i64 %t13)
+   %t15 = icmp ne ptr %route.resized, null
+   br i1 %t15, label %route.resize.ready, label %window.block.oom.v2.realloc
+@@ -3437,6 +3439,7 @@
+   %route.small = icmp ule i64 %route.old.bytes, 2048
+   br i1 %route.small, label %route.copy.allocate, label %route.resize
+ route.copy.allocate:
++  store ptr null, ptr %t2
+   %route.fresh = call ptr @wf_policy_allocate(i64 %t13)
+   %route.fresh.ok = icmp ne ptr %route.fresh, null
+   br i1 %route.fresh.ok, label %route.copy.ready, label %window.block.oom.v2.realloc
+@@ -3445,6 +3448,7 @@
+   call void @wf_policy_release(ptr %t5)
+   br label %window.block.ready.v2.realloc
+ route.resize:
++  store ptr null, ptr %t2
+   %route.resized = call ptr @wf_policy_reallocate(ptr %t5, i64 %t13)
+   %t15 = icmp ne ptr %route.resized, null
+   br i1 %t15, label %route.resize.ready, label %window.block.oom.v2.realloc

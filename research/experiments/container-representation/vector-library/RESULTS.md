@@ -8369,3 +8369,131 @@ Work remains confined to Vector append, with spare-capacity and growth paths
 assessed separately. No other API starts until append qualifies; every API
 must qualify before measuring the full container workload. This checkpoint
 changes no compiler, library, specification or production growth policy.
+
+
+#### Small-copy growth candidate: registered discriminator
+
+Test one provisional full-positive growth route: copy when the initialized old
+payload is at most 2048 physical bytes, otherwise realloc. The last paired
+small winner supports 2048; the equal-byte ladder supports smaller extents
+across both widths. It supplies no ground for extending copying to 4096 or a
+host page and does not establish an allocator threshold. This experiment
+combines the observed route advantages; it does not claim to repair every
+remaining append cell or select a production policy.
+
+Start from frozen full-spine A and preserve its representation, empty and
+partial-growth routes, public APIs, peer objects and initialization schedule.
+Only the two generic full-positive grow bodies acquire the byte comparison.
+Small growth allocates the same new extent, checks NULL, copies the complete
+initialized prefix, frees the old payload and publishes. Large growth retains
+realloc and its failure check. Both publish only after success. The accounting
+driver selects the existing route-specific ledger expectation by that same
+byte predicate; independent value/state and failure observers stay decisive.
+No benchmark name, element type or observed capacity selects a route.
+
+First build and inspect native code, exact allocation ledgers, complete
+post-state/value checks and deliberate incorrect controls. Include both sides
+and the exact cutoff, empty and partial growth, real allocation failure and
+nested cleanup. Confirm source-object identities, no introduced growth-helper
+call or wide offered-value spill, and the branch's executed register-save and
+frame consequences. Correctness or intended-route failure stops timing. Keep
+all outcomes; a code-generation failure is not repaired by weakening the
+criterion. Temporary material lives under .build/small-copy-growth and is
+removed or superseded with this experiment. Retain a replayable delta and
+compact complete evidence in this existing Vector home.
+
+If those prerequisites pass, use one fixed A-then-H exploratory pair, nine
+samples in each of two balanced reverse/rotated cohorts. H is the candidate.
+Keep the existing 64 MiB budget and 8 GiB wide-4096 budget. Preserve the six
+canonical matched growth cells (capacities 16, 256 and 4096 at both widths),
+and add neighboring old-byte extents 1792, 2048 and 2304: scalar capacities
+224, 256 and 288; wide capacities 7, 8 and 9. Deduplicate scalar256. Every
+peer starts at exactly N and ends at exactly 2N, including small wide cells.
+Report both peers, all raw controls, actual durations, RAW resolution and
+complete observed ranges; no control subtraction or repeated valid screen.
+Use the same 1 ms real-duration minimum, RAW <=100 ns, WF/peer cohort-ratio
+spread <=10% and between-image peer-median drift <=10%. A separated direction
+in both cohorts is a single-pair observation, not repeatable qualification.
+Overlap or a failed prerequisite stays unresolved. No cutoff sweep follows.
+
+The candidate should retain small-copy gains at the held-out small neighbor
+and avoid the uniform-copy loss at 1 MiB. A separated loss on unchanged large
+realloc routes identifies actual dispatch/layout overhead; the native record
+must explain whether frame or instruction changes accompany it. All original
+peer targets remain: a candidate that misses them leaves append unfinished.
+Inspect spare native paths now, and qualify their timings before any adoption;
+old A/B spare results do not qualify H. Continue only Vector append. Other
+APIs and whole-container timings remain deferred until their stated turn.
+
+
+#### Small-copy growth candidate: outcome
+
+The [prototype and observer delta](small-copy-growth.patch), complete
+[samples](ecosystem-append-growth-small-copy-samples.csv), and
+[commands, pins, native paths, ledgers and ranges](ecosystem-append-growth-small-copy-timing.txt)
+retain one fixed A→H pair. H copies at most 2048 initialized old bytes and
+otherwise reallocates; the exact two-definition transform preserves every
+other timed/account IR body and the frozen peer/runtime inputs. No compiler
+or WF library source was changed.
+
+All 71 guarded prerequisite stages returned their expected statuses.
+The 90 allocation rows include untimed 0/1 cases, exact capacities and route
+ledgers, cutoff neighbors, and complete cleanup. Actual H public-append
+observers passed full-content/state checks and returned-NULL tests below,
+at and above the cutoff at both widths, plus wide4096. Early publication and
+copy corruption failed independent observations; the reused nested fixture
+retained small Box/u8/u64 growth, partial-prefix, empty/ZST, cleanup, and
+first-allocation failure checks with early-free/publication/copy-order
+negatives. Successful realloc was forced moved, not in-place. This is bounded
+runtime evidence, not a new generic source ABI qualification.
+
+Native H append adds one cutoff comparison/branch, with no internal growth
+helper call or offered-value spill. Scalar/wide frames are 64 B versus A's
+48 B; static append instruction counts are 59/123 versus 43/107. On successful
+ordinary full growth, H's large route adds five executed instructions and one
+conditional branch, excluding the outer forwarding branch and allocator internals. Spare
+batch frames remain 80 B scalar and 336 B wide; their timings are not qualified
+by this checkpoint. Build/link cost was 5.582 s, prerequisite execution
+10.544 s and native extraction 0.529 s.
+
+A/H screens returned 0 in 155.417/154.704 s with unchanged image hashes.
+All 2376 rows are retained, including 1188 real intervals and 1188 snapshot
+controls. Minimum real intervals were 1.241/1.248 ms, both RAW probes observed
+41 ns, and every peer occupied each position three times per cohort. Maximum
+WF/peer cohort-ratio spread was 8.58%. Between-image drift exceeded 10% for
+scalar224 C++ cohort 0 (10.63%) and scalar4096 Rust in both cohorts
+(10.89%/13.43%); those cells remain unresolved despite any favorable medians.
+
+Medians are ns/append, cohort 0/cohort 1. A/H directions use complete range
+separation in both cohorts and all registered prerequisites; the canonical
+H target uses the median-slower peer's complete range. Full per-peer ranges
+and individual qualifications are retained in the timing record.
+
+| Element × capacity | WF A | WF H | Rust A → H | C++ A → H | Observation |
+| --- | ---: | ---: | ---: | ---: | --- |
+| 8 B × 16 | 35.06/34.59 | 22.54/22.56 | 37.52/37.36 → 37.42/36.96 | 26.39/26.61 → 25.84/26.06 | H faster; H target pass |
+| 8 B × 224 | 103.77/100.20 | 83.27/82.65 | 106.13/101.58 → 98.43/97.89 | 98.41/92.65 → 87.95/90.19 | unresolved; peer drift |
+| 8 B × 256 | 106.95/104.10 | 89.99/89.09 | 109.97/106.84 → 103.85/103.63 | 100.93/97.86 → 94.82/94.30 | H faster; H target pass |
+| 8 B × 288 | 114.83/112.87 | 111.54/107.98 | 116.77/118.31 → 115.18/109.62 | 104.22/104.09 → 99.13/99.22 | unresolved |
+| 8 B × 4096 | 731.69/757.60 | 747.35/715.30 | 773.40/787.01 → 689.15/681.31 | 666.40/667.20 → 675.65/666.46 | unresolved; peer drift; H target unqualified |
+| 256 B × 7 | 106.71/100.04 | 87.47/86.33 | 109.47/105.85 → 102.80/101.14 | 98.93/94.65 → 90.63/89.72 | H faster |
+| 256 B × 8 | 108.39/109.22 | 91.81/92.28 | 113.39/114.44 → 106.31/107.99 | 103.47/103.30 → 95.16/94.75 | H faster |
+| 256 B × 9 | 115.00/115.13 | 108.56/108.23 | 118.00/118.28 → 111.16/111.89 | 105.05/106.82 → 97.69/97.70 | unresolved |
+| 256 B × 16 | 159.27/156.89 | 147.81/148.75 | 159.59/161.45 → 151.72/152.17 | 151.92/151.43 → 141.92/142.48 | unresolved; H target unqualified |
+| 256 B × 256 | 1350.08/1356.93 | 1312.88/1309.78 | 1355.80/1363.60 → 1312.44/1310.63 | 1375.04/1352.17 → 1312.56/1326.72 | unresolved; H target unqualified |
+| 256 B × 4096 | 156.07/167.69 | 161.45/162.06 | 160.79/171.89 → 163.31/170.09 | 15251.02/15091.64 → 15072.80/15018.48 | unresolved; H target pass |
+
+H satisfies the selected-peer range target in **3/6 canonical cells**:
+scalar16, scalar256 and wide4096. A satisfies 2/6 in this pair, scalar16 and
+wide4096. Scalar4096, wide16 and wide256 leave append growth unfinished.
+Qualified single-pair H gains occur at scalar16/256 and wide7/8. Scalar224
+has separated H ranges in both cohorts but fails peer drift. No cell shows a
+qualified H loss; the remaining overlaps establish neither gain nor equivalence.
+Wide4096 H medians remain about 161/162 ns and overlap A, preserving the large
+realloc behavior without the uniform-copy scale observed previously.
+
+This is one exploratory pair, not repeatable qualification or selection of a
+production cutoff. No B timing, cutoff sweep, H spare timing or other API was
+run. Keep Vector append's spare and growth paths separate; H needs its own
+spare timing qualification before adoption. Other APIs remain paused until
+append qualifies, and all APIs precede a full container workload measurement.

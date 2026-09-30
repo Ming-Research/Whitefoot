@@ -1,0 +1,399 @@
+Small-copy growth policy: one exploratory A then H pair
+A is frozen complete append spine. H selects full-positive malloc/NULL-check/prefix memcpy/free for initialized old payload <=2048 bytes, otherwise existing realloc/NULL-check. Empty/partial/ZST behavior is retained. Only two generic grow definitions change in each timed/account module. All other IR lines are byte-exact; no extra assumptions, LTO, compiler rebuild or peer-object changes.
+Timed cells: scalar16/224/256/288/4096 and wide7/8/9/16/256/4096 (11 deduplicated). Correctness also retains untimed0/1; 45 account rows/image. Neighbor old bytes1792/2048/2304. Canonical six peer targets unchanged. 9 samples x 2 reverse/rotated cohorts, 64MiB work except wide4096 8GiB, same seeds/context budget/oracles/controls. One A->H pair only; no B run, cutoff sweep, spare timing or production-policy claim.
+Direction requires full WF range separation in both cohorts, real intervals>=1ms, RAW<=100ns, WF/peer cohort-ratio spread<=10%, between-image peer median drift<=10%. Overlap/failure unresolved. This is exploratory evidence, not repeatable qualification. H spare native is inspected, but previous A/B spare results do not qualify H; adoption requires a later spare cross-check.
+Portable paths: export R=checkout_root; V=$R/research/experiments/container-representation/vector-library; D=$V/.build/small-copy-growth; A=$V/.build/append-spine-exposure; B=$V/.build/full-growth-route. Exact argv below substitutes ${R}; execute serially with WHITEFOOT_CHECK_TIMEOUT=120 for qualification,360 for screens. A/H share one timed C driver.o and all frozen peer/runtime/preparebridge inputs in original native order. Account drivers use WF_SMALL_COPY_GROWTH=0/1; that flag is ACCOUNT_ONLY.
+Replay: small-copy-growth.patch first combines driver and two-module deltas against frozen B vector-costs-route.c and A whitefoot-timed/account.ll. Its remaining focused sections contain nested fixture route delta against frozen full-growth-route/focused/focused-observed.ll, actual-H API observer instrumentation and C observer, plus early-action mutants. The nested C observer is byte-exact frozen B/focused/observer.c. Exact build/test flags are below; CORRUPT_COPY_ORDER/CORRUPT_COPY supply independent negative values.
+
+Input pins (relative to R):
+232dd36934b8954f305a7fec2afd8430f2ef869dd93792c7ff9a01940518d6fa  research/experiments/container-representation/vector-library/.build/append-spine-exposure/whitefoot-timed.o
+07a863fa8195693af8a77893c62a68778738f90eecfd2f0d119f5eb6ef7c1bba  research/experiments/container-representation/vector-library/.build/append-spine-exposure/whitefoot-account.o
+e77fc43f3f4c43d609f5707dde19c68f7b9f37b6393c99d69702e8cf552fd2d8  research/experiments/container-representation/vector-library/.build/full-growth-route/vector-costs-route.c
+c35ec1f01eef08066ef381b06da6fc72ef6aba12d98a1b33c48a016de6313dd1  research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/cpp-timed.o
+b1eccd7d521f678bd123531708f67a1cce0f6b6fa509edb907acab53f1f11873  research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/rust-timed.a
+7584d61db0d902bfa4b5975c5fcd2f717f9d34fa174c9ae4650f457178477de5  research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/cpp-account.o
+f35af52b27861a01c37bf9cbdc0c103949619ba8fb3cd479812d07ed1b45c563  research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/rust-account.a
+07ebcae5ed98fa7ff1a218150170f56c961e9dbae682781b62a5878a094da58b  research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/ordinary_values.o
+0655633c69666fcce21bf67258101aedb49c914fc50a6cc8edbfe22a8315e645  research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/sched/core.o
+e04734d7a1ddbe9083b47570ca2854963803b88a7197628bed2ca66cb4924d5c  research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/sched/entry.o
+75cb971977625c9b05adcf74b14989544ccbf61b0a81fe4843ec72226eb36c61  research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/runtime.o
+1bcbb49aa9a44031faf6397e01a960b2ce5d5d02f42cc2aaecb4edc0818d8ec6  research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/file_adapter.o
+a1def81793c4229e41586590b91d134a9a2375a6ad9d31189b8164e91aaf137b  research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/bridge.o
+8342e7ea0b8d6a0817d543e8c05e807c96527393945e95597718ba9a27ce722d  research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/wf_floor.o
+c3a5140b8221a57d27a510995ae37c7b33a64ebc87ec9f9286b99ece649bce45  research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/sched/prim_host.o
+b9dbbb1485b2c3e47ef248568020130e7e27446e56be5a2c52f224bbd7a2f463  research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/wait_host.o
+f1fa09d7c0831333726c367986a3811d588e639f090435b1cbf1fce62758bf33  research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/file_posix.o
+e389769ac8c9f38af9cd00e5bc5d56d3c180dff5985fb81ddfff63dfa89eb453  research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/linux_io_uring.o
+846bc08916aadbe77111a2c45aff15f33fd1fb7ffe816c198c2bf6f96dcad210  research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/ordinary_values_ir.o
+b201a1b4c00d3b534a5b9df19e354d1166e3de19f24db79d8d1a805c9c7305a3  research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/prepare-bridge.o
+f4e6904f2dec97d7fbaf6a3c560cc9ea829f964844ece5a46a559b82fb6f0d62  research/experiments/container-representation/vector-library/.build/append-spine-exposure/whitefoot-timed.ll
+09a6d488955e209a44ac93ad08bd2346e27d2ef970627ecbbb2196e93a1a3f2b  research/experiments/container-representation/vector-library/.build/append-spine-exposure/whitefoot-account.ll
+3d403fb26a00b6efd27337fb5ffb470ba1bff19a1551ce7261ae4b5f3603d8db  research/experiments/container-representation/vector-library/.build/full-growth-route/focused/focused-fixture.wf
+4ae04ab0154482f286b1535824034b2a0ec4e5d148e34743f3f888da2cf0f77c  research/experiments/container-representation/vector-library/.build/full-growth-route/focused/focused-observed.ll
+0eeb90e0d650164c452566805bb085221ecb018e67d6b43ebf4eb1cdd3b86eb6  research/experiments/container-representation/vector-library/.build/full-growth-route/focused/observer.c
+
+Generated identities:
+034d33c02beb5b3805d565de3a92c221779eebea496dadf3704508af671c6d86  vector-costs-small-copy.c
+b997b6aa879f186f7b18b0047842be0d925079e6159f9ad42badbfa7f58bf809  driver.patch
+1947b198c0279e28531d5aacaa608a0a286e47932cf396140a8c89ec1ffdab90  modules.patch
+91f796ef0cfc20f8fd1e91f94f2d34883b8f73a68a8857dd8ad4d027b4122b91  prototype.patch
+37212ffc56682eecb3560e08f0769e9f7ab32f0faa59d656aa92d57575695412  whitefoot-timed.ll
+ed73f25e80f1eacae4ea2615f51fe40f05c371df50304c9482e6e24fe97c7d80  whitefoot-account.ll
+ee45e01c63420b00b23ec992129a664d607bdbc9423ae77f07859e3933bb973a  whitefoot-timed.o
+b3c6cb31830195edee4680e192f9f603063e98c8c44b3f0b55090a7b39ca2dda  whitefoot-account.o
+769d82083c24963e769aa6dae027cd083a04312a6a440e5a745d54858dbcef62  driver-timed.o
+daf42c853e60431687e80f28aef732ef58c4324322cde82dc917320fb253358c  A-driver-account.o
+a0983226ee643e319b121d1c8055d77d9a493f0ae4e4b2ccf3a0c99bab982cf3  H-driver-account.o
+9ad45e0a92d32d0c63b1632a8a37c233971f0a90f865ca3a6a2f246dd2d4f892  A-timed
+26e66b2e9b0f5aa020384d64f0c53010f107f364cca4c6850fba6d1735edea1e  H-timed
+dca955e0af749764b9f904f751f575b6b6047ef78d735e321c8346a0bef87ea4  A-account
+61cdac260a817b76ab89ba9a3e6bfd8e0ffcf054c833845338ac578f9c412b3d  H-account
+3897d694b07935d9c287da168a5b84c98f94081c762c5df37190e36f8f8a040f  A-samples.csv
+6a60ea99c8fe6152e0c4a7f97a6adf7049cf42107121ad99e63dfdbafc908d1c  H-samples.csv
+84f52ee38f09ef3a514c9e4ed62abff6d2afe7f7b62c73e812bdd9bf7410c343  samples.csv
+
+Qualification direct terminal statuses (seconds include the guard):
+H-timed-llvm: exit=0 expected=0 seconds=0.355648
+H-account-llvm: exit=0 expected=0 seconds=0.228877
+timed-driver: exit=0 expected=0 seconds=0.962190
+A-account-driver: exit=0 expected=0 seconds=0.650277
+A-timed-link: exit=0 expected=0 seconds=0.225599
+A-timed-growth-api-check: exit=0 expected=0 seconds=0.646898
+A-timed-growth-api-fail-values: exit=1 expected=1 seconds=0.146330
+A-timed-growth-api-fail-state: exit=1 expected=1 seconds=0.139480
+A-timed-spare-check: exit=0 expected=0 seconds=0.124917
+A-clock-negative: exit=1 expected=1 seconds=0.130719
+A-account-link: exit=0 expected=0 seconds=0.132968
+A-account-growth-api-check: exit=0 expected=0 seconds=0.436503
+A-account-growth-api-fail-values: exit=1 expected=1 seconds=0.148780
+A-account-growth-api-fail-state: exit=1 expected=1 seconds=0.124644
+A-account-spare-check: exit=0 expected=0 seconds=0.128878
+A-account-spare-values-negative: exit=1 expected=1 seconds=0.131776
+A-account-spare-allocation-negative: exit=1 expected=1 seconds=0.140627
+A-account-rows: exit=0 expected=0 seconds=0.146010
+A-native: exit=0 expected=0 seconds=0.301402
+H-account-driver: exit=0 expected=0 seconds=0.832354
+H-timed-link: exit=0 expected=0 seconds=0.131919
+H-timed-growth-api-check: exit=0 expected=0 seconds=0.439059
+H-timed-growth-api-fail-values: exit=1 expected=1 seconds=0.149904
+H-timed-growth-api-fail-state: exit=1 expected=1 seconds=0.143378
+H-timed-spare-check: exit=0 expected=0 seconds=0.145873
+H-clock-negative: exit=1 expected=1 seconds=0.145213
+H-account-link: exit=0 expected=0 seconds=0.133653
+H-account-growth-api-check: exit=0 expected=0 seconds=0.337066
+H-account-growth-api-fail-values: exit=1 expected=1 seconds=0.156912
+H-account-growth-api-fail-state: exit=1 expected=1 seconds=0.148247
+H-account-spare-check: exit=0 expected=0 seconds=0.143151
+H-account-spare-values-negative: exit=1 expected=1 seconds=0.138882
+H-account-spare-allocation-negative: exit=1 expected=1 seconds=0.123610
+H-account-rows: exit=0 expected=0 seconds=0.129925
+H-native: exit=0 expected=0 seconds=0.227463
+
+Exact qualification argv (checkout root prefix replaced by ${R}):
+perl ${R}/.github/run-check.pl small-copy-H-timed-llvm clang -O3 -Wno-override-module -x ir -c ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/whitefoot-timed.ll -o ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/whitefoot-timed.o
+perl ${R}/.github/run-check.pl small-copy-H-account-llvm clang -O3 -Wno-override-module -x ir -c ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/whitefoot-account.ll -o ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/whitefoot-account.o
+perl ${R}/.github/run-check.pl small-copy-timed-driver clang -std=c11 -O3 -Wall -Wextra -Werror -DECOSYSTEM -DWF_INLINE_SLOTS_OWNER=1 -c ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/vector-costs-small-copy.c -o ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/driver-timed.o
+perl ${R}/.github/run-check.pl small-copy-A-account-driver clang -std=c11 -O3 -Wall -Wextra -Werror -DECOSYSTEM -DWF_INLINE_SLOTS_OWNER=1 -DACCOUNT_ONLY -DWF_SPLIT_SLOTS_PAYLOAD=1 -DWF_SPLIT_SLOTS_REALLOC=1 -DWF_EMPTY_PAYLOAD_ANCHOR=1 -DWF_FULL_GROWTH_MALLOC_COPY=0 -DWF_SMALL_COPY_GROWTH=0 -c ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/vector-costs-small-copy.c -o ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/A-driver-account.o
+perl ${R}/.github/run-check.pl small-copy-A-timed-link clang++ -O3 ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/driver-timed.o ${R}/research/experiments/container-representation/vector-library/.build/append-spine-exposure/whitefoot-timed.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/cpp-timed.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/rust-timed.a ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/ordinary_values.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/sched/core.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/sched/entry.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/runtime.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/file_adapter.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/bridge.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/wf_floor.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/sched/prim_host.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/wait_host.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/file_posix.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/linux_io_uring.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/ordinary_values_ir.o -pthread -lm ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/prepare-bridge.o -liconv -lSystem -lc -lm -o ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/A-timed
+perl ${R}/.github/run-check.pl small-copy-A-timed-growth-api-check ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/A-timed growth-api-check
+perl ${R}/.github/run-check.pl small-copy-A-timed-growth-api-fail-values ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/A-timed growth-api-fail-values
+perl ${R}/.github/run-check.pl small-copy-A-timed-growth-api-fail-state ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/A-timed growth-api-fail-state
+perl ${R}/.github/run-check.pl small-copy-A-timed-spare-check ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/A-timed api-check
+perl ${R}/.github/run-check.pl small-copy-A-clock-negative ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/A-timed growth-api-fail-clock
+perl ${R}/.github/run-check.pl small-copy-A-account-link clang++ -O3 ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/A-driver-account.o ${R}/research/experiments/container-representation/vector-library/.build/append-spine-exposure/whitefoot-account.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/cpp-account.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/rust-account.a ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/ordinary_values.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/sched/core.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/sched/entry.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/runtime.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/file_adapter.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/bridge.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/wf_floor.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/sched/prim_host.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/wait_host.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/file_posix.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/linux_io_uring.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/ordinary_values_ir.o -pthread -lm ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/prepare-bridge.o -liconv -lSystem -lc -lm -o ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/A-account
+perl ${R}/.github/run-check.pl small-copy-A-account-growth-api-check ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/A-account growth-api-check
+perl ${R}/.github/run-check.pl small-copy-A-account-growth-api-fail-values ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/A-account growth-api-fail-values
+perl ${R}/.github/run-check.pl small-copy-A-account-growth-api-fail-state ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/A-account growth-api-fail-state
+perl ${R}/.github/run-check.pl small-copy-A-account-spare-check ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/A-account api-check
+perl ${R}/.github/run-check.pl small-copy-A-account-spare-values-negative ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/A-account api-fail-values
+perl ${R}/.github/run-check.pl small-copy-A-account-spare-allocation-negative ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/A-account api-fail-allocation
+perl ${R}/.github/run-check.pl small-copy-A-account-rows sh -c '${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/A-account growth-api-account > ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/A-account.csv'
+perl ${R}/.github/run-check.pl small-copy-A-native sh -c 'otool -tvV ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/A-timed > ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/A-native.asm'
+perl ${R}/.github/run-check.pl small-copy-H-account-driver clang -std=c11 -O3 -Wall -Wextra -Werror -DECOSYSTEM -DWF_INLINE_SLOTS_OWNER=1 -DACCOUNT_ONLY -DWF_SPLIT_SLOTS_PAYLOAD=1 -DWF_SPLIT_SLOTS_REALLOC=1 -DWF_EMPTY_PAYLOAD_ANCHOR=1 -DWF_FULL_GROWTH_MALLOC_COPY=0 -DWF_SMALL_COPY_GROWTH=1 -c ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/vector-costs-small-copy.c -o ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/H-driver-account.o
+perl ${R}/.github/run-check.pl small-copy-H-timed-link clang++ -O3 ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/driver-timed.o ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/whitefoot-timed.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/cpp-timed.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/rust-timed.a ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/ordinary_values.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/sched/core.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/sched/entry.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/runtime.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/file_adapter.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/bridge.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/wf_floor.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/sched/prim_host.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/wait_host.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/file_posix.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/linux_io_uring.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/ordinary_values_ir.o -pthread -lm ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/prepare-bridge.o -liconv -lSystem -lc -lm -o ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/H-timed
+perl ${R}/.github/run-check.pl small-copy-H-timed-growth-api-check ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/H-timed growth-api-check
+perl ${R}/.github/run-check.pl small-copy-H-timed-growth-api-fail-values ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/H-timed growth-api-fail-values
+perl ${R}/.github/run-check.pl small-copy-H-timed-growth-api-fail-state ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/H-timed growth-api-fail-state
+perl ${R}/.github/run-check.pl small-copy-H-timed-spare-check ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/H-timed api-check
+perl ${R}/.github/run-check.pl small-copy-H-clock-negative ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/H-timed growth-api-fail-clock
+perl ${R}/.github/run-check.pl small-copy-H-account-link clang++ -O3 ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/H-driver-account.o ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/whitefoot-account.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/cpp-account.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/rust-account.a ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/ordinary_values.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/sched/core.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/sched/entry.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/runtime.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/file_adapter.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/bridge.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/wf_floor.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/sched/prim_host.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/wait_host.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/file_posix.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/linux_io_uring.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/ordinary_values_ir.o -pthread -lm ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/prepare-bridge.o -liconv -lSystem -lc -lm -o ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/H-account
+perl ${R}/.github/run-check.pl small-copy-H-account-growth-api-check ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/H-account growth-api-check
+perl ${R}/.github/run-check.pl small-copy-H-account-growth-api-fail-values ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/H-account growth-api-fail-values
+perl ${R}/.github/run-check.pl small-copy-H-account-growth-api-fail-state ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/H-account growth-api-fail-state
+perl ${R}/.github/run-check.pl small-copy-H-account-spare-check ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/H-account api-check
+perl ${R}/.github/run-check.pl small-copy-H-account-spare-values-negative ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/H-account api-fail-values
+perl ${R}/.github/run-check.pl small-copy-H-account-spare-allocation-negative ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/H-account api-fail-allocation
+perl ${R}/.github/run-check.pl small-copy-H-account-rows sh -c '${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/H-account growth-api-account > ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/H-account.csv'
+perl ${R}/.github/run-check.pl small-copy-H-native sh -c 'otool -tvV ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/H-timed > ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/H-native.asm'
+
+Screen direct statuses:
+{"command": ["perl", "${R}/.github/run-check.pl", "small-copy-A-screen", "sh", "-c", "${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/A-timed growth-api-measure 67108864 9 8589934592 > ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/A-samples.csv"], "workload": ["${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/A-timed", "growth-api-measure", "67108864", "9", "8589934592"], "sha256_before": "9ad45e0a92d32d0c63b1632a8a37c233971f0a90f865ca3a6a2f246dd2d4f892", "guard_pid": 46015, "exit": 0, "seconds": 155.41656262474135, "sha256_after": "9ad45e0a92d32d0c63b1632a8a37c233971f0a90f865ca3a6a2f246dd2d4f892"}
+{"command": ["perl", "${R}/.github/run-check.pl", "small-copy-H-screen", "sh", "-c", "${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/H-timed growth-api-measure 67108864 9 8589934592 > ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/H-samples.csv"], "workload": ["${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/H-timed", "growth-api-measure", "67108864", "9", "8589934592"], "sha256_before": "26e66b2e9b0f5aa020384d64f0c53010f107f364cca4c6850fba6d1735edea1e", "guard_pid": 52198, "exit": 0, "seconds": 154.7037775842473, "sha256_after": "26e66b2e9b0f5aa020384d64f0c53010f107f364cca4c6850fba6d1735edea1e"}
+
+Focused prerequisites:
+H actual public append is instrumented from the frozen H timed module: allocation/copy/free/abort boundaries only. Nullable malloc/realloc checks remain. Positive and real returned-NULL cases cover both widths, below/at/above cutoff, and wide4096. The independent observer checks entire old prefix and one guard stride, every descriptor word/canary, exact allocation/copy/release route, full resulting values, and API destruction. Successful realloc is forced-moved by observer backing allocation and prefix preservation, not an allocator performance observation. Failure returns NULL, traverses actual append abort, and requires no copy/free/publication. Wrong-copy and early-publication mutants fail intended checks. Nested fixture reuses frozen full-growth-route source/observer and changes only three positive-full generic blocks to the same predicate (Box/u8/u64); ZST unchanged. It retains nested owners, partial-prefix/spare checks, cap0, ranges, empty/owner exchange, malloc NULL73 and first-allocation NULL74, early-free/publication and copy-order negatives. No compiler rebuild or fn_sig qualification claim. All commands/direct outcomes are in statuses.json; no failures omitted.
+nested-build: exit=0 expected=0 seconds=0.233510; perl ${R}/.github/run-check.pl small-copy-nested-build clang -std=c11 -O3 -Wall -Wextra -Werror -Wno-override-module ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/nested-observed.ll ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/nested-observer.c ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/ordinary_values.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/sched/core.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/sched/entry.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/runtime.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/file_adapter.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/bridge.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/wf_floor.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/sched/prim_host.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/wait_host.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/file_posix.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/linux_io_uring.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/ordinary_values_ir.o -pthread -lm -o ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/nested
+nested-copy-mutant-build: exit=0 expected=0 seconds=0.231699; perl ${R}/.github/run-check.pl small-copy-nested-copy-mutant-build clang -std=c11 -O3 -Wall -Wextra -Werror -Wno-override-module -DCORRUPT_COPY_ORDER ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/nested-observed.ll ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/nested-observer.c ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/ordinary_values.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/sched/core.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/sched/entry.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/runtime.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/file_adapter.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/bridge.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/wf_floor.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/sched/prim_host.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/wait_host.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/file_posix.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/linux_io_uring.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/ordinary_values_ir.o -pthread -lm -o ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/nested-copy-mutant
+nested-early-free-build: exit=0 expected=0 seconds=0.227837; perl ${R}/.github/run-check.pl small-copy-nested-early-free-build clang -std=c11 -O3 -Wall -Wextra -Werror -Wno-override-module ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/early-free.ll ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/nested-observer.c ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/ordinary_values.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/sched/core.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/sched/entry.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/runtime.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/file_adapter.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/bridge.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/wf_floor.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/sched/prim_host.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/wait_host.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/file_posix.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/linux_io_uring.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/ordinary_values_ir.o -pthread -lm -o ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/nested-early-free
+nested-early-publish-build: exit=0 expected=0 seconds=0.237997; perl ${R}/.github/run-check.pl small-copy-nested-early-publish-build clang -std=c11 -O3 -Wall -Wextra -Werror -Wno-override-module ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/early-publish.ll ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/nested-observer.c ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/ordinary_values.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/sched/core.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/sched/entry.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/runtime.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/file_adapter.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/bridge.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/wf_floor.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/sched/prim_host.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/wait_host.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/file_posix.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/linux_io_uring.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/ordinary_values_ir.o -pthread -lm -o ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/nested-early-publish
+api-build: exit=0 expected=0 seconds=0.331613; perl ${R}/.github/run-check.pl small-copy-api-build clang -std=c11 -O3 -Wall -Wextra -Werror -Wno-override-module ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/api-observed.ll ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/api-observer.c ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/ordinary_values.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/sched/core.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/sched/entry.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/runtime.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/file_adapter.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/bridge.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/wf_floor.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/sched/prim_host.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/wait_host.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/file_posix.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/linux_io_uring.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/ordinary_values_ir.o -pthread -lm -o ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/api
+api-copy-mutant-build: exit=0 expected=0 seconds=0.335299; perl ${R}/.github/run-check.pl small-copy-api-copy-mutant-build clang -std=c11 -O3 -Wall -Wextra -Werror -Wno-override-module -DCORRUPT_COPY ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/api-observed.ll ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/api-observer.c ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/ordinary_values.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/sched/core.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/sched/entry.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/runtime.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/file_adapter.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/bridge.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/wf_floor.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/sched/prim_host.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/wait_host.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/file_posix.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/linux_io_uring.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/ordinary_values_ir.o -pthread -lm -o ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/api-copy-mutant
+api-early-publish-build: exit=0 expected=0 seconds=0.330614; perl ${R}/.github/run-check.pl small-copy-api-early-publish-build clang -std=c11 -O3 -Wall -Wextra -Werror -Wno-override-module ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/api-early-publish.ll ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/api-observer.c ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/ordinary_values.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/sched/core.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/sched/entry.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/runtime.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/file_adapter.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/bridge.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/wf_floor.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/sched/prim_host.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/wait_host.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/file_posix.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/completion/linux_io_uring.o ${R}/research/experiments/container-representation/vector-library/.build/full-growth-route/inputs/native/ordinary_values_ir.o -pthread -lm -o ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/api-early-publish
+nested-normal: exit=0 expected=0 seconds=0.536130; perl ${R}/.github/run-check.pl small-copy-nested-normal ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/nested
+nested-failure: exit=73 expected=73 seconds=0.125192; perl ${R}/.github/run-check.pl small-copy-nested-failure ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/nested failure
+nested-scalar-failure: exit=73 expected=73 seconds=0.125983; perl ${R}/.github/run-check.pl small-copy-nested-scalar-failure ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/nested scalar-failure
+nested-owned-failure: exit=73 expected=73 seconds=0.128716; perl ${R}/.github/run-check.pl small-copy-nested-owned-failure ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/nested owned-failure
+nested-first-failure: exit=74 expected=74 seconds=0.136416; perl ${R}/.github/run-check.pl small-copy-nested-first-failure ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/nested first-failure
+nested-wrong-release: exit=1 expected=1 seconds=0.143767; perl ${R}/.github/run-check.pl small-copy-nested-wrong-release ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/nested wrong-release
+nested-wrong-realloc: exit=1 expected=1 seconds=0.144451; perl ${R}/.github/run-check.pl small-copy-nested-wrong-realloc ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/nested wrong-realloc
+nested-copy-negative: exit=1 expected=1 seconds=0.354597; perl ${R}/.github/run-check.pl small-copy-nested-copy-negative ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/nested-copy-mutant
+nested-early-free-scalar-failure: exit=1 expected=1 seconds=0.361717; perl ${R}/.github/run-check.pl small-copy-nested-early-free-scalar-failure ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/nested-early-free scalar-failure
+nested-early-free-owned-failure: exit=1 expected=1 seconds=0.162597; perl ${R}/.github/run-check.pl small-copy-nested-early-free-owned-failure ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/nested-early-free owned-failure
+nested-early-publish-scalar-failure: exit=1 expected=1 seconds=0.356476; perl ${R}/.github/run-check.pl small-copy-nested-early-publish-scalar-failure ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/nested-early-publish scalar-failure
+nested-early-publish-owned-failure: exit=1 expected=1 seconds=0.130798; perl ${R}/.github/run-check.pl small-copy-nested-early-publish-owned-failure ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/nested-early-publish owned-failure
+api-8-224-positive: exit=0 expected=0 seconds=0.448434; perl ${R}/.github/run-check.pl small-copy-api-8-224-positive ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/api 8 224 malloc positive
+api-8-224-null: exit=73 expected=73 seconds=0.169338; perl ${R}/.github/run-check.pl small-copy-api-8-224-null ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/api 8 224 malloc null
+api-8-256-positive: exit=0 expected=0 seconds=0.159127; perl ${R}/.github/run-check.pl small-copy-api-8-256-positive ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/api 8 256 malloc positive
+api-8-256-null: exit=73 expected=73 seconds=0.125149; perl ${R}/.github/run-check.pl small-copy-api-8-256-null ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/api 8 256 malloc null
+api-8-288-positive: exit=0 expected=0 seconds=0.127525; perl ${R}/.github/run-check.pl small-copy-api-8-288-positive ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/api 8 288 realloc positive
+api-8-288-null: exit=73 expected=73 seconds=0.129285; perl ${R}/.github/run-check.pl small-copy-api-8-288-null ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/api 8 288 realloc null
+api-256-7-positive: exit=0 expected=0 seconds=0.134647; perl ${R}/.github/run-check.pl small-copy-api-256-7-positive ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/api 256 7 malloc positive
+api-256-7-null: exit=73 expected=73 seconds=0.139877; perl ${R}/.github/run-check.pl small-copy-api-256-7-null ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/api 256 7 malloc null
+api-256-8-positive: exit=0 expected=0 seconds=0.138447; perl ${R}/.github/run-check.pl small-copy-api-256-8-positive ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/api 256 8 malloc positive
+api-256-8-null: exit=73 expected=73 seconds=0.150788; perl ${R}/.github/run-check.pl small-copy-api-256-8-null ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/api 256 8 malloc null
+api-256-9-positive: exit=0 expected=0 seconds=0.122649; perl ${R}/.github/run-check.pl small-copy-api-256-9-positive ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/api 256 9 realloc positive
+api-256-9-null: exit=73 expected=73 seconds=0.129468; perl ${R}/.github/run-check.pl small-copy-api-256-9-null ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/api 256 9 realloc null
+api-256-4096-positive: exit=0 expected=0 seconds=0.135567; perl ${R}/.github/run-check.pl small-copy-api-256-4096-positive ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/api 256 4096 realloc positive
+api-256-4096-null: exit=73 expected=73 seconds=0.141059; perl ${R}/.github/run-check.pl small-copy-api-256-4096-null ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/api 256 4096 realloc null
+api-copy-negative: exit=1 expected=1 seconds=0.451398; perl ${R}/.github/run-check.pl small-copy-api-copy-negative ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/api-copy-mutant 8 256 malloc positive
+api-early-publish-malloc: exit=1 expected=1 seconds=0.342629; perl ${R}/.github/run-check.pl small-copy-api-early-publish-malloc ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/api-early-publish 8 256 malloc null
+api-early-publish-realloc: exit=1 expected=1 seconds=0.144661; perl ${R}/.github/run-check.pl small-copy-api-early-publish-realloc ${R}/research/experiments/container-representation/vector-library/.build/small-copy-growth/focused/api-early-publish 8 288 realloc null
+Failure scope: real returned NULL traverses the candidate abort, not an account-only nonnull replacement. Positive realloc is forced moved; no in-place case is claimed. The nested borrowed fixture exercises small Box/u8/u64 routes and existing partial/empty/ZST/range/owner-cleanup cases; not a new generic source fn_sig/ABI qualification. Wrong-value/state/clock/allocation and early-release/publication/copy-order controls remain decisive.
+
+Native boundary check:
+A/H append_one static instruction counts scalar43/59, wide107/123; frames48/64 bytes. Batch counts scalar89/102, wide153/171; both scalar frames80 and wide336 bytes. H cutoff folds to cap<=256 scalar/cap<=8 wide. No introduced append/grow helper call or append_one offered-value spill. Existing batch-wide224B constant saves are outside the spare loop; no claim that H spare timing is qualified.
+Executed full-positive paths excluding public tail and libc internals: A scalar27/wide91 instructions,4 conditional branches,1 realloc; H small38/102,5 branches,3 malloc/memcpy/free; H large32/96,5 branches,1 realloc. Inputs: len=cap>0, cap<=4096, allocation succeeds. executed-paths.json retains every visited PC for independent reproduction.
+Actual append symbols: _wf_vector_api_append_one$instance$b2fcb9cda4b45694 (word), _wf_vector_api_append_one$instance$694069a978d9626c (record). Public entries tail-branch to these instances. A's WF object stays frozen; H's WF object is rebuilt from precisely two edited post-lowering definitions. Peer/runtime object identities are unchanged; linked addresses and relocations can move.
+A scalar full-positive native excerpt:
+0000000100010668	cmp	x22, #0x1, lsl #12
+000000010001066c	b.hi	0x1000106a4
+0000000100010670	ldr	x0, [x19, #0x10]
+0000000100010674	lsl	x1, x22, #4
+0000000100010678	bl	0x1000b5f24 ; symbol stub for: _realloc
+000000010001067c	cbz	x0, 0x1000106ec
+0000000100010680	lsl	x8, x22, #1
+0000000100010684	str	x0, [x19, #0x10]
+0000000100010688	b	0x1000106c8
+000000010001068c	mov	w0, #0x8
+0000000100010690	bl	0x1000b5c24 ; symbol stub for: _malloc
+H scalar full-positive native excerpt:
+00000001000107d4	cmp	x24, #0x1, lsl #12
+00000001000107d8	b.hi	0x10001082c
+00000001000107dc	ldr	x21, [x19, #0x10]
+00000001000107e0	lsl	x1, x24, #4
+00000001000107e4	cmp	x24, #0x100
+00000001000107e8	b.hi	0x100010854
+00000001000107ec	mov	x0, x1
+00000001000107f0	bl	0x1000b6254 ; symbol stub for: _malloc
+00000001000107f4	cbz	x0, 0x100010894
+00000001000107f8	mov	x22, x0
+00000001000107fc	lsl	x2, x24, #3
+0000000100010800	mov	x1, x21
+0000000100010804	bl	0x1000b6278 ; symbol stub for: _memcpy
+0000000100010808	mov	x0, x21
+000000010001080c	bl	0x1000b60d4 ; symbol stub for: _free
+0000000100010810	b	0x100010864
+0000000100010814	mov	w0, #0x8
+0000000100010818	bl	0x1000b6254 ; symbol stub for: _malloc
+000000010001081c	cbz	x0, 0x100010894
+0000000100010820	str	x0, [x19, #0x10]
+0000000100010824	mov	w8, #0x1
+0000000100010828	b	0x10001086c
+000000010001082c	cmp	x24, #0x2, lsl #12
+
+Full allocation tables (90 rows; cleanup assertion also passed):
+A
+contract,element_bytes,requested_capacity,initial_capacity,variant,length,capacity,requests,reallocations,releases,requested_bytes,live_before,live_after
+append-growth-o3,8,0,0,whitefoot,1,1,1,0,0,8,0,8
+append-growth-o3,8,0,0,rust-vec,1,4,1,0,0,32,0,32
+append-growth-o3,8,0,0,cpp-std-vector,1,1,1,0,0,8,0,8
+append-growth-o3,8,1,1,whitefoot,2,2,1,1,0,16,8,16
+append-growth-o3,8,1,1,rust-vec,2,4,1,1,0,32,8,32
+append-growth-o3,8,1,1,cpp-std-vector,2,2,1,0,1,16,8,16
+append-growth-o3,8,16,16,whitefoot,17,32,1,1,0,256,128,256
+append-growth-o3,8,16,16,rust-vec,17,32,1,1,0,256,128,256
+append-growth-o3,8,16,16,cpp-std-vector,17,32,1,0,1,256,128,256
+append-growth-o3,8,224,224,whitefoot,225,448,1,1,0,3584,1792,3584
+append-growth-o3,8,224,224,rust-vec,225,448,1,1,0,3584,1792,3584
+append-growth-o3,8,224,224,cpp-std-vector,225,448,1,0,1,3584,1792,3584
+append-growth-o3,8,256,256,whitefoot,257,512,1,1,0,4096,2048,4096
+append-growth-o3,8,256,256,rust-vec,257,512,1,1,0,4096,2048,4096
+append-growth-o3,8,256,256,cpp-std-vector,257,512,1,0,1,4096,2048,4096
+append-growth-o3,8,288,288,whitefoot,289,576,1,1,0,4608,2304,4608
+append-growth-o3,8,288,288,rust-vec,289,576,1,1,0,4608,2304,4608
+append-growth-o3,8,288,288,cpp-std-vector,289,576,1,0,1,4608,2304,4608
+append-growth-o3,8,4096,4096,whitefoot,4097,8192,1,1,0,65536,32768,65536
+append-growth-o3,8,4096,4096,rust-vec,4097,8192,1,1,0,65536,32768,65536
+append-growth-o3,8,4096,4096,cpp-std-vector,4097,8192,1,0,1,65536,32768,65536
+append-growth-o3,256,0,0,whitefoot,1,1,1,0,0,256,0,256
+append-growth-o3,256,0,0,rust-vec,1,4,1,0,0,1024,0,1024
+append-growth-o3,256,0,0,cpp-std-vector,1,1,1,0,0,256,0,256
+append-growth-o3,256,1,1,whitefoot,2,2,1,1,0,512,256,512
+append-growth-o3,256,1,1,rust-vec,2,4,1,1,0,1024,256,1024
+append-growth-o3,256,1,1,cpp-std-vector,2,2,1,0,1,512,256,512
+append-growth-o3,256,7,7,whitefoot,8,14,1,1,0,3584,1792,3584
+append-growth-o3,256,7,7,rust-vec,8,14,1,1,0,3584,1792,3584
+append-growth-o3,256,7,7,cpp-std-vector,8,14,1,0,1,3584,1792,3584
+append-growth-o3,256,8,8,whitefoot,9,16,1,1,0,4096,2048,4096
+append-growth-o3,256,8,8,rust-vec,9,16,1,1,0,4096,2048,4096
+append-growth-o3,256,8,8,cpp-std-vector,9,16,1,0,1,4096,2048,4096
+append-growth-o3,256,9,9,whitefoot,10,18,1,1,0,4608,2304,4608
+append-growth-o3,256,9,9,rust-vec,10,18,1,1,0,4608,2304,4608
+append-growth-o3,256,9,9,cpp-std-vector,10,18,1,0,1,4608,2304,4608
+append-growth-o3,256,16,16,whitefoot,17,32,1,1,0,8192,4096,8192
+append-growth-o3,256,16,16,rust-vec,17,32,1,1,0,8192,4096,8192
+append-growth-o3,256,16,16,cpp-std-vector,17,32,1,0,1,8192,4096,8192
+append-growth-o3,256,256,256,whitefoot,257,512,1,1,0,131072,65536,131072
+append-growth-o3,256,256,256,rust-vec,257,512,1,1,0,131072,65536,131072
+append-growth-o3,256,256,256,cpp-std-vector,257,512,1,0,1,131072,65536,131072
+append-growth-o3,256,4096,4096,whitefoot,4097,8192,1,1,0,2097152,1048576,2097152
+append-growth-o3,256,4096,4096,rust-vec,4097,8192,1,1,0,2097152,1048576,2097152
+append-growth-o3,256,4096,4096,cpp-std-vector,4097,8192,1,0,1,2097152,1048576,2097152
+H
+contract,element_bytes,requested_capacity,initial_capacity,variant,length,capacity,requests,reallocations,releases,requested_bytes,live_before,live_after
+append-growth-o3,8,0,0,whitefoot,1,1,1,0,0,8,0,8
+append-growth-o3,8,0,0,rust-vec,1,4,1,0,0,32,0,32
+append-growth-o3,8,0,0,cpp-std-vector,1,1,1,0,0,8,0,8
+append-growth-o3,8,1,1,whitefoot,2,2,1,0,1,16,8,16
+append-growth-o3,8,1,1,rust-vec,2,4,1,1,0,32,8,32
+append-growth-o3,8,1,1,cpp-std-vector,2,2,1,0,1,16,8,16
+append-growth-o3,8,16,16,whitefoot,17,32,1,0,1,256,128,256
+append-growth-o3,8,16,16,rust-vec,17,32,1,1,0,256,128,256
+append-growth-o3,8,16,16,cpp-std-vector,17,32,1,0,1,256,128,256
+append-growth-o3,8,224,224,whitefoot,225,448,1,0,1,3584,1792,3584
+append-growth-o3,8,224,224,rust-vec,225,448,1,1,0,3584,1792,3584
+append-growth-o3,8,224,224,cpp-std-vector,225,448,1,0,1,3584,1792,3584
+append-growth-o3,8,256,256,whitefoot,257,512,1,0,1,4096,2048,4096
+append-growth-o3,8,256,256,rust-vec,257,512,1,1,0,4096,2048,4096
+append-growth-o3,8,256,256,cpp-std-vector,257,512,1,0,1,4096,2048,4096
+append-growth-o3,8,288,288,whitefoot,289,576,1,1,0,4608,2304,4608
+append-growth-o3,8,288,288,rust-vec,289,576,1,1,0,4608,2304,4608
+append-growth-o3,8,288,288,cpp-std-vector,289,576,1,0,1,4608,2304,4608
+append-growth-o3,8,4096,4096,whitefoot,4097,8192,1,1,0,65536,32768,65536
+append-growth-o3,8,4096,4096,rust-vec,4097,8192,1,1,0,65536,32768,65536
+append-growth-o3,8,4096,4096,cpp-std-vector,4097,8192,1,0,1,65536,32768,65536
+append-growth-o3,256,0,0,whitefoot,1,1,1,0,0,256,0,256
+append-growth-o3,256,0,0,rust-vec,1,4,1,0,0,1024,0,1024
+append-growth-o3,256,0,0,cpp-std-vector,1,1,1,0,0,256,0,256
+append-growth-o3,256,1,1,whitefoot,2,2,1,0,1,512,256,512
+append-growth-o3,256,1,1,rust-vec,2,4,1,1,0,1024,256,1024
+append-growth-o3,256,1,1,cpp-std-vector,2,2,1,0,1,512,256,512
+append-growth-o3,256,7,7,whitefoot,8,14,1,0,1,3584,1792,3584
+append-growth-o3,256,7,7,rust-vec,8,14,1,1,0,3584,1792,3584
+append-growth-o3,256,7,7,cpp-std-vector,8,14,1,0,1,3584,1792,3584
+append-growth-o3,256,8,8,whitefoot,9,16,1,0,1,4096,2048,4096
+append-growth-o3,256,8,8,rust-vec,9,16,1,1,0,4096,2048,4096
+append-growth-o3,256,8,8,cpp-std-vector,9,16,1,0,1,4096,2048,4096
+append-growth-o3,256,9,9,whitefoot,10,18,1,1,0,4608,2304,4608
+append-growth-o3,256,9,9,rust-vec,10,18,1,1,0,4608,2304,4608
+append-growth-o3,256,9,9,cpp-std-vector,10,18,1,0,1,4608,2304,4608
+append-growth-o3,256,16,16,whitefoot,17,32,1,1,0,8192,4096,8192
+append-growth-o3,256,16,16,rust-vec,17,32,1,1,0,8192,4096,8192
+append-growth-o3,256,16,16,cpp-std-vector,17,32,1,0,1,8192,4096,8192
+append-growth-o3,256,256,256,whitefoot,257,512,1,1,0,131072,65536,131072
+append-growth-o3,256,256,256,rust-vec,257,512,1,1,0,131072,65536,131072
+append-growth-o3,256,256,256,cpp-std-vector,257,512,1,0,1,131072,65536,131072
+append-growth-o3,256,4096,4096,whitefoot,4097,8192,1,1,0,2097152,1048576,2097152
+append-growth-o3,256,4096,4096,rust-vec,4097,8192,1,1,0,2097152,1048576,2097152
+append-growth-o3,256,4096,4096,cpp-std-vector,4097,8192,1,0,1,2097152,1048576,2097152
+
+Instrument/cohort/drift/direction evidence:
+A: {"rows": 1188, "real": 594, "controls": 594, "min_real_ns": 1241403, "min_control_ns": 1498, "clock_min_nonzero_ns": 41, "balanced_positions": true}
+H: {"rows": 1188, "real": 594, "controls": 594, "min_real_ns": 1248194, "min_control_ns": 1413, "clock_min_nonzero_ns": 41, "balanced_positions": true}
+Each row lists old bytes, width/count, cohort H/A median ratios, range directions, minimum real durations in ns A/H, cohort WF/peer ratio spreads %, between-image peer drift %, and qualification. Detailed numerical values also in summary.json.
+128B, 8B x 16: H/A=[0.6429406234914505, 0.6520880193015807]; directions=['H faster', 'H faster']; min_ns={'A': 4547672, 'H': 3904209}; ratio_spreads={'A-rust-vec': 0.933122086142002, 'A-cpp-std-vector': 2.20418811961709, 'H-rust-vec': 1.2874970933250962, 'H-cpp-std-vector': 0.8000255150343083}; drift={'0-rust-vec': 0.2682514656183632, '0-cpp-std-vector': 2.075895330636901, '1-rust-vec': 1.058329009869119, '1-cpp-std-vector': 2.0471869344075966}; verdict=H faster; failures=[]
+1792B, 8B x 224: H/A=[0.8024930477458698, 0.8248570414781492]; directions=['H faster', 'H faster']; min_ns={'A': 2884083, 'H': 2683124}; ratio_spreads={'A-rust-vec': 0.8854345342263148, 'A-cpp-std-vector': 2.56400357156894, 'H-rust-vec': 0.19720062854076126, 'H-cpp-std-vector': 3.325050515312622}; drift={'0-rust-vec': 7.251232750975678, '0-cpp-std-vector': 10.625318641406079, '1-rust-vec': 3.63271789562426, '1-cpp-std-vector': 2.6462902493150864}; verdict=unresolved; failures=['cohort 0 cpp-std-vector drift >10%']
+2048B, 8B x 256: H/A=[0.8414069492566607, 0.8558306239707941]; directions=['H faster', 'H faster']; min_ns={'A': 2765625, 'H': 2599040}; ratio_spreads={'A-rust-vec': 0.1896893898249319, 'A-cpp-std-vector': 0.3937615622466195, 'H-rust-vec': 0.7805883786362822, 'H-cpp-std-vector': 0.44416040041022065}; drift={'0-rust-vec': 5.561334316833067, '0-cpp-std-vector': 6.052466366811626, '1-rust-vec': 3.0089881332336144, '1-cpp-std-vector': 3.639614015302295}; verdict=H faster; failures=[]
+2304B, 8B x 288: H/A=[0.9713786024474319, 0.9566617767715094]; directions=['overlap', 'H faster']; min_ns={'A': 2597498, 'H': 2554708}; ratio_spreads={'A-rust-vec': 3.068496262574527, 'A-cpp-std-vector': 1.6088891115518145, 'H-rust-vec': 1.7181961532119816, 'H-cpp-std-vector': 3.3929800279834943}; drift={'0-rust-vec': 1.3664074876514665, '0-cpp-std-vector': 4.8860075931174585, '1-rust-vec': 7.344724560111082, '1-cpp-std-vector': 4.682278840090548}; verdict=unresolved; failures=[]
+32768B, 8B x 4096: H/A=[1.0214035411164148, 0.9441666381727967]; directions=['overlap', 'overlap']; min_ns={'A': 1304169, 'H': 1323711}; ratio_spreads={'A-rust-vec': 1.7501400345782292, 'A-cpp-std-vector': 3.417220697258694, 'H-rust-vec': 3.2932483010151614, 'H-cpp-std-vector': 3.0616530183380286}; drift={'0-rust-vec': 10.893751481159653, '0-cpp-std-vector': 1.3869870674512397, '1-rust-vec': 13.430202445140837, '1-cpp-std-vector': 0.10966382214682158}; verdict=unresolved; failures=['cohort 0 rust-vec drift >10%', 'cohort 1 rust-vec drift >10%']
+1792B, 256B x 7: H/A=[0.8196861069778123, 0.8629476033555037]; directions=['H faster', 'H faster']; min_ns={'A': 2978333, 'H': 2815876}; ratio_spreads={'A-rust-vec': 3.146911014665088, 'A-cpp-std-vector': 2.0569943238367028, 'H-rust-vec': 0.3144364924524634, 'H-cpp-std-vector': 0.3082067877960615}; drift={'0-rust-vec': 6.096048453260783, '0-cpp-std-vector': 8.387006816550368, '1-rust-vec': 4.456519827560612, '1-cpp-std-vector': 5.204522576447291}; verdict=H faster; failures=[]
+2048B, 256B x 8: H/A=[0.8471001532679644, 0.8448871388329656]; directions=['H faster', 'H faster']; min_ns={'A': 2921996, 'H': 2682588}; ratio_spreads={'A-rust-vec': 0.16244064276420556, 'A-cpp-std-vector': 0.9291758619338175, 'H-rust-vec': 1.0747066493203228, 'H-cpp-std-vector': 0.9424631235866121}; drift={'0-rust-vec': 6.24256906242927, '0-cpp-std-vector': 8.024376462622085, '1-rust-vec': 5.635807324058851, '1-cpp-std-vector': 8.276734319263612}; verdict=H faster; failures=[]
+2304B, 256B x 9: H/A=[0.943999521131386, 0.9400175836554989]; directions=['overlap', 'overlap']; min_ns={'A': 2705163, 'H': 2581336}; ratio_spreads={'A-rust-vec': 0.12007497399173506, 'A-cpp-std-vector': 1.5607352396585394, 'H-rust-vec': 0.9618143537199364, 'H-cpp-std-vector': 0.3106106554696897}; drift={'0-rust-vec': 5.7962583211376595, '0-cpp-std-vector': 7.005663351915182, '1-rust-vec': 5.404966199681538, '1-cpp-std-vector': 8.537779201983241}; verdict=unresolved; failures=[]
+4096B, 256B x 16: H/A=[0.9280265146408068, 0.9481261782633248]; directions=['overlap', 'overlap']; min_ns={'A': 2283499, 'H': 2203871}; ratio_spreads={'A-rust-vec': 2.706237911043541, 'A-cpp-std-vector': 1.189925945091197, 'H-rust-vec': 0.340975333994753, 'H-cpp-std-vector': 0.24388934915302585}; drift={'0-rust-vec': 4.927253658405306, '0-cpp-std-vector': 6.583957910601801, '1-rust-vec': 5.748851059605942, '1-cpp-std-vector': 5.912478220304685}; verdict=unresolved; failures=[]
+65536B, 256B x 256: H/A=[0.9724489240924847, 0.9652553831869264]; directions=['H faster', 'overlap']; min_ns={'A': 1354539, 'H': 1334620}; ratio_spreads={'A-rust-vec': 0.06827903860593398, 'A-cpp-std-vector': 2.2066450844378194, 'H-rust-vec': 0.0988742896468775, 'H-cpp-std-vector': 1.3183290034233242}; drift={'0-rust-vec': 3.1982184215214593, '0-cpp-std-vector': 4.543535008238675, '1-rust-vec': 3.8849170640459785, '1-cpp-std-vector': 1.8821708594706221}; verdict=unresolved; failures=[]
+1048576B, 256B x 4096: H/A=[1.0344639574451442, 0.9664312651979557]; directions=['overlap', 'overlap']; min_ns={'A': 1241403, 'H': 1248194}; ratio_spreads={'A-rust-vec': 0.5120026505533781, 'A-cpp-std-vector': 8.581032391258137, 'H-rust-vec': 3.759139444343673, 'H-cpp-std-vector': 0.743004334538977}; drift={'0-rust-vec': 1.5629484413034467, '0-cpp-std-vector': 1.1685936724185275, '1-rust-vec': 1.0455805205671354, '1-cpp-std-vector': 0.48474699625135065}; verdict=unresolved; failures=[]
+Neighbor direction summary: [{"old_bytes": 1792, "scalar": "unresolved", "wide": "H faster", "opposite_qualified_directions": false}, {"old_bytes": 2048, "scalar": "H faster", "wide": "H faster", "opposite_qualified_directions": false}, {"old_bytes": 2304, "scalar": "unresolved", "wide": "unresolved", "opposite_qualified_directions": false}]
+Canonical peer target classifications: [{"element_bytes": 8, "count": 16, "cohorts": [{"cohort": 0, "slower_peer": "rust-vec", "each_peer": {"rust-vec": "separated faster", "cpp-std-vector": "separated faster"}, "target_pass": true}, {"cohort": 1, "slower_peer": "rust-vec", "each_peer": {"rust-vec": "separated faster", "cpp-std-vector": "separated faster"}, "target_pass": true}], "prerequisite_failures": [], "qualified": true}, {"element_bytes": 8, "count": 256, "cohorts": [{"cohort": 0, "slower_peer": "rust-vec", "each_peer": {"rust-vec": "separated faster", "cpp-std-vector": "overlap"}, "target_pass": true}, {"cohort": 1, "slower_peer": "rust-vec", "each_peer": {"rust-vec": "separated faster", "cpp-std-vector": "separated faster"}, "target_pass": true}], "prerequisite_failures": [], "qualified": true}, {"element_bytes": 8, "count": 4096, "cohorts": [{"cohort": 0, "slower_peer": "rust-vec", "each_peer": {"rust-vec": "overlap", "cpp-std-vector": "overlap"}, "target_pass": false}, {"cohort": 1, "slower_peer": "rust-vec", "each_peer": {"rust-vec": "overlap", "cpp-std-vector": "overlap"}, "target_pass": false}], "prerequisite_failures": ["cohort 0 rust-vec drift >10%", "cohort 1 rust-vec drift >10%"], "qualified": false}, {"element_bytes": 256, "count": 16, "cohorts": [{"cohort": 0, "slower_peer": "rust-vec", "each_peer": {"rust-vec": "overlap", "cpp-std-vector": "overlap"}, "target_pass": false}, {"cohort": 1, "slower_peer": "rust-vec", "each_peer": {"rust-vec": "overlap", "cpp-std-vector": "overlap"}, "target_pass": false}], "prerequisite_failures": [], "qualified": false}, {"element_bytes": 256, "count": 256, "cohorts": [{"cohort": 0, "slower_peer": "cpp-std-vector", "each_peer": {"rust-vec": "overlap", "cpp-std-vector": "overlap"}, "target_pass": false}, {"cohort": 1, "slower_peer": "cpp-std-vector", "each_peer": {"rust-vec": "overlap", "cpp-std-vector": "overlap"}, "target_pass": false}], "prerequisite_failures": [], "qualified": false}, {"element_bytes": 256, "count": 4096, "cohorts": [{"cohort": 0, "slower_peer": "cpp-std-vector", "each_peer": {"rust-vec": "overlap", "cpp-std-vector": "separated faster"}, "target_pass": true}, {"cohort": 1, "slower_peer": "cpp-std-vector", "each_peer": {"rust-vec": "overlap", "cpp-std-vector": "separated faster"}, "target_pass": true}], "prerequisite_failures": [], "qualified": true}]
+Maximum between-image peer median drift: 13.430202445140837%. Maximum peer within-image cohort median spread: 6.898991847004932%.
+Outcome: H passes the selected-peer range target in3/6 canonical cells (scalar16/256,wide4096). Scalar4096,wide16,wide256 remain overlapping/unqualified. Qualified single-pair H gains occur at scalar16/256 and wide7/8. Scalar224 has raw H separation twice but C++ cohort0 drift10.6253% invalidates attribution; scalar4096 Rust drift10.8938%/13.4302% also fails. No cell has a qualified H loss; overlap is not equivalence. Wide4096 H medians161.446/162.060ns avoid the uniform-copy scale while overlapping A; no H/A repeatable-gain claim. No cutoff or production policy selected; H spare remains untimed.
+Guarded stage costs: build/link5.582053s; native extraction0.528865s; prerequisite execution10.543671s. Timing screens separated above.
+
+Every peer, every cell/cohort range:
+Ns/op median [minimum,maximum]; independent peers, no control subtraction.
+8B x 16, old 128B: H faster; cohort directions ['H faster', 'H faster']; failures []
+  A cohort 0: whitefoot 35.065 [34.346,36.468]; rust-vec 37.518 [37.159,38.003]; cpp-std-vector 26.387 [26.095,27.559]
+  H cohort 0: whitefoot 22.545 [22.297,23.698]; rust-vec 37.418 [36.794,38.069]; cpp-std-vector 25.839 [25.768,26.965]
+  A cohort 1: whitefoot 34.594 [34.105,35.543]; rust-vec 37.360 [37.185,38.094]; cpp-std-vector 26.606 [25.971,27.121]
+  H cohort 1: whitefoot 22.558 [22.373,23.547]; rust-vec 36.964 [36.693,37.952]; cpp-std-vector 26.061 [25.758,26.544]
+8B x 224, old 1792B: unresolved; cohort directions ['H faster', 'H faster']; failures ['cohort 0 cpp-std-vector drift >10%']
+  A cohort 0: whitefoot 103.770 [100.218,108.465]; rust-vec 106.128 [100.235,115.626]; cpp-std-vector 98.408 [91.323,101.466]
+  H cohort 0: whitefoot 83.275 [82.127,87.541]; rust-vec 98.432 [96.779,105.220]; cpp-std-vector 87.952 [86.550,94.875]
+  A cohort 1: whitefoot 100.198 [95.225,104.350]; rust-vec 101.575 [99.897,107.600]; cpp-std-vector 92.645 [88.015,102.299]
+  H cohort 1: whitefoot 82.649 [81.882,86.255]; rust-vec 97.885 [96.670,104.179]; cpp-std-vector 90.194 [86.226,99.510]
+8B x 256, old 2048B: H faster; cohort directions ['H faster', 'H faster']; failures []
+  A cohort 0: whitefoot 106.947 [101.058,112.172]; rust-vec 109.969 [107.450,114.167]; cpp-std-vector 100.930 [96.190,105.421]
+  H cohort 0: whitefoot 89.986 [88.047,95.351]; rust-vec 103.853 [101.995,107.972]; cpp-std-vector 94.821 [92.797,101.472]
+  A cohort 1: whitefoot 104.102 [99.751,110.082]; rust-vec 106.841 [102.898,110.778]; cpp-std-vector 97.860 [93.512,101.024]
+  H cohort 1: whitefoot 89.094 [87.880,91.738]; rust-vec 103.627 [102.046,104.365]; cpp-std-vector 94.298 [92.829,100.186]
+8B x 288, old 2304B: unresolved; cohort directions ['overlap', 'H faster']; failures []
+  A cohort 0: whitefoot 114.830 [111.001,121.376]; rust-vec 116.773 [113.314,120.198]; cpp-std-vector 104.219 [97.705,117.336]
+  H cohort 0: whitefoot 111.543 [105.271,120.494]; rust-vec 115.178 [109.358,123.698]; cpp-std-vector 99.127 [96.375,149.522]
+  A cohort 1: whitefoot 112.874 [111.509,121.966]; rust-vec 118.306 [109.270,126.697]; cpp-std-vector 104.092 [98.444,107.177]
+  H cohort 1: whitefoot 107.982 [106.310,110.878]; rust-vec 109.617 [107.427,116.682]; cpp-std-vector 99.218 [96.096,102.934]
+8B x 4096, old 32768B: unresolved; cohort directions ['overlap', 'overlap']; failures ['cohort 0 rust-vec drift >10%', 'cohort 1 rust-vec drift >10%']
+  A cohort 0: whitefoot 731.692 [692.368,908.258]; rust-vec 773.399 [738.005,804.150]; cpp-std-vector 666.402 [637.424,722.301]
+  H cohort 0: whitefoot 747.353 [669.846,785.679]; rust-vec 689.147 [670.878,1690.738]; cpp-std-vector 675.645 [650.943,783.887]
+  A cohort 1: whitefoot 757.596 [731.856,794.927]; rust-vec 787.006 [763.358,869.421]; cpp-std-vector 667.195 [642.024,739.901]
+  H cohort 1: whitefoot 715.297 [685.710,843.939]; rust-vec 681.309 [668.379,759.102]; cpp-std-vector 666.463 [646.975,735.400]
+256B x 7, old 1792B: H faster; cohort directions ['H faster', 'H faster']; failures []
+  A cohort 0: whitefoot 106.710 [102.512,133.584]; rust-vec 109.470 [105.157,153.084]; cpp-std-vector 98.928 [93.901,122.013]
+  H cohort 0: whitefoot 87.469 [85.940,93.778]; rust-vec 102.797 [100.366,107.657]; cpp-std-vector 90.631 [89.237,128.779]
+  A cohort 1: whitefoot 100.035 [97.637,104.942]; rust-vec 105.853 [101.828,110.234]; cpp-std-vector 94.648 [90.892,99.332]
+  H cohort 1: whitefoot 86.325 [85.934,87.991]; rust-vec 101.135 [100.300,102.993]; cpp-std-vector 89.722 [89.205,95.453]
+256B x 8, old 2048B: H faster; cohort directions ['H faster', 'H faster']; failures []
+  A cohort 0: whitefoot 108.385 [105.514,114.846]; rust-vec 113.386 [108.281,119.873]; cpp-std-vector 103.466 [98.800,105.892]
+  H cohort 0: whitefoot 91.813 [90.971,100.147]; rust-vec 106.307 [105.864,115.017]; cpp-std-vector 95.163 [94.280,99.229]
+  A cohort 1: whitefoot 109.218 [105.061,111.213]; rust-vec 114.442 [109.997,122.640]; cpp-std-vector 103.301 [100.499,121.488]
+  H cohort 1: whitefoot 92.277 [90.705,94.408]; rust-vec 107.992 [105.737,111.086]; cpp-std-vector 94.751 [94.352,131.409]
+256B x 9, old 2304B: unresolved; cohort directions ['overlap', 'overlap']; failures []
+  A cohort 0: whitefoot 114.997 [111.244,118.082]; rust-vec 118.000 [114.472,122.448]; cpp-std-vector 105.054 [101.755,111.739]
+  H cohort 0: whitefoot 108.557 [107.206,113.615]; rust-vec 111.161 [109.843,112.984]; cpp-std-vector 97.695 [97.140,103.628]
+  A cohort 1: whitefoot 115.132 [110.615,201.483]; rust-vec 118.281 [112.447,120.289]; cpp-std-vector 106.819 [101.801,108.611]
+  H cohort 1: whitefoot 108.227 [107.282,119.613]; rust-vec 111.888 [109.799,118.524]; cpp-std-vector 97.699 [97.097,105.785]
+256B x 16, old 4096B: unresolved; cohort directions ['overlap', 'overlap']; failures []
+  A cohort 0: whitefoot 159.273 [149.623,166.530]; rust-vec 159.586 [154.081,169.645]; cpp-std-vector 151.923 [146.378,163.256]
+  H cohort 0: whitefoot 147.810 [146.685,162.933]; rust-vec 151.723 [150.494,164.316]; cpp-std-vector 141.921 [141.282,150.598]
+  A cohort 1: whitefoot 156.888 [149.658,161.634]; rust-vec 161.450 [152.032,169.258]; cpp-std-vector 151.429 [146.525,159.407]
+  H cohort 1: whitefoot 148.750 [146.699,160.136]; rust-vec 152.169 [150.069,158.071]; cpp-std-vector 142.476 [141.274,148.980]
+256B x 256, old 65536B: unresolved; cohort directions ['H faster', 'overlap']; failures []
+  A cohort 0: whitefoot 1350.079 [1332.520,1389.413]; rust-vec 1355.797 [1317.192,1398.387]; cpp-std-vector 1375.039 [1315.586,1463.365]
+  H cohort 0: whitefoot 1312.883 [1304.668,1332.124]; rust-vec 1312.436 [1297.457,1356.640]; cpp-std-vector 1312.563 [1303.098,1320.493]
+  A cohort 1: whitefoot 1356.927 [1312.722,1378.906]; rust-vec 1363.604 [1315.980,1423.668]; cpp-std-vector 1352.175 [1308.733,1389.889]
+  H cohort 1: whitefoot 1309.781 [1289.488,1364.132]; rust-vec 1310.629 [1302.100,1379.026]; cpp-std-vector 1326.725 [1311.110,1399.756]
+256B x 4096, old 1048576B: unresolved; cohort directions ['overlap', 'overlap']; failures []
+  A cohort 0: whitefoot 156.068 [151.557,166.980]; rust-vec 160.794 [155.587,181.494]; cpp-std-vector 15251.019 [15085.820,15459.573]
+  H cohort 0: whitefoot 161.446 [158.568,176.438]; rust-vec 163.307 [162.602,173.621]; cpp-std-vector 15072.796 [14906.384,15627.654]
+  A cohort 1: whitefoot 167.689 [158.190,185.419]; rust-vec 171.887 [165.107,186.561]; cpp-std-vector 15091.639 [14928.732,15340.041]
+  H cohort 1: whitefoot 162.060 [152.386,314.250]; rust-vec 170.090 [158.338,179.666]; cpp-std-vector 15018.483 [14826.876,16490.606]
+
+Raw retention: A/H-samples.csv contain only original header/data; A/H-screen.log retain guard START/RUNNING/END, RAW probe, stderr and wall/user/sys. Combined samples.csv adds arm, with exact byte-for-byte A/H reconstruction asserted. 1188 rows/image; no data removed or control subtraction. WF source/compiler/peer/runtime inputs unchanged; only the registered H IR and copied driver differ. No additional runs.
+
+Replay section order in small-copy-growth.patch (apply each named unified-diff section to a copied source; preserve the frozen inputs):
+1 vector-costs-route.c -> vector-costs-small-copy.c, from frozen B source.
+2/3 whitefoot-timed/account.ll -> same names, from frozen A modules.
+4 focused-observed.ll -> nested-observed.ll, from frozen B focused fixture.
+5 whitefoot-timed.ll -> api-observed.ll, from the newly patched H timed module (not A).
+6 /dev/null -> api-observer.c, full new independent observer.
+7/8 nested-observed.ll -> early-free.ll / early-publish.ll, copying section4 output first.
+9 api-observed.ll -> api-early-publish.ll, copying section5 output first.
+The nested-observer.c file is an unchanged copy of the pinned B focused observer.c. API and nested compile-time copy-corruption mutants use the flags in the exact commands above. Do not apply observer sections over the timed module used for measurement. Existing runtime object pins/order and the original prepare bridge remain the linked inputs. Source edits alone do not qualify another build; the recorded image hashes identify this pair.
