@@ -1254,9 +1254,18 @@ rarely insert at the same place.
   separate payload, full realloc and allocated empty placeholder. It qualifies
   only two of six matched growth-append cells and does not justify selection.
   Source and post-lowering linked ownership checks pass; worker lifetimes and
-  changed containing-layout ceilings remain open. Reopen with a discriminating
-  hypothesis for the remaining growth branches or empty allocation route,
-  preserving those qualifications instead of repeating the same layout screen.
+  changed containing-layout ceilings remain open. The independent
+  [allocation-free empty-payload screen](../research/experiments/container-representation/vector-library/RESULTS.md#allocation-free-empty-payload-registered-independent-discriminator)
+  uses a target-aligned static anchor: its capacity-zero cells lie below both
+  peers, but only the same two of six matched growth cells pass. Native call
+  placement also changes without an inline directive, so that unpaired screen
+  does not isolate allocator-route timing or establish a gain against B.
+  Empty/zero-stride and post-lowering linked transport checks pass; this is
+  still a nonconforming research layout. Reopen with a discriminating
+  hypothesis for remaining positive-capacity append costs, including
+  allocator/setup-state attribution before another layout change, and a
+  complete representation/lifetime qualification. No allocator cause is yet
+  established; preserve these evidence limits.
 
   The [Vector length-store diagnosis](../research/experiments/container-representation/vector-library/RESULTS.md#length-store-dependence-read-only-llvm-diagnosis)
   finds conservative header/payload dependencies in optimized take loops,
@@ -3204,8 +3213,14 @@ condition under which it is taken up.
   [split-payload native record](../research/experiments/container-representation/vector-library/ecosystem-append-growth-split-payload-timing.txt)
   still contains the capacity-above-8192 return guard in the ceiling-8193
   instance. This is redundant source control flow, not an inserted safety
-  check; its runtime cost has not been isolated. Reopen after the append
-  allocation-route discriminator if helper instructions remain material.
+  check; its runtime cost has not been isolated. The later
+  [entry-equality discriminator](../research/experiments/container-representation/vector-library/RESULTS.md#full-growth-entry-equality-registered-fact-transport-discriminator)
+  supplies only `len == cap` to the frozen inline-owner IR: both full helpers
+  lose their length-versus-capacity branch, while the ceiling guard remains.
+  Its single screen still passes only two of six matched cells; the branch
+  removal does not meet the append target and establishes no paired gain or
+  regression. Production transport remains unresolved. Reopen when a generic
+  retained relation and a discriminating measured case justify that work.
   Retain and lower proved entry-measure relations generically, with explicit
   support and mutation boundaries, rather than recognizing this helper's name.
   Require a complete target-fact mapping, unchanged acceptance and target

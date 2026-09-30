@@ -1,0 +1,54 @@
+diff --git a/whitefoot-timed.ll b/whitefoot-timed.ll
+--- a/whitefoot-timed.ll
++++ b/whitefoot-timed.ll
+@@ -3057,6 +3057,11 @@
+ 
+ define i8 @wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6(ptr noalias nonnull captures(none) dereferenceable(24) %v0) #0 {
+ entry:
++  %full.entry.len = load i64, ptr %v0, align 8
++  %full.entry.cap.ptr = getelementptr i8, ptr %v0, i64 8
++  %full.entry.cap = load i64, ptr %full.entry.cap.ptr, align 8
++  %full.entry.equal = icmp eq i64 %full.entry.len, %full.entry.cap
++  call void @llvm.assume(i1 %full.entry.equal)
+   %t0 = getelementptr inbounds %wf.t.4fe45f1358b41568, ptr %v0, i32 0, i32 0
+   %v1 = getelementptr i8, ptr %t0, i64 0
+   %v2 = getelementptr i8, ptr %v1, i64 0
+@@ -3126,6 +3131,11 @@
+ 
+ define i8 @wf_std.collections.vector.grow_vector_grow_full$instance$979fcc4ac6e818fb(ptr noalias nonnull captures(none) dereferenceable(24) %v0) #0 {
+ entry:
++  %full.entry.len = load i64, ptr %v0, align 8
++  %full.entry.cap.ptr = getelementptr i8, ptr %v0, i64 8
++  %full.entry.cap = load i64, ptr %full.entry.cap.ptr, align 8
++  %full.entry.equal = icmp eq i64 %full.entry.len, %full.entry.cap
++  call void @llvm.assume(i1 %full.entry.equal)
+   %t0 = getelementptr inbounds %wf.t.c59a17969695b1c4, ptr %v0, i32 0, i32 0
+   %v1 = getelementptr i8, ptr %t0, i64 0
+   %v2 = getelementptr i8, ptr %v1, i64 0
+diff --git a/whitefoot-account.ll b/whitefoot-account.ll
+--- a/whitefoot-account.ll
++++ b/whitefoot-account.ll
+@@ -3057,6 +3057,11 @@
+ 
+ define i8 @wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6(ptr noalias nonnull captures(none) dereferenceable(24) %v0) #0 {
+ entry:
++  %full.entry.len = load i64, ptr %v0, align 8
++  %full.entry.cap.ptr = getelementptr i8, ptr %v0, i64 8
++  %full.entry.cap = load i64, ptr %full.entry.cap.ptr, align 8
++  %full.entry.equal = icmp eq i64 %full.entry.len, %full.entry.cap
++  call void @llvm.assume(i1 %full.entry.equal)
+   %t0 = getelementptr inbounds %wf.t.4fe45f1358b41568, ptr %v0, i32 0, i32 0
+   %v1 = getelementptr i8, ptr %t0, i64 0
+   %v2 = getelementptr i8, ptr %v1, i64 0
+@@ -3126,6 +3131,11 @@
+ 
+ define i8 @wf_std.collections.vector.grow_vector_grow_full$instance$979fcc4ac6e818fb(ptr noalias nonnull captures(none) dereferenceable(24) %v0) #0 {
+ entry:
++  %full.entry.len = load i64, ptr %v0, align 8
++  %full.entry.cap.ptr = getelementptr i8, ptr %v0, i64 8
++  %full.entry.cap = load i64, ptr %full.entry.cap.ptr, align 8
++  %full.entry.equal = icmp eq i64 %full.entry.len, %full.entry.cap
++  call void @llvm.assume(i1 %full.entry.equal)
+   %t0 = getelementptr inbounds %wf.t.c59a17969695b1c4, ptr %v0, i32 0, i32 0
+   %v1 = getelementptr i8, ptr %t0, i64 0
+   %v2 = getelementptr i8, ptr %v1, i64 0

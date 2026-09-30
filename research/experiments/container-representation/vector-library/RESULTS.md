@@ -7,7 +7,7 @@ performance qualification follows only after the individual APIs qualify.
 | Active append path | Established evidence | Remaining qualification |
 |---|---|---|
 | Spare capacity | Earlier paired native comparison passed all six cells against the slower peer | Reconfirm with the repaired RAW-clock instrument on the final implementation |
-| Capacity growth | Boundary-length reuse removes a load; its paired timing establishes no gain. The separate-payload realloc prototype passes only two of six matched cells | Finish representation attribution and all-cell paired comparison; initial-capacity policy cells remain separately visible |
+| Capacity growth | Boundary-length reuse removes a load; its paired timing establishes no gain. Split-payload, inline-owner, entry-equality and empty-anchor screens each pass only two of six matched cells. The empty-anchor screen's capacity-zero policies beat both peers | Finish representation/fact attribution and all-cell paired comparison; initial-capacity policy cells remain separately visible |
 
 The [inline-owner experiment](#inline-runtime-slots-owner-registered-descriptor-placement-discriminator)
 changes only descriptor placement relative to the retained split-payload
@@ -6898,3 +6898,304 @@ No specification or live-tree revision was made.
 The restored-source record passes guarded `make static` in 32.76 s. Independent
 scoped review checked the implementation/fixture and retained evidence; this
 checkpoint does not claim a new full local canonical gate.
+
+
+#### Full-growth entry equality: registered fact-transport discriminator
+
+The inline-owner screen still misses four matched cells. Its scalar4096 full
+path reloads length and tests equality with capacity before payload realloc,
+even though `grow_vector_grow_full` requires `cap <= len` and MSR-2's standing
+window invariant supplies `len <= cap`. The helper makes no intervening
+storage mutation before calling reserve. This proves equality at entry; the
+capacity-doubling versus saturation branch remains necessary. Counting the
+reachable native path also finds fewer WF branches/calls than Rust, so a
+shorter instruction sequence alone is not a causal explanation of the gap.
+
+First test a post-lowering diagnostic, not a new compiler pass. In the frozen
+inline-owner timed and accounting modules, add an entry `llvm.assume` of
+length equal to capacity to exactly the scalar and wide full-growth helper
+bodies, loading both measures from their inline descriptor. Add no bound,
+inline hint, allocator change, false-path rewrite, or persistent memory fact.
+The assertion relates entry SSA loads only; ordinary later writes retain their
+normal semantics. Every other function body, source, driver, peer object,
+capacity policy, sentinel and compiler remains unchanged. This tests whether
+transporting this one proved relation can change native code and append cost.
+It selects no helper-name rule for the compiler: any production use must
+retain source proofs and support/mutation boundaries generically.
+
+Before timing, require the existing spare/growth correctness, exact allocation
+ledgers and deliberate value/state/allocation faults. Require the optimized
+full helpers to lose their length-versus-capacity branch while retaining
+failure handling and the general reserve/partial-growth path. If the assume
+fails to produce that native effect, retain the result and stop before timing.
+Verify all other input function bodies and the Rust/C++ and driver objects are
+unchanged. The full helper may simplify through ordinary inlining; inspect
+and report any changed call boundaries rather than hiding them.
+
+If the native discriminator passes, run one fixed screen with
+`growth-api-measure 67108864 7 8589934592`, two cohorts and seven samples,
+using the same RAW-clock instrument and existing duration/range conditions.
+Keep all 840 rows and controls without subtraction or retry. Only if every
+matched cell passes, proceed to a preregistered paired comparison against the
+unmodified inline-owner image. Otherwise stop timing qualification; neither an
+independent favorable median nor fewer instructions establishes a paired gain.
+The current empty-capacity policy cells remain separate. No other API or
+container is advanced. The patch, measured samples and instrument record stay
+in this existing Vector experiment; ignored scratch uses
+`.build/full-entry-equality` and retires with the superseding fact-transport
+experiment.
+
+
+Outcome: the entry relation removes the redundant length-versus-capacity
+branch in both full-growth helpers, but the single screen still qualifies
+only two of six matched cells. No paired comparison was opened, so this
+establishes neither a gain nor a regression against the original inline-owner
+image. It does not select production fact transport or a representation.
+
+The timed and accounting IR each receive exactly two five-instruction entry
+assertions. Removing those additions reproduces both frozen B inputs byte for
+byte; all other input functions, the driver, Rust/C++ objects and setup bridge
+are unchanged. The optimized full helpers retain allocation-failure handling,
+the doubling/saturation branches and the ceiling return guard. General reserve
+retains full realloc and partial initialized-prefix copying. Ordinary optimizer
+inlining also removes full-helper calls from the two suffix-cycle bodies and
+changes calls in two trace bodies; these are recorded native consequences,
+not extra directives. The single-append functions still call the full helpers.
+Thus this tests transport of the relation, not an isolated instruction deletion.
+
+Both initial images passed correctness and negative controls, but their link
+command ordered runtime objects differently from B. Before timing, both were
+relinked in B's original object order and every check and negative control was
+rerun. The retained log includes both generations, their exact commands and
+actual exits. Both O3 IR compilations, both initial links and both repaired
+links exited 0. Spare/growth API checks and allocator checks exited 0; all
+deliberate value, state, allocation/accounting and clock faults exited 1.
+The repaired accounting image retains 30 rows and B's allocation contract.
+No failed correctness observation was discarded or weakened to start timing.
+
+The one registered `growth-api-measure 67108864 7 8589934592` launch exited 0
+in 116.79 s according to the guarded runner. All 840 unique rows remain:
+420 real intervals and 420 snapshot controls, seven samples per cell. Minimum
+real duration is 1.271836 ms; the clock's minimum nonzero increment is 41 ns.
+No controls were subtracted and no launch was retried. Across the matched
+cells, maximum cohort peer-median spread is 2.5144%, and maximum cohort
+WF/peer-ratio spread is 3.2793%, within the existing 10% conditions. Cross-run
+drift against B is untested because this is one screen, not a paired launch.
+
+Only scalar-16 and wide-4096 have their complete WF ranges below the
+median-slower peer in both cohorts. Scalar-4096 loses in both; scalar-256,
+wide-16 and wide-256 overlap. Values below are recomputed from the raw CSV,
+median [minimum–maximum] ns/append. Capacity zero and one stay separate
+initial-policy cells and do not qualify matched growth.
+
+| Bytes / capacity | Cohort | WF | Rust | C++ | Screen |
+|---|---:|---|---|---|---|
+| 8 / 16 | 0 | 34.63 [34.43–36.30] | 36.81 [36.68–37.99] | 25.47 [25.40–26.42] | PASS |
+| 8 / 16 | 1 | 34.55 [34.38–34.94] | 36.88 [36.65–38.11] | 25.45 [25.33–25.71] | PASS |
+| 256 / 16 | 0 | 147.95 [146.65–166.20] | 150.93 [149.13–167.25] | 143.01 [141.52–151.11] | OVERLAP |
+| 256 / 16 | 1 | 147.88 [145.70–159.69] | 150.67 [149.11–158.92] | 142.46 [141.74–150.88] | OVERLAP |
+| 8 / 256 | 0 | 100.65 [99.35–114.93] | 103.10 [101.56–106.70] | 92.12 [91.34–95.97] | OVERLAP |
+| 8 / 256 | 1 | 100.20 [98.90–105.68] | 103.18 [102.30–108.01] | 91.07 [90.89–230.02] | OVERLAP |
+| 256 / 256 | 0 | 1316.03 [1310.22–1347.34] | 1310.47 [1307.01–1330.15] | 1305.20 [1299.75–1322.59] | OVERLAP |
+| 256 / 256 | 1 | 1337.24 [1309.38–1423.88] | 1318.72 [1311.22–1392.27] | 1319.81 [1311.63–1427.10] | OVERLAP |
+| 8 / 4096 | 0 | 746.30 [737.13–809.24] | 629.40 [621.93–733.05] | 642.01 [622.60–695.77] | LOSE |
+| 8 / 4096 | 1 | 754.58 [737.05–963.32] | 645.23 [621.62–714.61] | 628.52 [625.17–642.25] | LOSE |
+| 256 / 4096 | 0 | 160.48 [159.66–162.29] | 161.63 [160.19–164.40] | 14831.65 [14795.27–14859.56] | PASS |
+| 256 / 4096 | 1 | 161.89 [159.84–163.25] | 161.13 [159.01–164.77] | 14809.59 [14756.58–14877.09] | PASS |
+| 8 / 0 | 0 | 18.32 [18.25–18.38] | 11.75 [11.72–12.03] | 10.97 [10.92–12.19] | LOSE |
+| 8 / 0 | 1 | 18.35 [18.24–18.63] | 11.78 [11.73–12.08] | 11.00 [10.94–11.25] | LOSE |
+| 256 / 0 | 0 | 34.07 [33.98–34.38] | 22.38 [22.31–22.77] | 15.66 [15.65–15.80] | LOSE |
+| 256 / 0 | 1 | 34.03 [33.93–35.55] | 22.44 [22.23–23.25] | 15.73 [15.66–16.63] | LOSE |
+| 8 / 1 | 0 | 18.17 [18.07–18.76] | 33.02 [32.35–33.90] | 19.19 [19.04–19.90] | PASS |
+| 8 / 1 | 1 | 18.19 [18.06–18.61] | 32.36 [32.17–32.51] | 19.08 [19.05–19.57] | PASS |
+| 256 / 1 | 0 | 49.23 [48.41–50.31] | 53.47 [52.58–54.46] | 43.10 [42.98–45.39] | PASS |
+| 256 / 1 | 1 | 48.65 [48.43–50.25] | 52.90 [52.42–54.84] | 43.22 [43.06–43.71] | PASS |
+
+Evidence: [LLVM input patch](full-entry-equality.patch),
+[all raw samples](ecosystem-append-growth-entry-equality-samples.csv), and
+[commands, checks, allocation ledger and native bodies](ecosystem-append-growth-entry-equality-timing.txt).
+Reproduce the original inline-owner B as above, copy its timed/accounting LLVM
+to a fresh directory, and apply the LLVM patch there before the recorded O3
+compilation and repaired-order link. The log supplies both input hashes and
+exact commands; the patch adds no compiler source recognizer. These three
+artifacts serve this fact-transport discriminator and retire with superseding
+evidence. The compiler and public source operations are unchanged by this
+post-lowering diagnostic; the generic transport question remains open.
+
+- SHA-256 `full-entry-equality.patch`: `2b1ce6238a7dbf7e3fbf7ec614a58830f888e65d3abf15bf7b6cff4ba04273d1`.
+- SHA-256 `ecosystem-append-growth-entry-equality-samples.csv`: `a65f81da11ff5a71d91fa2915c0a1f1c1372e36f7649744a39eb0e49c68624a9`.
+- SHA-256 `ecosystem-append-growth-entry-equality-timing.txt`: `d479422c3deff21a346112598244198979ebf5f0a4eb6e9ee1610c5d6d6a91ad`.
+
+- Timed image SHA-256: `fefbd8e5bc725f4ac3dedca82bbecbbbd07813995528c356bdbc68615ab13fad`.
+
+
+#### Allocation-free empty payload: registered independent discriminator
+
+The inline-owner growth screen leaves both capacity-zero cells slower than
+both peers. WF starts with an allocated one-byte payload and reallocates it;
+the peers start without a backing allocation and allocate on first append.
+The inline descriptor makes a different empty representation possible without
+adding guards to metadata reads. This experiment is independent of the
+entry-equality diagnostic: its baseline is the original inline-owner compiler,
+without the entry assumptions.
+
+For physical extent zero (`cap == 0` or target element stride zero), keep a
+nonnull payload pointing to a private, explicitly target-aligned static
+anchor. Preserve logical length/capacity and all proof/acceptance obligations.
+Zero-to-positive growth allocates fresh payload and publishes it only after
+success; positive full/partial growth keeps the existing routes. Zero-stride
+growth changes logical capacity without allocating. Cleanup releases payload
+only for positive physical extent; the anchor is never freed or reallocated.
+Classify by physical extent, not pointer identity or length, so transported
+owners work across modules and a cleared positive-capacity vector still owns
+its allocation. Metadata and ordinary element/range pointer formation stay
+straight-line. No nullable descriptor, new API or source spelling is added.
+
+This is still a nonconforming layout experiment under TYPE-9/STOR-3/OP-14 and
+the earlier Box ceiling limits, not a production interpretation of those rules.
+The static anchor provides lifetime and alignment, while valid zero-extent
+operations touch no payload bytes. The mapping must preserve range `nonnull`
+and ordinary noalias promises; LLVM's [global storage](https://llvm.org/docs/LangRef.html#global-variables)
+and [argument attributes](https://llvm.org/docs/LangRef.html#parameter-attributes)
+define those target obligations. Verify target alignment from qualification,
+not a benchmark-specific element whitelist or an unchecked numeric constant.
+
+Before timing, require the existing API positives/negative controls and exact
+revised allocation ledger. Focused cases must include normal/ZST zero capacity,
+positive-capacity ZST logical length, zero-stride large logical capacity,
+empty ranges/reslices crossing an ordinary linked call, two simultaneously
+empty references, owner moves/swaps/cleanup, and failed first allocation with
+the original empty owner intact. The allocator observer must reject any anchor
+passed to free/realloc, with a deliberate wrong-release fault observed to fail.
+Require native first append to allocate fresh payload, no per-access metadata
+guard, and unchanged positive-capacity realloc/prefix-copy routes. Preserve
+all initial fixture/instrument failures; repair neither source verdicts nor
+requirements merely to run.
+
+If qualification passes, run one fixed RAW-clock screen
+`growth-api-measure 67108864 7 8589934592`, retaining all 840 rows and the
+capacity-zero/one policies separately. No retry, subtraction or repeated
+launch selection. Require the existing duration/range criteria, and no paired
+or whole-API win follows from one screen. Only an all-matched-cell pass opens
+paired qualification. This separates empty storage from descriptor placement
+and contract facts. No other API/family is advanced. Retain its overlay,
+fixtures and observations in this existing experiment; ignored scratch uses
+`.build/empty-payload-anchor` and retires with superseding evidence.
+
+
+Outcome: allocation-free empty payload passes the registered focused and API
+checks. In the single timing screen, both capacity-zero element sizes have
+complete WF ranges below both peers in both cohorts. The six matched growth
+cells still pass only two of six, so append remains unqualified and the
+conditional paired comparison was not opened. These observations establish no
+paired gain or regression against B and select no production representation.
+
+The candidate derives its private mutable anchor's size and alignment from
+the concrete runtime-Slots element layouts under target qualification. Metadata
+stays inline; no per-access null guard or pointer normalization is added.
+Zero-stride growth changes capacity only, and release tests capacity and
+physical stride, not length or anchor identity. The API accounting ledger
+contains 30 rows: WF capacity-zero append starts with zero live heap bytes
+and makes one fresh allocation, requesting 8 or 256 bytes respectively.
+Positive full growth remains realloc; partial growth preserves only the
+initialized prefix before releasing the old payload.
+
+The source/native and post-lowering linked fixtures pass in-place and moving
+realloc, partial-prefix/spare-byte preservation, normal and zero-stride empty
+owners, positive and large logical ZST capacities, empty ranges/reslices, two
+simultaneously empty references, owner moves and swaps, and cleanup after
+exchanging an empty owner with a cleared positive-capacity owner. Independent
+foreign anchors exercise transport without pointer-identity classification.
+Realloc refusal exits 73 and first-allocation refusal exits 74 only after
+checking that the caller's complete descriptor is unchanged. Deliberate
+anchor free/realloc attempts and reordered nested contents each exit 1.
+The linked bridge exercises ordinary public owner/range ABI transport; it is
+not source-level `fn_sig` formation or worker-lifetime qualification.
+
+The initial focused source had FORM-2 noncanonical single-line block trivia;
+canonical multiline formatting repaired it. Its rejection and complete source
+difference are retained. An initial timed-driver preprocessing comparison also
+failed: placing six new macro lines early shifted Darwin's `assert` line
+number from 513 to 519. Moving those accounting macros later restores exact
+preprocessed identity; this was not a compiler or runtime test rejection.
+The timed driver, Rust/C++ objects, setup bridge and runtime objects are
+byte-identical to B, in the same link order. Accounting rebuilds only its
+changed ledger driver. No F entry-equality assertion is present.
+
+Native call placement changes through ordinary optimization. Both timed
+append bodies use a 32-byte frame, inline the full-growth capacity policy and
+call a separate 48-byte `grow` primitive. The wide public wrapper tail-branches
+to that append specialization. B's 32-byte append bodies instead call 64-byte
+full-growth bodies with the primitive inlined. A separately emitted Z
+full-growth helper has a 16-byte frame and calls the 48-byte primitive, but it
+is not on these timed append paths. The retained audit corrects the initial
+summary that counted it there. No inline hint was changed. First positive
+growth reaches malloc, and allocation-failure checks precede publication;
+the positive full/partial routes remain visible. The screen therefore does
+not isolate the allocator route's timing from changed call placement.
+
+The gate CLI build exited 0 in 37.90 s. Focused/API emission, native builds,
+positive checks and the revised ledger exited 0; deliberate API value,
+state, allocation/accounting and clock faults exited 1. The one registered
+`growth-api-measure 67108864 7 8589934592` launch exited 0 in 116.44 s by the
+guarded runner. All 840 unique rows are retained: 420 real intervals and
+420 controls, seven samples per cell. Minimum real duration is 1.297194 ms;
+the clock's minimum nonzero increment is 41 ns. Across all displayed cells,
+maximum cohort peer-median spread is 2.4997% and maximum cohort WF/peer-ratio
+spread is 3.5064%, within the existing 10% conditions. No row was removed,
+no control was subtracted and no launch was retried. Cross-run drift against
+B remains untested.
+
+Scalar-16 and wide-4096 pass in both cohorts. Scalar-4096 loses in both;
+scalar-256, wide-16 and wide-256 overlap. Values below are recomputed from the
+raw CSV, median [minimum–maximum] ns/append. Capacity-zero/one initial-policy
+cells remain separately visible and do not qualify matched growth.
+
+| Bytes / capacity | Cohort | WF | Rust | C++ | Screen |
+|---|---:|---|---|---|---|
+| 8 / 16 | 0 | 34.72 [34.58–35.91] | 36.88 [36.65–37.66] | 25.48 [25.41–25.65] | PASS |
+| 8 / 16 | 1 | 34.81 [34.56–36.11] | 36.55 [36.52–38.55] | 25.52 [25.37–26.00] | PASS |
+| 256 / 16 | 0 | 147.85 [144.64–156.06] | 148.77 [146.39–156.88] | 139.76 [138.66–140.42] | OVERLAP |
+| 256 / 16 | 1 | 145.92 [144.99–152.99] | 148.04 [147.26–149.05] | 140.08 [139.67–140.86] | OVERLAP |
+| 8 / 256 | 0 | 103.92 [99.58–106.22] | 103.36 [102.24–110.69] | 92.39 [91.63–99.61] | OVERLAP |
+| 8 / 256 | 1 | 100.69 [99.94–105.27] | 102.07 [101.50–106.00] | 92.18 [91.78–96.40] | OVERLAP |
+| 256 / 256 | 0 | 1319.37 [1302.66–1371.26] | 1343.68 [1312.56–1410.98] | 1326.54 [1308.58–1407.49] | OVERLAP |
+| 256 / 256 | 1 | 1333.29 [1301.77–1349.47] | 1315.50 [1302.50–1362.28] | 1320.09 [1314.97–1417.23] | OVERLAP |
+| 8 / 4096 | 0 | 729.82 [724.61–899.86] | 668.54 [659.34–678.09] | 650.48 [644.41–659.15] | LOSE |
+| 8 / 4096 | 1 | 737.40 [723.89–809.38] | 670.86 [659.76–699.64] | 644.63 [639.40–695.81] | LOSE |
+| 256 / 4096 | 0 | 159.64 [158.50–167.69] | 161.64 [160.15–163.66] | 14836.32 [14815.21–14983.35] | PASS |
+| 256 / 4096 | 1 | 159.81 [158.37–160.85] | 161.50 [159.42–167.43] | 14830.34 [14776.97–14940.08] | PASS |
+| 8 / 0 | 0 | 8.77 [8.44–9.13] | 11.88 [11.72–12.47] | 10.93 [10.93–11.47] | PASS |
+| 8 / 0 | 1 | 8.49 [8.45–8.69] | 11.72 [11.71–11.85] | 10.95 [10.93–11.10] | PASS |
+| 256 / 0 | 0 | 13.08 [13.02–14.18] | 22.93 [22.44–23.52] | 15.77 [15.73–17.11] | PASS |
+| 256 / 0 | 1 | 13.05 [13.04–13.40] | 22.37 [22.28–23.04] | 15.76 [15.71–15.81] | PASS |
+| 8 / 1 | 0 | 18.46 [18.46–18.54] | 32.38 [32.21–32.84] | 19.51 [19.40–19.59] | PASS |
+| 8 / 1 | 1 | 18.51 [18.46–19.08] | 32.50 [32.33–33.82] | 19.54 [19.39–20.94] | PASS |
+| 256 / 1 | 0 | 48.84 [48.65–51.43] | 52.74 [52.42–54.80] | 43.25 [43.03–43.48] | PASS |
+| 256 / 1 | 1 | 48.82 [48.67–50.54] | 52.68 [52.41–55.21] | 43.38 [43.06–44.61] | PASS |
+
+Evidence: [reproducible delta from inline-owner B](empty-payload-anchor.patch),
+[all samples](ecosystem-append-growth-empty-anchor-samples.csv), and
+[qualification, commands, ledgers and native bodies](ecosystem-append-growth-empty-anchor-timing.txt).
+Apply `inline-slots-owner.patch` on its recorded base and then the anchor patch;
+the retained replay compares all 14 relevant paths byte for byte. The second
+patch changes four compiler files and candidate accounting, copies the focused
+fixture/observer into this experiment's namespace, and adds its linked bridge.
+It preserves the baseline artifacts. The log records exact build, linking,
+check and timing commands, including both initial instrument failures. These
+artifacts belong to this empty-storage discriminator and retire with
+superseding evidence.
+
+All seven compiler source files and the C driver were restored byte for byte
+to production before publication. The separate production gate CLI rebuild
+exited 0 in 37.51 s and reproduced its prior hash. No specification, live tree,
+public operation or normative expectation changed. This append-only result
+does not qualify worker lifetimes, containing-layout ceilings, spare append
+with the current clock, another API, or whole-container performance.
+
+- SHA-256 `empty-payload-anchor.patch`: `c8c6ce7345039f20860198f79236ea8fc8fecfa201eaffdc831ff3adb99c55fb`.
+- SHA-256 `ecosystem-append-growth-empty-anchor-samples.csv`: `097f4888f9fba48284c768fcd0e9cee2f523091d19bc5e643a5e843aa4e4ff97`.
+- SHA-256 `ecosystem-append-growth-empty-anchor-timing.txt`: `aacfb3e52c0a8072b3999b2dbb6a49db186086688dffd4c1be35ab4e9e1e36a4`.
+- Candidate CLI SHA-256: `d01ae503322ea77fe208ca28dacb747c0b689fa4a7b5257dccd1054944252754`.
+- Timed image SHA-256: `98fe87e2f530b9b8ff8327742e132ec6df82e200b994f8ba8c6383173fe32c75`.
+- Restored production CLI SHA-256: `5e8d37585a06e7b7040b43032b1cd5d4f41cce16d0e91aa77b35e7d0e83c74ac`.

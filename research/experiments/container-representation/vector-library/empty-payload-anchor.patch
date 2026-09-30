@@ -1,0 +1,746 @@
+diff --git a/compiler/src/backend/emitter.rs b/compiler/src/backend/emitter.rs
+--- a/compiler/src/backend/emitter.rs
++++ b/compiler/src/backend/emitter.rs
+@@ -59,6 +59,9 @@
+     parallel_split_budget_declaration, parallel_split_budget_fallback, sequential_clone_set,
+     sequential_clone_symbol,
+ };
++
++// Research-only static backing for zero physical payload extent.
++const EMPTY_SLOTS_ANCHOR: &str = ".wf.empty.slots.payload";
+ 
+ #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+ pub enum BackendFailure {
+@@ -350,6 +353,24 @@
+     text.text("\n");
+     emit_nominal_declarations(&mut text, program, target)?;
+     emit_global_constants(&mut text, program)?;
++    if program.nominals().iter().any(|nominal| {
++        matches!(
++            nominal.kind(), IrNominalKind::Box { referent, .. }
++                if crate::target::inline_slots_descriptor(*referent)
++        )
++    }) {
++        let anchor = crate::target::empty_slots_anchor_layout(target, program)
++            .map_err(BackendFailure::TargetLayout)?;
++        text.global(
++            EMPTY_SLOTS_ANCHOR.to_owned(),
++            "global",
++            format!("[{} x i8]", anchor.size()),
++            "zeroinitializer".to_owned(),
++            Some(anchor.align()),
++            References::default(),
++        );
++    }
++
+     // An allocation this host refuses is the heap twin of an exhausted stack,
+     // and it gets the same treatment: one record naming the resource class,
+     // written once, before a defined abort. The bytes carry no `rule_id`, no
+diff --git a/compiler/src/backend/emitter/cleanup.rs b/compiler/src/backend/emitter/cleanup.rs
+--- a/compiler/src/backend/emitter/cleanup.rs
++++ b/compiler/src/backend/emitter/cleanup.rs
+@@ -320,7 +320,7 @@
+     {
+         writeln!(output, "  br label %walk").map_err(|_| BackendFailure::TextEmission)?;
+         output.open_block("walk".to_string());
+-        write!(output, "  %index = phi i64 [ 0, %entry ], [ %next, %body ]\n  %continue = icmp ult i64 %index, %length\n  br i1 %continue, label %body, label %done\n").map_err(|_| BackendFailure::TextEmission)?;
++        write!(output, "  %index = phi i64 [ 0, %entry ], [ %next, %advance ]\n  %continue = icmp ult i64 %index, %length\n  br i1 %continue, label %body, label %done\n").map_err(|_| BackendFailure::TextEmission)?;
+         output.open_block("body".to_string());
+         write!(output, "  %raw = add i64 %origin, %index\n  %over = icmp uge i64 %raw, %capacity\n  %reduced = sub i64 %raw, %capacity\n  %physical = select i1 %over, i64 %reduced, i64 %raw\n  %element.pointer = getelementptr inbounds {element_llvm}, ptr %pointer, i64 {address_index}\n").map_err(|_| BackendFailure::TextEmission)?;
+     };
+@@ -337,6 +337,8 @@
+         CleanupOperand::Value("%element".to_owned())
+     };
+     emit_cleanup(program, &mut output, &mut temporary, element_ty, element)?;
++    output.push_str("  br label %advance\n");
++    output.open_block("advance".to_owned());
+     output.push_str("  %next = add i64 %index, 1\n  br label %walk\n");
+     output.open_block("done".to_owned());
+     output.push_str("  ret void\n");
+@@ -591,6 +593,43 @@
+         CleanupOperand::Address(address) => CleanupJob::Place { ty, address },
+     };
+     emit_cleanup_jobs(program, output, temporary, vec![job])
++}
++
++/// The research inline descriptor owns heap payload only at positive physical
++/// extent. This test deliberately uses capacity and stride, never pointer
++/// identity or length: moved owners can carry another module's static anchor.
++pub(super) fn emit_slots_payload_release(
++    program: &IrProgram,
++    output: &mut FunctionBody,
++    temporary: &mut u32,
++    referent: IrType,
++    address: &str,
++) -> Result<(), BackendFailure> {
++    let IrType::Window { element, .. } = referent else {
++        return Err(BackendFailure::InvalidIr);
++    };
++    let element = program.element(element).ok_or(BackendFailure::InvalidIr)?;
++    let llvm = output.type_name(program, referent)?;
++    let element_llvm = output.type_name(program, element)?;
++    let cap_field = next_temporary(temporary)?;
++    let capacity = next_temporary(temporary)?;
++    let positive_cap = next_temporary(temporary)?;
++    let positive_stride = next_temporary(temporary)?;
++    let allocated = next_temporary(temporary)?;
++    let release = format!("slots.release.{allocated}");
++    let done = format!("slots.release.done.{allocated}");
++    writeln!(output,
++        "  %{cap_field} = getelementptr inbounds {llvm}, ptr {address}, i64 0, i32 1\n  %{capacity} = load i64, ptr %{cap_field}\n  %{positive_cap} = icmp ne i64 %{capacity}, 0\n  %{positive_stride} = icmp ne i64 ptrtoint (ptr getelementptr ({element_llvm}, ptr null, i64 1) to i64), 0\n  %{allocated} = and i1 %{positive_cap}, %{positive_stride}\n  br i1 %{allocated}, label %{release}, label %{done}"
++    ).map_err(|_| BackendFailure::TextEmission)?;
++    output.open_block(release);
++    let field = next_temporary(temporary)?;
++    let payload = next_temporary(temporary)?;
++    output.symbol("free");
++    writeln!(output,
++        "  %{field} = getelementptr inbounds {llvm}, ptr {address}, i64 0, i32 2\n  %{payload} = load ptr, ptr %{field}\n  call void @free(ptr %{payload})\n  br label %{done}"
++    ).map_err(|_| BackendFailure::TextEmission)?;
++    output.open_block(done);
++    Ok(())
+ }
+ 
+ fn emit_cleanup_jobs(
+@@ -688,13 +727,9 @@
+                             .map_err(|_| BackendFailure::TextEmission)?;
+                     }
+                     if *release == IrReleaseClass::General {
+-                        let llvm = output.type_name(program, ty)?;
+-                        let field = next_temporary(temporary)?;
+-                        let payload = next_temporary(temporary)?;
+-                        writeln!(output,
+-                            "  %{field} = getelementptr inbounds {llvm}, ptr {address}, i64 0, i32 2\n  %{payload} = load ptr, ptr %{field}"
+-                        ).map_err(|_| BackendFailure::TextEmission)?;
+-                        jobs.push(CleanupJob::FreePointer(format!("%{payload}")));
++                        emit_slots_payload_release(
++                            program, output, temporary, *referent, &address,
++                        )?;
+                     }
+                     continue;
+                 }
+diff --git a/compiler/src/backend/emitter/runs.rs b/compiler/src/backend/emitter/runs.rs
+--- a/compiler/src/backend/emitter/runs.rs
++++ b/compiler/src/backend/emitter/runs.rs
+@@ -852,25 +852,39 @@
+         ))
+     }
+ 
+-    /// Throwaway layout experiment: a nonnull payload, including a one-byte
+-    /// placeholder for zero extent, keeps the existing empty-range ABI.
++    /// A zero physical extent uses static backing. Positive extents allocate
++    /// before the owner publishes any changed metadata.
+     fn allocate_window_payload(
+         &mut self,
+         result: IrValueId,
+         capacity: IrValueId,
+         element_size: &str,
+-    ) -> Result<String, BackendFailure> {
++        route: &str,
++        may_be_empty: bool,
++    ) -> Result<(String, String), BackendFailure> {
+         let extent = self.next_temporary()?;
+-        let zero = self.next_temporary()?;
+-        let bytes = self.next_temporary()?;
+         let payload = self.next_temporary()?;
+         let nonnull = self.next_temporary()?;
+-        let ready = format!("{}.payload", window_block_ready_label(result));
+-        let oom = format!("{}.payload", window_block_oom_label(result));
++        let ready = format!("{}.payload.{route}", window_block_ready_label(result));
++        let oom = format!("{}.payload.{route}", window_block_oom_label(result));
++        writeln!(
++            self.output,
++            "  %{extent} = mul nuw i64 {}, {element_size}",
++            self.value_name(capacity)
++        )
++        .map_err(|_| BackendFailure::TextEmission)?;
++        let empty = format!("{ready}.empty");
++        if may_be_empty {
++            let zero = self.next_temporary()?;
++            let allocate = format!("{ready}.allocate");
++            writeln!(self.output,
++                "  %{zero} = icmp eq i64 %{extent}, 0\n  br i1 %{zero}, label %{empty}, label %{allocate}"
++            ).map_err(|_| BackendFailure::TextEmission)?;
++            self.output.open_block(allocate);
++        }
+         self.output.symbol("malloc");
+         writeln!(self.output,
+-            "  %{extent} = mul nuw i64 {}, {element_size}\n  %{zero} = icmp eq i64 %{extent}, 0\n  %{bytes} = select i1 %{zero}, i64 1, i64 %{extent}\n  %{payload} = call ptr @malloc(i64 %{bytes})\n  %{nonnull} = icmp ne ptr %{payload}, null\n  br i1 %{nonnull}, label %{ready}, label %{oom}",
+-            self.value_name(capacity)
++            "  %{payload} = call ptr @malloc(i64 %{extent})\n  %{nonnull} = icmp ne ptr %{payload}, null\n  br i1 %{nonnull}, label %{ready}, label %{oom}"
+         ).map_err(|_| BackendFailure::TextEmission)?;
+         self.output.open_block(oom);
+         self.output.symbol("wf_resource_abort");
+@@ -879,8 +893,23 @@
+             "  call void @wf_resource_abort()\n  unreachable"
+         )
+         .map_err(|_| BackendFailure::TextEmission)?;
+-        self.output.open_block(ready);
+-        Ok(format!("%{payload}"))
++        self.output.open_block(ready.clone());
++        if !may_be_empty {
++            return Ok((format!("%{payload}"), ready));
++        }
++        let done = format!("{ready}.done");
++        writeln!(self.output, "  br label %{done}")?;
++        self.output.open_block(empty.clone());
++        self.output.symbol(EMPTY_SLOTS_ANCHOR);
++        writeln!(self.output, "  br label %{done}")?;
++        self.output.open_block(done.clone());
++        let selected = self.next_temporary()?;
++        writeln!(
++            self.output,
++            "  %{selected} = phi ptr [ %{payload}, %{ready} ], [ @{EMPTY_SLOTS_ANCHOR}, %{empty} ]"
++        )
++        .map_err(|_| BackendFailure::TextEmission)?;
++        Ok((format!("%{selected}"), done))
+     }
+ 
+     /// Copies one element between two physical slots of two windows.
+@@ -1229,7 +1258,8 @@
+             self.value_name(result)
+         };
+         if shape.split_payload() {
+-            let payload = self.allocate_window_payload(result, capacity, &element_size)?;
++            let (payload, _) =
++                self.allocate_window_payload(result, capacity, &element_size, "new", true)?;
+             let payload_field = self.aggregate_field_pointer(block_type, &block_address, 2)?;
+             writeln!(self.output, "  store ptr {payload}, ptr {payload_field}")
+                 .map_err(|_| BackendFailure::TextEmission)?;
+@@ -1293,31 +1323,54 @@
+         }
+         let element_size = self.window_element_size(shape)?;
+         let descriptor = self.value_name(cell);
++        let capacity_field = self.aggregate_field_pointer(block_type, &descriptor, 1)?;
++        if crate::target::element_has_zero_stride(
++            self.target,
++            self.program,
++            shape.element_type(self.program)?,
++        )
++        .map_err(BackendFailure::TargetLayout)?
++        {
++            writeln!(
++                self.output,
++                "  store i64 {}, ptr {capacity_field}",
++                self.value_name(capacity)
++            )?;
++            return self.emit_constant(result, ty, IrConstant::Unit);
++        }
+         let length_field = self.aggregate_field_pointer(block_type, &descriptor, 0)?;
+-        let capacity_field = self.aggregate_field_pointer(block_type, &descriptor, 1)?;
+         let payload_field = self.aggregate_field_pointer(block_type, &descriptor, 2)?;
+         let length = self.next_temporary()?;
+         let old_capacity = self.next_temporary()?;
+         let old_payload = self.next_temporary()?;
++        let empty = self.next_temporary()?;
++        let empty_label = format!("window.grow.empty.v{}", result.ordinal());
++        let allocated_label = format!("window.grow.allocated.v{}", result.ordinal());
+         let full = self.next_temporary()?;
+         let full_label = format!("window.grow.full.v{}", result.ordinal());
+         let partial_label = format!("window.grow.partial.v{}", result.ordinal());
+         let full_ready = format!("{}.realloc", window_block_ready_label(result));
+         let full_oom = format!("{}.realloc", window_block_oom_label(result));
+-        let partial_ready = format!("{}.payload", window_block_ready_label(result));
+         let done = window_block_ready_label(result);
+         writeln!(self.output,
+-            "  %{length} = load i64, ptr {length_field}\n  %{old_capacity} = load i64, ptr {capacity_field}\n  %{old_payload} = load ptr, ptr {payload_field}\n  %{full} = icmp eq i64 %{length}, %{old_capacity}\n  br i1 %{full}, label %{full_label}, label %{partial_label}"
++            "  %{length} = load i64, ptr {length_field}\n  %{old_capacity} = load i64, ptr {capacity_field}\n  %{old_payload} = load ptr, ptr {payload_field}\n  %{empty} = icmp eq i64 %{old_capacity}, 0\n  br i1 %{empty}, label %{empty_label}, label %{allocated_label}"
+         ).map_err(|_| BackendFailure::TextEmission)?;
++        self.output.open_block(empty_label);
++        let (initial, initial_ready) =
++            self.allocate_window_payload(result, capacity, &element_size, "empty", true)?;
++        writeln!(self.output, "  br label %{done}")?;
++        self.output.open_block(allocated_label);
++        writeln!(
++            self.output,
++            "  %{full} = icmp eq i64 %{length}, %{old_capacity}\n  br i1 %{full}, label %{full_label}, label %{partial_label}"
++        )?;
+         self.output.open_block(full_label);
+         let extent = self.next_temporary()?;
+-        let zero = self.next_temporary()?;
+-        let bytes = self.next_temporary()?;
+         let remade = self.next_temporary()?;
+         let nonnull = self.next_temporary()?;
+         self.output.symbol("realloc");
+         writeln!(self.output,
+-            "  %{extent} = mul nuw i64 {}, {element_size}\n  %{zero} = icmp eq i64 %{extent}, 0\n  %{bytes} = select i1 %{zero}, i64 1, i64 %{extent}\n  %{remade} = call ptr @realloc(ptr %{old_payload}, i64 %{bytes})\n  %{nonnull} = icmp ne ptr %{remade}, null\n  br i1 %{nonnull}, label %{full_ready}, label %{full_oom}",
++            "  %{extent} = mul nuw i64 {}, {element_size}\n  %{remade} = call ptr @realloc(ptr %{old_payload}, i64 %{extent})\n  %{nonnull} = icmp ne ptr %{remade}, null\n  br i1 %{nonnull}, label %{full_ready}, label %{full_oom}",
+             self.value_name(capacity)
+         ).map_err(|_| BackendFailure::TextEmission)?;
+         self.output.open_block(full_oom);
+@@ -1325,12 +1378,12 @@
+         writeln!(
+             self.output,
+             "  call void @wf_resource_abort()\n  unreachable"
+-        )
+-        .map_err(|_| BackendFailure::TextEmission)?;
++        )?;
+         self.output.open_block(full_ready.clone());
+-        writeln!(self.output, "  br label %{done}").map_err(|_| BackendFailure::TextEmission)?;
++        writeln!(self.output, "  br label %{done}")?;
+         self.output.open_block(partial_label);
+-        let fresh = self.allocate_window_payload(result, capacity, &element_size)?;
++        let (fresh, partial_ready) =
++            self.allocate_window_payload(result, capacity, &element_size, "partial", false)?;
+         let moved = self.next_temporary()?;
+         self.intrinsics.insert(IntrinsicDeclaration::MemoryMove);
+         self.output.symbol("llvm.memmove.p0.p0.i64");
+@@ -1341,7 +1394,7 @@
+         self.output.open_block(done);
+         let payload = self.next_temporary()?;
+         writeln!(self.output,
+-            "  %{payload} = phi ptr [ %{remade}, %{full_ready} ], [ {fresh}, %{partial_ready} ]\n  store ptr %{payload}, ptr {payload_field}\n  store i64 {}, ptr {capacity_field}",
++            "  %{payload} = phi ptr [ %{remade}, %{full_ready} ], [ {fresh}, %{partial_ready} ], [ {initial}, %{initial_ready} ]\n  store ptr %{payload}, ptr {payload_field}\n  store i64 {}, ptr {capacity_field}",
+             self.value_name(capacity)
+         ).map_err(|_| BackendFailure::TextEmission)?;
+         self.emit_constant(result, ty, IrConstant::Unit)
+@@ -1364,14 +1417,13 @@
+         if RunShape::of(*referent).is_some_and(RunShape::split_payload) {
+             let block_type = *referent;
+             let value = self.value_place(value)?;
+-            let payload_field = self.aggregate_field_pointer(block_type, &value, 2)?;
+-            let payload = self.next_temporary()?;
+-            self.output.symbol("free");
+-            writeln!(
+-                self.output,
+-                "  %{payload} = load ptr, ptr {payload_field}\n  call void @free(ptr %{payload})"
+-            )
+-            .map_err(|_| BackendFailure::TextEmission)?;
++            cleanup::emit_slots_payload_release(
++                self.program,
++                &mut self.output,
++                &mut self.temporary,
++                block_type,
++                &value,
++            )?;
+             return self.emit_constant(result, ty, IrConstant::Unit);
+         }
+         {
+diff --git a/compiler/src/target.rs b/compiler/src/target.rs
+--- a/compiler/src/target.rs
++++ b/compiler/src/target.rs
+@@ -842,6 +842,27 @@
+         size: layout.size,
+         align: layout.align,
+     })
++}
++
++/// Research-only empty Slots payload anchor: a static byte object padded to
++/// the maximum concrete element alignment of the inline owners it serves.
++/// Allocation-site qualification retains its independent OP-9 checks.
++pub(super) fn empty_slots_anchor_layout(
++    target: TargetLayout,
++    program: &IrProgram,
++) -> Result<TargetAggregateLayout, TargetLayoutFailure> {
++    let mut layouts = LayoutComputer::new(target, program.nominals(), program.elements());
++    let mut align = 1;
++    for nominal in program.nominals() {
++        if let IrNominalKind::Box { referent, .. } = nominal.kind()
++            && inline_slots_descriptor(*referent)
++            && let IrType::Window { element, .. } = referent
++        {
++            align = align.max(layouts.element(*element)?.align);
++        }
++    }
++    let size = align_up(target, 1, align, TargetObject::Static)?;
++    Ok(TargetAggregateLayout { size, align })
+ }
+ 
+ /// The selected-target layout of one fully assembled backend aggregate.
+diff --git a/research/experiments/container-representation/vector-library/vector-costs.c b/research/experiments/container-representation/vector-library/vector-costs.c
+--- a/research/experiments/container-representation/vector-library/vector-costs.c
++++ b/research/experiments/container-representation/vector-library/vector-costs.c
+@@ -672,6 +672,12 @@
+ }
+ 
+ #if defined(ACCOUNT_ONLY)
++#ifndef WF_EMPTY_PAYLOAD_ANCHOR
++#define WF_EMPTY_PAYLOAD_ANCHOR 0
++#endif
++#if WF_EMPTY_PAYLOAD_ANCHOR && !WF_INLINE_SLOTS_OWNER
++#error "empty payload anchor requires the inline Slots owner experiment"
++#endif
+ typedef struct { size_t requests, reallocations, releases, bytes, live; } ApiAccount;
+ static ApiAccount append_account_snapshot(void) {
+     return (ApiAccount){requests, realloc_requests, releases, requested_bytes, live_bytes};
+@@ -682,12 +688,20 @@
+             && live_bytes == before.live, "spare append zero allocation");
+ }
+ #if WF_SPLIT_SLOTS_PAYLOAD
+-// Split-owner candidates allocate one payload, with a one-byte allocation for
+-// zero-byte extents; only the thin-owner variant allocates its descriptor. Prepare
+-// first constructs capacity zero, then reserve grows that initial full run.
++// Split-owner candidates use a one-byte allocation for zero-byte extents unless
++// the anchor experiment removes that allocation. Only thin owners allocate a
++// descriptor. Prepare constructs capacity zero, then reserve grows that full run.
+ // Realloc's requested live peak excludes possible simultaneous old/new backing;
+ // peak_overlap_upper_bytes preserves that separate upper bound.
+ static void split_slots_prepared(ApiAccount before, size_t capacity, size_t stride) {
++#if WF_EMPTY_PAYLOAD_ANCHOR
++    const size_t payload = capacity * stride;
++    require(before.requests == (payload != 0) && before.reallocations == 0
++            && before.releases == 0 && before.bytes == payload
++            && before.live == payload && peak_bytes == payload
++            && peak_overlap_upper_bytes == payload,
++            "anchor Slots prepared allocation ledger");
++#else
+     const size_t payload = capacity != 0 && stride != 0 ? capacity * stride : 1;
+     const size_t reserved = capacity != 0;
+     const size_t descriptor = WF_INLINE_SLOTS_OWNER ? 0 : 24;
+@@ -699,6 +713,7 @@
+             && peak_bytes == (WF_SPLIT_SLOTS_REALLOC ? before.live : descriptor + 1 + reserved * payload)
+             && peak_overlap_upper_bytes == descriptor + 1 + reserved * payload,
+             "split Slots prepared allocation ledger");
++#endif
+ }
+ #endif
+ #endif
+@@ -747,6 +762,13 @@
+ #if defined(ACCOUNT_ONLY)
+             require(live_bytes == 0 && requests == releases + realloc_requests,
+                     "spare append complete cleanup");
++#if WF_EMPTY_PAYLOAD_ANCHOR
++            if (variant == 0)
++                require(requests == before.requests && realloc_requests == before.reallocations
++                        && requested_bytes == before.bytes
++                        && releases == before.releases + (count != 0),
++                        "anchor Slots spare destruction allocation ledger");
++#endif
+ #endif
+         }
+     }
+@@ -828,7 +850,8 @@
+                 const size_t header = variant == 0
+                     ? (WF_SPLIT_SLOTS_PAYLOAD ? (WF_INLINE_SLOTS_OWNER ? 0 : 24) : 16) : 0;
+                 require(before.live == header + initial * stride
+-                            + (WF_SPLIT_SLOTS_PAYLOAD && variant == 0 && initial == 0),
++                            + (WF_SPLIT_SLOTS_PAYLOAD && !WF_EMPTY_PAYLOAD_ANCHOR
++                               && variant == 0 && initial == 0),
+                         "growth append initial live bytes");
+ #if WF_SPLIT_SLOTS_PAYLOAD
+                 if (variant == 0) split_slots_prepared(before, initial, stride);
+@@ -846,15 +869,19 @@
+                         && after.requests - before.requests
+                             == after.releases - before.releases
+                                + after.reallocations - before.reallocations
+-                               + (initial == 0 && variant != 0),
++                               + (initial == 0 && (variant != 0 || WF_EMPTY_PAYLOAD_ANCHOR)),
+                         "growth append allocation ledger");
+ #if WF_SPLIT_SLOTS_PAYLOAD
+                 if (variant == 0) {
+-                    const size_t old_payload = initial != 0 && stride != 0 ? initial * stride : 1;
+-                    const size_t new_payload = capacity != 0 && stride != 0 ? capacity * stride : 1;
++                    const size_t old_payload = initial != 0 && stride != 0
++                        ? initial * stride : !WF_EMPTY_PAYLOAD_ANCHOR;
++                    const size_t new_payload = capacity != 0 && stride != 0
++                        ? capacity * stride : !WF_EMPTY_PAYLOAD_ANCHOR;
++                    const size_t resize = WF_SPLIT_SLOTS_REALLOC && old_payload != 0;
++                    const size_t release = !WF_SPLIT_SLOTS_REALLOC && old_payload != 0;
+                     require(after.requests == before.requests + 1
+-                            && after.reallocations == before.reallocations + WF_SPLIT_SLOTS_REALLOC
+-                            && after.releases == before.releases + !WF_SPLIT_SLOTS_REALLOC
++                            && after.reallocations == before.reallocations + resize
++                            && after.releases == before.releases + release
+                             && after.bytes == before.bytes + new_payload
+                             && peak_bytes == header + new_payload
+                                 + (WF_SPLIT_SLOTS_REALLOC ? 0 : old_payload)
+diff --git a/research/experiments/container-representation/vector-library/.build/inline-slots-owner/focused-fixture.wf b/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/focused-fixture.wf
+similarity index 79%
+copy from research/experiments/container-representation/vector-library/.build/inline-slots-owner/focused-fixture.wf
+copy to research/experiments/container-representation/vector-library/.build/empty-payload-anchor/focused-fixture.wf
+--- a/research/experiments/container-representation/vector-library/.build/inline-slots-owner/focused-fixture.wf
++++ b/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/focused-fixture.wf
+@@ -56,6 +56,13 @@
+   if values.inner.cap != 3_u64 {
+     return 2_u64;
+   }
++  place_back(window: &values.inner, value: 53_u8);
++  if values.inner.len != 1_u64 {
++    return 3_u64;
++  }
++  if values.inner[0_u64] != 53_u8 {
++    return 4_u64;
++  }
+   return 0_u64;
+ }
+ 
+@@ -111,3 +118,56 @@
+ fn release_owner(value: Box<Slots<u8>>) -> result: unit pure {
+   return unit;
+ }
++
++fn owner_identity_u8(value: Box<Slots<u8>>) -> result: Box<Slots<u8>> pure {
++  return move value;
++}
++
++fn grow_first_failure(values: &Box<Slots<u8>>) -> result: u64 writes(values) contract {
++  requires values^.inner.len == 0_u64;
++  requires values^.inner.cap == 0_u64;
++} {
++  grow(cell: values, capacity: 3_u64);
++  return 0_u64;
++}
++
++fn two_empty_lengths(first: &[u8], second: &[u8]) -> result: u64 reads(first.len), reads(second.len) {
++  if first^.len != 0_u64 {
++    return 1_u64;
++  }
++  if second^.len != 0_u64 {
++    return 2_u64;
++  }
++  return 0_u64;
++}
++
++fn two_empty_ranges() -> result: u64 pure {
++  let first = box_slots_new::<u8>(capacity: 0_u64);
++  let second = box_slots_new::<u8>(capacity: 0_u64);
++  let moved = owner_identity_u8(value: move first);
++  let first_range = &moved.inner[0_u64..0_u64];
++  let second_range = &second.inner[0_u64..0_u64];
++  let resliced = &first_range^[0_u64..0_u64];
++  return two_empty_lengths(first: resliced, second: second_range);
++}
++
++fn zst_zero_large() -> result: u64 pure {
++  let values = box_slots_new::<Array<u64, 0>>(capacity: 0_u64);
++  grow(cell: &values, capacity: 9223372036854775807_u64);
++  let empty = array_filled::<u64, 0>(value: 0_u64);
++  place_back(window: &values.inner, value: empty);
++  if values.inner.len != 1_u64 {
++    return 1_u64;
++  }
++  if values.inner.cap != 9223372036854775807_u64 {
++    return 2_u64;
++  }
++  let value = values.inner[0_u64];
++  return 0_u64;
++}
++
++fn zst_empty() -> result: u64 pure {
++  let values = box_slots_new::<Array<u64, 0>>(capacity: 0_u64);
++  free_empty(window: move values);
++  return 0_u64;
++}
+diff --git a/research/experiments/container-representation/vector-library/.build/inline-slots-owner/observer.c b/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/observer.c
+similarity index 71%
+copy from research/experiments/container-representation/vector-library/.build/inline-slots-owner/observer.c
+copy to research/experiments/container-representation/vector-library/.build/empty-payload-anchor/observer.c
+--- a/research/experiments/container-representation/vector-library/.build/inline-slots-owner/observer.c
++++ b/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/observer.c
+@@ -1,5 +1,6 @@
+-/* Independent observer for the inline-owner append research overlay. */
++/* Independent observer for the empty-payload anchor append research overlay. */
+ #include <stdint.h>
++#include <stdalign.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
+@@ -9,16 +10,22 @@
+ extern uint64_t wf_grow_zero_capacity(void), wf_grow_zero_stride(void);
+ extern uint64_t wf_empty_range(void), wf_empty_cell(void);
+ extern uint64_t wf_grow_failure(struct descriptor *);
++extern uint64_t wf_grow_first_failure(struct descriptor *);
++extern uint64_t wf_two_empty_ranges(void), wf_zst_zero_large(void), wf_zst_empty(void);
+ extern uint8_t wf_swap_owners(struct descriptor *, struct descriptor *);
+ extern uint8_t wf_release_owner(struct descriptor *);
+ extern int wf__floor_run(int, char **);
+ struct allocation { unsigned char *pointer; size_t bytes; unsigned live; };
+ static struct allocation allocations[8];
+ static size_t allocated, calls, remakes, releases, transfers;
+-static unsigned selected, moving, failing;
++static unsigned selected, moving, failing, first_failing;
++static alignas(16) unsigned char foreign_anchor[16];
++static alignas(16) unsigned char second_anchor[16];
+ static struct descriptor *failure_cell;
++static struct descriptor original_empty;
++static size_t range_calls, empty_transfers;
+ static void require(int okay, const char *message) {
+-    if (!okay) { fprintf(stderr,"inline Slots observer: %s\n",message); exit(1); }
++    if (!okay) { fprintf(stderr,"empty anchor observer: %s\n",message); exit(1); }
+ }
+ static struct allocation *find(void *pointer) {
+     for (size_t i=0; i<allocated; ++i)
+@@ -34,16 +41,18 @@
+     return a;
+ }
+ void *wf_observe_allocate(uint64_t bytes) {
+-    static const size_t expected[8][3]={
+-        {16,8,8}, {4,8}, {1}, {1}, {1}, {1}, {1}, {2,4}
++    static const size_t expected[11][3]={
++        {16,8,8}, {4,8}, {3}, {0}, {0}, {0}, {1}, {2,4}, {0}, {0}, {3}
+     };
+     require(calls<3 && bytes==expected[selected][calls],"exact malloc extent");
+-    ++calls; return make((size_t)bytes)->pointer;
++    ++calls;
++    if (first_failing) return NULL;
++    return make((size_t)bytes)->pointer;
+ }
+ void *wf_observe_reallocate(void *pointer, uint64_t bytes) {
+     static const size_t sizes[]={32,0,3,1,0,0,2};
+     struct allocation *old=find(pointer);
+-    require(selected!=1 && selected<7 && remakes++==0 && old==&allocations[0]
++    require((selected==0 || selected==6) && remakes++==0 && old==&allocations[0]
+             && old->live && bytes==sizes[selected],"full realloc identity and extent");
+     if (failing) return NULL;
+     struct allocation *fresh=old;
+@@ -80,6 +89,8 @@
+         for (size_t i=2; i<8; ++i)
+             require(a->pointer[i]==0xa6,"spare bytes not copied");
+     }
++    if (selected==2)
++        require(a->bytes==3 && a->pointer[0]==53,"fresh first append payload");
+     a->live=0; ++releases;
+     memset(a->pointer,0xdd,a->bytes);
+ }
+@@ -95,18 +106,52 @@
+ #endif
+     *out=*in;
+ }
++void wf_observe_empty_transfer(struct descriptor *out, const struct descriptor *in) {
++    require(selected==8 && empty_transfers++==0 && in->len==0 && in->cap==0
++            && in->payload!=NULL,"linked empty owner input");
++    *out=*in;
++}
++uint64_t wf_observe_empty_ranges(const void *first, uint64_t first_len,
++                                 const void *second, uint64_t second_len) {
++    require(selected==8 && range_calls++==0 && first!=NULL && second!=NULL
++            && first_len==0 && second_len==0,"linked simultaneous empty reslices");
++    return 0;
++}
+ void wf_observe_abort(void) {
++    if (first_failing) {
++        require(calls==1 && allocated==0 && remakes==0 && releases==0,"first malloc failure ledger");
++        require(failure_cell && failure_cell->len==original_empty.len
++                && failure_cell->cap==original_empty.cap
++                && failure_cell->payload==original_empty.payload,
++                "failed first malloc preserves all caller descriptor words");
++        puts("empty anchor: NULL first malloc preserves caller descriptor"); exit(74);
++    }
+     require(failing && calls==1 && remakes==1 && releases==0,"floor route");
+     require(failure_cell && failure_cell->len==1 && failure_cell->cap==1
+             && failure_cell->payload==allocations[0].pointer
+             && failure_cell->payload[0]==17 && allocations[0].live,
+             "failed realloc preserves caller descriptor and payload");
+-    puts("inline Slots: NULL preserves caller descriptor and payload"); exit(73);
++    puts("empty anchor: NULL preserves caller descriptor and payload"); exit(73);
+ }
+ static void reset(void) {
+-    memset(allocations,0,sizeof allocations); allocated=calls=remakes=releases=transfers=0;
++    memset(allocations,0,sizeof allocations); allocated=calls=remakes=releases=transfers=range_calls=empty_transfers=0;
+ }
+ int wf__main_body(int argc, char **argv) {
++    if (argc==2 && !strcmp(argv[1],"wrong-release")) {
++        reset(); wf_observe_release(foreign_anchor);
++        require(0,"wrong anchor release escaped observer");
++    }
++    if (argc==2 && !strcmp(argv[1],"wrong-realloc")) {
++        reset(); (void)wf_observe_reallocate(foreign_anchor,3);
++        require(0,"wrong anchor realloc escaped observer");
++    }
++    if (argc==2 && !strcmp(argv[1],"first-failure")) {
++        selected=10; first_failing=1; reset();
++        struct descriptor owner={0,0,foreign_anchor};
++        original_empty=owner; failure_cell=&owner;
++        (void)wf_grow_first_failure(&owner);
++        require(0,"failed first grow returned");
++    }
+     if (argc==2 && !strcmp(argv[1],"failure")) {
+         selected=6; failing=1; reset();
+         struct descriptor owner={1,1,wf_observe_allocate(1)};
+@@ -116,8 +161,8 @@
+     }
+     uint64_t (*const cases[])(void)={wf_grow_owned,wf_grow_partial,
+         wf_grow_zero_capacity,wf_grow_zero_stride,wf_empty_range,wf_empty_cell};
+-    const size_t mallocs[]={3,2,1,1,1,1};
+-    const size_t reallocs[]={1,0,1,1,0,0};
++    const size_t mallocs[]={3,2,1,0,0,0};
++    const size_t reallocs[]={1,0,0,0,0,0};
+     for (moving=0; moving<2; ++moving) for (selected=0; selected<6; ++selected) {
+         reset(); require(cases[selected]()==0,"source content/header assertion");
+         require(calls==mallocs[selected] && remakes==reallocs[selected]
+@@ -130,6 +175,25 @@
+             free(allocations[i].pointer);
+         }
+     }
++    selected=8; reset();
++    require(wf_two_empty_ranges()==0,"two empty ranges source check");
++    require(calls==0 && remakes==0 && releases==0,"two empty owners exact ledger");
++#ifdef EXPECT_LINKED_TRANSFER
++    require(empty_transfers==1 && range_calls==1,"exact empty owner/range linked route counts");
++#endif
++    selected=9; reset();
++    require(wf_zst_empty()==0,"zero-stride empty construction and free_empty");
++    require(calls==0 && remakes==0 && releases==0,"zero-stride empty exact ledger");
++    require(wf_zst_zero_large()==0,"zero-stride large logical capacity and content");
++    require(calls==0 && remakes==0 && releases==0,"zero-stride large exact ledger");
++    struct descriptor empty_first={0,0,foreign_anchor};
++    struct descriptor empty_second={0,0,second_anchor};
++    (void)wf_swap_owners(&empty_first,&empty_second);
++    require(empty_first.len==0 && empty_first.cap==0 && empty_first.payload==second_anchor
++            && empty_second.len==0 && empty_second.cap==0 && empty_second.payload==foreign_anchor,
++            "two foreign empty owners exchange every word");
++    (void)wf_release_owner(&empty_first); (void)wf_release_owner(&empty_second);
++    require(calls==0 && remakes==0 && releases==0,"foreign empty owners exact cleanup");
+     selected=7; reset();
+     struct descriptor first={1,2,wf_observe_allocate(2)};
+     struct descriptor second={2,4,wf_observe_allocate(4)};
+@@ -143,7 +207,26 @@
+     (void)wf_release_owner(&first); (void)wf_release_owner(&second);
+     require(calls==2 && remakes==0 && releases==2,"exchanged owners exact cleanup");
+     for(size_t i=0;i<allocated;++i) { require(!allocations[i].live,"exchanged allocation leak"); free(allocations[i].pointer); }
+-    puts("inline Slots: 12 in-place/moving nested/partial/cap0/ZST/empty cases; exact releases");
++    reset(); selected=7;
++    struct descriptor empty={0,0,foreign_anchor};
++    struct descriptor cleared={0,2,wf_observe_allocate(2)};
++    unsigned char *cleared_payload=cleared.payload;
++    (void)wf_swap_owners(&empty,&cleared);
++    require(empty.len==0 && empty.cap==2 && empty.payload==cleared_payload
++            && cleared.len==0 && cleared.cap==0 && cleared.payload==foreign_anchor,
++            "empty and cleared positive-capacity owners exchange every word");
++    (void)wf_release_owner(&empty); (void)wf_release_owner(&cleared);
++    require(calls==1 && remakes==0 && releases==1,"physical extent controls cleared owner cleanup");
++    require(!allocations[0].live,"cleared owner allocation leak"); free(allocations[0].pointer);
++    selected=10; reset();
++    struct descriptor fresh={0,0,foreign_anchor};
++    require(wf_grow_first_failure(&fresh)==0,"foreign anchor first growth succeeds");
++    require(fresh.len==0 && fresh.cap==3 && fresh.payload==allocations[0].pointer
++            && calls==1 && remakes==0 && releases==0,"foreign anchor uses fresh malloc");
++    (void)wf_release_owner(&fresh);
++    require(releases==1 && !allocations[0].live,"foreign anchor grown owner cleanup");
++    free(allocations[0].pointer);
++    puts("empty anchor: nested/partial/cap0/ZST/ranges/exchanges pass; exact releases");
+     return 0;
+ }
+ int main(int argc, char **argv) { return wf__floor_run(argc,argv); }
+diff --git a/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/linked-bridge.ll b/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/linked-bridge.ll
+new file mode 100644
+--- /dev/null
++++ b/research/experiments/container-representation/vector-library/.build/empty-payload-anchor/linked-bridge.ll
+@@ -0,0 +1,28 @@
++; Post-lowering linked-body replacement definitions, not source fn_sig formation.
++; Replace only the ordinary public definitions of these three source functions.
++; Keep calls through public symbols; do not redirect callers to .body helpers.
++declare void @wf_observe_transfer(ptr, ptr)
++declare void @wf_observe_empty_transfer(ptr, ptr)
++declare i64 @wf_observe_empty_ranges(ptr, i64, ptr, i64)
++
++define { i64, i64, ptr } @wf_owner_identity(ptr %input) {
++entry:
++  %output = alloca { i64, i64, ptr }, align 8
++  call void @wf_observe_transfer(ptr %output, ptr %input)
++  %result = load { i64, i64, ptr }, ptr %output, align 8
++  ret { i64, i64, ptr } %result
++}
++
++define { i64, i64, ptr } @wf_owner_identity_u8(ptr %input) {
++entry:
++  %output = alloca { i64, i64, ptr }, align 8
++  call void @wf_observe_empty_transfer(ptr %output, ptr %input)
++  %result = load { i64, i64, ptr }, ptr %output, align 8
++  ret { i64, i64, ptr } %result
++}
++
++define i64 @wf_two_empty_lengths(ptr noalias nonnull captures(none) %first, i64 %first_len, ptr noalias nonnull captures(none) %second, i64 %second_len) {
++entry:
++  %result = call i64 @wf_observe_empty_ranges(ptr %first, i64 %first_len, ptr %second, i64 %second_len)
++  ret i64 %result
++}
