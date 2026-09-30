@@ -196,6 +196,30 @@ and 15,243,647,766 under B (this branch's source, the same program with
 A program that names almost every host module keeps the host cost, as D3
 predicts. The chain's times are W3 and W4 above.
 
+## Small parser cleanup: prospective criterion
+
+The next bounded cleanup keeps the generated grammar and the parser's ordinary
+judgments, indexes SELECT2 rows by their first predicate, and enumerates a token's
+terminal membership by its set bits. The diagnostic frontier retains the full
+source-ordered rows. A formed token may match both `unit` and `literal`; source
+end has its own bucket. Neither optimization supplies a syntax or semantic fact.
+
+Before changing the implementation, the selection criterion is: every indexed
+bucket equals an independent scan of the original rows; ample-limit source
+verdicts, derivations and diagnostics remain unchanged; and seven alternating
+native comparisons improve the median small-module check by at least 10 percent.
+An identical-image comparison must first stay within three percent at its median,
+and `wfgrep` checking must not
+regress beyond three percent or the identical-image variation, whichever is
+larger. Record compiler construction separately from compiler execution. The
+host here is macOS, so wall time replaces the earlier Linux callgrind observation
+and does not establish the same instruction counts.
+
+This cleanup leaves repeated prelude parsing open. Prelude records follow the
+writer records in a bundle, so retaining their derivations across bundles needs
+source and token identity relocation plus explicit resource-ceiling accounting;
+that is a separate representation change, not this row-lookup optimization.
+
 ## The checker's per-function costs after the split
 
 The owner kept `std::process`'s layout and chose to fix the checker's nominal
