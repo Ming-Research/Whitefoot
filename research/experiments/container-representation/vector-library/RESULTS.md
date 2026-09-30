@@ -7968,3 +7968,112 @@ counterexample remains. This single screen establishes no paired gain or
 regression against B, no memcpy dispatch-cost cause, and no copy threshold.
 No further loop permutation is selected. Append growth remains unqualified;
 no representation, production/specification change or other API is advanced.
+
+
+#### Fresh-element placement: registered append ordering discriminator
+
+The reached full-growth B paths perform 38 scalar / 102 wide instructions
+outside allocator and copy bodies, versus C++ 79 / 141 and Rust 96 / 160.
+All three construct the same integral record; the suspected WF-only constant
+loads and odd vector-store grouping also occur in both peers. No remaining
+runtime constructor copy or redundant hot-path dispatch was found. These
+counts do not measure allocator internals or establish an unavoidable floor.
+
+One actual ordering difference remains: C++ constructs the appended value in
+fresh storage before copying the old prefix; B constructs it after prefix
+copying, old-payload free and descriptor publication. Test that difference
+alone for the frozen i64 and {[32 x i64]} payloads. In each full-positive
+success path, move the new element's nontrapping integral construction and
+stores to fresh + old_length * stride, after malloc's NULL check and before
+prefix memcpy. The appended element is disjoint from the copied prefix and
+within doubled or ceiling-saturated capacity. Preserve allocation extents,
+copy bytes, all allocator/copy calls, free and owner metadata publication
+order, refusal behavior, and empty/partial/spare logical behavior. Write the
+new element once. No pointer-bearing or effectful construction rule follows.
+
+Use matched optimized-IR baseline and candidate inputs if required to expose
+the native ordering. Record any effect of the extra optimization pass before
+attributing the candidate; freeze both controls and unchanged peer/runtime
+objects. The native prerequisite is earlier fresh-element stores, no additional
+payload copy, spill, helper/library call or executed conditional branch on the
+full-positive path, and no larger frame. Report total code size and duplicated
+construction code rather than hiding them. If these prerequisites fail, retain
+the result without timing or another scheduling permutation.
+
+Only after native qualification, rerun independent contents, bounds, exact
+allocation/release accounting and real allocation-refusal checks. Any later
+performance screen must be authorized separately: this registration authorizes
+native inspection and correctness, not timing or production selection. The
+next comparison will use balanced variant rotations, retaining old seven-sample
+results under their original instrument. The owner target is unchanged.
+
+Transient files belong to `.build/fresh-element-placement`, serving this one
+append ordering experiment and removed when its evidence is retained or it is
+superseded. A compact replay/native outcome belongs in this Vector record's
+existing home; no production compiler, source acceptance or other API changes.
+
+
+If the registered native and correctness prerequisites pass, authorize one
+candidate screen with the unchanged harness and byte budgets, using
+`growth-api-measure 67108864 9 8589934592`. Nine samples balance each variant's
+first/middle/last positions (three each per cohort); retain all 1,080 rows,
+including the four policy cells and the 1 MiB matched case. Keep the original
+RAW-clock, minimum duration, 10% stability and complete-range separation
+criteria; report both peers. This is a prospective screen on the optimized-IR
+candidate, not a paired improvement claim or qualification of older images.
+No repeat or alternate schedule follows a failed or inconclusive screen. A
+paired gain and production choice still require separate evidence.
+
+
+#### Fresh-element placement outcome: ordering changes, growth remains unqualified
+
+The [replay patch](fresh-element-placement.patch) and
+[native/check/timing record](ecosystem-append-growth-placement-timing.txt) retain
+the matched optimized-IR control, candidate and focused ordering observer.
+Only the two scalar/wide append definitions change per candidate module.
+Successful full growth writes the new element before prefix copying, without
+extra runtime construction, calls, payload spills or conditional branches.
+Both frames remain 80 bytes. Complete functions grow 59/123 → 61/253
+instructions through static construction duplication, while executed matched
+paths shrink 38/102 → 36/100, including public tails but excluding library
+bodies. Native post-free pointer/capacity publication combines into an `stp`.
+WF instruction bytes are 18,996 for frozen B, 19,016 after the extra control
+optimization pass, and 19,544 for the candidate. These optimizer consequences
+are part of the experiment; this is not an instruction-order-only binary change.
+
+All 30 API/account executions and 14 focused stages return expected exits.
+Both 30-row account tables match B. The focused observer checks full contents,
+spare/descriptor guards and exact allocation/copy/release order for scalar/wide
+doubling and saturation. Four real NULL cases preserve old state (exit 73);
+four baseline ordering controls fail (exit 1). Its final C cleanup is distinct
+from the ordinary library cleanup covered by complete API checks.
+
+The single balanced nine-sample screen exits 0 in 151.639 s. The
+[complete CSV](ecosystem-append-growth-placement-samples.csv) retains all
+1,080 rows (540 real, 540 controls). Every variant occupies each position
+three times per cohort/cell. Minimum real duration is 1.311726 ms, RAW
+precision is 41 ns, and maximum cohort ratio/peer-median spreads are
+1.541%/1.606%, within the unchanged 10% bounds. The table gives the two
+cohort-median ranges in ns/append; qualification uses full sample ranges
+against the median-slower peer in both cohorts, retained in the record.
+
+| Element / full capacity | WF | Rust | C++ | Growth qualification |
+|---|---:|---:|---:|---|
+| 8 B / 16 | 22.42–22.51 | 36.72–36.77 | 25.52–25.59 | Pass |
+| 8 B / 256 | 88.57–88.73 | 103.72–104.71 | 92.98–93.94 | Pass |
+| 8 B / 4096 | 685.46–698.66 | 685.24–690.96 | 662.67–665.41 | Overlap |
+| 8 B / 0 | 7.58–7.63 | 11.82–11.84 | 10.96–10.96 | Policy pass |
+| 8 B / 1 | 16.22–16.23 | 32.41–32.47 | 19.23–19.30 | Policy pass |
+| 256 B / 16 | 136.69–139.03 | 151.52–151.81 | 139.20–139.43 | Overlap |
+| 256 B / 256 | 1306.32–1325.53 | 1310.39–1324.52 | 1308.93–1329.95 | Overlap |
+| 256 B / 4096 | 14815.82–14831.27 | 162.49–163.32 | 14809.33–14816.00 | Overlap |
+| 256 B / 0 | 12.60–12.68 | 22.41–22.55 | 15.64–15.77 | Policy pass |
+| 256 B / 1 | 38.82–39.32 | 52.74–52.93 | 43.03–43.10 | Policy pass |
+
+Only scalar 16/256 qualify (**2/6 matched cells**); the four policy cells pass
+separately. Every other matched cell overlaps its selected slower peer in at
+least one cohort, so this is no disjoint loss to that peer. Wide-4096 still
+has a large deficit to Rust and overlaps C++. Complete append growth remains
+unqualified. This unpaired screen establishes neither an improvement against
+B/control nor a general refutation of earlier placement. No production rule,
+representation, next ordering permutation or other API is selected.

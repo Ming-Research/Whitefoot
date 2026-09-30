@@ -1,0 +1,650 @@
+--- a/candidate-timed.ll
++++ b/candidate-timed.ll
+@@ -1959,10 +1959,16 @@
+ 
+ window.block.ready.v2.realloc.i53:                ; preds = %window.grow.allocated.v2.i41
+   %route.copy.bytes.i54 = shl nuw nsw i64 %t1.i, 3
++  tail call void @llvm.experimental.noalias.scope.decl(metadata !148)
++  %placement.sat.t2.nonnegative.i = icmp sgt i64 %t4.i, -1
++  tail call void @llvm.assume(i1 %placement.sat.t2.nonnegative.i)
++  %placement.sat.t2.i65 = getelementptr inbounds nuw i64, ptr %t14.i51, i64 %t4.i
++  store i64 %v1, ptr %placement.sat.t2.i65, align 8, !noalias !148
+   tail call void @llvm.memcpy.p0.p0.i64(ptr nonnull align 1 %t14.i51, ptr align 1 %t5.i39, i64 %route.copy.bytes.i54, i1 false), !noalias !142
+   tail call void @free(ptr %t5.i39), !noalias !142
+   store ptr %t14.i51, ptr %t2.i36, align 8, !alias.scope !142
+-  br label %"wf_std.collections.vector.grow_vector_make_room$instance$8c4c85d67cb438a6.exit.sink.split"
++  store i64 8193, ptr %t2.i1, align 8
++  br label %placement.finish
+ 
+ bb8.i:                                            ; preds = %bb3.i6
+   tail call void @llvm.experimental.noalias.scope.decl(metadata !145)
+@@ -1980,13 +1986,19 @@
+ window.block.ready.v2.realloc.i27:                ; preds = %bb8.i
+   %v15.i = shl nuw nsw i64 %t1.i, 1
+   %route.copy.bytes.i28 = shl nuw nsw i64 %t1.i, 3
++  tail call void @llvm.experimental.noalias.scope.decl(metadata !148)
++  %placement.double.t2.nonnegative.i = icmp sgt i64 %t4.i, -1
++  tail call void @llvm.assume(i1 %placement.double.t2.nonnegative.i)
++  %placement.double.t2.i65 = getelementptr inbounds nuw i64, ptr %t14.i25, i64 %t4.i
++  store i64 %v1, ptr %placement.double.t2.i65, align 8, !noalias !148
+   tail call void @llvm.memcpy.p0.p0.i64(ptr nonnull align 1 %t14.i25, ptr align 1 %t5.i13, i64 %route.copy.bytes.i28, i1 false), !noalias !145
+   tail call void @free(ptr %t5.i13), !noalias !145
+   store ptr %t14.i25, ptr %t2.i10, align 8, !alias.scope !145
+-  br label %"wf_std.collections.vector.grow_vector_make_room$instance$8c4c85d67cb438a6.exit.sink.split"
++  store i64 %v15.i, ptr %t2.i1, align 8
++  br label %placement.finish
+ 
+ "wf_std.collections.vector.grow_vector_make_room$instance$8c4c85d67cb438a6.exit.sink.split": ; preds = %window.block.ready.v2.realloc.i27, %window.block.ready.v2.realloc.i53, %"wf_grow$instance$e194368921a477a7.exit"
+-  %.sink = phi i64 [ 1, %"wf_grow$instance$e194368921a477a7.exit" ], [ 8193, %window.block.ready.v2.realloc.i53 ], [ %v15.i, %window.block.ready.v2.realloc.i27 ]
++  %.sink = phi i64 [ 1, %"wf_grow$instance$e194368921a477a7.exit" ]
+   store i64 %.sink, ptr %t2.i1, align 8
+   br label %"wf_std.collections.vector.grow_vector_make_room$instance$8c4c85d67cb438a6.exit"
+ 
+@@ -1998,6 +2010,9 @@
+   %t4.i64 = load ptr, ptr %t3.i63, align 8, !alias.scope !148
+   %t2.i65 = getelementptr inbounds nuw i64, ptr %t4.i64, i64 %t4.i
+   store i64 %v1, ptr %t2.i65, align 8, !noalias !148
++  br label %placement.finish
++
++placement.finish:
+   %t5.i66 = add nuw i64 %t4.i, 1
+   store i64 %t5.i66, ptr %v0, align 8, !alias.scope !148
+   ret i64 %t5.i66
+@@ -2052,10 +2067,66 @@
+ 
+ window.block.ready.v2.realloc.i53:                ; preds = %window.grow.allocated.v2.i41
+   %route.copy.bytes.i54 = shl nuw nsw i64 %t1.i, 8
++  %placement.sat.v15.31.i = add i64 %v1, 31
++  %placement.sat.0 = insertelement <2 x i64> poison, i64 %v1, i64 0
++  %placement.sat.1 = shufflevector <2 x i64> %placement.sat.0, <2 x i64> poison, <2 x i32> zeroinitializer
++  %placement.sat.2 = add <2 x i64> %placement.sat.1, <i64 29, i64 30>
++  %placement.sat.3 = add <2 x i64> %placement.sat.1, <i64 27, i64 28>
++  %placement.sat.4 = add <2 x i64> %placement.sat.1, <i64 25, i64 26>
++  %placement.sat.5 = add <2 x i64> %placement.sat.1, <i64 23, i64 24>
++  %placement.sat.6 = add <2 x i64> %placement.sat.1, <i64 21, i64 22>
++  %placement.sat.7 = add <2 x i64> %placement.sat.1, <i64 19, i64 20>
++  %placement.sat.8 = add <2 x i64> %placement.sat.1, <i64 17, i64 18>
++  %placement.sat.9 = add <2 x i64> %placement.sat.1, <i64 15, i64 16>
++  %placement.sat.10 = add <2 x i64> %placement.sat.1, <i64 13, i64 14>
++  %placement.sat.11 = add <2 x i64> %placement.sat.1, <i64 11, i64 12>
++  %placement.sat.12 = add <2 x i64> %placement.sat.1, <i64 9, i64 10>
++  %placement.sat.13 = add <2 x i64> %placement.sat.1, <i64 7, i64 8>
++  %placement.sat.14 = add <2 x i64> %placement.sat.1, <i64 5, i64 6>
++  %placement.sat.15 = add <2 x i64> %placement.sat.1, <i64 3, i64 4>
++  %placement.sat.16 = add <2 x i64> %placement.sat.1, <i64 1, i64 2>
++  tail call void @llvm.experimental.noalias.scope.decl(metadata !163)
++  %placement.sat.t2.nonnegative.i = icmp sgt i64 %t4.i, -1
++  tail call void @llvm.assume(i1 %placement.sat.t2.nonnegative.i)
++  %placement.sat.t2.i65 = getelementptr inbounds nuw %wf.t.ac26c585c4167c7a, ptr %t14.i51, i64 %t4.i
++  store i64 %v1, ptr %placement.sat.t2.i65, align 1, !noalias !163
++  %placement.sat.wf.slot.0.i.sroa.4.0.t2.i65.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.sat.t2.i65, i64 8
++  store <2 x i64> %placement.sat.16, ptr %placement.sat.wf.slot.0.i.sroa.4.0.t2.i65.sroa_idx, align 1, !noalias !163
++  %placement.sat.wf.slot.0.i.sroa.6.0.t2.i65.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.sat.t2.i65, i64 24
++  store <2 x i64> %placement.sat.15, ptr %placement.sat.wf.slot.0.i.sroa.6.0.t2.i65.sroa_idx, align 1, !noalias !163
++  %placement.sat.wf.slot.0.i.sroa.8.0.t2.i65.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.sat.t2.i65, i64 40
++  store <2 x i64> %placement.sat.14, ptr %placement.sat.wf.slot.0.i.sroa.8.0.t2.i65.sroa_idx, align 1, !noalias !163
++  %placement.sat.wf.slot.0.i.sroa.10.0.t2.i65.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.sat.t2.i65, i64 56
++  store <2 x i64> %placement.sat.13, ptr %placement.sat.wf.slot.0.i.sroa.10.0.t2.i65.sroa_idx, align 1, !noalias !163
++  %placement.sat.wf.slot.0.i.sroa.12.0.t2.i65.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.sat.t2.i65, i64 72
++  store <2 x i64> %placement.sat.12, ptr %placement.sat.wf.slot.0.i.sroa.12.0.t2.i65.sroa_idx, align 1, !noalias !163
++  %placement.sat.wf.slot.0.i.sroa.14.0.t2.i65.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.sat.t2.i65, i64 88
++  store <2 x i64> %placement.sat.11, ptr %placement.sat.wf.slot.0.i.sroa.14.0.t2.i65.sroa_idx, align 1, !noalias !163
++  %placement.sat.wf.slot.0.i.sroa.16.0.t2.i65.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.sat.t2.i65, i64 104
++  store <2 x i64> %placement.sat.10, ptr %placement.sat.wf.slot.0.i.sroa.16.0.t2.i65.sroa_idx, align 1, !noalias !163
++  %placement.sat.wf.slot.0.i.sroa.18.0.t2.i65.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.sat.t2.i65, i64 120
++  store <2 x i64> %placement.sat.9, ptr %placement.sat.wf.slot.0.i.sroa.18.0.t2.i65.sroa_idx, align 1, !noalias !163
++  %placement.sat.wf.slot.0.i.sroa.20.0.t2.i65.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.sat.t2.i65, i64 136
++  store <2 x i64> %placement.sat.8, ptr %placement.sat.wf.slot.0.i.sroa.20.0.t2.i65.sroa_idx, align 1, !noalias !163
++  %placement.sat.wf.slot.0.i.sroa.22.0.t2.i65.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.sat.t2.i65, i64 152
++  store <2 x i64> %placement.sat.7, ptr %placement.sat.wf.slot.0.i.sroa.22.0.t2.i65.sroa_idx, align 1, !noalias !163
++  %placement.sat.wf.slot.0.i.sroa.24.0.t2.i65.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.sat.t2.i65, i64 168
++  store <2 x i64> %placement.sat.6, ptr %placement.sat.wf.slot.0.i.sroa.24.0.t2.i65.sroa_idx, align 1, !noalias !163
++  %placement.sat.wf.slot.0.i.sroa.26.0.t2.i65.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.sat.t2.i65, i64 184
++  store <2 x i64> %placement.sat.5, ptr %placement.sat.wf.slot.0.i.sroa.26.0.t2.i65.sroa_idx, align 1, !noalias !163
++  %placement.sat.wf.slot.0.i.sroa.28.0.t2.i65.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.sat.t2.i65, i64 200
++  store <2 x i64> %placement.sat.4, ptr %placement.sat.wf.slot.0.i.sroa.28.0.t2.i65.sroa_idx, align 1, !noalias !163
++  %placement.sat.wf.slot.0.i.sroa.30.0.t2.i65.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.sat.t2.i65, i64 216
++  store <2 x i64> %placement.sat.3, ptr %placement.sat.wf.slot.0.i.sroa.30.0.t2.i65.sroa_idx, align 1, !noalias !163
++  %placement.sat.wf.slot.0.i.sroa.32.0.t2.i65.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.sat.t2.i65, i64 232
++  store <2 x i64> %placement.sat.2, ptr %placement.sat.wf.slot.0.i.sroa.32.0.t2.i65.sroa_idx, align 1, !noalias !163
++  %placement.sat.wf.slot.0.i.sroa.34.0.t2.i65.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.sat.t2.i65, i64 248
++  store i64 %placement.sat.v15.31.i, ptr %placement.sat.wf.slot.0.i.sroa.34.0.t2.i65.sroa_idx, align 1, !noalias !163
+   tail call void @llvm.memcpy.p0.p0.i64(ptr nonnull align 1 %t14.i51, ptr align 1 %t5.i39, i64 %route.copy.bytes.i54, i1 false), !noalias !157
+   tail call void @free(ptr %t5.i39), !noalias !157
+   store ptr %t14.i51, ptr %t2.i36, align 8, !alias.scope !157
+-  br label %"wf_std.collections.vector.grow_vector_make_room$instance$979fcc4ac6e818fb.exit.sink.split"
++  store i64 8193, ptr %t2.i1, align 8
++  br label %placement.finish
+ 
+ bb8.i:                                            ; preds = %bb3.i6
+   tail call void @llvm.experimental.noalias.scope.decl(metadata !160)
+@@ -2073,13 +2144,69 @@
+ window.block.ready.v2.realloc.i27:                ; preds = %bb8.i
+   %v15.i = shl nuw nsw i64 %t1.i, 1
+   %route.copy.bytes.i28 = shl nuw nsw i64 %t1.i, 8
++  %placement.double.v15.31.i = add i64 %v1, 31
++  %placement.double.0 = insertelement <2 x i64> poison, i64 %v1, i64 0
++  %placement.double.1 = shufflevector <2 x i64> %placement.double.0, <2 x i64> poison, <2 x i32> zeroinitializer
++  %placement.double.2 = add <2 x i64> %placement.double.1, <i64 29, i64 30>
++  %placement.double.3 = add <2 x i64> %placement.double.1, <i64 27, i64 28>
++  %placement.double.4 = add <2 x i64> %placement.double.1, <i64 25, i64 26>
++  %placement.double.5 = add <2 x i64> %placement.double.1, <i64 23, i64 24>
++  %placement.double.6 = add <2 x i64> %placement.double.1, <i64 21, i64 22>
++  %placement.double.7 = add <2 x i64> %placement.double.1, <i64 19, i64 20>
++  %placement.double.8 = add <2 x i64> %placement.double.1, <i64 17, i64 18>
++  %placement.double.9 = add <2 x i64> %placement.double.1, <i64 15, i64 16>
++  %placement.double.10 = add <2 x i64> %placement.double.1, <i64 13, i64 14>
++  %placement.double.11 = add <2 x i64> %placement.double.1, <i64 11, i64 12>
++  %placement.double.12 = add <2 x i64> %placement.double.1, <i64 9, i64 10>
++  %placement.double.13 = add <2 x i64> %placement.double.1, <i64 7, i64 8>
++  %placement.double.14 = add <2 x i64> %placement.double.1, <i64 5, i64 6>
++  %placement.double.15 = add <2 x i64> %placement.double.1, <i64 3, i64 4>
++  %placement.double.16 = add <2 x i64> %placement.double.1, <i64 1, i64 2>
++  tail call void @llvm.experimental.noalias.scope.decl(metadata !163)
++  %placement.double.t2.nonnegative.i = icmp sgt i64 %t4.i, -1
++  tail call void @llvm.assume(i1 %placement.double.t2.nonnegative.i)
++  %placement.double.t2.i65 = getelementptr inbounds nuw %wf.t.ac26c585c4167c7a, ptr %t14.i25, i64 %t4.i
++  store i64 %v1, ptr %placement.double.t2.i65, align 1, !noalias !163
++  %placement.double.wf.slot.0.i.sroa.4.0.t2.i65.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.double.t2.i65, i64 8
++  store <2 x i64> %placement.double.16, ptr %placement.double.wf.slot.0.i.sroa.4.0.t2.i65.sroa_idx, align 1, !noalias !163
++  %placement.double.wf.slot.0.i.sroa.6.0.t2.i65.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.double.t2.i65, i64 24
++  store <2 x i64> %placement.double.15, ptr %placement.double.wf.slot.0.i.sroa.6.0.t2.i65.sroa_idx, align 1, !noalias !163
++  %placement.double.wf.slot.0.i.sroa.8.0.t2.i65.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.double.t2.i65, i64 40
++  store <2 x i64> %placement.double.14, ptr %placement.double.wf.slot.0.i.sroa.8.0.t2.i65.sroa_idx, align 1, !noalias !163
++  %placement.double.wf.slot.0.i.sroa.10.0.t2.i65.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.double.t2.i65, i64 56
++  store <2 x i64> %placement.double.13, ptr %placement.double.wf.slot.0.i.sroa.10.0.t2.i65.sroa_idx, align 1, !noalias !163
++  %placement.double.wf.slot.0.i.sroa.12.0.t2.i65.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.double.t2.i65, i64 72
++  store <2 x i64> %placement.double.12, ptr %placement.double.wf.slot.0.i.sroa.12.0.t2.i65.sroa_idx, align 1, !noalias !163
++  %placement.double.wf.slot.0.i.sroa.14.0.t2.i65.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.double.t2.i65, i64 88
++  store <2 x i64> %placement.double.11, ptr %placement.double.wf.slot.0.i.sroa.14.0.t2.i65.sroa_idx, align 1, !noalias !163
++  %placement.double.wf.slot.0.i.sroa.16.0.t2.i65.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.double.t2.i65, i64 104
++  store <2 x i64> %placement.double.10, ptr %placement.double.wf.slot.0.i.sroa.16.0.t2.i65.sroa_idx, align 1, !noalias !163
++  %placement.double.wf.slot.0.i.sroa.18.0.t2.i65.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.double.t2.i65, i64 120
++  store <2 x i64> %placement.double.9, ptr %placement.double.wf.slot.0.i.sroa.18.0.t2.i65.sroa_idx, align 1, !noalias !163
++  %placement.double.wf.slot.0.i.sroa.20.0.t2.i65.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.double.t2.i65, i64 136
++  store <2 x i64> %placement.double.8, ptr %placement.double.wf.slot.0.i.sroa.20.0.t2.i65.sroa_idx, align 1, !noalias !163
++  %placement.double.wf.slot.0.i.sroa.22.0.t2.i65.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.double.t2.i65, i64 152
++  store <2 x i64> %placement.double.7, ptr %placement.double.wf.slot.0.i.sroa.22.0.t2.i65.sroa_idx, align 1, !noalias !163
++  %placement.double.wf.slot.0.i.sroa.24.0.t2.i65.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.double.t2.i65, i64 168
++  store <2 x i64> %placement.double.6, ptr %placement.double.wf.slot.0.i.sroa.24.0.t2.i65.sroa_idx, align 1, !noalias !163
++  %placement.double.wf.slot.0.i.sroa.26.0.t2.i65.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.double.t2.i65, i64 184
++  store <2 x i64> %placement.double.5, ptr %placement.double.wf.slot.0.i.sroa.26.0.t2.i65.sroa_idx, align 1, !noalias !163
++  %placement.double.wf.slot.0.i.sroa.28.0.t2.i65.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.double.t2.i65, i64 200
++  store <2 x i64> %placement.double.4, ptr %placement.double.wf.slot.0.i.sroa.28.0.t2.i65.sroa_idx, align 1, !noalias !163
++  %placement.double.wf.slot.0.i.sroa.30.0.t2.i65.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.double.t2.i65, i64 216
++  store <2 x i64> %placement.double.3, ptr %placement.double.wf.slot.0.i.sroa.30.0.t2.i65.sroa_idx, align 1, !noalias !163
++  %placement.double.wf.slot.0.i.sroa.32.0.t2.i65.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.double.t2.i65, i64 232
++  store <2 x i64> %placement.double.2, ptr %placement.double.wf.slot.0.i.sroa.32.0.t2.i65.sroa_idx, align 1, !noalias !163
++  %placement.double.wf.slot.0.i.sroa.34.0.t2.i65.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.double.t2.i65, i64 248
++  store i64 %placement.double.v15.31.i, ptr %placement.double.wf.slot.0.i.sroa.34.0.t2.i65.sroa_idx, align 1, !noalias !163
+   tail call void @llvm.memcpy.p0.p0.i64(ptr nonnull align 1 %t14.i25, ptr align 1 %t5.i13, i64 %route.copy.bytes.i28, i1 false), !noalias !160
+   tail call void @free(ptr %t5.i13), !noalias !160
+   store ptr %t14.i25, ptr %t2.i10, align 8, !alias.scope !160
+-  br label %"wf_std.collections.vector.grow_vector_make_room$instance$979fcc4ac6e818fb.exit.sink.split"
++  store i64 %v15.i, ptr %t2.i1, align 8
++  br label %placement.finish
+ 
+ "wf_std.collections.vector.grow_vector_make_room$instance$979fcc4ac6e818fb.exit.sink.split": ; preds = %window.block.ready.v2.realloc.i27, %window.block.ready.v2.realloc.i53, %"wf_grow$instance$04ee659886c12146.exit"
+-  %.sink = phi i64 [ 1, %"wf_grow$instance$04ee659886c12146.exit" ], [ 8193, %window.block.ready.v2.realloc.i53 ], [ %v15.i, %window.block.ready.v2.realloc.i27 ]
++  %.sink = phi i64 [ 1, %"wf_grow$instance$04ee659886c12146.exit" ]
+   store i64 %.sink, ptr %t2.i1, align 8
+   br label %"wf_std.collections.vector.grow_vector_make_room$instance$979fcc4ac6e818fb.exit"
+ 
+@@ -2141,6 +2268,9 @@
+   store <2 x i64> %2, ptr %wf.slot.0.i.sroa.32.0.t2.i65.sroa_idx, align 1, !noalias !163
+   %wf.slot.0.i.sroa.34.0.t2.i65.sroa_idx = getelementptr inbounds nuw i8, ptr %t2.i65, i64 248
+   store i64 %v15.31.i, ptr %wf.slot.0.i.sroa.34.0.t2.i65.sroa_idx, align 1, !noalias !163
++  br label %placement.finish
++
++placement.finish:
+   %t5.i66 = add nuw i64 %t4.i, 1
+   store i64 %t5.i66, ptr %v0, align 8, !alias.scope !163
+   ret i64 %t5.i66
+--- a/candidate-account.ll
++++ b/candidate-account.ll
+@@ -1702,10 +1702,16 @@
+   %t5.i31 = load ptr, ptr %t2.i28, align 8, !alias.scope !130
+   %t14.i40 = tail call ptr @wf_cost_allocate(i64 65544), !noalias !130
+   %route.copy.bytes.i41 = shl nuw nsw i64 %t1.i, 3
++  tail call void @llvm.experimental.noalias.scope.decl(metadata !136)
++  %placement.sat.t2.nonnegative.i = icmp sgt i64 %t4.i, -1
++  tail call void @llvm.assume(i1 %placement.sat.t2.nonnegative.i)
++  %placement.sat.t2.i49 = getelementptr inbounds nuw i64, ptr %t14.i40, i64 %t4.i
++  store i64 %v1, ptr %placement.sat.t2.i49, align 8, !noalias !136
+   tail call void @llvm.memcpy.p0.p0.i64(ptr nonnull align 1 %t14.i40, ptr align 1 %t5.i31, i64 %route.copy.bytes.i41, i1 false), !noalias !130
+   tail call void @wf_cost_release(ptr %t5.i31), !noalias !130
+   store ptr %t14.i40, ptr %t2.i28, align 8, !alias.scope !130
+-  br label %"wf_std.collections.vector.grow_vector_make_room$instance$8c4c85d67cb438a6.exit.sink.split"
++  store i64 8193, ptr %t2.i1, align 8
++  br label %placement.finish
+ 
+ bb8.i:                                            ; preds = %bb3.i6
+   %v15.i = shl nuw nsw i64 %t1.i, 1
+@@ -1715,13 +1721,19 @@
+   %t13.i = shl nuw nsw i64 %t1.i, 4
+   %t14.i22 = tail call ptr @wf_cost_allocate(i64 %t13.i), !noalias !133
+   %route.copy.bytes.i23 = shl nuw nsw i64 %t1.i, 3
++  tail call void @llvm.experimental.noalias.scope.decl(metadata !136)
++  %placement.double.t2.nonnegative.i = icmp sgt i64 %t4.i, -1
++  tail call void @llvm.assume(i1 %placement.double.t2.nonnegative.i)
++  %placement.double.t2.i49 = getelementptr inbounds nuw i64, ptr %t14.i22, i64 %t4.i
++  store i64 %v1, ptr %placement.double.t2.i49, align 8, !noalias !136
+   tail call void @llvm.memcpy.p0.p0.i64(ptr nonnull align 1 %t14.i22, ptr align 1 %t5.i13, i64 %route.copy.bytes.i23, i1 false), !noalias !133
+   tail call void @wf_cost_release(ptr %t5.i13), !noalias !133
+   store ptr %t14.i22, ptr %t2.i10, align 8, !alias.scope !133
+-  br label %"wf_std.collections.vector.grow_vector_make_room$instance$8c4c85d67cb438a6.exit.sink.split"
++  store i64 %v15.i, ptr %t2.i1, align 8
++  br label %placement.finish
+ 
+ "wf_std.collections.vector.grow_vector_make_room$instance$8c4c85d67cb438a6.exit.sink.split": ; preds = %bb8.i, %window.grow.allocated.v2.i33, %"wf_grow$instance$e194368921a477a7.exit"
+-  %.sink = phi i64 [ 1, %"wf_grow$instance$e194368921a477a7.exit" ], [ 8193, %window.grow.allocated.v2.i33 ], [ %v15.i, %bb8.i ]
++  %.sink = phi i64 [ 1, %"wf_grow$instance$e194368921a477a7.exit" ]
+   store i64 %.sink, ptr %t2.i1, align 8
+   br label %"wf_std.collections.vector.grow_vector_make_room$instance$8c4c85d67cb438a6.exit"
+ 
+@@ -1733,6 +1745,9 @@
+   %t4.i48 = load ptr, ptr %t3.i47, align 8, !alias.scope !136
+   %t2.i49 = getelementptr inbounds nuw i64, ptr %t4.i48, i64 %t4.i
+   store i64 %v1, ptr %t2.i49, align 8, !noalias !136
++  br label %placement.finish
++
++placement.finish:
+   %t5.i50 = add nuw i64 %t4.i, 1
+   store i64 %t5.i50, ptr %v0, align 8, !alias.scope !136
+   ret i64 %t5.i50
+@@ -1771,10 +1786,66 @@
+   %t5.i31 = load ptr, ptr %t2.i28, align 8, !alias.scope !145
+   %t14.i40 = tail call ptr @wf_cost_allocate(i64 2097408), !noalias !145
+   %route.copy.bytes.i41 = shl nuw nsw i64 %t1.i, 8
++  %placement.sat.v15.31.i = add i64 %v1, 31
++  %placement.sat.0 = insertelement <2 x i64> poison, i64 %v1, i64 0
++  %placement.sat.1 = shufflevector <2 x i64> %placement.sat.0, <2 x i64> poison, <2 x i32> zeroinitializer
++  %placement.sat.2 = add <2 x i64> %placement.sat.1, <i64 29, i64 30>
++  %placement.sat.3 = add <2 x i64> %placement.sat.1, <i64 27, i64 28>
++  %placement.sat.4 = add <2 x i64> %placement.sat.1, <i64 25, i64 26>
++  %placement.sat.5 = add <2 x i64> %placement.sat.1, <i64 23, i64 24>
++  %placement.sat.6 = add <2 x i64> %placement.sat.1, <i64 21, i64 22>
++  %placement.sat.7 = add <2 x i64> %placement.sat.1, <i64 19, i64 20>
++  %placement.sat.8 = add <2 x i64> %placement.sat.1, <i64 17, i64 18>
++  %placement.sat.9 = add <2 x i64> %placement.sat.1, <i64 15, i64 16>
++  %placement.sat.10 = add <2 x i64> %placement.sat.1, <i64 13, i64 14>
++  %placement.sat.11 = add <2 x i64> %placement.sat.1, <i64 11, i64 12>
++  %placement.sat.12 = add <2 x i64> %placement.sat.1, <i64 9, i64 10>
++  %placement.sat.13 = add <2 x i64> %placement.sat.1, <i64 7, i64 8>
++  %placement.sat.14 = add <2 x i64> %placement.sat.1, <i64 5, i64 6>
++  %placement.sat.15 = add <2 x i64> %placement.sat.1, <i64 3, i64 4>
++  %placement.sat.16 = add <2 x i64> %placement.sat.1, <i64 1, i64 2>
++  tail call void @llvm.experimental.noalias.scope.decl(metadata !151)
++  %placement.sat.t2.nonnegative.i = icmp sgt i64 %t4.i, -1
++  tail call void @llvm.assume(i1 %placement.sat.t2.nonnegative.i)
++  %placement.sat.t2.i49 = getelementptr inbounds nuw %wf.t.ac26c585c4167c7a, ptr %t14.i40, i64 %t4.i
++  store i64 %v1, ptr %placement.sat.t2.i49, align 1, !noalias !151
++  %placement.sat.wf.slot.0.i.sroa.4.0.t2.i49.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.sat.t2.i49, i64 8
++  store <2 x i64> %placement.sat.16, ptr %placement.sat.wf.slot.0.i.sroa.4.0.t2.i49.sroa_idx, align 1, !noalias !151
++  %placement.sat.wf.slot.0.i.sroa.6.0.t2.i49.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.sat.t2.i49, i64 24
++  store <2 x i64> %placement.sat.15, ptr %placement.sat.wf.slot.0.i.sroa.6.0.t2.i49.sroa_idx, align 1, !noalias !151
++  %placement.sat.wf.slot.0.i.sroa.8.0.t2.i49.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.sat.t2.i49, i64 40
++  store <2 x i64> %placement.sat.14, ptr %placement.sat.wf.slot.0.i.sroa.8.0.t2.i49.sroa_idx, align 1, !noalias !151
++  %placement.sat.wf.slot.0.i.sroa.10.0.t2.i49.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.sat.t2.i49, i64 56
++  store <2 x i64> %placement.sat.13, ptr %placement.sat.wf.slot.0.i.sroa.10.0.t2.i49.sroa_idx, align 1, !noalias !151
++  %placement.sat.wf.slot.0.i.sroa.12.0.t2.i49.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.sat.t2.i49, i64 72
++  store <2 x i64> %placement.sat.12, ptr %placement.sat.wf.slot.0.i.sroa.12.0.t2.i49.sroa_idx, align 1, !noalias !151
++  %placement.sat.wf.slot.0.i.sroa.14.0.t2.i49.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.sat.t2.i49, i64 88
++  store <2 x i64> %placement.sat.11, ptr %placement.sat.wf.slot.0.i.sroa.14.0.t2.i49.sroa_idx, align 1, !noalias !151
++  %placement.sat.wf.slot.0.i.sroa.16.0.t2.i49.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.sat.t2.i49, i64 104
++  store <2 x i64> %placement.sat.10, ptr %placement.sat.wf.slot.0.i.sroa.16.0.t2.i49.sroa_idx, align 1, !noalias !151
++  %placement.sat.wf.slot.0.i.sroa.18.0.t2.i49.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.sat.t2.i49, i64 120
++  store <2 x i64> %placement.sat.9, ptr %placement.sat.wf.slot.0.i.sroa.18.0.t2.i49.sroa_idx, align 1, !noalias !151
++  %placement.sat.wf.slot.0.i.sroa.20.0.t2.i49.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.sat.t2.i49, i64 136
++  store <2 x i64> %placement.sat.8, ptr %placement.sat.wf.slot.0.i.sroa.20.0.t2.i49.sroa_idx, align 1, !noalias !151
++  %placement.sat.wf.slot.0.i.sroa.22.0.t2.i49.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.sat.t2.i49, i64 152
++  store <2 x i64> %placement.sat.7, ptr %placement.sat.wf.slot.0.i.sroa.22.0.t2.i49.sroa_idx, align 1, !noalias !151
++  %placement.sat.wf.slot.0.i.sroa.24.0.t2.i49.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.sat.t2.i49, i64 168
++  store <2 x i64> %placement.sat.6, ptr %placement.sat.wf.slot.0.i.sroa.24.0.t2.i49.sroa_idx, align 1, !noalias !151
++  %placement.sat.wf.slot.0.i.sroa.26.0.t2.i49.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.sat.t2.i49, i64 184
++  store <2 x i64> %placement.sat.5, ptr %placement.sat.wf.slot.0.i.sroa.26.0.t2.i49.sroa_idx, align 1, !noalias !151
++  %placement.sat.wf.slot.0.i.sroa.28.0.t2.i49.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.sat.t2.i49, i64 200
++  store <2 x i64> %placement.sat.4, ptr %placement.sat.wf.slot.0.i.sroa.28.0.t2.i49.sroa_idx, align 1, !noalias !151
++  %placement.sat.wf.slot.0.i.sroa.30.0.t2.i49.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.sat.t2.i49, i64 216
++  store <2 x i64> %placement.sat.3, ptr %placement.sat.wf.slot.0.i.sroa.30.0.t2.i49.sroa_idx, align 1, !noalias !151
++  %placement.sat.wf.slot.0.i.sroa.32.0.t2.i49.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.sat.t2.i49, i64 232
++  store <2 x i64> %placement.sat.2, ptr %placement.sat.wf.slot.0.i.sroa.32.0.t2.i49.sroa_idx, align 1, !noalias !151
++  %placement.sat.wf.slot.0.i.sroa.34.0.t2.i49.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.sat.t2.i49, i64 248
++  store i64 %placement.sat.v15.31.i, ptr %placement.sat.wf.slot.0.i.sroa.34.0.t2.i49.sroa_idx, align 1, !noalias !151
+   tail call void @llvm.memcpy.p0.p0.i64(ptr nonnull align 1 %t14.i40, ptr align 1 %t5.i31, i64 %route.copy.bytes.i41, i1 false), !noalias !145
+   tail call void @wf_cost_release(ptr %t5.i31), !noalias !145
+   store ptr %t14.i40, ptr %t2.i28, align 8, !alias.scope !145
+-  br label %"wf_std.collections.vector.grow_vector_make_room$instance$979fcc4ac6e818fb.exit.sink.split"
++  store i64 8193, ptr %t2.i1, align 8
++  br label %placement.finish
+ 
+ bb8.i:                                            ; preds = %bb3.i6
+   %v15.i = shl nuw nsw i64 %t1.i, 1
+@@ -1784,13 +1855,69 @@
+   %t13.i = shl nuw nsw i64 %t1.i, 9
+   %t14.i22 = tail call ptr @wf_cost_allocate(i64 %t13.i), !noalias !148
+   %route.copy.bytes.i23 = shl nuw nsw i64 %t1.i, 8
++  %placement.double.v15.31.i = add i64 %v1, 31
++  %placement.double.0 = insertelement <2 x i64> poison, i64 %v1, i64 0
++  %placement.double.1 = shufflevector <2 x i64> %placement.double.0, <2 x i64> poison, <2 x i32> zeroinitializer
++  %placement.double.2 = add <2 x i64> %placement.double.1, <i64 29, i64 30>
++  %placement.double.3 = add <2 x i64> %placement.double.1, <i64 27, i64 28>
++  %placement.double.4 = add <2 x i64> %placement.double.1, <i64 25, i64 26>
++  %placement.double.5 = add <2 x i64> %placement.double.1, <i64 23, i64 24>
++  %placement.double.6 = add <2 x i64> %placement.double.1, <i64 21, i64 22>
++  %placement.double.7 = add <2 x i64> %placement.double.1, <i64 19, i64 20>
++  %placement.double.8 = add <2 x i64> %placement.double.1, <i64 17, i64 18>
++  %placement.double.9 = add <2 x i64> %placement.double.1, <i64 15, i64 16>
++  %placement.double.10 = add <2 x i64> %placement.double.1, <i64 13, i64 14>
++  %placement.double.11 = add <2 x i64> %placement.double.1, <i64 11, i64 12>
++  %placement.double.12 = add <2 x i64> %placement.double.1, <i64 9, i64 10>
++  %placement.double.13 = add <2 x i64> %placement.double.1, <i64 7, i64 8>
++  %placement.double.14 = add <2 x i64> %placement.double.1, <i64 5, i64 6>
++  %placement.double.15 = add <2 x i64> %placement.double.1, <i64 3, i64 4>
++  %placement.double.16 = add <2 x i64> %placement.double.1, <i64 1, i64 2>
++  tail call void @llvm.experimental.noalias.scope.decl(metadata !151)
++  %placement.double.t2.nonnegative.i = icmp sgt i64 %t4.i, -1
++  tail call void @llvm.assume(i1 %placement.double.t2.nonnegative.i)
++  %placement.double.t2.i49 = getelementptr inbounds nuw %wf.t.ac26c585c4167c7a, ptr %t14.i22, i64 %t4.i
++  store i64 %v1, ptr %placement.double.t2.i49, align 1, !noalias !151
++  %placement.double.wf.slot.0.i.sroa.4.0.t2.i49.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.double.t2.i49, i64 8
++  store <2 x i64> %placement.double.16, ptr %placement.double.wf.slot.0.i.sroa.4.0.t2.i49.sroa_idx, align 1, !noalias !151
++  %placement.double.wf.slot.0.i.sroa.6.0.t2.i49.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.double.t2.i49, i64 24
++  store <2 x i64> %placement.double.15, ptr %placement.double.wf.slot.0.i.sroa.6.0.t2.i49.sroa_idx, align 1, !noalias !151
++  %placement.double.wf.slot.0.i.sroa.8.0.t2.i49.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.double.t2.i49, i64 40
++  store <2 x i64> %placement.double.14, ptr %placement.double.wf.slot.0.i.sroa.8.0.t2.i49.sroa_idx, align 1, !noalias !151
++  %placement.double.wf.slot.0.i.sroa.10.0.t2.i49.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.double.t2.i49, i64 56
++  store <2 x i64> %placement.double.13, ptr %placement.double.wf.slot.0.i.sroa.10.0.t2.i49.sroa_idx, align 1, !noalias !151
++  %placement.double.wf.slot.0.i.sroa.12.0.t2.i49.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.double.t2.i49, i64 72
++  store <2 x i64> %placement.double.12, ptr %placement.double.wf.slot.0.i.sroa.12.0.t2.i49.sroa_idx, align 1, !noalias !151
++  %placement.double.wf.slot.0.i.sroa.14.0.t2.i49.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.double.t2.i49, i64 88
++  store <2 x i64> %placement.double.11, ptr %placement.double.wf.slot.0.i.sroa.14.0.t2.i49.sroa_idx, align 1, !noalias !151
++  %placement.double.wf.slot.0.i.sroa.16.0.t2.i49.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.double.t2.i49, i64 104
++  store <2 x i64> %placement.double.10, ptr %placement.double.wf.slot.0.i.sroa.16.0.t2.i49.sroa_idx, align 1, !noalias !151
++  %placement.double.wf.slot.0.i.sroa.18.0.t2.i49.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.double.t2.i49, i64 120
++  store <2 x i64> %placement.double.9, ptr %placement.double.wf.slot.0.i.sroa.18.0.t2.i49.sroa_idx, align 1, !noalias !151
++  %placement.double.wf.slot.0.i.sroa.20.0.t2.i49.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.double.t2.i49, i64 136
++  store <2 x i64> %placement.double.8, ptr %placement.double.wf.slot.0.i.sroa.20.0.t2.i49.sroa_idx, align 1, !noalias !151
++  %placement.double.wf.slot.0.i.sroa.22.0.t2.i49.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.double.t2.i49, i64 152
++  store <2 x i64> %placement.double.7, ptr %placement.double.wf.slot.0.i.sroa.22.0.t2.i49.sroa_idx, align 1, !noalias !151
++  %placement.double.wf.slot.0.i.sroa.24.0.t2.i49.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.double.t2.i49, i64 168
++  store <2 x i64> %placement.double.6, ptr %placement.double.wf.slot.0.i.sroa.24.0.t2.i49.sroa_idx, align 1, !noalias !151
++  %placement.double.wf.slot.0.i.sroa.26.0.t2.i49.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.double.t2.i49, i64 184
++  store <2 x i64> %placement.double.5, ptr %placement.double.wf.slot.0.i.sroa.26.0.t2.i49.sroa_idx, align 1, !noalias !151
++  %placement.double.wf.slot.0.i.sroa.28.0.t2.i49.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.double.t2.i49, i64 200
++  store <2 x i64> %placement.double.4, ptr %placement.double.wf.slot.0.i.sroa.28.0.t2.i49.sroa_idx, align 1, !noalias !151
++  %placement.double.wf.slot.0.i.sroa.30.0.t2.i49.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.double.t2.i49, i64 216
++  store <2 x i64> %placement.double.3, ptr %placement.double.wf.slot.0.i.sroa.30.0.t2.i49.sroa_idx, align 1, !noalias !151
++  %placement.double.wf.slot.0.i.sroa.32.0.t2.i49.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.double.t2.i49, i64 232
++  store <2 x i64> %placement.double.2, ptr %placement.double.wf.slot.0.i.sroa.32.0.t2.i49.sroa_idx, align 1, !noalias !151
++  %placement.double.wf.slot.0.i.sroa.34.0.t2.i49.sroa_idx = getelementptr inbounds nuw i8, ptr %placement.double.t2.i49, i64 248
++  store i64 %placement.double.v15.31.i, ptr %placement.double.wf.slot.0.i.sroa.34.0.t2.i49.sroa_idx, align 1, !noalias !151
+   tail call void @llvm.memcpy.p0.p0.i64(ptr nonnull align 1 %t14.i22, ptr align 1 %t5.i13, i64 %route.copy.bytes.i23, i1 false), !noalias !148
+   tail call void @wf_cost_release(ptr %t5.i13), !noalias !148
+   store ptr %t14.i22, ptr %t2.i10, align 8, !alias.scope !148
+-  br label %"wf_std.collections.vector.grow_vector_make_room$instance$979fcc4ac6e818fb.exit.sink.split"
++  store i64 %v15.i, ptr %t2.i1, align 8
++  br label %placement.finish
+ 
+ "wf_std.collections.vector.grow_vector_make_room$instance$979fcc4ac6e818fb.exit.sink.split": ; preds = %bb8.i, %window.grow.allocated.v2.i33, %"wf_grow$instance$04ee659886c12146.exit"
+-  %.sink = phi i64 [ 1, %"wf_grow$instance$04ee659886c12146.exit" ], [ 8193, %window.grow.allocated.v2.i33 ], [ %v15.i, %bb8.i ]
++  %.sink = phi i64 [ 1, %"wf_grow$instance$04ee659886c12146.exit" ]
+   store i64 %.sink, ptr %t2.i1, align 8
+   br label %"wf_std.collections.vector.grow_vector_make_room$instance$979fcc4ac6e818fb.exit"
+ 
+@@ -1852,6 +1979,9 @@
+   store <2 x i64> %2, ptr %wf.slot.0.i.sroa.32.0.t2.i49.sroa_idx, align 1, !noalias !151
+   %wf.slot.0.i.sroa.34.0.t2.i49.sroa_idx = getelementptr inbounds nuw i8, ptr %t2.i49, i64 248
+   store i64 %v15.31.i, ptr %wf.slot.0.i.sroa.34.0.t2.i49.sroa_idx, align 1, !noalias !151
++  br label %placement.finish
++
++placement.finish:
+   %t5.i50 = add nuw i64 %t4.i, 1
+   store i64 %t5.i50, ptr %v0, align 8, !alias.scope !151
+   ret i64 %t5.i50
+--- /dev/null
++++ b/focused/instrument.py
+@@ -0,0 +1,99 @@
++#!/usr/bin/env python3
++"""Reproduce the focused observer IR from frozen timed inputs; no native build."""
++from pathlib import Path
++import difflib
++import hashlib
++import json
++import re
++
++here = Path(__file__).resolve().parent
++root = here.parent
++records = {}
++def function_pattern():
++    return r'^(define[^\n]*@(?:"([^"]+)"|([^\s(]+))\([^\n]*\)[^\n]*\{)\n(.*?)^\}'
++symbol_pattern = r'@(?:"([^"]+)"|([^\s(]+))\('
++for variant in ("baseline", "candidate"):
++    source = root / (variant + '-timed.ll')
++    original = source.read_text()
++    text = original
++    definitions = {'malloc': ('wf_placement_allocate', 'declare ptr @wf_placement_allocate(i64)'),
++                   'free': ('wf_placement_release', 'declare void @wf_placement_release(ptr)'),
++                   'llvm.memcpy.p0.p0.i64': ('wf_placement_copy', 'declare void @wf_placement_copy(ptr, ptr, i64, i1)')}
++    counts = {}
++    for old, (new, declaration) in definitions.items():
++        text, number = re.subn(r'^declare[^\n]*@' + re.escape(old) + r'\([^\n]*$', declaration, text, flags=re.M)
++        assert number == 1, (variant, old, 'declaration', number)
++        number = 0
++        lines = []
++        for line in text.splitlines(True):
++            if 'call ' in line and '@' + old + '(' in line:
++                prefix, arguments = line.split('@' + old + '(', 1)
++                arguments = arguments.split(')', 1)[0]
++                # The frozen calls have only simple SSA/constant operands;
++                # argument attributes can contain parentheses, so parse types
++                # using the full call text up to its last argument instead.
++                operands = re.findall(r'(ptr|i64|i1)\s+(?:[^,@\n]*?\s+)?(%[A-Za-z0-9_.-]+|true|false|-?[0-9]+)(?=,|\))', line.split('@' + old + '(', 1)[1])
++                expected = 1 if old in ('malloc', 'free') else 4
++                assert len(operands) == expected, (variant, old, line, operands)
++                if old == 'malloc':
++                    lhs = re.match(r'\s*(%[^\s=]+)\s*=', prefix).group(1)
++                    line = '  ' + lhs + ' = call ptr @' + new + '(' + ', '.join(t + ' ' + v for t, v in operands) + ')\n'
++                else:
++                    line = '  call void @' + new + '(' + ', '.join(t + ' ' + v for t, v in operands) + ')\n'
++                number += 1
++            lines.append(line)
++        text = ''.join(lines)
++        counts[old] = number
++    pattern = r'^define private fastcc void @wf_resource_abort\([^\n]*\{\n.*?^\}'
++    text, number = re.subn(pattern, 'declare void @wf_placement_abort() noreturn\n\ndefine private fastcc void @wf_resource_abort() noreturn {\nentry:\n  call void @wf_placement_abort()\n  unreachable\n}', text, flags=re.M | re.S)
++    assert number == 1
++    # Clone effect groups for the full transitive caller closure. Original
++    # intrinsic groups stay untouched. Public argument/return ABI is retained.
++    functions = list(re.finditer(function_pattern(), text, re.M | re.S))
++    calls = {(m[2] or m[3]): {a or b for a, b in re.findall(symbol_pattern, m[4])} for m in functions}
++    affected = {'wf_placement_allocate', 'wf_placement_release', 'wf_placement_copy', 'wf_placement_abort', 'wf_resource_abort'}
++    while True:
++        added = {name for name, targets in calls.items() if targets & affected} - affected
++        if not added:
++            break
++        affected |= added
++    groups = {int(n): body for n, body in re.findall(r'^attributes #(\d+) = \{ (.*) \}$', text, re.M)}
++    mapping = {}
++    appended = []
++    for m in reversed(functions):
++        if (m[2] or m[3]) not in affected:
++            continue
++        header = m[1]
++        for old_group in re.findall(r'#(\d+)\b', header):
++            old_group = int(old_group)
++            if old_group not in mapping:
++                body = groups[old_group]
++                body = re.sub(r'\bmemory\([^)]*\)', '', body)
++                body = re.sub(r'\b(?:mustprogress|nocallback|nofree|nosync|nounwind|willreturn|norecurse|speculatable)\b', '', body)
++                body = ' '.join(body.split())
++                new_group = max(groups) + 1 + len(mapping)
++                mapping[old_group] = new_group
++                appended.append('attributes #' + str(new_group) + ' = { ' + body + ' }')
++            header = re.sub(r'#' + str(old_group) + r'\b', '#' + str(mapping[old_group]), header)
++        replacement = header + '\n' + m[4] + '}'
++        text = text[:m.start()] + replacement + text[m.end():]
++    lines = []
++    for line in text.splitlines(True):
++        targets = {a or b for a, b in re.findall(symbol_pattern, line)} if 'call ' in line else set()
++        if targets & affected:
++            line = re.sub(r', ![A-Za-z0-9_.]+ !\d+', '', line)
++            line = re.sub(r' #(\d+)\b', lambda m: ' #' + str(mapping.get(int(m[1]), int(m[1]))), line)
++        lines.append(line)
++    text = ''.join(lines) + '\n' + '\n'.join(appended) + '\n'
++    text = text.replace('@wf__main_body(', '@wf__fixture_body(')
++    # The frozen timed module already names its original entry wf_fixture_main.
++    assert not re.search(r'@(?:malloc|free|llvm\.memcpy\.p0\.p0\.i64)\(', text)
++    output = here / (variant + '-observed.ll')
++    output.write_text(text)
++    (here / (variant + '-instrumentation.patch')).write_text(''.join(difflib.unified_diff(original.splitlines(True), text.splitlines(True), fromfile=variant+'-timed.ll', tofile=variant+'-observed.ll')))
++    records[variant] = {'source': str(source), 'source_sha256': hashlib.sha256(original.encode()).hexdigest(),
++                        'output_sha256': hashlib.sha256(text.encode()).hexdigest(),
++                        'instrumented_calls': counts, 'effect_groups_cloned': mapping,
++                        'affected_definitions': sorted(set(calls) & affected)}
++(here / 'instrumentation.json').write_text(json.dumps(records, indent=2) + '\n')
++print(json.dumps({key: value['instrumented_calls'] for key, value in records.items()}, indent=2))
+--- /dev/null
++++ b/focused/observer.c
+@@ -0,0 +1,141 @@
++/* Independent observer for the edited concrete append-one timed paths. */
++#include <stdint.h>
++#include <stdbool.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++struct descriptor { uint64_t len, cap; unsigned char *payload; };
++struct guarded_owner { uint64_t before[2]; struct descriptor value; uint64_t after[2]; };
++_Static_assert(sizeof(struct descriptor)==24,"ordinary inline owner extent");
++extern uint64_t wf_vector_api_word_append_one(struct descriptor *, uint64_t);
++extern uint64_t wf_vector_api_record_append_one(struct descriptor *, uint64_t);
++extern int wf__floor_run(int, char **);
++struct allocation { unsigned char *pointer; size_t bytes, backing; bool live; };
++static struct allocation allocations[2];
++static size_t requests, successes, copies, releases, requested_bytes, live_bytes, peak_bytes;
++static size_t stride, old_cap, new_cap, old_bytes, new_bytes;
++static bool refusing;
++static struct guarded_owner owner, original_owner;
++static unsigned char *original_payload;
++static const uint64_t old_seed=17, appended_seed=29;
++static void require(bool okay, const char *message) {
++    if (!okay) { fprintf(stderr,"fresh placement observer: %s\n",message); exit(1); }
++}
++static uint64_t read_word(const unsigned char *p) { uint64_t n; memcpy(&n,p,8); return n; }
++static void check_old(void) {
++    require(allocations[0].live,"old allocation remains live");
++    require(memcmp(allocations[0].pointer,original_payload,old_bytes+stride)==0,
++            "all old prefix and guarded spare bytes unchanged");
++}
++static void check_owner(void) {
++    require(memcmp(&owner,&original_owner,sizeof owner)==0,
++            "all descriptor words and surrounding canaries unchanged");
++}
++static void check_appended(const unsigned char *p) {
++    for(size_t word=0;word<stride/8;++word)
++        require(read_word(p+word*8)==appended_seed+word,"all fresh appended fields precede prefix copy");
++}
++static void check_result(const unsigned char *p) {
++    for(size_t element=0;element<old_cap;++element)
++        for(size_t word=0;word<stride/8;++word)
++            require(read_word(p+element*stride+word*8)==old_seed+element+word,
++                    "complete preserved prefix value and order");
++    check_appended(p+old_bytes);
++    for(size_t byte=old_bytes+stride;byte<new_bytes;++byte)
++        require(p[byte]==0xa6,"remaining fresh spare bytes untouched");
++}
++void *wf_placement_allocate(uint64_t bytes) {
++    require(requests==0 && bytes==new_bytes,"one exact append allocation request");
++    ++requests; requested_bytes+=(size_t)bytes;
++    check_old();
++    if(refusing) { check_owner(); return NULL; }
++    struct allocation *fresh=&allocations[1];
++    fresh->pointer=malloc((size_t)bytes); require(fresh->pointer!=NULL,"observer backing allocation");
++    fresh->bytes=fresh->backing=(size_t)bytes; fresh->live=true;
++    memset(fresh->pointer,0xa6,fresh->backing); ++successes;
++    live_bytes+=fresh->bytes; if(live_bytes>peak_bytes) peak_bytes=live_bytes;
++    return fresh->pointer;
++}
++void wf_placement_copy(void *destination,const void *source,uint64_t bytes,bool is_volatile) {
++    require(!refusing,"no prefix copy after allocation refusal");
++    require(requests==1 && successes==1 && copies==0 && releases==0 && !is_volatile,
++            "exact successful allocation before prefix copy");
++    require(destination==allocations[1].pointer && source==allocations[0].pointer
++            && allocations[1].live && bytes==old_bytes,"exact initialized prefix copy extent and identities");
++    check_old(); check_appended((const unsigned char *)destination+old_bytes);
++    ++copies; memcpy(destination,source,(size_t)bytes);
++}
++void wf_placement_release(void *pointer) {
++    require(!refusing,"no release after allocation refusal");
++    size_t at=pointer==allocations[0].pointer ? 0 : pointer==allocations[1].pointer ? 1 : 2;
++    require(at<2 && allocations[at].live,"release is one tracked live allocation");
++    if(at==0) {
++        require(copies==1 && releases==0,"old retirement follows one prefix copy");
++        check_old(); check_result(allocations[1].pointer);
++    } else {
++        require(copies==1 && releases==1 && !allocations[0].live,"fresh cleanup follows old retirement");
++        check_result(allocations[1].pointer);
++    }
++    allocations[at].live=false; live_bytes-=allocations[at].bytes; ++releases;
++    memset(pointer,0xdd,allocations[at].backing);
++}
++_Noreturn void wf_placement_abort(void) {
++    require(refusing && requests==1 && successes==0 && requested_bytes==new_bytes
++            && copies==0 && releases==0 && live_bytes==old_bytes && peak_bytes==old_bytes,
++            "NULL floor has exact refused-allocation ledger and no copy/free");
++    check_old(); check_owner();
++    printf("fresh placement: %s cap%zu actual NULL preserves complete old state\n",stride==8 ? "word":"record",old_cap);
++    exit(73);
++}
++static void run_case(size_t width,size_t capacity,bool fail) {
++    stride=width; old_cap=capacity; new_cap=capacity==1 ? 2 : 8193;
++    old_bytes=old_cap*stride; new_bytes=new_cap*stride; refusing=fail;
++    memset(allocations,0,sizeof allocations); requests=successes=copies=releases=requested_bytes=0;
++    live_bytes=peak_bytes=old_bytes;
++    allocations[0]=(struct allocation){malloc(old_bytes+stride),old_bytes,old_bytes+stride,true};
++    original_payload=malloc(old_bytes+stride);
++    require(allocations[0].pointer && original_payload,"observer initial backing and snapshot");
++    memset(allocations[0].pointer,0xa6,old_bytes+stride);
++    for(size_t element=0;element<old_cap;++element)
++        for(size_t word=0;word<stride/8;++word) {
++            uint64_t value=old_seed+element+word;
++            memcpy(allocations[0].pointer+element*stride+word*8,&value,8);
++        }
++    memcpy(original_payload,allocations[0].pointer,old_bytes+stride);
++    owner=(struct guarded_owner){{UINT64_C(0x3456789abcdef012),UINT64_C(0xfedcba9876543210)},
++        {old_cap,old_cap,allocations[0].pointer},
++        {UINT64_C(0x0123456789abcdef),UINT64_C(0xabcdef0123456789)}};
++    original_owner=owner;
++    uint64_t result=(width==8 ? wf_vector_api_word_append_one : wf_vector_api_record_append_one)
++        (&owner.value,appended_seed);
++    require(!refusing,"refused append cannot return");
++    require(result==old_cap+1 && owner.value.len==old_cap+1 && owner.value.cap==new_cap
++            && owner.value.payload==allocations[1].pointer,"append result and all descriptor words");
++    require(memcmp(owner.before,original_owner.before,sizeof owner.before)==0
++            && memcmp(owner.after,original_owner.after,sizeof owner.after)==0,"descriptor canaries after append");
++    check_result(owner.value.payload);
++    require(requests==1 && successes==1 && copies==1 && releases==1
++            && requested_bytes==new_bytes && live_bytes==new_bytes && peak_bytes==old_bytes+new_bytes,
++            "exact append request/copy/retirement/live/peak ledger");
++    /* Caller releases its final tracked allocation; ordinary API cleanup is
++     * covered by the parent experiment's unchanged complete API checks. */
++    wf_placement_release(owner.value.payload);
++    require(releases==2 && live_bytes==0,"exact final observer cleanup");
++    free(allocations[0].pointer); free(allocations[1].pointer); free(original_payload);
++    printf("fresh placement: %s cap%zu positive contents/order/ledger pass\n",width==8 ? "word":"record",capacity);
++}
++int wf__main_body(int argc,char **argv) {
++    if(argc==1) {
++        run_case(8,1,false); run_case(256,1,false);
++        run_case(8,4097,false); run_case(256,4097,false);
++    } else {
++        require(argc==4,"usage: word|record 1|4097 positive|null");
++        require(!strcmp(argv[1],"word") || !strcmp(argv[1],"record"),"known width");
++        require(!strcmp(argv[2],"1") || !strcmp(argv[2],"4097"),"known capacity branch");
++        require(!strcmp(argv[3],"positive") || !strcmp(argv[3],"null"),"known execution mode");
++        run_case(!strcmp(argv[1],"word") ? 8 : 256,!strcmp(argv[2],"1") ? 1 : 4097,
++                 !strcmp(argv[3],"null"));
++    }
++    return 0;
++}
++int main(int argc,char **argv) { return wf__floor_run(argc,argv); }

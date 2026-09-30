@@ -3566,6 +3566,23 @@ condition under which it is taken up.
   isolated processor-model cause. Keep the tests and budgets unchanged; the
   next published head supplies the next CI observation.
 
+- **Vector append comparisons do not fully balance variant order.** The
+  [growth driver](../research/experiments/container-representation/vector-library/vector-costs.c)
+  rotates three variants with `(sample + offset) % 3` and reverses the second
+  cohort, but seven samples leave unequal position counts. Across both
+  cohorts, WF and C++ occupy first/middle/last positions 5/4/5 times each;
+  Rust occupies them 4/6/4 times. A position-dependent effect could therefore
+  weight the peer comparison unequally; no measured deficit is attributed to
+  this limitation. Reopen at the next append comparison: preregister a sample
+  count divisible by three or an explicitly balanced schedule, verify equal
+  position counts, and retain the same API outcomes and timing criteria.
+  Keep the old seven-sample data and verdicts; do not retroactively qualify,
+  filter or reinterpret them as a balanced experiment.
+  The [fresh-element placement screen](../research/experiments/container-representation/vector-library/RESULTS.md#fresh-element-placement-registered-append-ordering-discriminator)
+  uses nine samples and verifies equal positions for that image. Final paired
+  and production comparisons remain open; close this item when they also use
+  a verified balanced schedule.
+
 - **Qualify the clock at each container API's individual timing window.**
   The Vector growth pilot on the current macOS host reports 1,000 ns for
   `CLOCK_MONOTONIC` and observes only 1,000 ns nonzero read steps, while one
