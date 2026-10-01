@@ -444,7 +444,7 @@ impl Checker<'_, '_> {
             return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
         }
         let mut terms = vec![(1_i128, self.range_product(context, first, bindings, names)?)];
-        for pair in rest.chunks_exact(2) {
+        for pair in rest.as_chunks::<2>().0 {
             let [token] = self.types.declarations.tree.direct_token_indices(pair[0])? else {
                 return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
             };
