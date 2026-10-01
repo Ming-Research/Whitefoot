@@ -4784,3 +4784,69 @@ timed LLVM, omitted baseline objects/binaries,
 resolved tool/path roles and the recorded scratch hierarchy; the component's
 replay.txt lists those dependencies. The published package has not been replayed.
 No production source changes or general zero-omission mechanism are selected.
+
+### Ordinary-source pending owners: native rejection and partial timing benefit
+
+Two source trials keep the public reserve contract, allocation geometry, complete
+bucket initialization, hash policy and owner outcomes. They are separate from the
+raw initialization floor above; neither changes the compiler or specification.
+Production library bytes are restored after each candidate compiler is frozen.
+
+The backing-pending trial keeps the pending Filled owner in the old backing and
+uses a borrowed tag/hash before swapping it into an available new bucket.
+Maintained normal/parallel admission and all eight build/native stages pass.
+However, wide native swap performs three 272-byte libc transfers, including a
+full temporary and inactive destination writeback to the old backing. The smaller
+400-byte frame does not satisfy the no-replacement-copy/call criterion. This
+trial stops before runtime/account checks or timing.
+
+Self-tail v1's loop-only completion fails FN-1 as specified: a loop does not
+satisfy the explicit-return requirement ([active specification](../../../../spec/kernel-spec.md)).
+V2 performs one bounded scan per invocation and uses ordinary direct self-tail
+returns for displacement or a complete scan. Both lower to IR jumps. Optimized
+native code retains the full-scan backedges and removes the displaced-Filled
+edge using the available-slot tag check; no recursive call remains. Wide
+old-owner capture is only partially removed:
+256 bytes still stage through the caller's argument area. The original strict
+native gate therefore remains **partial/fail**. Other transfers do disappear:
+the helper no longer loads 264 inactive destination bytes or clears the 272-byte
+Inserted result. Simultaneous caller/helper frames fall 752→336 bytes, without
+old-backing writeback. Scalar old-pair staging disappears. No initialization-only
+floor or special inline/alias attribute is composed with this source change.
+
+A separately preregistered supplemental question tests those partial savings.
+Each of the four timed/account images passes 288 reserve cases, with 21 fault
+controls per arm across its image pair; both 96-row ledgers equal the baseline.
+Maintained normal and parallel executions pass, each with 36 observed allocations.
+The initial observer link fails from a missing include path; that failure and the
+corrected unfinished-stage executions remain in the record. No expectation is
+weakened. The fixed paired panel retains all 88,128 rows and four final instrument
+exit-1 statuses (31.73 s outer guard); all frozen inputs remain unchanged.
+
+Aligned wide growth is the primary question. Values are WF median [minimum,
+maximum] µs per reserve, cohort 0 / cohort 1. Both native peers and all other
+cells remain in the complete reduction.
+
+| Initial entry floor | Matched control | Self-tail v2 | Supplemental verdict |
+|---:|---|---|---|
+| 64 | 2.058 [2.046, 2.393] / 2.055 [2.051, 2.113] | 1.708 [1.702, 1.788] / 1.734 [1.697, 1.835] | Qualified gain both cohorts |
+| 4096 | 125.554 [122.569, 134.222] / 122.952 [122.286, 139.159] | 102.369 [101.134, 106.955] / 102.544 [101.598, 107.171] | Raw gain; peer stability unresolved |
+
+S64 has separated gains with all gates satisfied. S4096 also has separated raw
+gains, but control C++ medians differ by 15.49% across cohorts, exceeding the
+unchanged 10% stability limit. The full supplemental criterion fails, and both
+candidate primary cells remain separated slower than Rust and C++ individually.
+Default wide growth gains in both sizes with its gates satisfied. No separated
+WF before/after loss appears; other overlaps and fast-cell duration failures
+remain visible. This is a measured partial benefit, not overall qualification,
+isolated copy-cycle attribution or production adoption.
+
+The existing archive adds `backing-pending/` and `selftail-pending/`, retaining
+source patches, both failed attempts, exact criteria, native excerpts, checks and
+complete supplemental samples. Scripts are historical command records requiring
+omitted compiler/generated-object dependencies and tool/path reconstruction, not
+a standalone replay; no published-package replay is claimed. All prior 222 entry
+byte sequences remain: 221 at their original names and the prior outer index at
+`component-index-before-owner-source-trials.json`. Only the outer component index
+is extended. Original/normalized hashes are explicit. The later initialization
+interaction experiment is not part of this record.

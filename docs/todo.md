@@ -3374,6 +3374,16 @@ condition under which it is taken up.
   with complete-content and ownership checks. This result neither attributes
   the loss to cache/allocation state nor rules out every inactive-byte strategy.
 
+  Ordinary-source owner migration gives a narrower lead: self-tail scanning
+  removes inactive destination capture and Inserted-result clearing, reducing
+  simultaneous wide frames from 752 to 336 bytes, but retains 256-byte argument
+  staging. Small aligned wide reserve gains pass the supplemental paired gates;
+  large raw gains fail the unchanged C++ cohort-stability limit, and both sizes
+  remain behind both peers. No source policy is selected. Reopen for a distinct
+  removal of reached migration work with maintained generic ownership/hostile
+  callback checks and complete paired qualification. Avoid replacing it with
+  the rejected backing-slot swap's three full 272-byte transfers.
+
 - **Ordered insertion replacement costs need attribution.** Both the
   [aggregate-result candidate](../research/experiments/container-representation/ordered-library/RESULTS.md#single-descent-insertion-candidate)
   and [borrowed-promotion follow-up](../research/experiments/container-representation/ordered-library/RESULTS.md#borrowed-promotion-follow-up)
