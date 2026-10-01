@@ -19,6 +19,9 @@ urcu_sha=2556b83adc0f9b3ac8024e613e17d014d04c4c49110604ce55fcb14eae32edd3
 urcu_url=https://lttng.org/files/urcu/$urcu
 tbb_pin=3046c8b0c29df995980003ea24f4d78c80ec0c8d
 cuckoo_pin=6a2555d551b7703d7176a5d114219a02c55d4038
+growt_pin=0c1148ebcdfd4c04803be79706533ad09cc81d37
+growt_utils_pin=ada7276d8fec43f463a50c86909535976ca005aa
+phmap_pin=47941057f21a1605749a59ecf8effac3698a7224
 sha() {
     if command -v sha256sum > /dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1
 }
@@ -52,15 +55,19 @@ if test "$mode" = fetch; then
     archive "$urcu" "$urcu_sha" "$urcu_url"
     clone onetbb "$tbb_pin" https://github.com/uxlfoundation/oneTBB.git
     clone libcuckoo "$cuckoo_pin" https://github.com/efficient/libcuckoo.git
+    clone growt "$growt_pin" https://github.com/TooBiased/growt.git
+    # growt's one needed submodule, its utilities, at the commit growt pins.
+    clone growt-utils "$growt_utils_pin" https://github.com/TooBiased/utils_tm.git
+    clone phmap "$phmap_pin" https://github.com/greg7mdp/parallel-hashmap.git
     cargo fetch --locked --manifest-path rust/Cargo.toml
     (cd go && go mod download)
-    echo "concurrent-map-bench sources PASS: boost=$boost_sha urcu=$urcu_sha oneTBB=$tbb_pin libcuckoo=$cuckoo_pin"
+    echo "concurrent-map-bench sources PASS: boost=$boost_sha urcu=$urcu_sha oneTBB=$tbb_pin libcuckoo=$cuckoo_pin growt=$growt_pin phmap=$phmap_pin"
     exit 0
 fi
 : "${OUT:?absolute output directory required}"
 case "$OUT" in /*) ;; *) echo 'deps.sh: OUT must be absolute' >&2; exit 1;; esac
 test "$OUT" != /
-for f in "$boost" "$urcu" onetbb libcuckoo; do
+for f in "$boost" "$urcu" onetbb libcuckoo growt growt-utils phmap; do
     test -e "$cache/$f" || { echo "deps.sh: $cache/$f is missing; run fetch first" >&2; exit 1; }
 done
 jobs=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
@@ -83,8 +90,14 @@ if test ! -e "$OUT/lib/libtbb.so" && test ! -e "$OUT/lib64/libtbb.so"; then
     cmake --build "$OUT/src/onetbb-build" -j "$jobs" > /dev/null
     cmake --install "$OUT/src/onetbb-build" > /dev/null
 fi
-rm -rf "${OUT:?}/include/libcuckoo"
+rm -rf "${OUT:?}/include/libcuckoo" "${OUT:?}/include/parallel_hashmap" "${OUT:?}/growt"
 cp -R "$cache/libcuckoo/libcuckoo" "$OUT/include/libcuckoo"
+cp -R "$cache/phmap/parallel_hashmap" "$OUT/include/parallel_hashmap"
+# growt's headers include one another from its root, utilities included.
+mkdir -p "$OUT/growt"
+for d in allocator data-structures example; do cp -R "$cache/growt/$d" "$OUT/growt/$d"; done
+cp -R "$cache/growt-utils" "$OUT/growt/utils"
+rm -rf "${OUT:?}/growt/utils/.git"
 CARGO_TARGET_DIR="$OUT/cmaps-target" cargo build --release --locked --offline \
     --manifest-path rust/Cargo.toml
 echo "concurrent-map-bench deps PASS: $OUT"

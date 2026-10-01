@@ -193,8 +193,9 @@ Native, through the C driver, at pinned versions:
 
 - Rust: `papaya` (lock-free, read-optimized), `DashMap` (sharded
   reader-writer locks), `scc::HashMap`;
-- C++: Boost 1.83 `concurrent_flat_map`, Intel TBB `concurrent_hash_map`,
-  `libcuckoo`, `growt`;
+- C++: Boost 1.92 `concurrent_flat_map`, Intel TBB `concurrent_hash_map`,
+  `libcuckoo`, `growt` and the parallel-hashmap library's
+  `parallel_flat_hash_map` with a mutex per submap;
 - C: liburcu's `cds_lfht`, a lock-free resizable table under
   read-copy-update;
 - floors at one thread: Rust's standard `HashMap` and Boost's
@@ -204,7 +205,15 @@ Managed, through their own drivers: Java 21 `ConcurrentHashMap`, .NET 8
 `ConcurrentDictionary`, Go 1.24 `sync.Map` and `xsync.MapOf`.
 
 Garnet's Tsavorite index is not separated from Garnet; firn meets it again in
-stage (c).
+stage (c). folly's `ConcurrentHashMap` is left out: its build needs most of
+folly.
+
+On 2026-10-01, after a first quick profile in which Boost's map led every
+multi-threaded mix but one, the owner added `growt`, which the first list
+named only if obtainable, and `parallel_flat_hash_map`, so that a lead
+counts against the strongest designs for integer keys; the baseline was
+restarted with them so that every comparator is measured in the same
+interleaved run.
 
 ## The index: a first design, stated before measuring
 

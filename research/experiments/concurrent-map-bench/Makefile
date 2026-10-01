@@ -31,7 +31,7 @@ CFLAGS   := -O3 $(MARCH) -g0 -std=c11 -Wall -Wextra -I$(HERE) -isystem $(DEPS)/i
 CXXFLAGS := -O3 $(MARCH) -g0 -std=c++20 -Wall -Wextra -I$(HERE) -isystem $(DEPS)/include -pthread
 RUSTLIB  := $(DEPS)/cmaps-target/release/libcmaps.a
 
-NATIVE := wf_index empty mutex_flat flat boost_cfm tbb_chm libcuckoo urcu_lfht papaya dashmap scc stdmap
+NATIVE := wf_index empty mutex_flat flat boost_cfm tbb_chm libcuckoo urcu_lfht growt phmap papaya dashmap scc stdmap
 BINS   := $(addprefix $(BUILD)/bench-,$(NATIVE))
 MANAGED := $(BUILD)/java/Bench.class $(BUILD)/bench-go $(BUILD)/dotnet/Bench.dll
 # The wf-current control needs the gate compiler (`make -C compiler build`
@@ -67,6 +67,10 @@ $(BUILD)/impl-libcuckoo.o: native/libcuckoo.cpp cmap.h | $(BUILD)
 	$(CXX) $(CXXFLAGS) -DCM_PREFIX=libcuckoo -c -o $@ $<
 $(BUILD)/impl-urcu_lfht.o: native/urcu_lfht.c cmap.h | $(BUILD)
 	$(CC) $(CFLAGS) -DCM_PREFIX=urcu_lfht -c -o $@ $<
+$(BUILD)/impl-growt.o: native/growt.cpp cmap.h | $(BUILD)
+	$(CXX) $(CXXFLAGS) -isystem $(DEPS)/growt -DCM_PREFIX=growt -c -o $@ $<
+$(BUILD)/impl-phmap.o: native/phmap.cpp cmap.h | $(BUILD)
+	$(CXX) $(CXXFLAGS) -DCM_PREFIX=phmap -c -o $@ $<
 
 LINK_C   = $(CC) $(CFLAGS) -o $@ $^
 LINK_CXX = $(CXX) $(CXXFLAGS) -o $@ $^
@@ -83,6 +87,10 @@ $(BUILD)/bench-boost_cfm: $(BUILD)/driver-boost_cfm.o $(BUILD)/impl-boost_cfm.o
 $(BUILD)/bench-tbb_chm: $(BUILD)/driver-tbb_chm.o $(BUILD)/impl-tbb_chm.o
 	$(LINK_CXX) -L$(DEPS)/lib -Wl,-rpath,$(DEPS)/lib -ltbb
 $(BUILD)/bench-libcuckoo: $(BUILD)/driver-libcuckoo.o $(BUILD)/impl-libcuckoo.o
+	$(LINK_CXX)
+$(BUILD)/bench-growt: $(BUILD)/driver-growt.o $(BUILD)/impl-growt.o
+	$(LINK_CXX)
+$(BUILD)/bench-phmap: $(BUILD)/driver-phmap.o $(BUILD)/impl-phmap.o
 	$(LINK_CXX)
 $(BUILD)/bench-urcu_lfht: $(BUILD)/driver-urcu_lfht.o $(BUILD)/impl-urcu_lfht.o
 	$(LINK_C) $(DEPS)/lib/liburcu-cds.a $(DEPS)/lib/liburcu.a $(DEPS)/lib/liburcu-common.a

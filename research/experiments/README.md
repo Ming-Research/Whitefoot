@@ -191,7 +191,8 @@ completion criterion were refused.
   standalone measurement of the
   [concurrent hash index investigation](../investigations/concurrent-map/DESIGN.md):
   one C driver linked with each native concurrent map (Boost, TBB, libcuckoo,
-  liburcu, papaya, DashMap, scc), Java, Go and .NET drivers for their maps,
+  liburcu, growt, parallel-hashmap, papaya, DashMap, scc), Java, Go and .NET
+  drivers for their maps,
   and three controls (an empty map, a flat table behind one mutex, and a
   Whitefoot `HashMap` behind one `Shared` object, the map firn uses), every
   cell checking its own result. `make -C research/experiments/concurrent-map-bench deps build verify quick`;

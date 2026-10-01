@@ -103,9 +103,13 @@ static inline uint32_t lock(bucket *b) {
         uint32_t served = atomic_load_explicit(&b->served, memory_order_acquire);
         if (served == ticket)
             break;
+        /* The next in line checks at once; the others wait in proportion to
+         * the holders ahead of them, so the line is not passed among
+         * waiters that cannot take it yet. */
         uint32_t ahead = ticket - served;
-        for (uint32_t k = 0; k < ahead * 16; k++)
+        for (uint32_t k = 0; k < (ahead - 1) * 32; k++)
             pause_once();
+        pause_once();
         if (++rounds > 4096) {
             sched_yield();
             rounds = 0;
