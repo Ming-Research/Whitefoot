@@ -17,6 +17,7 @@ mod permission_ledger;
 mod places;
 pub(crate) use places::PlaceRoot as CheckedPlaceRoot;
 mod postcondition;
+mod range_facts;
 mod tree;
 
 #[cfg(test)]
@@ -216,6 +217,15 @@ pub enum SemanticRule {
     Inv1,
     /// Finite source-written affine proof formation and checking.
     Prf1,
+    /// Range clause formation [RANGE-1].
+    Range1,
+    /// A range fact owed and not established: at a loop entry or back edge,
+    /// at a call, or at a normal return [RANGE-3].
+    Range3,
+    /// A `use` step that instantiates no range fact [RANGE-4].
+    Range4,
+    /// A counted loop's cross-iteration certificate [RANGE-5].
+    Range5,
 }
 
 impl SemanticRule {
@@ -285,6 +295,10 @@ impl SemanticRule {
             Self::Call6 => "CALL-6",
             Self::Inv1 => "INV-1",
             Self::Prf1 => "PRF-1",
+            Self::Range1 => "RANGE-1",
+            Self::Range3 => "RANGE-3",
+            Self::Range4 => "RANGE-4",
+            Self::Range5 => "RANGE-5",
         }
     }
 
@@ -367,7 +381,11 @@ impl SemanticRule {
             Self::Msr3 => Self::Call6,
             Self::Call6 => Self::Inv1,
             Self::Inv1 => Self::Prf1,
-            Self::Prf1 => return None,
+            Self::Prf1 => Self::Range1,
+            Self::Range1 => Self::Range3,
+            Self::Range3 => Self::Range4,
+            Self::Range4 => Self::Range5,
+            Self::Range5 => return None,
         })
     }
 
@@ -444,6 +462,10 @@ impl SemanticRule {
             Self::Call6 => 59,
             Self::Inv1 => 60,
             Self::Prf1 => 61,
+            Self::Range1 => 62,
+            Self::Range3 => 63,
+            Self::Range4 => 64,
+            Self::Range5 => 65,
         }
     }
 }
@@ -1002,6 +1024,29 @@ pub enum SemanticIssueKind {
         /// The exact source-level restructuring required by GRAM-4.
         mechanical_fix: &'static str,
     },
+    /// A range clause, a `use` step or a cross-iteration certificate outside
+    /// its formation rule [RANGE-1, RANGE-4, RANGE-5].
+    InvalidRangeClause {
+        reason: &'static str,
+        mechanical_fix: &'static str,
+    },
+    /// A range fact owed where it is not established [RANGE-3].
+    UndischargedRangeFact {
+        /// The owed fact's name.
+        fact: String,
+        /// Where it is owed: a loop entry or back edge, a call, a return.
+        site: &'static str,
+        /// The first instance case the fixed derivation did not establish.
+        missing: String,
+        mechanical_fix: &'static str,
+    },
+    /// Two iterations of a counted loop whose certificate does not separate
+    /// a pair of their accesses [RANGE-5].
+    UndischargedApart {
+        /// The first access pair left overlapping.
+        pair: String,
+        mechanical_fix: &'static str,
+    },
     /// A header or local invariant violates INV-1 name or target formation.
     InvalidInvariant {
         reason: &'static str,
@@ -1387,6 +1432,10 @@ pub enum UnsupportedSemanticFeature {
     DuplicateMatchArm,
     /// An OP-1 family outside the implemented scalar and nominal-tag families.
     OperationFamily,
+    /// A range clause in a position the checker does not yet carry
+    /// [RANGE-1]: a function-kind formal's contract, or an `ensures` of a
+    /// returned value.
+    RangeFacts,
 }
 
 /// Exact source node at which an unimplemented compiler family was required.

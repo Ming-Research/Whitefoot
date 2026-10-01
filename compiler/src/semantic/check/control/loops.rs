@@ -547,14 +547,72 @@ impl<'unit> Checker<'_, 'unit> {
         });
 
         let allowed_invariant_values = header_keys.iter().copied().collect::<HashSet<_>>();
+        // [RANGE-1] a header invariant written as a range clause is a range
+        // fact of this loop; every other one is an [INV-1] relation.
+        let mut affine_nodes = Vec::with_capacity(invariant_nodes.len());
+        let mut range_invariants = Vec::new();
+        for invariant in invariant_nodes {
+            match self
+                .types
+                .declarations
+                .tree
+                .first_child_with(invariant, Production::RangeClause)?
+            {
+                Some(clause) => {
+                    range_invariants.push(self.check_range_clause(
+                        context,
+                        clause,
+                        &body_bindings,
+                    )?);
+                }
+                None => affine_nodes.push(invariant),
+            }
+        }
         let invariants = self.form_loop_invariants(
             context,
-            invariant_nodes,
+            affine_nodes,
             id,
             &body_bindings,
             &allowed_invariant_values,
             scope.loops.len(),
         )?;
+        // [RANGE-5] the certificate may use this function's range
+        // requirements and the range invariants of this loop and of every
+        // loop enclosing it.
+        let apart = match self
+            .types
+            .declarations
+            .tree
+            .first_child_with(node, Production::ApartClause)?
+        {
+            Some(apart) => {
+                let mut facts = std::collections::HashMap::new();
+                for clause in &self.body.range_facts.requirements {
+                    facts.insert(clause.declaration, clause.binders.len());
+                }
+                for outer in scope.loops {
+                    if let Some(entry) = self.body.range_facts.loops.get(&outer.id) {
+                        for clause in &entry.invariants {
+                            facts.insert(clause.declaration, clause.binders.len());
+                        }
+                    }
+                }
+                for clause in &range_invariants {
+                    facts.insert(clause.declaration, clause.binders.len());
+                }
+                Some(self.check_apart_clause(context, apart, &body_bindings, &facts)?)
+            }
+            None => None,
+        };
+        if !range_invariants.is_empty() || apart.is_some() {
+            self.body.range_facts.loops.insert(
+                id,
+                crate::semantic::range_facts::CheckedRangeLoop {
+                    invariants: range_invariants,
+                    apart,
+                },
+            );
+        }
         let mut checked = self.check_block(
             context,
             &executable_statements,

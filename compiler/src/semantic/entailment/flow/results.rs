@@ -808,6 +808,7 @@ mod tests {
             requirements: Vec::new(),
             requirement_places: Vec::new(),
             postconditions: Vec::new(),
+            range_facts: Default::default(),
             body: None,
             reference_origins: Vec::new(),
             body_disposition: Default::default(),

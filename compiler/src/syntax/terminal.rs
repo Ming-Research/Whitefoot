@@ -172,6 +172,8 @@ pub enum FixedTerminal {
     Match,
     /// `=>`.
     FatArrow,
+    /// `apart`.
+    Apart,
     /// `+wrap`.
     PlusWrap,
     /// `+defined`.
@@ -224,6 +226,8 @@ pub enum FixedTerminal {
     Dot,
     /// `^`.
     Caret,
+    /// `forall`.
+    Forall,
     /// `pure`.
     Pure,
     /// `reads`.
@@ -233,7 +237,7 @@ pub enum FixedTerminal {
 }
 
 /// Every fixed raw-token predicate in the active specification, in first occurrence order.
-pub const ALL_FIXED_TERMINALS: [FixedTerminal; 104] = [
+pub const ALL_FIXED_TERMINALS: [FixedTerminal; 106] = [
     FixedTerminal::Public,
     FixedTerminal::Alias,
     FixedTerminal::Equal,
@@ -309,6 +313,7 @@ pub const ALL_FIXED_TERMINALS: [FixedTerminal; 104] = [
     FixedTerminal::Atomic,
     FixedTerminal::Match,
     FixedTerminal::FatArrow,
+    FixedTerminal::Apart,
     FixedTerminal::PlusWrap,
     FixedTerminal::PlusDefined,
     FixedTerminal::PlusChecked,
@@ -335,6 +340,7 @@ pub const ALL_FIXED_TERMINALS: [FixedTerminal; 104] = [
     FixedTerminal::Spawn,
     FixedTerminal::Dot,
     FixedTerminal::Caret,
+    FixedTerminal::Forall,
     FixedTerminal::Pure,
     FixedTerminal::Reads,
     FixedTerminal::Writes,
@@ -422,6 +428,7 @@ impl FixedTerminal {
             Self::Atomic => "atomic",
             Self::Match => "match",
             Self::FatArrow => "=>",
+            Self::Apart => "apart",
             Self::PlusWrap => "+wrap",
             Self::PlusDefined => "+defined",
             Self::PlusChecked => "+checked",
@@ -445,6 +452,7 @@ impl FixedTerminal {
             Self::LessEqual => "<=",
             Self::GreaterEqual => ">=",
             Self::Caret => "^",
+            Self::Forall => "forall",
             Self::Entry => "entry",
             Self::Dot => ".",
             Self::Pure => "pure",

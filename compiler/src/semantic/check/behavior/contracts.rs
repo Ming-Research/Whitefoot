@@ -291,6 +291,12 @@ impl<'unit> Checker<'_, 'unit> {
             &mut bindings.clone(),
             &mut counters,
         )?;
+        if !checked.range.is_empty() {
+            return self
+                .types
+                .declarations
+                .unsupported(crate::UnsupportedSemanticFeature::RangeFacts, block);
+        }
         let requires = checked
             .requirements
             .into_iter()
@@ -598,6 +604,7 @@ impl<'unit> DeclarationInventory<'unit> {
             requirements,
             requirement_places,
             postconditions: Vec::new(),
+            range_facts: Default::default(),
             body: None,
             reference_origins: Vec::new(),
             body_disposition: Default::default(),

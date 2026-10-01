@@ -368,7 +368,7 @@ impl CheckedConst {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) enum IntegerType {
     I8,
     I16,
@@ -2839,6 +2839,10 @@ pub(crate) struct CheckedFunction {
     /// constructs this metadata; the shared entailment flow proves every
     /// clause at every selected exit.
     pub(crate) postconditions: Vec<super::postcondition::CheckedPostcondition>,
+    /// [RANGE-1] every range clause of the function: its range `requires`
+    /// and `ensures`, and each counted loop's range invariants and
+    /// cross-iteration certificate.
+    pub(crate) range_facts: super::range_facts::CheckedRangeFacts,
     pub(crate) body: Option<Vec<CheckedStatement>>,
     /// Function-wide union of the resolved paths each reference holder names
     /// during the final structural walk, indexed by `BindingId`. Roots are

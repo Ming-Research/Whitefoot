@@ -1,4 +1,4 @@
-# Kernel Specification v0.84
+# Kernel Specification v0.83
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -197,8 +197,8 @@ fn_decl      := "fn" IDENT generics? "(" param_list? ")"
 result_binding:= IDENT ":" rtype
 contract_block:= "contract" "{" contract_define* requires_clause* ensures_clause* "}"
 contract_define:= "define" IDENT "=" expr ";"
-requires_clause:= "requires" (clause_expr | range_clause) ";"
-ensures_clause:= "ensures" ("when" result_route ":")? (clause_expr | range_clause) ";"
+requires_clause:= "requires" clause_expr ";"
+ensures_clause:= "ensures" ("when" result_route ":")? clause_expr ";"
 result_route:= (IDENT "is")? TYPEID "(" fieldbind ")"
 interface_decl  := "interface" TYPEID generics? "{" doc? (fn_sig ";")* "}"
 binding_decl  := "binding" TYPEID ":" (pack_use | type_path targs?) "{" doc? fn_bind* "}"
@@ -260,15 +260,15 @@ expr_stmt   := call ";"
 return_stmt := "return" expr ("," expr)* ";"
 loop_stmt   := "loop" LABEL? ("(" header_invariant ("," header_invariant)* ")")?
                "{" stmt* "}"
-for_stmt    := "for" LABEL? "(" for_binding ("," header_invariant)* ("," apart_clause)? ")"
+for_stmt    := "for" LABEL? "(" for_binding ("," header_invariant)* ")"
                "{" stmt* "}"
 for_binding := IDENT "in" atom ".." atom
-header_invariant := "invariant" (IDENT ":" affine_expr compare_op affine_expr | range_clause)
+header_invariant := "invariant" IDENT ":" affine_expr compare_op affine_expr
 invariant_stmt := "invariant" IDENT ":" affine_expr compare_op affine_expr
                   (";" | "{" proof_use+ "}")
 type_invariant := "invariant" IDENT "(" IDENT ")" ":" clause_expr ";"
 proof_use   := "use" (("[0-9]+" | IDENT) "times")? use_premise ";"
-use_premise := IDENT ("(" atom_list ")")? | "(" affine_expr compare_op affine_expr ")"
+use_premise := IDENT | "(" affine_expr compare_op affine_expr ")"
 affine_expr := affine_term (affine_add_op affine_term)*
 affine_term := affine_factor ("*" affine_factor)?
 affine_factor := atom | call | "(" affine_expr ")"
@@ -281,7 +281,6 @@ value_match := "match" expr "{" arm+ "}"
 arm            := TYPEID "(" ( fieldbind_list ("," "..")? | ".." )? ")" "=>" "{" stmt* "}"
 fieldbind_list := fieldbind ("," fieldbind)*
 fieldbind      := IDENT ":" IDENT
-apart_clause   := "apart" "(" IDENT "," IDENT ")" "{" proof_use* "}"
 ```
 
 [GRAM-5] Expressions and places:
@@ -311,10 +310,6 @@ place          := pbase psuffix*
 pbase          := IDENT | "entry" "(" IDENT ")"
 psuffix        := "." IDENT | "." TYPEID "." IDENT | "[" atom range_tail? "]" | "^"
 range_tail     := ".." atom
-range_clause   := "forall" IDENT "(" range_binder ("," range_binder)* ")"
-                  ("when" range_relation ("," range_relation)*)? ":" range_relation ("," range_relation)*
-range_binder   := IDENT "in" atom ".." atom
-range_relation := affine_expr compare_op affine_expr
 ```
 
 The enum payload step is `"." TYPEID "." IDENT` — the variant name and then that variant's declared field name, `n.left.Some.value` — and it is the one spelling for reaching a payload, the kernel having no positional fields [GRAM-8].

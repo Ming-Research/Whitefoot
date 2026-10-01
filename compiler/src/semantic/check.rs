@@ -13,6 +13,7 @@ mod nominal_instances;
 mod nominals;
 mod obligations;
 pub(crate) mod publication;
+mod range_clauses;
 mod receipts;
 mod references;
 mod repairs;
@@ -619,6 +620,9 @@ struct BodyChecker {
     /// checked: inside one, a waiting call or another atomic statement is
     /// refused.
     atomic_depth: u32,
+    /// [RANGE-1] the range clauses of the function being checked, published
+    /// with its finished body. Every retry starts empty.
+    range_facts: super::range_facts::CheckedRangeFacts,
 }
 
 /// Program-wide judgments and reuse records, published after checking succeeds.
@@ -1712,6 +1716,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 &mut requires_bindings,
                 &mut counters,
             )?;
+            self.body.range_facts.requirements = checked.range;
             (checked.requirements, checked.places)
         } else {
             (Vec::new(), Vec::new())
@@ -1905,6 +1910,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             requirements,
             requirement_places,
             postconditions,
+            range_facts: std::mem::take(&mut self.body.range_facts),
             body: (!declaration_only).then_some(checked.statements),
             reference_origins: std::mem::take(&mut self.body.reference_origins),
             body_disposition: super::model::CheckedBodyDisposition::Inhabited,
