@@ -16,6 +16,8 @@ use std::time::{Duration, Instant};
 #[cfg(unix)]
 use whitefoot::{CompilerLimits, OverlapLowering, SourceInput};
 
+#[cfg(target_os = "linux")]
+use super::support::compile_app;
 use super::support::{
     CompiledProgram, ProgramChild, build_program, compile_program, compile_program_with_overlap,
 };
@@ -886,13 +888,13 @@ fn resp(arguments: &[&str]) -> Vec<u8> {
     bytes
 }
 
-/// The Redis subset, built once for every case that runs it; each case
-/// names its own append-only file, so the shared working directory holds
-/// no state one case leaves for another.
+/// firn, the Redis-compatible server in `apps/firn`, built once for every
+/// case that runs it; each case names its own append-only file, so the shared
+/// working directory holds no state one case leaves for another.
 #[cfg(target_os = "linux")]
-fn redis_subset() -> &'static CompiledProgram {
+fn firn() -> &'static CompiledProgram {
     static PROGRAM: std::sync::OnceLock<CompiledProgram> = std::sync::OnceLock::new();
-    PROGRAM.get_or_init(|| build_program(&compile_program("redis_subset.wf")))
+    PROGRAM.get_or_init(|| build_program(&compile_app("firn", "firn")))
 }
 
 /// Reads one reply line through its CR LF.
@@ -933,17 +935,17 @@ fn expect_replies(stream: &mut TcpStream, expected: &[u8], what: &str) {
     );
 }
 
-/// [SHARE-1, SHARE-3] the Redis subset serves every client over one
+/// [SHARE-1, SHARE-3] firn serves every client over one
 /// keyspace: the commands answer as Redis does, a pipelined batch and a
 /// command split across two sends are answered whole, and clients that
 /// increment one key from four drivers at once lose no increment, which a
 /// keyspace not held alone by each atomic statement would.
 #[cfg(target_os = "linux")]
 #[test]
-fn the_redis_subset_serves_every_client_over_one_keyspace() {
+fn firn_serves_every_client_over_one_keyspace() {
     const CLIENTS: usize = 8;
     const INCREMENTS: usize = 250;
-    let program = redis_subset();
+    let program = firn();
     let port = free_port();
     let text = port.to_string();
     let count = (CLIENTS + 1).to_string();
@@ -973,7 +975,7 @@ fn the_redis_subset_serves_every_client_over_one_keyspace() {
     first.write_all(&batch).expect("send a pipelined batch");
     expect_replies(
         &mut first,
-        b"+PONG\r\n+OK\r\n$5\r\napple\r\n$-1\r\n-ERR value is not an integer or out of range\r\n:1\r\n:0\r\n:1\r\n-ERR unknown command\r\n",
+        b"+PONG\r\n+OK\r\n$5\r\napple\r\n$-1\r\n-ERR value is not an integer or out of range\r\n:1\r\n:0\r\n:1\r\n*2\r\n$4\r\nsave\r\n$0\r\n\r\n",
         "the pipelined batch",
     );
     let split = resp(&["SET", "split", "across two sends"]);
@@ -1034,7 +1036,7 @@ fn the_redis_subset_serves_every_client_over_one_keyspace() {
     assert_eq!(status, 0);
 }
 
-/// [PRE-2] the Redis subset expires keys as Redis does. In one pipelined
+/// [PRE-2] firn expires keys as Redis does. In one pipelined
 /// batch, whose commands all see one reading of the clocks, `TTL` answers -1
 /// for a key without an expiry and -2 for an absent one, `EXPIRE` gives one,
 /// `PERSIST` removes it once, and `SET` refuses a zero expiry, an unknown
@@ -1045,8 +1047,8 @@ fn the_redis_subset_serves_every_client_over_one_keyspace() {
 /// that check the value would usually still be returned.
 #[cfg(target_os = "linux")]
 #[test]
-fn the_redis_subset_expires_keys_on_both_routes() {
-    let program = redis_subset();
+fn firn_expires_keys_on_both_routes() {
+    let program = firn();
     for native_ring in [true, false] {
         let what = format!("native ring: {native_ring}");
         let port = free_port();
@@ -1106,14 +1108,14 @@ fn the_redis_subset_expires_keys_on_both_routes() {
     }
 }
 
-/// [PRE-2] the Redis subset's expiring context removes keys no command reads:
+/// [PRE-2] firn's expiring context removes keys no command reads:
 /// a thousand keys set with `PX 50` leave `DBSIZE`, which reads no key, at
 /// zero within three seconds.
 #[cfg(target_os = "linux")]
 #[test]
-fn the_redis_subset_removes_expired_keys_no_command_reads_on_both_routes() {
+fn firn_removes_expired_keys_no_command_reads_on_both_routes() {
     const KEYS: usize = 1000;
-    let program = redis_subset();
+    let program = firn();
     for native_ring in [true, false] {
         let what = format!("native ring: {native_ring}");
         let port = free_port();
@@ -1151,18 +1153,18 @@ fn the_redis_subset_removes_expired_keys_no_command_reads_on_both_routes() {
     }
 }
 
-/// [PRE-2] the Redis subset replays its append-only file after a restart:
+/// [PRE-2] firn replays its append-only file after a restart:
 /// every change the first run made, set, removed, incremented, given an expiry
 /// or made persistent, holds in the second, and a key whose expiry passed
-/// while the subset was stopped is absent. As in Redis, the replay applies the
+/// while firn was stopped is absent. As in Redis, the replay applies the
 /// file's commands in order without expiring anything, so a key made
 /// persistent before its expiry holds its value, and a key incremented before
 /// its expiry passed is absent rather than counting again from one. The first run ends once its one
 /// client has closed, after its writer appended and synced the last changes.
 #[cfg(target_os = "linux")]
 #[test]
-fn the_redis_subset_replays_its_append_only_file_after_a_restart_on_both_routes() {
-    let program = redis_subset();
+fn firn_replays_its_append_only_file_after_a_restart_on_both_routes() {
+    let program = firn();
     for native_ring in [true, false] {
         let what = format!("native ring: {native_ring}");
         let name = format!("replay-{native_ring}.aof");
@@ -1245,13 +1247,13 @@ fn the_redis_subset_replays_its_append_only_file_after_a_restart_on_both_routes(
     }
 }
 
-/// [PRE-2] a deadline on `receive_next` closes a client silent past the
-/// subset's idle limit: with a limit of one second, the connection ends after
+/// [PRE-2] a deadline on `receive_next` closes a client silent past
+/// firn's idle limit: with a limit of one second, the connection ends after
 /// at least 0.9 and at most two seconds of silence.
 #[cfg(target_os = "linux")]
 #[test]
-fn the_redis_subset_closes_a_client_silent_past_its_idle_limit_on_both_routes() {
-    let program = redis_subset();
+fn firn_closes_a_client_silent_past_its_idle_limit_on_both_routes() {
+    let program = firn();
     for native_ring in [true, false] {
         let what = format!("native ring: {native_ring}");
         let port = free_port();
@@ -1278,4 +1280,346 @@ fn the_redis_subset_closes_a_client_silent_past_its_idle_limit_on_both_routes() 
         let (status, _) = finished(child);
         assert_eq!(status, 0, "{what}");
     }
+}
+
+/// firn answers the value types as Redis does. One pipelined batch pushes,
+/// ranges and pops a list until it is empty, which removes its key; adds and
+/// removes set members; sets and reads hash fields; adds, rescores and pops
+/// sorted-set members; refuses a list command on a string and a string command
+/// on a hash; sets ten keys in one MSET, a command of eleven arguments; and
+/// names an unknown command and a command short of arguments as Redis does.
+/// Two inline commands close the batch. The expected bytes are those
+/// redis-server 7.0.15 returns for the same bytes.
+#[cfg(target_os = "linux")]
+#[test]
+fn firn_answers_the_value_types_as_redis_does() {
+    let program = firn();
+    let port = free_port();
+    let text = port.to_string();
+    let child = program.spawn_on_route(true, &[text.as_bytes(), b"1"]);
+    let mut client = connect_when_ready(port);
+    client
+        .set_read_timeout(Some(Duration::from_secs(20)))
+        .expect("bound the client's waits");
+    let mut batch = Vec::new();
+    for request in [
+        vec!["RPUSH", "l", "a", "b", "c"],
+        vec!["LPUSH", "l", "z"],
+        vec!["LRANGE", "l", "0", "-1"],
+        vec!["LRANGE", "l", "1", "-2"],
+        vec!["LPOP", "l"],
+        vec!["RPOP", "l", "2"],
+        vec!["LLEN", "l"],
+        vec!["RPOP", "l"],
+        vec!["EXISTS", "l"],
+        vec!["SADD", "s", "a", "b", "c", "a"],
+        vec!["SREM", "s", "a", "q"],
+        vec!["SCARD", "s"],
+        vec!["HSET", "h", "f", "1", "g", "2"],
+        vec!["HSET", "h", "f", "3"],
+        vec!["HGET", "h", "f"],
+        vec!["HGET", "h", "nope"],
+        vec!["ZADD", "z", "3", "c", "1", "a", "2", "b"],
+        vec!["ZADD", "z", "0", "c"],
+        vec!["ZSCORE", "z", "c"],
+        vec!["ZPOPMIN", "z", "2"],
+        vec!["ZCARD", "z"],
+        vec!["SET", "str", "v"],
+        vec!["LPUSH", "str", "x"],
+        vec!["SADD", "l", "x"],
+        vec!["TYPE", "l"],
+        vec!["GET", "h"],
+        vec![
+            "MSET", "k1", "1", "k2", "2", "k3", "3", "k4", "4", "k5", "5",
+        ],
+        vec!["GET", "k5"],
+        vec!["NOPE", "a", "b"],
+        vec!["LLEN"],
+    ] {
+        batch.extend(resp(&request));
+    }
+    batch.extend_from_slice(b"SET inline yes\r\nGET inline\r\n");
+    client.write_all(&batch).expect("send the batch");
+    expect_replies(
+        &mut client,
+        b":3\r\n:4\r\n*4\r\n$1\r\nz\r\n$1\r\na\r\n$1\r\nb\r\n$1\r\nc\r\n*2\r\n$1\r\na\r\n$1\r\nb\r\n$1\r\nz\r\n*2\r\n$1\r\nc\r\n$1\r\nb\r\n:1\r\n$1\r\na\r\n:0\r\n:3\r\n:1\r\n:2\r\n:2\r\n:0\r\n$1\r\n3\r\n$-1\r\n:3\r\n:0\r\n$1\r\n0\r\n*4\r\n$1\r\nc\r\n$1\r\n0\r\n$1\r\na\r\n$1\r\n1\r\n:1\r\n+OK\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n:1\r\n+set\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n+OK\r\n$1\r\n5\r\n-ERR unknown command 'NOPE', with args beginning with: 'a' 'b' \r\n-ERR wrong number of arguments for 'llen' command\r\n+OK\r\n$3\r\nyes\r\n",
+        "the value-type batch",
+    );
+    drop(client);
+    let (status, _) = finished(child);
+    assert_eq!(status, 0);
+}
+
+/// firn keeps strings of at most 24 bytes inside the keyspace and longer ones
+/// in allocations of their own. Keys, members, fields and values of exactly 24
+/// bytes and of 25 bytes sharing those 24, and a key differing from them only
+/// in its last byte, stay distinct in every kind of value, and a number that
+/// `INCR` rewrites to a different length reads back whole; the expected replies
+/// are redis-server 7.0.15's to the same requests.
+#[cfg(target_os = "linux")]
+#[test]
+fn firn_keeps_strings_at_and_past_the_inline_length_apart() {
+    let program = firn();
+    let port = free_port();
+    let text = port.to_string();
+    let child = program.spawn_on_route(true, &[text.as_bytes(), b"1"]);
+    let mut client = connect_when_ready(port);
+    client
+        .set_read_timeout(Some(Duration::from_secs(20)))
+        .expect("bound the client's waits");
+    let at = format!("{}x", "a".repeat(23));
+    let past = format!("{at}y");
+    let other = format!("{}z", "a".repeat(23));
+    let (a, b, c) = (at.as_str(), past.as_str(), other.as_str());
+    let short_value = "v".repeat(24);
+    let long_value = "v".repeat(25);
+    let (v24, v25) = (short_value.as_str(), long_value.as_str());
+    let wide = format!("1{}", "0".repeat(25));
+    let mut batch = Vec::new();
+    for request in [
+        vec!["SET", a, "1"],
+        vec!["SET", b, "2"],
+        vec!["SET", c, "3"],
+        vec!["GET", a],
+        vec!["GET", b],
+        vec!["GET", c],
+        vec!["INCR", a],
+        vec!["INCR", b],
+        vec!["GET", a],
+        vec!["GET", b],
+        vec!["SET", "k", v24],
+        vec!["GET", "k"],
+        vec!["SET", "k", v25],
+        vec!["GET", "k"],
+        vec!["SET", "k", v24],
+        vec!["GET", "k"],
+        vec!["SET", "m", "9223372036854775806"],
+        vec!["INCR", "m"],
+        vec!["INCR", "m"],
+        vec!["GET", "m"],
+        vec!["SET", "neg", "-9223372036854775807"],
+        vec!["INCR", "neg"],
+        vec!["GET", "neg"],
+        vec!["SET", "wide", wide.as_str()],
+        vec!["INCR", "wide"],
+        vec!["SADD", "s", a, b, c, a],
+        vec!["SCARD", "s"],
+        vec!["SREM", "s", a],
+        vec!["SCARD", "s"],
+        vec!["SREM", "s", a, b],
+        vec!["SCARD", "s"],
+        vec!["HSET", "h", a, v25, b, v24],
+        vec!["HGET", "h", a],
+        vec!["HGET", "h", b],
+        vec!["HGET", "h", c],
+        vec!["ZADD", "z", "1", a, "2", b, "3", c],
+        vec!["ZSCORE", "z", b],
+        vec!["ZADD", "z", "0", b],
+        vec!["ZPOPMIN", "z", "2"],
+        vec!["LPUSH", "l", a, b],
+        vec!["LRANGE", "l", "0", "-1"],
+        vec!["EXISTS", a, b, c],
+        vec!["DEL", a, b],
+        vec!["EXISTS", a, b, c],
+        vec!["MSET", a, v25, b, v24],
+        vec!["GET", a],
+        vec!["GET", b],
+    ] {
+        batch.extend(resp(&request));
+    }
+    client.write_all(&batch).expect("send the batch");
+    expect_replies(
+        &mut client,
+        b"+OK\r\n+OK\r\n+OK\r\n$1\r\n1\r\n$1\r\n2\r\n$1\r\n3\r\n:2\r\n:3\r\n$1\r\n2\r\n$1\r\n3\r\n+OK\r\n$24\r\nvvvvvvvvvvvvvvvvvvvvvvvv\r\n+OK\r\n$25\r\nvvvvvvvvvvvvvvvvvvvvvvvvv\r\n+OK\r\n$24\r\nvvvvvvvvvvvvvvvvvvvvvvvv\r\n+OK\r\n:9223372036854775807\r\n-ERR increment or decrement would overflow\r\n$19\r\n9223372036854775807\r\n+OK\r\n:-9223372036854775806\r\n$20\r\n-9223372036854775806\r\n+OK\r\n-ERR value is not an integer or out of range\r\n:3\r\n:3\r\n:1\r\n:2\r\n:1\r\n:1\r\n:2\r\n$25\r\nvvvvvvvvvvvvvvvvvvvvvvvvv\r\n$24\r\nvvvvvvvvvvvvvvvvvvvvvvvv\r\n$-1\r\n:3\r\n$1\r\n2\r\n:0\r\n*4\r\n$25\r\naaaaaaaaaaaaaaaaaaaaaaaxy\r\n$1\r\n0\r\n$24\r\naaaaaaaaaaaaaaaaaaaaaaax\r\n$1\r\n1\r\n:2\r\n*2\r\n$25\r\naaaaaaaaaaaaaaaaaaaaaaaxy\r\n$24\r\naaaaaaaaaaaaaaaaaaaaaaax\r\n:3\r\n:2\r\n:1\r\n+OK\r\n$25\r\nvvvvvvvvvvvvvvvvvvvvvvvvv\r\n$24\r\nvvvvvvvvvvvvvvvvvvvvvvvv\r\n",
+        "the strings around the inline length",
+    );
+    drop(client);
+    let (status, _) = finished(child);
+    assert_eq!(status, 0);
+}
+
+/// firn answers `CONFIG` with too few arguments, an unpaired option or
+/// several parameters, and echoes client bytes in its errors, as Redis does:
+/// a zero byte ends an echoed name or argument, carriage return and line feed
+/// become spaces so that an error stays one line, an unknown subcommand is
+/// echoed to 128 bytes and an unknown `CONFIG SET` option whole, and a
+/// carriage return a malformed request holds where a dollar sign belongs is
+/// echoed as a space before the connection closes. The expected replies are
+/// redis-server 7.0.15's to the same bytes.
+#[cfg(target_os = "linux")]
+#[test]
+fn firn_answers_config_and_echoes_client_bytes_as_redis_does() {
+    let program = firn();
+    let port = free_port();
+    let text = port.to_string();
+    let child = program.spawn_on_route(true, &[text.as_bytes(), b"1"]);
+    let mut client = connect_when_ready(port);
+    client
+        .set_read_timeout(Some(Duration::from_secs(20)))
+        .expect("bound the client's waits");
+    let mut batch = b"*1\r\n$6\r\nCONFIG\r\n*2\r\n$6\r\nCONFIG\r\n$3\r\nGET\r\n*3\r\n$6\r\nCONFIG\r\n$3\r\nSET\r\n$1\r\nx\r\n*5\r\n$6\r\nCONFIG\r\n$3\r\nSET\r\n$1\r\nx\r\n$1\r\ny\r\n$1\r\nz\r\n*4\r\n$6\r\nCONFIG\r\n$3\r\nSET\r\n$1\r\nx\r\n$1\r\ny\r\n*4\r\n$6\r\nCONFIG\r\n$3\r\nGET\r\n$4\r\nsave\r\n$10\r\nappendonly\r\n*5\r\n$6\r\nCONFIG\r\n$3\r\nGET\r\n$10\r\nappendonly\r\n$4\r\nsave\r\n$4\r\nsave\r\n*4\r\n$6\r\nCONFIG\r\n$3\r\nget\r\n$7\r\nnothing\r\n$4\r\nelse\r\n*3\r\n$6\r\nCONFIG\r\n$3\r\nGET\r\n$4\r\nsave\r\n*3\r\n$6\r\nCONFIG\r\n$3\r\nGET\r\n$10\r\nAPPENDONLY\r\n*3\r\n$6\r\nCONFIG\r\n$3\r\nGET\r\n$4\r\nSave\r\n*2\r\n$4\r\nGET\x00\r\n$1\r\na\r\n*3\r\n$4\r\nG\r\nT\r\n$3\r\nb\nc\r\n$3\r\nd\x00e\r\n*2\r\n$6\r\nCONFIG\r\n$4\r\nNO\nP\r\n".to_vec();
+    // An unknown subcommand is echoed to 128 bytes; an unknown CONFIG SET
+    // option is echoed whole, up to a zero byte.
+    batch.extend_from_slice(b"*2\r\n$6\r\nCONFIG\r\n$200\r\n");
+    batch.extend_from_slice(&[b'b'; 200]);
+    batch.extend_from_slice(b"\r\n*4\r\n$6\r\nCONFIG\r\n$3\r\nSET\r\n$161\r\n");
+    batch.extend_from_slice(&[b'c'; 150]);
+    batch.push(0);
+    batch.extend_from_slice(&[b'd'; 10]);
+    batch.extend_from_slice(b"\r\n$1\r\nv\r\n*1\r\n\r\n");
+    client.write_all(&batch).expect("send the batch");
+    let mut expected = b"-ERR wrong number of arguments for 'config' command\r\n-ERR wrong number of arguments for 'config|get' command\r\n-ERR wrong number of arguments for 'config|set' command\r\n-ERR syntax error\r\n-ERR Unknown option or number of arguments for CONFIG SET - 'x'\r\n*4\r\n$10\r\nappendonly\r\n$2\r\nno\r\n$4\r\nsave\r\n$0\r\n\r\n*4\r\n$10\r\nappendonly\r\n$2\r\nno\r\n$4\r\nsave\r\n$0\r\n\r\n*0\r\n*2\r\n$4\r\nsave\r\n$0\r\n\r\n*2\r\n$10\r\nAPPENDONLY\r\n$2\r\nno\r\n*2\r\n$4\r\nSave\r\n$0\r\n\r\n-ERR unknown command 'GET', with args beginning with: 'a' \r\n-ERR unknown command 'G  T', with args beginning with: 'b c' 'd' \r\n-ERR unknown subcommand 'NO P'. Try CONFIG HELP.\r\n".to_vec();
+    expected.extend_from_slice(b"-ERR unknown subcommand '");
+    expected.extend_from_slice(&[b'b'; 128]);
+    expected.extend_from_slice(
+        b"'. Try CONFIG HELP.\r\n-ERR Unknown option or number of arguments for CONFIG SET - '",
+    );
+    expected.extend_from_slice(&[b'c'; 150]);
+    expected.extend_from_slice(b"'\r\n-ERR Protocol error: expected '$', got ' '\r\n");
+    expect_replies(&mut client, &expected, "the CONFIG and echo batch");
+    drop(client);
+    let (status, _) = finished(child);
+    assert_eq!(status, 0);
+}
+
+/// firn reads a request larger than its first input window and writes a reply
+/// larger than its first reply window: a 100,000-byte value set in one command
+/// reads back whole, and a range of 2,000 list elements, a reply of more than
+/// 16,384 bytes, arrives whole and in order.
+#[cfg(target_os = "linux")]
+#[test]
+fn firn_carries_requests_and_replies_larger_than_its_windows() {
+    const ELEMENTS: usize = 2_000;
+    let program = firn();
+    let port = free_port();
+    let text = port.to_string();
+    let child = program.spawn_on_route(true, &[text.as_bytes(), b"1"]);
+    let mut client = connect_when_ready(port);
+    client
+        .set_read_timeout(Some(Duration::from_secs(20)))
+        .expect("bound the client's waits");
+    let value = (0..100_000)
+        .map(|index| char::from(b'a' + (index % 26) as u8))
+        .collect::<String>();
+    client
+        .write_all(&resp(&["SET", "big", &value]))
+        .expect("send a large value");
+    client
+        .write_all(&resp(&["GET", "big"]))
+        .expect("read it back");
+    let mut expected = b"+OK\r\n".to_vec();
+    expected.extend_from_slice(format!("${}\r\n{value}\r\n", value.len()).as_bytes());
+    expect_replies(&mut client, &expected, "the large value");
+    let elements = (0..ELEMENTS)
+        .map(|index| format!("element-{index:05}"))
+        .collect::<Vec<_>>();
+    let mut push = vec!["RPUSH", "many"];
+    push.extend(elements.iter().map(String::as_str));
+    client.write_all(&resp(&push)).expect("push the elements");
+    client
+        .write_all(&resp(&["LRANGE", "many", "0", "-1"]))
+        .expect("range every element");
+    let mut expected = format!(":{ELEMENTS}\r\n*{ELEMENTS}\r\n").into_bytes();
+    for element in &elements {
+        expected.extend_from_slice(format!("${}\r\n{element}\r\n", element.len()).as_bytes());
+    }
+    assert!(expected.len() > 16_384);
+    expect_replies(&mut client, &expected, "the large range");
+    drop(client);
+    let (status, _) = finished(child);
+    assert_eq!(status, 0);
+}
+
+/// firn replays the value types from its append-only file: after a restart a
+/// list keeps the elements its pushes and pops left, a hash its field, and a
+/// sorted set the member ZPOPMIN left at its score. The 25 of 50 members SPOP
+/// removed stay removed, since the file records the pop as the SREM of the
+/// members it chose, as Redis records it; a replay that popped at random, from
+/// a generator seeded by the clock at each start, would almost surely remove
+/// others.
+#[cfg(target_os = "linux")]
+#[test]
+fn firn_replays_the_value_types_from_its_append_only_file() {
+    let program = firn();
+    let name = "replay-types.aof";
+    let port = free_port();
+    let text = port.to_string();
+    let child = program.spawn_on_route(true, &[text.as_bytes(), b"1", name.as_bytes()]);
+    let mut client = connect_when_ready(port);
+    client
+        .set_read_timeout(Some(Duration::from_secs(20)))
+        .expect("bound the first client's waits");
+    let members = (0..50)
+        .map(|index| format!("m{index:02}"))
+        .collect::<Vec<_>>();
+    let mut add = vec!["SADD", "s"];
+    add.extend(members.iter().map(String::as_str));
+    let mut batch = Vec::new();
+    for request in [
+        vec!["RPUSH", "l", "a", "b", "c"],
+        vec!["LPOP", "l"],
+        vec!["HSET", "h", "f", "v"],
+        vec!["ZADD", "z", "1", "a", "2", "b"],
+        vec!["ZPOPMIN", "z"],
+        add,
+    ] {
+        batch.extend(resp(&request));
+    }
+    client.write_all(&batch).expect("send the changes");
+    expect_replies(
+        &mut client,
+        b":3\r\n$1\r\na\r\n:1\r\n:2\r\n*2\r\n$1\r\na\r\n$1\r\n1\r\n:50\r\n",
+        "the first run's changes",
+    );
+    client
+        .write_all(&resp(&["SPOP", "s", "25"]))
+        .expect("pop 25 members");
+    assert_eq!(
+        reply_line(&mut client, "the popped members' header"),
+        "*25\r\n"
+    );
+    let mut popped = Vec::new();
+    for _ in 0..25 {
+        assert_eq!(
+            reply_line(&mut client, "a popped member's header"),
+            "$3\r\n"
+        );
+        let member = reply_line(&mut client, "a popped member");
+        let member = member.trim_end().to_owned();
+        assert!(members.contains(&member), "{member}");
+        assert!(!popped.contains(&member), "{member} popped twice");
+        popped.push(member);
+    }
+    drop(client);
+    let (status, _) = finished(child);
+    assert_eq!(status, 0, "the first run");
+    let port = free_port();
+    let text = port.to_string();
+    let child = program.spawn_on_route(true, &[text.as_bytes(), b"1", name.as_bytes()]);
+    let mut client = connect_when_ready(port);
+    client
+        .set_read_timeout(Some(Duration::from_secs(20)))
+        .expect("bound the second client's waits");
+    let mut remove = vec!["SREM", "s"];
+    remove.extend(popped.iter().map(String::as_str));
+    let mut batch = Vec::new();
+    for request in [
+        vec!["LRANGE", "l", "0", "-1"],
+        vec!["HGET", "h", "f"],
+        vec!["ZCARD", "z"],
+        vec!["ZSCORE", "z", "b"],
+        vec!["SCARD", "s"],
+        remove,
+    ] {
+        batch.extend(resp(&request));
+    }
+    client.write_all(&batch).expect("read the replayed values");
+    expect_replies(
+        &mut client,
+        b"*2\r\n$1\r\nb\r\n$1\r\nc\r\n$1\r\nv\r\n:1\r\n$1\r\n2\r\n:25\r\n:0\r\n",
+        "the replayed values",
+    );
+    drop(client);
+    let (status, _) = finished(child);
+    assert_eq!(status, 0, "the second run");
 }

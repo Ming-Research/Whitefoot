@@ -1,0 +1,12 @@
+alias Clock = std::time::Clock;
+alias DirectoryRead = std::fs::DirectoryRead;
+alias HandleFactory = std::io::HandleFactory;
+alias Store = pkg::store::Store;
+alias Time = pkg::store::Time;
+alias WriteFile = std::fs::WriteFile;
+
+public fn write_log(store: Shared<Store>, factory: HandleFactory, file: WriteFile, clock: Clock) -> result: unit pure waits doc "The append-only file's writer: every 10 milliseconds it exchanges the keyspace's pending bytes for an empty buffer in one atomic statement and appends what it took to the file, syncing the file once a second has passed since the last sync, as appendfsync everysec does. Once the server stops it writes the last bytes, syncs and closes the file.";
+
+public fn replay(store: &Shared<Store>, factory: &HandleFactory, root: &DirectoryRead, name: &[u8], name_length: u64, time: &Time) -> applied: u64 reads(store), reads(root), reads(name), reads(time), writes(factory) waits contract {
+  requires name_length <= name^.len;
+} doc "Applies every command of the append-only file the name names, when one exists, and returns how many it applied. As Redis does while loading, no key counts as expired during the replay, time's check being zero, and an expiry whose calendar time has passed is kept as one already reached, so the commands after it in the file apply as they did when they were written; lazy and active expiry remove such a key once the server listens.";

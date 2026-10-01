@@ -1,0 +1,203 @@
+alias Key = pkg::bytes::Key;
+alias Keyed = pkg::bytes::Keyed;
+alias Client = pkg::protocol::Client;
+alias Entry = pkg::store::Entry;
+alias HashMap = std::collections::hash_map::HashMap;
+alias KeyEnv = pkg::bytes::KeyEnv;
+alias Span = pkg::protocol::Span;
+alias Store = pkg::store::Store;
+alias Time = pkg::store::Time;
+alias Value = pkg::store::Value;
+alias ceiling = pkg::store::ceiling;
+alias clear_items = pkg::protocol::clear_items;
+alias copy_key = pkg::bytes::copy_key;
+alias expired = pkg::store::expired;
+alias hash_map_edit = std::collections::hash_map::hash_map_edit;
+alias hash_map_lookup = std::collections::hash_map::hash_map_lookup;
+alias hash_map_new = std::collections::hash_map::hash_map_new;
+alias hash_map_put = std::collections::hash_map::hash_map_put;
+alias hash_map_remove = std::collections::hash_map::hash_map_remove;
+alias log_command = pkg::store::log_command;
+alias push_item = pkg::protocol::push_item;
+alias reply_error = pkg::protocol::reply_error;
+alias reply_integer = pkg::protocol::reply_integer;
+alias reply_nil = pkg::protocol::reply_nil;
+alias reply_wrong_type = pkg::protocol::reply_wrong_type;
+alias Bytes = pkg::bytes::Bytes;
+alias key_text = pkg::bytes::key_text;
+alias reply_text = pkg::protocol::reply_text;
+
+fn put_fields(fields: &HashMap<Key, Bytes, ceiling>, client: &Client) -> added: u64 writes(fields), writes(client) {
+  doc "Stores every prepared field and value pair in the hash, the field taken first, and returns how many fields it did not already hold.";
+  let added = 0_u64;
+  loop @pairs {
+    if client^.items.inner.len >= 2_u64 {
+      let field = take_back(window: &client^.items.inner);
+      let prepared = take_back(window: &client^.items.inner);
+      let stored = key_text(key: move prepared);
+      let put = hash_map_put::<Keyed, Bytes, ceiling>(map: fields, key: move field, value: move stored, env: &client^.keys);
+      match move put {
+        HashMapInserted() => {
+          set added = added +wrap 1_u64;
+        }
+        HashMapReturned(reason: why, pair: returned) => {
+        }
+      }
+    } else {
+      break @pairs;
+    }
+  }
+  return added;
+}
+
+fn set_fields(env: &Client, key: &Key, value: &Entry) -> kind: u64 writes(env), writes(value) {
+  doc "Stores the prepared pairs in a live hash, recording done and how many fields were new in number; records wrong for another kind and expired for an expired entry.";
+  let reached = expired(expires: value^.expires, now: env^.now);
+  if reached {
+    set env^.state = state_expired;
+    return 0_u64;
+  }
+  match value^.value {
+    Fields(fields: hash_of) => {
+      set env^.number = put_fields(fields: hash_of, client: env);
+      set env^.state = state_done;
+      return 4_u64;
+    }
+    Text(bytes: stored) => {
+      set env^.state = state_wrong;
+      return 1_u64;
+    }
+    Items(items: list) => {
+      set env^.state = state_wrong;
+      return 2_u64;
+    }
+    Members(members: set_of) => {
+      set env^.state = state_wrong;
+      return 3_u64;
+    }
+    Ranked(ranked: sorted) => {
+      set env^.state = state_wrong;
+      return 5_u64;
+    }
+  }
+}
+
+fn run_hset(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), writes(client) waits {
+  doc "HSET key field value [field value ...]: stores each pair in the hash, creating it for an absent key, and answers how many fields were new.";
+  prepare_keys(input: input, args: args, client: client, first: 2_u64);
+  let key = key_at(input: input, args: args, index: 1_u64);
+  set client^.now = time^.check;
+  set client^.state = state_absent;
+  set client^.number = 0_u64;
+  let full = False();
+  atomic state = &store^ {
+    let edited = hash_map_edit::<Keyed, Entry, Client, u64, fn set_fields, ceiling>(map: &state^.map, key: &key, key_env: env, edit_env: client);
+    let create = client^.state == state_absent;
+    if client^.state == state_expired {
+      let gone = hash_map_remove::<Keyed, Entry, ceiling>(map: &state^.map, key: &key, env: env);
+      set create = True();
+    }
+    if create {
+      let pairs = client^.items.inner.len / 2_u64;
+      let capacity = imax(pairs, 4_u64);
+      if capacity <= ceiling {
+        let fields = hash_map_new::<Key, Bytes, ceiling>(capacity: capacity);
+        set client^.number = put_fields(fields: &fields, client: client);
+        let made = Value::Fields(fields: move fields);
+        let fresh = Entry(value: move made, expires: 0_u64);
+        let owned_key = copy_key(key: &key);
+        let put = put_entry(state: &state^, key: move owned_key, held: move fresh, env: env);
+        if put {
+          set client^.state = state_done;
+        } else {
+          set full = True();
+        }
+      }
+    }
+    if client^.state == state_done {
+      if state^.logging {
+        log_command(log: &state^.log, input: input, args: args);
+      }
+    }
+  }
+  clear_items(client: client);
+  if client^.state == state_done {
+    let added = cvt.wrap::<u64, i64>(client^.number);
+    reply_integer(client: client, value: added);
+    return unit;
+  }
+  if full {
+    reply_error(client: client, word: &text_full[0_u64..17_u64]);
+    return unit;
+  }
+  reply_wrong_type(client: client);
+  return unit;
+}
+
+fn field_out(env: &Client, key: &Key, value: &Bytes) -> result: u64 reads(value), writes(env) {
+  doc "Writes a field's value as a bulk string, recording done.";
+  reply_text(client: env, text: value);
+  set env^.state = state_done;
+  return 1_u64;
+}
+
+fn get_field(env: &Client, key: &Key, value: &Entry) -> kind: u64 reads(value), writes(env) {
+  doc "Writes the value of the prepared field of a live hash as a bulk string, recording done, or records absent when the hash does not hold the field; records wrong for another kind and expired for an expired entry.";
+  let reached = expired(expires: value^.expires, now: env^.now);
+  if reached {
+    set env^.state = state_expired;
+    return 0_u64;
+  }
+  match value^.value {
+    Fields(fields: hash_of) => {
+      if env^.items.inner.len > 0_u64 {
+        let field = take_back(window: &env^.items.inner);
+        let keys = env^.keys;
+        let found = hash_map_lookup::<Keyed, Bytes, Client, u64, fn field_out, ceiling>(map: hash_of, key: &field, key_env: &keys, visit_env: env);
+      }
+      return 4_u64;
+    }
+    Text(bytes: stored) => {
+      set env^.state = state_wrong;
+      return 1_u64;
+    }
+    Items(items: list) => {
+      set env^.state = state_wrong;
+      return 2_u64;
+    }
+    Members(members: set_of) => {
+      set env^.state = state_wrong;
+      return 3_u64;
+    }
+    Ranked(ranked: sorted) => {
+      set env^.state = state_wrong;
+      return 5_u64;
+    }
+  }
+}
+
+fn run_hget(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), writes(client) waits {
+  doc "HGET key field: answers the field's value in the hash, or the null bulk string when the key or the field is absent.";
+  clear_items(client: client);
+  let field = key_at(input: input, args: args, index: 2_u64);
+  push_item(client: client, item: move field);
+  let key = key_at(input: input, args: args, index: 1_u64);
+  set client^.now = time^.check;
+  set client^.state = state_absent;
+  atomic state = &store^ {
+    let found = hash_map_edit::<Keyed, Entry, Client, u64, fn get_field, ceiling>(map: &state^.map, key: &key, key_env: env, edit_env: client);
+    if client^.state == state_expired {
+      let gone = hash_map_remove::<Keyed, Entry, ceiling>(map: &state^.map, key: &key, env: env);
+    }
+  }
+  clear_items(client: client);
+  if client^.state == state_done {
+    return unit;
+  }
+  if client^.state == state_wrong {
+    reply_wrong_type(client: client);
+    return unit;
+  }
+  reply_nil(client: client);
+  return unit;
+}

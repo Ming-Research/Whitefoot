@@ -334,13 +334,16 @@ Safe, fast and small are the core. These are the other things worth knowing.
   (`tests/programs/shared_objects.wf`). While a statement waits on `when`,
   the other contexts and the function that started it go on, so a consumer
   started before its producer still finishes. A Redis subset written this way,
-  `PING`, `SET`, `GET`, `DEL` and `INCR` over one shared keyspace
-  (`tests/programs/redis_subset.wf`), served `SET` and `GET` at least as fast
-  as `redis-server` on the same two cores of one four-CPU host under
-  `redis-benchmark`, with and without pipelining
+  `PING`, `SET`, `GET`, `DEL` and `INCR` over one shared keyspace, served
+  `SET` and `GET` at least as fast as `redis-server` on the same two cores of
+  one four-CPU host under `redis-benchmark`, with and without pipelining
   ([Experiment 7](research/investigations/io-model/SHARED.md#experiment-7-a-redis-subset)).
-  Still open: a statement over several objects, and letting statements that
-  only read run at the same time.
+  It has grown into firn (`apps/firn`), a server of Redis's protocol whose
+  lists, sets, hashes and sorted sets let it run every test of
+  `redis-benchmark`'s default suite
+  ([firn](research/investigations/firn/DESIGN.md)). Still open: a statement
+  over several objects, and letting statements that only read run at the same
+  time.
 
 ### Planned
 

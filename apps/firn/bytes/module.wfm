@@ -1,0 +1,64 @@
+alias HashMapKey = std::collections::hash_map::HashMapKey;
+
+public struct KeyEnv {
+  doc "The environment firn's key protocols take. It holds nothing: every key carries the hash it was made with.";
+}
+
+public enum Bytes {
+  doc "A byte string: one of at most 24 bytes held inside its owner, a longer one in an allocation of its own. Every string is built by bytes_new, which chooses the form from the length, so equal strings share a form; the variants are public, so this holds by convention, and a string built in the other form would still compare equal, only more slowly.";
+  Short(public bytes: Slots<u8, 24>);
+  Long(public bytes: Box<Slots<u8>>);
+}
+
+public struct Key {
+  doc "A string with its hash, computed once when the key is made, so that a hash map neither hashes it again nor compares the bytes of two keys whose hashes differ.";
+  public hash: u64;
+  public bytes: Bytes;
+}
+
+public struct Integer {
+  doc "A signed decimal read from bytes: state 1 is a number, 0 is text that is not one.";
+  public value: i64;
+  public state: u64;
+}
+
+public fn byte_at(input: &[u8], index: u64) -> result: u8 reads(input) doc "Reads one byte, or zero at a position the range does not hold.";
+
+public fn bytes_new(input: &[u8], start: u64, length: u64) -> made: Bytes reads(input) doc "Copies bytes of the input from a position into a string of its own, held inline when it has at most 24 bytes; a position the input does not hold reads as zero.";
+
+public fn bytes_copy(bytes: &Bytes) -> made: Bytes reads(bytes) doc "A copy of a string.";
+
+public fn bytes_length(bytes: &Bytes) -> length: u64 reads(bytes) doc "How many bytes a string holds.";
+
+public fn bytes_same(left: &Bytes, right: &Bytes) -> equal: Bool reads(left), reads(right) doc "Whether two strings hold the same bytes.";
+
+public fn bytes_order(left: &Bytes, right: &Bytes) -> order: i32 reads(left), reads(right) doc "Orders two strings byte by byte as unsigned values, a proper prefix first: -1, 0 or 1.";
+
+public fn bytes_boxed(bytes: Bytes) -> made: Box<Slots<u8>> pure doc "A string in an allocation of its own, for a container of such strings.";
+
+public fn bytes_integer(bytes: &Bytes) -> number: Integer reads(bytes) doc "Reads a string as read_integer reads bytes of the input.";
+
+public fn decimal_text(value: i64) -> made: Bytes pure doc "A string holding a number in decimal, with a leading minus sign when it is negative.";
+
+public fn key_hash(env: &KeyEnv, key: &Key) -> hash: u64 reads(key) doc "The hash a key carries.";
+
+public fn key_equal(env: &KeyEnv, left: &Key, right: &Key) -> equal: Bool reads(left), reads(right) doc "Two keys are equal when their hashes, lengths and every byte are.";
+
+public binding Keyed : HashMapKey<Key, KeyEnv> {
+  hash = key_hash;
+  equal = key_equal;
+}
+
+public fn make_key(input: &[u8], start: u64, length: u64) -> made: Key reads(input) doc "Copies bytes of the input into a key with the FNV-1a hash of its bytes, the hash every key of firn carries.";
+
+public fn copy_key(key: &Key) -> made: Key reads(key) doc "A copy of a key, its hash kept.";
+
+public fn key_text(key: Key) -> bytes: Bytes pure doc "A key's string, its hash dropped, for a value that is stored where no hash map looks it up.";
+
+public fn key_boxed(key: Key) -> bytes: Box<Slots<u8>> pure doc "A key's string in an allocation of its own, its hash dropped, for a list element or a hash's value.";
+
+public fn read_integer(input: &[u8], start: u64, length: u64) -> number: Integer reads(input) doc "Reads bytes of the input as a signed 64-bit decimal as Redis reads one: an optional minus sign, then digits without a leading zero unless the number is 0, and nothing else.";
+
+public fn name_code(input: &[u8], start: u64, length: u64) -> code: u64 reads(input) doc "Packs a command name's first eight bytes, letters upper-cased, little end first, into one number; a name longer than eight bytes, or one holding a zero byte, which no command's name does, has its top byte set to 255, and a name of no bytes is 0.";
+
+public fn name_is(input: &[u8], start: u64, length: u64, word: &[u8]) -> matched: Bool reads(input), reads(word) doc "Whether bytes of the input spell an upper-case word, letters in either case.";

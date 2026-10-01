@@ -1,0 +1,258 @@
+alias Bytes = pkg::bytes::Bytes;
+alias Key = pkg::bytes::Key;
+alias KeyEnv = pkg::bytes::KeyEnv;
+alias Span = pkg::protocol::Span;
+alias Keyed = pkg::bytes::Keyed;
+alias byte_at = pkg::bytes::byte_at;
+alias bytes_order = pkg::bytes::bytes_order;
+alias hash_map_lookup = std::collections::hash_map::hash_map_lookup;
+alias hash_map_new = std::collections::hash_map::hash_map_new;
+alias hash_map_remove = std::collections::hash_map::hash_map_remove;
+alias priority_queue_len = std::collections::priority_queue::priority_queue_len;
+alias priority_queue_new = std::collections::priority_queue::priority_queue_new;
+alias priority_queue_peek = std::collections::priority_queue::priority_queue_peek;
+alias priority_queue_pop = std::collections::priority_queue::priority_queue_pop;
+
+struct Probe {
+  at: u64;
+}
+
+fn rank_compare(env: &KeyEnv, left: &Rank, right: &Rank) -> order: i32 reads(left), reads(right) {
+  doc "Orders ranks by score, then by member bytes, as Redis orders a sorted set.";
+  let before = flt(left^.score, right^.score);
+  if before {
+    return -1_i32;
+  }
+  let after = fgt(left^.score, right^.score);
+  if after {
+    return 1_i32;
+  }
+  let order = bytes_order(left: &left^.member.bytes, right: &right^.member.bytes);
+  return order;
+}
+
+fn due_order(env: &KeyEnv, left: &Due, right: &Due) -> order: i32 reads(left), reads(right) {
+  doc "Orders queued expiries by their instant, the earliest first.";
+  if left^.at < right^.at {
+    return -1_i32;
+  }
+  if left^.at > right^.at {
+    return 1_i32;
+  }
+  return 0_i32;
+}
+
+fn store_new(seed: u64) -> made: Store pure {
+  doc "An empty keyspace that keeps no append-only file, whose SPOP draws start from the seed.";
+  let map = hash_map_new::<Key, Entry, ceiling>(capacity: 1024_u64);
+  let due = priority_queue_new::<Due, ceiling>();
+  let log = box_slots_new::<u8>(capacity: 65536_u64);
+  let quiet = False();
+  let running = False();
+  return Store(map: move map, due: move due, log: move log, logging: quiet, clients: 0_u64, stopping: running, random: seed);
+}
+
+fn expired(expires: u64, now: u64) -> reached: Bool pure {
+  doc "Whether an expiry, zero for none, has been reached at now.";
+  if expires == 0_u64 {
+    return False();
+  }
+  let reached = expires <= now;
+  return reached;
+}
+
+fn entry_expiry(env: &Probe, key: &Key, value: &Entry) -> result: u64 reads(value), writes(env) {
+  doc "Reads an entry's expiry, zero for none.";
+  set env^.at = value^.expires;
+  return value^.expires;
+}
+
+fn due_at(env: &Probe, value: &Due) -> result: u64 reads(value), writes(env) {
+  doc "Reads a queued expiry's instant.";
+  set env^.at = value^.at;
+  return value^.at;
+}
+
+fn expire_batch(store: &Store, now: u64, env: &KeyEnv) -> more: Bool reads(env), writes(store) {
+  doc "Removes up to 256 keys whose expiry has been reached, the earliest first, and returns whether more may be due. A queued expiry that no longer matches its key's, because the key was set, given another expiry or removed since, is dropped.";
+  for @batch (step in 0_u64..256_u64) {
+    let pending = priority_queue_len::<Due, ceiling>(queue: &store^.due);
+    if pending > 0_u64 {
+      let probe = Probe(at: 0_u64);
+      let first = priority_queue_peek::<Due, Probe, u64, fn due_at, ceiling>(queue: &store^.due, env: &probe);
+      if first > now {
+        return False();
+      }
+      let due = priority_queue_pop::<DueOrder, ceiling>(queue: &store^.due, env: env);
+      let seen = Probe(at: 0_u64);
+      let found = hash_map_lookup::<Keyed, Entry, Probe, u64, fn entry_expiry, ceiling>(map: &store^.map, key: &due.key, key_env: env, visit_env: &seen);
+      match found {
+        Ok(value: expires) => {
+          if expires == due.at {
+            let gone = hash_map_remove::<Keyed, Entry, ceiling>(map: &store^.map, key: &due.key, env: env);
+          }
+        }
+        Err(error: absent) => {
+        }
+      }
+    } else {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn log_reserve(log: &Box<Slots<u8>>, needed: u64) -> result: unit writes(log) {
+  doc "Grows the append-only file's buffer, at least doubling it, until it has room for needed more bytes. No host allocates the 2^62 bytes the growth stops at; a host that cannot allocate less stops the program [SCOPE-3], as Redis stops when its buffer exhausts memory.";
+  let length = log^.inner.len;
+  let capacity = log^.inner.cap;
+  let wanted = length +wrap needed;
+  if wanted > capacity {
+    let doubled = capacity +wrap capacity;
+    let target = imax(doubled, wanted);
+    let fits = target <= 4611686018427387904_u64;
+    if fits {
+      if target >= log^.inner.cap {
+        grow(cell: log, capacity: target);
+      }
+    }
+  }
+  return unit;
+}
+
+fn log_byte(log: &Box<Slots<u8>>, value: u8) -> result: unit writes(log) {
+  doc "Appends one byte to the buffer, which log_reserve gave room.";
+  if log^.inner.len < log^.inner.cap {
+    place_back(window: &log^.inner, value: value);
+  }
+  return unit;
+}
+
+fn log_number(log: &Box<Slots<u8>>, value: u64) -> result: unit writes(log) {
+  doc "Appends a number in decimal.";
+  let digits = array_filled::<u8, 20>(value: 0_u8);
+  let count = 0_u64;
+  let rest = value;
+  loop @digits {
+    let low = rest % 10_u64;
+    let narrow = cvt.wrap::<u64, u8>(low);
+    let glyph = narrow +wrap 48_u8;
+    if count < 20_u64 {
+      set digits[count] = glyph;
+      set count = count +wrap 1_u64;
+    }
+    set rest = rest / 10_u64;
+    if rest == 0_u64 {
+      break @digits;
+    }
+  }
+  for @emit (index in 0_u64..count) {
+    let back = count -wrap index;
+    let from = back -wrap 1_u64;
+    let glyph = 48_u8;
+    if from < 20_u64 {
+      set glyph = digits[from];
+    }
+    log_byte(log: log, value: glyph);
+  }
+  return unit;
+}
+
+fn log_crlf(log: &Box<Slots<u8>>) -> result: unit writes(log) {
+  doc "Appends CR LF.";
+  log_byte(log: log, value: 13_u8);
+  log_byte(log: log, value: 10_u8);
+  return unit;
+}
+
+fn log_length(log: &Box<Slots<u8>>, length: u64) -> result: unit writes(log) {
+  doc "Makes room for a bulk string of length bytes and appends its header.";
+  let needed = length +wrap 32_u64;
+  log_reserve(log: log, needed: needed);
+  log_byte(log: log, value: 36_u8);
+  log_number(log: log, value: length);
+  log_crlf(log: log);
+  return unit;
+}
+
+fn log_count(log: &Box<Slots<u8>>, count: u64, room: u64) -> result: unit writes(log) {
+  doc "Makes room for a command of about room bytes and appends the header of a RESP array of count elements.";
+  let needed = room +wrap 32_u64;
+  log_reserve(log: log, needed: needed);
+  log_byte(log: log, value: 42_u8);
+  log_number(log: log, value: count);
+  log_crlf(log: log);
+  return unit;
+}
+
+fn log_word(log: &Box<Slots<u8>>, word: &[u8]) -> result: unit reads(word), writes(log) {
+  doc "Appends a constant word as a RESP bulk string.";
+  let count = word^.len;
+  log_length(log: log, length: count);
+  for @word (offset in 0_u64..count) {
+    let byte = word^[offset];
+    log_byte(log: log, value: byte);
+  }
+  log_crlf(log: log);
+  return unit;
+}
+
+fn log_input(log: &Box<Slots<u8>>, input: &[u8], span: Span) -> result: unit reads(input), writes(log) {
+  doc "Appends an argument of the input as a RESP bulk string.";
+  let length = span.length;
+  log_length(log: log, length: length);
+  for @copy (offset in 0_u64..length) {
+    let position = span.start +wrap offset;
+    let byte = byte_at(input: input, index: position);
+    log_byte(log: log, value: byte);
+  }
+  log_crlf(log: log);
+  return unit;
+}
+
+fn log_text(log: &Box<Slots<u8>>, text: &Bytes) -> result: unit reads(text), writes(log) {
+  doc "Appends a stored string as a RESP bulk string.";
+  match text^ {
+    Short(bytes: short) => {
+      let length = short^.len;
+      let window = &short^[0_u64..length];
+      let span = Span(start: 0_u64, length: length);
+      log_input(log: log, input: window, span: span);
+    }
+    Long(bytes: long) => {
+      let length = long^.inner.len;
+      let window = &long^.inner[0_u64..length];
+      let span = Span(start: 0_u64, length: length);
+      log_input(log: log, input: window, span: span);
+    }
+  }
+  return unit;
+}
+
+fn log_decimal(log: &Box<Slots<u8>>, value: u64) -> result: unit writes(log) {
+  doc "Appends a number as a RESP bulk string of its decimal digits.";
+  let digits = 1_u64;
+  let rest = value / 10_u64;
+  loop @count {
+    if rest == 0_u64 {
+      break @count;
+    }
+    set digits = digits +wrap 1_u64;
+    set rest = rest / 10_u64;
+  }
+  log_length(log: log, length: digits);
+  log_number(log: log, value: value);
+  log_crlf(log: log);
+  return unit;
+}
+
+fn log_command(log: &Box<Slots<u8>>, input: &[u8], args: &Box<Slots<Span>>) -> result: unit reads(input), reads(args), writes(log) {
+  doc "Appends a command as the client sent it, every argument a RESP bulk string.";
+  let count = args^.inner.len;
+  log_count(log: log, count: count, room: 0_u64);
+  for @arguments (index in 0_u64..count) {
+    let span = args^.inner[index];
+    log_input(log: log, input: input, span: span);
+  }
+  return unit;
+}

@@ -44,12 +44,15 @@ disjoint from the Slab's cells under the ordinary effect-path rules.
 capacity. `hash_map_put` returns `HashMapInserted` or `HashMapReturned`, whose
 fields are `reason` and `pair`: `HashMapReplaced` returns the old complete pair
 after installing the offered pair, and `HashMapFull` returns the offered pair.
-`hash_map_try_put` keeps the current capacity; `hash_map_put` grows only after a
-full probe finds no reusable slot, taking capacity zero to one and otherwise
-doubling or saturating at the ceiling. `hash_map_reserve` is a no-op at or below
-current capacity and refuses requests above the ceiling; `hash_map_rehash`
-rebuilds at the same capacity. Capacity refusal is not an allocation-failure
-outcome.
+`hash_map_try_put` keeps the current capacity. `hash_map_put` first rebuilds a
+map below its ceiling once its filled buckets and the buckets removals vacated
+number three quarters or more of its buckets: at the same capacity when fewer
+than half that mark, rounded down, are filled, and otherwise from zero buckets
+to one or at twice its buckets, saturating at the ceiling; a map at its ceiling
+is not rebuilt, so its vacated buckets remain until `hash_map_rehash`.
+`hash_map_reserve` is a no-op at or below current capacity and refuses requests
+above the ceiling; `hash_map_rehash` rebuilds at the same capacity. Capacity
+refusal is not an allocation-failure outcome.
 
 `hash_map_lookup` and `hash_map_each` borrow stored pairs for callbacks.
 `hash_map_edit` permits its callback to change the value while reading the key,
