@@ -243,17 +243,19 @@ fn main() -> status: std::process::ExitStatus pure {
         }),
         "stored aggregates must not cross the write as SSA values: {replace}"
     );
-    let marker = module
-        .find("@wf_place_back$instance$")
-        .expect("the aggregate place_back instance must be emitted");
-    let start = module[..marker]
-        .rfind("define ")
-        .expect("the place_back definition must start");
-    let end = module[start..]
-        .find("\n}\n")
-        .map(|offset| start + offset + 2)
-        .expect("the place_back definition must close");
-    let place_back = &module[start..end];
+    let append = emitted_function(&module, "append_record");
+    let callees = append
+        .lines()
+        .filter(|line| line.contains(" = call "))
+        .filter_map(|line| line.split_once("@wf_")?.1.split_once('('))
+        .map(|(name, _)| name)
+        .filter(|name| name.starts_with("place_back$instance$"))
+        .collect::<Vec<_>>();
+    assert_eq!(callees.len(), 1, "one aggregate place_back call: {append}");
+    // The first symbol occurrence is this caller's instruction, not the
+    // transfer kernel's definition. Entry forwarding may erase the caller's
+    // snapshot without changing the element transfer checked below.
+    let place_back = emitted_function(&module, callees[0]);
     assert!(
         place_back.contains("call void @llvm.memmove.p0.p0.i64"),
         "{place_back}"
