@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <functional>
 #include <memory>
+#include <new>
 #include <unordered_map>
 #include <utility>
 
@@ -173,6 +174,63 @@ Word trace(Word capacity, Word count, Word rounds, Word seed, Word path,
     for (auto& [key, value] : map) digest.consume(Payload<V>::content(key, std::move(value)));
     return digest.finish(); // map destruction reclaims all native backing/nodes.
 }
+
+// The isolated lookup caller supplies the owner storage. Its map remains an
+// ordinary unordered_map: reservation, population and release are untimed.
+template<class V> struct LookupOwner {
+    StdMap<V, AlignedHash> map;
+    Word count, seed;
+    LookupOwner(Word count, Word seed)
+        : map(0, AlignedHash{seed ^ UINT64_C(0x9e3779b97f4a7c15), false}),
+          count(count), seed(seed) {}
+};
+
+template<class V>
+void lookup_prepare(void* storage, Word slots, Word count, Word seed) {
+    static_assert(sizeof(LookupOwner<V>) <= 128, "lookup owner fits caller storage");
+    static_assert(alignof(LookupOwner<V>) <= 16, "lookup owner fits caller alignment");
+    if (count > slots || slots > UINT32_MAX) std::abort();
+    auto* owner = new (storage) LookupOwner<V>(count, seed);
+    owner->map.reserve(slots);
+    for (Word index = 0; index < count; ++index)
+        owner->map.try_emplace(key_at(index), Payload<V>::make(seed + index));
+    if (owner->map.size() != count || owner->map.bucket_count() > UINT32_MAX)
+        std::abort();
+}
+
+template<class V>
+Word lookup_query(const void* storage, Word rounds, Word miss) {
+    const auto& owner = *static_cast<const LookupOwner<V>*>(storage);
+    Digest digest(owner.seed);
+    for (Word round = 0; round < rounds; ++round)
+        for (Word index = 0; index < owner.count; ++index) {
+            Word key = key_at(index) + (miss != 0);
+            auto found = owner.map.find(key);
+            digest.ordered(found != owner.map.end());
+            if (found != owner.map.end())
+                digest.ordered(Payload<V>::identity(found->second));
+        }
+    return digest.finish();
+}
+
+template<class V>
+Word lookup_geometry(const void* storage) {
+    const auto& owner = *static_cast<const LookupOwner<V>*>(storage);
+    // Return the implementation's actual bucket count, never the reservation
+    // request: the caller qualifies the expected geometry before timing.
+    return (Word(owner.map.bucket_count()) << 32) | Word(owner.map.size());
+}
+
+template<class V>
+Word lookup_finish(void* storage) {
+    auto* owner = static_cast<LookupOwner<V>*>(storage);
+    Digest digest(owner->seed);
+    for (auto& [key, value] : owner->map)
+        digest.consume(Payload<V>::content(key, std::move(value)));
+    Word result = digest.finish();
+    std::destroy_at(owner);
+    return result;
+}
 } // namespace
 
 #define DEFAULT_ENTRY(NAME, MAP, VALUE, HASH)                             \
@@ -197,6 +255,25 @@ DEFAULT_ENTRY(eco_absl_map_word_default, FlatMap, Word, FlatDefaultHash)
 DEFAULT_ENTRY(eco_absl_map_record_default, FlatMap, Record, FlatDefaultHash)
 ALIGNED_ENTRY(eco_absl_map_word_aligned, FlatMap, Word)
 ALIGNED_ENTRY(eco_absl_map_record_aligned, FlatMap, Record)
+
+#define LOOKUP_ENTRY(WIDTH, VALUE)                                        \
+extern "C" void eco_cpp_map_lookup_##WIDTH##_prepare(                    \
+    void* storage, Word slots, Word count, Word seed) {                   \
+    lookup_prepare<VALUE>(storage, slots, count, seed);                   \
+}                                                                       \
+extern "C" Word eco_cpp_map_lookup_##WIDTH##_query(                      \
+    const void* storage, Word rounds, Word miss) {                        \
+    return lookup_query<VALUE>(storage, rounds, miss);                    \
+}                                                                       \
+extern "C" Word eco_cpp_map_lookup_##WIDTH##_geometry(const void* storage) { \
+    return lookup_geometry<VALUE>(storage);                              \
+}                                                                       \
+extern "C" Word eco_cpp_map_lookup_##WIDTH##_finish(void* storage) {      \
+    return lookup_finish<VALUE>(storage);                                \
+}
+
+LOOKUP_ENTRY(word, Word)
+LOOKUP_ENTRY(record, Record)
 
 #ifdef ACCOUNT_ONLY
 #define ECO_STRING_INNER(VALUE) #VALUE

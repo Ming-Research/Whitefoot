@@ -355,3 +355,128 @@ entry!(
     eco_rust_map_record_aligned,
     Record
 );
+
+// Isolated lookup keeps the ordinary map in the caller's descriptor storage.
+// Preparation and full-content consumption are outside the query interval.
+struct LookupState<V> {
+    map: HashMap<u64, V, AlignedBuild>,
+    count: u64,
+    seed: u64,
+}
+
+unsafe fn lookup_prepare<V: Payload>(
+    storage: *mut std::ffi::c_void,
+    slots: u64,
+    count: u64,
+    seed: u64,
+) {
+    assert!(std::mem::size_of::<LookupState<V>>() <= 128);
+    assert!(std::mem::align_of::<LookupState<V>>() <= 16);
+    assert!(!storage.is_null() && (storage as usize) % 16 == 0);
+    let mut map = HashMap::with_capacity_and_hasher(
+        usize::try_from(slots / 2).expect("lookup capacity fits usize"),
+        AlignedBuild {
+            salt: seed ^ 0x9e37_79b9_7f4a_7c15,
+            collide: false,
+        },
+    );
+    assert!(count <= map.capacity() as u64);
+    for index in 0..count {
+        map.insert(key_at(index), V::make(seed.wrapping_add(index)));
+    }
+    // The caller supplies fresh or previously finished aligned storage.
+    unsafe {
+        storage
+            .cast::<LookupState<V>>()
+            .write(LookupState { map, count, seed })
+    };
+}
+
+unsafe fn lookup_query<V: Payload>(
+    storage: *const std::ffi::c_void,
+    rounds: u64,
+    miss: u64,
+) -> u64 {
+    // Query borrows the owner initialized by prepare and does not mutate it.
+    let state = unsafe { &*storage.cast::<LookupState<V>>() };
+    let mut digest = Digest::new(state.seed);
+    let missing_offset = u64::from(miss != 0);
+    for _ in 0..rounds {
+        for index in 0..state.count {
+            let key = key_at(index).wrapping_add(missing_offset);
+            let found = state.map.get(&key);
+            digest.ordered(u64::from(found.is_some()));
+            if let Some(value) = found {
+                digest.ordered(value.identity());
+            }
+        }
+    }
+    digest.finish()
+}
+
+unsafe fn lookup_geometry<V>(storage: *const std::ffi::c_void) -> u64 {
+    let state = unsafe { &*storage.cast::<LookupState<V>>() };
+    // This reports usable capacity, not physical buckets. Physical capacity
+    // remains inferred by the harness from the selected Rust implementation.
+    let usable = u32::try_from(state.map.capacity()).expect("lookup capacity fits geometry");
+    let length = u32::try_from(state.map.len()).expect("lookup length fits geometry");
+    (u64::from(usable) << 32) | u64::from(length)
+}
+
+unsafe fn lookup_finish<V: Payload>(storage: *mut std::ffi::c_void) -> u64 {
+    // Consume exactly once, leaving the caller's descriptor storage uninitialized.
+    let LookupState { map, seed, .. } = unsafe { storage.cast::<LookupState<V>>().read() };
+    let mut digest = Digest::new(seed);
+    for (key, value) in map {
+        digest.consume(value.content(key));
+    }
+    digest.finish()
+}
+
+macro_rules! lookup_exports {
+    ($value:ty, $prepare:ident, $query:ident, $geometry:ident, $finish:ident) => {
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn $prepare(
+            storage: *mut std::ffi::c_void,
+            slots: u64,
+            count: u64,
+            seed: u64,
+        ) {
+            unsafe { lookup_prepare::<$value>(storage, slots, count, seed) }
+        }
+
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn $query(
+            storage: *const std::ffi::c_void,
+            rounds: u64,
+            miss: u64,
+        ) -> u64 {
+            unsafe { lookup_query::<$value>(storage, rounds, miss) }
+        }
+
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn $geometry(storage: *const std::ffi::c_void) -> u64 {
+            unsafe { lookup_geometry::<$value>(storage) }
+        }
+
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn $finish(storage: *mut std::ffi::c_void) -> u64 {
+            unsafe { lookup_finish::<$value>(storage) }
+        }
+    };
+}
+
+lookup_exports!(
+    u64,
+    eco_rust_map_lookup_word_prepare,
+    eco_rust_map_lookup_word_query,
+    eco_rust_map_lookup_word_geometry,
+    eco_rust_map_lookup_word_finish
+);
+lookup_exports!(
+    Record,
+    eco_rust_map_lookup_record_prepare,
+    eco_rust_map_lookup_record_query,
+    eco_rust_map_lookup_record_geometry,
+    eco_rust_map_lookup_record_finish
+);

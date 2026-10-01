@@ -255,6 +255,7 @@ clean:
 ECO_FAMILY := map
 ECO_ABSL_PACKAGES := absl_flat_hash_map
 ECO_WORK ?= 262144
+ECO_LOOKUP_WORK ?= 2097152
 include ../ecosystem.mk
 ECO_OCCUPANCY_WORK ?= 1048576
 ECO_GEOMETRY_FILE ?= $(ECO_BUILD)/geometry.csv
@@ -263,6 +264,7 @@ ECO_OCCUPANCY_ACCOUNT ?= $(ECO_BUILD)/occupancy-accounting.csv
 ECO_OCCUPANCY_SAMPLES ?= $(ECO_BUILD)/occupancy-measurements.csv
 
 .PHONY: ecosystem-build ecosystem-check ecosystem-account ecosystem-measure \
+        ecosystem-lookup-check ecosystem-lookup-account ecosystem-lookup-measure \
         ecosystem-occupancy-check ecosystem-geometry ecosystem-occupancy-account ecosystem-occupancy-measure
 
 $(ECO_BUILD)/map.raw.ll: map-library.wf $(WHITEFOOTC) $(ECO_CONFIG) Makefile | $(ECO_BUILD)
@@ -286,8 +288,8 @@ $(ECO_BUILD)/control-%.o: map-costs.c map-oracle.h $(ECO_CONFIG) Makefile
 	@set -eu; case '$*' in timed) account= ;; account) account=-DACCOUNT_ONLY ;; *) exit 1 ;; esac; \
 	  $(CLANG) $(ECO_CPPFLAGS) $(ECO_CFLAGS) -DECO_MAP_CONTROL $$account -c $< -o $@
 
-$(ECO_BUILD)/map-%$(EXE): $(ECO_BUILD)/driver-%.o $(ECO_BUILD)/wf-%.o \
-                         $(ECO_BUILD)/rust-%.a $(ECO_BUILD)/cpp-%.o $(ECO_BUILD)/control-%.o $(NATIVE_OBJECTS)
+$(ECO_BUILD)/map-%$(EXE): $(ECO_BUILD)/driver-%.o $(ECO_BUILD)/rust-%.a \
+                         $(ECO_BUILD)/cpp-%.o $(ECO_BUILD)/control-%.o $(NATIVE_OBJECTS) $(ECO_BUILD)/wf-%.o
 	$(CXX) $(ECO_LDFLAGS) $^ $(ECO_ABSL_LDFLAGS) $(ECO_RUST_LINK_FLAGS) $(NATIVE_LINK_FLAGS) -o $@
 
 .SECONDARY: $(addprefix $(ECO_BUILD)/,wf-timed.ll wf-account.ll wf-timed.o wf-account.o driver-timed.o driver-account.o rust-timed.a rust-account.a cpp-timed.o cpp-account.o control-timed.o control-account.o)
@@ -323,6 +325,42 @@ ecosystem-measure: ecosystem-build
 	  cat $(ECO_BUILD)/cohort-0.csv > '$(ECO_SAMPLE_FILE)'; \
 	  awk 'NR > 1' $(ECO_BUILD)/cohort-1.csv >> '$(ECO_SAMPLE_FILE)'; \
 	  echo 'Map raw samples: $(ECO_SAMPLE_FILE)'
+
+ecosystem-lookup-check: ecosystem-build
+	$(ECO_BUILD)/map-timed$(EXE) lookup-check
+	$(ECO_BUILD)/map-account$(EXE) lookup-check
+	@set -eu; \
+	  for fault in population capacity checksum cleanup; do \
+	    case $$fault in \
+	      population) expected='lookup filled population' ;; \
+	      capacity) expected='lookup filled backing geometry' ;; \
+	      checksum) expected='lookup independent query oracle' ;; \
+	      cleanup) expected='lookup independent full-content cleanup oracle' ;; \
+	    esac; \
+	    status=0; $(ECO_BUILD)/map-timed$(EXE) negative-lookup $$fault \
+	      > $(ECO_BUILD)/lookup-negative.stdout 2> $(ECO_BUILD)/lookup-negative.stderr || status=$$?; \
+	    test "$$status" = 1; test ! -s $(ECO_BUILD)/lookup-negative.stdout; \
+	    test "$$(cat $(ECO_BUILD)/lookup-negative.stderr)" = "map ecosystem: $$expected"; \
+	  done; \
+	  for fault in allocation leak; do \
+	    case $$fault in allocation) expected='lookup query has no allocation' ;; \
+	      leak) expected='every allocation is reclaimed' ;; esac; \
+	    status=0; $(ECO_BUILD)/map-account$(EXE) negative-lookup $$fault \
+	      > $(ECO_BUILD)/lookup-negative.stdout 2> $(ECO_BUILD)/lookup-negative.stderr || status=$$?; \
+	    test "$$status" = 1; test ! -s $(ECO_BUILD)/lookup-negative.stdout; \
+	    test "$$(cat $(ECO_BUILD)/lookup-negative.stderr)" = "map ecosystem: $$expected"; \
+	  done
+
+ecosystem-lookup-account: ecosystem-build
+	$(ECO_BUILD)/map-account$(EXE) lookup-account $(ECO_LOOKUP_WORK) > $(ECO_BUILD)/lookup-accounting.csv
+
+ecosystem-lookup-measure: ecosystem-build
+	@set -eu; \
+	  for cohort in 0 1; do \
+	    $(ECO_BUILD)/map-timed$(EXE) lookup-measure $$cohort $(ECO_LOOKUP_WORK) > $(ECO_BUILD)/lookup-cohort-$$cohort.csv; \
+	  done; \
+	  cat $(ECO_BUILD)/lookup-cohort-0.csv > $(ECO_BUILD)/lookup-measurements.csv; \
+	  awk 'NR > 1' $(ECO_BUILD)/lookup-cohort-1.csv >> $(ECO_BUILD)/lookup-measurements.csv
 
 # The capacity discriminator is opt-in and preserves every practical output.
 # Its timed trace bodies are shared with ecosystem-measure; observers occur

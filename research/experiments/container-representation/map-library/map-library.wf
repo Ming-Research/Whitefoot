@@ -503,6 +503,99 @@ fn map_cost_library_record_geometry(capacity: u64, count: u64, seed: u64) -> res
   return map_cost_library_geometry::<MapCostWide>(capacity: capacity, count: count, seed: seed);
 }
 
+struct MapLookupOwner<T: drop> {
+  map: HashMap<u64, T, 16384>;
+  env: MapCostEnv;
+  seed: u64;
+  count: u64;
+}
+
+fn map_cost_lookup_prepare<interface MapCostElement<T>>(capacity: u64, count: u64, seed: u64) -> result: MapLookupOwner<T> pure contract {
+  requires capacity <= 8192_u64;
+  requires count <= capacity;
+} {
+  let salt = ixor(seed, 11400714819323198485_u64);
+  let collide = 0_u64 != 0_u64;
+  let env = MapCostEnv(salt: salt, collide: collide);
+  let map = hash_map_new::<u64, T, 16384>(capacity: capacity);
+  let setup_digest = MapCostDigest(ordered: seed, sum: 0_u64, parity: 0_u64, count: 0_u64);
+  for (index in 0_u64..count) {
+    let key = map_cost_key(index: index);
+    let next = seed +wrap index;
+    let value = MapCostElement::make(seed: next);
+    let outcome = hash_map_put::<MapCostLibraryKey, T, 16384>(map: &map, key: key, value: move value, env: &env);
+    map_cost_library_policy_result::<MapCostElement<T>>(outcome: move outcome, digest: &setup_digest);
+  }
+  return MapLookupOwner<T>(map: move map, env: env, seed: seed, count: count);
+}
+
+fn map_cost_lookup_query<interface MapCostElement<T>>(owner: &MapLookupOwner<T>, rounds: u64, miss: u64) -> result: u64 reads(owner) {
+  let digest = MapCostDigest(ordered: owner^.seed, sum: 0_u64, parity: 0_u64, count: 0_u64);
+  for (round in 0_u64..rounds) {
+    for (index in 0_u64..owner^.count) {
+      let key = map_cost_key(index: index);
+      if miss != 0_u64 {
+        set key = key +wrap 1_u64;
+      }
+      let found = hash_map_lookup::<MapCostLibraryKey, T, MapCostDigest, u64, fn MapCostElement::observe, 16384>(map: &owner^.map, key: &key, key_env: &owner^.env, visit_env: &digest);
+      map_cost_lookup_result(found: found, digest: &digest);
+    }
+  }
+  return map_cost_finish(digest: digest);
+}
+
+fn map_cost_lookup_finish<interface MapCostElement<T>>(owner: MapLookupOwner<T>) -> result: u64 pure {
+  let MapLookupOwner(map: map, env: env, seed: seed, count: count) = move owner;
+  let digest = MapCostDigest(ordered: seed, sum: 0_u64, parity: 0_u64, count: 0_u64);
+  hash_map_free::<u64, T, MapCostDigest, fn MapCostElement::consume, 16384>(map: move map, env: &digest);
+  return map_cost_finish(digest: digest);
+}
+
+fn map_cost_lookup_geometry<T: drop>(owner: &MapLookupOwner<T>) -> result: u64 reads(owner) {
+  let capacity = hash_map_capacity::<u64, T, 16384>(map: &owner^.map);
+  let count = hash_map_len::<u64, T, 16384>(map: &owner^.map);
+  let high = capacity *wrap 4294967296_u64;
+  return high +wrap count;
+}
+
+fn map_cost_lookup_word_prepare(capacity: u64, count: u64, seed: u64) -> result: MapLookupOwner<u64> pure contract {
+  requires capacity <= 8192_u64;
+  requires count <= capacity;
+} {
+  return map_cost_lookup_prepare::<MapCostWord>(capacity: capacity, count: count, seed: seed);
+}
+
+fn map_cost_lookup_record_prepare(capacity: u64, count: u64, seed: u64) -> result: MapLookupOwner<MapCostRecord> pure contract {
+  requires capacity <= 8192_u64;
+  requires count <= capacity;
+} {
+  return map_cost_lookup_prepare::<MapCostWide>(capacity: capacity, count: count, seed: seed);
+}
+
+fn map_cost_lookup_word_query(owner: &MapLookupOwner<u64>, rounds: u64, miss: u64) -> result: u64 reads(owner) {
+  return map_cost_lookup_query::<MapCostWord>(owner: owner, rounds: rounds, miss: miss);
+}
+
+fn map_cost_lookup_record_query(owner: &MapLookupOwner<MapCostRecord>, rounds: u64, miss: u64) -> result: u64 reads(owner) {
+  return map_cost_lookup_query::<MapCostWide>(owner: owner, rounds: rounds, miss: miss);
+}
+
+fn map_cost_lookup_word_geometry(owner: &MapLookupOwner<u64>) -> result: u64 reads(owner) {
+  return map_cost_lookup_geometry::<u64>(owner: owner);
+}
+
+fn map_cost_lookup_record_geometry(owner: &MapLookupOwner<MapCostRecord>) -> result: u64 reads(owner) {
+  return map_cost_lookup_geometry::<MapCostRecord>(owner: owner);
+}
+
+fn map_cost_lookup_word_finish(owner: MapLookupOwner<u64>) -> result: u64 pure {
+  return map_cost_lookup_finish::<MapCostWord>(owner: move owner);
+}
+
+fn map_cost_lookup_record_finish(owner: MapLookupOwner<MapCostRecord>) -> result: u64 pure {
+  return map_cost_lookup_finish::<MapCostWide>(owner: move owner);
+}
+
 fn main() -> status: ExitStatus pure {
   let word = map_cost_library_word_trace(capacity: 3_u64, count: 2_u64, rounds: 2_u64, seed: 17_u64, path: 7_u64, collide: 0_u64);
   let record = map_cost_library_record_trace(capacity: 3_u64, count: 2_u64, rounds: 2_u64, seed: 17_u64, path: 3_u64, collide: 1_u64);

@@ -21,7 +21,7 @@
 
 enum { INSERTED, REPLACED, REFUSED };
 enum { HIT, MISS, REPLACE, CHURN, GROW, REHASH, SETUP, EDIT, POLICY, RESERVE_CHECK, RESERVE_OMITTED };
-enum { WORDS = 32, SAMPLE_COUNT = 11, IMPLEMENTATIONS = 5 };
+enum { WORDS = 32, SAMPLE_COUNT = 11, LOOKUP_SAMPLE_COUNT = 9, IMPLEMENTATIONS = 5 };
 typedef struct { uint64_t ordered, sum, parity, count; } Digest;
 typedef uint64_t (*Trace)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 typedef struct { uint64_t capacity, count; } Shape;
@@ -234,6 +234,151 @@ static void check(void) {
     printf("map ecosystem: %zu oracle-checked traces passed\n", executions);
 }
 
+/* The lookup owner lives in the caller's aligned storage. The Whitefoot
+ * emitted ABI uses a 72-byte result; native peers assert the 128-byte bound. */
+typedef union { max_align_t alignment; _Alignas(16) unsigned char bytes[128]; } LookupStorage;
+_Static_assert(_Alignof(LookupStorage) >= 16 && sizeof(LookupStorage) >= 128,
+               "lookup owner storage ABI");
+typedef void (*LookupPrepare)(void *, uint64_t, uint64_t, uint64_t);
+typedef uint64_t (*LookupQuery)(const void *, uint64_t, uint64_t);
+typedef uint64_t (*LookupGeometry)(const void *);
+typedef uint64_t (*LookupFinish)(void *);
+typedef struct {
+    const char *name;
+    const char *capacity_kind;
+    bool wide;
+    LookupPrepare prepare;
+    LookupQuery query;
+    LookupGeometry geometry;
+    LookupFinish finish;
+} LookupApi;
+#define LOOKUP_DECLARE(PREFIX, WIDTH) \
+    extern void PREFIX##_lookup_##WIDTH##_prepare(void *, uint64_t, uint64_t, uint64_t); \
+    extern uint64_t PREFIX##_lookup_##WIDTH##_query(const void *, uint64_t, uint64_t); \
+    extern uint64_t PREFIX##_lookup_##WIDTH##_geometry(const void *); \
+    extern uint64_t PREFIX##_lookup_##WIDTH##_finish(void *)
+LOOKUP_DECLARE(wf_map_cost, word);
+LOOKUP_DECLARE(wf_map_cost, record);
+LOOKUP_DECLARE(eco_rust_map, word);
+LOOKUP_DECLARE(eco_rust_map, record);
+LOOKUP_DECLARE(eco_cpp_map, word);
+LOOKUP_DECLARE(eco_cpp_map, record);
+#undef LOOKUP_DECLARE
+#define LOOKUP_ENTRY(NAME, KIND, WIDE, PREFIX, WIDTH) \
+    {NAME, KIND, WIDE, PREFIX##_lookup_##WIDTH##_prepare, \
+     PREFIX##_lookup_##WIDTH##_query, PREFIX##_lookup_##WIDTH##_geometry, \
+     PREFIX##_lookup_##WIDTH##_finish}
+static const LookupApi lookup_apis[] = {
+    LOOKUP_ENTRY("whitefoot-hash-map", "physical-slots", false, wf_map_cost, word),
+    LOOKUP_ENTRY("rust-hash-map", "usable-entries", false, eco_rust_map, word),
+    LOOKUP_ENTRY("cpp-unordered-map", "chaining-buckets", false, eco_cpp_map, word),
+    LOOKUP_ENTRY("whitefoot-hash-map", "physical-slots", true, wf_map_cost, record),
+    LOOKUP_ENTRY("rust-hash-map", "usable-entries", true, eco_rust_map, record),
+    LOOKUP_ENTRY("cpp-unordered-map", "chaining-buckets", true, eco_cpp_map, record),
+};
+#undef LOOKUP_ENTRY
+
+static uint64_t lookup_query_oracle(uint64_t count, uint64_t rounds, uint64_t seed, bool miss) {
+    Digest digest = {seed, 0, 0, 0};
+    for (uint64_t round = 0; round < rounds; ++round)
+        for (uint64_t index = 0; index < count; ++index) {
+            ordered(&digest, !miss);
+            if (!miss) ordered(&digest, seed + index);
+        }
+    return finish(digest);
+}
+
+static uint64_t lookup_cleanup_oracle(bool wide, uint64_t count, uint64_t seed) {
+    Digest digest = {seed, 0, 0, 0};
+    for (uint64_t index = 0; index < count; ++index)
+        final_value(&digest, oracle_content(wide, key_at(index), seed + index));
+    return finish(digest);
+}
+
+static uint64_t lookup_expected_geometry(const LookupApi *api, uint64_t slots) {
+    return strcmp(api->capacity_kind, "usable-entries") == 0 ? slots - slots / 8 : slots;
+}
+
+static uint64_t lookup_rounds(uint64_t count, uint64_t work) {
+    return (work + count - 1) / count;
+}
+
+static void lookup_check_one(const LookupApi *api, uint64_t slots, uint64_t seed, bool miss,
+                             uint64_t rounds) {
+    uint64_t count = slots / 2;
+    LookupStorage storage = {0};
+    reset_ledger();
+    api->prepare(storage.bytes, slots, count, seed);
+    uint64_t encoded = api->geometry(storage.bytes);
+    require((uint32_t)encoded == count, "lookup filled population");
+    require(encoded >> 32 == lookup_expected_geometry(api, slots), "lookup filled backing geometry");
+#ifdef ACCOUNT_ONLY
+    Ledger filled = ledger;
+    require(filled.live > 0, "lookup filled allocation");
+#endif
+    uint64_t actual = api->query(storage.bytes, rounds, miss);
+    require(actual == lookup_query_oracle(count, rounds, seed, miss),
+            "lookup independent query oracle");
+#ifdef ACCOUNT_ONLY
+    require(memcmp(&ledger, &filled, sizeof ledger) == 0, "lookup query has no allocation");
+#endif
+    uint64_t cleanup = api->finish(storage.bytes);
+    require(cleanup == lookup_cleanup_oracle(api->wide, count, seed),
+            "lookup independent full-content cleanup oracle");
+    clean_ledger();
+    observed ^= actual ^ cleanup;
+}
+
+static void lookup_check(void) {
+    const uint64_t slots[] = {64, 4096};
+    const uint64_t seeds[] = {17, 101, UINT64_MAX};
+    size_t checked = 0;
+    for (size_t v = 0; v < ELEMENTS(lookup_apis); ++v)
+        for (size_t s = 0; s < ELEMENTS(slots); ++s)
+            for (size_t n = 0; n < ELEMENTS(seeds); ++n)
+                for (unsigned miss = 0; miss < 2; ++miss) {
+                    lookup_check_one(&lookup_apis[v], slots[s], seeds[n], miss != 0, 2);
+                    ++checked;
+                }
+    printf("map lookup: %zu isolated owner/query/cleanup cases passed\n", checked);
+}
+
+static void lookup_negative(const char *failure) {
+    const LookupApi *api = &lookup_apis[0];
+    LookupStorage storage = {0};
+    const uint64_t slots = 64, count = 32, seed = 17;
+    reset_ledger();
+    api->prepare(storage.bytes, slots, count, seed);
+    uint64_t encoded = api->geometry(storage.bytes);
+    if (strcmp(failure, "population") == 0) {
+        require((uint32_t)(encoded ^ UINT64_C(1)) == count, "lookup filled population");
+    } else if (strcmp(failure, "capacity") == 0) {
+        require((encoded >> 32) - 1 == lookup_expected_geometry(api, slots),
+                "lookup filled backing geometry");
+    } else if (strcmp(failure, "checksum") == 0) {
+        uint64_t actual = api->query(storage.bytes, 2, false);
+        require((actual ^ UINT64_C(1)) == lookup_query_oracle(count, 2, seed, false),
+                "lookup independent query oracle");
+    } else if (strcmp(failure, "cleanup") == 0) {
+        uint64_t actual = api->finish(storage.bytes);
+        require((actual ^ UINT64_C(1)) == lookup_cleanup_oracle(false, count, seed),
+                "lookup independent full-content cleanup oracle");
+    }
+#ifdef ACCOUNT_ONLY
+    else if (strcmp(failure, "allocation") == 0) {
+        Ledger filled = ledger;
+        wf_ecosystem_note_alloc(8);
+        require(memcmp(&ledger, &filled, sizeof ledger) == 0, "lookup query has no allocation");
+    } else if (strcmp(failure, "leak") == 0) {
+        api->finish(storage.bytes);
+        wf_ecosystem_note_alloc(8);
+        clean_ledger();
+    }
+#endif
+    else require(false, "unknown lookup negative control");
+    require(false, "lookup negative control was not refused");
+}
+
 static void occupancy_check(void) {
     const uint64_t rounds[] = {0, 1, 3}, seeds[] = {17, 101, UINT64_MAX};
     size_t executions = 0;
@@ -277,6 +422,52 @@ static uint64_t run_batch(Trace trace, Shape shape, unsigned path, uint64_t roun
         checksum = checksum * UINT64_C(257)
             + trace(shape.capacity, shape.count, rounds, seed + i, path, 0);
     return checksum;
+}
+
+static void lookup_measure(unsigned cohort, uint64_t work) {
+    const uint64_t slots[] = {64, 4096};
+    puts("contract,cohort,element_bytes,path,physical_backing_target,count,hash,variant,reported_capacity_kind,reported_capacity,sample,rounds,lookups,elapsed_ns,query_checksum,cleanup_checksum");
+    for (unsigned wide = 0; wide < 2; ++wide)
+        for (size_t s = 0; s < ELEMENTS(slots); ++s)
+            for (unsigned miss = 0; miss < 2; ++miss) {
+                uint64_t target = slots[cohort ? ELEMENTS(slots) - 1 - s : s];
+                uint64_t count = target / 2;
+                uint64_t rounds = lookup_rounds(count, work);
+                for (unsigned warmup = 0; warmup < 2; ++warmup)
+                    for (unsigned offset = 0; offset < 3; ++offset) {
+                        unsigned peer = cohort ? 2 - offset : offset;
+                        lookup_check_one(&lookup_apis[wide * 3 + peer], target,
+                                         71 + warmup, miss != 0, rounds);
+                    }
+                for (unsigned sample = 0; sample < LOOKUP_SAMPLE_COUNT; ++sample)
+                    for (unsigned offset = 0; offset < 3; ++offset) {
+                        unsigned peer = (sample + offset) % 3;
+                        if (cohort) peer = 2 - peer;
+                        const LookupApi *api = &lookup_apis[wide * 3 + peer];
+                        uint64_t seed = 101 + sample;
+                        LookupStorage storage = {0};
+                        api->prepare(storage.bytes, target, count, seed);
+                        uint64_t encoded = api->geometry(storage.bytes);
+                        require((uint32_t)encoded == count, "lookup timed filled population");
+                        require(encoded >> 32 == lookup_expected_geometry(api, target),
+                                "lookup timed filled backing geometry");
+                        uint64_t start = nanoseconds();
+                        uint64_t checksum = api->query(storage.bytes, rounds, miss);
+                        uint64_t elapsed = nanoseconds() - start;
+                        require(checksum == lookup_query_oracle(count, rounds, seed, miss),
+                                "lookup timed independent query oracle");
+                        uint64_t cleanup = api->finish(storage.bytes);
+                        require(cleanup == lookup_cleanup_oracle(api->wide, count, seed),
+                                "lookup timed independent cleanup oracle");
+                        observed ^= checksum ^ cleanup;
+                        printf("isolated-lookup,%u,%u,%s,%" PRIu64 ",%" PRIu64
+                               ",salted-mix64,%s,%s,%" PRIu64 ",%u,%" PRIu64
+                               ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 "\n",
+                               cohort, wide ? 256 : 8, miss ? "miss" : "hit",
+                               target, count, api->name, api->capacity_kind, encoded >> 32,
+                               sample, rounds, rounds * count, elapsed, checksum, cleanup);
+                    }
+            }
 }
 static uint64_t batch_oracle(bool wide, Shape shape, unsigned path, uint64_t rounds,
                              uint64_t traces, uint64_t seed) {
@@ -359,6 +550,43 @@ static void account(uint64_t work, bool occupancy) {
                            shape.capacity, shape.count, hasher_for(variant, series), variant->name, rounds, traces,
                            ledger.requests, ledger.releases, ledger.bytes, ledger.peak, ledger.live, checksum);
                 }
+}
+
+static void lookup_account(uint64_t work) {
+    const uint64_t slots[] = {64, 4096};
+    puts("contract,element_bytes,path,physical_backing_target,count,hash,variant,reported_capacity_kind,reported_capacity,rounds,lookups,filled_live_bytes,requests,releases,requested_bytes,peak_bytes,final_live_bytes,query_checksum,cleanup_checksum");
+    for (size_t v = 0; v < ELEMENTS(lookup_apis); ++v)
+        for (size_t s = 0; s < ELEMENTS(slots); ++s)
+            for (unsigned miss = 0; miss < 2; ++miss) {
+                const LookupApi *api = &lookup_apis[v];
+                uint64_t target = slots[s], count = target / 2, seed = 101;
+                uint64_t rounds = lookup_rounds(count, work);
+                LookupStorage storage = {0};
+                reset_ledger();
+                api->prepare(storage.bytes, target, count, seed);
+                uint64_t encoded = api->geometry(storage.bytes);
+                require((uint32_t)encoded == count, "lookup accounted population");
+                require(encoded >> 32 == lookup_expected_geometry(api, target),
+                        "lookup accounted backing geometry");
+                Ledger filled = ledger;
+                uint64_t checksum = api->query(storage.bytes, rounds, miss);
+                require(checksum == lookup_query_oracle(count, rounds, seed, miss),
+                        "lookup accounted query oracle");
+                require(memcmp(&ledger, &filled, sizeof ledger) == 0,
+                        "lookup accounted query has no allocation");
+                uint64_t cleanup = api->finish(storage.bytes);
+                require(cleanup == lookup_cleanup_oracle(api->wide, count, seed),
+                        "lookup accounted cleanup oracle");
+                clean_ledger();
+                printf("isolated-lookup-account,%u,%s,%" PRIu64 ",%" PRIu64
+                       ",salted-mix64,%s,%s,%" PRIu64 ",%" PRIu64 ",%" PRIu64
+                       ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64
+                       ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 "\n",
+                       api->wide ? 256 : 8, miss ? "miss" : "hit", target, count,
+                       api->name, api->capacity_kind, encoded >> 32, rounds, rounds * count,
+                       filled.live, ledger.requests, ledger.releases, ledger.bytes, ledger.peak,
+                       ledger.live, checksum, cleanup);
+            }
 }
 
 typedef uint64_t (*GeometryTrace)(uint64_t, uint64_t, uint64_t);
@@ -533,11 +761,15 @@ static uint64_t parse_work(const char *text) {
 }
 
 int main(int argc, char **argv) {
-    require(argc >= 2, "usage: check | occupancy-check | geometry | geometry-check | geometry-identities | negative-geometry kind | negative-checksum | negative-leak | negative-reserve variant | account work | occupancy-account work | measure 0|1 work | occupancy-measure 0|1 work");
+    require(argc >= 2, "usage: check | occupancy-check | lookup-check | lookup-account work | lookup-measure 0|1 work | geometry | geometry-check | geometry-identities | negative-geometry kind | negative-checksum | negative-leak | negative-reserve variant | account work | occupancy-account work | measure 0|1 work | occupancy-measure 0|1 work");
     if (strcmp(argv[1], "check") == 0) {
         require(argc == 2, "check takes no arguments"); check();
     } else if (strcmp(argv[1], "occupancy-check") == 0) {
         require(argc == 2, "occupancy-check takes no arguments"); occupancy_check();
+    } else if (strcmp(argv[1], "lookup-check") == 0) {
+        require(argc == 2, "lookup-check takes no arguments"); lookup_check();
+    } else if (strcmp(argv[1], "negative-lookup") == 0) {
+        require(argc == 3, "negative-lookup requires a fault kind"); lookup_negative(argv[2]);
     } else if (strcmp(argv[1], "negative-checksum") == 0) {
         require(argc == 2, "negative-checksum takes no arguments");
         checked_trace(&variants[0], 1, (Shape){3, 2}, 1, 17, HIT, false);
@@ -562,6 +794,8 @@ int main(int argc, char **argv) {
         require(argc == 3, "account requires a work count"); account(parse_work(argv[2]), false);
     } else if (strcmp(argv[1], "occupancy-account") == 0) {
         require(argc == 3, "occupancy-account requires a work count"); account(parse_work(argv[2]), true);
+    } else if (strcmp(argv[1], "lookup-account") == 0) {
+        require(argc == 3, "lookup-account requires a work count"); lookup_account(parse_work(argv[2]));
     } else if (strcmp(argv[1], "geometry") == 0 || strcmp(argv[1], "geometry-check") == 0) {
         require(argc == 2, "geometry modes take no arguments"); geometry(strcmp(argv[1], "geometry") == 0);
     } else if (strcmp(argv[1], "geometry-identities") == 0) {
@@ -576,6 +810,10 @@ int main(int argc, char **argv) {
         require(argc == 4 && (strcmp(argv[2], "0") == 0 || strcmp(argv[2], "1") == 0),
                 "measure requires cohort 0 or 1 and a work count");
         measure((unsigned)(argv[2][0] - '0'), parse_work(argv[3]), strcmp(argv[1], "occupancy-measure") == 0);
+    } else if (strcmp(argv[1], "lookup-measure") == 0) {
+        require(argc == 4 && (strcmp(argv[2], "0") == 0 || strcmp(argv[2], "1") == 0),
+                "lookup-measure requires cohort 0 or 1 and a work count");
+        lookup_measure((unsigned)(argv[2][0] - '0'), parse_work(argv[3]));
     }
 #endif
     else require(false, "unknown or unavailable mode");
