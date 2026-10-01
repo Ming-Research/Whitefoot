@@ -192,10 +192,10 @@ completion criterion were refused.
   [concurrent hash index investigation](../investigations/concurrent-map/DESIGN.md):
   one C driver linked with each native concurrent map (Boost, TBB, libcuckoo,
   liburcu, growt, parallel-hashmap, papaya, DashMap, scc), Java, Go and .NET
-  drivers for their maps,
-  and three controls (an empty map, a flat table behind one mutex, and a
-  Whitefoot `HashMap` behind one `Shared` object, the map firn uses), every
-  cell checking its own result. `make -C research/experiments/concurrent-map-bench deps build verify quick`;
+  drivers for their maps, and two controls (an empty map and a flat table
+  behind one mutex), every cell checking its own result. The index it
+  measures is the runtime's, compiled from `compiler/src/backend/`.
+  `make -C research/experiments/concurrent-map-bench deps build verify duel`;
   never part of `make check`. It goes when the index it measures is settled
   and a maintained successor keeps its comparisons.
 - `io-completion-bench/` — program-level measurement of ordinary linked I/O

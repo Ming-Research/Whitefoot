@@ -229,7 +229,7 @@ $(eval $(call completion-image,core-read-probe-sanitize,$(COMPLETION_CORE_READ_S
 $(eval $(call completion-image,harness-tsan,$(COMPLETION_SOURCES),$(COMPLETION_TSAN_FLAGS) $(COMPLETION_DEFINES) $(COMPLETION_HARNESS_DEFINES)))
 $(eval $(call completion-image,bridge-default-probe-tsan,$(COMPLETION_DEFAULT_ROUTE_SOURCES),$(COMPLETION_TSAN_FLAGS)))
 
-completion-test: $(COMPLETION_TMP)/harness completion-core-read-test completion-default-route-test sched-smoke sched-deque-test sched-policy-test floor-test completion-native-test
+completion-test: $(COMPLETION_TMP)/harness completion-core-read-test completion-default-route-test sched-smoke sched-deque-test sched-policy-test floor-test concurrent-map-test completion-native-test
 	@mkdir -p "$(COMPLETION_TMP)"
 	$(NO_CORE_DUMPS) $(NATIVE_REQUIREMENT) WF_IO_HELPERS=1 "$(COMPLETION_TMP)/harness" "$(COMPLETION_TMP)" all
 	$(NO_CORE_DUMPS) $(NATIVE_REQUIREMENT) WF_IO_HELPERS=0 "$(COMPLETION_TMP)/harness" "$(COMPLETION_TMP)" bridge
@@ -388,6 +388,23 @@ $(SCHED_PROBE_OBJECT_DIR)/floor-probe-hooks.o: src/backend/floor_probe.c src/bac
 floor-test: $(COMPLETION_TMP)/floor-probe $(COMPLETION_TMP)/floor-probe-hooks
 	WF_WORKERS=4 "$(COMPLETION_TMP)/floor-probe"
 	WF_WORKERS=4 "$(COMPLETION_TMP)/floor-probe-hooks"
+
+# The concurrent map, and the two read variants built for measurement, each
+# against a reference, accounting checks and recorded histories checked for
+# linearizability (concurrent_map_test.c).
+CONCURRENT_MAP_SOURCES := src/backend/concurrent_map.c src/backend/concurrent_map_test.c
+CONCURRENT_MAP_VARIANTS := copy-out locked shared
+concurrent-map-test: $(foreach v,$(CONCURRENT_MAP_VARIANTS),$(COMPLETION_TMP)/concurrent-map-test-$(v))
+	@set -e; for v in $(CONCURRENT_MAP_VARIANTS); do "$(COMPLETION_TMP)/concurrent-map-test-$$v"; done
+$(COMPLETION_TMP)/concurrent-map-test-copy-out: $(CONCURRENT_MAP_SOURCES) src/backend/concurrent_map.h Makefile
+	@mkdir -p "$(dir $@)"
+	$(CC) $(COMPLETION_BASE_CFLAGS) $(CONCURRENT_MAP_SOURCES) -o "$@"
+$(COMPLETION_TMP)/concurrent-map-test-locked: $(CONCURRENT_MAP_SOURCES) src/backend/concurrent_map.h Makefile
+	@mkdir -p "$(dir $@)"
+	$(CC) $(COMPLETION_BASE_CFLAGS) -DWF_CMAP_LOCKED_READ $(CONCURRENT_MAP_SOURCES) -o "$@"
+$(COMPLETION_TMP)/concurrent-map-test-shared: $(CONCURRENT_MAP_SOURCES) src/backend/concurrent_map.h Makefile
+	@mkdir -p "$(dir $@)"
+	$(CC) $(COMPLETION_BASE_CFLAGS) -DWF_CMAP_SHARED_READ $(CONCURRENT_MAP_SOURCES) -o "$@"
 
 # Manual calibration, never a correctness or automatic performance input.
 sched-wake-measure: $(COMPLETION_TMP)/sched-policy
@@ -618,7 +635,7 @@ completion-windows-wine:
 # Managed-stack park-on-miss measurements are retired from this runtime.
 # Their dated evidence and reproduction revision remain in the investigation.
 .PHONY: check _check static _static build test-build test-build-unit test-build-corpus format lint test _test test-unit test-corpus \
-	docs completion-test completion-native-test \
+	docs completion-test completion-native-test concurrent-map-test \
 	completion-core-read-test \
 	completion-tsan \
 	completion-sanitize \

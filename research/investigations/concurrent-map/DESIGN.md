@@ -50,6 +50,20 @@ On 2026-10-01, after the [firn suite](../firn/DESIGN.md#the-full-suite-results):
   session running on that machine; this 4-CPU host measures one to four
   threads.
 
+Later on 2026-10-01:
+
+- **The index lives in the runtime,** `compiler/src/backend/concurrent_map.c`,
+  with its tests in the runtime's own test stage; the bundle measures that
+  source and keeps no copy.
+- **Two maps unless one is fastest everywhere.** The concurrent map does not
+  replace the standard `HashMap`, which serves a single thread: if the
+  concurrent map were faster for a single thread too, only it would remain;
+  otherwise both stay, one concurrent and one single-threaded.
+- **A `Shared` object holding a `HashMap` stops being the way to share a
+  keyspace,** since it cannot be faster than the concurrent map; `Shared`
+  objects and atomic statements remain for every other shared state. The
+  bundle's control that measured it, `wf-current`, is removed.
+
 Still open, for stage (b) with stage (a)'s evidence: statements over several
 keys, acquired in a canonical order inside the runtime (MSET is their
 instance), and statements that only read running at the same time (the four
@@ -142,9 +156,6 @@ their drivers differ.
 **Controls.** `empty` answers every operation without storage: the floor of
 the driver itself. `mutex-flat` is Boost's `unordered_flat_map` behind one
 mutex: a fast table and one lock, so table speed and lock cost separate.
-`wf-current` is a Whitefoot program that runs the same workload through
-`atomic` statements on one `Shared` object holding a standard `HashMap`, on
-as many drivers as threads: the map firn uses now.
 
 **Timing.** A process runs one implementation at one size and one key
 choice; it prefills untimed, then runs every mix at every thread count,
@@ -190,8 +201,7 @@ thread counts.
   repetitions as a fraction of their medians, counts as a tie and is listed
   apart, not as a lead.
 - **No criterion against firn's map.** The owner ruled that leading the
-  comparators suffices; `wf-current` is measured beside the index and its
-  ratio reported, not judged.
+  comparators suffices.
 - **Its single thread is not paid for concurrency.** At one thread, in every
   mix, it reaches at least `mutex-flat`'s rate.
 - **The read path judged is the copy-out read.** Every comparator's `get`

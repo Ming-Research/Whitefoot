@@ -10,7 +10,7 @@ millions of operations per second, the fastest native comparator per column,
 and, with --ours, that implementation's ratio to it. Failed checks are listed
 first; a failed implementation's rates are marked. With --leaders it prints
 instead one line per cell: the fastest comparator, native or managed, at each
-thread count, and wf-current beside it. With --verdict it judges NAME by
+thread count. With --verdict it judges NAME by
 DESIGN.md's criteria in every cell it ran: against the fastest comparator, a
 lead, a tie (a margin smaller than the larger of the two spreads, fastest
 less slowest repetition over the median) or a loss; and at one thread
@@ -21,7 +21,7 @@ import statistics
 import sys
 from collections import defaultdict
 
-CONTROLS = {"empty", "mutex-flat", "wf-current"}
+CONTROLS = {"empty", "mutex-flat"}
 MANAGED = {"java-chm", "go-syncmap", "go-xsync", "dotnet-cd"}
 MIX_ORDER = ["read", "mostly-read", "balanced", "update", "churn", "grow", "prefill"]
 DIST_ORDER = ["uniform", "zipf", "one"]
@@ -118,9 +118,9 @@ def main(argv):
 
     if leaders:
         print("| size | key choice | mix | " + " | ".join(f"{t} thr fastest" for t in sorted(
-            {t for c in cells.values() for per in c.values() for t in per})) + " | wf-current |")
+            {t for c in cells.values() for per in c.values() for t in per})) + " |")
         counts_all = sorted({t for c in cells.values() for per in c.values() for t in per})
-        print("|---|---|---|" + "---|" * len(counts_all) + "---|")
+        print("|---|---|---|" + "---|" * len(counts_all))
         for key in sorted(cells, key=order):
             size, dist, mix = key
             if mix == "prefill":
@@ -135,9 +135,7 @@ def main(argv):
                     cols.append(f"{v:.2f} {who}")
                 else:
                     cols.append("")
-            current = table.get("wf-current", {})
-            cur = ", ".join(f"{current[t]:.2f}" for t in counts_all if t in current)
-            print(f"| {size} | {dist} | {mix} | " + " | ".join(cols) + f" | {cur} |")
+            print(f"| {size} | {dist} | {mix} | " + " | ".join(cols) + " |")
         return
     for key in sorted(cells, key=order):
         size, dist, mix = key

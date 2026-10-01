@@ -6,9 +6,6 @@
 #   make build     the Zipf generator and one driver binary per implementation
 #   make verify    every implementation at a small size, every mix, short
 #                  cells; fails on any failed check
-#   make stress    the linearizability mode on wf-index and its two read
-#                  variants, with Boost's map and the mutex control as
-#                  known-good implementations
 #   make quick     the quick profile over every implementation (minutes)
 #   make duel      the index against the fastest comparators (minutes)
 #   make full      the whole matrix, hours; only when unavoidable
@@ -36,16 +33,15 @@ RUSTLIB  := $(DEPS)/cmaps-target/release/libcmaps.a
 NATIVE := wf_index wf_index_locked wf_index_shared empty mutex_flat flat boost_cfm tbb_chm libcuckoo urcu_lfht growt phmap papaya dashmap scc stdmap
 BINS   := $(addprefix $(BUILD)/bench-,$(NATIVE))
 MANAGED := $(BUILD)/java/Bench.class $(BUILD)/bench-go $(BUILD)/dotnet/Bench.dll
-# The wf-current control needs the gate compiler (`make -C compiler build`
-# builds a different profile; `cargo build --profile gate` builds this one).
-WFC := $(ROOT)/compiler/target/gate/whitefootc
+# The runtime's concurrent map, compiled into its driver adapter.
+RUNTIME_BACKEND := $(ROOT)/compiler/src/backend
 
-.PHONY: deps build verify stress quick duel full
+.PHONY: deps build verify quick duel full
 deps:
 	sh deps.sh fetch
 	OUT=$(DEPS) sh deps.sh build
 
-build: $(BUILD)/zipfgen $(BINS) $(MANAGED) $(BUILD)/wf-current
+build: $(BUILD)/zipfgen $(BINS) $(MANAGED)
 
 $(BUILD)/zipfgen: zipfgen.c workload.h | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ zipfgen.c -lm
@@ -53,12 +49,12 @@ $(BUILD)/zipfgen: zipfgen.c workload.h | $(BUILD)
 $(BUILD)/driver-%.o: driver.c cmap.h workload.h | $(BUILD)
 	$(CC) $(CFLAGS) -DCM_PREFIX=$* -c -o $@ driver.c
 
-$(BUILD)/impl-wf_index.o: native/wf_index.c cmap.h | $(BUILD)
-	$(CC) $(CFLAGS) -DCM_PREFIX=wf_index -c -o $@ $<
-$(BUILD)/impl-wf_index_locked.o: native/wf_index.c cmap.h | $(BUILD)
-	$(CC) $(CFLAGS) -DCM_PREFIX=wf_index_locked -DWF_INDEX_LOCKED_READ -c -o $@ $<
-$(BUILD)/impl-wf_index_shared.o: native/wf_index.c cmap.h | $(BUILD)
-	$(CC) $(CFLAGS) -DCM_PREFIX=wf_index_shared -DWF_INDEX_SHARED_READ -c -o $@ $<
+$(BUILD)/impl-wf_index.o: native/wf_index.c cmap.h $(RUNTIME_BACKEND)/concurrent_map.c $(RUNTIME_BACKEND)/concurrent_map.h | $(BUILD)
+	$(CC) $(CFLAGS) -I$(RUNTIME_BACKEND) -DCM_PREFIX=wf_index -c -o $@ $<
+$(BUILD)/impl-wf_index_locked.o: native/wf_index.c cmap.h $(RUNTIME_BACKEND)/concurrent_map.c $(RUNTIME_BACKEND)/concurrent_map.h | $(BUILD)
+	$(CC) $(CFLAGS) -I$(RUNTIME_BACKEND) -DCM_PREFIX=wf_index_locked -DWF_CMAP_LOCKED_READ -c -o $@ $<
+$(BUILD)/impl-wf_index_shared.o: native/wf_index.c cmap.h $(RUNTIME_BACKEND)/concurrent_map.c $(RUNTIME_BACKEND)/concurrent_map.h | $(BUILD)
+	$(CC) $(CFLAGS) -I$(RUNTIME_BACKEND) -DCM_PREFIX=wf_index_shared -DWF_CMAP_SHARED_READ -c -o $@ $<
 $(BUILD)/impl-empty.o: native/empty.c cmap.h | $(BUILD)
 	$(CC) $(CFLAGS) -DCM_PREFIX=empty -c -o $@ $<
 $(BUILD)/impl-mutex_flat.o: native/flat.cpp cmap.h | $(BUILD)
@@ -119,26 +115,6 @@ $(BUILD)/dotnet/Bench.dll: dotnet/Program.cs dotnet/Bench.csproj | $(BUILD)
 	rm -rf $(BUILD)/dotnet-src && mkdir -p $(BUILD)/dotnet-src
 	cp dotnet/Program.cs dotnet/Bench.csproj $(BUILD)/dotnet-src/
 	dotnet build $(BUILD)/dotnet-src/Bench.csproj -c Release -o $(BUILD)/dotnet --nologo -v q
-
-STRESS := $(addprefix $(BUILD)/stress-,wf_index wf_index_locked wf_index_shared boost_cfm mutex_flat)
-$(BUILD)/stress-%.o: stress.c cmap.h workload.h | $(BUILD)
-	$(CC) $(CFLAGS) -DCM_PREFIX=$* -c -o $@ stress.c
-$(BUILD)/stress-wf_index: $(BUILD)/stress-wf_index.o $(BUILD)/impl-wf_index.o
-	$(LINK_C)
-$(BUILD)/stress-wf_index_locked: $(BUILD)/stress-wf_index_locked.o $(BUILD)/impl-wf_index_locked.o
-	$(LINK_C)
-$(BUILD)/stress-wf_index_shared: $(BUILD)/stress-wf_index_shared.o $(BUILD)/impl-wf_index_shared.o
-	$(LINK_C)
-$(BUILD)/stress-boost_cfm: $(BUILD)/stress-boost_cfm.o $(BUILD)/impl-boost_cfm.o
-	$(LINK_CXX)
-$(BUILD)/stress-mutex_flat: $(BUILD)/stress-mutex_flat.o $(BUILD)/impl-mutex_flat.o
-	$(LINK_CXX)
-
-stress: $(STRESS)
-	for s in $(STRESS); do $$s || exit 1; done
-
-$(BUILD)/wf-current: wf/current.wf $(WFC) | $(BUILD)
-	$(WFC) -o $@ wf/current.wf
 
 $(BUILD):
 	mkdir -p $@
