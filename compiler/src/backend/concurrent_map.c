@@ -57,6 +57,12 @@
 
 #include "concurrent_map.h"
 
+/* The map's test drives one interleaving through this point: a writer that
+ * is about to claim a removed cell for a key. */
+#ifndef WF_CMAP_BEFORE_REUSE
+#define WF_CMAP_BEFORE_REUSE(t, index) ((void)0)
+#endif
+
 #define LOCKED (1ull << 63)
 #define KEY_MASK ((1ull << 62) - 1)
 #define EMPTY 0ull
@@ -469,7 +475,7 @@ static void start_move(wf_cmap *map, table *t) {
     atomic_store_explicit(&t->next, nt, memory_order_seq_cst);
 }
 
-enum { FOUND, CLAIMED, ABSENT, FULL };
+enum { FOUND, CLAIMED, ABSENT, FULL, REUSED };
 
 /* Locks key's cell in t, or with claim set locks an empty cell for it; FULL
  * when a claim found no empty cell in the whole table. */
@@ -647,42 +653,118 @@ static uint64_t tag_of(const unsigned char *key, uint64_t length) {
     return tag;
 }
 
-/* Locks the cell of key, whose hash is tag, in t, or claims an empty one for
- * it; FULL when no empty cell is left in the whole table. */
-static int acquire_entry(table *t, uint64_t tag, const unsigned char *key, uint64_t length, cell **out) {
-    uint64_t i = start_of(t, tag);
-    uint64_t left = t->capacity;
+/* Locks c when it holds key, whose hash is tag: 1 and the cell locked when
+ * it does, 0 with the cell as it was when it holds another key of that hash,
+ * and -1 when its key word changed and it must be read again. */
+static int try_entry(cell *c, uint64_t k, const unsigned char *key, uint64_t length, unsigned *round) {
+    if (k & LOCKED) {
+        wait_for_cell(round);
+        return -1;
+    }
+    if (!atomic_compare_exchange_weak_explicit(&c->key, &k, k | LOCKED, memory_order_seq_cst,
+                                               memory_order_relaxed))
+        return -1;
+    node *n = (node *)(uintptr_t)atomic_load_explicit(&c->value, memory_order_relaxed);
+    if (n->length == length && memcmp(n->bytes, key, (size_t)length) == 0)
+        return 1;
+    unlock(c, k);
+    *round = 0;
+    return 0;
+}
+
+/* After claiming the removed cell at index from for key, whose hash is tag:
+ * looks on to the next empty cell for a cell of key another writer claimed
+ * meanwhile, and when one is there gives the claimed cell back as removed and
+ * answers FOUND with that cell locked; otherwise REUSED with the claimed one.
+ * Two writers of one key that each claim a removed cell claim them one ahead
+ * of the other in the order the hash fixes, and the one behind meets the one
+ * ahead here, so a key never holds two cells; a writer waits here only on
+ * cells ahead of its own claim, so writers never wait on each other in a
+ * cycle. */
+static int verify_claim(table *t, uint64_t from, uint64_t tag, const unsigned char *key, uint64_t length,
+                        cell **out) {
+    cell *claimed = &t->cells[from];
+    uint64_t i = (from + 1) & t->mask;
+    uint64_t left = t->capacity - 1;
     unsigned round = 0;
-    for (;;) {
+    while (left > 0) {
         cell *c = &t->cells[i];
         uint64_t k = atomic_load_explicit(&c->key, memory_order_acquire);
         uint64_t bare = k & ~LOCKED;
+        if (bare == EMPTY)
+            break;
         if (bare == tag) {
-            if (k & LOCKED) {
-                wait_for_cell(&round);
+            int r = try_entry(c, k, key, length, &round);
+            if (r < 0)
                 continue;
-            }
-            if (!atomic_compare_exchange_weak_explicit(&c->key, &k, k | LOCKED, memory_order_seq_cst,
-                                                       memory_order_relaxed))
-                continue;
-            node *n = (node *)(uintptr_t)atomic_load_explicit(&c->value, memory_order_relaxed);
-            if (n->length == length && memcmp(n->bytes, key, (size_t)length) == 0) {
+            if (r > 0) {
+                atomic_store_explicit(&claimed->key, REMOVED, memory_order_release);
                 *out = c;
                 return FOUND;
             }
-            unlock(c, k);
-            round = 0;
-        } else if (bare == EMPTY) {
-            if (atomic_compare_exchange_weak_explicit(&c->key, &k, tag | LOCKED, memory_order_seq_cst,
-                                                      memory_order_relaxed)) {
-                *out = c;
-                return CLAIMED;
-            }
-            continue;
         }
-        if (--left == 0)
-            return FULL;
+        left--;
         i = (i + 1) & t->mask;
+    }
+    *out = claimed;
+    return REUSED;
+}
+
+/* Locks the cell of key, whose hash is tag, in t, or claims one for it: the
+ * first removed cell the probe passed, so that a key that is missed again and
+ * again keeps reusing one cell instead of leaving a removed cell each time in
+ * front of the next probe, or else the empty cell that ended the probe; FULL
+ * when the whole table holds neither. */
+static int acquire_entry(table *t, uint64_t tag, const unsigned char *key, uint64_t length, cell **out) {
+    for (;;) {
+        uint64_t i = start_of(t, tag);
+        uint64_t left = t->capacity;
+        unsigned round = 0;
+        uint64_t spare = 0;
+        int spared = 0;
+        int restart = 0;
+        while (!restart) {
+            cell *c = &t->cells[i];
+            uint64_t k = atomic_load_explicit(&c->key, memory_order_acquire);
+            uint64_t bare = k & ~LOCKED;
+            int reached_end = 0;
+            if (bare == tag) {
+                int r = try_entry(c, k, key, length, &round);
+                if (r < 0)
+                    continue;
+                if (r > 0) {
+                    *out = c;
+                    return FOUND;
+                }
+            } else if (bare == EMPTY) {
+                if (!spared) {
+                    if (atomic_compare_exchange_weak_explicit(&c->key, &k, tag | LOCKED, memory_order_seq_cst,
+                                                              memory_order_relaxed)) {
+                        *out = c;
+                        return CLAIMED;
+                    }
+                    continue;
+                }
+                reached_end = 1;
+            } else if (k == REMOVED && !spared) {
+                spare = i;
+                spared = 1;
+            }
+            if (!reached_end && --left > 0) {
+                i = (i + 1) & t->mask;
+                continue;
+            }
+            if (!spared)
+                return FULL;
+            WF_CMAP_BEFORE_REUSE(t, spare);
+            uint64_t removed = REMOVED;
+            if (!atomic_compare_exchange_strong_explicit(&t->cells[spare].key, &removed, tag | LOCKED,
+                                                         memory_order_seq_cst, memory_order_relaxed)) {
+                restart = 1;
+                continue;
+            }
+            return verify_claim(t, spare, tag, key, length, out);
+        }
     }
 }
 
@@ -694,7 +776,7 @@ static int lock_entry(wf_cmap_user *u, uint64_t tag, const unsigned char *key, u
         table *t = use_current(u);
         if (atomic_load_explicit(&t->next, memory_order_acquire) == NULL) {
             int r = acquire_entry(t, tag, key, length, out);
-            if (r == FOUND || r == CLAIMED) {
+            if (r == FOUND || r == CLAIMED || r == REUSED) {
                 if (keep_cell(t, *out, r, tag)) {
                     *in = t;
                     return r;
@@ -766,19 +848,21 @@ void *wf_cmap_lock_entry(wf_cmap_user *u, const unsigned char *key, uint64_t len
     table *t;
     int r = lock_entry(u, tag, key, length, &c, &t);
     node *n;
-    if (r == CLAIMED) {
+    if (r == FOUND) {
+        n = (node *)(uintptr_t)atomic_load_explicit(&c->value, memory_order_relaxed);
+    } else {
         n = new_node(u, node_bytes(map, length));
         n->length = length;
         memcpy(n->bytes, key, (size_t)length);
         memset(slot_of(map, n), 0, (size_t)map->slot_size);
         atomic_store_explicit(&c->value, (uint64_t)(uintptr_t)n, memory_order_relaxed);
-        count(u, 1, 0);
-    } else {
-        n = (node *)(uintptr_t)atomic_load_explicit(&c->value, memory_order_relaxed);
+        /* A reused removed cell was counted when it was first claimed. */
+        if (r == CLAIMED)
+            count(u, 1, 0);
     }
     entry->cell = c;
     entry->table = t;
-    entry->fresh = r == CLAIMED;
+    entry->fresh = r != FOUND;
     return slot_of(map, n);
 }
 

@@ -211,6 +211,19 @@ it and Redis 7.0.15, requests a second:
 | `LPUSH` | 1,199,201 | 1,564,945 to 1,635,769 | 1,999,556 to 2,117,149 |
 | `MSET` | 176,984 to 180,357 | 391,151 to 391,441 | 342,661 to 386,316 |
 
+**What the suite's pilot found.** The first launch of the suite was stopped
+at its pilot: firn answered `SPOP` and `ZPOPMIN` at depth 1 at about 29,500 a
+second, against 114,000 to 177,000 for its other tests. Both pop one key until
+it is empty and then go on missing it, and every statement on an absent key
+claimed a cell and left it removed, so each miss walked one more removed cell
+than the last: five rounds of 40,000 `SPOP`s on an emptied key answered
+53,191, 19,714, 12,296, 9,401 and 7,990 a second. A claim now reuses the first
+removed cell its probe passed and then looks on to the next empty cell for a
+cell of the same key another writer claimed meanwhile; the same five rounds
+answered 159,363 to 160,000. The runtime's test drives that interleaving step
+by step and fails when the look ahead is left out. The quick comparison above
+predates the change; none of its four tests misses a key.
+
 At depth 1 firn before and after both answered 171,298 to 179,928 a second
 on `SET`, `GET` and `LPUSH`, the same steps of the benchmark's clock, so
 those cells did not separate them. `MSET` holds the whole map, as the old

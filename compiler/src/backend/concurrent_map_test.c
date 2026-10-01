@@ -35,6 +35,10 @@
 #define WF_CMAP_GIVE(block, bytes) free(block)
 #define WF_CMAP_YIELD() sched_yield()
 #define WF_CMAP_EXHAUSTED() abort()
+struct table;
+static void before_reuse(struct table *t, unsigned long long index);
+static uint64_t counted_key(uint64_t k, unsigned char *bytes);
+#define WF_CMAP_BEFORE_REUSE(t, index) before_reuse((t), (index))
 #include "concurrent_map.c"
 
 #define THREADS 4
@@ -510,6 +514,64 @@ static void claim_given_back(void) {
 
 /* Entries. */
 
+/* What before_reuse does while claim_reused drives it: claims the cell after
+ * index for one key, as a second writer that read that cell empty before the
+ * first writer did would, and stores a value there. */
+static wf_cmap_user *reuse_user;
+static const unsigned char *reuse_key;
+static uint64_t reuse_length;
+
+static void before_reuse(struct table *t, unsigned long long index) {
+    if (reuse_user == NULL)
+        return;
+    wf_cmap *map = reuse_user->map;
+    cell *c = &t->cells[(index + 1) & t->mask];
+    uint64_t tag = tag_of(reuse_key, reuse_length), empty = EMPTY;
+    if (!atomic_compare_exchange_strong(&c->key, &empty, tag | LOCKED))
+        fail("the cell after the removed one was not empty", index, 0);
+    node *n = new_node(reuse_user, node_bytes(map, reuse_length));
+    n->length = reuse_length;
+    memcpy(n->bytes, reuse_key, (size_t)reuse_length);
+    memset(slot_of(map, n), 0, (size_t)map->slot_size);
+    ((uint64_t *)slot_of(map, n))[0] = 7;
+    atomic_store(&c->value, (uint64_t)(uintptr_t)n);
+    count(reuse_user, 1, 1);
+    unlock(c, tag);
+    reuse_user = NULL;
+}
+
+/* Key k claims a removed cell while a second writer of k claims the empty
+ * cell after it, which the first read as empty before the second claimed it:
+ * the first must find the second's cell and give its own back, or k holds
+ * two cells. */
+static void claim_reused(void) {
+    wf_cmap *map = wf_cmap_create_entries(8, 8, 0);
+    wf_cmap_user *first = wf_cmap_user_at(map, 0), *second = wf_cmap_user_at(map, 1);
+    table *t = atomic_load(&map->current);
+    unsigned char k[16], other[16];
+    uint64_t k_length = counted_key(0, k), other_length = 0;
+    for (uint64_t i = 1; other_length == 0; i++) {
+        uint64_t length = counted_key(i, other);
+        if (start_of(t, tag_of(other, length)) == start_of(t, tag_of(k, k_length)))
+            other_length = length;
+    }
+    wf_cmap_entry entry;
+    wf_cmap_lock_entry(first, other, other_length, 0, &entry);
+    wf_cmap_unlock_entry(first, &entry, 0, 0);
+    reuse_user = second;
+    reuse_key = k;
+    reuse_length = k_length;
+    uint64_t *slot = wf_cmap_lock_entry(first, k, k_length, 0, &entry);
+    if (reuse_user != NULL)
+        fail("the key did not claim the removed cell", 0, 0);
+    if (entry.fresh || slot[0] != 7)
+        fail("a key claimed a removed cell beside its own claimed cell", entry.fresh, slot[0]);
+    wf_cmap_unlock_entry(first, &entry, 0, 1);
+    if (wf_cmap_count(map) != 1)
+        fail("the key counted twice", wf_cmap_count(map), 1);
+    wf_cmap_destroy(map);
+}
+
 enum { ENTRY_KEYS = 3000, ENTRY_KEY_BYTES = 600 };
 
 /* Key k's bytes: k's own eight bytes, so that keys differ, then up to 55
@@ -651,10 +713,90 @@ static void entries_held(void) {
     wf_cmap_destroy(map);
 }
 
+/* Statements that find their key absent and leave it absent take no cell
+ * for good: the same key missed many times keeps the table it started in. */
+static void entries_misses(void) {
+    wf_cmap *map = wf_cmap_create_entries(8, 8, 0);
+    wf_cmap_user *user = wf_cmap_user_at(map, 0);
+    table *first = atomic_load(&map->current);
+    unsigned char bytes[16];
+    for (uint64_t round = 0; round < 20000; round++) {
+        uint64_t length = counted_key(round % 3, bytes);
+        wf_cmap_entry entry;
+        uint64_t *slot = wf_cmap_lock_entry(user, bytes, length, 0, &entry);
+        if (slot[0] != 0)
+            fail("an absent key's slot was not empty", round, slot[0]);
+        wf_cmap_unlock_entry(user, &entry, 0, 0);
+    }
+    int64_t used, live;
+    totals(map, &used, &live);
+    if (atomic_load(&map->current) != first || used > 3 || live != 0)
+        fail("misses of three keys took cells for good (used, live)", (uint64_t)used, (uint64_t)live);
+    wf_cmap_destroy(map);
+}
+
+/* Statements on a few keys that remove them as often as they keep them,
+ * from several threads: no two statements hold one key at once, and no
+ * increment is lost. */
+enum { CHURN_KEYS = 4, CHURN_OPS = 200000 };
+static _Atomic int churn_holding[CHURN_KEYS];
+static _Atomic uint64_t churn_removed;
+
+static void *churn_entries(void *arg) {
+    counter_t *c = arg;
+    wf_cmap_user *user = wf_cmap_user_at(c->map, c->index);
+    unsigned char bytes[16];
+    uint64_t state = 0x9e3779b97f4a7c15ull * (c->index + 1);
+    for (uint64_t i = 0; i < CHURN_OPS; i++) {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        uint64_t k = state % CHURN_KEYS;
+        uint64_t length = counted_key(k, bytes);
+        wf_cmap_entry entry;
+        uint64_t *slot = wf_cmap_lock_entry(user, bytes, length, 0, &entry);
+        if (atomic_exchange(&churn_holding[k], 1))
+            fail("two statements held one key at once", k, i);
+        uint64_t next = slot[0] + 1;
+        atomic_store(&churn_holding[k], 0);
+        if ((state >> 20) % 2 == 0) {
+            atomic_fetch_add(&churn_removed, next);
+            wf_cmap_unlock_entry(user, &entry, 0, 0);
+        } else {
+            slot[0] = next;
+            wf_cmap_unlock_entry(user, &entry, 0, 1);
+        }
+    }
+    return NULL;
+}
+
+static void entries_churn(void) {
+    wf_cmap *map = wf_cmap_create_entries(8, 8, 0);
+    pthread_t t[THREADS];
+    counter_t c[THREADS];
+    for (unsigned i = 0; i < THREADS; i++) {
+        c[i] = (counter_t){map, i, NULL, NULL, 0};
+        pthread_create(&t[i], NULL, churn_entries, &c[i]);
+    }
+    for (unsigned i = 0; i < THREADS; i++)
+        pthread_join(t[i], NULL);
+    if (wf_cmap_count(map) > CHURN_KEYS)
+        fail("churned keys counted more than once", wf_cmap_count(map), CHURN_KEYS);
+    uint64_t sum = atomic_load(&churn_removed);
+    for (uint64_t *slot; (slot = wf_cmap_drain(map)) != NULL;)
+        sum += slot[0];
+    if (sum != (uint64_t)THREADS * CHURN_OPS)
+        fail("a churned key's increment was lost", sum, (uint64_t)THREADS * CHURN_OPS);
+    wf_cmap_destroy(map);
+}
+
 int main(void) {
     checker_self_test();
     claim_given_back();
     entries_sequential();
+    claim_reused();
+    entries_misses();
+    entries_churn();
     entries_held();
     sequential();
     concurrent(0);

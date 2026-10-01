@@ -933,17 +933,18 @@ rarely insert at the same place.
   Reopen when the 14900K measures one-key `update`, or when waiting writers
   park.
 
-- **A keyed statement on an absent key claims a cell it then removes.**
-  `wf_cmap_lock_entry` (`compiler/src/backend/concurrent_map.c`) creates an
-  absent key's entry so the block can write `Some`; a block that leaves it
-  `None`, a `GET` that misses, leaves a removed cell that counts toward the
-  half-full threshold until the next move, so a workload of misses moves the
-  table at a rate set by misses rather than by keys. The change: probe
-  without claiming first and claim only when the block writes, which needs
-  the lowering to tell a block that may write `Some` from one that cannot,
-  or let a claimed-and-abandoned cell go back to empty when no probe has
-  passed it. Reopen when a measured workload misses often, such as
-  redis-benchmark's `GET` before `SET` has filled its keys.
+- **A keyed statement on an absent key allocates a node it then frees.**
+  `wf_cmap_lock_entry` (`compiler/src/backend/concurrent_map.c`) claims a
+  cell for an absent key, reusing the first removed cell its probe passed,
+  and allocates the key's node so the block can write `Some`; a block that
+  leaves the entry `None`, a `GET` that misses, frees the node again. Misses
+  no longer grow the table or lengthen the next probe (one key missed 200,000
+  times answered `SPOP` at about 159,000 a second in every round), but each
+  costs an allocation and a free from the user's free lists. The change:
+  claim without a node and allocate it when the block first writes the slot,
+  which needs the lowering to call the runtime there, or keep a freed node on
+  the user for the next claim of the same size. Reopen when a profile of a
+  miss-heavy workload shows the allocation.
 
 - **Statements waiting for an entry or a map spin, and can be overtaken
   without bound.** A keyed statement that finds its entry locked, and a
