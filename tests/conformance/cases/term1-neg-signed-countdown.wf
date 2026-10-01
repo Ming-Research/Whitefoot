@@ -1,0 +1,18 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn count_down(start: i64) -> result: i64 pure {
+  doc "Over a signed left the continuing left != 0 does not bound left below, so a negative start walks away from zero: the table derives no rank and the loop has no other form [TERM-1].";
+  let left = start;
+  loop {
+    if left == 0_i64 {
+      break;
+    }
+    set left = left -wrap 1_i64;
+  }
+  return left;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

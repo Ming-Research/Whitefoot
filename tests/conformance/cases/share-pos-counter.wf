@@ -1,11 +1,11 @@
-fn bump(counter: Shared<u8>) -> result: unit pure waits {
+fn bump(counter: Shared<u8>) -> result: unit pure may_wait {
   atomic count = &counter {
     set count^ = count^ +wrap 1_u8;
   }
   return unit;
 }
 
-fn bump_three(counter: &Shared<u8>) -> result: unit reads(counter) waits {
+fn bump_three(counter: &Shared<u8>) -> result: unit reads(counter) must_wait {
   let first = shared_share::<u8>(shared: counter);
   spawn bump(counter: move first);
   let second = shared_share::<u8>(shared: counter);
@@ -15,7 +15,7 @@ fn bump_three(counter: &Shared<u8>) -> result: unit reads(counter) waits {
   return unit;
 }
 
-fn main() -> status: std::process::ExitStatus pure waits {
+fn main() -> status: std::process::ExitStatus pure must_wait {
   let counter = shared_new::<u8>(value: 4_u8);
   bump_three(counter: &counter);
   let total = 0_u8;

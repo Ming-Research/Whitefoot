@@ -310,7 +310,10 @@ fn loop_owner_sources_cover_later_iterations_and_counted_exhaustion() {
 
 fn once(first: Box<u64>, second: Box<u64>) -> result: u64 pure {
   let repeat = True();
-  loop {
+  let fuel = 64_u64;
+  loop (
+    decreases fuel
+  ) {
     let observed = first.inner;
     if repeat {
       set repeat = False();
@@ -318,6 +321,10 @@ fn once(first: Box<u64>, second: Box<u64>) -> result: u64 pure {
     } else {
       break;
     }
+    if fuel == 0_u64 {
+      break;
+    }
+    set fuel = fuel -wrap 1_u64;
   }
   let held = first.inner;
   return held;

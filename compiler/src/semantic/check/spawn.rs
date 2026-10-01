@@ -136,6 +136,9 @@ impl Checker<'_, '_> {
             );
         }
         let path = self.types.declarations.tree.path(statement)?.clone();
+        if bound {
+            self.body.spawn_joins.push(path.clone());
+        }
         self.body.waiting.context_starts.push(path);
         Ok(())
     }

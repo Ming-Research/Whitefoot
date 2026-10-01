@@ -40,6 +40,7 @@ fn pop(heap: &Slots<u64, 16>) -> minimum: u64 writes(heap) contract {
   set heap^[0_u64] = last;
   let at = 0_u64;
   loop @sink (
+    decreases count - at,
     invariant live: at < heap^.len
   ) {
     let doubled = at * 2_u64;

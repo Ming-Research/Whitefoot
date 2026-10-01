@@ -12,7 +12,7 @@ fn fresh() -> table: Table pure {
   return move made;
 }
 
-fn claim(table: Shared<Table>) -> result: u64 pure waits {
+fn claim(table: Shared<Table>) -> result: u64 pure may_wait {
   let got = 0_u64;
   atomic t = &table {
     let at = t^.next;
@@ -27,7 +27,7 @@ fn claim(table: Shared<Table>) -> result: u64 pure waits {
   return got;
 }
 
-fn main() -> status: std::process::ExitStatus pure waits {
+fn main() -> status: std::process::ExitStatus pure may_wait {
   let initial = fresh();
   set initial.next = 9_u64;
   let table = shared_new::<Table>(value: move initial);

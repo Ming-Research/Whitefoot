@@ -6,7 +6,7 @@ binding Direct : Closer {
   close = close_it;
 }
 
-fn close_it(factory: &std::io::HandleFactory, directory: std::fs::DirectoryRead) -> result: unit writes(factory) waits {
+fn close_it(factory: &std::io::HandleFactory, directory: std::fs::DirectoryRead) -> result: unit writes(factory) must_wait {
   std::fs::close_directory(factory: factory, directory: move directory);
   return unit;
 }

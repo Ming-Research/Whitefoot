@@ -24,7 +24,7 @@ fn grayscale(input: &[u8], output: &[u8]) -> result: Result<unit, NarrowError> r
   doc "Both operands are range references, whose one measure is len; whether the callee may write through one is stated by this row and by nothing on the reference itself [REF-4, EFF-1].";
   let pixel = 0_u64;
   loop @pixels {
-    let done = pixel == 8_u64;
+    let done = pixel >= 8_u64;
     if done {
       break @pixels;
     }

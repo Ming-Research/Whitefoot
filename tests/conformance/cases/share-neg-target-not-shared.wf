@@ -1,4 +1,4 @@
-fn main() -> status: std::process::ExitStatus pure waits {
+fn main() -> status: std::process::ExitStatus pure may_wait {
   let plain = 0_u8;
   atomic value = &plain {
     set value^ = 1_u8;

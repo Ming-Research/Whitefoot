@@ -553,9 +553,11 @@ The maintained [stdin_echo.wf](../tests/programs/stdin_echo.wf) shows an inline
 window passed to `read_next` and `write_once`, with the invocation's owners
 consumed explicitly.
 
-Every host function that acquires, transfers or closes waits, so a function
-that calls one writes `waits` after its effect row, and so does each function
-that calls that one, up to an entry that waits [WAIT-1]. Keep the computation
+Every host function that acquires, transfers or closes writes `must_wait`, so
+a function that calls one writes a waiting kind after its effect row, and so
+does each function that calls that one, up to an entry that waits [WAIT-1]. The
+kind is `must_wait` when every path of the body to an exit waits and `may_wait`
+otherwise; the compiler names the one the body shows. Keep the computation
 in functions that do not wait: only they can be overlapped [PAR-1, PAR-2].
 
 ## P12. Use fixed arrays for immutable tables
@@ -900,3 +902,45 @@ or a `?`, and otherwise at the block's end [WAIT-3]. A statement that makes
 the spawned call's guard true therefore stands before that statement in the
 block, not inside it: inside, it would run only after the join, which waits
 for the guard.
+
+## P20. Give every repeating loop an exit test or a rank
+
+Every `loop` that can reach its header again makes progress [TERM-1]. The
+default shape needs no annotation: begin the body with an exit test on an
+ordered comparison, and the rank comes from it.
+
+```whitefoot
+let cursor = 0_u64;
+loop {
+  if cursor >= count {
+    break;
+  }
+  set cursor = cursor +wrap 1_u64;
+}
+```
+
+- Write `>=`, not `==`: `cursor != count` does not bound a cursor that starts
+  past `count`, so an equality exit derives no rank.
+- Compute a bound before the loop, not in a `let` inside it with a wrapping
+  add; an exact `+`, `-` or literal `*` in the test is fine.
+- Several leading exit tests are fine: one whose rank falls on every path back
+  to the header is enough.
+- When the progress lives in a measure a call changes, or the exit test comes
+  last, write the rank: `loop (decreases queue.storage.inner.len) {`. A
+  written rank falls by at least one and stays nonnegative.
+- A walk over owned `Box` links through a reference cursor progresses when
+  each path back moves the cursor into a `Box` below it and the body adds no
+  `Box`; see [owned_link_cursors.wf](../tests/programs/owned_link_cursors.wf).
+- A server or poller waits instead: every path back must call a `must_wait`
+  function, execute a guarded `atomic` statement, or join a spawn a `let`
+  binds. A helper that waits on every path writes `must_wait`, so a loop may
+  wait through any number of such helpers; a `may_wait` helper, which can
+  return without waiting, and an unguarded `atomic` statement are no wait.
+  Move a check that returns early to after the helper's first wait, or into
+  the loop itself, so the helper stays `must_wait`.
+- When nothing in the language measures the progress, such as an output
+  position a callee advances, count the loop by a bound the data gives and
+  make running out of the count a defined outcome, as the DEFLATE decoder's
+  symbol walk does with `out^.len +sat 1_u64`.
+
+The rank is proof-only: it adds no runtime value, branch or check.

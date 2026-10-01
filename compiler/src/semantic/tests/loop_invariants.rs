@@ -231,9 +231,15 @@ fn disequality_is_not_an_invariant_root() {
 fn ordinary_loop_invariant_is_inductive_at_an_arbitrary_header() {
     let source = br#"fn repeat(leave: Bool) -> result: unit pure {
   let value = 0_u64;
+  let fuel = 64_u64;
   loop (
+    decreases fuel,
     invariant limit: value <= 0_u64
   ) {
+    if fuel == 0_u64 {
+      return unit;
+    }
+    set fuel = fuel -wrap 1_u64;
     if leave {
       break;
     } else {
@@ -269,9 +275,15 @@ fn main() -> status: std::process::ExitStatus pure {
 fn ordinary_loop_without_a_break_has_a_contradictory_continuation() {
     let source = br#"fn repeat_forever() -> result: unit pure {
   let value = 0_u64;
+  let fuel = 64_u64;
   loop (
+    decreases fuel,
     invariant limit: value <= 0_u64
   ) {
+    if fuel == 0_u64 {
+      return unit;
+    }
+    set fuel = fuel -wrap 1_u64;
     set value = 0_u64;
   }
   let impossible = 1_u64 / 0_u64;
@@ -346,9 +358,15 @@ fn ordinary_loop_write_must_preserve_the_next_header_invariant() {
     assert_invariant_issue(
         br#"fn repeat(leave: Bool) -> result: unit pure {
   let value = 0_u64;
+  let fuel = 64_u64;
   loop (
+    decreases fuel,
     invariant limit: value <= 0_u64
   ) {
+    if fuel == 0_u64 {
+      return unit;
+    }
+    set fuel = fuel -wrap 1_u64;
     if leave {
       break;
     } else {
@@ -371,9 +389,15 @@ fn ordinary_backedge_diagnostic_prints_the_source_relation() {
     assert_invariant_required_relation(
         br#"fn repeat(leave: Bool) -> result: unit pure {
   let value = 0_u64;
+  let fuel = 64_u64;
   loop (
+    decreases fuel,
     invariant limit: value <= 0_u64
   ) {
+    if fuel == 0_u64 {
+      return unit;
+    }
+    set fuel = fuel -wrap 1_u64;
     if leave {
       break;
     } else {
@@ -423,9 +447,15 @@ fn main() -> status: std::process::ExitStatus pure {
 fn ordinary_loop_break_exports_its_header_invariant() {
     let source = br#"fn leave_loop(leave: Bool) -> result: unit pure {
   let value = 0_u64;
+  let fuel = 64_u64;
   loop (
+    decreases fuel,
     invariant limit: value <= 0_u64
   ) {
+    if fuel == 0_u64 {
+      return unit;
+    }
+    set fuel = fuel -wrap 1_u64;
     if leave {
       break;
     } else {
@@ -455,9 +485,15 @@ fn main() -> status: std::process::ExitStatus pure {
 fn a_write_before_break_leaves_the_header_invariant_about_the_old_image() {
     let source = br#"fn leave_loop(leave: Bool) -> result: unit pure {
   let value = 0_u64;
+  let fuel = 64_u64;
   loop (
+    decreases fuel,
     invariant limit: value <= 0_u64
   ) {
+    if fuel == 0_u64 {
+      return unit;
+    }
+    set fuel = fuel -wrap 1_u64;
     if leave {
       set value = value + 1_u64;
       break;
@@ -495,11 +531,17 @@ fn ordinary_loop_batch_uses_all_invariants_for_each_backedge() {
   let combined_right = 0_u64;
   let combined_left_limit = 0_u64;
   let combined_right_limit = 0_u64;
+  let fuel = 64_u64;
   loop (
+    decreases fuel,
     invariant combined: combined_left + combined_right <= combined_left_limit + combined_right_limit,
     invariant first_order: first <= first_limit,
     invariant second_order: second <= second_limit
   ) {
+    if fuel == 0_u64 {
+      return unit;
+    }
+    set fuel = fuel -wrap 1_u64;
     if leave {
       break;
     } else {
@@ -567,10 +609,16 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn a_failed_base_batch_grants_no_ordinary_header_assumption() {
     let source = br#"fn unknown_order(left: u64, right: u64, leave: Bool) -> result: unit pure {
+  let fuel = 64_u64;
   loop (
+    decreases fuel,
     invariant first: left <= right,
     invariant second: left <= right
   ) {
+    if fuel == 0_u64 {
+      return unit;
+    }
+    set fuel = fuel -wrap 1_u64;
     if leave {
       break;
     }
@@ -1653,7 +1701,7 @@ fn main() -> status: std::process::ExitStatus pure {
 
 #[test]
 fn exhaustion_facts_prove_both_ordinary_range_requirements() {
-    let source = br#"fn publish_prefix(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], limit: u64) -> result: unit reads(source), writes(factory), writes(output) waits contract {
+    let source = br#"fn publish_prefix(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], limit: u64) -> result: unit reads(source), writes(factory), writes(output) must_wait contract {
   define capacity = source^.len;
   requires limit <= capacity;
 } {
@@ -1797,7 +1845,8 @@ fn main() -> status: std::process::ExitStatus pure {
                 premises.iter().find_map(|premise| match premise.source {
                     SourceAffineFactRef::LoopInvariant(source) => Some(source.source_ordinal),
                     SourceAffineFactRef::SourceProof { .. }
-                    | SourceAffineFactRef::JoinedSourceProof { .. } => None,
+                    | SourceAffineFactRef::JoinedSourceProof { .. }
+                    | SourceAffineFactRef::JoinedLoopProgress { .. } => None,
                 })
             })
             .collect::<Vec<_>>();
@@ -2079,9 +2128,15 @@ fn a_local_proof_fact_can_discharge_an_ordinary_loop_backedge() {
   let middle_limit = 0_u64;
   let right = 0_u64;
   let right_limit = 0_u64;
+  let fuel = 64_u64;
   loop (
+    decreases fuel,
     invariant limit: left + middle + right <= left_limit + middle_limit + right_limit
   ) {
+    if fuel == 0_u64 {
+      return unit;
+    }
+    set fuel = fuel -wrap 1_u64;
     if leave {
       break;
     } else {
@@ -2430,9 +2485,15 @@ fn an_unguarded_cursor_increment_fails_the_ordinary_loop_backedge() {
   requires limit < 1000_u64;
 } {
   let cursor = 0_u64;
+  let fuel = 64_u64;
   loop (
+    decreases fuel,
     invariant bounded: cursor <= limit
   ) {
+    if fuel == 0_u64 {
+      return unit;
+    }
+    set fuel = fuel -wrap 1_u64;
     if leave {
       break;
     } else {
@@ -2683,8 +2744,10 @@ fn main() -> status: std::process::ExitStatus pure {
 
 /// [INV-1, DIAG-1] A body-end local invariant is a probe: it asks whether the
 /// entering context at that join still proves the relation the header carries.
-/// Here it does not, and the header's own backedge fails for exactly the same
-/// reason. DIAG-1 admits one rejection, and the probe is decided at the join
+/// Here it does not, since one arm writes an unbounded candidate, and the
+/// header's own backedge fails for exactly the same reason. (A join whose
+/// every arm proves the header relation now keeps it [ENT-6, INV-1], so the
+/// candidate is left unguarded.) DIAG-1 admits one rejection, and the probe is decided at the join
 /// while the backedge is decided only after the whole body has been walked, so
 /// the probe is the reported failure.
 ///
@@ -2694,13 +2757,15 @@ fn main() -> status: std::process::ExitStatus pure {
 fn a_failing_body_probe_is_reported_before_the_header_backedge() {
     let source = br#"fn narrow(spare: u64, cand: u64, flag: Bool) -> out: u64 pure {
   let hi = spare;
+  let fuel = 64_u64;
   loop (
+    decreases fuel,
     invariant bounds: hi <= spare
   ) {
-    if cand <= spare {
-    } else {
-      return 0_u64;
+    if fuel == 0_u64 {
+      return hi;
     }
+    set fuel = fuel -wrap 1_u64;
     if flag {
       set hi = cand;
     }

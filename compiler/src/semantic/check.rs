@@ -143,9 +143,13 @@ struct FunctionSignature {
     result_list: Option<NominalId>,
     effects_node: NodeId,
     declared_effects: EffectSet,
-    /// [WAIT-1] whether the declaration writes `waits`: a waiting function,
-    /// whose calls are admitted only in the body of another waiting function.
+    /// [WAIT-1] whether the declaration writes `may_wait` or `must_wait`: a
+    /// waiting function, whose calls are admitted only in the body of another
+    /// waiting function.
     waits: bool,
+    /// [WAIT-1] whether the declaration writes `must_wait`: every path of its
+    /// body to an exit waits, so every call of it is a wait [TERM-1].
+    must_wait: bool,
     /// A callable hypothesis used only while checking generic source spelling.
     /// Concrete calls always select a verified source function instead.
     formal_parameter: Option<generics::GenericParameterKey>,
@@ -593,6 +597,12 @@ struct BodyChecker {
     /// [WAIT-1, WAIT-3] the waiting calls and spawns of the function being
     /// checked, published with its finished body.
     waiting: super::model::CheckedWaiting,
+    /// [WAIT-1, TERM-1] the calls of the function being checked, not
+    /// spawns, whose callee writes `must_wait`: each is a wait.
+    must_wait_calls: Vec<NodePath>,
+    /// [TERM-1, WAIT-3] the `let_stmt`s whose call is a spawn: each joins
+    /// its context before any edge leaves the `let_stmt`'s block.
+    spawn_joins: Vec<NodePath>,
     /// [REF-2] uses reached under loop-header validity variables. Every
     /// owning loop resolves its variables before the function is published;
     /// the function driver clears this scratch state on every retry.
@@ -1877,6 +1887,9 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 .flatten()
                 .collect()
         };
+        if !declaration_only {
+            self.check_wait_kind(signature, &checked.statements)?;
+        }
         let function = CheckedFunction {
             formal_hypothesis: signature.formal_parameter.is_some(),
             id: signature.id,
@@ -3160,13 +3173,17 @@ impl<'unit> TypeContext<'unit> {
             if signature.id.0 as usize != index {
                 return Err(SemanticCompilerFailure::InvalidResolution.into());
             }
-            callees.push(EntailmentCallee::from_signature(
+            let mut callee = EntailmentCallee::from_signature(
                 signature
                     .parameters
                     .iter()
                     .map(|parameter| (parameter.declaration, parameter.mode, parameter.ty)),
                 &signature.declared_effects.writes,
-            ));
+            );
+            // [OP-11] `swap` is reserved in every scope [TYPE-6], so the
+            // spelling names the built-in exchange.
+            callee.exchanges = signature.name == "swap";
+            callees.push(callee);
         }
         Ok(callees)
     }

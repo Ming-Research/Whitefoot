@@ -1,0 +1,22 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn count_to(limit: u64) -> result: u64 pure {
+  doc "The exit test derives the rank limit - cursor, and the guarded wrapping step raises the cursor by exactly one [TERM-1].";
+  let cursor = 0_u64;
+  loop {
+    if cursor >= limit {
+      break;
+    }
+    set cursor = cursor +wrap 1_u64;
+  }
+  return cursor;
+}
+
+fn main() -> status: ExitStatus pure {
+  let reached = count_to(limit: 5_u64);
+  if reached != 5_u64 {
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 0_u8);
+}

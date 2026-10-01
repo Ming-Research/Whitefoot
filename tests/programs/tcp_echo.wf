@@ -246,7 +246,7 @@ fn parse_port(digits: &[u8], length: u64) -> result: u16 reads(digits) {
   return port;
 }
 
-fn send_all(send: &TcpSend, source: &[u8], length: u64) -> result: Result<unit, IoError> reads(source), writes(send) waits contract {
+fn send_all(send: &TcpSend, source: &[u8], length: u64) -> result: Result<unit, IoError> reads(source), writes(send) may_wait contract {
   define source_length = source^.len;
   requires length <= source_length;
 } {
@@ -271,7 +271,7 @@ fn send_all(send: &TcpSend, source: &[u8], length: u64) -> result: Result<unit, 
   return Ok<unit, IoError>(value: unit);
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+fn main(inputs: Inputs) -> status: ExitStatus pure must_wait {
   doc "Listens on the loopback port named by the invocation, takes one connection, and returns every byte the peer sends until the peer stops sending through ordinary prelude calls [PRE-1]. The prelude declares no operation reporting a listener's own local address, so the port is the caller's choice and arrives as an argument. The argument scratch and the echo chunk are two inline Slots windows of this frame, each reached through one range reference [TYPE-9, REF-4].";
   let Inputs(args: args, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;

@@ -1,11 +1,11 @@
-fn fill(queue: Shared<Ring<u64, 4>>) -> result: unit pure waits {
+fn fill(queue: Shared<Ring<u64, 4>>) -> result: unit pure must_wait {
   atomic items = &queue when items^.len < items^.cap {
     place_back(window: items, value: 7_u64);
   }
   return unit;
 }
 
-fn main() -> status: std::process::ExitStatus pure waits {
+fn main() -> status: std::process::ExitStatus pure must_wait {
   let empty = ring_new::<u64, 4>();
   let queue = shared_new::<Ring<u64, 4>>(value: move empty);
   let other = shared_share::<Ring<u64, 4>>(shared: &queue);

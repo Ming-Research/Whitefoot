@@ -93,7 +93,7 @@ fn bfs_pull(edges: &[u64]) -> result: Box<Array<u64>> reads(edges) contract {
 fn bfs_sparse(edges: &[u64]) -> result: Box<Array<u64>> reads(edges) contract {
   requires edges^.len <= 67108864_u64;
 } {
-  doc "Sparse level traversal. Each vertex owns one intrusive frontier link, so no queue-capacity theorem or per-vertex allocation is needed. The count sentinel denotes both an absent edge and an undiscovered distance.";
+  doc "Sparse level traversal. Each vertex owns one intrusive frontier link, so no queue-capacity theorem or per-vertex allocation is needed. The count sentinel denotes both an absent edge and an undiscovered distance. A vertex joins a frontier only when its distance leaves the sentinel, so a frontier links at most count vertices and its walk is a counted loop of count steps.";
   let slots = edges^.len;
   let count = slots / 4_u64;
   let distance = box_array_filled::<u64>(count: count, value: count);
@@ -111,7 +111,7 @@ fn bfs_sparse(edges: &[u64]) -> result: Box<Array<u64>> reads(edges) contract {
     }
     let next = count;
     let vertex = frontier;
-    loop {
+    for (linked in 0_u64..count) {
       if vertex >= count {
         break;
       }

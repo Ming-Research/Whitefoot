@@ -1,0 +1,7 @@
+pkg::font: rejected: ./font/shape_normalize.wf:333:52: error[INV-1]: InvalidInvariant
+  source:     invariant term_progress_173: term_before_173 < buffer^.index;
+  marker:                                                    ^^^^^^^^^^^^^
+  reason: an affine factor reads a referent that is not a measure
+  mechanical_fix: read one measure member of the dereferenced place, or bind the integer value with a `let` and use that binding
+pkg::font: further failures may follow the last listed one
+whitefootc: rejected: pkg::font

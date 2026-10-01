@@ -1,0 +1,20 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn descend(start: i64) -> result: i64 pure {
+  doc "The written rank falls, but below zero: the backedge does not prove 0 <= left [TERM-1].";
+  let left = start;
+  loop (
+    decreases left
+  ) {
+    if left <= -5_i64 {
+      return left;
+    }
+    set left = left - 1_i64;
+  }
+  return left;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

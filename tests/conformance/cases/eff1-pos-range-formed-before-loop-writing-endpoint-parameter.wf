@@ -21,7 +21,9 @@ fn write_run(window: &Slots<u64, 4>, lo: u64, hi: u64) -> result: unit writes(wi
   doc "Clears the run from lo to hi on every iteration of a loop that writes lo.";
   let part = &window^[lo..hi];
   let n = 0_u64;
-  loop {
+  loop (
+    decreases 1_u64 - n
+  ) {
     clear(part: part);
     if 1_u64 <= n {
       break;

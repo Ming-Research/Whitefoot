@@ -77,6 +77,102 @@ rarely insert at the same place.
 
 ## Checker precision and proof cost
 
+- **An invariant-proved fact does not reach a constructed struct's field
+  in a postcondition.** Minimal witness: after
+  `loop (invariant from: start <= index) { ... }`,
+  `let next = index + 1_u64; let number = Decimal(value: 0_u64, next: next);
+  return number;` does not discharge `ensures result.next > start;`, while
+  the same function returning the scalar `next` under
+  `ensures result > start;` does. A control-flow edge fact such as
+  `if next > start { ... }` reaches the field; a proved header or local
+  invariant, even `invariant probe: start < next;` written just before the
+  construction, does not. [MSR-3]'s construct placement carries a construction
+  operand's value into the field, and [MSR-4] step 6 bridges through a live
+  own integer binding with a current image, so this reads as a compiler
+  discrepancy rather than a precision limit.
+  - Candidate points: the value half of `mint_measure_datums`
+    (`compiler/src/semantic/entailment/flow/sources.rs`), which establishes
+    only the L0 equality `datum = next` and skips a source place with no
+    interned term, and the step-6 candidates of `measure_terms`
+    (`flow/prover.rs`), which admit only measure datums with a measure.
+    Neither is confirmed as the one that fires.
+  - Impact: a routed postcondition over a struct payload cannot use a loop
+    invariant, so the Redis subset's `parse_command` cannot publish
+    `command.next > start` and `command.next <= held`, and its two
+    `@commands` loops keep the runtime tests `next <= consumed` and
+    `next > held` that the rewrite under the termination rulings (Q24,
+    Q26) was to remove.
+  - Change: carry the operand's affine image into the value datum, or
+    admit value datums as step-6 candidates, after confirming which point
+    fails; validate with the witness pair and the Redis rewrite.
+  - Reopen with the Redis rewrite or the first program whose postcondition
+    names a constructed field.
+- **A rank cannot name a field advanced by a call.** The DEFLATE symbol
+  loops (`tests/programs/raw_deflate.wf` `decode_fixed`,
+  `raw_deflate_dynamic_decode.wf` `decode_dynamic`) progress because
+  `emit_byte` and `copy_distance` advance `state^.output_offset`, but a
+  written rank admits no field reached through a reference [INV-1] and a
+  routed postcondition names only its payload [FN-9], so neither the
+  callee's advance nor the loop's descent can be stated. They are counted
+  by `out^.len +sat 1_u64` with an `OutputFull` after the count, a runtime
+  counter and a result no input reaches.
+  - This meets the reopening condition of the refused "field atoms in loop
+    invariants" (`design/language/checks-and-proofs.md`).
+  - Snowghost's font shaper has seven loops of the same kind, bounded by
+    `buffer^.index` (`research/investigations/termination/runs/checker.md`).
+    A measure through a reference is already an atom there.
+  - Change: admit an integer field place as an affine atom with a measure's
+    [MSR-2] kill rule, and let a postcondition relate such a field to its
+    entry value.
+  - Validate by writing `decreases out^.len - state^.output_offset` on both
+    loops with the counted bound removed.
+  - Reopen with the next state-machine or decoder loop that needs it.
+
+- **A cursor removal that shrinks its referent has no progress form.**
+  `remove_even` in `tests/programs/owned_link_cursors.wf` either moves its
+  cursor into the next `Box` or replaces the cursor's referent by its tail;
+  the structural form [TERM-1] measures only the move, so the walk is
+  counted by a list length the caller passes.
+  - Change: admit a backedge that replaces the cursor's referent by a value
+    moved out of a proper part of it, or make structural recursion (a planned TERM-2 rule)
+    the list filter's form.
+  - Reopen when TERM-2 is designed.
+
+- **Three automatic-derivation gaps the loop migration met.** Each has a
+  writer workaround recorded in
+  `research/investigations/termination/runs/migration.md` and
+  `runs/checker.md`.
+  - `x / c < x` from `x >= 1` is not derived: it needs a rounding step
+    (`x - x/10 >= 0.9x`) the affine layer does not take.
+  - A `+wrap` sum is not read as exact from a bound on the sum: under
+    `requires pos + index < length;`,
+    `let base = pos +wrap 1_u64; let next = base +wrap index;` does not
+    prove `ensures next > pos;`, while the same body with exact `+` does,
+    although the bound leaves no room to wrap. `pos +wrap 1_u64` alone under
+    `pos < length` is exact. A header invariant alone does not make
+    `i +wrap 1` exact either, so writers use `+`.
+  - A backedge after `take_back` then `place_back` on two windows needs one
+    intermediate local invariant (`hash_map_rebuild`'s park loop).
+  - Reopen together with the next change to [ENT-3.S7]'s rows or to AUTO.
+
+- **Carrying owed relations through joins fails its cost criterion.** [ENT-6]
+  now proves each relation a loop owes at every join inside its body, once
+  per joined state, cloning each state per relation
+  (`join_carrying` in `compiler/src/semantic/entailment/flow/walk.rs`).
+  - Measured against the branch-join investigation's 10% time and RSS
+    criterion
+    ([run](../research/investigations/termination/runs/join-carry-cost.md)):
+    Snowghost's library modules (1.018) and the conformance sources (1.029)
+    pass, the single-file programs fail at 2.07 times the wall time, almost
+    all of it `wfgrep.wf` (10.06 s against 2.61 s), with `dir_walk.wf` and
+    `redis_subset.wf` about three times slower each.
+  - Change: clone each input once and prove every relation against it, and
+    skip relations whose operands no input wrote.
+  - Validate by repeating the run's method; the three I/O programs must
+    come within the criterion.
+  - Reopen before the rule leaves draft or when a check stage exceeds its
+    budget.
+
 - **A widening conversion's operand is read as any affine side.**
   [ENT-2] admits `cvt::<S, D>(e)` as a relation term or comparison-origin
   operand only for e a term or constant. [FN-9] relation terms match that:
@@ -892,6 +988,30 @@ rarely insert at the same place.
   short-lived windows. Not checked on a later revision. Reopen with the
   next change to `Slots` lowering or when a profile shows the clearing
   again.
+
+- **A map with parked owners answers keyed operations without them.**
+  `hash_map_rebuild` (`lib/std/collections/hash_map/hash-map.wf`) parks the
+  owners an unplaceable scan leaves in the map's `stale` window and reports
+  failure; `hash_map_each` and `hash_map_free` reach them, keyed lookups,
+  edits, removals and puts do not, and a put can then store a second pair
+  under a parked key. The path needs a broken probe, so it has no witness.
+  - Change: have keyed operations scan `stale` when its length is nonzero,
+    and have a put look there before inserting.
+  - The window also costs one empty allocation per map (seven in
+    `hash-map-program.wf`); an `Option` holding the window would avoid it but
+    needs the variant a swap moves to be a fact. The owner asked for the
+    allocation on the failure path only (termination rulings, Q32); tried
+    on the `Option` field, `set map^.stale = Some(...)` inside the `None`
+    arm of a `match map^.stale` is refused as a linear assignment target
+    [WIN-3], since the rule reads the place's type and not its known
+    variant, and a `swap` leaves a `Some` arm that has no owner to hand the
+    old window to. It needs either a rule that lets a write replace a place
+    whose variant is known to hold no linear payload, or a rebuild that
+    returns the unplaced owners to its caller; both are decisions.
+  - Validate with a probe whose `hash_map_probe` skips one bucket: the rebuild
+    must fail, every pair must stay reachable, and no key may be stored twice.
+  - Reopen when a map operation changes or a consumer can observe the
+    degraded map.
 
 ## Parallel lowering and runtime
 
@@ -2053,6 +2173,20 @@ rarely insert at the same place.
 
 ## Open language questions
 
+- **Recursion carries no checked progress yet.** [TERM-1] covers loops;
+  a recursive call is unchecked, so `pure` still promises nothing about
+  termination and the constitution's "unintended nontermination may remain"
+  still holds for recursion.
+  - Change: a TERM-2 rule for recursion, with ranks shared across a recursive component and
+    structural descent through owned arguments, as
+    `research/investigations/termination/ARENA.md` plans.
+  - A recursive `must_wait` function whose only wait is its own call,
+    `fn f() must_wait { f(); }`, satisfies [WAIT-1] without ever waiting,
+    and a waiting function whose only waiting call is recursive satisfies
+    its colour the same way; TERM-2 closes both, since such a recursion
+    has no progress.
+  - Reopen as the next step of the termination work.
+
 Questions the owner has left open on purpose. None of them is a decision;
 each is resolved by a discussion and a tree change.
 
@@ -2092,6 +2226,30 @@ each is resolved by a discussion and a tree change.
   (`len == entry(len) + 1`), and the maintained programs repeat a field
   relation at most twice. Reopen generic invariants when a generic type has
   a relation every value keeps that several functions restate.
+- **A type invariant does not hold at every point a value is observed.**
+  Minimal witness: `struct Span { start: u64; end: u64; invariant ok(s):
+  s.start <= s.end; }` and `fn len_at(v: &Slots<Span, n>, i: u64) -> u64
+  { let s = v^[i]; return s.end - s.start; }`, which is refused, because
+  in `Span`'s module `set v^[i].start = 100;` may break the relation
+  without owing it back. Admitting the fact at every read needs a point
+  at which every store and field write re-establishes the invariant, and
+  three designs place that point differently: SPARK checks it at the
+  boundary of every subprogram visible outside the package; Spec#'s
+  `expose` names a block inside which the object may be broken and at
+  whose end the invariant is checked; and an observation-point rule
+  checks it wherever the value can next be read from outside the writing
+  statement sequence. A large struct whose three fields must change
+  together constrains the choice: rebuilding the whole struct to keep the
+  relation is either impossible or too costly, so the design must admit a
+  multi-field update whose intermediate states break the relation. The
+  index-relative link form of the termination work
+  (`research/investigations/termination/ARENA.md`, Q17) depends on it,
+  since its rank is a relation stored in each arena element; until this
+  is settled, work that needs the fact states it as a contract or
+  re-checks it at run time. Change: an investigation comparing the three
+  placements on the maintained programs and Snowghost's DOM arena.
+  Reopen when the termination work reaches Q17, or with the first
+  program that keeps invariant-bearing structs in a container.
 - **A standard collection restates at every operation that its capacity is
   unchanged.** `ensures queue^.storage.inner.cap == entry(queue)^.storage.inner.cap`
   appears 15 times across the priority queue's interface and body
@@ -2361,9 +2519,11 @@ condition under which it is taken up.
   when selecting its reference counterpart. Do not manufacture an impossible
   branch or weaken a postcondition to complete the comparison.
 - **Conditional measure controls expose a branch-join limit.** A counted-loop control calling a length/capacity-preserving
-  helper in only one arm rejects its backedge facts, as do lockstep growth
-  under a branch and a binary search that updates `low` in one arm and `high`
-  in the other. The [branch-join investigation](../research/investigations/branch-join-relations/DESIGN.md)
+  helper in only one arm rejects its backedge facts, as does lockstep growth
+  under a branch. A binary search that updates `low` in one arm and `high` in
+  the other is accepted since [ENT-6] keeps at a join the relations the loop
+  owes when every arm proves them (`term1-pos-bisection-join`); the other
+  cases stay refused because their facts are not relations the loop owes. The [branch-join investigation](../research/investigations/branch-join-relations/DESIGN.md)
   classifies these as the specification as written, not compiler defects: an
   invariant's conclusion is an affine theorem only, the pre-kill closure and
   the join keep only L0 facts, and the join gives each changed binding a

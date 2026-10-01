@@ -70,7 +70,7 @@ fn copy_distance(state: &InflateState, input: &[u8], out: &[u8], copy_length: u6
   }
   let copied = 0_u64;
   loop @copy_match {
-    let copy_done = copied == copy_length;
+    let copy_done = copied >= copy_length;
     if copy_done {
       break @copy_match;
     } else {
@@ -248,7 +248,10 @@ fn decode_table_symbol(state: &InflateState, input: &[u8], table: &HuffmanTable)
   let symbol_index = 0_u64;
   let bit_length = 1_u32;
   let decoded = 0_u64;
-  loop @table_code_lengths {
+  let max_bits = table^.max_bits;
+  loop @table_code_lengths (
+    decreases max_bits - bit_length
+  ) {
     let bit = 0_u64;
     match read_bits(state: state, input: input, count: 1_u32, mask: 1_u64) {
       Ok(value: read_bit) => {
@@ -288,7 +291,7 @@ fn decode_table_symbol(state: &InflateState, input: &[u8], table: &HuffmanTable)
     set symbol_index = symbol_index +wrap count;
     set first = ishl.wrap(first_after_count, 1_u32);
     set code = ishl.wrap(code, 1_u32);
-    let last_length = bit_length == table^.max_bits;
+    let last_length = bit_length >= max_bits;
     if last_length {
       let error = InflateError::InvalidHuffmanCode();
       return Err<u64, InflateError>(error: error);

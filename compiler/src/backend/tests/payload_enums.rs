@@ -567,7 +567,10 @@ enum Holder {
   Nothing();
 }
 
-fn build(kind: u64, seed: u64) -> result: Holder pure waits {
+fn build(kind: u64, seed: u64, turn: Shared<u64>) -> result: Holder pure may_wait {
+  atomic state = &turn {
+    set state^ = seed;
+  }
   let next = seed +wrap 1_u64;
   if kind == 0_u64 {
     let cell = box_new::<u64>(value: seed);
@@ -588,7 +591,10 @@ fn build(kind: u64, seed: u64) -> result: Holder pure waits {
   return Holder::Nothing();
 }
 
-fn weight(holder: Holder) -> result: u64 pure waits {
+fn weight(holder: Holder, turn: Shared<u64>) -> result: u64 pure may_wait {
+  atomic state = &turn {
+    set state^ = 1_u64;
+  }
   match move holder {
     Boxed(cell: c, stamp: s) => {
       return c.inner +wrap s;
@@ -619,22 +625,32 @@ fn weight(holder: Holder) -> result: u64 pure waits {
   }
 }
 
-fn main() -> status: std::process::ExitStatus pure waits {
-  let direct = build(kind: 0_u64, seed: 3_u64);
-  let first = spawn build(kind: 2_u64, seed: 5_u64);
-  let second = spawn build(kind: 1_u64, seed: 7_u64);
-  let given = build(kind: 0_u64, seed: 9_u64);
-  spawn weight(holder: move given);
-  let kept = spawn build(kind: 2_u64, seed: 11_u64);
-  let direct_weight = weight(holder: move direct);
+fn main() -> status: std::process::ExitStatus pure must_wait {
+  let cell = shared_new::<u64>(value: 0_u64);
+  let share1 = shared_share::<u64>(shared: &cell);
+  let direct = build(kind: 0_u64, seed: 3_u64, turn: move share1);
+  let share2 = shared_share::<u64>(shared: &cell);
+  let first = spawn build(kind: 2_u64, seed: 5_u64, turn: move share2);
+  let share3 = shared_share::<u64>(shared: &cell);
+  let second = spawn build(kind: 1_u64, seed: 7_u64, turn: move share3);
+  let share4 = shared_share::<u64>(shared: &cell);
+  let given = build(kind: 0_u64, seed: 9_u64, turn: move share4);
+  let share5 = shared_share::<u64>(shared: &cell);
+  spawn weight(holder: move given, turn: move share5);
+  let share6 = shared_share::<u64>(shared: &cell);
+  let kept = spawn build(kind: 2_u64, seed: 11_u64, turn: move share6);
+  let share7 = shared_share::<u64>(shared: &cell);
+  let direct_weight = weight(holder: move direct, turn: move share7);
   if direct_weight != 7_u64 {
     return std::process::exit_status(code: 1_u8);
   }
-  let first_weight = weight(holder: move first);
+  let share8 = shared_share::<u64>(shared: &cell);
+  let first_weight = weight(holder: move first, turn: move share8);
   if first_weight != 16_u64 {
     return std::process::exit_status(code: 2_u8);
   }
-  let second_weight = weight(holder: move second);
+  let share9 = shared_share::<u64>(shared: &cell);
+  let second_weight = weight(holder: move second, turn: move share9);
   if second_weight != 1002_u64 {
     return std::process::exit_status(code: 3_u8);
   }
@@ -697,7 +713,7 @@ fn peek(holder: &Holder) -> result: u64 reads(holder) {
   }
 }
 
-fn fill(held: Shared<Holder>, seed: u64) -> result: unit pure waits {
+fn fill(held: Shared<Holder>, seed: u64) -> result: unit pure may_wait {
   atomic state = &held {
     let cell = box_new::<u64>(value: seed);
     let next = Holder::Boxed(cell: move cell, stamp: 100_u64);
@@ -706,7 +722,7 @@ fn fill(held: Shared<Holder>, seed: u64) -> result: unit pure waits {
   return unit;
 }
 
-fn fill_all(held: &Shared<Holder>) -> result: unit reads(held) waits {
+fn fill_all(held: &Shared<Holder>) -> result: unit reads(held) may_wait {
   for @start (index in 0_u64..4_u64) {
     let handle = shared_share::<Holder>(shared: held);
     spawn fill(held: move handle, seed: index);
@@ -714,7 +730,7 @@ fn fill_all(held: &Shared<Holder>) -> result: unit reads(held) waits {
   return unit;
 }
 
-fn main() -> status: std::process::ExitStatus pure waits {
+fn main() -> status: std::process::ExitStatus pure may_wait {
   let values = box_slots_new::<u64>(capacity: 2_u64);
   place_back(window: &values.inner, value: 1_u64);
   let start = Holder::Many(values: move values);

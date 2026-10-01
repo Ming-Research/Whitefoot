@@ -720,6 +720,16 @@ impl<'unit> Checker<'_, 'unit> {
                 "a formal that waits, because the supplied function waits",
             );
         }
+        // [FN-4, WAIT-1] a call of a `must_wait` formal is a wait [TERM-1],
+        // so its actual must wait on every path as well; a `may_wait` formal
+        // promises no wait and admits either kind.
+        if formal.must_wait && !bound_actual.must_wait {
+            return self.types.declarations.behavior_mismatch(
+                SemanticRule::Fn4,
+                node,
+                "a supplied function that writes `must_wait`, because the formal writes `must_wait`",
+            );
+        }
         let contract =
             self.check_behavior_contracts(check_context, node, instance, formal, &bound_actual)?;
         // [FN-5] the immediate call judgment stays wholly in the formal

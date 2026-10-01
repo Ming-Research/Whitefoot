@@ -1,0 +1,33 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn step(pos: u64, length: u64) -> next: u64 pure contract {
+  requires pos < length;
+  ensures next > pos;
+  ensures next <= length;
+} {
+  let n = pos + 1_u64;
+  return n;
+}
+
+fn walk(length: u64) -> result: u64 pure {
+  let pos = 0_u64;
+  loop @scan (
+    invariant pos_bounded: pos <= length
+  ) {
+    let more = pos < length;
+    if more {
+    } else {
+      break @scan;
+    }
+    let before = pos;
+    let next = step(pos: pos, length: length);
+    set pos = next;
+    invariant progress: before < pos;
+  }
+  return pos;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

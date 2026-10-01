@@ -3,8 +3,11 @@ alias exit_status = std::process::exit_status;
 
 fn main() -> status: ExitStatus pure {
   let outer = 0_i32;
-  loop @outer_loop {
-    set outer = outer +wrap 1_i32;
+  loop @outer_loop (
+    decreases 3_i32 - outer,
+    invariant below: outer <= 2_i32
+  ) {
+    set outer = outer + 1_i32;
     let inner = 0_i32;
     loop @inner_loop {
       if outer >= 3_i32 {

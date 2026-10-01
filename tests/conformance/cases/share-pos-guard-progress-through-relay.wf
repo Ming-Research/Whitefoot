@@ -1,4 +1,4 @@
-fn consume(cell: Shared<u8>, total: Shared<u8>) -> result: unit pure waits {
+fn consume(cell: Shared<u8>, total: Shared<u8>) -> result: unit pure must_wait {
   let seen = 0_u8;
   atomic value = &cell when value^ != 0_u8 {
     set seen = value^;
@@ -9,12 +9,12 @@ fn consume(cell: Shared<u8>, total: Shared<u8>) -> result: unit pure waits {
   return unit;
 }
 
-fn relay(cell: Shared<u8>, total: Shared<u8>) -> result: unit pure waits {
+fn relay(cell: Shared<u8>, total: Shared<u8>) -> result: unit pure must_wait {
   consume(cell: move cell, total: move total);
   return unit;
 }
 
-fn run(cell: &Shared<u8>, total: &Shared<u8>) -> result: unit reads(cell), reads(total) waits {
+fn run(cell: &Shared<u8>, total: &Shared<u8>) -> result: unit reads(cell), reads(total) must_wait {
   let watched = shared_share::<u8>(shared: cell);
   let summed = shared_share::<u8>(shared: total);
   spawn relay(cell: move watched, total: move summed);
@@ -24,7 +24,7 @@ fn run(cell: &Shared<u8>, total: &Shared<u8>) -> result: unit reads(cell), reads
   return unit;
 }
 
-fn main() -> status: std::process::ExitStatus pure waits {
+fn main() -> status: std::process::ExitStatus pure must_wait {
   let cell = shared_new::<u8>(value: 0_u8);
   let total = shared_new::<u8>(value: 0_u8);
   run(cell: &cell, total: &total);

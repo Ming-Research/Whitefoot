@@ -1,0 +1,21 @@
+id	file	line	measure_var	direction	exit	result	first_error	disposition	cause
+6	renderer/html/tree_builder/afe.wf	54	i	up	0	proved			
+13	renderer/html/tree_builder/afe.wf	449	idx	up	0	proved			
+59	renderer/html/tree_builder/util.wf	104	i	up	0	proved			
+74	renderer/html/tokenizer/data_state.wf	239	position	up	1	fails at inserted invariant	pkg::html::tokenizer: rejected: ./html/tokenizer/data_state.wf:306:5: error[INV-1]: UndischargedLocalInvariant	disposition: Unproved	callee advance not in a contract (next_char)
+83	renderer/html/tokenizer/tags.wf	179	i	up	0	proved			
+109	renderer/text/idna/punycode.wf	273	pos	up	1	fails at inserted invariant	pkg::text::idna: rejected: ./text/idna/punycode.wf:395:5: error[INV-1]: UndischargedLocalInvariant	disposition: Unproved	fact lost at an inner loop exit (inner @digits loop advances the cursor)
+113	renderer/text/normalization/buffer.wf	44	output^.inner.len	down	0	proved			
+125	renderer/url/host.wf	70	pos	up	0	proved			
+135	renderer/url/parser.wf	26	hi	down	0	proved			
+152	renderer/image/png/huffman.wf	174	slot	up	0	proved			
+170	renderer/font/shape_normalize.wf	48	position	up	1	fails at inserted invariant	pkg::font: rejected: ./font/shape_normalize.wf:108:5: error[INV-1]: UndischargedLocalInvariant	disposition: Unproved	fact lost at a join (step 1 or 2)
+172	renderer/font/shape_normalize.wf	287	buffer^.index	up	1	fails at inserted invariant	pkg::font: rejected: ./font/shape_normalize.wf:302:56: error[INV-1]: InvalidInvariant		rank not expressible (field read through a reference)
+173	renderer/font/shape_normalize.wf	324	buffer^.index	up	1	fails at inserted invariant	pkg::font: rejected: ./font/shape_normalize.wf:333:52: error[INV-1]: InvalidInvariant		rank not expressible (field read through a reference)
+181	renderer/font/shape_normalize.wf	506	buffer^.index	up	1	fails at inserted invariant	pkg::font: rejected: ./font/shape_normalize.wf:564:52: error[INV-1]: InvalidInvariant		rank not expressible (field read through a reference)
+318	renderer/css/syntax/decode.wf	292	pos	up	1	fails at inserted invariant	pkg::css::syntax: rejected: ./css/syntax/decode.wf:319:5: error[INV-1]: UndischargedLocalInvariant	disposition: Unproved	callee advance not in a contract (peek_pp)
+319	renderer/css/syntax/numbers.wf	8	e	down	1	fails at inserted invariant	pkg::css::syntax: rejected: ./css/syntax/numbers.wf:21:5: error[INV-1]: UndischargedLocalInvariant	disposition: Unproved	operation fact missing (ishr.wrap halves a nonzero value)
+321	renderer/css/syntax/numbers.wf	168	pos	up	1	fails at inserted invariant	pkg::css::syntax: rejected: ./css/syntax/numbers.wf:191:7: error[INV-1]: UndischargedLocalInvariant	disposition: Unproved	fact lost at a join (advance and exit in two ifs on one Boolean)
+323	renderer/css/syntax/strings.wf	16	pos	up	1	fails at inserted invariant	pkg::css::syntax: rejected: ./css/syntax/strings.wf:58:5: error[INV-1]: UndischargedLocalInvariant	disposition: Unproved	callee advance not in a contract (peek_pp)
+329	renderer/css/syntax/tokenizer.wf	50	pos	up	0	proved			
+348	renderer/css/selectors/nth.wf	67	step	up	0	proved			

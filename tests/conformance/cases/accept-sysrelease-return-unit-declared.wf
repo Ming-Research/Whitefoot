@@ -4,7 +4,7 @@ alias ReadFile = std::fs::ReadFile;
 alias close_read = std::fs::close_read;
 alias exit_status = std::process::exit_status;
 
-fn release_read_file(factory: &HandleFactory, file: ReadFile) -> result: unit writes(factory) waits {
+fn release_read_file(factory: &HandleFactory, file: ReadFile) -> result: unit writes(factory) must_wait {
   doc "PRE-2 and EFF-2: close is an explicit ordinary consuming function call. The opaque drop performs no native release, and the consumed by-value parameter contributes no effect entry of its own.";
   let closed = close_read(factory: factory, file: move file);
   return unit;

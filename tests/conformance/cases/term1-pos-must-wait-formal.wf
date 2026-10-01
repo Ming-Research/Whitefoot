@@ -1,0 +1,22 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+alias Instant = std::time::Instant;
+
+fn drive<fn step(deadline: Instant) -> result: unit pure must_wait>(deadline: Instant) -> result: unit pure must_wait {
+  doc "A call of a must_wait formal is a wait, since every actual must wait on every path as well [TERM-1, FN-4].";
+  loop {
+    step(deadline: deadline);
+  }
+  return unit;
+}
+
+fn run(clock: std::time::Clock) -> result: unit pure must_wait {
+  doc "Instantiates drive with the host function sleep_until, which writes must_wait.";
+  let now = std::time::now(clock: &clock);
+  drive::<fn std::time::sleep_until>(deadline: now);
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

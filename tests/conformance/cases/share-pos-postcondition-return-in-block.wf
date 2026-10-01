@@ -1,4 +1,4 @@
-fn pick(cell: &Shared<u8>) -> result: u8 reads(cell) waits contract {
+fn pick(cell: &Shared<u8>) -> result: u8 reads(cell) may_wait contract {
   ensures result >= 5_u8;
 } {
   atomic value = &cell^ {
@@ -15,7 +15,7 @@ fn need(value: u8) -> result: u8 pure contract {
   return value;
 }
 
-fn main() -> status: std::process::ExitStatus pure waits {
+fn main() -> status: std::process::ExitStatus pure may_wait {
   let cell = shared_new::<u8>(value: 1_u8);
   let got = pick(cell: &cell);
   let admitted = need(value: got);

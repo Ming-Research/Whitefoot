@@ -773,6 +773,21 @@ fn assert_source_affine_fact_resolves(summary: &FunctionEntailment, source: Sour
                     pending.push(predecessor);
                 }
             }
+            // [TERM-1] a loop's owed relation proved on every predecessor of
+            // a join inside its body names that loop, which must exist.
+            SourceAffineFactRef::JoinedLoopProgress { loop_id } => {
+                assert!(
+                    summary
+                        .loop_invariants
+                        .iter()
+                        .any(|invariant| invariant.loop_id.0 == loop_id)
+                        || summary
+                            .loop_progress
+                            .iter()
+                            .any(|progress| progress.loop_id.0 == loop_id),
+                    "joined loop progress names a loop with an invariant or a rank"
+                );
+            }
         }
     }
 }
@@ -4107,7 +4122,14 @@ fn all_contradictory(left: u64, right: u64, choose: Bool) -> result: unit pure {
 }
 
 fn no_induction(left: u64, right: u64, leave: Bool) -> result: unit pure {
-  loop @again {
+  let fuel = 64_u64;
+  loop @again (
+    decreases fuel
+  ) {
+    if fuel == 0_u64 {
+      return unit;
+    }
+    set fuel = fuel -wrap 1_u64;
     need_distinct(left: left, right: right);
     if left < right {
     } else {
@@ -5011,7 +5033,14 @@ fn read(i: u64) -> result: i32 pure {
     return 0_i32;
   }
   let before = values[i];
-  loop @l {
+  let fuel = 64_u64;
+  loop @l (
+    decreases fuel
+  ) {
+    if fuel == 0_u64 {
+      return 0_i32;
+    }
+    set fuel = fuel -wrap 1_u64;
     let inside = values[i];
     set i = i +wrap 1_u64;
     if i < 4_u64 {
@@ -5164,7 +5193,14 @@ fn read(i: u64, leave_outer: Bool, leave_inner: Bool) -> result: i32 pure {
     return 0_i32;
   }
   loop @outer {
-    loop @inner {
+    let fuel = 64_u64;
+    loop @inner (
+      decreases fuel
+    ) {
+      if fuel == 0_u64 {
+        return 0_i32;
+      }
+      set fuel = fuel -wrap 1_u64;
       let at_head = values[i];
       if leave_outer {
         set i = i +wrap 1_u64;
@@ -5213,7 +5249,14 @@ fn read(i: u64, fail: Bool, leave: Bool) -> result: Result<i32, Fail> pure {
   } else {
     return Ok<i32, Fail>(value: 0_i32);
   }
-  loop @l {
+  let fuel = 64_u64;
+  loop @l (
+    decreases fuel
+  ) {
+    if fuel == 0_u64 {
+      return Ok<i32, Fail>(value: 0_i32);
+    }
+    set fuel = fuel -wrap 1_u64;
     let value = propagate source(fail: fail);
     let at_head = values[i];
     if leave {
@@ -5245,7 +5288,14 @@ fn read(i: u64, mutate: Bool, leave: Bool) -> result: i32 pure {
   } else {
     return 0_i32;
   }
-  loop @l {
+  let fuel = 64_u64;
+  loop @l (
+    decreases fuel
+  ) {
+    if fuel == 0_u64 {
+      return 0_i32;
+    }
+    set fuel = fuel -wrap 1_u64;
     if mutate {
       set i = i +wrap 1_u64;
     }
@@ -5279,7 +5329,14 @@ fn read(i: u64, mutate: Bool, leave: Bool) -> result: i32 pure {
   } else {
     return 0_i32;
   }
-  loop @l {
+  let fuel = 64_u64;
+  loop @l (
+    decreases fuel
+  ) {
+    if fuel == 0_u64 {
+      return 0_i32;
+    }
+    set fuel = fuel -wrap 1_u64;
     let picked = if mutate {
       set i = i +wrap 1_u64;
       give 1_i32;
@@ -5322,7 +5379,14 @@ fn read(i: u64, j: u64, stop: Bool, leave: Bool) -> result: i32 pure {
   } else {
     return 0_i32;
   }
-  loop @l {
+  let fuel = 64_u64;
+  loop @l (
+    decreases fuel
+  ) {
+    if fuel == 0_u64 {
+      return 0_i32;
+    }
+    set fuel = fuel -wrap 1_u64;
     if stop {
       set i = i +wrap 1_u64;
       return 0_i32;
@@ -5360,7 +5424,14 @@ fn read(i: u64, leave_outer: Bool) -> result: i32 pure {
   } else {
     return 0_i32;
   }
-  loop @outer {
+  let fuel = 64_u64;
+  loop @outer (
+    decreases fuel
+  ) {
+    if fuel == 0_u64 {
+      return 0_i32;
+    }
+    set fuel = fuel -wrap 1_u64;
     let at_head = values[i];
     loop @inner {
       set i = i +wrap 1_u64;
@@ -6075,7 +6146,14 @@ fn read(i: u64, leave: Bool) -> result: i32 pure {
   } else {
     return 0_i32;
   }
-  loop @outer {
+  let fuel = 64_u64;
+  loop @outer (
+    decreases fuel
+  ) {
+    if fuel == 0_u64 {
+      return 0_i32;
+    }
+    set fuel = fuel -wrap 1_u64;
     for @inner (n in 0_u64..1_u64) {
       set i = i +wrap 1_u64;
       let ignored = n;
@@ -6695,7 +6773,14 @@ fn clamp_three(value: u64) -> result: u64 pure {
 
 fn direct(input: u64) -> result: i32 pure {
   let bounded = 0_u64;
-  loop @select_bound {
+  let fuel = 64_u64;
+  loop @select_bound (
+    decreases fuel
+  ) {
+    if fuel == 0_u64 {
+      return 0_i32;
+    }
+    set fuel = fuel -wrap 1_u64;
     if bounded == input {
       break @select_bound;
     } else if bounded == 3_u64 {
@@ -6712,7 +6797,14 @@ fn direct(input: u64) -> result: i32 pure {
 
 fn through_origin(input: u64) -> result: i32 pure {
   let bounded = 0_u64;
-  loop @select_bound {
+  let fuel = 64_u64;
+  loop @select_bound (
+    decreases fuel
+  ) {
+    if fuel == 0_u64 {
+      return 0_i32;
+    }
+    set fuel = fuel -wrap 1_u64;
     if bounded == input {
       break @select_bound;
     } else if bounded == 3_u64 {
@@ -6754,7 +6846,14 @@ fn clamp_three(value: u64) -> result: u64 pure {
 
 fn read(left_raw: u64, right_raw: u64) -> result: i32 pure {
   let left = 0_u64;
-  loop @select_left {
+  let fuel = 64_u64;
+  loop @select_left (
+    decreases fuel
+  ) {
+    if fuel == 0_u64 {
+      return 0_i32;
+    }
+    set fuel = fuel -wrap 1_u64;
     if left == left_raw {
       break @select_left;
     } else if left == 3_u64 {
@@ -6764,7 +6863,14 @@ fn read(left_raw: u64, right_raw: u64) -> result: i32 pure {
     }
   }
   let right = 0_u64;
-  loop @select_right {
+  let fuel_right = 64_u64;
+  loop @select_right (
+    decreases fuel_right
+  ) {
+    if fuel_right == 0_u64 {
+      return 0_i32;
+    }
+    set fuel_right = fuel_right -wrap 1_u64;
     if right == right_raw {
       break @select_right;
     } else if right == 3_u64 {
@@ -7202,7 +7308,14 @@ fn alias_write(value: f64) -> result: i32 pure {
 
 fn backedge(value: f64, stop: Bool) -> result: unit pure {
   let allowed = cvt.defined::<f64, i32>(value);
-  loop @again {
+  let fuel = 64_u64;
+  loop @again (
+    decreases fuel
+  ) {
+    if fuel == 0_u64 {
+      return unit;
+    }
+    set fuel = fuel -wrap 1_u64;
     if allowed {
       let converted = cvt::<f64, i32>(value);
     }
@@ -7215,7 +7328,14 @@ fn backedge(value: f64, stop: Bool) -> result: unit pure {
 }
 
 fn fresh(value: f64, stop: Bool) -> result: unit pure {
-  loop @again {
+  let fuel = 64_u64;
+  loop @again (
+    decreases fuel
+  ) {
+    if fuel == 0_u64 {
+      return unit;
+    }
+    set fuel = fuel -wrap 1_u64;
     if cvt.defined::<f64, i32>(value) {
       let converted = cvt::<f64, i32>(value);
     }
@@ -8232,9 +8352,11 @@ fn main() -> status: std::process::ExitStatus pure {
 // witnesses through the same requires path as a WF function body.
 // ---------------------------------------------------------------------
 
-fn range_contract_source(contract: &str, body: &str) -> String {
+/// `kind` is the waiting kind the body shows [WAIT-1]: `must_wait` when every
+/// path calls the host's `write_once`.
+fn range_contract_source(contract: &str, body: &str, kind: &str) -> String {
     format!(
-        "const endpoints: Array<u64, 2> =[0_u64, 0_u64];\n\nfn publish(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], start: u64, end: u64) -> result: unit reads(source), writes(factory), writes(output) waits{contract} {{\n{body}  return unit;\n}}\n"
+        "const endpoints: Array<u64, 2> =[0_u64, 0_u64];\n\nfn publish(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], start: u64, end: u64) -> result: unit reads(source), writes(factory), writes(output) {kind}{contract} {{\n{body}  return unit;\n}}\n"
     )
 }
 
@@ -8243,6 +8365,7 @@ fn a_failed_endpoint_expression_prevents_unreached_call_requirements() {
     let source = range_contract_source(
         "",
         "  let no_deadline = None<std::time::Instant>();\n  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: 0_u64, end: endpoints[2_u64], deadline: no_deadline);\n",
+        "must_wait",
     );
     let outcomes = obligations(source.as_bytes(), "publish");
     let [endpoint_index] = outcomes.as_slice() else {
@@ -8261,6 +8384,7 @@ fn one_ordinary_call_retains_two_independent_ordered_range_requirements() {
     let source = range_contract_source(
         "",
         "  let no_deadline = None<std::time::Instant>();\n  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: start, end: end, deadline: no_deadline);\n",
+        "must_wait",
     );
     let outcomes = call_goals(source.as_bytes(), "publish");
     assert_eq!(outcomes.len(), 2);
@@ -8288,6 +8412,7 @@ fn ordinary_source_relations_discharge_both_signature_ranges() {
     let source = range_contract_source(
         " contract {\n  requires start <= end;\n  requires end <= source^.len;\n}",
         "  let no_deadline = None<std::time::Instant>();\n  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: start, end: end, deadline: no_deadline);\n",
+        "must_wait",
     );
     with_semantics(source.as_bytes(), |outcome| {
         let SemanticOutcome::Complete(checked) = outcome else {
@@ -8335,6 +8460,7 @@ fn indexed_guards_discharge_structurally_identical_signature_ranges() {
     let source = range_contract_source(
         "",
         "  let no_deadline = None<std::time::Instant>();\n  let capacity = source^.len;\n  if endpoints[0_u64] <= endpoints[1_u64] {\n    if endpoints[1_u64] <= capacity {\n      let outcome = std::io::write_once(factory: factory, output: output, source: source, start: endpoints[0_u64], end: endpoints[1_u64], deadline: no_deadline);\n    }\n  }\n",
+        "may_wait",
     );
     let ranges = call_goals(source.as_bytes(), "publish");
     assert_eq!(ranges.len(), 2);
@@ -8380,6 +8506,7 @@ fn a_nonterm_endpoint_is_never_replaced_by_the_zero_term() {
     let source = range_contract_source(
         "",
         "  let no_deadline = None<std::time::Instant>();\n  let outcome = std::io::write_once(factory: factory, output: output, source: source, start: 1_u64, end: endpoints[0_u64], deadline: no_deadline);\n",
+        "must_wait",
     );
     let ranges = call_goals(source.as_bytes(), "publish");
     assert_eq!(ranges.len(), 2);
@@ -8402,7 +8529,7 @@ fn a_transfer_endpoint_is_bounded_by_end_and_not_beyond_it() {
 
 const table: Array<u8, count> =[0_u8, 0_u8, 0_u8, 0_u8];
 
-fn under(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8]) -> result: unit reads(source), writes(factory), writes(output) waits {
+fn under(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8]) -> result: unit reads(source), writes(factory), writes(output) may_wait {
   let source_length = source^.len;
   let enough = 3_u64 <= source_length;
   if enough {
@@ -8418,7 +8545,7 @@ fn under(factory: &std::io::HandleFactory, output: &std::io::OutputStream, sourc
   return unit;
 }
 
-fn exact(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8]) -> result: unit reads(source), writes(factory), writes(output) waits {
+fn exact(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8]) -> result: unit reads(source), writes(factory), writes(output) may_wait {
   let source_length = source^.len;
   let enough = 4_u64 <= source_length;
   if enough {
@@ -8540,7 +8667,7 @@ fn a_named_boundary_outcome_uses_the_same_numeric_evidence_as_source_calls() {
 
 const table: Array<u8, count> =[0_u8, 0_u8, 0_u8, 0_u8];
 
-fn deferred(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], limit: u64) -> result: unit reads(source), writes(factory), writes(output) waits contract {
+fn deferred(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], limit: u64) -> result: unit reads(source), writes(factory), writes(output) must_wait contract {
   define capacity = source^.len;
   requires 3_u64 <= capacity;
 } {
@@ -8556,7 +8683,7 @@ fn deferred(factory: &std::io::HandleFactory, output: &std::io::OutputStream, so
   return unit;
 }
 
-fn killed(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], limit: u64) -> result: unit reads(source), writes(factory), writes(output) waits contract {
+fn killed(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], limit: u64) -> result: unit reads(source), writes(factory), writes(output) must_wait contract {
   define capacity = source^.len;
   requires limit <= capacity;
 } {
@@ -8598,7 +8725,7 @@ fn a_read_at_endpoint_is_observed_on_its_own_outcome_variant() {
     // PRE-1 read_at uses Result and an ordinary selected ensures.
     let source = br#"const table: Array<u8, 4> =[0_u8, 0_u8, 0_u8, 0_u8];
 
-fn main(factory: &std::io::HandleFactory, file: &std::fs::ReadFile, destination: &[u8]) -> result: unit writes(factory), writes(file), writes(destination) waits contract {
+fn main(factory: &std::io::HandleFactory, file: &std::fs::ReadFile, destination: &[u8]) -> result: unit writes(factory), writes(file), writes(destination) must_wait contract {
   requires 3_u64 <= destination^.len;
 } {
   match std::fs::read_at(factory: factory, file: file, destination: destination, file_offset: 0_u64, start: 0_u64, end: 3_u64) {
@@ -8937,10 +9064,18 @@ fn real_sources_retain_complete_proof_roots_without_counted_false_positives() {
                     // v0.58's ordinary Inputs wrapper keeps main separate
                     // from that unchanged four-loop operation chain.
                     (1, "build_huffman_table") => 5,
-                    (1, "decode_dynamic") => 3,
+                    // [TERM-1] the length expansion and the symbol walk are
+                    // counted by the lengths and by the output's length plus
+                    // one, since the output position their calls advance is
+                    // not a term a rank can name.
+                    (1, "decode_dynamic") => 5,
                     // RFC 1951's fixed distance symbol is reconstructed from
-                    // five wire bits by one counted bit-reversal loop.
-                    (1, "decode_fixed") => 1,
+                    // five wire bits by one counted bit-reversal loop, and
+                    // the symbol walk is counted as `decode_dynamic`'s is.
+                    (1, "decode_fixed") => 2,
+                    // [TERM-1] the block walk is counted by the input's bits,
+                    // every block reading its three header bits.
+                    (1, "inflate") => 1,
                     (1, "exercise") => 4,
                     (1, "main") => 0,
                     // `wfgrep.wf`'s fill helper, which carries the zero fill

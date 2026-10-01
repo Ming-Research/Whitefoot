@@ -70,11 +70,11 @@ use super::super::model::{
     BindingId, CheckedAffineExpression, CheckedAffineExpressionKind, CheckedAffineRelation,
     CheckedArrayRoot, CheckedBooleanOperation, CheckedConst, CheckedConstructor,
     CheckedContainerRoot, CheckedConversionMode, CheckedExpression, CheckedFloatOperation,
-    CheckedFunction, CheckedIntegerOperation, CheckedLoopId, CheckedLoopInvariant, CheckedMatchArm,
-    CheckedMeasure, CheckedMode, CheckedNominalKind, CheckedNumericType, CheckedPlaceStep,
-    CheckedProofMultiplicity, CheckedProofUseSource, CheckedRangeSource, CheckedSetTarget,
-    CheckedStatement, CheckedType, CheckedValue, FloatType, IntegerType, MeasureCell, MeasuredKind,
-    SubscriptedTerm,
+    CheckedFunction, CheckedIntegerOperation, CheckedLoopId, CheckedLoopInvariant,
+    CheckedLoopProgress, CheckedMatchArm, CheckedMeasure, CheckedMode, CheckedNominalKind,
+    CheckedNumericType, CheckedPlaceStep, CheckedProofMultiplicity, CheckedProofUseSource,
+    CheckedRangeSource, CheckedSetTarget, CheckedStatement, CheckedType, CheckedValue, FloatType,
+    IntegerType, MeasureCell, MeasuredKind, SubscriptedTerm,
 };
 use super::super::permission::{PermissionSeparationProof, PermissionSeparationQuery};
 use super::super::places::{
@@ -204,6 +204,11 @@ struct LoopFrame {
     /// the private endpoint-capture scope as well as source binding scopes.
     capture_path: Option<Vec<u32>>,
     breaks: Vec<ProofFlowState>,
+    /// [INV-1, TERM-1] the relations a loop owes at its backedge: its header
+    /// invariants and, for an ordinary loop, its rank's relations with the
+    /// relations that imply them. At a join inside the body each one that
+    /// every joined state proves holds in the joined state [ENT-6].
+    progress: Box<[CheckedAffineRelation]>,
 }
 
 /// The [ENT-3] facts one `match` scrutinee admits at its arms' entries: the
@@ -1113,6 +1118,7 @@ fn analyze_candidate_inner(
         contract_goals: Vec::new(),
         counted_derivations: run.counted_derivations,
         loop_invariants: run.loop_invariants,
+        loop_progress: run.loop_progress,
         source_proofs: run.source_proofs,
         joined_source_proofs: run.joined_source_proofs,
         postconditions: run.postconditions,
@@ -1133,6 +1139,7 @@ struct AnalysisRun {
     call_goals: Vec<CallGoalOutcome>,
     counted_derivations: Vec<CountedDerivationSet>,
     loop_invariants: Vec<LoopInvariantOutcome>,
+    loop_progress: Vec<super::LoopProgressOutcome>,
     source_proofs: Vec<SourceProofOutcome>,
     joined_source_proofs: Vec<JoinedSourceProofProvenance>,
     postconditions: Vec<super::FunctionPostconditionProof>,
@@ -1226,6 +1233,7 @@ fn run(function: &CheckedFunction, context: &EntailmentContext<'_>) -> AnalysisR
         call_goals: analyzer.output.call_goals,
         counted_derivations: analyzer.output.counted_derivations,
         loop_invariants: analyzer.output.loop_invariants,
+        loop_progress: analyzer.output.loop_progress,
         source_proofs: analyzer.output.source_proofs,
         joined_source_proofs: analyzer.output.joined_source_proofs,
         postconditions: analyzer.output.postconditions,
@@ -1269,6 +1277,7 @@ impl<'check, 'unit> Analyzer<'check, 'unit> {
                 call_goals: Vec::new(),
                 counted_derivations: Vec::new(),
                 loop_invariants: Vec::new(),
+                loop_progress: Vec::new(),
                 source_proofs: Vec::new(),
                 joined_source_proofs: Vec::new(),
                 postconditions: Vec::new(),
@@ -1665,6 +1674,7 @@ struct Output {
     call_goals: Vec<CallGoalOutcome>,
     counted_derivations: Vec<CountedDerivationSet>,
     loop_invariants: Vec<LoopInvariantOutcome>,
+    loop_progress: Vec<super::LoopProgressOutcome>,
     source_proofs: Vec<SourceProofOutcome>,
     joined_source_proofs: Vec<JoinedSourceProofProvenance>,
     postconditions: Vec<super::FunctionPostconditionProof>,

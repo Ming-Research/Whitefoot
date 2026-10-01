@@ -123,9 +123,9 @@ struct FormalCallBoundary {
 }
 
 /// [WAIT-1, DIAG-1] the repair for a waiting call in a function that does
-/// not wait. Declaring the enclosing function `waits` admits the call; every
+/// not wait. Declaring the enclosing function waiting admits the call; every
 /// caller of that function then meets the same rule, up to a waiting entry.
-pub(in crate::semantic::check) const WAIT1_DECLARE_THE_CALLER_WAITING: &str = "write `waits` after the enclosing function's effect row, so the call stands in a waiting function; each caller of that function then waits in turn, up to an entry that waits";
+pub(in crate::semantic::check) const WAIT1_DECLARE_THE_CALLER_WAITING: &str = "write `must_wait` after the enclosing function's effect row when every path of its body to an exit executes a wait, and `may_wait` otherwise, so the call stands in a waiting function; each caller of that function then waits in turn, up to an entry that waits";
 
 impl<'unit> Checker<'_, 'unit> {
     pub(super) fn check_user_call(
@@ -255,9 +255,11 @@ impl<'unit> Checker<'_, 'unit> {
         }
         if signature.waits {
             let call = self.types.declarations.tree.path(node)?.clone();
-            self.body.waiting.calls.push(call);
+            self.body.waiting.calls.push(call.clone());
             if self.types.declarations.is_spawn(node)? {
                 self.check_spawn(check_context, node, signature)?;
+            } else if signature.must_wait {
+                self.body.must_wait_calls.push(call);
             }
         }
         let target = signature.id;

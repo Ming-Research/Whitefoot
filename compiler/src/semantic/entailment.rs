@@ -137,6 +137,10 @@ pub(crate) struct EntailmentCallee {
     /// under-approximate the write.
     pub(crate) parameter_writes: Vec<Vec<Vec<super::model::CheckedEffectStep>>>,
     pub(crate) parameter_transports: Vec<CallTransport>,
+    /// [OP-11] the call exchanges the values at its two reference actuals,
+    /// so each measure under one of them is, after the call, the value the
+    /// same measure under the other had before it.
+    pub(crate) exchanges: bool,
 }
 
 impl EntailmentCallee {
@@ -174,6 +178,7 @@ impl EntailmentCallee {
                 })
                 .collect(),
             parameter_modes: parameters.into_iter().map(|(_, mode, _)| mode).collect(),
+            exchanges: false,
         }
     }
 }
@@ -713,6 +718,19 @@ pub(crate) struct LoopInvariantOutcome {
     pub(crate) proof: LoopInvariantProof,
 }
 
+/// The backedge judgment of one loop rank [TERM-1]. A loop whose body never
+/// reaches its header records none.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct LoopProgressOutcome {
+    pub(crate) node_path: NodePath,
+    pub(crate) loop_id: super::model::CheckedLoopId,
+    /// The descent the backedge owed, rendered over the rank's operands.
+    pub(crate) required_relation: String,
+    pub(crate) proved: bool,
+    /// The backedge state derives the negation of the descent [MSR-4].
+    pub(crate) refuted: bool,
+}
+
 /// A structural failure while following one source-written local certificate.
 /// These are closed, deterministic source-shape outcomes, not compiler
 /// resource failures and not work-budget exhaustion.
@@ -1141,6 +1159,8 @@ pub(crate) struct FunctionEntailment {
     pub(crate) counted_derivations: Vec<CountedDerivationSet>,
     /// Source-written loop invariants in statement order.
     pub(crate) loop_invariants: Vec<LoopInvariantOutcome>,
+    /// Loop rank descents in statement order [TERM-1].
+    pub(crate) loop_progress: Vec<LoopProgressOutcome>,
     /// Erased finite local invariants in statement order.
     pub(crate) source_proofs: Vec<SourceProofOutcome>,
     /// Diagnostic-only DAG nodes introduced when equal source-proof facts
@@ -1205,6 +1225,12 @@ pub(crate) fn answer_records(
             .iter()
             .map(|outcome| (&outcome.node_path, &outcome.node_path)),
     );
+    let mut loop_progress = Judgments::of(
+        entailment
+            .loop_progress
+            .iter()
+            .map(|outcome| (&outcome.node_path, &outcome.node_path)),
+    );
     let mut source_proofs = Judgments::of(
         entailment
             .source_proofs
@@ -1243,6 +1269,9 @@ pub(crate) fn answer_records(
                 ObligationSubject::LoopInvariant => {
                     loop_invariants.take(&site).map(RecordAnswer::LoopInvariant)
                 }
+                ObligationSubject::LoopProgress => {
+                    loop_progress.take(&site).map(RecordAnswer::LoopProgress)
+                }
                 ObligationSubject::SourceProof => {
                     source_proofs.take(&site).map(RecordAnswer::SourceProof)
                 }
@@ -1261,6 +1290,7 @@ pub(crate) fn answer_records(
         .unanswered()
         .chain(call_goals.unanswered())
         .chain(loop_invariants.unanswered())
+        .chain(loop_progress.unanswered())
         .chain(source_proofs.unanswered())
         .chain(postconditions.unanswered())
         .cloned()

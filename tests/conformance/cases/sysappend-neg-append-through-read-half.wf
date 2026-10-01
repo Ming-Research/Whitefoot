@@ -1,4 +1,4 @@
-fn append_below(factory: &std::io::HandleFactory, root: &std::fs::DirectoryRead, name: &[u8]) -> result: u8 reads(root), reads(name), writes(factory) waits contract {
+fn append_below(factory: &std::io::HandleFactory, root: &std::fs::DirectoryRead, name: &[u8]) -> result: u8 reads(root), reads(name), writes(factory) may_wait contract {
   requires 1_u64 <= name^.len;
 } {
   match std::fs::open_append(factory: factory, root: root, name: name, start: 0_u64, end: 1_u64) {

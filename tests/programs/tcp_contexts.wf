@@ -63,7 +63,7 @@ fn parse_port(digits: &[u8], length: u64) -> result: u16 reads(digits) {
   return port;
 }
 
-fn send_all(send: &TcpSend, source: &[u8], length: u64) -> result: Result<unit, IoError> reads(source), writes(send) waits contract {
+fn send_all(send: &TcpSend, source: &[u8], length: u64) -> result: Result<unit, IoError> reads(source), writes(send) may_wait contract {
   define source_length = source^.len;
   requires length <= source_length;
 } {
@@ -88,7 +88,7 @@ fn send_all(send: &TcpSend, source: &[u8], length: u64) -> result: Result<unit, 
   return Ok<unit, IoError>(value: unit);
 }
 
-fn serve(connection: TcpConnection, factory: HandleFactory) -> result: unit pure waits {
+fn serve(connection: TcpConnection, factory: HandleFactory) -> result: unit pure must_wait {
   doc "Returns every byte one peer sends until the peer stops sending, then closes both halves. It runs in a context of its own [WAIT-3], so a peer that is silent holds only this context, and the chunk it echoes through is an inline window of this context's own frame.";
   let chunk = slots_new::<u8, 65536>();
   for @fill_chunk (
@@ -154,7 +154,7 @@ fn argument(args: &std::text::Args, position: u64, window: &[u8]) -> result: u64
   return carried;
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+fn main(inputs: Inputs) -> status: ExitStatus pure must_wait {
   doc "Listens on the loopback port the first argument names and serves each accepted connection in a context of its own [WAIT-3], echoing until its peer stops sending. The second argument is how many connections to accept; zero accepts until the listener fails. Every started context completes before main returns.";
   let Inputs(args: args, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;

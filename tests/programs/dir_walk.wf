@@ -16,7 +16,7 @@ alias write_once = std::io::write_once;
 
 const empty_prefix: Array<u8, 1> =[0_u8];
 
-fn publish_all(factory: &HandleFactory, output: &OutputStream, source: &[u8], length: u64) -> result: Result<unit, IoError> reads(source), writes(factory), writes(output) waits contract {
+fn publish_all(factory: &HandleFactory, output: &OutputStream, source: &[u8], length: u64) -> result: Result<unit, IoError> reads(source), writes(factory), writes(output) may_wait contract {
   define source_length = source^.len;
   requires length <= source_length;
 } {
@@ -136,12 +136,12 @@ fn record_line(records: &Slots<u8, 8192>, index: u64, destination: &[u8], at: u6
   return cursor;
 }
 
-fn open_source_from_factory(factory: &HandleFactory, directory: &DirectoryRead) -> result: Result<DirectorySource, IoError> reads(directory), writes(factory) waits {
+fn open_source_from_factory(factory: &HandleFactory, directory: &DirectoryRead) -> result: Result<DirectorySource, IoError> reads(directory), writes(factory) must_wait {
   doc "One independent enumeration handle for one directory value.";
   return open_directory_source(factory: factory, directory: directory);
 }
 
-fn open_directory_from_factory(factory: &HandleFactory, root: &DirectoryRead, name: &[u8], start: u64, end: u64) -> result: Result<DirectoryRead, IoError> reads(root), reads(name), writes(factory) waits contract {
+fn open_directory_from_factory(factory: &HandleFactory, root: &DirectoryRead, name: &[u8], start: u64, end: u64) -> result: Result<DirectoryRead, IoError> reads(root), reads(name), writes(factory) must_wait contract {
   define ordered = start <= end;
   define capacity = name^.len;
   define within = end <= capacity;
@@ -152,7 +152,7 @@ fn open_directory_from_factory(factory: &HandleFactory, root: &DirectoryRead, na
   return open_directory(factory: factory, root: root, name: name, start: start, end: end);
 }
 
-fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_length: u64, records: &Slots<u8, 8192>, used: u64, depth: u64) -> count: u64 reads(dir), reads(prefix), writes(factory), writes(records) waits {
+fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_length: u64, records: &Slots<u8, 8192>, used: u64, depth: u64) -> count: u64 reads(dir), reads(prefix), writes(factory), writes(records) may_wait {
   doc "Enumerates one directory, records every entry's relative path, and descends into every subdirectory it names. The record table stays in its caller and is reached through one reference parameter whose row declares the write; the two scratch runs are frame-resident arrays of this activation [STOR-1].";
   let total = used;
   let too_deep = depth >= 8_u64;
@@ -193,7 +193,9 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
           break @batches;
         }
         let at = 0_u64;
-        loop @stored_entry {
+        loop @stored_entry (
+          decreases produced - at
+        ) {
           let entries_room = entries.len;
           let child_room = child.len;
           let prefix_room = prefix^.len;
@@ -390,7 +392,7 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
   return total;
 }
 
-fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputStream, files: &HandleFactory) -> status: ExitStatus reads(cwd), writes(out), writes(files) waits {
+fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputStream, files: &HandleFactory) -> status: ExitStatus reads(cwd), writes(out), writes(files) may_wait {
   doc "Walks the invocation directory recursively and publishes every entry's kind and relative path in sorted order.";
   let status = 0_u8;
   let records = slots_new::<u8, 8192>();
@@ -506,7 +508,7 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputSt
   return exit_status(code: status);
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+fn main(inputs: Inputs) -> status: ExitStatus pure must_wait {
   doc "PRE-1 ordinary Inputs are destructured once; the referenced operation chain returns before the initial directory is explicitly closed on every exit.";
   let Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: files, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;

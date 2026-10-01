@@ -239,7 +239,9 @@ fn put_decimal(output: &[u8], at: u64, value: u64) -> result: u64 writes(output)
   let digits = array_filled::<u8, 20>(value: 0_u8);
   let count = 0_u64;
   let rest = value;
-  loop @digits {
+  loop @digits (
+    decreases rest
+  ) {
     let low = rest % 10_u64;
     let narrow = cvt.wrap::<u64, u8>(low);
     let glyph = narrow +wrap 48_u8;
@@ -534,7 +536,9 @@ fn decimal_value(value: u64) -> made: Box<Slots<u8>> pure {
   let digits = array_filled::<u8, 20>(value: 0_u8);
   let count = 0_u64;
   let rest = value;
-  loop @digits {
+  loop @digits (
+    decreases rest
+  ) {
     let low = rest % 10_u64;
     let narrow = cvt.wrap::<u64, u8>(low);
     let glyph = narrow +wrap 48_u8;
@@ -728,7 +732,9 @@ fn log_decimal(log: &Box<Slots<u8>>, value: u64) -> result: unit writes(log) {
   let digits = array_filled::<u8, 20>(value: 0_u8);
   let count = 0_u64;
   let rest = value;
-  loop @digits {
+  loop @digits (
+    decreases rest
+  ) {
     let low = rest % 10_u64;
     let narrow = cvt.wrap::<u64, u8>(low);
     let glyph = narrow +wrap 48_u8;
@@ -755,14 +761,16 @@ fn log_decimal(log: &Box<Slots<u8>>, value: u64) -> result: unit writes(log) {
 
 fn decimal_length(value: u64) -> result: u64 pure {
   doc "The number of decimal digits of a number.";
-  let count = 1_u64;
-  let rest = value / 10_u64;
-  loop @digits {
+  let count = 0_u64;
+  let rest = value;
+  loop @digits (
+    decreases rest
+  ) {
+    set count = count +wrap 1_u64;
+    set rest = rest / 10_u64;
     if rest == 0_u64 {
       break @digits;
     }
-    set count = count +wrap 1_u64;
-    set rest = rest / 10_u64;
   }
   return count;
 }
@@ -849,7 +857,7 @@ fn log_expire_at(log: &Box<Slots<u8>>, input: &[u8], command: &Command, at_ms: u
   return unit;
 }
 
-fn run_set(store: &Shared<Store>, input: &[u8], command: &Command, output: &[u8], at: u64, env: &KeyEnv, time: &Time) -> result: u64 reads(store), reads(input), reads(command), reads(env), reads(time), writes(output) waits {
+fn run_set(store: &Shared<Store>, input: &[u8], command: &Command, output: &[u8], at: u64, env: &KeyEnv, time: &Time) -> result: u64 reads(store), reads(input), reads(command), reads(env), reads(time), writes(output) may_wait {
   doc "SET key value [EX seconds | PX milliseconds]: stores the value with the expiry the option gives, or none, in one atomic statement that also appends the change to the append-only file's buffer.";
   let key_long = command^.second_length > 48_u64;
   let value_long = command^.third_length > 1024_u64;
@@ -937,7 +945,7 @@ fn run_set(store: &Shared<Store>, input: &[u8], command: &Command, output: &[u8]
   return after;
 }
 
-fn run_get(store: &Shared<Store>, input: &[u8], command: &Command, output: &[u8], at: u64, env: &KeyEnv, copied: &Copied, time: &Time) -> result: u64 reads(store), reads(input), reads(command), reads(env), reads(time), writes(output), writes(copied) waits {
+fn run_get(store: &Shared<Store>, input: &[u8], command: &Command, output: &[u8], at: u64, env: &KeyEnv, copied: &Copied, time: &Time) -> result: u64 reads(store), reads(input), reads(command), reads(env), reads(time), writes(output), writes(copied) may_wait {
   doc "GET key: copies a live value out in one atomic statement, which removes the key instead when its expiry has been reached, then encodes it as a bulk string.";
   if command^.second_length > 48_u64 {
     let after = put_word(output: output, at: at, word: &reply_nil[0_u64..5_u64]);
@@ -979,7 +987,7 @@ fn run_get(store: &Shared<Store>, input: &[u8], command: &Command, output: &[u8]
   }
 }
 
-fn run_del(store: &Shared<Store>, input: &[u8], command: &Command, output: &[u8], at: u64, env: &KeyEnv, time: &Time) -> result: u64 reads(store), reads(input), reads(command), reads(env), reads(time), writes(output) waits {
+fn run_del(store: &Shared<Store>, input: &[u8], command: &Command, output: &[u8], at: u64, env: &KeyEnv, time: &Time) -> result: u64 reads(store), reads(input), reads(command), reads(env), reads(time), writes(output) may_wait {
   doc "DEL key: removes the key in one atomic statement and answers how many live keys it removed.";
   let removed = 0_u64;
   if command^.second_length <= 48_u64 {
@@ -1006,7 +1014,7 @@ fn run_del(store: &Shared<Store>, input: &[u8], command: &Command, output: &[u8]
   return after;
 }
 
-fn run_incr(store: &Shared<Store>, input: &[u8], command: &Command, output: &[u8], at: u64, env: &KeyEnv, time: &Time) -> result: u64 reads(store), reads(input), reads(command), reads(env), reads(time), writes(output) waits {
+fn run_incr(store: &Shared<Store>, input: &[u8], command: &Command, output: &[u8], at: u64, env: &KeyEnv, time: &Time) -> result: u64 reads(store), reads(input), reads(command), reads(env), reads(time), writes(output) may_wait {
   doc "INCR key: adds one to the stored number, keeping its expiry, or stores 1 without one for an absent or expired key, in one atomic statement.";
   if command^.second_length > 48_u64 {
     let after = put_word(output: output, at: at, word: &reply_long[0_u64..44_u64]);
@@ -1049,7 +1057,7 @@ fn run_incr(store: &Shared<Store>, input: &[u8], command: &Command, output: &[u8
   return after;
 }
 
-fn run_expire(store: &Shared<Store>, input: &[u8], command: &Command, output: &[u8], at: u64, env: &KeyEnv, time: &Time, scale: u64, absolute: Bool, invalid: &[u8]) -> result: u64 reads(store), reads(input), reads(command), reads(env), reads(time), reads(invalid), writes(output) waits {
+fn run_expire(store: &Shared<Store>, input: &[u8], command: &Command, output: &[u8], at: u64, env: &KeyEnv, time: &Time, scale: u64, absolute: Bool, invalid: &[u8]) -> result: u64 reads(store), reads(input), reads(command), reads(env), reads(time), reads(invalid), writes(output) may_wait {
   doc "EXPIRE key seconds (scale 1000), PEXPIRE key milliseconds (scale 1) and PEXPIREAT key calendar-milliseconds (absolute): gives a live key an expiry, or removes it when the expiry is zero or already past, and answers 1 when the key was live and 0 otherwise. While the file is replayed an expiry already past is kept as one already reached, as Redis keeps it while loading, so a later PERSIST in the file still finds the key; invalid is the reply to an expiry out of range.";
   if command^.second_length > 48_u64 {
     let after = put_word(output: output, at: at, word: &reply_zero[0_u64..4_u64]);
@@ -1141,7 +1149,7 @@ fn run_expire(store: &Shared<Store>, input: &[u8], command: &Command, output: &[
   return after;
 }
 
-fn run_ttl(store: &Shared<Store>, input: &[u8], command: &Command, output: &[u8], at: u64, env: &KeyEnv, time: &Time, in_seconds: Bool) -> result: u64 reads(store), reads(input), reads(command), reads(env), reads(time), writes(output) waits {
+fn run_ttl(store: &Shared<Store>, input: &[u8], command: &Command, output: &[u8], at: u64, env: &KeyEnv, time: &Time, in_seconds: Bool) -> result: u64 reads(store), reads(input), reads(command), reads(env), reads(time), writes(output) may_wait {
   doc "TTL key and PTTL key: answers the time a live key has left, in seconds rounded as Redis rounds them or in milliseconds, -1 for a key without an expiry and -2 for an absent or expired one.";
   let remaining = Remaining(left: 0_u64, now: time^.check, state: 3_u64);
   if command^.second_length <= 48_u64 {
@@ -1171,7 +1179,7 @@ fn run_ttl(store: &Shared<Store>, input: &[u8], command: &Command, output: &[u8]
   return after;
 }
 
-fn run_persist(store: &Shared<Store>, input: &[u8], command: &Command, output: &[u8], at: u64, env: &KeyEnv, time: &Time) -> result: u64 reads(store), reads(input), reads(command), reads(env), reads(time), writes(output) waits {
+fn run_persist(store: &Shared<Store>, input: &[u8], command: &Command, output: &[u8], at: u64, env: &KeyEnv, time: &Time) -> result: u64 reads(store), reads(input), reads(command), reads(env), reads(time), writes(output) may_wait {
   doc "PERSIST key: removes a live key's expiry and answers 1 when it had one, 0 otherwise.";
   let expiry = Expiry(at: 0_u64, now: time^.check, state: 0_u64);
   if command^.second_length <= 48_u64 {
@@ -1202,7 +1210,7 @@ fn run_persist(store: &Shared<Store>, input: &[u8], command: &Command, output: &
   return after;
 }
 
-fn run_dbsize(store: &Shared<Store>, output: &[u8], at: u64) -> result: u64 reads(store), writes(output) waits {
+fn run_dbsize(store: &Shared<Store>, output: &[u8], at: u64) -> result: u64 reads(store), writes(output) may_wait {
   doc "DBSIZE: answers how many keys the keyspace holds, counting an expired key not yet removed, as Redis does.";
   let size = 0_u64;
   atomic state = &store^ {
@@ -1212,7 +1220,7 @@ fn run_dbsize(store: &Shared<Store>, output: &[u8], at: u64) -> result: u64 read
   return after;
 }
 
-fn execute(store: &Shared<Store>, input: &[u8], command: &Command, output: &[u8], at: u64, env: &KeyEnv, copied: &Copied, time: &Time) -> result: u64 reads(store), reads(input), reads(command), reads(env), reads(time), writes(output), writes(copied) waits {
+fn execute(store: &Shared<Store>, input: &[u8], command: &Command, output: &[u8], at: u64, env: &KeyEnv, copied: &Copied, time: &Time) -> result: u64 reads(store), reads(input), reads(command), reads(env), reads(time), writes(output), writes(copied) may_wait {
   doc "Answers one parsed command into the output from a position and returns the position after the answer.";
   let start = command^.first_start;
   let length = command^.first_length;
@@ -1288,7 +1296,7 @@ fn execute(store: &Shared<Store>, input: &[u8], command: &Command, output: &[u8]
   return after;
 }
 
-fn send_all(send: &TcpSend, source: &[u8], length: u64) -> result: Result<unit, IoError> reads(source), writes(send) waits contract {
+fn send_all(send: &TcpSend, source: &[u8], length: u64) -> result: Result<unit, IoError> reads(source), writes(send) may_wait contract {
   define source_length = source^.len;
   requires length <= source_length;
 } {
@@ -1341,7 +1349,7 @@ fn read_time(clock: &Clock, wall: &WallClock, origin: Instant) -> result: Time r
   return Time(now: offset, unix_ms: unix_ms, check: offset, loading: live);
 }
 
-fn serve(connection: TcpConnection, factory: HandleFactory, store: Shared<Store>, clock: Clock, wall: WallClock, origin: Instant, idle: u64) -> result: unit pure waits {
+fn serve(connection: TcpConnection, factory: HandleFactory, store: Shared<Store>, clock: Clock, wall: WallClock, origin: Instant, idle: u64) -> result: unit pure must_wait {
   doc "Serves one client in a context of its own: reads requests into its input, answers every complete command the input holds with one send, and keeps an incomplete one for the next read. Every command of one read sees the clocks as read once after it, and a client silent for idle seconds, when idle is not zero, is closed.";
   let env = KeyEnv(seed: 0_u64);
   let blank = array_filled::<u8, 1024>(value: 0_u8);
@@ -1391,7 +1399,10 @@ fn serve(connection: TcpConnection, factory: HandleFactory, store: Shared<Store>
     let consumed = 0_u64;
     let written = 0_u64;
     let broken = False();
-    loop @commands {
+    loop @commands (
+      decreases held - consumed,
+      invariant within: consumed <= held
+    ) {
       let command = parse_command(input: input, start: consumed, held: held);
       if command.state == 0_u64 {
         break @commands;
@@ -1400,8 +1411,17 @@ fn serve(connection: TcpConnection, factory: HandleFactory, store: Shared<Store>
         set broken = True();
         break @commands;
       }
+      let next = command.next;
+      if next <= consumed {
+        set broken = True();
+        break @commands;
+      }
+      if next > held {
+        set broken = True();
+        break @commands;
+      }
       set written = execute(store: &store, input: input, command: &command, output: output, at: written, env: &env, copied: &copied, time: &time);
-      set consumed = command.next;
+      set consumed = next;
       if written > 12288_u64 {
         let bounded = written;
         if bounded > 16384_u64 {
@@ -1474,8 +1494,8 @@ fn expire_batch(store: &Store, now: u64, env: &KeyEnv) -> result: Bool reads(env
   return True();
 }
 
-fn expire_keys(store: Shared<Store>, clock: Clock, origin: Instant) -> result: unit pure waits {
-  doc "Wakes ten times a second and removes the keys whose expiry has passed, in batches of atomic statements so that clients proceed between them, until the program stops. A key whose expiry did not fit the queue, which holds 4,194,304 entries counting those a later command replaced, is removed only when a command finds it expired.";
+fn expire_keys(store: Shared<Store>, clock: Clock, origin: Instant) -> result: unit pure must_wait {
+  doc "Wakes ten times a second and removes the keys whose expiry has passed, in batches of atomic statements so that clients proceed between them, until the program stops. One tick runs at most 16,384 batches of 256, enough to empty a full queue; what clients queue meanwhile waits for the next tick. A key whose expiry did not fit the queue, which holds 4,194,304 entries counting those a later command replaced, is removed only when a command finds it expired.";
   let env = KeyEnv(seed: 0_u64);
   loop @ticks {
     let started = std::time::now(clock: &clock);
@@ -1484,7 +1504,7 @@ fn expire_keys(store: Shared<Store>, clock: Clock, origin: Instant) -> result: u
     let reading = std::time::now(clock: &clock);
     let current = nanoseconds_from(earlier: origin, later: reading);
     let stop = False();
-    loop @batches {
+    for @batches (batch in 0_u64..16384_u64) {
       let more = False();
       atomic state = &store {
         set stop = state^.stopping;
@@ -1502,7 +1522,7 @@ fn expire_keys(store: Shared<Store>, clock: Clock, origin: Instant) -> result: u
   return unit;
 }
 
-fn append_all(factory: &HandleFactory, file: &WriteFile, source: &Box<Slots<u8>>) -> result: Bool reads(source), writes(factory), writes(file) waits {
+fn append_all(factory: &HandleFactory, file: &WriteFile, source: &Box<Slots<u8>>) -> result: Bool reads(source), writes(factory), writes(file) may_wait {
   doc "Appends every byte the buffer holds to the file, reattempting until the host has taken them all; false reports a refusal or a write that took nothing.";
   let length = source^.inner.len;
   let bytes = &source^.inner[0_u64..length];
@@ -1526,7 +1546,7 @@ fn append_all(factory: &HandleFactory, file: &WriteFile, source: &Box<Slots<u8>>
   return True();
 }
 
-fn write_log(store: Shared<Store>, factory: HandleFactory, file: WriteFile, clock: Clock) -> result: unit pure waits {
+fn write_log(store: Shared<Store>, factory: HandleFactory, file: WriteFile, clock: Clock) -> result: unit pure must_wait {
   doc "The append-only file's writer: every 10 milliseconds it exchanges the keyspace's buffer for an empty one in one atomic statement and appends what it took to the file, syncing the file once a second has passed since the last sync, as appendfsync everysec does. Once the program stops it writes the last buffer, syncs and closes the file.";
   let spare = box_slots_new::<u8>(capacity: 65536_u64);
   let last_sync = std::time::now(clock: &clock);
@@ -1557,7 +1577,7 @@ fn write_log(store: Shared<Store>, factory: HandleFactory, file: WriteFile, cloc
   return unit;
 }
 
-fn replay(store: &Shared<Store>, factory: &HandleFactory, root: &DirectoryRead, name: &[u8], name_length: u64, time: &Time) -> result: u64 reads(store), reads(root), reads(name), reads(time), writes(factory) waits contract {
+fn replay(store: &Shared<Store>, factory: &HandleFactory, root: &DirectoryRead, name: &[u8], name_length: u64, time: &Time) -> result: u64 reads(store), reads(root), reads(name), reads(time), writes(factory) must_wait contract {
   requires name_length <= name^.len;
 } {
   doc "Applies every command of the append-only file the name names, when one exists, and returns how many it applied. As Redis does while loading, no key counts as expired during the replay, time's check being zero, and an expiry whose calendar time has passed is kept as one already reached, so the commands after it in the file apply as they did when they were written; lazy and active expiry remove such a key once the subset listens.";
@@ -1609,7 +1629,10 @@ fn replay(store: &Shared<Store>, factory: &HandleFactory, root: &DirectoryRead, 
         }
         let consumed = 0_u64;
         let broken = False();
-        loop @commands {
+        loop @commands (
+          decreases held - consumed,
+          invariant within: consumed <= held
+        ) {
           let command = parse_command(input: input, start: consumed, held: held);
           if command.state == 0_u64 {
             break @commands;
@@ -1618,9 +1641,18 @@ fn replay(store: &Shared<Store>, factory: &HandleFactory, root: &DirectoryRead, 
             set broken = True();
             break @commands;
           }
+          let next = command.next;
+          if next <= consumed {
+            set broken = True();
+            break @commands;
+          }
+          if next > held {
+            set broken = True();
+            break @commands;
+          }
           let answered = execute(store: store, input: input, command: &command, output: output, at: 0_u64, env: &env, copied: &copied, time: time);
           set applied = applied +wrap 1_u64;
-          set consumed = command.next;
+          set consumed = next;
         }
         if broken {
           break @chunks;
@@ -1682,7 +1714,7 @@ fn argument(args: &std::text::Args, position: u64, window: &[u8]) -> result: u64
   return carried;
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+fn main(inputs: Inputs) -> status: ExitStatus pure must_wait {
   doc "A Redis subset: PING, SET with EX or PX, GET, DEL, INCR, EXPIRE, PEXPIRE, PEXPIREAT, TTL, PTTL, PERSIST and DBSIZE in RESP2 over TCP, with pipelining. It listens on the loopback port the first argument names and serves each accepted client in a context of its own over one keyspace, a shared object every client reaches through atomic statements. The second argument is how many clients to accept; zero accepts until the listener fails. A third argument other than - names an append-only file in the working directory: the subset replays it before it listens and appends every change to it, syncing it once a second. A fourth argument, when not zero, closes a client silent for that many seconds. Expired keys are removed when a command finds them and by a context that wakes ten times a second.";
   let Inputs(args: args, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: clock, wall_clock: wall_clock) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;

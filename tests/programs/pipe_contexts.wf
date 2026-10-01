@@ -9,7 +9,7 @@ alias factory_share = std::io::factory_share;
 alias read_next = std::io::read_next;
 alias write_once = std::io::write_once;
 
-fn consume(factory: HandleFactory, input: InputStream, received: Shared<u64>) -> result: unit pure waits {
+fn consume(factory: HandleFactory, input: InputStream, received: Shared<u64>) -> result: unit pure may_wait {
   doc "Reads the standard input until 262144 bytes have arrived or the input stops, and records how many arrived.";
   let buffer = array_filled::<u8, 4096>(value: 0_u8);
   let count = 0_u64;
@@ -34,7 +34,7 @@ fn consume(factory: HandleFactory, input: InputStream, received: Shared<u64>) ->
   return unit;
 }
 
-fn produce(factory: HandleFactory, output: OutputStream, sent: Shared<u64>) -> result: unit pure waits {
+fn produce(factory: HandleFactory, output: OutputStream, sent: Shared<u64>) -> result: unit pure may_wait {
   doc "Writes 262144 bytes to the standard output, asking for all that remain in each request, and records how many were accepted. One request is four times what a pipe holds, so it completes only while the reader drains the pipe.";
   let chunk = array_filled::<u8, 262144>(value: 7_u8);
   let count = 0_u64;
@@ -60,7 +60,7 @@ fn produce(factory: HandleFactory, output: OutputStream, sent: Shared<u64>) -> r
   return unit;
 }
 
-fn relay(inputs: Inputs, received: &Shared<u64>, sent: &Shared<u64>) -> result: unit reads(received), reads(sent) waits {
+fn relay(inputs: Inputs, received: &Shared<u64>, sent: &Shared<u64>) -> result: unit reads(received), reads(sent) must_wait {
   doc "Spawns the reader of the standard input before the writer of the standard output. When both name one pipe, the reader waits for bytes only the writer's context supplies, so the two finish only if neither blocks the thread the other runs on [WAIT-2].";
   let Inputs(args: unused_args, cwd: cwd_directory, stdout: out, stderr: unused_err, handles: handles, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
@@ -75,7 +75,7 @@ fn relay(inputs: Inputs, received: &Shared<u64>, sent: &Shared<u64>) -> result: 
   return unit;
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+fn main(inputs: Inputs) -> status: ExitStatus pure must_wait {
   doc "Exits 0 when all 262144 bytes crossed the pipe from the writer's context to the reader's.";
   let received = shared_new::<u64>(value: 0_u64);
   let sent = shared_new::<u64>(value: 0_u64);

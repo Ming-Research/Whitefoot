@@ -117,7 +117,7 @@ fn main() -> status: ExitStatus pure {
   let iteration = 0_u64;
   let accumulated = 0_u32;
   loop @sustained_hashing {
-    let finished = iteration == 1024_u64;
+    let finished = iteration >= 1024_u64;
     if finished {
       break @sustained_hashing;
     }

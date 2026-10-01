@@ -1,0 +1,17 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+const rank_table: Array<u64, 4> =[3_u64, 2_u64, 1_u64, 0_u64];
+
+fn walk() -> result: u64 pure {
+  let mode = 0_u64;
+  let before = rank_table[mode];
+  set mode = 2_u64;
+  let after = rank_table[mode];
+  invariant progress: after < before;
+  return mode;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

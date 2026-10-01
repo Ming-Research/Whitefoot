@@ -89,7 +89,7 @@ fn an_unproved_postcondition_rejects_under_fn9() {
   let reviewed = 1_i32;
   let cursor = 0_u8;
   loop {
-    if cursor == 3_u8 {
+    if cursor >= 3_u8 {
       break;
     } else {
       set reviewed = 1_i32;
@@ -158,7 +158,7 @@ fn main() -> status: std::process::ExitStatus pure {
 
 #[test]
 fn unproved_prelude_endpoints_reject_under_fn8() {
-    let source = br#"fn publish(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], start: u64, end: u64) -> result: unit reads(source), writes(factory), writes(output) waits {
+    let source = br#"fn publish(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], start: u64, end: u64) -> result: unit reads(source), writes(factory), writes(output) must_wait {
   let no_deadline = None<std::time::Instant>();
   match std::io::write_once(factory: factory, output: output, source: source, start: start, end: end, deadline: no_deadline) {
     Ok(value: next) => {

@@ -1,0 +1,37 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+alias Instant = std::time::Instant;
+
+fn nap(until: Instant) -> result: u64 pure must_wait {
+  doc "Waits, then returns.";
+  std::time::sleep_until(deadline: until);
+  return 1_u64;
+}
+
+fn exits(skip: Bool, until: Instant) -> result: u64 pure must_wait {
+  doc "Each exit follows a wait: one inside the return's expression, one before an early return, and one before a loop's break [WAIT-1].";
+  if skip {
+    return nap(until: until);
+  }
+  std::time::sleep_until(deadline: until);
+  if skip {
+    return 0_u64;
+  }
+  loop {
+    let slept = nap(until: until);
+    if slept >= 1_u64 {
+      break;
+    }
+  }
+  return 2_u64;
+}
+
+fn fan_out(until: Instant) -> result: unit pure must_wait {
+  doc "A spawn written as an expression statement is joined when the activation leaves, so every exit follows that join [WAIT-1, WAIT-3].";
+  spawn nap(until: until);
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

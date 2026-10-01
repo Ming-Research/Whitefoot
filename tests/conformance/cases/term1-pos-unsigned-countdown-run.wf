@@ -1,0 +1,24 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn count_down(start: u64) -> result: u64 pure {
+  doc "Leaving when left == 0 continues while left != 0 over an unsigned left, which derives the rank left, and the step lowers it by one [TERM-1].";
+  let left = start;
+  let steps = 0_u64;
+  loop {
+    if left == 0_u64 {
+      break;
+    }
+    set left = left - 1_u64;
+    set steps = steps +wrap 1_u64;
+  }
+  return steps;
+}
+
+fn main() -> status: ExitStatus pure {
+  let steps = count_down(start: 3_u64);
+  if steps != 3_u64 {
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 0_u8);
+}

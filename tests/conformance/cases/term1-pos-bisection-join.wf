@@ -1,0 +1,29 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn lower_bound(count: u64, key: u64) -> result: u64 pure {
+  doc "Each arm of the bisection narrows the interval, one from each side; the rank's descent and the header invariant hold on both arms, so they hold after the join [TERM-1, ENT-6, INV-1].";
+  let lower = 0_u64;
+  let upper = count;
+  loop (
+    invariant ordered: lower <= upper
+  ) {
+    if lower >= upper {
+      return lower;
+    }
+    let last = upper - 1_u64;
+    let span = last - lower;
+    let half = span / 2_u64;
+    let middle = lower + half;
+    if middle < key {
+      set lower = middle + 1_u64;
+    } else {
+      set upper = middle;
+    }
+  }
+  return count;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

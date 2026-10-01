@@ -108,7 +108,8 @@ pub fn fixed_terminal(spelling: &str) -> Pred {
         ("return", "Return"),
         ("musttail", "Musttail"),
         ("spawn", "Spawn"),
-        ("waits", "Waits"),
+        ("may_wait", "MayWait"),
+        ("must_wait", "MustWait"),
         ("loop", "Loop"),
         ("break", "Break"),
         ("else", "Else"),
@@ -183,6 +184,8 @@ pub fn fixed_terminal(spelling: &str) -> Pred {
         ("pkg", "Pkg"),
         // v0.72 [MOD-10]: the standard library qualifier.
         ("std", "Std"),
+        // v0.84 [TERM-1]: the written loop rank.
+        ("decreases", "Decreases"),
     ];
     if spelling == "[0-9]+" {
         return Pred::Digits;

@@ -24,7 +24,9 @@ fn main() -> status: ExitStatus pure {
   let n = 0_u64;
   if k < rows.len {
     let wr = &rows[k];
-    loop @outer {
+    loop @outer (
+      decreases 2_u64 - n
+    ) {
       if 3_u64 <= rows[k].len {
         let d = get(x: wr, i: 2_u64);
         if d != 3_u64 {

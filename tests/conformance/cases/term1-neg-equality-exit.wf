@@ -1,0 +1,18 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn count_to(limit: u64) -> result: u64 pure {
+  doc "An equality exit derives no rank: the disequality that continues does not bound the cursor, and a cursor past the limit would wrap forever [TERM-1].";
+  let cursor = 0_u64;
+  loop {
+    if cursor == limit {
+      break;
+    }
+    set cursor = cursor +wrap 1_u64;
+  }
+  return cursor;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

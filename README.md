@@ -301,8 +301,9 @@ Safe, fast and small are the core. These are the other things worth knowing.
 
 - **Concurrent I/O without async.** The language has no `async`, `await`,
   futures or callbacks: files and sockets are ordinary values, and an I/O
-  operation is an ordinary call. A function that makes one declares `waits`
-  after its effect row, and only a waiting function may call it, so every
+  operation is an ordinary call. A function that makes one declares
+  `must_wait` after its effect row when it waits on every path and `may_wait`
+  when it waits on some, and only a waiting function may call it, so every
   place a program can pause is visible in its signatures. A waiting call
   returns when its operation has completed, and a call runs in order unless
   it is spawned: `spawn serve(…);` runs the call in a context of its own,

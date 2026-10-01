@@ -9,7 +9,7 @@ alias instant_reached = std::time::instant_reached;
 alias now = std::time::now;
 alias read_next = std::io::read_next;
 
-fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+fn main(inputs: Inputs) -> status: ExitStatus pure must_wait {
   doc "Reads standard input with a deadline ten seconds away while its writer sends a byte after a tenth of a second: the read completes with the byte, well before its deadline [PRE-2].";
   let Inputs(args: unused_args, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: input, clock: clock, wall_clock: unused_wall_clock) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;

@@ -1,0 +1,22 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+alias Instant = std::time::Instant;
+
+fn drive<fn step(deadline: Instant) -> result: unit pure may_wait>(deadline: Instant) -> result: unit pure may_wait {
+  doc "The loop calls through a function-kind parameter, whose actual need not wait, so the call is not a wait even where the actual is a host module's waiting function [TERM-1, WAIT-1].";
+  loop {
+    step(deadline: deadline);
+  }
+  return unit;
+}
+
+fn run(clock: std::time::Clock) -> result: unit pure may_wait {
+  doc "Instantiates drive with the host function sleep_until.";
+  let now = std::time::now(clock: &clock);
+  drive::<fn std::time::sleep_until>(deadline: now);
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

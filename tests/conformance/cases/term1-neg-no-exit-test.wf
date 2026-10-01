@@ -1,0 +1,18 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn spin(leave: Bool) -> result: u64 pure {
+  doc "The only exit tests a Bool that never changes, so the body derives no rank, writes none and never waits [TERM-1].";
+  let turns = 0_u64;
+  loop {
+    if leave {
+      break;
+    }
+    set turns = turns +wrap 1_u64;
+  }
+  return turns;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

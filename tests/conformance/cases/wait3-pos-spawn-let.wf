@@ -1,9 +1,9 @@
-fn weigh(factory: std::io::HandleFactory, directory: std::fs::DirectoryRead, weight: u8) -> result: u8 pure waits {
+fn weigh(factory: std::io::HandleFactory, directory: std::fs::DirectoryRead, weight: u8) -> result: u8 pure must_wait {
   std::fs::close_directory(factory: &factory, directory: move directory);
   return weight;
 }
 
-fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure must_wait {
   let std::process::Inputs(args: unused_args, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &handles, directory: move cwd_write);

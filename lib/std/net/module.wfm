@@ -29,28 +29,28 @@ public fn socket_address_v4(a: u8, b: u8, c: u8, d: u8, port: u16) -> result: So
 
 public fn socket_address_v6(a: u16, b: u16, c: u16, d: u16, e: u16, f: u16, g: u16, h: u16, port: u16) -> result: SocketAddress pure doc "Returns the IPv6 socket address whose eight groups are a to h, with port.";
 
-public fn tcp_listen(factory: &HandleFactory, address: &SocketAddress) -> result: Result<TcpListener, IoError> reads(address), writes(factory) waits doc "Opens a TCP listener bound to address.";
+public fn tcp_listen(factory: &HandleFactory, address: &SocketAddress) -> result: Result<TcpListener, IoError> reads(address), writes(factory) must_wait doc "Opens a TCP listener bound to address.";
 
-public fn tcp_accept(factory: &HandleFactory, listener: &TcpListener, deadline: Option<Instant>) -> result: Result<AcceptedConnection, IoError> writes(factory), writes(listener) waits doc "Accepts the next connection on listener and returns it with the address of its peer; DeadlinePassed reports that deadline passed with no connection accepted.";
+public fn tcp_accept(factory: &HandleFactory, listener: &TcpListener, deadline: Option<Instant>) -> result: Result<AcceptedConnection, IoError> writes(factory), writes(listener) must_wait doc "Accepts the next connection on listener and returns it with the address of its peer; DeadlinePassed reports that deadline passed with no connection accepted.";
 
-public fn tcp_connect(factory: &HandleFactory, address: &SocketAddress, deadline: Option<Instant>) -> result: Result<TcpConnection, IoError> reads(address), writes(factory) waits doc "Opens a TCP connection to address; DeadlinePassed reports that deadline passed with no connection opened.";
+public fn tcp_connect(factory: &HandleFactory, address: &SocketAddress, deadline: Option<Instant>) -> result: Result<TcpConnection, IoError> reads(address), writes(factory) must_wait doc "Opens a TCP connection to address; DeadlinePassed reports that deadline passed with no connection opened.";
 
-public fn receive_next(receive: &TcpReceive, destination: &[u8], start: u64, end: u64, deadline: Option<Instant>) -> result: Result<u64, ReadStop> writes(receive), writes(destination) waits contract {
+public fn receive_next(receive: &TcpReceive, destination: &[u8], start: u64, end: u64, deadline: Option<Instant>) -> result: Result<u64, ReadStop> writes(receive), writes(destination) must_wait contract {
   requires start <= end;
   requires end <= destination^.len;
   ensures when Ok(value: next): start <= next;
   ensures when Ok(value: next): next <= end;
 } doc "Receives bytes into destination from start toward end with one host receive; Ok carries the index after the last byte received, ReadEnd reports that the peer finished sending, and DeadlinePassed reports that deadline passed with no byte received.";
 
-public fn send_once(send: &TcpSend, source: &[u8], start: u64, end: u64, deadline: Option<Instant>) -> result: Result<u64, IoError> reads(source), writes(send) waits contract {
+public fn send_once(send: &TcpSend, source: &[u8], start: u64, end: u64, deadline: Option<Instant>) -> result: Result<u64, IoError> reads(source), writes(send) must_wait contract {
   requires start <= end;
   requires end <= source^.len;
   ensures when Ok(value: next): start <= next;
   ensures when Ok(value: next): next <= end;
 } doc "Sends bytes of source from start toward end with one host send; Ok carries the index after the last byte sent, and DeadlinePassed reports that deadline passed with no byte sent.";
 
-public fn close_listener(factory: &HandleFactory, listener: TcpListener) -> result: Result<unit, IoError> writes(factory) waits doc "Closes listener.";
+public fn close_listener(factory: &HandleFactory, listener: TcpListener) -> result: Result<unit, IoError> writes(factory) must_wait doc "Closes listener.";
 
-public fn close_receive(factory: &HandleFactory, receive: TcpReceive) -> result: Result<unit, IoError> writes(factory) waits doc "Closes the receiving half of a connection.";
+public fn close_receive(factory: &HandleFactory, receive: TcpReceive) -> result: Result<unit, IoError> writes(factory) must_wait doc "Closes the receiving half of a connection.";
 
-public fn close_send(factory: &HandleFactory, send: TcpSend) -> result: Result<unit, IoError> writes(factory) waits doc "Closes the sending half of a connection.";
+public fn close_send(factory: &HandleFactory, send: TcpSend) -> result: Result<unit, IoError> writes(factory) must_wait doc "Closes the sending half of a connection.";

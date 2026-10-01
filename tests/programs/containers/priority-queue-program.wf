@@ -233,7 +233,9 @@ fn priority_test_scalar_heapify() -> failures: u64 pure {
   if capacity != 9_u64 {
     set failures = failures +wrap 1_u64;
   }
-  loop @pop {
+  loop @pop (
+    decreases queue.storage.inner.len
+  ) {
     let length = priority_queue_len::<u64, 11>(queue: &queue);
     if length == 0_u64 {
       break @pop;

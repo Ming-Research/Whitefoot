@@ -101,7 +101,7 @@ fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
   }
 }
 
-fn exercise(cwd: &DirectoryRead, files: &HandleFactory) -> status: ExitStatus reads(cwd), writes(files) waits {
+fn exercise(cwd: &DirectoryRead, files: &HandleFactory) -> status: ExitStatus reads(cwd), writes(files) must_wait {
   doc "The ordinary enumeration library emits records with one kind byte, a little-endian u16 name length and the name bytes. The program checks the selected record format, kind range and announced entry count without a special language operand class.";
   let entries = slots_new::<u8, 4096>();
   for @scratch (
@@ -136,7 +136,9 @@ fn exercise(cwd: &DirectoryRead, files: &HandleFactory) -> status: ExitStatus re
       }
       let at = 0_u64;
       let seen = 0_u64;
-      loop @stored_entry {
+      loop @stored_entry (
+        decreases produced - at
+      ) {
         let header_end = at +wrap 3_u64;
         let complete = header_end <= produced;
         if complete {
@@ -206,7 +208,7 @@ fn exercise(cwd: &DirectoryRead, files: &HandleFactory) -> status: ExitStatus re
   return exit_status(code: status);
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+fn main(inputs: Inputs) -> status: ExitStatus pure must_wait {
   doc "PRE-2 ordinary Inputs are destructured once; the borrowed operation chain returns before the initial directory is explicitly closed on every exit.";
   let Inputs(args: unused_args, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: files, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;

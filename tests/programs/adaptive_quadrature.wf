@@ -66,7 +66,7 @@ fn integrate(a: f64, b: f64, center: f64, width: f64, tolerance: f64, depth: u64
   return adaptive(a: a, b: b, center: center, width: width, fa: fa, fm: fm, fb: fb, whole: whole, tolerance: tolerance, depth: depth);
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+fn main(inputs: Inputs) -> status: ExitStatus pure must_wait {
   doc "Integrates 2048 narrow Lorentz profiles with centers from 1/4 to just below 3/4, width 1/64 and tolerance 2^-42. Emits the sum's 64 floating-point bits, most significant first, as ASCII. The numerical depth cap is part of the algorithm, not a compiler proof limit.";
   let Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: files, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;

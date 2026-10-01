@@ -1441,7 +1441,7 @@ fn a_canonical_rejection_prints_the_expected_bytes_beside_the_found_bytes() {
 /// the requirement, not by adding a scope.
 #[test]
 fn a_reference_parameter_keeps_its_later_call_requirement() {
-    let source = br#"fn walk(factory: &std::io::HandleFactory, root: &std::fs::DirectoryRead, name: &[u8]) -> result: u8 reads(root), reads(name), writes(factory) waits {
+    let source = br#"fn walk(factory: &std::io::HandleFactory, root: &std::fs::DirectoryRead, name: &[u8]) -> result: u8 reads(root), reads(name), writes(factory) must_wait {
   match std::fs::open_file(factory: factory, root: root, name: name, start: 0_u64, end: 1_u64) {
     Ok(value: handle) => {
       std::fs::close_read(factory: factory, file: move handle);
@@ -1465,8 +1465,8 @@ fn a_reference_parameter_keeps_its_later_call_requirement() {
         failure.detail()
     );
     let bounded = std::str::from_utf8(source).unwrap().replace(
-        "writes(factory) waits {",
-        "writes(factory) waits contract {\n  requires 1_u64 <= name^.len;\n} {",
+        "writes(factory) must_wait {",
+        "writes(factory) must_wait contract {\n  requires 1_u64 <= name^.len;\n} {",
     );
     compile(
         &[SourceInput::new("bounded_walk.wf", bounded.as_bytes())],
@@ -1919,7 +1919,7 @@ fn a_counted_loop_reducing_under_an_associative_operation_is_permitted() {
   let low = iand(index, 7_u64);
   let seen = 0_u64;
   loop @spin {
-    let done = seen == 4_u64;
+    let done = seen >= 4_u64;
     if done {
       break @spin;
     }

@@ -1,0 +1,21 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn take_turns(cell: &Shared<u64>) -> result: u64 reads(cell) must_wait {
+  doc "Every path back to the header waits at a guarded atomic statement, so the loop owes no rank [TERM-1, SHARE-2].";
+  let seen = 0_u64;
+  loop {
+    atomic value = &cell^ when value^ != 0_u64 {
+      set seen = value^;
+      set value^ = 0_u64;
+    }
+    if seen >= 100_u64 {
+      break;
+    }
+  }
+  return seen;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

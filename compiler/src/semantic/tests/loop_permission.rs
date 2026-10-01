@@ -619,7 +619,7 @@ fn a_counted_reduction_over_a_pure_callee_is_permitted_and_eligible() {
   let low = iand(index, 7_u64);
   let seen = 0_u64;
   loop @spin {
-    let done = seen == 4_u64;
+    let done = seen >= 4_u64;
     if done {
       break @spin;
     }
@@ -2001,7 +2001,7 @@ fn main() -> status: std::process::ExitStatus pure {
 /// condition keeps its own cases above, none of which waits.
 #[test]
 fn an_ordinary_directory_wrapper_writes_enclosing_storage() {
-    let source = br#"fn probe(factory: &std::io::HandleFactory, root: &std::fs::DirectoryRead) -> result: u64 reads(root), writes(factory) waits {
+    let source = br#"fn probe(factory: &std::io::HandleFactory, root: &std::fs::DirectoryRead) -> result: u64 reads(root), writes(factory) must_wait {
   match std::fs::open_directory_source(factory: factory, directory: root) {
     Ok(value: listing) => {
       let closed = std::fs::close_directory_source(factory: factory, source: move listing);
@@ -2013,7 +2013,7 @@ fn an_ordinary_directory_wrapper_writes_enclosing_storage() {
   }
 }
 
-fn main(factory: &std::io::HandleFactory, root: &std::fs::DirectoryRead) -> result: unit reads(root), writes(factory) waits {
+fn main(factory: &std::io::HandleFactory, root: &std::fs::DirectoryRead) -> result: unit reads(root), writes(factory) may_wait {
   let total = 0_u64;
   for @scan (i in 0_u64..4_u64) {
     let seen = probe(factory: factory, root: root);
@@ -2035,7 +2035,7 @@ fn main(factory: &std::io::HandleFactory, root: &std::fs::DirectoryRead) -> resu
 /// read_next waits, and the waiting condition refuses the loop first.
 #[test]
 fn a_direct_read_state_transition_writes_enclosing_storage() {
-    let source = br#"fn main(factory: &std::io::HandleFactory, input: &std::io::InputStream, destination: &[u8]) -> result: unit writes(factory), writes(input), writes(destination) waits contract {
+    let source = br#"fn main(factory: &std::io::HandleFactory, input: &std::io::InputStream, destination: &[u8]) -> result: unit writes(factory), writes(input), writes(destination) may_wait contract {
   requires 1_u64 <= destination^.len;
 } {
   let total = 0_u64;
@@ -2109,11 +2109,11 @@ fn a_break_to_an_enclosing_loop_is_denied_while_an_inner_break_is_not() {
   for @sum (i in 0_u64..16_u64) {
     let seen = 0_u64;
     loop @inner {
-      set seen = seen +wrap 1_u64;
-      let done = seen == 4_u64;
+      let done = seen >= 4_u64;
       if done {
         break @inner;
       }
+      set seen = seen +wrap 1_u64;
     }
     set total = total +wrap i;
   }

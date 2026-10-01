@@ -1,0 +1,33 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn clamp_advance(length: u64) -> result: u64 pure {
+  let pos = 0_u64;
+  loop @decode {
+    let more = pos < length;
+    if more {
+    } else {
+      break @decode;
+    }
+    let pct = pos == 5_u64;
+    let advance = if pct {
+      give 3_u64;
+    } else {
+      give 1_u64;
+    }
+    let before = pos;
+    let remaining = length - pos;
+    let short = advance > remaining;
+    if short {
+      set pos = length;
+    } else {
+      set pos = pos + advance;
+    }
+    invariant progress: before < pos;
+  }
+  return pos;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

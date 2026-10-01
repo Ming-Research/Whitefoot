@@ -110,7 +110,7 @@ fn deadline_passed(error: &IoError) -> result: Bool reads(error) {
   }
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+fn main(inputs: Inputs) -> status: ExitStatus pure must_wait {
   doc "An accept on a listener no client reaches, bounded by a deadline 20 milliseconds away, produces DeadlinePassed, and a clock read after it returns a reading at or after the deadline [PRE-2].";
   let Inputs(args: unused_args, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: clock, wall_clock: unused_wall_clock) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;

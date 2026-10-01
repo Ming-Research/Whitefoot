@@ -7,7 +7,7 @@ fn mandelbrot_escapes(cx: f64, cy: f64) -> result: Bool pure {
   let iteration = 0_u32;
   let escaped = False();
   loop @orbit {
-    let exhausted = iteration == 64_u32;
+    let exhausted = iteration >= 64_u32;
     if exhausted {
       break @orbit;
     }
@@ -37,13 +37,13 @@ fn main() -> status: ExitStatus pure {
   let y = 0_u32;
   let escaped_points = 0_u32;
   loop @rows {
-    let rows_done = y == 48_u32;
+    let rows_done = y >= 48_u32;
     if rows_done {
       break @rows;
     }
     let x = 0_u32;
     loop @columns {
-      let columns_done = x == 64_u32;
+      let columns_done = x >= 64_u32;
       if columns_done {
         break @columns;
       }

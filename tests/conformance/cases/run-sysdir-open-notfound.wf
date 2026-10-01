@@ -104,7 +104,7 @@ fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
   }
 }
 
-fn exercise(args: &Args, cwd: &DirectoryRead, files: &HandleFactory) -> status: ExitStatus reads(args), reads(cwd), writes(files) waits {
+fn exercise(args: &Args, cwd: &DirectoryRead, files: &HandleFactory) -> status: ExitStatus reads(args), reads(cwd), writes(files) may_wait {
   doc "The ordinary open_read implementation returns NotFound for a name absent from the supplied DirectoryRead selector. IoError class matching is ordinary exhaustive enum control flow, and a failed open leaves the factory available.";
   match arg_get(args: args, position: 1_u64) {
     Ok(value: text) => {
@@ -223,7 +223,7 @@ fn exercise(args: &Args, cwd: &DirectoryRead, files: &HandleFactory) -> status: 
   }
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+fn main(inputs: Inputs) -> status: ExitStatus pure must_wait {
   doc "PRE-2 ordinary Inputs are destructured once, with the rest marker covering the fields this program does not name; the referenced operation chain returns before the initial directory is explicitly closed.";
   let Inputs(args: arguments, cwd: root_directory, handles: files, ..) = move inputs;
   let std::fs::Directory(read: root, write: root_write) = move root_directory;

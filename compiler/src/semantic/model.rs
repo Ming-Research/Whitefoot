@@ -217,6 +217,44 @@ pub(crate) struct CheckedLoopInvariant {
     pub(crate) relation: CheckedAffineRelation,
 }
 
+/// [TERM-1] how one `loop_stmt` makes progress. Erased before lowering: it
+/// adds no runtime value, branch, or trap.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum CheckedLoopProgress {
+    /// The body never falls through to its header, so no backedge owes a
+    /// descent.
+    NoBackedge,
+    /// A rank the header writes or the exit test derives. Each snapshot
+    /// records one operand's value at the start of an iteration. Every
+    /// backedge owes every relation of `owed`, the rank's descent first; each
+    /// entry of `alternatives` implies them all, so the backedge discharges
+    /// the rank when it proves `owed` or every relation of one entry.
+    Rank {
+        snapshots: Vec<CheckedProgressSnapshot>,
+        owed: Vec<CheckedAffineRelation>,
+        alternatives: Vec<Vec<CheckedAffineRelation>>,
+    },
+    /// Every path from the header back to the header waits [WAIT-1].
+    Waits,
+    /// Every backedge rebinds a reference cursor strictly inside the owned
+    /// value it named when the iteration began, through at least one `Box`,
+    /// and the body writes nothing that could add a `Box` to any value: the
+    /// number of `Box` cells the cursor's value holds falls each iteration.
+    /// The checker decides it; the proof checker owes nothing more.
+    Structural,
+}
+
+/// [TERM-1] one proof-only value captured at the start of each iteration.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CheckedProgressSnapshot {
+    pub(crate) binding: BindingId,
+    pub(crate) ty: IntegerType,
+    pub(crate) value: CheckedAffineExpression,
+    /// The operand's own read, which the snapshot is established equal to,
+    /// as a `let` binding is to its initializer.
+    pub(crate) read: CheckedExpression,
+}
+
 /// One source-written `use` in a local invariant certificate.
 ///
 /// `multiplicity` is how many times the premise is added into the certificate
@@ -2686,6 +2724,8 @@ pub(crate) enum CheckedStatement {
         /// Formed source invariants awaiting the normal semantic proof
         /// checker. Their presence alone grants no authority.
         invariants: Vec<CheckedLoopInvariant>,
+        /// [TERM-1] the loop's progress, proved by the semantic proof checker.
+        progress: CheckedLoopProgress,
         body: Vec<CheckedStatement>,
         backedge_drops: Vec<CheckedDrop>,
     },
@@ -2879,10 +2919,11 @@ pub(crate) struct CheckedFunction {
 /// `context_starts` and `context_awaits`; nothing else here reaches it.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct CheckedWaiting {
-    /// Whether the declaration writes `waits` [WAIT-1].
+    /// Whether the declaration writes a waiting kind, `may_wait` or
+    /// `must_wait` [WAIT-1]; both lower alike.
     pub(crate) waits: bool,
     /// Every call whose selected callee waits, by call node: through a
-    /// function-kind formal, the formal's `waits` decides [WAIT-1].
+    /// function-kind formal, the formal's waiting kind decides [WAIT-1].
     pub(crate) calls: Vec<NodePath>,
     /// Every `expr_stmt` or `let_stmt` whose call is a spawn, which starts a
     /// context [WAIT-3].

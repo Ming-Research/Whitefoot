@@ -1,0 +1,13 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+alias Instant = std::time::Instant;
+
+fn nap(until: Instant) -> result: unit pure may_wait {
+  doc "Writes may_wait, but every path waits in sleep_until, so the kind is must_wait [WAIT-1].";
+  std::time::sleep_until(deadline: until);
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

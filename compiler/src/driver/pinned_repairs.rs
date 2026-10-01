@@ -15,6 +15,7 @@ use crate::SourceInput;
 mod call_separations;
 mod content_moves;
 mod selector_scope;
+mod waiting_and_progress;
 mod storage_destructuring;
 
 /// One repair [DIAG-1], pinned with the programs it produces: a rejected
@@ -2345,7 +2346,7 @@ alias Inputs = std::process::Inputs;
 alias close_directory = std::fs::close_directory;
 alias exit_status = std::process::exit_status;
 
-fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+fn main(inputs: Inputs) -> status: ExitStatus pure must_wait {
   let Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &factory, directory: move unused_cwd_write);
@@ -2388,7 +2389,7 @@ alias Inputs = std::process::Inputs;
 alias close_directory = std::fs::close_directory;
 alias exit_status = std::process::exit_status;
 
-fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+fn main(inputs: Inputs) -> status: ExitStatus pure may_wait {
   let Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &factory, directory: move unused_cwd_write);
@@ -2407,7 +2408,7 @@ alias Inputs = std::process::Inputs;
 alias close_directory = std::fs::close_directory;
 alias exit_status = std::process::exit_status;
 
-fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+fn main(inputs: Inputs) -> status: ExitStatus pure must_wait {
   let Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &factory, directory: move unused_cwd_write);
@@ -2425,7 +2426,7 @@ alias DirectoryRead = std::fs::DirectoryRead;
 alias Inputs = std::process::Inputs;
 alias exit_status = std::process::exit_status;
 
-fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+fn main(inputs: Inputs) -> status: ExitStatus pure may_wait {
   let Inputs(args: unused_args, cwd: directory_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
   let std::fs::Directory(read: directory, write: directory_write) = move directory_directory;
   std::fs::close_directory_write(factory: &factory, directory: move directory_write);
@@ -2443,7 +2444,7 @@ alias Inputs = std::process::Inputs;
 alias close_directory = std::fs::close_directory;
 alias exit_status = std::process::exit_status;
 
-fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+fn main(inputs: Inputs) -> status: ExitStatus pure must_wait {
   let Inputs(args: unused_args, cwd: directory_directory, stdout: unused_stdout, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
   let std::fs::Directory(read: directory, write: directory_write) = move directory_directory;
   std::fs::close_directory_write(factory: &factory, directory: move directory_write);
@@ -2953,9 +2954,9 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "WAIT-1",
         sentences: &[
             "]: WaitingCallOutsideWaitingFunction\n",
-            "\n  mechanical_fix: write `waits` after the enclosing function's effect row, so the call stands in a waiting function; each caller of that function then waits in turn, up to an entry that waits\n",
+            "\n  mechanical_fix: write `must_wait` after the enclosing function's effect row when every path of its body to an exit executes a wait, and `may_wait` otherwise, so the call stands in a waiting function; each caller of that function then waits in turn, up to an entry that waits\n",
         ],
-        repaired: &[br#"fn close_it(factory: &std::io::HandleFactory, directory: std::fs::DirectoryRead) -> result: unit writes(factory) waits {
+        repaired: &[br#"fn close_it(factory: &std::io::HandleFactory, directory: std::fs::DirectoryRead) -> result: unit writes(factory) must_wait {
   std::fs::close_directory(factory: factory, directory: move directory);
   return unit;
 }
@@ -2971,7 +2972,7 @@ fn main() -> status: std::process::ExitStatus pure {
     // -------------------------------------------------------------------
     RepairPair {
         name: "atomic-target-is-not-a-shared-handle.wf",
-        rejected: br#"fn main() -> status: std::process::ExitStatus pure waits {
+        rejected: br#"fn main() -> status: std::process::ExitStatus pure may_wait {
   let plain = 0_u8;
   atomic value = &plain {
     set value^ = 1_u8;
@@ -2984,7 +2985,7 @@ fn main() -> status: std::process::ExitStatus pure {
             "]: AtomicTargetNotShared\n",
             "\n  mechanical_fix: name a place of type `Shared<T>`: create the object with `shared_new` and give each context its own handle made with `shared_share`\n",
         ],
-        repaired: &[br#"fn main() -> status: std::process::ExitStatus pure waits {
+        repaired: &[br#"fn main() -> status: std::process::ExitStatus pure may_wait {
   let plain = shared_new::<u8>(value: 0_u8);
   let seen = 0_u8;
   atomic value = &plain {
@@ -2997,11 +2998,14 @@ fn main() -> status: std::process::ExitStatus pure {
     },
     RepairPair {
         name: "waiting-call-inside-an-atomic-statement.wf",
-        rejected: br#"fn pause(cell: Shared<u8>) -> result: unit pure waits {
+        rejected: br#"fn pause(cell: Shared<u8>) -> result: unit pure may_wait {
+  atomic value = &cell {
+    set value^ = 2_u8;
+  }
   return unit;
 }
 
-fn main() -> status: std::process::ExitStatus pure waits {
+fn main() -> status: std::process::ExitStatus pure may_wait {
   let cell = shared_new::<u8>(value: 0_u8);
   let other = shared_share::<u8>(shared: &cell);
   atomic value = &cell {
@@ -3016,11 +3020,14 @@ fn main() -> status: std::process::ExitStatus pure waits {
             "]: WaitInsideAtomic\n",
             "\n  mechanical_fix: move the waiting call out of the atomic statement: end the statement first, wait, and start another atomic statement for any update that depends on the outcome\n",
         ],
-        repaired: &[br#"fn pause(cell: Shared<u8>) -> result: unit pure waits {
+        repaired: &[br#"fn pause(cell: Shared<u8>) -> result: unit pure may_wait {
+  atomic value = &cell {
+    set value^ = 2_u8;
+  }
   return unit;
 }
 
-fn main() -> status: std::process::ExitStatus pure waits {
+fn main() -> status: std::process::ExitStatus pure may_wait {
   let cell = shared_new::<u8>(value: 0_u8);
   let other = shared_share::<u8>(shared: &cell);
   atomic value = &cell {
@@ -3033,7 +3040,7 @@ fn main() -> status: std::process::ExitStatus pure waits {
     },
     RepairPair {
         name: "atomic-statement-inside-another.wf",
-        rejected: br#"fn main() -> status: std::process::ExitStatus pure waits {
+        rejected: br#"fn main() -> status: std::process::ExitStatus pure may_wait {
   let first = shared_new::<u8>(value: 0_u8);
   let second = shared_new::<u8>(value: 0_u8);
   atomic outer = &first {
@@ -3049,7 +3056,7 @@ fn main() -> status: std::process::ExitStatus pure waits {
             "]: WaitInsideAtomic\n",
             "\n  mechanical_fix: end the outer atomic statement before starting the inner one, carrying what the inner one needs in a local\n",
         ],
-        repaired: &[br#"fn main() -> status: std::process::ExitStatus pure waits {
+        repaired: &[br#"fn main() -> status: std::process::ExitStatus pure may_wait {
   let first = shared_new::<u8>(value: 0_u8);
   let second = shared_new::<u8>(value: 0_u8);
   let carried = 0_u8;
@@ -3070,7 +3077,7 @@ fn main() -> status: std::process::ExitStatus pure waits {
   return True();
 }
 
-fn main() -> status: std::process::ExitStatus pure waits {
+fn main() -> status: std::process::ExitStatus pure may_wait {
   let cell = shared_new::<u8>(value: 0_u8);
   atomic value = &cell when claim(value: value) {
     set value^ = 2_u8;
@@ -3088,7 +3095,7 @@ fn main() -> status: std::process::ExitStatus pure waits {
   return free;
 }
 
-fn main() -> status: std::process::ExitStatus pure waits {
+fn main() -> status: std::process::ExitStatus pure must_wait {
   let cell = shared_new::<u8>(value: 0_u8);
   atomic value = &cell when unclaimed(value: value) {
     set value^ = 1_u8;
@@ -3399,7 +3406,7 @@ fn fresh() -> table: Table pure {
   return move made;
 }
 
-fn claim(table: Shared<Table>) -> result: u64 pure waits {
+fn claim(table: Shared<Table>) -> result: u64 pure may_wait {
   let got = 0_u64;
   atomic t = &table {
     let at = t^.next;
@@ -3410,7 +3417,7 @@ fn claim(table: Shared<Table>) -> result: u64 pure waits {
   return got;
 }
 
-fn main() -> status: std::process::ExitStatus pure waits {
+fn main() -> status: std::process::ExitStatus pure may_wait {
   let initial = fresh();
   let table = shared_new::<Table>(value: move initial);
   let got = claim(table: move table);
@@ -3436,7 +3443,7 @@ fn fresh() -> table: Table pure {
   return move made;
 }
 
-fn claim(table: Shared<Table>) -> result: u64 pure waits {
+fn claim(table: Shared<Table>) -> result: u64 pure may_wait {
   let got = 0_u64;
   atomic t = &table {
     let at = t^.next;
@@ -3451,7 +3458,7 @@ fn claim(table: Shared<Table>) -> result: u64 pure waits {
   return got;
 }
 
-fn main() -> status: std::process::ExitStatus pure waits {
+fn main() -> status: std::process::ExitStatus pure may_wait {
   let initial = fresh();
   let table = shared_new::<Table>(value: move initial);
   let got = claim(table: move table);
@@ -3470,7 +3477,7 @@ binding First : Disposer {
   release = release_read_file;
 }
 
-fn release_read_file(factory: &std::io::HandleFactory, file: std::fs::ReadFile) -> function_result: unit writes(factory) waits {
+fn release_read_file(factory: &std::io::HandleFactory, file: std::fs::ReadFile) -> function_result: unit writes(factory) must_wait {
   let closed = std::fs::close_read(factory: factory, file: move file);
   return unit;
 }
@@ -3485,14 +3492,14 @@ fn main() -> status: std::process::ExitStatus pure {
             "\n  mechanical_fix: supply a function whose signature, row and contract meet the formal interface, or weaken the formal interface to what the supplied function declares\n",
         ],
         repaired: &[br#"interface Disposer {
-  fn release(factory: &std::io::HandleFactory, file: std::fs::ReadFile) -> function_result: unit writes(factory) waits;
+  fn release(factory: &std::io::HandleFactory, file: std::fs::ReadFile) -> function_result: unit writes(factory) may_wait;
 }
 
 binding First : Disposer {
   release = release_read_file;
 }
 
-fn release_read_file(factory: &std::io::HandleFactory, file: std::fs::ReadFile) -> function_result: unit writes(factory) waits {
+fn release_read_file(factory: &std::io::HandleFactory, file: std::fs::ReadFile) -> function_result: unit writes(factory) must_wait {
   let closed = std::fs::close_read(factory: factory, file: move file);
   return unit;
 }
@@ -3657,6 +3664,7 @@ fn each_pinned_repair_is_carried_out_by_its_programs() {
         .chain(content_moves::CONTENT_MOVES)
         .chain(storage_destructuring::STORAGE_DESTRUCTURING)
         .chain(selector_scope::SELECTOR_SCOPE)
+        .chain(waiting_and_progress::WAITING_AND_PROGRESS)
     {
         let failure = compile(
             &[SourceInput::new(pair.name, pair.rejected)],
@@ -3768,7 +3776,7 @@ fn make(count: u64) -> made: Box<Slots<u8>> pure {
   return move cell;
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+fn main(inputs: Inputs) -> status: ExitStatus pure must_wait {
   let Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: files, stdin: unused, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &files, directory: move cwd_write);
@@ -3834,7 +3842,7 @@ fn make(count: u64) -> made: Box<Slots<u8>> pure {
   return move empty;
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+fn main(inputs: Inputs) -> status: ExitStatus pure must_wait {
   let Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: files, stdin: unused, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &files, directory: move cwd_write);
@@ -3859,7 +3867,7 @@ fn make(count: u64) -> made: Box<Slots<u8>> pure contract {
   return move cell;
 }
 
-fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+fn main(inputs: Inputs) -> status: ExitStatus pure must_wait {
   let Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: files, stdin: unused, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &files, directory: move cwd_write);

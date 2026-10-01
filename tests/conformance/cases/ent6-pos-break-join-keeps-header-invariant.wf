@@ -1,0 +1,34 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn advance(limit: u64, stride: u64) -> result: u64 pure contract {
+  requires stride >= 1_u64;
+  requires stride <= 100_u64;
+  requires limit <= 1000_u64;
+  ensures result <= limit;
+} {
+  doc "The loop leaves by two breaks from states that bind at differently; each proves the header invariant at <= limit, which the join of the break edges keeps, so the postcondition holds after the loop [ENT-6, INV-1].";
+  let at = 0_u64;
+  loop (
+    invariant bounded: at <= limit
+  ) {
+    if at >= limit {
+      break;
+    }
+    let next = at + stride;
+    if next >= limit {
+      set at = limit;
+      break;
+    }
+    set at = next;
+  }
+  return at;
+}
+
+fn main() -> status: ExitStatus pure {
+  let reached = advance(limit: 10_u64, stride: 3_u64);
+  if reached != 10_u64 {
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 0_u8);
+}

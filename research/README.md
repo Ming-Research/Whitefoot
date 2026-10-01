@@ -55,6 +55,10 @@ the work-branch and merge boundary.
 - [Result proof transport](investigations/result-proof-transport/DESIGN.md):
   compare verified result facts across direct matches, named outcomes and
   propagation, including capture, invalidation and composition boundaries.
+- [Mandatory progress](investigations/termination/DESIGN.md): whether every
+  loop and recursion in Snowghost and Whitefoot's programs can carry a
+  checked descent or a wait, the census by measure class and the tree-builder
+  measure.
 - [Writer-lost facts](investigations/writer-lost-facts/DESIGN.md): facts
   agent writers established and the checker dropped (loop exit, conjunction,
   value `if`, `Option`, chained certificates), each classified against v0.77

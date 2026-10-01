@@ -1031,7 +1031,9 @@ fn indexed_heapify_reports() -> failures: u64 pure {
       set log.failures = log.failures +wrap 1_u64;
     }
   }
-  loop @remove {
+  loop @remove (
+    decreases queue.storage.inner.len
+  ) {
     let remaining = priority_queue_len::<RecordDue, 7>(queue: &queue);
     if remaining == 0_u64 {
       break @remove;

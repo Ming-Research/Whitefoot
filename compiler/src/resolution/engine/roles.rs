@@ -1346,6 +1346,7 @@ fn affine_atom_role(topology: &FinalizedTopology, pbase: NodeId) -> LexicalUseRo
     }
     if ancestor_with_production(topology, pbase, Production::HeaderInvariant).is_some()
         || ancestor_with_production(topology, pbase, Production::InvariantStmt).is_some()
+        || ancestor_with_production(topology, pbase, Production::LoopRank).is_some()
     {
         return LexicalUseRole::InvariantValue;
     }

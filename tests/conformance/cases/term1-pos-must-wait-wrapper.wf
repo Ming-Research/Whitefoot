@@ -1,0 +1,27 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+alias Instant = std::time::Instant;
+
+fn nap(until: Instant) -> result: unit pure must_wait {
+  doc "Every path waits in sleep_until [WAIT-1].";
+  std::time::sleep_until(deadline: until);
+  return unit;
+}
+
+fn next_tick(until: Instant) -> result: unit pure must_wait {
+  doc "Every path calls nap, a must_wait function, so it waits on every path without calling the host itself [WAIT-1].";
+  nap(until: until);
+  return unit;
+}
+
+fn tick(until: Instant) -> result: unit pure must_wait {
+  doc "Every path back to the header calls a must_wait function two calls above the host, so the loop owes no rank [TERM-1].";
+  loop {
+    next_tick(until: until);
+  }
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

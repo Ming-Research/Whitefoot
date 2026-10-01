@@ -61,7 +61,8 @@ impl<'unit> DeclarationInventory<'unit> {
     /// full-range atom is exactly what breaks it. Positioning the backedge
     /// after the body it consumes therefore reports the cause rather than the
     /// effect, while INV-1's base judgment stays at the header where it is
-    /// decided. A local invariant is decided at the written `use` that owns
+    /// decided. TERM-1's descent is decided at the same backedge and stands
+    /// there too. A local invariant is decided at the written `use` that owns
     /// its failure.
     fn proof_position(
         &self,
@@ -92,6 +93,32 @@ impl<'unit> DeclarationInventory<'unit> {
                         components.push(ProofPosition::AfterSubtree);
                         return Ok(components);
                     }
+                }
+                &outcome.node_path
+            }
+            // [TERM-1] a rank's descent is decided at the backedge, after
+            // the body, exactly as INV-1's step is; a header invariant the
+            // same backedge fails is therefore reported before it.
+            RecordAnswer::LoopProgress(index) => {
+                let outcome = entailment
+                    .loop_progress
+                    .get(index)
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                let node = self
+                    .tree
+                    .node_with_path(&outcome.node_path)
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                if let Some(loop_node) = self.enclosing_loop_node(node)? {
+                    let mut components = self
+                        .tree
+                        .path(loop_node)?
+                        .components()
+                        .iter()
+                        .copied()
+                        .map(ProofPosition::Child)
+                        .collect::<Vec<_>>();
+                    components.push(ProofPosition::AfterSubtree);
+                    return Ok(components);
                 }
                 &outcome.node_path
             }
@@ -139,6 +166,28 @@ impl<'unit> DeclarationInventory<'unit> {
             path.clone(),
             self.tree.coordinate(node)?,
         ))
+    }
+    /// [TERM-1] a loop whose rank does not fall on some backedge.
+    fn undischarged_loop_progress(
+        &self,
+        entailment: &FunctionEntailment,
+        index: usize,
+    ) -> Result<SemanticIssue, CheckStop> {
+        let outcome = entailment
+            .loop_progress
+            .get(index)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        let (disposition, _) = dispositions(outcome.refuted);
+        Ok(SemanticIssue {
+            rule: SemanticRule::Term1,
+            location: self.source_location(&outcome.node_path)?,
+            kind: SemanticIssueKind::UndischargedLoopProgress {
+                required_relation: outcome.required_relation.clone(),
+                disposition,
+                mechanical_fix: repairs::TERM1_MAKE_THE_RANK_FALL,
+            },
+            request: None,
+        })
     }
     fn undischarged_loop_invariant(
         &self,
@@ -414,6 +463,9 @@ impl<'unit> TypeContext<'unit> {
             (SemanticRule::Inv1 | SemanticRule::Prf1, RecordAnswer::SourceProof(index)) => self
                 .declarations
                 .undischarged_source_proof(&function.entailment, index),
+            (SemanticRule::Term1, RecordAnswer::LoopProgress(index)) => self
+                .declarations
+                .undischarged_loop_progress(&function.entailment, index),
             (
                 SemanticRule::Op4
                 | SemanticRule::Op2

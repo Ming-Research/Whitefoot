@@ -152,7 +152,7 @@ fn last_byte(v: u64) -> result: u8 pure {
   }
 }
 
-fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure must_wait {
   doc "A pure call handed out while a pure call written as an if condition runs.";
   let std::process::Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
@@ -2011,7 +2011,7 @@ fn main() -> status: std::process::ExitStatus pure {
 /// written; this is the observation that replaces it.
 #[test]
 fn a_waiting_helper_is_never_handed_out() {
-    let source = br#"fn write_byte(inputs: std::process::Inputs) -> result: u64 pure waits {
+    let source = br#"fn write_byte(inputs: std::process::Inputs) -> result: u64 pure must_wait {
   let std::process::Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: factory, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &factory, directory: move cwd_write);
@@ -2033,7 +2033,7 @@ fn choose(value: u64) -> result: u64 pure {
   return value;
 }
 
-fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure must_wait {
   let first = write_byte(inputs: move inputs);
   let second = choose(value: 1_u64);
   if first != second {
@@ -2091,7 +2091,7 @@ fn pair_total(store: &[u8], at: u64) -> result: u64 reads(store) {
   return wide_first +wrap wide_second;
 }
 
-fn descend(store: &[u8], remaining: u64) -> result: u64 reads(store) waits {
+fn descend(store: &[u8], remaining: u64) -> result: u64 reads(store) may_wait {
   if remaining == 0_u64 {
     return 0_u64;
   }
@@ -2101,7 +2101,7 @@ fn descend(store: &[u8], remaining: u64) -> result: u64 reads(store) waits {
   return here +wrap below;
 }
 
-fn main() -> status: std::process::ExitStatus pure waits {
+fn main() -> status: std::process::ExitStatus pure may_wait {
   let cells = box_array_filled::<u8>(count: 64_u64, value: 3_u8);
   let view = &cells.inner[0_u64..64_u64];
   let total = descend(store: view, remaining: 20_u64);

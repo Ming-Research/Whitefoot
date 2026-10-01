@@ -2,6 +2,8 @@ Decision: Exchanging the values of two places is a built-in two-place operation 
 
 Decision: Exchange admits equal captured targets and disjoint storage, but requires proof that neither target may be a proper ancestor of the other, because swapping a recursive owner with its own descendant would manufacture a cycle or lose ownership while equal array slots remain a harmless no-op, instead of extending the equality allowance to every possible overlap of unknown-depth targets.
 
+Decision: After an exchange each measure of a place at or below one target has the image and the closed bounds the same measure of the corresponding place below the other target had before it, because the exchange moves whole values and their measures move with them, and a window that can be replaced only by an exchange could otherwise never be shown empty to be released, as the hash map's rebuild shows ([migration](../../../research/investigations/termination/runs/migration.md#exchange)), instead of an exchange that publishes nothing about its targets.
+
 Rejected:
 - Express an exchange as one multi-place commit whose values are the moved bindings: rejected because such a commit must prove its two target indices distinct before it can order its writes, which puts a proof obligation or a runtime branch into every partition loop, while the built-in exchange needs neither and never names a vacant place.
 - Require distinctness for every exchange: rejected because the existing same-slot allowance serves indexed partition and heap adjustment without a branch; the additional condition excludes ancestry, not equality.

@@ -1,0 +1,26 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn count_to(limit: u64, stop_early: Bool) -> result: u64 pure {
+  doc "A leading test on a Bool derives no rank and writes nothing, so the leading statements continue to the bound test, which derives limit - cursor [TERM-1].";
+  let cursor = 0_u64;
+  loop {
+    if stop_early {
+      break;
+    }
+    if cursor >= limit {
+      break;
+    }
+    set cursor = cursor +wrap 1_u64;
+  }
+  return cursor;
+}
+
+fn main() -> status: ExitStatus pure {
+  let early = False();
+  let reached = count_to(limit: 5_u64, stop_early: early);
+  if reached != 5_u64 {
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 0_u8);
+}
