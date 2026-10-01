@@ -1,31 +1,22 @@
 alias Client = pkg::protocol::Client;
 alias KeyEnv = pkg::bytes::KeyEnv;
 alias Span = pkg::protocol::Span;
-alias Store = pkg::store::Store;
+alias Keyspace = pkg::store::Keyspace;
+alias Meta = pkg::store::Meta;
 alias Time = pkg::store::Time;
 alias Key = pkg::bytes::Key;
-alias KeyHash = pkg::bytes::KeyHash;
-alias DueOrder = pkg::store::DueOrder;
-alias Due = pkg::store::Due;
 alias Entry = pkg::store::Entry;
 alias arg = pkg::protocol::arg;
-alias ceiling = pkg::store::ceiling;
 alias clear_items = pkg::protocol::clear_items;
 alias push_item = pkg::protocol::push_item;
-alias copy_key = pkg::bytes::copy_key;
 alias make_key = pkg::bytes::make_key;
 alias expired = pkg::store::expired;
-alias hash_map_edit = std::collections::hash_map::hash_map_edit;
-alias hash_map_len = std::collections::hash_map::hash_map_len;
-alias hash_map_lookup = std::collections::hash_map::hash_map_lookup;
-alias hash_map_put = std::collections::hash_map::hash_map_put;
-alias hash_map_remove = std::collections::hash_map::hash_map_remove;
 alias log_command = pkg::store::log_command;
 alias log_count = pkg::store::log_count;
 alias log_decimal = pkg::store::log_decimal;
 alias log_input = pkg::store::log_input;
 alias log_word = pkg::store::log_word;
-alias priority_queue_push = std::collections::priority_queue::priority_queue_push;
+alias queue_expiry = pkg::store::queue_expiry;
 alias read_integer = pkg::bytes::read_integer;
 alias reply_error = pkg::protocol::reply_error;
 alias reply_integer = pkg::protocol::reply_integer;
@@ -83,6 +74,11 @@ struct Expiry {
   state: u64;
 }
 
+struct Bounds {
+  start: u64;
+  end: u64;
+}
+
 struct Remaining {
   left: u64;
   now: u64;
@@ -96,7 +92,24 @@ fn key_at(input: &[u8], args: &Box<Slots<Span>>, index: u64) -> made: Key reads(
   return move made;
 }
 
-fn kind_of(env: &Client, key: &Key, value: &Entry) -> kind: u64 reads(value), writes(env) {
+fn key_bounds(input: &[u8], args: &Box<Slots<Span>>, index: u64) -> bounds: Bounds reads(input), reads(args) contract {
+  define input_length = input^.len;
+  ensures bounds.start <= bounds.end;
+  ensures bounds.end <= input_length;
+} {
+  doc "Where one argument lies in the input, as the bounds of a key the keyspace is reached by; an argument reaching past the input, which the parser never places, names no bytes.";
+  let span = arg(args: args, index: index);
+  let end = span.start +wrap span.length;
+  let within = end <= input^.len;
+  let ordered = span.start <= end;
+  let fits = band(within, ordered);
+  if fits {
+    return Bounds(start: span.start, end: end);
+  }
+  return Bounds(start: 0_u64, end: 0_u64);
+}
+
+fn kind_of(env: &Client, value: &Entry) -> kind: u64 reads(value), writes(env) {
   doc "Reports a live entry's kind: 1 a string, 2 a list, 3 a set, 4 a hash and 5 a sorted set, recording done in state; an expired one is 0, recording expired.";
   let reached = expired(expires: value^.expires, now: env^.now);
   if reached {
@@ -123,67 +136,40 @@ fn kind_of(env: &Client, key: &Key, value: &Entry) -> kind: u64 reads(value), wr
   }
 }
 
-fn live_kind(state: &Store, key: &Key, client: &Client, env: &KeyEnv) -> kind: u64 reads(key), reads(env), writes(state), writes(client) {
-  doc "The kind of the value a key holds, as kind_of reports it, removing the key when its expiry has been reached; 0 for an absent or expired key.";
+fn entry_kind(slot: &Option<Entry>, client: &Client) -> kind: u64 writes(slot), writes(client) {
+  doc "The kind of the value an entry holds, as kind_of reports it, removing it when its expiry has been reached; 0 for an absent or expired key.";
   set client^.state = state_absent;
-  let found = hash_map_lookup::<KeyHash, Entry, Client, u64, fn kind_of, ceiling>(map: &state^.map, key: key, key_env: env, visit_env: client);
-  match found {
-    Ok(value: kind) => {
-      if client^.state == state_expired {
-        let gone = hash_map_remove::<KeyHash, Entry, ceiling>(map: &state^.map, key: key, env: env);
-        return 0_u64;
-      }
-      return kind;
-    }
-    Err(error: absent) => {
-      return 0_u64;
-    }
-  }
-}
-
-fn put_entry(state: &Store, key: Key, held: Entry, env: &KeyEnv) -> stored: Bool reads(env), writes(state) {
-  doc "Stores an entry under a key, replacing any the key held, and reports whether the keyspace had room.";
-  let put = hash_map_put::<KeyHash, Entry, ceiling>(map: &state^.map, key: move key, value: move held, env: env);
-  match move put {
-    HashMapInserted() => {
-      return True();
-    }
-    HashMapReturned(reason: why, pair: returned) => {
-      match why {
-        HashMapReplaced() => {
-          return True();
-        }
-        HashMapFull() => {
-          return False();
-        }
-      }
-    }
-  }
-}
-
-fn remove_live(state: &Store, key: &Key, env: &KeyEnv, now: u64) -> removed: Bool reads(key), reads(env), writes(state) {
-  doc "Removes a key and reports whether it was live.";
-  let pair = hash_map_remove::<KeyHash, Entry, ceiling>(map: &state^.map, key: key, env: env);
-  match move pair {
-    Some(value: gone) => {
-      let reached = expired(expires: gone.value.expires, now: now);
-      if reached {
-        return False();
-      }
-      return True();
+  let kind = 0_u64;
+  match slot^ {
+    Some(value: held) => {
+      set kind = kind_of(env: client, value: held);
     }
     None() => {
-      return False();
     }
   }
+  if client^.state == state_expired {
+    set slot^ = None<Entry>();
+    return 0_u64;
+  }
+  return kind;
 }
 
-fn queue_expiry(state: &Store, key: &Key, at: u64, env: &KeyEnv) -> result: unit reads(key), reads(env), writes(state) {
-  doc "Queues a key's new expiry for active removal; one past the queue's ceiling is left to lazy removal.";
-  let copied = copy_key(key: key);
-  let due = Due(key: move copied, at: at);
-  let queued = priority_queue_push::<DueOrder, ceiling>(queue: &state^.due, value: move due, env: env);
-  return unit;
+fn remove_live(slot: &Option<Entry>, now: u64) -> removed: Bool writes(slot) {
+  doc "Removes an entry and reports whether it was live.";
+  let live = False();
+  match slot^ {
+    Some(value: gone) => {
+      let reached = expired(expires: gone^.expires, now: now);
+      if reached {
+      } else {
+        set live = True();
+      }
+    }
+    None() => {
+    }
+  }
+  set slot^ = None<Entry>();
+  return live;
 }
 
 fn prepare_keys(input: &[u8], args: &Box<Slots<Span>>, client: &Client, first: u64) -> result: unit reads(input), reads(args), writes(client) {
@@ -200,25 +186,42 @@ fn prepare_keys(input: &[u8], args: &Box<Slots<Span>>, client: &Client, first: u
   return unit;
 }
 
-fn run_del(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), writes(client) waits {
-  doc "DEL key [key ...]: removes every key named in one atomic statement and answers how many were live.";
-  prepare_keys(input: input, args: args, client: client, first: 1_u64);
+fn run_del(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+  doc "DEL key [key ...]: removes every key named, one key in a statement on that key and several in one statement over the whole keyspace, and answers how many were live.";
+  let count = args^.inner.len;
   let removed = 0_u64;
-  atomic state = &store^ {
-    loop @keys {
-      if client^.items.inner.len > 0_u64 {
-        let key = take_back(window: &client^.items.inner);
-        let live = remove_live(state: &state^, key: &key, env: env, now: time^.check);
-        if live {
-          set removed = removed +wrap 1_u64;
+  if count == 2_u64 {
+    let place = key_bounds(input: input, args: args, index: 1_u64);
+    let key = &input^[place.start..place.end];
+    atomic slot = &store^.map[key] {
+      let live = remove_live(slot: slot, now: time^.check);
+      if live {
+        set removed = 1_u64;
+        if store^.logging {
+          atomic meta = &store^.meta {
+            log_command(log: &meta^.log, input: input, args: args);
+          }
         }
-      } else {
-        break @keys;
       }
     }
-    if removed > 0_u64 {
-      if state^.logging {
-        log_command(log: &state^.log, input: input, args: args);
+  } else {
+    atomic state = &store^.map {
+      for @keys (index in 1_u64..count) {
+        let place = key_bounds(input: input, args: args, index: index);
+        let key = &input^[place.start..place.end];
+        atomic slot = &state^[key] {
+          let live = remove_live(slot: slot, now: time^.check);
+          if live {
+            set removed = removed +wrap 1_u64;
+          }
+        }
+      }
+      if removed > 0_u64 {
+        if store^.logging {
+          atomic meta = &store^.meta {
+            log_command(log: &meta^.log, input: input, args: args);
+          }
+        }
       }
     }
   }
@@ -227,21 +230,31 @@ fn run_del(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client:
   return unit;
 }
 
-fn run_exists(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), writes(client) waits {
-  doc "EXISTS key [key ...]: answers how many of the keys named are live, a key named twice counted twice.";
-  prepare_keys(input: input, args: args, client: client, first: 1_u64);
+fn run_exists(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+  doc "EXISTS key [key ...]: answers how many of the keys named are live, a key named twice counted twice; one key is read in a statement on that key and several in one statement over the whole keyspace.";
+  let count = args^.inner.len;
   set client^.now = time^.check;
   let live = 0_u64;
-  atomic state = &store^ {
-    loop @keys {
-      if client^.items.inner.len > 0_u64 {
-        let key = take_back(window: &client^.items.inner);
-        let kind = live_kind(state: &state^, key: &key, client: client, env: env);
-        if kind != 0_u64 {
-          set live = live +wrap 1_u64;
+  if count == 2_u64 {
+    let place = key_bounds(input: input, args: args, index: 1_u64);
+    let key = &input^[place.start..place.end];
+    atomic slot = &store^.map[key] {
+      let kind = entry_kind(slot: slot, client: client);
+      if kind != 0_u64 {
+        set live = 1_u64;
+      }
+    }
+  } else {
+    atomic state = &store^.map {
+      for @keys (index in 1_u64..count) {
+        let place = key_bounds(input: input, args: args, index: index);
+        let key = &input^[place.start..place.end];
+        atomic slot = &state^[key] {
+          let kind = entry_kind(slot: slot, client: client);
+          if kind != 0_u64 {
+            set live = live +wrap 1_u64;
+          }
         }
-      } else {
-        break @keys;
       }
     }
   }
@@ -250,13 +263,14 @@ fn run_exists(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, clie
   return unit;
 }
 
-fn run_type(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), writes(client) waits {
+fn run_type(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
   doc "TYPE key: answers the kind of the value a live key holds, or none.";
-  let key = key_at(input: input, args: args, index: 1_u64);
+  let place = key_bounds(input: input, args: args, index: 1_u64);
+  let key = &input^[place.start..place.end];
   set client^.now = time^.check;
   let kind = 0_u64;
-  atomic state = &store^ {
-    set kind = live_kind(state: &state^, key: &key, client: client, env: env);
+  atomic slot = &store^.map[key] {
+    set kind = entry_kind(slot: slot, client: client);
   }
   if kind == 1_u64 {
     reply_word(client: client, word: &reply_type_string[0_u64..9_u64]);
@@ -274,7 +288,7 @@ fn run_type(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client
   return unit;
 }
 
-fn set_expiry(env: &Expiry, key: &Key, value: &Entry) -> result: u64 writes(env), writes(value) {
+fn set_expiry(env: &Expiry, value: &Entry) -> result: u64 writes(env), writes(value) {
   doc "Gives a live entry the expiry env carries. State 1 is done and 2 marks an expired entry.";
   let reached = expired(expires: value^.expires, now: env^.now);
   if reached {
@@ -286,7 +300,7 @@ fn set_expiry(env: &Expiry, key: &Key, value: &Entry) -> result: u64 writes(env)
   return 1_u64;
 }
 
-fn clear_expiry(env: &Expiry, key: &Key, value: &Entry) -> result: u64 writes(env), writes(value) {
+fn clear_expiry(env: &Expiry, value: &Entry) -> result: u64 writes(env), writes(value) {
   doc "Removes a live entry's expiry. State 1 removed one, 0 found none, and 2 marks an expired entry.";
   let reached = expired(expires: value^.expires, now: env^.now);
   if reached {
@@ -302,7 +316,7 @@ fn clear_expiry(env: &Expiry, key: &Key, value: &Entry) -> result: u64 writes(en
   return 1_u64;
 }
 
-fn read_expiry(env: &Remaining, key: &Key, value: &Entry) -> result: u64 reads(value), writes(env) {
+fn read_expiry(env: &Remaining, value: &Entry) -> result: u64 reads(value), writes(env) {
   doc "Reads how long a live entry has left. State 2 has an expiry and its nanoseconds left, 1 has none, and 0 marks an expired entry.";
   let reached = expired(expires: value^.expires, now: env^.now);
   if reached {
@@ -337,7 +351,7 @@ fn log_key_word(log: &Box<Slots<u8>>, word: &[u8], input: &[u8], key: Span) -> r
   return unit;
 }
 
-fn run_expire(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time, scale: u64, absolute: Bool, invalid: &[u8]) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), reads(invalid), writes(client) waits {
+fn run_expire(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time, scale: u64, absolute: Bool, invalid: &[u8]) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), reads(invalid), writes(client) waits {
   doc "EXPIRE key seconds (scale 1000), PEXPIRE key milliseconds (scale 1) and PEXPIREAT key calendar-milliseconds (absolute): gives a live key an expiry, or removes it when the expiry is zero or already past, and answers 1 when the key was live and 0 otherwise. While a file is replayed an expiry already past is kept as one already reached, as Redis keeps it while loading, so a later PERSIST in the file still finds the key; invalid is the reply to an expiry out of range. A negative expiry is out of range here, where Redis removes the key.";
   let key_span = arg(args: args, index: 1_u64);
   let amount = arg(args: args, index: 2_u64);
@@ -376,7 +390,8 @@ fn run_expire(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, clie
     reply_error(client: client, word: invalid);
     return unit;
   }
-  let key = key_at(input: input, args: args, index: 1_u64);
+  let place = key_bounds(input: input, args: args, index: 1_u64);
+  let key = &input^[place.start..place.end];
   let ttl_ns = ttl_ms *wrap 1000000_u64;
   let expires = time^.now +wrap ttl_ns;
   if remove_now {
@@ -387,30 +402,34 @@ fn run_expire(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, clie
   }
   let at_ms = time^.unix_ms +wrap ttl_ms;
   let expiry = Expiry(at: expires, now: time^.check, state: state_absent);
-  atomic state = &store^ {
+  atomic slot = &store^.map[key] {
     if remove_now {
-      let live = remove_live(state: &state^, key: &key, env: env, now: time^.check);
+      let live = remove_live(slot: slot, now: time^.check);
       if live {
         set expiry.state = state_done;
-        if state^.logging {
-          log_key_word(log: &state^.log, word: &word_del[0_u64..3_u64], input: input, key: key_span);
+        if store^.logging {
+          atomic meta = &store^.meta {
+            log_key_word(log: &meta^.log, word: &word_del[0_u64..3_u64], input: input, key: key_span);
+          }
         }
       }
     } else {
-      let edited = hash_map_edit::<KeyHash, Entry, Expiry, u64, fn set_expiry, ceiling>(map: &state^.map, key: &key, key_env: env, edit_env: &expiry);
-      match edited {
-        Ok(value: outcome) => {
-          if expiry.state == state_expired {
-            let gone = hash_map_remove::<KeyHash, Entry, ceiling>(map: &state^.map, key: &key, env: env);
-          }
+      match slot^ {
+        Some(value: held) => {
+          let outcome = set_expiry(env: &expiry, value: held);
         }
-        Err(error: absent) => {
+        None() => {
         }
       }
+      if expiry.state == state_expired {
+        set slot^ = None<Entry>();
+      }
       if expiry.state == state_done {
-        queue_expiry(state: &state^, key: &key, at: expires, env: env);
-        if state^.logging {
-          log_expire_at(log: &state^.log, input: input, key: key_span, at_ms: at_ms);
+        atomic meta = &store^.meta {
+          queue_expiry(meta: &meta^, key: key, at: expires, env: env);
+          if store^.logging {
+            log_expire_at(log: &meta^.log, input: input, key: key_span, at_ms: at_ms);
+          }
         }
       }
     }
@@ -423,14 +442,21 @@ fn run_expire(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, clie
   return unit;
 }
 
-fn run_ttl(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time, in_seconds: Bool) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), writes(client) waits {
+fn run_ttl(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time, in_seconds: Bool) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
   doc "TTL key and PTTL key: answers the time a live key has left, in seconds rounded as Redis rounds them or in milliseconds, -1 for a key without an expiry and -2 for an absent or expired one.";
   let remaining = Remaining(left: 0_u64, now: time^.check, state: 3_u64);
-  let key = key_at(input: input, args: args, index: 1_u64);
-  atomic state = &store^ {
-    let found = hash_map_lookup::<KeyHash, Entry, Remaining, u64, fn read_expiry, ceiling>(map: &state^.map, key: &key, key_env: env, visit_env: &remaining);
+  let place = key_bounds(input: input, args: args, index: 1_u64);
+  let key = &input^[place.start..place.end];
+  atomic slot = &store^.map[key] {
+    match slot^ {
+      Some(value: held) => {
+        let found = read_expiry(env: &remaining, value: held);
+      }
+      None() => {
+      }
+    }
     if remaining.state == 0_u64 {
-      let gone = hash_map_remove::<KeyHash, Entry, ceiling>(map: &state^.map, key: &key, env: env);
+      set slot^ = None<Entry>();
     }
   }
   if remaining.state == 1_u64 {
@@ -452,25 +478,28 @@ fn run_ttl(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client:
   return unit;
 }
 
-fn run_persist(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), writes(client) waits {
+fn run_persist(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
   doc "PERSIST key: removes a live key's expiry and answers 1 when it had one, 0 otherwise.";
   let expiry = Expiry(at: 0_u64, now: time^.check, state: state_absent);
   let key_span = arg(args: args, index: 1_u64);
-  let key = key_at(input: input, args: args, index: 1_u64);
-  atomic state = &store^ {
-    let edited = hash_map_edit::<KeyHash, Entry, Expiry, u64, fn clear_expiry, ceiling>(map: &state^.map, key: &key, key_env: env, edit_env: &expiry);
-    match edited {
-      Ok(value: outcome) => {
-        if expiry.state == state_expired {
-          let gone = hash_map_remove::<KeyHash, Entry, ceiling>(map: &state^.map, key: &key, env: env);
-        }
+  let place = key_bounds(input: input, args: args, index: 1_u64);
+  let key = &input^[place.start..place.end];
+  atomic slot = &store^.map[key] {
+    match slot^ {
+      Some(value: held) => {
+        let outcome = clear_expiry(env: &expiry, value: held);
       }
-      Err(error: absent) => {
+      None() => {
       }
     }
+    if expiry.state == state_expired {
+      set slot^ = None<Entry>();
+    }
     if expiry.state == state_done {
-      if state^.logging {
-        log_key_word(log: &state^.log, word: &word_persist[0_u64..7_u64], input: input, key: key_span);
+      if store^.logging {
+        atomic meta = &store^.meta {
+          log_key_word(log: &meta^.log, word: &word_persist[0_u64..7_u64], input: input, key: key_span);
+        }
       }
     }
   }
@@ -482,11 +511,11 @@ fn run_persist(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, cli
   return unit;
 }
 
-fn run_dbsize(store: &Shared<Store>, client: &Client) -> result: unit reads(store), writes(client) waits {
-  doc "DBSIZE: answers how many keys the keyspace holds, counting an expired key not yet removed, as Redis does.";
+fn run_dbsize(store: &Keyspace, client: &Client) -> result: unit reads(store), writes(client) waits {
+  doc "DBSIZE: answers how many keys the keyspace holds, counting an expired key not yet removed, as Redis does, in one statement over the whole keyspace.";
   let size = 0_u64;
-  atomic state = &store^ {
-    set size = hash_map_len::<Key, Entry, ceiling>(map: &state^.map);
+  atomic state = &store^.map {
+    set size = keyed_count::<Entry>(state: state);
   }
   let answer = cvt.wrap::<u64, i64>(size);
   reply_integer(client: client, value: answer);

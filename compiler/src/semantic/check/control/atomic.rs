@@ -179,6 +179,17 @@ impl Checker<'_, '_> {
             ),
             AtomicTarget::Entry { entry, key, holder } => {
                 effects = effects.union(key.effects.clone());
+                // [SHARE-2] the statement reads the bytes `k` names.
+                for place in key
+                    .reference
+                    .as_ref()
+                    .map(|reference| reference.paths.as_slice())
+                    .unwrap_or_default()
+                {
+                    for path in self.effect_paths_for_place(node, place, bindings)? {
+                        effects.add_read(path);
+                    }
+                }
                 (
                     entry,
                     CheckedAtomicForm::Entry {

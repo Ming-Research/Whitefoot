@@ -8,7 +8,7 @@ alias Rank = pkg::store::Rank;
 alias RankOrder = pkg::store::RankOrder;
 alias Sorted = pkg::store::Sorted;
 alias Span = pkg::protocol::Span;
-alias Store = pkg::store::Store;
+alias Keyspace = pkg::store::Keyspace;
 alias Time = pkg::store::Time;
 alias Value = pkg::store::Value;
 alias arg = pkg::protocol::arg;
@@ -258,7 +258,7 @@ fn add_ranked(sorted: &Sorted, client: &Client) -> added: u64 writes(sorted), wr
   return added;
 }
 
-fn add_scores(env: &Client, key: &Key, value: &Entry) -> kind: u64 writes(env), writes(value) {
+fn add_scores(env: &Client, value: &Entry) -> kind: u64 writes(env), writes(value) {
   doc "Adds the prepared members at their scores to a live sorted set, recording done and how many were new in number; records wrong for another kind and expired for an expired entry.";
   let reached = expired(expires: value^.expires, now: env^.now);
   if reached {
@@ -290,7 +290,7 @@ fn add_scores(env: &Client, key: &Key, value: &Entry) -> kind: u64 writes(env), 
   }
 }
 
-fn run_zadd(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), writes(client) waits {
+fn run_zadd(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
   doc "ZADD key score member [score member ...]: gives each member its score, creating the sorted set for an absent key, and answers how many members were new. Redis's options are answered as a syntax error, and a score that is not an integer below 2^52 in magnitude is refused.";
   let count = args^.inner.len;
   let pairs_length = count -wrap 2_u64;
@@ -323,16 +323,22 @@ fn run_zadd(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client
     push_item(client: client, item: move member);
     push_score(client: client, score: score.value);
   }
-  let key = key_at(input: input, args: args, index: 1_u64);
+  let place = key_bounds(input: input, args: args, index: 1_u64);
+  let key = &input^[place.start..place.end];
   set client^.now = time^.check;
   set client^.state = state_absent;
   set client^.number = 0_u64;
-  let full = False();
-  atomic state = &store^ {
-    let edited = hash_map_edit::<KeyHash, Entry, Client, u64, fn add_scores, ceiling>(map: &state^.map, key: &key, key_env: env, edit_env: client);
+  atomic slot = &store^.map[key] {
+    match slot^ {
+      Some(value: held) => {
+        let edited = add_scores(env: client, value: held);
+      }
+      None() => {
+      }
+    }
     let create = client^.state == state_absent;
     if client^.state == state_expired {
-      let gone = hash_map_remove::<KeyHash, Entry, ceiling>(map: &state^.map, key: &key, env: env);
+      set slot^ = None<Entry>();
       set create = True();
     }
     if create {
@@ -344,18 +350,15 @@ fn run_zadd(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client
         set client^.number = add_ranked(sorted: &sorted, client: client);
         let made = Value::Ranked(ranked: move sorted);
         let fresh = Entry(value: move made, expires: 0_u64);
-        let owned_key = copy_key(key: &key);
-        let put = put_entry(state: &state^, key: move owned_key, held: move fresh, env: env);
-        if put {
-          set client^.state = state_done;
-        } else {
-          set full = True();
-        }
+        set slot^ = Some<Entry>(value: move fresh);
+        set client^.state = state_done;
       }
     }
     if client^.state == state_done {
-      if state^.logging {
-        log_command(log: &state^.log, input: input, args: args);
+      if store^.logging {
+        atomic meta = &store^.meta {
+          log_command(log: &meta^.log, input: input, args: args);
+        }
       }
     }
   }
@@ -363,10 +366,6 @@ fn run_zadd(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client
   if client^.state == state_done {
     let added = cvt.wrap::<u64, i64>(client^.number);
     reply_integer(client: client, value: added);
-    return unit;
-  }
-  if full {
-    reply_error(client: client, word: &text_full[0_u64..17_u64]);
     return unit;
   }
   reply_wrong_type(client: client);
@@ -403,7 +402,7 @@ fn lowest(sorted: &Sorted) -> found: Option<Rank> reads(sorted) {
   return None<Rank>();
 }
 
-fn pop_lowest(env: &Client, key: &Key, value: &Entry) -> kind: u64 writes(env), writes(value) {
+fn pop_lowest(env: &Client, value: &Entry) -> kind: u64 writes(env), writes(value) {
   doc "Removes up to number of a live sorted set's lowest members, writing each member and its score as an array reply. Records done, or emptied when the set is left empty; wrong for another kind and expired for an expired entry.";
   let reached = expired(expires: value^.expires, now: env^.now);
   if reached {
@@ -457,7 +456,7 @@ fn pop_lowest(env: &Client, key: &Key, value: &Entry) -> kind: u64 writes(env), 
   }
 }
 
-fn run_zpopmin(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), writes(client) waits {
+fn run_zpopmin(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
   doc "ZPOPMIN key [count]: removes and answers the sorted set's lowest member and its score, or up to count of them, as one array, removing the key when the set is left empty; an absent key answers an empty array.";
   let wanted = 1_u64;
   if args^.inner.len == 3_u64 {
@@ -473,23 +472,32 @@ fn run_zpopmin(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, cli
     }
     set wanted = cvt.wrap::<i64, u64>(number.value);
   }
-  let key = key_at(input: input, args: args, index: 1_u64);
+  let place = key_bounds(input: input, args: args, index: 1_u64);
+  let key = &input^[place.start..place.end];
   set client^.now = time^.check;
   set client^.state = state_absent;
   set client^.number = wanted;
-  atomic state = &store^ {
-    let edited = hash_map_edit::<KeyHash, Entry, Client, u64, fn pop_lowest, ceiling>(map: &state^.map, key: &key, key_env: env, edit_env: client);
+  atomic slot = &store^.map[key] {
+    match slot^ {
+      Some(value: held) => {
+        let edited = pop_lowest(env: client, value: held);
+      }
+      None() => {
+      }
+    }
     let emptied = client^.state == state_emptied;
     let lapsed = client^.state == state_expired;
     let removing = bor(emptied, lapsed);
     if removing {
-      let gone = hash_map_remove::<KeyHash, Entry, ceiling>(map: &state^.map, key: &key, env: env);
+      set slot^ = None<Entry>();
     }
     let done = client^.state == state_done;
     let changed = bor(done, emptied);
     if changed {
-      if state^.logging {
-        log_command(log: &state^.log, input: input, args: args);
+      if store^.logging {
+        atomic meta = &store^.meta {
+          log_command(log: &meta^.log, input: input, args: args);
+        }
       }
     }
   }
@@ -507,7 +515,7 @@ fn run_zpopmin(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, cli
   return unit;
 }
 
-fn sorted_size(env: &Client, key: &Key, value: &Entry) -> kind: u64 reads(value), writes(env) {
+fn sorted_size(env: &Client, value: &Entry) -> kind: u64 reads(value), writes(env) {
   doc "Records a live sorted set's size in number and done; wrong for another kind and expired for an expired entry.";
   let reached = expired(expires: value^.expires, now: env^.now);
   if reached {
@@ -539,16 +547,23 @@ fn sorted_size(env: &Client, key: &Key, value: &Entry) -> kind: u64 reads(value)
   }
 }
 
-fn run_zcard(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), writes(client) waits {
+fn run_zcard(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
   doc "ZCARD key: answers the sorted set's size, 0 for an absent key.";
-  let key = key_at(input: input, args: args, index: 1_u64);
+  let place = key_bounds(input: input, args: args, index: 1_u64);
+  let key = &input^[place.start..place.end];
   set client^.now = time^.check;
   set client^.state = state_absent;
   set client^.number = 0_u64;
-  atomic state = &store^ {
-    let found = hash_map_lookup::<KeyHash, Entry, Client, u64, fn sorted_size, ceiling>(map: &state^.map, key: &key, key_env: env, visit_env: client);
+  atomic slot = &store^.map[key] {
+    match slot^ {
+      Some(value: held) => {
+        let found = sorted_size(env: client, value: held);
+      }
+      None() => {
+      }
+    }
     if client^.state == state_expired {
-      let gone = hash_map_remove::<KeyHash, Entry, ceiling>(map: &state^.map, key: &key, env: env);
+      set slot^ = None<Entry>();
       set client^.number = 0_u64;
     }
   }
@@ -561,7 +576,7 @@ fn run_zcard(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, clien
   return unit;
 }
 
-fn member_score(env: &Client, key: &Key, value: &Entry) -> kind: u64 reads(value), writes(env) {
+fn member_score(env: &Client, value: &Entry) -> kind: u64 reads(value), writes(env) {
   doc "Writes the prepared member's score in a live sorted set as a bulk string, recording done, or records absent when the set does not hold it; wrong for another kind and expired for an expired entry.";
   let reached = expired(expires: value^.expires, now: env^.now);
   if reached {
@@ -603,18 +618,25 @@ fn member_score(env: &Client, key: &Key, value: &Entry) -> kind: u64 reads(value
   }
 }
 
-fn run_zscore(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), writes(client) waits {
+fn run_zscore(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
   doc "ZSCORE key member: answers the member's score, or the null bulk string when the key or the member is absent.";
   clear_items(client: client);
   let member = key_at(input: input, args: args, index: 2_u64);
   push_item(client: client, item: move member);
-  let key = key_at(input: input, args: args, index: 1_u64);
+  let place = key_bounds(input: input, args: args, index: 1_u64);
+  let key = &input^[place.start..place.end];
   set client^.now = time^.check;
   set client^.state = state_absent;
-  atomic state = &store^ {
-    let found = hash_map_edit::<KeyHash, Entry, Client, u64, fn member_score, ceiling>(map: &state^.map, key: &key, key_env: env, edit_env: client);
+  atomic slot = &store^.map[key] {
+    match slot^ {
+      Some(value: held) => {
+        let found = member_score(env: client, value: held);
+      }
+      None() => {
+      }
+    }
     if client^.state == state_expired {
-      let gone = hash_map_remove::<KeyHash, Entry, ceiling>(map: &state^.map, key: &key, env: env);
+      set slot^ = None<Entry>();
     }
   }
   clear_items(client: client);

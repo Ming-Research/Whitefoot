@@ -1,0 +1,14 @@
+fn fill(map: &SharedMap<u8>, key: &[u8]) -> result: unit reads(map) waits {
+  atomic slot = &map^[key] {
+    set slot^ = Some<u8>(value: 1_u8);
+  }
+  return unit;
+}
+
+const name: Array<u8, 1> =[107_u8];
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let map = shared_map_new::<u8>(capacity: 0_u64);
+  fill(map: &map, key: &name[0_u64..1_u64]);
+  return std::process::exit_status(code: 0_u8);
+}
