@@ -616,8 +616,10 @@ and stored values that each exceed every value stored before, as preorder
 indices appended in document order do. A function that builds the arrays
 can hand the facts back as range postconditions, `ensures when Some(value:
 made): forall ...` for a builder that may refuse its input [RANGE-3], so the
-validating pass is one function its consumers call; nothing carries a fact
-past the call that returned it, so each pass pays for that walk.
+validating pass is one function its consumers call. A fact holds of the
+storage versions it was stated over and reaches a later write only through
+the derivation, and no fact outlives the pass that built its arrays: each
+pass pays for that walk.
 [A scatter through a left inverse](../tests/conformance/cases/range5-pos-scatter-through-left-inverse.wf),
 [a children array kept free of repeats by fresh values](../tests/conformance/cases/range5-pos-children-fresh-values.wf)
 and [a level-by-level cascade over a tree](../tests/conformance/cases/range5-pos-level-cascade.wf)

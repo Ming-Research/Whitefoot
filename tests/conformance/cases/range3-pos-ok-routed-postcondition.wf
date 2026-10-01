@@ -1,0 +1,47 @@
+fn ramp(n: u64) -> result: Result<Box<Array<u64>>, Box<Array<u64>>> pure contract {
+  ensures when Ok(value: cells): forall up(k in 0_u64..cells.inner.len): cells.inner[k] == k;
+} {
+  doc "Builds the array whose element k is k, or refuses a length past a thousand with an array of sevens.";
+  if n > 1000_u64 {
+    let sevens = box_array_filled::<u64>(count: 3_u64, value: 7_u64);
+    return Err<Box<Array<u64>>, Box<Array<u64>>>(error: move sevens);
+  }
+  let cells = box_array_filled::<u64>(count: n, value: 0_u64);
+  for (
+    k in 0_u64..n,
+    invariant forall built(q in 0_u64..k): cells.inner[q] == q
+  ) {
+    set cells.inner[k] = k;
+  }
+  return Ok<Box<Array<u64>>, Box<Array<u64>>>(value: move cells);
+}
+
+fn at_index(cells: &[u64]) -> result: u64 reads(cells) contract {
+  requires forall up(k in 0_u64..cells^.len): cells^[k] == k;
+} {
+  doc "Returns the last element, which the requirement makes the last index.";
+  if 0_u64 < cells^.len {
+    let last = cells^.len - 1_u64;
+    let value = cells^[last];
+    return value;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "A postcondition routed through Ok holds in the Ok arm of a match on the call's result, over Ok's payload.";
+  let made = ramp(n: 5_u64);
+  match move made {
+    Ok(value: cells) => {
+      let length = cells.inner.len;
+      let got = at_index(cells: &cells.inner[0_u64..length]);
+      if got != 4_u64 {
+        return std::process::exit_status(code: 1_u8);
+      }
+    }
+    Err(..) => {
+      return std::process::exit_status(code: 2_u8);
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}

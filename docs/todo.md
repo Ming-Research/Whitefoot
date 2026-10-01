@@ -563,8 +563,9 @@ rarely insert at the same place.
   parent's owner, checks in 12.7 s against 0.86 s without its `owned`
   invariant; 11.3 s of it is that invariant's backedge, one problem of 30
   atoms, 21 of them element reads, refuted in 5,463 nodes and 160,140
-  eliminations, counted by a measurement patch never committed; with the
-  owners computed in the depth walk instead it takes 392.6 s
+  eliminations, counted at 9ea2818b by a measurement patch never
+  committed; with the owners computed in the depth walk instead it took
+  392.6 s there
   (`research/investigations/unique-keys/POINTWISE.md#snowghosts-inherited-pass`).
   The level cascade's check spends 91% of its 0.9 s in the judgment
   (`research/investigations/unique-keys/POINTWISE.md#observations`). A
@@ -2417,6 +2418,19 @@ each is resolved by a discussion and a tree change.
   with the polling one. Reopen when a program must wake on the earlier of an
   object's change and a time, or when the polling writer's cost shows in a
   profile.
+
+- **A function that states a range clause cannot be a function-kind
+  actual.** RANGE-1 refuses a range clause in a `fn_sig` contract, so no
+  function-kind formal can declare one, and a `fn_decl` whose requirements
+  or postconditions include a range clause is refused as the actual of
+  such a formal, as `whitefootc` reports "a function signature's contract
+  states a range clause". Impact: generic code that takes a function cannot
+  take a producer that hands back range facts, or a consumer that requires
+  them; no program has needed one yet. Change: admit range clauses in a
+  `fn_sig` contract, matched clause by clause against the actual's, with
+  the formal's clauses owed and taken at the call as a direct call's are.
+  Validate by a generic driver that takes `level_index`'s shape through a
+  function parameter. Reopen when a program passes such a function.
 
 - **Parameters a contract names but the body does not use are passed at
   run time.** A range requirement can only name what the callee receives,

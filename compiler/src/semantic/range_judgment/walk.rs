@@ -4,10 +4,11 @@
 //! forks the state and the arms rejoin through a join whose values remember
 //! which arm produced them; a loop header forgets what the body writes and
 //! assumes the loop's invariants; a call discharges the callee's range
-//! requirements and forgets what the callee writes. Every expression the walk
-//! does not model evaluates to a fresh opaque value, and every write it
-//! cannot place forgets every container, so what the walk does not know it
-//! never assumes.
+//! requirements, forgets what the callee writes and takes its
+//! postconditions; an exit discharges the function's own. Every expression
+//! the walk does not model evaluates to a fresh opaque value, and every
+//! write it cannot place forgets every container, so what the walk does not
+//! know it never assumes.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -16,11 +17,11 @@ use crate::NodePath;
 use super::super::UnsupportedSemanticFeature;
 use super::super::model::{
     BindingId, CheckedAffineExpression, CheckedAffineExpressionKind, CheckedAffineRelation,
-    CheckedArrayRoot, CheckedBooleanOperation, CheckedConversionMode, CheckedEnumType,
-    CheckedExpression, CheckedFunction, CheckedIntegerOperation, CheckedLoopId, CheckedMatchArm,
-    CheckedMeasure, CheckedMode, CheckedNumericType, CheckedPlaceStep, CheckedRangeElementPlace,
-    CheckedRangeSource, CheckedSegmentSelect, CheckedSetTarget, CheckedStatement, CheckedType,
-    CheckedValue, IntegerType,
+    CheckedArrayRoot, CheckedBodyDisposition, CheckedBooleanOperation, CheckedConversionMode,
+    CheckedEnumType, CheckedExpression, CheckedFunction, CheckedIntegerOperation, CheckedLoopId,
+    CheckedMatchArm, CheckedMeasure, CheckedMode, CheckedNumericType, CheckedPlaceStep,
+    CheckedRangeElementPlace, CheckedRangeSource, CheckedSegmentSelect, CheckedSetTarget,
+    CheckedStatement, CheckedType, CheckedValue, IntegerType,
 };
 use super::super::places::PlaceRoot;
 use super::super::range_facts::{
@@ -86,6 +87,8 @@ pub(super) struct Walker<'program> {
     entry: BTreeMap<BindingId, Value>,
     /// The node the walk cites for an access it records.
     cite: NodePath,
+    /// Whether an exit selected each of the function's postconditions.
+    selected: Vec<bool>,
 }
 
 /// The largest number of nested loop dry walks; a deeper nest forgets
@@ -168,6 +171,7 @@ impl<'program> Walker<'program> {
             gives: Vec::new(),
             entry: BTreeMap::new(),
             cite: empty_path(),
+            selected: vec![false; function.range_facts.postconditions.len()],
         }
     }
 
@@ -221,6 +225,22 @@ impl<'program> Walker<'program> {
         }
         let body = function.body.as_deref().unwrap_or_default();
         self.block(state, body);
+        // [RANGE-3] an inhabited instance selects each postcondition at
+        // some exit.
+        if function.body_disposition == CheckedBodyDisposition::Inhabited {
+            for (post, selected) in function
+                .range_facts
+                .postconditions
+                .iter()
+                .zip(&self.selected)
+            {
+                if post.owed && !selected {
+                    self.issues.push(RangeIssue::NoSelectedExit {
+                        node: post.clause.node.clone(),
+                    });
+                }
+            }
+        }
     }
 
     pub(super) fn add_fact(&mut self, clause: CheckedRangeClause, frame: Frame) -> FactId {
@@ -1856,11 +1876,12 @@ impl<'program> Walker<'program> {
             return;
         }
         let function = self.function;
-        for post in function
+        for (index, post) in function
             .range_facts
             .postconditions
             .iter()
-            .filter(|post| post.owed)
+            .enumerate()
+            .filter(|(_, post)| post.owed)
         {
             if post.route.is_some() && returned.is_none() {
                 continue;
@@ -1895,6 +1916,9 @@ impl<'program> Walker<'program> {
                 if let Some(slot) = results.get_mut(index) {
                     *slot = payload;
                 }
+            }
+            if let Some(selected) = self.selected.get_mut(index) {
+                *selected = true;
             }
             let entry = self.entry.clone();
             let roots = |root: CheckedRangeRoot| match root {

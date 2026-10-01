@@ -1,0 +1,58 @@
+struct Mark {
+  weight: u64;
+}
+
+fn scatter<T: copy>(order: &[u64], pos: &[u64], tags: &[T], out: &[u64]) -> result: unit reads(order), writes(out) contract {
+  requires pos^.len == out^.len;
+  requires tags^.len == out^.len;
+  requires forall inv(k in 0_u64..order^.len) when order^[k] < out^.len: pos^[order^[k]] == k;
+  requires forall same(k in 0_u64..tags^.len): tags^[k] == tags^[k];
+} {
+  doc "Scatters each iteration's index through a left inverse. The certificate's use of same instantiates it where T is an integer and nothing where it is not.";
+  let count = order^.len;
+  for (
+    k in 0_u64..count,
+    apart(i, j) {
+      use same(i);
+    }
+  ) {
+    let e = order^[k];
+    if e < out^.len {
+      set out^[e] = k;
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "A loop whose invariant states the left inverse establishes the requirement inv. The u64 instance's certificate forms the instance of same; the Mark instance's states nothing and still holds by the left inverse.";
+  let order = box_array_filled::<u64>(count: 3_u64, value: 0_u64);
+  set order.inner[0_u64] = 2_u64;
+  set order.inner[1_u64] = 0_u64;
+  set order.inner[2_u64] = 1_u64;
+  let pos = box_array_filled::<u64>(count: 3_u64, value: 0_u64);
+  set pos.inner[2_u64] = 0_u64;
+  set pos.inner[0_u64] = 1_u64;
+  set pos.inner[1_u64] = 2_u64;
+  for (
+    k in 0_u64..3_u64,
+    invariant forall placed(q in 0_u64..k): pos.inner[order.inner[q]] == q
+  ) {
+  }
+  let numbers = box_array_filled::<u64>(count: 3_u64, value: 5_u64);
+  let weight = Mark(weight: 1_u64);
+  let marks = box_array_filled::<Mark>(count: 3_u64, value: weight);
+  let first = box_array_filled::<u64>(count: 3_u64, value: 9_u64);
+  let second = box_array_filled::<u64>(count: 3_u64, value: 9_u64);
+  scatter::<u64>(order: &order.inner[0_u64..3_u64], pos: &pos.inner[0_u64..3_u64], tags: &numbers.inner[0_u64..3_u64], out: &first.inner[0_u64..3_u64]);
+  scatter::<Mark>(order: &order.inner[0_u64..3_u64], pos: &pos.inner[0_u64..3_u64], tags: &marks.inner[0_u64..3_u64], out: &second.inner[0_u64..3_u64]);
+  let a = first.inner[2_u64];
+  let b = second.inner[1_u64];
+  if a != 0_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if b != 2_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

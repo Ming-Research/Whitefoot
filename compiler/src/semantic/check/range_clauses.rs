@@ -299,7 +299,9 @@ impl Checker<'_, '_> {
         if names.unformed.get() {
             return Ok(None);
         }
-        // The clause has no fact name of its own; it carries its function's.
+        // An [FN-9] relation declares no fact name, so no `use` step names
+        // it [RANGE-4]: the clause carries its function's declaration and an
+        // empty name, which no written fact has.
         Ok(Some(CheckedRangeClause {
             declaration: context.function.declaration,
             name: String::new(),
@@ -507,6 +509,14 @@ impl Checker<'_, '_> {
                     } else {
                         "establish the fact before this site: a range `requires`, a range invariant of the enclosing counted loop, or a guard that excludes the uncovered elements"
                     },
+                },
+            ),
+            RangeIssue::NoSelectedExit { node } => (
+                node,
+                SemanticRule::Range3,
+                SemanticIssueKind::NoSelectedNormalExit {
+                    residual: "no selected normal exit",
+                    mechanical_fix: super::repairs::NO_SELECTED_EXIT,
                 },
             ),
             // A checker gap, not a verdict.
@@ -828,13 +838,21 @@ impl Checker<'_, '_> {
             .declarations
             .tree
             .children_with(place, Production::Psuffix)?;
-        // [RANGE-1] a postcondition names the result through its selector
-        // spelling, which resolves to no declaration [FN-9].
-        if let Some((ordinal, ty)) = self
+        // [RANGE-1] a postcondition names a result ordinal through its
+        // selector spelling, which resolves to no declaration [FN-9].
+        if let Some(spelling) = self
             .types
             .declarations
-            .postcondition_selector_place_base(check_context, place)?
+            .postcondition_selector_spelling(check_context, place)?
         {
+            // [FN-9] the routed ordinal's whole-value binder supplies no
+            // datum in its own clause.
+            let Some((ordinal, ty)) = Checker::active_result_datum(check_context, &spelling) else {
+                return self
+                    .types
+                    .declarations
+                    .invalid_postcondition_relation(place);
+            };
             return self.range_suffixes(
                 context,
                 place,
@@ -900,6 +918,19 @@ impl Checker<'_, '_> {
                 "name a parameter or a value bound before this clause",
             );
         };
+        // [RANGE-1] a postcondition names an `own` parameter only as an
+        // integer value at entry: the call consumes its storage.
+        if check_context.active_postcondition.is_some()
+            && local.mode == CheckedMode::Own
+            && !suffixes.is_empty()
+        {
+            return self.invalid_range(
+                SemanticRule::Range1,
+                place,
+                "a range postcondition reads storage of a parameter the call consumes",
+                "take the parameter by reference, or state the fact over a result",
+            );
+        }
         let selected = match local.mode {
             CheckedMode::Own => Selected::Value(local.ty),
             mode => Selected::Holder { mode, ty: local.ty },

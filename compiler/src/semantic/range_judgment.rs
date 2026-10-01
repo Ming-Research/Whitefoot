@@ -4,9 +4,9 @@
 //! function's ordinary entailment has succeeded, because a range proof
 //! consumes what that judgment established and no ordinary obligation
 //! consumes a range fact. One forward walk per function carries the facts
-//! a function's requirements, its loops' invariants and the fill
-//! constructors' contents establish, discharges every range fact owed at a
-//! call, a loop's entry or a back edge, and checks each counted loop's
+//! a function's requirements, its loops' invariants and its callees'
+//! postconditions establish, discharges every range fact owed at a call, a
+//! loop's entry, a back edge or an exit, and checks each counted loop's
 //! cross-iteration certificate. A
 //! certificate that holds is retained for the counted permission judgment
 //! [PAR-2]; it grants nothing by itself.
@@ -33,6 +33,9 @@ pub(crate) enum RangeIssue {
         /// The structural ceiling the derivation reached, if it reached one.
         capacity: Option<&'static str>,
     },
+    /// No exit of an inhabited instance selects the range postcondition
+    /// written at `node` [RANGE-3].
+    NoSelectedExit { node: NodePath },
     /// A counted loop's certificate does not separate two iterations
     /// [RANGE-5].
     Apart {

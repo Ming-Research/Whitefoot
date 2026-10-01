@@ -147,7 +147,7 @@ impl<'unit> Checker<'_, 'unit> {
 
     /// The result ordinal and datum type one written selector spelling names
     /// in the clause being checked, when it names one.
-    fn active_result_datum(
+    pub(super) fn active_result_datum(
         check_context: &CheckContext<'_>,
         spelling: &str,
     ) -> Option<(u32, CheckedType)> {
@@ -1526,7 +1526,10 @@ impl<'unit> DeclarationInventory<'unit> {
             normalized,
         })
     }
-    fn invalid_postcondition_relation<T>(&self, expression: NodeId) -> Result<T, CheckStop> {
+    pub(super) fn invalid_postcondition_relation<T>(
+        &self,
+        expression: NodeId,
+    ) -> Result<T, CheckStop> {
         self.issue_node(
             SemanticRule::Fn9,
             expression,
@@ -1616,6 +1619,18 @@ impl<'unit> DeclarationInventory<'unit> {
         check_context: &CheckContext<'_>,
         place: NodeId,
     ) -> Result<Option<(u32, CheckedType)>, CheckStop> {
+        Ok(self
+            .postcondition_selector_spelling(check_context, place)?
+            .and_then(|spelling| Checker::active_result_datum(check_context, &spelling)))
+    }
+
+    /// The selector spelling a bare place base writes in the postcondition
+    /// clause being checked, whether or not a datum supplies it [FN-9].
+    pub(super) fn postcondition_selector_spelling(
+        &self,
+        check_context: &CheckContext<'_>,
+        place: NodeId,
+    ) -> Result<Option<String>, CheckStop> {
         let Some(context) = check_context.active_postcondition else {
             return Ok(None);
         };
@@ -1636,7 +1651,7 @@ impl<'unit> DeclarationInventory<'unit> {
             .selector_uses
             .iter()
             .find(|usage| usage.origin.node() == pbase_path)
-            .and_then(|usage| Checker::active_result_datum(check_context, &usage.spelling)))
+            .map(|usage| usage.spelling.clone()))
     }
     fn validate_postcondition_selector(
         &self,
