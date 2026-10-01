@@ -8,6 +8,10 @@
 
 #include "cmap.h"
 
+/* The driver gives each thread one map at a time, so a thread keeps its
+ * user of that map here. */
+static _Thread_local wf_cmap_user *user;
+
 #if defined(WF_CMAP_LOCKED_READ)
 const char *CM(name)(void) { return "wf-index-locked"; }
 #else
@@ -16,17 +20,35 @@ const char *CM(name)(void) { return "wf-index"; }
 int CM(flags)(void) { return 0; }
 cm_map *CM(create)(uint64_t capacity) { return (cm_map *)wf_cmap_create(capacity); }
 void CM(destroy)(cm_map *map) { wf_cmap_destroy((wf_cmap *)map); }
-void CM(enter)(cm_map *map) { wf_cmap_enter((wf_cmap *)map); }
-void CM(leave)(cm_map *map) { wf_cmap_leave((wf_cmap *)map); }
-int CM(get)(cm_map *map, uint64_t key, uint64_t *value) { return wf_cmap_get((wf_cmap *)map, key, value); }
-int CM(insert)(cm_map *map, uint64_t key, uint64_t value) {
-    return wf_cmap_insert((wf_cmap *)map, key, value);
+void CM(enter)(cm_map *map) {
+    user = wf_cmap_enter((wf_cmap *)map);
+    if (user == NULL)
+        abort();
 }
-int CM(remove)(cm_map *map, uint64_t key) { return wf_cmap_remove((wf_cmap *)map, key); }
+void CM(leave)(cm_map *map) {
+    (void)map;
+    wf_cmap_leave(user);
+    user = NULL;
+}
+int CM(get)(cm_map *map, uint64_t key, uint64_t *value) {
+    (void)map;
+    return wf_cmap_get(user, key, value);
+}
+int CM(insert)(cm_map *map, uint64_t key, uint64_t value) {
+    (void)map;
+    return wf_cmap_insert(user, key, value);
+}
+int CM(remove)(cm_map *map, uint64_t key) {
+    (void)map;
+    return wf_cmap_remove(user, key);
+}
 
 static void add_one(uint64_t *value, void *env) {
     (void)env;
     *value += 1;
 }
 
-int CM(update)(cm_map *map, uint64_t key) { return wf_cmap_update((wf_cmap *)map, key, add_one, NULL); }
+int CM(update)(cm_map *map, uint64_t key) {
+    (void)map;
+    return wf_cmap_update(user, key, add_one, NULL);
+}

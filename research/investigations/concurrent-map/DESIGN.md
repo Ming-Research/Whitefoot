@@ -263,53 +263,100 @@ DashMap and scc, the fastest comparators of the baseline, with `mutex-flat`
 for the single-thread criterion. The criteria above apply to the cells it
 runs.
 
-## The index: a first design, stated before measuring
+## The index
 
-The first candidate follows the cache-line hash table of David, Guerraoui
-and Trigonakis ("Asynchronized concurrency", ASPLOS 2015), whose aim
-matches this one: one cache line touched per operation.
+### The first design, and why it was replaced
 
-- **A bucket is one 64-byte line:** a state word, three key and value
-  slots and a pointer to an overflow bucket. A lookup touches the home
-  line, and an overflow line only when the bucket holds more than three
-  keys.
-- **The state word is a ticket lock and a version at once:** its high half
-  counts tickets taken, its low half counts tickets served, and the bucket
-  is free when the two are equal. A writer takes a ticket and runs once,
-  with the bucket to itself; tickets serve writers in arrival order, which
-  bounds overtaking as the shared-object design requires of every begun
-  statement.
-- **A read takes no lock and writes nothing:** it reads the state, the
-  slots and the state again, and starts over if a writer came between. So
-  readers of a hot key do not pass its line between cores, which is where
-  a reader-writer lock on the line (Boost's group lock, TBB's accessor)
-  pays. This is a copy-out read: the comparators' `get`, and the form a
-  Whitefoot statement that only reads can use only if its block may run
-  again without effect, which is stage (b)'s question.
-- **Growth is cooperative and incremental:** a writer that finds the table
-  holding one and a half keys per bucket allocates one twice as large, and every writer that
-  arrives during the move first moves a run of buckets, locking each,
-  copying it into the two buckets it splits into and marking it moved;
-  readers and writers that meet a moved bucket go on to the new table, so
-  no operation waits for the whole table to move. Old tables are kept until
-  the map is destroyed, which bounds their memory by the live table's and
-  needs no reclamation; deferred reclamation is a later step.
-- **The count of keys is kept per thread** and summed only when an
-  insertion needs an overflow bucket, so no insertion contends on a shared
-  counter.
+The first candidate followed the cache-line hash table of David, Guerraoui
+and Trigonakis ("Asynchronized concurrency", ASPLOS 2015): 64-byte buckets
+of three keys and values with a ticket lock that doubled as the read
+version, overflow buckets, and a cooperative move bucket by bucket. In the
+first duel it led one cell, tied eight and lost nine, most of them to growt
+at between half and four fifths of its rate. Two costs were found: a branch
+on which slot held the key mispredicted on most lookups and discarded the
+loads of the lookups after it (a branch-free slot match took single-thread
+reads at 2^10 keys from about 47 to about 101 million a second), and the
+buckets held 2^20 keys in 41.9 bytes a key against growt's 32.4, so a
+random probe missed the cache more often and a lookup that reached an
+overflow bucket missed twice.
 
-Changed after the first duel: a lookup compares the three slots and picks
-the value with conditional moves and leaves the bucket by one rarely taken
-branch, since a branch on which slot holds a key mispredicted on most
-lookups and discarded the following lookups' loads (single-thread reads at
-2^10 keys rose from about 47 to about 101 million a second); the table
-doubles at one and a half keys per bucket instead of two and a quarter, so
-that an overflow bucket is rarely needed; a map created without a capacity
-starts with 2^10 buckets; and bucket arrays of 2 MiB or more are advised
-into huge pages.
+### The cell design
+
+`compiler/src/backend/concurrent_map.c` now follows growt's layout (Maier,
+Sanders and Dementiev, "Concurrent hash tables: fast and general?!", 2016),
+with a lock in place of its compare-and-swap updates, since a Whitefoot
+statement's block runs once with its entry held:
+
+- **A cell is 16 bytes, a key word and a value,** four to a cache line, in
+  one array probed linearly from the key's golden-ratio hash. A lookup at
+  half load reads one line nearly always, and the cells cost 32 bytes a key
+  at that load, as growt's do.
+- **The key word carries the lock.** Its top bit locks the cell and the next
+  marks it moved; empty is zero and removed is all ones below them, so keys
+  lie in [1, 2^62 - 2]. A writer locks its key's cell, or claims an empty
+  one, by one compare-and-swap, runs once and stores the key back. A reader
+  takes no lock: it reads the key word, the value and the key word again,
+  and starts over when the cell was locked or changed between, which is
+  exact for an 8-byte value; entries larger than a word need a version in
+  their header, which stage (b) adds with the byte-string keys.
+- **A removed key stays a removed cell until the table moves,** so a probe
+  never stops early. A probe that has seen every cell stops there: a full
+  table, which racing claims can leave in a small one, answers absent to a
+  read and sends a claim to help a move.
+- **A table moves once half its cells are used,** to the fewest cells, a
+  power of two, that hold the live keys in three eighths of them, at least
+  half its size: growth doubles, and a churning map moves between tables
+  of one size with at least an eighth of the cells left to claim. One
+  writer makes the next table; writers that meet the move mark blocks of
+  4,096 cells moved and copy their keys, readers go on reading the frozen
+  cells, and a writer that met the move retries in the new table. A map
+  created for N keys starts half full at N, as dense as a table gets before
+  it moves, since reads cost less in a smaller table: four times N cells
+  took single-thread reads at 2^20 keys from about 26 to about 20 million a
+  second.
+- **Each user publishes the table it works in,** as growt's handles do: an
+  operation compares the map's current table with its user's, and only on a
+  change publishes the new one and checks again, both sequentially
+  consistent. A moved table is freed once no user is in it, and the cells of
+  the newest one freed are kept for the next move to their size, so a map
+  whose size holds steady moves between warm tables: on this host, at four
+  threads, a move of 2^22 cells took 12 ms into reused cells and 111 ms
+  into fresh ones. A
+  user belongs to one thread and one map, so a thread can use several maps;
+  a thread-local slot could not tell them apart.
+- **A writer that finds its key locked waits 16 pauses, then twice as long
+  each time up to 1,024,** about 0.2 to 12 microseconds here, as long as a
+  sleep and wake by the system. The holder then makes many changes in a row
+  instead of handing the cell's line to a waiter on each: one-key `update` at
+  four threads went from about 6.5 to about 24 million a second, where
+  waiting that started at one pause or yielded the processor stayed between
+  6 and 16. A waiting writer can be overtaken without bound; stage (b)
+  parks waiting statements and hands the entry over after a bounded number
+  of vain wakes, as the shared-object runtime does [SHARE-3].
+- **Cell arrays of 2 MiB or more are mapped and advised into huge pages,**
+  since a random probe in a large table otherwise pays a page walk on most
+  accesses: uniform `read` at four threads ran at about 127 million a second
+  with huge pages and about 105 without.
+
+### This host's fresh memory
+
+This host returns every free 2 MiB block to its hypervisor
+(`/sys/module/page_reporting/parameters/page_reporting_order` is 9), so a
+huge page faulted in fresh arrives cold: fresh memory faulted in at about
+140 MB/s in huge pages and 2 GB/s in 4 KiB pages, and memory the process
+had just freed at about 6.6 GB/s. A move
+into fresh cells pays this, so a map that grows while measured pays it once
+per size; the comparators allocate 4 KiB pages and do not. The first
+measurement of `churn` at one thread completed no operation in its window:
+its writer spent 0.8 s clearing a fresh 128 MiB table, and at four threads
+every writer that crossed the threshold allocated and cleared its own, 1.4
+to 2.3 s each. One writer now makes the table, and reuse
+leaves the cold cost to the first moves of each size. The 14900K, a host
+without page reporting, measures the same cells without it.
 
 What would refute it: a lead lost at one thread to the single-thread floors
-would show the version check costing more than it saves; a lead lost on
-`update` with one key would show the ticket lock's handoff costing more
-than a test-and-set's; a lead lost in `grow` would show the cooperative
-move slower than the comparators' rebuilds.
+would show the lock bit and the read's second key load costing more than
+they save; a lead lost on `update` with one key at four threads once waits
+park would show the batching depended on unbounded overtaking; a lead lost
+in `grow` on the 14900K would show the cooperative move slower than the
+comparators' rebuilds.

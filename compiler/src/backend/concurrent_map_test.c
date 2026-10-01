@@ -68,7 +68,7 @@ static void sequential(void) {
     static uint8_t present[KEYS];
     static uint64_t value[KEYS];
     wf_cmap *map = wf_cmap_create(1);
-    wf_cmap_enter(map);
+    wf_cmap_user *user = wf_cmap_enter(map);
     uint64_t state = 7;
     for (unsigned i = 0; i < OPS; i++) {
         uint64_t r = next(&state);
@@ -77,25 +77,25 @@ static void sequential(void) {
         int result;
         switch (r & 3) {
         case 0:
-            result = wf_cmap_get(map, key, &got);
+            result = wf_cmap_get(user, key, &got);
             if (result != present[k] || (result && got != value[k]))
                 fail("a get disagrees with the reference", k, got);
             break;
         case 1:
-            result = wf_cmap_insert(map, key, r);
+            result = wf_cmap_insert(user, key, r);
             if (result != !present[k])
                 fail("an insert disagrees with the reference", k, (unsigned long long)result);
             present[k] = 1;
             value[k] = r;
             break;
         case 2:
-            result = wf_cmap_remove(map, key);
+            result = wf_cmap_remove(user, key);
             if (result != present[k])
                 fail("a remove disagrees with the reference", k, (unsigned long long)result);
             present[k] = 0;
             break;
         default:
-            result = wf_cmap_update(map, key, add_one, NULL);
+            result = wf_cmap_update(user, key, add_one, NULL);
             if (result != present[k])
                 fail("an update disagrees with the reference", k, (unsigned long long)result);
             value[k] += (uint64_t)present[k];
@@ -104,11 +104,11 @@ static void sequential(void) {
     }
     for (unsigned k = 0; k < KEYS; k++) {
         uint64_t got = 0;
-        int result = wf_cmap_get(map, key_of(k), &got);
+        int result = wf_cmap_get(user, key_of(k), &got);
         if (result != present[k] || (result && got != value[k]))
             fail("a key's final state disagrees with the reference", k, got);
     }
-    wf_cmap_leave(map);
+    wf_cmap_leave(user);
     wf_cmap_destroy(map);
 }
 
@@ -124,20 +124,20 @@ typedef struct {
 static void *work(void *arg) {
     worker_t *w = arg;
     uint64_t state = mix64(0xC0FFEEull + w->thread);
-    wf_cmap_enter(w->map);
+    wf_cmap_user *user = wf_cmap_enter(w->map);
     for (unsigned i = 0; i < 200000; i++) {
         uint64_t r = next(&state);
         if (!w->churn) {
-            w->updates += (uint64_t)wf_cmap_update(w->map, key_of((r >> 8) % SHARED_KEYS), add_one, NULL);
+            w->updates += (uint64_t)wf_cmap_update(user, key_of((r >> 8) % SHARED_KEYS), add_one, NULL);
         } else {
             uint64_t key = key_of((r >> 8) % (2 * SHARED_KEYS));
             if (r & 1)
-                w->inserted += (uint64_t)wf_cmap_insert(w->map, key, r);
+                w->inserted += (uint64_t)wf_cmap_insert(user, key, r);
             else
-                w->removed += (uint64_t)wf_cmap_remove(w->map, key);
+                w->removed += (uint64_t)wf_cmap_remove(user, key);
         }
     }
-    wf_cmap_leave(w->map);
+    wf_cmap_leave(user);
     return NULL;
 }
 
@@ -145,9 +145,9 @@ static void *work(void *arg) {
  * value equal to their index, and checks what is left. */
 static void concurrent(int churn) {
     wf_cmap *map = wf_cmap_create(churn ? 1 : SHARED_KEYS);
-    wf_cmap_enter(map);
+    wf_cmap_user *user = wf_cmap_enter(map);
     for (uint64_t i = 0; i < SHARED_KEYS; i++)
-        wf_cmap_insert(map, key_of(i), i);
+        wf_cmap_insert(user, key_of(i), i);
     pthread_t t[THREADS];
     worker_t w[THREADS];
     for (unsigned i = 0; i < THREADS; i++) {
@@ -164,7 +164,7 @@ static void concurrent(int churn) {
     uint64_t sum = 0, live = 0;
     for (uint64_t i = 0; i < 2 * SHARED_KEYS; i++) {
         uint64_t v;
-        if (wf_cmap_get(map, key_of(i), &v)) {
+        if (wf_cmap_get(user, key_of(i), &v)) {
             live++;
             sum += v;
         }
@@ -173,7 +173,7 @@ static void concurrent(int churn) {
         fail("an update was lost", live, sum);
     if (churn && live != SHARED_KEYS + inserted - removed)
         fail("the live count after churn is wrong", live, SHARED_KEYS + inserted - removed);
-    wf_cmap_leave(map);
+    wf_cmap_leave(user);
     wf_cmap_destroy(map);
 }
 
@@ -202,7 +202,7 @@ static uint64_t now_ns(void) {
 static void *record(void *arg) {
     history_t *h = arg;
     uint64_t state = mix64(0x57AE55ull ^ h->thread);
-    wf_cmap_enter(h->map);
+    wf_cmap_user *user = wf_cmap_enter(h->map);
     while (!atomic_load(h->go)) {
     }
     for (unsigned i = 0; i < h->count; i++) {
@@ -217,22 +217,22 @@ static void *record(void *arg) {
         o->call = now_ns();
         switch (o->kind) {
         case GET:
-            o->result = wf_cmap_get(h->map, key, &v);
+            o->result = wf_cmap_get(user, key, &v);
             o->out = v;
             break;
         case INSERT:
-            o->result = wf_cmap_insert(h->map, key, o->arg);
+            o->result = wf_cmap_insert(user, key, o->arg);
             break;
         case REMOVE:
-            o->result = wf_cmap_remove(h->map, key);
+            o->result = wf_cmap_remove(user, key);
             break;
         default:
-            o->result = wf_cmap_update(h->map, key, add_one, NULL);
+            o->result = wf_cmap_update(user, key, add_one, NULL);
             break;
         }
         o->ret = now_ns();
     }
-    wf_cmap_leave(h->map);
+    wf_cmap_leave(user);
     return NULL;
 }
 
