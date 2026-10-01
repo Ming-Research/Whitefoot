@@ -220,8 +220,9 @@ pub enum SemanticRule {
     Prf1,
     /// Range clause formation [RANGE-1].
     Range1,
-    /// A range fact owed and not established: at a loop entry or back edge,
-    /// or at a call [RANGE-3].
+    /// A range fact owed and not established, at a call, a loop entry, a
+    /// back edge or an exit, or a range postcondition no exit selects
+    /// [RANGE-3].
     Range3,
     /// A `use` step that instantiates no range fact [RANGE-4].
     Range4,
@@ -1035,7 +1036,8 @@ pub enum SemanticIssueKind {
     UndischargedRangeFact {
         /// The owed fact's name.
         fact: String,
-        /// Where it is owed: a loop entry or back edge, or a call.
+        /// Where it is owed: a call, a loop entry or back edge, a return or
+        /// a propagated error exit.
         site: &'static str,
         /// The first instance case the fixed derivation did not establish.
         missing: String,
@@ -1233,9 +1235,10 @@ pub enum SemanticIssueKind {
     },
     /// A selected Result exit is not a direct canonical `Ok(value: atom)` or `Err(error: atom)`.
     InvalidPostconditionReturn,
-    /// One concrete postcondition has no selected normal exit.
+    /// One concrete postcondition has no selected normal exit [FN-9,
+    /// RANGE-3].
     NoSelectedNormalExit {
-        /// The exact fixed residual required by FN-9.
+        /// The exact fixed residual FN-9 requires, which RANGE-3 shares.
         residual: &'static str,
         /// The repair [DIAG-1].
         mechanical_fix: &'static str,

@@ -516,7 +516,7 @@ impl Checker<'_, '_> {
                 SemanticRule::Range3,
                 SemanticIssueKind::NoSelectedNormalExit {
                     residual: "no selected normal exit",
-                    mechanical_fix: super::repairs::NO_SELECTED_EXIT,
+                    mechanical_fix: super::repairs::NO_SELECTED_RANGE_EXIT,
                 },
             ),
             // A checker gap, not a verdict.

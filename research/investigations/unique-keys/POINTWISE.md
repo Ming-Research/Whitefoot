@@ -393,15 +393,15 @@ criteria before the paper derivation:
   `nodup`.
 - **Postconditions.** A range postcondition names the result ordinals,
   integer parameters at entry and the storage of reference parameters as
-  the return leaves it, never a parameter the call consumes. A function
-  that states a range clause cannot be a function-kind actual, since a
-  `fn_sig` contract states none (RANGE-1). A function that returns a
-  callee's routed result unchanged cannot promise the callee's routed
-  postcondition again: the walk holds that fact only in a `match` arm, so
-  the function matches and returns a new construction. In a generic
-  function a clause over a type parameter's values is dropped whole at a
-  non-integer instance, so a fact that mixes such values with integers is
-  better written as two clauses.
+  the return leaves it, never an `own` aggregate parameter's storage or
+  measure. A function that states a range clause cannot be a
+  function-kind actual, since a `fn_sig` contract states none (RANGE-1). A
+  function that returns a callee's routed result unchanged cannot promise
+  the callee's routed postcondition again: the walk holds that fact only
+  in a `match` arm, so the function matches and returns a new construction
+  (`docs/todo.md`). In a generic function a clause over a type parameter's
+  values is dropped whole at a non-integer instance, so a fact that mixes
+  such values with integers is better written as two clauses.
 - **Proof cost.** The derivation explores every open pair of reads, so a
   fact with a nested read such as `owned` costs seconds per loop
   ([above](#snowghosts-inherited-pass)); the level cascade's figures are in

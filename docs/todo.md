@@ -2429,8 +2429,22 @@ each is resolved by a discussion and a tree change.
   them; no program has needed one yet. Change: admit range clauses in a
   `fn_sig` contract, matched clause by clause against the actual's, with
   the formal's clauses owed and taken at the call as a direct call's are.
-  Validate by a generic driver that takes `level_index`'s shape through a
+  Validate by a generic driver that takes `ramp` of
+  `tests/conformance/cases/range3-pos-postcondition-producer.wf` through a
   function parameter. Reopen when a program passes such a function.
+
+- **A function cannot pass on a callee's routed range postcondition.** A
+  function that returns a callee's `Option` or `Result` unchanged, `return
+  move made;` after `let made = ramp(n: n);`, cannot promise the callee's
+  routed range postcondition again: the range walk holds a routed fact only
+  in a `match` arm that takes its variant [RANGE-2], so the return owes the
+  payload fact unproved. The writer matches and returns a new construction
+  of the payload, which costs a match and a move per forwarding layer.
+  Change: let a routed fact over a location stay attached to it, so a
+  return of that location selects and discharges the same route. Validate
+  by a forwarding wrapper accepted unchanged and a wrapper that forwards
+  the other variant still refused. Reopen when a program forwards a
+  producer's result through a wrapper.
 
 - **Parameters a contract names but the body does not use are passed at
   run time.** A range requirement can only name what the callee receives,
