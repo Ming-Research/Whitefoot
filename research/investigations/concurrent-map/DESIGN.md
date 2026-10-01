@@ -217,11 +217,29 @@ it is empty and then go on missing it, and every statement on an absent key
 claimed a cell and left it removed, so each miss walked one more removed cell
 than the last: five rounds of 40,000 `SPOP`s on an emptied key answered
 53,191, 19,714, 12,296, 9,401 and 7,990 a second. A claim now reuses the first
-removed cell its probe passed and then looks on to the next empty cell for a
-cell of the same key another writer claimed meanwhile; the same five rounds
-answered 159,363 to 160,000. The runtime's test drives that interleaving step
-by step and fails when the look ahead is left out. The quick comparison above
-predates the change; none of its four tests misses a key.
+removed cell its probe passed; the same five rounds answered 159,363 to
+160,000.
+
+**Reuse and a key's second cell.** The first reuse looked on from its claim to
+the next empty cell for a cell of the same key another writer claimed
+meanwhile. The completion review's re-check found the order it missed: a
+writer passes a live key's cell, that key is removed, and a second writer of
+the first writer's key reuses the cell behind it before the first claims a
+later removed or empty cell; both then hold the key, in two cells. A claim of
+either kind is now marked pending in its key word and kept only after a
+second read of the key's whole run, from its starting cell to the next empty
+one: a settled cell of the key ends the claim with that cell, an earlier
+pending claim of the same hash wins and the claim restarts, and a later one
+is waited out. Both writers mark and then read, sequentially consistent, and
+the cells before a claim never become empty again, so at least one of them
+sees the other. The runtime's test drives each order step by step, both on a
+removed and on an empty cell, and checks the pending rules on cells set by
+hand; a churn of six keys sharing one starting cell, four threads removing
+each key half the time, held one key in two statements at once in each of
+seven runs of the first reuse, and its runs of the pending claim pass. Left
+unmarked, claims of one key deadlock there, which the test's alarm fails.
+The quick comparison above predates both changes; none of its four tests
+misses a key.
 
 **The handle each statement counted.** Every keyed statement retained and
 released its map's handle, two atomic updates of one count every driver's

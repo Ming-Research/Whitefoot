@@ -391,7 +391,9 @@ floor-test: $(COMPLETION_TMP)/floor-probe $(COMPLETION_TMP)/floor-probe-hooks
 
 # The concurrent map, and its locked read built for measurement, each against
 # a reference, accounting checks and recorded histories checked for
-# linearizability (concurrent_map_test.c).
+# linearizability (concurrent_map_test.c). The locked read changes only the
+# tests of word keys and the narrowed hashes only those of entries, so those
+# builds run only the tests they change; the default build runs every test.
 # The test includes the map's source, so that it can drive interleavings
 # through the map's own steps.
 CONCURRENT_MAP_SOURCES := src/backend/concurrent_map.c src/backend/concurrent_map_test.c

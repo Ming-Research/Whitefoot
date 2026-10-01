@@ -4,8 +4,8 @@
  *
  * Open addressing with linear probing over 16-byte cells, a key word and a
  * value, so that most operations touch one cache line. The key word's top
- * bit locks the cell, and the next is kept for marking waiters once they
- * park; zero is an empty cell and KEY_MASK a removed one, so keys lie in
+ * bit locks the cell, and in a map of entries the next marks a claim not yet
+ * settled; zero is an empty cell and KEY_MASK a removed one, so keys lie in
  * [1, 2^62 - 2].
  *
  * A writer locks its key's cell by compare-and-swap, runs once and stores
@@ -57,13 +57,14 @@
 
 #include "concurrent_map.h"
 
-/* The map's test drives one interleaving through this point: a writer that
- * is about to claim a removed cell for a key. */
-#ifndef WF_CMAP_BEFORE_REUSE
-#define WF_CMAP_BEFORE_REUSE(t, index) ((void)0)
+/* The map's test drives interleavings through this point: a writer that is
+ * about to claim an empty or removed cell for an entry's key. */
+#ifndef WF_CMAP_BEFORE_CLAIM
+#define WF_CMAP_BEFORE_CLAIM(t, index) ((void)0)
 #endif
 
 #define LOCKED (1ull << 63)
+#define PENDING (1ull << 62)
 #define KEY_MASK ((1ull << 62) - 1)
 #define EMPTY 0ull
 #define REMOVED KEY_MASK
@@ -562,7 +563,9 @@ static inline void unlock(cell *c, uint64_t key) { atomic_store_explicit(&c->key
  * word holds the key's hash in place of the key, and a probe compares a key's
  * bytes only once it has locked a cell of the same hash, so a node is freed
  * under its cell's lock and no probe reads a freed node. Every operation on
- * an entry locks its cell, reading or writing. */
+ * an entry locks its cell, reading or writing. A key found absent claims the
+ * first removed cell its probe passed, or else the empty cell that ended it,
+ * and settles the claim against other claims of its hash (settle_claim). */
 
 typedef struct node {
     uint64_t length;
@@ -674,62 +677,87 @@ static int try_entry(cell *c, uint64_t k, const unsigned char *key, uint64_t len
     return 0;
 }
 
-/* After claiming the removed cell at index from for key, whose hash is tag:
- * looks on to the next empty cell for a cell of key another writer claimed
- * meanwhile, and when one is there gives the claimed cell back as removed and
- * answers FOUND with that cell locked; otherwise REUSED with the claimed one.
- * Two writers of one key that each claim a removed cell claim them one ahead
- * of the other in the order the hash fixes, and the one behind meets the one
- * ahead here, so a key never holds two cells; a writer waits here only on
- * cells ahead of its own claim, so writers never wait on each other in a
- * cycle. */
-static int verify_claim(table *t, uint64_t from, uint64_t tag, const unsigned char *key, uint64_t length,
-                        cell **out) {
-    cell *claimed = &t->cells[from];
-    uint64_t i = (from + 1) & t->mask;
-    uint64_t left = t->capacity - 1;
+/* What settle_claim answers besides FOUND. */
+enum { SETTLED = 16, YIELDED };
+
+/* After claiming the cell at index at for key, whose hash is tag, starting
+ * at start and marked pending: reads every other cell from start to the next
+ * empty cell for a cell of the same hash. A settled one is locked, waiting
+ * for its holder, and when it holds key the claimed cell goes back as removed
+ * and the answer is FOUND with that cell locked. A pending one, another claim
+ * not yet settled, is waited out when it lies after the claimed cell and wins
+ * when it lies before it: the claimed cell goes back as removed and the answer
+ * is YIELDED. Otherwise the claim settles and the answer is SETTLED.
+ *
+ * Two writers of one key that each claim a cell both mark it and then read
+ * the other's cell, all sequentially consistent, and every cell before a
+ * claimed one stays non-empty, so at least one of them sees the other's
+ * claim: the one behind wins if both see the other pending, the one that
+ * settled first otherwise, and a key never holds two cells. A writer waits
+ * on a pending claim only after its own, and a settled cell's holder runs a
+ * statement that takes no further cell, so writers never wait in a cycle. */
+static int settle_claim(table *t, uint64_t start, uint64_t at, uint64_t tag, const unsigned char *key,
+                        uint64_t length, cell **out) {
+    cell *claimed = &t->cells[at];
+    uint64_t own = (at - start) & t->mask;
+    uint64_t i = start;
+    uint64_t left = t->capacity;
     unsigned round = 0;
     while (left > 0) {
         cell *c = &t->cells[i];
-        uint64_t k = atomic_load_explicit(&c->key, memory_order_acquire);
-        uint64_t bare = k & ~LOCKED;
-        if (bare == EMPTY)
-            break;
-        if (bare == tag) {
-            int r = try_entry(c, k, key, length, &round);
-            if (r < 0)
-                continue;
-            if (r > 0) {
-                atomic_store_explicit(&claimed->key, REMOVED, memory_order_release);
-                *out = c;
-                return FOUND;
+        if (c != claimed) {
+            uint64_t k = atomic_load_explicit(&c->key, memory_order_seq_cst);
+            uint64_t bare = k & ~(LOCKED | PENDING);
+            if (bare == EMPTY)
+                break;
+            if (bare == tag) {
+                if (k & PENDING) {
+                    if (((i - start) & t->mask) < own) {
+                        atomic_store_explicit(&claimed->key, REMOVED, memory_order_release);
+                        return YIELDED;
+                    }
+                    wait_for_cell(&round);
+                    continue;
+                }
+                int r = try_entry(c, k, key, length, &round);
+                if (r < 0)
+                    continue;
+                if (r > 0) {
+                    atomic_store_explicit(&claimed->key, REMOVED, memory_order_release);
+                    *out = c;
+                    return FOUND;
+                }
             }
         }
         left--;
         i = (i + 1) & t->mask;
     }
+    atomic_store_explicit(&claimed->key, tag | LOCKED, memory_order_release);
     *out = claimed;
-    return REUSED;
+    return SETTLED;
 }
 
 /* Locks the cell of key, whose hash is tag, in t, or claims one for it: the
  * first removed cell the probe passed, so that a key that is missed again and
  * again keeps reusing one cell instead of leaving a removed cell each time in
  * front of the next probe, or else the empty cell that ended the probe; FULL
- * when the whole table holds neither. */
-static int acquire_entry(table *t, uint64_t tag, const unsigned char *key, uint64_t length, cell **out) {
+ * when the whole table holds neither. A claimed empty cell given back as
+ * removed is counted as used, since it stays taken until the table moves. */
+static int acquire_entry(wf_cmap_user *u, table *t, uint64_t tag, const unsigned char *key, uint64_t length,
+                         cell **out) {
+    uint64_t start = start_of(t, tag);
     for (;;) {
-        uint64_t i = start_of(t, tag);
+        uint64_t i = start;
         uint64_t left = t->capacity;
         unsigned round = 0;
-        uint64_t spare = 0;
+        uint64_t at = 0;
         int spared = 0;
-        int restart = 0;
-        while (!restart) {
+        int claimed = 0;
+        int from_empty = 0;
+        while (!claimed) {
             cell *c = &t->cells[i];
             uint64_t k = atomic_load_explicit(&c->key, memory_order_acquire);
-            uint64_t bare = k & ~LOCKED;
-            int reached_end = 0;
+            uint64_t bare = k & ~(LOCKED | PENDING);
             if (bare == tag) {
                 int r = try_entry(c, k, key, length, &round);
                 if (r < 0)
@@ -738,35 +766,41 @@ static int acquire_entry(table *t, uint64_t tag, const unsigned char *key, uint6
                     *out = c;
                     return FOUND;
                 }
-            } else if (bare == EMPTY) {
-                if (!spared) {
-                    if (atomic_compare_exchange_weak_explicit(&c->key, &k, tag | LOCKED, memory_order_seq_cst,
-                                                              memory_order_relaxed)) {
-                        *out = c;
-                        return CLAIMED;
-                    }
+            } else if (bare == EMPTY && !spared) {
+                WF_CMAP_BEFORE_CLAIM(t, i);
+                if (!atomic_compare_exchange_weak_explicit(&c->key, &k, tag | LOCKED | PENDING,
+                                                           memory_order_seq_cst, memory_order_relaxed))
                     continue;
-                }
-                reached_end = 1;
+                at = i;
+                claimed = 1;
+                from_empty = 1;
+                break;
             } else if (k == REMOVED && !spared) {
-                spare = i;
+                at = i;
                 spared = 1;
             }
-            if (!reached_end && --left > 0) {
+            if (bare != EMPTY && --left > 0) {
                 i = (i + 1) & t->mask;
                 continue;
             }
             if (!spared)
                 return FULL;
-            WF_CMAP_BEFORE_REUSE(t, spare);
+            WF_CMAP_BEFORE_CLAIM(t, at);
             uint64_t removed = REMOVED;
-            if (!atomic_compare_exchange_strong_explicit(&t->cells[spare].key, &removed, tag | LOCKED,
-                                                         memory_order_seq_cst, memory_order_relaxed)) {
-                restart = 1;
-                continue;
-            }
-            return verify_claim(t, spare, tag, key, length, out);
+            if (!atomic_compare_exchange_strong_explicit(&t->cells[at].key, &removed, tag | LOCKED | PENDING,
+                                                         memory_order_seq_cst, memory_order_relaxed))
+                break;
+            claimed = 1;
         }
+        if (!claimed)
+            continue;
+        int r = settle_claim(t, start, at, tag, key, length, out);
+        if (r == SETTLED)
+            return from_empty ? CLAIMED : REUSED;
+        if (from_empty)
+            count(u, 1, 0);
+        if (r == FOUND)
+            return FOUND;
     }
 }
 
@@ -777,7 +811,7 @@ static int lock_entry(wf_cmap_user *u, uint64_t tag, const unsigned char *key, u
     for (;;) {
         table *t = use_current(u);
         if (atomic_load_explicit(&t->next, memory_order_acquire) == NULL) {
-            int r = acquire_entry(t, tag, key, length, out);
+            int r = acquire_entry(u, t, tag, key, length, out);
             if (r == FOUND || r == CLAIMED || r == REUSED) {
                 if (keep_cell(t, *out, r, tag)) {
                     *in = t;

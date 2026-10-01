@@ -15,7 +15,10 @@
  *   many lengths against a plain reference, through moves; threads counting
  *   on shared keys while another holds the whole map and finds every
  *   entry's sum equal to a total each statement adds to with its entry
- *   locked; and a drain that hands out every present entry once.
+ *   locked; threads removing and keeping a few keys, spread or all starting
+ *   at one cell so that their claims race in one run, never holding one
+ *   key in two statements or two cells; and a drain that hands out every
+ *   present entry once.
  *
  * Prints the first failure and exits 1, or exits 0.
  */
@@ -27,6 +30,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #include <sched.h>
 
@@ -36,9 +40,25 @@
 #define WF_CMAP_YIELD() sched_yield()
 #define WF_CMAP_EXHAUSTED() abort()
 struct table;
-static void before_reuse(struct table *t, unsigned long long index);
+static void before_claim(struct table *t, unsigned long long index);
 static uint64_t counted_key(uint64_t k, unsigned char *bytes);
-#define WF_CMAP_BEFORE_REUSE(t, index) before_reuse((t), (index))
+#define WF_CMAP_BEFORE_CLAIM(t, index) before_claim((t), (index))
+
+/* The tests a build runs: locked reads change only wf_cmap_get, which only
+ * the tests of word keys call, and narrowed hashes change only entries'
+ * hashes, which only the tests of entries use, so each such build runs the
+ * tests its change reaches and the default build runs both. */
+#ifdef WF_CMAP_TAG_MASK
+#define WORD_TESTS 0
+#else
+#define WORD_TESTS 1
+#endif
+#ifdef WF_CMAP_LOCKED_READ
+#define ENTRY_TESTS 0
+#else
+#define ENTRY_TESTS 1
+#endif
+
 #include "concurrent_map.c"
 
 #define THREADS 4
@@ -514,61 +534,174 @@ static void claim_given_back(void) {
 
 /* Entries. */
 
-/* What before_reuse does while claim_reused drives it: claims the cell after
- * index for one key, as a second writer that read that cell empty before the
- * first writer did would, and stores a value there. */
-static wf_cmap_user *reuse_user;
-static const unsigned char *reuse_key;
-static uint64_t reuse_length;
+/* A step another writer takes once, when the writer under test is about to
+ * claim the cell at index; the claim tests below set it. */
+static void (*at_claim)(struct table *t, unsigned long long index);
 
-static void before_reuse(struct table *t, unsigned long long index) {
-    if (reuse_user == NULL)
-        return;
-    wf_cmap *map = reuse_user->map;
+static void before_claim(struct table *t, unsigned long long index) {
+    void (*step)(struct table *, unsigned long long) = at_claim;
+    at_claim = NULL;
+    if (step != NULL)
+        step(t, index);
+}
+
+/* The other writer and the keys the claim tests use. */
+static wf_cmap_user *other_user;
+static const unsigned char *claim_key, *gone_key;
+static uint64_t claim_length, gone_length;
+
+/* As a writer of claim_key that read the cell after index empty before the
+ * writer under test did: claims that cell and stores 7 there. */
+static void claim_after(struct table *t, unsigned long long index) {
+    wf_cmap *map = other_user->map;
     cell *c = &t->cells[(index + 1) & t->mask];
-    uint64_t tag = tag_of(reuse_key, reuse_length), empty = EMPTY;
+    uint64_t tag = tag_of(claim_key, claim_length), empty = EMPTY;
     if (!atomic_compare_exchange_strong(&c->key, &empty, tag | LOCKED))
         fail("the cell after the removed one was not empty", index, 0);
-    node *n = new_node(reuse_user, node_bytes(map, reuse_length));
-    n->length = reuse_length;
-    memcpy(n->bytes, reuse_key, (size_t)reuse_length);
+    node *n = new_node(other_user, node_bytes(map, claim_length));
+    n->length = claim_length;
+    memcpy(n->bytes, claim_key, (size_t)claim_length);
     memset(slot_of(map, n), 0, (size_t)map->slot_size);
     ((uint64_t *)slot_of(map, n))[0] = 7;
     atomic_store(&c->value, (uint64_t)(uintptr_t)n);
-    count(reuse_user, 1, 1);
+    count(other_user, 1, 1);
     unlock(c, tag);
-    reuse_user = NULL;
+}
+
+/* As other writers that ran after the writer under test passed gone_key's
+ * cell: removes gone_key, and then stores 7 under claim_key, which reuses
+ * that cell, behind the one the writer under test is about to claim. */
+static void insert_behind(struct table *t, unsigned long long index) {
+    (void)t;
+    (void)index;
+    wf_cmap_entry entry;
+    wf_cmap_lock_entry(other_user, gone_key, gone_length, 0, &entry);
+    wf_cmap_unlock_entry(other_user, &entry, 0, 0);
+    uint64_t *slot = wf_cmap_lock_entry(other_user, claim_key, claim_length, 0, &entry);
+    if (!entry.fresh)
+        fail("the other writer found the key before inserting it", 0, 0);
+    slot[0] = 7;
+    wf_cmap_unlock_entry(other_user, &entry, 0, 1);
+}
+
+/* Bytes of the first counted key after skip, other than k, that starts
+ * where k does in t. */
+static uint64_t key_beside(table *t, const unsigned char *k, uint64_t k_length, uint64_t *skip,
+                           unsigned char *bytes) {
+    for (;;) {
+        uint64_t length = counted_key(++*skip, bytes);
+        if (start_of(t, tag_of(bytes, length)) == start_of(t, tag_of(k, k_length)))
+            return length;
+    }
 }
 
 /* Key k claims a removed cell while a second writer of k claims the empty
  * cell after it, which the first read as empty before the second claimed it:
  * the first must find the second's cell and give its own back, or k holds
  * two cells. */
-static void claim_reused(void) {
+static void claim_ahead(void) {
     wf_cmap *map = wf_cmap_create_entries(8, 8, 0);
-    wf_cmap_user *first = wf_cmap_user_at(map, 0), *second = wf_cmap_user_at(map, 1);
+    wf_cmap_user *first = wf_cmap_user_at(map, 0);
     table *t = atomic_load(&map->current);
     unsigned char k[16], other[16];
-    uint64_t k_length = counted_key(0, k), other_length = 0;
-    for (uint64_t i = 1; other_length == 0; i++) {
-        uint64_t length = counted_key(i, other);
-        if (start_of(t, tag_of(other, length)) == start_of(t, tag_of(k, k_length)))
-            other_length = length;
-    }
+    uint64_t k_length = counted_key(0, k), skip = 0;
+    uint64_t other_length = key_beside(t, k, k_length, &skip, other);
     wf_cmap_entry entry;
     wf_cmap_lock_entry(first, other, other_length, 0, &entry);
     wf_cmap_unlock_entry(first, &entry, 0, 0);
-    reuse_user = second;
-    reuse_key = k;
-    reuse_length = k_length;
+    other_user = wf_cmap_user_at(map, 1);
+    claim_key = k;
+    claim_length = k_length;
+    at_claim = claim_after;
     uint64_t *slot = wf_cmap_lock_entry(first, k, k_length, 0, &entry);
-    if (reuse_user != NULL)
+    if (at_claim != NULL)
         fail("the key did not claim the removed cell", 0, 0);
     if (entry.fresh || slot[0] != 7)
         fail("a key claimed a removed cell beside its own claimed cell", entry.fresh, slot[0]);
     wf_cmap_unlock_entry(first, &entry, 0, 1);
     if (wf_cmap_count(map) != 1)
         fail("the key counted twice", wf_cmap_count(map), 1);
+    wf_cmap_destroy(map);
+}
+
+/* Key k is about to claim a cell, a removed one when spare is set and the
+ * empty one after the removed cells otherwise, when other writers remove
+ * the key whose cell its probe passed before it and then insert k there:
+ * the first must find k behind its own claim and give its claim back, or k
+ * holds two cells. */
+static void claim_behind(int spare) {
+    wf_cmap *map = wf_cmap_create_entries(8, 8, 0);
+    wf_cmap_user *first = wf_cmap_user_at(map, 0);
+    table *t = atomic_load(&map->current);
+    unsigned char k[16], gone[16], removed[16];
+    uint64_t k_length = counted_key(0, k), skip = 0;
+    uint64_t gone_bytes = key_beside(t, k, k_length, &skip, gone);
+    wf_cmap_entry entry;
+    wf_cmap_lock_entry(first, gone, gone_bytes, 0, &entry);
+    wf_cmap_unlock_entry(first, &entry, 0, 1);
+    if (spare) {
+        uint64_t removed_length = key_beside(t, k, k_length, &skip, removed);
+        wf_cmap_lock_entry(first, removed, removed_length, 0, &entry);
+        wf_cmap_unlock_entry(first, &entry, 0, 0);
+    }
+    other_user = wf_cmap_user_at(map, 1);
+    claim_key = k;
+    claim_length = k_length;
+    gone_key = gone;
+    gone_length = gone_bytes;
+    at_claim = insert_behind;
+    uint64_t *slot = wf_cmap_lock_entry(first, k, k_length, 0, &entry);
+    if (at_claim != NULL)
+        fail("the key never came to claim a cell", (uint64_t)spare, 0);
+    if (entry.fresh || slot[0] != 7)
+        fail("a key claimed a cell after its own cell behind (spare, fresh)", (uint64_t)spare, entry.fresh);
+    wf_cmap_unlock_entry(first, &entry, 0, 1);
+    if (wf_cmap_count(map) != 1)
+        fail("the key counted twice (spare)", (uint64_t)spare, wf_cmap_count(map));
+    /* Two cells taken either way: the passed key's and the removed key's, or
+     * the passed key's and the empty one claimed and given back. */
+    int64_t used, live;
+    totals(map, &used, &live);
+    if (used != 2)
+        fail("taken cells miscounted (spare, used)", (uint64_t)spare, (uint64_t)used);
+    uint64_t drained = 0;
+    for (uint64_t *left; (left = wf_cmap_drain(map)) != NULL;)
+        drained++;
+    if (drained != 1)
+        fail("the key holds two cells (spare, cells)", (uint64_t)spare, drained);
+    wf_cmap_destroy(map);
+}
+
+/* settle_claim on cells set by hand to two pending claims of one hash: the
+ * claim ahead gives way to the one behind, and the one behind waits until
+ * the claim ahead is given back and then settles. */
+static void *give_back_later(void *arg) {
+    cell *c = arg;
+    struct timespec pause = {0, 2000000};
+    nanosleep(&pause, NULL);
+    atomic_store(&c->key, REMOVED);
+    return NULL;
+}
+
+static void settle_pending(void) {
+    wf_cmap *map = wf_cmap_create_entries(8, 8, 0);
+    table *t = atomic_load(&map->current);
+    unsigned char k[16];
+    uint64_t length = counted_key(0, k), tag = tag_of(k, length);
+    uint64_t at = start_of(t, tag), next = (at + 1) & t->mask;
+    cell *behind = &t->cells[at], *ahead = &t->cells[next], *out = NULL;
+    atomic_store(&behind->key, tag | LOCKED | PENDING);
+    atomic_store(&ahead->key, tag | LOCKED | PENDING);
+    if (settle_claim(t, at, next, tag, k, length, &out) != YIELDED || atomic_load(&ahead->key) != REMOVED)
+        fail("a claim ahead of a pending claim of its hash did not give way", 0, 0);
+    atomic_store(&ahead->key, tag | LOCKED | PENDING);
+    pthread_t thread;
+    pthread_create(&thread, NULL, give_back_later, ahead);
+    int r = settle_claim(t, at, at, tag, k, length, &out);
+    uint64_t seen = atomic_load(&ahead->key);
+    pthread_join(thread, NULL);
+    if (r != SETTLED || out != behind || seen != REMOVED || atomic_load(&behind->key) != (tag | LOCKED))
+        fail("a claim behind a pending claim did not wait it out and settle", (uint64_t)r, seen);
     wf_cmap_destroy(map);
 }
 
@@ -737,24 +870,25 @@ static void entries_misses(void) {
 
 /* Statements on a few keys that remove them as often as they keep them,
  * from several threads: no two statements hold one key at once, and no
- * increment is lost. */
-enum { CHURN_KEYS = 4, CHURN_OPS = 200000 };
+ * increment is lost. Crowded, the keys all start at one cell, so that their
+ * claims of removed and empty cells race in one run of cells. */
+enum { CHURN_KEYS = 6, CHURN_OPS = 200000 };
+static unsigned char churn_bytes[CHURN_KEYS][16];
+static uint64_t churn_lengths[CHURN_KEYS];
 static _Atomic int churn_holding[CHURN_KEYS];
 static _Atomic uint64_t churn_removed;
 
 static void *churn_entries(void *arg) {
     counter_t *c = arg;
     wf_cmap_user *user = wf_cmap_user_at(c->map, c->index);
-    unsigned char bytes[16];
     uint64_t state = 0x9e3779b97f4a7c15ull * (c->index + 1);
     for (uint64_t i = 0; i < CHURN_OPS; i++) {
         state ^= state << 13;
         state ^= state >> 7;
         state ^= state << 17;
         uint64_t k = state % CHURN_KEYS;
-        uint64_t length = counted_key(k, bytes);
         wf_cmap_entry entry;
-        uint64_t *slot = wf_cmap_lock_entry(user, bytes, length, 0, &entry);
+        uint64_t *slot = wf_cmap_lock_entry(user, churn_bytes[k], churn_lengths[k], 0, &entry);
         if (atomic_exchange(&churn_holding[k], 1))
             fail("two statements held one key at once", k, i);
         uint64_t next = slot[0] + 1;
@@ -770,21 +904,30 @@ static void *churn_entries(void *arg) {
     return NULL;
 }
 
-static void entries_churn(void) {
+static void entries_churn(int crowded) {
     wf_cmap *map = wf_cmap_create_entries(8, 8, 0);
-    pthread_t t[THREADS];
+    table *t = atomic_load(&map->current);
+    uint64_t skip = 0;
+    churn_lengths[0] = counted_key(0, churn_bytes[0]);
+    for (uint64_t k = 1; k < CHURN_KEYS; k++)
+        churn_lengths[k] = crowded ? key_beside(t, churn_bytes[0], churn_lengths[0], &skip, churn_bytes[k])
+                                   : counted_key(k, churn_bytes[k]);
+    atomic_store(&churn_removed, 0);
+    pthread_t threads[THREADS];
     counter_t c[THREADS];
     for (unsigned i = 0; i < THREADS; i++) {
         c[i] = (counter_t){map, i, NULL, NULL, 0};
-        pthread_create(&t[i], NULL, churn_entries, &c[i]);
+        pthread_create(&threads[i], NULL, churn_entries, &c[i]);
     }
     for (unsigned i = 0; i < THREADS; i++)
-        pthread_join(t[i], NULL);
+        pthread_join(threads[i], NULL);
     if (wf_cmap_count(map) > CHURN_KEYS)
-        fail("churned keys counted more than once", wf_cmap_count(map), CHURN_KEYS);
-    uint64_t sum = atomic_load(&churn_removed);
-    for (uint64_t *slot; (slot = wf_cmap_drain(map)) != NULL;)
+        fail("churned keys counted more than once (crowded, count)", (uint64_t)crowded, wf_cmap_count(map));
+    uint64_t sum = atomic_load(&churn_removed), cells = 0;
+    for (uint64_t *slot; (slot = wf_cmap_drain(map)) != NULL; cells++)
         sum += slot[0];
+    if (cells > CHURN_KEYS)
+        fail("a churned key holds two cells (crowded, cells)", (uint64_t)crowded, cells);
     if (sum != (uint64_t)THREADS * CHURN_OPS)
         fail("a churned key's increment was lost", sum, (uint64_t)THREADS * CHURN_OPS);
     wf_cmap_destroy(map);
@@ -811,18 +954,29 @@ static void entries_huge_capacity(void) {
 }
 
 int main(void) {
-    checker_self_test();
-    entries_huge_capacity();
-    claim_given_back();
-    entries_sequential();
-    claim_reused();
-    entries_misses();
-    entries_churn();
-    entries_held();
-    sequential();
-    concurrent(0);
-    concurrent(1);
-    histories(20);
+    /* Writers that wait on each other in a cycle fail the test here rather
+     * than at the gate's limit. */
+    alarm(120);
+    if (ENTRY_TESTS) {
+        entries_huge_capacity();
+        entries_sequential();
+        claim_ahead();
+        claim_behind(1);
+        claim_behind(0);
+        settle_pending();
+        entries_misses();
+        entries_churn(0);
+        entries_churn(1);
+        entries_held();
+    }
+    if (WORD_TESTS) {
+        checker_self_test();
+        claim_given_back();
+        sequential();
+        concurrent(0);
+        concurrent(1);
+        histories(20);
+    }
     printf("concurrent-map-test: all checks passed\n");
     return 0;
 }
