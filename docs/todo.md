@@ -2154,6 +2154,13 @@ each is resolved by a discussion and a tree change.
   (`len == entry(len) + 1`), and the maintained programs repeat a field
   relation at most twice. Reopen generic invariants when a generic type has
   a relation every value keeps that several functions restate.
+  The [library-Forest derivation](../research/investigations/unique-keys/DESIGN.md#worked-derivation-a-library-forest)
+  supplies that consumer and a writable-interior-reference probe: an exit
+  postcondition can restore a field while its enclosing invariant was false
+  inside the callee. Settle the invariant's observation boundary before
+  granting facts at every read. Validate nested storage, generic mutation,
+  interior-reference calls and propagation, with a failing case for each
+  route that would expose a value without establishing its invariant.
 - **A standard collection restates at every operation that its capacity is
   unchanged.** `ensures queue^.storage.inner.cap == entry(queue)^.storage.inner.cap`
   appears 15 times across the priority queue's interface and body
