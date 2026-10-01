@@ -5507,3 +5507,57 @@ expected stage outcomes and exits zero in 1.09 seconds. An independent read-only
 review finds no issue within this bounded repair. This changes geometry
 observation, not the isolated reserve workload, its frozen timing images,
 library behavior, specification or recorded storage decision.
+
+### Edit running index: native improvement without qualified timing gain
+
+`hash_map_edit` still reconstructed each bucket from the home bucket and the
+probe count. The ordinary-source candidate uses the bounded running index
+already used by lookup/find/try_put. Hashing remains before the empty check;
+all nonempty visited buckets, equality/callback order, complete-cycle refusal,
+public fields and contracts stay the same. There is no dense-layout ceiling
+restriction. Explicit identical source packages avoid relying on changes to
+an on-disk standard library embedded in a frozen compiler.
+
+The initial combined-compiler native screen and the published self-tail
+compiler both pass the existing 18,390 complete-operation traces, 96 lookup
+cases and 288 reserve cases. The reached scalar/wide edit paths lose the
+first-probe compare/select/add reconstruction; continuation advances a wrapped
+index. Native frames do not grow, the update stays a direct load/add/store,
+and no assumptions or ownership transfers are removed. This is a native
+prerequisite, not a measured speedup. The additional source witness checks a
+capacity-three wrap past a deleted home bucket, absent full-cycle probes,
+empty results, exact callback count and complete consumed key/value sums.
+Both ordinary witness executions exit zero. Three independently perturbed
+expectations (edited result, callback count and cleanup value sum) each compile
+and exit seven, demonstrating that those observations detect wrong results.
+
+Only the published self-tail compiler is used for the primary timing campaign.
+The existing complete EDIT trace is selected at initial capacity/live count
+64/56 and 4096/3584, with both payload sizes, both hash series and all five
+implementations. Each sample requests 2,097,152 edits, rounded down by the live
+count, and includes preparation and full cleanup. These are complete-trace
+nanoseconds amortized per edit, not isolated API latency. Eleven samples per
+cell follow two warmups, with rotating peer order. The one four-process
+control0/candidate0/candidate1/control1 campaign retains all 1,760 rows;
+all exits are zero and the shortest interval is 3.804 ms.
+
+Aligned-hash medians are cohort zero / cohort one:
+
+| Payload / initial capacity | Control WF | Candidate WF | Candidate-image Rust | Candidate-image C++ |
+|---|---:|---:|---:|---:|
+| 8 B / 64 | 3.262 / 3.120 | 3.039 / 3.037 | 2.354 / 2.372 | 2.379 / 2.393 |
+| 8 B / 4096 | 4.624 / 4.915 | 4.297 / 4.502 | 2.474 / 2.484 | 5.110 / 5.050 |
+| 256 B / 64 | 3.232 / 3.231 | 3.054 / 3.190 | 2.788 / 2.792 | 2.374 / 2.372 |
+| 256 B / 4096 | 5.651 / 5.729 | 5.101 / 5.123 | 3.180 / 3.176 | 6.022 / 5.994 |
+
+Every candidate median improves, but no before/after cell separates its full
+sample ranges in both cohorts. There is no separated loss; within-arm and
+unchanged-peer drift checks pass. The prospective source-selection criterion
+therefore fails, and the source patch is not adopted. All four aligned cells
+also fail the strict slower-peer range target. The four default-hash cells
+pass that peer comparison under their different hash protocols; they do not
+replace the aligned result. No repeat campaign, sample filtering or criterion
+relaxation follows. Root independently checked 480 min/median/max fields,
+88 cross-arm/peer checksums and all eight per-series verdicts against the raw
+rows. Exact source, prospective criteria, raw rows and replay limits belong to
+the `edit-running-index/` component of [reserve-api-evidence.tar.gz](reserve-api-evidence.tar.gz).

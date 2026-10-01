@@ -1,8 +1,8 @@
 {
   "purpose": "Isolated ordinary public reserve with verified future entry headroom; single production baseline panel, not an optimization/adoption result",
   "archive": "reserve-api-evidence.tar.gz",
-  "archive_sha256": "dc8037f35a5670fa7b7931da5082d7bca86ca077dcb7590c217c129973eabaa9",
-  "archive_members": 726,
+  "archive_sha256": "71518c3ea2b608472bba053df6140678feed1923095c6844881229334c0c62ed",
+  "archive_members": 740,
   "base_revision": "89571a60381a685cfbe760248ceb6178d9f9ac05",
   "production_cli_sha256": "c12b2b2a6c9694fd2bc1b7be0004d582ae9628951422def849f4cf6a3ac02f77",
   "timed_image_sha256": "f1ebf18d7a94c79250bb3cbd74a0b379a2a30c6e5e4eda48396ec77d8bbdbf3f",
@@ -3952,6 +3952,43 @@
       "from": "component-index.json",
       "to": "component-index-before-current-dense-policy.json",
       "sha256": "3476d28593dfd62335d9d6f88f486cdd896e88124bf1fbfeb1a0e47a62b8e512"
+    },
+    "all_prior_member_bytes_preserved": true
+  },
+  "edit_running_index": {
+    "prefix": "edit-running-index/",
+    "payload_count": 13,
+    "manifest": "edit-running-index/manifest.json",
+    "status": "Ordinary-source edit running-index experiment failed its source-retention criterion; no production adoption, retry or broader performance claim.",
+    "published_base": "b02050c65454eb7b48df76c40bd1b8a6a902744e",
+    "timed_cli_sha256": "bf3eafb4bd5dba320c45654cd3eb80727f5dab3647dadc96978452a4d18a4701",
+    "source_patch_sha256": "c9ed0a5e1644f4a5a238fca329edf5ff91afc6f81c607e63395d6d8e1182b2a3",
+    "driver_patch_sha256": "e50b3b3ca5597577cae3632d6cfc4af0089274dceafbe4ab8c8eb379b5a04b91",
+    "raw_rows": 1760,
+    "cells": 8,
+    "gain_cells": 0,
+    "separated_loss_cells": 0,
+    "source_retention_criterion": false,
+    "minimum_interval_ns": 3804000,
+    "independent_statistic_fields": 480,
+    "matching_oracle_checksums": 88,
+    "all_independent_checks_agree": true,
+    "witness_faults": 3,
+    "fault_compile_and_native_stages_pass": 6,
+    "fault_execution_status": 7,
+    "records": "edit-running-index/records.json",
+    "frozen_producer_inventory_sha256": "38576eb5d4a33b34e4eda9d2a1253856b478aee60b5ef67a0363f0d8f0033140",
+    "producer_retained_files": 87,
+    "replay_boundary": "Historical source packages/commands require omitted pinned CLI, runtime/peer objects and toolchain/scratch reconstruction; no standalone or verified published replay."
+  },
+  "edit_running_index_prior_index": {
+    "prior_archive_sha256": "dc8037f35a5670fa7b7931da5082d7bca86ca077dcb7590c217c129973eabaa9",
+    "prior_members": 726,
+    "unchanged_names_and_bytes": 725,
+    "renamed_member": {
+      "from": "component-index.json",
+      "to": "component-index-before-edit-running-index.json",
+      "sha256": "d0fff20f4beee78eaee17e11c878e63de4caa23451a1537c8f8b12ad1da74e52"
     },
     "all_prior_member_bytes_preserved": true
   }

@@ -3477,6 +3477,13 @@ condition under which it is taken up.
   reductions of the flat map's initialization and transfer costs that preserve
   its scalar behavior; this experiment does not measure those alternatives.
 
+  Extending the running-index source form to `hash_map_edit` removes reached
+  native bucket reconstruction, but its [complete EDIT comparison](../research/experiments/container-representation/map-library/RESULTS.md#edit-running-index-native-improvement-without-qualified-timing-gain)
+  has no before/after cell with separated ranges in both cohorts, despite lower
+  medians. Keep the source patch experimental. Reopen with a discriminator for
+  remaining result staging or probe work and the same complete-outcome and
+  peer criteria; instruction removal alone does not qualify an optimization.
+
 - **Ordered insertion replacement costs need attribution.** Both the
   [aggregate-result candidate](../research/experiments/container-representation/ordered-library/RESULTS.md#single-descent-insertion-candidate)
   and [borrowed-promotion follow-up](../research/experiments/container-representation/ordered-library/RESULTS.md#borrowed-promotion-follow-up)
