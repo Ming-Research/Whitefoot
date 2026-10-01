@@ -200,7 +200,7 @@ being proved, without selecting brands for the runtime index type.
 This section identifies necessary capabilities by following operations,
 rather than treating a name such as `forest_valid` as an assumed theorem.
 All mathematical forms and assignment sketches in this section are proposals,
-not accepted WF syntax, apart from the explicitly runnable Pair probe.
+not accepted WF syntax, apart from the explicitly runnable Pair probes.
 The model is one way to expose the obligations, not a selected representation
 for either runtime data or proof terms.
 
@@ -308,6 +308,113 @@ It is the checked-intermediate-state alternative above, not an unchecked
 escape. Whether to provide it, a more general simultaneous update form, or
 require the stronger boundary and accept its algorithmic restrictions is
 an open choice that the fixed-link example alone cannot settle.
+
+### A scoped change and an ordinary representation conversion
+
+Consider the candidate spelling `change(s) as raw { ... }`. Its useful
+interpretation is a scoped conversion from a valid value to an exclusively
+owned representation, followed by a checked reconstruction. Merely delaying
+the final invariant check while retaining all ordinary facts about `s` would
+be insufficient: a helper taking `&Forest` could assume the very invariant
+the block has temporarily broken.
+
+For that interpretation the scope needs the following rules, regardless of
+its eventual spelling:
+
+- Entry requires the current invariant and grants the update exclusive
+  access. The ordinary `s` and aliases through which an observer could use
+  its invariant are unavailable during the update. This changes usable
+  authority, not the truth of a theorem about the entry state.
+- The body operates on a representation without the opened invariant. It
+  retains applicable bounds, initializedness, ownership, arithmetic and
+  other value-type obligations. Writes invalidate current-state facts by
+  their support; an old-state theorem cannot prove the final-state goal.
+- Helpers accept that representation and state the partial properties they
+  need and preserve. An ordinary `&Forest` helper remains callable only when
+  its normal preconditions, including the complete invariant, are proved;
+  lexical presence in `change` grants no exemption to a callee.
+- Every exit that returns the updated object to a caller or observer owes
+  its complete invariant. A propagated error has this obligation too. A
+  consuming API may instead dispose of the representation if its ownership
+  and resource obligations permit that. There is no implicit rollback.
+- Opening a nested field does not silently waive an invariant of its live
+  enclosing value. Any enclosing invariant affected by the writes must also
+  be preserved, or its owning value must participate in the conversion.
+  Reopening the same ordinary owner cannot create another independent
+  entitlement to its original invariant.
+- A change block provides no cross-thread atomicity, lock or scheduling
+  edge. Shared storage still requires the language's ordinary exclusive
+  access/synchronization rules. A long update need not be a machine atomic
+  operation merely because its proof has one boundary.
+
+An alternative already has a small executable witness in current WF:
+ordinary consuming destructuring [PROV-6], followed by construction
+[TYPE-11]. No special scope is required for this example:
+
+```wf
+nocopy struct Pair {
+  left: u64;
+  right: u64;
+  invariant equal(pair): pair.left == pair.right;
+}
+
+fn rewrite(pair: Pair) -> result: Pair pure {
+  let Pair(left: left, right: right) = move pair;
+  set left = 1_u64;
+  set right = 1_u64;
+  return Pair(left: left, right: right);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let pair = Pair(left: 0_u64, right: 0_u64);
+  set pair = rewrite(pair: move pair);
+  return std::process::exit_status(code: 0_u8);
+}
+```
+
+There is no surviving Pair inside `rewrite` after the destructuring; there
+are two ordinary integers. Construction proves their required relation
+before another Pair exists. The caller uses the existing in-place update
+form [OP-12]. Its restrictions on result types and failure exits still
+apply. This probe establishes neither arbitrary Forest proofs nor a complete
+invariant discipline for every other mutation route; TYPE-11 still has the
+limitations identified above.
+
+A larger library can give the representation its own ordinary type,
+`ForestData`, and keep `Forest` as a private wrapper with the stronger
+invariant. Destructuring moves out ForestData, helpers accept ForestData with
+explicit content contracts, and construction owes `Rep(data, new_model)`.
+The representation keeps all of its own type invariants. A boxed node array
+can remain owned by that representation; the approach need not construct a
+second array. Equal generated code under R3 remains a separate observation
+to make, not a consequence of writing `move`.
+
+The comparison is semantic rather than a keyword count:
+
+| Candidate | Dynamic update set | Helper interface | Obligation exposed to the writer |
+|---|---|---|---|
+| Finite tuple commit | Only its statically listed targets | Compute operands or preserve the invariant at calls | Establish the simultaneous final state |
+| Scoped conversion `change(s) as raw` | Loops and calls inside the scope | A nameable representation or an explicitly specified open-state parameter | Close every publishing exit and account for enclosing owners |
+| Consuming destructure and reconstruct | Loops and calls between the two | Ordinary representation type and its contracts | Reconstruct every promised valid result; obey ordinary move and exit rules |
+| Every function body implicitly opens the struct | Loops within a body | Still needs a distinction for helpers allowed to receive partial state | Function privacy or body entry alone cannot supply that distinction |
+
+For further investigation, consuming representation conversion is the useful
+baseline: it gives partial states and helper boundaries explicit meanings
+using existing ownership forms. A scoped form should be compared against
+that baseline for borrowed/in-place mutation, nested owners and error exits.
+This does not select a new language rule or establish that no scoped form
+is needed. It narrows the unresolved requirement from "an invariant-off
+scope" to a compositional representation-state boundary.
+
+There is related prior art in
+[Viper's explicit predicate fold/unfold](https://viper.ethz.ch/tutorial/predicates.html):
+predicate authority is exchanged with the resources and properties of its
+body, rather than keeping both independently. This is a comparison of proof
+organization, not adoption of that verifier's inference or permission model.
+[Pulse's shared invariant scopes](https://fstar-lang.org/tutorial/book/pulse/pulse_atomics_and_invariants.html)
+instead restrict observable computation to at most one atomic step, with
+ghost or unobservable steps around it. Those shared-invariant scopes cannot
+be copied as the meaning of an arbitrarily long exclusive local update.
 
 ### Runtime representation and an independent finite model
 
@@ -568,6 +675,19 @@ Each probe uses that build with `--check`; each scatter uses
   exits 1 with FN-9 `UndischargedPostcondition`. Changing the construction
   to `(1, 0)` exits 1 with TYPE-11 `UndischargedTypeInvariant`. Thus the
   positive result does not mean the declared invariant is ignored everywhere.
+- The complete consuming-destructure/reconstruct Pair probe exits 0.
+  Removing `set right = 1_u64;` rejects its final construction with TYPE-11
+  `UndischargedTypeInvariant`. Replacing `set left = 1_u64;` with
+  `set left = pair.left;` rejects with OWN-1 `UseAfterMove`.
+  This is existing language behavior, not a prototype of `change`.
+- A boxed representation variant also exposes the content-transport limit:
+  for `Parts { left: u64; right: u64; }`, binding `Parts(0, 0)` and passing
+  it to `box_new::<Parts>` does not by itself establish the field equality
+  needed to construct a wrapper whose invariant is
+  `wrapper.data.inner.left == wrapper.data.inner.right`. That constructor
+  rejects with TYPE-11 `UndischargedTypeInvariant`. This does not refute the
+  conversion protocol; it is an additional witness for the logical-content
+  transport requirement already recorded above.
 - Both the original caller filled with four zeros and the corrected
   distinct caller of `cascade.wf` compile with exit 0 and deny the loop's
   parallel permission at condition 2. The original was a duplicate-write
