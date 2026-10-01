@@ -3334,9 +3334,9 @@
       }
     ],
     "archive": {
-      "bytes": 1397257,
+      "bytes": 1466763,
       "path": "research/experiments/container-representation/map-library/entry-forward-evidence.tar.gz",
-      "sha256": "e8aae829cab1665ab0b4f40b70a06903b9c9a2a8560133228c9e63f3ff1ac072"
+      "sha256": "a1f4eec87e254c06282bc58189d79368f603331d8612ab980d65211fd9cf11ad"
     },
     "archive_purpose": "Raw auditable API and whole-Map/long-hit replay for this RESULTS section; retire or replace when superseded. No binaries.",
     "construction": [
@@ -4158,6 +4158,99 @@
         "work": 1048576
       }
     },
+    "input_disjoint_inline_diagnostic": {
+      "callgraph_and_definition_edits": {
+        "archive_member": "input-disjoint-inline/callgraph.json",
+        "bytes": 2383,
+        "sha256": "1a254f4a1d046051f58c75597d7a64bd7e2e7f4fb8773300527ec1f1b8e45af1"
+      },
+      "causal_control": "Frozen offered-input/result-disjoint noinline clone candidate157a4c79a7b3e13781daf100846fe105e6453101f8384b40af6b95b82171cc49; its successful native frame reduction and failed timing panel remain separate.",
+      "construction": {
+        "all_direct_exits": 0,
+        "direct_status": {
+          "archive_member": "input-disjoint-inline/build-direct-status.json",
+          "bytes": 311,
+          "sha256": "d09368ba437cca43367d3b1cc2d09fba20c8b6e02a9facad74e8630993907c7f"
+        },
+        "guard_seconds": 2.2581420838832855,
+        "native_stages": 6,
+        "statuses": {
+          "archive_member": "input-disjoint-inline/build-statuses.json",
+          "bytes": 5549,
+          "sha256": "923720335d226447290dbdaf39e5b70ec9597229abadd9f22b53b34829b651a4"
+        }
+      },
+      "criterion": {
+        "archive_member": "input-disjoint-inline/criterion.txt",
+        "bytes": 2159,
+        "sha256": "c8a67a1401e3ab617d4a6360819c7ab0ff4a2532dfaa7b239732942e5d5cc09e"
+      },
+      "input_pins": {
+        "archive_member": "input-disjoint-inline/inputs.json",
+        "bytes": 6435,
+        "sha256": "bbb43478a9f27aba999ab21ab9519e6eb8a990770a9fbbe197ca9fd93f62a5a7"
+      },
+      "limitation": "No production alias variant: ordinary ABI permits input/result overlap; narrow callsite disjointness is not blanket noalias.",
+      "native": {
+        "candidate_equals_earlier_failed_inline_normalized_stream": true,
+        "candidate_reached_batch_BL_edges": 0,
+        "candidate_reached_batch_frame_bytes": 448,
+        "candidate_reached_batch_instructions": 570,
+        "control_graph_frames": [
+          1024,
+          0,
+          0
+        ],
+        "control_graph_instructions": [
+          381,
+          95,
+          75
+        ],
+        "interpretation": "120-byte offered spills persist. Old-word stack-store traffic totals256bytes across32events/23distinctwords/9re-stores; not32distinctwords or simultaneously residentfull256bytes. Earlier failed-inline equality is context, not causal baseline or timing.",
+        "normalized_stream_sha256": "e50fe26e96bde5cb652e43f21e9020990e7421f1215fc1fc144bd29b0966e486",
+        "primary": {
+          "archive_member": "input-disjoint-inline/native-summary.json",
+          "bytes": 1426,
+          "sha256": "b61db90231b6c595dafb578802de611a9a77424d2e925ed489359ab3cfa114b2"
+        },
+        "stack_access_instructions_control_candidate": [
+          102,
+          168
+        ],
+        "traffic_qualification": {
+          "archive_member": "input-disjoint-inline/native-traffic-qualification.json",
+          "bytes": 1011,
+          "sha256": "95bf56a88dfd0df8730983cf373a77ff8a0274b1d5d8a8b807b6b4df27bf5efe"
+        }
+      },
+      "native_excerpt": {
+        "archive_member": "input-disjoint-inline/native/candidate-batch.asm",
+        "bytes": 23643,
+        "sha256": "8c643577e3a7a854a871e24da3ca6cfc4ab9eceb59570c02d5ae8ea8ee889452"
+      },
+      "normalization": {
+        "archive_member": "input-disjoint-inline/text-normalization.json",
+        "bytes": 1114,
+        "sha256": "095c556f6b433df82fa941c5e1af9e969c63ee5fdad187955b522e935741ea9e"
+      },
+      "output_pins": {
+        "archive_member": "input-disjoint-inline/outputs.json",
+        "bytes": 897,
+        "sha256": "facc22edb7392b423dd40da46d86e938b77cae46888cc0342893d9c41628a13d"
+      },
+      "patch": {
+        "archive_member": "input-disjoint-inline/modules.patch",
+        "bytes": 1437,
+        "sha256": "1b9b9d9afa7cffa8b245d0c4b487de86ff7085b4a82f93f360f879aec7e94623"
+      },
+      "recipe": {
+        "archive_member": "input-disjoint-inline/run.py",
+        "bytes": 7705,
+        "sha256": "825ae6eef20ddc1824d83af54dece4ee8ce58a7d8532115a620f05b9f18f66dc"
+      },
+      "scope": "Exactly two alwaysinline clone-header attributes; reverse those edits recovers control raw bytes. Existing input/result facts, instructions, original helpers and one batch reroute unchanged.",
+      "status": "Native criterion FAIL; no correctness or timing run."
+    },
     "long_hit_discriminator": {
       "all_expected_statuses": true,
       "archive_directory": "long-hit",
@@ -4675,6 +4768,159 @@
         126,
         95
       ]
+    },
+    "offered_input_disjoint_diagnostic": {
+      "callgraph_and_definition_edits": {
+        "archive_member": "offered-input-disjoint/callgraph.json",
+        "bytes": 2311,
+        "sha256": "d49bf23fcd5ed6453d20290d0d5b6c103e54015a0bfeeb68aead56c8f7d64d23"
+      },
+      "construction": {
+        "all_native_direct_exits": 0,
+        "direct_status": {
+          "archive_member": "offered-input-disjoint/build-direct-status.json",
+          "bytes": 309,
+          "sha256": "e6996fd732dce86f5680bfec73f32a5dd52fb32797bccc6f027f3f563f50cf07"
+        },
+        "guard_seconds": 2.2878554579801857,
+        "stages": 6,
+        "statuses": {
+          "archive_member": "offered-input-disjoint/build-statuses.json",
+          "bytes": 5532,
+          "sha256": "d55a2e6de4af56194d06af8ca14d2499f99a6f00b8a8487863a2949c774682ef"
+        }
+      },
+      "control": "Prior result-only noalias clone, rawSHA d8cc8d5969f211447e7069098d62ea07168349dc3f54b5b936bc8a39ca85f359; no ordering, source-mask or inline composition.",
+      "correctness": {
+        "expected_stages": 26,
+        "full_owner_cases_per_image": 96,
+        "guard_seconds": 1.5356340841390193,
+        "ledger_byte_equal": true,
+        "ledger_rows": 32,
+        "specific_fault_controls_per_arm": 10,
+        "statuses": {
+          "archive_member": "offered-input-disjoint/check-statuses.json",
+          "bytes": 6292,
+          "sha256": "947dd2a19b21d9c802d1334af2a1a5d1f5e82f23c7786bfa8b26b901e2c26197"
+        }
+      },
+      "criteria": [
+        {
+          "archive_member": "offered-input-disjoint/criterion.txt",
+          "bytes": 2706,
+          "sha256": "39898cfa4b3a8ed2c489d826516436fc982bfc5bae0dd174a38eae2a43c69263"
+        },
+        {
+          "archive_member": "offered-input-disjoint/timing-criterion.txt",
+          "bytes": 2275,
+          "sha256": "d574efc80d77c3c506d19b8717d97482b3458e0eb8b527b13dfc6db31369687b"
+        }
+      ],
+      "input_pins": {
+        "archive_member": "offered-input-disjoint/inputs.json",
+        "bytes": 6393,
+        "sha256": "6ccb99a02b2e0104cf21dcb03d1ee30c3227a5a30823750081e84a322a32e94d"
+      },
+      "native": {
+        "body_order": [
+          "batch",
+          "try_put clone",
+          "exchange clone"
+        ],
+        "frames_control_candidate": [
+          [
+            1024,
+            0,
+            64
+          ],
+          [
+            1024,
+            0,
+            0
+          ]
+        ],
+        "initial_stage_note": "native-summary.json was captured before separately authorized checks/timing; its false run flags describe that earlier stage.",
+        "instructions_control_candidate": [
+          [
+            381,
+            95,
+            87
+          ],
+          [
+            381,
+            95,
+            75
+          ]
+        ],
+        "mechanism": "Offered streaming removes exchange64-byte vector-save frame, without relocating that capture into the unchanged caller stack. Caller input/result buffers and complete old-result materialization remain.",
+        "primary": {
+          "archive_member": "offered-input-disjoint/native-summary.json",
+          "bytes": 1021,
+          "sha256": "f2607072d41b581c2b2a2afad542463d55fca2240a2e8ebfa75fa98077805bf3"
+        }
+      },
+      "native_namespace": "offered-input-disjoint/native/; control/candidate batch, try_put, exchange excerpts.",
+      "normalization": {
+        "archive_member": "offered-input-disjoint/text-normalization.json",
+        "bytes": 1114,
+        "sha256": "35c28b77d02701e1df7c4e31d27bc181f9ec8d22bc0982d6edf17e7f06c52d66"
+      },
+      "output_pins": {
+        "archive_member": "offered-input-disjoint/outputs.json",
+        "bytes": 891,
+        "sha256": "f7cce23820efda8eed810ee6ded79c89d57f0aec1542c65d21d2ae5649b62af5"
+      },
+      "patch": {
+        "archive_member": "offered-input-disjoint/modules.patch",
+        "bytes": 1395,
+        "sha256": "426d281ebddf44c208672d9a13dcb60da3e277fb858d1f72a3177c6c048a7780"
+      },
+      "recipes": [
+        {
+          "archive_member": "offered-input-disjoint/run.py",
+          "bytes": 7638,
+          "sha256": "d08f15ef1b69f504ac3134370a50ade33ccbc7e8839cd5c051ef6fb5d836086f"
+        },
+        {
+          "archive_member": "offered-input-disjoint/measure.py",
+          "bytes": 2093,
+          "sha256": "9329f1dd1e301f37a70c90a704d6dc695862b161e85d9a62ba28c8c70cd3a03d"
+        }
+      ],
+      "scope": "Exactly two offered-input noalias flags on existing clones. InputRecord256 alloca8, resultPut272 alloca9 and owner-derived heap cells are distinct on the audited batch path; originals and all other callers unchanged. This is not a general callable-ABI promise; ordinary input/result overlap remains valid.",
+      "status": "Native criterion PASS, but measured criterion FAIL:16flat cohort ranges overlap and chain drift fails. No production alias policy selected.",
+      "summary": {
+        "adverse_medians": "Scalar4096replacement+2.241/+3.637percent; scalar4096churn cohort1+4.601percent; wide4096churn cohort0+0.580percent; complete ranges overlap. All raw/adverse/peer observations retained.",
+        "all_ranges_overlap": true,
+        "failed_cell": "word8/4096/churn/cohort0",
+        "failed_chain_drift_percent": 13.235724743777455,
+        "flat_cohort_cells": 16,
+        "full_reduction": {
+          "archive_member": "offered-input-disjoint/timing-summary.json",
+          "bytes": 66773,
+          "sha256": "b295831c0f095d6415ca61c3847cd278a1dba617a5d09a23f8c08cb26ad107e2"
+        },
+        "maximum_paired_ratio_spread_percent": 4.8527324840826,
+        "maximum_rust_cpp_drift_percent": 6.334841628959276,
+        "minimum_interval_ns": 2328000,
+        "separated_gains": 0,
+        "separated_losses": 0
+      },
+      "timing": {
+        "all_direct_exits": 0,
+        "guard_seconds": 55.39768054196611,
+        "images_before_after_equal": true,
+        "metadata": {
+          "archive_member": "offered-input-disjoint/timing/metadata.json",
+          "bytes": 1868,
+          "sha256": "2caf810129c3d291f6d7361a74d45f814aab936415015d5e6c27e6673cb6ddc4"
+        },
+        "processes": 4,
+        "raw_namespace": "offered-input-disjoint/timing/; all four raw CSVs pinned by MANIFEST.json.",
+        "rows": 1152,
+        "samples": 9,
+        "work": 1048576
+      }
     },
     "ordering_floor_diagnostics": [
       {

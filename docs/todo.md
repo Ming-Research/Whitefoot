@@ -1264,7 +1264,13 @@ rarely insert at the same place.
   to the measured candidate. The original whole-Map adverse hit cells remain
   recorded alongside the longer overlapping replay. Reopen broader forwarding
   only for an independently measured remaining copy with
-  complete interference proof. Repeated syntactic-candidate/callee and
+  complete interference proof. The [offered-input disjointness floor](../research/experiments/container-representation/map-library/RESULTS.md#offered-input-disjointness-native-frame-removed-timing-unqualified)
+  removes the exchange vector-save frame on audited separate batch storage,
+  but its fixed panel has no separated gain and fails unchanged-peer drift.
+  Full inline composition reproduces the earlier equivalent payload spills.
+  Keep both unselected: ordinary input/result overlap remains supported, and
+  any alias variant needs a general interference proof plus qualified timing.
+  Repeated syntactic-candidate/callee and
   per-parameter liveness walks are an unprofiled analysis-cost opportunity:
   profile representative compilation before sharing or caching those facts.
 

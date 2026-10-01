@@ -4126,6 +4126,54 @@ criterion, patch, complete access/call proof, recipes, controls, ledgers, raw
 cohorts and all peer/adverse reductions remain under `prepared-capacity-snapshot`
 in the same archive, separate from the alias negative.
 
+#### Offered input disjointness: native frame removed, timing unqualified
+
+A frozen-IR diagnostic adds exactly two offered-input `noalias` flags to the
+existing result-disjoint wide clones. Its causal control is the prior result-only
+clone, without source-mask, ordering or inline composition. The audited batch
+passes separate 256-byte input and 272-byte result allocas, distinct from its
+owner-derived heap cells; originals and other callers remain unchanged. This
+local premise is not an ordinary callable-ABI promise: input/result overlap is
+still permitted. Exchange falls from 87 to 75 instructions and its 64-byte
+vector-save frame disappears through offered streaming. The reached caller stays
+381 instructions / 1024 bytes and `try_put` stays 95 / zero; caller input/result
+buffers and complete old-result materialization remain. All six native stages
+pass in 2.288 seconds guarded. This native mechanism passes its initial criterion.
+
+Both arms subsequently pass all four timed/accounted 96-owner checks, all ten
+specific negatives per arm and identical 32-row ledgers: 26 expected statuses
+pass in 1.536 seconds. The single fixed panel exits zero in 55.398 seconds,
+retaining all 1152 rows and stable image hashes. All 16 flat cohort ranges overlap,
+with no separated gain or loss. Scalar 4096-bucket replacement medians worsen
+2.241 / 3.637 percent, scalar 4096-bucket churn worsens 4.601 percent in cohort one,
+and wide 4096-bucket churn worsens 0.580 percent in cohort zero; these observations
+remain inconclusive with overlapping ranges. The shortest interval is 2.328 ms
+and maximum paired-ratio spread is 4.853 percent, but unchanged chain scalar
+4096-bucket churn drift is 13.236 percent in cohort zero, exceeding the registered
+10-percent limit (Rust/C++ maximum is 6.335 percent). The measured criterion fails;
+the frame reduction establishes no qualified timing benefit or production alias
+variant. Initial native-stage flags, later controls, raw cohorts, all peer/adverse
+reductions, criteria, exact header patch and recipes are retained separately
+under `offered-input-disjoint` in the archive.
+
+#### Input-disjoint inline composition
+
+A subsequent native-only trial uses that input/result-disjoint noinline candidate
+as its causal control and adds exactly two clone `alwaysinline` attributes.
+Reversing those edits recovers the control LLVM bytes. All six construction
+stages pass in 2.258 seconds guarded, but the actual reached batch becomes
+570 instructions / a 448-byte frame with 168 stack-access instructions and no
+helper call, versus the current control's 381 / 1024 and 102 stack accesses,
+followed by 95/zero and 75/zero-frame helpers. Its normalized instruction stream
+is exactly the earlier failed-inline batch: 120-byte offered spills and equivalent
+256-byte old-payload scalar spill traffic persists. That older image is explanatory
+context, not the causal control or a timing comparison. The 256 bytes are total
+old-word stack-store traffic: 32 events across 23 distinct old words, including
+nine repeated stores during the post-commit shuffle, not a simultaneously resident
+full payload. The native criterion fails, so correctness and timing are not run. No blanket input `noalias` or inline
+policy follows from these trials. The minimal recipe, criteria, patch, callgraph,
+pins, direct statuses and reached excerpts remain under `input-disjoint-inline`.
+
 [`entry-forward-evidence.tar.gz`](entry-forward-evidence.tar.gz) serves this
 section's reader with scripts, criteria, raw API/whole-Map/long-hit records,
 commands, metadata, statuses, source patch and native excerpts, without binaries.
