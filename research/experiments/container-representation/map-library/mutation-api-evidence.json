@@ -1565,5 +1565,19 @@
     "source_path": "tests/programs/containers/hash-map-program.wf",
     "source_sha256": "76164c37181effb048b43100adc62e6f4141f866d4ef4a99601aebe83d678c2d",
     "tail_fault_exit": 1
+  },
+  "wide_owner_waiting_expansion": {
+    "compiler_sha256": "64cd73e5a10130ab1fff5a9360ecfbb4a2918e6904235f1f461dcd5477a57422",
+    "definitions": 254,
+    "function_definition_bytes": {
+      "wf__par_seq_hash_map_test_owned": 63638,
+      "wf_hash_map_test_owned": 4255286
+    },
+    "limit": "Observed module expansion on the local ARM host. Formal native build/run phase timings are retained under wide_owner_regression. Linux CI deadline does not identify its timed-out command until the diagnostic is changed.",
+    "llvm_bytes": 5122451,
+    "llvm_sha256": "d8aebff3ffe05d11f35d363bae8d9f0e09fa59561079c2b665c86502d868ab92",
+    "replay": "<frozen-running-index-compiler> --par --emit-llvm tests/programs/containers/hash-map-program.wf -o <scratch-root>/wide-node-par.ll",
+    "source_path": "tests/programs/containers/hash-map-program.wf",
+    "source_revision": "b9ccb67de4d2ab3110418f47670944c5d000970a"
   }
 }

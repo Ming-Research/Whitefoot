@@ -396,6 +396,7 @@ fn terminal_consumption_keeps_waiting_context_starts_and_exit_join() {
 // never the source window; each owner must then be updated and released once.
 const WAITING_OBSERVER: &str = r#"
 #include <stdint.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -403,7 +404,8 @@ const WAITING_OBSERVER: &str = r#"
 extern void *wf__context_prepare(uint64_t);
 extern void wf__context_launch(uint64_t *, void *, void *(*)(void *));
 extern int wf__context_join_wait(uint64_t *, void *);
-static unsigned starts, joins, released;
+static unsigned starts, joins;
+static atomic_uint released;
 static struct {
   uint64_t bytes;
   uint64_t *group;
@@ -432,7 +434,8 @@ void wf_launch_observed(uint64_t *group, void *arguments, void *(*start)(void *)
 }
 
 int wf_join_observed(uint64_t *group, void *frame) {
-  if (starts != 3 || joins != 0 || released != 0) fail("context capture or join order");
+  if (starts != 3 || joins != 0 || atomic_load_explicit(&released, memory_order_relaxed) != 0)
+    fail("context capture or join order");
   ++joins;
   for (unsigned index = 0; index < starts; ++index) {
     if (deferred[index].group != group) fail("context group changed");
@@ -449,10 +452,12 @@ void wf_release_observed(void *owner) {
   uint64_t value = *(uint64_t *)owner;
   if (value < 1101 || value > 1103) fail("captured owner or value changed");
   unsigned bit = 1u << (unsigned)(value - 1101);
-  if ((released & bit) != 0) fail("owner released twice");
-  released |= bit;
+  // Contexts may release concurrently. The mask publishes no other data;
+  // one atomic update retains every bit and elects exactly one final report.
+  unsigned previous = atomic_fetch_or_explicit(&released, bit, memory_order_relaxed);
+  if ((previous & bit) != 0) fail("owner released twice");
   free(owner);
-  if (released == 7) puts("waiting owners: three starts, one join, three releases");
+  if ((previous | bit) == 7) puts("waiting owners: three starts, one join, three releases");
 }
 "#;
 

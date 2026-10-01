@@ -1567,6 +1567,19 @@ rarely insert at the same place.
 
 ## Parallel lowering and runtime
 
+- **Wide local owners expand waiting callers and native compilation.** The
+  [wide HashMap ownership witness](../research/experiments/container-representation/map-library/RESULTS.md#wide-owner-waiting-frame-cost)
+  emits a 4.26 MB waiting caller against a 64 KB sequential clone after each
+  node gains 31 inline words. Local parallel native builds take about eleven
+  seconds while sequential builds stay below two; Linux CI reaches the
+  native-child deadline twice, but its original diagnostic does not identify
+  compilation versus execution. Preserve the complete word, identity, cleanup
+  and lowering-mode observations. Reopen now to attribute the timed-out command,
+  then reduce redundant waiting-frame/aggregate transfers or compare bounded
+  ordinary helper lifetimes, without increasing the deadline or suppressing
+  overlap permission. Validate exact outcomes and native build/run phases
+  separately; a smaller source shape alone does not resolve the general cost.
+
 - **Addressed call results can suppress proved overlap.** In
   `lowering/builder.rs::overlaps`, promoting a non-final call result to local
   storage would read it before its join, so that call ends the offered group.

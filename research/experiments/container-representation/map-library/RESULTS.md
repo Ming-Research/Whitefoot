@@ -3770,3 +3770,25 @@ returns zero for the unchanged strengthened program. Incrementing only word 30
 in each constructed node, while leaving every child and key serial unchanged,
 returns status one. The new full-content observation therefore detects a
 corrupted tail independently of the existing identity and release checks.
+
+
+#### Wide-owner waiting-frame cost
+
+The strengthened fixture also exposes a separate compilation cost. With the
+frozen running-index compiler and ordinary CLI `--par` policy, its LLVM module
+is 5,122,451 bytes with 254 definitions. `wf_hash_map_test_owned` alone occupies
+about 4.26 MB, versus about 64 KB for its sequential clone in that same module.
+Repeated complete waiting-frame address types contribute to this expansion;
+this is not evidence that the 31-word checking loop itself was unrolled.
+The emitted module SHA-256 is
+`d8aebff3ffe05d11f35d363bae8d9f0e09fa59561079c2b665c86502d868ab92`.
+The retained formal phase records above locate 11.32 and 11.40 seconds in
+parallel native compilation on the local ARM host. Native execution in those
+records remains below 0.28 seconds per image.
+
+On revision `b9ccb67de4d2ab3110418f47670944c5d000970a`, Linux corpus CI
+hits the 60-second native-child deadline in this case twice; macOS passes.
+The shared child runner times both compiler commands and programs, so that
+original message does not prove which command expired. The diagnostic now
+includes the command. Attribution and any corrective change remain open;
+no timeout increase, assertion removal or overlap-policy change is selected.
