@@ -1,0 +1,113 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+const top: u64 = 18446744073709551615_u64;
+
+const absent: u64 = 18446744073709551615_u64;
+
+fn mark_children(kids: &[u64], results: &[u64], value: u64) -> result: unit reads(kids), writes(results) contract {
+  requires forall nodup(a in 0_u64..kids^.len, b in 0_u64..kids^.len) when a != b, kids^[a] < results^.len: kids^[a] != kids^[b];
+} {
+  doc "Writes value at every child's own document index. The requirement states that no child repeats, so the certificate separates any two iterations with one instance.";
+  let count = kids^.len;
+  for (
+    k in 0_u64..count,
+    apart(i, j) {
+    }
+  ) {
+    let child = kids^[k];
+    if child < results^.len {
+      set results^[child] = value;
+    }
+  }
+  return unit;
+}
+
+fn mark(parents: &[u64], results: &[u64]) -> result: u64 reads(parents), writes(results) contract {
+  requires results^.len == parents^.len;
+  requires parents^.len <= 4294967294_u64;
+} {
+  doc "Lays the children of every element out in one array, each parent's run in document order, and marks the children of each element with that element's index plus one. A child is appended as its own document index at, larger than every index already in the array, which is what keeps the array free of repeats; a slot never filled stays absent.";
+  let n = parents^.len;
+  let counts = box_array_filled::<u64>(count: n, value: 0_u64);
+  for (at in 0_u64..n) {
+    let parent = parents^[at];
+    if parent < n {
+      let seen = counts.inner[parent];
+      if seen < n {
+        set counts.inner[parent] = seen + 1_u64;
+      } else {
+        return 1_u64;
+      }
+    }
+  }
+  let starts = box_array_filled::<u64>(count: n, value: 0_u64);
+  let fill = box_array_filled::<u64>(count: n, value: 0_u64);
+  let running = 0_u64;
+  for (at in 0_u64..n) {
+    set starts.inner[at] = running;
+    set fill.inner[at] = running;
+    let here = counts.inner[at];
+    let total = running +sat here;
+    if total <= n {
+      set running = total;
+    } else {
+      return 2_u64;
+    }
+  }
+  let children = box_array_filled::<u64>(count: n, value: absent);
+  for (
+    at in 0_u64..n,
+    invariant forall fresh(q in 0_u64..children.inner.len) when children.inner[q] != absent: children.inner[q] < at,
+    invariant forall nodup(a in 0_u64..children.inner.len, b in 0_u64..children.inner.len) when a != b, children.inner[a] != absent: children.inner[a] != children.inner[b]
+  ) {
+    let parent = parents^[at];
+    if parent < n {
+      let place = fill.inner[parent];
+      if place < children.inner.len {
+        set children.inner[place] = at;
+        set fill.inner[parent] = place + 1_u64;
+      } else {
+        return 3_u64;
+      }
+    }
+  }
+  for (at in 0_u64..n) {
+    let start = starts.inner[at];
+    let end = fill.inner[at];
+    let ordered = start <= end;
+    let inside = end <= n;
+    let usable = band(ordered, inside);
+    if usable {
+      let label = at + 1_u64;
+      mark_children(kids: &children.inner[start..end], results: results, value: label);
+    } else {
+      return 4_u64;
+    }
+  }
+  return 0_u64;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The tree div(section(span, img), article(p, a)) in preorder: every element but the root is marked with its parent's index plus one.";
+  let parents = box_array_filled::<u64>(count: 7_u64, value: top);
+  set parents.inner[1_u64] = 0_u64;
+  set parents.inner[2_u64] = 1_u64;
+  set parents.inner[3_u64] = 1_u64;
+  set parents.inner[4_u64] = 0_u64;
+  set parents.inner[5_u64] = 4_u64;
+  set parents.inner[6_u64] = 4_u64;
+  let results = box_array_filled::<u64>(count: 7_u64, value: 0_u64);
+  let status = mark(parents: &parents.inner[0_u64..7_u64], results: &results.inner[0_u64..7_u64]);
+  if status != 0_u64 {
+    return exit_status(code: 1_u8);
+  }
+  let sum = 0_u64;
+  for (at in 0_u64..7_u64) {
+    set sum = sum +wrap results.inner[at];
+  }
+  if sum != 16_u64 {
+    return exit_status(code: 2_u8);
+  }
+  return exit_status(code: 0_u8);
+}

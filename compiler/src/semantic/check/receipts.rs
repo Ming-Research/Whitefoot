@@ -520,7 +520,7 @@ fn claims_rendering(function: &CheckedFunction) -> String {
         })
         .collect::<Vec<_>>();
     format!(
-        "{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{postconditions:?}\n{:?}\n{:?}\n{:?}",
+        "{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{postconditions:?}\n{:?}\n{:?}",
         function.formal_hypothesis,
         function.symbol,
         function.module,
@@ -531,7 +531,6 @@ fn claims_rendering(function: &CheckedFunction) -> String {
         function.requirements,
         function.function_actuals,
         function.range_facts.requirements,
-        function.range_facts.ensures,
     )
 }
 

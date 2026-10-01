@@ -718,7 +718,7 @@ variant_names! {
     StaticObligationDisposition { Refuted, Unproved }
     UnsupportedSemanticFeature {
         Generics, PreludeNominalValues, ReferenceFormation, CompositeValues,
-        RecursiveNominalLayout, OwnershipJoin, DuplicateMatchArm, OperationFamily, RangeFacts,
+        RecursiveNominalLayout, OwnershipJoin, DuplicateMatchArm, OperationFamily,
     }
 }
 

@@ -550,6 +550,24 @@ rarely insert at the same place.
   inventory is next edited; the storage-destructuring repair uses its actual
   identities and needs no inventory change.
 
+- **The range judgment re-solves each problem from scratch.** The
+  derivation of [RANGE-3] and [RANGE-5] decides each choice by testing every
+  undecided alternative with a full Fourier-Motzkin elimination on every
+  saturation round and branch, and the walk solves one problem per
+  obligation and per certificate pair without sharing work between them. In
+  `research/investigations/unique-keys/level_cascade.wf` it is 91% of the
+  checker's instructions, about 1.1 s of a 1.2 s check, almost all in
+  solving owed facts (`Walker::require`); in Snowghost's whole renderer it is
+  about 2.5 s of a 105 s front end
+  (`research/investigations/unique-keys/POINTWISE.md#observations`). An
+  incremental elimination that extends a solved set by one literal, or a
+  memo of contradictory literal sets within one problem, would keep every
+  verdict and cut the repeated eliminations. Validate by identical verdicts
+  on the `range*` conformance cases and the witnesses, and by the
+  instruction count of `level_cascade.wf`'s check. Reopen when a program's
+  check time is dominated by the range judgment or a clause the writer
+  believes holds reaches a ceiling.
+
 ## Containers and storage lowering
 
 - **A hash map offers no sample or bounded visit.**
@@ -1629,6 +1647,22 @@ rarely insert at the same place.
   components a budget-carrying frame variant. Reopen when such a program
   appears.
 
+- **A counted loop that binds an ordered result list is denied
+  parallelism.** [PAR-2]'s permission survey describes one written target
+  per statement, so a body containing `let (a, b) = f(...);` [CALL-4] is
+  denied as an unsupported body form (`LoopDenial::BodyForm` in
+  `compiler/src/semantic/loop_permission.rs`) whatever `f` writes. The
+  Snowghost shape D cascade hit it: its level loop's call of
+  `cascade_element`, which returns the values and a flag, moved into a
+  helper `cascade_into` that writes the values through an element reference
+  and returns the flag alone. The survey could
+  give each binder its own place, as a `let` of one value already does,
+  since every binder is a new iteration-own binding. Validate with a loop
+  whose body binds a two-result call and writes one element per iteration:
+  it should be permitted and split, with the same output as its sequential
+  build. Reopen with the next change to the permission survey or a program
+  whose wrapper costs measurable time.
+
 ## Platforms and host interfaces
 
 - **Upstream LLVM on Darwin does not yet support the selected stack-probe
@@ -2355,6 +2389,21 @@ each is resolved by a discussion and a tree change.
   with the polling one. Reopen when a program must wake on the earlier of an
   object's change and a time, or when the polling writer's cost shows in a
   profile.
+
+- **Parameters a contract names but the body does not use are passed at
+  run time.** A range requirement can only name what the callee receives,
+  so `cascade_level` in
+  `research/investigations/unique-keys/level_cascade.wf` takes `positions`,
+  `depths` and `level` only so that its `listed` and `up` requirements can
+  state the facts its certificate uses; the caller passes them on every
+  call. Each costs a pointer and a length or one integer per call, which the
+  measured cascade does not show, but a writer must keep proof-only data
+  alive and in scope to call such a function. A proof-only parameter that
+  lowering erases would need its own rule for what such a parameter may
+  flow into. Validate by measuring the call cost in a cascade with small
+  levels and by counting the functions in Snowghost whose parameters only
+  their contract reads. Reopen when that cost shows in a profile or a
+  writer must compute a value only to pass it.
 
 ## Ownership redesign (candidate x1) follow-ups
 

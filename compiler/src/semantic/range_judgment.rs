@@ -29,11 +29,15 @@ pub(crate) enum RangeIssue {
         site: &'static str,
         /// The conclusion the derivation left open, when the fact was written.
         relation: Option<NodePath>,
-        capacity: bool,
+        /// The structural ceiling the derivation reached, if it reached one.
+        capacity: Option<&'static str>,
     },
     /// A counted loop's certificate does not separate two iterations
     /// [RANGE-5].
-    Apart { node: NodePath, failure: ApartFailure },
+    Apart {
+        node: NodePath,
+        failure: ApartFailure,
+    },
 }
 
 /// Why a certificate does not hold.
@@ -48,9 +52,16 @@ pub(crate) enum ApartFailure {
     /// An access reaches storage another iteration writes at no one element.
     Unplaced { access: NodePath },
     /// A `use` step does not form an instance.
-    Use { step: NodePath, reason: &'static str },
-    /// One pair's derivation reached a structural capacity.
-    Capacity { write: NodePath, other: NodePath },
+    Use {
+        step: NodePath,
+        reason: &'static str,
+    },
+    /// One pair's derivation reached a structural ceiling.
+    Capacity {
+        write: NodePath,
+        other: NodePath,
+        ceiling: &'static str,
+    },
 }
 
 pub(crate) use super::range_facts::CheckedCertifiedLoop as CertifiedLoop;
@@ -69,14 +80,17 @@ fn takes_part(functions: &[CheckedFunction], function: &CheckedFunction) -> bool
         return true;
     }
     let mut calls = false;
-    for_each_call(function.body.as_deref().unwrap_or_default(), &mut |callee| {
-        if functions
-            .get(callee.0 as usize)
-            .is_some_and(|callee| !callee.range_facts.requirements.is_empty())
-        {
-            calls = true;
-        }
-    });
+    for_each_call(
+        function.body.as_deref().unwrap_or_default(),
+        &mut |callee| {
+            if functions
+                .get(callee.0 as usize)
+                .is_some_and(|callee| !callee.range_facts.requirements.is_empty())
+            {
+                calls = true;
+            }
+        },
+    );
     calls
 }
 
@@ -126,7 +140,10 @@ fn for_each_call(
                 for_each_call(body, visit);
             }
             CheckedStatement::Atomic {
-                target, guard, body, ..
+                target,
+                guard,
+                body,
+                ..
             } => {
                 expression(target, visit);
                 if let Some(guard) = guard {
@@ -140,7 +157,10 @@ fn for_each_call(
 }
 
 /// Judges every selected function of a checked program, dense by function.
-pub(crate) fn judge_program(functions: &[CheckedFunction], selected: &[bool]) -> Vec<RangeJudgment> {
+pub(crate) fn judge_program(
+    functions: &[CheckedFunction],
+    selected: &[bool],
+) -> Vec<RangeJudgment> {
     functions
         .iter()
         .enumerate()

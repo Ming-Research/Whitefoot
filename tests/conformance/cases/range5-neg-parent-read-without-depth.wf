@@ -8,7 +8,6 @@ const absent: u64 = 18446744073709551615_u64;
 const depth_ceiling: u64 = 4096_u64;
 
 fn cascade_one(parent: u64, own: u64) -> result: u64 pure {
-  doc "Stands in for an element's cascade: its value from its parent's and its own matched rules.";
   let mixed = parent +wrap own;
   return mixed;
 }
@@ -19,9 +18,7 @@ fn cascade_level(slots: &[u64], positions: &[u64], depths: &[u64], parents: &[u6
   requires positions^.len == results^.len;
   requires depths^.len == results^.len;
   requires forall listed(k in 0_u64..slots^.len) when slots^[k] < results^.len: positions^[slots^[k]] == k, depths^[slots^[k]] == level;
-  requires forall up(e in 0_u64..parents^.len) when parents^[e] < parents^.len: depths^[parents^[e]] + 1_u64 == depths^[e];
 } {
-  doc "Cascades one level: each listed element's result, written at its own preorder index, from its parent's result, read at the parent's index, or from base for a top-level element. listed states that the level's elements are distinct, positions^ naming each one's own iteration, and up that a parent lies one level above its element, so the certificate separates the writes of two iterations and a write of one from the parent read of the other.";
   let count = slots^.len;
   let total = results^.len;
   for (
@@ -49,7 +46,6 @@ fn cascade(parents: &[u64], matched: &[u64], results: &[u64]) -> result: u64 rea
   requires results^.len == parents^.len;
   requires parents^.len <= 4294967294_u64;
 } {
-  doc "Stands in for a style pass: a validating walk derives each element's depth, refusing a parent that does not precede its element as Snowghost's walk does, the elements are grouped by depth in preorder with each one's position in its group, and the levels are cascaded one after another. The two loops' invariants state what cascade_level requires. Returns 0, or the step that refused.";
   let n = parents^.len;
   let depths = box_array_filled::<u64>(count: n, value: 0_u64);
   let deepest = 0_u64;
@@ -132,7 +128,6 @@ fn cascade(parents: &[u64], matched: &[u64], results: &[u64]) -> result: u64 rea
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "The tree div(section(span, img), article(p, a)) in preorder. Level 2 lists elements 2, 3, 5 and 6, scattered through the preorder results.";
   let parents = box_array_filled::<u64>(count: 7_u64, value: top);
   set parents.inner[1_u64] = 0_u64;
   set parents.inner[2_u64] = 1_u64;

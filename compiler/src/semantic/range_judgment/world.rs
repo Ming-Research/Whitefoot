@@ -102,7 +102,6 @@ pub(super) enum VersionDef {
 
 #[derive(Clone, Debug)]
 pub(super) struct Version {
-    pub(super) container: ContainerId,
     pub(super) def: VersionDef,
 }
 
@@ -116,12 +115,9 @@ pub(super) enum AtomDef {
         version: VersionId,
         indices: Vec<Linear>,
     },
-    /// A measure of a container in one generation of its descriptor.
-    Measure {
-        container: ContainerId,
-        generation: u32,
-        measure: CheckedMeasure,
-    },
+    /// A measure of a container in one generation of its descriptor; the
+    /// world interns one atom per container, generation and measure.
+    Measure,
     /// The length of one segment of a `Segments` container.
     SegmentLength {
         container: ContainerId,
@@ -206,14 +202,7 @@ impl World {
         if let Some(atom) = self.measures.get(&key) {
             return Linear::atom(*atom);
         }
-        let atom = self.push(
-            AtomDef::Measure {
-                container,
-                generation,
-                measure,
-            },
-            Some(IntegerType::U64),
-        );
+        let atom = self.push(AtomDef::Measure, Some(IntegerType::U64));
         self.measures.insert(key, atom);
         Linear::atom(atom)
     }
@@ -240,7 +229,12 @@ impl World {
         Linear::atom(atom)
     }
 
-    pub(super) fn joined(&mut self, join: JoinId, values: Vec<Linear>, ty: Option<IntegerType>) -> Linear {
+    pub(super) fn joined(
+        &mut self,
+        join: JoinId,
+        values: Vec<Linear>,
+        ty: Option<IntegerType>,
+    ) -> Linear {
         Linear::atom(self.push(AtomDef::Joined { join, values }, ty))
     }
 
@@ -270,14 +264,14 @@ impl World {
         if let Some(version) = self.initial.get(&container) {
             return *version;
         }
-        let version = self.new_version(container, VersionDef::Initial);
+        let version = self.new_version(VersionDef::Initial);
         self.initial.insert(container, version);
         version
     }
 
-    pub(super) fn new_version(&mut self, container: ContainerId, def: VersionDef) -> VersionId {
+    pub(super) fn new_version(&mut self, def: VersionDef) -> VersionId {
         let id = VersionId::try_from(self.versions.len()).unwrap_or(VersionId::MAX);
-        self.versions.push(Version { container, def });
+        self.versions.push(Version { def });
         id
     }
 
@@ -402,7 +396,10 @@ pub(super) enum Value {
     /// A struct being constructed, field by field.
     Struct(Vec<Value>),
     /// An enum value being constructed.
-    Variant { variant: u32, fields: Vec<Value> },
+    Variant {
+        variant: u32,
+        fields: Vec<Value>,
+    },
     Unknown,
 }
 
@@ -494,14 +491,11 @@ impl State {
         value: Option<Linear>,
     ) {
         let previous = self.version(world, container);
-        let version = world.new_version(
-            container,
-            VersionDef::Write {
-                previous,
-                indices,
-                value,
-            },
-        );
+        let version = world.new_version(VersionDef::Write {
+            previous,
+            indices,
+            value,
+        });
         self.versions.insert(container, version);
         if let Some(log) = &mut world.log {
             log.containers.insert(container);
@@ -510,8 +504,13 @@ impl State {
 
     /// Forgets the contents of one container, and its descriptor when
     /// `descriptor` says the write can change it.
-    pub(super) fn havoc_container(&mut self, world: &mut World, container: ContainerId, descriptor: bool) {
-        let version = world.new_version(container, VersionDef::Fresh);
+    pub(super) fn havoc_container(
+        &mut self,
+        world: &mut World,
+        container: ContainerId,
+        descriptor: bool,
+    ) {
+        let version = world.new_version(VersionDef::Fresh);
         self.versions.insert(container, version);
         if descriptor {
             let generation = world.new_generation();
@@ -543,7 +542,8 @@ impl State {
                 log.slots.insert(slot);
             }
         }
-        self.variants.retain(|known, _| !known.starts_with(&location));
+        self.variants
+            .retain(|known, _| !known.starts_with(&location));
         if let Some(log) = &mut world.log {
             log.slots.insert(location);
         }
@@ -610,8 +610,7 @@ pub(super) fn join_states(
         let Some(all) = all else {
             continue;
         };
-        out.values
-            .insert(*binding, join_values(world, join, &all));
+        out.values.insert(*binding, join_values(world, join, &all));
     }
     for (location, slot) in &first.slots {
         let all: Option<Vec<&Slot>> = arms.iter().map(|arm| arm.slots.get(location)).collect();
@@ -628,8 +627,10 @@ pub(super) fn join_states(
             })
             .collect::<Option<Vec<_>>>()
         {
-            out.slots
-                .insert(location.clone(), Slot::Int(world.joined(join, values, None)));
+            out.slots.insert(
+                location.clone(),
+                Slot::Int(world.joined(join, values, None)),
+            );
         }
     }
     let containers: BTreeSet<ContainerId> = arms
@@ -644,7 +645,7 @@ pub(super) fn join_states(
         let version = if versions.iter().all(|version| *version == versions[0]) {
             versions[0]
         } else {
-            world.new_version(container, VersionDef::Join { join, versions })
+            world.new_version(VersionDef::Join { join, versions })
         };
         out.versions.insert(container, version);
     }
@@ -681,7 +682,10 @@ pub(super) fn join_states(
         .cloned()
         .collect();
     for (location, variant) in &first.variants {
-        if arms.iter().all(|arm| arm.variants.get(location) == Some(variant)) {
+        if arms
+            .iter()
+            .all(|arm| arm.variants.get(location) == Some(variant))
+        {
             out.variants.insert(location.clone(), *variant);
         }
     }

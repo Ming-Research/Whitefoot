@@ -348,7 +348,15 @@ fn collect<'check>(
             judged.push(loop_permission);
         }
         for nested in nested_bodies(statement) {
-            collect(program, places, obligations, waiting, certified, nested, judged);
+            collect(
+                program,
+                places,
+                obligations,
+                waiting,
+                certified,
+                nested,
+                judged,
+            );
         }
     }
 }
@@ -914,9 +922,10 @@ impl<'check> Survey<'check, '_> {
         else {
             return false;
         };
-        if !matches!(place.path[first], PlaceStep::Index(_)) && !place.path[first..]
-            .iter()
-            .any(|step| matches!(step, PlaceStep::Index(_)))
+        if !matches!(place.path[first], PlaceStep::Index(_))
+            && !place.path[first..]
+                .iter()
+                .any(|step| matches!(step, PlaceStep::Index(_)))
         {
             return false;
         }
@@ -1551,10 +1560,9 @@ impl<'check> Survey<'check, '_> {
                 .element_writes
                 .iter()
                 .any(|other| self.places.overlaps(&oracle, &other.root, &written.root))
-                || self
-                    .range_references
-                    .iter()
-                    .any(|range| range.written && self.places.overlaps(&oracle, &range.origin, &written.root));
+                || self.range_references.iter().any(|range| {
+                    range.written && self.places.overlaps(&oracle, &range.origin, &written.root)
+                });
             if uncovered || mixed {
                 return Some(LoopDenial::SharedWrite {
                     argument: written.statement.clone(),

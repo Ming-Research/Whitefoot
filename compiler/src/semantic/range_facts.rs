@@ -18,10 +18,10 @@ use super::model::{BindingId, CheckedLoopId, CheckedMeasure, IntegerType};
 pub(crate) enum CheckedRangeRoot {
     /// A parameter or a binding live where the clause is written.
     Binding(BindingId),
-    /// An `ensures` clause's result binder.
+    /// A fill constructor's result, in the clause of its content [RANGE-2].
     Result,
-    /// A routed `ensures` clause's payload binder.
-    Route,
+    /// One of a fill constructor's arguments, by position.
+    Argument(u32),
 }
 
 /// One storage place a range term reads: a root and the field, `Box`
@@ -148,13 +148,6 @@ pub(crate) struct CheckedRangeLoop {
     pub(crate) apart: Option<CheckedApart>,
 }
 
-/// One range `ensures`, with its success route when it has one.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct CheckedRangeEnsures {
-    pub(crate) clause: CheckedRangeClause,
-    pub(crate) routed: bool,
-}
-
 /// One counted loop whose certificate holds [RANGE-5]: every element write
 /// one iteration makes to storage that outlives it selects an element no
 /// other iteration reads or writes.
@@ -174,14 +167,25 @@ pub(crate) struct CheckedCertifiedLoop {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct CheckedRangeFacts {
     pub(crate) requirements: Vec<CheckedRangeClause>,
-    pub(crate) ensures: Vec<CheckedRangeEnsures>,
     pub(crate) loops: BTreeMap<CheckedLoopId, CheckedRangeLoop>,
     pub(crate) certified: Vec<CheckedCertifiedLoop>,
 }
 
 impl CheckedRangeFacts {
     pub(crate) fn is_empty(&self) -> bool {
-        self.requirements.is_empty() && self.ensures.is_empty() && self.loops.is_empty()
+        self.requirements.is_empty() && self.loops.is_empty()
+    }
+
+    /// Whether `declaration` names one of these range facts.
+    pub(crate) fn declares(&self, declaration: DeclarationId) -> bool {
+        self.requirements
+            .iter()
+            .chain(
+                self.loops
+                    .values()
+                    .flat_map(|entry| entry.invariants.iter()),
+            )
+            .any(|clause| clause.declaration == declaration)
     }
 }
 

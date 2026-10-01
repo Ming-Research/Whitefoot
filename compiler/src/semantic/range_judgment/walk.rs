@@ -73,8 +73,8 @@ pub(super) struct Walker<'program> {
     /// Nonzero while a loop body is walked only to learn what it writes.
     dry: usize,
     recording: Option<Recording>,
-    /// Loops a `break` left.
-    breaks: BTreeSet<u32>,
+    /// The state at each `break`, by the loop it leaves.
+    breaks: BTreeMap<u32, Vec<State>>,
     /// One sink per open value initializer: each `give`'s state and value.
     gives: Vec<Vec<(State, Value)>>,
     /// Each parameter's value at entry.
@@ -112,7 +112,10 @@ fn literal(left: Linear, relation: Relation, right: Linear) -> Literal {
 }
 
 impl<'program> Walker<'program> {
-    pub(super) fn new(functions: &'program [CheckedFunction], function: &'program CheckedFunction) -> Self {
+    pub(super) fn new(
+        functions: &'program [CheckedFunction],
+        function: &'program CheckedFunction,
+    ) -> Self {
         Self {
             functions,
             function,
@@ -122,7 +125,7 @@ impl<'program> Walker<'program> {
             certified: Vec::new(),
             dry: 0,
             recording: None,
-            breaks: BTreeSet::new(),
+            breaks: BTreeMap::new(),
             gives: Vec::new(),
             entry: BTreeMap::new(),
             cite: empty_path(),
@@ -284,7 +287,9 @@ impl<'program> Walker<'program> {
                 };
                 let version = state.version(&mut self.world, container);
                 let generation = state.generation(container);
-                let length = self.world.measure(container, generation, CheckedMeasure::Length);
+                let length = self
+                    .world
+                    .measure(container, generation, CheckedMeasure::Length);
                 if segments {
                     PlaceView::Segments {
                         container,
@@ -336,12 +341,16 @@ impl<'program> Walker<'program> {
             let negation = conclusion_negation(conclusion);
             match negation.as_slice() {
                 [single] => query.units.push(single.clone()),
-                _ => query.choices.push(negation.into_iter().map(|literal| vec![literal]).collect()),
+                _ => query
+                    .choices
+                    .push(negation.into_iter().map(|literal| vec![literal]).collect()),
             }
             let verdict = facts::judge(&mut self.world, &self.facts, &state.facts, &[], query)?;
             if verdict != Verdict::Refuted {
                 let relation = clause.conclusions[position].node.clone();
-                return Ok(Some((!relation.components().is_empty()).then_some(relation)));
+                return Ok(Some(
+                    (!relation.components().is_empty()).then_some(relation),
+                ));
             }
         }
         Ok(None)
@@ -365,14 +374,14 @@ impl<'program> Walker<'program> {
                 fact: clause.name.clone(),
                 site,
                 relation,
-                capacity: false,
+                capacity: None,
             }),
-            Err(Capacity) => self.issues.push(RangeIssue::Undischarged {
+            Err(capacity) => self.issues.push(RangeIssue::Undischarged {
                 node: node.clone(),
                 fact: clause.name.clone(),
                 site,
                 relation: None,
-                capacity: true,
+                capacity: Some(capacity.describe()),
             }),
         }
     }
@@ -409,12 +418,15 @@ impl<'program> Walker<'program> {
                 let evaluated = self.eval(&mut state, value);
                 for (binding, ty, ordinal) in bindings {
                     let field = match &evaluated {
-                        Value::Owned(location) => {
-                            self.read_location(&mut state, &location.child(Step::Field(*ordinal)), *ty)
-                        }
-                        Value::Struct(fields) => {
-                            fields.get(*ordinal as usize).cloned().unwrap_or(Value::Unknown)
-                        }
+                        Value::Owned(location) => self.read_location(
+                            &mut state,
+                            &location.child(Step::Field(*ordinal)),
+                            *ty,
+                        ),
+                        Value::Struct(fields) => fields
+                            .get(*ordinal as usize)
+                            .cloned()
+                            .unwrap_or(Value::Unknown),
                         _ => Value::Unknown,
                     };
                     self.bind(&mut state, *binding, *ty, field);
@@ -461,9 +473,10 @@ impl<'program> Walker<'program> {
             CheckedStatement::Return {
                 node_path, value, ..
             } => {
+                // No range fact is owed at a return [RANGE-1]: the returned
+                // value is evaluated only for the obligations it contains.
                 self.cite = node_path.clone();
-                let returned = self.eval(&mut state, value);
-                self.returned(&state, &returned, node_path);
+                self.eval(&mut state, value);
                 None
             }
             CheckedStatement::Match {
@@ -515,11 +528,7 @@ impl<'program> Walker<'program> {
                 }
                 None
             }
-            CheckedStatement::Loop {
-                id,
-                body,
-                ..
-            } => self.unbounded_loop(state, *id, body),
+            CheckedStatement::Loop { id, body, .. } => self.unbounded_loop(state, *id, body),
             CheckedStatement::CountedRange {
                 id,
                 node_path,
@@ -531,10 +540,12 @@ impl<'program> Walker<'program> {
                 ..
             } => {
                 self.cite = node_path.clone();
-                self.counted_loop(state, *id, node_path, *binder, lower, upper, invariants, body)
+                self.counted_loop(
+                    state, *id, node_path, *binder, lower, upper, invariants, body,
+                )
             }
             CheckedStatement::Break { target, .. } => {
-                self.breaks.insert(target.0);
+                self.breaks.entry(target.0).or_default().push(state);
                 None
             }
             CheckedStatement::Atomic {
@@ -601,7 +612,9 @@ impl<'program> Walker<'program> {
                         let known = state.variants.get(&location).copied();
                         (Some(location), None, known)
                     }
-                    Value::Variant { variant, fields } => (None, Some(fields.clone()), Some(*variant)),
+                    Value::Variant { variant, fields } => {
+                        (None, Some(fields.clone()), Some(*variant))
+                    }
                     _ => (None, None, None),
                 };
                 for arm in arms {
@@ -668,7 +681,10 @@ impl<'program> Walker<'program> {
                 CheckedType::Integer(integer) => Value::Int(self.world.opaque(Some(integer))),
                 CheckedType::Bool => Value::Bool(Cond::Unknown),
                 CheckedType::Unit | CheckedType::Float(_) => Value::Unknown,
-                _ => Value::Owned(Location::root(Origin::Binding(binding, self.world.new_origin()))),
+                _ => Value::Owned(Location::root(Origin::Binding(
+                    binding,
+                    self.world.new_origin(),
+                ))),
             },
             other => other,
         };
@@ -755,7 +771,8 @@ impl<'program> Walker<'program> {
                         state.set_value(&mut self.world, place.binding, value);
                         return;
                     }
-                    if let Some(Value::Owned(location)) = state.values.get(&place.binding).cloned() {
+                    if let Some(Value::Owned(location)) = state.values.get(&place.binding).cloned()
+                    {
                         state.havoc_location(&mut self.world, &location);
                         self.unplaced_location(state, &location, node);
                     }
@@ -772,20 +789,18 @@ impl<'program> Walker<'program> {
                 }
                 self.store(state, &location, place.ty, value, node);
             }
-            CheckedSetTarget::RangeIndex(place) => {
-                match self.range_element(state, place) {
-                    Some((container, indices, whole)) => {
-                        self.access(container, &indices, true, node, state);
-                        state.write_element(
-                            &mut self.world,
-                            container,
-                            indices,
-                            if whole { stored } else { None },
-                        );
-                    }
-                    None => self.forget_all(state, node),
+            CheckedSetTarget::RangeIndex(place) => match self.range_element(state, place) {
+                Some((container, indices, whole)) => {
+                    self.access(container, &indices, true, node, state);
+                    state.write_element(
+                        &mut self.world,
+                        container,
+                        indices,
+                        if whole { stored } else { None },
+                    );
                 }
-            }
+                None => self.forget_all(state, node),
+            },
             CheckedSetTarget::Storage(root) => {
                 match self.path_target(state, root.root, &root.path) {
                     Target::Element {
@@ -814,7 +829,14 @@ impl<'program> Walker<'program> {
         }
     }
 
-    fn store(&mut self, state: &mut State, location: &Location, ty: CheckedType, value: Value, node: &NodePath) {
+    fn store(
+        &mut self,
+        state: &mut State,
+        location: &Location,
+        ty: CheckedType,
+        value: Value,
+        node: &NodePath,
+    ) {
         let location = state.resolve(location);
         state.havoc_location(&mut self.world, &location);
         self.unplaced_location(state, &location, node);
@@ -845,7 +867,12 @@ impl<'program> Walker<'program> {
     // ----- places -----
 
     /// Where one storage path leads.
-    fn path_target(&mut self, state: &mut State, root: PlaceRoot, path: &[CheckedPlaceStep]) -> Target {
+    fn path_target(
+        &mut self,
+        state: &mut State,
+        root: PlaceRoot,
+        path: &[CheckedPlaceStep],
+    ) -> Target {
         let PlaceRoot::Binding(binding) = root else {
             return Target::Unknown;
         };
@@ -981,7 +1008,9 @@ impl<'program> Walker<'program> {
             } => View::Element { container, indices },
             Target::Row { container, row } => {
                 let generation = state.generation(container);
-                let length = self.world.segment_length(container, generation, row.clone());
+                let length = self
+                    .world
+                    .segment_length(container, generation, row.clone());
                 View::Run {
                     container,
                     prefix: vec![row],
@@ -1007,7 +1036,9 @@ impl<'program> Walker<'program> {
         match self.world.container(location, 1) {
             Some(container) => {
                 let generation = state.generation(container);
-                let length = self.world.measure(container, generation, CheckedMeasure::Length);
+                let length = self
+                    .world
+                    .measure(container, generation, CheckedMeasure::Length);
                 View::Run {
                     container,
                     prefix: Vec::new(),
@@ -1021,7 +1052,14 @@ impl<'program> Walker<'program> {
 
     // ----- accesses -----
 
-    fn access(&mut self, container: ContainerId, indices: &[Linear], write: bool, node: &NodePath, state: &State) {
+    fn access(
+        &mut self,
+        container: ContainerId,
+        indices: &[Linear],
+        write: bool,
+        node: &NodePath,
+        state: &State,
+    ) {
         if self.recording.is_some() {
             let (conds, choices) = state.premises(&self.world);
             if let Some(recording) = &mut self.recording {
@@ -1109,7 +1147,14 @@ impl<'program> Walker<'program> {
                 result,
                 formal_effects,
                 ..
-            } => self.call(state, *function, call, arguments, *result, formal_effects.as_deref()),
+            } => self.call(
+                state,
+                *function,
+                call,
+                arguments,
+                *result,
+                formal_effects.as_deref(),
+            ),
             CheckedExpression::IntegerOperation {
                 operation,
                 arguments,
@@ -1168,13 +1213,19 @@ impl<'program> Walker<'program> {
                 let _ = self.eval(state, value);
                 self.opaque_of(expression.ty())
             }
-            CheckedExpression::ArrayMeasure { root, length, measure } => match (root, length.value()) {
+            CheckedExpression::ArrayMeasure {
+                root,
+                length,
+                measure,
+            } => match (root, length.value()) {
                 (_, Some(value)) if *measure != CheckedMeasure::Head => {
                     Value::Int(Linear::constant(i128::from(value)))
                 }
                 (CheckedArrayRoot::Binding { binding, fields }, _) => {
-                    let path: Vec<CheckedPlaceStep> =
-                        fields.iter().map(|field| CheckedPlaceStep::Field(*field)).collect();
+                    let path: Vec<CheckedPlaceStep> = fields
+                        .iter()
+                        .map(|field| CheckedPlaceStep::Field(*field))
+                        .collect();
                     match self.path_target(state, PlaceRoot::Binding(*binding), &path) {
                         Target::Location(location) => {
                             let location = state.resolve(&location);
@@ -1201,15 +1252,21 @@ impl<'program> Walker<'program> {
                 let index = self.int(state, offset);
                 match root {
                     CheckedArrayRoot::Binding { binding, fields } => {
-                        let path: Vec<CheckedPlaceStep> =
-                            fields.iter().map(|field| CheckedPlaceStep::Field(*field)).collect();
+                        let path: Vec<CheckedPlaceStep> = fields
+                            .iter()
+                            .map(|field| CheckedPlaceStep::Field(*field))
+                            .collect();
                         match self.path_target(state, PlaceRoot::Binding(*binding), &path) {
                             Target::Location(location) => {
                                 let location = state.resolve(&location);
                                 match self.world.container(location, 1) {
-                                    Some(container) => {
-                                        self.read_element(state, container, vec![index], *element_type, carrier)
-                                    }
+                                    Some(container) => self.read_element(
+                                        state,
+                                        container,
+                                        vec![index],
+                                        *element_type,
+                                        carrier,
+                                    ),
                                     None => self.opaque_of(*element_type),
                                 }
                             }
@@ -1231,9 +1288,13 @@ impl<'program> Walker<'program> {
                     Target::Location(location) => {
                         let location = state.resolve(&location);
                         match self.world.container(location, 1) {
-                            Some(container) => {
-                                self.read_element(state, container, vec![index], root.element_type, carrier)
-                            }
+                            Some(container) => self.read_element(
+                                state,
+                                container,
+                                vec![index],
+                                root.element_type,
+                                carrier,
+                            ),
                             None => self.opaque_of(root.element_type),
                         }
                     }
@@ -1262,7 +1323,11 @@ impl<'program> Walker<'program> {
                 match self.path_target(state, root.root, &root.path) {
                     Target::Location(location) => {
                         let location = state.resolve(&location);
-                        let arity = if matches!(root.ty, CheckedType::Segments { .. }) { 2 } else { 1 };
+                        let arity = if matches!(root.ty, CheckedType::Segments { .. }) {
+                            2
+                        } else {
+                            1
+                        };
                         match self.world.container(location, arity) {
                             Some(container) => {
                                 let generation = state.generation(container);
@@ -1306,7 +1371,9 @@ impl<'program> Walker<'program> {
             }
             CheckedExpression::BorrowRangeIndex { place, .. } => {
                 match self.range_element(state, place) {
-                    Some((container, indices, true)) => Value::Ref(View::Element { container, indices }),
+                    Some((container, indices, true)) => {
+                        Value::Ref(View::Element { container, indices })
+                    }
                     _ => Value::Ref(View::Unknown),
                 }
             }
@@ -1325,7 +1392,8 @@ impl<'program> Walker<'program> {
                             Some(container) => {
                                 let generation = state.generation(container);
                                 let length =
-                                    self.world.segment_length(container, generation, row.clone());
+                                    self.world
+                                        .segment_length(container, generation, row.clone());
                                 Value::Ref(View::Run {
                                     container,
                                     prefix: vec![row],
@@ -1343,10 +1411,12 @@ impl<'program> Walker<'program> {
                 source, start, end, ..
             } => {
                 let base = match source {
-                    CheckedRangeSource::Storage(root) => match self.path_target(state, root.root, &root.path) {
-                        Target::Location(location) => self.run_of(state, location),
-                        _ => View::Unknown,
-                    },
+                    CheckedRangeSource::Storage(root) => {
+                        match self.path_target(state, root.root, &root.path) {
+                            Target::Location(location) => self.run_of(state, location),
+                            _ => View::Unknown,
+                        }
+                    }
                     CheckedRangeSource::Range(root) => match state.values.get(&root.binding) {
                         Some(Value::Ref(view @ View::Run { .. })) => view.clone(),
                         _ => View::Unknown,
@@ -1378,31 +1448,41 @@ impl<'program> Walker<'program> {
                 binding,
                 ty,
             } => match state.values.get(binding).cloned() {
-                Some(Value::Ref(View::Place(location))) => self.read_location(state, &location, *ty),
+                Some(Value::Ref(View::Place(location))) => {
+                    self.read_location(state, &location, *ty)
+                }
                 Some(Value::Ref(View::Element { container, indices })) => {
                     self.read_element(state, container, indices, *ty, carrier)
                 }
                 _ => self.opaque_of(*ty),
             },
             CheckedExpression::Project {
-                binding, fields, ty, ..
+                binding,
+                fields,
+                ty,
+                ..
             } => {
-                let path: Vec<CheckedPlaceStep> =
-                    fields.iter().map(|field| CheckedPlaceStep::Field(*field)).collect();
+                let path: Vec<CheckedPlaceStep> = fields
+                    .iter()
+                    .map(|field| CheckedPlaceStep::Field(*field))
+                    .collect();
                 match self.path_target(state, PlaceRoot::Binding(*binding), &path) {
                     Target::Location(location) => self.read_location(state, &location, *ty),
                     _ => self.opaque_of(*ty),
                 }
             }
-            CheckedExpression::ProjectValue { value, field, ty, .. } => {
-                match self.eval(state, value) {
-                    Value::Struct(fields) => fields.get(*field as usize).cloned().unwrap_or(Value::Unknown),
-                    Value::Owned(location) => {
-                        self.read_location(state, &location.child(Step::Field(*field)), *ty)
-                    }
-                    _ => self.opaque_of(*ty),
+            CheckedExpression::ProjectValue {
+                value, field, ty, ..
+            } => match self.eval(state, value) {
+                Value::Struct(fields) => fields
+                    .get(*field as usize)
+                    .cloned()
+                    .unwrap_or(Value::Unknown),
+                Value::Owned(location) => {
+                    self.read_location(state, &location.child(Step::Field(*field)), *ty)
                 }
-            }
+                _ => self.opaque_of(*ty),
+            },
             CheckedExpression::ConstructStruct { fields, .. } => {
                 let mut values = Vec::with_capacity(fields.len());
                 for field in fields {
@@ -1410,7 +1490,9 @@ impl<'program> Walker<'program> {
                 }
                 Value::Struct(values)
             }
-            CheckedExpression::ConstructEnum { variant, fields, .. } => {
+            CheckedExpression::ConstructEnum {
+                variant, fields, ..
+            } => {
                 let mut values = Vec::with_capacity(fields.len());
                 for field in fields {
                     values.push(self.eval(state, field));
@@ -1456,7 +1538,11 @@ impl<'program> Walker<'program> {
             values.push(self.int(state, argument));
         }
         let comparison = |relation| match values.as_slice() {
-            [left, right] => Value::Bool(Cond::Literal(literal(left.clone(), relation, right.clone()))),
+            [left, right] => Value::Bool(Cond::Literal(literal(
+                left.clone(),
+                relation,
+                right.clone(),
+            ))),
             _ => Value::Bool(Cond::Unknown),
         };
         match operation {
@@ -1470,13 +1556,17 @@ impl<'program> Walker<'program> {
             // value: the operation's own obligation proved it in range.
             CheckedIntegerOperation::AddExact | CheckedIntegerOperation::AddDefined => {
                 match values.as_slice() {
-                    [left, right] => left.plus(right).map_or_else(|| self.opaque_of(result), Value::Int),
+                    [left, right] => left
+                        .plus(right)
+                        .map_or_else(|| self.opaque_of(result), Value::Int),
                     _ => self.opaque_of(result),
                 }
             }
             CheckedIntegerOperation::SubtractExact | CheckedIntegerOperation::SubtractDefined => {
                 match values.as_slice() {
-                    [left, right] => left.minus(right).map_or_else(|| self.opaque_of(result), Value::Int),
+                    [left, right] => left
+                        .minus(right)
+                        .map_or_else(|| self.opaque_of(result), Value::Int),
                     _ => self.opaque_of(result),
                 }
             }
@@ -1514,7 +1604,11 @@ impl<'program> Walker<'program> {
             self.forget_all(state, call);
             return self.opaque_of(result);
         };
-        let parameters: Vec<BindingId> = callee.parameters.iter().map(|parameter| parameter.binding).collect();
+        let parameters: Vec<BindingId> = callee
+            .parameters
+            .iter()
+            .map(|parameter| parameter.binding)
+            .collect();
         let argument_of = |root: CheckedRangeRoot| -> Option<Value> {
             match root {
                 CheckedRangeRoot::Binding(binding) => parameters
@@ -1535,7 +1629,11 @@ impl<'program> Walker<'program> {
         // Reads and writes through reference arguments [EFF-5].
         let writes: Vec<crate::DeclarationId> = match formal {
             Some(effects) => effects.writes.iter().map(|path| path.root).collect(),
-            None => callee.declared_state_writes.iter().map(|path| path.root).collect(),
+            None => callee
+                .declared_state_writes
+                .iter()
+                .map(|path| path.root)
+                .collect(),
         };
         for (position, parameter) in callee.parameters.iter().enumerate() {
             if !parameter.mode.is_reference() {
@@ -1553,7 +1651,9 @@ impl<'program> Walker<'program> {
                 continue;
             }
             match view {
-                View::Run { container, .. } => state.havoc_container(&mut self.world, container, false),
+                View::Run { container, .. } => {
+                    state.havoc_container(&mut self.world, container, false)
+                }
                 View::Element { container, indices } => {
                     state.write_element(&mut self.world, container, indices, None);
                 }
@@ -1574,13 +1674,20 @@ impl<'program> Walker<'program> {
     }
 
     /// [RANGE-2] the content a fill constructor gives its result.
-    fn content_law(&mut self, state: &mut State, callee: &CheckedFunction, arguments: &[Value], result: &Value) {
+    fn content_law(
+        &mut self,
+        state: &mut State,
+        callee: &CheckedFunction,
+        arguments: &[Value],
+        result: &Value,
+    ) {
         let Value::Owned(location) = result else {
             return;
         };
         match callee.name.as_str() {
             "box_array_filled" => {
-                let (Some(Value::Int(count)), Some(Value::Int(fill))) = (arguments.first(), arguments.get(1))
+                let (Some(Value::Int(count)), Some(Value::Int(fill))) =
+                    (arguments.first(), arguments.get(1))
                 else {
                     return;
                 };
@@ -1606,13 +1713,22 @@ impl<'program> Walker<'program> {
                         length,
                     },
                 );
-                frame.values.insert(CheckedRangeRoot::Route, fill.clone());
+                frame
+                    .values
+                    .insert(CheckedRangeRoot::Argument(1), fill.clone());
                 let id = self.add_fact(clause, frame);
                 state.facts.push(id);
             }
             "box_segments_filled" => {
-                let (Some(Value::Ref(View::Run { container: lengths, prefix, offset, length: count })), Some(Value::Int(fill))) =
-                    (arguments.first().cloned(), arguments.get(1).cloned())
+                let (
+                    Some(Value::Ref(View::Run {
+                        container: lengths,
+                        prefix,
+                        offset,
+                        length: count,
+                    })),
+                    Some(Value::Int(fill)),
+                ) = (arguments.first().cloned(), arguments.get(1).cloned())
                 else {
                     return;
                 };
@@ -1620,7 +1736,10 @@ impl<'program> Walker<'program> {
                     return;
                 }
                 let payload = location
-                    .child(Step::Payload { variant: 1, field: 0 })
+                    .child(Step::Payload {
+                        variant: 1,
+                        field: 0,
+                    })
                     .child(Step::BoxContent);
                 let Some(container) = self.world.container(payload, 2) else {
                     return;
@@ -1651,23 +1770,17 @@ impl<'program> Walker<'program> {
                         length: count.clone(),
                     },
                 );
-                frame.values.insert(CheckedRangeRoot::Route, fill);
-                let filled = self.add_fact(law_clause(None, CheckedRangeShape::Segments), frame.clone());
+                frame.values.insert(CheckedRangeRoot::Argument(1), fill);
+                let frame_rows = frame.clone();
+                let filled =
+                    self.add_fact(law_clause(None, CheckedRangeShape::Segments), frame.clone());
                 let sized = self.add_fact(segment_lengths_clause(), frame);
                 let at = state.resolve(location);
                 state.routed.push((at.clone(), 1, filled));
                 state.routed.push((at, 1, sized));
-                // The row count is a routed fact too: a zero-binder clause.
-                let rows_fact = self.add_fact(
-                    rows_clause(),
-                    Frame {
-                        places: BTreeMap::new(),
-                        values: BTreeMap::from([
-                            (CheckedRangeRoot::Result, rows),
-                            (CheckedRangeRoot::Route, count),
-                        ]),
-                    },
-                );
+                // The row count is a routed fact too: a clause without
+                // bound variables.
+                let rows_fact = self.add_fact(rows_clause(), frame_rows);
                 let at = state.resolve(location);
                 state.routed.push((at, 1, rows_fact));
             }
@@ -1675,16 +1788,15 @@ impl<'program> Walker<'program> {
         }
     }
 
-    // ----- returns -----
-
-    fn returned(&mut self, state: &State, value: &Value, node: &NodePath) {
-        let _ = (state, value, node);
-    }
-
     // ----- loops -----
 
     /// What a body writes, from a dry walk that records instead of judging.
-    fn modified(&mut self, state: &State, body: &[CheckedStatement], binder: Option<BindingId>) -> Modified {
+    fn modified(
+        &mut self,
+        state: &State,
+        body: &[CheckedStatement],
+        binder: Option<BindingId>,
+    ) -> Modified {
         if self.dry >= MAX_DRY_DEPTH {
             return Modified {
                 everything: true,
@@ -1751,7 +1863,12 @@ impl<'program> Walker<'program> {
         header
     }
 
-    fn unbounded_loop(&mut self, entry: State, id: CheckedLoopId, body: &[CheckedStatement]) -> Option<State> {
+    fn unbounded_loop(
+        &mut self,
+        entry: State,
+        id: CheckedLoopId,
+        body: &[CheckedStatement],
+    ) -> Option<State> {
         let modified = self.modified(&entry, body, None);
         let invariants = self.loop_invariants(id);
         let node = self.cite.clone();
@@ -1761,13 +1878,13 @@ impl<'program> Walker<'program> {
             self.require(&entry, clause, &frame, &node, "a loop entry");
         }
         let mut header = self.header(&entry, &modified);
-        let without = header.clone();
         for clause in &invariants {
             let mut scratch = header.clone();
             let frame = self.frame(&mut scratch, clause, &|root| binding_value(&header, root));
             let fact = self.add_fact(clause.clone(), frame);
             header.facts.push(fact);
         }
+        let fork = header.conds.len();
         let saved = self.breaks.remove(&id.0);
         let end = self.block(header, body);
         if let Some(end) = end {
@@ -1777,11 +1894,13 @@ impl<'program> Walker<'program> {
                 self.require(&end, clause, &frame, &node, "a loop back edge");
             }
         }
-        let broke = self.breaks.remove(&id.0);
-        if saved {
-            self.breaks.insert(id.0);
+        // The loop leaves only by its breaks: the state after it is their
+        // join.
+        let broke = self.breaks.remove(&id.0).unwrap_or_default();
+        if let Some(saved) = saved {
+            self.breaks.insert(id.0, saved);
         }
-        broke.then_some(without)
+        join(&mut self.world, fork, broke)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1809,7 +1928,12 @@ impl<'program> Walker<'program> {
         }
         // [RANGE-5] the certificate, over the entry state.
         if self.dry == 0
-            && let Some(apart) = self.function.range_facts.loops.get(&id).and_then(|entry| entry.apart.clone())
+            && let Some(apart) = self
+                .function
+                .range_facts
+                .loops
+                .get(&id)
+                .and_then(|entry| entry.apart.clone())
         {
             self.apart(&entry, id, node, binder, &low, &high, &apart, body);
         }
@@ -1817,12 +1941,15 @@ impl<'program> Walker<'program> {
         let mut header = self.header(&entry, &modified);
         let index = self.world.opaque(None);
         header.values.insert(binder, Value::Int(index.clone()));
-        header.conds.push(literal(index.clone(), Relation::GreaterEqual, low.clone()));
+        header
+            .conds
+            .push(literal(index.clone(), Relation::GreaterEqual, low.clone()));
         for invariant in affine {
             if let Some(literals) = self.affine_relation(&header, &invariant.relation) {
                 header.conds.extend(literals);
             }
         }
+        let fork = header.conds.len();
         let mut exit = header.clone();
         let mut facts_added = Vec::new();
         for clause in &invariants {
@@ -1833,11 +1960,15 @@ impl<'program> Walker<'program> {
         }
         header.facts.extend(facts_added.iter().copied());
         let mut body_state = header.clone();
-        body_state.conds.push(literal(index.clone(), Relation::Less, high.clone()));
+        body_state
+            .conds
+            .push(literal(index.clone(), Relation::Less, high.clone()));
         let saved = self.breaks.remove(&id.0);
         let end = self.block(body_state, body);
         if let Some(mut end) = end {
-            let next = index.plus_constant(1).unwrap_or_else(|| self.world.opaque(None));
+            let next = index
+                .plus_constant(1)
+                .unwrap_or_else(|| self.world.opaque(None));
             end.values.insert(binder, Value::Int(next));
             for clause in &invariants {
                 let mut scratch = end.clone();
@@ -1845,23 +1976,27 @@ impl<'program> Walker<'program> {
                 self.require(&end, clause, &frame, node, "a loop back edge");
             }
         }
-        let broke = self.breaks.remove(&id.0);
-        if saved {
-            self.breaks.insert(id.0);
-        }
-        exit.values.remove(&binder);
-        if broke {
-            return Some(exit);
+        let mut arms = self.breaks.remove(&id.0).unwrap_or_default();
+        if let Some(saved) = saved {
+            self.breaks.insert(id.0, saved);
         }
         // The loop leaves at the header where the binder reaches the upper
-        // bound: there when the range is not empty.
+        // bound, there when the range is not empty, and at each break; the
+        // state after it is their join.
         exit.facts.extend(facts_added);
-        if self.entailed(&entry, &literal(low.clone(), Relation::LessEqual, high.clone())) {
+        if self.entailed(
+            &entry,
+            &literal(low.clone(), Relation::LessEqual, high.clone()),
+        ) {
             exit.conds.push(literal(index, Relation::Equal, high));
         } else {
-            exit.conds.push(literal(index, Relation::GreaterEqual, high));
+            exit.conds
+                .push(literal(index, Relation::GreaterEqual, high));
         }
-        Some(exit)
+        exit.values.remove(&binder);
+        arms.push(exit);
+        // Every arm but the exit holds the binder, so the join drops it.
+        join(&mut self.world, fork, arms)
     }
 
     fn loop_invariants(&self, id: CheckedLoopId) -> Vec<CheckedRangeClause> {
@@ -1908,8 +2043,14 @@ impl<'program> Walker<'program> {
         for iteration in [&first, &second] {
             let mut state = entry.clone();
             state.values.insert(binder, Value::Int(iteration.clone()));
-            state.conds.push(literal(iteration.clone(), Relation::GreaterEqual, low.clone()));
-            state.conds.push(literal(iteration.clone(), Relation::Less, high.clone()));
+            state.conds.push(literal(
+                iteration.clone(),
+                Relation::GreaterEqual,
+                low.clone(),
+            ));
+            state
+                .conds
+                .push(literal(iteration.clone(), Relation::Less, high.clone()));
             let saved_recording = self.recording.replace(Recording::default());
             let saved_breaks = std::mem::take(&mut self.breaks);
             self.dry += 1;
@@ -1918,7 +2059,8 @@ impl<'program> Walker<'program> {
             self.gives.pop();
             self.dry -= 1;
             self.breaks = saved_breaks;
-            let recording = std::mem::replace(&mut self.recording, saved_recording).unwrap_or_default();
+            let recording =
+                std::mem::replace(&mut self.recording, saved_recording).unwrap_or_default();
             runs.push(recording);
         }
         let shared = |world: &World, container: ContainerId| -> bool {
@@ -1935,16 +2077,26 @@ impl<'program> Walker<'program> {
             .iter()
             .filter(|access| access.write)
             .map(|access| access.container)
-            .chain(left.unplaced.iter().filter(|access| access.write).filter_map(|access| access.container))
+            .chain(
+                left.unplaced
+                    .iter()
+                    .filter(|access| access.write)
+                    .filter_map(|access| access.container),
+            )
             .filter(|container| shared(&self.world, *container))
             .collect();
-        let everything = left.unplaced.iter().any(|access| access.container.is_none() && access.write);
+        let everything = left
+            .unplaced
+            .iter()
+            .any(|access| access.container.is_none() && access.write);
         let mut failure: Option<ApartFailure> = None;
         // An access the certificate cannot place, against a written container.
         for access in left.unplaced.iter().chain(right.unplaced.iter()) {
             let reaches = match access.container {
                 None => true,
-                Some(container) => shared(&self.world, container) && (written.contains(&container) || everything),
+                Some(container) => {
+                    shared(&self.world, container) && (written.contains(&container) || everything)
+                }
             };
             if reaches && (access.write || !access.descriptor) && failure.is_none() {
                 failure = Some(ApartFailure::Unplaced {
@@ -1992,7 +2144,11 @@ impl<'program> Walker<'program> {
                 if !shared(&self.world, write.container) {
                     continue;
                 }
-                for other in right.accesses.iter().filter(|access| access.container == write.container) {
+                for other in right
+                    .accesses
+                    .iter()
+                    .filter(|access| access.container == write.container)
+                {
                     let (units, choices) = entry.premises(&self.world);
                     let mut query = Query {
                         units,
@@ -2003,11 +2159,21 @@ impl<'program> Walker<'program> {
                     query.units.extend(other.conds.iter().cloned());
                     query.choices.extend(write.choices.iter().cloned());
                     query.choices.extend(other.choices.iter().cloned());
-                    query.units.push(literal(first.clone(), Relation::NotEqual, second.clone()));
+                    query
+                        .units
+                        .push(literal(first.clone(), Relation::NotEqual, second.clone()));
                     for (at, index) in write.indices.iter().zip(&other.indices) {
-                        query.units.push(literal(at.clone(), Relation::Equal, index.clone()));
+                        query
+                            .units
+                            .push(literal(at.clone(), Relation::Equal, index.clone()));
                     }
-                    match facts::judge(&mut self.world, &self.facts, &entry.facts, &written_instances, query) {
+                    match facts::judge(
+                        &mut self.world,
+                        &self.facts,
+                        &entry.facts,
+                        &written_instances,
+                        query,
+                    ) {
                         Ok(Verdict::Refuted) => {}
                         Ok(Verdict::Open) => {
                             failure = Some(ApartFailure::Overlap {
@@ -2017,17 +2183,22 @@ impl<'program> Walker<'program> {
                             });
                             break 'pairs;
                         }
-                        Err(Capacity) => {
+                        Err(capacity) => {
                             failure = Some(ApartFailure::Capacity {
                                 write: write.node.clone(),
                                 other: other.node.clone(),
+                                ceiling: capacity.describe(),
                             });
                             break 'pairs;
                         }
                     }
                 }
             }
-            for access in left.accesses.iter().filter(|access| written.contains(&access.container)) {
+            for access in left
+                .accesses
+                .iter()
+                .filter(|access| written.contains(&access.container))
+            {
                 if access.write {
                     certified_writes.push(access.node.clone());
                 } else {
@@ -2075,7 +2246,10 @@ impl<'program> Walker<'program> {
         let mut scratch = entry.clone();
         let own = self.frame(&mut scratch, &clause, &|root| binding_value(entry, root));
         let formed = facts::form(&mut self.world, &clause, &own, &[], iterations)?;
-        formed.conclusions.first().map(|conclusion| conclusion.left.clone())
+        formed
+            .conclusions
+            .first()
+            .map(|conclusion| conclusion.left.clone())
     }
 
     // ----- affine relations -----
@@ -2093,76 +2267,106 @@ impl<'program> Walker<'program> {
             CheckedAffineExpressionKind::Subtract(left, right) => {
                 self.affine(state, left)?.minus(&self.affine(state, right)?)
             }
-            CheckedAffineExpressionKind::MultiplyByConstant { constant, value, .. } => {
-                self.affine(state, value)?.scaled(*constant)
-            }
-            CheckedAffineExpressionKind::ConstGeneric { .. } | CheckedAffineExpressionKind::Measure(_) => None,
+            CheckedAffineExpressionKind::MultiplyByConstant {
+                constant, value, ..
+            } => self.affine(state, value)?.scaled(*constant),
+            CheckedAffineExpressionKind::ConstGeneric { .. }
+            | CheckedAffineExpressionKind::Measure(_) => None,
         }
     }
 
     /// A checked affine relation `left - right <= bound` (and its reverse
     /// for an equality), where every leaf has a value here.
-    fn affine_relation(&self, state: &State, relation: &CheckedAffineRelation) -> Option<Vec<Literal>> {
+    fn affine_relation(
+        &self,
+        state: &State,
+        relation: &CheckedAffineRelation,
+    ) -> Option<Vec<Literal>> {
         let left = self.affine(state, &relation.left)?;
         let right = self.affine(state, &relation.right)?;
         let bounded = right.plus_constant(relation.bound)?;
         let mut out = vec![literal(left.clone(), Relation::LessEqual, bounded)];
         if relation.equality {
-            out.push(literal(right.clone(), Relation::LessEqual, left.plus_constant(relation.bound)?));
+            out.push(literal(
+                right.clone(),
+                Relation::LessEqual,
+                left.plus_constant(relation.bound)?,
+            ));
         }
         Some(out)
     }
 
     /// One affine requirement as a literal, where the walk can read it.
-    fn goal_literal(&mut self, state: &State, root: &super::super::goal::GoalExpression) -> Option<Literal> {
+    fn goal_literal(
+        &mut self,
+        state: &State,
+        root: &super::super::goal::GoalExpression,
+    ) -> Option<Literal> {
         use super::super::goal::{GoalDatum, GoalExpression, GoalOperation, GoalProjection};
-        fn term(walker: &mut Walker<'_>, state: &State, expression: &GoalExpression) -> Option<Linear> {
+        fn term(
+            walker: &mut Walker<'_>,
+            state: &State,
+            expression: &GoalExpression,
+        ) -> Option<Linear> {
             match expression {
                 GoalExpression::Datum(GoalDatum::Literal(CheckedValue::Integer { ty, bits })) => {
-                    Some(Linear::constant(super::super::entailment::integer_value(*ty, *bits)))
+                    Some(Linear::constant(super::super::entailment::integer_value(
+                        *ty, *bits,
+                    )))
                 }
-                GoalExpression::Datum(GoalDatum::Parameter { ordinal, projections, .. })
-                    if projections.is_empty() =>
-                {
+                GoalExpression::Datum(GoalDatum::Parameter {
+                    ordinal,
+                    projections,
+                    ..
+                }) if projections.is_empty() => {
                     let parameter = walker.function.parameters.get(*ordinal as usize)?;
                     match state.values.get(&parameter.binding) {
                         Some(Value::Int(value)) => Some(value.clone()),
                         _ => None,
                     }
                 }
-                GoalExpression::Operation { row, arguments, .. } => match (row, arguments.as_slice()) {
-                    (
-                        GoalOperation::Integer {
-                            operation: CheckedIntegerOperation::AddExact,
-                            ..
-                        },
-                        [left, right],
-                    ) => term(walker, state, left)?.plus(&term(walker, state, right)?),
-                    (
-                        GoalOperation::Integer {
-                            operation: CheckedIntegerOperation::SubtractExact,
-                            ..
-                        },
-                        [left, right],
-                    ) => term(walker, state, left)?.minus(&term(walker, state, right)?),
-                    (
-                        GoalOperation::ContainerMeasure {
-                            measure: CheckedMeasure::Length,
-                            ..
-                        },
-                        [GoalExpression::Datum(GoalDatum::Parameter { ordinal, projections, .. })],
-                    ) => {
-                        let parameter = walker.function.parameters.get(*ordinal as usize)?;
-                        let value = state.values.get(&parameter.binding)?.clone();
-                        match (value, projections.as_slice()) {
-                            (Value::Ref(View::Run { length, .. }), [] | [GoalProjection::Deref]) => {
-                                Some(length)
+                GoalExpression::Operation { row, arguments, .. } => {
+                    match (row, arguments.as_slice()) {
+                        (
+                            GoalOperation::Integer {
+                                operation: CheckedIntegerOperation::AddExact,
+                                ..
+                            },
+                            [left, right],
+                        ) => term(walker, state, left)?.plus(&term(walker, state, right)?),
+                        (
+                            GoalOperation::Integer {
+                                operation: CheckedIntegerOperation::SubtractExact,
+                                ..
+                            },
+                            [left, right],
+                        ) => term(walker, state, left)?.minus(&term(walker, state, right)?),
+                        (
+                            GoalOperation::ContainerMeasure {
+                                measure: CheckedMeasure::Length,
+                                ..
+                            },
+                            [
+                                GoalExpression::Datum(GoalDatum::Parameter {
+                                    ordinal,
+                                    projections,
+                                    ..
+                                }),
+                            ],
+                        ) => {
+                            let parameter = walker.function.parameters.get(*ordinal as usize)?;
+                            let value = state.values.get(&parameter.binding)?.clone();
+                            match (value, projections.as_slice()) {
+                                (
+                                    Value::Ref(View::Run { length, .. }),
+                                    [] | [GoalProjection::Deref],
+                                ) => Some(length),
+                                _ => None,
                             }
-                            _ => None,
                         }
+                        _ => None,
                     }
-                    _ => None,
-                },
+                }
                 _ => None,
             }
         }
@@ -2206,7 +2410,10 @@ enum Target {
         below: bool,
     },
     /// One segment of a `Segments`, before its element subscript.
-    Row { container: ContainerId, row: Linear },
+    Row {
+        container: ContainerId,
+        row: Linear,
+    },
     Unknown,
 }
 
@@ -2219,9 +2426,9 @@ fn binding_value(state: &State, root: CheckedRangeRoot) -> Option<Value> {
 
 fn constant(value: &CheckedValue) -> Value {
     match value {
-        CheckedValue::Integer { ty, bits } => {
-            Value::Int(Linear::constant(super::super::entailment::integer_value(*ty, *bits)))
-        }
+        CheckedValue::Integer { ty, bits } => Value::Int(Linear::constant(
+            super::super::entailment::integer_value(*ty, *bits),
+        )),
         CheckedValue::Bool(truth) => Value::Bool(Cond::Constant(*truth)),
         _ => Value::Unknown,
     }
@@ -2272,7 +2479,6 @@ fn empty_path() -> NodePath {
     }
 }
 
-
 /// The one place a content law's clause reads: the filled content.
 fn law_place() -> CheckedRangePlace {
     CheckedRangePlace {
@@ -2284,7 +2490,7 @@ fn law_place() -> CheckedRangePlace {
 /// The lengths a `box_segments_filled` call was given.
 fn law_lengths() -> CheckedRangePlace {
     CheckedRangePlace {
-        root: CheckedRangeRoot::Route,
+        root: CheckedRangeRoot::Argument(0),
         path: vec![CheckedRangeStep::Referent],
     }
 }
@@ -2344,7 +2550,7 @@ fn law_clause(element: Option<IntegerType>, shape: CheckedRangeShape) -> Checked
                 element: element.unwrap_or(IntegerType::U64),
             },
             comparison: RangeComparison::Equal,
-            right: CheckedRangeTerm::Value(CheckedRangeRoot::Route),
+            right: CheckedRangeTerm::Value(CheckedRangeRoot::Argument(1)),
         }],
     }
 }
@@ -2393,9 +2599,15 @@ fn rows_clause() -> CheckedRangeClause {
         guards: Vec::new(),
         conclusions: vec![CheckedRangeRelation {
             node: empty_path(),
-            left: CheckedRangeTerm::Value(CheckedRangeRoot::Result),
+            left: CheckedRangeTerm::Measure {
+                place: law_place(),
+                measure: CheckedMeasure::Length,
+            },
             comparison: RangeComparison::Equal,
-            right: CheckedRangeTerm::Value(CheckedRangeRoot::Route),
+            right: CheckedRangeTerm::Measure {
+                place: law_lengths(),
+                measure: CheckedMeasure::Length,
+            },
         }],
     }
 }

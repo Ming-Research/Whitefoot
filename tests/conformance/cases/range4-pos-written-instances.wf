@@ -1,0 +1,26 @@
+fn scatter_twin(order: &[u64], twin: &[u64], pos: &[u64], out: &[u64]) -> result: unit reads(twin), writes(out) contract {
+  requires pos^.len == out^.len;
+  requires twin^.len == order^.len;
+  requires forall same(k in 0_u64..twin^.len): twin^[k] == order^[k];
+  requires forall inv(k in 0_u64..order^.len) when order^[k] < out^.len: pos^[order^[k]] == k;
+} {
+  doc "The body reads twin, so same is instantiated at i and j and names order's elements; those reads come from instances and form no instance of inv, so the certificate writes inv at i and j, and the left inverse separates the iterations.";
+  let count = twin^.len;
+  for (
+    k in 0_u64..count,
+    apart(i, j) {
+      use inv(i);
+      use inv(j);
+    }
+  ) {
+    let e = twin^[k];
+    if e < out^.len {
+      set out^[e] = k;
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

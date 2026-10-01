@@ -1,0 +1,31 @@
+fn bump(part: &[u64]) -> result: unit writes(part) {
+  doc "Writes the first element of the run it is handed.";
+  if 0_u64 < part^.len {
+    set part^[0_u64] = 1_u64;
+  }
+  return unit;
+}
+
+fn spread(order: &[u64], pos: &[u64], out: &[u64]) -> result: unit reads(order), writes(out) contract {
+  requires pos^.len == out^.len;
+  requires forall inv(k in 0_u64..order^.len) when order^[k] < out^.len: pos^[order^[k]] == k;
+} {
+  doc "Each iteration hands the whole written run to a callee that writes it, which no certificate places at one element.";
+  let count = order^.len;
+  for (
+    k in 0_u64..count,
+    apart(i, j) {
+    }
+  ) {
+    let e = order^[k];
+    if e < out^.len {
+      set out^[e] = k;
+      bump(part: out);
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

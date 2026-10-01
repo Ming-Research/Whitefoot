@@ -602,6 +602,23 @@ one associative and commutative accumulator update in the admitted operation
 family. Do not add locks, scheduling calls, or runtime alias tests to seek
 permission.
 
+When iteration i writes at an index read from storage, as
+`set out^[order^[i]] = v;` does, put `apart(i, j) { }` last in the loop's
+header: it asks the checker to prove that two iterations touch no element in
+common [RANGE-5], and a certificate that holds admits those writes [PAR-2]. The
+proof comes from range facts [RANGE-1]: state what keeps the stored indices
+distinct where the arrays are built, as range invariants of the loops that
+fill them, and pass them to the consumer as its range requirements. Two forms
+cover the common cases: a left inverse, `pos^[order^[k]] == k` for every k,
+and stored values that each exceed every value stored before, as preorder
+indices appended in document order do. A range fact does not cross a return,
+so a consumer handed arrays from elsewhere checks them with a loop whose
+invariants state the facts; that pass is the cost.
+[A scatter through a left inverse](../tests/conformance/cases/range5-pos-scatter-through-left-inverse.wf)
+and [a level-by-level cascade over a tree](../tests/conformance/cases/range5-pos-level-cascade.wf)
+show both ends. A certificate that does not hold is a compile error naming
+the two accesses it could not separate, not a sequential lowering.
+
 Maintained examples live under
 [tests/programs/compute](../tests/programs/compute) and
 [tests/programs/parallel](../tests/programs/parallel); their source contracts

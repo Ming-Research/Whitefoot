@@ -22,9 +22,9 @@ use super::super::model::{
     CheckedMeasure, CheckedMode, CheckedNominalKind, CheckedType, CheckedValue, IntegerType,
 };
 use super::super::range_facts::{
-    CheckedApart, CheckedRangeBinder, CheckedRangeClause, CheckedRangePlace,
-    CheckedRangeRelation, CheckedRangeRoot, CheckedRangeShape, CheckedRangeStep, CheckedRangeTerm,
-    CheckedRangeUse, RangeComparison,
+    CheckedApart, CheckedRangeBinder, CheckedRangeClause, CheckedRangePlace, CheckedRangeRelation,
+    CheckedRangeRoot, CheckedRangeShape, CheckedRangeStep, CheckedRangeTerm, CheckedRangeUse,
+    RangeComparison,
 };
 use super::{CheckStop, Checker, FunctionContext, LocalBinding};
 
@@ -86,10 +86,18 @@ impl Checker<'_, '_> {
                 .declarations
                 .declaration_at(binder, DeclarationRole::RangeBinder)?
                 .id();
-            let position =
-                u32::try_from(binders.len()).map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
+            let position = u32::try_from(binders.len())
+                .map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
             names.binders.insert(bound, position);
             binders.push(CheckedRangeBinder { start, end });
+        }
+        if binders.len() > 2 {
+            return self.invalid_range(
+                SemanticRule::Range1,
+                clause,
+                "a range clause binds more than two variables",
+                "state the fact over at most two bound variables, or split it into facts over fewer",
+            );
         }
         let colon = self
             .types
@@ -248,7 +256,10 @@ impl Checker<'_, '_> {
     }
 
     /// The diagnostic one range judgment failure reports [RANGE-3, RANGE-5].
-    pub(super) fn range_issue(&self, issue: &crate::semantic::range_judgment::RangeIssue) -> CheckStop {
+    pub(super) fn range_issue(
+        &self,
+        issue: &crate::semantic::range_judgment::RangeIssue,
+    ) -> CheckStop {
         use crate::semantic::range_judgment::{ApartFailure, RangeIssue};
         let tree = &self.types.declarations.tree;
         // A source spelling with its line, for one access or relation.
@@ -274,11 +285,14 @@ impl Checker<'_, '_> {
                     fact: fact.clone(),
                     site,
                     missing: match (relation, capacity) {
-                        (_, true) => "the derivation reached a structural capacity".to_owned(),
-                        (Some(relation), false) => spell(relation),
-                        (None, false) => "a place the clause names, which the judgment cannot view here".to_owned(),
+                        (_, Some(ceiling)) => format!("the derivation reached {ceiling}"),
+                        (Some(relation), None) => spell(relation),
+                        (None, None) => {
+                            "a place the clause names, which the judgment cannot view here"
+                                .to_owned()
+                        }
                     },
-                    mechanical_fix: if *capacity {
+                    mechanical_fix: if capacity.is_some() {
                         "split the obligation: state fewer facts over the storage this site reads, or move part of the work into a callee with its own range requirements"
                     } else {
                         "establish the fact before this site: a range `requires`, a range invariant of the enclosing counted loop, or a guard that excludes the uncovered elements"
@@ -311,9 +325,13 @@ impl Checker<'_, '_> {
                         format!("the step {}: {reason}", spell(step)),
                         "name a range `requires` or a range invariant of an enclosing loop, with arguments over the loop's own state",
                     ),
-                    ApartFailure::Capacity { write, other } => (
+                    ApartFailure::Capacity {
+                        write,
+                        other,
+                        ceiling,
+                    } => (
                         format!(
-                            "the write {} and the access {} reached a structural capacity",
+                            "the write {} and the access {} reached {ceiling}",
                             spell(write),
                             spell(other)
                         ),
@@ -417,12 +435,7 @@ impl Checker<'_, '_> {
         }
         let mut terms = vec![(1_i128, self.range_product(context, first, bindings, names)?)];
         for pair in rest.chunks_exact(2) {
-            let [token] = self
-                .types
-                .declarations
-                .tree
-                .direct_token_indices(pair[0])?
-            else {
+            let [token] = self.types.declarations.tree.direct_token_indices(pair[0])? else {
                 return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
             };
             let sign = match self.types.declarations.tree.token_bytes(*token)? {
@@ -830,8 +843,10 @@ impl Checker<'_, '_> {
                                 "select a field of a struct",
                             );
                         };
-                        let Some((ordinal, field)) =
-                            fields.iter().enumerate().find(|(_, field)| field.name == name)
+                        let Some((ordinal, field)) = fields
+                            .iter()
+                            .enumerate()
+                            .find(|(_, field)| field.name == name)
                         else {
                             return self.invalid_range(
                                 SemanticRule::Range1,
@@ -852,9 +867,9 @@ impl Checker<'_, '_> {
             index += 1;
         }
         match selected {
-            Selected::Value(CheckedType::Integer(_)) if path.is_empty() => {
-                Ok(CheckedRangeTerm::Value(CheckedRangeRoot::Binding(local.binding)))
-            }
+            Selected::Value(CheckedType::Integer(_)) if path.is_empty() => Ok(
+                CheckedRangeTerm::Value(CheckedRangeRoot::Binding(local.binding)),
+            ),
             _ => self.invalid_range(
                 SemanticRule::Range1,
                 place,
@@ -915,7 +930,10 @@ fn range_sum(terms: Vec<(i128, CheckedRangeTerm)>) -> CheckedRangeTerm {
     flat.retain(|(weight, _)| *weight != 0);
     flat.sort_by(|left, right| left.1.cmp(&right.1));
     if constant == 0 && flat.len() == 1 && flat[0].0 == 1 {
-        return flat.pop().map(|(_, term)| term).unwrap_or(CheckedRangeTerm::Constant(0));
+        return flat
+            .pop()
+            .map(|(_, term)| term)
+            .unwrap_or(CheckedRangeTerm::Constant(0));
     }
     if flat.is_empty() {
         return CheckedRangeTerm::Constant(constant);

@@ -291,11 +291,23 @@ impl<'unit> Checker<'_, 'unit> {
             &mut bindings.clone(),
             &mut counters,
         )?;
-        if !checked.range.is_empty() {
-            return self
+        // [RANGE-1] a range clause is a requirement of a declared function
+        // only; a signature's contract names none.
+        if let Some(clause) = checked.range.first() {
+            let node = self
                 .types
                 .declarations
-                .unsupported(crate::UnsupportedSemanticFeature::RangeFacts, block);
+                .tree
+                .node_with_path(&clause.node)
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+            return self.types.declarations.issue_node(
+                crate::SemanticRule::Range1,
+                node,
+                crate::SemanticIssueKind::InvalidRangeClause {
+                    reason: "a function signature's contract states a range clause",
+                    mechanical_fix: "state the range requirement on the function that implements the signature, or pass the storage to a function that requires it",
+                },
+            );
         }
         let requires = checked
             .requirements

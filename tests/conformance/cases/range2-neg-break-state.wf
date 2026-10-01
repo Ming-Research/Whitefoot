@@ -1,0 +1,31 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn first(cells: &[u64], limit: u64) -> result: u64 reads(cells) contract {
+  requires forall above(k in 0_u64..cells^.len): cells^[k] >= limit;
+} {
+  doc "Returns the first cell, which its requirement makes at least limit, or limit when there is none.";
+  if 0_u64 < cells^.len {
+    let got = cells^[0_u64];
+    return got;
+  }
+  return limit;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The loop's affine invariant holds at its header, not at its break: after the loop x is 11, which no cell reaches, so the call's requirement is not established.";
+  let cells = box_array_filled::<u64>(count: 4_u64, value: 5_u64);
+  let x = 0_u64;
+  for (
+    k in 0_u64..4_u64,
+    invariant small: x <= 3_u64
+  ) {
+    set x = 11_u64;
+    break;
+  }
+  let got = first(cells: &cells.inner[0_u64..4_u64], limit: x);
+  if got != 5_u64 {
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 0_u8);
+}

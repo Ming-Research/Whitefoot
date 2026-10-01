@@ -1035,7 +1035,7 @@ pub enum SemanticIssueKind {
     UndischargedRangeFact {
         /// The owed fact's name.
         fact: String,
-        /// Where it is owed: a loop entry or back edge, a call, a return.
+        /// Where it is owed: a loop entry or back edge, or a call.
         site: &'static str,
         /// The first instance case the fixed derivation did not establish.
         missing: String,
@@ -1433,10 +1433,6 @@ pub enum UnsupportedSemanticFeature {
     DuplicateMatchArm,
     /// An OP-1 family outside the implemented scalar and nominal-tag families.
     OperationFamily,
-    /// A range clause in a position the checker does not yet carry
-    /// [RANGE-1]: a function-kind formal's contract, or an `ensures` of a
-    /// returned value.
-    RangeFacts,
 }
 
 /// Exact source node at which an unimplemented compiler family was required.

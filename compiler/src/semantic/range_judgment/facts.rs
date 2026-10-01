@@ -16,12 +16,14 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::super::model::{CheckedMeasure, IntegerType};
+use super::super::model::CheckedMeasure;
 use super::super::range_facts::{
     CheckedRangeClause, CheckedRangePlace, CheckedRangeRelation, CheckedRangeRoot,
     CheckedRangeShape, CheckedRangeTerm, RangeComparison,
 };
-use super::solver::{AtomId, AtomKind, Capacity, Linear, Literal, Problem, Relation, Rule, Verdict};
+use super::solver::{
+    AtomId, AtomKind, Capacity, Linear, Literal, Problem, Relation, Rule, Verdict,
+};
 use super::world::{AtomDef, ContainerId, FactId, VersionDef, VersionId, World};
 
 /// What one place of a clause denotes in a frame.
@@ -99,7 +101,9 @@ impl Former<'_> {
                         },
                         measure,
                     ) => Some(self.world.measure(*container, *generation, *measure)),
-                    (PlaceView::Segments { rows, .. }, CheckedMeasure::Length) => Some(rows.clone()),
+                    (PlaceView::Segments { rows, .. }, CheckedMeasure::Length) => {
+                        Some(rows.clone())
+                    }
                     _ => None,
                 }
             }
@@ -159,7 +163,9 @@ impl Former<'_> {
                             return None;
                         };
                         self.within(row, &rows);
-                        let length = self.world.segment_length(container, generation, row.clone());
+                        let length = self
+                            .world
+                            .segment_length(container, generation, row.clone());
                         self.within(index, &length);
                         Some(self.world.read(version, values, Some(*element)))
                     }
@@ -311,6 +317,12 @@ pub(super) fn judge(
         .units
         .iter()
         .chain(query.choices.iter().flatten().flatten())
+        .chain(
+            query
+                .rules
+                .iter()
+                .flat_map(|rule| rule.guards.iter().chain(&rule.conclusions)),
+        )
     {
         collect_literal(literal, &mut atoms);
     }
@@ -331,7 +343,8 @@ pub(super) fn judge(
             collect_triggers(&relation.left, &mut triggers);
             collect_triggers(&relation.right, &mut triggers);
         }
-        let mut candidates: Vec<BTreeSet<Linear>> = vec![BTreeSet::new(); fact.clause.binders.len()];
+        let mut candidates: Vec<BTreeSet<Linear>> =
+            vec![BTreeSet::new(); fact.clause.binders.len()];
         for trigger in &triggers {
             let Some(view) = fact.frame.places.get(&trigger.place) else {
                 continue;
@@ -352,7 +365,7 @@ pub(super) fn judge(
             }
             tuples = next;
             if tuples.len() > MAX_INSTANCES {
-                return Err(Capacity);
+                return Err(Capacity::Instances);
             }
         }
         for tuple in tuples {
@@ -385,29 +398,14 @@ pub(super) fn judge(
                 Relation::GreaterEqual,
                 Linear::constant(low),
             ));
-            query
-                .units
-                .push(Literal::new(value, Relation::LessEqual, Linear::constant(high)));
+            query.units.push(Literal::new(
+                value,
+                Relation::LessEqual,
+                Linear::constant(high),
+            ));
         }
     }
-    let problem = localize(world, &atoms, query)?;
-    let verdict = problem.judge();
-    if std::env::var_os("WF_RANGE_DEBUG").is_some() {
-        eprintln!("== problem {verdict:?}");
-        for (index, atom) in atoms.iter().enumerate() {
-            eprintln!("  a{index} = g{atom} {:?} {:?}", world.atoms[*atom as usize].def, world.atoms[*atom as usize].ty);
-        }
-        for unit in &problem.units {
-            eprintln!("  unit {unit:?}");
-        }
-        for choice in &problem.choices {
-            eprintln!("  choice {choice:?}");
-        }
-        for rule in &problem.rules {
-            eprintln!("  rule {:?} => {:?}", rule.guards, rule.conclusions);
-        }
-    }
-    verdict
+    localize(world, &atoms, query).judge()
 }
 
 fn match_trigger(
@@ -476,14 +474,14 @@ fn expand(
         };
         expanded.insert(atom);
         if atoms.len() > MAX_ATOMS {
-            return Err(Capacity);
+            return Err(Capacity::Atoms);
         }
         let def = world.atoms[atom as usize].def.clone();
         let ty = world.atoms[atom as usize].ty;
         let value = Linear::atom(atom);
         let mut alternatives: Vec<Vec<Literal>> = Vec::new();
         match def {
-            AtomDef::Opaque | AtomDef::Measure { .. } => {}
+            AtomDef::Opaque | AtomDef::Measure => {}
             AtomDef::SegmentLength { row, .. } => collect_linear(&row, atoms),
             AtomDef::Read { version, indices } => {
                 for index in &indices {
@@ -500,7 +498,9 @@ fn expand(
                         let mut hit: Vec<Literal> = indices
                             .iter()
                             .zip(&written)
-                            .map(|(index, at)| Literal::new(index.clone(), Relation::Equal, at.clone()))
+                            .map(|(index, at)| {
+                                Literal::new(index.clone(), Relation::Equal, at.clone())
+                            })
                             .collect();
                         if let Some(stored) = stored {
                             hit.push(Literal::new(value.clone(), Relation::Equal, stored));
@@ -518,7 +518,11 @@ fn expand(
                         for (arm, version) in arms.iter().zip(versions) {
                             let selected = world.read(version, indices.clone(), ty);
                             let mut alternative = arm.clone();
-                            alternative.push(Literal::new(value.clone(), Relation::Equal, selected));
+                            alternative.push(Literal::new(
+                                value.clone(),
+                                Relation::Equal,
+                                selected,
+                            ));
                             alternatives.push(alternative);
                         }
                     }
@@ -543,30 +547,32 @@ fn expand(
 }
 
 /// Renumbers the problem's atoms densely and gives the solver each read's
-/// identity for congruence.
-fn localize(world: &World, atoms: &BTreeSet<AtomId>, query: Query) -> Result<Problem, Capacity> {
+/// identity for congruence. `atoms` holds every atom the query names: each
+/// literal's atoms were collected before [`expand`] closed the set.
+fn localize(world: &World, atoms: &BTreeSet<AtomId>, query: Query) -> Problem {
     let local: BTreeMap<AtomId, AtomId> = atoms
         .iter()
         .enumerate()
         .map(|(index, atom)| (*atom, index as AtomId))
         .collect();
-    let map_linear = |linear: &Linear| -> Result<Linear, Capacity> {
-        let mut terms = Vec::with_capacity(linear.terms.len());
-        for (atom, coefficient) in &linear.terms {
-            terms.push((*local.get(atom).ok_or(Capacity)?, *coefficient));
-        }
+    let map_linear = |linear: &Linear| -> Linear {
+        let mut terms: Vec<(AtomId, i128)> = linear
+            .terms
+            .iter()
+            .map(|(atom, coefficient)| (local[atom], *coefficient))
+            .collect();
         terms.sort_unstable();
-        Ok(Linear {
+        Linear {
             terms,
             constant: linear.constant,
-        })
+        }
     };
-    let map_literal = |literal: &Literal| -> Result<Literal, Capacity> {
-        Ok(Literal::new(
-            map_linear(&literal.left)?,
+    let map_literal = |literal: &Literal| -> Literal {
+        Literal::new(
+            map_linear(&literal.left),
             literal.relation,
-            map_linear(&literal.right)?,
-        ))
+            map_linear(&literal.right),
+        )
     };
     let mut descriptors: BTreeMap<(ContainerId, u32), u32> = BTreeMap::new();
     let mut kinds = Vec::with_capacity(atoms.len());
@@ -574,7 +580,7 @@ fn localize(world: &World, atoms: &BTreeSet<AtomId>, query: Query) -> Result<Pro
         let kind = match &world.atoms[*atom as usize].def {
             AtomDef::Read { version, indices } => AtomKind::Read {
                 place: *version,
-                indices: indices.iter().map(&map_linear).collect::<Result<_, _>>()?,
+                indices: indices.iter().map(&map_linear).collect(),
             },
             AtomDef::SegmentLength {
                 container,
@@ -585,7 +591,7 @@ fn localize(world: &World, atoms: &BTreeSet<AtomId>, query: Query) -> Result<Pro
                 let place = *descriptors.entry((*container, *generation)).or_insert(next);
                 AtomKind::SegmentLength {
                     place,
-                    segment: map_linear(row)?,
+                    segment: map_linear(row),
                 }
             }
             _ => AtomKind::Plain,
@@ -597,32 +603,20 @@ fn localize(world: &World, atoms: &BTreeSet<AtomId>, query: Query) -> Result<Pro
         ..Problem::default()
     };
     for literal in &query.units {
-        problem.units.push(map_literal(literal)?);
+        problem.units.push(map_literal(literal));
     }
     for choice in &query.choices {
         let mut alternatives = Vec::with_capacity(choice.len());
         for alternative in choice {
-            alternatives.push(alternative.iter().map(&map_literal).collect::<Result<_, _>>()?);
+            alternatives.push(alternative.iter().map(&map_literal).collect());
         }
         problem.choices.push(alternatives);
     }
     for rule in &query.rules {
         problem.rules.push(Rule {
-            guards: rule.guards.iter().map(&map_literal).collect::<Result<_, _>>()?,
-            conclusions: rule
-                .conclusions
-                .iter()
-                .map(&map_literal)
-                .collect::<Result<_, _>>()?,
+            guards: rule.guards.iter().map(&map_literal).collect(),
+            conclusions: rule.conclusions.iter().map(&map_literal).collect(),
         });
     }
-    Ok(problem)
-}
-
-/// The element types a container's reads carry, for a frame's run views.
-pub(super) fn element_type(term: &CheckedRangeTerm) -> Option<IntegerType> {
-    match term {
-        CheckedRangeTerm::Read { element, .. } => Some(*element),
-        _ => None,
-    }
+    problem
 }

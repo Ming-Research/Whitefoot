@@ -79,7 +79,10 @@ impl Linear {
             *entry = entry.checked_add(*coefficient)?;
         }
         Some(Self {
-            terms: merged.into_iter().filter(|(_, value)| *value != 0).collect(),
+            terms: merged
+                .into_iter()
+                .filter(|(_, value)| *value != 0)
+                .collect(),
             constant: self.constant.checked_add(other.constant)?,
         })
     }
@@ -227,9 +230,34 @@ pub(crate) const MAX_INEQUALITIES: usize = 4096;
 /// The largest number of branches one problem may open.
 pub(crate) const MAX_BRANCHES: usize = 4096;
 
-/// Why a judgment stopped short of an answer about the problem itself.
+/// The structural ceiling one problem reached, which stops its judgment
+/// short of an answer about the problem itself [RANGE-3].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct Capacity;
+pub(crate) enum Capacity {
+    /// More atoms than one problem holds.
+    Atoms,
+    /// More instances of one fact than one problem holds.
+    Instances,
+    /// More inequalities than one elimination holds.
+    Inequalities,
+    /// More branches than one derivation opens.
+    Branches,
+    /// A coefficient or constant outside the checked `i128` domain.
+    Arithmetic,
+}
+
+impl Capacity {
+    /// The ceiling's description in a diagnostic.
+    pub(crate) const fn describe(self) -> &'static str {
+        match self {
+            Self::Atoms => "the 4096 atoms one problem holds",
+            Self::Instances => "the 256 instances of one fact one problem holds",
+            Self::Inequalities => "the 4096 inequalities one elimination holds",
+            Self::Branches => "the 4096 branches one derivation opens",
+            Self::Arithmetic => "the checked i128 arithmetic of one derivation",
+        }
+    }
+}
 
 /// What an atom stands for, as far as congruence is concerned.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -287,7 +315,7 @@ impl Problem {
     ) -> Result<Verdict, Capacity> {
         *branches += 1;
         if *branches > MAX_BRANCHES {
-            return Err(Capacity);
+            return Err(Capacity::Branches);
         }
         // Saturation: decide what the units force, fire what they entail.
         loop {
@@ -393,14 +421,15 @@ impl Problem {
                 .minus(&literal.right)
                 .and_then(|difference| difference.substituted(&solved.solution))
             else {
-                return Err(Capacity);
+                return Err(Capacity::Arithmetic);
             };
             if difference.is_constant() {
                 continue;
             }
             for relation in [Relation::Less, Relation::Greater] {
                 let mut with = units.clone();
-                with[position] = Literal::new(literal.left.clone(), relation, literal.right.clone());
+                with[position] =
+                    Literal::new(literal.left.clone(), relation, literal.right.clone());
                 match self.search(with, decided.clone(), fired.clone(), branches)? {
                     Verdict::Refuted => {}
                     Verdict::Open => return Ok(Verdict::Open),
@@ -423,7 +452,11 @@ impl Problem {
             };
             let mut reduced = Vec::with_capacity(indices.len());
             for index in indices {
-                reduced.push(index.substituted(&solved.solution).ok_or(Capacity)?);
+                reduced.push(
+                    index
+                        .substituted(&solved.solution)
+                        .ok_or(Capacity::Arithmetic)?,
+                );
             }
             let tuples = by_place.entry(*place).or_default();
             if !tuples.contains(&reduced) {
@@ -445,7 +478,9 @@ impl Problem {
                         .collect();
                     let equal: Vec<Literal> = differing
                         .iter()
-                        .map(|(left, right)| Literal::new((*left).clone(), Relation::Equal, (*right).clone()))
+                        .map(|(left, right)| {
+                            Literal::new((*left).clone(), Relation::Equal, (*right).clone())
+                        })
                         .collect();
                     let apart: Vec<Literal> = differing
                         .iter()
@@ -494,14 +529,21 @@ impl Problem {
         let mut pending: Vec<Linear> = Vec::new();
         for literal in literals {
             if literal.relation == Relation::Equal {
-                pending.push(literal.left.minus(&literal.right).ok_or(Capacity)?);
+                pending.push(
+                    literal
+                        .left
+                        .minus(&literal.right)
+                        .ok_or(Capacity::Arithmetic)?,
+                );
             }
         }
         loop {
             let mut progressed = false;
             let mut kept = Vec::new();
             for difference in pending.drain(..) {
-                let difference = difference.substituted(&solved.solution).ok_or(Capacity)?;
+                let difference = difference
+                    .substituted(&solved.solution)
+                    .ok_or(Capacity::Arithmetic)?;
                 if difference.is_constant() {
                     if difference.constant != 0 {
                         solved.contradiction = true;
@@ -522,7 +564,7 @@ impl Problem {
                 // atom * c + rest = 0, so atom = -rest / c with c = +-1.
                 let mut rest = difference.clone();
                 rest.terms.retain(|(candidate, _)| *candidate != atom);
-                let solution = rest.scaled(-coefficient).ok_or(Capacity)?;
+                let solution = rest.scaled(-coefficient).ok_or(Capacity::Arithmetic)?;
                 solved.assign(atom, solution)?;
                 progressed = true;
             }
@@ -537,14 +579,22 @@ impl Problem {
                     AtomKind::Read { place, indices } => {
                         let mut reduced = Vec::with_capacity(indices.len());
                         for index in indices {
-                            reduced.push(index.substituted(&solved.solution).ok_or(Capacity)?);
+                            reduced.push(
+                                index
+                                    .substituted(&solved.solution)
+                                    .ok_or(Capacity::Arithmetic)?,
+                            );
                         }
                         (0_u8, *place, reduced)
                     }
                     AtomKind::SegmentLength { place, segment } => (
                         1_u8,
                         *place,
-                        vec![segment.substituted(&solved.solution).ok_or(Capacity)?],
+                        vec![
+                            segment
+                                .substituted(&solved.solution)
+                                .ok_or(Capacity::Arithmetic)?,
+                        ],
                     ),
                 };
                 match seen.get(&key) {
@@ -552,7 +602,7 @@ impl Problem {
                         let difference = Linear::atom(atom)
                             .minus(&Linear::atom(*other))
                             .and_then(|difference| difference.substituted(&solved.solution))
-                            .ok_or(Capacity)?;
+                            .ok_or(Capacity::Arithmetic)?;
                         if !(difference.is_constant() && difference.constant == 0) {
                             pending.push(difference);
                             progressed = true;
@@ -579,30 +629,41 @@ impl Problem {
         let mut inequalities = Vec::new();
         for difference in &solved.unsolved {
             inequalities.push(Inequality(difference.clone()).normalized());
-            inequalities.push(Inequality(difference.scaled(-1).ok_or(Capacity)?).normalized());
+            inequalities
+                .push(Inequality(difference.scaled(-1).ok_or(Capacity::Arithmetic)?).normalized());
         }
         for literal in literals {
-            let left = literal.left.substituted(&solved.solution).ok_or(Capacity)?;
-            let right = literal.right.substituted(&solved.solution).ok_or(Capacity)?;
+            let left = literal
+                .left
+                .substituted(&solved.solution)
+                .ok_or(Capacity::Arithmetic)?;
+            let right = literal
+                .right
+                .substituted(&solved.solution)
+                .ok_or(Capacity::Arithmetic)?;
             match literal.relation {
                 Relation::Equal => {}
                 Relation::NotEqual => {
-                    let difference = left.minus(&right).ok_or(Capacity)?;
+                    let difference = left.minus(&right).ok_or(Capacity::Arithmetic)?;
                     if difference.is_constant() && difference.constant == 0 {
                         return Ok(true);
                     }
                 }
                 Relation::LessEqual => {
-                    inequalities.push(Inequality::at_most(&left, &right).ok_or(Capacity)?);
+                    inequalities
+                        .push(Inequality::at_most(&left, &right).ok_or(Capacity::Arithmetic)?);
                 }
                 Relation::GreaterEqual => {
-                    inequalities.push(Inequality::at_most(&right, &left).ok_or(Capacity)?);
+                    inequalities
+                        .push(Inequality::at_most(&right, &left).ok_or(Capacity::Arithmetic)?);
                 }
                 Relation::Less => {
-                    inequalities.push(Inequality::below(&left, &right).ok_or(Capacity)?);
+                    inequalities
+                        .push(Inequality::below(&left, &right).ok_or(Capacity::Arithmetic)?);
                 }
                 Relation::Greater => {
-                    inequalities.push(Inequality::below(&right, &left).ok_or(Capacity)?);
+                    inequalities
+                        .push(Inequality::below(&right, &left).ok_or(Capacity::Arithmetic)?);
                 }
             }
         }
@@ -656,7 +717,7 @@ impl Solved {
     fn assign(&mut self, atom: AtomId, value: Linear) -> Result<(), Capacity> {
         let single = BTreeMap::from([(atom, value.clone())]);
         for solution in self.solution.values_mut() {
-            *solution = solution.substituted(&single).ok_or(Capacity)?;
+            *solution = solution.substituted(&single).ok_or(Capacity::Arithmetic)?;
         }
         self.solution.insert(atom, value);
         Ok(())
@@ -710,9 +771,10 @@ fn eliminate(inequalities: Vec<Inequality>) -> Result<bool, Capacity> {
         }
         for (up_weight, up) in &upper {
             for (low_weight, low) in &lower {
-                let left = up.0.scaled(*low_weight).ok_or(Capacity)?;
-                let right = low.0.scaled(*up_weight).ok_or(Capacity)?;
-                let combined = Inequality(left.plus(&right).ok_or(Capacity)?).normalized();
+                let left = up.0.scaled(*low_weight).ok_or(Capacity::Arithmetic)?;
+                let right = low.0.scaled(*up_weight).ok_or(Capacity::Arithmetic)?;
+                let combined =
+                    Inequality(left.plus(&right).ok_or(Capacity::Arithmetic)?).normalized();
                 if combined.contradictory() {
                     return Ok(true);
                 }
@@ -720,7 +782,7 @@ fn eliminate(inequalities: Vec<Inequality>) -> Result<bool, Capacity> {
                     next.insert(combined);
                 }
                 if next.len() > MAX_INEQUALITIES {
-                    return Err(Capacity);
+                    return Err(Capacity::Inequalities);
                 }
             }
         }
@@ -761,7 +823,11 @@ mod tests {
     #[test]
     fn elimination_refutes_a_cycle() {
         let mut problem = Problem::default();
-        let (x, y, z) = (plain(&mut problem), plain(&mut problem), plain(&mut problem));
+        let (x, y, z) = (
+            plain(&mut problem),
+            plain(&mut problem),
+            plain(&mut problem),
+        );
         unit(&mut problem, &x, Relation::Less, &y);
         unit(&mut problem, &y, Relation::Less, &z);
         unit(&mut problem, &z, Relation::Less, &x);
@@ -812,8 +878,18 @@ mod tests {
         let pos_next = read(&mut problem, 0, &next);
         let pos_s = read(&mut problem, 0, &s);
         unit(&mut problem, &s, Relation::Equal, &next);
-        unit(&mut problem, &pos_next, Relation::Equal, &Linear::constant(5));
-        unit(&mut problem, &pos_s, Relation::NotEqual, &Linear::constant(5));
+        unit(
+            &mut problem,
+            &pos_next,
+            Relation::Equal,
+            &Linear::constant(5),
+        );
+        unit(
+            &mut problem,
+            &pos_s,
+            Relation::NotEqual,
+            &Linear::constant(5),
+        );
         assert_eq!(problem.judge(), Ok(Verdict::Refuted));
     }
 
@@ -828,7 +904,11 @@ mod tests {
         unit(&mut problem, &at, Relation::Less, &absent);
         unit(&mut problem, &c_b, Relation::Equal, &at);
         problem.rules.push(Rule {
-            guards: vec![Literal::new(c_b.clone(), Relation::NotEqual, absent.clone())],
+            guards: vec![Literal::new(
+                c_b.clone(),
+                Relation::NotEqual,
+                absent.clone(),
+            )],
             conclusions: vec![Literal::new(c_b.clone(), Relation::Less, at.clone())],
         });
         assert_eq!(problem.judge(), Ok(Verdict::Refuted));
@@ -841,7 +921,11 @@ mod tests {
     fn a_write_choice_is_decided_or_split() {
         // c1 = c0 with c1[w] = v. Reading c1[q] with q < w is the old value.
         let mut problem = Problem::default();
-        let (q, w, v) = (plain(&mut problem), plain(&mut problem), plain(&mut problem));
+        let (q, w, v) = (
+            plain(&mut problem),
+            plain(&mut problem),
+            plain(&mut problem),
+        );
         let new = read(&mut problem, 1, &q);
         let old = read(&mut problem, 0, &q);
         problem.choices.push(vec![
@@ -893,9 +977,24 @@ mod tests {
         let p_at = read(&mut problem, 0, &at);
         let p_e = read(&mut problem, 0, &e);
         let top = Linear::constant(u64::MAX as i128);
-        unit(&mut problem, &n, Relation::LessEqual, &Linear::constant(4_294_967_294));
-        unit(&mut problem, &e, Relation::GreaterEqual, &Linear::constant(0));
-        unit(&mut problem, &e, Relation::Less, &at.plus_constant(1).unwrap());
+        unit(
+            &mut problem,
+            &n,
+            Relation::LessEqual,
+            &Linear::constant(4_294_967_294),
+        );
+        unit(
+            &mut problem,
+            &e,
+            Relation::GreaterEqual,
+            &Linear::constant(0),
+        );
+        unit(
+            &mut problem,
+            &e,
+            Relation::Less,
+            &at.plus_constant(1).unwrap(),
+        );
         unit(&mut problem, &p_e, Relation::Less, &n);
         unit(&mut problem, &p_e, Relation::GreaterEqual, &e);
         problem.choices.push(vec![
@@ -918,6 +1017,61 @@ mod tests {
             conclusions: vec![Literal::new(p_e.clone(), Relation::Less, e.clone())],
         });
         assert_eq!(problem.judge(), Ok(Verdict::Refuted));
+    }
+
+    #[test]
+    fn a_derivation_past_the_branch_ceiling_names_it() {
+        // Thirteen independent two-way choices and a contradiction that only
+        // the leaves' disequality splits find: 2^13 leaves exceed the 4096
+        // branches, where an unbounded search would answer Refuted.
+        let mut problem = Problem::default();
+        let x = plain(&mut problem);
+        unit(
+            &mut problem,
+            &x,
+            Relation::GreaterEqual,
+            &Linear::constant(0),
+        );
+        unit(&mut problem, &x, Relation::LessEqual, &Linear::constant(1));
+        unit(&mut problem, &x, Relation::NotEqual, &Linear::constant(0));
+        unit(&mut problem, &x, Relation::NotEqual, &Linear::constant(1));
+        for _ in 0..13 {
+            let y = plain(&mut problem);
+            problem.choices.push(vec![
+                vec![Literal::new(
+                    y.clone(),
+                    Relation::Equal,
+                    Linear::constant(0),
+                )],
+                vec![Literal::new(y, Relation::Equal, Linear::constant(1))],
+            ]);
+        }
+        assert_eq!(problem.judge(), Err(Capacity::Branches));
+        problem.choices.truncate(3);
+        assert_eq!(problem.judge(), Ok(Verdict::Refuted));
+    }
+
+    #[test]
+    fn an_elimination_past_i128_names_the_arithmetic_ceiling() {
+        // p*a >= q*b and q*a < p*b with p = 2^120 and q = p + 1, which are
+        // coprime: eliminating either atom multiplies p by q, about 2^240.
+        let mut problem = Problem::default();
+        let (a, b) = (plain(&mut problem), plain(&mut problem));
+        let p = 1_i128 << 120;
+        let q = p + 1;
+        unit(
+            &mut problem,
+            &a.scaled(p).unwrap(),
+            Relation::GreaterEqual,
+            &b.scaled(q).unwrap(),
+        );
+        unit(
+            &mut problem,
+            &a.scaled(q).unwrap(),
+            Relation::Less,
+            &b.scaled(p).unwrap(),
+        );
+        assert_eq!(problem.judge(), Err(Capacity::Arithmetic));
     }
 
     #[test]
