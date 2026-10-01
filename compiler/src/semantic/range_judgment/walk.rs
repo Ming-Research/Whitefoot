@@ -1298,10 +1298,9 @@ impl<'program> Walker<'program> {
                     None => self.opaque_of(place.ty),
                 }
             }
-            CheckedExpression::RangeElementMeasure { place, .. } => {
+            CheckedExpression::RangeElementMeasure { carrier, place, .. } => {
                 if let Some((container, indices, _)) = self.range_element(state, place) {
-                    let carrier = self.cite.clone();
-                    self.access(container, &indices, false, &carrier, state);
+                    self.access(container, &indices, false, carrier, state);
                 }
                 self.opaque_of(expression.ty())
             }
@@ -1374,16 +1373,17 @@ impl<'program> Walker<'program> {
                     _ => Value::Ref(View::Unknown),
                 }
             }
-            CheckedExpression::DerefAddressed { binding, ty, .. } => {
-                match state.values.get(binding).cloned() {
-                    Some(Value::Ref(View::Place(location))) => self.read_location(state, &location, *ty),
-                    Some(Value::Ref(View::Element { container, indices })) => {
-                        let carrier = self.cite.clone();
-                        self.read_element(state, container, indices, *ty, &carrier)
-                    }
-                    _ => self.opaque_of(*ty),
+            CheckedExpression::DerefAddressed {
+                carrier,
+                binding,
+                ty,
+            } => match state.values.get(binding).cloned() {
+                Some(Value::Ref(View::Place(location))) => self.read_location(state, &location, *ty),
+                Some(Value::Ref(View::Element { container, indices })) => {
+                    self.read_element(state, container, indices, *ty, carrier)
                 }
-            }
+                _ => self.opaque_of(*ty),
+            },
             CheckedExpression::Project {
                 binding, fields, ty, ..
             } => {
