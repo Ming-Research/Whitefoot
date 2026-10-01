@@ -1571,13 +1571,15 @@ rarely insert at the same place.
   [wide HashMap ownership witness](../research/experiments/container-representation/map-library/RESULTS.md#wide-owner-waiting-frame-cost)
   emits a 4.26 MB waiting caller against a 64 KB sequential clone after each
   node gains 31 inline words. Local parallel native builds take about eleven
-  seconds while sequential builds stay below two; Linux CI reaches the
-  native-child deadline twice, but its original diagnostic does not identify
-  compilation versus execution. Preserve the complete word, identity, cleanup
-  and lowering-mode observations. Reopen now to attribute the timed-out command,
-  then reduce redundant waiting-frame/aggregate transfers or compare bounded
-  ordinary helper lifetimes, without increasing the deadline or suppressing
-  overlap permission. Validate exact outcomes and native build/run phases
+  seconds while sequential builds stay below two. The improved Linux CI
+  diagnostic identifies Clang `-O2` compilation as the native-child timeout.
+  Equivalent fixed-size literal initialization reduces the maintained transfer
+  fixture's parallel module to 0.87 MB and local Clang compilation below one
+  second; the original loop remains at `e39dbc277`. Preserve its complete word,
+  identity, cleanup and lowering-mode observations. Reopen with that loop to
+  reduce redundant waiting-frame/aggregate transfers or compare bounded ordinary
+  helper lifetimes, without increasing the deadline or suppressing overlap
+  permission. Validate exact outcomes and native build/run phases
   separately; a smaller source shape alone does not resolve the general cost.
 
 - **Addressed call results can suppress proved overlap.** In

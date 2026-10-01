@@ -561,11 +561,38 @@ struct HashMapOwnerLedger {
 fn hash_map_test_owned_make(id: u64, serial: u64) -> result: HashMapOwnedNode pure {
   let record = HashMapOwnedRecord(id: id, serial: serial);
   let child = box_new::<HashMapOwnedRecord>(value: record);
-  let words = array_filled::<u64, 31>(value: 0_u64);
-  for (index in 0_u64..31_u64) {
-    let base = serial *wrap 257_u64;
-    set words[index] = base +wrap index;
-  }
+  let base = serial *wrap 257_u64;
+  let words = array_filled::<u64, 31>(value: base);
+  set words[1_u64] = base +wrap 1_u64;
+  set words[2_u64] = base +wrap 2_u64;
+  set words[3_u64] = base +wrap 3_u64;
+  set words[4_u64] = base +wrap 4_u64;
+  set words[5_u64] = base +wrap 5_u64;
+  set words[6_u64] = base +wrap 6_u64;
+  set words[7_u64] = base +wrap 7_u64;
+  set words[8_u64] = base +wrap 8_u64;
+  set words[9_u64] = base +wrap 9_u64;
+  set words[10_u64] = base +wrap 10_u64;
+  set words[11_u64] = base +wrap 11_u64;
+  set words[12_u64] = base +wrap 12_u64;
+  set words[13_u64] = base +wrap 13_u64;
+  set words[14_u64] = base +wrap 14_u64;
+  set words[15_u64] = base +wrap 15_u64;
+  set words[16_u64] = base +wrap 16_u64;
+  set words[17_u64] = base +wrap 17_u64;
+  set words[18_u64] = base +wrap 18_u64;
+  set words[19_u64] = base +wrap 19_u64;
+  set words[20_u64] = base +wrap 20_u64;
+  set words[21_u64] = base +wrap 21_u64;
+  set words[22_u64] = base +wrap 22_u64;
+  set words[23_u64] = base +wrap 23_u64;
+  set words[24_u64] = base +wrap 24_u64;
+  set words[25_u64] = base +wrap 25_u64;
+  set words[26_u64] = base +wrap 26_u64;
+  set words[27_u64] = base +wrap 27_u64;
+  set words[28_u64] = base +wrap 28_u64;
+  set words[29_u64] = base +wrap 29_u64;
+  set words[30_u64] = base +wrap 30_u64;
   return HashMapOwnedNode(child: move child, words: words);
 }
 

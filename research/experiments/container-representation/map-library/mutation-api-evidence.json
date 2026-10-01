@@ -1517,6 +1517,418 @@
     "note": "Check direct exit statuses and diagnostics in raw logs. Initial baseline account guard stdout mixed runner lines with CSV before a clean CSV capture; this is an instrument recording issue, not a measured sample.",
     "positive_check_images": 4
   },
+  "wide_owner_fixed_constructor": {
+    "ci_attribution": {
+      "finding": "The timed-out Linux native-child command is /usr/bin/clang -x ir ... -O2 -lm -o program, so the earlier ambiguity between native compilation and execution is resolved. This was the historical loop constructor.",
+      "path": "<scratch-root>/whitefoot-e39dbc277-corpus-failed.log",
+      "revision": "e39dbc2776421b689fcb8db11ef8dc8b039a17e1",
+      "sha256": "8de631b44e6ded7da2f87b13865ac1e87eb0dedc435e63eb799f24d2613a7b7f"
+    },
+    "compiler_sha256": "64cd73e5a10130ab1fff5a9360ecfbb4a2918e6904235f1f461dcd5477a57422",
+    "observation": "All four sequential/parallel ordinary/observer executions exit 0; both observers report 36 allocations, each released once. A node with only the last inline word perturbed exits 1.",
+    "parallel_ir": {
+      "bytes": 866051,
+      "path": "<scratch-root>/whitefoot-wide-node-fixed-par.ll",
+      "sha256": "80b5f5b1247a16bc382627c7361052fe8b1c78ada03d8977568516103aafe3de"
+    },
+    "positive_log": {
+      "path": "<scratch-root>/whitefoot-fixed-constructor-check.log",
+      "sha256": "c03f2765ecb3f2c417792a12c251f08bb8027f1b2ef51e9d8c765d95c72c0854",
+      "text": "== START research/wide-node-fixed-constructor (limit 1800s): python3 <scratch-root>/whitefoot-fixed-constructor-check.py ==\n{\"label\": \"seq emit\", \"command\": [\"<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/whitefootc-running-index\", \"--emit-llvm\", \"<repository-root>/tests/programs/containers/hash-map-program.wf\", \"-o\", \"<scratch-root>/whitefoot-wide-node-fixed-seq.ll\"], \"seconds\": 0.669491124805063, \"exit\": 0, \"stdout\": \"\", \"stderr\": \"\"}\n{\"label\": \"seq-ordinary clang\", \"command\": [\"/usr/bin/clang\", \"-O2\", \"-Wno-override-module\", \"-x\", \"ir\", \"-c\", \"<scratch-root>/whitefoot-wide-node-fixed-seq.ll\", \"-o\", \"<scratch-root>/whitefoot-wide-node-fixed-seq.o\"], \"seconds\": 0.572286625392735, \"exit\": 0, \"stdout\": \"\", \"stderr\": \"\"}\n{\"label\": \"seq-ordinary link\", \"command\": [\"/usr/bin/clang\", \"<scratch-root>/whitefoot-wide-node-fixed-seq.o\", \"research/experiments/container-representation/map-library/.build/native/ordinary_values.o\", \"research/experiments/container-representation/map-library/.build/native/ordinary_values_ir.o\", \"research/experiments/container-representation/map-library/.build/native/sched/core.o\", \"research/experiments/container-representation/map-library/.build/native/sched/entry.o\", \"research/experiments/container-representation/map-library/.build/native/completion/runtime.o\", \"research/experiments/container-representation/map-library/.build/native/completion/file_adapter.o\", \"research/experiments/container-representation/map-library/.build/native/completion/bridge.o\", \"research/experiments/container-representation/map-library/.build/native/wf_floor.o\", \"research/experiments/container-representation/map-library/.build/native/sched/prim_host.o\", \"research/experiments/container-representation/map-library/.build/native/completion/wait_host.o\", \"research/experiments/container-representation/map-library/.build/native/completion/file_posix.o\", \"research/experiments/container-representation/map-library/.build/native/completion/linux_io_uring.o\", \"-liconv\", \"-lSystem\", \"-lc\", \"-lm\", \"-pthread\", \"-o\", \"<scratch-root>/whitefoot-wide-node-fixed-seq-ordinary\"], \"seconds\": 0.05256537487730384, \"exit\": 0, \"stdout\": \"\", \"stderr\": \"ld: warning: ignoring duplicate libraries: '-lSystem'\\n\"}\n{\"label\": \"seq-ordinary execute\", \"command\": [\"<scratch-root>/whitefoot-wide-node-fixed-seq-ordinary\"], \"seconds\": 0.4081469997763634, \"exit\": 0, \"stdout\": \"\", \"stderr\": \"\"}\n{\"label\": \"seq-observer clang\", \"command\": [\"/usr/bin/clang\", \"-O2\", \"-Wno-override-module\", \"-x\", \"ir\", \"-c\", \"<scratch-root>/whitefoot-wide-node-fixed-seq-observer.ll\", \"-o\", \"<scratch-root>/whitefoot-wide-node-fixed-seq-observer.o\"], \"seconds\": 0.6260708328336477, \"exit\": 0, \"stdout\": \"\", \"stderr\": \"\"}\n{\"label\": \"seq-observer observer compile\", \"command\": [\"/usr/bin/clang\", \"-O2\", \"-std=c11\", \"-Wall\", \"-Wextra\", \"-Werror\", \"-Icompiler/src/backend\", \"-c\", \"tests/programs/containers/container-allocation-observer.c\", \"-o\", \"<scratch-root>/whitefoot-container-observer-fixed.o\"], \"seconds\": 0.07871654210612178, \"exit\": 0, \"stdout\": \"\", \"stderr\": \"\"}\n{\"label\": \"seq-observer link\", \"command\": [\"/usr/bin/clang\", \"<scratch-root>/whitefoot-wide-node-fixed-seq-observer.o\", \"<scratch-root>/whitefoot-container-observer-fixed.o\", \"research/experiments/container-representation/map-library/.build/native/ordinary_values.o\", \"research/experiments/container-representation/map-library/.build/native/ordinary_values_ir.o\", \"research/experiments/container-representation/map-library/.build/native/sched/core.o\", \"research/experiments/container-representation/map-library/.build/native/sched/entry.o\", \"research/experiments/container-representation/map-library/.build/native/completion/runtime.o\", \"research/experiments/container-representation/map-library/.build/native/completion/file_adapter.o\", \"research/experiments/container-representation/map-library/.build/native/completion/bridge.o\", \"research/experiments/container-representation/map-library/.build/native/wf_floor.o\", \"research/experiments/container-representation/map-library/.build/native/sched/prim_host.o\", \"research/experiments/container-representation/map-library/.build/native/completion/wait_host.o\", \"research/experiments/container-representation/map-library/.build/native/completion/file_posix.o\", \"research/experiments/container-representation/map-library/.build/native/completion/linux_io_uring.o\", \"-liconv\", \"-lSystem\", \"-lc\", \"-lm\", \"-pthread\", \"-o\", \"<scratch-root>/whitefoot-wide-node-fixed-seq-observer\"], \"seconds\": 0.049209834076464176, \"exit\": 0, \"stdout\": \"\", \"stderr\": \"ld: warning: ignoring duplicate libraries: '-lSystem'\\n\"}\n{\"label\": \"seq-observer execute\", \"command\": [\"<scratch-root>/whitefoot-wide-node-fixed-seq-observer\"], \"seconds\": 0.27668941719457507, \"exit\": 0, \"stdout\": \"container allocation observer: 36 allocations, each released exactly once\\n\", \"stderr\": \"\"}\n{\"label\": \"par emit\", \"command\": [\"<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/whitefootc-running-index\", \"--par\", \"--emit-llvm\", \"<repository-root>/tests/programs/containers/hash-map-program.wf\", \"-o\", \"<scratch-root>/whitefoot-wide-node-fixed-par.ll\"], \"seconds\": 0.7598638329654932, \"exit\": 0, \"stdout\": \"\", \"stderr\": \"\"}\n{\"label\": \"par-ordinary clang\", \"command\": [\"/usr/bin/clang\", \"-O2\", \"-Wno-override-module\", \"-x\", \"ir\", \"-c\", \"<scratch-root>/whitefoot-wide-node-fixed-par.ll\", \"-o\", \"<scratch-root>/whitefoot-wide-node-fixed-par.o\"], \"seconds\": 0.5919107086956501, \"exit\": 0, \"stdout\": \"\", \"stderr\": \"\"}\n{\"label\": \"par-ordinary link\", \"command\": [\"/usr/bin/clang\", \"<scratch-root>/whitefoot-wide-node-fixed-par.o\", \"research/experiments/container-representation/map-library/.build/native/ordinary_values.o\", \"research/experiments/container-representation/map-library/.build/native/ordinary_values_ir.o\", \"research/experiments/container-representation/map-library/.build/native/sched/core.o\", \"research/experiments/container-representation/map-library/.build/native/sched/entry.o\", \"research/experiments/container-representation/map-library/.build/native/completion/runtime.o\", \"research/experiments/container-representation/map-library/.build/native/completion/file_adapter.o\", \"research/experiments/container-representation/map-library/.build/native/completion/bridge.o\", \"research/experiments/container-representation/map-library/.build/native/wf_floor.o\", \"research/experiments/container-representation/map-library/.build/native/sched/prim_host.o\", \"research/experiments/container-representation/map-library/.build/native/completion/wait_host.o\", \"research/experiments/container-representation/map-library/.build/native/completion/file_posix.o\", \"research/experiments/container-representation/map-library/.build/native/completion/linux_io_uring.o\", \"-liconv\", \"-lSystem\", \"-lc\", \"-lm\", \"-pthread\", \"-o\", \"<scratch-root>/whitefoot-wide-node-fixed-par-ordinary\"], \"seconds\": 0.04745333408936858, \"exit\": 0, \"stdout\": \"\", \"stderr\": \"ld: warning: ignoring duplicate libraries: '-lSystem'\\n\"}\n{\"label\": \"par-ordinary execute\", \"command\": [\"<scratch-root>/whitefoot-wide-node-fixed-par-ordinary\"], \"seconds\": 0.26275274995714426, \"exit\": 0, \"stdout\": \"\", \"stderr\": \"\"}\n{\"label\": \"par-observer clang\", \"command\": [\"/usr/bin/clang\", \"-O2\", \"-Wno-override-module\", \"-x\", \"ir\", \"-c\", \"<scratch-root>/whitefoot-wide-node-fixed-par-observer.ll\", \"-o\", \"<scratch-root>/whitefoot-wide-node-fixed-par-observer.o\"], \"seconds\": 0.6173067921772599, \"exit\": 0, \"stdout\": \"\", \"stderr\": \"\"}\n{\"label\": \"par-observer observer compile\", \"command\": [\"/usr/bin/clang\", \"-O2\", \"-std=c11\", \"-Wall\", \"-Wextra\", \"-Werror\", \"-Icompiler/src/backend\", \"-c\", \"tests/programs/containers/container-allocation-observer.c\", \"-o\", \"<scratch-root>/whitefoot-container-observer-fixed.o\"], \"seconds\": 0.06025316705927253, \"exit\": 0, \"stdout\": \"\", \"stderr\": \"\"}\n{\"label\": \"par-observer link\", \"command\": [\"/usr/bin/clang\", \"<scratch-root>/whitefoot-wide-node-fixed-par-observer.o\", \"<scratch-root>/whitefoot-container-observer-fixed.o\", \"research/experiments/container-representation/map-library/.build/native/ordinary_values.o\", \"research/experiments/container-representation/map-library/.build/native/ordinary_values_ir.o\", \"research/experiments/container-representation/map-library/.build/native/sched/core.o\", \"research/experiments/container-representation/map-library/.build/native/sched/entry.o\", \"research/experiments/container-representation/map-library/.build/native/completion/runtime.o\", \"research/experiments/container-representation/map-library/.build/native/completion/file_adapter.o\", \"research/experiments/container-representation/map-library/.build/native/completion/bridge.o\", \"research/experiments/container-representation/map-library/.build/native/wf_floor.o\", \"research/experiments/container-representation/map-library/.build/native/sched/prim_host.o\", \"research/experiments/container-representation/map-library/.build/native/completion/wait_host.o\", \"research/experiments/container-representation/map-library/.build/native/completion/file_posix.o\", \"research/experiments/container-representation/map-library/.build/native/completion/linux_io_uring.o\", \"-liconv\", \"-lSystem\", \"-lc\", \"-lm\", \"-pthread\", \"-o\", \"<scratch-root>/whitefoot-wide-node-fixed-par-observer\"], \"seconds\": 0.047478958033025265, \"exit\": 0, \"stdout\": \"\", \"stderr\": \"ld: warning: ignoring duplicate libraries: '-lSystem'\\n\"}\n{\"label\": \"par-observer execute\", \"command\": [\"<scratch-root>/whitefoot-wide-node-fixed-par-observer\"], \"seconds\": 0.2802389580756426, \"exit\": 0, \"stdout\": \"container allocation observer: 36 allocations, each released exactly once\\n\", \"stderr\": \"\"}\nreal 5.51\nuser 4.01\nsys 0.37\n== END research/wide-node-fixed-constructor: 5.55 s, exit 0 ==\n"
+    },
+    "positive_records": [
+      {
+        "command": [
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/whitefootc-running-index",
+          "--emit-llvm",
+          "<repository-root>/tests/programs/containers/hash-map-program.wf",
+          "-o",
+          "<scratch-root>/whitefoot-wide-node-fixed-seq.ll"
+        ],
+        "exit": 0,
+        "label": "seq emit",
+        "seconds": 0.669491124805063,
+        "stderr": "",
+        "stdout": ""
+      },
+      {
+        "command": [
+          "/usr/bin/clang",
+          "-O2",
+          "-Wno-override-module",
+          "-x",
+          "ir",
+          "-c",
+          "<scratch-root>/whitefoot-wide-node-fixed-seq.ll",
+          "-o",
+          "<scratch-root>/whitefoot-wide-node-fixed-seq.o"
+        ],
+        "exit": 0,
+        "label": "seq-ordinary clang",
+        "seconds": 0.572286625392735,
+        "stderr": "",
+        "stdout": ""
+      },
+      {
+        "command": [
+          "/usr/bin/clang",
+          "<scratch-root>/whitefoot-wide-node-fixed-seq.o",
+          "research/experiments/container-representation/map-library/.build/native/ordinary_values.o",
+          "research/experiments/container-representation/map-library/.build/native/ordinary_values_ir.o",
+          "research/experiments/container-representation/map-library/.build/native/sched/core.o",
+          "research/experiments/container-representation/map-library/.build/native/sched/entry.o",
+          "research/experiments/container-representation/map-library/.build/native/completion/runtime.o",
+          "research/experiments/container-representation/map-library/.build/native/completion/file_adapter.o",
+          "research/experiments/container-representation/map-library/.build/native/completion/bridge.o",
+          "research/experiments/container-representation/map-library/.build/native/wf_floor.o",
+          "research/experiments/container-representation/map-library/.build/native/sched/prim_host.o",
+          "research/experiments/container-representation/map-library/.build/native/completion/wait_host.o",
+          "research/experiments/container-representation/map-library/.build/native/completion/file_posix.o",
+          "research/experiments/container-representation/map-library/.build/native/completion/linux_io_uring.o",
+          "-liconv",
+          "-lSystem",
+          "-lc",
+          "-lm",
+          "-pthread",
+          "-o",
+          "<scratch-root>/whitefoot-wide-node-fixed-seq-ordinary"
+        ],
+        "exit": 0,
+        "label": "seq-ordinary link",
+        "seconds": 0.05256537487730384,
+        "stderr": "ld: warning: ignoring duplicate libraries: '-lSystem'\n",
+        "stdout": ""
+      },
+      {
+        "command": [
+          "<scratch-root>/whitefoot-wide-node-fixed-seq-ordinary"
+        ],
+        "exit": 0,
+        "label": "seq-ordinary execute",
+        "seconds": 0.4081469997763634,
+        "stderr": "",
+        "stdout": ""
+      },
+      {
+        "command": [
+          "/usr/bin/clang",
+          "-O2",
+          "-Wno-override-module",
+          "-x",
+          "ir",
+          "-c",
+          "<scratch-root>/whitefoot-wide-node-fixed-seq-observer.ll",
+          "-o",
+          "<scratch-root>/whitefoot-wide-node-fixed-seq-observer.o"
+        ],
+        "exit": 0,
+        "label": "seq-observer clang",
+        "seconds": 0.6260708328336477,
+        "stderr": "",
+        "stdout": ""
+      },
+      {
+        "command": [
+          "/usr/bin/clang",
+          "-O2",
+          "-std=c11",
+          "-Wall",
+          "-Wextra",
+          "-Werror",
+          "-Icompiler/src/backend",
+          "-c",
+          "tests/programs/containers/container-allocation-observer.c",
+          "-o",
+          "<scratch-root>/whitefoot-container-observer-fixed.o"
+        ],
+        "exit": 0,
+        "label": "seq-observer observer compile",
+        "seconds": 0.07871654210612178,
+        "stderr": "",
+        "stdout": ""
+      },
+      {
+        "command": [
+          "/usr/bin/clang",
+          "<scratch-root>/whitefoot-wide-node-fixed-seq-observer.o",
+          "<scratch-root>/whitefoot-container-observer-fixed.o",
+          "research/experiments/container-representation/map-library/.build/native/ordinary_values.o",
+          "research/experiments/container-representation/map-library/.build/native/ordinary_values_ir.o",
+          "research/experiments/container-representation/map-library/.build/native/sched/core.o",
+          "research/experiments/container-representation/map-library/.build/native/sched/entry.o",
+          "research/experiments/container-representation/map-library/.build/native/completion/runtime.o",
+          "research/experiments/container-representation/map-library/.build/native/completion/file_adapter.o",
+          "research/experiments/container-representation/map-library/.build/native/completion/bridge.o",
+          "research/experiments/container-representation/map-library/.build/native/wf_floor.o",
+          "research/experiments/container-representation/map-library/.build/native/sched/prim_host.o",
+          "research/experiments/container-representation/map-library/.build/native/completion/wait_host.o",
+          "research/experiments/container-representation/map-library/.build/native/completion/file_posix.o",
+          "research/experiments/container-representation/map-library/.build/native/completion/linux_io_uring.o",
+          "-liconv",
+          "-lSystem",
+          "-lc",
+          "-lm",
+          "-pthread",
+          "-o",
+          "<scratch-root>/whitefoot-wide-node-fixed-seq-observer"
+        ],
+        "exit": 0,
+        "label": "seq-observer link",
+        "seconds": 0.049209834076464176,
+        "stderr": "ld: warning: ignoring duplicate libraries: '-lSystem'\n",
+        "stdout": ""
+      },
+      {
+        "command": [
+          "<scratch-root>/whitefoot-wide-node-fixed-seq-observer"
+        ],
+        "exit": 0,
+        "label": "seq-observer execute",
+        "seconds": 0.27668941719457507,
+        "stderr": "",
+        "stdout": "container allocation observer: 36 allocations, each released exactly once\n"
+      },
+      {
+        "command": [
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/whitefootc-running-index",
+          "--par",
+          "--emit-llvm",
+          "<repository-root>/tests/programs/containers/hash-map-program.wf",
+          "-o",
+          "<scratch-root>/whitefoot-wide-node-fixed-par.ll"
+        ],
+        "exit": 0,
+        "label": "par emit",
+        "seconds": 0.7598638329654932,
+        "stderr": "",
+        "stdout": ""
+      },
+      {
+        "command": [
+          "/usr/bin/clang",
+          "-O2",
+          "-Wno-override-module",
+          "-x",
+          "ir",
+          "-c",
+          "<scratch-root>/whitefoot-wide-node-fixed-par.ll",
+          "-o",
+          "<scratch-root>/whitefoot-wide-node-fixed-par.o"
+        ],
+        "exit": 0,
+        "label": "par-ordinary clang",
+        "seconds": 0.5919107086956501,
+        "stderr": "",
+        "stdout": ""
+      },
+      {
+        "command": [
+          "/usr/bin/clang",
+          "<scratch-root>/whitefoot-wide-node-fixed-par.o",
+          "research/experiments/container-representation/map-library/.build/native/ordinary_values.o",
+          "research/experiments/container-representation/map-library/.build/native/ordinary_values_ir.o",
+          "research/experiments/container-representation/map-library/.build/native/sched/core.o",
+          "research/experiments/container-representation/map-library/.build/native/sched/entry.o",
+          "research/experiments/container-representation/map-library/.build/native/completion/runtime.o",
+          "research/experiments/container-representation/map-library/.build/native/completion/file_adapter.o",
+          "research/experiments/container-representation/map-library/.build/native/completion/bridge.o",
+          "research/experiments/container-representation/map-library/.build/native/wf_floor.o",
+          "research/experiments/container-representation/map-library/.build/native/sched/prim_host.o",
+          "research/experiments/container-representation/map-library/.build/native/completion/wait_host.o",
+          "research/experiments/container-representation/map-library/.build/native/completion/file_posix.o",
+          "research/experiments/container-representation/map-library/.build/native/completion/linux_io_uring.o",
+          "-liconv",
+          "-lSystem",
+          "-lc",
+          "-lm",
+          "-pthread",
+          "-o",
+          "<scratch-root>/whitefoot-wide-node-fixed-par-ordinary"
+        ],
+        "exit": 0,
+        "label": "par-ordinary link",
+        "seconds": 0.04745333408936858,
+        "stderr": "ld: warning: ignoring duplicate libraries: '-lSystem'\n",
+        "stdout": ""
+      },
+      {
+        "command": [
+          "<scratch-root>/whitefoot-wide-node-fixed-par-ordinary"
+        ],
+        "exit": 0,
+        "label": "par-ordinary execute",
+        "seconds": 0.26275274995714426,
+        "stderr": "",
+        "stdout": ""
+      },
+      {
+        "command": [
+          "/usr/bin/clang",
+          "-O2",
+          "-Wno-override-module",
+          "-x",
+          "ir",
+          "-c",
+          "<scratch-root>/whitefoot-wide-node-fixed-par-observer.ll",
+          "-o",
+          "<scratch-root>/whitefoot-wide-node-fixed-par-observer.o"
+        ],
+        "exit": 0,
+        "label": "par-observer clang",
+        "seconds": 0.6173067921772599,
+        "stderr": "",
+        "stdout": ""
+      },
+      {
+        "command": [
+          "/usr/bin/clang",
+          "-O2",
+          "-std=c11",
+          "-Wall",
+          "-Wextra",
+          "-Werror",
+          "-Icompiler/src/backend",
+          "-c",
+          "tests/programs/containers/container-allocation-observer.c",
+          "-o",
+          "<scratch-root>/whitefoot-container-observer-fixed.o"
+        ],
+        "exit": 0,
+        "label": "par-observer observer compile",
+        "seconds": 0.06025316705927253,
+        "stderr": "",
+        "stdout": ""
+      },
+      {
+        "command": [
+          "/usr/bin/clang",
+          "<scratch-root>/whitefoot-wide-node-fixed-par-observer.o",
+          "<scratch-root>/whitefoot-container-observer-fixed.o",
+          "research/experiments/container-representation/map-library/.build/native/ordinary_values.o",
+          "research/experiments/container-representation/map-library/.build/native/ordinary_values_ir.o",
+          "research/experiments/container-representation/map-library/.build/native/sched/core.o",
+          "research/experiments/container-representation/map-library/.build/native/sched/entry.o",
+          "research/experiments/container-representation/map-library/.build/native/completion/runtime.o",
+          "research/experiments/container-representation/map-library/.build/native/completion/file_adapter.o",
+          "research/experiments/container-representation/map-library/.build/native/completion/bridge.o",
+          "research/experiments/container-representation/map-library/.build/native/wf_floor.o",
+          "research/experiments/container-representation/map-library/.build/native/sched/prim_host.o",
+          "research/experiments/container-representation/map-library/.build/native/completion/wait_host.o",
+          "research/experiments/container-representation/map-library/.build/native/completion/file_posix.o",
+          "research/experiments/container-representation/map-library/.build/native/completion/linux_io_uring.o",
+          "-liconv",
+          "-lSystem",
+          "-lc",
+          "-lm",
+          "-pthread",
+          "-o",
+          "<scratch-root>/whitefoot-wide-node-fixed-par-observer"
+        ],
+        "exit": 0,
+        "label": "par-observer link",
+        "seconds": 0.047478958033025265,
+        "stderr": "ld: warning: ignoring duplicate libraries: '-lSystem'\n",
+        "stdout": ""
+      },
+      {
+        "command": [
+          "<scratch-root>/whitefoot-wide-node-fixed-par-observer"
+        ],
+        "exit": 0,
+        "label": "par-observer execute",
+        "seconds": 0.2802389580756426,
+        "stderr": "",
+        "stdout": "container allocation observer: 36 allocations, each released exactly once\n"
+      }
+    ],
+    "scope": "Equivalent 31-word fixture constructor spelling only: array filled with base plus explicit offsets 1..30. This isolates full-content transfer observations; it does not repair general waiting-frame expansion.",
+    "sequential_ir": {
+      "bytes": 858129,
+      "path": "<scratch-root>/whitefoot-wide-node-fixed-seq.ll",
+      "sha256": "69c1f837fc2b924fa10701adfa6e62b0bcd7516d77c011205f63e93ce21b07f1"
+    },
+    "source_path": "tests/programs/containers/hash-map-program.wf",
+    "source_sha256": "8224bee496e70a91a64eb20e66b13d69ff29684aad3847f8566a92163a2715ee",
+    "tail_fault_log": {
+      "path": "<scratch-root>/whitefoot-fixed-tail-fault-check.log",
+      "sha256": "bbd28ea0ee4194705a306296bcf141ffc229c3c6e740dd6bea21b1a157ecd883",
+      "text": "== START research/wide-node-fixed-tail-fault (limit 1800s): python3 <scratch-root>/whitefoot-fixed-tail-fault-check.py ==\n{\"label\": \"tail fault emit\", \"command\": [\"<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/whitefootc-running-index\", \"--emit-llvm\", \"<scratch-root>/whitefoot-wide-node-fixed-tail-fault.wf\", \"-o\", \"<scratch-root>/whitefoot-wide-node-fixed-tail-fault.ll\"], \"seconds\": 0.6861135000362992, \"exit\": 0, \"stdout\": \"\", \"stderr\": \"\"}\n{\"label\": \"tail fault clang\", \"command\": [\"/usr/bin/clang\", \"-O2\", \"-Wno-override-module\", \"-x\", \"ir\", \"-c\", \"<scratch-root>/whitefoot-wide-node-fixed-tail-fault.ll\", \"-o\", \"<scratch-root>/whitefoot-wide-node-fixed-tail-fault.o\"], \"seconds\": 0.5930605418980122, \"exit\": 0, \"stdout\": \"\", \"stderr\": \"\"}\n{\"label\": \"tail fault link\", \"command\": [\"/usr/bin/clang\", \"<scratch-root>/whitefoot-wide-node-fixed-tail-fault.o\", \"research/experiments/container-representation/map-library/.build/native/ordinary_values.o\", \"research/experiments/container-representation/map-library/.build/native/ordinary_values_ir.o\", \"research/experiments/container-representation/map-library/.build/native/sched/core.o\", \"research/experiments/container-representation/map-library/.build/native/sched/entry.o\", \"research/experiments/container-representation/map-library/.build/native/completion/runtime.o\", \"research/experiments/container-representation/map-library/.build/native/completion/file_adapter.o\", \"research/experiments/container-representation/map-library/.build/native/completion/bridge.o\", \"research/experiments/container-representation/map-library/.build/native/wf_floor.o\", \"research/experiments/container-representation/map-library/.build/native/sched/prim_host.o\", \"research/experiments/container-representation/map-library/.build/native/completion/wait_host.o\", \"research/experiments/container-representation/map-library/.build/native/completion/file_posix.o\", \"research/experiments/container-representation/map-library/.build/native/completion/linux_io_uring.o\", \"-liconv\", \"-lSystem\", \"-lc\", \"-lm\", \"-pthread\", \"-o\", \"<scratch-root>/whitefoot-wide-node-fixed-tail-fault\"], \"seconds\": 0.0504270838573575, \"exit\": 0, \"stdout\": \"\", \"stderr\": \"ld: warning: ignoring duplicate libraries: '-lSystem'\\n\"}\n{\"label\": \"tail fault execute\", \"command\": [\"<scratch-root>/whitefoot-wide-node-fixed-tail-fault\"], \"seconds\": 0.2743159579113126, \"exit\": 1, \"stdout\": \"\", \"stderr\": \"\"}\nreal 1.65\nuser 1.31\nsys 0.10\n== END research/wide-node-fixed-tail-fault: 1.66 s, exit 0 ==\n"
+    },
+    "tail_fault_records": [
+      {
+        "command": [
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/whitefootc-running-index",
+          "--emit-llvm",
+          "<scratch-root>/whitefoot-wide-node-fixed-tail-fault.wf",
+          "-o",
+          "<scratch-root>/whitefoot-wide-node-fixed-tail-fault.ll"
+        ],
+        "exit": 0,
+        "label": "tail fault emit",
+        "seconds": 0.6861135000362992,
+        "stderr": "",
+        "stdout": ""
+      },
+      {
+        "command": [
+          "/usr/bin/clang",
+          "-O2",
+          "-Wno-override-module",
+          "-x",
+          "ir",
+          "-c",
+          "<scratch-root>/whitefoot-wide-node-fixed-tail-fault.ll",
+          "-o",
+          "<scratch-root>/whitefoot-wide-node-fixed-tail-fault.o"
+        ],
+        "exit": 0,
+        "label": "tail fault clang",
+        "seconds": 0.5930605418980122,
+        "stderr": "",
+        "stdout": ""
+      },
+      {
+        "command": [
+          "/usr/bin/clang",
+          "<scratch-root>/whitefoot-wide-node-fixed-tail-fault.o",
+          "research/experiments/container-representation/map-library/.build/native/ordinary_values.o",
+          "research/experiments/container-representation/map-library/.build/native/ordinary_values_ir.o",
+          "research/experiments/container-representation/map-library/.build/native/sched/core.o",
+          "research/experiments/container-representation/map-library/.build/native/sched/entry.o",
+          "research/experiments/container-representation/map-library/.build/native/completion/runtime.o",
+          "research/experiments/container-representation/map-library/.build/native/completion/file_adapter.o",
+          "research/experiments/container-representation/map-library/.build/native/completion/bridge.o",
+          "research/experiments/container-representation/map-library/.build/native/wf_floor.o",
+          "research/experiments/container-representation/map-library/.build/native/sched/prim_host.o",
+          "research/experiments/container-representation/map-library/.build/native/completion/wait_host.o",
+          "research/experiments/container-representation/map-library/.build/native/completion/file_posix.o",
+          "research/experiments/container-representation/map-library/.build/native/completion/linux_io_uring.o",
+          "-liconv",
+          "-lSystem",
+          "-lc",
+          "-lm",
+          "-pthread",
+          "-o",
+          "<scratch-root>/whitefoot-wide-node-fixed-tail-fault"
+        ],
+        "exit": 0,
+        "label": "tail fault link",
+        "seconds": 0.0504270838573575,
+        "stderr": "ld: warning: ignoring duplicate libraries: '-lSystem'\n",
+        "stdout": ""
+      },
+      {
+        "command": [
+          "<scratch-root>/whitefoot-wide-node-fixed-tail-fault"
+        ],
+        "exit": 1,
+        "label": "tail fault execute",
+        "seconds": 0.2743159579113126,
+        "stderr": "",
+        "stdout": ""
+      }
+    ]
+  },
   "wide_owner_regression": {
     "fault_delta": "Insert set words[30_u64] = words[30_u64] +wrap 1_u64; immediately before returning HashMapOwnedNode in hash_map_test_owned_make. All key/child serials and ownership paths remain unchanged.",
     "logs": {
@@ -1573,7 +1985,7 @@
       "wf__par_seq_hash_map_test_owned": 63638,
       "wf_hash_map_test_owned": 4255286
     },
-    "limit": "Observed module expansion on the local ARM host. Formal native build/run phase timings are retained under wide_owner_regression. Linux CI deadline does not identify its timed-out command until the diagnostic is changed.",
+    "limit": "Historical loop constructor at the source_revision below. Local ARM native build/run phases are retained under wide_owner_regression. The e39dbc277 diagnostic identifies Linux Clang -O2 compilation as the timeout; the equivalent fixed-size constructor and its separate measurements are under wide_owner_fixed_constructor. The general waiting-frame cost remains unresolved.",
     "llvm_bytes": 5122451,
     "llvm_sha256": "d8aebff3ffe05d11f35d363bae8d9f0e09fa59561079c2b665c86502d868ab92",
     "replay": "<frozen-running-index-compiler> --par --emit-llvm tests/programs/containers/hash-map-program.wf -o <scratch-root>/wide-node-par.ll",

@@ -3774,21 +3774,38 @@ corrupted tail independently of the existing identity and release checks.
 
 #### Wide-owner waiting-frame cost
 
-The strengthened fixture also exposes a separate compilation cost. With the
-frozen running-index compiler and ordinary CLI `--par` policy, its LLVM module
-is 5,122,451 bytes with 254 definitions. `wf_hash_map_test_owned` alone occupies
-about 4.26 MB, versus about 64 KB for its sequential clone in that same module.
-Repeated complete waiting-frame address types contribute to this expansion;
-this is not evidence that the 31-word checking loop itself was unrolled.
-The emitted module SHA-256 is
+The loop-constructor fixture at `e39dbc2776421b689fcb8db11ef8dc8b039a17e1`
+exposes a separate compilation cost. With the frozen running-index compiler
+and ordinary CLI `--par` policy, its LLVM module is 5,122,451 bytes with 254
+definitions. `wf_hash_map_test_owned` alone occupies about 4.26 MB, versus
+about 64 KB for its sequential clone. Repeated complete waiting-frame address
+types contribute to this expansion; this is not evidence that the 31-word
+checking loop itself was unrolled. The module SHA-256 is
 `d8aebff3ffe05d11f35d363bae8d9f0e09fa59561079c2b665c86502d868ab92`.
-The retained formal phase records above locate 11.32 and 11.40 seconds in
-parallel native compilation on the local ARM host. Native execution in those
-records remains below 0.28 seconds per image.
+The retained phase records locate 11.32 and 11.40 seconds in parallel native
+compilation on the local ARM host, with execution below 0.28 seconds per image.
 
-On revision `b9ccb67de4d2ab3110418f47670944c5d000970a`, Linux corpus CI
-hits the 60-second native-child deadline in this case twice; macOS passes.
-The shared child runner times both compiler commands and programs, so that
-original message does not prove which command expired. The diagnostic now
-includes the command. Attribution and any corrective change remain open;
-no timeout increase, assertion removal or overlap-policy change is selected.
+Linux corpus reached the 60-second native-child deadline twice at
+`b9ccb67de4d2ab3110418f47670944c5d000970a`. The improved diagnostic at
+`e39dbc2776421b689fcb8db11ef8dc8b039a17e1` identifies `/usr/bin/clang -x ir`
+with `-O2` as the timed-out command, before program execution. macOS passed.
+
+The current constructor computes the same wrapping base once, fills all 31
+words with it and writes indices 1 through 30 explicitly. Word zero is already
+`base +wrap 0`; each other word retains `base +wrap index`. This removes an
+independent initialization loop from the transfer witness, not its full-content,
+identity, cleanup or lowering-mode observations. The original loop remains
+available at the revision above and its general compilation cost stays in TODO.
+
+Using the same frozen compiler, the new parallel module is 866,051 bytes
+(SHA-256 `80b5f5b1247a16bc382627c7361052fe8b1c78ada03d8977568516103aafe3de`).
+Sequential ordinary/observer Clang object builds take 0.572/0.626 seconds;
+parallel builds take 0.592/0.617 seconds, with about 0.05 seconds per link.
+All four executions exit zero; both observers report exactly 36 allocations,
+each released once. Changing only word 30 from `base +wrap 30` to
+`base +wrap 31` makes the native program exit one. The positive checks take
+5.55 seconds and the independent tail-fault check 1.66 seconds, including
+emission, native compilation, linking and execution. The source hash, commands,
+phase observations and logs are retained in `mutation-api-evidence.json` under
+`wide_owner_fixed_constructor`. Linux CI on this source change remains pending;
+no timeout, assertion or runtime overlap policy was weakened.
