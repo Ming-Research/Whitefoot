@@ -1,0 +1,8 @@
+fn main() -> status: std::process::ExitStatus pure waits {
+  let map = shared_map_new::<u8>(capacity: 0_u64);
+  let ready = True();
+  atomic state = &map when ready {
+    let counted = keyed_count::<u8>(state: state);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

@@ -570,7 +570,7 @@ Field suffixes introduce no runtime evaluation.
 This rule judges a value target; a `set` whose target is a reference variable and whose right-hand side is a `borrow_expr` rebinds that name and is judged by [REF-1] instead.
 A `set` whose target is a reference variable and whose right-hand side is a value is not a rebinding: it is a hard error citing TYPE-7 at the target `place`, with a repair [DIAG-1].
 The value target's final selected type is T.
-The target is writable exactly when it is rooted in a live own-mode value binding or in the state of a shared object [SHARE-1], or is `p^` or a path below it where `p` is a reference parameter whose declared row carries `writes` of that path [EFF-1, EFF-5] or a local reference variable whose named path is itself writable.
+The target is writable exactly when it is rooted in a live own-mode value binding, in the state of a shared object or of a shared map, or in an entry of a shared map [SHARE-1], or is `p^` or a path below it where `p` is a reference parameter whose declared row carries `writes` of that path [EFF-1, EFF-5] or a local reference variable whose named path is itself writable.
 Fields and indices inherit the writability of their selected base.
 A named const is never writable [CONST-2], and a target path that ends at or passes through a readonly field is refused by [TYPE-2].
 A `for_stmt` binder is compiler-updated state and is never source-writable; a target rooted there is a SET-1 rejection at the complete target `place`.
@@ -2170,7 +2170,7 @@ A program that needs two host operations ordered passes both through one owner w
 Each context executes its own constructs one at a time, in the order they define, and a call that is not spawned executes in its caller's context in that order.
 A call of a waiting host-module function [PRE-2] completes once the host has produced the operation's outcome, and that outcome is an input of the execution, as the bytes an operation delivers are.
 A context waits at a waiting host call until the host has produced its outcome, at an atomic statement until the statement takes effect [SHARE-3], and at a join until the joined context has completed [WAIT-3].
-Which of several outstanding operations completes first, how the host effects of different contexts interleave, and the order in which atomic statements of different contexts take effect on one shared object [SHARE-3] are inputs of the execution: two executions that receive the same outcomes in the same order execute every context identically.
+Which of several outstanding operations completes first, how the host effects of different contexts interleave, and the order in which atomic statements of different contexts take effect on what they hold [SHARE-3] are inputs of the execution: two executions that receive the same outcomes in the same order execute every context identically.
 Where a context executes, and whether two contexts execute at the same time, are not observable.
 While every context, from every point of its execution, reaches in finitely many steps its completion or a wait, each context that does not wait, or waits for a host outcome that has been produced or for a context that has completed, eventually takes its next step, and each atomic statement that has begun, and that has no guard or whose guard is true in its object's state at every point from some point on, eventually takes effect.
 An execution in which every context that has not completed waits for an atomic statement whose guard is false or for another context, and no host operation is outstanding, takes no further step and does not complete; an implementation may stop it with a report, which is not a program outcome [SCOPE-3].
@@ -2203,14 +2203,14 @@ An `atomic_stmt` [GRAM-4] has a target, the `place` after `&`; a binding, its `I
 | a place of type `Shared<T>` | the object's state | `&T`, whose path is the state |
 | a place of type `SharedMap<V>` | the map's state | `&Keyed<V>`, whose path is the state |
 | `m[k]`, where `m` is a place of type `SharedMap<V>` and the index atom `k` has type `&[u8]` | the map's entry under the bytes `k` names | `&Option<V>`, whose path is the entry |
-| `s^[k]`, where `s` is the binding of an atomic statement holding a map's state whose block encloses this statement and `k` has type `&[u8]` | the entry of that map under the bytes `k` names | `&Option<V>`, whose path is the entry |
+| `s^[k]`, where the one path `s` names is the state of a map that an atomic statement whose block encloses this statement holds, and `k` has type `&[u8]` | the entry of that map under the bytes `k` names | `&Option<V>`, whose path is the entry |
 
 The statement reads its target place, or `m` and `k`, when it begins. The object or map stays live until the statement completes, whatever its block does with the target place [SHARE-1].
 The binding is a reference variable of the kind the table gives. It is in scope in the guard and the block, and its root leaves scope when the block ends by any edge [REF-2].
-A statement of the last form counts as no call. Every other atomic statement counts as a waiting call for [WAIT-1], [PAR-1] and [PAR-2], so one in the body of a function that does not wait is WAIT-1's hard error at that `atomic_stmt`.
-The guard, and the block of a statement holding an object's state, contain no call to a waiting function [WAIT-1] and no atomic statement. The block of a statement holding a map's state or an entry contains no call to a waiting function; the atomic statements it contains are those holding an object's state and, in the block of a statement holding a map's state, those of the last form whose `s` is that statement's binding.
+Every atomic statement counts as a waiting call for [PAR-1] and [PAR-2]. A statement of the last form counts as no call for [WAIT-1], and every other atomic statement counts as a waiting call for it, so one in the body of a function that does not wait is WAIT-1's hard error at that `atomic_stmt`.
+The guard, and the block of a statement holding an object's state, contain no call to a waiting function [WAIT-1] and no atomic statement. The block of a statement holding a map's state or an entry contains no call to a waiting function; the atomic statements it contains are those holding an object's state and, in the block of a statement holding a map's state, those of the last form whose `s` names that state.
 Only a statement holding an object's state, inside the block of no other atomic statement, has a guard; the guard has the condition judgment of an `if` [GRAM-6], and its footprint [PAR-1] writes no path.
-A violation is a hard error citing SHARE-2 at the offending `call`, `atomic_stmt` or guard `expr`, with a repair [DIAG-1].
+A violation is a hard error citing SHARE-2 at the offending `call`, `atomic_stmt`, guard `expr` or key, with a repair [DIAG-1].
 The statement's footprint is its target place, or `m` and `k`, read, together with the footprint of its guard and block from which every path rooted at the state or entry it holds is removed.
 
 [SHARE-3] An atomic statement takes effect at one point after it begins and before it completes.

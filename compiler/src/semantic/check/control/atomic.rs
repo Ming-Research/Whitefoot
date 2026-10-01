@@ -353,17 +353,29 @@ impl Checker<'_, '_> {
                     // The state is named only by the binder of the statement
                     // that holds it, so the path the prefix names is rooted
                     // at that binder.
-                    let holder = prefix
-                        .reference
-                        .as_ref()
-                        .and_then(|reference| match reference.paths.as_slice() {
+                    let holder = prefix.reference.as_ref().and_then(|reference| {
+                        match reference.paths.as_slice() {
                             [place] => match place.root {
                                 PlaceRoot::Binding(binding) => Some(binding),
                                 PlaceRoot::Constant(_) => None,
                             },
                             _ => None,
-                        })
-                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                        }
+                    });
+                    // [SHARE-2] a reference that may name more than one
+                    // state names none an enclosing statement holds.
+                    let Some(holder) = holder else {
+                        return self.types.declarations.issue_node(
+                            SemanticRule::Share2,
+                            node,
+                            SemanticIssueKind::AtomicTargetNotShared {
+                                found:
+                                    "an entry of a map state no enclosing atomic statement holds"
+                                        .to_owned(),
+                                mechanical_fix: SHARE2_HOLD_THE_STATE,
+                            },
+                        );
+                    };
                     Some((entry, Some(holder)))
                 }
                 Some(CheckedShared::Object) | None => None,

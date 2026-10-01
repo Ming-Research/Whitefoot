@@ -132,9 +132,8 @@ handed back. Each choice is a proposal until then.
 - **A whole-map statement, `atomic s = &m { ... }`,** whose binding is a
   `&Keyed<V>` naming the whole map, with exclusive access to every entry,
   for commands over several keys (`MSET`, `DEL` and `EXISTS` of several)
-  and for an exact count (`DBSIZE`). Inside its block, or in a function
-  passed the binding, `atomic e = &s^[key] { ... }` reaches one entry and
-  waits for nothing. To exclude it, every keyed statement publishes itself
+  and for an exact count (`DBSIZE`). Inside its block, and only there,
+  `atomic e = &s^[key] { ... }` reaches one entry and waits for nothing. To exclude it, every keyed statement publishes itself
   with one sequentially consistent store on its own thread's cache line, the
   price paid by every keyed statement and measured with firn. A statement
   over a list of keys, taken in one order the runtime fixes (Q35), would let

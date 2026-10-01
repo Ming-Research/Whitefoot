@@ -69,6 +69,8 @@
 #define REMOVED KEY_MASK
 /* Cells a map created without a capacity starts with, 64 KiB. */
 #define DEFAULT_CELLS 4096ull
+/* The most keys a map's first table is sized for: 2^27 cells of 16 bytes. */
+#define CAPACITY_LIMIT (1ull << 26)
 #define MIN_CELLS 16ull
 /* Cells one helper moves at a time. */
 #define BLOCK 4096ull
@@ -819,6 +821,9 @@ static void enter_keyed(wf_cmap_user *u) {
 }
 
 wf_cmap *wf_cmap_create_entries(uint64_t slot_size, uint64_t slot_align, uint64_t capacity) {
+    /* The target refuses a program whose map's slot needs more alignment
+     * before emission, so this stops only a caller that breaks the
+     * contract. */
     if (slot_align == 0 || slot_align > ENTRY_GRAIN || (slot_align & (slot_align - 1)) != 0)
         abort();
     wf_cmap *map = wf_cmap_create(capacity);
@@ -954,7 +959,12 @@ wf_cmap *wf_cmap_create(uint64_t capacity) {
     for (int i = 0; i < WF_CMAP_MAX_USERS; i++)
         map->users[i].map = map;
     /* Half full when it holds capacity keys, as dense as a table gets
-     * before it moves, since reads cost less in a smaller table. */
+     * before it moves, since reads cost less in a smaller table. The capacity
+     * only sizes the first table, which a map outgrows by moving, so a hint
+     * past CAPACITY_LIMIT keys asks for that many: a larger one would have
+     * the cell count's bytes overflow. */
+    if (capacity > CAPACITY_LIMIT)
+        capacity = CAPACITY_LIMIT;
     table *t = new_table(NULL, capacity ? cells_for(capacity, 1, 2) : DEFAULT_CELLS);
     atomic_store(&map->current, t);
     return map;

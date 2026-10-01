@@ -962,13 +962,6 @@ rarely insert at the same place.
   from. Reopen with that parking, or when a workload's tail latency shows a
   keyed or nested wait.
 
-- **A shared map's slot alignment above 16 bytes aborts.**
-  `wf_cmap_create_entries` calls `abort()` for an alignment the node layout
-  does not serve, outside the bridge's report path; no prelude type has one
-  today. The change: report through `wf__runtime_exhausted`'s path with a
-  message, or align nodes to the slot's alignment. Reopen when a type with a
-  larger alignment can be a map's value.
-
 - **`SharedMap<unit>` and maps of other payload-free values do not lower.**
   The unlock reads the entry's `Option` tag as an `i32`
   (`emit_shared_map_unlock` in `compiler/src/backend/emitter/shared.rs`) and
@@ -983,6 +976,18 @@ rarely insert at the same place.
   `compiler/src/backend/completion/bridge.c`), while smaller nodes come from
   per-user chunks. A workload of long keys from many drivers would contend
   on it. Reopen when a measured workload's keys exceed 512 bytes.
+
+- **Every keyed statement counts a handle of its own on the map's one
+  handle count.** A keyed or whole-map statement reached through a handle
+  retains and releases it (`compiler/src/lowering/builder/atomic.rs`), two
+  atomic updates of `wf_shared_map.handles` in
+  `compiler/src/backend/shared_map.c`, one word every driver's statements
+  update, so it moves between cores on every statement while the entries
+  themselves do not. The change is the one the next item proposes for
+  objects: omit the pair for a statement whose function cannot write the
+  place it reaches the map through, such as firn's `store^.map` through a
+  read-only reference. Reopen when a profile of firn's keyed commands on two
+  or more drivers shows the count's line, or with the next item.
 
 - **Every atomic statement counts a handle of its own, on the lock's cache
   line.** The lowering retains the shared object before it acquires and

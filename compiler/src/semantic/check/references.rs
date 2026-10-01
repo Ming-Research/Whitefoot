@@ -835,6 +835,9 @@ impl<'unit> Checker<'_, 'unit> {
         } else {
             suffixes.as_slice()
         };
+        // [TYPE-7] whether a step is written after the root, the last one
+        // included when the caller resolves it itself.
+        let written_steps = !suffixes.is_empty();
         let suffixes = match (without_last, suffixes.split_last()) {
             (true, Some((_, prefix))) => prefix,
             (true, None) => return Err(SemanticCompilerFailure::InvalidCanonicalTree.into()),
@@ -915,7 +918,7 @@ impl<'unit> Checker<'_, 'unit> {
         // [REF-1, TYPE-7] forming another reference still writes the step
         // through a reference holder; resolving the path grants no omission.
         if !written_deref
-            && !suffixes.is_empty()
+            && written_steps
             && root_binding
                 .as_ref()
                 .is_some_and(|local| local.mode.is_reference())

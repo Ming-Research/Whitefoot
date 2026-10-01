@@ -2437,6 +2437,7 @@ int wf__shared_acquire(void *object, uint32_t write, void *frame) {
  * resumes. */
 void wf__shared_take(void *object, uint32_t write) {
     wf_shared *shared = (wf_shared *)object;
+    unsigned spins = 0u;
     for (;;) {
         if (wf_shared_admits(shared, write)
             || atomic_load_explicit(&shared->granted, memory_order_relaxed) != NULL) {
@@ -2462,7 +2463,15 @@ void wf__shared_take(void *object, uint32_t write) {
                 return;
             }
         }
-        wf_prim_spin_hint();
+        /* A holder runs its block to the end, but a host may preempt its
+         * thread, so after a while this one gives up its processor. */
+        spins += 1u;
+        if (spins >= WF_SHARED_SPINS) {
+            spins = 0u;
+            wf_prim_yield();
+        } else {
+            wf_prim_spin_hint();
+        }
     }
 }
 

@@ -790,8 +790,29 @@ static void entries_churn(void) {
     wf_cmap_destroy(map);
 }
 
+/* A capacity past what any table can hold sizes the first table at the
+ * limit, and the map works. */
+static void entries_huge_capacity(void) {
+    wf_cmap *map = wf_cmap_create_entries(8, 8, 1ull << 61);
+    wf_cmap_user *user = wf_cmap_user_at(map, 0);
+    unsigned char bytes[16];
+    uint64_t length = counted_key(1, bytes);
+    wf_cmap_entry entry;
+    uint64_t *slot = wf_cmap_lock_entry(user, bytes, length, 0, &entry);
+    slot[0] = 5;
+    wf_cmap_unlock_entry(user, &entry, 0, 1);
+    slot = wf_cmap_lock_entry(user, bytes, length, 0, &entry);
+    if (entry.fresh || slot[0] != 5)
+        fail("a map sized past the limit lost its key", entry.fresh, slot[0]);
+    wf_cmap_unlock_entry(user, &entry, 0, 1);
+    if (atomic_load(&map->current)->capacity > 2 * CAPACITY_LIMIT)
+        fail("a capacity past the limit sized a larger table", atomic_load(&map->current)->capacity, 0);
+    wf_cmap_destroy(map);
+}
+
 int main(void) {
     checker_self_test();
+    entries_huge_capacity();
     claim_given_back();
     entries_sequential();
     claim_reused();
