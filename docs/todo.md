@@ -1228,6 +1228,11 @@ rarely insert at the same place.
   argument addressing those optimizer losses. Compare the same full matrices,
   null controls and ordinary/retained boundaries; preserve the dirty-storage,
   selected-variant, partial-window, linked-body and parallel cleanup checks.
+  Defined dirty-byte fixtures do not establish transport of undefined inactive
+  LLVM value fields. Any reopening must cover that distinction, including Bool
+  and pointer payloads, nested products/unions, returns and parallel frames,
+  while checking active values and exact ownership. An indirect callable ABI
+  does not by itself make a product enum a memory-only representation.
   SSA construction and general aggregate forwarding are separate paths, not
   improvements established by this candidate.
 
@@ -3433,13 +3438,24 @@ condition under which it is taken up.
   the final index still feeds migration's probe limit. An equal-pass raw-IR
   discriminator removes only six initializer assumptions: LLVM then deletes
   all four loops and derives the live final index, while the control retains
-  residual loops. Its runtime contribution remains unmeasured. A general
-  simplification must preserve the final index, zero-trip
-  behavior, stable descriptor bounds and existing window performance; simply
-  removing every index assumption is not justified. Reopen after the current
-  constructor comparison, using the reached rebuild rather than the standalone
-  migration helper: ordinary LLVM inlines that helper and removes its caller's
-  temporary wide copy in this candidate.
+  residual loops. A source-admitted generic positive-stride Slots append rule
+  now removes those loops without deleting assumptions: target qualification
+  and len < cap justify signed and unsigned no-wrap flags. Zero-stride lengths
+  retain the complete u64 domain. The [combined comparison](../research/experiments/container-representation/map-library/RESULTS.md#complete-zeroing-with-bounded-append-scalar-gains-wide-criterion-unmet)
+  has four qualified scalar growth gains, but small-wide overlap with adverse
+  medians and large-wide candidate/ratio drift leave its wide criterion unmet.
+  Keep this implementation experimental; its combined result does not isolate
+  the loop's elapsed contribution or select constructor lowering.
+
+  The same ledger/native audit separates the peers' remaining representation
+  costs. Rust relocates the same wide payload bytes while initializing compact
+  control metadata and scanning/probing it in groups; WF initializes complete
+  inline slots and scans strided tags. C++ instead retains separately allocated
+  payload nodes and rebuilds bucket links. Reopen initialization and metadata
+  attribution against Rust with fixed capacities, full ownership/headroom
+  checks and adverse results retained. A boxed-value alternative would add
+  per-offer allocation and lookup indirection and change the exposed cells
+  type; reserve-only improvement cannot select it for the ordinary map API.
 
 - **Ordered insertion replacement costs need attribution.** Both the
   [aggregate-result candidate](../research/experiments/container-representation/ordered-library/RESULTS.md#single-descent-insertion-candidate)

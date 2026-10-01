@@ -1,8 +1,8 @@
 {
   "purpose": "Isolated ordinary public reserve with verified future entry headroom; single production baseline panel, not an optimization/adoption result",
   "archive": "reserve-api-evidence.tar.gz",
-  "archive_sha256": "764fe16e90ed1cee37faeca036f44d5ca2ed2c2d3be876b0b5fa52eb29154b93",
-  "archive_members": 684,
+  "archive_sha256": "372a449b2f89402bd431c984b8890deecf04cecf4f09ae204210498e51058b25",
+  "archive_members": 698,
   "base_revision": "89571a60381a685cfbe760248ceb6178d9f9ac05",
   "production_cli_sha256": "c12b2b2a6c9694fd2bc1b7be0004d582ae9628951422def849f4cf6a3ac02f77",
   "timed_image_sha256": "f1ebf18d7a94c79250bb3cbd74a0b379a2a30c6e5e4eda48396ec77d8bbdbf3f",
@@ -3826,6 +3826,54 @@
       "from": "component-index.json",
       "to": "component-index-before-q205-implementation.json",
       "sha256": "58ed9782d355f4c3004c1b9b1637d09be9b039829b18255dbda92a21dc0879a9"
+    },
+    "all_prior_member_bytes_preserved": true
+  },
+  "combined_zero_nsw": {
+    "prefix": "combined-zero-nsw/",
+    "payload_count": 13,
+    "manifest": "combined-zero-nsw/manifest.json",
+    "status": "Experimental combined candidate; primary wide criterion failed, no compiler/tree/API adoption.",
+    "compiler_patch": "combined-zero-nsw/compiler-nsw.patch",
+    "compiler_patch_sha256": "1818bdb7d939d056ba7700fc400ade40a06d337e1336e117d91c5c1a21a94999",
+    "constructor_patch": "q205-implementation/compiler-candidate.patch",
+    "combined_source_sha256": {
+      "compiler/src/backend/emitter/runs.rs": "749171126e56645295a3a2ee033a1077d30cfe1af8525324d1e9336aa7c458bf",
+      "compiler/src/backend/tests/windows.rs": "2c6b6c979f2d766875b9741c4df20f408b184d22805a4568a373adb43d405a1a",
+      "compiler/src/backend/tests/window_length_residency.rs": "ff0ef62175b63bdb9f1f2a7507dbd7b7f4ff5252ea27b1d93d9d2abfa4aae3d3",
+      "compiler/src/backend/emitter.rs": "c9ee903f496a97bc560299f8fe6d030cf0e8a45065fcf46b42500238570c50bc",
+      "compiler/src/backend/emitter/places.rs": "733c887ab81a5e4009e9e6a51123847dba8820e7e8647943813a13e6c6dbe3c3",
+      "compiler/src/backend/tests/payload_enums.rs": "f0af6827de8d1f56fb99400ebf365521dbf3e1b620b85d41465aabaad6e33ca4"
+    },
+    "combined_cli_sha256": "997a315bef76c906464b233ff47a6c26201eb7f2c4324de4981f914ecc98a221",
+    "raw_rows": 336960,
+    "hierarchy_checks": 3456,
+    "prerequisite_stages": 98,
+    "positive_stages": 44,
+    "expected_negative_stages": 54,
+    "all_prerequisites_pass": true,
+    "all_cell_instrument_pass": true,
+    "primary_both_qualified_gain": false,
+    "reducer_comparison_discrepancies": [],
+    "growth_results": {
+      "scalar_gains": 4,
+      "small_wide_overlaps": 2,
+      "large_wide_unqualified": 2
+    },
+    "noop_overlap_cells": 8,
+    "records": "combined-zero-nsw/records.json",
+    "frozen_producer_manifest_sha256": "5b7ef109b324b726063254386c4402cbe9b76c2a781fba149a8cd69c9a27529e",
+    "peer_attribution_original_sha256": "c2edc111aeb9f4893f149e8086df013f080debe9326d6214de1a0ca1e06e7994",
+    "replay_boundary": "Historical records require omitted CLIs/modules/objects and source/toolchain/scratch reconstruction; no standalone or verified published replay."
+  },
+  "combined_zero_nsw_prior_index": {
+    "prior_archive_sha256": "764fe16e90ed1cee37faeca036f44d5ca2ed2c2d3be876b0b5fa52eb29154b93",
+    "prior_members": 684,
+    "unchanged_names_and_bytes": 683,
+    "renamed_member": {
+      "from": "component-index.json",
+      "to": "component-index-before-combined-zero-nsw.json",
+      "sha256": "af88ea79da9b4a0624d2f789e3e1c5347886f7554f05c549d4f25bed6607462f"
     },
     "all_prior_member_bytes_preserved": true
   }

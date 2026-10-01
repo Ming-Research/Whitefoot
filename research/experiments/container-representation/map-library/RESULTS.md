@@ -5214,3 +5214,110 @@ member byte sequences remain unchanged; the former index is renamed
 members. Whole compiler binaries, optimized modules and native objects are
 omitted, with original/retained hashes and reconstruction dependencies stated;
 the package has not been replayed as a standalone build.
+
+### Complete zeroing with bounded append: scalar gains, wide criterion unmet
+
+A second generic candidate retains complete constructor zeroing and publishes
+`nuw nsw` on positive-target-stride Slots append increments. OP-10's admitted
+`len < cap` and STOR-6's complete target allocation bound imply that `len + 1`
+fits signed and unsigned i64. Zero-stride logical lengths retain ordinary
+addition over the full u64 domain; Ring arithmetic is unchanged. Both ordinary
+and resident appends use the existing target-layout query. The current resident
+selector admits only non-unit scalars, so zero-stride resident emission is not
+an inhabited path. No assumption is removed and no acceptance rule changes.
+
+The actual CLI's emitted module, after the identical fixture-main rename, and
+native object byte-match the raw two-original-increment discriminator. First
+O3 removes all four empty fresh-initialization loops while retaining complete
+initialization through calloc. The reached scalar rebuild changes from 116 to
+111 native instructions; wide migration is inlined with its direct 256-byte
+old-to-new transfer and a 64-byte frame, versus the self-tail control's
+336-byte frame and retained migration call. This measures the combined zeroing,
+inlining and bounded-increment change, not the isolated cost of any one part.
+
+The frozen combined CLI is
+`997a315bef76c906464b233ff47a6c26201eb7f2c4324de4981f914ecc98a221`;
+the published self-tail control remains
+`bf3eafb4bd5dba320c45654cd3eb80727f5dab3647dadc96978452a4d18a4701`.
+Both emit the same benchmark and embedded library. The new experiment uses the
+original three-peer driver, the preceding comparison's prospective fixed work,
+post-O3 calloc-aware observer, unchanged strict gates and one
+control0/candidate0/candidate1/control1 sequence. Earlier failed observations
+remain unchanged. All 98 prerequisite outcomes pass, including 54 specific
+negative diagnostics. Four 96-row allocation ledgers remain byte-identical to
+the original ledger; all four 288-case reserve panels pass.
+
+The campaign exits zero in 120.22 seconds; all four processes exit zero. Each
+retains 84,240 rows, totaling 336,960. All interval-validity conditions pass,
+including a 42 ns maximum empty-clock interval in each process. Independent
+reductions agree on all 3,456 aggregate hierarchies, medians, complete ranges,
+ratios and verdicts. All four scalar growth cells have separated gains in both
+cohorts (about 6–32 percent); both small-wide cells overlap, and both large-wide
+cells fail candidate-WF cohort stability and paired-ratio stability. All eight
+no-op before/after comparisons overlap. The two required aligned-wide gains
+are therefore not established, and this combined candidate remains experimental.
+
+Aligned-hash growth medians are microseconds per call, cohort0 / cohort1:
+
+| Payload / initial floor | Control WF | Candidate WF | Candidate Rust | Candidate C++ | Before/after qualification |
+|---|---:|---:|---:|---:|---|
+| 8 B / 64 | 0.231 / 0.231 | 0.215 / 0.214 | 0.196 / 0.196 | 0.134 / 0.129 | Gain |
+| 8 B / 4096 | 13.844 / 13.525 | 9.461 / 9.579 | 9.666 / 9.683 | 4.936 / 4.881 | Gain |
+| 256 B / 64 | 1.684 / 1.686 | 1.749 / 1.742 | 0.868 / 0.842 | 0.233 / 0.242 | Overlap; raw medians worsen 3.9 / 3.3 percent |
+| 256 B / 4096 | 99.082 / 98.705 | 74.204 / 86.516 | 63.578 / 62.718 | 12.630 / 13.062 | Unqualified; raw gains 25.1 / 12.3 percent |
+
+For the final peer target, only the two native-default scalar growth cells
+qualify against Rust, the slower peer there. No growth cell qualifies against
+C++. All eight no-op cells qualify against C++, but none against Rust. The
+aligned large-scalar medians near Rust do not establish separated peer ranges.
+Default-policy and aligned-hash outcomes remain separate in the full reduction.
+
+Focused compiler checks pass 29 window tests, three length-residency tests and
+the HashMap corpus case in both lowerings with its exact 45-allocation ledger.
+The zero-stride native witness appends across i64::MAX and up to u64::MAX without
+changing the storage anchor or capacity. The initial missing-capacity-invariant
+fixture failure is retained with its source repair. A separate read-only review
+finds no issue in the three new implementation/test files; neither this review
+nor those focused tests replace final whole-PR validation.
+
+#### Remaining reserve work differs by representation
+
+The fresh combined ledger and reached native paths distinguish concrete work;
+they do not assign a percentage of elapsed time to each difference. At initial
+entry floors 64 / 4096, all peers preserve 32 / 2048 live values and provide room
+for 128 / 8192 total entries without another backing growth. Physical geometry
+is implementation-specific and independently checked, not assumed identical.
+
+| Wide-value reserve work | WF | Rust | C++ |
+|---|---:|---:|---:|
+| New physical slots or buckets | 170 / 10922 | 256 / 16384 | 128 / 8192 |
+| New allocation bytes | 46240 / 2970784 | 67848 / 4341768 | 1024 / 65536 |
+| Live value bytes relocated | 8192 / 524288 | 8192 / 524288 | 0 / 0 |
+| Preparation allocation requests | 1 / 1 | 1 / 1 | 33 / 2049 |
+
+WF initializes its complete future inline table with calloc and scans old tags
+at 272-byte strides. Rust allocates more bytes but initially writes only
+264 / 16392 contiguous control bytes, scans and probes groups of eight control
+bytes, uses a power-of-two mask, recomputes the same aligned hash and copies
+264 bytes per live entry (key plus value). WF also recomputes the hash, uses
+one division per live entry and directly copies the same live value bytes.
+Requested allocation extent does not establish actual physical zero-write
+traffic or explain Rust's cost advantage by itself.
+
+C++ keeps each value in its pre-existing 280-byte node, uses the cached full
+hash and changes bucket/node links. Its new allocation covers only bucket
+pointers; future insertions still allocate nodes. Thus C++'s reserve avoids
+payload relocation, while Rust's does not. Exact operation-headroom checks,
+whole-value digests and cleanup remain the common contract. These differences
+make compact initialization and metadata scanning/probing the next attribution
+questions for the Rust comparison; they do not select a new layout, capacity
+policy, boxed-value API or a previously rejected inactive-payload policy.
+
+The `combined-zero-nsw/` component of the existing reserve evidence archive
+retains all four complete CSVs, both reducers, the exact three-file append
+patch and source pins, and 307 compact records including the compiler preflight
+failure, native prerequisites and peer attribution excerpts. All 684 prior
+member byte sequences are preserved; the archive now has 698 members. Compiler
+binaries, whole LLVM modules and native objects remain omitted with their
+identities and reconstruction limits recorded. This is retained experimental
+evidence, not a standalone published replay or an adopted compiler change.
