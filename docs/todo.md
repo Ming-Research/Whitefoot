@@ -2164,6 +2164,11 @@ each is resolved by a discussion and a tree change.
   Cached subtree counts also expose a runtime-sized update that a finite
   tuple cannot commit at once; any checked unpack/repack route must exclude
   intermediate observations and prove the invariant before republishing.
+  The same investigation now includes an accepted, executed direct-field
+  write that leaves a live Pair with unequal fields despite its equality
+  invariant. Current TYPE-11 specifies this weaker boundary; the owner's
+  stronger requirement that every live struct value satisfy its invariant
+  needs a language amendment covering all creation and mutation routes.
 - **A standard collection restates at every operation that its capacity is
   unchanged.** `ensures queue^.storage.inner.cap == entry(queue)^.storage.inner.cap`
   appears 15 times across the priority queue's interface and body

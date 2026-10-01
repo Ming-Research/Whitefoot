@@ -30,6 +30,12 @@ handoff, ruling on Q41, 2026-10-01):
   for another application. A compiler-owned Forest is not the requested
   endpoint. This is the direction clarified during the investigation;
   the earlier candidates below remain comparisons, not selected mechanisms.
+- **R5. No invalid struct values.** The owner requires every live value of
+  a struct type to satisfy that type's invariant, including in its defining
+  module and during an update. A constructor check alone does not meet this
+  requirement. A candidate scope cannot simply retain an invalid value of
+  the same type with its invariant disabled. This is a requirement for the
+  proposed design, not a claim about current TYPE-11.
 
 R2 preserves the ordinary operation vocabulary, not a false proposition:
 duplicating an index cannot preserve a no-duplicates proof. An operation
@@ -214,6 +220,44 @@ at every statement boundary or transport it through every nested store/read.
 The current limitation is already recorded under "Type invariants stop at
 the direct struct type" in [the TODO](../../../docs/todo.md).
 
+The gap is observable even without a helper. This complete current-WF
+program constructs a valid Pair, modifies one field, then reads both:
+
+```wf
+struct Pair {
+  left: u64;
+  right: u64;
+  invariant equal(pair): pair.left == pair.right;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let pair = Pair(left: 0_u64, right: 0_u64);
+  set pair.left = 1_u64;
+  let left = pair.left;
+  let right = pair.right;
+  if left == right {
+    return std::process::exit_status(code: 0_u8);
+  } else {
+    return std::process::exit_status(code: 1_u8);
+  }
+}
+```
+
+The baseline compiler accepts it, and the native executable exits 1: the
+live Pair can be observed with unequal fields. Current TYPE-11 requires no
+invariant obligation at that field write or those reads, so this is a
+specified weaker boundary, not evidence of a compiler/specification
+discrepancy. It fails R5's proposed requirement. Changing the construction
+itself to `Pair(left: 1_u64, right: 0_u64)` remains a TYPE-11 rejection.
+
+The existing [type-invariant boundary decision](../../../design/language/checks-and-proofs.md)
+deliberately rejects an obligation at every field write because only the
+updating body can observe the intermediate state. R5 rules out tolerating
+an invalid live struct even inside that body. That decision and its refused
+alternative must therefore be reopened alongside TYPE-11; this research
+does not amend either, and an implementation-only repair would not select
+the new language behavior.
+
 This complete current-WF probe demonstrates the difference:
 
 ```wf
@@ -244,9 +288,9 @@ The caller starts and ends with `(0, 0)`, but after the first store inside
 cannot establish preservation at each intermediate source statement. Adding
 tuple assignment does not change this program's behavior or admission.
 
-A stronger, still-unselected rule could require every live invariant-bearing
-value to satisfy its invariant at each source commit boundary. Its proof
-would be induction over program transitions, with these obligations:
+Meeting R5 requires every live invariant-bearing value to satisfy its
+invariant at each source commit boundary. The corresponding preservation
+argument would be induction over program transitions, with these obligations:
 
 - Construction establishes every applicable invariant, including nested
   values; generic storage admits only valid elements.
@@ -269,13 +313,20 @@ would be induction over program transitions, with these obligations:
   the chosen boundary. Existing effects and ownership must prevent another
   context or callback from observing a partial update.
 
-Another possible boundary is validity whenever a complete value is handed
+Another boundary is validity whenever a complete value is handed
 to an observer, with explicit checked intermediate states inside an update.
 That is weaker than validity at every source statement. Tuple assignment
-makes many fixed-size link updates compatible with the stronger boundary;
-it does not choose between these two meanings or solve interior-reference
-composition by itself. The source rule must settle this before an invariant
+makes many fixed-size link updates compatible with the stronger boundary
+required by R5; it does not enforce that boundary or solve interior-reference
+composition by itself. A complete source rule is needed before an invariant
 is freely assumed on any read.
+Under R5, an intermediate state cannot remain a live value of the original
+struct type with a false invariant, even if a scope hides it. An admissible
+representation conversion must end that typed value's lifetime and expose
+ordinary values of other types, each obeying its own invariants, before any
+otherwise-invalid update. Reconstructing the original type owes its full
+invariant. An unusable binding may be retained to name the eventual
+replacement place; it must not count as a surviving invalid typed value.
 
 An extensibility example makes the distinction consequential. Add a cached
 `subtree_size` to every node and require it to equal the node count of its
@@ -305,9 +356,10 @@ facts. Private visibility alone establishes none of these obligations.
 The protocol might use ordinary consuming representation conversion or a
 scoped proof form; neither syntax nor a lowering guarantee is selected here.
 It is the checked-intermediate-state alternative above, not an unchecked
-escape. Whether to provide it, a more general simultaneous update form, or
-require the stronger boundary and accept its algorithmic restrictions is
-an open choice that the fixed-link example alone cannot settle.
+escape. Whether to provide this consuming conversion, a more general
+simultaneous update form, or only operations that preserve the invariant
+without a representation conversion is an open choice that the fixed-link
+example alone cannot settle. Each candidate must meet R5.
 
 ### A scoped change and an ordinary representation conversion
 
@@ -322,9 +374,11 @@ For that interpretation the scope needs the following rules, regardless of
 its eventual spelling:
 
 - Entry requires the current invariant and grants the update exclusive
-  access. The ordinary `s` and aliases through which an observer could use
-  its invariant are unavailable during the update. This changes usable
-  authority, not the truth of a theorem about the entry state.
+  access. To meet R5, conversion consumes the original typed value; the body
+  has ordinary representation values of different types. The ordinary `s`
+  and aliases through which an observer could use its invariant are
+  unavailable during the update. This changes usable authority, not the
+  truth of a theorem about the entry state.
 - The body operates on a representation without the opened invariant. It
   retains applicable bounds, initializedness, ownership, arithmetic and
   other value-type obligations. Writes invalidate current-state facts by
@@ -671,6 +725,11 @@ Compiler source: `22d0923bdf5ce7dbf4752cf9a302dc4154254869`, built with
 Each probe uses that build with `--check`; each scatter uses
 `--par --par-ledger --emit-llvm`.
 
+- The direct-write Pair probe above passes `--check` and native compilation
+  with `whitefootc -o executable source.wf`. Running it exits 1, the expected
+  observation of unequal fields. This executable observation demonstrates
+  that current TYPE-11 does not meet R5; it is not a proposed accepted case
+  for the stronger invariant discipline.
 - The runnable Pair probe above exits 0. Removing `set value^ = old;`
   exits 1 with FN-9 `UndischargedPostcondition`. Changing the construction
   to `(1, 0)` exits 1 with TYPE-11 `UndischargedTypeInvariant`. Thus the
@@ -719,7 +778,9 @@ it meets every one:
    witnesses and on one further container from R1 (indices held as hash map
    values), across construction, mutation and use. R4 additionally requires
    a second user-defined property or representation without a new kernel
-   container or a trusted user axiom.
+   container or a trusted user axiom. R5 requires negative witnesses for
+   invalid construction, direct mutation, projected-reference mutation and
+   nested storage; a scoped update cannot keep a live invalid struct value.
 
 ## Plan
 
