@@ -3334,9 +3334,9 @@
       }
     ],
     "archive": {
-      "bytes": 1552780,
+      "bytes": 1695089,
       "path": "research/experiments/container-representation/map-library/entry-forward-evidence.tar.gz",
-      "sha256": "ffe7b0cc20f19dc2c80500a175c45fd381742c6421b62740db579363bd9e6dc2"
+      "sha256": "9f5a447c0636a4d0e1e692f4cd16f579d461ff39fdbdc0d0d2193df00ba843f3"
     },
     "archive_purpose": "Raw auditable API and whole-Map/long-hit replay for this RESULTS section; retire or replace when superseded. No binaries.",
     "atomic_slot_admission_stop": {
@@ -3421,6 +3421,116 @@
         "timing": "NOT RUN"
       },
       "status": "Source-admission stop under existing specified capability boundary; no compiler defect or native-performance failure. No adoption, drop-bound narrowing, spec/compiler change or gain claim."
+    },
+    "borrowed_tag_source_native_stop": {
+      "admission": {
+        "all15_direct_stages_exit": 0,
+        "candidate_compiler_build_exit": 0,
+        "candidate_compiler_build_seconds": 9.36366729112342,
+        "full_mutation_witness": "both control/candidate emit exit0",
+        "guard_exit": 0,
+        "guard_seconds": 17.14,
+        "maintained_capacity3_program": "both control/candidate emit exit0",
+        "statuses": {
+          "archive_member": "borrowed-tag-source/build-statuses.json",
+          "bytes": 12428,
+          "sha256": "22d82c3c51ebe081b2f1b65ea93b1f1beb3c7b64630792cc100729f2192eea61"
+        }
+      },
+      "all_source_tool_input_pins": {
+        "archive_member": "borrowed-tag-source/pins.json",
+        "bytes": 56392,
+        "sha256": "44d04c43e133b96d7b9c940a360b9c991204cbb105e79b965e85c93ba137f5dc"
+      },
+      "baseline_cli_sha256": "c12b2b2a6c9694fd2bc1b7be0004d582ae9628951422def849f4cf6a3ac02f77",
+      "candidate_cli_sha256": "074f62e58d61170b7a87aa8c4be8830ab0e2bbad5ae524f9832fe573293cb34b",
+      "candidate_library_sha256": "750ec42968a36b9af5eec843a335e45af5632d781101ed127dd9b72409f59862",
+      "criterion": {
+        "archive_member": "borrowed-tag-source/criterion.txt",
+        "bytes": 4232,
+        "sha256": "6f59360b5a5cdb1746526e186d63058ca58569dc297ff63271c35659abfb842f"
+      },
+      "images": {
+        "archive_member": "borrowed-tag-source/images.json",
+        "bytes": 555,
+        "sha256": "3ae5a6cc3a61c07cd3bd28d572f726eff34c5329213683053b0bdf2b18775599"
+      },
+      "native": {
+        "excerpts_namespace": "borrowed-tag-source/native/",
+        "gate": "FAIL",
+        "inactive_capture": "Tag0/1 avoid old key/Record reads; Filled retains complete old capture. No added hot call, but extra frame and seven offered-word spills fail registered criterion.",
+        "object_text_bytes": [
+          66528,
+          65144
+        ],
+        "offered_stack_spill_bytes": 56,
+        "offered_word_offsets": [
+          8,
+          16,
+          40,
+          24,
+          32,
+          48,
+          56
+        ],
+        "scalar_batch": "197 instructions/16 stack accesses; inlined tag dispatch now precedes old two-word capture, not exact-body identity.",
+        "summary": {
+          "archive_member": "borrowed-tag-source/native-summary.json",
+          "bytes": 5909,
+          "sha256": "30dad441fedce2b8be83ecbd3c2a98a6042a10beb5b1e3338ae80c926c97a65b"
+        },
+        "wide_batch": "381 instructions/frame1024/102 stack accesses; CFG/call retained with literal-address relocations, not a byte-identical claim.",
+        "wide_exchange_frame_bytes": [
+          64,
+          160
+        ],
+        "wide_exchange_instructions": [
+          87,
+          142
+        ],
+        "wide_exchange_stack_accesses": [
+          12,
+          27
+        ],
+        "wide_try_put": "95 instructions, exact normalized body."
+      },
+      "normalization": {
+        "archive_member": "borrowed-tag-source/text-normalization.json",
+        "bytes": 1749,
+        "sha256": "f9882878f2e42b14233e12f56c01577382504725fd6f30a46dae6c92f0fdcdd5"
+      },
+      "patch_replay_byte_exact": true,
+      "prepared_criterion_note": "Criterion retains its pre-run admission-not-yet-observed/preparation-only wording. Final 15 direct stage statuses and native summary record the subsequent run.",
+      "recipe_namespace": "borrowed-tag-source/run.py; direct commands/statuses/logs and compact native excerpts in same namespace, hashes in MANIFEST.json.",
+      "restoration": {
+        "archive_member": "borrowed-tag-source/restoration.json",
+        "bytes": 207,
+        "sha256": "9929c4eb7515db671020dc15c17d0cf5a76fab2f3f496f3fa0fe86399079e6cf"
+      },
+      "restored_library_sha256": "bd482f345505ab2c1a30b323f5d0667839febbb6c57c06f82e3675b628e20a89",
+      "scope": "Only hash_map_exchange source: offered Filled constructed once, borrow indexed slot and match tag, then each outer arm performs unchanged swap plus complete original consuming match. All inner outcomes retained; no noalias, hint, source assumption, bound, rule or compiler change.",
+      "source_compiler_pins": {
+        "archive_member": "borrowed-tag-source/compiler-identity.json",
+        "bytes": 349,
+        "sha256": "52f9997defc3b5c909070894c11baee9b5edd74f924337ea63a5e4cd4553a9b4"
+      },
+      "source_definition": {
+        "archive_member": "borrowed-tag-source/exchange-candidate.wf",
+        "bytes": 2519,
+        "sha256": "9830070b65fd85b62a855900bd9e1a827dd8b51a6b18415dfeb2ae605b330b39"
+      },
+      "source_patch": {
+        "archive_member": "borrowed-tag-source/source.patch",
+        "bytes": 2892,
+        "sha256": "f87e175851c53fb067913f388fc9a9df9162bfcd8183221fcd4020568f8e782c"
+      },
+      "status": "Ordinary source admitted; native criterion FAIL from frame/spill growth. Correctness/timing not run; source restored byte-exact. No adoption or rescue trial.",
+      "unrun": [
+        "runtime correctness",
+        "capacity3 native execution",
+        "allocator ledger",
+        "timing"
+      ]
     },
     "construction": [
       {
@@ -6140,7 +6250,266 @@
       "shortest_elapsed_ns": 2328000
     },
     "scope": "Ordinary indirect Own incoming backing with private capture and conservative deferred/callee/result-alias fallbacks. Source Loads/interior projections remain snapshots; no source-language, ABI, LLVM alias-attribute or HashMap-name special case.",
+    "source_mask_final_peer_qualification": {
+      "criterion": {
+        "archive_member": "mask-peer-qualification/criterion.txt",
+        "bytes": 4774,
+        "sha256": "470a28b5fa92bc7e9394579e5af811494d2b88f013e0d66a3678cc763a655195"
+      },
+      "images": {
+        "/private/tmp/whitefoot-mutation-home-mask/candidate-account": "e9c9bab8fc3770f666b1d1b6e93df52ea2e6582f4e664c69d91cbba23905d6c3",
+        "/private/tmp/whitefoot-mutation-home-mask/candidate-timed": "7b284ca0b7b523013e6e632a3c8bc0b2e111053fa2c1b143edd2f4d2a97378fb",
+        "/private/tmp/whitefoot-mutation-home-mask/control-account": "970c7588b9130ca0f99b69a007340cb6f751970cb761ed0a3223fc7b9be608f1",
+        "/private/tmp/whitefoot-mutation-home-mask/control-timed": "90f51712cd3142e75f86688f414b06778b56dee047eff822e52f66c9f835f4f0"
+      },
+      "metadata": {
+        "archive_member": "mask-peer-qualification/timing/metadata.json",
+        "bytes": 2717,
+        "sha256": "31dc35a9dd16be3049180638ce956332df58ed8e90629c3c9faf8cccf2db71ec"
+      },
+      "normalization": "No personal-home tool paths occur in this campaign; raw commands/scripts retained byte-exact.",
+      "pins": {
+        "archive_member": "mask-peer-qualification/pins.json",
+        "bytes": 10916,
+        "sha256": "af1d69d3b4ccee022e5efd24bbeb19c7f30049e535cfa6821ab5356261808596"
+      },
+      "prior_short_panel_status": "Not qualified: unchanged chain peer drift exceeds registered10-percent limit. Wide gains and scalar adverse medians retained; no production selection.",
+      "prior_source_trial": "ordinary_incoming_backing.mutation_home_mask_source_trial; reuse mutation-home-mask/source.patch, source/compiler/image pins, native excerpts and correctness statuses, without duplicated dumps.",
+      "protocol": {
+        "all_direct_exits": 0,
+        "change": "Timed and untimed warmup rounds4x vs earlier1048576 campaign; same images/driver/geometry/algorithms/ownership. Separate campaign, not pooled replication.",
+        "guard_seconds": 216.67,
+        "image_hashes_before_after_equal": true,
+        "non_time_fields_equal": true,
+        "order": [
+          "control0",
+          "candidate0",
+          "candidate1",
+          "control1"
+        ],
+        "per_process_timeout_seconds": 180,
+        "processes": 4,
+        "rows": 1152,
+        "samples": 9,
+        "work": 4194304
+      },
+      "question": "Each cohort/cell selects the median-slower Rust/C++ peer (both on tie), requiring full candidate range below full selected-peer range; all16 required. This is distinct from no-WF-before/after-loss. Before/after gains/losses/adverse medians remain diagnostics.",
+      "raw_namespace": "mask-peer-qualification/timing/; four288-row CSVs pinned in MANIFEST.json.",
+      "reused_checks": {
+        "archive_member": "mutation-home-mask/check-statuses.json",
+        "bytes": 7119,
+        "expected_outcomes": 30,
+        "ledger_byte_equal": true,
+        "ledger_rows": 32,
+        "maintained_capacity3_native": "both passed in original prerequisites; not rerun",
+        "sha256": "e9596743dd7d5144a624b06df6acf0f4a80acf4b6e1319d7e6aa7202ad11d603"
+      },
+      "runner": {
+        "archive_member": "mask-peer-qualification/measure.py",
+        "bytes": 3845,
+        "sha256": "636effc28ded73bae9ba584263c9d1a656df10da4ffbfb62c16d9d5ece6d33c8"
+      },
+      "status": "New fixed-work final-native-peer question FAIL:5/8 cells pass both cohorts,11/16 conditions pass; unchanged-chain drift also exceeds limit. Complete goal unmet, no adoption/retry/rebuild. Original short-panel failure remains unchanged.",
+      "summary": {
+        "adverse_scalar_replacement_percent_cohort0_cohort1": {
+          "4096": [
+            22.27443609022557,
+            21.52259256408282
+          ],
+          "64": [
+            12.456402590931749,
+            15.374507227332469
+          ]
+        },
+        "all_peer_ranges_and_adverse_observations": {
+          "archive_member": "mask-peer-qualification/table.txt",
+          "bytes": 3686,
+          "sha256": "eaf608a32f3221284608131f4ef39f4797c94dfa30964a3b696fe37756633305"
+        },
+        "before_after_flat_cohort_ranges": {
+          "OVERLAP": 8,
+          "WIN": 8
+        },
+        "control_both_cohort_cells_diagnostic": 5,
+        "failed_drift_cell": "whitefoot-chain/word8/4096/churn/cohort0",
+        "full_reduction": {
+          "archive_member": "mask-peer-qualification/summary.json",
+          "bytes": 55434,
+          "sha256": "cb3dd7712717a9815bfa9bd37cf56a3c0bf75a85b0095aa39e4531c70fef6597"
+        },
+        "instrument_pass": false,
+        "maximum_flat_paired_ratio_spread_percent": 7.098336775941494,
+        "maximum_native_peer_drift_percent": 4.751170452575004,
+        "maximum_unchanged_peer_drift_percent": 13.300391187976125,
+        "minimum_interval_ns": 9316000,
+        "pass_both_cells": "All four churn cells and wide256/4096 replacement.",
+        "primary_both_cohort_cells": 5,
+        "primary_cohort_conditions_pass": 11,
+        "remaining_cells": "word8/64 and4096 replacement overlap C++both; wide256/64 replacement overlaps Rustc0, passc1.",
+        "required_cells": 8,
+        "required_cohort_conditions": 16
+      },
+      "verification": {
+        "archive_member": "mask-peer-qualification/verification.json",
+        "bytes": 559,
+        "sha256": "3b97d113d3a4d22d71c68d292fd1c27433ac700239d91c5406155dae5899aca1"
+      }
+    },
     "status": "Provisional work-branch Q203; bounded code/design review complete. Exact published360a711 canonical correctness groups, native and compute checks succeeded; Draft readiness skipped. New research-record head has not yet been published.",
+    "tag_directed_private_capture_diagnostic": {
+      "alias_and_write_order": "Offered capture and active old capture precede cell write; private snapshots are unescaped; full cell commit precedes result writes, preserving input/result/cell overlap. Inactive private old bytes remain unread. This is a floor on unchanged accepted source, not proof of a general production fusion.",
+      "candidate_raw_sha256": "9f2c657e19fab81bfc599e3d58be3f15999f27e1a0399501d7d58f8094d45849",
+      "control_raw_sha256": "09cb4c4ea979d9dedb46dbc2bcb267d984d472777f0a69f4af86df68ede57b41",
+      "correctness": {
+        "account_construction_seconds": 1.5970909991301596,
+        "account_construction_stages": 4,
+        "exact_negative_diagnostics": 20,
+        "execution_seconds": 1.371817291714251,
+        "expected_outcomes": 26,
+        "full_owner_cases_per_image": 96,
+        "guard_exit": 0,
+        "guard_seconds": 3.15,
+        "images": 4,
+        "ledger_equal_to_each_other_and_prior": true,
+        "ledger_rows": 32,
+        "ledger_sha256": "75bcb01092141bcb20958473838a5d65df03cab359630981eed220412c84b252",
+        "summary": {
+          "archive_member": "tag-directed-private-capture/account-check-summary.json",
+          "bytes": 936,
+          "sha256": "99bc398b0dd6c6033bba5c3fdd8381038fb6d4aaf2269571fc061875deb32fb4"
+        }
+      },
+      "criterion": {
+        "archive_member": "tag-directed-private-capture/criterion.txt",
+        "bytes": 3941,
+        "sha256": "31817bcd2fafc21ce881319a97f6b00e57e4f91d1c3db063d1f572956c11e17a"
+      },
+      "images": {
+        "all_timed_account_pins": "tag-directed-private-capture/account-check-summary.json",
+        "candidate_timed": "d61db11f3455f46b6f9cb49b2708131c1cd44ca4b57f7501b99ee00abba57af4",
+        "control_timed": "90f51712cd3142e75f86688f414b06778b56dee047eff822e52f66c9f835f4f0"
+      },
+      "native": {
+        "all_stage_exits": 0,
+        "build_stages": 6,
+        "excerpts_namespace": "tag-directed-private-capture/native/",
+        "exchange_valid_tag_dynamic_instructions": {
+          "candidate": [
+            46,
+            48,
+            74
+          ],
+          "control": [
+            60,
+            62,
+            72
+          ]
+        },
+        "frames_batch_try_put_exchange": [
+          1024,
+          0,
+          64
+        ],
+        "gate": "PASS",
+        "guard_exit": 0,
+        "guard_seconds": 2.71,
+        "inactive_old_capture": "Tag0/1 bypass all17 old264B field loads; tag2 preserves complete old fields. No extra hot call, spill or frame growth. Dynamic instruction counts are not timing attribution.",
+        "scalar_batch": "197 instructions, exact normalized stream; reached wide batch/try_put exact normalized streams. Other raw functions byte-identical; object code +12 bytes.",
+        "summary": {
+          "archive_member": "tag-directed-private-capture/native-summary.json",
+          "bytes": 4581,
+          "sha256": "bac92f8601713f724f7a6870c85bd5497de092b8eb77c6a710bd415fecce194c"
+        },
+        "wide_batch_instructions": [
+          381,
+          381
+        ],
+        "wide_exchange_instructions": [
+          87,
+          90
+        ],
+        "wide_try_put_instructions": [
+          95,
+          95
+        ]
+      },
+      "normalization": {
+        "archive_member": "tag-directed-private-capture/text-normalization.json",
+        "bytes": 1291,
+        "sha256": "c8220e997de3fc40fd108e7d2416e3bfa54b1f98f750d05645eafdbb81328e07"
+      },
+      "patch": {
+        "archive_member": "tag-directed-private-capture/modules.patch",
+        "bytes": 1833,
+        "sha256": "67e873465fb039be03d8f3324fc55ac933530bb73421ed566bc5870cb4e03d3d"
+      },
+      "preparation": {
+        "archive_member": "tag-directed-private-capture/preparation.json",
+        "bytes": 1291,
+        "sha256": "fdde63e878ca4fa94a8b80d80684f4c80e1c0d6176d3b2626c41c94a12123911"
+      },
+      "recipe_namespace": "tag-directed-private-capture/prepare.py,build.py,account-check.py,measure.py; all direct commands/statuses/logs, raw cohorts, complete peer/adverse reductions and native excerpts pinned by MANIFEST.json.",
+      "scope": "Only original wide exchange body changes from ordinary raw09cb; eager offered capture and private Filled construction remain. Capture old tag, capture complete key/Record into private storage only for Filled, commit whole272B new slot, then construct unchanged result. Scalar/all other raw functions/signatures/attributes/callers unchanged; no clone, hints, extra O3 or post-O3 transform.",
+      "status": "Native/correctness-qualified typed-IR floor, rejected by the full fixed panel instrument criterion. No adoption, retry, source/compiler/ABI change or new alias premise.",
+      "summary": {
+        "adverse_scalar4096_replacement_medians_percent": [
+          7.2513170127053,
+          5.44079138783824
+        ],
+        "adverse_wide4096_replacement_medians_percent": [
+          1.80922162964963,
+          4.07334731713918
+        ],
+        "criterion": "FAIL",
+        "failed_spread_cell": "word8/4096/churn",
+        "flat_cohort_cells": 16,
+        "full_reduction": {
+          "archive_member": "tag-directed-private-capture/timing-summary.json",
+          "bytes": 46002,
+          "sha256": "e7d9e47f9ee8763d3bbb1855ac670deb4f7c2fdf8d7e1718b5b7ffc0984ae0da"
+        },
+        "gain_cell": "wide256/64/churn (both cohorts)",
+        "maximum_native_peer_drift_percent": 4.754464285714288,
+        "maximum_paired_ratio_spread_percent": 17.796929922462358,
+        "maximum_unchanged_peer_drift_percent": 5.905220288781932,
+        "minimum_interval_ns": 2327000,
+        "overlaps": 14,
+        "separated_gains": 2,
+        "separated_losses": 0
+      },
+      "timing": {
+        "all_direct_exits": 0,
+        "guard_seconds": 55.02,
+        "images_before_after_equal": true,
+        "metadata": {
+          "archive_member": "tag-directed-private-capture/timing/metadata.json",
+          "bytes": 1835,
+          "sha256": "367dcf980c28b0e30ce5e3835663150f8faeb71510ef6c03240d4baf1a455269"
+        },
+        "non_time_fields_equal": true,
+        "order": [
+          "control0",
+          "candidate0",
+          "candidate1",
+          "control1"
+        ],
+        "processes": 4,
+        "raw_namespace": "tag-directed-private-capture/timing/",
+        "rows": 1152,
+        "samples": 9,
+        "work": 1048576
+      },
+      "timing_criterion": {
+        "archive_member": "tag-directed-private-capture/timing-criterion.txt",
+        "bytes": 2270,
+        "sha256": "7edc7b9b9bd5220e36b7bda5f06c7868d6f1ff458a605ea05a5eec22e9f8448c"
+      },
+      "verification": {
+        "archive_member": "tag-directed-private-capture/verification.json",
+        "bytes": 1014,
+        "sha256": "739a60483c35332431961de90416b3a1d79105c028912775ba61a17368a675a7"
+      }
+    },
     "whole_map": {
       "adverse_cells": [
         {

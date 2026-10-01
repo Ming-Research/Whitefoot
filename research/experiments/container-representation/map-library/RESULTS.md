@@ -4072,6 +4072,49 @@ retained under `mutation-home-mask` in the same archive; the JSON separates this
 source trial from the two rejected native ordering floors. The overall container
 performance goal remains unestablished.
 
+#### Source-mask final-peer qualification
+
+A separately registered question tests those unchanged source-mask images
+against the median-slower ordinary Rust/C++ peer in each cell/cohort. It requires
+the candidate's full range below that peer's full range in all 16 conditions
+(both peers on a median tie). This is a final-peer goal, distinct from a
+no-Whitefoot-before/after-loss criterion; the earlier short-panel drift failure
+remains unchanged. The existing source/check/native prerequisites are reused,
+without rebuild or rerun. Fixed work increases from 1048576 to 4194304, including
+four times the untimed warmup rounds, with the same driver, geometry and ownership.
+This is a separate campaign, not pooled short-panel replication. All four direct
+exits are zero in 216.67 seconds guarded; all 1152 rows, stable image hashes and
+equal non-time fields are retained. Candidate median ns/op, cohort zero / one,
+with each native peer reported independently, are:
+
+| Width | Buckets | Operation | Source mask | Rust | C++ | Slower-peer separation c0/c1 |
+|---|---:|---|---:|---:|---:|---|
+| word8 | 64 | replace | 2.691/2.721 | 2.488/2.481 | 2.748/2.742 | overlap/overlap |
+| word8 | 64 | churn | 7.494/6.969 | 16.085/16.126 | 28.904/27.499 | pass/pass |
+| word8 | 4096 | replace | 3.722/3.764 | 2.589/2.590 | 4.199/4.321 | overlap/overlap |
+| word8 | 4096 | churn | 11.708/11.767 | 10.449/10.222 | 29.466/29.951 | pass/pass |
+| wide256 | 64 | replace | 20.910/20.782 | 22.114/22.088 | 18.854/18.857 | overlap/pass |
+| wide256 | 64 | churn | 27.199/27.811 | 27.348/27.157 | 49.477/49.611 | pass/pass |
+| wide256 | 4096 | replace | 25.439/25.377 | 27.093/27.045 | 22.960/23.511 | pass/pass |
+| wide256 | 4096 | churn | 39.404/38.868 | 31.317/31.246 | 59.615/60.126 | pass/pass |
+
+Five of eight cells pass both cohorts, and 11 of 16 cohort conditions pass;
+scalar replacement overlaps C++ in both capacities/cohorts, and wide 64-bucket
+replacement overlaps Rust in cohort zero. Candidate is also separated slower
+than Rust on scalar replacement, C++ on wide replacement and Rust on wide
+4096-bucket churn; the chosen slower-peer goal does not erase those comparisons.
+Before/after scalar replacement medians worsen by 12.456 / 15.375 percent at
+64 buckets and 22.274 / 21.523 percent at 4096, with all eight scalar cohort
+ranges overlapping; all eight wide before/after comparisons show separated gains.
+Minimum interval is 9.316 ms and maximum paired-ratio spread 7.098 percent,
+but unchanged chain scalar4096 churn cohort-zero drift is 13.300 percent,
+exceeding the retained 10-percent gate (native-peer maximum 4.751 percent).
+Both the full peer goal and instrument criterion fail. No adoption or retry
+follows. New criterion, runner, pins, direct metadata, every raw cohort and full
+peer/adverse reduction remain under `mask-peer-qualification` in the same archive;
+source/native/controls remain under `mutation-home-mask`. The complete goal
+remains unmet.
+
 #### Descriptor and payload alias metadata
 
 A fact-only LLVM diagnostic gives the reached scalar mutation batch one fresh
@@ -4246,6 +4289,69 @@ emission, native construction, correctness and timing are not reached. Original
 library bytes are restored and verified. The complete diagnostic, source patch,
 criterion, compiler/source pins, statuses and restoration hash remain under
 `atomic-slot-admission-stop` in the same archive; no gain is inferred.
+
+#### Tag-directed private capture: native pass, timing unqualified
+
+A typed-IR floor changes only the original wide exchange body in the ordinary
+production raw module. Eager offered capture and Filled construction remain;
+it reads the old tag, captures the complete old key/Record into private storage
+only for Filled, commits the whole 272-byte new slot, then constructs the unchanged
+result. Offered/active-old reads precede external writes, and cell commit still
+precedes result writes, preserving overlap order without a new alias premise.
+There are no clones, inline hints, extra-O3 passes, source or compiler changes.
+Empty/Deleted now bypass 17 field-load instructions covering 264 old bytes. Exchange
+changes from 87 to 90 instructions with its 64-byte frame unchanged; its valid
+0/1/2 routes change from 60/62/72 to 46/48/74 instructions. These counts do not
+establish timing causality. Reached wide batch/try_put remain exact normalized
+381/95-instruction streams, scalar batch remains exact, and object code grows
+12 bytes. The six-stage native gate passes in 2.71 seconds guarded.
+
+The unchanged controls pass in 3.15 seconds guarded: 1.597 seconds account
+construction and 1.372 execution, four 96-owner positives, 20 exact negative
+diagnostics and two byte-identical 32-row ledgers equal to the prior ledger.
+The single fixed panel exits zero in 55.02 seconds and retains all 1152 rows,
+stable images and equal non-time fields. Median ns per complete operation,
+cohort zero / one, with peers from candidate images, are:
+
+| Width | Buckets | Operation | Ordinary control | Private capture floor | Rust | C++ |
+|---|---:|---|---:|---:|---:|---:|
+| wide256 | 64 | replace | 23.697/23.737 | 23.764/23.865 | 22.043/22.112 | 18.891/18.930 |
+| wide256 | 4096 | replace | 28.254/28.189 | 28.765/29.337 | 27.062/27.061 | 23.284/23.332 |
+| wide256 | 64 | churn | 32.617/32.319 | 28.238/28.605 | 27.135/27.092 | 49.354/49.744 |
+| wide256 | 4096 | churn | 48.154/47.887 | 44.568/45.209 | 31.234/31.217 | 59.711/59.475 |
+
+Only wide 64-bucket churn has separated gains in both cohorts; the other 14
+flat cohort comparisons overlap, with no separated loss. Wide 4096-bucket
+replacement medians worsen by 1.809 / 4.073 percent; scalar 4096-bucket replacement
+by 7.251 / 5.441 percent. Scalar 4096-bucket churn has overlapping median changes
+of +12.629 / -4.387 percent and paired-ratio spread 17.797 percent, exceeding the
+registered 10-percent limit. Minimum interval is 2.327 ms; maximum unchanged-peer
+drift is 5.905 percent (Rust/C++ 4.754 percent), within its separate limit.
+The full criterion fails; no adoption or retry follows. All adverse observations,
+criteria, exact patch/replay pins, private-capture write-order premises, direct
+controls/ledgers, raw cohorts and native excerpts remain under
+`tag-directed-private-capture` in the same archive. This floor does not prove a
+general production swap/consume fusion.
+
+#### Borrowed-tag source exposure: native stop
+
+A separate ordinary-source trial borrows the indexed slot and matches its tag,
+then performs the original swap and complete consuming match in every arm. It
+retains all inner outcomes and changes no rule, bound, interface or compiler.
+Both the complete mutation witness and maintained capacity-three program emit
+successfully with control and candidate CLIs. All 15 construction/emission/native
+stages exit zero in 17.14 seconds guarded, including a 9.364-second candidate CLI
+build. Source admission therefore succeeds. Empty/Deleted avoid old key/payload
+capture, but wide exchange expands from 87 to 142 instructions, frame 64 to 160
+bytes and stack accesses 12 to 27; seven offered words spill 56 bytes. This fails
+the registered no-frame-growth/no-added-spill native criterion. Wide batch keeps
+381 instructions/102 stack accesses with literal-address relocations, and try_put
+keeps its exact 95-instruction normalized body; scalar batch remains 197/16 but
+its inlined tag order changes. No raw-body identity is inferred from equal counts.
+Correctness and timing are not run. Original source is restored byte-exact;
+source patch, accepted emissions/statuses, compiler/source pins, restoration hash
+and compact native excerpts remain under `borrowed-tag-source`. No source-only
+policy or performance gain is selected.
 
 [`entry-forward-evidence.tar.gz`](entry-forward-evidence.tar.gz) serves this
 section's reader with scripts, criteria, raw API/whole-Map/long-hit records,

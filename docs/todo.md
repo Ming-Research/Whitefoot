@@ -1290,6 +1290,14 @@ rarely insert at the same place.
   churn attribution unresolved. Reopen continuation placement only with a
   general pre-O3 mechanism, complete ownership/result controls and benefit
   across the matched mutation panel, preserving all adverse observations.
+  The [tag-directed private-capture floor](../research/experiments/container-representation/map-library/RESULTS.md#tag-directed-private-capture-native-pass-timing-unqualified)
+  avoids inactive old-slot loads with original cell-before-result write order,
+  but its full timing criterion fails scalar spread despite small-wide churn
+  gains; overlapping adverse replacement medians remain. The separate
+  [borrowed-tag source form](../research/experiments/container-representation/map-library/RESULTS.md#borrowed-tag-source-exposure-native-stop)
+  is admitted but fails its native frame/spill criterion. Keep both unselected;
+  reopen only with general typed capture/overlap proof and qualified full-panel
+  benefit, preserving active old values and all adverse observations.
   Repeated syntactic-candidate/callee and
   per-parameter liveness walks are an unprofiled analysis-cost opportunity:
   profile representative compilation before sharing or caching those facts.
@@ -3425,6 +3433,12 @@ condition under which it is taken up.
   selected complete representation, distinguishing home arithmetic from count
   lifetime and descriptor accesses. Preserve
   arbitrary capacities, non-power-of-two lookup, wrap and empty-table behavior.
+  The separate [longer final-peer panel](../research/experiments/container-representation/map-library/RESULTS.md#source-mask-final-peer-qualification)
+  passes only five of eight cells in both cohorts and fails unchanged-chain
+  drift; scalar replacement adverse medians still overlap. It qualifies neither
+  the complete native-peer goal nor adoption, and does not supersede the
+  earlier short-panel verdict. Preserve both questions and all peer ranges
+  when reopening bucket-index selection.
 - **Packing a byte-comparison mask loses the vector form.** Three ordinary
   `Array<u8, 8>` source forms generate vector comparisons, but packing their
   0x80/0 results into a word becomes lane widening and an AND/OR reduction.
