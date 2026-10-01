@@ -168,6 +168,55 @@ Stage (b)'s own measurement, the same workloads through Whitefoot code
 against the C index, is deferred: firn's suite measures the surface end to
 end first, at the owner's direction.
 
+## Stage (c): firn's keyspace on the shared map
+
+firn's keyspace was one `Shared<Store>`, so every command of every client
+took one lock. It is now a `Keyspace` of three fields, each client holding
+its own handles (`apps/firn/store/module.wfm`):
+
+- **`map: SharedMap<Entry>`**, created for 2^18 keys, so that the suite's
+  2^17 keys (`key:` and `counter:` names drawn from 100,000) fit without a
+  move into memory this host has not yet given the process (see this host's
+  fresh memory, above). Every single-key command is one keyed statement on
+  its key; `MSET`, and `DEL` and `EXISTS` of several keys, hold the whole
+  map and reach each key through it; `DBSIZE` counts the held state.
+- **`meta: Shared<Meta>`**: the queued expiries, the append-only file's
+  pending bytes, the client count, the stop flag and the seed of each
+  client's `SPOP` state. A command that logs a change, or queues an expiry,
+  does so in a statement on `meta` inside its keyed statement, so the record
+  and the change take effect together; the suite runs firn without a file,
+  so no measured command takes `meta`.
+- **`logging: Bool`**, fixed in each context's handles before any client is
+  served, since it changes only once, after the file's replay.
+
+A key is a range of the client's input whose bounds a contract proves
+(`key_bounds` in `apps/firn/commands/keys.wf`), so no key is copied or hashed
+in Whitefoot. The expiry context takes up to 256 reached expiries from `meta`
+in one statement and then removes each key whose expiry still matches in a
+statement on that key; two statements are Redis's own meaning, since a key
+set between them keeps its new expiry. Each client keeps its `SPOP` state,
+seeded from `meta` when it connects, instead of reading and writing one
+shared seed in every `SPOP`.
+
+**A quick comparison, before the suite.** On this host, servers on CPUs 0
+and 1, `redis-benchmark` on 2 and 3 with two threads, 50 clients, two
+interleaved rounds of about six seconds a cell, firn before the change (its
+source at `e92a54ed7`, built with this branch's compiler) against firn after
+it and Redis 7.0.15, requests a second:
+
+| Test, depth 16 | Redis | firn before | firn after |
+|---|---|---|---|
+| `SET` | 730,579 to 733,915 | 1,291,434 to 1,332,938 | 1,634,877 to 1,713,633 |
+| `GET` | 716,903 to 781,861 | 1,564,945 to 1,636,066 | 1,799,640 to 1,893,940 |
+| `LPUSH` | 1,199,201 | 1,564,945 to 1,635,769 | 1,999,556 to 2,117,149 |
+| `MSET` | 176,984 to 180,357 | 391,151 to 391,441 | 342,661 to 386,316 |
+
+At depth 1 firn before and after both answered 171,298 to 179,928 a second
+on `SET`, `GET` and `LPUSH`, the same steps of the benchmark's clock, so
+those cells did not separate them. `MSET` holds the whole map, as the old
+keyspace held its one lock, and adds a lock per key and the hold's wait for
+keyed statements under way.
+
 ## The measurement
 
 The bundle is `research/experiments/concurrent-map-bench/`. These rules are
