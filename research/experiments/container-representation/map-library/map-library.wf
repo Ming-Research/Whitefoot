@@ -531,12 +531,15 @@ fn map_cost_lookup_prepare<interface MapCostElement<T>>(capacity: u64, count: u6
 
 fn map_cost_lookup_query<interface MapCostElement<T>>(owner: &MapLookupOwner<T>, rounds: u64, miss: u64) -> result: u64 reads(owner) {
   let digest = MapCostDigest(ordered: owner^.seed, sum: 0_u64, parity: 0_u64, count: 0_u64);
+  let first_key = if miss != 0_u64 {
+    give 2_u64;
+  } else {
+    give 1_u64;
+  }
   for (round in 0_u64..rounds) {
     for (index in 0_u64..owner^.count) {
-      let key = map_cost_key(index: index);
-      if miss != 0_u64 {
-        set key = key +wrap 1_u64;
-      }
+      let doubled = index *wrap 2_u64;
+      let key = doubled +wrap first_key;
       let found = hash_map_lookup::<MapCostLibraryKey, T, MapCostDigest, u64, fn MapCostElement::observe, 16384>(map: &owner^.map, key: &key, key_env: &owner^.env, visit_env: &digest);
       map_cost_lookup_result(found: found, digest: &digest);
     }

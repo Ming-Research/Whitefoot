@@ -3160,7 +3160,138 @@ group layout, probing and enum checks. An equivalent LLVM vector mask is a
 measurement instrument, not an implemented WF capability: first check its
 byte-wise equivalence, query oracle and ledger, then measure it against the
 original grouped body with the same harness. A loss even with that mask
-rules out mask packing as a sufficient repair of this shape. Ordinary-source
+rules out that replacement as a sufficient repair of this shape. Ordinary-source
 byte-array forms are screened separately to distinguish an unexpressible
 operation from a missed code-generation opportunity; neither instruction
 counts nor SIMD instructions alone select a representation.
+
+The mask-only pair changes one LLVM function. Both versions XOR the control
+word with the same repeated fingerprint; the replacement compares each of
+the resulting eight bytes with zero and packs 0x80 for equal bytes. In the
+original expression, `(byte & 127) + 127` never carries to another byte and
+its high bit, combined with the original byte's high bit, detects exactly
+nonzero bytes. Thus the replacement is equivalent for every word and code,
+without assuming a fingerprint range. An additional 117,664-case oracle
+checks byte boundaries, cross-byte patterns and seeded arbitrary inputs.
+
+The floor passes the 96-case query oracle, a separately patched accounting
+image's 96 cases, seven fault controls and the same 32-row release ledger.
+Two cohorts retain 1152 timing rows; the shortest interval is 3.010 ms.
+All eight candidate/control ranges separate in the favorable direction in
+both cohorts. Combined-cohort medians are:
+
+| Value bytes | Buckets | Query | Original group ns/query | Vector mask floor ns/query |
+| ---: | ---: | :--- | ---: | ---: |
+| 8 | 64 | hit | 3.641 | 3.212 |
+| 8 | 64 | miss | 3.063 | 2.265 |
+| 8 | 4096 | hit | 3.937 | 3.510 |
+| 8 | 4096 | miss | 3.277 | 2.640 |
+| 256 | 64 | hit | 3.673 | 3.187 |
+| 256 | 64 | miss | 2.992 | 2.265 |
+| 256 | 4096 | hit | 4.222 | 3.729 |
+| 256 | 4096 | miss | 3.226 | 2.735 |
+
+Mask lowering therefore accounts for a meaningful part of this grouped
+query's cost: cohort median ratios are 0.866–0.892 on hits and 0.739–0.863
+on misses. It does not repair the large hit disadvantage against flat WF.
+The flat/group and mask-only pairs are separate campaigns; cross-table
+numbers are not a freshly paired flat-versus-floor attribution. The grouped
+representation remains unselected, and these floor timings are not ordinary
+WF performance.
+
+Three ordinary-source forms instead store controls in `Array<u8, 8>`,
+compare its bytes, and assemble eight 0x80/0 results: explicit lanes, a
+fixed eight-iteration loop, and a separate ordinary byte-packing helper.
+All compile and produce `LDR D` plus `CMEQ.8B`. Their mask packing widens
+lanes and reduces them with AND/OR operations, leaving a 201-instruction,
+48-byte-frame query rather than the original group's 189 instructions and
+80-byte frame. They have no hot calls but were not executed or timed.
+The LLVM vector instrument has 184 instructions and a 64-byte frame. It
+still loads and XORs the word in scalar registers before transferring it
+into and out of SIMD registers, so it is not an ideal SIMD lower bound. This
+exposes a code-generation opportunity, not a missing byte-comparison
+operation or evidence that primitive container types must change.
+
+### Query-caller normalization discriminator
+
+Current flat WF reconstructs each input key with a shift, add, hit/miss
+comparison and selection inside the query loop. The matched C body folds
+the invariant offset outside the loop and uses one shifted add. Test only
+the ordinary WF caller spelling: compute `first_key` as 1 for hits or 2 for
+misses before both loops, then form `index *wrap 2 +wrap first_key`.
+Modular associativity preserves every query key for all `u64` indices;
+lookup, callbacks, hash, digest, preparation and cleanup stay unchanged.
+This is caller-overhead normalization, not a HashMap implementation gain.
+
+Before timing, require identical independent query/cleanup results and
+allocation ledgers, one key-construction instruction on the native query
+path, no added hot calls or spills, and identical native peer bodies. Pair
+with the unchanged flat enum-domain control under the existing two-cohort
+protocol. Retain adverse observations and apply the same full-range and
+stability criteria; do not attribute its gain to storage or probing.
+
+The normalized source passes both 96-case query checks, seven fault
+controls and a 32-row accounting record identical to the flat control's.
+Both native queries construct the key with one shifted add. Their frames
+remain 16 bytes with no hot calls or loop spills; the complete bodies shrink
+from 237 to 196 instructions, including elimination of a duplicated query
+path. The six native peer query bodies retain identical bytes and addresses.
+WF's internal code layout also changes, so timing attributes the complete
+source rewrite, not just three instructions in isolation.
+
+The two-cohort comparison has 1152 observations and a 3.015 ms minimum
+interval. Combined-cohort medians, in nanoseconds per lookup:
+
+| Value bytes | Buckets | Query | Previous WF caller | Normalized WF caller | Rust | C++ |
+| ---: | ---: | :--- | ---: | ---: | ---: | ---: |
+| 8 | 64 | hit | 2.118 | 1.973 | 2.176 | 1.619 |
+| 8 | 64 | miss | 2.691 | 2.698 | 1.654 | 1.577 |
+| 8 | 4096 | hit | 2.338 | 2.181 | 2.231 | 1.668 |
+| 8 | 4096 | miss | 3.058 | 2.745 | 2.141 | 1.508 |
+| 256 | 64 | hit | 2.115 | 1.958 | 2.315 | 1.615 |
+| 256 | 64 | miss | 2.727 | 2.469 | 1.592 | 1.567 |
+| 256 | 4096 | hit | 2.471 | 2.350 | 2.470 | 2.283 |
+| 256 | 4096 | miss | 3.235 | 3.023 | 2.173 | 1.783 |
+
+Retain the normalized caller to expose the same invariant key offset that
+the native controls already move outside the query loop. This keeps the
+input stream and complete observations unchanged; it is not a change to
+the container or its target. All four hit medians improve in both cohorts,
+but scalar 64-bucket misses are 1.040 times the previous caller in cohort 1,
+with overlapping ranges. Do not claim a uniform no-regression result.
+The complete-range slower-peer target qualifies three of eight shapes in
+both cohorts: scalar 64-bucket hits and wide hits at both capacities.
+Scalar 4096-bucket hits qualify only in cohort 1; no miss qualifies.
+All four hit medians beat Rust, while misses remain 28–63% slower than Rust.
+This is still controlled-hash, half-load lookup evidence, not whole-HashMap
+qualification. The exact old fixture revision and both source hashes are
+retained so earlier experiments remain reproducible after this normalization.
+
+A following ordinary-source vacant-first match was compiled against an
+identical copied-lookup control. LLVM reconstructed the same tag dispatch:
+both widths' native query disassemblies were identical to the normalized
+caller, including their addresses. The experiment stopped without timing
+identical code. No variant tag order or branch-likelihood hint changed.
+
+### Index-linked chaining discriminator
+
+Test one ordinary-source chaining representation because the matched C++
+node table remains faster on misses than the flat linear probes. Use
+64/4096 head buckets and 32/2048 initialized owning entries, the same keys,
+hash, seeds, payloads and normalized caller. Heads contain indices into a
+separate backing of `{key, value, next}` records. Every stored index is
+range-checked before access, and traversal is bounded by the initialized
+entry count. This requires two allocations and reserves fewer payload
+positions than the flat table; disclose both capacities and all requested
+bytes rather than calling the representations identical. It tests an
+algorithm and representation together, not one lowering instruction.
+
+Before timing require the independent query/full-cleanup oracles, exact
+geometry, zero query allocations, final-zero release ledger, and native
+inspection of the stored-index checks and dependent loads. Pair against
+the normalized flat caller with unchanged native peer bodies and the
+existing two-cohort protocol. A repeatable benefit without separated query
+losses justifies studying the complete ownership and mutation protocol;
+it does not select a library replacement. Duplicate replacement, deletion,
+slot reuse, growth/rehash and their refusal behavior are outside this
+query-only screen. A failure ends this candidate without a language change.

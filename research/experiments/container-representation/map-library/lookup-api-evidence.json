@@ -1343,8 +1343,8 @@
   "collated_samples": {
     "line_ending": "LF; values and order retained from raw CSVs",
     "path": "<repository-root>/research/experiments/container-representation/map-library/lookup-api-samples.csv",
-    "rows": 5112,
-    "sha256": "14f2eb386bb1a6b39fd36c1652c7595cf43bf56ae34b9b8cf00fbcdc10c14485"
+    "rows": 7416,
+    "sha256": "56d83f1b41bdbf173675ad7d256aecd5590ff6b3de44b41d8656924df4104770"
   },
   "compiler_cli_sha256": {
     "base": "a7da03da398bdedc8adc2abccd1cf667ffbac1016e06f8431617fd5f50e8d798",
@@ -2888,6 +2888,873 @@
     "final_checks": "perl .github/run-check.pl map-lookup-finalcheck-{base,candidate} make -C research/experiments/container-representation/map-library ecosystem-lookup-check ECO_BUILD=.build/lookup-api/{base,candidate} ABSEIL_PREFIX=<scratch-root>/whitefoot-abseil-20260817.0-install WHITEFOOTC=<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/whitefootc-{base,index-candidate}",
     "formal": "perl .github/run-check.pl map-lookup-{arm}-{cohort} sh -c \"<arm-map-timed> lookup-measure <cohort> 2097152 > <raw-csv>\"; exact arm/cohort/guard labels and raw paths are in raw_sources and retained guard logs."
   },
+  "first_key_caller_normalization": {
+    "account_byte_identical_to_control": true,
+    "account_csv": "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/first-key/accounting.csv",
+    "account_link_command": "clang++ -O3 .build/lookup-api/enum-domain/driver-account.o .build/lookup-api/enum-domain/rust-account.a .build/lookup-api/enum-domain/cpp-account.o .build/lookup-api/enum-domain/control-account.o .build/native/ordinary_values.o .build/native/sched/core.o .build/native/sched/entry.o .build/native/completion/runtime.o .build/native/completion/file_adapter.o .build/native/completion/bridge.o .build/native/wf_floor.o .build/native/sched/prim_host.o .build/native/completion/wait_host.o .build/native/completion/file_posix.o .build/native/completion/linux_io_uring.o .build/native/ordinary_values_ir.o <repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/first-key/wf-account.o -L<scratch-root>/whitefoot-abseil-20260817.0-install/lib -labsl_raw_hash_set -labsl_cord -labsl_cordz_info -labsl_cord_internal -labsl_cordz_functions -labsl_cordz_handle -labsl_crc_cord_state -labsl_crc32c -labsl_crc_internal -labsl_base_cpu_detect -labsl_str_format_internal -labsl_hash -labsl_city -labsl_hashtablez_sampler -labsl_exponential_biased -labsl_synchronization -labsl_graphcycles_internal -labsl_kernel_timeout_internal -labsl_stacktrace -labsl_symbolize -labsl_debugging_internal -labsl_demangle_internal -labsl_demangle_rust -labsl_decode_rust_punycode -labsl_utf8_for_code_point -labsl_malloc_internal -labsl_tracing_internal -labsl_time -labsl_civil_time -labsl_strings -labsl_strings_internal -labsl_int128 -labsl_base -labsl_spinlock_wait -labsl_source_location -labsl_time_zone -labsl_throw_delegate -labsl_raw_logging_internal -labsl_log_severity -labsl_hardening -framework CoreFoundation -liconv -lSystem -lc -lm -pthread -lm -o <repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/first-key/map-account",
+    "account_link_ir_sha256": "d70307c5bc2dec7b14ec9fa137ef768967a2d36a16873867c49999216b796f42",
+    "account_object_sha256": "e8eb79f921fabdff165fb1888387d7944e4198139d1c5542a7d61a2e86941a4b",
+    "account_sha256": "34597dbe6e24bb66f002e2d30f502003ae1c20e04a2fadac3f2c146083bfed78",
+    "baseline_revision": "213e72936bd7fb02b54b781c733474979489bbc4",
+    "baseline_source_sha256": "7c50f94f49c5fc53477c21ae02a95f879915032c519f508bf4973a110990a1ec",
+    "candidate_account_image_sha256": "5fe93010c545c466903ac3bea1d76779183fc7e4b17b01e0209e7188b02c54e5",
+    "candidate_timed_image_sha256": "8b4144198da9611d1f6cb3adf6ae399ac8e4f566101e9c3d96858d40e3b574b0",
+    "checks": {
+      "account_lookup_cases": 96,
+      "account_rows": 32,
+      "direct_exit": 0,
+      "final_live_bytes": 0,
+      "ordinary_negative_controls": 7,
+      "timed_lookup_cases": 96
+    },
+    "compiler_sha256": "9df0737701f58992f55d1a09f73836483c207196e609c4d1c2df373573948f42",
+    "control_timed_image_sha256": "60d26b358204a454006823d7b3b45b6b1ed432c3627a2636c585cac3069da720",
+    "native": "WF query instances 237 to196 instructions; frame16B unchanged; CMP/MOV/CINC hoisted before loops, one shifted ADD per key inside loop; no calls or loop spills. Six peer query ranges exact machine bytes and image-relative addresses identical. WF query positions differ, so static instruction count does not isolate single instruction timing causally.",
+    "native_screen_text": "Purpose: isolate ordinary query-driver input-key construction; no HashMap implementation or representation change. Retire scratch when trial is rejected or its surviving normalization is published.\nScope: only map_cost_lookup_query shared by word/record exports. Setup, hash/equality callbacks, lookup body, digest and cleanup source are byte-identical.\nFor every u64 index and miss, d=(miss!=0) is0or1. Old key=((index*2 mod2^64)+1+d) mod2^64 equals new(index*2+(1+d)) mod2^64 by modular associativity. Loops/counts/order unchanged; first_key is an effect-free comparison of a value argument. Empty owner or zero rounds still invokes no lookup/hash/visitor; only that effect-free comparison moves before the loops.\nPeer source: Rust lookup_query hoists missing_offset=u64::from(miss!=0) then key_at(index).wrapping_add(missing_offset); C/C++ source spells key_at(index)+(miss!=0) inside query loops. All key_at definitions are index*2+1 with unsigned wrapping arithmetic. The normalized WF stream is therefore identical, not a source-algorithm advantage. Native compilers may hoist/combine those peer expressions differently; inspect actual bodies before claiming one instruction.\nBaseline source SHA256: 7c50f94f49c5fc53477c21ae02a95f879915032c519f508bf4973a110990a1ec\nCandidate source SHA256: 7cbfd1754b8ca6afae4b88a232fbeebfd0d7fe4daf944bd320554e95ab03a5d8\n\nNative result: both actual query instances196instructions,16-byte frame, no calls or loop spills. First key CMP/MOV/CINC is before loop guards; normal key construction is one ADD with LSL#1 (word0x65f8; record0x6908 in lookup-first-key.native.asm). Source was accepted and emitted with frozen enum-domain compiler; guarded clang-O3 object build succeeded. No native execution or timing was performed for this candidate.\nRaw LLVM changed function bodies against enum-domain/map.raw.ll: wf_map_cost_lookup_query$instance$4250cb78d3f44027, wf_map_cost_lookup_query$instance$c7c8cd11e7f079bd; added/removed: []/[].\nExact guarded commands/status/time retained in lookup-first-key-emit.log and lookup-first-key-native.log.\n",
+    "pair": {
+      "cohorts": 2,
+      "decision": "caller normalization improves most hit medians but misses remain above slower ordinary peer; scalar64 miss cohort1 adverse ratio retained; not a HashMap implementation result",
+      "minimum_elapsed_ns": 3015000,
+      "order": [
+        "first-key-control/c0",
+        "first-key-candidate/c0",
+        "first-key-candidate/c1",
+        "first-key-control/c1"
+      ],
+      "rows": 1152,
+      "samples_per_cohort": 9,
+      "strict_target_shapes_both_cohorts": 3,
+      "summary": [
+        {
+          "candidate_to_control_median_ratio": 0.938764,
+          "candidate_wf_median_ns_per_lookup": 2.324581,
+          "candidate_wf_range_ns_per_lookup": [
+            2.276897,
+            2.424717
+          ],
+          "cohort": 0,
+          "control_wf_median_ns_per_lookup": 2.476215,
+          "control_wf_range_ns_per_lookup": [
+            2.44379,
+            2.578259
+          ],
+          "element_bytes": 256,
+          "path": "hit",
+          "physical_backing_target": 4096,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 2.466679,
+          "slower_peer_range_ns_per_lookup": [
+            2.430439,
+            2.477646
+          ],
+          "strict_candidate_below_slower_peer": true
+        },
+        {
+          "candidate_to_control_median_ratio": 0.968744,
+          "candidate_wf_median_ns_per_lookup": 2.379417,
+          "candidate_wf_range_ns_per_lookup": [
+            2.3036,
+            2.458096
+          ],
+          "cohort": 1,
+          "control_wf_median_ns_per_lookup": 2.456188,
+          "control_wf_range_ns_per_lookup": [
+            2.395153,
+            2.530098
+          ],
+          "element_bytes": 256,
+          "path": "hit",
+          "physical_backing_target": 4096,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 2.487659,
+          "slower_peer_range_ns_per_lookup": [
+            2.464771,
+            2.569199
+          ],
+          "strict_candidate_below_slower_peer": true
+        },
+        {
+          "candidate_to_control_median_ratio": 0.919525,
+          "candidate_wf_median_ns_per_lookup": 1.955986,
+          "candidate_wf_range_ns_per_lookup": [
+            1.88303,
+            1.987457
+          ],
+          "cohort": 0,
+          "control_wf_median_ns_per_lookup": 2.127171,
+          "control_wf_range_ns_per_lookup": [
+            2.031803,
+            2.225399
+          ],
+          "element_bytes": 256,
+          "path": "hit",
+          "physical_backing_target": 64,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 2.315521,
+          "slower_peer_range_ns_per_lookup": [
+            2.27499,
+            2.915859
+          ],
+          "strict_candidate_below_slower_peer": true
+        },
+        {
+          "candidate_to_control_median_ratio": 0.931423,
+          "candidate_wf_median_ns_per_lookup": 1.968861,
+          "candidate_wf_range_ns_per_lookup": [
+            1.883984,
+            2.118587
+          ],
+          "cohort": 1,
+          "control_wf_median_ns_per_lookup": 2.113819,
+          "control_wf_range_ns_per_lookup": [
+            2.039909,
+            2.250671
+          ],
+          "element_bytes": 256,
+          "path": "hit",
+          "physical_backing_target": 64,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 2.3036,
+          "slower_peer_range_ns_per_lookup": [
+            2.276897,
+            2.898693
+          ],
+          "strict_candidate_below_slower_peer": true
+        },
+        {
+          "candidate_to_control_median_ratio": 0.881222,
+          "candidate_wf_median_ns_per_lookup": 3.148556,
+          "candidate_wf_range_ns_per_lookup": [
+            2.799034,
+            3.425598
+          ],
+          "cohort": 0,
+          "control_wf_median_ns_per_lookup": 3.572941,
+          "control_wf_range_ns_per_lookup": [
+            3.055573,
+            4.767895
+          ],
+          "element_bytes": 256,
+          "path": "miss",
+          "physical_backing_target": 4096,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 2.179623,
+          "slower_peer_range_ns_per_lookup": [
+            2.124786,
+            2.260208
+          ],
+          "strict_candidate_below_slower_peer": false
+        },
+        {
+          "candidate_to_control_median_ratio": 0.942115,
+          "candidate_wf_median_ns_per_lookup": 3.011227,
+          "candidate_wf_range_ns_per_lookup": [
+            2.746105,
+            6.228924
+          ],
+          "cohort": 1,
+          "control_wf_median_ns_per_lookup": 3.196239,
+          "control_wf_range_ns_per_lookup": [
+            2.994537,
+            4.302025
+          ],
+          "element_bytes": 256,
+          "path": "miss",
+          "physical_backing_target": 4096,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 2.166271,
+          "slower_peer_range_ns_per_lookup": [
+            2.12574,
+            4.517555
+          ],
+          "strict_candidate_below_slower_peer": false
+        },
+        {
+          "candidate_to_control_median_ratio": 0.897643,
+          "candidate_wf_median_ns_per_lookup": 2.488136,
+          "candidate_wf_range_ns_per_lookup": [
+            2.353191,
+            3.198624
+          ],
+          "cohort": 0,
+          "control_wf_median_ns_per_lookup": 2.771854,
+          "control_wf_range_ns_per_lookup": [
+            2.540588,
+            3.459454
+          ],
+          "element_bytes": 256,
+          "path": "miss",
+          "physical_backing_target": 64,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 1.574516,
+          "slower_peer_range_ns_per_lookup": [
+            1.564026,
+            2.129078
+          ],
+          "strict_candidate_below_slower_peer": false
+        },
+        {
+          "candidate_to_control_median_ratio": 0.92127,
+          "candidate_wf_median_ns_per_lookup": 2.449512,
+          "candidate_wf_range_ns_per_lookup": [
+            2.309322,
+            3.168583
+          ],
+          "cohort": 1,
+          "control_wf_median_ns_per_lookup": 2.658844,
+          "control_wf_range_ns_per_lookup": [
+            2.511978,
+            3.415108
+          ],
+          "element_bytes": 256,
+          "path": "miss",
+          "physical_backing_target": 64,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 1.599312,
+          "slower_peer_range_ns_per_lookup": [
+            1.564026,
+            2.066612
+          ],
+          "strict_candidate_below_slower_peer": false
+        },
+        {
+          "candidate_to_control_median_ratio": 0.958418,
+          "candidate_wf_median_ns_per_lookup": 2.253056,
+          "candidate_wf_range_ns_per_lookup": [
+            2.168655,
+            2.603054
+          ],
+          "cohort": 0,
+          "control_wf_median_ns_per_lookup": 2.350807,
+          "control_wf_range_ns_per_lookup": [
+            2.246857,
+            2.445221
+          ],
+          "element_bytes": 8,
+          "path": "hit",
+          "physical_backing_target": 4096,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 2.302647,
+          "slower_peer_range_ns_per_lookup": [
+            2.209663,
+            16.489506
+          ],
+          "strict_candidate_below_slower_peer": false
+        },
+        {
+          "candidate_to_control_median_ratio": 0.912482,
+          "candidate_wf_median_ns_per_lookup": 2.122879,
+          "candidate_wf_range_ns_per_lookup": [
+            2.090931,
+            2.189159
+          ],
+          "cohort": 1,
+          "control_wf_median_ns_per_lookup": 2.326488,
+          "control_wf_range_ns_per_lookup": [
+            2.243996,
+            2.563953
+          ],
+          "element_bytes": 8,
+          "path": "hit",
+          "physical_backing_target": 4096,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 2.214909,
+          "slower_peer_range_ns_per_lookup": [
+            2.189636,
+            2.233505
+          ],
+          "strict_candidate_below_slower_peer": true
+        },
+        {
+          "candidate_to_control_median_ratio": 0.931925,
+          "candidate_wf_median_ns_per_lookup": 1.977921,
+          "candidate_wf_range_ns_per_lookup": [
+            1.886368,
+            2.083778
+          ],
+          "cohort": 0,
+          "control_wf_median_ns_per_lookup": 2.122402,
+          "control_wf_range_ns_per_lookup": [
+            2.04134,
+            2.261162
+          ],
+          "element_bytes": 8,
+          "path": "hit",
+          "physical_backing_target": 64,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 2.189636,
+          "slower_peer_range_ns_per_lookup": [
+            2.123356,
+            2.662659
+          ],
+          "strict_candidate_below_slower_peer": true
+        },
+        {
+          "candidate_to_control_median_ratio": 0.951699,
+          "candidate_wf_median_ns_per_lookup": 1.963615,
+          "candidate_wf_range_ns_per_lookup": [
+            1.885891,
+            2.045631
+          ],
+          "cohort": 1,
+          "control_wf_median_ns_per_lookup": 2.063274,
+          "control_wf_range_ns_per_lookup": [
+            2.017021,
+            2.180576
+          ],
+          "element_bytes": 8,
+          "path": "hit",
+          "physical_backing_target": 64,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 2.162457,
+          "slower_peer_range_ns_per_lookup": [
+            2.112389,
+            2.719402
+          ],
+          "strict_candidate_below_slower_peer": true
+        },
+        {
+          "candidate_to_control_median_ratio": 0.899134,
+          "candidate_wf_median_ns_per_lookup": 2.771378,
+          "candidate_wf_range_ns_per_lookup": [
+            2.613068,
+            4.110336
+          ],
+          "cohort": 0,
+          "control_wf_median_ns_per_lookup": 3.082275,
+          "control_wf_range_ns_per_lookup": [
+            2.91729,
+            3.831863
+          ],
+          "element_bytes": 8,
+          "path": "miss",
+          "physical_backing_target": 4096,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 2.150536,
+          "slower_peer_range_ns_per_lookup": [
+            2.11525,
+            2.185345
+          ],
+          "strict_candidate_below_slower_peer": false
+        },
+        {
+          "candidate_to_control_median_ratio": 0.898177,
+          "candidate_wf_median_ns_per_lookup": 2.725601,
+          "candidate_wf_range_ns_per_lookup": [
+            2.585888,
+            2.923965
+          ],
+          "cohort": 1,
+          "control_wf_median_ns_per_lookup": 3.034592,
+          "control_wf_range_ns_per_lookup": [
+            2.83289,
+            3.175735
+          ],
+          "element_bytes": 8,
+          "path": "miss",
+          "physical_backing_target": 4096,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 2.134323,
+          "slower_peer_range_ns_per_lookup": [
+            2.090931,
+            2.177715
+          ],
+          "strict_candidate_below_slower_peer": false
+        },
+        {
+          "candidate_to_control_median_ratio": 0.919335,
+          "candidate_wf_median_ns_per_lookup": 2.505302,
+          "candidate_wf_range_ns_per_lookup": [
+            2.35033,
+            3.091812
+          ],
+          "cohort": 0,
+          "control_wf_median_ns_per_lookup": 2.725124,
+          "control_wf_range_ns_per_lookup": [
+            2.500534,
+            3.433704
+          ],
+          "element_bytes": 8,
+          "path": "miss",
+          "physical_backing_target": 64,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 1.589298,
+          "slower_peer_range_ns_per_lookup": [
+            1.563072,
+            2.035141
+          ],
+          "strict_candidate_below_slower_peer": false
+        },
+        {
+          "candidate_to_control_median_ratio": 1.039842,
+          "candidate_wf_median_ns_per_lookup": 2.762794,
+          "candidate_wf_range_ns_per_lookup": [
+            2.283096,
+            3.288746
+          ],
+          "cohort": 1,
+          "control_wf_median_ns_per_lookup": 2.656937,
+          "control_wf_range_ns_per_lookup": [
+            2.517223,
+            3.410339
+          ],
+          "element_bytes": 8,
+          "path": "miss",
+          "physical_backing_target": 64,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 1.678467,
+          "slower_peer_range_ns_per_lookup": [
+            1.566887,
+            2.137661
+          ],
+          "strict_candidate_below_slower_peer": false
+        }
+      ],
+      "work_per_sample": 2097152
+    },
+    "promoted_tracked_source_sha256": "7cbfd1754b8ca6afae4b88a232fbeebfd0d7fe4daf944bd320554e95ab03a5d8",
+    "purpose": "ordinary WF query caller key-construction normalization only, not HashMap library change; same enum-domain compiler and actual backing",
+    "raw_ir_sha256": "feac2ebafeb777c31fcc74fa7885f49feb47edc6c8142e00350761a32681250e",
+    "source_patch": "--- map-library.wf\n+++ lookup-first-key.wf\n@@ -531,12 +531,15 @@\n \n fn map_cost_lookup_query<interface MapCostElement<T>>(owner: &MapLookupOwner<T>, rounds: u64, miss: u64) -> result: u64 reads(owner) {\n   let digest = MapCostDigest(ordered: owner^.seed, sum: 0_u64, parity: 0_u64, count: 0_u64);\n+  let first_key = if miss != 0_u64 {\n+    give 2_u64;\n+  } else {\n+    give 1_u64;\n+  }\n   for (round in 0_u64..rounds) {\n     for (index in 0_u64..owner^.count) {\n-      let key = map_cost_key(index: index);\n-      if miss != 0_u64 {\n-        set key = key +wrap 1_u64;\n-      }\n+      let doubled = index *wrap 2_u64;\n+      let key = doubled +wrap first_key;\n       let found = hash_map_lookup::<MapCostLibraryKey, T, MapCostDigest, u64, fn MapCostElement::observe, 16384>(map: &owner^.map, key: &key, key_env: &owner^.env, visit_env: &digest);\n       map_cost_lookup_result(found: found, digest: &digest);\n     }\n",
+    "source_patch_sha256": "b3fb17a5b7134ecf2fb5c2cdba08adcb4bbfeb86e2b0566506ba014670297cb1",
+    "source_sha256": "7cbfd1754b8ca6afae4b88a232fbeebfd0d7fe4daf944bd320554e95ab03a5d8",
+    "timed_link_command": "clang++ -O3 .build/lookup-api/enum-domain/driver-timed.o .build/lookup-api/enum-domain/rust-timed.a .build/lookup-api/enum-domain/cpp-timed.o .build/lookup-api/enum-domain/control-timed.o .build/native/ordinary_values.o .build/native/sched/core.o .build/native/sched/entry.o .build/native/completion/runtime.o .build/native/completion/file_adapter.o .build/native/completion/bridge.o .build/native/wf_floor.o .build/native/sched/prim_host.o .build/native/completion/wait_host.o .build/native/completion/file_posix.o .build/native/completion/linux_io_uring.o .build/native/ordinary_values_ir.o <repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/first-key/wf-timed.o -L<scratch-root>/whitefoot-abseil-20260817.0-install/lib -labsl_raw_hash_set -labsl_cord -labsl_cordz_info -labsl_cord_internal -labsl_cordz_functions -labsl_cordz_handle -labsl_crc_cord_state -labsl_crc32c -labsl_crc_internal -labsl_base_cpu_detect -labsl_str_format_internal -labsl_hash -labsl_city -labsl_hashtablez_sampler -labsl_exponential_biased -labsl_synchronization -labsl_graphcycles_internal -labsl_kernel_timeout_internal -labsl_stacktrace -labsl_symbolize -labsl_debugging_internal -labsl_demangle_internal -labsl_demangle_rust -labsl_decode_rust_punycode -labsl_utf8_for_code_point -labsl_malloc_internal -labsl_tracing_internal -labsl_time -labsl_civil_time -labsl_strings -labsl_strings_internal -labsl_int128 -labsl_base -labsl_spinlock_wait -labsl_source_location -labsl_time_zone -labsl_throw_delegate -labsl_raw_logging_internal -labsl_log_severity -labsl_hardening -framework CoreFoundation -liconv -lSystem -lc -lm -pthread -lm -o <repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/first-key/map-timed",
+    "timed_link_ir_sha256": "345c68f01d4c910b99f422d112842a9f77a98273f242891f224a56cbdae62b8e",
+    "timed_object_sha256": "e8ce3673335efe430ed964f8e5edb0b9e2c269fc67cdd23892fdb23c50748ad1"
+  },
+  "group8_mask_floor": {
+    "account_link_command": "clang++ -O3 .build/lookup-api/group8/driver-account.o .build/lookup-api/group8/rust-account.a .build/lookup-api/group8/cpp-account.o .build/lookup-api/group8/control-account.o .build/native/ordinary_values.o .build/native/sched/core.o .build/native/sched/entry.o .build/native/completion/runtime.o .build/native/completion/file_adapter.o .build/native/completion/bridge.o .build/native/wf_floor.o .build/native/sched/prim_host.o .build/native/completion/wait_host.o .build/native/completion/file_posix.o .build/native/completion/linux_io_uring.o .build/native/ordinary_values_ir.o <repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/group8-mask-floor/wf-account.o -L<scratch-root>/whitefoot-abseil-20260817.0-install/lib -labsl_raw_hash_set -labsl_cord -labsl_cordz_info -labsl_cord_internal -labsl_cordz_functions -labsl_cordz_handle -labsl_crc_cord_state -labsl_crc32c -labsl_crc_internal -labsl_base_cpu_detect -labsl_str_format_internal -labsl_hash -labsl_city -labsl_hashtablez_sampler -labsl_exponential_biased -labsl_synchronization -labsl_graphcycles_internal -labsl_kernel_timeout_internal -labsl_stacktrace -labsl_symbolize -labsl_debugging_internal -labsl_demangle_internal -labsl_demangle_rust -labsl_decode_rust_punycode -labsl_utf8_for_code_point -labsl_malloc_internal -labsl_tracing_internal -labsl_time -labsl_civil_time -labsl_strings -labsl_strings_internal -labsl_int128 -labsl_base -labsl_spinlock_wait -labsl_source_location -labsl_time_zone -labsl_throw_delegate -labsl_raw_logging_internal -labsl_log_severity -labsl_hardening -framework CoreFoundation -liconv -lSystem -lc -lm -pthread -lm -o <repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/group8-mask-floor/map-account",
+    "account_matches_original_group8_bytes": true,
+    "account_observation_csv": "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/group8-mask-floor/accounting.csv",
+    "account_observation_sha256": "e06a511a48bfb7859b6f5fface91933b3c02743947224cbef374246ccf38b703",
+    "baseline_group8_raw_ir_sha256": "204e0c907ee6157b1c5f93996b4706b113d196a06cfc6daeb7fd6cb0bbf188df",
+    "baseline_group8_source_sha256": "80f9ca373b007638c7b87830b0056177a5faaa2d7e13db3be0cf4e851080ddec",
+    "checks": {
+      "account_rows": 32,
+      "all_direct_exit": 0,
+      "final_live_bytes": 0,
+      "floor_account_lookup_cases": 96,
+      "floor_account_lookup_command": "perl .github/run-check.pl group8-mask-floor-account-check <floor>/map-account lookup-check",
+      "floor_account_observe_command": "perl .github/run-check.pl group8-mask-floor-account-observe sh -c \"<floor>/map-account lookup-account 2097152 > <floor>/accounting.csv\"",
+      "floor_fault_command": "negative-lookup for population, capacity, checksum, cleanup on floor timed; filled-allocation, allocation, leak on floor account; each exit1, empty stdout, exact expected ordinary guard stderr",
+      "floor_timed_lookup_cases": 96,
+      "floor_timed_lookup_command": "perl .github/run-check.pl group8-mask-floor-check <floor>/map-timed lookup-check",
+      "ordinary_negative_controls": 7
+    },
+    "compiler_sha256": "9df0737701f58992f55d1a09f73836483c207196e609c4d1c2df373573948f42",
+    "equivalence": {
+      "algebraic_note": "Only probe_control_equal changes. Baseline source/LLVM stay untouched.\nFor arbitrary u64 word and code, both variants compute repeated = code * 0x0101010101010101 modulo 2^64, then different = word XOR repeated. No code<=255 or fingerprint-range assumption is added.\nFor each byte d of different, the original lower=(d&127), nonzero=lower+127 has value127..254, so the byte-local additions cannot carry into neighboring bytes. The high bit of nonzero OR d OR127 is zero exactly when d==0. Inverting and masking128 therefore emits128 iff d==0, else0. This establishes exact per-byte equivalence for every input.\nOrdinary source computes those eight byte tests explicitly and reassembles the corresponding high bits. The LLVM floor bitcasts the SAME different value to eight i8 lanes, compares with zero, selects byte128/0 and bitcasts back. No pointer load, alignment, inactive-payload, alias or termination claim is added.\nThe LLVM floor is an attribution instrument only, not ordinary WF compilation or a production backend change. Byte outputs can be exhaustively checked256ways at every lane plus the direct algebraic equivalence above; random word/code checks are additional observations, not the proof.\n",
+      "exit": 0,
+      "method": "for each of 8 codes including 0,255,256 and arbitrary u64, all 256 byte values at each lane; 256 adversarial multi-lane patterns for five codes; 100000 fixed-seed random arbitrary word/code pairs; algebraic per-byte argument in scratch mask-equivalence.txt",
+      "observed_cases": 117664,
+      "oracle_source": "MASK=(1<<64)-1; LOW=0x7f7f7f7f7f7f7f7f; HIGH=0x8080808080808080\ndef old(word,code):\n d=word^((code*0x0101010101010101)&MASK)\n return (~(((((d&LOW)+LOW)&MASK)|d|LOW))&HIGH)&MASK\ndef floor(word,code):\n d=word^((code*0x0101010101010101)&MASK)\n return sum(0x80<<(8*i) for i in range(8) if ((d>>(8*i))&255)==0)\nfor code in (0,1,127,128,255,256,0x123456789abcdef0,MASK):\n rep=(code*0x0101010101010101)&MASK\n for lane in range(8):\n  for byte in range(256):\n   word=rep^(byte<<(8*lane)); assert old(word,code)==floor(word,code)\nfor code in (0,255,256,0x123456789abcdef0,MASK):\n rep=(code*0x0101010101010101)&MASK\n for pattern in range(256):\n  different=sum((0 if pattern&(1<<lane) else lane+1)<<(8*lane) for lane in range(8))\n  word=rep^different; assert old(word,code)==floor(word,code)\nimport random\nrng=random.Random(0x6d61736b)\nfor _ in range(100000):\n word=rng.getrandbits(64); code=rng.getrandbits(64); assert old(word,code)==floor(word,code)\n"
+    },
+    "floor_account_image_sha256": "b1cbb074d34837104eb22a246b1f0016f397361bce822c50b0fbc94a2d18cdeb",
+    "floor_account_object_sha256": "49eaa56079748c59e8052c81bafa026f5546802d2a2d51c63d2ce6b5ed4e634f",
+    "floor_linked_account_ir_sha256": "ad8cc18d5c1aad7a145cf6c55f2ce16e01d9276b3ffdd7e6765c297b8443176d",
+    "floor_linked_timed_ir_sha256": "8cde0fd40db08bc6943c283059321cbebff23128b29691e352b3f686d5180f45",
+    "floor_raw_ir_sha256": "332ad30720dd6f8e365bb5d193d812e8f06d6b47fe73c0bb99fb3b47ba050ff8",
+    "floor_timed_image_sha256": "6452d4eb4d6afb7e62ec31524be8a19718c1c694e6ceedae5be59551e51c78a4",
+    "floor_timed_object_sha256": "c189aecfff817335db3faa0bf12082e009059e6d614d9a0624b104fe03c97d30",
+    "link_command": "clang++ -O3 .build/lookup-api/group8/driver-timed.o .build/lookup-api/group8/rust-timed.a .build/lookup-api/group8/cpp-timed.o .build/lookup-api/group8/control-timed.o .build/native/ordinary_values.o .build/native/sched/core.o .build/native/sched/entry.o .build/native/completion/runtime.o .build/native/completion/file_adapter.o .build/native/completion/bridge.o .build/native/wf_floor.o .build/native/sched/prim_host.o .build/native/completion/wait_host.o .build/native/completion/file_posix.o .build/native/completion/linux_io_uring.o .build/native/ordinary_values_ir.o <repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/group8-mask-floor/wf-timed.o -L<scratch-root>/whitefoot-abseil-20260817.0-install/lib -labsl_raw_hash_set -labsl_cord -labsl_cordz_info -labsl_cord_internal -labsl_cordz_functions -labsl_cordz_handle -labsl_crc_cord_state -labsl_crc32c -labsl_crc_internal -labsl_base_cpu_detect -labsl_str_format_internal -labsl_hash -labsl_city -labsl_hashtablez_sampler -labsl_exponential_biased -labsl_synchronization -labsl_graphcycles_internal -labsl_kernel_timeout_internal -labsl_stacktrace -labsl_symbolize -labsl_debugging_internal -labsl_demangle_internal -labsl_demangle_rust -labsl_decode_rust_punycode -labsl_utf8_for_code_point -labsl_malloc_internal -labsl_tracing_internal -labsl_time -labsl_civil_time -labsl_strings -labsl_strings_internal -labsl_int128 -labsl_base -labsl_spinlock_wait -labsl_source_location -labsl_time_zone -labsl_throw_delegate -labsl_raw_logging_internal -labsl_log_severity -labsl_hardening -framework CoreFoundation -liconv -lSystem -lc -lm -pthread -lm -o <repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/group8-mask-floor/map-timed",
+    "llvm_patch": "--- probe.raw.ll\n+++ mask-vector-floor.raw.ll\n@@ -684,20 +684,13 @@\n \n define i64 @wf_probe_control_equal(i64 %v0, i64 %v1) #0 {\n entry:\n-  %v2 = select i1 true, i64 72340172838076673, i64 72340172838076673\n-  %v3 = mul i64 %v1, %v2\n-  %v4 = xor i64 %v0, %v3\n-  %v5 = select i1 true, i64 9187201950435737471, i64 9187201950435737471\n-  %v6 = and i64 %v4, %v5\n-  %v7 = select i1 true, i64 9187201950435737471, i64 9187201950435737471\n-  %v8 = add i64 %v6, %v7\n-  %v9 = or i64 %v8, %v4\n-  %v10 = select i1 true, i64 9187201950435737471, i64 9187201950435737471\n-  %v11 = or i64 %v9, %v10\n-  %v12 = xor i64 %v11, -1\n-  %v13 = select i1 true, i64 9259542123273814144, i64 9259542123273814144\n-  %v14 = and i64 %v12, %v13\n-  ret i64 %v14\n+  %repeated = mul i64 %v1, 72340172838076673\n+  %different = xor i64 %v0, %repeated\n+  %bytes = bitcast i64 %different to <8 x i8>\n+  %equal = icmp eq <8 x i8> %bytes, zeroinitializer\n+  %high = select <8 x i1> %equal, <8 x i8> <i8 -128, i8 -128, i8 -128, i8 -128, i8 -128, i8 -128, i8 -128, i8 -128>, <8 x i8> zeroinitializer\n+  %result = bitcast <8 x i8> %high to i64\n+  ret i64 %result\n }\n \n define i64 @wf_probe_control_first(i64 %v0) #0 {\n",
+    "llvm_patch_sha256": "9112071d8a0ff439553edfd4cbeca6113c61978ff7ea86c49d8da0ce1459dc5b",
+    "native": {
+      "caveat": "LLVM floor is a hand-written attribution IR patch, and changing the WF object can alter linked layout; peer identity must be checked before causal timing claims",
+      "floor_frame_bytes": 64,
+      "floor_query_instructions": 184,
+      "hot_calls": 0,
+      "linked_audit": "Reached query body184 instructions and64B frame vs original189/80B; scalar LDR/EOR->FMOV D->CMEQ.8B #0->AND.8B->FMOV X->CBNZ; no hot calls or loop spills; home udiv, fingerprint mul, ctz/lane and enum-tag guard remain. Actual first matching hit 25 vs28 executed instructions; zero-match plus empty first-group path20 vs20. Six linked C/Rust/C++ query bodies exact-byte and image-address identical.",
+      "original_frame_bytes": 80,
+      "original_group8_query_instructions": 189,
+      "peer_query_exact_bytes_and_addresses_identical": true,
+      "vector_byte_compare": true
+    },
+    "original_group8_timed_image_sha256": "4e47fbe14e8ed8cf4d1f21b6f551f4151a1b915a6bbb1e8cecf1f126e886ee96",
+    "pair": {
+      "cohorts": 2,
+      "decision": "mask lowering is a substantial Group8 cost in this LLVM-only floor, but floor does not meet Rust/C++ lookup target in any shape; no Group8 source selection",
+      "guarded_command_template": "perl .github/run-check.pl <arm>-c<cohort> sh -c \"<image>/map-timed lookup-measure <cohort> 2097152 > <raw.csv>\"; no clock/control subtraction",
+      "minimum_elapsed_ns": 3010000,
+      "order": [
+        "group8-original/c0",
+        "group8-mask-floor/c0",
+        "group8-mask-floor/c1",
+        "group8-original/c1"
+      ],
+      "rows": 1152,
+      "seeds_per_cohort": 9,
+      "strict_target_cells_both_cohorts": 0,
+      "summary": [
+        {
+          "cohort": 0,
+          "cpp_median_ns_per_lookup": 2.29311,
+          "element_bytes": 256,
+          "floor_to_original_median_ratio": 0.882805,
+          "floor_wf_median_ns_per_lookup": 3.72839,
+          "floor_wf_range_ns_per_lookup": [
+            3.716469,
+            3.757477
+          ],
+          "original_wf_median_ns_per_lookup": 4.223347,
+          "path": "hit",
+          "physical_backing_target": 4096,
+          "rust_median_ns_per_lookup": 2.456188,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_range_ns_per_lookup": [
+            2.429008,
+            2.500534
+          ],
+          "strict_floor_below_slower_peer": false
+        },
+        {
+          "cohort": 1,
+          "cpp_median_ns_per_lookup": 2.28548,
+          "element_bytes": 256,
+          "floor_to_original_median_ratio": 0.883929,
+          "floor_wf_median_ns_per_lookup": 3.729343,
+          "floor_wf_range_ns_per_lookup": [
+            3.693581,
+            3.751278
+          ],
+          "original_wf_median_ns_per_lookup": 4.219055,
+          "path": "hit",
+          "physical_backing_target": 4096,
+          "rust_median_ns_per_lookup": 2.454758,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_range_ns_per_lookup": [
+            2.426147,
+            2.482414
+          ],
+          "strict_floor_below_slower_peer": false
+        },
+        {
+          "cohort": 0,
+          "cpp_median_ns_per_lookup": 1.587391,
+          "element_bytes": 256,
+          "floor_to_original_median_ratio": 0.866797,
+          "floor_wf_median_ns_per_lookup": 3.161907,
+          "floor_wf_range_ns_per_lookup": [
+            3.139019,
+            3.312588
+          ],
+          "original_wf_median_ns_per_lookup": 3.647804,
+          "path": "hit",
+          "physical_backing_target": 64,
+          "rust_median_ns_per_lookup": 2.296925,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_range_ns_per_lookup": [
+            2.278328,
+            2.845287
+          ],
+          "strict_floor_below_slower_peer": false
+        },
+        {
+          "cohort": 1,
+          "cpp_median_ns_per_lookup": 1.589775,
+          "element_bytes": 256,
+          "floor_to_original_median_ratio": 0.865503,
+          "floor_wf_median_ns_per_lookup": 3.21579,
+          "floor_wf_range_ns_per_lookup": [
+            3.137112,
+            3.373146
+          ],
+          "original_wf_median_ns_per_lookup": 3.715515,
+          "path": "hit",
+          "physical_backing_target": 64,
+          "rust_median_ns_per_lookup": 2.301216,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_range_ns_per_lookup": [
+            2.27499,
+            2.991676
+          ],
+          "strict_floor_below_slower_peer": false
+        },
+        {
+          "cohort": 0,
+          "cpp_median_ns_per_lookup": 1.759529,
+          "element_bytes": 256,
+          "floor_to_original_median_ratio": 0.863141,
+          "floor_wf_median_ns_per_lookup": 2.793789,
+          "floor_wf_range_ns_per_lookup": [
+            2.663612,
+            2.839565
+          ],
+          "original_wf_median_ns_per_lookup": 3.236771,
+          "path": "miss",
+          "physical_backing_target": 4096,
+          "rust_median_ns_per_lookup": 2.167702,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_range_ns_per_lookup": [
+            2.111912,
+            2.245426
+          ],
+          "strict_floor_below_slower_peer": false
+        },
+        {
+          "cohort": 1,
+          "cpp_median_ns_per_lookup": 1.756191,
+          "element_bytes": 256,
+          "floor_to_original_median_ratio": 0.846768,
+          "floor_wf_median_ns_per_lookup": 2.729893,
+          "floor_wf_range_ns_per_lookup": [
+            2.664566,
+            2.761364
+          ],
+          "original_wf_median_ns_per_lookup": 3.223896,
+          "path": "miss",
+          "physical_backing_target": 4096,
+          "rust_median_ns_per_lookup": 2.151489,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_range_ns_per_lookup": [
+            2.113342,
+            2.174854
+          ],
+          "strict_floor_below_slower_peer": false
+        },
+        {
+          "cohort": 0,
+          "cpp_median_ns_per_lookup": 1.563072,
+          "element_bytes": 256,
+          "floor_to_original_median_ratio": 0.753795,
+          "floor_wf_median_ns_per_lookup": 2.273083,
+          "floor_wf_range_ns_per_lookup": [
+            2.23875,
+            2.389431
+          ],
+          "original_wf_median_ns_per_lookup": 3.015518,
+          "path": "miss",
+          "physical_backing_target": 64,
+          "rust_median_ns_per_lookup": 1.579762,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_range_ns_per_lookup": [
+            1.562119,
+            2.026558
+          ],
+          "strict_floor_below_slower_peer": false
+        },
+        {
+          "cohort": 1,
+          "cpp_median_ns_per_lookup": 1.576424,
+          "element_bytes": 256,
+          "floor_to_original_median_ratio": 0.773106,
+          "floor_wf_median_ns_per_lookup": 2.253532,
+          "floor_wf_range_ns_per_lookup": [
+            2.242088,
+            2.371788
+          ],
+          "original_wf_median_ns_per_lookup": 2.914906,
+          "path": "miss",
+          "physical_backing_target": 64,
+          "rust_median_ns_per_lookup": 1.573086,
+          "slower_peer": "cpp-unordered-map",
+          "slower_peer_range_ns_per_lookup": [
+            1.510143,
+            1.634121
+          ],
+          "strict_floor_below_slower_peer": false
+        },
+        {
+          "cohort": 0,
+          "cpp_median_ns_per_lookup": 1.625061,
+          "element_bytes": 8,
+          "floor_to_original_median_ratio": 0.890733,
+          "floor_wf_median_ns_per_lookup": 3.506184,
+          "floor_wf_range_ns_per_lookup": [
+            3.473759,
+            3.547192
+          ],
+          "original_wf_median_ns_per_lookup": 3.936291,
+          "path": "hit",
+          "physical_backing_target": 4096,
+          "rust_median_ns_per_lookup": 2.204895,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_range_ns_per_lookup": [
+            2.178192,
+            2.232552
+          ],
+          "strict_floor_below_slower_peer": false
+        },
+        {
+          "cohort": 1,
+          "cpp_median_ns_per_lookup": 1.640797,
+          "element_bytes": 8,
+          "floor_to_original_median_ratio": 0.892239,
+          "floor_wf_median_ns_per_lookup": 3.513813,
+          "floor_wf_range_ns_per_lookup": [
+            3.495216,
+            3.604412
+          ],
+          "original_wf_median_ns_per_lookup": 3.938198,
+          "path": "hit",
+          "physical_backing_target": 4096,
+          "rust_median_ns_per_lookup": 2.199173,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_range_ns_per_lookup": [
+            2.180099,
+            2.230167
+          ],
+          "strict_floor_below_slower_peer": false
+        },
+        {
+          "cohort": 0,
+          "cpp_median_ns_per_lookup": 1.614571,
+          "element_bytes": 8,
+          "floor_to_original_median_ratio": 0.881806,
+          "floor_wf_median_ns_per_lookup": 3.212452,
+          "floor_wf_range_ns_per_lookup": [
+            3.144264,
+            3.359318
+          ],
+          "original_wf_median_ns_per_lookup": 3.643036,
+          "path": "hit",
+          "physical_backing_target": 64,
+          "rust_median_ns_per_lookup": 2.127171,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_range_ns_per_lookup": [
+            2.095699,
+            2.780437
+          ],
+          "strict_floor_below_slower_peer": false
+        },
+        {
+          "cohort": 1,
+          "cpp_median_ns_per_lookup": 1.594543,
+          "element_bytes": 8,
+          "floor_to_original_median_ratio": 0.882091,
+          "floor_wf_median_ns_per_lookup": 3.210545,
+          "floor_wf_range_ns_per_lookup": [
+            3.132343,
+            3.340244
+          ],
+          "original_wf_median_ns_per_lookup": 3.639698,
+          "path": "hit",
+          "physical_backing_target": 64,
+          "rust_median_ns_per_lookup": 2.175808,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_range_ns_per_lookup": [
+            2.103329,
+            2.614021
+          ],
+          "strict_floor_below_slower_peer": false
+        },
+        {
+          "cohort": 0,
+          "cpp_median_ns_per_lookup": 1.462936,
+          "element_bytes": 8,
+          "floor_to_original_median_ratio": 0.803501,
+          "floor_wf_median_ns_per_lookup": 2.626419,
+          "floor_wf_range_ns_per_lookup": [
+            2.6021,
+            2.701283
+          ],
+          "original_wf_median_ns_per_lookup": 3.268719,
+          "path": "miss",
+          "physical_backing_target": 4096,
+          "rust_median_ns_per_lookup": 2.151966,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_range_ns_per_lookup": [
+            2.106667,
+            2.268791
+          ],
+          "strict_floor_below_slower_peer": false
+        },
+        {
+          "cohort": 1,
+          "cpp_median_ns_per_lookup": 1.449108,
+          "element_bytes": 8,
+          "floor_to_original_median_ratio": 0.804134,
+          "floor_wf_median_ns_per_lookup": 2.652645,
+          "floor_wf_range_ns_per_lookup": [
+            2.603531,
+            2.84481
+          ],
+          "original_wf_median_ns_per_lookup": 3.298759,
+          "path": "miss",
+          "physical_backing_target": 4096,
+          "rust_median_ns_per_lookup": 2.128601,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_range_ns_per_lookup": [
+            2.100468,
+            2.227306
+          ],
+          "strict_floor_below_slower_peer": false
+        },
+        {
+          "cohort": 0,
+          "cpp_median_ns_per_lookup": 1.549721,
+          "element_bytes": 8,
+          "floor_to_original_median_ratio": 0.739185,
+          "floor_wf_median_ns_per_lookup": 2.264977,
+          "floor_wf_range_ns_per_lookup": [
+            2.23875,
+            2.366066
+          ],
+          "original_wf_median_ns_per_lookup": 3.064156,
+          "path": "miss",
+          "physical_backing_target": 64,
+          "rust_median_ns_per_lookup": 1.576424,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_range_ns_per_lookup": [
+            1.550674,
+            2.020359
+          ],
+          "strict_floor_below_slower_peer": false
+        },
+        {
+          "cohort": 1,
+          "cpp_median_ns_per_lookup": 1.560211,
+          "element_bytes": 8,
+          "floor_to_original_median_ratio": 0.739841,
+          "floor_wf_median_ns_per_lookup": 2.26593,
+          "floor_wf_range_ns_per_lookup": [
+            2.245903,
+            2.443314
+          ],
+          "original_wf_median_ns_per_lookup": 3.062725,
+          "path": "miss",
+          "physical_backing_target": 64,
+          "rust_median_ns_per_lookup": 1.573086,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_range_ns_per_lookup": [
+            1.552582,
+            2.025127
+          ],
+          "strict_floor_below_slower_peer": false
+        }
+      ],
+      "work_per_sample": 2097152
+    },
+    "purpose": "LLVM-only mask-lowering attribution; same grouped owner/layout/probe/tag guard, original Group8 comparator compiled with same enum-domain CLI; not ordinary source capability or selected production change",
+    "source_array_screen": {
+      "description": "Three ordinary Array<u8,8> source formulations generate SIMD byte equality but lane-mask packing remains costly. Loop/unrolled/helper differ only in how mask is repacked; none selected or timed.",
+      "retained_full_delta": "--- probe-complete.wf\n+++ mask-bytes-pack-helper.wf\n@@ -604,7 +604,7 @@\n }\n \n struct ProbeGroup<K, V> {\n-  controls: u64;\n+  controls: Array<u8, 8>;\n   slots: Array<GroupSlot<K, V>, 8>;\n }\n \n@@ -627,7 +627,8 @@\n   let empty7 = GroupSlot<K, V>::HashMapVacant();\n   place_back(window: &slots, value: move empty7);\n   let complete = slots_into_array::<GroupSlot<K, V>, 8>(values: move slots);\n-  return ProbeGroup<K, V>(controls: 9259542123273814144_u64, slots: move complete);\n+  let controls = array_filled::<u8, 8>(value: 128_u8);\n+  return ProbeGroup<K, V>(controls: controls, slots: move complete);\n }\n \n fn probe_groups_new<K, V>(count: u64) -> result: Box<Slots<ProbeGroup<K, V>>> pure contract {\n@@ -646,15 +647,83 @@\n   return move groups;\n }\n \n-fn probe_control_equal(word: u64, code: u64) -> result: u64 pure {\n-  let repeated = code *wrap 72340172838076673_u64;\n-  let different = ixor(word, repeated);\n-  let lower = iand(different, 9187201950435737471_u64);\n-  let nonzero = lower +wrap 9187201950435737471_u64;\n-  let either = ior(nonzero, different);\n-  let filled = ior(either, 9187201950435737471_u64);\n-  let inverse = inot(filled);\n-  return iand(inverse, 9259542123273814144_u64);\n+fn probe_control_equal(word: &Array<u8, 8>, code: u8) -> result: u64 reads(word) {\n+  let masks = array_filled::<u8, 8>(value: 0_u8);\n+  let equal0 = if word^[0_u64] == code {\n+    give 128_u8;\n+  } else {\n+    give 0_u8;\n+  }\n+  set masks[0_u64] = equal0;\n+  let equal1 = if word^[1_u64] == code {\n+    give 128_u8;\n+  } else {\n+    give 0_u8;\n+  }\n+  set masks[1_u64] = equal1;\n+  let equal2 = if word^[2_u64] == code {\n+    give 128_u8;\n+  } else {\n+    give 0_u8;\n+  }\n+  set masks[2_u64] = equal2;\n+  let equal3 = if word^[3_u64] == code {\n+    give 128_u8;\n+  } else {\n+    give 0_u8;\n+  }\n+  set masks[3_u64] = equal3;\n+  let equal4 = if word^[4_u64] == code {\n+    give 128_u8;\n+  } else {\n+    give 0_u8;\n+  }\n+  set masks[4_u64] = equal4;\n+  let equal5 = if word^[5_u64] == code {\n+    give 128_u8;\n+  } else {\n+    give 0_u8;\n+  }\n+  set masks[5_u64] = equal5;\n+  let equal6 = if word^[6_u64] == code {\n+    give 128_u8;\n+  } else {\n+    give 0_u8;\n+  }\n+  set masks[6_u64] = equal6;\n+  let equal7 = if word^[7_u64] == code {\n+    give 128_u8;\n+  } else {\n+    give 0_u8;\n+  }\n+  set masks[7_u64] = equal7;\n+  return probe_read_le8(bytes: &masks);\n+}\n+\n+fn probe_read_le8(bytes: &Array<u8, 8>) -> result: u64 reads(bytes) {\n+  let byte0 = cvt::<u8, u64>(bytes^[0_u64]);\n+  let mask0 = ishl(byte0, 0_u32);\n+  let byte1 = cvt::<u8, u64>(bytes^[1_u64]);\n+  let mask1 = ishl(byte1, 8_u32);\n+  let byte2 = cvt::<u8, u64>(bytes^[2_u64]);\n+  let mask2 = ishl(byte2, 16_u32);\n+  let byte3 = cvt::<u8, u64>(bytes^[3_u64]);\n+  let mask3 = ishl(byte3, 24_u32);\n+  let byte4 = cvt::<u8, u64>(bytes^[4_u64]);\n+  let mask4 = ishl(byte4, 32_u32);\n+  let byte5 = cvt::<u8, u64>(bytes^[5_u64]);\n+  let mask5 = ishl(byte5, 40_u32);\n+  let byte6 = cvt::<u8, u64>(bytes^[6_u64]);\n+  let mask6 = ishl(byte6, 48_u32);\n+  let byte7 = cvt::<u8, u64>(bytes^[7_u64]);\n+  let mask7 = ishl(byte7, 56_u32);\n+  let result01 = ior(mask0, mask1);\n+  let result23 = ior(mask2, mask3);\n+  let result45 = ior(mask4, mask5);\n+  let result67 = ior(mask6, mask7);\n+  let first = ior(result01, result23);\n+  let second = ior(result45, result67);\n+  return ior(first, second);\n }\n \n fn probe_control_first(mask: u64) -> result: u64 pure contract {\n@@ -675,13 +744,14 @@\n   }\n   let home = hash / 8_u64;\n   let group_index = home % count;\n-  let fingerprint = ishr(hash, 57_u32);\n+  let fingerprint_word = ishr(hash, 57_u32);\n+  let fingerprint = cvt::<u64, u8>(fingerprint_word);\n   for @groups (\n     step in 0_u64..count,\n     invariant group_bound: group_index < count\n   ) {\n     let group = &groups^.inner[group_index];\n-    let controls = group^.controls;\n+    let controls = &group^.controls;\n     let matches = probe_control_equal(word: controls, code: fingerprint);\n     loop @lanes {\n       if matches == 0_u64 {\n@@ -705,7 +775,7 @@\n       let lowered = matches -wrap 1_u64;\n       set matches = iand(matches, lowered);\n     }\n-    let empty = probe_control_equal(word: controls, code: 128_u64);\n+    let empty = probe_control_equal(word: controls, code: 128_u8);\n     if empty != 0_u64 {\n       return Err<R, unit>(error: unit);\n     }\n@@ -762,7 +832,8 @@\n   }\n   let home = hash / 8_u64;\n   let group_index = home % count;\n-  let fingerprint = ishr(hash, 57_u32);\n+  let fingerprint_word = ishr(hash, 57_u32);\n+  let fingerprint = cvt::<u64, u8>(fingerprint_word);\n   for @groups (\n     step in 0_u64..count,\n     invariant group_bound: group_index < count\n@@ -771,14 +842,7 @@\n       let vacant = probe_group_available::<K, V>(slot: &groups^.inner[group_index].slots[lane]);\n       if vacant {\n         swap(first: &groups^.inner[group_index].slots[lane], second: &offered);\n-        let distance = lane * 8_u64;\n-        let shift = cvt::<u64, u32>(distance);\n-        let byte_mask = ishl(255_u64, shift);\n-        let inverse_mask = inot(byte_mask);\n-        let old_control = groups^.inner[group_index].controls;\n-        let kept = iand(old_control, inverse_mask);\n-        let bits = ishl(fingerprint, shift);\n-        set groups^.inner[group_index].controls = ior(kept, bits);\n+        set groups^.inner[group_index].controls[lane] = fingerprint;\n         return move offered;\n       }\n     }\n",
+      "retained_full_delta_name": "mask-bytes-pack-helper",
+      "variants": {
+        "mask-bytes-loop": {
+          "native": "CMEQ emitted but per-lane widen/OR packing remains; no timing",
+          "object_sha256": "3351ac2084c18963bf5e4f458d64093a982d2478c8908c95c18e17ef2e8d4054",
+          "query_instructions": 201,
+          "sha256": "88b434607ab2b95be2aa4e8b069794110d06a15897175af9bd270b23d798e970",
+          "source_sha256": "4fa4473e44f9ae849a6362088326b499afff8dfe91f7710a987a7d29352ad69d"
+        },
+        "mask-bytes-pack-helper": {
+          "native": "CMEQ emitted but per-lane widen/OR packing remains; no timing",
+          "object_sha256": "18983197a5cd612026996d70af96eb96d8044a815d25a3c6ffffb7d3e3f4e4bc",
+          "query_instructions": 201,
+          "sha256": "ed52ffac1a511d265f5a2c9c617c9761d3ad9d693d054bbff7374c2e43ab4831",
+          "source_sha256": "58d4b1cc7aa6b281105a3939f65dd4bcfef9631266a3828d95246f398dcb38d7"
+        },
+        "mask-bytes-unrolled": {
+          "native": "CMEQ emitted but per-lane widen/OR packing remains; no timing",
+          "object_sha256": "3351ac2084c18963bf5e4f458d64093a982d2478c8908c95c18e17ef2e8d4054",
+          "query_instructions": 201,
+          "sha256": "f34b7a17c591eefc22a8cd2bd9352eb4c10617a85157a762d3af93bf6af6e396",
+          "source_sha256": "80f0e5d17cf1bcf486950584121ea14197935e663325912b77f68f4394541eb3"
+        }
+      }
+    }
+  },
   "group8_screen": {
     "account_image_sha256": "a1c7bafce9ba7e27defdea0cacf711f8f4875ce191aa1af69053aae351cd98e8",
     "account_rows": [
@@ -3566,6 +4433,8 @@
     ],
     "accounting_csv": "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/group8/accounting.csv",
     "accounting_sha256": "e06a511a48bfb7859b6f5fface91933b3c02743947224cbef374246ccf38b703",
+    "base_fixture_git_path": "213e72936bd7fb02b54b781c733474979489bbc4:research/experiments/container-representation/map-library/map-library.wf",
+    "base_fixture_revision": "213e72936bd7fb02b54b781c733474979489bbc4",
     "base_fixture_sha256": "7c50f94f49c5fc53477c21ae02a95f879915032c519f508bf4973a110990a1ec",
     "checks": {
       "account": "32 rows, direct exit 0, final live bytes zero",
@@ -3936,6 +4805,86 @@
       "raw_sha256": "e4aa3a06b158bfc5210ffc1e628a71a2bed2f0cb247406bba4e5b304caaffb1e",
       "rows": 288,
       "use": "registered Group8 pair"
+    },
+    {
+      "arm": "group8-original",
+      "guard_exit": 0,
+      "guard_log": "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/group8-mask-floor/group8-original-cohort-0.log",
+      "phase": "group8-mask-floor-paired",
+      "raw_csv": "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/group8-mask-floor/group8-original-cohort-0.csv",
+      "raw_sha256": "38c15bba76be30c7844ab3b3ba7aad13ba03969fde03ee2f43515a4e0931e758",
+      "rows": 288,
+      "use": "LLVM mask-lowering attribution only; not ordinary Whitefoot source compilation"
+    },
+    {
+      "arm": "group8-original",
+      "guard_exit": 0,
+      "guard_log": "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/group8-mask-floor/group8-original-cohort-1.log",
+      "phase": "group8-mask-floor-paired",
+      "raw_csv": "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/group8-mask-floor/group8-original-cohort-1.csv",
+      "raw_sha256": "bd12cfae70ef7e66eff2f466913e5f5576e9a97225c8aaf4f2b25678d6843c06",
+      "rows": 288,
+      "use": "LLVM mask-lowering attribution only; not ordinary Whitefoot source compilation"
+    },
+    {
+      "arm": "group8-mask-floor",
+      "guard_exit": 0,
+      "guard_log": "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/group8-mask-floor/group8-mask-floor-cohort-0.log",
+      "phase": "group8-mask-floor-paired",
+      "raw_csv": "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/group8-mask-floor/group8-mask-floor-cohort-0.csv",
+      "raw_sha256": "f1278655785d73473167892f11b3e3aa512eb078f7692c9d2df44aefc01d57f9",
+      "rows": 288,
+      "use": "LLVM mask-lowering attribution only; not ordinary Whitefoot source compilation"
+    },
+    {
+      "arm": "group8-mask-floor",
+      "guard_exit": 0,
+      "guard_log": "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/group8-mask-floor/group8-mask-floor-cohort-1.log",
+      "phase": "group8-mask-floor-paired",
+      "raw_csv": "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/group8-mask-floor/group8-mask-floor-cohort-1.csv",
+      "raw_sha256": "afeaaeea0bd396e4f24aa845e7a5cc1e38878449b92468a2b427e23847c40ece",
+      "rows": 288,
+      "use": "LLVM mask-lowering attribution only; not ordinary Whitefoot source compilation"
+    },
+    {
+      "arm": "first-key-control",
+      "guard_exit": 0,
+      "guard_log": "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/first-key/first-key-control-cohort-0.log",
+      "phase": "first-key-caller-paired",
+      "raw_csv": "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/first-key/first-key-control-cohort-0.csv",
+      "raw_sha256": "a1cf091b3485ae2b0c1e7cd1d9e4bf3dfe49790bbe9d4f7703fa6196b94d092e",
+      "rows": 288,
+      "use": "ordinary WF caller key normalization, not HashMap library implementation change"
+    },
+    {
+      "arm": "first-key-control",
+      "guard_exit": 0,
+      "guard_log": "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/first-key/first-key-control-cohort-1.log",
+      "phase": "first-key-caller-paired",
+      "raw_csv": "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/first-key/first-key-control-cohort-1.csv",
+      "raw_sha256": "5efbb2610249b99d9ce5f3702d85697c814f2e6749d03d3791ba98ef5e157998",
+      "rows": 288,
+      "use": "ordinary WF caller key normalization, not HashMap library implementation change"
+    },
+    {
+      "arm": "first-key-candidate",
+      "guard_exit": 0,
+      "guard_log": "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/first-key/first-key-candidate-cohort-0.log",
+      "phase": "first-key-caller-paired",
+      "raw_csv": "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/first-key/first-key-candidate-cohort-0.csv",
+      "raw_sha256": "3f11f70877fc7579151e0802888a2fa8b933806ec68daf286814d49475379669",
+      "rows": 288,
+      "use": "ordinary WF caller key normalization, not HashMap library implementation change"
+    },
+    {
+      "arm": "first-key-candidate",
+      "guard_exit": 0,
+      "guard_log": "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/first-key/first-key-candidate-cohort-1.log",
+      "phase": "first-key-caller-paired",
+      "raw_csv": "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/first-key/first-key-candidate-cohort-1.csv",
+      "raw_sha256": "aba846cd2c3753ac925ec495912bc49bca1d05aea456273261b273a135cc53d3",
+      "rows": 288,
+      "use": "ordinary WF caller key normalization, not HashMap library implementation change"
     }
   ],
   "revisions": {
@@ -3959,5 +4908,15 @@
     "base": "d5e1efe114d829881b8ce99dab577fefb36245a374a491040f356b8424aea3c4",
     "index": "e867178d29ceeb61b18a38254c0723dbe0c7b09800e628141df3f40f32cef50c",
     "mask": "67997673a32458c7039d872b24fbb6e49ae0499d8924045c3d1dfc816706afd6"
+  },
+  "vacant_first_source_screen": {
+    "candidate_source_sha256": "14ee5189d8ab85490d8cb60af7ede647494c87d35cbdea7d68215795221ea0d2",
+    "checks": "emit and O3 object build direct0; no runtime/timing, native discriminator failed",
+    "copied_control_source_sha256": "b2d9da2446ee9624054a1d1e9483e8143393c0c0f942adcc4988cc998eb3668f",
+    "native": "Both query instances in copied control and Vacant-first candidate exactly identical to normalized flat caller:196 instructions,16B frame, no new Vacant-first branch; disassembly text hashes word7edcd695fbd10b0e10b001c4c5fd6b498def249d0397a78d252d5d220eb28158, record0d542665b3d1208ff3b9bf334d872e4840ef01608ef3c9ebf49dbd7bb760fbb4. These hash disassembly text, not machine bytes.",
+    "purpose": "one ordinary WF Vacant-first branch-source discriminator on same normalized caller; stopped before timing because native identical",
+    "scratch_evidence": "Purpose: ordinary-source flat lookup branch-order discriminator only. Scratch home lookup-api; retire with rejected experiment or publish surviving exact source patch and evidence. No tracked library, compiler, tag ABI, or backing representation edits.\nFixture uses prior accepted lookup-first-key.wf, with ONLY its map_cost_lookup_query lookup call redirected to an ordinary copied lookup_discriminator function. Control copies current library lookup byte-for-byte except the function name; candidate adds a side-effect-free borrowed enum match and early Vacant return. Source copied body and fixture are both ordinary compiler inputs, not edited IR.\nCallbacks: one hash before the empty-count guard, equality only on each visited Filled and in identical bucket order, visitor only after matching equality; unchanged. Vacant pretest reads only the active tag, binds but never reads Filled payload fields. Second actual enum match guards every key/value access. Deleted advances as before. Repeated read-only matches have no intervening mutation/callback. No assumption added.\nSource spelling count: one candidate so far. A native result with extra tag loads or branches, calls/spills or a longer path is not a selection; stop instead of measuring it.\nword: first-key original, copied-control and vacant-first query disassembly EXACTLY IDENTICAL including addresses;196instructions,16B frame,no calls/in-loop spills. One tag load, Deleted(tag1) check followed by Filled(tag2) check; no early Vacant CBZ survives.\nrecord: first-key original, copied-control and vacant-first query disassembly EXACTLY IDENTICAL including addresses;196instructions,16B frame,no calls/in-loop spills. One tag load, Deleted(tag1) check followed by Filled(tag2) check; no early Vacant CBZ survives.\nlookup-vacant-control.wf SHA256 b2d9da2446ee9624054a1d1e9483e8143393c0c0f942adcc4988cc998eb3668f\nlookup-vacant-first.wf SHA256 14ee5189d8ab85490d8cb60af7ede647494c87d35cbdea7d68215795221ea0d2\nlookup-vacant-first.patch SHA256 b4105372adda8bcd5613da7b22194615705dc5971e98b8a4cefbe95d6a37d8f1\nControl/candidate emits and native builds all directexit0, exact commands/times in their emit/native logs. No timing or runtime qualification; stopped because ordinary source normalization is erased to the identical native path. One candidate spelling tested; no further spelling chosen.\n",
+    "source_patch": "--- hash-map.wf:hash_map_lookup\n+++ hash-map.wf:hash_map_lookup\n@@ -10,6 +10,20 @@\n     invariant bucket: index < count\n   ) {\n     let slot = &map^.cells.inner[index];\n+    let vacant = match slot^ {\n+      HashMapVacant() => {\n+        give 0_u64 == 0_u64;\n+      }\n+      HashMapDeleted() => {\n+        give 0_u64 != 0_u64;\n+      }\n+      HashMapFilled(key: saved_key, value: saved_value) => {\n+        give 0_u64 != 0_u64;\n+      }\n+    }\n+    if vacant {\n+      return Err<R, unit>(error: unit);\n+    }\n     match slot^ {\n       HashMapFilled(key: saved_key, value: saved_value) => {\n         let equal = HashMapKey::equal(env: key_env, left: saved_key, right: key);\n",
+    "source_patch_sha256": "b4105372adda8bcd5613da7b22194615705dc5971e98b8a4cefbe95d6a37d8f1"
   }
 }

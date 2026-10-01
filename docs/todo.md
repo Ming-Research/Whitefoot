@@ -3339,6 +3339,16 @@ condition under which it is taken up.
   Reopen indexing with an explanation of the selected-path costs and stable
   paired evidence. Preserve
   arbitrary capacities, non-power-of-two lookup, wrap and empty-table behavior.
+- **Packing a byte-comparison mask loses the vector form.** Three ordinary
+  `Array<u8, 8>` source forms generate vector comparisons, but packing their
+  0x80/0 results into a word becomes lane widening and an AND/OR reduction.
+  The [grouped lookup discriminator](../research/experiments/container-representation/map-library/RESULTS.md#single-backing-grouped-lookup-screen)
+  measures an equivalent LLVM vector mask 11–26% faster than its original
+  scalar mask; the grouped container still loses on hits and is not selected.
+  Reopen with a competitive grouped consumer: compare a general lowering
+  improvement against the ordinary source forms, preserve exact byte
+  semantics and callback paths, and require executed correctness and paired
+  benefit. No new source operation or container layout is selected.
 - **Handing checker facts to the backend.** Emitted since the v0.60 port:
   `noalias` (not on `swap`), `nonnull`, `dereferenceable`,
   `captures(none)` or `nocapture` by a build-time probe, `inbounds`, and
