@@ -33,8 +33,12 @@ pub(in crate::semantic::check) const SHARE2_KEY_A_BYTE_RANGE: &str = "name the k
 pub(in crate::semantic::check) const SHARE2_NO_GUARD_ON_A_MAP: &str = "remove the guard and test the condition inside the block; only a statement on a `Shared<T>` object outside every map's and entry's statement waits for a guard";
 /// The repair for a waiting call inside an atomic statement [SHARE-2].
 pub(in crate::semantic::check) const SHARE2_WAIT_OUTSIDE_THE_BLOCK: &str = "move the waiting call out of the atomic statement: end the statement first, wait, and start another atomic statement for any update that depends on the outcome";
-/// The repair for an atomic statement inside another [SHARE-2].
-pub(in crate::semantic::check) const SHARE2_END_THE_OUTER_STATEMENT: &str = "end the outer atomic statement before starting the inner one, carrying what the inner one needs in a local; only a statement on an object, or on an entry of the map the outer statement holds, may be inside one";
+/// The repair for an atomic statement inside an object's statement
+/// [SHARE-2].
+pub(in crate::semantic::check) const SHARE2_END_THE_OUTER_STATEMENT: &str = "end the outer atomic statement before starting the inner one, carrying what the inner one needs in a local";
+/// The repair for an atomic statement a map's or an entry's statement does
+/// not admit inside it [SHARE-2].
+pub(in crate::semantic::check) const SHARE2_ONLY_OBJECTS_OR_HELD_ENTRIES: &str = "end the outer atomic statement before starting the inner one, carrying what the inner one needs in a local; inside a statement on a map or an entry only a statement on a `Shared<T>` object may start, and inside one holding a map's state also one on an entry `s^[key]` through its binding";
 /// The repair for a guard that writes [SHARE-2].
 pub(in crate::semantic::check) const SHARE2_READ_ONLY_GUARD: &str = "make the guard read only, calling a function whose row writes nothing and moves no argument, and make the update in the block";
 
@@ -115,12 +119,16 @@ impl Checker<'_, '_> {
             _ => false,
         };
         if !admitted {
+            let mechanical_fix = match self.body.atomic_holds.last() {
+                Some(AtomicHold::Map(_) | AtomicHold::Entry) => SHARE2_ONLY_OBJECTS_OR_HELD_ENTRIES,
+                _ => SHARE2_END_THE_OUTER_STATEMENT,
+            };
             return self.types.declarations.issue_node(
                 SemanticRule::Share2,
                 node,
                 SemanticIssueKind::WaitInsideAtomic {
                     construct: "an atomic statement",
-                    mechanical_fix: SHARE2_END_THE_OUTER_STATEMENT,
+                    mechanical_fix,
                 },
             );
         }

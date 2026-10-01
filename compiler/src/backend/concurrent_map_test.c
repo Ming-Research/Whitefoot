@@ -483,7 +483,7 @@ static void claim_given_back(void) {
     for (uint64_t i = 1; b == 0; i++)
         if (start_of(t, key_of(i)) == start_of(t, a))
             b = key_of(i);
-    cell *ca, *cb;
+    cell *ca = NULL, *cb = NULL;
     if (acquire(t, a, 1, &ca) != CLAIMED || acquire(t, b, 1, &cb) != CLAIMED || cb == ca)
         fail("the two claims did not take two cells", 0, 0);
     if (!keep_cell(t, cb, CLAIMED, b))
