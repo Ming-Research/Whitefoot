@@ -97,8 +97,9 @@ fixed before any measurement.
 `remove` deletes; `update` adds one to a present key's value under exclusive
 access to that key, the shape of an atomic statement on one key. A
 comparator whose update may run its function more than once, an optimistic
-compare-and-swap loop, is flagged in every table: a Whitefoot block runs once,
-so a lead over a flagged update compares different guarantees.
+compare-and-swap loop, or that offers only an atomic addition, is flagged in
+every table: a Whitefoot block runs once and may do anything to the entry, so
+a lead over a flagged update compares different guarantees.
 
 **Mixes,** over N live keys inserted before timing:
 
@@ -113,19 +114,22 @@ so a lead over a flagged update compares different guarantees.
 
 **Key choice.** Uniform; Zipf with θ = 0.99, the constant of the Yahoo!
 Cloud Serving Benchmark; and one key, for `update` only, the Redis shape of a
-single counter. Sizes N are 2^10, 2^20 and 2^24. Uniform choice is generated
+single counter. `churn` and `grow` draw uniformly. Sizes N are 2^10, 2^20
+and 2^24. Uniform choice is generated
 inside the timed loop by every driver from SplitMix64, integers only, so
 every language draws the same sequence. Zipf ranks come from a buffer of
 2^20 per thread that one generator writes to a file before timing and every
 driver reads; the buffer repeats, so Zipf cells measure hot-key contention
 and not the cold tail, which the uniform 2^24 cells measure.
 
-**Keys and values** are 64-bit. A key is the SplitMix64 finalizer of its
-index, a bijection, so keys are uniformly random and no table gains from
-their order. Native implementations all hash with the identity, which
-costs nothing and is uniform on these keys, so integer cells compare
-structure alone; byte-string keys add real hashing. Managed implementations
-keep their languages' own hashing.
+**Keys and values** are 64-bit. A key is one plus a bijection of its index
+onto 62-bit integers, the SplitMix64 finalizer's steps taken modulo 2^62, so
+keys are uniformly random, no table gains from their order, and none is zero
+or has a top bit set, values some comparators reserve. Native implementations
+all hash a key by one multiplication with the 64-bit golden ratio, which
+spreads these keys over every bit any of them reads at the cost of one
+instruction, so integer cells compare structure; byte-string keys add real
+hashing. Managed implementations keep their languages' own hashing.
 
 **Drivers.** One C driver serves every C, C++ and Rust implementation,
 including this one: each is a separate binary in which the driver calls the
