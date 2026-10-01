@@ -13,12 +13,23 @@ use crate::{DeclarationId, NodePath};
 
 use super::model::{BindingId, CheckedLoopId, CheckedMeasure, IntegerType};
 
-/// One storage place a range term reads: a binding and the field, `Box`
+/// What a range term's place or value starts from.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub(crate) enum CheckedRangeRoot {
+    /// A parameter or a binding live where the clause is written.
+    Binding(BindingId),
+    /// An `ensures` clause's result binder.
+    Result,
+    /// A routed `ensures` clause's payload binder.
+    Route,
+}
+
+/// One storage place a range term reads: a root and the field, `Box`
 /// content and dereference steps below it. Subscripts are never part of a
 /// place; a read names its subscripts separately [RANGE-1].
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct CheckedRangePlace {
-    pub(crate) root: BindingId,
+    pub(crate) root: CheckedRangeRoot,
     pub(crate) path: Vec<CheckedRangeStep>,
 }
 
@@ -52,7 +63,7 @@ pub(crate) enum CheckedRangeTerm {
     /// One of a cross-iteration certificate's two iterations [RANGE-5].
     Iteration(u32),
     /// The current value of an own integer binding.
-    Value(BindingId),
+    Value(CheckedRangeRoot),
     /// One measure of a place: `p.len` or `p.cap`.
     Measure {
         place: CheckedRangePlace,
@@ -144,14 +155,28 @@ pub(crate) struct CheckedRangeEnsures {
     pub(crate) routed: bool,
 }
 
-/// Every range clause of one function.
+/// One counted loop whose certificate holds [RANGE-5]: every element write
+/// one iteration makes to storage that outlives it selects an element no
+/// other iteration reads or writes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CheckedCertifiedLoop {
+    pub(crate) id: CheckedLoopId,
+    /// The loop's `for_stmt`.
+    pub(crate) node: NodePath,
+    /// The certified element writes: each `set` statement or call.
+    pub(crate) writes: Vec<NodePath>,
+    /// The certified element reads of the written storage, by carrier.
+    pub(crate) reads: Vec<NodePath>,
+}
+
+/// Every range clause of one function, and the certificates the range
+/// judgment found to hold.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct CheckedRangeFacts {
-    /// Parameter bindings in declaration order, for call substitution.
-    pub(crate) parameters: Vec<BindingId>,
     pub(crate) requirements: Vec<CheckedRangeClause>,
     pub(crate) ensures: Vec<CheckedRangeEnsures>,
     pub(crate) loops: BTreeMap<CheckedLoopId, CheckedRangeLoop>,
+    pub(crate) certified: Vec<CheckedCertifiedLoop>,
 }
 
 impl CheckedRangeFacts {
@@ -184,8 +209,8 @@ impl CheckedRangeTerm {
         }
     }
 
-    /// Every binding whose current value this term reads.
-    pub(crate) fn collect_values(&self, out: &mut Vec<BindingId>) {
+    /// Every root whose current value this term reads.
+    pub(crate) fn collect_values(&self, out: &mut Vec<CheckedRangeRoot>) {
         match self {
             Self::Constant(_) | Self::Bound(_) | Self::Iteration(_) => {}
             Self::Value(binding) => out.push(*binding),

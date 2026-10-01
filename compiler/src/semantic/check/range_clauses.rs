@@ -23,7 +23,7 @@ use super::super::model::{
 };
 use super::super::range_facts::{
     CheckedApart, CheckedRangeBinder, CheckedRangeClause, CheckedRangePlace,
-    CheckedRangeRelation, CheckedRangeShape, CheckedRangeStep, CheckedRangeTerm,
+    CheckedRangeRelation, CheckedRangeRoot, CheckedRangeShape, CheckedRangeStep, CheckedRangeTerm,
     CheckedRangeUse, RangeComparison,
 };
 use super::{CheckStop, Checker, FunctionContext, LocalBinding};
@@ -245,6 +245,95 @@ impl Checker<'_, '_> {
             node: self.types.declarations.tree.path(node)?.clone(),
             uses,
         })
+    }
+
+    /// The diagnostic one range judgment failure reports [RANGE-3, RANGE-5].
+    pub(super) fn range_issue(&self, issue: &crate::semantic::range_judgment::RangeIssue) -> CheckStop {
+        use crate::semantic::range_judgment::{ApartFailure, RangeIssue};
+        let tree = &self.types.declarations.tree;
+        // A source spelling with its line, for one access or relation.
+        let spell = |path: &crate::NodePath| -> String {
+            let text = tree.path_spelling(path).unwrap_or_default();
+            let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+            match tree.source_line(path) {
+                Ok((_, line)) => format!("`{text}` (line {line})"),
+                Err(_) => format!("`{text}`"),
+            }
+        };
+        let (path, rule, kind) = match issue {
+            RangeIssue::Undischarged {
+                node,
+                fact,
+                site,
+                relation,
+                capacity,
+            } => (
+                node,
+                SemanticRule::Range3,
+                SemanticIssueKind::UndischargedRangeFact {
+                    fact: fact.clone(),
+                    site,
+                    missing: match (relation, capacity) {
+                        (_, true) => "the derivation reached a structural capacity".to_owned(),
+                        (Some(relation), false) => spell(relation),
+                        (None, false) => "a place the clause names, which the judgment cannot view here".to_owned(),
+                    },
+                    mechanical_fix: if *capacity {
+                        "split the obligation: state fewer facts over the storage this site reads, or move part of the work into a callee with its own range requirements"
+                    } else {
+                        "establish the fact before this site: a range `requires`, a range invariant of the enclosing counted loop, or a guard that excludes the uncovered elements"
+                    },
+                },
+            ),
+            RangeIssue::Apart { node, failure } => {
+                let (pair, mechanical_fix) = match failure {
+                    ApartFailure::Overlap {
+                        write,
+                        other,
+                        other_write,
+                    } => (
+                        format!(
+                            "the write {} and the {} {} of another iteration",
+                            spell(write),
+                            if *other_write { "write" } else { "read" },
+                            spell(other)
+                        ),
+                        "add `use` steps whose instances separate the two accesses, or remove `apart` to leave the loop sequential",
+                    ),
+                    ApartFailure::Unplaced { access } => (
+                        format!(
+                            "{} reaches storage another iteration writes, at no one element",
+                            spell(access)
+                        ),
+                        "pass one element or no written storage to the call, or remove `apart` to leave the loop sequential",
+                    ),
+                    ApartFailure::Use { step, reason } => (
+                        format!("the step {}: {reason}", spell(step)),
+                        "name a range `requires` or a range invariant of an enclosing loop, with arguments over the loop's own state",
+                    ),
+                    ApartFailure::Capacity { write, other } => (
+                        format!(
+                            "the write {} and the access {} reached a structural capacity",
+                            spell(write),
+                            spell(other)
+                        ),
+                        "give the certificate fewer accesses to separate: hoist reads that do not depend on the iteration out of the loop",
+                    ),
+                };
+                (
+                    node,
+                    SemanticRule::Range5,
+                    SemanticIssueKind::UndischargedApart {
+                        pair,
+                        mechanical_fix,
+                    },
+                )
+            }
+        };
+        match tree.node_with_path(path) {
+            Some(node) => self.types.declarations.issue_value(rule, node, kind),
+            None => CheckStop::Compiler(SemanticCompilerFailure::InvalidResolution),
+        }
     }
 
     fn invalid_range<Value>(
@@ -586,7 +675,7 @@ impl Checker<'_, '_> {
                 PlaceSuffix::Index { offset } => {
                     let index_term = self.range_atom(context, offset, bindings, names)?;
                     let root = CheckedRangePlace {
-                        root: local.binding,
+                        root: CheckedRangeRoot::Binding(local.binding),
                         path: path.clone(),
                     };
                     let element = match selected {
@@ -696,7 +785,7 @@ impl Checker<'_, '_> {
                         if measured {
                             return Ok(CheckedRangeTerm::Measure {
                                 place: CheckedRangePlace {
-                                    root: local.binding,
+                                    root: CheckedRangeRoot::Binding(local.binding),
                                     path,
                                 },
                                 measure,
@@ -764,7 +853,7 @@ impl Checker<'_, '_> {
         }
         match selected {
             Selected::Value(CheckedType::Integer(_)) if path.is_empty() => {
-                Ok(CheckedRangeTerm::Value(local.binding))
+                Ok(CheckedRangeTerm::Value(CheckedRangeRoot::Binding(local.binding)))
             }
             _ => self.invalid_range(
                 SemanticRule::Range1,

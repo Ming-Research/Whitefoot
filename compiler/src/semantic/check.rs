@@ -1298,6 +1298,19 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         // program. The affine-map rule consumes a successful OP-4 disposition
         // and exact value image retained on that program; no permission rule
         // repeats a local invariant or changes source acceptance.
+        // [RANGE-3, RANGE-5] range facts are judged over the completed
+        // program: every callee's range clauses are formed, and no ordinary
+        // obligation consumes a range fact. A certificate that holds is
+        // retained for the counted permission judgment below.
+        let ranges = super::range_judgment::judge_program(&functions, &ordinary);
+        for id in &executable_functions {
+            if let Some(issue) = ranges[id.0 as usize].issues.first() {
+                return Err(self.range_issue(issue));
+            }
+        }
+        for (function, judged) in functions.iter_mut().zip(ranges) {
+            function.range_facts.certified = judged.certified;
+        }
         let permission = analyze_permission(&functions, &permission_signatures, &ordinary);
         // [WAIT-2] each started waiting `let` is joined where the table found
         // its binding's first use; lowering reads the plan from the function.

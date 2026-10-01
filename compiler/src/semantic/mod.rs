@@ -18,6 +18,7 @@ mod places;
 pub(crate) use places::PlaceRoot as CheckedPlaceRoot;
 mod postcondition;
 mod range_facts;
+mod range_judgment;
 mod tree;
 
 #[cfg(test)]
