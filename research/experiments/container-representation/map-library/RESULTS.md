@@ -3277,13 +3277,16 @@ identical code. No variant tag order or branch-likelihood hint changed.
 
 Test one ordinary-source chaining representation because the matched C++
 node table remains faster on misses than the flat linear probes. Use
-64/4096 head buckets and 32/2048 initialized owning entries, the same keys,
-hash, seeds, payloads and normalized caller. Heads contain indices into a
+64/4096 head buckets and reserve 64/4096 entry positions, of which 32/2048
+are initialized, with the same keys, hash, seeds, payloads and normalized
+caller. Heads contain indices into a
 separate backing of `{key, value, next}` records. Every stored index is
 range-checked before access, and traversal is bounded by the initialized
-entry count. This requires two allocations and reserves fewer payload
-positions than the flat table; disclose both capacities and all requested
-bytes rather than calling the representations identical. It tests an
+entry count. This requires two allocations. Reserve the same number of
+payload positions as the flat table to avoid crediting a reduced reserve
+to the chaining algorithm; disclose both capacities and all requested
+bytes rather than calling the representations identical. C++ still
+allocates nodes as it inserts them. The screen tests an
 algorithm and representation together, not one lowering instruction.
 
 Before timing require the independent query/full-cleanup oracles, exact
@@ -3295,3 +3298,136 @@ losses justifies studying the complete ownership and mutation protocol;
 it does not select a library replacement. Duplicate replacement, deletion,
 slot reuse, growth/rehash and their refusal behavior are outside this
 query-only screen. A failure ends this candidate without a language change.
+
+#### Equal-reserve chain outcome
+
+The two reversed-order cohorts retain 1,152 observations in
+[the samples](lookup-api-samples.csv); the `equal_reserve_index_chain` record
+in [the evidence](lookup-api-evidence.json) contains the exact ordinary source,
+driver delta, compiler/object/image identities, allocation ledger and commands.
+The initial half-reserve constructor was not timed. All reported chain runs
+reserve as many entry positions as head buckets.
+
+Median nanoseconds per query, with the two cohorts shown separately:
+
+| Payload | Buckets / entry reserve | Query | Flat cohort 0 / 1 | Chain cohort 0 / 1 |
+|---|---:|---|---:|---:|
+| 8 bytes | 64 | hit | 1.914 / 1.934 | 1.844 / 1.839 |
+| 8 bytes | 64 | miss | 2.430 / 2.422 | 1.637 / 1.658 |
+| 8 bytes | 4096 | hit | 2.147 / 2.133 | 1.951 / 1.976 |
+| 8 bytes | 4096 | miss | 2.743 / 2.754 | 1.545 / 1.556 |
+| 256 bytes | 64 | hit | 1.895 / 1.940 | 1.832 / 1.857 |
+| 256 bytes | 64 | miss | 2.506 / 2.469 | 1.630 / 1.656 |
+| 256 bytes | 4096 | hit | 2.326 / 2.323 | 2.270 / 2.233 |
+| 256 bytes | 4096 | miss | 3.582 / 3.040 | 1.600 / 1.625 |
+
+All four hit shapes and both 4096-bucket misses separate from the slower
+native peer's full sample range in both cohorts. The 64-bucket misses do not:
+scalar medians are 1.637/1.658 ns against Rust's 1.624/1.616, and record
+medians are 1.630/1.656 against 1.580/1.604. Keep the 4.714 ns record-small-miss
+sample. The flat record-large-miss control also drifts between cohorts;
+its apparent 47--55 percent reduction must not be treated as a stable
+single-effect estimate. This is six range-qualified query shapes under this
+hash and half-load setup, not a whole-map performance qualification.
+
+The allocation observer records two requests and two releases, no allocation
+while querying and zero final live bytes. Equal reserve costs 2,048/131,072
+bytes for scalar payloads versus flat 1,536/98,304 (+33.3 percent), and
+17,920/1,146,880 for records versus flat 17,408/1,114,112 (+2.94 percent).
+The dense entry prefix alone is initialized; its remaining reserve is not
+populated. C++'s node allocations and Rust's control-byte layout remain
+different and are reported by the same observer.
+
+The timed and accounting images each pass 96 independent query/full-cleanup
+cases; eight deliberately faulty controls reject, including wrong chain
+allocation bytes. Native review finds 191 instructions and a 16-byte frame
+in each query, no hot calls or loop spills, a checked stored index and a
+bounded traversal. Every visited node still reloads the entry backing pointer.
+All six native peer query bodies and addresses match the flat paired image.
+
+Proceed to an ordinary-source full-operation prototype, without changing the
+library representation yet. Dense swap-removal must repair the incoming link
+to the moved last element; a full-table repair scan would make deletion linear
+in capacity. The current library's filled-plus-vacated pressure policy also
+needs an explicit comparison because this representation has no tombstones.
+Replacement, removal/reuse, owning cleanup, ceiling refusal, growth and rebuild
+costs remain unmeasured. No allocator-refusal outcome is introduced: allocation
+exhaustion follows the current language's terminal resource-failure model.
+
+### Mask retry after caller normalization
+
+Revisit exactly the earlier power-of-two mask with arbitrary-capacity modulo
+fallback because normalization removes a duplicated query path. The original
+mask screen grew the body/frame to 287 instructions/32 bytes; on the
+normalized caller the same source change produces 242/16, against 196/16
+for its copied-lookup control. The native power-of-two path bypasses
+division and the fallback remains, with no hot calls or loop spills.
+The extra per-query selection and larger body still cost work. This changed
+native shape warrants a new comparison, not a reversal of the earlier
+unselected result by assertion.
+
+Require the same query/cleanup/geometry/accounting checks and peer identity,
+then pair against the normalized flat caller under the existing two-cohort
+protocol. Retain every adverse cell and arbitrary-capacity coverage. Only
+a repeatable improvement without a new separated query loss would justify
+carrying the source fast path into the production library for full testing.
+No modulus algorithm, capacity policy or primitive type changes in this
+screen; do not combine it with chaining when attributing its effect.
+
+#### Normalized-mask retry outcome
+
+The retry retains all 1,152 paired samples and exact source/driver/image pins
+under `normalized_mask_retry` in the same evidence. Each candidate and control
+passes 98 timed and 98 accounting cases, including capacity-three hit/miss
+fallback; the seven candidate fault controls reject and all 32 accounting
+rows are byte-identical to the flat first-key control. A common driver adds
+those untimed cases to both arms. Peer addresses differ from older images,
+so the native identity claim applies only within this new pair.
+
+| Payload | Buckets | Query | Candidate/control median, cohort 0 / 1 |
+|---|---:|---|---:|
+| 8 bytes | 64 | hit | 0.846 / 0.884 |
+| 8 bytes | 64 | miss | 0.914 / 0.750 |
+| 8 bytes | 4096 | hit | 0.985 / 0.933 |
+| 8 bytes | 4096 | miss | 0.925 / 0.909 |
+| 256 bytes | 64 | hit | 0.885 / 0.894 |
+| 256 bytes | 64 | miss | 0.911 / 0.875 |
+| 256 bytes | 4096 | hit | 0.966 / 0.927 |
+| 256 bytes | 4096 | miss | 0.843 / 0.959 |
+
+Only the two 64-bucket hit shapes show separated candidate/control sample
+ranges in both cohorts. No shape shows a separated loss. The slower-peer
+target still qualifies only three shapes in both cohorts, the same three as
+the normalized flat source; no miss qualifies. The 20.212 ns record-small-hit
+control outlier and 7.742 ns record-large-miss candidate outlier are retained.
+Control medians for scalar-small-miss and record-large-miss drift substantially;
+ratios in those cells are attribution leads, not stable improvement estimates.
+
+The selected power-of-two path bypasses division, but its test still executes
+per query and the query grows from 196 to 242 instructions. Frames stay at
+16 bytes with no hot calls or loop spills. All six native peer query bodies
+and addresses match within the new pair. Keep this source fast path as a
+measured alternative rather than selecting it while a different representation
+is being evaluated: it helps small hits but does not close the miss gap.
+
+### Chain home-index discriminator
+
+Before measuring a combined chain/mask candidate, isolate the home-index
+change from the full-operation prototype. The linked chain's empty-head miss
+executes unsigned divide, multiply-subtract, head address and head load before
+its sentinel/index-bound branch. The repeated entry-base load is absent on
+this empty path. Rust and C++ use masking in their selected power-of-two paths.
+This motivates one source change: the same exact power-of-two mask and
+arbitrary-capacity modulo fallback, used for both placement and lookup, with
+the zero-capacity guard preserved. It is a hypothesis about the dependent
+address calculation, not a cycle attribution from instruction counts.
+
+Use the frozen equal-reserve chain layout, normalized caller, hash, seeds and
+payloads; do not combine the trial with replacement/removal or growth changes.
+Require a division-free selected native path, retained nonpower fallback,
+unchanged bounds and no new calls or spills before timing. Run capacity-three
+hit/miss oracles as well as the full query/cleanup/accounting checks in both
+arms of a fresh common driver. Confirm native peer identity within that pair,
+then apply the existing two-cohort protocol with every adverse observation
+retained. A separated loss defeats a universal improvement claim; any gain
+still qualifies only this query shape and does not select the library layout.

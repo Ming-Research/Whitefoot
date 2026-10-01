@@ -3336,8 +3336,12 @@ condition under which it is taken up.
   separates part of that miss cost from the probing algorithm, and the
   [grouped lookup screen](../research/experiments/container-representation/map-library/RESULTS.md#single-backing-grouped-lookup-screen)
   rejects its tested single-backing group shape for separated hit losses.
-  Reopen indexing with an explanation of the selected-path costs and stable
-  paired evidence. Preserve
+  The [normalized-caller retry](../research/experiments/container-representation/map-library/RESULTS.md#normalized-mask-retry-outcome)
+  removes the previous frame growth and gives separated small-hit gains,
+  but still qualifies no miss against the slower native peer; some control
+  medians drift. Keep it unselected while the representation comparison
+  proceeds. Reopen indexing with stable paired evidence on the selected
+  complete representation. Preserve
   arbitrary capacities, non-power-of-two lookup, wrap and empty-table behavior.
 - **Packing a byte-comparison mask loses the vector form.** Three ordinary
   `Array<u8, 8>` source forms generate vector comparisons, but packing their
