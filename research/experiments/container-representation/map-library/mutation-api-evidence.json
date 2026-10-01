@@ -3334,9 +3334,9 @@
       }
     ],
     "archive": {
-      "bytes": 2175915,
+      "bytes": 2354471,
       "path": "research/experiments/container-representation/map-library/entry-forward-evidence.tar.gz",
-      "sha256": "8ad5d09e5f1716c629c498994bd3d4a59cbbcf3065c8480d68e0f581fef87597"
+      "sha256": "aaa9492bc9602f411943997be471b8e4c19870e01bdbae0a7ca72d8b08867b09"
     },
     "archive_purpose": "Raw auditable API and whole-Map/long-hit replay for this RESULTS section; retire or replace when superseded. No binaries.",
     "atomic_slot_admission_stop": {
@@ -7395,7 +7395,7 @@
   "first_probe_peel": {
     "decision": "unselected; original native criterion partial/FAIL and distinct 4M peer campaign unqualified",
     "archive_prefix": "first-probe-peel/",
-    "archive_sha256": "8ad5d09e5f1716c629c498994bd3d4a59cbbcf3065c8480d68e0f581fef87597",
+    "archive_sha256": "aaa9492bc9602f411943997be471b8e4c19870e01bdbae0a7ca72d8b08867b09",
     "initial_source_sha256": "3a682ccda3156a055fc548f3eba0deed2d2f7ff666ad514d0b007c45b7cc5d02",
     "admission_failure": "TYPE-6 next binding collision; exact diagnostic retained",
     "repair": "outer first-advance next renamed first_next only",
@@ -7450,7 +7450,7 @@
   "chain_layout_aa": {
     "decision": "layout-only A/A unqualified; no causal attribution or source adoption",
     "archive_prefix": "chain-layout-aa/",
-    "archive_sha256": "8ad5d09e5f1716c629c498994bd3d4a59cbbcf3065c8480d68e0f581fef87597",
+    "archive_sha256": "aaa9492bc9602f411943997be471b8e4c19870e01bdbae0a7ca72d8b08867b09",
     "manifest_sha256": "c07e025ed017b2cbc50b80f5de94d9e253e1d3785d5d97a12a305defae438bdf",
     "native_observation": "chain 928 equal code bytes; address 0x1000a50dc to 0x1000a5180, modulo64 28 to 0; 15 moved functions",
     "direct_checks": {
@@ -7471,7 +7471,7 @@
   "filled_first_order": {
     "decision": "native-only source-arm-order discriminator rejected; matched -O3 scalar replacement batch is unchanged; no timing or production selection",
     "archive_prefix": "filled-first-order/",
-    "archive_sha256": "8ad5d09e5f1716c629c498994bd3d4a59cbbcf3065c8480d68e0f581fef87597",
+    "archive_sha256": "aaa9492bc9602f411943997be471b8e4c19870e01bdbae0a7ca72d8b08867b09",
     "prefix_manifest_sha256": "24bcd84a37ea4bb0c07010116bcda8b5fb3a0284e1219b07936b8e172bb450ee",
     "criterion_sha256": "fecbd4f2d7ac94b864b78fddfdcfe6e94aaecc2152c4c83b404ca29d92044198",
     "original_criterion_sha256": "d11279341fddf88e532faecfbc3a85d941e2ccfdcb0550368fc591dda6ec6c56",
@@ -7493,5 +7493,112 @@
     "o3_observation": "both scalar batches 205 identical instruction words, 112-byte frame, zero calls; both try_put inlined at cost 305/threshold 525; diagnostic object bytes equal nondiagnostic on each arm",
     "invalid_setup": "earlier candidate -O2 versus control -O3; prior hot call, 137 versus 205 instructions and 144 versus 112-byte frame are not arm-order evidence; old artifact hashes/statuses retained under prefix",
     "limit": "No owner/fault/account checks or timing after native stop. Old untransformed raw link collision had directly observed exit 1 but no primary stderr. Neither the older removal caller excerpt nor corrected O2 callee excerpt proves a replacement gain."
+  },
+  "matched_c_mutation": {
+    "decision": "same-image source-mask WF versus ordinary matched C attribution only; no source/representation choice or performance ceiling",
+    "archive_prefix": "matched-c-mutation/",
+    "archive_sha256": "aaa9492bc9602f411943997be471b8e4c19870e01bdbae0a7ca72d8b08867b09",
+    "prefix_manifest_sha256": "b6cda0ca6bc9a79669a7b2d7a20b6ee4815fd98832a52e0edbc25df34b3ed0d8",
+    "scope": "concrete integer word8/wide256 payloads; complete old/offered pairs, tombstones, bounded mask/modulo, full digest, independent verify/cleanup; not generic owning-resource proof",
+    "checks": {
+      "stages": 50,
+      "positive_cases_per_image": 120,
+      "faults": 36,
+      "ledger_rows": 40,
+      "previous_ledger_rows_identical": 32,
+      "c_rows": 8
+    },
+    "timing": {
+      "rows": 800,
+      "work": 4194304,
+      "samples_per_group": 10,
+      "cohorts": 2,
+      "minimum_interval_ns": 9320000,
+      "max_c_wf_ratio_spread": 0.09534509112881318,
+      "max_native_cohort_spread": 0.010180763634127787,
+      "direction_counts": {
+        "UNRESOLVED": 7,
+        "HIGHER": 1
+      },
+      "csv_sha256": {
+        "cohort-0.csv": "f6c44ba5d0145b788d11a981e5194f576eb553430982a44f8d33bd69f582ab6d",
+        "cohort-1.csv": "ee1af2fc402d0a9cbb748527810e5b7d5b3dc7cf3e10134f90bedd537ee3056f"
+      },
+      "image_sha256": {
+        "timed": "ec1333faebff2613677149a80dbe2eb6293210e99878faf86e4065cafb85b333",
+        "account": "c9c1f15e4425e376a378540917d859c914a5f7f517fd3c17431f748fbe9b4bbc"
+      }
+    },
+    "limit": "C is a same-contract attribution participant, not a target denominator. Seven C/WF cells are unresolved; wide64 churn C is separated slower in both cohorts. Wide4096 replacement C median is lower but cohort-zero maximum overlaps WF, so no qualified win. Every Rust and C++ peer range remains separate in archived raw rows and all-peer-ranges.txt. Original executed hashes are pinned alongside role-normalized archive text."
+  },
+  "byte_store_floor": {
+    "decision": "raw LLVM 26 scalar i1-store to zext/store i8 floor rejected after native gain and unqualified full timing; no compiler/source change",
+    "archive_prefix": "byte-store-floor/",
+    "archive_sha256": "aaa9492bc9602f411943997be471b8e4c19870e01bdbae0a7ca72d8b08867b09",
+    "prefix_manifest_sha256": "20746cd8447357ac5b0936d7717bc17b63a99cd2af7ff47f8c041eb9e8a1abd6",
+    "native": "flat scalar 205 to 197 instructions, frame 112 to 96 bytes, no hot calls; wide mutation unchanged; chain scalar 232 to 234 and chain prepare changes retained",
+    "checks": {
+      "stages": 36,
+      "positive_owner_cases_per_timed_and_account_image": 96,
+      "faults": 20,
+      "matching_ledger_rows": 32,
+      "maintained_capacity_program_control_and_candidate_exit": 0
+    },
+    "timing": {
+      "rows": 1152,
+      "work": 1048576,
+      "samples_per_group": 9,
+      "cohorts": 2,
+      "minimum_interval_ns": 2326000,
+      "max_wf_ratio_spread": 0.0682250314535624,
+      "max_native_peer_drift": 0.12426776147799523,
+      "useful_scalar_cells": 0,
+      "separated_adverse_cells": 1,
+      "criterion_pass": false,
+      "raw_csv_sha256": {
+        "control-cohort-0.csv": "4d037b65bf66c1308e13f5114282871874ac50cf504071f13a4b0194758d0d34",
+        "control-cohort-1.csv": "74290d0eabc754352389090c887537264f2d39030af08511b1310424b38f5246",
+        "candidate-cohort-0.csv": "2b1b18cc90ff65b586c03d1f9ae389b35844c3669f6af1ba5930d14ed6ff22b3",
+        "candidate-cohort-1.csv": "4d5f57531ce160a727505fa262145586863fc5bc4211c41db8314028a0d978b7"
+      }
+    },
+    "limit": "No flat scalar cell has a separated before/after gain in both cohorts. Wide4096 churn flat has separated slower cohort one (cohort zero overlaps). C++ wide64 replacement cohort-one peer drift 12.427% exceeds the 10% criterion. All 16 WF cells, distinct Rust/C++ peer ranges and raw rows are retained; raw-store floor is not a general compiler proof."
+  },
+  "coherent_byte_native": {
+    "decision": "unselected coherent scalar byte-memory emitter prototype; ordinary production Map native stop, no timing",
+    "archive_prefix": "coherent-byte-native/",
+    "archive_sha256": "aaa9492bc9602f411943997be471b8e4c19870e01bdbae0a7ca72d8b08867b09",
+    "prefix_manifest_sha256": "36a35176125a86ce5d78c10d24d70d3a541593663fe366f7edc50942da982191",
+    "compiler_patch_sha256": "8ffb0c113b305c98a79c74a20bc613438dae94d3b27667984001a37f9999d0cd",
+    "source_manifest_archive_member": "coherent-byte-native/implementation/source-manifest.json",
+    "source_and_image_pins": {
+      "production_library": "bd482f345505ab2c1a30b323f5d0667839febbb6c57c06f82e3675b628e20a89",
+      "control_cli": "c12b2b2a6c9694fd2bc1b7be0004d582ae9628951422def849f4cf6a3ac02f77",
+      "prototype_cli": "504679721e4164bf706a5dd867488563fc88f584de504d4cd4738f4ab6797d75",
+      "control_raw_ir": "09cb4c4ea979d9dedb46dbc2bcb267d984d472777f0a69f4af86df68ede57b41",
+      "prototype_raw_ir": "3a9d4ab830de5b7f5e3c03e29d0404e57565288a6274f848fce32392191e65e6"
+    },
+    "native": {
+      "stages": 8,
+      "direct_exit": 0,
+      "flat_scalar_batch_instructions": "197 to 191",
+      "flat_scalar_frame_bytes": "112 to 96",
+      "flat_wide": "381 instructions, 1024-byte frame, one try_put call and unchanged stack stream",
+      "chain_scalar": "232 to 234 instructions, 112-byte frame, no new call/spill",
+      "chain_wide": "311 instructions, 1184-byte frame, two calls and unchanged stack stream",
+      "attribution": "same reason-byte scratch removal as separate source-mask store-only floor; no additional timed transfer mechanism; source policies differ"
+    },
+    "tests": {
+      "prototype_cli_build_exit": 0,
+      "initial_focused_exit": 101,
+      "initial_failure": "mixed-copy fixture lacked required main entry; optimizer assertion and ordinary source/linked test passed",
+      "repaired_focused_exit": 0,
+      "repaired_focused_wall_seconds": 58.91,
+      "repaired_focused_execution_seconds": 1.89,
+      "mixed_copy_old_fixture": "O3 retains alloca under mixed i1 store/i8 load; coherent access promotes",
+      "plain_bool_nonregression": true,
+      "wrong_result_controls_pass": 2
+    },
+    "limit": "Native CLI predates formatting-only core edits; exact pre-format source snapshot unavailable. Broader worker/context transport, full backend, cross-target execution and Map timing unrun. Aggregate-copy semantics unchanged. Patch preserved, 13 owned compiler files restored to published baseline; no spec/tree/library choice."
   }
 }

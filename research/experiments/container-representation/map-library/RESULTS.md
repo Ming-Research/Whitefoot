@@ -4503,6 +4503,126 @@ follows and no source change is selected. Criterion, patch, commands, pins,
 native excerpts and the invalid setup's artifact hashes are retained under
 `filled-first-order` in the same archive, indexed by `mutation-api-evidence.json`.
 
+#### Matched C mutation attribution: one slower cell, seven unresolved
+
+An ordinary C flat map was added as a fifth participant to the frozen source-mask
+mutation image. It uses the same bounded mask/modulo probe, tombstone/refusal
+policy, complete returned old/offered pair, full-word digest and cleanup for
+concrete integer word and 32-word payloads. This is a same-contract attribution
+control, not a performance ceiling or proof for generic owning values. Rust
+and C++ remain separate native target peers; source-mask is not production-selected.
+The C source uses ordinary `-O3`, without forced inlining or alias promises.
+The final image passes 50 expected stages, two 120-case full-content images,
+36 exact faults and a 40-row allocation ledger: the prior 32 rows agree and
+C contributes eight exact one-allocation/one-release rows. Reached scalar WF/C
+batches have 205/209 instructions and 112/48-byte frames; wide WF batch
+calls `try_put`/exchange while C naturally inlines its wider graph. These
+whole-body counts do not predict executed-path cost.
+
+The preregistered two-process, five-way panel retains 800 rows: ten seeds at
+each cell/cohort, every implementation in each order position twice, and
+4,194,304 operations per sample. Every full-content outcome agrees, images
+remain fixed, all intervals are at least 9.32 ms, maximum C/WF ratio spread is
+9.535%, and maximum native cohort spread is 1.018%. Median ns/op follows;
+each entry is cohort 0 / cohort 1. Full ranges and all peer directions are
+retained in the archive.
+
+| Width | Buckets | Operation | WF flat | C matched | WF chain | Rust | C++ | C/WF qualified |
+|---|---:|---|---:|---:|---:|---:|---:|---|
+| word8 | 64 | replace | 2.536 / 2.445 | 2.697 / 2.849 | 2.269 / 2.255 | 2.498 / 2.483 | 2.750 / 2.737 | unresolved |
+| word8 | 64 | churn | 7.480 / 7.442 | 7.763 / 8.084 | 5.403 / 5.310 | 16.113 / 16.046 | 27.424 / 27.628 | unresolved |
+| word8 | 4096 | replace | 3.246 / 3.320 | 3.663 / 3.590 | 2.757 / 2.653 | 2.593 / 2.593 | 4.027 / 4.059 | unresolved |
+| word8 | 4096 | churn | 14.364 / 15.428 | 15.281 / 15.894 | 6.961 / 7.009 | 10.470 / 10.481 | 29.690 / 29.670 | unresolved |
+| wide256 | 64 | replace | 20.894 / 20.852 | 21.466 / 21.450 | 31.780 / 31.631 | 22.175 / 22.169 | 18.960 / 18.884 | unresolved |
+| wide256 | 64 | churn | 27.791 / 27.779 | 34.054 / 34.077 | 41.019 / 40.684 | 27.118 / 27.095 | 49.396 / 49.583 | higher |
+| wide256 | 4096 | replace | 25.466 / 25.359 | 23.368 / 23.482 | 32.769 / 33.741 | 27.070 / 27.165 | 23.266 / 23.503 | unresolved |
+| wide256 | 4096 | churn | 39.101 / 38.800 | 40.836 / 41.027 | 48.217 / 48.085 | 31.538 / 31.623 | 60.012 / 59.559 | unresolved |
+
+C has no qualified gain over WF: seven cells have overlapping ranges. At
+wide256/64 churn C is separated slower in both cohorts (34.054/34.077
+versus WF 27.791/27.779 ns/op). At wide256/4096 replacement C medians
+are lower, but cohort-zero C range 23.191–32.734 overlaps WF 25.136–26.730;
+the outlier remains and the cell is unresolved. C, WF, Rust and C++
+directions are assessed separately; neither C nor WF solves the whole API
+target. Criterion, adapter/driver, checks, native excerpts, ledgers, raw rows,
+per-peer ranges and reduction are under `matched-c-mutation` in the same
+archive. Archived role placeholders carry original executed hashes separately.
+
+#### Scalar byte-store LLVM floor: native gain without runtime selection
+
+A separate raw-LLVM diagnostic replaces all 26 ordinary scalar `store i1`
+operations in the frozen source-mask module with zero-extension and `store i8`
+at the same destination. It leaves SSA, loads, aggregate layouts, ABI and
+control flow unchanged. This one-module floor is not a compiler implementation
+or a general qualification of every storage path. Linked flat scalar batch
+shrinks 205→197 instructions and its frame 112→96 bytes, with no hot calls;
+chain scalar grows 232→234 and chain preparation also changes, while wide
+mutation instruction counts, frames, calls and stack-access streams stay unchanged. Both arms pass 36 stages, 96 full-owner cases
+per timed/account image, 20 exact faults, identical 32-row ledgers and the
+maintained capacity-zero/three program.
+
+The fixed 1,048,576-operation control0/candidate0/candidate1/control1 panel
+retains all 1,152 rows, nine seeds per group. Non-time fields and complete
+outcomes agree, images stay fixed, minimum interval is 2.326 ms and maximum
+WF before/after ratio spread is 6.823%. The table gives control→candidate
+median ns/op and full-range direction in cohorts 0 / 1. “Peer” columns give
+the candidate versus Rust and C++ separately in cohorts 0 / 1; full peer
+ranges and controls are archived.
+
+| WF variant | Width | Buckets | Operation | C0 control→candidate | C1 control→candidate | C0/C1 direction | Rust peer C0/C1 | C++ peer C0/C1 |
+|---|---|---:|---|---:|---:|---|---|---|
+| flat | word8 | 64 | replace | 2.767→2.958 | 2.742→2.963 | overlap / overlap | loss / loss | overlap / overlap |
+| flat | word8 | 64 | churn | 6.898→6.984 | 7.014→7.262 | overlap / overlap | win / win | win / win |
+| flat | word8 | 4096 | replace | 3.748→3.781 | 3.997→3.825 | overlap / overlap | loss / loss | overlap / win |
+| flat | word8 | 4096 | churn | 12.263→12.141 | 13.180→13.721 | overlap / overlap | loss / loss | win / win |
+| flat | wide256 | 64 | replace | 20.741→20.780 | 21.197→20.764 | overlap / overlap | win / win | loss / loss |
+| flat | wide256 | 64 | churn | 28.332→27.458 | 28.092→27.909 | overlap / overlap | overlap / overlap | win / win |
+| flat | wide256 | 4096 | replace | 25.458→25.520 | 25.448→25.588 | overlap / overlap | win / win | loss / loss |
+| flat | wide256 | 4096 | churn | 40.131→43.148 | 39.641→43.562 | overlap / loss | loss / loss | win / win |
+| chain | word8 | 64 | replace | 2.332→2.276 | 2.259→2.272 | overlap / overlap | win / win | win / win |
+| chain | word8 | 64 | churn | 5.424→5.522 | 5.504→5.601 | overlap / overlap | win / win | win / win |
+| chain | word8 | 4096 | replace | 3.080→3.005 | 3.012→2.750 | overlap / overlap | loss / loss | win / win |
+| chain | word8 | 4096 | churn | 7.986→7.055 | 7.747→7.221 | overlap / overlap | win / win | win / win |
+| chain | wide256 | 64 | replace | 31.658→31.535 | 31.595→31.759 | overlap / overlap | loss / loss | loss / loss |
+| chain | wide256 | 64 | churn | 40.752→40.879 | 40.890→40.996 | overlap / overlap | loss / loss | win / win |
+| chain | wide256 | 4096 | replace | 33.363→33.321 | 33.298→33.182 | overlap / overlap | loss / loss | loss / loss |
+| chain | wide256 | 4096 | churn | 47.581→48.202 | 48.018→47.307 | overlap / overlap | loss / loss | win / win |
+
+No flat scalar cell has a separated gain in both cohorts. Flat wide256/4096
+churn is separated slower in cohort one (43.562 versus 39.641 ns/op), with
+cohort zero overlapping. C++ wide256/64 replacement drifts 12.427% between
+unchanged peer arms in cohort one, beyond the registered 10% limit. No
+sample is removed; the criterion fails and no lowering change is selected.
+The 26-store patch, maintained-program patch, native deltas, direct checks,
+four raw cohort CSVs, peer ranges and reduction are under `byte-store-floor`
+in the same archive. This storage-only floor is distinct from any future
+coherent compiler prototype.
+
+#### Coherent byte-memory prototype: native stop
+
+A general emitter prototype makes scalar Bool/tag loads and stores use
+coherent one-byte memory access; aggregate copies, one-bit SSA, calls and
+layouts remain unchanged. Both CLIs compile the
+same ordinary source and production Map; control LLVM matches the baseline.
+Flat scalar batch falls 197→191 instructions and frame 112→96 bytes, with no
+new call/spill. Its reason scratch disappears, the same mechanism as the
+separate source-mask store-only floor; source policy prevents subtraction.
+Wide mutation counts, frames, calls and stack streams stay unchanged; chain
+scalar grows 232→234. Scalar preparation has fewer instructions outside the timer. No
+additional timed transfer mechanism appears, so no timing or adoption follows.
+
+The source/linked regression and repaired mixed-copy test pass: an old
+mixed i1-store/i8-load fixture retains an O3 alloca, while coherent access
+promotes it; plain Bool remains promotable. The initial fixture lacked a
+main stub and failed linking; repair passes both wrong-result controls.
+The native observation proceeded with the preregistered worker/context
+prerequisite unmet, so it is not a completed preflight. Broader transport,
+full backend, cross-target and performance checks remain unrun. After
+preserving the patch, compiler sources were restored to the published baseline. Criterion, patch/base hashes, minimal
+counterexample, statuses and native deltas are under `coherent-byte-native`.
+The inspected CLI predates formatting-only edits without a pre-format
+source snapshot, so its exact source identity is unproved.
+
 [`entry-forward-evidence.tar.gz`](entry-forward-evidence.tar.gz) serves this
 section's reader with scripts, criteria, raw API/whole-Map/long-hit records,
 commands, metadata, statuses, source patch and native excerpts, without binaries.

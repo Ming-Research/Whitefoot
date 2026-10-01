@@ -1231,6 +1231,19 @@ rarely insert at the same place.
   SSA construction and general aggregate forwarding are separate paths, not
   improvements established by this candidate.
 
+- **Mixed-width scalar access can block private aggregate promotion.** A
+  mixed i1-store/i8-load optimizer fixture retains an alloca after O3; a
+  coherent one-byte emitter prototype promotes it while plain addressed Bool
+  still promotes. In the [Map native stop](../research/experiments/container-representation/map-library/RESULTS.md#coherent-byte-memory-prototype-native-stop),
+  the reached scalar reason scratch disappears, but no additional timed
+  mechanism beyond the rejected store-only floor appears; wide instruction
+  counts, frames, calls and stack streams stay unchanged. The compiler files
+  were restored without prototype timing. Reopen for a consumer with material
+  blocked aggregate promotion or a toolchain change relevant to the unresolved
+  Map timing; require a discriminating full-workload gain before selection. Check direct, aggregate,
+  linked and worker paths, source/ABI behavior and broad transport before
+  selecting general lowering; accepted source behavior is unchanged.
+
 - **Consumed aggregate locals can retain an argument snapshot.** An exposed
   mutable local is loaded into an immutable argument snapshot before a consuming
   call. Clang 21 forwards that snapshot in the large-record regression, while
