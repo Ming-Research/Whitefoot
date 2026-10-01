@@ -1,10 +1,13 @@
 //! Storage for immutable aggregate IR values.
 //!
-//! Source ownership is already checked and is not inferred here. A value gets
-//! independent backing unless complete CFG liveness proves that a selected
-//! update, edge transfer or alternative return can reuse backing whose old
-//! contents are dead. A returned group containing one owned entry parameter
-//! may use the result after every other indirect input reaches private storage.
+//! Source ownership is already checked and is not inferred here. Independent
+//! backing is the default; complete CFG liveness can permit a selected update,
+//! edge transfer or alternative return to reuse backing whose old contents are
+//! dead. An unexposed, read-only owned input may retain its incoming backing
+//! when private capture or a guaranteed eager callee protects its live bytes
+//! from potentially aliasing result writes. A returned group containing an
+//! owned entry parameter may use the result after the other indirect inputs
+//! that must survive its initialization have been captured.
 //! Loads and ordinary projections remain snapshots. A consumed call input and
 //! its consumed struct result field may occupy the same field of the complete
 //! result allocation after a separate interference check. Exposed backing is
@@ -61,6 +64,8 @@ pub(super) struct FunctionStoragePlan {
     /// The frame plan supplies this address's static or per-iteration backing.
     destinations: Vec<Option<IrValueId>>,
     fields: Vec<Option<FieldDestination>>,
+    /// Read-only incoming backing selected instead of a private entry capture.
+    incoming: Vec<Option<IrValueId>>,
 }
 
 /// A logical slot occupies one field of a complete local struct allocation.
@@ -105,6 +110,7 @@ impl FunctionStoragePlan {
                 exposed: BTreeSet::new(),
                 destinations: Vec::new(),
                 fields: Vec::new(),
+                incoming: Vec::new(),
             });
         }
         let graph = FlowGraph::from_function(program, function, sequential)?;
@@ -130,7 +136,181 @@ impl FunctionStoragePlan {
         let mut plan = graph.plan(types, &returned)?;
         plan.select_destinations(function, &graph)?;
         plan.select_field_destinations(program, function, &graph, sequential)?;
+        plan.select_incoming(program, function, &graph)?;
         Ok(plan)
+    }
+
+    /// Keep incoming bytes only for value families which never expose or
+    /// mutate that backing. EFF-5 includes the by-value actual when separating
+    /// other reference writes. The hidden result has no such disjointness
+    /// promise, so its writes are checked against the family's CFG liveness.
+    fn select_incoming(
+        &mut self,
+        program: &IrProgram,
+        function: &IrFunction,
+        graph: &FlowGraph,
+    ) -> Result<(), BackendFailure> {
+        let candidates = incoming_candidates(program, function)?;
+        if candidates.is_empty() {
+            return Ok(());
+        }
+        let result_roots: BTreeSet<_> = function
+            .blocks()
+            .iter()
+            .filter_map(|block| {
+                let IrTerminator::Return { value, .. } = block.terminator() else {
+                    return None;
+                };
+                self.slot(*value).map(|slot| self.allocation_root(slot))
+            })
+            .collect();
+        // A prologue capture into output could overwrite a different incoming
+        // argument before this function's first ordinary instruction. Exposed
+        // output backing also has writes outside the definition inventory.
+        if function.parameters().iter().any(|(value, _)| {
+            self.slot(*value)
+                .is_some_and(|slot| result_roots.contains(&self.allocation_root(slot)))
+        }) || result_roots
+            .iter()
+            .any(|slot| self.is_exposed(*slot) || self.destination(*slot).is_some())
+        {
+            return Ok(());
+        }
+        // Edge transfers are writes too: emit_place_edge captures sources,
+        // performs drops, then writes distinct-slot block parameters. Their
+        // result destination may alias incoming bytes even when every source
+        // is private. Conservatively reject the whole function rather than
+        // depend on family liveness across simultaneous phi transfers.
+        if function.blocks().iter().any(|block| {
+            let IrTerminator::Jump {
+                target, arguments, ..
+            } = block.terminator()
+            else {
+                return false;
+            };
+            function.blocks()[target.index()]
+                .parameters()
+                .iter()
+                .zip(arguments)
+                .any(|((parameter, _), argument)| {
+                    self.slot(*parameter).is_some_and(|slot| {
+                        self.slot(*argument) != Some(slot)
+                            && result_roots.contains(&self.allocation_root(slot))
+                    })
+                })
+        }) {
+            return Ok(());
+        }
+        let entering = graph.live_in();
+        for (parameter, family) in candidates {
+            let Some(slot) = self.slot(parameter) else {
+                continue;
+            };
+            if self.is_exposed(slot)
+                || self.destination(slot).is_some()
+                || self.field_destination(slot).is_some()
+                || self
+                    .fields
+                    .iter()
+                    .flatten()
+                    .any(|field| field.parent_slot == slot)
+                || result_roots.contains(&slot)
+                || family.iter().any(|value| self.slot(*value) != Some(slot))
+                || self.values.iter().enumerate().any(|(value, member)| {
+                    *member == Some(slot) && !family.contains(&IrValueId(value as u32))
+                })
+            {
+                continue;
+            }
+            let mut allowed = true;
+            for (block_index, block) in function.blocks().iter().enumerate() {
+                let flow = &graph.blocks[block_index];
+                let mut live = graph.live_after(flow, &entering);
+                for (instruction, access) in
+                    block.instructions().iter().zip(&flow.instructions).rev()
+                {
+                    let reads_family = access
+                        .operands
+                        .iter()
+                        .any(|value| family.contains(&IrValueId(*value as u32)));
+                    let writes_result = access
+                        .result
+                        .and_then(|value| self.values[value])
+                        .is_some_and(|slot| result_roots.contains(&self.allocation_root(slot)));
+                    if writes_result
+                        && live
+                            .iter()
+                            .any(|value| family.contains(&IrValueId(*value as u32)))
+                    {
+                        allowed = false;
+                    }
+                    if reads_family {
+                        match instruction {
+                            IrInstruction::Define {
+                                result,
+                                operation: IrOperation::ConstructStruct { .. },
+                                ..
+                            } => {
+                                // Construction clears its destination before
+                                // copying fields: it must be genuinely private.
+                                let private = self.slot(*result).is_some_and(|slot| {
+                                    let root = self.allocation_root(slot);
+                                    !result_roots.contains(&root)
+                                        && !self.is_exposed(root)
+                                        && self.destination(root).is_none()
+                                });
+                                allowed &= private;
+                            }
+                            IrInstruction::Define {
+                                operation:
+                                    IrOperation::Call {
+                                        function: called,
+                                        arguments,
+                                    },
+                                ..
+                            } => {
+                                let callee = program
+                                    .functions()
+                                    .get(*called as usize)
+                                    .ok_or(BackendFailure::InvalidIr)?;
+                                let eager = !callee.blocks().is_empty()
+                                    && !has_deferred_execution(callee)
+                                    && incoming_candidates(program, callee)?.is_empty();
+                                let own = callee.source_signature().is_some_and(|signature| {
+                                    arguments
+                                        .iter()
+                                        .enumerate()
+                                        .filter(|(_, value)| family.contains(value))
+                                        .all(|(ordinal, _)| {
+                                            signature.parameters().get(ordinal)
+                                                == Some(&IrSourceMode::Own)
+                                        })
+                                });
+                                // Phase one deliberately over-approximates who
+                                // might forward. An eligible caller never relies
+                                // on a callee selected by phase two to capture;
+                                // recursive/mutually recursive promises cannot
+                                // manufacture this guarantee.
+                                allowed &= eager && own;
+                            }
+                            _ => allowed = false,
+                        }
+                    }
+                    if let Some(result) = access.result {
+                        live.remove(&result);
+                    }
+                    live.extend(access.operands.iter().copied());
+                }
+            }
+            if allowed {
+                self.incoming[slot] = Some(parameter);
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn incoming(&self, slot: usize) -> Option<IrValueId> {
+        self.incoming.get(slot).copied().flatten()
     }
 
     pub(super) fn slot(&self, value: IrValueId) -> Option<usize> {
@@ -391,6 +571,124 @@ impl FunctionStoragePlan {
     }
 }
 
+/// A purely syntactic over-approximation, independent of selected storage and
+/// of any callee's eligibility. This first phase also certifies callees which
+/// must retain the existing eager capture of every indirect parameter.
+fn incoming_candidates(
+    program: &IrProgram,
+    function: &IrFunction,
+) -> Result<Vec<(IrValueId, BTreeSet<IrValueId>)>, BackendFailure> {
+    if function.blocks().is_empty() || has_deferred_execution(function) {
+        return Ok(Vec::new());
+    }
+    let Some(signature) = function.source_signature() else {
+        return Ok(Vec::new());
+    };
+    let mut candidates = Vec::new();
+    for (ordinal, (parameter, ty)) in function.parameters().iter().enumerate() {
+        if signature.parameters().get(ordinal) != Some(&IrSourceMode::Own)
+            || !is_stored_aggregate(program, *ty)?
+        {
+            continue;
+        }
+        let mut family = BTreeSet::from([*parameter]);
+        loop {
+            let before = family.len();
+            for block in function.blocks() {
+                if let IrTerminator::Jump {
+                    target, arguments, ..
+                } = block.terminator()
+                {
+                    let target = function
+                        .blocks()
+                        .get(target.index())
+                        .ok_or(BackendFailure::InvalidIr)?;
+                    if arguments.len() != target.parameters().len() {
+                        return Err(BackendFailure::InvalidIr);
+                    }
+                    for ((parameter, parameter_type), argument) in
+                        target.parameters().iter().zip(arguments)
+                    {
+                        if family.contains(argument) {
+                            if parameter_type != ty {
+                                return Err(BackendFailure::InvalidIr);
+                            }
+                            family.insert(*parameter);
+                        }
+                    }
+                }
+            }
+            if family.len() == before {
+                break;
+            }
+        }
+        let mut allowed = true;
+        for block in function.blocks() {
+            for instruction in block.instructions() {
+                if instruction
+                    .operands()
+                    .iter()
+                    .any(|value| family.contains(value))
+                {
+                    allowed &= matches!(
+                        instruction,
+                        IrInstruction::Define {
+                            operation: IrOperation::ConstructStruct { .. }
+                                | IrOperation::Call { .. },
+                            ..
+                        }
+                    );
+                }
+            }
+            match block.terminator() {
+                IrTerminator::Jump {
+                    target,
+                    arguments,
+                    drops,
+                } => {
+                    let target = &function.blocks()[target.index()];
+                    for ((parameter, _), argument) in target.parameters().iter().zip(arguments) {
+                        if family.contains(parameter) && !family.contains(argument) {
+                            allowed = false;
+                        }
+                    }
+                    allowed &= !drops.iter().any(|drop| family.contains(&drop.operand()));
+                }
+                terminator => {
+                    allowed &= !terminator
+                        .operands()
+                        .iter()
+                        .any(|value| family.contains(value))
+                }
+            }
+        }
+        if allowed {
+            candidates.push((*parameter, family));
+        }
+    }
+    Ok(candidates)
+}
+
+fn has_deferred_execution(function: &IrFunction) -> bool {
+    function.waits()
+        || !function.overlaps().is_empty()
+        || function.blocks().iter().any(|block| {
+            block.instructions().iter().any(|instruction| {
+                matches!(
+                    instruction,
+                    IrInstruction::Define {
+                        operation: IrOperation::ContextStart { .. }
+                            | IrOperation::ContextStartBound { .. }
+                            | IrOperation::ContextAwait { .. }
+                            | IrOperation::ContextJoin
+                            | IrOperation::LoopSplit { .. },
+                        ..
+                    }
+                )
+            })
+        })
+}
+
 /// The emitter must read all incoming edge values before writing any aggregate
 /// block parameter. Slot assignment does not turn parallel phi transfer into
 /// sequential assignment; in particular two loop carries may exchange slots.
@@ -603,6 +901,7 @@ impl FlowGraph {
         }
         let destinations = vec![None; slots.len()];
         let fields = vec![None; slots.len()];
+        let incoming = vec![None; slots.len()];
         let exposed = self
             .blocks
             .iter()
@@ -616,6 +915,7 @@ impl FlowGraph {
             exposed,
             destinations,
             fields,
+            incoming,
         })
     }
 
@@ -757,9 +1057,10 @@ impl FlowGraph {
 }
 
 /// Selects the one checked owned binding whose dead backing may receive this
-/// ordinary call's whole result. Stored parameters are snapshotted in the
-/// callee prologue before any body or result write, so making its result
-/// destination equal this one input address preserves argument evaluation.
+/// ordinary call's whole result. The callee preserves indirect input bytes
+/// until private capture or consumption into a guaranteed eager callee, before
+/// potentially overlapping result writes. Its result destination can therefore
+/// equal this one input address without changing argument evaluation.
 /// Calls which can leave the current synchronous extent keep distinct storage.
 fn call_reuse_operand(
     program: &IrProgram,
@@ -1370,6 +1671,10 @@ fn main() -> status: std::process::ExitStatus pure {
     }
 
     fn with_program(source: &[u8], test: impl FnOnce(&IrProgram)) {
+        with_mutated_program(source, |program| test(program));
+    }
+
+    fn with_mutated_program(source: &[u8], test: impl FnOnce(&mut IrProgram)) {
         use crate::*;
 
         let limits = CompilerLimits::default();
@@ -1394,15 +1699,303 @@ fn main() -> status: std::process::ExitStatus pure {
         else {
             panic!("canonical")
         };
-        let ResolutionOutcome::Complete(resolved) = resolve(canonical) else {
-            panic!("resolve")
+        let resolved = match resolve(canonical) {
+            ResolutionOutcome::Complete(resolved) => resolved,
+            other => panic!("resolve: {other:?}"),
         };
         let checked = match check_semantics(&resolved) {
             SemanticOutcome::Complete(checked) => checked,
             other => panic!("semantics: {other:?}"),
         };
-        let program = lower_checked(*checked, OverlapLowering::Off).expect("lower");
-        test(&program);
+        let mut program = lower_checked(*checked, OverlapLowering::Off).expect("lower");
+        test(&mut program);
+    }
+
+    #[test]
+    fn incoming_backing_requires_private_capture_and_eager_callees() {
+        with_mutated_program(
+            br#"struct Row {
+  words: Array<u64, 32>;
+}
+
+struct Wrapped {
+  row: Row;
+}
+
+enum Answer {
+  Empty();
+  Full(value: Row);
+}
+
+fn capture(value: Row) -> result: Answer pure {
+  return Answer::Full(value: value);
+}
+
+fn relay(value: Row) -> result: Answer pure {
+  let answer = capture(value: value);
+  return answer;
+}
+
+fn exposed(value: Row) -> result: Answer pure {
+  set value.words[0_u64] = 99_u64;
+  let answer = capture(value: value);
+  return answer;
+}
+
+fn mixed(value: Row, other: Row, choose: Bool) -> result: Answer pure {
+  let selected = if choose {
+    give value;
+  } else {
+    give other;
+  }
+  let answer = capture(value: selected);
+  return answer;
+}
+
+fn direct(value: Row) -> result: Wrapped pure {
+  return Wrapped(row: value);
+}
+
+fn later(value: Row) -> result: Answer pure {
+  let first = capture(value: value);
+  let second = capture(value: value);
+  return first;
+}
+
+fn other_entry(value: Row, other: Answer, choose: Bool) -> result: Answer pure {
+  if choose {
+    return other;
+  }
+  let answer = capture(value: value);
+  return answer;
+}
+
+fn edge_first(answer: Answer) -> result: u64 pure {
+  match answer {
+    Empty() => {
+      return 0_u64;
+    }
+    Full(value: held) => {
+      return held.words[0_u64];
+    }
+  }
+}
+
+fn edge_roundtrip(value: Row, choose: u64, expected: u64) -> result: Answer pure {
+  let left_words = array_filled::<u64, 32>(value: 11_u64);
+  let left_row = Row(words: left_words);
+  let left = Answer::Full(value: left_row);
+  let right_words = left_words;
+  set right_words[0_u64] = 29_u64;
+  let right_row = Row(words: right_words);
+  let right = Answer::Full(value: right_row);
+  let selected = if choose != 0_u64 {
+    give left;
+  } else {
+    give right;
+  }
+  let captured = capture(value: value);
+  let left_first = edge_first(answer: left);
+  let right_first = edge_first(answer: right);
+  let seen = edge_first(answer: captured);
+  if left_first != 11_u64 {
+    return Answer::Empty();
+  }
+  if right_first != 29_u64 {
+    return Answer::Empty();
+  }
+  if seen != expected {
+    return Answer::Empty();
+  }
+  return selected;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let words = array_filled::<u64, 32>(value: 7_u64);
+  let value = Row(words: words);
+  let answer = relay(value: value);
+  let changed = exposed(value: value);
+  let choose = True();
+  let selected = mixed(value: value, other: value, choose: choose);
+  let wrapped = direct(value: value);
+  let earlier = later(value: value);
+  let other = other_entry(value: value, other: answer, choose: choose);
+  let edge = edge_roundtrip(value: value, choose: 0_u64, expected: 7_u64);
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+            |program| {
+                // Keep the two original SSA sources address-exposed without
+                // replacing their Jump operands by source-language Load
+                // snapshots. These unused typed addresses preserve semantics
+                // and force the result phi to use distinct storage.
+                let function = program
+                    .functions
+                    .iter_mut()
+                    .find(|function| function.name() == "edge_roundtrip")
+                    .unwrap();
+                let sources: Vec<_> = function.blocks[0]
+                    .instructions
+                    .iter()
+                    .filter_map(|instruction| match instruction {
+                        IrInstruction::Define {
+                            result,
+                            operation:
+                                IrOperation::ConstructEnum {
+                                    nominal, fields, ..
+                                },
+                            ..
+                        } if !fields.is_empty() => Some((*result, *nominal)),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(sources.len(), 2);
+                for (value, nominal) in sources {
+                    let referent = crate::IrAddressed::Nominal(nominal);
+                    let ty = IrType::Address(referent);
+                    let result = IrValueId(function.values.len() as u32);
+                    function.values.push(ty);
+                    function.blocks[0].instructions.push(IrInstruction::Define {
+                        result,
+                        ty,
+                        operation: IrOperation::AddressOf { value, referent },
+                    });
+                }
+                let find = |name: &str| {
+                    program
+                        .functions()
+                        .iter()
+                        .position(|function| function.name() == name)
+                        .expect(name)
+                };
+                let relay_index = find("relay");
+                let capture_index = find("capture");
+                let relay = program.functions()[relay_index].clone();
+                let parameter = relay.parameters()[0].0;
+                let plan = FunctionStoragePlan::build(program, &relay).expect("relay plan");
+                assert_eq!(
+                    plan.incoming(plan.slot(parameter).unwrap()),
+                    Some(parameter)
+                );
+                let capture = &program.functions()[capture_index];
+                assert!(
+                    incoming_candidates(program, capture).unwrap().is_empty(),
+                    "callee is guaranteed eager before phase two"
+                );
+                for name in [
+                    "exposed",
+                    "mixed",
+                    "direct",
+                    "later",
+                    "other_entry",
+                    "edge_roundtrip",
+                ] {
+                    let function = &program.functions()[find(name)];
+                    let plan = FunctionStoragePlan::build(program, function).expect(name);
+                    let slot = plan.slot(function.parameters()[0].0).unwrap();
+                    assert_eq!(plan.incoming(slot), None, "{name}");
+                }
+                let edge = &program.functions()[find("edge_roundtrip")];
+                let edge_parameter = edge.parameters()[0].0;
+                assert!(
+                    incoming_candidates(program, edge)
+                        .unwrap()
+                        .iter()
+                        .any(|(parameter, _)| *parameter == edge_parameter),
+                    "the edge fixture reaches phase two: waits={}, overlaps={:?}, deferred={}",
+                    edge.waits(),
+                    edge.overlaps(),
+                    has_deferred_execution(edge)
+                );
+                let edge_plan = FunctionStoragePlan::build(program, edge).unwrap();
+                let returned: BTreeSet<_> = edge
+                    .blocks()
+                    .iter()
+                    .filter_map(|block| {
+                        let IrTerminator::Return { value, .. } = block.terminator() else {
+                            return None;
+                        };
+                        edge_plan
+                            .slot(*value)
+                            .map(|slot| edge_plan.allocation_root(slot))
+                    })
+                    .collect();
+                assert!(
+                    edge.blocks().iter().any(|block| {
+                        let IrTerminator::Jump {
+                            target, arguments, ..
+                        } = block.terminator()
+                        else {
+                            return false;
+                        };
+                        edge.blocks()[target.index()]
+                            .parameters()
+                            .iter()
+                            .zip(arguments)
+                            .any(|((parameter, _), argument)| {
+                                edge_plan.slot(*parameter).is_some_and(|slot| {
+                                    edge_plan.slot(*argument) != Some(slot)
+                                        && returned.contains(&edge_plan.allocation_root(slot))
+                                })
+                            })
+                    }),
+                    "the fixture emits a distinct-slot transfer into returned storage"
+                );
+                let mut waiting = relay.clone();
+                waiting.waits = true;
+                assert!(incoming_candidates(program, &waiting).unwrap().is_empty());
+                let mut overlapping = relay.clone();
+                let call = overlapping
+                    .blocks()
+                    .iter()
+                    .flat_map(|block| block.instructions())
+                    .find_map(|instruction| match instruction {
+                        IrInstruction::Define {
+                            result,
+                            operation: IrOperation::Call { .. },
+                            ..
+                        } => Some(*result),
+                        _ => None,
+                    })
+                    .unwrap();
+                overlapping.overlaps.push(crate::IrOverlap {
+                    members: vec![call],
+                });
+                for sequential in [false, true] {
+                    let plan =
+                        FunctionStoragePlan::build_in_world(program, &overlapping, sequential)
+                            .unwrap();
+                    assert_eq!(plan.incoming(plan.slot(parameter).unwrap()), None);
+                }
+                let original = program.functions[capture_index].clone();
+                program.functions[capture_index].blocks.clear();
+                let plan = FunctionStoragePlan::build(program, &relay).unwrap();
+                assert_eq!(
+                    plan.incoming(plan.slot(parameter).unwrap()),
+                    None,
+                    "linked body has no eager capture certificate"
+                );
+                program.functions[capture_index] = original.clone();
+                program.functions[capture_index].waits = true;
+                let plan = FunctionStoragePlan::build(program, &relay).unwrap();
+                assert_eq!(
+                    plan.incoming(plan.slot(parameter).unwrap()),
+                    None,
+                    "waiting callee"
+                );
+                // Replacing capture by relay creates a self-recursive callee.
+                // Its phase-one candidacy denies the eager certificate even
+                // though phase two would itself decline that function.
+                program.functions[capture_index] = relay.clone();
+                let plan = FunctionStoragePlan::build(program, &relay).unwrap();
+                assert_eq!(
+                    plan.incoming(plan.slot(parameter).unwrap()),
+                    None,
+                    "potential forwarding callee/cycle"
+                );
+                program.functions[capture_index] = original;
+            },
+        );
     }
 
     #[test]

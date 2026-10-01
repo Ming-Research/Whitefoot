@@ -904,9 +904,9 @@
   "baseline_revision": "948f300b1f988c3c2dc0db25a1b79a9543965cc0",
   "candidate_source_revision": "3b654f6a6",
   "combined_samples": {
-    "bytes": 900281,
+    "bytes": 1130061,
     "path": "research/experiments/container-representation/map-library/mutation-api-samples.csv",
-    "sha256": "6b5dabb307df1c39a16a0ed53e2c16b835082a88d309d4f75fde20a58d9f386d"
+    "sha256": "e2e14bb5ec536e6ef2927c5b3579b5f8953b709b29d3a30cee3ce6dd36e07d6d"
   },
   "compiler_images": {
     "baseline": {
@@ -3253,6 +3253,1730 @@
     }
   },
   "native_limit": "Peer batch loop entry addresses match, but Rust and C++ branch relocations to shared reserve/rehash and new/delete/unwind stubs differ. Do not claim whole peer bodies are byte-identical.",
+  "ordinary_incoming_backing": {
+    "accounting": {
+      "byte_identical": true,
+      "bytes": 3926,
+      "path": "research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/entry-forward-entry-forward-check-account.csv",
+      "rows": 32,
+      "sha256": "75bcb01092141bcb20958473838a5d65df03cab359630981eed220412c84b252"
+    },
+    "api_raw_samples": [
+      {
+        "bytes": 44062,
+        "path": "research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/candidate-entry-forward-cohort-0.csv",
+        "sha256": "649e21a45f7264b43c979d4cb519cbe6ab28d58ea81ac7a3a2ddb92f7dd93f32"
+      },
+      {
+        "bytes": 44062,
+        "path": "research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/candidate-entry-forward-cohort-1.csv",
+        "sha256": "d713a66fa1d2c69735abca33f27e1f1e107f3e76b40f50e3d9012cbb322c6fd2"
+      },
+      {
+        "bytes": 44062,
+        "path": "research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/entry-forward-entry-forward-cohort-0.csv",
+        "sha256": "172fc3ee35229da0d4f2eacb99d1a4ce916f73632db8dfa9ef26051c52f41634"
+      },
+      {
+        "bytes": 44062,
+        "path": "research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/entry-forward-entry-forward-cohort-1.csv",
+        "sha256": "9800c0a01e6b25433092cfe17810c0cfe1219e888d224b0190e6e63fc253c243"
+      }
+    ],
+    "api_timing_commands": [
+      {
+        "command": [
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/candidate-timed",
+          "measure",
+          "0",
+          "1048576"
+        ],
+        "exit": 0,
+        "label": "candidate cohort 0",
+        "seconds": 14.022828666958958,
+        "stderr": ""
+      },
+      {
+        "command": [
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/entry-forward-timed",
+          "measure",
+          "0",
+          "1048576"
+        ],
+        "exit": 0,
+        "label": "entry-forward cohort 0",
+        "seconds": 13.755234291777015,
+        "stderr": ""
+      },
+      {
+        "command": [
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/entry-forward-timed",
+          "measure",
+          "1",
+          "1048576"
+        ],
+        "exit": 0,
+        "label": "entry-forward cohort 1",
+        "seconds": 13.760015041101724,
+        "stderr": ""
+      },
+      {
+        "command": [
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/candidate-timed",
+          "measure",
+          "1",
+          "1048576"
+        ],
+        "exit": 0,
+        "label": "candidate cohort 1",
+        "seconds": 13.929914708249271,
+        "stderr": ""
+      }
+    ],
+    "archive": {
+      "bytes": 1156977,
+      "path": "research/experiments/container-representation/map-library/entry-forward-evidence.tar.gz",
+      "sha256": "f22066ca3c51f1ac8c60850cfde780b6d0d7b3fea3a29fb8bdb8651b21501fd5"
+    },
+    "archive_purpose": "Raw auditable API and whole-Map/long-hit replay for this RESULTS section; retire or replace when superseded. No binaries.",
+    "construction": [
+      {
+        "command": [
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/whitefootc-entry-forward",
+          "--emit-llvm",
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-chain-probe/mutation-complete.wf",
+          "-o",
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/entry-forward.raw.ll"
+        ],
+        "exit": 0,
+        "label": "emit unchanged mutation witness",
+        "seconds": 1.3631277498789132,
+        "stderr": "",
+        "stdout": ""
+      },
+      {
+        "command": [
+          "/usr/bin/clang",
+          "-O3",
+          "-Wno-override-module",
+          "-x",
+          "ir",
+          "-c",
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/entry-forward.raw.ll",
+          "-o",
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/entry-forward.o"
+        ],
+        "exit": 0,
+        "label": "raw object",
+        "seconds": 0.7878702082671225,
+        "stderr": "",
+        "stdout": ""
+      },
+      {
+        "command": [
+          "/usr/bin/clang",
+          "-O3",
+          "-Wno-override-module",
+          "-x",
+          "ir",
+          "-c",
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/entry-forward-wf-timed.ll",
+          "-o",
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/entry-forward-wf-timed.o"
+        ],
+        "exit": 0,
+        "label": "timed object",
+        "seconds": 0.7434338331222534,
+        "stderr": "",
+        "stdout": ""
+      },
+      {
+        "command": [
+          "/usr/bin/clang++",
+          "-O3",
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/driver-timed.o",
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/rust-timed.a",
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/cpp-timed.o",
+          "research/experiments/container-representation/map-library/.build/native/ordinary_values.o",
+          "research/experiments/container-representation/map-library/.build/native/ordinary_values_ir.o",
+          "research/experiments/container-representation/map-library/.build/native/sched/core.o",
+          "research/experiments/container-representation/map-library/.build/native/sched/entry.o",
+          "research/experiments/container-representation/map-library/.build/native/completion/runtime.o",
+          "research/experiments/container-representation/map-library/.build/native/completion/file_adapter.o",
+          "research/experiments/container-representation/map-library/.build/native/completion/bridge.o",
+          "research/experiments/container-representation/map-library/.build/native/wf_floor.o",
+          "research/experiments/container-representation/map-library/.build/native/sched/prim_host.o",
+          "research/experiments/container-representation/map-library/.build/native/completion/wait_host.o",
+          "research/experiments/container-representation/map-library/.build/native/completion/file_posix.o",
+          "research/experiments/container-representation/map-library/.build/native/completion/linux_io_uring.o",
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/entry-forward-wf-timed.o",
+          "-liconv",
+          "-lSystem",
+          "-lc",
+          "-lm",
+          "-pthread",
+          "-o",
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/entry-forward-timed"
+        ],
+        "exit": 0,
+        "label": "timed link",
+        "seconds": 0.06457083392888308,
+        "stderr": "ld: warning: ignoring duplicate libraries: '-lSystem'\n",
+        "stdout": ""
+      },
+      {
+        "command": [
+          "/usr/bin/clang",
+          "-O3",
+          "-Wno-override-module",
+          "-x",
+          "ir",
+          "-c",
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/entry-forward-wf-account.ll",
+          "-o",
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/entry-forward-wf-account.o"
+        ],
+        "exit": 0,
+        "label": "account object",
+        "seconds": 0.7259824997745454,
+        "stderr": "",
+        "stdout": ""
+      },
+      {
+        "command": [
+          "/usr/bin/clang++",
+          "-O3",
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/driver-account.o",
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/rust-account.a",
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/cpp-account.o",
+          "research/experiments/container-representation/map-library/.build/native/ordinary_values.o",
+          "research/experiments/container-representation/map-library/.build/native/ordinary_values_ir.o",
+          "research/experiments/container-representation/map-library/.build/native/sched/core.o",
+          "research/experiments/container-representation/map-library/.build/native/sched/entry.o",
+          "research/experiments/container-representation/map-library/.build/native/completion/runtime.o",
+          "research/experiments/container-representation/map-library/.build/native/completion/file_adapter.o",
+          "research/experiments/container-representation/map-library/.build/native/completion/bridge.o",
+          "research/experiments/container-representation/map-library/.build/native/wf_floor.o",
+          "research/experiments/container-representation/map-library/.build/native/sched/prim_host.o",
+          "research/experiments/container-representation/map-library/.build/native/completion/wait_host.o",
+          "research/experiments/container-representation/map-library/.build/native/completion/file_posix.o",
+          "research/experiments/container-representation/map-library/.build/native/completion/linux_io_uring.o",
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/entry-forward-wf-account.o",
+          "-liconv",
+          "-lSystem",
+          "-lc",
+          "-lm",
+          "-pthread",
+          "-o",
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/entry-forward-account"
+        ],
+        "exit": 0,
+        "label": "account link",
+        "seconds": 0.05802154215052724,
+        "stderr": "ld: warning: ignoring duplicate libraries: '-lSystem'\n",
+        "stdout": ""
+      }
+    ],
+    "controls": [
+      {
+        "command": [
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/candidate-timed",
+          "check"
+        ],
+        "exit": 0,
+        "label": "candidate timed check",
+        "seconds": 0.023651208728551865,
+        "stderr": "",
+        "stdout": "mutation: 96 independent owner/three-successive-batches/verify/cleanup cases passed\n"
+      },
+      {
+        "command": [
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/candidate-timed",
+          "negative",
+          "wrong-batch-checksum"
+        ],
+        "exit": 1,
+        "label": "candidate timed wrong-batch-checksum",
+        "seconds": 0.004266000352799892,
+        "stderr": "mutation: negative wrong batch checksum\n",
+        "stdout": ""
+      },
+      {
+        "command": [
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/candidate-timed",
+          "negative",
+          "stale-generation"
+        ],
+        "exit": 1,
+        "label": "candidate timed stale-generation",
+        "seconds": 0.003541707992553711,
+        "stderr": "mutation: negative stale generation\n",
+        "stdout": ""
+      },
+      {
+        "command": [
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/candidate-timed",
+          "negative",
+          "corrupt-last-word"
+        ],
+        "exit": 1,
+        "label": "candidate timed corrupt-last-word",
+        "seconds": 0.003419875167310238,
+        "stderr": "mutation: negative corrupt last word full-content\n",
+        "stdout": ""
+      },
+      {
+        "command": [
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/candidate-timed",
+          "negative",
+          "cleanup"
+        ],
+        "exit": 1,
+        "label": "candidate timed cleanup",
+        "seconds": 0.003454458899796009,
+        "stderr": "mutation: negative cleanup checksum\n",
+        "stdout": ""
+      },
+      {
+        "command": [
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/candidate-account",
+          "check"
+        ],
+        "exit": 0,
+        "label": "candidate account check",
+        "seconds": 0.023141916375607252,
+        "stderr": "",
+        "stdout": "mutation: 96 independent owner/three-successive-batches/verify/cleanup cases passed\n"
+      },
+      {
+        "command": [
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/candidate-account",
+          "negative",
+          "wrong-batch-checksum"
+        ],
+        "exit": 1,
+        "label": "candidate account wrong-batch-checksum",
+        "seconds": 0.004283541813492775,
+        "stderr": "mutation: negative wrong batch checksum\n",
+        "stdout": ""
+      },
+      {
+        "command": [
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/candidate-account",
+          "negative",
+          "stale-generation"
+        ],
+        "exit": 1,
+        "label": "candidate account stale-generation",
+        "seconds": 0.004236417356878519,
+        "stderr": "mutation: negative stale generation\n",
+        "stdout": ""
+      },
+      {
+        "command": [
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/candidate-account",
+          "negative",
+          "corrupt-last-word"
+        ],
+        "exit": 1,
+        "label": "candidate account corrupt-last-word",
+        "seconds": 0.0038947081193327904,
+        "stderr": "mutation: negative corrupt last word full-content\n",
+        "stdout": ""
+      },
+      {
+        "command": [
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/candidate-account",
+          "negative",
+          "cleanup"
+        ],
+        "exit": 1,
+        "label": "candidate account cleanup",
+        "seconds": 0.004153667017817497,
+        "stderr": "mutation: negative cleanup checksum\n",
+        "stdout": ""
+      },
+      {
+        "command": [
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/candidate-account",
+          "negative",
+          "ledger-leak"
+        ],
+        "exit": 1,
+        "label": "candidate account ledger-leak",
+        "seconds": 0.0035624168813228607,
+        "stderr": "mutation: negative ledger leak\n",
+        "stdout": ""
+      },
+      {
+        "command": [
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/candidate-account",
+          "negative",
+          "filled-allocation"
+        ],
+        "exit": 1,
+        "label": "candidate account filled-allocation",
+        "seconds": 0.0033622500486671925,
+        "stderr": "mutation: negative filled allocation\n",
+        "stdout": ""
+      },
+      {
+        "command": [
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/candidate-account",
+          "account"
+        ],
+        "exit": 0,
+        "label": "candidate ledger",
+        "seconds": 0.010230292100459337,
+        "stderr": "",
+        "stdout": "variant,capacity_kind,width,slots,population,capacity,operation,rounds,filled_requests,filled_releases,filled_bytes,filled_live,filled_peak,batch_requests,batch_releases,batch_bytes,batch_live,final_requests,final_releases,final_bytes,final_live,final_peak\nwhitefoot-flat,physical-slots,word8,64,32,64,replace,3,1,0,1536,1536,1536,0,0,0,1536,1,1,1536,0,1536\nwhitefoot-flat,physical-slots,word8,64,32,64,churn,3,1,0,1536,1536,1536,0,0,0,1536,1,1,1536,0,1536\nwhitefoot-flat,physical-slots,word8,4096,2048,4096,replace,3,1,0,98304,98304,98304,0,0,0,98304,1,1,98304,0,98304\nwhitefoot-flat,physical-slots,word8,4096,2048,4096,churn,3,1,0,98304,98304,98304,0,0,0,98304,1,1,98304,0,98304\nwhitefoot-chain,head-buckets,word8,64,32,64,replace,3,2,0,2048,2048,2048,0,0,0,2048,2,2,2048,0,2048\nwhitefoot-chain,head-buckets,word8,64,32,64,churn,3,2,0,2048,2048,2048,0,0,0,2048,2,2,2048,0,2048\nwhitefoot-chain,head-buckets,word8,4096,2048,4096,replace,3,2,0,131072,131072,131072,0,0,0,131072,2,2,131072,0,131072\nwhitefoot-chain,head-buckets,word8,4096,2048,4096,churn,3,2,0,131072,131072,131072,0,0,0,131072,2,2,131072,0,131072\nrust-hash-map,usable-entries,word8,64,32,56,replace,3,1,0,1096,1096,1096,0,0,0,1096,1,1,1096,0,1096\nrust-hash-map,usable-entries,word8,64,32,56,churn,3,1,0,1096,1096,1096,0,0,0,1096,1,1,1096,0,1096\nrust-hash-map,usable-entries,word8,4096,2048,3584,replace,3,1,0,69640,69640,69640,0,0,0,69640,1,1,69640,0,69640\nrust-hash-map,usable-entries,word8,4096,2048,3584,churn,3,1,0,69640,69640,69640,0,0,0,69640,1,1,69640,0,69640\ncpp-unordered-map,chaining-buckets,word8,64,32,64,replace,3,33,0,1536,1536,1536,0,0,0,1536,33,33,1536,0,1536\ncpp-unordered-map,chaining-buckets,word8,64,32,64,churn,3,33,0,1536,1536,1536,96,96,3072,1536,129,129,4608,0,1536\ncpp-unordered-map,chaining-buckets,word8,4096,2048,4096,replace,3,2049,0,98304,98304,98304,0,0,0,98304,2049,2049,98304,0,98304\ncpp-unordered-map,chaining-buckets,word8,4096,2048,4096,churn,3,2049,0,98304,98304,98304,6144,6144,196608,98304,8193,8193,294912,0,98304\nwhitefoot-flat,physical-slots,wide256,64,32,64,replace,3,1,0,17408,17408,17408,0,0,0,17408,1,1,17408,0,17408\nwhitefoot-flat,physical-slots,wide256,64,32,64,churn,3,1,0,17408,17408,17408,0,0,0,17408,1,1,17408,0,17408\nwhitefoot-flat,physical-slots,wide256,4096,2048,4096,replace,3,1,0,1114112,1114112,1114112,0,0,0,1114112,1,1,1114112,0,1114112\nwhitefoot-flat,physical-slots,wide256,4096,2048,4096,churn,3,1,0,1114112,1114112,1114112,0,0,0,1114112,1,1,1114112,0,1114112\nwhitefoot-chain,head-buckets,wide256,64,32,64,replace,3,2,0,17920,17920,17920,0,0,0,17920,2,2,17920,0,17920\nwhitefoot-chain,head-buckets,wide256,64,32,64,churn,3,2,0,17920,17920,17920,0,0,0,17920,2,2,17920,0,17920\nwhitefoot-chain,head-buckets,wide256,4096,2048,4096,replace,3,2,0,1146880,1146880,1146880,0,0,0,1146880,2,2,1146880,0,1146880\nwhitefoot-chain,head-buckets,wide256,4096,2048,4096,churn,3,2,0,1146880,1146880,1146880,0,0,0,1146880,2,2,1146880,0,1146880\nrust-hash-map,usable-entries,wide256,64,32,56,replace,3,1,0,16968,16968,16968,0,0,0,16968,1,1,16968,0,16968\nrust-hash-map,usable-entries,wide256,64,32,56,churn,3,1,0,16968,16968,16968,0,0,0,16968,1,1,16968,0,16968\nrust-hash-map,usable-entries,wide256,4096,2048,3584,replace,3,1,0,1085448,1085448,1085448,0,0,0,1085448,1,1,1085448,0,1085448\nrust-hash-map,usable-entries,wide256,4096,2048,3584,churn,3,1,0,1085448,1085448,1085448,0,0,0,1085448,1,1,1085448,0,1085448\ncpp-unordered-map,chaining-buckets,wide256,64,32,64,replace,3,33,0,9472,9472,9472,0,0,0,9472,33,33,9472,0,9472\ncpp-unordered-map,chaining-buckets,wide256,64,32,64,churn,3,33,0,9472,9472,9472,96,96,26880,9472,129,129,36352,0,9472\ncpp-unordered-map,chaining-buckets,wide256,4096,2048,4096,replace,3,2049,0,606208,606208,606208,0,0,0,606208,2049,2049,606208,0,606208\ncpp-unordered-map,chaining-buckets,wide256,4096,2048,4096,churn,3,2049,0,606208,606208,606208,6144,6144,1720320,606208,8193,8193,2326528,0,606208\n"
+      },
+      {
+        "command": [
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/entry-forward-timed",
+          "check"
+        ],
+        "exit": 0,
+        "label": "entry-forward timed check",
+        "seconds": 0.37445675022900105,
+        "stderr": "",
+        "stdout": "mutation: 96 independent owner/three-successive-batches/verify/cleanup cases passed\n"
+      },
+      {
+        "command": [
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/entry-forward-timed",
+          "negative",
+          "wrong-batch-checksum"
+        ],
+        "exit": 1,
+        "label": "entry-forward timed wrong-batch-checksum",
+        "seconds": 0.0056940000504255295,
+        "stderr": "mutation: negative wrong batch checksum\n",
+        "stdout": ""
+      },
+      {
+        "command": [
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/entry-forward-timed",
+          "negative",
+          "stale-generation"
+        ],
+        "exit": 1,
+        "label": "entry-forward timed stale-generation",
+        "seconds": 0.004777958150953054,
+        "stderr": "mutation: negative stale generation\n",
+        "stdout": ""
+      },
+      {
+        "command": [
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/entry-forward-timed",
+          "negative",
+          "corrupt-last-word"
+        ],
+        "exit": 1,
+        "label": "entry-forward timed corrupt-last-word",
+        "seconds": 0.0046896249987185,
+        "stderr": "mutation: negative corrupt last word full-content\n",
+        "stdout": ""
+      },
+      {
+        "command": [
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/entry-forward-timed",
+          "negative",
+          "cleanup"
+        ],
+        "exit": 1,
+        "label": "entry-forward timed cleanup",
+        "seconds": 0.004510791972279549,
+        "stderr": "mutation: negative cleanup checksum\n",
+        "stdout": ""
+      },
+      {
+        "command": [
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/entry-forward-account",
+          "check"
+        ],
+        "exit": 0,
+        "label": "entry-forward account check",
+        "seconds": 0.29066133312880993,
+        "stderr": "",
+        "stdout": "mutation: 96 independent owner/three-successive-batches/verify/cleanup cases passed\n"
+      },
+      {
+        "command": [
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/entry-forward-account",
+          "negative",
+          "wrong-batch-checksum"
+        ],
+        "exit": 1,
+        "label": "entry-forward account wrong-batch-checksum",
+        "seconds": 0.005587707739323378,
+        "stderr": "mutation: negative wrong batch checksum\n",
+        "stdout": ""
+      },
+      {
+        "command": [
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/entry-forward-account",
+          "negative",
+          "stale-generation"
+        ],
+        "exit": 1,
+        "label": "entry-forward account stale-generation",
+        "seconds": 0.005045583937317133,
+        "stderr": "mutation: negative stale generation\n",
+        "stdout": ""
+      },
+      {
+        "command": [
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/entry-forward-account",
+          "negative",
+          "corrupt-last-word"
+        ],
+        "exit": 1,
+        "label": "entry-forward account corrupt-last-word",
+        "seconds": 0.004845957737416029,
+        "stderr": "mutation: negative corrupt last word full-content\n",
+        "stdout": ""
+      },
+      {
+        "command": [
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/entry-forward-account",
+          "negative",
+          "cleanup"
+        ],
+        "exit": 1,
+        "label": "entry-forward account cleanup",
+        "seconds": 0.00472291698679328,
+        "stderr": "mutation: negative cleanup checksum\n",
+        "stdout": ""
+      },
+      {
+        "command": [
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/entry-forward-account",
+          "negative",
+          "ledger-leak"
+        ],
+        "exit": 1,
+        "label": "entry-forward account ledger-leak",
+        "seconds": 0.004212208092212677,
+        "stderr": "mutation: negative ledger leak\n",
+        "stdout": ""
+      },
+      {
+        "command": [
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/entry-forward-account",
+          "negative",
+          "filled-allocation"
+        ],
+        "exit": 1,
+        "label": "entry-forward account filled-allocation",
+        "seconds": 0.004312083590775728,
+        "stderr": "mutation: negative filled allocation\n",
+        "stdout": ""
+      },
+      {
+        "command": [
+          "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/entry-forward-account",
+          "account"
+        ],
+        "exit": 0,
+        "label": "entry-forward ledger",
+        "seconds": 0.010605583433061838,
+        "stderr": "",
+        "stdout": "variant,capacity_kind,width,slots,population,capacity,operation,rounds,filled_requests,filled_releases,filled_bytes,filled_live,filled_peak,batch_requests,batch_releases,batch_bytes,batch_live,final_requests,final_releases,final_bytes,final_live,final_peak\nwhitefoot-flat,physical-slots,word8,64,32,64,replace,3,1,0,1536,1536,1536,0,0,0,1536,1,1,1536,0,1536\nwhitefoot-flat,physical-slots,word8,64,32,64,churn,3,1,0,1536,1536,1536,0,0,0,1536,1,1,1536,0,1536\nwhitefoot-flat,physical-slots,word8,4096,2048,4096,replace,3,1,0,98304,98304,98304,0,0,0,98304,1,1,98304,0,98304\nwhitefoot-flat,physical-slots,word8,4096,2048,4096,churn,3,1,0,98304,98304,98304,0,0,0,98304,1,1,98304,0,98304\nwhitefoot-chain,head-buckets,word8,64,32,64,replace,3,2,0,2048,2048,2048,0,0,0,2048,2,2,2048,0,2048\nwhitefoot-chain,head-buckets,word8,64,32,64,churn,3,2,0,2048,2048,2048,0,0,0,2048,2,2,2048,0,2048\nwhitefoot-chain,head-buckets,word8,4096,2048,4096,replace,3,2,0,131072,131072,131072,0,0,0,131072,2,2,131072,0,131072\nwhitefoot-chain,head-buckets,word8,4096,2048,4096,churn,3,2,0,131072,131072,131072,0,0,0,131072,2,2,131072,0,131072\nrust-hash-map,usable-entries,word8,64,32,56,replace,3,1,0,1096,1096,1096,0,0,0,1096,1,1,1096,0,1096\nrust-hash-map,usable-entries,word8,64,32,56,churn,3,1,0,1096,1096,1096,0,0,0,1096,1,1,1096,0,1096\nrust-hash-map,usable-entries,word8,4096,2048,3584,replace,3,1,0,69640,69640,69640,0,0,0,69640,1,1,69640,0,69640\nrust-hash-map,usable-entries,word8,4096,2048,3584,churn,3,1,0,69640,69640,69640,0,0,0,69640,1,1,69640,0,69640\ncpp-unordered-map,chaining-buckets,word8,64,32,64,replace,3,33,0,1536,1536,1536,0,0,0,1536,33,33,1536,0,1536\ncpp-unordered-map,chaining-buckets,word8,64,32,64,churn,3,33,0,1536,1536,1536,96,96,3072,1536,129,129,4608,0,1536\ncpp-unordered-map,chaining-buckets,word8,4096,2048,4096,replace,3,2049,0,98304,98304,98304,0,0,0,98304,2049,2049,98304,0,98304\ncpp-unordered-map,chaining-buckets,word8,4096,2048,4096,churn,3,2049,0,98304,98304,98304,6144,6144,196608,98304,8193,8193,294912,0,98304\nwhitefoot-flat,physical-slots,wide256,64,32,64,replace,3,1,0,17408,17408,17408,0,0,0,17408,1,1,17408,0,17408\nwhitefoot-flat,physical-slots,wide256,64,32,64,churn,3,1,0,17408,17408,17408,0,0,0,17408,1,1,17408,0,17408\nwhitefoot-flat,physical-slots,wide256,4096,2048,4096,replace,3,1,0,1114112,1114112,1114112,0,0,0,1114112,1,1,1114112,0,1114112\nwhitefoot-flat,physical-slots,wide256,4096,2048,4096,churn,3,1,0,1114112,1114112,1114112,0,0,0,1114112,1,1,1114112,0,1114112\nwhitefoot-chain,head-buckets,wide256,64,32,64,replace,3,2,0,17920,17920,17920,0,0,0,17920,2,2,17920,0,17920\nwhitefoot-chain,head-buckets,wide256,64,32,64,churn,3,2,0,17920,17920,17920,0,0,0,17920,2,2,17920,0,17920\nwhitefoot-chain,head-buckets,wide256,4096,2048,4096,replace,3,2,0,1146880,1146880,1146880,0,0,0,1146880,2,2,1146880,0,1146880\nwhitefoot-chain,head-buckets,wide256,4096,2048,4096,churn,3,2,0,1146880,1146880,1146880,0,0,0,1146880,2,2,1146880,0,1146880\nrust-hash-map,usable-entries,wide256,64,32,56,replace,3,1,0,16968,16968,16968,0,0,0,16968,1,1,16968,0,16968\nrust-hash-map,usable-entries,wide256,64,32,56,churn,3,1,0,16968,16968,16968,0,0,0,16968,1,1,16968,0,16968\nrust-hash-map,usable-entries,wide256,4096,2048,3584,replace,3,1,0,1085448,1085448,1085448,0,0,0,1085448,1,1,1085448,0,1085448\nrust-hash-map,usable-entries,wide256,4096,2048,3584,churn,3,1,0,1085448,1085448,1085448,0,0,0,1085448,1,1,1085448,0,1085448\ncpp-unordered-map,chaining-buckets,wide256,64,32,64,replace,3,33,0,9472,9472,9472,0,0,0,9472,33,33,9472,0,9472\ncpp-unordered-map,chaining-buckets,wide256,64,32,64,churn,3,33,0,9472,9472,9472,96,96,26880,9472,129,129,36352,0,9472\ncpp-unordered-map,chaining-buckets,wide256,4096,2048,4096,replace,3,2049,0,606208,606208,606208,0,0,0,606208,2049,2049,606208,0,606208\ncpp-unordered-map,chaining-buckets,wide256,4096,2048,4096,churn,3,2049,0,606208,606208,606208,6144,6144,1720320,606208,8193,8193,2326528,0,606208\n"
+      }
+    ],
+    "edge_guard_counterfactual": {
+      "direct_cargo_exit": 101,
+      "execution_s": 1.29,
+      "final_good_tests": {
+        "direct_exit": 0,
+        "execution_s": 4.04,
+        "failed": 0,
+        "guard_s": 66.33,
+        "log_member": "logs/whitefoot-entry-forward-final.log",
+        "log_sha256": "7432c6104c3298a880eaf11f2ad7bf8449abc73646e4f5684ec6091fa9b14145",
+        "passed": 2,
+        "phases_member": "logs/whitefoot-entry-forward-final-phases.tsv",
+        "reported_compilation": "1m01s"
+      },
+      "guard_s": 63.44,
+      "log_member": "logs/whitefoot-entry-forward-edge-counterfactual.log",
+      "log_sha256": "f2206831a775b8e5bbca41bb490f1e21ad79bf76655bfcdd3905ff2781ef1d7b",
+      "observed_failures": {
+        "native": "Output exit31, expected0: independent C observer rejected a wrong complete-result tag.",
+        "planner": "edge_roundtrip selected Some(IrValueId(0)), expected None."
+      },
+      "patch_member": "source/counterfactual-guard-removal.patch",
+      "patch_sha256": "e1331b77d5f0a76ef7c8e425591e58f34e8f1f41fc3bcb6d32a25c2430f4b839",
+      "removed_condition": "Distinct-slot Jump transfers into returned allocation roots conservatively prohibit incoming backing forwarding for the function.",
+      "reported_test_build": "1m01s",
+      "witness": "Typed valid IR inserts unused AddressOf operations for the two live private enum sources, preserving semantics while exposing their storage. This prevents identity coalescing of the Jump result phi without introducing a source-language Load/snapshot path. It witnesses a backend input/result alias obligation, not a WF source-language bug."
+    },
+    "formal_validation": {
+      "build_cli": {
+        "exit": 0,
+        "guard_s": 44.08,
+        "reported_compilation_s": 43.94
+      },
+      "final_cli_build": {
+        "archive_member": "final-proof/whitefoot-entry-forward-final-build.log",
+        "exit": 0,
+        "guard_s": 34.42
+      },
+      "final_format_lint": {
+        "exit": 0,
+        "guard_s": 4.11,
+        "log_member": "logs/whitefoot-entry-forward-final-lint.log"
+      },
+      "final_guard": {
+        "direct_exit": 0,
+        "execution_s": 4.04,
+        "failed": 0,
+        "guard_s": 66.33,
+        "log_member": "logs/whitefoot-entry-forward-final.log",
+        "log_sha256": "7432c6104c3298a880eaf11f2ad7bf8449abc73646e4f5684ec6091fa9b14145",
+        "passed": 2,
+        "phases_member": "logs/whitefoot-entry-forward-final-phases.tsv",
+        "reported_compilation": "1m01s"
+      },
+      "final_owned_places": {
+        "execution_s": 18.06,
+        "exit": 0,
+        "failed": 0,
+        "guard_s": 18.15,
+        "log_member": "logs/whitefoot-entry-forward-final-owned.log",
+        "passed": 31
+      },
+      "final_storage_module": {
+        "execution_s": 0.05,
+        "exit": 0,
+        "failed": 0,
+        "guard_s": 0.1,
+        "log_member": "logs/whitefoot-entry-forward-final-storage.log",
+        "passed": 25
+      },
+      "focused_retry": {
+        "execution_s": 3.85,
+        "exit": 0,
+        "guard_s": 24.81,
+        "passed": 2,
+        "reported_compilation_s": 20.18
+      },
+      "format_lint": {
+        "exit": 0,
+        "guard_s": 4.12
+      },
+      "initial_focused": {
+        "cause": "Authored planner fixture parse failure; owning executable test passed; original log retained.",
+        "exit": 101,
+        "guard_s": 77.75
+      },
+      "limit": "Final focused tests and benchmark output identity pass. Canonical gate and independent review remain pending.",
+      "owned_places": {
+        "execution_s": 18.46,
+        "exit": 0,
+        "guard_s": 18.57,
+        "passed": 31
+      },
+      "storage_module": {
+        "execution_s": 0.08,
+        "exit": 0,
+        "guard_s": 0.22,
+        "passed": 25
+      }
+    },
+    "images": {
+      "candidate-account": {
+        "bytes": 1654192,
+        "path": "research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/candidate-account",
+        "sha256": "e3c263e62df53f28bbb495b27de0004097b74537c1c3ac165fb087320dae8b87"
+      },
+      "candidate-timed": {
+        "bytes": 1650512,
+        "path": "research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/candidate-timed",
+        "sha256": "602958b7985ae376cb8d5b5233437c21a47bc69e26b433616d5baec9e813da09"
+      },
+      "candidate.o": {
+        "bytes": 106872,
+        "path": "research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/candidate.o",
+        "sha256": "b277b64ea442698f694cd64055efbb6fc1e5525ca629d2801fec7bc523a24fc8"
+      },
+      "candidate.raw.ll": {
+        "bytes": 869325,
+        "path": "research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/candidate.raw.ll",
+        "sha256": "d774c884cc8ec56ff06fdd10a79f624a68833e3f8583c68d4c0217517a86eb95"
+      },
+      "entry-forward-account": {
+        "bytes": 1654200,
+        "path": "research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/entry-forward-account",
+        "sha256": "01da9a4ecc3a99fcfbcc6d5488277940e7c6b7bf3aecb98498d22a8628281df8"
+      },
+      "entry-forward-timed": {
+        "bytes": 1650512,
+        "path": "research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/entry-forward-timed",
+        "sha256": "f2e2cf0b6eb8edfe00c72119064e7ded8dbacb2be944c3a929c06c5074aa8ae0"
+      },
+      "entry-forward-wf-account.ll": {
+        "bytes": 866332,
+        "path": "research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/entry-forward-wf-account.ll",
+        "sha256": "69484c4a6de491b3affbf79682687eb948ed97f033c00ddb3597964d282969b2"
+      },
+      "entry-forward-wf-account.o": {
+        "bytes": 108488,
+        "path": "research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/entry-forward-wf-account.o",
+        "sha256": "38a8e8b4faae535f3d1fcaffde5aae901a1a5ea5268ee4002a1c442bbec5ca1c"
+      },
+      "entry-forward-wf-timed.ll": {
+        "bytes": 866056,
+        "path": "research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/entry-forward-wf-timed.ll",
+        "sha256": "c3624de59a556699017952a7d6d5c1dd558b495751eb8f3dae997067e244ba1f"
+      },
+      "entry-forward-wf-timed.o": {
+        "bytes": 105800,
+        "path": "research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/entry-forward-wf-timed.o",
+        "sha256": "75df3fc9e5a678d8c3b8e4dcf81db2c5f2b18287c863cd492a630637429f9157"
+      },
+      "entry-forward.o": {
+        "bytes": 105776,
+        "path": "research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/entry-forward.o",
+        "sha256": "13e68d0b43ee808319ed3d3d319a9952d527419a6e8c0e8c074c542ff36326ea"
+      },
+      "entry-forward.raw.ll": {
+        "bytes": 866040,
+        "path": "research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/entry-forward.raw.ll",
+        "sha256": "09cb4c4ea979d9dedb46dbc2bcb267d984d472777f0a69f4af86df68ede57b41"
+      },
+      "whitefootc-entry-forward": {
+        "bytes": 9745776,
+        "path": "research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/whitefootc-entry-forward",
+        "sha256": "ec194c6af770f59a5871690a2d60608cb7e4e27956b6f6688f0d24acdcc1c736"
+      },
+      "whitefootc-running-index": {
+        "bytes": 9726256,
+        "path": "research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/whitefootc-running-index",
+        "sha256": "64cd73e5a10130ab1fff5a9360ecfbb4a2918e6904235f1f461dcd5477a57422"
+      }
+    },
+    "long_hit_discriminator": {
+      "all_expected_statuses": true,
+      "archive_directory": "long-hit",
+      "cells": [
+        {
+          "candidate_median_elapsed_ns": 18973000,
+          "candidate_range_ns": [
+            18300000,
+            22293000
+          ],
+          "cohort": 0,
+          "control_median_elapsed_ns": 19023000,
+          "control_range_ns": [
+            18285000,
+            22077000
+          ],
+          "element_bytes": 8,
+          "median_change_percent": -0.26283972033853686,
+          "separation": "overlap",
+          "series": "native-default"
+        },
+        {
+          "candidate_median_elapsed_ns": 25525000,
+          "candidate_range_ns": [
+            25446000,
+            25968000
+          ],
+          "cohort": 0,
+          "control_median_elapsed_ns": 25568000,
+          "control_range_ns": [
+            25497000,
+            26684000
+          ],
+          "element_bytes": 256,
+          "median_change_percent": -0.16817897371714796,
+          "separation": "overlap",
+          "series": "native-default"
+        },
+        {
+          "candidate_median_elapsed_ns": 18895000,
+          "candidate_range_ns": [
+            18308000,
+            21256000
+          ],
+          "cohort": 0,
+          "control_median_elapsed_ns": 19296000,
+          "control_range_ns": [
+            18300000,
+            22295000
+          ],
+          "element_bytes": 8,
+          "median_change_percent": -2.078150912106136,
+          "separation": "overlap",
+          "series": "aligned-hash"
+        },
+        {
+          "candidate_median_elapsed_ns": 25536000,
+          "candidate_range_ns": [
+            25431000,
+            26332000
+          ],
+          "cohort": 0,
+          "control_median_elapsed_ns": 25534000,
+          "control_range_ns": [
+            25427000,
+            35171000
+          ],
+          "element_bytes": 256,
+          "median_change_percent": 0.007832693663356594,
+          "separation": "overlap",
+          "series": "aligned-hash"
+        },
+        {
+          "candidate_median_elapsed_ns": 19016000,
+          "candidate_range_ns": [
+            18289000,
+            22131000
+          ],
+          "cohort": 1,
+          "control_median_elapsed_ns": 19058000,
+          "control_range_ns": [
+            18254000,
+            22961000
+          ],
+          "element_bytes": 8,
+          "median_change_percent": -0.22037989295833338,
+          "separation": "overlap",
+          "series": "native-default"
+        },
+        {
+          "candidate_median_elapsed_ns": 25524000,
+          "candidate_range_ns": [
+            25429000,
+            27095000
+          ],
+          "cohort": 1,
+          "control_median_elapsed_ns": 25542000,
+          "control_range_ns": [
+            25463000,
+            26347000
+          ],
+          "element_bytes": 256,
+          "median_change_percent": -0.0704721634954164,
+          "separation": "overlap",
+          "series": "native-default"
+        },
+        {
+          "candidate_median_elapsed_ns": 18985000,
+          "candidate_range_ns": [
+            18337000,
+            21503000
+          ],
+          "cohort": 1,
+          "control_median_elapsed_ns": 19047000,
+          "control_range_ns": [
+            18258000,
+            22739000
+          ],
+          "element_bytes": 8,
+          "median_change_percent": -0.32551057909382397,
+          "separation": "overlap",
+          "series": "aligned-hash"
+        },
+        {
+          "candidate_median_elapsed_ns": 25506000,
+          "candidate_range_ns": [
+            25454000,
+            26385000
+          ],
+          "cohort": 1,
+          "control_median_elapsed_ns": 25549000,
+          "control_range_ns": [
+            25488000,
+            26950000
+          ],
+          "element_bytes": 256,
+          "median_change_percent": -0.16830404321108716,
+          "separation": "overlap",
+          "series": "aligned-hash"
+        }
+      ],
+      "commands": 27,
+      "conclusion": "All eight WF cohort cells overlap; the two initial adverse cells are not reproduced but remain retained. Not an attribution to a codegen/layout cause.",
+      "criterion": {
+        "capacity": 64,
+        "cohorts": 2,
+        "count": 56,
+        "direction": "strict disjoint full sample envelopes in BOTH cohorts; overlap unresolved",
+        "limitations": "WF function placement differs; no isolated-query or layout attribution claim",
+        "measure_deadline_s": 180,
+        "minimum_every_sample_ns": 1000000,
+        "order": [
+          "control-c0",
+          "candidate-c0",
+          "candidate-c1",
+          "control-c1"
+        ],
+        "original_panel_retained": "<scratch-root>/whitefoot-entry-forward-whole-map-run",
+        "path": "hit",
+        "peers": "all five existing implementations",
+        "question": "Longer unchanged whole-trace hit64 adverse-cell discriminator",
+        "retries": 0,
+        "rows_per_process": 220,
+        "samples": 11,
+        "series": [
+          "native-default",
+          "aligned-hash"
+        ],
+        "widths": [
+          8,
+          256
+        ],
+        "work": 8388608
+      },
+      "minimum_wf_elapsed_ns": {
+        "256": 25427000,
+        "8": 18254000
+      },
+      "rows": 880
+    },
+    "measured_revision_boundary": {
+      "base_revision": "4c94b40bcea4be27abf93b60ac8600ee1f0a6220",
+      "final_artifact_identity": {
+        "comparisons": [
+          {
+            "label": "mutation-raw",
+            "previous": "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/entry-forward.raw.ll",
+            "same": true,
+            "sha256": "09cb4c4ea979d9dedb46dbc2bcb267d984d472777f0a69f4af86df68ede57b41"
+          },
+          {
+            "label": "mutation-object",
+            "previous": "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/entry-forward.o",
+            "same": true,
+            "sha256": "13e68d0b43ee808319ed3d3d319a9952d527419a6e8c0e8c074c542ff36326ea"
+          },
+          {
+            "label": "whole-map-raw",
+            "previous": "<scratch-root>/whitefoot-entry-forward-whole-map-run/candidate/map.raw.ll",
+            "same": true,
+            "sha256": "3da32aa691e5d0e65316ca85182e1180ab80dcf744bb34d0ed6c40f553b37a70"
+          },
+          {
+            "label": "whole-map-timed-object",
+            "previous": "<scratch-root>/whitefoot-entry-forward-whole-map-run/candidate/wf-timed.o",
+            "same": true,
+            "sha256": "2ca500af5f40747e8820d662f28db7c7f907ad8ac059a466c322e9b94b779270"
+          },
+          {
+            "label": "whole-map-account-object",
+            "previous": "<scratch-root>/whitefoot-entry-forward-whole-map-run/candidate/wf-account.o",
+            "same": true,
+            "sha256": "eb3b3cec2e73975783cb9a4cc3d4f6c2353422b2103dc0a854998274d8ae9b0d"
+          }
+        ],
+        "compiler": {
+          "bytes": 9745776,
+          "path": "<scratch-root>/whitefoot-entry-forward-final-proof/whitefootc",
+          "sha256": "c12b2b2a6c9694fd2bc1b7be0004d582ae9628951422def849f4cf6a3ac02f77"
+        },
+        "direct_exit": 0,
+        "guard_s": 3.69,
+        "interpretation": "Reemission/native byte identity, not a repeated timing run or a whole-compiler behavioral equivalence proof.",
+        "log_member": "final-proof/whitefoot-entry-forward-final-proof.log",
+        "metadata_member": "final-proof/metadata.json",
+        "script_member": "final-proof/whitefoot-entry-forward-final-proof.py",
+        "stages": [
+          {
+            "argv": [
+              "<scratch-root>/whitefoot-entry-forward-final-proof/whitefootc",
+              "--emit-llvm",
+              "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-chain-probe/mutation-complete.wf",
+              "-o",
+              "<scratch-root>/whitefoot-entry-forward-final-proof/mutation.raw.ll"
+            ],
+            "exit": 0,
+            "label": "mutation-emit",
+            "seconds": 1.3396581672132015,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "argv": [
+              "/usr/bin/clang",
+              "-O3",
+              "-Wno-override-module",
+              "-x",
+              "ir",
+              "-c",
+              "<scratch-root>/whitefoot-entry-forward-final-proof/mutation.raw.ll",
+              "-o",
+              "<scratch-root>/whitefoot-entry-forward-final-proof/mutation.o"
+            ],
+            "exit": 0,
+            "label": "mutation-native",
+            "seconds": 0.7397202919237316,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "argv": [
+              "<scratch-root>/whitefoot-entry-forward-final-proof/whitefootc",
+              "--emit-llvm",
+              "<repository-root>/research/experiments/container-representation/map-library/map-library.wf",
+              "-o",
+              "<scratch-root>/whitefoot-entry-forward-final-proof/whole-map.raw.ll"
+            ],
+            "exit": 0,
+            "label": "whole-map-emit",
+            "seconds": 0.5660705417394638,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "argv": [
+              "clang",
+              "-O3",
+              "-Wno-override-module",
+              "-c",
+              "<scratch-root>/whitefoot-entry-forward-final-proof/whole-map-timed.ll",
+              "-o",
+              "<scratch-root>/whitefoot-entry-forward-final-proof/whole-map-timed.o"
+            ],
+            "exit": 0,
+            "label": "whole-map-timed-native",
+            "seconds": 0.45585512509569526,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "argv": [
+              "clang",
+              "-O3",
+              "-Wno-override-module",
+              "-c",
+              "<scratch-root>/whitefoot-entry-forward-final-proof/whole-map-account.ll",
+              "-o",
+              "<scratch-root>/whitefoot-entry-forward-final-proof/whole-map-account.o"
+            ],
+            "exit": 0,
+            "label": "whole-map-account-native",
+            "seconds": 0.4549912088550627,
+            "stderr": "",
+            "stdout": ""
+          }
+        ]
+      },
+      "final_guard_snapshot": {
+        "files": {
+          "compiler/src/backend/emitter.rs": {
+            "bytes": 143550,
+            "path": "compiler/src/backend/emitter.rs",
+            "sha256": "f88395012296c7ccd14e3ce13341f35afac6d5ba07f058a4e821670382ab2089"
+          },
+          "compiler/src/backend/emitter/places.rs": {
+            "bytes": 32480,
+            "path": "compiler/src/backend/emitter/places.rs",
+            "sha256": "e654fcaaf614a53296ce1d7324c033ecb152aeac756ee19d395352ad23e7c2a3"
+          },
+          "compiler/src/backend/storage.rs": {
+            "bytes": 92112,
+            "path": "compiler/src/backend/storage.rs",
+            "sha256": "37d19154ed8e811ff36264e89f53efe117f22a9bcda3957c7a9925e2b81647c3"
+          },
+          "compiler/src/backend/tests/owned_places.rs": {
+            "bytes": 81701,
+            "path": "compiler/src/backend/tests/owned_places.rs",
+            "sha256": "086c2823839fa444940182a249fca308e36c0034c662d999458957ff01843d81"
+          }
+        },
+        "patch_member": "source/final-implementation.patch",
+        "sha256": "bdd37a42ab4262d5feb038ab4d9a352d99b69d2d9412879c77af15e4bb147b30",
+        "source_hash_verification": "Final frozen source independently rehashed; root-supplied storage/owned_places hashes match.",
+        "verification": "Final focused/storage/owning-place tests, format/lint and all five benchmark output identities independently verified; full CI and review remain pending."
+      },
+      "measured_code": "Timings use the preguard frozen compiler. Final guarded compiler reemits both benchmark raw modules and three native objects byte-identically; those timings therefore apply to the final benchmark outputs without rerunning timing.",
+      "measured_compiler_sha256": "ec194c6af770f59a5871690a2d60608cb7e4e27956b6f6688f0d24acdcc1c736"
+    },
+    "native_comparison": {
+      "archive_members": [
+        "native/control.asm",
+        "native/entry-forward.asm"
+      ],
+      "limit": "Not a claim that the whole native object is identical elsewhere.",
+      "reached_exchange_instruction_counts": [
+        87,
+        87
+      ],
+      "removed_entry_capture_bytes": 256,
+      "wide_caller_instruction_counts": [
+        381,
+        381
+      ],
+      "wide_try_put_frame_bytes": [
+        288,
+        0
+      ],
+      "wide_try_put_instructions": [
+        126,
+        95
+      ]
+    },
+    "pre_registered_criterion": {
+      "archive_member": "api/entry-forward-implementation-criterion.txt",
+      "bytes": 2222,
+      "path": "research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/entry-forward-implementation-criterion.txt",
+      "sha256": "ec7dfc6ffed9d988ed3becd454fc69ce029a4ff20f194474bc86f1d310ab54ec"
+    },
+    "proof_boundary": "Only unexposed Own input plus typed identity carries in its complete storage group; liveness requires eager private capture before all result-root writes, including Jump edges. Defined synchronous callees require finite nonrecursive eager-capture guarantee. Exposed, mixed, result-backed, waiting/scheduled, unknown and cyclic cases retain copies.",
+    "rejected_inline_boundary": {
+      "build": {
+        "direct_exit": 0,
+        "guard_s": 2.29,
+        "statuses": [
+          {
+            "command": [
+              "/usr/bin/clang",
+              "-O3",
+              "-Wno-override-module",
+              "-x",
+              "ir",
+              "-c",
+              "<scratch-root>/whitefoot-map-replacement-inline/candidate-wf-timed.ll",
+              "-o",
+              "<scratch-root>/whitefoot-map-replacement-inline/candidate-wf-timed.o"
+            ],
+            "exit": 0,
+            "label": "timed-object",
+            "seconds": 0.8089797496795654
+          },
+          {
+            "command": [
+              "/usr/bin/clang++",
+              "-O3",
+              "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/driver-timed.o",
+              "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/rust-timed.a",
+              "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/cpp-timed.o",
+              "research/experiments/container-representation/map-library/.build/native/ordinary_values.o",
+              "research/experiments/container-representation/map-library/.build/native/ordinary_values_ir.o",
+              "research/experiments/container-representation/map-library/.build/native/sched/core.o",
+              "research/experiments/container-representation/map-library/.build/native/sched/entry.o",
+              "research/experiments/container-representation/map-library/.build/native/completion/runtime.o",
+              "research/experiments/container-representation/map-library/.build/native/completion/file_adapter.o",
+              "research/experiments/container-representation/map-library/.build/native/completion/bridge.o",
+              "research/experiments/container-representation/map-library/.build/native/wf_floor.o",
+              "research/experiments/container-representation/map-library/.build/native/sched/prim_host.o",
+              "research/experiments/container-representation/map-library/.build/native/completion/wait_host.o",
+              "research/experiments/container-representation/map-library/.build/native/completion/file_posix.o",
+              "research/experiments/container-representation/map-library/.build/native/completion/linux_io_uring.o",
+              "<scratch-root>/whitefoot-map-replacement-inline/candidate-wf-timed.o",
+              "-liconv",
+              "-lSystem",
+              "-lc",
+              "-lm",
+              "-pthread",
+              "-o",
+              "<scratch-root>/whitefoot-map-replacement-inline/candidate-timed"
+            ],
+            "exit": 0,
+            "label": "timed-link",
+            "seconds": 0.05525333387777209
+          },
+          {
+            "command": [
+              "/usr/bin/clang",
+              "-O3",
+              "-Wno-override-module",
+              "-x",
+              "ir",
+              "-c",
+              "<scratch-root>/whitefoot-map-replacement-inline/candidate-wf-account.ll",
+              "-o",
+              "<scratch-root>/whitefoot-map-replacement-inline/candidate-wf-account.o"
+            ],
+            "exit": 0,
+            "label": "account-object",
+            "seconds": 0.7985625406727195
+          },
+          {
+            "command": [
+              "/usr/bin/clang++",
+              "-O3",
+              "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/driver-account.o",
+              "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/rust-account.a",
+              "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/cpp-account.o",
+              "research/experiments/container-representation/map-library/.build/native/ordinary_values.o",
+              "research/experiments/container-representation/map-library/.build/native/ordinary_values_ir.o",
+              "research/experiments/container-representation/map-library/.build/native/sched/core.o",
+              "research/experiments/container-representation/map-library/.build/native/sched/entry.o",
+              "research/experiments/container-representation/map-library/.build/native/completion/runtime.o",
+              "research/experiments/container-representation/map-library/.build/native/completion/file_adapter.o",
+              "research/experiments/container-representation/map-library/.build/native/completion/bridge.o",
+              "research/experiments/container-representation/map-library/.build/native/wf_floor.o",
+              "research/experiments/container-representation/map-library/.build/native/sched/prim_host.o",
+              "research/experiments/container-representation/map-library/.build/native/completion/wait_host.o",
+              "research/experiments/container-representation/map-library/.build/native/completion/file_posix.o",
+              "research/experiments/container-representation/map-library/.build/native/completion/linux_io_uring.o",
+              "<scratch-root>/whitefoot-map-replacement-inline/candidate-wf-account.o",
+              "-liconv",
+              "-lSystem",
+              "-lc",
+              "-lm",
+              "-pthread",
+              "-o",
+              "<scratch-root>/whitefoot-map-replacement-inline/candidate-account"
+            ],
+            "exit": 0,
+            "label": "account-link",
+            "seconds": 0.054716791957616806
+          },
+          {
+            "command": [
+              "<LLVM_OBJDUMP>",
+              "-dr",
+              "--no-show-raw-insn",
+              "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/entry-forward-timed"
+            ],
+            "exit": 0,
+            "label": "control-native",
+            "seconds": 0.23328362498432398
+          },
+          {
+            "command": [
+              "<LLVM_OBJDUMP>",
+              "-dr",
+              "--no-show-raw-insn",
+              "<scratch-root>/whitefoot-map-replacement-inline/candidate-timed"
+            ],
+            "exit": 0,
+            "label": "candidate-native",
+            "seconds": 0.22655845806002617
+          }
+        ]
+      },
+      "candidate_ir": {
+        "bytes": 866066,
+        "path": "<scratch-root>/whitefoot-map-replacement-inline/candidate.raw.ll",
+        "sha256": "a8248c2c9ad3eec51768e954d3acbf9db23d84ab961bb5424b10f474b2a9175f"
+      },
+      "correctness": "NOT RUN after native gate failure.",
+      "criterion": {
+        "bytes": 3884,
+        "path": "<scratch-root>/whitefoot-map-replacement-inline/criterion.txt",
+        "sha256": "2b106cc2ab2a5ade50819d49612da6d23dea896b385aea0c6c0b12f873bd481f"
+      },
+      "native": {
+        "excerpts": [
+          "rejected-inline-boundary/control-wide-batch.asm",
+          "rejected-inline-boundary/candidate-wide-batch.asm"
+        ],
+        "finding": "The old264-byte result staging disappears, but offered/result content retains equivalent256-byte scalar spill/reload traffic in the caller. The strict no-relocated-transfers requirement fails.",
+        "frame_bytes": [
+          1024,
+          448
+        ],
+        "instructions": [
+          381,
+          570
+        ],
+        "wide_batch_symbol": "_wf_flat_mutation_batch$instance$4250cb78d3f44027"
+      },
+      "outputs": {
+        "<scratch-root>/whitefoot-map-replacement-inline/candidate-account": "c81ea2cf236a6f4c55479cc4e0f6fb79e21d9561c4cfef9c360a8d98e80660d7",
+        "<scratch-root>/whitefoot-map-replacement-inline/candidate-native.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "<scratch-root>/whitefoot-map-replacement-inline/candidate-native.stdout": "c911fb3958dd642901a056bcd5533debbaa298c785b50d373248088a7b0ebcc2",
+        "<scratch-root>/whitefoot-map-replacement-inline/candidate-timed": "603de9045caa7c68c04e85461cf6d8165b0fb3638a48fe7c19e2c510854fda21",
+        "<scratch-root>/whitefoot-map-replacement-inline/candidate-wf-account.o": "228cdbae700b11096af316f5b64543e05f7d73998359840d621eddfde97a88d3",
+        "<scratch-root>/whitefoot-map-replacement-inline/candidate-wf-timed.o": "1c49a171c84717288416b46e43959adfd39d1e980d13316f5a74e413e37f4201"
+      },
+      "raw_patch": {
+        "bytes": 1299,
+        "path": "<scratch-root>/whitefoot-map-replacement-inline/modules.patch",
+        "sha256": "382b0c427f1bf01fcf0cb7911dc6d8ce9bc3c8f9a38fee26a2af353120d7acd8"
+      },
+      "scope": "Exactly two alwaysinline tokens on wide try_put58dd6ca826103b6d and exchange d7a1a90c27bba449 in the frozen actual candidate raw LLVM. No source/compiler policy, signatures, alias assumptions or instructions changed.",
+      "selection": "Rejected diagnostic boundary trial; no recommendation for arbitrary alwaysinline.",
+      "source_ir": {
+        "bytes": 866040,
+        "path": "research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/entry-forward.raw.ll",
+        "sha256": "09cb4c4ea979d9dedb46dbc2bcb267d984d472777f0a69f4af86df68ede57b41"
+      },
+      "status": "Rejected at preregistered native aggregate-transfer gate, before correctness or timing; not a measured performance loss.",
+      "text_normalization": {
+        "archive_records": [
+          {
+            "archive_member": "rejected-inline-boundary/build-statuses.json",
+            "normalized_bytes": 5561,
+            "normalized_sha256": "8ee169d4c71be541a05ad425de4a39e4f380c1149690d1bf36df50415f5ae803",
+            "original_bytes": 5673,
+            "original_measured_sha256": "d71934e1f574bf6cd0a18a1fb19a809a7bb084c3ea47a975724265f1f0140b12"
+          },
+          {
+            "archive_member": "rejected-inline-boundary/build.log",
+            "normalized_bytes": 5219,
+            "normalized_sha256": "4878750d0274bbd3dd6168af064bbc4dcb41c6b0168ba8774f1a454620f4bbe1",
+            "original_bytes": 5331,
+            "original_measured_sha256": "9712193f1aae18c8131352f7ba4966c24b101bfa3ba8066555a84c3879f6dcbf"
+          },
+          {
+            "archive_member": "rejected-inline-boundary/run.py",
+            "normalized_bytes": 6697,
+            "normalized_sha256": "1cf25db620fff57fe967e41902c81e426ea150395c849ef125bc174201e6dffa",
+            "original_bytes": 6707,
+            "original_measured_sha256": "e75230099acda996c86d79a20adcc964c118b851977206bcf6798428755030c8"
+          },
+          {
+            "archive_member": "rejected-inline-boundary/verdict.json",
+            "normalized_bytes": 8975,
+            "normalized_sha256": "080a7b66884a75c46a97a0669638c7bc83005679e093532109ebf9bee2f1b76b",
+            "original_bytes": 9087,
+            "original_measured_sha256": "4b472d9a7135dcc37656a4b58155217b525e975c2b6ec0c37441019503a748c2"
+          }
+        ],
+        "instrument": {
+          "binary_sha256": "68753cbcf2ceafe6c45d8f39ce9faaefb282bf1b97d853567193ab5ddb0cd780",
+          "environment_variable": "LLVM_OBJDUMP",
+          "symbolic_command": "<LLVM_OBJDUMP>",
+          "version": "LLVM22.1.8; optimized build, independently read with --version"
+        },
+        "scope": "Recorded native commands are normalized displays using <LLVM_OBJDUMP>; see archive text-normalization.json for original measured versus normalized hashes. No measurement or expectation changed."
+      },
+      "timing": "NOT RUN; no samples or throughput conclusion."
+    },
+    "sample_summary": {
+      "cells": [
+        {
+          "candidate": 2.3651123046875,
+          "candidate_range": [
+            2.2640228271484375,
+            2.9211044311523438
+          ],
+          "cohort": 0,
+          "control": 2.422332763671875,
+          "control_range": [
+            2.2897720336914062,
+            3.0164718627929688
+          ],
+          "operation": "replace",
+          "peers": {
+            "cpp-unordered-map": 2.7666091918945312,
+            "rust-hash-map": 2.5568008422851562
+          },
+          "separation": "overlap",
+          "slots": 64,
+          "width": "word8"
+        },
+        {
+          "candidate": 7.9135894775390625,
+          "candidate_range": [
+            7.53021240234375,
+            8.793830871582031
+          ],
+          "cohort": 0,
+          "control": 7.965087890625,
+          "control_range": [
+            7.506370544433594,
+            8.853912353515625
+          ],
+          "operation": "churn",
+          "peers": {
+            "cpp-unordered-map": 27.45819091796875,
+            "rust-hash-map": 16.080856323242188
+          },
+          "separation": "overlap",
+          "slots": 64,
+          "width": "word8"
+        },
+        {
+          "candidate": 3.1528472900390625,
+          "candidate_range": [
+            3.0088424682617188,
+            3.6363601684570312
+          ],
+          "cohort": 0,
+          "control": 3.2854080200195312,
+          "control_range": [
+            3.0298233032226562,
+            3.84521484375
+          ],
+          "operation": "replace",
+          "peers": {
+            "cpp-unordered-map": 4.2972564697265625,
+            "rust-hash-map": 2.593994140625
+          },
+          "separation": "overlap",
+          "slots": 4096,
+          "width": "word8"
+        },
+        {
+          "candidate": 12.751579284667969,
+          "candidate_range": [
+            11.547088623046875,
+            15.6097412109375
+          ],
+          "cohort": 0,
+          "control": 13.959884643554688,
+          "control_range": [
+            12.889862060546875,
+            16.814231872558594
+          ],
+          "operation": "churn",
+          "peers": {
+            "cpp-unordered-map": 29.989242553710938,
+            "rust-hash-map": 10.231971740722656
+          },
+          "separation": "overlap",
+          "slots": 4096,
+          "width": "word8"
+        },
+        {
+          "candidate": 23.729324340820312,
+          "candidate_range": [
+            23.48041534423828,
+            25.44116973876953
+          ],
+          "cohort": 0,
+          "control": 27.520179748535156,
+          "control_range": [
+            27.093887329101562,
+            28.942108154296875
+          ],
+          "operation": "replace",
+          "peers": {
+            "cpp-unordered-map": 18.83220672607422,
+            "rust-hash-map": 22.100448608398438
+          },
+          "separation": "gain",
+          "slots": 64,
+          "width": "wide256"
+        },
+        {
+          "candidate": 33.50067138671875,
+          "candidate_range": [
+            31.890869140625,
+            35.369873046875
+          ],
+          "cohort": 0,
+          "control": 37.522315979003906,
+          "control_range": [
+            35.80284118652344,
+            40.373802185058594
+          ],
+          "operation": "churn",
+          "peers": {
+            "cpp-unordered-map": 49.30877685546875,
+            "rust-hash-map": 27.08911895751953
+          },
+          "separation": "gain",
+          "slots": 64,
+          "width": "wide256"
+        },
+        {
+          "candidate": 27.9998779296875,
+          "candidate_range": [
+            27.78148651123047,
+            29.94537353515625
+          ],
+          "cohort": 0,
+          "control": 31.159400939941406,
+          "control_range": [
+            30.65776824951172,
+            32.33623504638672
+          ],
+          "operation": "replace",
+          "peers": {
+            "cpp-unordered-map": 23.65875244140625,
+            "rust-hash-map": 26.987075805664062
+          },
+          "separation": "gain",
+          "slots": 4096,
+          "width": "wide256"
+        },
+        {
+          "candidate": 49.54814910888672,
+          "candidate_range": [
+            47.29175567626953,
+            51.08070373535156
+          ],
+          "cohort": 0,
+          "control": 49.744606018066406,
+          "control_range": [
+            46.082496643066406,
+            50.461769104003906
+          ],
+          "operation": "churn",
+          "peers": {
+            "cpp-unordered-map": 59.662818908691406,
+            "rust-hash-map": 31.25
+          },
+          "separation": "overlap",
+          "slots": 4096,
+          "width": "wide256"
+        },
+        {
+          "candidate": 2.3393630981445312,
+          "candidate_range": [
+            2.2630691528320312,
+            2.8934478759765625
+          ],
+          "cohort": 1,
+          "control": 2.4614334106445312,
+          "control_range": [
+            2.2802352905273438,
+            2.9249191284179688
+          ],
+          "operation": "replace",
+          "peers": {
+            "cpp-unordered-map": 2.7399063110351562,
+            "rust-hash-map": 2.4709701538085938
+          },
+          "separation": "overlap",
+          "slots": 64,
+          "width": "word8"
+        },
+        {
+          "candidate": 7.900238037109375,
+          "candidate_range": [
+            7.538795471191406,
+            8.845329284667969
+          ],
+          "cohort": 1,
+          "control": 7.916450500488281,
+          "control_range": [
+            7.460594177246094,
+            9.290695190429688
+          ],
+          "operation": "churn",
+          "peers": {
+            "cpp-unordered-map": 27.498245239257812,
+            "rust-hash-map": 16.13616943359375
+          },
+          "separation": "overlap",
+          "slots": 64,
+          "width": "word8"
+        },
+        {
+          "candidate": 3.4456253051757812,
+          "candidate_range": [
+            3.1080245971679688,
+            3.5610198974609375
+          ],
+          "cohort": 1,
+          "control": 3.37982177734375,
+          "control_range": [
+            3.1290054321289062,
+            3.62396240234375
+          ],
+          "operation": "replace",
+          "peers": {
+            "cpp-unordered-map": 4.088401794433594,
+            "rust-hash-map": 2.5644302368164062
+          },
+          "separation": "overlap",
+          "slots": 4096,
+          "width": "word8"
+        },
+        {
+          "candidate": 14.733314514160156,
+          "candidate_range": [
+            11.538505554199219,
+            15.57159423828125
+          ],
+          "cohort": 1,
+          "control": 13.880729675292969,
+          "control_range": [
+            11.639595031738281,
+            15.669822692871094
+          ],
+          "operation": "churn",
+          "peers": {
+            "cpp-unordered-map": 30.060768127441406,
+            "rust-hash-map": 10.197639465332031
+          },
+          "separation": "overlap",
+          "slots": 4096,
+          "width": "word8"
+        },
+        {
+          "candidate": 23.797035217285156,
+          "candidate_range": [
+            23.40221405029297,
+            24.75261688232422
+          ],
+          "cohort": 1,
+          "control": 27.594566345214844,
+          "control_range": [
+            27.059555053710938,
+            29.382705688476562
+          ],
+          "operation": "replace",
+          "peers": {
+            "cpp-unordered-map": 18.86272430419922,
+            "rust-hash-map": 22.025108337402344
+          },
+          "separation": "gain",
+          "slots": 64,
+          "width": "wide256"
+        },
+        {
+          "candidate": 33.20598602294922,
+          "candidate_range": [
+            31.88610076904297,
+            34.16728973388672
+          ],
+          "cohort": 1,
+          "control": 36.208152770996094,
+          "control_range": [
+            35.71033477783203,
+            38.799285888671875
+          ],
+          "operation": "churn",
+          "peers": {
+            "cpp-unordered-map": 49.365997314453125,
+            "rust-hash-map": 27.15301513671875
+          },
+          "separation": "gain",
+          "slots": 64,
+          "width": "wide256"
+        },
+        {
+          "candidate": 28.227806091308594,
+          "candidate_range": [
+            27.889251708984375,
+            28.736114501953125
+          ],
+          "cohort": 1,
+          "control": 30.722618103027344,
+          "control_range": [
+            30.524253845214844,
+            34.81292724609375
+          ],
+          "operation": "replace",
+          "peers": {
+            "cpp-unordered-map": 23.766517639160156,
+            "rust-hash-map": 26.9927978515625
+          },
+          "separation": "gain",
+          "slots": 4096,
+          "width": "wide256"
+        },
+        {
+          "candidate": 49.671173095703125,
+          "candidate_range": [
+            46.25988006591797,
+            50.77838897705078
+          ],
+          "cohort": 1,
+          "control": 47.24597930908203,
+          "control_range": [
+            46.596527099609375,
+            49.47376251220703
+          ],
+          "operation": "churn",
+          "peers": {
+            "cpp-unordered-map": 60.80055236816406,
+            "rust-hash-map": 31.167030334472656
+          },
+          "separation": "overlap",
+          "slots": 4096,
+          "width": "wide256"
+        }
+      ],
+      "matched_flat_cells": 16,
+      "phase": "actual-incoming-forward-discriminator",
+      "rows": 1152,
+      "separated_gains": 6,
+      "separated_losses": 0,
+      "shortest_elapsed_ns": 2328000
+    },
+    "scope": "Ordinary indirect Own incoming backing with private capture and conservative deferred/callee/result-alias fallbacks. Source Loads/interior projections remain snapshots; no source-language, ABI, LLVM alias-attribute or HashMap-name special case.",
+    "status": "Final guarded work-branch implementation provisionally selected as Q203, measured benchmark outputs byte-identical; full CI and review pending.",
+    "whole_map": {
+      "adverse_cells": [
+        {
+          "candidate_elapsed_ns": 836000,
+          "candidate_range": [
+            828000,
+            871000
+          ],
+          "cell": {
+            "count": "56",
+            "element_bytes": "256",
+            "hash": "salted-mix64",
+            "path": "hit",
+            "requested_capacity": "64",
+            "series": "aligned-hash",
+            "variant": "whitefoot-hash-map"
+          },
+          "cohort": 0,
+          "control_elapsed_ns": 801000,
+          "control_range": [
+            795000,
+            822000
+          ],
+          "median_percent": 4.369538077403257,
+          "separation": "loss"
+        },
+        {
+          "candidate_elapsed_ns": 825000,
+          "candidate_range": [
+            814000,
+            838000
+          ],
+          "cell": {
+            "count": "56",
+            "element_bytes": "256",
+            "hash": "salted-mix64",
+            "path": "hit",
+            "requested_capacity": "64",
+            "series": "native-default",
+            "variant": "whitefoot-hash-map"
+          },
+          "cohort": 0,
+          "control_elapsed_ns": 798000,
+          "control_range": [
+            796000,
+            807000
+          ],
+          "median_percent": 3.383458646616533,
+          "separation": "loss"
+        }
+      ],
+      "all_expected_statuses": true,
+      "archive_directory": "whole-map",
+      "commands": 49,
+      "ledger_byte_identical": true,
+      "ledger_rows": 420,
+      "limit": "Normal matrix only; no retained-callback or explicit rehash timing.",
+      "matched_wf_cohort_cells": 168,
+      "overlaps": 130,
+      "protocol": {
+        "cells": 84,
+        "cohorts": 2,
+        "explicit_rehash_timing": false,
+        "measure_deadline_s": 180,
+        "order": [
+          "control-c0",
+          "candidate-c0",
+          "candidate-c1",
+          "control-c1"
+        ],
+        "paths": [
+          "hit",
+          "miss",
+          "replace",
+          "churn",
+          "edit",
+          "setup",
+          "grow"
+        ],
+        "retained_callbacks": false,
+        "rows_per_process": 4620,
+        "samples": 11,
+        "work": 262144
+      },
+      "rows": 18480,
+      "separated_gains": 36,
+      "separated_losses": 2
+    }
+  },
   "protocol": {
     "capacity_targets": [
       64,
@@ -3296,7 +5020,7 @@
       "sha256": "279b9bf47bd30f028656a246309698e38a098a56b2e7b460fb3b7e0644095c10"
     }
   },
-  "selection": "No library or layout selected by this evidence record; RESULTS.md holds the preregistered criteria and conclusions.",
+  "selection": "No library or representation is selected by this evidence. Ordinary incoming backing is provisional work-branch compiler placement choice Q203; full CI and review remain pending.",
   "sources": {
     "cpp": {
       "path": "research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/map-mutation.cpp",

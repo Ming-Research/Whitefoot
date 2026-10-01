@@ -3870,3 +3870,89 @@ distinct input/output storage and synchronous helper calls do not establish
 those premises for arbitrary programs. The measurements motivate a sound
 capture optimization; they are not evidence for the separate compiler
 prototype currently being tested.
+
+
+#### Ordinary incoming backing: measured implementation
+
+The actual compiler trial forwards only an unexposed indirect `Own` input whose
+complete storage group contains that input and its typed identity CFG carries.
+Loads and interior projections remain snapshots. Liveness must establish a
+private capture before a hidden-result write; defined synchronous callees need
+a finite eager-capture guarantee, while exposed, mixed, result-backed, deferred,
+unknown and recursive cases retain the copy. Review subsequently found that
+Jump-edge writes into the result root need the same guard. The measured compiler
+predates that repair. The final guarded compiler reemits both benchmark LLVM
+modules and three native objects byte-identically (3.69 seconds, exit zero),
+so the retained timings apply to those final outputs without a new timing run.
+Both final focused tests pass (66.33 seconds guarded, a reported 1m 01s build
+and 4.04 seconds execution); the final CLI build takes 34.42 seconds. Source
+pins, patch and all five identity comparisons are retained. Source acceptance,
+ABI and alias attributes are unchanged; the compiler placement choice is
+provisional work-branch choice Q203, with full CI and review pending.
+
+The separate `actual-incoming-forward-discriminator` phase retains 1152 samples
+in `mutation-api-samples.csv`; it is not pooled with the diagnostic floor. The
+wide `try_put` shrinks from 126 to 95 native instructions and its frame from
+288 to zero bytes, removing the 256-byte entry capture. Reached exchange and
+wide caller remain at 87 and 381 instructions. Wide replacement at both sizes
+and wide 64-bucket churn separate in both cohorts; the other ten flat cohort
+cells overlap, with no separated loss. Median ns per complete wide replacement
+(cohort zero / one), with peers from these actual candidate images, are:
+
+| Buckets | Running-index control | Actual compiler candidate | Rust | C++ |
+|---:|---:|---:|---:|---:|
+| 64 | 27.520 / 27.595 | 23.729 / 23.797 | 22.100 / 22.025 | 18.832 / 18.863 |
+| 4096 | 31.159 / 30.723 | 28.000 / 28.228 | 26.987 / 26.993 | 23.659 / 23.767 |
+
+Both arms pass 96 owner traces in timed and accounted images, all ten fault
+controls per arm fail distinctly, and their 32-row ledgers are identical. The
+planner retry passes two tests (20.18 seconds construction, 3.85 execution),
+the final storage module passes 25 tests (0.05 seconds execution, 0.10 guarded)
+and owning-place tests pass 31 (18.06 seconds execution, 18.15 guarded).
+Final formatting/lint passes in 4.11 seconds. These include full copied content, retained inputs, nested-owner
+cleanup, identical and partially overlapping input/result storage, and independent
+tag/tail corruption. The initial fixture parse failure is retained. The complete
+gate and independent review remain pending.
+
+The edge regression uses valid typed IR: unused `AddressOf` operations expose
+the two live private alternatives without changing their values or introducing
+a source `Load` snapshot. Removing only the Jump-write guard makes the planner
+select incoming parameter zero, where it must retain a private copy, and the
+independent native observer rejects a wrong result tag with exit 31 instead
+of zero. Both focused tests fail as intended (Cargo exit 101; 63.44 seconds
+guarded, 1.29 seconds execution). The exact guard-removal patch and log are
+retained. This witnesses a general backend alias obligation, not a WF source
+bug; the restored guard passes both final focused tests.
+
+The normal whole-Map screen retains all 18480 rows and an identical 420-row
+allocation ledger. Of 168 WF cohort cells, 36 separate positively, 130 overlap
+and two separate adversely: cohort-zero wide hit at capacity 64/population 56
+is 3.38 percent slower under native-default hashing and 4.37 percent under
+aligned hashing. The longer hit discriminator retains another 880 rows: all
+eight WF cohort cells overlap, and the wide medians differ by less than 0.18
+percent. The original adverse observations remain; their direction is not
+reproduced, and this does not establish a layout or codegen cause. Neither
+screen includes retained callbacks or explicit rehash timing. The provisional
+compiler choice still needs full CI and review; the overall container performance
+goal is not established and the PR remains Draft.
+
+A separate native boundary diagnostic adds exactly two `alwaysinline` tokens
+on wide `try_put` and exchange. Native construction exits zero in 2.29 seconds,
+but the wide caller grows from 381 to 570 instructions. Its frame shrinks from
+1024 to 448 bytes and the old 264-byte result staging disappears, while equivalent
+256-byte scalar spill/reload traffic remains. This fails the preregistered
+no-relocated-transfer gate. Correctness and timing were not run: it is a rejected
+native-code hypothesis, not a measured performance loss or a general inline
+recommendation. The tiny recipe, criterion, exact patch, pins, direct build
+statuses and relevant caller excerpts are retained separately in the same archive
+under `rejected-inline-boundary`.
+
+[`entry-forward-evidence.tar.gz`](entry-forward-evidence.tar.gz) serves this
+section's reader with scripts, criteria, raw API/whole-Map/long-hit records,
+commands, metadata, statuses, source patch and native excerpts, without binaries.
+It is retained with this attribution trial and replaced or retired when the
+trial is superseded. The incompatible broad CSV schema stays in that one
+archive. `mutation-api-evidence.json` under `ordinary_incoming_backing` pins the
+images, archive, final source and benchmark identity boundary. Native commands
+use the symbolic `LLVM_OBJDUMP` instrument (LLVM22.1.8); the archive labels
+normalized text and preserves the original executed byte hashes separately.

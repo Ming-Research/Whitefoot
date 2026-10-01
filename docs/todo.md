@@ -1238,10 +1238,9 @@ rarely insert at the same place.
   snapshot controls. The
   [transfer evidence](../research/experiments/container-representation/vector-library/RESULTS.md#v061-copy-and-consumption-trial)
   separates this opportunity from the library's remaining element relocation.
-  The isolated HashMap follow-up also finds two 256-byte snapshots across
-  `hash_map_put` and `hash_map_try_put`: each indirect owned parameter is
-  copied by the general function-entry materialization, while call lowering
-  passes its address. The isolated mutation adapter calls `try_put` directly,
+  The isolated HashMap follow-up found two 256-byte snapshots across
+  `hash_map_put` and `hash_map_try_put`: blanket function-entry materialization
+  copied each indirect owned parameter while call lowering passed its address. The isolated mutation adapter calls `try_put` directly,
   so its reached path retains only that helper's entry snapshot; `exchange`'s
   raw-IR copy already folds into register capture in the optimized native code.
   Reopen on the insert/replacement API measurements, not the unreached `put`
@@ -1258,6 +1257,16 @@ rarely insert at the same place.
   shape and generic aggregate transfer lowering before changing general entry
   materialization. Any compiler forwarding change must preserve overlapping-result,
   retained input and constant-input cases.
+  The [ordinary incoming-backing trial](../research/experiments/container-representation/map-library/RESULTS.md#ordinary-incoming-backing-measured-implementation)
+  removes the reached helper's entry copy while keeping source loads and
+  exposed/interior snapshots. The final Jump-edge result-write guard passes its
+  regression, and final emitted/native benchmark outputs are byte-identical
+  to the measured candidate. The original whole-Map adverse hit cells remain
+  recorded alongside the longer overlapping replay. Reopen broader forwarding
+  only for an independently measured remaining copy with
+  complete interference proof. Repeated syntactic-candidate/callee and
+  per-parameter liveness walks are an unprofiled analysis-cost opportunity:
+  profile representative compilation before sharing or caching those facts.
 
 - **Ordered node construction retains wide transfers.** The
   [ordered-map attribution](../research/experiments/container-representation/ordered-library/RESULTS.md#transfer-and-generated-code-attribution)

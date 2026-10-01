@@ -1117,6 +1117,7 @@ impl FunctionFramePlan {
         let mut ordered = Vec::new();
         for (slot, ty) in storage.slots().iter().copied().enumerate() {
             if Some(slot) != result_slot
+                && storage.incoming(slot).is_none()
                 && storage.destination(slot).is_none()
                 && storage.field_destination(slot).is_none()
             {
@@ -1891,7 +1892,13 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                                 self.storage.allocation_root(slot) == result_slot
                             })
                         });
-                        if !parameter.is_indirect() || uses_result != writes_result {
+                        if !parameter.is_indirect()
+                            || uses_result != writes_result
+                            || self
+                                .storage
+                                .slot(*value)
+                                .is_some_and(|slot| self.storage.incoming(slot).is_some())
+                        {
                             continue;
                         }
                         let destination = self.value_place(*value)?;

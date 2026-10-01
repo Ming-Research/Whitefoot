@@ -615,7 +615,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     }
 
     fn slot_place(&mut self, slot: usize) -> Result<String, BackendFailure> {
-        if let Some(destination) = self.storage.destination(slot) {
+        if let Some(parameter) = self.storage.incoming(slot) {
+            Ok(format!("%wf.arg.v{}", parameter.ordinal()))
+        } else if let Some(destination) = self.storage.destination(slot) {
             self.binding_place(destination)
         } else if Some(slot) == self.result_slot {
             Ok(RESULT_POINTER.to_owned())

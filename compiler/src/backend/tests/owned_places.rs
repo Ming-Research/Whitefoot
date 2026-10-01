@@ -2024,3 +2024,244 @@ fn main() -> status: std::process::ExitStatus pure {
         assert!(output.stderr.is_empty(), "{output:?}");
     }
 }
+
+#[test]
+fn incoming_backing_preserves_copies_owners_and_overlapping_results() {
+    let source = br#"struct Row {
+  words: Array<u64, 32>;
+}
+
+struct OwnedRow {
+  words: Array<u64, 31>;
+  child: Box<u64>;
+}
+
+enum Answer<T> {
+  Empty();
+  Full(value: T);
+}
+
+fn capture<T>(value: T) -> result: Answer<T> pure {
+  return Answer<T>::Full(value: move value);
+}
+
+fn alias_roundtrip(value: Row) -> result: Answer<Row> pure {
+  let answer = capture::<Row>(value: value);
+  return answer;
+}
+
+fn owned_roundtrip(value: OwnedRow) -> result: Answer<OwnedRow> pure {
+  let answer = capture::<OwnedRow>(value: move value);
+  return move answer;
+}
+
+fn edge_first(answer: Answer<Row>) -> result: u64 pure {
+  match answer {
+    Empty() => {
+      return 0_u64;
+    }
+    Full(value: held) => {
+      return held.words[0_u64];
+    }
+  }
+}
+
+fn edge_roundtrip(value: Row, choose: u64, expected: u64) -> result: Answer<Row> pure {
+  let left_words = array_filled::<u64, 32>(value: 11_u64);
+  let left_row = Row(words: left_words);
+  let left = Answer<Row>::Full(value: left_row);
+  let right_words = left_words;
+  set right_words[0_u64] = 29_u64;
+  let right_row = Row(words: right_words);
+  let right = Answer<Row>::Full(value: right_row);
+  let selected = if choose != 0_u64 {
+    give left;
+  } else {
+    give right;
+  }
+  let captured = capture::<Row>(value: value);
+  let left_first = edge_first(answer: left);
+  let right_first = edge_first(answer: right);
+  let seen = edge_first(answer: captured);
+  if left_first != 11_u64 {
+    return Answer<Row>::Empty();
+  }
+  if right_first != 29_u64 {
+    return Answer<Row>::Empty();
+  }
+  if seen != expected {
+    return Answer<Row>::Empty();
+  }
+  return selected;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let words = array_filled::<u64, 32>(value: 0_u64);
+  for @fill (index in 0_u64..32_u64) {
+    set words[index] = index +wrap 17_u64;
+  }
+  let original = Row(words: words);
+  let edge = edge_roundtrip(value: original, choose: 0_u64, expected: 17_u64);
+  let edge_seen = edge_first(answer: edge);
+  if edge_seen != 29_u64 {
+    return std::process::exit_status(code: 7_u8);
+  }
+  let copied = alias_roundtrip(value: original);
+  match copied {
+    Empty() => {
+      return std::process::exit_status(code: 1_u8);
+    }
+    Full(value: observed) => {
+      for @check (index in 0_u64..32_u64) {
+        let expected = index +wrap 17_u64;
+        if observed.words[index] != expected {
+          return std::process::exit_status(code: 2_u8);
+        }
+        if original.words[index] != expected {
+          return std::process::exit_status(code: 3_u8);
+        }
+      }
+    }
+  }
+  let owned_words = array_filled::<u64, 31>(value: 0_u64);
+  for @fill_owned (index in 0_u64..31_u64) {
+    set owned_words[index] = index +wrap 71_u64;
+  }
+  let child = box_new::<u64>(value: 103_u64);
+  let owner = OwnedRow(words: owned_words, child: move child);
+  let moved = owned_roundtrip(value: move owner);
+  match move moved {
+    Empty() => {
+      return std::process::exit_status(code: 4_u8);
+    }
+    Full(value: observed) => {
+      for @check_owned (index in 0_u64..31_u64) {
+        let expected = index +wrap 71_u64;
+        if observed.words[index] != expected {
+          return std::process::exit_status(code: 5_u8);
+        }
+      }
+      if observed.child.inner != 103_u64 {
+        return std::process::exit_status(code: 6_u8);
+      }
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let observer = r#"
+#include <stdint.h>
+
+extern int wf_fixture_main(int argc, char **argv);
+extern void wf_alias_roundtrip(void *result, const void *input);
+extern void wf_edge_roundtrip(void *result, const void *input, uint64_t choose, uint64_t expected);
+
+struct Answer { uint32_t tag; uint32_t padding; uint64_t words[32]; };
+_Static_assert(sizeof(struct Answer) == 264, "ordinary enum result size");
+_Static_assert(offsetof(struct Answer, words) == 8, "ordinary enum payload offset");
+
+int main(int argc, char **argv) {
+    int fault = argc > 1 ? atoi(argv[1]) : 0;
+    for (unsigned offset = 0; offset < 2; ++offset) {
+        uint64_t arena[34];
+        for (unsigned i = 0; i < 34; ++i) arena[i] = UINT64_C(0xfeed0000) + i;
+        for (unsigned i = 0; i < 32; ++i) arena[offset + i] = 211 + i;
+        wf_alias_roundtrip(arena, arena + offset);
+        struct Answer answer;
+        memcpy(&answer, arena, sizeof answer);
+        if (fault == 1) answer.tag = 0;
+        if (fault == 2) answer.words[31] ^= 1;
+        if (answer.tag != 1) return 21;
+        for (unsigned i = 0; i < 32; ++i) if (answer.words[i] != 211 + i) return 22;
+        if (arena[33] != UINT64_C(0xfeed0000) + 33) return 23;
+        // Force a result-root phi write before the later incoming capture.
+        // Both private alternatives remain live across that edge.
+        for (uint64_t choose = 0; choose < 2; ++choose) {
+            for (unsigned i = 0; i < 34; ++i) arena[i] = UINT64_C(0xfeed0000) + i;
+            for (unsigned i = 0; i < 32; ++i) arena[offset + i] = 211 + i;
+            wf_edge_roundtrip(arena, arena + offset, choose, 211);
+            memcpy(&answer, arena, sizeof answer);
+            if (answer.tag != 1) return 31;
+            for (unsigned i = 0; i < 32; ++i)
+                if (answer.words[i] != ((i == 0 && !choose) ? 29 : 11)) return 32;
+            if (arena[33] != UINT64_C(0xfeed0000) + 33) return 33;
+        }
+    }
+    uint64_t input[32];
+    for (unsigned i = 0; i < 32; ++i) input[i] = 401 + i;
+    struct Answer result;
+    wf_alias_roundtrip(&result, input);
+    if (result.tag != 1) return 24;
+    for (unsigned i = 0; i < 32; ++i)
+        if (result.words[i] != 401 + i || input[i] != 401 + i) return 25;
+    return wf_fixture_main(argc, argv);
+}
+"#;
+    for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
+        let module = super::system::with_mutated_ir_lowering(source, overlap, |program| {
+            use crate::{IrInstruction, IrOperation, IrType, IrValueId};
+            // Keep the two original SSA sources address-exposed without
+            // replacing their Jump operands by source-language Load
+            // snapshots. These unused typed addresses preserve semantics
+            // and force the result phi to use distinct storage.
+            let function = program
+                .functions
+                .iter_mut()
+                .find(|function| function.name() == "edge_roundtrip")
+                .unwrap();
+            let sources: Vec<_> = function.blocks[0]
+                .instructions
+                .iter()
+                .filter_map(|instruction| match instruction {
+                    IrInstruction::Define {
+                        result,
+                        operation:
+                            IrOperation::ConstructEnum {
+                                nominal, fields, ..
+                            },
+                        ..
+                    } if !fields.is_empty() => Some((*result, *nominal)),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(sources.len(), 2);
+            for (value, nominal) in sources {
+                let referent = crate::IrAddressed::Nominal(nominal);
+                let ty = IrType::Address(referent);
+                let result = IrValueId(function.values.len() as u32);
+                function.values.push(ty);
+                function.blocks[0].instructions.push(IrInstruction::Define {
+                    result,
+                    ty,
+                    operation: IrOperation::AddressOf { value, referent },
+                });
+            }
+            let mut llvm = crate::emit_llvm(program)
+                .expect("typed edge witness emits")
+                .into_string();
+            llvm.push_str(
+                &crate::driver::launcher::render(program, "main")
+                    .expect("ordinary test launcher")
+                    .render(),
+            );
+            llvm
+        })
+        .replace("@main(", "@wf_fixture_main(")
+        .replace("@malloc(", "@wf_test_allocate(")
+        .replace("@free(", "@wf_test_release(");
+        let host = format!("{}{observer}", u64_allocation_observer(1));
+        for module in [module.clone(), retain_calls(&module)] {
+            let output = compile_link_and_run(&module, Some(&host), &[]);
+            assert_eq!(output.status.code(), Some(0), "{output:?}");
+            assert_eq!(output.stdout, b"A1;V103;");
+            assert!(output.stderr.is_empty(), "{output:?}");
+        }
+        // Independently corrupt the tag and the last payload word to check
+        // that both observations reject a wrong complete result.
+        let retained = retain_calls(&module);
+        for (fault, expected) in [("1", 21), ("2", 22)] {
+            let output = compile_link_and_run(&retained, Some(&host), &[fault.as_bytes()]);
+            assert_eq!(output.status.code(), Some(expected), "{output:?}");
+        }
+    }
+}
