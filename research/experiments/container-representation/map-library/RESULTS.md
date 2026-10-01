@@ -3431,3 +3431,138 @@ arms of a fresh common driver. Confirm native peer identity within that pair,
 then apply the existing two-cohort protocol with every adverse observation
 retained. A separated loss defeats a universal improvement claim; any gain
 still qualifies only this query shape and does not select the library layout.
+
+#### Chain home-index short-interval outcome
+
+The first pair adds 1,152 observations with unchanged equal-reserve accounting.
+Each arm passes 98 timed and 98 accounting oracle cases, including the
+capacity-three fallback; the candidate's eight fault controls reject. Native
+peer bodies and addresses match within the new pair. The query grows from
+191 to 234 instructions with its 16-byte frame unchanged, no calls or loop
+spills. The power-of-two route bypasses division but adds conditional work.
+
+| Payload | Buckets | Query | Chain cohort 0 / 1, ns | Masked chain cohort 0 / 1, ns |
+|---|---:|---|---:|---:|
+| 8 bytes | 64 | hit | 1.987 / 1.924 | 1.643 / 1.670 |
+| 8 bytes | 64 | miss | 1.731 / 1.732 | 1.620 / 1.588 |
+| 8 bytes | 4096 | hit | 1.997 / 1.957 | 1.883 / 1.935 |
+| 8 bytes | 4096 | miss | 1.620 / 1.556 | 1.495 / 1.542 |
+| 256 bytes | 64 | hit | 1.888 / 1.902 | 1.642 / 1.629 |
+| 256 bytes | 64 | miss | 1.645 / 1.653 | 1.563 / 1.590 |
+| 256 bytes | 4096 | hit | 2.285 / 2.242 | 2.189 / 2.114 |
+| 256 bytes | 4096 | miss | 1.596 / 1.614 | 1.611 / 1.539 |
+
+Both small-hit shapes and the scalar-small-miss shape separate from the
+unmasked chain's sample range in both cohorts. No separated loss occurs,
+but the record-large-miss median is adverse in cohort zero (1.009 times the
+control). Five shapes separate from the slower native peer in both cohorts;
+both small misses still overlap, and the record-large-hit range now overlaps
+in cohort one despite a favorable median. Retain record-small-miss candidate
+outliers of 2.231 and 2.722 ns. This is not evidence that the mask closes the
+whole query target. Exact deltas and raw samples remain in the existing
+lookup evidence; the full-operation prototype is a separate source.
+
+#### Longer-interval stability discriminator
+
+The initial chain/mask comparison has overlapping small-miss ranges and loses
+one wide-hit range qualification to an adverse sample even though its cohort
+medians improve. Retain that complete short-interval campaign. Before another
+run, change only the existing driver's work argument from 2,097,152 to
+16,777,216 queries per observation: both unchanged linked images, all peers,
+the same nine seeds, two reversed-order cohorts and off-clock preparation and
+cleanup. This targets intervals near or above 25 ms instead of 3 ms and tests
+whether short-interval disturbance explains the inconclusive comparisons.
+It changes neither the algorithm nor the query key distribution. The first
+requested work count, 33,554,432, was refused by the existing driver before
+measurement because its maximum is 16,777,216. Retain that exit-one log as an
+instrument-limit observation, not a timing sample. The revised count is fixed
+before the valid campaign and preserves both binaries unchanged.
+
+Keep the longer campaign separate, preserve every outlier, and apply the same
+full-range comparison and at-most-ten-percent cohort-drift requirement.
+Longer intervals do not themselves qualify a cell, and must not be pooled with
+the earlier samples to manufacture a passing range. Independently check
+checksums and geometry at the larger work count. No simultaneous heavy build
+or timing is allowed during the pair. This is a measurement-stability test,
+not permission to relax the performance target.
+
+#### Longer-interval outcome
+
+All four valid arms returned zero with 288 samples each; the minimum interval
+was 24.082 ms. The 1,152 rows form a separate retained campaign. Median query
+time in nanoseconds, cohort zero / cohort one:
+
+| Payload | Buckets | Query | Masked chain WF | Rust | C++ |
+|---|---:|---|---:|---:|---:|
+| 8 bytes | 64 | hit | 1.609 / 1.602 | 2.145 / 2.140 | 1.608 / 1.585 |
+| 8 bytes | 64 | miss | 1.562 / 1.569 | 1.593 / 1.590 | 1.554 / 1.584 |
+| 8 bytes | 4096 | hit | 1.829 / 1.808 | 2.273 / 2.223 | 1.640 / 1.658 |
+| 8 bytes | 4096 | miss | 1.521 / 1.498 | 2.182 / 2.149 | 1.474 / 1.448 |
+| 256 bytes | 64 | hit | 1.665 / 1.649 | 2.369 / 2.343 | 1.625 / 1.625 |
+| 256 bytes | 64 | miss | 1.573 / 1.557 | 1.592 / 1.636 | 1.563 / 1.565 |
+| 256 bytes | 4096 | hit | 2.080 / 2.181 | 2.457 / 2.541 | 2.122 / 2.196 |
+| 256 bytes | 4096 | miss | 1.534 / 1.562 | 2.164 / 2.213 | 1.754 / 1.808 |
+
+Every candidate median beats the slower peer's median in both cohorts, and
+candidate/control medians improve in all sixteen cells (ratios 0.819--0.977).
+Full-range target separation still holds for only five of eight shapes:
+both small misses overlap, and the record-large hit overlaps in cohort one.
+The maximum cohort drift of each shape's candidate and both peer medians is
+below five percent, so it is range separation, not that drift requirement,
+that remains unqualified. A 2.685 ns candidate sample prevents the latter
+cell from passing. Only the record-small miss separates from the unmasked
+chain in both cohorts; there is no separated loss. Longer intervals have not
+resolved every range comparison. No sample is dropped and no target is
+relaxed; move to mutation costs before selecting the representation.
+
+### Full-operation index-chain correctness discriminator
+
+The separate `full_operation_index_chain` record in the same evidence retains
+ordinary WF operations, additional controls, the exact adaptation of the pinned
+maintained program, all build/run commands and identities, and the policy
+observations. Replaying that patch and concatenation reproduces the measured
+source bytes. The current compiler, library and formal program are unchanged.
+This prototype is bounded to a research ceiling of 8192 and has been executed
+in one optimized native configuration; it is not a three-mode library release.
+
+The map owns an initialized dense prefix of `{key, value, next}` entries and
+integer bucket heads. Replacement exchanges the complete key/value pair.
+Removal unlinks the selected entry, takes the final owner and, when needed,
+swaps it into the hole, then repairs the old final index by hashing the moved
+key and walking its chain with explicit bounds. This adds a hash call on a
+nonfinal removal, but avoids a full-capacity repair scan or additional metadata
+in each entry. For consistent key behavior it preserves reachability. With a
+changed hash environment, repair may find no link; that is an ordinary bounded
+exit, not an assertion that the path is impossible. Every subsequent access
+still checks its index, and dense iteration and cleanup retain every survivor.
+FN-4 requires safety under inconsistent behavior; the library's ordinary map
+meaning additionally requires the consistent protocol its interface states.
+
+Scalar, wrap, collision-cycle, borrowed edit, owning-pair, zero-sized,
+six-position removal-topology and changed-hash cleanup groups each report
+zero failures. The latter preserves and consumes every remaining owning pair
+even when lookup cannot reach the moved entry. Four controls demonstrate that
+the observations can reject wrong behavior: omitting incoming-link repair
+causes 13 topology and five owning failures; omitting the owner swap causes
+24 topology and four owning failures; lost and duplicate release-account
+observations each cause ten owning and eight changed-hash failures. The last
+two controls change the recorded count, never perform duplicate frees.
+All four executables return one; the valid observer returns zero.
+
+The current public shape and pressure policy remain incompatible. The adapted
+corpus preserves all expected values and branches, but reports zero for the
+removed tombstone field. It retains eight failures in the old growth checks:
+seven expected tombstone counts (10, 10, 1, 6, 7, 40, 40) are zero, and one
+post-insertion capacity is 16 where the old pressure rule expects 32. A
+separate replay of all sixteen checkpoints confirms exactly these differences;
+every expected population count matches. The observer explicitly requires
+those eight differences rather than counting this as a compatibility pass.
+
+This establishes a usable mutation prototype, not the final layout or policy.
+Before selecting it, compare isolated replacement and remove/reinsert at fixed
+capacity with the flat library and native peers, including complete returned
+payload digestion and final cleanup. Keep construction and cleanup outside
+timing, use the same hash, keys, seeds and payloads, and exclude automatic
+pressure-policy changes by using the no-growth insertion operation. Rehash
+and reserve costs follow separately. Their measurements and independent
+oracles remain outstanding.

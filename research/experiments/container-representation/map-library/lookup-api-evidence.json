@@ -1238,6 +1238,1695 @@
     },
     "timed_image_sha256": "c8c69d134db2330b554c8bfabc0ae01a0cf456816642d67c5957b5dbe45b59ea"
   },
+  "chain_home_mask_screen": {
+    "account_byte_identical_to_equal_reserve_control": true,
+    "account_csv": "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/chain-mask-screen/accounting.csv",
+    "account_rows": [
+      {
+        "cleanup_checksum": "6569140190154816122",
+        "contract": "isolated-lookup-account",
+        "count": "32",
+        "element_bytes": "8",
+        "entry_capacity": "64",
+        "filled_live_bytes": "2048",
+        "final_live_bytes": "0",
+        "hash": "salted-mix64",
+        "lookups": "2097152",
+        "path": "hit",
+        "peak_bytes": "2048",
+        "physical_backing_target": "64",
+        "query_checksum": "4239522231411693208",
+        "releases": "2",
+        "reported_capacity": "64",
+        "reported_capacity_kind": "head-buckets",
+        "requested_bytes": "2048",
+        "requests": "2",
+        "rounds": "65536",
+        "variant": "whitefoot-index-chain"
+      },
+      {
+        "cleanup_checksum": "6569140190154816122",
+        "contract": "isolated-lookup-account",
+        "count": "32",
+        "element_bytes": "8",
+        "entry_capacity": "64",
+        "filled_live_bytes": "2048",
+        "final_live_bytes": "0",
+        "hash": "salted-mix64",
+        "lookups": "2097152",
+        "path": "miss",
+        "peak_bytes": "2048",
+        "physical_backing_target": "64",
+        "query_checksum": "15132253838967462115",
+        "releases": "2",
+        "reported_capacity": "64",
+        "reported_capacity_kind": "head-buckets",
+        "requested_bytes": "2048",
+        "requests": "2",
+        "rounds": "65536",
+        "variant": "whitefoot-index-chain"
+      },
+      {
+        "cleanup_checksum": "5491702704287014337",
+        "contract": "isolated-lookup-account",
+        "count": "2048",
+        "element_bytes": "8",
+        "entry_capacity": "4096",
+        "filled_live_bytes": "131072",
+        "final_live_bytes": "0",
+        "hash": "salted-mix64",
+        "lookups": "2097152",
+        "path": "hit",
+        "peak_bytes": "131072",
+        "physical_backing_target": "4096",
+        "query_checksum": "12256773017604771992",
+        "releases": "2",
+        "reported_capacity": "4096",
+        "reported_capacity_kind": "head-buckets",
+        "requested_bytes": "131072",
+        "requests": "2",
+        "rounds": "1024",
+        "variant": "whitefoot-index-chain"
+      },
+      {
+        "cleanup_checksum": "5491702704287014337",
+        "contract": "isolated-lookup-account",
+        "count": "2048",
+        "element_bytes": "8",
+        "entry_capacity": "4096",
+        "filled_live_bytes": "131072",
+        "final_live_bytes": "0",
+        "hash": "salted-mix64",
+        "lookups": "2097152",
+        "path": "miss",
+        "peak_bytes": "131072",
+        "physical_backing_target": "4096",
+        "query_checksum": "15132253838967462115",
+        "releases": "2",
+        "reported_capacity": "4096",
+        "reported_capacity_kind": "head-buckets",
+        "requested_bytes": "131072",
+        "requests": "2",
+        "rounds": "1024",
+        "variant": "whitefoot-index-chain"
+      },
+      {
+        "cleanup_checksum": "6569140190154816122",
+        "contract": "isolated-lookup-account",
+        "count": "32",
+        "element_bytes": "8",
+        "entry_capacity": "0",
+        "filled_live_bytes": "1096",
+        "final_live_bytes": "0",
+        "hash": "salted-mix64",
+        "lookups": "2097152",
+        "path": "hit",
+        "peak_bytes": "1096",
+        "physical_backing_target": "64",
+        "query_checksum": "4239522231411693208",
+        "releases": "1",
+        "reported_capacity": "56",
+        "reported_capacity_kind": "usable-entries",
+        "requested_bytes": "1096",
+        "requests": "1",
+        "rounds": "65536",
+        "variant": "rust-hash-map"
+      },
+      {
+        "cleanup_checksum": "6569140190154816122",
+        "contract": "isolated-lookup-account",
+        "count": "32",
+        "element_bytes": "8",
+        "entry_capacity": "0",
+        "filled_live_bytes": "1096",
+        "final_live_bytes": "0",
+        "hash": "salted-mix64",
+        "lookups": "2097152",
+        "path": "miss",
+        "peak_bytes": "1096",
+        "physical_backing_target": "64",
+        "query_checksum": "15132253838967462115",
+        "releases": "1",
+        "reported_capacity": "56",
+        "reported_capacity_kind": "usable-entries",
+        "requested_bytes": "1096",
+        "requests": "1",
+        "rounds": "65536",
+        "variant": "rust-hash-map"
+      },
+      {
+        "cleanup_checksum": "5491702704287014337",
+        "contract": "isolated-lookup-account",
+        "count": "2048",
+        "element_bytes": "8",
+        "entry_capacity": "0",
+        "filled_live_bytes": "69640",
+        "final_live_bytes": "0",
+        "hash": "salted-mix64",
+        "lookups": "2097152",
+        "path": "hit",
+        "peak_bytes": "69640",
+        "physical_backing_target": "4096",
+        "query_checksum": "12256773017604771992",
+        "releases": "1",
+        "reported_capacity": "3584",
+        "reported_capacity_kind": "usable-entries",
+        "requested_bytes": "69640",
+        "requests": "1",
+        "rounds": "1024",
+        "variant": "rust-hash-map"
+      },
+      {
+        "cleanup_checksum": "5491702704287014337",
+        "contract": "isolated-lookup-account",
+        "count": "2048",
+        "element_bytes": "8",
+        "entry_capacity": "0",
+        "filled_live_bytes": "69640",
+        "final_live_bytes": "0",
+        "hash": "salted-mix64",
+        "lookups": "2097152",
+        "path": "miss",
+        "peak_bytes": "69640",
+        "physical_backing_target": "4096",
+        "query_checksum": "15132253838967462115",
+        "releases": "1",
+        "reported_capacity": "3584",
+        "reported_capacity_kind": "usable-entries",
+        "requested_bytes": "69640",
+        "requests": "1",
+        "rounds": "1024",
+        "variant": "rust-hash-map"
+      },
+      {
+        "cleanup_checksum": "6569140190154816122",
+        "contract": "isolated-lookup-account",
+        "count": "32",
+        "element_bytes": "8",
+        "entry_capacity": "0",
+        "filled_live_bytes": "1536",
+        "final_live_bytes": "0",
+        "hash": "salted-mix64",
+        "lookups": "2097152",
+        "path": "hit",
+        "peak_bytes": "1536",
+        "physical_backing_target": "64",
+        "query_checksum": "4239522231411693208",
+        "releases": "33",
+        "reported_capacity": "64",
+        "reported_capacity_kind": "chaining-buckets",
+        "requested_bytes": "1536",
+        "requests": "33",
+        "rounds": "65536",
+        "variant": "cpp-unordered-map"
+      },
+      {
+        "cleanup_checksum": "6569140190154816122",
+        "contract": "isolated-lookup-account",
+        "count": "32",
+        "element_bytes": "8",
+        "entry_capacity": "0",
+        "filled_live_bytes": "1536",
+        "final_live_bytes": "0",
+        "hash": "salted-mix64",
+        "lookups": "2097152",
+        "path": "miss",
+        "peak_bytes": "1536",
+        "physical_backing_target": "64",
+        "query_checksum": "15132253838967462115",
+        "releases": "33",
+        "reported_capacity": "64",
+        "reported_capacity_kind": "chaining-buckets",
+        "requested_bytes": "1536",
+        "requests": "33",
+        "rounds": "65536",
+        "variant": "cpp-unordered-map"
+      },
+      {
+        "cleanup_checksum": "5491702704287014337",
+        "contract": "isolated-lookup-account",
+        "count": "2048",
+        "element_bytes": "8",
+        "entry_capacity": "0",
+        "filled_live_bytes": "98304",
+        "final_live_bytes": "0",
+        "hash": "salted-mix64",
+        "lookups": "2097152",
+        "path": "hit",
+        "peak_bytes": "98304",
+        "physical_backing_target": "4096",
+        "query_checksum": "12256773017604771992",
+        "releases": "2049",
+        "reported_capacity": "4096",
+        "reported_capacity_kind": "chaining-buckets",
+        "requested_bytes": "98304",
+        "requests": "2049",
+        "rounds": "1024",
+        "variant": "cpp-unordered-map"
+      },
+      {
+        "cleanup_checksum": "5491702704287014337",
+        "contract": "isolated-lookup-account",
+        "count": "2048",
+        "element_bytes": "8",
+        "entry_capacity": "0",
+        "filled_live_bytes": "98304",
+        "final_live_bytes": "0",
+        "hash": "salted-mix64",
+        "lookups": "2097152",
+        "path": "miss",
+        "peak_bytes": "98304",
+        "physical_backing_target": "4096",
+        "query_checksum": "15132253838967462115",
+        "releases": "2049",
+        "reported_capacity": "4096",
+        "reported_capacity_kind": "chaining-buckets",
+        "requested_bytes": "98304",
+        "requests": "2049",
+        "rounds": "1024",
+        "variant": "cpp-unordered-map"
+      },
+      {
+        "cleanup_checksum": "6569140190154816122",
+        "contract": "isolated-lookup-account",
+        "count": "32",
+        "element_bytes": "8",
+        "entry_capacity": "0",
+        "filled_live_bytes": "1552",
+        "final_live_bytes": "0",
+        "hash": "salted-mix64",
+        "lookups": "2097152",
+        "path": "hit",
+        "peak_bytes": "1552",
+        "physical_backing_target": "64",
+        "query_checksum": "4239522231411693208",
+        "releases": "1",
+        "reported_capacity": "64",
+        "reported_capacity_kind": "physical-slots",
+        "requested_bytes": "1552",
+        "requests": "1",
+        "rounds": "65536",
+        "variant": "c-linear-probe-attribution"
+      },
+      {
+        "cleanup_checksum": "6569140190154816122",
+        "contract": "isolated-lookup-account",
+        "count": "32",
+        "element_bytes": "8",
+        "entry_capacity": "0",
+        "filled_live_bytes": "1552",
+        "final_live_bytes": "0",
+        "hash": "salted-mix64",
+        "lookups": "2097152",
+        "path": "miss",
+        "peak_bytes": "1552",
+        "physical_backing_target": "64",
+        "query_checksum": "15132253838967462115",
+        "releases": "1",
+        "reported_capacity": "64",
+        "reported_capacity_kind": "physical-slots",
+        "requested_bytes": "1552",
+        "requests": "1",
+        "rounds": "65536",
+        "variant": "c-linear-probe-attribution"
+      },
+      {
+        "cleanup_checksum": "5491702704287014337",
+        "contract": "isolated-lookup-account",
+        "count": "2048",
+        "element_bytes": "8",
+        "entry_capacity": "0",
+        "filled_live_bytes": "98320",
+        "final_live_bytes": "0",
+        "hash": "salted-mix64",
+        "lookups": "2097152",
+        "path": "hit",
+        "peak_bytes": "98320",
+        "physical_backing_target": "4096",
+        "query_checksum": "12256773017604771992",
+        "releases": "1",
+        "reported_capacity": "4096",
+        "reported_capacity_kind": "physical-slots",
+        "requested_bytes": "98320",
+        "requests": "1",
+        "rounds": "1024",
+        "variant": "c-linear-probe-attribution"
+      },
+      {
+        "cleanup_checksum": "5491702704287014337",
+        "contract": "isolated-lookup-account",
+        "count": "2048",
+        "element_bytes": "8",
+        "entry_capacity": "0",
+        "filled_live_bytes": "98320",
+        "final_live_bytes": "0",
+        "hash": "salted-mix64",
+        "lookups": "2097152",
+        "path": "miss",
+        "peak_bytes": "98320",
+        "physical_backing_target": "4096",
+        "query_checksum": "15132253838967462115",
+        "releases": "1",
+        "reported_capacity": "4096",
+        "reported_capacity_kind": "physical-slots",
+        "requested_bytes": "98320",
+        "requests": "1",
+        "rounds": "1024",
+        "variant": "c-linear-probe-attribution"
+      },
+      {
+        "cleanup_checksum": "18266774267156818832",
+        "contract": "isolated-lookup-account",
+        "count": "32",
+        "element_bytes": "256",
+        "entry_capacity": "64",
+        "filled_live_bytes": "17920",
+        "final_live_bytes": "0",
+        "hash": "salted-mix64",
+        "lookups": "2097152",
+        "path": "hit",
+        "peak_bytes": "17920",
+        "physical_backing_target": "64",
+        "query_checksum": "4239522231411693208",
+        "releases": "2",
+        "reported_capacity": "64",
+        "reported_capacity_kind": "head-buckets",
+        "requested_bytes": "17920",
+        "requests": "2",
+        "rounds": "65536",
+        "variant": "whitefoot-index-chain"
+      },
+      {
+        "cleanup_checksum": "18266774267156818832",
+        "contract": "isolated-lookup-account",
+        "count": "32",
+        "element_bytes": "256",
+        "entry_capacity": "64",
+        "filled_live_bytes": "17920",
+        "final_live_bytes": "0",
+        "hash": "salted-mix64",
+        "lookups": "2097152",
+        "path": "miss",
+        "peak_bytes": "17920",
+        "physical_backing_target": "64",
+        "query_checksum": "15132253838967462115",
+        "releases": "2",
+        "reported_capacity": "64",
+        "reported_capacity_kind": "head-buckets",
+        "requested_bytes": "17920",
+        "requests": "2",
+        "rounds": "65536",
+        "variant": "whitefoot-index-chain"
+      },
+      {
+        "cleanup_checksum": "4275004589874247251",
+        "contract": "isolated-lookup-account",
+        "count": "2048",
+        "element_bytes": "256",
+        "entry_capacity": "4096",
+        "filled_live_bytes": "1146880",
+        "final_live_bytes": "0",
+        "hash": "salted-mix64",
+        "lookups": "2097152",
+        "path": "hit",
+        "peak_bytes": "1146880",
+        "physical_backing_target": "4096",
+        "query_checksum": "12256773017604771992",
+        "releases": "2",
+        "reported_capacity": "4096",
+        "reported_capacity_kind": "head-buckets",
+        "requested_bytes": "1146880",
+        "requests": "2",
+        "rounds": "1024",
+        "variant": "whitefoot-index-chain"
+      },
+      {
+        "cleanup_checksum": "4275004589874247251",
+        "contract": "isolated-lookup-account",
+        "count": "2048",
+        "element_bytes": "256",
+        "entry_capacity": "4096",
+        "filled_live_bytes": "1146880",
+        "final_live_bytes": "0",
+        "hash": "salted-mix64",
+        "lookups": "2097152",
+        "path": "miss",
+        "peak_bytes": "1146880",
+        "physical_backing_target": "4096",
+        "query_checksum": "15132253838967462115",
+        "releases": "2",
+        "reported_capacity": "4096",
+        "reported_capacity_kind": "head-buckets",
+        "requested_bytes": "1146880",
+        "requests": "2",
+        "rounds": "1024",
+        "variant": "whitefoot-index-chain"
+      },
+      {
+        "cleanup_checksum": "18266774267156818832",
+        "contract": "isolated-lookup-account",
+        "count": "32",
+        "element_bytes": "256",
+        "entry_capacity": "0",
+        "filled_live_bytes": "16968",
+        "final_live_bytes": "0",
+        "hash": "salted-mix64",
+        "lookups": "2097152",
+        "path": "hit",
+        "peak_bytes": "16968",
+        "physical_backing_target": "64",
+        "query_checksum": "4239522231411693208",
+        "releases": "1",
+        "reported_capacity": "56",
+        "reported_capacity_kind": "usable-entries",
+        "requested_bytes": "16968",
+        "requests": "1",
+        "rounds": "65536",
+        "variant": "rust-hash-map"
+      },
+      {
+        "cleanup_checksum": "18266774267156818832",
+        "contract": "isolated-lookup-account",
+        "count": "32",
+        "element_bytes": "256",
+        "entry_capacity": "0",
+        "filled_live_bytes": "16968",
+        "final_live_bytes": "0",
+        "hash": "salted-mix64",
+        "lookups": "2097152",
+        "path": "miss",
+        "peak_bytes": "16968",
+        "physical_backing_target": "64",
+        "query_checksum": "15132253838967462115",
+        "releases": "1",
+        "reported_capacity": "56",
+        "reported_capacity_kind": "usable-entries",
+        "requested_bytes": "16968",
+        "requests": "1",
+        "rounds": "65536",
+        "variant": "rust-hash-map"
+      },
+      {
+        "cleanup_checksum": "4275004589874247251",
+        "contract": "isolated-lookup-account",
+        "count": "2048",
+        "element_bytes": "256",
+        "entry_capacity": "0",
+        "filled_live_bytes": "1085448",
+        "final_live_bytes": "0",
+        "hash": "salted-mix64",
+        "lookups": "2097152",
+        "path": "hit",
+        "peak_bytes": "1085448",
+        "physical_backing_target": "4096",
+        "query_checksum": "12256773017604771992",
+        "releases": "1",
+        "reported_capacity": "3584",
+        "reported_capacity_kind": "usable-entries",
+        "requested_bytes": "1085448",
+        "requests": "1",
+        "rounds": "1024",
+        "variant": "rust-hash-map"
+      },
+      {
+        "cleanup_checksum": "4275004589874247251",
+        "contract": "isolated-lookup-account",
+        "count": "2048",
+        "element_bytes": "256",
+        "entry_capacity": "0",
+        "filled_live_bytes": "1085448",
+        "final_live_bytes": "0",
+        "hash": "salted-mix64",
+        "lookups": "2097152",
+        "path": "miss",
+        "peak_bytes": "1085448",
+        "physical_backing_target": "4096",
+        "query_checksum": "15132253838967462115",
+        "releases": "1",
+        "reported_capacity": "3584",
+        "reported_capacity_kind": "usable-entries",
+        "requested_bytes": "1085448",
+        "requests": "1",
+        "rounds": "1024",
+        "variant": "rust-hash-map"
+      },
+      {
+        "cleanup_checksum": "18266774267156818832",
+        "contract": "isolated-lookup-account",
+        "count": "32",
+        "element_bytes": "256",
+        "entry_capacity": "0",
+        "filled_live_bytes": "9472",
+        "final_live_bytes": "0",
+        "hash": "salted-mix64",
+        "lookups": "2097152",
+        "path": "hit",
+        "peak_bytes": "9472",
+        "physical_backing_target": "64",
+        "query_checksum": "4239522231411693208",
+        "releases": "33",
+        "reported_capacity": "64",
+        "reported_capacity_kind": "chaining-buckets",
+        "requested_bytes": "9472",
+        "requests": "33",
+        "rounds": "65536",
+        "variant": "cpp-unordered-map"
+      },
+      {
+        "cleanup_checksum": "18266774267156818832",
+        "contract": "isolated-lookup-account",
+        "count": "32",
+        "element_bytes": "256",
+        "entry_capacity": "0",
+        "filled_live_bytes": "9472",
+        "final_live_bytes": "0",
+        "hash": "salted-mix64",
+        "lookups": "2097152",
+        "path": "miss",
+        "peak_bytes": "9472",
+        "physical_backing_target": "64",
+        "query_checksum": "15132253838967462115",
+        "releases": "33",
+        "reported_capacity": "64",
+        "reported_capacity_kind": "chaining-buckets",
+        "requested_bytes": "9472",
+        "requests": "33",
+        "rounds": "65536",
+        "variant": "cpp-unordered-map"
+      },
+      {
+        "cleanup_checksum": "4275004589874247251",
+        "contract": "isolated-lookup-account",
+        "count": "2048",
+        "element_bytes": "256",
+        "entry_capacity": "0",
+        "filled_live_bytes": "606208",
+        "final_live_bytes": "0",
+        "hash": "salted-mix64",
+        "lookups": "2097152",
+        "path": "hit",
+        "peak_bytes": "606208",
+        "physical_backing_target": "4096",
+        "query_checksum": "12256773017604771992",
+        "releases": "2049",
+        "reported_capacity": "4096",
+        "reported_capacity_kind": "chaining-buckets",
+        "requested_bytes": "606208",
+        "requests": "2049",
+        "rounds": "1024",
+        "variant": "cpp-unordered-map"
+      },
+      {
+        "cleanup_checksum": "4275004589874247251",
+        "contract": "isolated-lookup-account",
+        "count": "2048",
+        "element_bytes": "256",
+        "entry_capacity": "0",
+        "filled_live_bytes": "606208",
+        "final_live_bytes": "0",
+        "hash": "salted-mix64",
+        "lookups": "2097152",
+        "path": "miss",
+        "peak_bytes": "606208",
+        "physical_backing_target": "4096",
+        "query_checksum": "15132253838967462115",
+        "releases": "2049",
+        "reported_capacity": "4096",
+        "reported_capacity_kind": "chaining-buckets",
+        "requested_bytes": "606208",
+        "requests": "2049",
+        "rounds": "1024",
+        "variant": "cpp-unordered-map"
+      },
+      {
+        "cleanup_checksum": "18266774267156818832",
+        "contract": "isolated-lookup-account",
+        "count": "32",
+        "element_bytes": "256",
+        "entry_capacity": "0",
+        "filled_live_bytes": "17424",
+        "final_live_bytes": "0",
+        "hash": "salted-mix64",
+        "lookups": "2097152",
+        "path": "hit",
+        "peak_bytes": "17424",
+        "physical_backing_target": "64",
+        "query_checksum": "4239522231411693208",
+        "releases": "1",
+        "reported_capacity": "64",
+        "reported_capacity_kind": "physical-slots",
+        "requested_bytes": "17424",
+        "requests": "1",
+        "rounds": "65536",
+        "variant": "c-linear-probe-attribution"
+      },
+      {
+        "cleanup_checksum": "18266774267156818832",
+        "contract": "isolated-lookup-account",
+        "count": "32",
+        "element_bytes": "256",
+        "entry_capacity": "0",
+        "filled_live_bytes": "17424",
+        "final_live_bytes": "0",
+        "hash": "salted-mix64",
+        "lookups": "2097152",
+        "path": "miss",
+        "peak_bytes": "17424",
+        "physical_backing_target": "64",
+        "query_checksum": "15132253838967462115",
+        "releases": "1",
+        "reported_capacity": "64",
+        "reported_capacity_kind": "physical-slots",
+        "requested_bytes": "17424",
+        "requests": "1",
+        "rounds": "65536",
+        "variant": "c-linear-probe-attribution"
+      },
+      {
+        "cleanup_checksum": "4275004589874247251",
+        "contract": "isolated-lookup-account",
+        "count": "2048",
+        "element_bytes": "256",
+        "entry_capacity": "0",
+        "filled_live_bytes": "1114128",
+        "final_live_bytes": "0",
+        "hash": "salted-mix64",
+        "lookups": "2097152",
+        "path": "hit",
+        "peak_bytes": "1114128",
+        "physical_backing_target": "4096",
+        "query_checksum": "12256773017604771992",
+        "releases": "1",
+        "reported_capacity": "4096",
+        "reported_capacity_kind": "physical-slots",
+        "requested_bytes": "1114128",
+        "requests": "1",
+        "rounds": "1024",
+        "variant": "c-linear-probe-attribution"
+      },
+      {
+        "cleanup_checksum": "4275004589874247251",
+        "contract": "isolated-lookup-account",
+        "count": "2048",
+        "element_bytes": "256",
+        "entry_capacity": "0",
+        "filled_live_bytes": "1114128",
+        "final_live_bytes": "0",
+        "hash": "salted-mix64",
+        "lookups": "2097152",
+        "path": "miss",
+        "peak_bytes": "1114128",
+        "physical_backing_target": "4096",
+        "query_checksum": "15132253838967462115",
+        "releases": "1",
+        "reported_capacity": "4096",
+        "reported_capacity_kind": "physical-slots",
+        "requested_bytes": "1114128",
+        "requests": "1",
+        "rounds": "1024",
+        "variant": "c-linear-probe-attribution"
+      }
+    ],
+    "account_sha256": "9475e58520aa2d39a1c92eee0177f72b6072e93099cdd1499b6d70396c386b9d",
+    "baseline_equal_reserve_chain_added_source_sha256": "8249986487a1e912caaa23bc31d5fe0d3185b20f83eef581ea0108f93ed7e039",
+    "candidate_account_image_sha256": "6946c834d3ffbaab971a5e8f7799f5316ebef7e5330b3f483ac047c43d8a0ceb",
+    "candidate_account_link_command": "clang++ -O3 <repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/chain-mask-screen/driver-account.o .build/lookup-api/enum-domain/rust-account.a .build/lookup-api/enum-domain/cpp-account.o .build/lookup-api/enum-domain/control-account.o .build/native/ordinary_values.o .build/native/sched/core.o .build/native/sched/entry.o .build/native/completion/runtime.o .build/native/completion/file_adapter.o .build/native/completion/bridge.o .build/native/wf_floor.o .build/native/sched/prim_host.o .build/native/completion/wait_host.o .build/native/completion/file_posix.o .build/native/completion/linux_io_uring.o .build/native/ordinary_values_ir.o <repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/chain-mask-screen/candidate-wf-account.o -L<scratch-root>/whitefoot-abseil-20260817.0-install/lib -labsl_raw_hash_set -labsl_cord -labsl_cordz_info -labsl_cord_internal -labsl_cordz_functions -labsl_cordz_handle -labsl_crc_cord_state -labsl_crc32c -labsl_crc_internal -labsl_base_cpu_detect -labsl_str_format_internal -labsl_hash -labsl_city -labsl_hashtablez_sampler -labsl_exponential_biased -labsl_synchronization -labsl_graphcycles_internal -labsl_kernel_timeout_internal -labsl_stacktrace -labsl_symbolize -labsl_debugging_internal -labsl_demangle_internal -labsl_demangle_rust -labsl_decode_rust_punycode -labsl_utf8_for_code_point -labsl_malloc_internal -labsl_tracing_internal -labsl_time -labsl_civil_time -labsl_strings -labsl_strings_internal -labsl_int128 -labsl_base -labsl_spinlock_wait -labsl_source_location -labsl_time_zone -labsl_throw_delegate -labsl_raw_logging_internal -labsl_log_severity -labsl_hardening -framework CoreFoundation -liconv -lSystem -lc -lm -pthread -lm -o <repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/chain-mask-screen/candidate-map-account",
+    "candidate_account_link_ir_sha256": "5f42e6c6dbbd395ec54c18c14b4e3737c1a467fe16255b963aa2a26c6d2aa82e",
+    "candidate_account_object_sha256": "a848027c36ad4dd9f8c1303f5f02490c659a632e2bf2945eba22a80b4a8b2a28",
+    "candidate_added_source_patch": "--- chain-probe.wf\n+++ chain-mask-add.wf\n@@ -38,7 +38,12 @@\n     let offered = HashMapPair<K, V>(key: move key, value: move value);\n     return Err<unit, HashMapPair<K, V>>(error: move offered);\n   }\n-  let bucket = hash % capacity;\n+  let mask = capacity - 1_u64;\n+  let bucket = iand(hash, mask);\n+  let non_power = iand(capacity, mask);\n+  if non_power != 0_u64 {\n+    set bucket = hash % capacity;\n+  }\n   let previous = map^.heads.inner[bucket];\n   let index = map^.entries.inner.len;\n   let node = ChainEntry<K, V>(key: move key, value: move value, next: previous);\n@@ -53,7 +58,12 @@\n   if capacity == 0_u64 {\n     return Err<R, unit>(error: unit);\n   }\n-  let bucket = hash % capacity;\n+  let mask = capacity - 1_u64;\n+  let bucket = iand(hash, mask);\n+  let non_power = iand(capacity, mask);\n+  if non_power != 0_u64 {\n+    set bucket = hash % capacity;\n+  }\n   let index = map^.heads.inner[bucket];\n   let count = map^.entries.inner.len;\n   for (step in 0_u64..count) {\n",
+    "candidate_added_source_patch_sha256": "4887b513a8f9d0a50c0e5504d81b3fd505628f99fa078ef968869b84e4da9e1e",
+    "candidate_added_source_sha256": "572c00c4232e83f57483c0f13b4d377744da37f51fd32bf1c2d2b11a10b2d84c",
+    "candidate_complete_source_sha256": "8ca93a4f14391791405cf65e2fd7f3644809f867d177bad5a24f3120b418d5a7",
+    "candidate_raw_ir_sha256": "fe07ecffb1097b44b1e57381acd2b6611b0743e23a8c8826de418904e44912f4",
+    "candidate_timed_image_sha256": "76254f0d71a31e289168d24720139506d3b2b26431ae044544ef224a0b8a7c76",
+    "candidate_timed_link_command": "clang++ -O3 <repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/chain-mask-screen/driver-timed.o .build/lookup-api/enum-domain/rust-timed.a .build/lookup-api/enum-domain/cpp-timed.o .build/lookup-api/enum-domain/control-timed.o .build/native/ordinary_values.o .build/native/sched/core.o .build/native/sched/entry.o .build/native/completion/runtime.o .build/native/completion/file_adapter.o .build/native/completion/bridge.o .build/native/wf_floor.o .build/native/sched/prim_host.o .build/native/completion/wait_host.o .build/native/completion/file_posix.o .build/native/completion/linux_io_uring.o .build/native/ordinary_values_ir.o <repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/chain-mask-screen/candidate-wf-timed.o -L<scratch-root>/whitefoot-abseil-20260817.0-install/lib -labsl_raw_hash_set -labsl_cord -labsl_cordz_info -labsl_cord_internal -labsl_cordz_functions -labsl_cordz_handle -labsl_crc_cord_state -labsl_crc32c -labsl_crc_internal -labsl_base_cpu_detect -labsl_str_format_internal -labsl_hash -labsl_city -labsl_hashtablez_sampler -labsl_exponential_biased -labsl_synchronization -labsl_graphcycles_internal -labsl_kernel_timeout_internal -labsl_stacktrace -labsl_symbolize -labsl_debugging_internal -labsl_demangle_internal -labsl_demangle_rust -labsl_decode_rust_punycode -labsl_utf8_for_code_point -labsl_malloc_internal -labsl_tracing_internal -labsl_time -labsl_civil_time -labsl_strings -labsl_strings_internal -labsl_int128 -labsl_base -labsl_spinlock_wait -labsl_source_location -labsl_time_zone -labsl_throw_delegate -labsl_raw_logging_internal -labsl_log_severity -labsl_hardening -framework CoreFoundation -liconv -lSystem -lc -lm -pthread -lm -o <repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/chain-mask-screen/candidate-map-timed",
+    "candidate_timed_link_ir_sha256": "01b48ddc77d20a00cd5e5d73e956f018ad70a6624fe24a7e28b3c3427e7aa524",
+    "candidate_timed_object_sha256": "e42f50bc8b06c35f4481fd788ef9bac5ee51dd8d279e1f1314cb24925d2fb509",
+    "candidate_unmodified_object_sha256": "aab4c345496706e241a16efe6b0571e78ebd4ab8f2db64127bdbe3f4abbad71a",
+    "checks": {
+      "account_rows": 32,
+      "all_direct_exit": 0,
+      "candidate_account_lookup_cases": 98,
+      "candidate_ordinary_negative_controls": 8,
+      "candidate_timed_lookup_cases": 98,
+      "control_account_lookup_cases": 98,
+      "control_timed_lookup_cases": 98,
+      "final_live_bytes": 0,
+      "wf_only_nonpower_capacity3_hit_miss_cases": 2
+    },
+    "common_scratch_driver_diff": "--- driver-chain.c\n+++ driver-chain-mask.c\n@@ -383,6 +383,10 @@\n                                      LOOKUP_FAULT_NONE);\n                     ++checked;\n                 }\n+    for (unsigned miss = 0; miss < 2; ++miss) {\n+        lookup_check_one(&lookup_apis[0], 3, 17, miss != 0, 2, LOOKUP_FAULT_NONE);\n+        ++checked;\n+    }\n     printf(\"map lookup: %zu isolated owner/query/cleanup cases passed\\n\", checked);\n }\n \n",
+    "common_scratch_driver_sha256": "5ec0e2a1503b30a1f9cd43ead82703b8c56133a4fd1cf84f808b846c2e40c1a4",
+    "compiler_sha256": "9df0737701f58992f55d1a09f73836483c207196e609c4d1c2df373573948f42",
+    "control_account_image_sha256": "c2a935aa1652164a51fb40b862f48c5ee31df0270ac0b07b0f23f90e88f1ed93",
+    "control_timed_image_sha256": "cc34f8e9d65e10f55d8c0583c4b599b47824087b0736f16ef2148d6a15b8c785",
+    "control_timed_link_command": "clang++ -O3 <repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/chain-mask-screen/driver-timed.o .build/lookup-api/enum-domain/rust-timed.a .build/lookup-api/enum-domain/cpp-timed.o .build/lookup-api/enum-domain/control-timed.o .build/native/ordinary_values.o .build/native/sched/core.o .build/native/sched/entry.o .build/native/completion/runtime.o .build/native/completion/file_adapter.o .build/native/completion/bridge.o .build/native/wf_floor.o .build/native/sched/prim_host.o .build/native/completion/wait_host.o .build/native/completion/file_posix.o .build/native/completion/linux_io_uring.o .build/native/ordinary_values_ir.o <repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/chain-screen/wf-timed.o -L<scratch-root>/whitefoot-abseil-20260817.0-install/lib -labsl_raw_hash_set -labsl_cord -labsl_cordz_info -labsl_cord_internal -labsl_cordz_functions -labsl_cordz_handle -labsl_crc_cord_state -labsl_crc32c -labsl_crc_internal -labsl_base_cpu_detect -labsl_str_format_internal -labsl_hash -labsl_city -labsl_hashtablez_sampler -labsl_exponential_biased -labsl_synchronization -labsl_graphcycles_internal -labsl_kernel_timeout_internal -labsl_stacktrace -labsl_symbolize -labsl_debugging_internal -labsl_demangle_internal -labsl_demangle_rust -labsl_decode_rust_punycode -labsl_utf8_for_code_point -labsl_malloc_internal -labsl_tracing_internal -labsl_time -labsl_civil_time -labsl_strings -labsl_strings_internal -labsl_int128 -labsl_base -labsl_spinlock_wait -labsl_source_location -labsl_time_zone -labsl_throw_delegate -labsl_raw_logging_internal -labsl_log_severity -labsl_hardening -framework CoreFoundation -liconv -lSystem -lc -lm -pthread -lm -o <repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/chain-mask-screen/control-map-timed",
+    "criterion_sha256": "2e146ad7b54a2d5c84cd501dbe42bceb0ee4715e7e56c22512ad60d0ee7b0317",
+    "long_work_stability": {
+      "attempted_unsupported_guard_exit": 1,
+      "attempted_unsupported_guard_log": "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/chain-mask-screen/long-control-cohort-0.log",
+      "attempted_unsupported_reason": "unchanged parse_work limit 16,777,216; zero CSV rows; not a timing sample",
+      "attempted_unsupported_work": 33554432,
+      "cohorts": 2,
+      "criterion_sha256": "7e49af31d461bc237137ed5b76300c6d81656df0b2ec0b3b461ccad2df5dc2fc",
+      "criterion_text": "Chain-home mask stability followup registered before its long-work timing.\nUse the exact frozen fresh linked binaries from the short campaign: control SHA256 cc34f8e9d65e10f55d8c0583c4b599b47824087b0736f16ef2148d6a15b8c785; candidate SHA256 76254f0d71a31e289168d24720139506d3b2b26431ae044544ef224a0b8a7c76. Source, account/control oracles, native peer identity, 64/4096 half-load geometry and 8/256-byte values remain identical. An initial requested 33,554,432 work argument was refused by the unchanged driver parser (limit 16,777,216) before producing any CSV row; its direct exit1 log is retained as an instrument-limit observation. This criterion was corrected before any valid long-work sample. The sole measured factor is work argument 16,777,216 lookup calls/sample instead of 2,097,152; lookup_rounds supplies equal total calls in every compared arm. No timer/control subtraction.\nRun the existing two-cohort nine-seed four-arm order: control c0, candidate c0, candidate c1, control c1. Retain all 1,152 rows, including every outlier and adverse result, separate from the 2,097,152-work campaign. The long campaign independently uses the same full-range slower-peer target, candidate/control range separation and <=10% between-cohort median stability. Do not pool short and long medians, filter outliers, change thresholds, or reinterpret an overlap as qualified. A long-work improvement can show the short interval was unstable, but cannot erase its retained contradiction. No source change or production selection follows from this timing alone.\n",
+      "decision": "Do not pool with short campaign. At longer intervals all median shapes improve but separated gains shift to the record-small miss only; target stays5/8, adverse wide4096 hit cohort1 remains. Instrument resolution alone does not explain short campaign overlap.",
+      "measured_work_per_sample": 16777216,
+      "minimum_elapsed_ns": 24082000,
+      "order": [
+        "chain-home-mask-control/c0",
+        "chain-home-mask-candidate/c0",
+        "chain-home-mask-candidate/c1",
+        "chain-home-mask-control/c1"
+      ],
+      "rows": 1152,
+      "same_frozen_images_as_short": true,
+      "same_oracle_account_and_peer_identity_as_short": true,
+      "samples_per_cohort": 9,
+      "strict_gain_shapes_both_cohorts": 1,
+      "strict_loss_shapes_either_cohort": 0,
+      "strict_target_shapes_both_cohorts": 5,
+      "summary": [
+        {
+          "cohort": 0,
+          "control_chain_median_ns_per_lookup": 2.27195,
+          "control_chain_range_ns_per_lookup": [
+            2.229452,
+            2.540052
+          ],
+          "element_bytes": 256,
+          "head_bucket_target": 4096,
+          "initialized_entries": 2048,
+          "mask_chain_median_ns_per_lookup": 2.079546,
+          "mask_chain_range_ns_per_lookup": [
+            1.989603,
+            2.258062
+          ],
+          "mask_to_control_median_ratio": 0.915313,
+          "path": "hit",
+          "reserved_entry_capacity": 4096,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 2.457023,
+          "slower_peer_range_ns_per_lookup": [
+            2.438247,
+            2.558053
+          ],
+          "strict_mask_below_control": false,
+          "strict_mask_below_slower_peer": true,
+          "strict_mask_slower_than_control": false
+        },
+        {
+          "cohort": 1,
+          "control_chain_median_ns_per_lookup": 2.283096,
+          "control_chain_range_ns_per_lookup": [
+            2.23875,
+            2.409399
+          ],
+          "element_bytes": 256,
+          "head_bucket_target": 4096,
+          "initialized_entries": 2048,
+          "mask_chain_median_ns_per_lookup": 2.181351,
+          "mask_chain_range_ns_per_lookup": [
+            2.029181,
+            2.684772
+          ],
+          "mask_to_control_median_ratio": 0.955435,
+          "path": "hit",
+          "reserved_entry_capacity": 4096,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 2.540767,
+          "slower_peer_range_ns_per_lookup": [
+            2.486467,
+            4.719198
+          ],
+          "strict_mask_below_control": false,
+          "strict_mask_below_slower_peer": false,
+          "strict_mask_slower_than_control": false
+        },
+        {
+          "cohort": 0,
+          "control_chain_median_ns_per_lookup": 1.844466,
+          "control_chain_range_ns_per_lookup": [
+            1.828492,
+            2.007306
+          ],
+          "element_bytes": 256,
+          "head_bucket_target": 64,
+          "initialized_entries": 32,
+          "mask_chain_median_ns_per_lookup": 1.664758,
+          "mask_chain_range_ns_per_lookup": [
+            1.596451,
+            1.926661
+          ],
+          "mask_to_control_median_ratio": 0.902569,
+          "path": "hit",
+          "reserved_entry_capacity": 64,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 2.369285,
+          "slower_peer_range_ns_per_lookup": [
+            2.296746,
+            2.870142
+          ],
+          "strict_mask_below_control": false,
+          "strict_mask_below_slower_peer": true,
+          "strict_mask_slower_than_control": false
+        },
+        {
+          "cohort": 1,
+          "control_chain_median_ns_per_lookup": 2.012551,
+          "control_chain_range_ns_per_lookup": [
+            1.867473,
+            2.314389
+          ],
+          "element_bytes": 256,
+          "head_bucket_target": 64,
+          "initialized_entries": 32,
+          "mask_chain_median_ns_per_lookup": 1.648843,
+          "mask_chain_range_ns_per_lookup": [
+            1.609623,
+            1.832962
+          ],
+          "mask_to_control_median_ratio": 0.81928,
+          "path": "hit",
+          "reserved_entry_capacity": 64,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 2.343416,
+          "slower_peer_range_ns_per_lookup": [
+            2.294242,
+            3.716767
+          ],
+          "strict_mask_below_control": true,
+          "strict_mask_below_slower_peer": true,
+          "strict_mask_slower_than_control": false
+        },
+        {
+          "cohort": 0,
+          "control_chain_median_ns_per_lookup": 1.600325,
+          "control_chain_range_ns_per_lookup": [
+            1.58006,
+            1.856923
+          ],
+          "element_bytes": 256,
+          "head_bucket_target": 4096,
+          "initialized_entries": 2048,
+          "mask_chain_median_ns_per_lookup": 1.533747,
+          "mask_chain_range_ns_per_lookup": [
+            1.514256,
+            1.667321
+          ],
+          "mask_to_control_median_ratio": 0.958397,
+          "path": "miss",
+          "reserved_entry_capacity": 4096,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 2.164125,
+          "slower_peer_range_ns_per_lookup": [
+            2.124488,
+            2.191126
+          ],
+          "strict_mask_below_control": false,
+          "strict_mask_below_slower_peer": true,
+          "strict_mask_slower_than_control": false
+        },
+        {
+          "cohort": 1,
+          "control_chain_median_ns_per_lookup": 1.599073,
+          "control_chain_range_ns_per_lookup": [
+            1.579821,
+            1.628101
+          ],
+          "element_bytes": 256,
+          "head_bucket_target": 4096,
+          "initialized_entries": 2048,
+          "mask_chain_median_ns_per_lookup": 1.562417,
+          "mask_chain_range_ns_per_lookup": [
+            1.524329,
+            1.646161
+          ],
+          "mask_to_control_median_ratio": 0.977076,
+          "path": "miss",
+          "reserved_entry_capacity": 4096,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 2.212524,
+          "slower_peer_range_ns_per_lookup": [
+            2.152562,
+            2.301514
+          ],
+          "strict_mask_below_control": false,
+          "strict_mask_below_slower_peer": true,
+          "strict_mask_slower_than_control": false
+        },
+        {
+          "cohort": 0,
+          "control_chain_median_ns_per_lookup": 1.646698,
+          "control_chain_range_ns_per_lookup": [
+            1.614928,
+            1.741827
+          ],
+          "element_bytes": 256,
+          "head_bucket_target": 64,
+          "initialized_entries": 32,
+          "mask_chain_median_ns_per_lookup": 1.573324,
+          "mask_chain_range_ns_per_lookup": [
+            1.544178,
+            1.60408
+          ],
+          "mask_to_control_median_ratio": 0.955442,
+          "path": "miss",
+          "reserved_entry_capacity": 64,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 1.592278,
+          "slower_peer_range_ns_per_lookup": [
+            1.577735,
+            2.057374
+          ],
+          "strict_mask_below_control": true,
+          "strict_mask_below_slower_peer": false,
+          "strict_mask_slower_than_control": false
+        },
+        {
+          "cohort": 1,
+          "control_chain_median_ns_per_lookup": 1.669943,
+          "control_chain_range_ns_per_lookup": [
+            1.624227,
+            1.740992
+          ],
+          "element_bytes": 256,
+          "head_bucket_target": 64,
+          "initialized_entries": 32,
+          "mask_chain_median_ns_per_lookup": 1.557469,
+          "mask_chain_range_ns_per_lookup": [
+            1.544356,
+            1.614988
+          ],
+          "mask_to_control_median_ratio": 0.932648,
+          "path": "miss",
+          "reserved_entry_capacity": 64,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 1.636028,
+          "slower_peer_range_ns_per_lookup": [
+            1.568019,
+            2.068698
+          ],
+          "strict_mask_below_control": true,
+          "strict_mask_below_slower_peer": false,
+          "strict_mask_slower_than_control": false
+        },
+        {
+          "cohort": 0,
+          "control_chain_median_ns_per_lookup": 1.958907,
+          "control_chain_range_ns_per_lookup": [
+            1.891315,
+            2.074361
+          ],
+          "element_bytes": 8,
+          "head_bucket_target": 4096,
+          "initialized_entries": 2048,
+          "mask_chain_median_ns_per_lookup": 1.829147,
+          "mask_chain_range_ns_per_lookup": [
+            1.749754,
+            1.940727
+          ],
+          "mask_to_control_median_ratio": 0.933759,
+          "path": "hit",
+          "reserved_entry_capacity": 4096,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 2.272964,
+          "slower_peer_range_ns_per_lookup": [
+            2.190173,
+            2.420604
+          ],
+          "strict_mask_below_control": false,
+          "strict_mask_below_slower_peer": true,
+          "strict_mask_slower_than_control": false
+        },
+        {
+          "cohort": 1,
+          "control_chain_median_ns_per_lookup": 1.968622,
+          "control_chain_range_ns_per_lookup": [
+            1.94943,
+            2.078414
+          ],
+          "element_bytes": 8,
+          "head_bucket_target": 4096,
+          "initialized_entries": 2048,
+          "mask_chain_median_ns_per_lookup": 1.807868,
+          "mask_chain_range_ns_per_lookup": [
+            1.78206,
+            1.928508
+          ],
+          "mask_to_control_median_ratio": 0.918342,
+          "path": "hit",
+          "reserved_entry_capacity": 4096,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 2.222717,
+          "slower_peer_range_ns_per_lookup": [
+            2.199829,
+            2.328873
+          ],
+          "strict_mask_below_control": true,
+          "strict_mask_below_slower_peer": true,
+          "strict_mask_slower_than_control": false
+        },
+        {
+          "cohort": 0,
+          "control_chain_median_ns_per_lookup": 1.886785,
+          "control_chain_range_ns_per_lookup": [
+            1.835465,
+            2.008677
+          ],
+          "element_bytes": 8,
+          "head_bucket_target": 64,
+          "initialized_entries": 32,
+          "mask_chain_median_ns_per_lookup": 1.608968,
+          "mask_chain_range_ns_per_lookup": [
+            1.588464,
+            1.878917
+          ],
+          "mask_to_control_median_ratio": 0.852756,
+          "path": "hit",
+          "reserved_entry_capacity": 64,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 2.144456,
+          "slower_peer_range_ns_per_lookup": [
+            2.106547,
+            2.636611
+          ],
+          "strict_mask_below_control": false,
+          "strict_mask_below_slower_peer": true,
+          "strict_mask_slower_than_control": false
+        },
+        {
+          "cohort": 1,
+          "control_chain_median_ns_per_lookup": 1.848519,
+          "control_chain_range_ns_per_lookup": [
+            1.832664,
+            2.036333
+          ],
+          "element_bytes": 8,
+          "head_bucket_target": 64,
+          "initialized_entries": 32,
+          "mask_chain_median_ns_per_lookup": 1.602113,
+          "mask_chain_range_ns_per_lookup": [
+            1.591802,
+            1.756489
+          ],
+          "mask_to_control_median_ratio": 0.866701,
+          "path": "hit",
+          "reserved_entry_capacity": 64,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 2.140403,
+          "slower_peer_range_ns_per_lookup": [
+            2.126992,
+            2.67297
+          ],
+          "strict_mask_below_control": true,
+          "strict_mask_below_slower_peer": true,
+          "strict_mask_slower_than_control": false
+        },
+        {
+          "cohort": 0,
+          "control_chain_median_ns_per_lookup": 1.57249,
+          "control_chain_range_ns_per_lookup": [
+            1.535058,
+            1.659214
+          ],
+          "element_bytes": 8,
+          "head_bucket_target": 4096,
+          "initialized_entries": 2048,
+          "mask_chain_median_ns_per_lookup": 1.520813,
+          "mask_chain_range_ns_per_lookup": [
+            1.485467,
+            1.603186
+          ],
+          "mask_to_control_median_ratio": 0.967137,
+          "path": "miss",
+          "reserved_entry_capacity": 4096,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 2.182364,
+          "slower_peer_range_ns_per_lookup": [
+            2.129674,
+            2.413511
+          ],
+          "strict_mask_below_control": false,
+          "strict_mask_below_slower_peer": true,
+          "strict_mask_slower_than_control": false
+        },
+        {
+          "cohort": 1,
+          "control_chain_median_ns_per_lookup": 1.568317,
+          "control_chain_range_ns_per_lookup": [
+            1.550555,
+            1.607776
+          ],
+          "element_bytes": 8,
+          "head_bucket_target": 4096,
+          "initialized_entries": 2048,
+          "mask_chain_median_ns_per_lookup": 1.498342,
+          "mask_chain_range_ns_per_lookup": [
+            1.478612,
+            1.558781
+          ],
+          "mask_to_control_median_ratio": 0.955382,
+          "path": "miss",
+          "reserved_entry_capacity": 4096,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 2.149343,
+          "slower_peer_range_ns_per_lookup": [
+            2.079368,
+            2.208233
+          ],
+          "strict_mask_below_control": false,
+          "strict_mask_below_slower_peer": true,
+          "strict_mask_slower_than_control": false
+        },
+        {
+          "cohort": 0,
+          "control_chain_median_ns_per_lookup": 1.684546,
+          "control_chain_range_ns_per_lookup": [
+            1.612782,
+            1.743019
+          ],
+          "element_bytes": 8,
+          "head_bucket_target": 64,
+          "initialized_entries": 32,
+          "mask_chain_median_ns_per_lookup": 1.562059,
+          "mask_chain_range_ns_per_lookup": [
+            1.542151,
+            1.589894
+          ],
+          "mask_to_control_median_ratio": 0.927288,
+          "path": "miss",
+          "reserved_entry_capacity": 64,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 1.593113,
+          "slower_peer_range_ns_per_lookup": [
+            1.561701,
+            2.056241
+          ],
+          "strict_mask_below_control": true,
+          "strict_mask_below_slower_peer": false,
+          "strict_mask_slower_than_control": false
+        },
+        {
+          "cohort": 1,
+          "control_chain_median_ns_per_lookup": 1.65683,
+          "control_chain_range_ns_per_lookup": [
+            1.624405,
+            1.675606
+          ],
+          "element_bytes": 8,
+          "head_bucket_target": 64,
+          "initialized_entries": 32,
+          "mask_chain_median_ns_per_lookup": 1.568794,
+          "mask_chain_range_ns_per_lookup": [
+            1.543999,
+            1.66893
+          ],
+          "mask_to_control_median_ratio": 0.946865,
+          "path": "miss",
+          "reserved_entry_capacity": 64,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 1.589596,
+          "slower_peer_range_ns_per_lookup": [
+            1.56045,
+            2.086222
+          ],
+          "strict_mask_below_control": false,
+          "strict_mask_below_slower_peer": false,
+          "strict_mask_slower_than_control": false
+        }
+      ]
+    },
+    "native": "Selected pow2 path TST/branch skips UDIV/MSUB and reaches AND; arbitrary cap3 fallback retains modulo in both insertion and lookup. Reached query191->234 instructions,16B frame unchanged,zero hot calls/loop spills. Per-node entries pointer reload and bounded traversal remain. Selected posthash-to-empty-miss path8 versus7 executed instructions. Six C/Rust/C++ peer query raw bytes and image-relative addresses identical between fresh linked arms.",
+    "pair": {
+      "cohorts": 2,
+      "decision": "three repeatably separated gains without separated loss; target5/8 versus equal-reserve control6/8 because wide4096-hit cohort1 range overlaps slower Rust. Neither64 miss qualifies. Query-only evidence, no full-map selection.",
+      "minimum_elapsed_ns": 3023000,
+      "order": [
+        "chain-home-mask-control/c0",
+        "chain-home-mask-candidate/c0",
+        "chain-home-mask-candidate/c1",
+        "chain-home-mask-control/c1"
+      ],
+      "rows": 1152,
+      "samples_per_cohort": 9,
+      "strict_gain_shapes_both_cohorts": 3,
+      "strict_loss_shapes_either_cohort": 0,
+      "strict_target_shapes_both_cohorts": 5,
+      "summary": [
+        {
+          "cohort": 0,
+          "control_chain_median_ns_per_lookup": 2.28548,
+          "control_chain_range_ns_per_lookup": [
+            2.211094,
+            2.392292
+          ],
+          "element_bytes": 256,
+          "head_bucket_target": 4096,
+          "initialized_entries": 2048,
+          "mask_chain_median_ns_per_lookup": 2.188683,
+          "mask_chain_range_ns_per_lookup": [
+            2.078533,
+            2.364159
+          ],
+          "mask_to_control_median_ratio": 0.957647,
+          "path": "hit",
+          "reserved_entry_capacity": 4096,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 2.471447,
+          "slower_peer_range_ns_per_lookup": [
+            2.439976,
+            2.588272
+          ],
+          "strict_mask_below_control": false,
+          "strict_mask_below_slower_peer": true,
+          "strict_mask_slower_than_control": false
+        },
+        {
+          "cohort": 1,
+          "control_chain_median_ns_per_lookup": 2.241611,
+          "control_chain_range_ns_per_lookup": [
+            2.174854,
+            2.522469
+          ],
+          "element_bytes": 256,
+          "head_bucket_target": 4096,
+          "initialized_entries": 2048,
+          "mask_chain_median_ns_per_lookup": 2.113819,
+          "mask_chain_range_ns_per_lookup": [
+            2.018452,
+            2.454758
+          ],
+          "mask_to_control_median_ratio": 0.942991,
+          "path": "hit",
+          "reserved_entry_capacity": 4096,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 2.470493,
+          "slower_peer_range_ns_per_lookup": [
+            2.441406,
+            2.563
+          ],
+          "strict_mask_below_control": false,
+          "strict_mask_below_slower_peer": false,
+          "strict_mask_slower_than_control": false
+        },
+        {
+          "cohort": 0,
+          "control_chain_median_ns_per_lookup": 1.887798,
+          "control_chain_range_ns_per_lookup": [
+            1.826286,
+            1.966476
+          ],
+          "element_bytes": 256,
+          "head_bucket_target": 64,
+          "initialized_entries": 32,
+          "mask_chain_median_ns_per_lookup": 1.642227,
+          "mask_chain_range_ns_per_lookup": [
+            1.581192,
+            1.706123
+          ],
+          "mask_to_control_median_ratio": 0.869917,
+          "path": "hit",
+          "reserved_entry_capacity": 64,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 2.338886,
+          "slower_peer_range_ns_per_lookup": [
+            2.281666,
+            2.872467
+          ],
+          "strict_mask_below_control": true,
+          "strict_mask_below_slower_peer": true,
+          "strict_mask_slower_than_control": false
+        },
+        {
+          "cohort": 1,
+          "control_chain_median_ns_per_lookup": 1.901627,
+          "control_chain_range_ns_per_lookup": [
+            1.832962,
+            1.94931
+          ],
+          "element_bytes": 256,
+          "head_bucket_target": 64,
+          "initialized_entries": 32,
+          "mask_chain_median_ns_per_lookup": 1.629353,
+          "mask_chain_range_ns_per_lookup": [
+            1.589298,
+            1.683712
+          ],
+          "mask_to_control_median_ratio": 0.85682,
+          "path": "hit",
+          "reserved_entry_capacity": 64,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 2.332211,
+          "slower_peer_range_ns_per_lookup": [
+            2.277851,
+            2.842903
+          ],
+          "strict_mask_below_control": true,
+          "strict_mask_below_slower_peer": true,
+          "strict_mask_slower_than_control": false
+        },
+        {
+          "cohort": 0,
+          "control_chain_median_ns_per_lookup": 1.596451,
+          "control_chain_range_ns_per_lookup": [
+            1.578331,
+            1.699448
+          ],
+          "element_bytes": 256,
+          "head_bucket_target": 4096,
+          "initialized_entries": 2048,
+          "mask_chain_median_ns_per_lookup": 1.611233,
+          "mask_chain_range_ns_per_lookup": [
+            1.528263,
+            1.791477
+          ],
+          "mask_to_control_median_ratio": 1.009259,
+          "path": "miss",
+          "reserved_entry_capacity": 4096,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 2.212524,
+          "slower_peer_range_ns_per_lookup": [
+            2.115726,
+            2.323151
+          ],
+          "strict_mask_below_control": false,
+          "strict_mask_below_slower_peer": true,
+          "strict_mask_slower_than_control": false
+        },
+        {
+          "cohort": 1,
+          "control_chain_median_ns_per_lookup": 1.614094,
+          "control_chain_range_ns_per_lookup": [
+            1.567364,
+            1.767159
+          ],
+          "element_bytes": 256,
+          "head_bucket_target": 4096,
+          "initialized_entries": 2048,
+          "mask_chain_median_ns_per_lookup": 1.538754,
+          "mask_chain_range_ns_per_lookup": [
+            1.508236,
+            1.663208
+          ],
+          "mask_to_control_median_ratio": 0.953323,
+          "path": "miss",
+          "reserved_entry_capacity": 4096,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 2.16198,
+          "slower_peer_range_ns_per_lookup": [
+            2.116203,
+            2.253532
+          ],
+          "strict_mask_below_control": false,
+          "strict_mask_below_slower_peer": true,
+          "strict_mask_slower_than_control": false
+        },
+        {
+          "cohort": 0,
+          "control_chain_median_ns_per_lookup": 1.645088,
+          "control_chain_range_ns_per_lookup": [
+            1.605511,
+            1.689434
+          ],
+          "element_bytes": 256,
+          "head_bucket_target": 64,
+          "initialized_entries": 32,
+          "mask_chain_median_ns_per_lookup": 1.563072,
+          "mask_chain_range_ns_per_lookup": [
+            1.539707,
+            2.230644
+          ],
+          "mask_to_control_median_ratio": 0.950145,
+          "path": "miss",
+          "reserved_entry_capacity": 64,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 1.631737,
+          "slower_peer_range_ns_per_lookup": [
+            1.573086,
+            2.117157
+          ],
+          "strict_mask_below_control": false,
+          "strict_mask_below_slower_peer": false,
+          "strict_mask_slower_than_control": false
+        },
+        {
+          "cohort": 1,
+          "control_chain_median_ns_per_lookup": 1.652718,
+          "control_chain_range_ns_per_lookup": [
+            1.616001,
+            1.730919
+          ],
+          "element_bytes": 256,
+          "head_bucket_target": 64,
+          "initialized_entries": 32,
+          "mask_chain_median_ns_per_lookup": 1.589775,
+          "mask_chain_range_ns_per_lookup": [
+            1.54829,
+            2.722263
+          ],
+          "mask_to_control_median_ratio": 0.961916,
+          "path": "miss",
+          "reserved_entry_capacity": 64,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 1.584053,
+          "slower_peer_range_ns_per_lookup": [
+            1.564503,
+            2.070904
+          ],
+          "strict_mask_below_control": false,
+          "strict_mask_below_slower_peer": false,
+          "strict_mask_slower_than_control": false
+        },
+        {
+          "cohort": 0,
+          "control_chain_median_ns_per_lookup": 1.996517,
+          "control_chain_range_ns_per_lookup": [
+            1.952648,
+            2.151012
+          ],
+          "element_bytes": 8,
+          "head_bucket_target": 4096,
+          "initialized_entries": 2048,
+          "mask_chain_median_ns_per_lookup": 1.882553,
+          "mask_chain_range_ns_per_lookup": [
+            1.788616,
+            2.04277
+          ],
+          "mask_to_control_median_ratio": 0.942919,
+          "path": "hit",
+          "reserved_entry_capacity": 4096,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 2.219677,
+          "slower_peer_range_ns_per_lookup": [
+            2.186298,
+            2.314091
+          ],
+          "strict_mask_below_control": false,
+          "strict_mask_below_slower_peer": true,
+          "strict_mask_slower_than_control": false
+        },
+        {
+          "cohort": 1,
+          "control_chain_median_ns_per_lookup": 1.95694,
+          "control_chain_range_ns_per_lookup": [
+            1.900673,
+            2.001286
+          ],
+          "element_bytes": 8,
+          "head_bucket_target": 4096,
+          "initialized_entries": 2048,
+          "mask_chain_median_ns_per_lookup": 1.935005,
+          "mask_chain_range_ns_per_lookup": [
+            1.829147,
+            2.090454
+          ],
+          "mask_to_control_median_ratio": 0.988791,
+          "path": "hit",
+          "reserved_entry_capacity": 4096,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 2.22683,
+          "slower_peer_range_ns_per_lookup": [
+            2.186298,
+            2.296925
+          ],
+          "strict_mask_below_control": false,
+          "strict_mask_below_slower_peer": true,
+          "strict_mask_slower_than_control": false
+        },
+        {
+          "cohort": 0,
+          "control_chain_median_ns_per_lookup": 1.987457,
+          "control_chain_range_ns_per_lookup": [
+            1.829147,
+            2.054691
+          ],
+          "element_bytes": 8,
+          "head_bucket_target": 64,
+          "initialized_entries": 32,
+          "mask_chain_median_ns_per_lookup": 1.643181,
+          "mask_chain_range_ns_per_lookup": [
+            1.587868,
+            1.665592
+          ],
+          "mask_to_control_median_ratio": 0.826775,
+          "path": "hit",
+          "reserved_entry_capacity": 64,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 2.146721,
+          "slower_peer_range_ns_per_lookup": [
+            2.135277,
+            2.660275
+          ],
+          "strict_mask_below_control": true,
+          "strict_mask_below_slower_peer": true,
+          "strict_mask_slower_than_control": false
+        },
+        {
+          "cohort": 1,
+          "control_chain_median_ns_per_lookup": 1.924038,
+          "control_chain_range_ns_per_lookup": [
+            1.822472,
+            2.06852
+          ],
+          "element_bytes": 8,
+          "head_bucket_target": 64,
+          "initialized_entries": 32,
+          "mask_chain_median_ns_per_lookup": 1.670361,
+          "mask_chain_range_ns_per_lookup": [
+            1.598835,
+            1.747608
+          ],
+          "mask_to_control_median_ratio": 0.868154,
+          "path": "hit",
+          "reserved_entry_capacity": 64,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 2.213955,
+          "slower_peer_range_ns_per_lookup": [
+            2.112865,
+            2.773762
+          ],
+          "strict_mask_below_control": true,
+          "strict_mask_below_slower_peer": true,
+          "strict_mask_slower_than_control": false
+        },
+        {
+          "cohort": 0,
+          "control_chain_median_ns_per_lookup": 1.620293,
+          "control_chain_range_ns_per_lookup": [
+            1.570702,
+            1.639366
+          ],
+          "element_bytes": 8,
+          "head_bucket_target": 4096,
+          "initialized_entries": 2048,
+          "mask_chain_median_ns_per_lookup": 1.495361,
+          "mask_chain_range_ns_per_lookup": [
+            1.485348,
+            1.6675
+          ],
+          "mask_to_control_median_ratio": 0.922896,
+          "path": "miss",
+          "reserved_entry_capacity": 4096,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 2.132416,
+          "slower_peer_range_ns_per_lookup": [
+            2.081394,
+            2.188206
+          ],
+          "strict_mask_below_control": false,
+          "strict_mask_below_slower_peer": true,
+          "strict_mask_slower_than_control": false
+        },
+        {
+          "cohort": 1,
+          "control_chain_median_ns_per_lookup": 1.55592,
+          "control_chain_range_ns_per_lookup": [
+            1.53923,
+            1.647472
+          ],
+          "element_bytes": 8,
+          "head_bucket_target": 4096,
+          "initialized_entries": 2048,
+          "mask_chain_median_ns_per_lookup": 1.541615,
+          "mask_chain_range_ns_per_lookup": [
+            1.514912,
+            1.800537
+          ],
+          "mask_to_control_median_ratio": 0.990806,
+          "path": "miss",
+          "reserved_entry_capacity": 4096,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 2.177238,
+          "slower_peer_range_ns_per_lookup": [
+            2.097607,
+            2.276421
+          ],
+          "strict_mask_below_control": false,
+          "strict_mask_below_slower_peer": true,
+          "strict_mask_slower_than_control": false
+        },
+        {
+          "cohort": 0,
+          "control_chain_median_ns_per_lookup": 1.730919,
+          "control_chain_range_ns_per_lookup": [
+            1.693249,
+            1.841068
+          ],
+          "element_bytes": 8,
+          "head_bucket_target": 64,
+          "initialized_entries": 32,
+          "mask_chain_median_ns_per_lookup": 1.620293,
+          "mask_chain_range_ns_per_lookup": [
+            1.53923,
+            1.667976
+          ],
+          "mask_to_control_median_ratio": 0.936088,
+          "path": "miss",
+          "reserved_entry_capacity": 64,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 1.671314,
+          "slower_peer_range_ns_per_lookup": [
+            1.556873,
+            2.098083
+          ],
+          "strict_mask_below_control": true,
+          "strict_mask_below_slower_peer": false,
+          "strict_mask_slower_than_control": false
+        },
+        {
+          "cohort": 1,
+          "control_chain_median_ns_per_lookup": 1.732349,
+          "control_chain_range_ns_per_lookup": [
+            1.694679,
+            1.776218
+          ],
+          "element_bytes": 8,
+          "head_bucket_target": 64,
+          "initialized_entries": 32,
+          "mask_chain_median_ns_per_lookup": 1.587868,
+          "mask_chain_range_ns_per_lookup": [
+            1.531601,
+            1.640797
+          ],
+          "mask_to_control_median_ratio": 0.916598,
+          "path": "miss",
+          "reserved_entry_capacity": 64,
+          "slower_peer": "rust-hash-map",
+          "slower_peer_median_ns_per_lookup": 1.63269,
+          "slower_peer_range_ns_per_lookup": [
+            1.555443,
+            2.060413
+          ],
+          "strict_mask_below_control": true,
+          "strict_mask_below_slower_peer": false,
+          "strict_mask_slower_than_control": false
+        }
+      ],
+      "work_per_sample": 2097152
+    },
+    "preregistered_criterion": "Chain home-index mask screen; registered before source emission or timing.\nBase: frozen equal-reserve query-only index chain, heads and entries both reserve 64/4096, initialized entries 32/2048, two backings. Keep the same first-key caller, salted hash, equality/visitor, bounded next traversal, full cleanup and observed capacities. Only insertion and lookup home-bucket reductions change: after the existing zero-capacity guard, use count-1 mask when count is a power of two, otherwise the original hash % count. Do not combine with the full-operation chain extension or change production source.\nNative prerequisite: selected 64/4096 path executes no UDIV/MSUB; capacity3 fallback still executes modulo; no new hot calls or loop spills, and record any frame/body change. Verify candidate linked wrapper reaches that query and all six C/Rust/C++ timed query bodies keep identical bytes and image-relative addresses against a fresh equal-reserve-chain control with the same driver.\nCorrectness prerequisite: same independent ordered hit/miss first-word query oracle and unordered complete key/value cleanup oracle, including capacity3 hit and miss; exact head geometry, entry reserve, two-allocation bytes/peak/release and zero query allocation; all ordinary injected fault controls through the real guards.\nTiming if those pass: same driver and compiler; paired equal-reserve-chain c0, chain-mask c0, chain-mask c1, equal-reserve-chain c1, 9 samples/shape/cohort, 2,097,152 query operations/sample. Retain every raw row and outlier, no clock subtraction. Report eight shapes (2 widths x hit/miss x 64/4096), same-input ratios, full ranges, 10% cohort stability and the slower ordinary Rust/C++ target. A repeatable gain without a separated regression may justify a full-chain continuation; one query screen does not select production or qualify mutation protocols. Reject on native mismatch or separated loss; do not infer a language need from this result.\n",
+    "purpose": "ordinary-source power2 home-index mask plus nonpower modulo fallback for both insertion and lookup in the equal-reserve index chain; no combination with separate full-operation variant or production selection"
+  },
   "checks": {
     "c_linear_attribution_min_elapsed_ns": 3027000,
     "calibration_guard_exit_zero_observed": true,
@@ -1343,8 +3032,8 @@
   "collated_samples": {
     "line_ending": "LF; values and order retained from raw CSVs",
     "path": "<repository-root>/research/experiments/container-representation/map-library/lookup-api-samples.csv",
-    "rows": 9720,
-    "sha256": "58b2fe9b22623ae5122097ba2eae041ea9f05cbea296ab634696721b3c06e2be"
+    "rows": 12024,
+    "sha256": "339a1949b3fa296b729f188cad9e43ca97b5128e6cf5ea12cdffeb39c8a03bd3"
   },
   "compiler_cli_sha256": {
     "base": "a7da03da398bdedc8adc2abccd1cf667ffbac1016e06f8431617fd5f50e8d798",
@@ -4575,6 +6264,486 @@
     "timed_link_ir_sha256": "345c68f01d4c910b99f422d112842a9f77a98273f242891f224a56cbdae62b8e",
     "timed_object_sha256": "e8ce3673335efe430ed964f8e5edb0b9e2c269fc67cdd23892fdb23c50748ad1"
   },
+  "full_operation_index_chain": {
+    "commands": {
+      "emit": [
+        "perl",
+        ".github/run-check.pl",
+        "full-chain-emit",
+        "research/experiments/container-representation/map-library/.build/lookup-api/whitefootc-enum-domain",
+        "--emit-llvm",
+        "research/experiments/container-representation/map-library/.build/lookup-chain-probe/full-chain.wf",
+        "-o",
+        "research/experiments/container-representation/map-library/.build/lookup-chain-probe/full-chain.raw.ll"
+      ],
+      "native": [
+        "perl",
+        ".github/run-check.pl",
+        "full-chain-native",
+        "clang",
+        "-O3",
+        "-Wno-override-module",
+        "research/experiments/container-representation/map-library/.build/lookup-chain-probe/full-chain-observer.ll",
+        "research/experiments/container-representation/map-library/.build/lookup-chain-probe/full-chain-observer.c",
+        "research/experiments/container-representation/map-library/.build/native/ordinary_values.o",
+        "research/experiments/container-representation/map-library/.build/native/ordinary_values_ir.o",
+        "research/experiments/container-representation/map-library/.build/native/sched/core.o",
+        "research/experiments/container-representation/map-library/.build/native/sched/entry.o",
+        "research/experiments/container-representation/map-library/.build/native/completion/runtime.o",
+        "research/experiments/container-representation/map-library/.build/native/completion/file_adapter.o",
+        "research/experiments/container-representation/map-library/.build/native/completion/bridge.o",
+        "research/experiments/container-representation/map-library/.build/native/wf_floor.o",
+        "research/experiments/container-representation/map-library/.build/native/sched/prim_host.o",
+        "research/experiments/container-representation/map-library/.build/native/completion/wait_host.o",
+        "research/experiments/container-representation/map-library/.build/native/completion/file_posix.o",
+        "research/experiments/container-representation/map-library/.build/native/completion/linux_io_uring.o",
+        "-pthread",
+        "-lm",
+        "-o",
+        "research/experiments/container-representation/map-library/.build/lookup-chain-probe/full-chain-observer"
+      ],
+      "run": [
+        "perl",
+        ".github/run-check.pl",
+        "full-chain-run",
+        "research/experiments/container-representation/map-library/.build/lookup-chain-probe/full-chain-observer"
+      ]
+    },
+    "compiler": {
+      "path": "research/experiments/container-representation/map-library/.build/lookup-api/whitefootc-enum-domain",
+      "sha256": "9df0737701f58992f55d1a09f73836483c207196e609c4d1c2df373573948f42"
+    },
+    "composition": "Adapt pinned corpus by full-chain-corpus.patch; concatenate corpus + LF + operations + LF + controls + LF + policy-observation; strip trailing whitespace then append exactlyone LF.",
+    "composition_reproduces_final_bytes": true,
+    "entry_adapter": {
+      "reason": "Rename generated C entry wrapper for independent C observer; no algorithm or other emitted-function bytes changed.",
+      "replace_once": "define i32 @main(",
+      "reversal_byteequal": true,
+      "with": "define i32 @full_chain_unused_main("
+    },
+    "fault_controls": {
+      "duplicate-release": {
+        "exit": 1,
+        "observations": {
+          "changed_hash_owning_cleanup": 8,
+          "current_flat_growth_policy": 8,
+          "cycle": 0,
+          "edit": 0,
+          "owned": 10,
+          "scalars": 0,
+          "topology": 0,
+          "units": 0,
+          "wrapping": 0
+        },
+        "source_delta": "--- full-chain.wf\n+++ full-chain-duplicate-release.wf\n@@ -509,7 +509,7 @@\n   let HashMapOwnedNode(child: owned_child) = move value;\n   let serial = owned_child.inner.serial;\n   if serial < ledger^.releases.len {\n-    set ledger^.releases[serial] = ledger^.releases[serial] +wrap 1_u64;\n+    set ledger^.releases[serial] = ledger^.releases[serial] +wrap 2_u64;\n   } else {\n     hash_map_test_owned_fail(ledger: ledger);\n   }\n"
+      },
+      "lost-release": {
+        "exit": 1,
+        "observations": {
+          "changed_hash_owning_cleanup": 8,
+          "current_flat_growth_policy": 8,
+          "cycle": 0,
+          "edit": 0,
+          "owned": 10,
+          "scalars": 0,
+          "topology": 0,
+          "units": 0,
+          "wrapping": 0
+        },
+        "source_delta": "--- full-chain.wf\n+++ full-chain-lost-release.wf\n@@ -509,7 +509,7 @@\n   let HashMapOwnedNode(child: owned_child) = move value;\n   let serial = owned_child.inner.serial;\n   if serial < ledger^.releases.len {\n-    set ledger^.releases[serial] = ledger^.releases[serial] +wrap 1_u64;\n+    set ledger^.releases[serial] = ledger^.releases[serial] +wrap 0_u64;\n   } else {\n     hash_map_test_owned_fail(ledger: ledger);\n   }\n"
+      },
+      "no-repair": {
+        "exit": 1,
+        "observations": {
+          "changed_hash_owning_cleanup": 0,
+          "current_flat_growth_policy": 39,
+          "cycle": 0,
+          "edit": 0,
+          "owned": 5,
+          "scalars": 0,
+          "topology": 13,
+          "units": 0,
+          "wrapping": 7
+        },
+        "source_delta": "--- full-chain.wf\n+++ full-chain-no-repair.wf\n@@ -1257,13 +1257,13 @@\n           let moved_bucket = moved_hash % buckets;\n           let cursor = map^.heads.inner[moved_bucket];\n           if cursor == last {\n-            set map^.heads.inner[moved_bucket] = index;\n+            set map^.heads.inner[moved_bucket] = last;\n           } else {\n             for @repair (attempt in 0_u64..last) {\n               if cursor < last {\n                 let link = map^.entries.inner[cursor].next;\n                 if link == last {\n-                  set map^.entries.inner[cursor].next = index;\n+                  set map^.entries.inner[cursor].next = last;\n                   break @repair;\n                 }\n                 set cursor = link;\n"
+      },
+      "wrong-owner": {
+        "exit": 1,
+        "observations": {
+          "changed_hash_owning_cleanup": 3,
+          "current_flat_growth_policy": 39,
+          "cycle": 0,
+          "edit": 0,
+          "owned": 4,
+          "scalars": 0,
+          "topology": 24,
+          "units": 0,
+          "wrapping": 11
+        },
+        "source_delta": "--- full-chain.wf\n+++ full-chain-wrong-owner.wf\n@@ -1252,7 +1252,9 @@\n         let removed = take_back(window: &map^.entries.inner);\n         let last = map^.entries.inner.len;\n         if index < last {\n-          swap(first: &map^.entries.inner[index], second: &removed);\n+          if index == last {\n+            swap(first: &map^.entries.inner[index], second: &removed);\n+          }\n           let moved_hash = HashMapKey::hash(env: env, key: &map^.entries.inner[index].key);\n           let moved_bucket = moved_hash % buckets;\n           let cursor = map^.heads.inner[moved_bucket];\n"
+      }
+    },
+    "limits": [
+      "Generic constructor/growth research ceiling<=8192 is explicit source precondition; no compiler/spec ceiling changed.",
+      "Currentpublic cells/length/vacated shape differs. Dense no-tombstone prototype live-only75percent pressure intentionally fails8existingpolicy observations; no expectedassertion changed.",
+      "Bounded moved-key hash repair may fail under changed hashing; subsequent lookup can reportabsent, while bounds guards and dense iteration/cleanup preserve memory/ownership. Consistent-key laws remain necessary for ordinarymap semantics.",
+      "All mutation uses borrowedmap references; no by-value map result mutation.",
+      "Allocation failure remains terminal current language behavior; recoverable refusals tested are ceiling/fullpolicy only.",
+      "Deletion scan correctness baseline retained full-chain-scan.wf/.raw.ll; active bounded-chain version no extra per-entry metadata.",
+      "Release-ledger controls alter observedcount0/2, never perform duplicate allocator frees.",
+      "No full-operation timing or final representation selection."
+    ],
+    "native_sha256": "9dc9ca714a891c4af794cbda15bec79eb153959fcc75e5b59495830c28f7a1c2",
+    "nonpolicy_observations": {
+      "changed_hash_owning_cleanup": 0,
+      "current_flat_growth_policy": 8,
+      "cycle": 0,
+      "edit": 0,
+      "owned": 0,
+      "scalars": 0,
+      "topology": 0,
+      "units": 0,
+      "wrapping": 0
+    },
+    "policy_differences": 8,
+    "policy_rows": [
+      {
+        "actual": [
+          8,
+          6,
+          0
+        ],
+        "expected": [
+          8,
+          6,
+          0
+        ],
+        "stage": 0
+      },
+      {
+        "actual": [
+          16,
+          7,
+          0
+        ],
+        "expected": [
+          16,
+          7,
+          0
+        ],
+        "stage": 1
+      },
+      {
+        "actual": [
+          16,
+          11,
+          0
+        ],
+        "expected": [
+          16,
+          11,
+          0
+        ],
+        "stage": 2
+      },
+      {
+        "actual": [
+          16,
+          1,
+          0
+        ],
+        "expected": [
+          16,
+          1,
+          10
+        ],
+        "stage": 3
+      },
+      {
+        "actual": [
+          16,
+          2,
+          0
+        ],
+        "expected": [
+          16,
+          2,
+          10
+        ],
+        "stage": 4
+      },
+      {
+        "actual": [
+          16,
+          3,
+          0
+        ],
+        "expected": [
+          16,
+          3,
+          0
+        ],
+        "stage": 5
+      },
+      {
+        "actual": [
+          16,
+          2,
+          0
+        ],
+        "expected": [
+          16,
+          2,
+          1
+        ],
+        "stage": 6
+      },
+      {
+        "actual": [
+          16,
+          3,
+          0
+        ],
+        "expected": [
+          16,
+          3,
+          0
+        ],
+        "stage": 7
+      },
+      {
+        "actual": [
+          3,
+          3,
+          0
+        ],
+        "expected": [
+          3,
+          3,
+          0
+        ],
+        "stage": 8
+      },
+      {
+        "actual": [
+          6,
+          4,
+          0
+        ],
+        "expected": [
+          6,
+          4,
+          0
+        ],
+        "stage": 9
+      },
+      {
+        "actual": [
+          16,
+          6,
+          0
+        ],
+        "expected": [
+          16,
+          6,
+          6
+        ],
+        "stage": 10
+      },
+      {
+        "actual": [
+          16,
+          7,
+          0
+        ],
+        "expected": [
+          32,
+          7,
+          0
+        ],
+        "stage": 11
+      },
+      {
+        "actual": [
+          16,
+          5,
+          0
+        ],
+        "expected": [
+          16,
+          5,
+          7
+        ],
+        "stage": 12
+      },
+      {
+        "actual": [
+          16,
+          6,
+          0
+        ],
+        "expected": [
+          16,
+          6,
+          0
+        ],
+        "stage": 13
+      },
+      {
+        "actual": [
+          64,
+          8,
+          0
+        ],
+        "expected": [
+          64,
+          8,
+          40
+        ],
+        "stage": 14
+      },
+      {
+        "actual": [
+          64,
+          9,
+          0
+        ],
+        "expected": [
+          64,
+          9,
+          40
+        ],
+        "stage": 15
+      }
+    ],
+    "policy_rows_columns": [
+      "capacity",
+      "length",
+      "vacated"
+    ],
+    "raw_ir_sha256": "b2e01482b808e5d99783db7449c93818a53606b7656f586314d2ce2124bca3a6",
+    "repository_revision_for_corpus": "bc74136e1bac7592d95776afd70c08707b26d4e6",
+    "scope": "Ordinary source full-operation dense index-chain prototype; not production selection. All paths relative repository root unless scratch basenames.",
+    "source_sha256": "d1f82020c65cdd3a26c8099e69382e8c8d7eefea29619b45349ada8936eb5475",
+    "sources": {
+      "full-chain-controls.wf": "fn chain_topology_hash(env: &HashMapHashEnv, key: &u64) -> result: u64 reads(key) {\n  return key^ % 2_u64;\n}\n\nbinding ChainTopologyKey : HashMapKey<u64, HashMapHashEnv> {\n  hash = chain_topology_hash;\n  equal = hash_map_test_scalar_equal;\n}\n\nfn full_chain_topology_test() -> result: u64 pure {\n  let ordinary = False();\n  let env = HashMapHashEnv(hostile: ordinary);\n  let seen = HashMapTestSeen(failures: 0_u64, consumed: 0_u64, key_sum: 0_u64, value_sum: 0_u64, visits: 0_u64, observed: 0_u64);\n  for (selected in 0_u64..6_u64) {\n    let map = full_chain_new::<u64, u64, 8>(capacity: 8_u64);\n    for (key in 0_u64..6_u64) {\n      let value = key *wrap 10_u64;\n      let outcome = full_chain_try_put::<ChainTopologyKey, u64, 8>(map: &map, key: key, value: value, env: &env);\n      hash_map_test_scalar_outcome(outcome: outcome, expected: 0_u64, key: key, value: value, seen: &seen);\n    }\n    let removed = full_chain_remove::<ChainTopologyKey, u64, 8>(map: &map, key: &selected, env: &env);\n    match removed {\n      Some(value: pair) => {\n        if pair.key != selected {\n          hash_map_test_fail(seen: &seen);\n        }\n        let expected = selected *wrap 10_u64;\n        if pair.value != expected {\n          hash_map_test_fail(seen: &seen);\n        }\n        hash_map_pair_consume::<HashMapScalarConsume>(pair: pair, env: &seen);\n      }\n      None() => {\n        hash_map_test_fail(seen: &seen);\n      }\n    }\n    for (key in 0_u64..6_u64) {\n      let found = full_chain_lookup::<ChainTopologyKey, u64, HashMapTestSeen, u64, fn hash_map_test_scalar_read, 8>(map: &map, key: &key, key_env: &env, visit_env: &seen);\n      match found {\n        Ok(value: actual) => {\n          if key == selected {\n            hash_map_test_fail(seen: &seen);\n          }\n          let expected = key *wrap 10_u64;\n          if actual != expected {\n            hash_map_test_fail(seen: &seen);\n          }\n        }\n        Err(error: missing) => {\n          if key != selected {\n            hash_map_test_fail(seen: &seen);\n          }\n        }\n      }\n    }\n    full_chain_free::<HashMapScalarConsume, 8>(map: move map, env: &seen);\n  }\n  if seen.consumed != 36_u64 {\n    hash_map_test_fail(seen: &seen);\n  }\n  if seen.key_sum != 90_u64 {\n    hash_map_test_fail(seen: &seen);\n  }\n  if seen.value_sum != 900_u64 {\n    hash_map_test_fail(seen: &seen);\n  }\n  return seen.failures;\n}\n\nfn chain_changed_hash(env: &HashMapHashEnv, key: &HashMapOwnedNode) -> result: u64 reads(env), reads(key) {\n  if env^.hostile {\n    if key^.child.inner.id == 3_u64 {\n      return 1_u64;\n    }\n  }\n  return 0_u64;\n}\n\nfn chain_changed_equal(env: &HashMapHashEnv, left: &HashMapOwnedNode, right: &HashMapOwnedNode) -> result: Bool reads(left), reads(right) {\n  return left^.child.inner.id == right^.child.inner.id;\n}\n\nbinding ChainChangedKey : HashMapKey<HashMapOwnedNode, HashMapHashEnv> {\n  hash = chain_changed_hash;\n  equal = chain_changed_equal;\n}\n\nfn chain_changed_visit(env: &HashMapOwnerLedger, key: &HashMapOwnedNode, value: &HashMapOwnedNode) -> result: unit reads(key), reads(value), writes(env) {\n  let identifier = key^.child.inner.id;\n  if identifier < 2_u64 {\n    hash_map_test_owned_fail(ledger: env);\n  }\n  if identifier > 3_u64 {\n    hash_map_test_owned_fail(ledger: env);\n  }\n  let expected = identifier +wrap 10_u64;\n  if value^.child.inner.id != expected {\n    hash_map_test_owned_fail(ledger: env);\n  }\n  set env^.visits = env^.visits +wrap 1_u64;\n  return unit;\n}\n\nfn full_chain_changed_hash_test() -> result: u64 pure {\n  let releases = array_filled::<u64, 32>(value: 0_u64);\n  let ledger = HashMapOwnerLedger(releases: releases, failures: 0_u64, visits: 0_u64);\n  let ordinary = False();\n  let env = HashMapHashEnv(hostile: ordinary);\n  let map = full_chain_new::<HashMapOwnedNode, HashMapOwnedNode, 4>(capacity: 4_u64);\n  for (identifier in 1_u64..4_u64) {\n    let serial = identifier +wrap 10_u64;\n    let key = hash_map_test_owned_make(id: identifier, serial: identifier);\n    let value = hash_map_test_owned_make(id: serial, serial: serial);\n    let outcome = full_chain_try_put::<ChainChangedKey, HashMapOwnedNode, 4>(map: &map, key: move key, value: move value, env: &env);\n    hash_map_test_owned_outcome(outcome: move outcome, expected: 0_u64, key: identifier, value: serial, ledger: &ledger);\n  }\n  set env.hostile = True();\n  let key = hash_map_test_owned_make(id: 1_u64, serial: 21_u64);\n  let removed = full_chain_remove::<ChainChangedKey, HashMapOwnedNode, 4>(map: &map, key: &key, env: &env);\n  hash_map_test_owned_release(value: move key, ledger: &ledger);\n  match move removed {\n    Some(value: pair) => {\n      hash_map_test_owned_check_pair(pair: &pair, key: 1_u64, value: 11_u64, ledger: &ledger);\n      hash_map_pair_consume::<HashMapOwnedConsume>(pair: move pair, env: &ledger);\n    }\n    None() => {\n      hash_map_test_owned_fail(ledger: &ledger);\n    }\n  }\n  let stale_query = hash_map_test_owned_make(id: 2_u64, serial: 22_u64);\n  let inaccessible = full_chain_lookup::<ChainChangedKey, HashMapOwnedNode, HashMapOwnerLedger, u64, fn hash_map_test_owned_read, 4>(map: &map, key: &stale_query, key_env: &env, visit_env: &ledger);\n  match inaccessible {\n    Ok(value: unexpected) => {\n      hash_map_test_owned_fail(ledger: &ledger);\n    }\n    Err(error: missing) => {\n    }\n  }\n  hash_map_test_owned_release(value: move stale_query, ledger: &ledger);\n  let count = full_chain_len::<HashMapOwnedNode, HashMapOwnedNode, 4>(map: &map);\n  if count != 2_u64 {\n    hash_map_test_owned_fail(ledger: &ledger);\n  }\n  full_chain_each::<HashMapOwnedNode, HashMapOwnedNode, HashMapOwnerLedger, fn chain_changed_visit, 4>(map: &map, env: &ledger);\n  full_chain_free::<HashMapOwnedConsume, 4>(map: move map, env: &ledger);\n  if ledger.visits != 2_u64 {\n    hash_map_test_owned_fail(ledger: &ledger);\n  }\n  for (serial in 0_u64..32_u64) {\n    let expected = 0_u64;\n    if serial >= 1_u64 {\n      if serial <= 3_u64 {\n        set expected = 1_u64;\n      }\n    }\n    if serial >= 11_u64 {\n      if serial <= 13_u64 {\n        set expected = 1_u64;\n      }\n    }\n    if serial == 21_u64 {\n      set expected = 1_u64;\n    }\n    if serial == 22_u64 {\n      set expected = 1_u64;\n    }\n    if ledger.releases[serial] != expected {\n      hash_map_test_owned_fail(ledger: &ledger);\n    }\n  }\n  return ledger.failures;\n}\n",
+      "full-chain-observer.c": "#include <inttypes.h>\n#include <stdint.h>\n#include <stdio.h>\nextern uint64_t wf_hash_map_test_scalars(void);\nextern uint64_t wf_hash_map_test_wrapping(void);\nextern uint64_t wf_hash_map_test_cycle(void);\nextern uint64_t wf_hash_map_test_growth(void);\nextern uint64_t wf_hash_map_test_edit(void);\nextern uint64_t wf_hash_map_test_owned(void);\nextern uint64_t wf_hash_map_test_units(void);\nextern uint64_t wf_full_chain_topology_test(void);\nextern uint64_t wf_full_chain_changed_hash_test(void);\nextern uint64_t wf_full_chain_policy_stage(uint64_t stage);\nint main(void) {\n  struct test { const char *name; uint64_t (*run)(void); } tests[] = {\n    {\"scalars\", wf_hash_map_test_scalars},\n    {\"wrapping\", wf_hash_map_test_wrapping},\n    {\"cycle\", wf_hash_map_test_cycle},\n    {\"edit\", wf_hash_map_test_edit},\n    {\"owned\", wf_hash_map_test_owned},\n    {\"units\", wf_hash_map_test_units},\n    {\"topology\", wf_full_chain_topology_test},\n    {\"changed_hash_owning_cleanup\", wf_full_chain_changed_hash_test},\n  };\n  int failed = 0;\n  for (size_t i = 0; i < sizeof(tests)/sizeof(tests[0]); ++i) {\n    uint64_t count = tests[i].run();\n    printf(\"%s failures=%\" PRIu64 \"\\n\", tests[i].name, count);\n    if (count != 0) failed = 1;\n  }\n  uint64_t policy = wf_hash_map_test_growth();\n  printf(\"current_flat_growth_policy failures=%\" PRIu64 \" (known prototype contract difference)\\n\", policy);\n  if (policy != 8) { puts(\"unexpected number of policy differences\"); failed = 1; }\n  const uint64_t expected[][3] = {{8,6,0},{16,7,0},{16,11,0},{16,1,10},{16,2,10},{16,3,0},{16,2,1},{16,3,0},{3,3,0},{6,4,0},{16,6,6},{32,7,0},{16,5,7},{16,6,0},{64,8,40},{64,9,40}};\n  for (uint64_t stage = 0; stage < 16; ++stage) {\n    uint64_t packed = wf_full_chain_policy_stage(stage);\n    uint64_t capacity = packed & 255, length = packed >> 8;\n    uint64_t expected_actual_capacity = stage == 11 ? 16 : expected[stage][0];\n    printf(\"policy_stage=%\" PRIu64 \" expected=%\" PRIu64 \",%\" PRIu64 \",%\" PRIu64 \" actual=%\" PRIu64 \",%\" PRIu64 \",0\\n\", stage, expected[stage][0], expected[stage][1], expected[stage][2], capacity, length);\n    if (capacity != expected_actual_capacity || length != expected[stage][1]) failed = 1;\n  }\n  return failed;\n}\n",
+      "full-chain-operations.wf": "struct FullChainEntry<K, V> {\n  key: K;\n  value: V;\n  next: u64;\n}\n\nstruct FullChainMap<K, V, const ceiling: u64> {\n  heads: Box<Slots<u64>>;\n  entries: Box<Slots<FullChainEntry<K, V>>>;\n}\n\nfn full_chain_heads<const ceiling: u64>(capacity: u64) -> result: Box<Slots<u64>> pure contract {\n  requires capacity <= ceiling;\n  requires ceiling <= 8192_u64;\n  ensures result.inner.len == capacity;\n} {\n  let heads = box_slots_new::<u64>(capacity: capacity);\n  for @heads (\n    index in 0_u64..capacity,\n    invariant minimum: heads.inner.len >= index,\n    invariant maximum: heads.inner.len <= index,\n    invariant capacity: heads.inner.cap >= capacity\n  ) {\n    place_back(window: &heads.inner, value: 18446744073709551615_u64);\n  }\n  invariant complete_min: heads.inner.len >= capacity;\n  invariant complete_max: heads.inner.len <= capacity;\n  return move heads;\n}\n\nfn full_chain_new<K, V, const ceiling: u64>(capacity: u64) -> result: FullChainMap<K, V, ceiling> pure contract {\n  requires capacity <= ceiling;\n  requires ceiling <= 8192_u64;\n} {\n  let heads = full_chain_heads::<ceiling>(capacity: capacity);\n  let entries = box_slots_new::<FullChainEntry<K, V>>(capacity: capacity);\n  return FullChainMap<K, V, ceiling>(heads: move heads, entries: move entries);\n}\n\nfn full_chain_len<K, V, const ceiling: u64>(map: &FullChainMap<K, V, ceiling>) -> result: u64 reads(map) {\n  return map^.entries.inner.len;\n}\n\nfn full_chain_capacity<K, V, const ceiling: u64>(map: &FullChainMap<K, V, ceiling>) -> result: u64 reads(map) {\n  return map^.heads.inner.len;\n}\n\nfn full_chain_find<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &FullChainMap<K, V, ceiling>, key: &K, env: &E) -> result: Result<u64, unit> reads(map), reads(key), reads(env) contract {\n  ensures when Ok(value: index): index < map^.entries.inner.len;\n} {\n  let hash = HashMapKey::hash(env: env, key: key);\n  let capacity = map^.heads.inner.len;\n  if capacity == 0_u64 {\n    return Err<u64, unit>(error: unit);\n  }\n  let bucket = hash % capacity;\n  let index = map^.heads.inner[bucket];\n  let count = map^.entries.inner.len;\n  for (step in 0_u64..count) {\n    if index < count {\n      let node = &map^.entries.inner[index];\n      let equal = HashMapKey::equal(env: env, left: &node^.key, right: key);\n      if equal {\n        return Ok<u64, unit>(value: index);\n      }\n      set index = node^.next;\n    } else {\n      return Err<u64, unit>(error: unit);\n    }\n  }\n  return Err<u64, unit>(error: unit);\n}\n\nfn full_chain_lookup<interface HashMapKey<K, E>, V, F, R, fn observe(env: &F, key: &K, value: &V) -> result: R reads(key), reads(value), writes(env), const ceiling: u64>(map: &FullChainMap<K, V, ceiling>, key: &K, key_env: &E, visit_env: &F) -> result: Result<R, unit> reads(map), reads(key), reads(key_env), writes(visit_env) {\n  let found = full_chain_find::<HashMapKey<K, E>, V, ceiling>(map: map, key: key, env: key_env);\n  match found {\n    Ok(value: index) => {\n      let node = &map^.entries.inner[index];\n      let observed = observe(env: visit_env, key: &node^.key, value: &node^.value);\n      return Ok<R, unit>(value: move observed);\n    }\n    Err(error: missing) => {\n      return Err<R, unit>(error: unit);\n    }\n  }\n}\n\nfn full_chain_edit<interface HashMapKey<K, E>, V, F, R, fn update(env: &F, key: &K, value: &V) -> result: R reads(key), writes(env), writes(value), const ceiling: u64>(map: &FullChainMap<K, V, ceiling>, key: &K, key_env: &E, edit_env: &F) -> result: Result<R, unit> reads(key), reads(key_env), writes(map), writes(edit_env) contract {\n  ensures map^.heads.inner.len == entry(map)^.heads.inner.len;\n  ensures map^.entries.inner.len == entry(map)^.entries.inner.len;\n  ensures map^.entries.inner.cap == entry(map)^.entries.inner.cap;\n} {\n  let found = full_chain_find::<HashMapKey<K, E>, V, ceiling>(map: map, key: key, env: key_env);\n  match found {\n    Ok(value: index) => {\n      let node = &map^.entries.inner[index];\n      let updated = update(env: edit_env, key: &node^.key, value: &node^.value);\n      return Ok<R, unit>(value: move updated);\n    }\n    Err(error: missing) => {\n      return Err<R, unit>(error: unit);\n    }\n  }\n}\n\nfn full_chain_try_put<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &FullChainMap<K, V, ceiling>, key: K, value: V, env: &E) -> result: HashMapPut<K, V> reads(env), writes(map) contract {\n  ensures map^.heads.inner.len == entry(map)^.heads.inner.len;\n  ensures map^.entries.inner.cap == entry(map)^.entries.inner.cap;\n} {\n  let hash = HashMapKey::hash(env: env, key: &key);\n  let capacity = map^.heads.inner.len;\n  if capacity > 0_u64 {\n    let bucket = hash % capacity;\n    let first = map^.heads.inner[bucket];\n    let index = first;\n    let count = map^.entries.inner.len;\n    for @find (step in 0_u64..count) {\n      if index < count {\n        let node = &map^.entries.inner[index];\n        let equal = HashMapKey::equal(env: env, left: &node^.key, right: &key);\n        if equal {\n          swap(first: &node^.key, second: &key);\n          swap(first: &node^.value, second: &value);\n          let previous = HashMapPair<K, V>(key: move key, value: move value);\n          let reason = HashMapReturnReason::HashMapReplaced();\n          return HashMapPut<K, V>::HashMapReturned(reason: reason, pair: move previous);\n        }\n        set index = node^.next;\n      } else {\n        break @find;\n      }\n    }\n    if count < capacity {\n      if count < ceiling {\n        if count < map^.entries.inner.cap {\n          let node = FullChainEntry<K, V>(key: move key, value: move value, next: first);\n          place_back(window: &map^.entries.inner, value: move node);\n          set map^.heads.inner[bucket] = count;\n          return HashMapPut<K, V>::HashMapInserted();\n        }\n      }\n    }\n  }\n  let offered = HashMapPair<K, V>(key: move key, value: move value);\n  let reason = HashMapReturnReason::HashMapFull();\n  return HashMapPut<K, V>::HashMapReturned(reason: reason, pair: move offered);\n}\n\nfn full_chain_relink<K, V, const ceiling: u64>(map: &FullChainMap<K, V, ceiling>, old: u64, replacement: u64) -> result: unit writes(map) contract {\n  ensures map^.heads.inner.len == entry(map)^.heads.inner.len;\n  ensures map^.entries.inner.len == entry(map)^.entries.inner.len;\n  ensures map^.entries.inner.cap == entry(map)^.entries.inner.cap;\n} {\n  let buckets = map^.heads.inner.len;\n  for (index in 0_u64..buckets) {\n    if map^.heads.inner[index] == old {\n      set map^.heads.inner[index] = replacement;\n    }\n  }\n  let count = map^.entries.inner.len;\n  for (index in 0_u64..count) {\n    if map^.entries.inner[index].next == old {\n      set map^.entries.inner[index].next = replacement;\n    }\n  }\n  return unit;\n}\n\nfn full_chain_remove<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &FullChainMap<K, V, ceiling>, key: &K, env: &E) -> result: Option<HashMapPair<K, V>> reads(key), reads(env), writes(map) {\n  let count = map^.entries.inner.len;\n  if count == 0_u64 {\n    return None<HashMapPair<K, V>>();\n  }\n  let hash = HashMapKey::hash(env: env, key: key);\n  let buckets = map^.heads.inner.len;\n  if buckets == 0_u64 {\n    return None<HashMapPair<K, V>>();\n  }\n  let bucket = hash % buckets;\n  let index = map^.heads.inner[bucket];\n  let predecessor = count;\n  for (step in 0_u64..count) {\n    if index < count {\n      let equal = HashMapKey::equal(env: env, left: &map^.entries.inner[index].key, right: key);\n      if equal {\n        let next = map^.entries.inner[index].next;\n        if predecessor < count {\n          set map^.entries.inner[predecessor].next = next;\n        } else {\n          set map^.heads.inner[bucket] = next;\n        }\n        let removed = take_back(window: &map^.entries.inner);\n        let last = map^.entries.inner.len;\n        if index < last {\n          swap(first: &map^.entries.inner[index], second: &removed);\n          let moved_hash = HashMapKey::hash(env: env, key: &map^.entries.inner[index].key);\n          let moved_bucket = moved_hash % buckets;\n          let cursor = map^.heads.inner[moved_bucket];\n          if cursor == last {\n            set map^.heads.inner[moved_bucket] = index;\n          } else {\n            for @repair (attempt in 0_u64..last) {\n              if cursor < last {\n                let link = map^.entries.inner[cursor].next;\n                if link == last {\n                  set map^.entries.inner[cursor].next = index;\n                  break @repair;\n                }\n                set cursor = link;\n              } else {\n                break @repair;\n              }\n            }\n          }\n        }\n        let FullChainEntry(key: saved_key, value: saved_value, next: discarded_next) = move removed;\n        let pair = HashMapPair<K, V>(key: move saved_key, value: move saved_value);\n        return Some<HashMapPair<K, V>>(value: move pair);\n      }\n      set predecessor = index;\n      set index = map^.entries.inner[index].next;\n    } else {\n      return None<HashMapPair<K, V>>();\n    }\n  }\n  return None<HashMapPair<K, V>>();\n}\n\nfn full_chain_rebuild<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &FullChainMap<K, V, ceiling>, capacity: u64, env: &E) -> result: Result<unit, unit> reads(env), writes(map) contract {\n  requires ceiling <= 8192_u64;\n} {\n  if capacity > ceiling {\n    return Err<unit, unit>(error: unit);\n  }\n  if capacity < map^.heads.inner.len {\n    return Err<unit, unit>(error: unit);\n  }\n  if capacity < map^.entries.inner.len {\n    return Err<unit, unit>(error: unit);\n  }\n  if capacity == 0_u64 {\n    return Ok<unit, unit>(value: unit);\n  }\n  let heads = full_chain_heads::<ceiling>(capacity: capacity);\n  if map^.entries.inner.cap < capacity {\n    grow(cell: &map^.entries, capacity: capacity);\n  }\n  let count = map^.entries.inner.len;\n  for (step in 0_u64..count) {\n    let reverse = count - step;\n    let index = reverse - 1_u64;\n    let hash = HashMapKey::hash(env: env, key: &map^.entries.inner[index].key);\n    let bucket = hash % capacity;\n    let previous = heads.inner[bucket];\n    set map^.entries.inner[index].next = previous;\n    set heads.inner[bucket] = index;\n  }\n  swap(first: &map^.heads, second: &heads);\n  return Ok<unit, unit>(value: unit);\n}\n\nfn full_chain_reserve<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &FullChainMap<K, V, ceiling>, capacity: u64, env: &E) -> result: Result<unit, unit> reads(env), writes(map) contract {\n  requires ceiling <= 8192_u64;\n} {\n  if capacity > ceiling {\n    return Err<unit, unit>(error: unit);\n  }\n  if capacity <= map^.heads.inner.len {\n    return Ok<unit, unit>(value: unit);\n  }\n  return full_chain_rebuild::<HashMapKey<K, E>, V, ceiling>(map: map, capacity: capacity, env: env);\n}\n\nfn full_chain_rehash<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &FullChainMap<K, V, ceiling>, env: &E) -> result: Result<unit, unit> reads(env), writes(map) contract {\n  requires ceiling <= 8192_u64;\n} {\n  let capacity = map^.heads.inner.len;\n  return full_chain_rebuild::<HashMapKey<K, E>, V, ceiling>(map: map, capacity: capacity, env: env);\n}\n\nfn full_chain_put<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &FullChainMap<K, V, ceiling>, key: K, value: V, env: &E) -> result: HashMapPut<K, V> reads(env), writes(map) contract {\n  requires ceiling <= 8192_u64;\n} {\n  let buckets = map^.heads.inner.len;\n  let live = map^.entries.inner.len;\n  let quarter = buckets / 4_u64;\n  let limit = buckets - quarter;\n  let crowded = live >= limit;\n  let below_ceiling = buckets < ceiling;\n  if band(crowded, below_ceiling) {\n    let target = ceiling;\n    if buckets == 0_u64 {\n      set target = 1_u64;\n    } else if buckets <= 9223372036854775807_u64 {\n      let widened = buckets + buckets;\n      if widened <= ceiling {\n        set target = widened;\n      }\n    }\n    let grown = full_chain_rebuild::<HashMapKey<K, E>, V, ceiling>(map: map, capacity: target, env: env);\n  }\n  return full_chain_try_put::<HashMapKey<K, E>, V, ceiling>(map: map, key: move key, value: move value, env: env);\n}\n\nfn full_chain_each<K, V, E, fn visit(env: &E, key: &K, value: &V) -> result: unit reads(key), reads(value), writes(env), const ceiling: u64>(map: &FullChainMap<K, V, ceiling>, env: &E) -> result: unit reads(map), writes(env) {\n  let count = map^.entries.inner.len;\n  for (index in 0_u64..count) {\n    let node = &map^.entries.inner[index];\n    visit(env: env, key: &node^.key, value: &node^.value);\n  }\n  return unit;\n}\n\nfn full_chain_free<interface HashMapConsume<K, V, E>, const ceiling: u64>(map: FullChainMap<K, V, ceiling>, env: &E) -> result: unit writes(env) {\n  let FullChainMap(heads: heads, entries: entries) = move map;\n  loop @cleanup {\n    if entries.inner.len == 0_u64 {\n      break @cleanup;\n    }\n    let node = take_back(window: &entries.inner);\n    let FullChainEntry(key: saved_key, value: saved_value, next: discarded_next) = move node;\n    HashMapConsume::consume(env: env, key: move saved_key, value: move saved_value);\n  }\n  free_empty(window: move entries);\n  return unit;\n}\n",
+      "full-chain-policy-observation.wf": "fn full_chain_policy_stage(stage: u64) -> result: u64 pure {\n  doc \"The growth policy, observed through capacity, length and the vacated count: a map of eight buckets holds six pairs and doubles before the seventh; once removals leave 10 of its 16 buckets vacated and one filled, it rebuilds at the same capacity when an insertion would find three quarters already used, clearing the vacated count; an insertion that reuses a vacated bucket uncounts it; a map of three buckets fills all three before it grows; at the mark of twelve of sixteen buckets, a map with half that mark filled doubles while one with one fewer is rebuilt at the same capacity; and a map at its ceiling of 64 buckets, with 8 filled and 40 vacated, is not rebuilt by an insertion that reaches the mark.\";\n  let seen = HashMapTestSeen(failures: 0_u64, consumed: 0_u64, key_sum: 0_u64, value_sum: 0_u64, visits: 0_u64, observed: 0_u64);\n  let false_value = False();\n  let env = HashMapHashEnv(hostile: false_value);\n  let map = full_chain_new::<u64, u64, 64>(capacity: 8_u64);\n  for (key in 0_u64..6_u64) {\n    hash_map_test_growth_put(map: &map, key: key, env: &env, seen: &seen);\n  }\n  if stage == 0_u64 {\n    let actual_capacity = full_chain_capacity::<u64, u64, 64>(map: &map);\n    let actual_length = full_chain_len::<u64, u64, 64>(map: &map);\n    let high = actual_length *wrap 256_u64;\n    let packed = high +wrap actual_capacity;\n    full_chain_free::<HashMapScalarConsume, 64>(map: move map, env: &seen);\n    return packed;\n  }\n  hash_map_test_growth_shape(map: &map, capacity: 8_u64, length: 6_u64, vacated: 0_u64, seen: &seen);\n  hash_map_test_growth_put(map: &map, key: 6_u64, env: &env, seen: &seen);\n  if stage == 1_u64 {\n    let actual_capacity = full_chain_capacity::<u64, u64, 64>(map: &map);\n    let actual_length = full_chain_len::<u64, u64, 64>(map: &map);\n    let high = actual_length *wrap 256_u64;\n    let packed = high +wrap actual_capacity;\n    full_chain_free::<HashMapScalarConsume, 64>(map: move map, env: &seen);\n    return packed;\n  }\n  hash_map_test_growth_shape(map: &map, capacity: 16_u64, length: 7_u64, vacated: 0_u64, seen: &seen);\n  for (key in 7_u64..11_u64) {\n    hash_map_test_growth_put(map: &map, key: key, env: &env, seen: &seen);\n  }\n  if stage == 2_u64 {\n    let actual_capacity = full_chain_capacity::<u64, u64, 64>(map: &map);\n    let actual_length = full_chain_len::<u64, u64, 64>(map: &map);\n    let high = actual_length *wrap 256_u64;\n    let packed = high +wrap actual_capacity;\n    full_chain_free::<HashMapScalarConsume, 64>(map: move map, env: &seen);\n    return packed;\n  }\n  hash_map_test_growth_shape(map: &map, capacity: 16_u64, length: 11_u64, vacated: 0_u64, seen: &seen);\n  for (key in 0_u64..10_u64) {\n    hash_map_test_growth_remove(map: &map, key: key, env: &env, seen: &seen);\n  }\n  if stage == 3_u64 {\n    let actual_capacity = full_chain_capacity::<u64, u64, 64>(map: &map);\n    let actual_length = full_chain_len::<u64, u64, 64>(map: &map);\n    let high = actual_length *wrap 256_u64;\n    let packed = high +wrap actual_capacity;\n    full_chain_free::<HashMapScalarConsume, 64>(map: move map, env: &seen);\n    return packed;\n  }\n  hash_map_test_growth_shape(map: &map, capacity: 16_u64, length: 1_u64, vacated: 10_u64, seen: &seen);\n  hash_map_test_growth_put(map: &map, key: 11_u64, env: &env, seen: &seen);\n  if stage == 4_u64 {\n    let actual_capacity = full_chain_capacity::<u64, u64, 64>(map: &map);\n    let actual_length = full_chain_len::<u64, u64, 64>(map: &map);\n    let high = actual_length *wrap 256_u64;\n    let packed = high +wrap actual_capacity;\n    full_chain_free::<HashMapScalarConsume, 64>(map: move map, env: &seen);\n    return packed;\n  }\n  hash_map_test_growth_shape(map: &map, capacity: 16_u64, length: 2_u64, vacated: 10_u64, seen: &seen);\n  hash_map_test_growth_put(map: &map, key: 12_u64, env: &env, seen: &seen);\n  if stage == 5_u64 {\n    let actual_capacity = full_chain_capacity::<u64, u64, 64>(map: &map);\n    let actual_length = full_chain_len::<u64, u64, 64>(map: &map);\n    let high = actual_length *wrap 256_u64;\n    let packed = high +wrap actual_capacity;\n    full_chain_free::<HashMapScalarConsume, 64>(map: move map, env: &seen);\n    return packed;\n  }\n  hash_map_test_growth_shape(map: &map, capacity: 16_u64, length: 3_u64, vacated: 0_u64, seen: &seen);\n  hash_map_test_growth_remove(map: &map, key: 10_u64, env: &env, seen: &seen);\n  if stage == 6_u64 {\n    let actual_capacity = full_chain_capacity::<u64, u64, 64>(map: &map);\n    let actual_length = full_chain_len::<u64, u64, 64>(map: &map);\n    let high = actual_length *wrap 256_u64;\n    let packed = high +wrap actual_capacity;\n    full_chain_free::<HashMapScalarConsume, 64>(map: move map, env: &seen);\n    return packed;\n  }\n  hash_map_test_growth_shape(map: &map, capacity: 16_u64, length: 2_u64, vacated: 1_u64, seen: &seen);\n  hash_map_test_growth_put(map: &map, key: 26_u64, env: &env, seen: &seen);\n  if stage == 7_u64 {\n    let actual_capacity = full_chain_capacity::<u64, u64, 64>(map: &map);\n    let actual_length = full_chain_len::<u64, u64, 64>(map: &map);\n    let high = actual_length *wrap 256_u64;\n    let packed = high +wrap actual_capacity;\n    full_chain_free::<HashMapScalarConsume, 64>(map: move map, env: &seen);\n    return packed;\n  }\n  hash_map_test_growth_shape(map: &map, capacity: 16_u64, length: 3_u64, vacated: 0_u64, seen: &seen);\n  hash_map_test_growth_expect(map: &map, key: 11_u64, env: &env, seen: &seen);\n  hash_map_test_growth_expect(map: &map, key: 12_u64, env: &env, seen: &seen);\n  hash_map_test_growth_expect(map: &map, key: 26_u64, env: &env, seen: &seen);\n  full_chain_free::<HashMapScalarConsume, 64>(map: move map, env: &seen);\n  let small = full_chain_new::<u64, u64, 64>(capacity: 3_u64);\n  for (key in 0_u64..3_u64) {\n    let offered = key;\n    if key == 0_u64 {\n      set offered = 3_u64;\n    }\n    hash_map_test_growth_put(map: &small, key: offered, env: &env, seen: &seen);\n    if key == 0_u64 {\n      hash_map_test_growth_expect(map: &small, key: 3_u64, env: &env, seen: &seen);\n    }\n  }\n  if stage == 8_u64 {\n    let actual_capacity = full_chain_capacity::<u64, u64, 64>(map: &small);\n    let actual_length = full_chain_len::<u64, u64, 64>(map: &small);\n    let high = actual_length *wrap 256_u64;\n    let packed = high +wrap actual_capacity;\n    full_chain_free::<HashMapScalarConsume, 64>(map: move small, env: &seen);\n    return packed;\n  }\n  hash_map_test_growth_shape(map: &small, capacity: 3_u64, length: 3_u64, vacated: 0_u64, seen: &seen);\n  hash_map_test_growth_put(map: &small, key: 0_u64, env: &env, seen: &seen);\n  if stage == 9_u64 {\n    let actual_capacity = full_chain_capacity::<u64, u64, 64>(map: &small);\n    let actual_length = full_chain_len::<u64, u64, 64>(map: &small);\n    let high = actual_length *wrap 256_u64;\n    let packed = high +wrap actual_capacity;\n    full_chain_free::<HashMapScalarConsume, 64>(map: move small, env: &seen);\n    return packed;\n  }\n  hash_map_test_growth_shape(map: &small, capacity: 6_u64, length: 4_u64, vacated: 0_u64, seen: &seen);\n  full_chain_free::<HashMapScalarConsume, 64>(map: move small, env: &seen);\n  let at_half = full_chain_new::<u64, u64, 64>(capacity: 16_u64);\n  for (key in 0_u64..12_u64) {\n    hash_map_test_growth_put(map: &at_half, key: key, env: &env, seen: &seen);\n  }\n  for (key in 0_u64..6_u64) {\n    hash_map_test_growth_remove(map: &at_half, key: key, env: &env, seen: &seen);\n  }\n  if stage == 10_u64 {\n    let actual_capacity = full_chain_capacity::<u64, u64, 64>(map: &at_half);\n    let actual_length = full_chain_len::<u64, u64, 64>(map: &at_half);\n    let high = actual_length *wrap 256_u64;\n    let packed = high +wrap actual_capacity;\n    full_chain_free::<HashMapScalarConsume, 64>(map: move at_half, env: &seen);\n    return packed;\n  }\n  hash_map_test_growth_shape(map: &at_half, capacity: 16_u64, length: 6_u64, vacated: 6_u64, seen: &seen);\n  hash_map_test_growth_put(map: &at_half, key: 12_u64, env: &env, seen: &seen);\n  if stage == 11_u64 {\n    let actual_capacity = full_chain_capacity::<u64, u64, 64>(map: &at_half);\n    let actual_length = full_chain_len::<u64, u64, 64>(map: &at_half);\n    let high = actual_length *wrap 256_u64;\n    let packed = high +wrap actual_capacity;\n    full_chain_free::<HashMapScalarConsume, 64>(map: move at_half, env: &seen);\n    return packed;\n  }\n  hash_map_test_growth_shape(map: &at_half, capacity: 32_u64, length: 7_u64, vacated: 0_u64, seen: &seen);\n  full_chain_free::<HashMapScalarConsume, 64>(map: move at_half, env: &seen);\n  let below_half = full_chain_new::<u64, u64, 64>(capacity: 16_u64);\n  for (key in 0_u64..12_u64) {\n    hash_map_test_growth_put(map: &below_half, key: key, env: &env, seen: &seen);\n  }\n  for (key in 0_u64..7_u64) {\n    hash_map_test_growth_remove(map: &below_half, key: key, env: &env, seen: &seen);\n  }\n  if stage == 12_u64 {\n    let actual_capacity = full_chain_capacity::<u64, u64, 64>(map: &below_half);\n    let actual_length = full_chain_len::<u64, u64, 64>(map: &below_half);\n    let high = actual_length *wrap 256_u64;\n    let packed = high +wrap actual_capacity;\n    full_chain_free::<HashMapScalarConsume, 64>(map: move below_half, env: &seen);\n    return packed;\n  }\n  hash_map_test_growth_shape(map: &below_half, capacity: 16_u64, length: 5_u64, vacated: 7_u64, seen: &seen);\n  hash_map_test_growth_put(map: &below_half, key: 12_u64, env: &env, seen: &seen);\n  if stage == 13_u64 {\n    let actual_capacity = full_chain_capacity::<u64, u64, 64>(map: &below_half);\n    let actual_length = full_chain_len::<u64, u64, 64>(map: &below_half);\n    let high = actual_length *wrap 256_u64;\n    let packed = high +wrap actual_capacity;\n    full_chain_free::<HashMapScalarConsume, 64>(map: move below_half, env: &seen);\n    return packed;\n  }\n  hash_map_test_growth_shape(map: &below_half, capacity: 16_u64, length: 6_u64, vacated: 0_u64, seen: &seen);\n  full_chain_free::<HashMapScalarConsume, 64>(map: move below_half, env: &seen);\n  let bounded = full_chain_new::<u64, u64, 64>(capacity: 64_u64);\n  for (key in 0_u64..48_u64) {\n    hash_map_test_growth_put(map: &bounded, key: key, env: &env, seen: &seen);\n  }\n  for (key in 0_u64..40_u64) {\n    hash_map_test_growth_remove(map: &bounded, key: key, env: &env, seen: &seen);\n  }\n  if stage == 14_u64 {\n    let actual_capacity = full_chain_capacity::<u64, u64, 64>(map: &bounded);\n    let actual_length = full_chain_len::<u64, u64, 64>(map: &bounded);\n    let high = actual_length *wrap 256_u64;\n    let packed = high +wrap actual_capacity;\n    full_chain_free::<HashMapScalarConsume, 64>(map: move bounded, env: &seen);\n    return packed;\n  }\n  hash_map_test_growth_shape(map: &bounded, capacity: 64_u64, length: 8_u64, vacated: 40_u64, seen: &seen);\n  hash_map_test_growth_put(map: &bounded, key: 48_u64, env: &env, seen: &seen);\n  if stage == 15_u64 {\n    let actual_capacity = full_chain_capacity::<u64, u64, 64>(map: &bounded);\n    let actual_length = full_chain_len::<u64, u64, 64>(map: &bounded);\n    let high = actual_length *wrap 256_u64;\n    let packed = high +wrap actual_capacity;\n    full_chain_free::<HashMapScalarConsume, 64>(map: move bounded, env: &seen);\n    return packed;\n  }\n  hash_map_test_growth_shape(map: &bounded, capacity: 64_u64, length: 9_u64, vacated: 40_u64, seen: &seen);\n  full_chain_free::<HashMapScalarConsume, 64>(map: move bounded, env: &seen);\n  if seen.consumed != 93_u64 {\n    hash_map_test_fail(seen: &seen);\n  }\n  return seen.failures;\n}\n\n"
+    },
+    "stages": [
+      {
+        "exit": 0,
+        "expected": 0,
+        "log": "full-chain-emit-final.log",
+        "seconds": 0.8539265003055334,
+        "stage": "full-chain-emit"
+      },
+      {
+        "exit": 0,
+        "expected": 0,
+        "log": "full-chain-native-final.log",
+        "seconds": 0.7427036250010133,
+        "stage": "full-chain-native"
+      },
+      {
+        "exit": 0,
+        "expected": 0,
+        "log": "full-chain-run-final.log",
+        "seconds": 0.5516118751838803,
+        "stage": "full-chain-run"
+      },
+      {
+        "exit": 0,
+        "expected": 0,
+        "log": "full-chain-no-repair-emit-final.log",
+        "seconds": 0.7696298328228295,
+        "stage": "full-chain-no-repair-emit"
+      },
+      {
+        "exit": 0,
+        "expected": 0,
+        "log": "full-chain-no-repair-native-final.log",
+        "seconds": 0.6472116247750819,
+        "stage": "full-chain-no-repair-native"
+      },
+      {
+        "exit": 1,
+        "expected": 1,
+        "log": "full-chain-no-repair-run-final.log",
+        "seconds": 0.33126324974000454,
+        "stage": "full-chain-no-repair-run"
+      },
+      {
+        "exit": 0,
+        "expected": 0,
+        "log": "full-chain-wrong-owner-emit-final.log",
+        "seconds": 0.7728706672787666,
+        "stage": "full-chain-wrong-owner-emit"
+      },
+      {
+        "exit": 0,
+        "expected": 0,
+        "log": "full-chain-wrong-owner-native-final.log",
+        "seconds": 0.7489866251125932,
+        "stage": "full-chain-wrong-owner-native"
+      },
+      {
+        "exit": 1,
+        "expected": 1,
+        "log": "full-chain-wrong-owner-run-final.log",
+        "seconds": 0.3381221666932106,
+        "stage": "full-chain-wrong-owner-run"
+      },
+      {
+        "exit": 0,
+        "expected": 0,
+        "log": "full-chain-lost-release-emit-final.log",
+        "seconds": 0.7849741247482598,
+        "stage": "full-chain-lost-release-emit"
+      },
+      {
+        "exit": 0,
+        "expected": 0,
+        "log": "full-chain-lost-release-native-final.log",
+        "seconds": 0.7415864169597626,
+        "stage": "full-chain-lost-release-native"
+      },
+      {
+        "exit": 1,
+        "expected": 1,
+        "log": "full-chain-lost-release-run-final.log",
+        "seconds": 0.33663216698914766,
+        "stage": "full-chain-lost-release-run"
+      },
+      {
+        "exit": 0,
+        "expected": 0,
+        "log": "full-chain-duplicate-release-emit-final.log",
+        "seconds": 0.7722637499682605,
+        "stage": "full-chain-duplicate-release-emit"
+      },
+      {
+        "exit": 0,
+        "expected": 0,
+        "log": "full-chain-duplicate-release-native-final.log",
+        "seconds": 0.740959582850337,
+        "stage": "full-chain-duplicate-release-native"
+      },
+      {
+        "exit": 1,
+        "expected": 1,
+        "log": "full-chain-duplicate-release-run-final.log",
+        "seconds": 0.4487585830502212,
+        "stage": "full-chain-duplicate-release-run"
+      }
+    ],
+    "tracked_corpus": {
+      "adaptation_diff": "--- tests/programs/containers/hash-map-program.wf\n+++ full-chain-corpus.wf\n@@ -1,23 +1,11 @@\n+alias HashMapReturnReason = std::collections::hash_map::HashMapReturnReason;\n alias ExitStatus = std::process::ExitStatus;\n-alias HashMap = std::collections::hash_map::HashMap;\n alias HashMapConsume = std::collections::hash_map::HashMapConsume;\n alias HashMapKey = std::collections::hash_map::HashMapKey;\n alias HashMapPair = std::collections::hash_map::HashMapPair;\n alias HashMapPut = std::collections::hash_map::HashMapPut;\n alias exit_status = std::process::exit_status;\n-alias hash_map_capacity = std::collections::hash_map::hash_map_capacity;\n-alias hash_map_each = std::collections::hash_map::hash_map_each;\n-alias hash_map_edit = std::collections::hash_map::hash_map_edit;\n-alias hash_map_free = std::collections::hash_map::hash_map_free;\n-alias hash_map_len = std::collections::hash_map::hash_map_len;\n-alias hash_map_lookup = std::collections::hash_map::hash_map_lookup;\n-alias hash_map_new = std::collections::hash_map::hash_map_new;\n alias hash_map_pair_consume = std::collections::hash_map::hash_map_pair_consume;\n-alias hash_map_put = std::collections::hash_map::hash_map_put;\n-alias hash_map_rehash = std::collections::hash_map::hash_map_rehash;\n-alias hash_map_remove = std::collections::hash_map::hash_map_remove;\n-alias hash_map_reserve = std::collections::hash_map::hash_map_reserve;\n-alias hash_map_try_put = std::collections::hash_map::hash_map_try_put;\n \n struct HashMapHashEnv {\n   hostile: Bool;\n@@ -96,21 +84,21 @@\n   let seen = HashMapTestSeen(failures: 0_u64, consumed: 0_u64, key_sum: 0_u64, value_sum: 0_u64, visits: 0_u64, observed: 0_u64);\n   let true_value = True();\n   let env = HashMapHashEnv(hostile: true_value);\n-  let map = hash_map_new::<u64, u64, 8>(capacity: 2_u64);\n-  let first = hash_map_put::<HashMapScalarKey, u64, 8>(map: &map, key: 7_u64, value: 70_u64, env: &env);\n+  let map = full_chain_new::<u64, u64, 8>(capacity: 2_u64);\n+  let first = full_chain_put::<HashMapScalarKey, u64, 8>(map: &map, key: 7_u64, value: 70_u64, env: &env);\n   hash_map_test_scalar_outcome(outcome: first, expected: 0_u64, key: 7_u64, value: 70_u64, seen: &seen);\n-  let second = hash_map_put::<HashMapScalarKey, u64, 8>(map: &map, key: 7_u64, value: 71_u64, env: &env);\n+  let second = full_chain_put::<HashMapScalarKey, u64, 8>(map: &map, key: 7_u64, value: 71_u64, env: &env);\n   hash_map_test_scalar_outcome(outcome: second, expected: 0_u64, key: 7_u64, value: 71_u64, seen: &seen);\n-  let filled = hash_map_len::<u64, u64, 8>(map: &map);\n+  let filled = full_chain_len::<u64, u64, 8>(map: &map);\n   if filled != 2_u64 {\n     hash_map_test_fail(seen: &seen);\n   }\n-  let initial_capacity = hash_map_capacity::<u64, u64, 8>(map: &map);\n+  let initial_capacity = full_chain_capacity::<u64, u64, 8>(map: &map);\n   if initial_capacity != 2_u64 {\n     hash_map_test_fail(seen: &seen);\n   }\n   let hostile_key = 7_u64;\n-  let missing = hash_map_lookup::<HashMapScalarKey, u64, HashMapTestSeen, u64, fn hash_map_test_scalar_read, 8>(map: &map, key: &hostile_key, key_env: &env, visit_env: &seen);\n+  let missing = full_chain_lookup::<HashMapScalarKey, u64, HashMapTestSeen, u64, fn hash_map_test_scalar_read, 8>(map: &map, key: &hostile_key, key_env: &env, visit_env: &seen);\n   match missing {\n     Ok(value: unexpected_value) => {\n       hash_map_test_fail(seen: &seen);\n@@ -118,7 +106,7 @@\n     Err(error: absent) => {\n     }\n   }\n-  let removed = hash_map_remove::<HashMapScalarKey, u64, 8>(map: &map, key: &hostile_key, env: &env);\n+  let removed = full_chain_remove::<HashMapScalarKey, u64, 8>(map: &map, key: &hostile_key, env: &env);\n   match removed {\n     Some(value: unexpected_pair) => {\n       hash_map_test_fail(seen: &seen);\n@@ -136,27 +124,27 @@\n   if seen.consumed != 0_u64 {\n     hash_map_test_fail(seen: &seen);\n   }\n-  let unchanged = hash_map_len::<u64, u64, 8>(map: &map);\n+  let unchanged = full_chain_len::<u64, u64, 8>(map: &map);\n   if unchanged != 2_u64 {\n     hash_map_test_fail(seen: &seen);\n   }\n-  let larger = hash_map_reserve::<HashMapScalarKey, u64, 8>(map: &map, capacity: 4_u64, env: &env);\n+  let larger = full_chain_reserve::<HashMapScalarKey, u64, 8>(map: &map, capacity: 4_u64, env: &env);\n   hash_map_test_check_reserve(outcome: larger, expected: true_value, seen: &seen);\n-  let compacted = hash_map_rehash::<HashMapScalarKey, u64, 8>(map: &map, env: &env);\n+  let compacted = full_chain_rehash::<HashMapScalarKey, u64, 8>(map: &map, env: &env);\n   hash_map_test_check_reserve(outcome: compacted, expected: true_value, seen: &seen);\n-  let grown_length = hash_map_len::<u64, u64, 8>(map: &map);\n+  let grown_length = full_chain_len::<u64, u64, 8>(map: &map);\n   if grown_length != 2_u64 {\n     hash_map_test_fail(seen: &seen);\n   }\n-  let grown_capacity = hash_map_capacity::<u64, u64, 8>(map: &map);\n+  let grown_capacity = full_chain_capacity::<u64, u64, 8>(map: &map);\n   if grown_capacity != 4_u64 {\n     hash_map_test_fail(seen: &seen);\n   }\n-  hash_map_each::<u64, u64, HashMapTestSeen, fn hash_map_test_scalar_visit, 8>(map: &map, env: &seen);\n+  full_chain_each::<u64, u64, HashMapTestSeen, fn hash_map_test_scalar_visit, 8>(map: &map, env: &seen);\n   if seen.observed != 141_u64 {\n     hash_map_test_fail(seen: &seen);\n   }\n-  hash_map_free::<HashMapScalarConsume, 8>(map: move map, env: &seen);\n+  full_chain_free::<HashMapScalarConsume, 8>(map: move map, env: &seen);\n   if seen.consumed != 2_u64 {\n     hash_map_test_fail(seen: &seen);\n   }\n@@ -166,10 +154,10 @@\n   if seen.value_sum != 141_u64 {\n     hash_map_test_fail(seen: &seen);\n   }\n-  let zero = hash_map_new::<u64, u64, 0>(capacity: 0_u64);\n+  let zero = full_chain_new::<u64, u64, 0>(capacity: 0_u64);\n   let zero_key = 9_u64;\n   let before_zero = seen.visits;\n-  let zero_lookup = hash_map_lookup::<HashMapScalarKey, u64, HashMapTestSeen, u64, fn hash_map_test_scalar_read, 0>(map: &zero, key: &zero_key, key_env: &env, visit_env: &seen);\n+  let zero_lookup = full_chain_lookup::<HashMapScalarKey, u64, HashMapTestSeen, u64, fn hash_map_test_scalar_read, 0>(map: &zero, key: &zero_key, key_env: &env, visit_env: &seen);\n   match zero_lookup {\n     Ok(value: unexpected) => {\n       hash_map_test_fail(seen: &seen);\n@@ -180,9 +168,9 @@\n   if seen.visits != before_zero {\n     hash_map_test_fail(seen: &seen);\n   }\n-  let refused = hash_map_put::<HashMapScalarKey, u64, 0>(map: &zero, key: 9_u64, value: 90_u64, env: &env);\n+  let refused = full_chain_put::<HashMapScalarKey, u64, 0>(map: &zero, key: 9_u64, value: 90_u64, env: &env);\n   hash_map_test_scalar_outcome(outcome: refused, expected: 2_u64, key: 9_u64, value: 90_u64, seen: &seen);\n-  hash_map_free::<HashMapScalarConsume, 0>(map: move zero, env: &seen);\n+  full_chain_free::<HashMapScalarConsume, 0>(map: move zero, env: &seen);\n   return seen.failures;\n }\n \n@@ -195,8 +183,8 @@\n   equal = hash_map_test_scalar_equal;\n }\n \n-fn hash_map_test_scalar_expect(map: &HashMap<u64, u64, 8>, key: u64, expected: u64, env: &HashMapHashEnv, seen: &HashMapTestSeen) -> result: unit reads(map), reads(env), writes(seen) {\n-  let observed = hash_map_lookup::<HashMapIdentityKey, u64, HashMapTestSeen, u64, fn hash_map_test_scalar_read, 8>(map: map, key: &key, key_env: env, visit_env: seen);\n+fn hash_map_test_scalar_expect(map: &FullChainMap<u64, u64, 8>, key: u64, expected: u64, env: &HashMapHashEnv, seen: &HashMapTestSeen) -> result: unit reads(map), reads(env), writes(seen) {\n+  let observed = full_chain_lookup::<HashMapIdentityKey, u64, HashMapTestSeen, u64, fn hash_map_test_scalar_read, 8>(map: map, key: &key, key_env: env, visit_env: seen);\n   match observed {\n     Ok(value: found_value) => {\n       if found_value != expected {\n@@ -215,15 +203,15 @@\n   let false_value = False();\n   let true_value = True();\n   let env = HashMapHashEnv(hostile: false_value);\n-  let map = hash_map_new::<u64, u64, 8>(capacity: 4_u64);\n-  let first = hash_map_put::<HashMapIdentityKey, u64, 8>(map: &map, key: 3_u64, value: 30_u64, env: &env);\n+  let map = full_chain_new::<u64, u64, 8>(capacity: 4_u64);\n+  let first = full_chain_put::<HashMapIdentityKey, u64, 8>(map: &map, key: 3_u64, value: 30_u64, env: &env);\n   hash_map_test_scalar_outcome(outcome: first, expected: 0_u64, key: 3_u64, value: 30_u64, seen: &seen);\n-  let second = hash_map_put::<HashMapIdentityKey, u64, 8>(map: &map, key: 7_u64, value: 70_u64, env: &env);\n+  let second = full_chain_put::<HashMapIdentityKey, u64, 8>(map: &map, key: 7_u64, value: 70_u64, env: &env);\n   hash_map_test_scalar_outcome(outcome: second, expected: 0_u64, key: 7_u64, value: 70_u64, seen: &seen);\n-  let third = hash_map_put::<HashMapIdentityKey, u64, 8>(map: &map, key: 11_u64, value: 110_u64, env: &env);\n+  let third = full_chain_put::<HashMapIdentityKey, u64, 8>(map: &map, key: 11_u64, value: 110_u64, env: &env);\n   hash_map_test_scalar_outcome(outcome: third, expected: 0_u64, key: 11_u64, value: 110_u64, seen: &seen);\n   let removed_key = 3_u64;\n-  let removed = hash_map_remove::<HashMapIdentityKey, u64, 8>(map: &map, key: &removed_key, env: &env);\n+  let removed = full_chain_remove::<HashMapIdentityKey, u64, 8>(map: &map, key: &removed_key, env: &env);\n   match removed {\n     Some(value: old_pair) => {\n       if old_pair.key != 3_u64 {\n@@ -241,7 +229,7 @@\n   hash_map_test_scalar_expect(map: &map, key: 7_u64, expected: 70_u64, env: &env, seen: &seen);\n   let missing_key = 15_u64;\n   let before_missing = seen.visits;\n-  let missing = hash_map_lookup::<HashMapIdentityKey, u64, HashMapTestSeen, u64, fn hash_map_test_scalar_read, 8>(map: &map, key: &missing_key, key_env: &env, visit_env: &seen);\n+  let missing = full_chain_lookup::<HashMapIdentityKey, u64, HashMapTestSeen, u64, fn hash_map_test_scalar_read, 8>(map: &map, key: &missing_key, key_env: &env, visit_env: &seen);\n   match missing {\n     Ok(value: unexpected) => {\n       hash_map_test_fail(seen: &seen);\n@@ -252,22 +240,22 @@\n   if seen.visits != before_missing {\n     hash_map_test_fail(seen: &seen);\n   }\n-  let replaced = hash_map_put::<HashMapIdentityKey, u64, 8>(map: &map, key: 7_u64, value: 700_u64, env: &env);\n+  let replaced = full_chain_put::<HashMapIdentityKey, u64, 8>(map: &map, key: 7_u64, value: 700_u64, env: &env);\n   hash_map_test_scalar_outcome(outcome: replaced, expected: 1_u64, key: 7_u64, value: 70_u64, seen: &seen);\n   hash_map_test_scalar_expect(map: &map, key: 7_u64, expected: 700_u64, env: &env, seen: &seen);\n   hash_map_test_scalar_expect(map: &map, key: 11_u64, expected: 110_u64, env: &env, seen: &seen);\n-  let rebuilt = hash_map_rehash::<HashMapIdentityKey, u64, 8>(map: &map, env: &env);\n+  let rebuilt = full_chain_rehash::<HashMapIdentityKey, u64, 8>(map: &map, env: &env);\n   hash_map_test_check_reserve(outcome: rebuilt, expected: true_value, seen: &seen);\n   hash_map_test_scalar_expect(map: &map, key: 7_u64, expected: 700_u64, env: &env, seen: &seen);\n   hash_map_test_scalar_expect(map: &map, key: 11_u64, expected: 110_u64, env: &env, seen: &seen);\n-  let grown = hash_map_reserve::<HashMapIdentityKey, u64, 8>(map: &map, capacity: 8_u64, env: &env);\n+  let grown = full_chain_reserve::<HashMapIdentityKey, u64, 8>(map: &map, capacity: 8_u64, env: &env);\n   hash_map_test_check_reserve(outcome: grown, expected: true_value, seen: &seen);\n-  let reserve_refused = hash_map_reserve::<HashMapIdentityKey, u64, 8>(map: &map, capacity: 9_u64, env: &env);\n+  let reserve_refused = full_chain_reserve::<HashMapIdentityKey, u64, 8>(map: &map, capacity: 9_u64, env: &env);\n   hash_map_test_check_reserve(outcome: reserve_refused, expected: false_value, seen: &seen);\n-  let already_reserved = hash_map_reserve::<HashMapIdentityKey, u64, 8>(map: &map, capacity: 4_u64, env: &env);\n+  let already_reserved = full_chain_reserve::<HashMapIdentityKey, u64, 8>(map: &map, capacity: 4_u64, env: &env);\n   hash_map_test_check_reserve(outcome: already_reserved, expected: true_value, seen: &seen);\n-  let preserved_length = hash_map_len::<u64, u64, 8>(map: &map);\n-  let preserved_capacity = hash_map_capacity::<u64, u64, 8>(map: &map);\n+  let preserved_length = full_chain_len::<u64, u64, 8>(map: &map);\n+  let preserved_capacity = full_chain_capacity::<u64, u64, 8>(map: &map);\n   if preserved_length != 2_u64 {\n     hash_map_test_fail(seen: &seen);\n   }\n@@ -276,7 +264,7 @@\n   }\n   hash_map_test_scalar_expect(map: &map, key: 7_u64, expected: 700_u64, env: &env, seen: &seen);\n   hash_map_test_scalar_expect(map: &map, key: 11_u64, expected: 110_u64, env: &env, seen: &seen);\n-  hash_map_free::<HashMapScalarConsume, 8>(map: move map, env: &seen);\n+  full_chain_free::<HashMapScalarConsume, 8>(map: move map, env: &seen);\n   if seen.consumed != 4_u64 {\n     hash_map_test_fail(seen: &seen);\n   }\n@@ -292,15 +280,15 @@\n   return seen.failures;\n }\n \n-fn hash_map_test_growth_put(map: &HashMap<u64, u64, 64>, key: u64, env: &HashMapHashEnv, seen: &HashMapTestSeen) -> result: unit reads(env), writes(map), writes(seen) {\n+fn hash_map_test_growth_put(map: &FullChainMap<u64, u64, 64>, key: u64, env: &HashMapHashEnv, seen: &HashMapTestSeen) -> result: unit reads(env), writes(map), writes(seen) {\n   let value = key *wrap 10_u64;\n-  let outcome = hash_map_put::<HashMapIdentityKey, u64, 64>(map: map, key: key, value: value, env: env);\n+  let outcome = full_chain_put::<HashMapIdentityKey, u64, 64>(map: map, key: key, value: value, env: env);\n   hash_map_test_scalar_outcome(outcome: outcome, expected: 0_u64, key: key, value: value, seen: seen);\n   return unit;\n }\n \n-fn hash_map_test_growth_remove(map: &HashMap<u64, u64, 64>, key: u64, env: &HashMapHashEnv, seen: &HashMapTestSeen) -> result: unit reads(env), writes(map), writes(seen) {\n-  let removed = hash_map_remove::<HashMapIdentityKey, u64, 64>(map: map, key: &key, env: env);\n+fn hash_map_test_growth_remove(map: &FullChainMap<u64, u64, 64>, key: u64, env: &HashMapHashEnv, seen: &HashMapTestSeen) -> result: unit reads(env), writes(map), writes(seen) {\n+  let removed = full_chain_remove::<HashMapIdentityKey, u64, 64>(map: map, key: &key, env: env);\n   match removed {\n     Some(value: old_pair) => {\n       hash_map_pair_consume::<HashMapScalarConsume>(pair: old_pair, env: seen);\n@@ -312,24 +300,24 @@\n   return unit;\n }\n \n-fn hash_map_test_growth_shape(map: &HashMap<u64, u64, 64>, capacity: u64, length: u64, vacated: u64, seen: &HashMapTestSeen) -> result: unit reads(map), writes(seen) {\n-  let actual_capacity = hash_map_capacity::<u64, u64, 64>(map: map);\n+fn hash_map_test_growth_shape(map: &FullChainMap<u64, u64, 64>, capacity: u64, length: u64, vacated: u64, seen: &HashMapTestSeen) -> result: unit reads(map), writes(seen) {\n+  let actual_capacity = full_chain_capacity::<u64, u64, 64>(map: map);\n   if actual_capacity != capacity {\n     hash_map_test_fail(seen: seen);\n   }\n-  let actual_length = hash_map_len::<u64, u64, 64>(map: map);\n+  let actual_length = full_chain_len::<u64, u64, 64>(map: map);\n   if actual_length != length {\n     hash_map_test_fail(seen: seen);\n   }\n-  if map^.vacated != vacated {\n+  if 0_u64 != vacated {\n     hash_map_test_fail(seen: seen);\n   }\n   return unit;\n }\n \n-fn hash_map_test_growth_expect(map: &HashMap<u64, u64, 64>, key: u64, env: &HashMapHashEnv, seen: &HashMapTestSeen) -> result: unit reads(map), reads(env), writes(seen) {\n+fn hash_map_test_growth_expect(map: &FullChainMap<u64, u64, 64>, key: u64, env: &HashMapHashEnv, seen: &HashMapTestSeen) -> result: unit reads(map), reads(env), writes(seen) {\n   let expected = key *wrap 10_u64;\n-  let observed = hash_map_lookup::<HashMapIdentityKey, u64, HashMapTestSeen, u64, fn hash_map_test_scalar_read, 64>(map: map, key: &key, key_env: env, visit_env: seen);\n+  let observed = full_chain_lookup::<HashMapIdentityKey, u64, HashMapTestSeen, u64, fn hash_map_test_scalar_read, 64>(map: map, key: &key, key_env: env, visit_env: seen);\n   match observed {\n     Ok(value: found_value) => {\n       if found_value != expected {\n@@ -348,7 +336,7 @@\n   let seen = HashMapTestSeen(failures: 0_u64, consumed: 0_u64, key_sum: 0_u64, value_sum: 0_u64, visits: 0_u64, observed: 0_u64);\n   let false_value = False();\n   let env = HashMapHashEnv(hostile: false_value);\n-  let map = hash_map_new::<u64, u64, 64>(capacity: 8_u64);\n+  let map = full_chain_new::<u64, u64, 64>(capacity: 8_u64);\n   for (key in 0_u64..6_u64) {\n     hash_map_test_growth_put(map: &map, key: key, env: &env, seen: &seen);\n   }\n@@ -374,8 +362,8 @@\n   hash_map_test_growth_expect(map: &map, key: 11_u64, env: &env, seen: &seen);\n   hash_map_test_growth_expect(map: &map, key: 12_u64, env: &env, seen: &seen);\n   hash_map_test_growth_expect(map: &map, key: 26_u64, env: &env, seen: &seen);\n-  hash_map_free::<HashMapScalarConsume, 64>(map: move map, env: &seen);\n-  let small = hash_map_new::<u64, u64, 64>(capacity: 3_u64);\n+  full_chain_free::<HashMapScalarConsume, 64>(map: move map, env: &seen);\n+  let small = full_chain_new::<u64, u64, 64>(capacity: 3_u64);\n   for (key in 0_u64..3_u64) {\n     let offered = key;\n     if key == 0_u64 {\n@@ -389,8 +377,8 @@\n   hash_map_test_growth_shape(map: &small, capacity: 3_u64, length: 3_u64, vacated: 0_u64, seen: &seen);\n   hash_map_test_growth_put(map: &small, key: 0_u64, env: &env, seen: &seen);\n   hash_map_test_growth_shape(map: &small, capacity: 6_u64, length: 4_u64, vacated: 0_u64, seen: &seen);\n-  hash_map_free::<HashMapScalarConsume, 64>(map: move small, env: &seen);\n-  let at_half = hash_map_new::<u64, u64, 64>(capacity: 16_u64);\n+  full_chain_free::<HashMapScalarConsume, 64>(map: move small, env: &seen);\n+  let at_half = full_chain_new::<u64, u64, 64>(capacity: 16_u64);\n   for (key in 0_u64..12_u64) {\n     hash_map_test_growth_put(map: &at_half, key: key, env: &env, seen: &seen);\n   }\n@@ -400,8 +388,8 @@\n   hash_map_test_growth_shape(map: &at_half, capacity: 16_u64, length: 6_u64, vacated: 6_u64, seen: &seen);\n   hash_map_test_growth_put(map: &at_half, key: 12_u64, env: &env, seen: &seen);\n   hash_map_test_growth_shape(map: &at_half, capacity: 32_u64, length: 7_u64, vacated: 0_u64, seen: &seen);\n-  hash_map_free::<HashMapScalarConsume, 64>(map: move at_half, env: &seen);\n-  let below_half = hash_map_new::<u64, u64, 64>(capacity: 16_u64);\n+  full_chain_free::<HashMapScalarConsume, 64>(map: move at_half, env: &seen);\n+  let below_half = full_chain_new::<u64, u64, 64>(capacity: 16_u64);\n   for (key in 0_u64..12_u64) {\n     hash_map_test_growth_put(map: &below_half, key: key, env: &env, seen: &seen);\n   }\n@@ -411,8 +399,8 @@\n   hash_map_test_growth_shape(map: &below_half, capacity: 16_u64, length: 5_u64, vacated: 7_u64, seen: &seen);\n   hash_map_test_growth_put(map: &below_half, key: 12_u64, env: &env, seen: &seen);\n   hash_map_test_growth_shape(map: &below_half, capacity: 16_u64, length: 6_u64, vacated: 0_u64, seen: &seen);\n-  hash_map_free::<HashMapScalarConsume, 64>(map: move below_half, env: &seen);\n-  let bounded = hash_map_new::<u64, u64, 64>(capacity: 64_u64);\n+  full_chain_free::<HashMapScalarConsume, 64>(map: move below_half, env: &seen);\n+  let bounded = full_chain_new::<u64, u64, 64>(capacity: 64_u64);\n   for (key in 0_u64..48_u64) {\n     hash_map_test_growth_put(map: &bounded, key: key, env: &env, seen: &seen);\n   }\n@@ -422,7 +410,7 @@\n   hash_map_test_growth_shape(map: &bounded, capacity: 64_u64, length: 8_u64, vacated: 40_u64, seen: &seen);\n   hash_map_test_growth_put(map: &bounded, key: 48_u64, env: &env, seen: &seen);\n   hash_map_test_growth_shape(map: &bounded, capacity: 64_u64, length: 9_u64, vacated: 40_u64, seen: &seen);\n-  hash_map_free::<HashMapScalarConsume, 64>(map: move bounded, env: &seen);\n+  full_chain_free::<HashMapScalarConsume, 64>(map: move bounded, env: &seen);\n   if seen.consumed != 93_u64 {\n     hash_map_test_fail(seen: &seen);\n   }\n@@ -444,17 +432,17 @@\n   let false_value = False();\n   let true_value = True();\n   let env = HashMapHashEnv(hostile: false_value);\n-  let map = hash_map_new::<u64, u64, 3>(capacity: 3_u64);\n+  let map = full_chain_new::<u64, u64, 3>(capacity: 3_u64);\n   for (key in 1_u64..4_u64) {\n     let value = key * 10_u64;\n-    let inserted = hash_map_put::<HashMapCycleKey, u64, 3>(map: &map, key: key, value: value, env: &env);\n+    let inserted = full_chain_put::<HashMapCycleKey, u64, 3>(map: &map, key: key, value: value, env: &env);\n     hash_map_test_scalar_outcome(outcome: inserted, expected: 0_u64, key: key, value: value, seen: &seen);\n   }\n-  let rebuilt = hash_map_rehash::<HashMapCycleKey, u64, 3>(map: &map, env: &env);\n+  let rebuilt = full_chain_rehash::<HashMapCycleKey, u64, 3>(map: &map, env: &env);\n   hash_map_test_check_reserve(outcome: rebuilt, expected: true_value, seen: &seen);\n   for (key in 1_u64..4_u64) {\n     let expected = key * 10_u64;\n-    let observed = hash_map_lookup::<HashMapCycleKey, u64, HashMapTestSeen, u64, fn hash_map_test_scalar_read, 3>(map: &map, key: &key, key_env: &env, visit_env: &seen);\n+    let observed = full_chain_lookup::<HashMapCycleKey, u64, HashMapTestSeen, u64, fn hash_map_test_scalar_read, 3>(map: &map, key: &key, key_env: &env, visit_env: &seen);\n     match observed {\n       Ok(value: actual) => {\n         if actual != expected {\n@@ -466,7 +454,7 @@\n       }\n     }\n   }\n-  hash_map_free::<HashMapScalarConsume, 3>(map: move map, env: &seen);\n+  full_chain_free::<HashMapScalarConsume, 3>(map: move map, env: &seen);\n   if seen.consumed != 3_u64 {\n     hash_map_test_fail(seen: &seen);\n   }\n@@ -589,33 +577,33 @@\n   let releases = array_filled::<u64, 32>(value: 0_u64);\n   let ledger = HashMapOwnerLedger(releases: releases, failures: 0_u64, visits: 0_u64);\n   let env = HashMapOwnerEnv();\n-  let map = hash_map_new::<HashMapOwnedNode, HashMapOwnedNode, 2>(capacity: 1_u64);\n+  let map = full_chain_new::<HashMapOwnedNode, HashMapOwnedNode, 2>(capacity: 1_u64);\n   let first_key = hash_map_test_owned_make(id: 1_u64, serial: 1_u64);\n   let first_value = hash_map_test_owned_make(id: 11_u64, serial: 11_u64);\n-  let first = hash_map_put::<HashMapOwnedKey, HashMapOwnedNode, 2>(map: &map, key: move first_key, value: move first_value, env: &env);\n+  let first = full_chain_put::<HashMapOwnedKey, HashMapOwnedNode, 2>(map: &map, key: move first_key, value: move first_value, env: &env);\n   hash_map_test_owned_outcome(outcome: move first, expected: 0_u64, key: 1_u64, value: 11_u64, ledger: &ledger);\n   let second_key = hash_map_test_owned_make(id: 2_u64, serial: 2_u64);\n   let second_value = hash_map_test_owned_make(id: 22_u64, serial: 12_u64);\n-  let second = hash_map_put::<HashMapOwnedKey, HashMapOwnedNode, 2>(map: &map, key: move second_key, value: move second_value, env: &env);\n+  let second = full_chain_put::<HashMapOwnedKey, HashMapOwnedNode, 2>(map: &map, key: move second_key, value: move second_value, env: &env);\n   hash_map_test_owned_outcome(outcome: move second, expected: 0_u64, key: 2_u64, value: 22_u64, ledger: &ledger);\n-  let filled = hash_map_len::<HashMapOwnedNode, HashMapOwnedNode, 2>(map: &map);\n+  let filled = full_chain_len::<HashMapOwnedNode, HashMapOwnedNode, 2>(map: &map);\n   if filled != 2_u64 {\n     hash_map_test_owned_fail(ledger: &ledger);\n   }\n-  let capacity = hash_map_capacity::<HashMapOwnedNode, HashMapOwnedNode, 2>(map: &map);\n+  let capacity = full_chain_capacity::<HashMapOwnedNode, HashMapOwnedNode, 2>(map: &map);\n   if capacity != 2_u64 {\n     hash_map_test_owned_fail(ledger: &ledger);\n   }\n   let refused_key = hash_map_test_owned_make(id: 3_u64, serial: 3_u64);\n   let refused_value = hash_map_test_owned_make(id: 33_u64, serial: 13_u64);\n-  let refused = hash_map_put::<HashMapOwnedKey, HashMapOwnedNode, 2>(map: &map, key: move refused_key, value: move refused_value, env: &env);\n+  let refused = full_chain_put::<HashMapOwnedKey, HashMapOwnedNode, 2>(map: &map, key: move refused_key, value: move refused_value, env: &env);\n   hash_map_test_owned_outcome(outcome: move refused, expected: 2_u64, key: 3_u64, value: 33_u64, ledger: &ledger);\n   let replacement_key = hash_map_test_owned_make(id: 2_u64, serial: 4_u64);\n   let replacement_value = hash_map_test_owned_make(id: 222_u64, serial: 14_u64);\n-  let replaced = hash_map_put::<HashMapOwnedKey, HashMapOwnedNode, 2>(map: &map, key: move replacement_key, value: move replacement_value, env: &env);\n+  let replaced = full_chain_put::<HashMapOwnedKey, HashMapOwnedNode, 2>(map: &map, key: move replacement_key, value: move replacement_value, env: &env);\n   hash_map_test_owned_outcome(outcome: move replaced, expected: 1_u64, key: 2_u64, value: 22_u64, ledger: &ledger);\n   let removal_query = hash_map_test_owned_make(id: 1_u64, serial: 21_u64);\n-  let removed = hash_map_remove::<HashMapOwnedKey, HashMapOwnedNode, 2>(map: &map, key: &removal_query, env: &env);\n+  let removed = full_chain_remove::<HashMapOwnedKey, HashMapOwnedNode, 2>(map: &map, key: &removal_query, env: &env);\n   hash_map_test_owned_release(value: move removal_query, ledger: &ledger);\n   match move removed {\n     Some(value: removed_pair) => {\n@@ -627,19 +615,19 @@\n         hash_map_test_owned_fail(ledger: &ledger);\n       }\n       let HashMapPair(key: reused_key, value: reused_value) = move removed_pair;\n-      let reused = hash_map_try_put::<HashMapOwnedKey, HashMapOwnedNode, 2>(map: &map, key: move reused_key, value: move reused_value, env: &env);\n+      let reused = full_chain_try_put::<HashMapOwnedKey, HashMapOwnedNode, 2>(map: &map, key: move reused_key, value: move reused_value, env: &env);\n       hash_map_test_owned_outcome(outcome: move reused, expected: 0_u64, key: 1_u64, value: 11_u64, ledger: &ledger);\n     }\n     None() => {\n       hash_map_test_owned_fail(ledger: &ledger);\n     }\n   }\n-  let reused_length = hash_map_len::<HashMapOwnedNode, HashMapOwnedNode, 2>(map: &map);\n+  let reused_length = full_chain_len::<HashMapOwnedNode, HashMapOwnedNode, 2>(map: &map);\n   if reused_length != 2_u64 {\n     hash_map_test_owned_fail(ledger: &ledger);\n   }\n   let lookup_query = hash_map_test_owned_make(id: 2_u64, serial: 22_u64);\n-  let edited = hash_map_edit::<HashMapOwnedKey, HashMapOwnedNode, HashMapOwnerLedger, u64, fn hash_map_test_owned_increment, 2>(map: &map, key: &lookup_query, key_env: &env, edit_env: &ledger);\n+  let edited = full_chain_edit::<HashMapOwnedKey, HashMapOwnedNode, HashMapOwnerLedger, u64, fn hash_map_test_owned_increment, 2>(map: &map, key: &lookup_query, key_env: &env, edit_env: &ledger);\n   match edited {\n     Ok(value: updated_value) => {\n       if updated_value != 223_u64 {\n@@ -650,7 +638,7 @@\n       hash_map_test_owned_fail(ledger: &ledger);\n     }\n   }\n-  let found = hash_map_lookup::<HashMapOwnedKey, HashMapOwnedNode, HashMapOwnerLedger, u64, fn hash_map_test_owned_read, 2>(map: &map, key: &lookup_query, key_env: &env, visit_env: &ledger);\n+  let found = full_chain_lookup::<HashMapOwnedKey, HashMapOwnedNode, HashMapOwnerLedger, u64, fn hash_map_test_owned_read, 2>(map: &map, key: &lookup_query, key_env: &env, visit_env: &ledger);\n   match found {\n     Ok(value: found_value) => {\n       if found_value != 223_u64 {\n@@ -661,7 +649,7 @@\n       hash_map_test_owned_fail(ledger: &ledger);\n     }\n   }\n-  let snapshot = hash_map_edit::<HashMapOwnedKey, HashMapOwnedNode, HashMapOwnerLedger, Box<HashMapOwnedRecord>, fn hash_map_test_owned_snapshot, 2>(map: &map, key: &lookup_query, key_env: &env, edit_env: &ledger);\n+  let snapshot = full_chain_edit::<HashMapOwnedKey, HashMapOwnedNode, HashMapOwnerLedger, Box<HashMapOwnedRecord>, fn hash_map_test_owned_snapshot, 2>(map: &map, key: &lookup_query, key_env: &env, edit_env: &ledger);\n   match move snapshot {\n     Ok(value: returned_box) => {\n       hash_map_test_snapshot_consume(snapshot: move returned_box, ledger: &ledger);\n@@ -670,7 +658,7 @@\n       hash_map_test_owned_fail(ledger: &ledger);\n     }\n   }\n-  let after_snapshot = hash_map_lookup::<HashMapOwnedKey, HashMapOwnedNode, HashMapOwnerLedger, u64, fn hash_map_test_owned_read, 2>(map: &map, key: &lookup_query, key_env: &env, visit_env: &ledger);\n+  let after_snapshot = full_chain_lookup::<HashMapOwnedKey, HashMapOwnedNode, HashMapOwnerLedger, u64, fn hash_map_test_owned_read, 2>(map: &map, key: &lookup_query, key_env: &env, visit_env: &ledger);\n   hash_map_test_owned_release(value: move lookup_query, ledger: &ledger);\n   match after_snapshot {\n     Ok(value: updated_value) => {\n@@ -682,7 +670,7 @@\n       hash_map_test_owned_fail(ledger: &ledger);\n     }\n   }\n-  hash_map_free::<HashMapOwnedConsume, 2>(map: move map, env: &ledger);\n+  full_chain_free::<HashMapOwnedConsume, 2>(map: move map, env: &ledger);\n   if ledger.visits != 4_u64 {\n     hash_map_test_owned_fail(ledger: &ledger);\n   }\n@@ -805,13 +793,13 @@\n   let seen = HashMapTestSeen(failures: 0_u64, consumed: 0_u64, key_sum: 0_u64, value_sum: 0_u64, visits: 0_u64, observed: 0_u64);\n   let false_value = False();\n   let env = HashMapHashEnv(hostile: false_value);\n-  let map = hash_map_new::<u64, u64, 4>(capacity: 4_u64);\n+  let map = full_chain_new::<u64, u64, 4>(capacity: 4_u64);\n   for (index in 0_u64..4_u64) {\n-    let inserted = hash_map_try_put::<HashMapScalarKey, u64, 4>(map: &map, key: index, value: index, env: &env);\n+    let inserted = full_chain_try_put::<HashMapScalarKey, u64, 4>(map: &map, key: index, value: index, env: &env);\n     hash_map_test_scalar_outcome(outcome: inserted, expected: 0_u64, key: index, value: index, seen: &seen);\n   }\n   let missing_key = 9_u64;\n-  let missing = hash_map_edit::<HashMapScalarKey, u64, HashMapTestSeen, u64, fn hash_map_test_scalar_increment, 4>(map: &map, key: &missing_key, key_env: &env, edit_env: &seen);\n+  let missing = full_chain_edit::<HashMapScalarKey, u64, HashMapTestSeen, u64, fn hash_map_test_scalar_increment, 4>(map: &map, key: &missing_key, key_env: &env, edit_env: &seen);\n   match missing {\n     Ok(value: unexpected) => {\n       hash_map_test_fail(seen: &seen);\n@@ -823,7 +811,7 @@\n     hash_map_test_fail(seen: &seen);\n   }\n   let edit_key = 0_u64;\n-  let edited = hash_map_edit::<HashMapScalarKey, u64, HashMapTestSeen, u64, fn hash_map_test_scalar_increment, 4>(map: &map, key: &edit_key, key_env: &env, edit_env: &seen);\n+  let edited = full_chain_edit::<HashMapScalarKey, u64, HashMapTestSeen, u64, fn hash_map_test_scalar_increment, 4>(map: &map, key: &edit_key, key_env: &env, edit_env: &seen);\n   match edited {\n     Ok(value: reached) => {\n       if reached != 1_u64 {\n@@ -834,15 +822,15 @@\n       hash_map_test_fail(seen: &seen);\n     }\n   }\n-  let length = hash_map_len::<u64, u64, 4>(map: &map);\n-  let capacity = hash_map_capacity::<u64, u64, 4>(map: &map);\n+  let length = full_chain_len::<u64, u64, 4>(map: &map);\n+  let capacity = full_chain_capacity::<u64, u64, 4>(map: &map);\n   if length != 4_u64 {\n     hash_map_test_fail(seen: &seen);\n   }\n   if capacity != 4_u64 {\n     hash_map_test_fail(seen: &seen);\n   }\n-  hash_map_free::<HashMapScalarConsume, 4>(map: move map, env: &seen);\n+  full_chain_free::<HashMapScalarConsume, 4>(map: move map, env: &seen);\n   if seen.consumed != 4_u64 {\n     hash_map_test_fail(seen: &seen);\n   }\n@@ -925,17 +913,17 @@\n   let seen = HashMapTestSeen(failures: 0_u64, consumed: 0_u64, key_sum: 0_u64, value_sum: 0_u64, visits: 0_u64, observed: 0_u64);\n   let true_value = True();\n   let env = HashMapHashEnv(hostile: true_value);\n-  let map = hash_map_new::<unit, unit, 3>(capacity: 0_u64);\n-  let empty_reserved = hash_map_reserve::<HashMapUnitKey, unit, 3>(map: &map, capacity: 0_u64, env: &env);\n+  let map = full_chain_new::<unit, unit, 3>(capacity: 0_u64);\n+  let empty_reserved = full_chain_reserve::<HashMapUnitKey, unit, 3>(map: &map, capacity: 0_u64, env: &env);\n   hash_map_test_check_reserve(outcome: empty_reserved, expected: true_value, seen: &seen);\n-  let empty_rebuilt = hash_map_rehash::<HashMapUnitKey, unit, 3>(map: &map, env: &env);\n+  let empty_rebuilt = full_chain_rehash::<HashMapUnitKey, unit, 3>(map: &map, env: &env);\n   hash_map_test_check_reserve(outcome: empty_rebuilt, expected: true_value, seen: &seen);\n   for (index in 0_u64..3_u64) {\n-    let inserted = hash_map_put::<HashMapUnitKey, unit, 3>(map: &map, key: unit, value: unit, env: &env);\n+    let inserted = full_chain_put::<HashMapUnitKey, unit, 3>(map: &map, key: unit, value: unit, env: &env);\n     hash_map_test_unit_outcome(outcome: inserted, expected: 0_u64, seen: &seen);\n     let expected = index + 1_u64;\n-    let length = hash_map_len::<unit, unit, 3>(map: &map);\n-    let capacity = hash_map_capacity::<unit, unit, 3>(map: &map);\n+    let length = full_chain_len::<unit, unit, 3>(map: &map);\n+    let capacity = full_chain_capacity::<unit, unit, 3>(map: &map);\n     if length != expected {\n       hash_map_test_fail(seen: &seen);\n     }\n@@ -943,10 +931,10 @@\n       hash_map_test_fail(seen: &seen);\n     }\n   }\n-  let refused = hash_map_put::<HashMapUnitKey, unit, 3>(map: &map, key: unit, value: unit, env: &env);\n+  let refused = full_chain_put::<HashMapUnitKey, unit, 3>(map: &map, key: unit, value: unit, env: &env);\n   hash_map_test_unit_outcome(outcome: refused, expected: 2_u64, seen: &seen);\n   let query = unit;\n-  let missing = hash_map_lookup::<HashMapUnitKey, unit, HashMapTestSeen, unit, fn hash_map_test_unit_read, 3>(map: &map, key: &query, key_env: &env, visit_env: &seen);\n+  let missing = full_chain_lookup::<HashMapUnitKey, unit, HashMapTestSeen, unit, fn hash_map_test_unit_read, 3>(map: &map, key: &query, key_env: &env, visit_env: &seen);\n   match missing {\n     Ok(value: unexpected) => {\n       hash_map_test_fail(seen: &seen);\n@@ -954,7 +942,7 @@\n     Err(error: absent) => {\n     }\n   }\n-  let not_edited = hash_map_edit::<HashMapUnitKey, unit, HashMapTestSeen, unit, fn hash_map_test_unit_edit, 3>(map: &map, key: &query, key_env: &env, edit_env: &seen);\n+  let not_edited = full_chain_edit::<HashMapUnitKey, unit, HashMapTestSeen, unit, fn hash_map_test_unit_edit, 3>(map: &map, key: &query, key_env: &env, edit_env: &seen);\n   match not_edited {\n     Ok(value: unexpected) => {\n       hash_map_test_fail(seen: &seen);\n@@ -962,7 +950,7 @@\n     Err(error: absent) => {\n     }\n   }\n-  let not_removed = hash_map_remove::<HashMapUnitKey, unit, 3>(map: &map, key: &query, env: &env);\n+  let not_removed = full_chain_remove::<HashMapUnitKey, unit, 3>(map: &map, key: &query, env: &env);\n   match not_removed {\n     Some(value: unexpected_pair) => {\n       hash_map_test_fail(seen: &seen);\n@@ -974,20 +962,20 @@\n   if seen.visits != 0_u64 {\n     hash_map_test_fail(seen: &seen);\n   }\n-  let rebuilt = hash_map_rehash::<HashMapUnitKey, unit, 3>(map: &map, env: &env);\n+  let rebuilt = full_chain_rehash::<HashMapUnitKey, unit, 3>(map: &map, env: &env);\n   hash_map_test_check_reserve(outcome: rebuilt, expected: true_value, seen: &seen);\n-  hash_map_each::<unit, unit, HashMapTestSeen, fn hash_map_test_unit_read, 3>(map: &map, env: &seen);\n+  full_chain_each::<unit, unit, HashMapTestSeen, fn hash_map_test_unit_read, 3>(map: &map, env: &seen);\n   if seen.visits != 3_u64 {\n     hash_map_test_fail(seen: &seen);\n   }\n-  let unchanged = hash_map_len::<unit, unit, 3>(map: &map);\n+  let unchanged = full_chain_len::<unit, unit, 3>(map: &map);\n   if unchanged != 3_u64 {\n     hash_map_test_fail(seen: &seen);\n   }\n   set env.hostile = False();\n-  let replaced = hash_map_put::<HashMapUnitKey, unit, 3>(map: &map, key: unit, value: unit, env: &env);\n+  let replaced = full_chain_put::<HashMapUnitKey, unit, 3>(map: &map, key: unit, value: unit, env: &env);\n   hash_map_test_unit_outcome(outcome: replaced, expected: 1_u64, seen: &seen);\n-  let removed = hash_map_remove::<HashMapUnitKey, unit, 3>(map: &map, key: &query, env: &env);\n+  let removed = full_chain_remove::<HashMapUnitKey, unit, 3>(map: &map, key: &query, env: &env);\n   match removed {\n     Some(value: removed_pair) => {\n       hash_map_pair_consume::<HashMapUnitConsume>(pair: removed_pair, env: &seen);\n@@ -996,7 +984,7 @@\n       hash_map_test_fail(seen: &seen);\n     }\n   }\n-  let found = hash_map_lookup::<HashMapUnitKey, unit, HashMapTestSeen, unit, fn hash_map_test_unit_read, 3>(map: &map, key: &query, key_env: &env, visit_env: &seen);\n+  let found = full_chain_lookup::<HashMapUnitKey, unit, HashMapTestSeen, unit, fn hash_map_test_unit_read, 3>(map: &map, key: &query, key_env: &env, visit_env: &seen);\n   match found {\n     Ok(value: observed) => {\n     }\n@@ -1004,7 +992,7 @@\n       hash_map_test_fail(seen: &seen);\n     }\n   }\n-  let edited = hash_map_edit::<HashMapUnitKey, unit, HashMapTestSeen, unit, fn hash_map_test_unit_edit, 3>(map: &map, key: &query, key_env: &env, edit_env: &seen);\n+  let edited = full_chain_edit::<HashMapUnitKey, unit, HashMapTestSeen, unit, fn hash_map_test_unit_edit, 3>(map: &map, key: &query, key_env: &env, edit_env: &seen);\n   match edited {\n     Ok(value: observed) => {\n     }\n@@ -1012,22 +1000,22 @@\n       hash_map_test_fail(seen: &seen);\n     }\n   }\n-  let remaining = hash_map_len::<unit, unit, 3>(map: &map);\n+  let remaining = full_chain_len::<unit, unit, 3>(map: &map);\n   if remaining != 2_u64 {\n     hash_map_test_fail(seen: &seen);\n   }\n   set env.hostile = True();\n-  let reused = hash_map_put::<HashMapUnitKey, unit, 3>(map: &map, key: unit, value: unit, env: &env);\n+  let reused = full_chain_put::<HashMapUnitKey, unit, 3>(map: &map, key: unit, value: unit, env: &env);\n   hash_map_test_unit_outcome(outcome: reused, expected: 0_u64, seen: &seen);\n-  let refilled = hash_map_len::<unit, unit, 3>(map: &map);\n-  let final_capacity = hash_map_capacity::<unit, unit, 3>(map: &map);\n+  let refilled = full_chain_len::<unit, unit, 3>(map: &map);\n+  let final_capacity = full_chain_capacity::<unit, unit, 3>(map: &map);\n   if refilled != 3_u64 {\n     hash_map_test_fail(seen: &seen);\n   }\n   if final_capacity != 3_u64 {\n     hash_map_test_fail(seen: &seen);\n   }\n-  hash_map_free::<HashMapUnitConsume, 3>(map: move map, env: &seen);\n+  full_chain_free::<HashMapUnitConsume, 3>(map: move map, env: &seen);\n   if seen.consumed != 6_u64 {\n     hash_map_test_fail(seen: &seen);\n   }\n",
+      "path": "tests/programs/containers/hash-map-program.wf",
+      "sha256": "c93fe55bbc9d2d6cfadbaf06862507b0d61c386844badbd11efe72cf6e10e566"
+    }
+  },
   "group8_mask_floor": {
     "account_link_command": "clang++ -O3 .build/lookup-api/group8/driver-account.o .build/lookup-api/group8/rust-account.a .build/lookup-api/group8/cpp-account.o .build/lookup-api/group8/control-account.o .build/native/ordinary_values.o .build/native/sched/core.o .build/native/sched/entry.o .build/native/completion/runtime.o .build/native/completion/file_adapter.o .build/native/completion/bridge.o .build/native/wf_floor.o .build/native/sched/prim_host.o .build/native/completion/wait_host.o .build/native/completion/file_posix.o .build/native/completion/linux_io_uring.o .build/native/ordinary_values_ir.o <repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/group8-mask-floor/wf-account.o -L<scratch-root>/whitefoot-abseil-20260817.0-install/lib -labsl_raw_hash_set -labsl_cord -labsl_cordz_info -labsl_cord_internal -labsl_cordz_functions -labsl_cordz_handle -labsl_crc_cord_state -labsl_crc32c -labsl_crc_internal -labsl_base_cpu_detect -labsl_str_format_internal -labsl_hash -labsl_city -labsl_hashtablez_sampler -labsl_exponential_biased -labsl_synchronization -labsl_graphcycles_internal -labsl_kernel_timeout_internal -labsl_stacktrace -labsl_symbolize -labsl_debugging_internal -labsl_demangle_internal -labsl_demangle_rust -labsl_decode_rust_punycode -labsl_utf8_for_code_point -labsl_malloc_internal -labsl_tracing_internal -labsl_time -labsl_civil_time -labsl_strings -labsl_strings_internal -labsl_int128 -labsl_base -labsl_spinlock_wait -labsl_source_location -labsl_time_zone -labsl_throw_delegate -labsl_raw_logging_internal -labsl_log_severity -labsl_hardening -framework CoreFoundation -liconv -lSystem -lc -lm -pthread -lm -o <repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/group8-mask-floor/map-account",
     "account_matches_original_group8_bytes": true,
@@ -7349,6 +9518,86 @@
       "raw_sha256": "95444e4ff31b54e2fdd44fc84ff94fc31d4bc71ab6aceb46202a1c8a61a6490b",
       "rows": 288,
       "use": "same first-key caller, exact masked power2 probe with nonpower modulo fallback"
+    },
+    {
+      "arm": "chain-home-mask-control",
+      "guard_exit": 0,
+      "guard_log": "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/chain-mask-screen/control-cohort-0.log",
+      "phase": "chain-home-mask-paired",
+      "raw_csv": "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/chain-mask-screen/control-cohort-0.csv",
+      "raw_sha256": "bf7bc9b9e954d7bd2e71f0475c2b5259aba1920ce55318b186d205c0dbb4790c",
+      "rows": 288,
+      "use": "same equal-reserve chain algorithm/layout, home-index reduction mask+nonpower fallback in insertion and lookup"
+    },
+    {
+      "arm": "chain-home-mask-control",
+      "guard_exit": 0,
+      "guard_log": "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/chain-mask-screen/control-cohort-1.log",
+      "phase": "chain-home-mask-paired",
+      "raw_csv": "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/chain-mask-screen/control-cohort-1.csv",
+      "raw_sha256": "128226d0c1796a0aac2124080d7422a714bf2630df0728c2084998cdf9ba47da",
+      "rows": 288,
+      "use": "same equal-reserve chain algorithm/layout, home-index reduction mask+nonpower fallback in insertion and lookup"
+    },
+    {
+      "arm": "chain-home-mask-candidate",
+      "guard_exit": 0,
+      "guard_log": "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/chain-mask-screen/candidate-cohort-0.log",
+      "phase": "chain-home-mask-paired",
+      "raw_csv": "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/chain-mask-screen/candidate-cohort-0.csv",
+      "raw_sha256": "b257f5cf27a49ed31461104dde6a835a2f70fca4b835f310660e3db6584db87a",
+      "rows": 288,
+      "use": "same equal-reserve chain algorithm/layout, home-index reduction mask+nonpower fallback in insertion and lookup"
+    },
+    {
+      "arm": "chain-home-mask-candidate",
+      "guard_exit": 0,
+      "guard_log": "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/chain-mask-screen/candidate-cohort-1.log",
+      "phase": "chain-home-mask-paired",
+      "raw_csv": "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/chain-mask-screen/candidate-cohort-1.csv",
+      "raw_sha256": "45032cb3ecdc6c0869d7cbd3235f2ceebecb34aea8e198c9c172201a602a51b9",
+      "rows": 288,
+      "use": "same equal-reserve chain algorithm/layout, home-index reduction mask+nonpower fallback in insertion and lookup"
+    },
+    {
+      "arm": "chain-home-mask-control",
+      "guard_exit": 0,
+      "guard_log": "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/chain-mask-screen/long8-control-cohort-0.log",
+      "phase": "chain-home-mask-long8-paired",
+      "raw_csv": "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/chain-mask-screen/long8-control-cohort-0.csv",
+      "raw_sha256": "61f24a86b3900a35c6a638a0d7211c23341bca3eb67116a89700ef74088c2a22",
+      "rows": 288,
+      "use": "separate 16,777,216-work stability discriminator; never pooled with 2,097,152-work campaign"
+    },
+    {
+      "arm": "chain-home-mask-control",
+      "guard_exit": 0,
+      "guard_log": "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/chain-mask-screen/long8-control-cohort-1.log",
+      "phase": "chain-home-mask-long8-paired",
+      "raw_csv": "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/chain-mask-screen/long8-control-cohort-1.csv",
+      "raw_sha256": "160ac09ddc3da85c67c571197e0081976c0b77e73e7602a35f54c04f2c9b3390",
+      "rows": 288,
+      "use": "separate 16,777,216-work stability discriminator; never pooled with 2,097,152-work campaign"
+    },
+    {
+      "arm": "chain-home-mask-candidate",
+      "guard_exit": 0,
+      "guard_log": "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/chain-mask-screen/long8-candidate-cohort-0.log",
+      "phase": "chain-home-mask-long8-paired",
+      "raw_csv": "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/chain-mask-screen/long8-candidate-cohort-0.csv",
+      "raw_sha256": "ad0ce36b84e7be682424f8315a3b95d7f9fbf6c6b7b14ccb939396ab5b923b15",
+      "rows": 288,
+      "use": "separate 16,777,216-work stability discriminator; never pooled with 2,097,152-work campaign"
+    },
+    {
+      "arm": "chain-home-mask-candidate",
+      "guard_exit": 0,
+      "guard_log": "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/chain-mask-screen/long8-candidate-cohort-1.log",
+      "phase": "chain-home-mask-long8-paired",
+      "raw_csv": "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/chain-mask-screen/long8-candidate-cohort-1.csv",
+      "raw_sha256": "57a7a99c56ef864dd742a2892824c16ec02fa652bb5ec9b049ea82c1765e932e",
+      "rows": 288,
+      "use": "separate 16,777,216-work stability discriminator; never pooled with 2,097,152-work campaign"
     }
   ],
   "revisions": {
