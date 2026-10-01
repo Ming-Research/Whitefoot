@@ -1026,7 +1026,30 @@ void wf_ecosystem_map_geometry(uint64_t kind, uint64_t count, uint64_t usable,
     snapshot.filled = ledger;
 }
 
-static void validate_geometry(Geometry value, uint64_t kind, Shape shape, uint64_t expected) {
+/* Setup has no tombstones: apply the current pre-insertion pressure rule.
+ * These are independent expectations, never substitutes for observed ledgers. */
+static Ledger wf_geometry_expected(bool wide, uint64_t initial, uint64_t count,
+                                   uint64_t *final_capacity) {
+    uint64_t stride = wide ? 272 : 24, capacity = initial;
+    Ledger expected = {capacity ? 1 : 0, 0, stride * capacity,
+                       stride * capacity, stride * capacity};
+    for (uint64_t live = 0; live < count; ++live) {
+        if (capacity >= 16384 || live < capacity - capacity / 4) continue;
+        uint64_t target = capacity ? capacity * 2 : 1;
+        if (target > 16384) target = 16384;
+        uint64_t bytes = stride * target;
+        ++expected.requests;
+        if (capacity) ++expected.releases;
+        expected.bytes += bytes;
+        if (expected.live + bytes > expected.peak) expected.peak = expected.live + bytes;
+        expected.live = bytes;
+        capacity = target;
+    }
+    *final_capacity = capacity;
+    return expected;
+}
+
+static void validate_geometry(Geometry value, uint64_t kind, Shape shape, uint64_t expected, bool wide) {
     require(value.checksum == expected, "geometry independent setup oracle");
     require(value.calls == 1, "one filled geometry snapshot");
     require(value.count == shape.count, "filled geometry population");
@@ -1048,13 +1071,18 @@ static void validate_geometry(Geometry value, uint64_t kind, Shape shape, uint64
             && isfinite(value.max_load_factor) && value.max_load_factor > 0
             && fabs(value.load_factor - (double)value.count / value.slots) <= 0.000001;
     } else {
-        valid = value.usable == shape.capacity && value.slots == shape.capacity
+        uint64_t expected_capacity = shape.capacity;
+        if (kind == WF_GEOMETRY) (void)wf_geometry_expected(false, shape.capacity, shape.count, &expected_capacity);
+        valid = value.usable == expected_capacity && value.slots == expected_capacity
             && value.buckets == UINT64_MAX && value.max_load_factor == -1.0
             && fabs(value.load_factor - (double)value.count / value.slots) <= 0.000001;
     }
     require(valid, "exposed capacity geometry");
     require(value.diagnostic_consistent, "diagnostic matches trace allocation");
-    require(value.filled.live == value.complete.peak
+    Ledger expected_filled = {0};
+    uint64_t expected_capacity;
+    if (kind == WF_GEOMETRY) expected_filled = wf_geometry_expected(wide, shape.capacity, shape.count, &expected_capacity);
+    require((kind == WF_GEOMETRY ? memcmp(&value.filled, &expected_filled, sizeof expected_filled) == 0 : value.filled.live == value.complete.peak)
             && value.filled.requests == value.complete.requests
             && value.filled.bytes == value.complete.bytes,
             "filled geometry allocation snapshot");
@@ -1074,10 +1102,29 @@ static Geometry read_geometry(size_t variant_index, unsigned series, Shape shape
     clean_ledger();
     Geometry value = snapshot;
     value.complete = ledger; value.checksum = checksum; value.diagnostic_consistent = true;
-    if (kind == WF_GEOMETRY || kind == C_GEOMETRY) {
-        GeometryTrace diagnostic = kind == WF_GEOMETRY
-            ? (variant->wide ? wf_map_cost_library_record_geometry : wf_map_cost_library_word_geometry)
-            : (variant->wide ? eco_c_map_record_geometry : eco_c_map_word_geometry);
+    if (kind == WF_GEOMETRY) {
+        const LookupApi *api = &lookup_apis[variant->wide ? LOOKUP_IMPLEMENTATIONS : 0];
+        LookupStorage owner = {0};
+        reset_ledger();
+        api->prepare(owner.bytes, shape.capacity, shape.count, seed);
+        uint64_t encoded = api->geometry(owner.bytes);
+        Ledger actual_filled = ledger; /* Owner still exists: genuine live snapshot. */
+        uint64_t cleanup = api->finish(owner.bytes);
+        require(cleanup == lookup_cleanup_oracle(variant->wide, shape.count, seed),
+                "geometry diagnostic complete-owner oracle");
+        clean_ledger();
+        value.diagnostic_consistent = ledger.requests == value.complete.requests
+            && ledger.releases == value.complete.releases && ledger.bytes == value.complete.bytes
+            && ledger.peak == value.complete.peak;
+        value.calls = 1; value.kind = kind;
+        value.count = encoded & UINT64_C(0xffffffff);
+        value.slots = encoded >> 32; value.usable = value.slots;
+        value.buckets = UINT64_MAX;
+        value.load_factor = value.slots ? (double)value.count / value.slots : 0;
+        value.max_load_factor = -1.0;
+        value.filled = actual_filled;
+    } else if (kind == C_GEOMETRY) {
+        GeometryTrace diagnostic = variant->wide ? eco_c_map_record_geometry : eco_c_map_word_geometry;
         reset_ledger();
         uint64_t encoded = diagnostic(shape.capacity, shape.count, seed) ^ expected;
         clean_ledger();
@@ -1093,7 +1140,7 @@ static Geometry read_geometry(size_t variant_index, unsigned series, Shape shape
         value.filled.live = value.complete.peak;
         value.filled.releases = 0;
     }
-    validate_geometry(value, kind, shape, expected);
+    validate_geometry(value, kind, shape, expected, variant->wide);
     observed ^= checksum;
     return value;
 }
@@ -1126,7 +1173,7 @@ static void geometry(bool print_rows) {
                     : value.kind == RUST_GEOMETRY ? "rust-std"
                     : value.kind == WF_GEOMETRY ? "whitefoot-bundled-std" : "direct-sparse-c";
                 const char *source = value.kind == C_GEOMETRY ? "filled-control-fields"
-                    : value.kind == WF_GEOMETRY ? "filled-public-diagnostic" : "filled-public-snapshot";
+                    : value.kind == WF_GEOMETRY ? "filled-owner-snapshot" : "filled-public-snapshot";
                 printf("capacity-geometry,%s,%u,%" PRIu64 ",%" PRIu64 ",%s,%s,%s,%s,%" PRIu64 ",",
                        series ? "aligned-hash" : "native-default", variant->wide ? 256 : 8,
                        shape.capacity, value.count, hasher_for(variant, series), variant->name,
@@ -1142,10 +1189,14 @@ static void geometry(bool print_rows) {
 }
 
 static void negative_geometry(const char *failure) {
-    Shape shape = {3, 2};
-    uint64_t kind = strcmp(failure, "diagnostic") == 0 ? WF_GEOMETRY : RUST_GEOMETRY;
+    bool wf_growth = strcmp(failure, "wf-growth-allocation") == 0
+        || strcmp(failure, "wf-growth-capacity") == 0;
+    Shape shape = wf_growth ? (Shape){64, 56} : (Shape){3, 2};
+    uint64_t kind = wf_growth || strcmp(failure, "diagnostic") == 0 ? WF_GEOMETRY : RUST_GEOMETRY;
     Geometry value = read_geometry(kind, 1, shape);
-    if (strcmp(failure, "missing") == 0) value.calls = 0;
+    if (strcmp(failure, "wf-growth-allocation") == 0) value.filled.live = value.complete.peak;
+    else if (strcmp(failure, "wf-growth-capacity") == 0) value.usable = value.slots = shape.capacity;
+    else if (strcmp(failure, "missing") == 0) value.calls = 0;
     else if (strcmp(failure, "population") == 0) ++value.count;
     else if (strcmp(failure, "identity") == 0) value.kind = CPP_GEOMETRY;
     else if (strcmp(failure, "capacity") == 0) value.usable = 0;
@@ -1153,7 +1204,7 @@ static void negative_geometry(const char *failure) {
     else if (strcmp(failure, "checksum") == 0) value.checksum ^= UINT64_C(1);
     else if (strcmp(failure, "diagnostic") == 0) value.diagnostic_consistent = false;
     else require(false, "unknown geometry negative control");
-    validate_geometry(value, kind, shape, oracle(false, shape.count, 0, 101, SETUP));
+    validate_geometry(value, kind, shape, oracle(false, shape.count, 0, 101, SETUP), false);
 }
 #endif
 

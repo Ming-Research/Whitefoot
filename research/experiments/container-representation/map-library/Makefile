@@ -371,13 +371,13 @@ ecosystem-occupancy-check: ecosystem-build
 	$(ECO_BUILD)/map-account$(EXE) occupancy-check
 	$(ECO_BUILD)/map-account$(EXE) geometry-check
 	@set -eu; \
-	  for control in missing population identity capacity allocation checksum diagnostic; do \
+	  for control in missing population identity capacity allocation checksum diagnostic wf-growth-allocation wf-growth-capacity; do \
 	    case "$$control" in \
 	      missing) reason='one filled geometry snapshot' ;; \
 	      population) reason='filled geometry population' ;; \
 	      identity) reason='geometry implementation identity' ;; \
-	      capacity) reason='exposed capacity geometry' ;; \
-	      allocation) reason='filled geometry allocation snapshot' ;; \
+	      capacity|wf-growth-capacity) reason='exposed capacity geometry' ;; \
+	      allocation|wf-growth-allocation) reason='filled geometry allocation snapshot' ;; \
 	      checksum) reason='geometry independent setup oracle' ;; \
 	      diagnostic) reason='diagnostic matches trace allocation' ;; \
 	    esac; \
@@ -386,7 +386,7 @@ ecosystem-occupancy-check: ecosystem-build
 	    test "$$status" = 1; test ! -s $(ECO_BUILD)/geometry-negative.stdout; \
 	    test "$$(cat $(ECO_BUILD)/geometry-negative.stderr)" = "map ecosystem: $$reason"; \
 	  done; \
-	  echo 'Map geometry: seven missing/corrupted-observation controls rejected'
+	  echo 'Map geometry: nine missing/corrupted-observation controls rejected'
 
 ecosystem-geometry: ecosystem-build
 	$(ECO_BUILD)/map-account$(EXE) geometry > '$(ECO_GEOMETRY_FILE)'

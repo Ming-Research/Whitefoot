@@ -1,8 +1,8 @@
 {
   "purpose": "Isolated ordinary public reserve with verified future entry headroom; single production baseline panel, not an optimization/adoption result",
   "archive": "reserve-api-evidence.tar.gz",
-  "archive_sha256": "3f7d0b242b028712a4b7f7d8ac3b84d0212b3d2f39caa218081e87629570db64",
-  "archive_members": 712,
+  "archive_sha256": "dc8037f35a5670fa7b7931da5082d7bca86ca077dcb7590c217c129973eabaa9",
+  "archive_members": 726,
   "base_revision": "89571a60381a685cfbe760248ceb6178d9f9ac05",
   "production_cli_sha256": "c12b2b2a6c9694fd2bc1b7be0004d582ae9628951422def849f4cf6a3ac02f77",
   "timed_image_sha256": "f1ebf18d7a94c79250bb3cbd74a0b379a2a30c6e5e4eda48396ec77d8bbdbf3f",
@@ -3913,6 +3913,45 @@
       "from": "component-index.json",
       "to": "component-index-before-fresh-tag-runtime.json",
       "sha256": "98249cbe0237d8fbb53daff709130713e2c944062b897fc9a72048c60b381826"
+    },
+    "all_prior_member_bytes_preserved": true
+  },
+  "current_dense_policy": {
+    "prefix": "current-dense-policy/",
+    "payload_count": 13,
+    "manifest": "current-dense-policy/manifest.json",
+    "status": "Bounded layout-changing package experiment; reserve primary criterion failed, no original-domain/API equivalence or production representation adoption.",
+    "source_head_at_freeze": "eb9f0ebb9ba88883b8ab5cde0e8339b0527b5925",
+    "frozen_cli_sha256": "997a315bef76c906464b233ff47a6c26201eb7f2c4324de4981f914ecc98a221",
+    "raw_rows": 336960,
+    "hierarchy_checks": 3456,
+    "all_cell_instrument_pass": true,
+    "primary_both_qualified_gain": false,
+    "reducer_comparison_discrepancies": [],
+    "growth_results": {
+      "small_wide_gains": 2,
+      "scalar_losses": 4,
+      "large_wide_unqualified": 2
+    },
+    "noop_overlap_cells": 8,
+    "WF_formula_rows_checked": 32,
+    "unchanged_peer_ledger_rows": 64,
+    "full_maintained_request_count_qualified": false,
+    "original_domain_or_API_equivalence": false,
+    "records": "current-dense-policy/records.json",
+    "frozen_producer_manifest_sha256": "05b24c150656a84e32951381c8c554135fd186b1f5ce040831f90dbdce144d1b",
+    "producer_retained_records": 183,
+    "consolidated_observation_streams": 409,
+    "replay_boundary": "Recorded exact package sources require omitted pinned CLI/generated artifacts, external dependencies and toolchain/scratch reconstruction; no standalone or verified published replay."
+  },
+  "current_dense_policy_prior_index": {
+    "prior_archive_sha256": "3f7d0b242b028712a4b7f7d8ac3b84d0212b3d2f39caa218081e87629570db64",
+    "prior_members": 712,
+    "unchanged_names_and_bytes": 711,
+    "renamed_member": {
+      "from": "component-index.json",
+      "to": "component-index-before-current-dense-policy.json",
+      "sha256": "3476d28593dfd62335d9d6f88f486cdd896e88124bf1fbfeb1a0e47a62b8e512"
     },
     "all_prior_member_bytes_preserved": true
   }

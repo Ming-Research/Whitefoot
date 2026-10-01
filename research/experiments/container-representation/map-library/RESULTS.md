@@ -5384,3 +5384,126 @@ both reducers, exact four-site patch, criteria and 262 compact native/runtime
 records. All 698 prior member byte sequences are preserved; there are now 712
 members. Omitted whole modules, native objects and compiler images are identified
 with their reconstruction dependencies. No standalone replay is claimed.
+
+### Current-policy dense storage: wide reserve gains and scalar losses
+
+This ordinary-source experiment separates compact index storage from the flat
+enum table. A dense initialized prefix owns complete key/value pairs and a
+reverse bucket index; a separate array holds Vacant, Deleted or a dense index.
+It preserves the current filled-plus-vacated pressure rule, tombstone reuse,
+ceiling refusal, returned pairs and cleanup. The new representation is an
+experimental package, not a production selection or an interface-identical map:
+public `cells` and `length` become `entries` and `indexes`, while `vacated` stays.
+
+There is a real source-domain limit. Allocating the fixed-layout `DenseIndex`
+array with only `capacity <= ceiling` fails the OP-9 schema judgment under ENT-1:
+its stride ceiling is 16 and the symbolic ceiling has no upper bound. The
+original generic bucket allocation has genuinely unresolved K/V layout; that
+does not defer this unrelated fixed-layout obligation. Both experimental arms
+therefore add `ceiling <= 16384`, the largest actual harness instantiation,
+instead of writing an ABI-limit constant or using a phantom type parameter.
+This bounds the experiment, not the production API. The reverse-bucket word
+also changes the concrete allocation domain for small element types. The
+unrestricted rejected source and exact bounded-interface patch are retained.
+
+The copied flat control's package transport preserves 93 layouts, 158 LLVM
+function definitions and 140 native instruction streams after explicit
+name-only correspondence. Adding the shared ceiling bound leaves its emitted
+LLVM byte-identical. Both arms use the frozen combined compiler from the
+preceding experiment, not an additional compiler change. An unnecessary loop
+invariant failed in the maintained owning instance; traversing the actual
+planned-array length admits without it. That rejection and source change are
+retained, without inferring a compiler defect from the failed proof alone.
+
+The first dense removal swaps two stored entries before taking the tail.
+Taking the tail first and exchanging with that local owner only for a nonfinal
+removal reduces the wide native frame from 624 to 528 bytes. The three external
+272-byte copy/move calls disappear, but path-dependent inline 256-byte transfers
+remain. This is a native-code observation, not a measured removal speedup.
+The selected experimental sibling passes the maintained owning program in both
+lowering modes and the existing 18,390 complete-operation, 96 lookup and 288
+reserve cases. Accounted and timed images pass those same operation panels;
+all 50 reserve/lookup fault controls reject at their intended diagnostics.
+Its maintained program's total allocation count was not independently derived;
+the production fixture and its 45-allocation expectation are unchanged.
+
+For each capacity C, reserved backing bytes are `40*C+8` for scalar values and
+`288*C+8` for wide values, versus the flat map's `24*C` and `272*C`. Each positive
+constructor has two allocations. Growth in the measured half-full windows
+allocates new metadata and entry storage, copies the live prefix, and releases
+both old blocks; full-prefix growth may instead use realloc. The post-O3
+observer now accounts for malloc, calloc, realloc and free. Its success,
+relocation, failure-preserves-owner and interception fault tests pass. Its
+realloc peak is known live payload storage, not allocator-internal transient
+space. All 32 WF reserve-ledger rows match the prospective source formulas;
+the 64 peer rows and every semantic/headroom/checksum field are unchanged.
+
+Native rebuild initializes only the 16-byte-per-bucket metadata, rather than
+future payload capacity. It still hashes and divides, probes scalar tags,
+copies 272 bytes per live wide entry including its reverse index, and scans
+the new metadata to repair those indexes. Lookup retains a dependent index
+load and an element-bound check. Wide insertion/replacement staging remains.
+
+The one preregistered four-process reserve campaign exits zero in 113.24 seconds.
+All 336,960 rows are retained; independent reductions agree on all 3,456
+aggregate hierarchies and sixteen verdicts. Instrument conditions pass in all
+cells. Two small-wide growth cells improve, four scalar-growth cells regress,
+and eight no-op comparisons overlap. Both large-wide comparisons fail flat
+control cohort stability and before/after ratio stability. There is no retry,
+sample filtering or criterion change. The primary criterion fails.
+
+Aligned-hash medians are microseconds per call, cohort0 / cohort1:
+
+| Value / initial floor | Flat control WF | Dense WF | Same-image Rust | Same-image C++ | Before/after qualification |
+|---|---:|---:|---:|---:|---|
+| 8 B / 64 | 0.215 / 0.213 | 0.378 / 0.379 | 0.196 / 0.196 | 0.124 / 0.131 | Loss, about 76–78 percent |
+| 8 B / 4096 | 12.432 / 12.388 | 27.066 / 27.072 | 9.686 / 9.667 | 4.954 / 4.910 | Loss, about 118–119 percent |
+| 256 B / 64 | 1.747 / 1.721 | 0.622 / 0.623 | 0.914 / 0.904 | 0.240 / 0.240 | Gain, about 64 percent; below Rust, above C++ |
+| 256 B / 4096 | 75.073 / 86.740 | 37.087 / 37.055 | 66.599 / 62.754 | 13.871 / 13.600 | Unqualified; raw gain about 51–57 percent |
+
+The native-default series remains separately recorded. The data support neither
+a universal dense replacement nor completion of the HashMap target. Small-wide
+reserve meets the slower-peer target; the large-wide before/after claim remains
+unqualified, and scalar growth loses substantially. Lookup and mutation have
+correctness and native evidence here, not a new complete performance matrix.
+Raw inherited `whitefoot-bundled-std` labels identify a harness slot; the source
+provenance for these two arms is the explicitly bounded copied-control and dense
+packages above. Compiler, library, API and representation questions remain open.
+
+The `current-dense-policy/` component of [reserve-api-evidence.tar.gz](reserve-api-evidence.tar.gz),
+indexed by [reserve-api-evidence.json](reserve-api-evidence.json), retains the
+four raw timing CSVs, criteria, both reducers, exact experimental packages,
+rejected sources, native excerpts and correctness/accounting observations.
+All 712 prior archive members retain their bytes (the previous component index
+has a historical name). The new archive has 726 members; an independent check
+verified its 725 indexed payload hashes, twelve component payload hashes,
+180 embedded records against the producer originals, and 409 observation
+streams. Pinned compiler binaries, generated objects and full LLVM dumps are
+omitted; the retained replay limits describe the dependencies and reconstruction
+needed, without claiming standalone replay.
+
+### Geometry observation across automatic growth
+
+The existing geometry checker assumed setup retained the requested physical
+capacity and one allocation. Under the current pressure rule, creating 64 slots
+and inserting 56 entries grows to 128 slots. The old control consequently fails
+`exposed capacity geometry`. It also reconstructed filled live bytes from the
+complete trace's peak, which is incorrect when two backings coexist in growth.
+
+The corrected checker holds an ordinary lookup owner, reads its actual capacity
+and allocation ledger before cleanup, and checks its full-content cleanup
+against the independent oracle. Its complete allocation totals must match the
+original setup trace. A separate model derives expected events from the
+existing pressure rule; modeled values do not replace observations. For the
+64/56 scalar case, actual filled live bytes are 3,072 and peak bytes 4,608;
+the wide case gives 34,816 and 52,224. Both expose 128 physical slots.
+
+The old failure is retained. The corrected control passes 140 geometry rows
+and all seven existing negative controls. Two new controls reproduce the exact
+wrong assumptions: replacing filled live bytes with peak, and replacing actual
+capacity with the original request. Both reject at their intended diagnostics
+and run through `ecosystem-occupancy-check`. The focused repair check has fourteen
+expected stage outcomes and exits zero in 1.09 seconds. An independent read-only
+review finds no issue within this bounded repair. This changes geometry
+observation, not the isolated reserve workload, its frozen timing images,
+library behavior, specification or recorded storage decision.

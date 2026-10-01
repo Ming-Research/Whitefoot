@@ -3462,6 +3462,21 @@ condition under which it is taken up.
   per-offer allocation and lookup indirection and change the exposed cells
   type; reserve-only improvement cannot select it for the ordinary map API.
 
+  The [current-policy dense experiment](../research/experiments/container-representation/map-library/RESULTS.md#current-policy-dense-storage-wide-reserve-gains-and-scalar-losses)
+  obtains qualified small-wide reserve gains of about 64 percent, but scalar
+  reserve regresses by about 76–119 percent and large-wide comparisons remain
+  unstable. Keep the flat map; this does not select a second representation.
+  Dense storage adds 16 bytes per reserved bucket plus an 8-byte header and
+  changes exposed fields. Its fixed-layout metadata also requires a schema
+  allocation bound absent from the generic constructor; the matched 16384
+  ceiling is only an experimental domain. Reopen a dense alternative only with
+  a concrete consumer and complete lookup/mutation measurements, an explicit
+  public-shape/domain choice, and accounted owning-program allocations. The
+  rejected unnecessary loop invariant is retained as an unresolved proof
+  observation, not a demonstrated compiler defect. In parallel, investigate
+  reductions of the flat map's initialization and transfer costs that preserve
+  its scalar behavior; this experiment does not measure those alternatives.
+
 - **Ordered insertion replacement costs need attribution.** Both the
   [aggregate-result candidate](../research/experiments/container-representation/ordered-library/RESULTS.md#single-descent-insertion-candidate)
   and [borrowed-promotion follow-up](../research/experiments/container-representation/ordered-library/RESULTS.md#borrowed-promotion-follow-up)
