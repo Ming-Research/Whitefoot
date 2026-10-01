@@ -3417,11 +3417,29 @@ condition under which it is taken up.
   changes four fresh slot constructions to zero their complete allocated size.
   Ordinary LLVM then fuses allocation and initialization into `calloc` for both
   widths; existing tag/key/value zeros, argument staging and copy sites remain.
-  Generalize only after checking construction destinations, target layout and
-  zero-size cases, and observing allocation failure/cleanup through emergent
-  `calloc`. Measure the complete operation panel: the native result supplies
-  a mechanism, not a runtime benefit. Standalone extend loops and whole-module
-  inlining collateral remain part of that comparison.
+  The subsequent [generic implementation comparison](../research/experiments/container-representation/map-library/RESULTS.md#complete-constructor-zeroing-implementation-comparison-does-not-qualify)
+  passes construction, zero-size, ownership and post-optimization calloc
+  accounting checks. It also inlines wide migration and removes argument staging,
+  so its runtime difference cannot isolate zero-store cost. All eight growth
+  cells fail instrument or stability qualification; small aligned-wide raw
+  medians worsen while large medians improve. Keep the candidate experimental;
+  production selection still needs qualified complete-panel evidence, including
+  the adverse small case, standalone extend and whole-module inlining collateral.
+
+  The generic complete-zero constructor candidate also exposes a store-free
+  counting loop in fresh HashMap rebuilds after LLVM fuses initialization into
+  `calloc`. The physical-index nonnegativity assumption from
+  `compiler/src/backend/emitter/runs.rs` survives with the induction variable;
+  the final index still feeds migration's probe limit. An equal-pass raw-IR
+  discriminator removes only six initializer assumptions: LLVM then deletes
+  all four loops and derives the live final index, while the control retains
+  residual loops. Its runtime contribution remains unmeasured. A general
+  simplification must preserve the final index, zero-trip
+  behavior, stable descriptor bounds and existing window performance; simply
+  removing every index assumption is not justified. Reopen after the current
+  constructor comparison, using the reached rebuild rather than the standalone
+  migration helper: ordinary LLVM inlines that helper and removes its caller's
+  temporary wide copy in this candidate.
 
 - **Ordered insertion replacement costs need attribution.** Both the
   [aggregate-result candidate](../research/experiments/container-representation/ordered-library/RESULTS.md#single-descent-insertion-candidate)

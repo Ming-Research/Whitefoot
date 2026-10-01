@@ -5119,3 +5119,98 @@ builds and sixteen executions). The retained integration check record includes
 exact mutations and input hashes; these controls test the new observation and
 do not alter any maintained verdict. Initial command/fixture authoring failures
 are retained separately from the successful final stages.
+
+### Complete constructor zeroing: implementation comparison does not qualify
+
+A generic compiler candidate replaces stored struct/enum aggregate zero stores
+with an ordinary memset of the target allocation extent, before the unchanged
+tag and field writes. It leaves input captures, destination interference and
+the ABI unchanged; nested aggregate copies can still copy their own padding.
+This candidate remains experimental: the registered runtime criterion fails,
+so the following results do not select it for production adoption.
+
+Both compilers emitted the same current self-tail library and benchmark source.
+The frozen control CLI is `bf3eafb4bd5dba320c45654cd3eb80727f5dab3647dadc96978452a4d18a4701`;
+the candidate is `b2de2a4059e037b32313f88ae7dc023c284656344de01989e0349b261efd215d`.
+The library hash is `9805a2515877f5c1243a008268a3ae8a3b2a4a50e5d9843397aeabbddac27074`.
+The ordinary three-peer reserve driver retains its seeds, ownership oracle,
+headroom contract and separate default/aligned hash series. The prospectively
+fixed longer panel uses 65,536/1,024 growth calls at S64/S4096 and 4,194,304
+no-op calls, nine samples, and the sequence control0/candidate0/candidate1/control1.
+The historical paired A/A instrument is not reused or requalified.
+
+Native inspection confirms fresh backing allocation becomes `calloc`, and also
+finds a second consequence: ordinary LLVM inlines wide owner migration. Both
+wide rebuild frames shrink from 336 to 64 bytes, with direct old-to-new payload
+copies replacing the 256-byte caller stack snapshot. The timed reserve entry
+reaches the ceiling-16,384 rebuild; the standalone migration helper's remaining
+staging is not on that path. Empty induction loops remain after calloc, including
+a final index used by probe termination. Consequently, this comparison measures
+the complete compiler change, not an isolated contribution from zero stores.
+
+Accounting rewrites allocator calls after optimization and disables a second
+LLVM middle-end pass for both timed and accounted objects. It therefore observes
+the emergent calloc rather than preventing it. All four ordinary/accounted
+reserve panels pass 288 cases, and all 96-row ledgers equal the prior original
+ledger byte for byte. The candidate observer records 3,216 calloc requests and
+181,246,720 payload bytes across the checks; the control records none. The 98
+final prerequisite stages include 54 diagnostic-specific negative outcomes,
+with lookup and whole-trace checks in both images. The two initial observer
+rewrite failures remain in the attempt records.
+
+The one timing campaign retains 336,960 rows and all four terminal statuses.
+Control0 exits 1: its maximum empty-clock interval is 2,959 ns, which fails the
+unchanged one-percent overhead condition for many growth batches. The other
+three processes exit 0. No run is retried or filtered. Independently recomputed
+batch sums, receipts, cleanup checksums and fixed work counts agree in all
+3,456 sample summaries. All eight growth cells are unqualified; all eight
+no-op comparisons have overlapping complete ranges. Large wide growth also
+has peer or ratio drift, so removing the clock failure alone would not qualify
+the complete result.
+
+Aligned-hash, 256-byte payload growth medians below are microseconds per
+operation, shown as cohort0 / cohort1. They are raw observations, not qualified
+gains or established peer parity:
+
+| Initial entry floor | Control WF | Candidate WF | Candidate Rust | Candidate C++ |
+|---|---:|---:|---:|---:|
+| 64 | 1.757 / 1.764 | 1.878 / 1.878 | 1.101 / 1.170 | 0.238 / 0.245 |
+| 4096 | 104.807 / 103.266 | 85.180 / 92.393 | 83.403 / 88.260 | 12.634 / 15.234 |
+
+Small aligned-wide medians worsen by 6.5–6.9 percent; large medians improve by
+10.5–18.7 percent without satisfying the range/stability conditions. Both remain
+behind each peer by these medians. Default-policy results and all other cells,
+including adverse observations, stay in the full reduction.
+
+Compiler validation passes nine payload tests, 31 owned-place tests and the
+HashMap corpus test with both lowerings and its exact 45-allocation ledger.
+The new isolated constructor byte observer also passes with the old compiler:
+it checks values and adjacent bounds but is not a discriminator on this host
+optimizer. The separate fresh-allocation test does distinguish the old code:
+its optimized function retains `malloc(count * 48)` and a per-slot 40-byte
+memset, failing both the complete-backing-fill and calloc alternatives. Neither
+fixture was weakened after that observation. These are focused results, not
+full canonical validation of the experimental compiler.
+
+A subsequent native-only discriminator isolates the residual counting loop.
+Both sides reoptimize the same candidate module at O3; the experimental side
+only removes six per-iteration nonnegativity assumptions in the four fresh
+rebuilds. Ordinary LLVM then removes all four loops and derives the live final
+index as capacity minus one. The equal-pass control retains a residual loop in
+each rebuild, although that extra pass alone already removes its large vector
+loop. Only the four edited function bodies differ between the equal-pass arms.
+Wide frames remain 64 bytes, with the same direct payload transfers, allocation
+calls and division count. This identifies an optimizer obstruction, not its
+runtime contribution; no execution or timing ran for the omission diagnostic.
+It does not justify removing the fact family globally, which has separately
+measured window benefits. A generic replacement needs its own complete target
+contract and performance comparison.
+
+The existing reserve archive's `q205-implementation/` component retains the
+exact three-file experimental compiler patch, all four CSVs, the criterion and
+reducer, and 296 compact command, check and diagnostic records. Its prior 671
+member byte sequences remain unchanged; the former index is renamed
+`component-index-before-q205-implementation.json`. The archive now has 684
+members. Whole compiler binaries, optimized modules and native objects are
+omitted, with original/retained hashes and reconstruction dependencies stated;
+the package has not been replayed as a standalone build.

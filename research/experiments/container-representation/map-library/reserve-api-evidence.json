@@ -1,8 +1,8 @@
 {
   "purpose": "Isolated ordinary public reserve with verified future entry headroom; single production baseline panel, not an optimization/adoption result",
   "archive": "reserve-api-evidence.tar.gz",
-  "archive_sha256": "eec7f5bb5f51f0da4f83a592dbcdfcff4e940191078b2c98ed67132ce71e3329",
-  "archive_members": 671,
+  "archive_sha256": "764fe16e90ed1cee37faeca036f44d5ca2ed2c2d3be876b0b5fa52eb29154b93",
+  "archive_members": 684,
   "base_revision": "89571a60381a685cfbe760248ceb6178d9f9ac05",
   "production_cli_sha256": "c12b2b2a6c9694fd2bc1b7be0004d582ae9628951422def849f4cf6a3ac02f77",
   "timed_image_sha256": "f1ebf18d7a94c79250bb3cbd74a0b379a2a30c6e5e4eda48396ec77d8bbdbf3f",
@@ -3791,6 +3791,41 @@
       "from": "component-index.json",
       "to": "component-index-before-selftail-integration-checks.json",
       "sha256": "df96995a7737343c1c05fd8e4fd4465b0fd82aca4029f5572bccaf3bbc49e645"
+    },
+    "all_prior_member_bytes_preserved": true
+  },
+  "q205_implementation": {
+    "prefix": "q205-implementation/",
+    "payload_count": 12,
+    "manifest": "q205-implementation/manifest.json",
+    "status": "Experimental/unqualified; compiler candidate retained as patch, not adopted.",
+    "compiler_candidate_base": "560e8e6447bfde72bc6ce668ba201395110d4bfe",
+    "compiler_candidate_patch_sha256": "cd63ab2c1d9dc3b85534b323ae90c50a369de0abd57784b67dc7965a59e2cb0b",
+    "compiler_candidate_file_sha256": {
+      "compiler/src/backend/emitter.rs": "c9ee903f496a97bc560299f8fe6d030cf0e8a45065fcf46b42500238570c50bc",
+      "compiler/src/backend/emitter/places.rs": "733c887ab81a5e4009e9e6a51123847dba8820e7e8647943813a13e6c6dbe3c3",
+      "compiler/src/backend/tests/payload_enums.rs": "f0af6827de8d1f56fb99400ebf365521dbf3e1b620b85d41465aabaad6e33ca4"
+    },
+    "raw_rows": 336960,
+    "attempted_prerequisite_stages": 101,
+    "latest_distinct_prerequisite_stages": 98,
+    "latest_prerequisites_pass": true,
+    "primary_both_qualified_gain": false,
+    "all_cell_instrument_pass": false,
+    "reducer_comparison_discrepancies": [],
+    "old_compiler_falsifier": "Construction observer actual 0 versus expected 22; native fresh-allocation test separately discriminates.",
+    "subsequent_diagnostic": "Six-assume omission removes four residual loops under equal O3 comparison; native only, no execution/timing/adoption.",
+    "records": "q205-implementation/records.json",
+    "replay_boundary": "Historical records require omitted pinned CLIs/modules/objects, reconstructed scratch paths and toolchain; no standalone or verified published replay."
+  },
+  "q205_implementation_prior_index": {
+    "prior_archive_sha256": "eec7f5bb5f51f0da4f83a592dbcdfcff4e940191078b2c98ed67132ce71e3329",
+    "prior_members": 671,
+    "unchanged_names_and_bytes": 670,
+    "renamed_member": {
+      "from": "component-index.json",
+      "to": "component-index-before-q205-implementation.json",
+      "sha256": "58ed9782d355f4c3004c1b9b1637d09be9b039829b18255dbda92a21dc0879a9"
     },
     "all_prior_member_bytes_preserved": true
   }
