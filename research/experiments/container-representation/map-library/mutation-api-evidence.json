@@ -3334,9 +3334,9 @@
       }
     ],
     "archive": {
-      "bytes": 1205165,
+      "bytes": 1315991,
       "path": "research/experiments/container-representation/map-library/entry-forward-evidence.tar.gz",
-      "sha256": "fdc654137b64df75b0f35af63eb07e0fd10ac40b43beeaf4492a2dceda94f3fd"
+      "sha256": "407b96d635fc6b1af15d16f20c5b6c13475fbf34347e48f84c7bcdde3d4cba26"
     },
     "archive_purpose": "Raw auditable API and whole-Map/long-hit replay for this RESULTS section; retire or replace when superseded. No binaries.",
     "construction": [
@@ -4411,6 +4411,162 @@
       "measured_code": "Timings use the preguard frozen compiler. Final guarded compiler reemits both benchmark raw modules and three native objects byte-identically; those timings therefore apply to the final benchmark outputs without rerunning timing.",
       "measured_compiler_sha256": "ec194c6af770f59a5871690a2d60608cb7e4e27956b6f6688f0d24acdcc1c736"
     },
+    "mutation_home_mask_source_trial": {
+      "archive_namespace": "mutation-home-mask/; all raw cohorts, stage outputs, native excerpts and commands are pinned by MANIFEST.json.",
+      "construction": {
+        "all_direct_exits": 0,
+        "compiler_reported_real_seconds": 9.41,
+        "guard_seconds": 15.88,
+        "stages": 13,
+        "statuses": {
+          "archive_member": "mutation-home-mask/build-statuses.json",
+          "bytes": 11438,
+          "sha256": "7740db67114c0e37adb40453427e383d4496abf2126914063c942ebf53118d6b"
+        }
+      },
+      "correctness": {
+        "expected_statuses": 30,
+        "guard_seconds": 5.97,
+        "ledger_byte_equal": true,
+        "ledger_rows": 32,
+        "ledger_sha256": "75bcb01092141bcb20958473838a5d65df03cab359630981eed220412c84b252",
+        "maintained_cap3_program": "Both arm builds and native executions exit0; complete zero/wrap/full/refusal/tombstone and owning-value observations retained.",
+        "specific_negative_diagnostics_per_arm": 10,
+        "statuses": {
+          "archive_member": "mutation-home-mask/check-statuses.json",
+          "bytes": 7119,
+          "sha256": "e9596743dd7d5144a624b06df6acf0f4a80acf4b6e1319d7e6aa7202ad11d603"
+        }
+      },
+      "criterion": {
+        "archive_member": "mutation-home-mask/criterion.txt",
+        "bytes": 5554,
+        "sha256": "dc430716332b24ae1a53d499318b5751b7eeaeb67ae001680ed03aee5e8c3cea"
+      },
+      "images": {
+        "candidate-account": "e9c9bab8fc3770f666b1d1b6e93df52ea2e6582f4e664c69d91cbba23905d6c3",
+        "candidate-timed": "7b284ca0b7b523013e6e632a3c8bc0b2e111053fa2c1b143edd2f4d2a97378fb",
+        "control-account": "970c7588b9130ca0f99b69a007340cb6f751970cb761ed0a3223fc7b9be608f1",
+        "control-timed": "90f51712cd3142e75f86688f414b06778b56dee047eff822e52f66c9f835f4f0"
+      },
+      "input_pins": {
+        "archive_member": "mutation-home-mask/pins.json",
+        "bytes": 56357,
+        "sha256": "aade0ae71b614173b0be2421bbeaa55add0946035cc196f291d916aa97e6b61b"
+      },
+      "native_summary": {
+        "archive_member": "mutation-home-mask/native-summary.json",
+        "bytes": 5569,
+        "sha256": "ac6481bb8cd5519e6f2d014a7d21c8e8194b2bad61cf6fc5bb62a069fec50574"
+      },
+      "normalization": {
+        "archive_member": "mutation-home-mask/text-normalization.json",
+        "bytes": 1120,
+        "sha256": "8e03bc5a03b63c08af611412c7c57ca97b1186dd91169fe7e4aa07a700dfd5d7"
+      },
+      "recipes": [
+        {
+          "archive_member": "mutation-home-mask/run.py",
+          "bytes": 9908,
+          "sha256": "a049d7716107990a3b0a42faf8858af0088b8e5e70b60d2b1fc42dd07be6f653"
+        },
+        {
+          "archive_member": "mutation-home-mask/measure.py",
+          "bytes": 3754,
+          "sha256": "adcf7c0b6af40194a48ec85ea7e39424da95c942e33bd25707c410692ae0e06b"
+        }
+      ],
+      "restoration": {
+        "archive_member": "mutation-home-mask/restoration.json",
+        "bytes": 207,
+        "sha256": "426806f620e68e98796aa52252d36db70e4912cd55d6d2167dbd9665c9afff85"
+      },
+      "scope": "Source-only conditional power-of-two home calculation in hash_map_find and hash_map_try_put after positive-count guards. Exact modulo fallback, running-index probing, wrap/full/tombstone behavior, layout, exchange, payload consumption and hash call order remain unchanged.",
+      "source_and_compiler_identity": {
+        "archive_member": "mutation-home-mask/compiler-identity.json",
+        "bytes": 349,
+        "sha256": "f6e0f6a924b362fed0323ba8aa3b942c21b484431cdd92827b0d4a65c891b189"
+      },
+      "source_patch": {
+        "archive_member": "mutation-home-mask/source.patch",
+        "bytes": 851,
+        "sha256": "557b9ff4f70a1fb9c19efa9d6d0add637cbdbffdf212565bd612c213edf0d588"
+      },
+      "status": "Not qualified: unchanged chain peer drift exceeds registered10-percent limit. Wide gains and scalar adverse medians retained; no production selection.",
+      "summary": {
+        "failed_peer_drift_cells": [
+          {
+            "cohort": 0,
+            "operation": "churn",
+            "peer": "whitefoot-chain",
+            "percent": 14.889362836576915,
+            "slots": 4096,
+            "width": "word8"
+          },
+          {
+            "cohort": 1,
+            "operation": "churn",
+            "peer": "whitefoot-chain",
+            "percent": 13.006597549481613,
+            "slots": 4096,
+            "width": "word8"
+          }
+        ],
+        "flat_cohort_cells": 16,
+        "full_reduction": {
+          "archive_member": "mutation-home-mask/reduction.json",
+          "bytes": 26336,
+          "sha256": "cd23d3362f38908a3967aa03b08eb58c5c57c36471b0f714e6c94adc79531d62"
+        },
+        "maximum_paired_ratio_spread_percent": 5.194322820623909,
+        "maximum_rust_cpp_median_drift_percent": 3.7462652263847485,
+        "minimum_interval_ns": 2326000,
+        "overlaps": 8,
+        "scalar_replacement_adverse": {
+          "all_ranges": "overlap",
+          "median_change_percent_cohort0_cohort1": {
+            "4096": [
+              16.69177463091294,
+              12.073784237003913
+            ],
+            "64": [
+              16.856677524429962,
+              14.535830618892497
+            ]
+          }
+        },
+        "separated_gains": 8,
+        "separated_losses": 0,
+        "wide_cells": "All four wide cells have separated lower ranges in both cohorts; median reductions8.73\u201319.32percent."
+      },
+      "timing": {
+        "all_direct_exits": 0,
+        "guard_seconds": 54.46,
+        "images_before_after_equal": true,
+        "metadata": {
+          "archive_member": "mutation-home-mask/timing/metadata.json",
+          "bytes": 2720,
+          "sha256": "28ee38f122e8aeed0bb67cc0e5814414afd8af6034f7a5c2fd1dc4a88da62006"
+        },
+        "order": [
+          "control0",
+          "candidate0",
+          "candidate1",
+          "control1"
+        ],
+        "raw_cohorts": [
+          "mutation-home-mask/timing/control-cohort-0.csv",
+          "mutation-home-mask/timing/control-cohort-1.csv",
+          "mutation-home-mask/timing/candidate-cohort-0.csv",
+          "mutation-home-mask/timing/candidate-cohort-1.csv"
+        ],
+        "raw_pins": "Exact bytes/sha256 for all four CSVs in archive MANIFEST.json.",
+        "rows": 1152,
+        "samples": 9,
+        "stages": 4,
+        "work": 1048576
+      }
+    },
     "native_comparison": {
       "archive_members": [
         "native/control.asm",
@@ -4435,6 +4591,164 @@
         95
       ]
     },
+    "ordering_floor_diagnostics": [
+      {
+        "build": {
+          "all_direct_exits": 0,
+          "guard_seconds": 2.17,
+          "log": {
+            "archive_member": "ordering-result-before-commit/build.log",
+            "bytes": 5135,
+            "sha256": "d743de6801b10417297b31e626a390638873528d949afd797a65eaec548a9f34"
+          },
+          "stages": 6,
+          "statuses": {
+            "archive_member": "ordering-result-before-commit/build-statuses.json",
+            "bytes": 5480,
+            "sha256": "f7124cbaf23d05a0ec2efa97d00fb44e81a65f38b52108ae5eee07a9e9fb9d72"
+          }
+        },
+        "callgraph": {
+          "archive_member": "ordering-result-before-commit/callgraph.json",
+          "bytes": 1182,
+          "sha256": "267f4b453de6ac893f1683bac1b472e44cf34343e65e2b69b8ef70635916aa28"
+        },
+        "control_raw_sha256": "d8cc8d5969f211447e7069098d62ea07168349dc3f54b5b936bc8a39ca85f359",
+        "criterion": {
+          "archive_member": "ordering-result-before-commit/criterion.txt",
+          "bytes": 2636,
+          "sha256": "43274842480db37acb507c16aa68baa380de9e95957500a17652c0428fdb907d"
+        },
+        "input_pins": {
+          "archive_member": "ordering-result-before-commit/inputs.json",
+          "bytes": 6357,
+          "sha256": "8ad2c8dcf39fc4741884b36c3beb6312bf475f06748546f5543a8658b3531e28"
+        },
+        "native_excerpts": [
+          {
+            "archive_member": "ordering-result-before-commit/batch.asm",
+            "bytes": 25581,
+            "sha256": "2ac3102043fb133af8f36236f3cc375b5a90661f6fdfa4cb3e5123af7ce3af04"
+          },
+          {
+            "archive_member": "ordering-result-before-commit/tryput.asm",
+            "bytes": 9039,
+            "sha256": "044b4e30d15c7cf95a0e8442a3e130a58ca8346fefba0fe32912b07bca2e2b9b"
+          },
+          {
+            "archive_member": "ordering-result-before-commit/exchange.asm",
+            "bytes": 2950,
+            "sha256": "1823345843771978c453ff98cb84d4da40d13012c2e608e59b163d2f16c8d7b6"
+          }
+        ],
+        "native_summary": {
+          "archive_member": "ordering-result-before-commit/native-summary.json",
+          "bytes": 1270,
+          "sha256": "0b1f2ce74413067713e45fc57faeee4fdaac3130a6794fabe3b7fdf4dbe4ebb3"
+        },
+        "normalization": {
+          "archive_member": "ordering-result-before-commit/text-normalization.json",
+          "bytes": 1053,
+          "sha256": "6d61320635fbd47ac1e43c3734b7e6f854630cf0a26ab2aaeaa0103899cc3708"
+        },
+        "output_pins": {
+          "archive_member": "ordering-result-before-commit/outputs.json",
+          "bytes": 855,
+          "sha256": "10ae92a81a3fe125c333e3848e8ce8cb209a5be1ce68ea42d14671b951b4a23a"
+        },
+        "patch": {
+          "archive_member": "ordering-result-before-commit/modules.patch",
+          "bytes": 5330,
+          "sha256": "631ee656b0641b22d8c6882b65b9bcad3c9aeb35e6c3c70bf7ff82cb9aee33b0"
+        },
+        "recipe": {
+          "archive_member": "ordering-result-before-commit/run.py",
+          "bytes": 8845,
+          "sha256": "23bdcb9c2f1a97af4f984180d8327eea47378ced1d8b631fd75ec366f03e3c22"
+        },
+        "scope": "Frozen-IR diagnostic: replace only result-disjoint clone exchange ordering; preserve input capture before writes, valid tags, common new-slot commit, original helpers and callers. No new alias attribute or inline hint.",
+        "status": "Rejected native criterion; no correctness or timing run.",
+        "variant": "single264-byte oldPair transfer"
+      },
+      {
+        "build": {
+          "all_direct_exits": 0,
+          "guard_seconds": 2.27,
+          "log": {
+            "archive_member": "ordering-typed-fields/build.log",
+            "bytes": 5217,
+            "sha256": "0c210dee349936729c5b370e12f9db4d90315cb7a25188569200b57f1eaffac1"
+          },
+          "stages": 6,
+          "statuses": {
+            "archive_member": "ordering-typed-fields/build-statuses.json",
+            "bytes": 5541,
+            "sha256": "bab9dc924e9d970ab292653383bad5c75ffd426499970700bfda35cacdb635d5"
+          }
+        },
+        "callgraph": {
+          "archive_member": "ordering-typed-fields/callgraph.json",
+          "bytes": 1182,
+          "sha256": "267f4b453de6ac893f1683bac1b472e44cf34343e65e2b69b8ef70635916aa28"
+        },
+        "control_raw_sha256": "d8cc8d5969f211447e7069098d62ea07168349dc3f54b5b936bc8a39ca85f359",
+        "criterion": {
+          "archive_member": "ordering-typed-fields/criterion.txt",
+          "bytes": 3699,
+          "sha256": "b08abe715e50bbdc9ffef3c6b2dec6cb9c063d9d14c4df1c5ae5744110342b67"
+        },
+        "input_pins": {
+          "archive_member": "ordering-typed-fields/inputs.json",
+          "bytes": 6399,
+          "sha256": "307e635aefdec1612a7ba36164b24519c0273dae615d29d7763c3de6f031b4a7"
+        },
+        "native_excerpts": [
+          {
+            "archive_member": "ordering-typed-fields/batch.asm",
+            "bytes": 25581,
+            "sha256": "2ac3102043fb133af8f36236f3cc375b5a90661f6fdfa4cb3e5123af7ce3af04"
+          },
+          {
+            "archive_member": "ordering-typed-fields/tryput.asm",
+            "bytes": 9753,
+            "sha256": "dd805ca087e0c92f1f1074c0843a689e2fbbb15dd474430d1ff21ce8c4b9ab57"
+          },
+          {
+            "archive_member": "ordering-typed-fields/exchange.asm",
+            "bytes": 3273,
+            "sha256": "0d8f09846cb19072a097c1849f6c62b54f1343fd2d5f3d0f106ab3af4e9628de"
+          }
+        ],
+        "native_summary": {
+          "archive_member": "ordering-typed-fields/native-summary.json",
+          "bytes": 1315,
+          "sha256": "7cdd04abc56b6a502495e09540172f71efb7d3aeb51db269b289abcad7579f4d"
+        },
+        "normalization": {
+          "archive_member": "ordering-typed-fields/text-normalization.json",
+          "bytes": 1053,
+          "sha256": "39a35e329698d4b3050ffcf007c3078251035a2cb87f47447ee409f6655474f9"
+        },
+        "output_pins": {
+          "archive_member": "ordering-typed-fields/outputs.json",
+          "bytes": 897,
+          "sha256": "0bb9d1278accdd99e9a27a636d16f202b82d889e6b83677721455b9cc2990397"
+        },
+        "patch": {
+          "archive_member": "ordering-typed-fields/modules.patch",
+          "bytes": 5776,
+          "sha256": "3fc1960abf329bfc50e2a4efff011e200067317348cb08cfaad22e6b8761ce95"
+        },
+        "recipe": {
+          "archive_member": "ordering-typed-fields/run.py",
+          "bytes": 9305,
+          "sha256": "28d0c8c3fd5b49a5b0055c528e9fcf349c8cce2f1c0546a10eda7555f3a00e79"
+        },
+        "scope": "Frozen-IR diagnostic: replace only result-disjoint clone exchange ordering; preserve input capture before writes, valid tags, common new-slot commit, original helpers and callers. No new alias attribute or inline hint.",
+        "status": "Rejected native criterion; no correctness or timing run.",
+        "variant": "scalar key plus typedRecord256 transfer"
+      }
+    ],
     "pre_registered_criterion": {
       "archive_member": "api/entry-forward-implementation-criterion.txt",
       "bytes": 2222,
@@ -5107,7 +5421,7 @@
       "shortest_elapsed_ns": 2328000
     },
     "scope": "Ordinary indirect Own incoming backing with private capture and conservative deferred/callee/result-alias fallbacks. Source Loads/interior projections remain snapshots; no source-language, ABI, LLVM alias-attribute or HashMap-name special case.",
-    "status": "Final guarded work-branch implementation provisionally selected as Q203; measured outputs byte-identical, bounded compiler/design review complete, exact-head CI pending.",
+    "status": "Provisional work-branch Q203; bounded code/design review complete. Exact published360a711 canonical correctness groups, native and compute checks succeeded; Draft readiness skipped. New research-record head has not yet been published.",
     "whole_map": {
       "adverse_cells": [
         {

@@ -3889,7 +3889,9 @@ and 4.04 seconds execution); the final CLI build takes 34.42 seconds. Source
 pins, patch and all five identity comparisons are retained. Source acceptance,
 ABI and alias attributes are unchanged; the compiler placement choice is
 provisional work-branch choice Q203. Its bounded compiler/design review is
-complete; exact-head CI remains pending.
+complete. The published [360a711 revision](https://github.com/mbbill/Whitefoot/commit/360a711ad33b16806fc43b9242a56e6efe5e7f10)
+passed the canonical correctness groups, native and compute checks; Draft
+readiness stayed skipped.
 
 The separate `actual-incoming-forward-discriminator` phase retains 1152 samples
 in `mutation-api-samples.csv`; it is not pooled with the diagnostic floor. The
@@ -3912,8 +3914,8 @@ the final storage module passes 25 tests (0.05 seconds execution, 0.10 guarded)
 and owning-place tests pass 31 (18.06 seconds execution, 18.15 guarded).
 Final formatting/lint passes in 4.11 seconds. These include full copied content, retained inputs, nested-owner
 cleanup, identical and partially overlapping input/result storage, and independent
-tag/tail corruption. The initial fixture parse failure is retained. The complete
-gate remains pending; the bounded compiler/design review is complete.
+tag/tail corruption. The initial fixture parse failure is retained. The published revision above passed the complete gate; the bounded
+compiler/design review is complete.
 
 The edge regression uses valid typed IR: unused `AddressOf` operations expose
 the two live private alternatives without changing their values or introducing
@@ -3934,8 +3936,8 @@ eight WF cohort cells overlap, and the wide medians differ by less than 0.18
 percent. The original adverse observations remain; their direction is not
 reproduced, and this does not establish a layout or codegen cause. Neither
 screen includes retained callbacks or explicit rehash timing. The provisional
-compiler choice still needs exact-head CI; its bounded compiler/design review
-is complete. The overall container performance goal is not established and
+compiler choice has the published revision's successful gate; its bounded
+compiler/design review is complete. The overall container performance goal is not established and
 the PR remains Draft.
 
 A separate native boundary diagnostic adds exactly two `alwaysinline` tokens
@@ -4000,6 +4002,75 @@ rules out that narrow result-only attribute benefit, not all disjointness or
 ordering optimizations. Its minimal recipe, criterion, patch, callgraph, pins,
 stage statuses and three reached-body excerpts are retained under
 `result-only-disjoint` in the same archive.
+
+#### Result-before-commit ordering floors
+
+Two frozen-IR diagnostics change only the result-disjoint exchange clone to
+materialize the complete old result before a common new-slot commit. Offered
+input remains captured before all writes; original helpers, alias premises and
+callers remain unchanged. The first uses one 264-byte old-pair transfer; the
+refinement uses a scalar key plus a typed 256-byte record transfer. All six
+construction stages pass in each trial (2.17 / 2.27 seconds guarded). The first
+standalone exchange calls `memcpy` and has 68 instructions / a 304-byte frame;
+the typed version has 77 instructions / a 272-byte frame, with the offered
+256-byte stack capture still present. These are standalone bodies, not the
+actual replacement path: both trials naturally inline the clones into a
+byte-identical 613-instruction batch with a 624-byte frame and no helper `BL`.
+The reached path retains old/new interleaving and scalar staging around its
+later digest, rather than the required streaming without relocated transfers.
+Both native criteria fail; correctness and timing are not run. Recipes, criteria,
+patches, callgraphs, pins, direct statuses and compact body excerpts remain under
+`ordering-result-before-commit` and `ordering-typed-fields` in the archive.
+
+#### Conditional home mask in the source library
+
+A separate source trial changes only the positive-count home initializations in
+`hash_map_find` and `hash_map_try_put`: start with `iand(hash, count - 1)`, falling
+back to `hash % count` when the capacity is not a power of two. Hash call order,
+running-index probing, wrap, full refusal, tombstones, layout and complete owning
+payload consumption stay unchanged. A fresh compiler embeds those candidate
+library bytes; the library is then restored byte-exact. Selected 64/4096 native
+paths bypass home division, while the generic modulo fallback remains. Word
+batch instructions grow from 197 to 205 and wide batch from 381 to 386; frames
+remain 112 / 1024 bytes, with no added helper call or stack-access change. Wide
+`try_put` grows from 95 to 99 instructions with no frame; exchange remains
+87 instructions / 64 bytes. The source/compiler pins identify the explicit
+frozen baseline and candidate: the mutable gate CLI is not the restored baseline.
+
+All 13 construction stages pass (15.88 seconds guarded, compiler real time
+9.41 seconds). Both arms pass their timed/accounted 96-owner, three-successive-
+batch checks and all ten specific fault controls per arm; their 32-row ledgers
+are byte-identical. Both also compile and execute the maintained capacity-three
+program, retaining its zero/wrap/full/refusal/tombstone and owner-cleanup
+observations. Those 30 expected statuses pass in 5.97 seconds guarded. The one
+fixed control/candidate/candidate/control panel exits zero in 54.46 seconds,
+retaining all 1152 rows without retry. Median ns per operation (cohort zero /
+one), with peers from candidate images, are:
+
+| Width | Buckets | Operation | Entry-forward control | Source mask | Rust | C++ |
+|---|---:|---|---:|---:|---:|---:|
+| word8 | 64 | replace | 2.342/2.342 | 2.737/2.683 | 2.476/2.481 | 2.743/2.743 |
+| word8 | 64 | churn | 7.842/7.913 | 6.971/7.059 | 16.068/16.123 | 27.625/27.603 |
+| word8 | 4096 | replace | 3.165/3.412 | 3.694/3.824 | 2.593/2.589 | 4.232/4.305 |
+| word8 | 4096 | churn | 13.489/13.745 | 12.155/13.029 | 10.159/10.379 | 29.975/30.055 |
+| wide256 | 64 | replace | 23.743/23.688 | 20.783/20.854 | 22.011/22.048 | 18.887/19.373 |
+| wide256 | 64 | churn | 32.271/33.420 | 27.165/28.429 | 27.091/27.024 | 49.673/49.514 |
+| wide256 | 4096 | replace | 28.098/28.329 | 25.645/25.701 | 27.169/27.083 | 23.089/23.387 |
+| wide256 | 4096 | churn | 48.777/48.928 | 39.351/39.707 | 31.250/31.212 | 59.078/60.050 |
+
+All four wide cells have separated lower ranges in both cohorts, with median
+reductions of 8.73 to 19.32 percent. All eight scalar cohort cells overlap;
+scalar replacement medians worsen by 12.07 to 16.86 percent, and those adverse
+observations remain. No flat cohort cell has a separated loss. The shortest
+interval is 2.326 ms and maximum paired-ratio spread is 5.194 percent, but
+unchanged chain word4096 churn median drift is 14.889 / 13.007 percent, exceeding
+the registered 10-percent limit (Rust/C++ maximum is 3.746 percent). The campaign
+therefore does not pass all instrument controls and does not qualify a production
+choice or a global benefit. The source patch, original/candidate source, criteria,
+compiler/image pins, raw cohorts, controls, exact ledgers and full reduction are
+retained under `mutation-home-mask` in the same archive; the JSON separates this
+source trial from the two rejected native ordering floors. The overall container
+performance goal remains unestablished.
 
 [`entry-forward-evidence.tar.gz`](entry-forward-evidence.tar.gz) serves this
 section's reader with scripts, criteria, raw API/whole-Map/long-hit records,
