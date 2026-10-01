@@ -81,9 +81,12 @@ invariants, ordinary bounds proofs, effect rows.
 
 ## The witness programs
 
-Both are in this directory and check and run at this branch's compiler.
+Both are conformance cases, `range5-pos-level-cascade.wf` and
+`range5-pos-children-fresh-values.wf` in `tests/conformance/cases/`, which
+check and run at this branch's compiler; the first was this directory's
+`level_cascade.wf`, kept with its documentation.
 
-### `level_cascade.wf`: the level cascade
+### [The level cascade](../../../tests/conformance/cases/range5-pos-level-cascade.wf)
 
 `cascade` stands in for a style pass. Its first loop derives each element's
 depth from its parent, refusing a parent that does not precede its element,
@@ -111,7 +114,7 @@ requires forall up(e in 0_u64..parents^.len) when parents^[e] < parents^.len: de
 
 and its loop carries `apart(i, j) { }`.
 
-### `children.wf`: one array of children, distinct by fresh values
+### [One array of children, distinct by fresh values](../../../tests/conformance/cases/range5-pos-children-fresh-values.wf)
 
 This is the shape Snowghost's `child_ranges` has: one array holding every
 element's children, each parent's run contiguous, filled in document order.
@@ -204,11 +207,11 @@ of the written storage is a measure or one of the certificate's reads.
 
 ## Observations
 
-At compiler revision 450fea25 (`make -C compiler build`), on the 4-processor
-Linux host the timings below name:
+At compiler revision b787fe51 (`make -C compiler build`), on the
+4-processor Linux host the timings below name:
 
-- **The witnesses.** `whitefootc --check` accepts `level_cascade.wf` and
-  `children.wf`; both exit 0 built sequentially and with `--par`.
+- **The witnesses.** `whitefootc --check` accepts the level cascade and the
+  children array; both exit 0 built sequentially and with `--par`.
   `--par-ledger` permits `cascade_level`'s level loop (line 27) and
   `mark_children`'s loop (line 13), each "eligible; no accumulator". The
   other loops stay denied, rightly: each depends on what earlier iterations
@@ -223,22 +226,39 @@ Linux host the timings below name:
   names the rule and the site: a false left inverse (`<=` for `==`), a
   missing depth requirement, a call handing the whole written run to a
   writer, a grouping that writes 0 instead of the element, a chained
-  instance with no written `use`, and the state after a break.
-- **Proof cost.** Checking `level_cascade.wf` takes 1.2 s; callgrind
+  instance with no written `use`, the state after a break, a write to a copy
+  taken for a write to its source, and a header that forgot neither a write
+  only later iterations reach nor the variant of a written enum. The last
+  four were accepted by earlier builds of this branch.
+- **Proof cost.** Checking the level cascade takes 1.14 s; callgrind
   attributes 91% of its 10.1 billion instructions to the range judgment,
   90% to solving owed facts (`Walker::require`), with repeated
-  Fourier-Motzkin elimination the largest part. `children.wf` checks in
-  0.08 s. Over Snowghost's whole renderer the judgment is about 2.5 s of a
-  105 s front end: 102.9 s and 102.7 s with the judgment skipped by a
-  temporary switch, against 105.4 s and 105.1 s with it, two builds each.
-  Making the derivation incremental is recorded in `docs/todo.md`.
+  Fourier-Motzkin elimination the largest part. The children array checks in
+  0.08 s. Over Snowghost's whole renderer the judgment is within the
+  run-to-run spread of the front end: 108.3 s and 106.2 s with the judgment
+  skipped by a temporary switch, against 108.5 s and 109.2 s with it, two
+  builds each; at 450fea25 the same comparison gave 102.9 s and 102.7 s
+  against 105.4 s and 105.1 s. Making the derivation incremental is
+  recorded in `docs/todo.md`.
+
+The proof-cost figures come from these commands. The check time is
+`/usr/bin/time whitefootc --check` on the case; the instruction shares are
+`valgrind --tool=callgrind whitefootc --check` on it, read with
+`callgrind_annotate --inclusive=yes` at `range_judgment::judge_program` and
+`Walker::require`. The front end is `front_end_ms` of
+`whitefootc --report --graph modules.wfg --entry proto_style -o OUT` in
+Snowghost's `renderer/`; the switch was a measurement patch, never committed,
+that returned an empty judgment for every function when the environment
+variable `WF_SKIP_RANGE` was set.
 
 ## Snowghost shape D
 
 Snowghost's style prototype gained shape D on its branch
 `proved-level-cascade`, commits 7358347 (code) and 8684f92 (record), built
-with this branch's compiler at 450fea25: C's flat match, then
-`cascade_levels`, the program of `level_cascade.wf` over the prototype's
+and timed with this branch's compiler at 450fea25 and checked again at
+b787fe51, whose later changes are to range checking alone, with the same
+checksums and ledger lines: C's flat match, then
+`cascade_levels`, the level cascade's program over the prototype's
 traversal, with `cascade_level`'s loop writing each element's computed
 values at its preorder index under an empty certificate. The Snowghost
 record, `research/investigations/concurrency/DESIGN.md`, "Shape D: a
@@ -251,21 +271,23 @@ proved level cascade", holds the tables and runs 22 to 24.
   ordered result list (`docs/todo.md`).
 - **Same results.** `proto_style check` agrees on the six pages present
   on the host, `--par` and sequential, with the checksums Snowghost
-  recorded before the port.
+  recorded before the port, at both revisions.
 - **Permitted and split.** `--par-ledger` permits the level loop, one
   accumulator under `band`, and splits it; the depth walk, the grouping and
   the loop over levels stay sequential, as they must.
 - **Speed.** At four workers the cascade alone, over one match, takes
-  0.0350 s against shape C's sequential preorder cascade at 0.0425 s on
-  ecma262 (1.21 times faster), 0.0062 s against 0.0168 s on html5 (2.71
+  0.0350 s against 0.0425 s for shape C's preorder cascade, which is
+  sequential in every build, on ecma262 (1.21 times faster), 0.0062 s against 0.0168 s on html5 (2.71
   times), and 1.6 and 1.5 times faster on the flat and unbalanced synthetic
   pages. The cascade is 2.5 to 5 percent of the real pages' style stage,
   which matching dominates, so the whole stage changes by about the
   cascade's gain. D's sequential cascade adds the validating walk and the
-  grouping: 0.0517 s against C's 0.0415 s on ecma262, though 0.0128 s
-  against 0.0168 s on html5, a difference not attributed further.
-- **Compile time.** The range judgment is about 2.5 s of the renderer's
-  105 s front end ([Observations](#observations)).
+  grouping: 0.0517 s against C's 0.0415 s, both in the sequential build, on
+  ecma262, though 0.0128 s against 0.0168 s on html5, a difference not
+  attributed further. Snowghost's `run.sh style` with `SHAPES="C D
+  cascade-c cascade-d"` and `RUNS=5` produced these figures.
+- **Compile time.** The range judgment stays within the run-to-run spread
+  of the renderer's front end ([Observations](#observations)).
 
 ## Criteria and result
 
@@ -274,10 +296,10 @@ criteria before the paper derivation:
 
 | Criterion | Result |
 |---|---|
-| Every fact used is pointwise or pairwise over one structure | Met: `up`, `fresh`, `listed` and `nodup` |
+| Every fact used is pointwise: its body reads one element and elements at values it holds | Met for W1: `up`, `fresh` and `listed` each read one element, the last two indexing a `Segments` element by its level and slot. The children array's `nodup` reads two elements and is pairwise, outside the criterion |
 | Every preservation premise is an existing runtime check or loop bound | Met: the walk's precedence refusal and the grouping's room check |
 | The consumer gains no state and no branch | Met in the loop body; `cascade_level` takes `positions`, `depths` and `level` as proof-only arguments |
-| No written instance is needed | Met: every certificate in the two programs and in Snowghost is empty |
+| The written certificate steps are counted | None: every certificate in W1, the children array and Snowghost is empty |
 
 ## Found by the derivation and the implementation
 
@@ -304,8 +326,9 @@ criteria before the paper derivation:
 
 ## Limits
 
-- **No range postconditions.** A function cannot hand a range fact to its
-  caller. A producer in its own function means its consumer validates what it
+- **No range postconditions.** A written function cannot hand a range fact
+  to its caller; only the prelude's fill constructors' contents come back
+  from a call. A producer in its own function means its consumer validates what it
   receives. The design tree records the reopening condition.
 - **The live DOM.** Nothing is stated about the linked arena itself: not
   acyclicity, not facts that survive a mutation. Incremental restyling that
