@@ -1238,6 +1238,12 @@ rarely insert at the same place.
   snapshot controls. The
   [transfer evidence](../research/experiments/container-representation/vector-library/RESULTS.md#v061-copy-and-consumption-trial)
   separates this opportunity from the library's remaining element relocation.
+  The isolated HashMap follow-up also finds two 256-byte snapshots across
+  `hash_map_put` and `hash_map_try_put`: each indirect owned parameter is
+  copied by the general function-entry materialization, while call lowering
+  passes its address. Reopen on insert/replacement API measurements after
+  lookup; forwarding needs the same complete liveness, interference and
+  result/input alias analysis, not a HashMap-specific bypass.
 
 - **Ordered node construction retains wide transfers.** The
   [ordered-map attribution](../research/experiments/container-representation/ordered-library/RESULTS.md#transfer-and-generated-code-attribution)
@@ -3320,12 +3326,16 @@ condition under which it is taken up.
   no new layout or construction spelling is selected without that evidence.
 - **HashMap bucket indexing.** ENT-3.S7's [tested unsigned operand bounds](../tests/conformance/cases/ent3-pos-stage8b-bit-sources.wf)
   already derive `iand(x, c - 1) < c` for positive `c`. The
-  [current native inspection](../research/experiments/container-representation/map-library/RESULTS.md#query-dispatch-and-inlining-in-the-practical-image)
-  finds one initial remainder before the probe loop; its per-probe comparison
-  handles wrap. After the capacity controls, test a source power-of-two mask
-  with the unchanged modulo fallback, preserving exact capacities and bucket
-  distribution. The proposed helper is uncompiled; require proof acceptance,
-  selected-path division removal and qualified paired timings.
+  [query-only comparison](../research/experiments/container-representation/map-library/RESULTS.md#paired-lookup-results-and-remaining-gap)
+  admits ordinary source using a power-of-two mask with the exact modulo
+  fallback and confirms removal of division on that native path. It improves
+  small-table hits, but the large-table miss is unstable across cohorts and
+  the generic query body/frame grow; the mask fast path is not selected.
+  The retained running index reduces bucket reconstruction, but misses still
+  trail Rust/C++ at matched half load. Reopen indexing with an explanation of
+  the selected-path costs and stable paired evidence; first separate probe
+  counts and a matched C linear-probe floor from compiler overhead. Preserve
+  arbitrary capacities, non-power-of-two lookup, wrap and empty-table behavior.
 - **Handing checker facts to the backend.** Emitted since the v0.60 port:
   `noalias` (not on `swap`), `nonnull`, `dereferenceable`,
   `captures(none)` or `nocapture` by a build-time probe, `inbounds`, and

@@ -1389,6 +1389,72 @@ uint64_t eco_c_map_record(uint64_t capacity, uint64_t count, uint64_t rounds,
                           uint64_t seed, uint64_t path, uint64_t collide) {
     return record_sparse_trace(capacity, count, rounds, seed, path, collide);
 }
+
+/* Isolated running-index lookup attribution. The caller owns the context;
+ * the existing sparse backing retains its 16-byte length/capacity header and
+ * ordinary 24/272-byte enum cells. Unlike the insertion probe, this lookup
+ * tracks no vacancy: it follows the WF lookup's bounded live/deleted/empty
+ * decisions, one initial remainder and increment with conditional wrap.
+ * Retire these exports with the isolated lookup comparison. */
+#define ECO_LOOKUP(WIDTH, P, B)                                           \
+typedef struct { P##_Map map; HashEnv env; uint64_t seed; } WIDTH##_LookupOwner; \
+_Static_assert(sizeof(WIDTH##_LookupOwner) <= 128, "lookup context extent"); \
+_Static_assert(_Alignof(WIDTH##_LookupOwner) <= 16, "lookup context alignment"); \
+static HELPER Lookup WIDTH##_lookup_one(const WIDTH##_LookupOwner *owner, uint64_t key) { \
+    uint64_t hash = key_hash(&owner->env, &key);                          \
+    uint64_t count = owner->map.slots->capacity;                          \
+    if (count == 0) return (Lookup){false, 0};                            \
+    uint64_t index = hash % count;                                      \
+    for (uint64_t step = 0; step < count; ++step) {                       \
+        const P##_Cell *slot = &owner->map.slots->cells[index];           \
+        if (slot->tag == LIVE) {                                         \
+            if (key_equal(&owner->env, &slot->pair.key, &key))            \
+                return (Lookup){true, B##_identity(&slot->pair.value)};  \
+        } else if (slot->tag == EMPTY) {                                 \
+            return (Lookup){false, 0};                                   \
+        }                                                               \
+        uint64_t next = index + 1;                                       \
+        index = next < count ? next : 0;                                 \
+    }                                                                   \
+    return (Lookup){false, 0};                                           \
+}                                                                       \
+void eco_c_map_lookup_##WIDTH##_prepare(void *storage, uint64_t slots, uint64_t count, uint64_t seed) { \
+    require(count <= slots && slots <= CEILING, "isolated lookup capacity"); \
+    WIDTH##_LookupOwner *owner = storage;                                \
+    *owner = (WIDTH##_LookupOwner){P##_new(slots),                        \
+        {seed ^ UINT64_C(0x9e3779b97f4a7c15), false}, seed};              \
+    for (uint64_t i = 0; i < count; ++i) {                               \
+        B##_Put result = P##_put(&owner->map, &owner->env,                \
+            (B##_Pair){key_at(i), B##_make(seed + i)});                   \
+        require(result.kind == INSERTED, "isolated lookup population"); \
+    }                                                                   \
+}                                                                       \
+uint64_t eco_c_map_lookup_##WIDTH##_query(const void *storage, uint64_t rounds, uint64_t miss) { \
+    const WIDTH##_LookupOwner *owner = storage;                          \
+    Digest digest = {owner->seed, 0, 0, 0};                              \
+    for (uint64_t round = 0; round < rounds; ++round)                     \
+        for (uint64_t i = 0; i < owner->map.count; ++i) {                  \
+            uint64_t key = key_at(i) + (miss != 0);                      \
+            Lookup found = WIDTH##_lookup_one(owner, key);               \
+            ordered(&digest, found.found);                               \
+            if (found.found) ordered(&digest, found.identity);            \
+        }                                                               \
+    return finish(digest);                                              \
+}                                                                       \
+uint64_t eco_c_map_lookup_##WIDTH##_geometry(const void *storage) {       \
+    const WIDTH##_LookupOwner *owner = storage;                          \
+    return (owner->map.slots->capacity << 32) | owner->map.count;          \
+}                                                                       \
+uint64_t eco_c_map_lookup_##WIDTH##_finish(void *storage) {               \
+    WIDTH##_LookupOwner *owner = storage;                                \
+    Digest digest = {owner->seed, 0, 0, 0};                              \
+    P##_free(owner->map, &digest);                                       \
+    *owner = (WIDTH##_LookupOwner){0};                                   \
+    return finish(digest);                                              \
+}
+ECO_LOOKUP(word, word_sparse, word)
+ECO_LOOKUP(record, record_sparse, record)
+#undef ECO_LOOKUP
 #if defined(ACCOUNT_ONLY)
 /* A separate filled-map witness keeps geometry reads out of the timed trace.
  * The low/high halves encode count/capacity, combined with the setup digest. */

@@ -21,7 +21,8 @@
 
 enum { INSERTED, REPLACED, REFUSED };
 enum { HIT, MISS, REPLACE, CHURN, GROW, REHASH, SETUP, EDIT, POLICY, RESERVE_CHECK, RESERVE_OMITTED };
-enum { WORDS = 32, SAMPLE_COUNT = 11, LOOKUP_SAMPLE_COUNT = 9, IMPLEMENTATIONS = 5 };
+enum { WORDS = 32, SAMPLE_COUNT = 11, LOOKUP_SAMPLE_COUNT = 9,
+       IMPLEMENTATIONS = 5, LOOKUP_IMPLEMENTATIONS = 4 };
 typedef struct { uint64_t ordered, sum, parity, count; } Digest;
 typedef uint64_t (*Trace)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 typedef struct { uint64_t capacity, count; } Shape;
@@ -263,6 +264,8 @@ LOOKUP_DECLARE(eco_rust_map, word);
 LOOKUP_DECLARE(eco_rust_map, record);
 LOOKUP_DECLARE(eco_cpp_map, word);
 LOOKUP_DECLARE(eco_cpp_map, record);
+LOOKUP_DECLARE(eco_c_map, word);
+LOOKUP_DECLARE(eco_c_map, record);
 #undef LOOKUP_DECLARE
 #define LOOKUP_ENTRY(NAME, KIND, WIDE, PREFIX, WIDTH) \
     {NAME, KIND, WIDE, PREFIX##_lookup_##WIDTH##_prepare, \
@@ -272,9 +275,11 @@ static const LookupApi lookup_apis[] = {
     LOOKUP_ENTRY("whitefoot-hash-map", "physical-slots", false, wf_map_cost, word),
     LOOKUP_ENTRY("rust-hash-map", "usable-entries", false, eco_rust_map, word),
     LOOKUP_ENTRY("cpp-unordered-map", "chaining-buckets", false, eco_cpp_map, word),
+    LOOKUP_ENTRY("c-linear-probe-attribution", "physical-slots", false, eco_c_map, word),
     LOOKUP_ENTRY("whitefoot-hash-map", "physical-slots", true, wf_map_cost, record),
     LOOKUP_ENTRY("rust-hash-map", "usable-entries", true, eco_rust_map, record),
     LOOKUP_ENTRY("cpp-unordered-map", "chaining-buckets", true, eco_cpp_map, record),
+    LOOKUP_ENTRY("c-linear-probe-attribution", "physical-slots", true, eco_c_map, record),
 };
 #undef LOOKUP_ENTRY
 
@@ -303,28 +308,43 @@ static uint64_t lookup_rounds(uint64_t count, uint64_t work) {
     return (work + count - 1) / count;
 }
 
+typedef enum {
+    LOOKUP_FAULT_NONE, LOOKUP_FAULT_POPULATION, LOOKUP_FAULT_CAPACITY,
+    LOOKUP_FAULT_FILLED_ALLOCATION, LOOKUP_FAULT_CHECKSUM, LOOKUP_FAULT_CLEANUP,
+    LOOKUP_FAULT_ALLOCATION, LOOKUP_FAULT_LEAK
+} LookupFault;
+
 static void lookup_check_one(const LookupApi *api, uint64_t slots, uint64_t seed, bool miss,
-                             uint64_t rounds) {
+                             uint64_t rounds, LookupFault fault) {
     uint64_t count = slots / 2;
     LookupStorage storage = {0};
     reset_ledger();
     api->prepare(storage.bytes, slots, count, seed);
     uint64_t encoded = api->geometry(storage.bytes);
+    if (fault == LOOKUP_FAULT_POPULATION) encoded ^= UINT64_C(1);
+    if (fault == LOOKUP_FAULT_CAPACITY) encoded ^= UINT64_C(1) << 32;
     require((uint32_t)encoded == count, "lookup filled population");
     require(encoded >> 32 == lookup_expected_geometry(api, slots), "lookup filled backing geometry");
 #ifdef ACCOUNT_ONLY
     Ledger filled = ledger;
+    if (fault == LOOKUP_FAULT_FILLED_ALLOCATION) filled.live = 0;
     require(filled.live > 0, "lookup filled allocation");
 #endif
     uint64_t actual = api->query(storage.bytes, rounds, miss);
+    if (fault == LOOKUP_FAULT_CHECKSUM) actual ^= UINT64_C(1);
     require(actual == lookup_query_oracle(count, rounds, seed, miss),
             "lookup independent query oracle");
 #ifdef ACCOUNT_ONLY
+    if (fault == LOOKUP_FAULT_ALLOCATION) wf_ecosystem_note_alloc(8);
     require(memcmp(&ledger, &filled, sizeof ledger) == 0, "lookup query has no allocation");
 #endif
     uint64_t cleanup = api->finish(storage.bytes);
+    if (fault == LOOKUP_FAULT_CLEANUP) cleanup ^= UINT64_C(1);
     require(cleanup == lookup_cleanup_oracle(api->wide, count, seed),
             "lookup independent full-content cleanup oracle");
+#ifdef ACCOUNT_ONLY
+    if (fault == LOOKUP_FAULT_LEAK) wf_ecosystem_note_alloc(8);
+#endif
     clean_ledger();
     observed ^= actual ^ cleanup;
 }
@@ -337,45 +357,26 @@ static void lookup_check(void) {
         for (size_t s = 0; s < ELEMENTS(slots); ++s)
             for (size_t n = 0; n < ELEMENTS(seeds); ++n)
                 for (unsigned miss = 0; miss < 2; ++miss) {
-                    lookup_check_one(&lookup_apis[v], slots[s], seeds[n], miss != 0, 2);
+                    lookup_check_one(&lookup_apis[v], slots[s], seeds[n], miss != 0, 2,
+                                     LOOKUP_FAULT_NONE);
                     ++checked;
                 }
     printf("map lookup: %zu isolated owner/query/cleanup cases passed\n", checked);
 }
 
 static void lookup_negative(const char *failure) {
-    const LookupApi *api = &lookup_apis[0];
-    LookupStorage storage = {0};
-    const uint64_t slots = 64, count = 32, seed = 17;
-    reset_ledger();
-    api->prepare(storage.bytes, slots, count, seed);
-    uint64_t encoded = api->geometry(storage.bytes);
-    if (strcmp(failure, "population") == 0) {
-        require((uint32_t)(encoded ^ UINT64_C(1)) == count, "lookup filled population");
-    } else if (strcmp(failure, "capacity") == 0) {
-        require((encoded >> 32) - 1 == lookup_expected_geometry(api, slots),
-                "lookup filled backing geometry");
-    } else if (strcmp(failure, "checksum") == 0) {
-        uint64_t actual = api->query(storage.bytes, 2, false);
-        require((actual ^ UINT64_C(1)) == lookup_query_oracle(count, 2, seed, false),
-                "lookup independent query oracle");
-    } else if (strcmp(failure, "cleanup") == 0) {
-        uint64_t actual = api->finish(storage.bytes);
-        require((actual ^ UINT64_C(1)) == lookup_cleanup_oracle(false, count, seed),
-                "lookup independent full-content cleanup oracle");
-    }
+    LookupFault fault = LOOKUP_FAULT_NONE;
+    if (strcmp(failure, "population") == 0) fault = LOOKUP_FAULT_POPULATION;
+    else if (strcmp(failure, "capacity") == 0) fault = LOOKUP_FAULT_CAPACITY;
+    else if (strcmp(failure, "checksum") == 0) fault = LOOKUP_FAULT_CHECKSUM;
+    else if (strcmp(failure, "cleanup") == 0) fault = LOOKUP_FAULT_CLEANUP;
 #ifdef ACCOUNT_ONLY
-    else if (strcmp(failure, "allocation") == 0) {
-        Ledger filled = ledger;
-        wf_ecosystem_note_alloc(8);
-        require(memcmp(&ledger, &filled, sizeof ledger) == 0, "lookup query has no allocation");
-    } else if (strcmp(failure, "leak") == 0) {
-        api->finish(storage.bytes);
-        wf_ecosystem_note_alloc(8);
-        clean_ledger();
-    }
+    else if (strcmp(failure, "allocation") == 0) fault = LOOKUP_FAULT_ALLOCATION;
+    else if (strcmp(failure, "leak") == 0) fault = LOOKUP_FAULT_LEAK;
+    else if (strcmp(failure, "filled-allocation") == 0) fault = LOOKUP_FAULT_FILLED_ALLOCATION;
 #endif
     else require(false, "unknown lookup negative control");
+    lookup_check_one(&lookup_apis[0], 64, 17, false, 2, fault);
     require(false, "lookup negative control was not refused");
 }
 
@@ -434,16 +435,16 @@ static void lookup_measure(unsigned cohort, uint64_t work) {
                 uint64_t count = target / 2;
                 uint64_t rounds = lookup_rounds(count, work);
                 for (unsigned warmup = 0; warmup < 2; ++warmup)
-                    for (unsigned offset = 0; offset < 3; ++offset) {
-                        unsigned peer = cohort ? 2 - offset : offset;
-                        lookup_check_one(&lookup_apis[wide * 3 + peer], target,
-                                         71 + warmup, miss != 0, rounds);
+                    for (unsigned offset = 0; offset < LOOKUP_IMPLEMENTATIONS; ++offset) {
+                        unsigned peer = cohort ? LOOKUP_IMPLEMENTATIONS - 1 - offset : offset;
+                        lookup_check_one(&lookup_apis[wide * LOOKUP_IMPLEMENTATIONS + peer], target,
+                                         71 + warmup, miss != 0, rounds, LOOKUP_FAULT_NONE);
                     }
                 for (unsigned sample = 0; sample < LOOKUP_SAMPLE_COUNT; ++sample)
-                    for (unsigned offset = 0; offset < 3; ++offset) {
-                        unsigned peer = (sample + offset) % 3;
-                        if (cohort) peer = 2 - peer;
-                        const LookupApi *api = &lookup_apis[wide * 3 + peer];
+                    for (unsigned offset = 0; offset < LOOKUP_IMPLEMENTATIONS; ++offset) {
+                        unsigned peer = (sample + offset) % LOOKUP_IMPLEMENTATIONS;
+                        if (cohort) peer = LOOKUP_IMPLEMENTATIONS - 1 - peer;
+                        const LookupApi *api = &lookup_apis[wide * LOOKUP_IMPLEMENTATIONS + peer];
                         uint64_t seed = 101 + sample;
                         LookupStorage storage = {0};
                         api->prepare(storage.bytes, target, count, seed);

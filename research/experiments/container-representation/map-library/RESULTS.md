@@ -2812,3 +2812,229 @@ unexecuted and is not claimed satisfied. Current-main waiting/context
 boundaries, grammar/layout adaptation, complete correctness and native
 qualification are the next discriminator. No size threshold, timing retry or
 final general-policy selection follows this evidence alone.
+
+## Current-library lookup: matched query-only discriminator
+
+The baseline source is `63c6cd6ac82c7c1f9f94b688ccc4cccef87e51cc`, including
+main's live-plus-vacated growth policy and the inline Slots representation.
+Its frozen compiler SHA-256 is
+`a7da03da398bdedc8adc2abccd1cf667ffbac1016e06f8431617fd5f50e8d798`.
+The older fixed-eight `find` inlining observation concerns a different source;
+it is not evidence that the current runtime-map lookup retains a helper call.
+
+First isolate successful and unsuccessful borrowed lookups, reading one word
+from either an 8-byte or 256-byte value. Prepare the maps and verify their
+complete contents outside the query clock; consume every query outcome in an
+independent digest. Use the same salted mix, odd stored keys, even missing
+keys and query order. The first geometry is 64/4096 bucket counts with
+32/2048 live entries, below Whitefoot's rebuild threshold. Verify actual
+post-fill counts: WF physical slots and C++ chaining buckets equal the target;
+Rust usable capacity is 56/3584, with any inferred physical-slot count labelled
+as such. Chaining buckets are not flat slots, and representation-dependent
+allocated bytes must be reported rather than called equal. Default hashers
+and higher-load/ceiling cases remain separate follow-ups.
+
+The first candidate keeps a running wrapped bucket index in public
+`hash_map_lookup`, preserving the hash call on an empty map, the exact bounded
+probe order, tombstone handling and callback order. Its hypothesis is less
+per-probe address reconstruction, not fewer hash computations: retained native
+code already hoists the division. Before timing, require actual reached native
+code to remove the predicted work without new calls or spills, and require
+empty, hit, miss, wrap, tombstone and ownership observations to pass. If it does
+not, retain the result and do not use timing noise to select the candidate.
+
+Compare ordinary source compiled by frozen baseline/candidate compilers with
+identical harness and peer inputs. Calibrate a common work count before the
+comparison so real intervals exceed 1 ms; keep all samples and separate
+unsubtracted clock controls. Use two rotated/reversed cohorts and nine samples,
+report both peers, complete ranges and cohort ratios. The existing full-range
+and at-most-10% cohort-ratio criterion remains the sufficient performance test.
+A candidate gain also needs separated before/after ranges in both cohorts and
+no unexplained peer drift above 10%. This first discriminator qualifies no
+unmeasured mutation API or whole-map workload.
+
+### Running-index native prerequisite
+
+Both fresh scalar and wide query instances pass the native prerequisite.
+The first probe drops the `cmp/csel/add` reconstruction before its addressing
+`madd`; a continued probe reduces its index/control sequence from seven
+instructions to six. Each complete query body shrinks from 244 to 235
+instructions and its stack frame from 32 to 16 bytes. Division remains once
+per query, bucket strides remain 24/272 bytes, and no hot call or loop spill
+is introduced. These counts establish the mechanism, not its timing benefit.
+The baseline and candidate object SHA-256 values are respectively
+`ffdd2c1c9a4ebf29d216347c6925fd5ad886ad7989722380f2037ec12ae05675`
+and `5922a39a8415e19767e5469e5b68ae0428203f0c8ca6cec75c491b46720294a0`.
+
+Common objects link before the varying WF object. The four timed Rust/C++
+query bodies have identical addresses and bytes in both linked images,
+retain actual lookups and borrowed first-word loads, and have no calls or
+constant-pool references. Untimed setup/cleanup relocations do differ as
+other constants and stubs move; whole-image identity is not claimed.
+
+The next lookup discriminator is the already-recorded bucket-indexing TODO:
+for a positive power-of-two bucket count, use `iand(hash, count - 1)`;
+otherwise retain `% count`. This preserves every bucket index, including
+arbitrary non-power-of-two capacities. Require accepted ordinary source,
+non-power-of-two/wrap/empty correctness, removal of division on the reached
+power-of-two native path, and the same paired timing criterion. Compare both
+against the unchanged baseline and against the running-index-only arm; do not
+attribute their combined gain solely to either component. No table layout,
+capacity, hash, growth policy or compiler proof rule changes in this trial.
+
+### Paired lookup results and remaining gap
+
+The [samples](lookup-api-samples.csv) retain the calibration and both paired
+campaigns; [evidence](lookup-api-evidence.json) retains exact identities,
+commands, accounting, clock observations and the unselected mask patch.
+The running-index source is
+`c5ba1a5bca2c449df0e5d4457709447fc780dc26`. Each formal arm has 432
+observations: eight operation/width/capacity cells, three implementations,
+nine samples and two cohorts. Each sample performs 2,097,152 lookups.
+The first campaign's minimum intervals are 3.021/3.024 ms for baseline/index;
+the second's are 3.013/3.026 ms for index/mask. The 262,144-work pilot is
+calibration only. Clock controls are separate and unsubtracted: median of
+nine batch means is 20.447 ns per clock pair; individual pairs range from
+0 to 35,000 ns.
+
+First campaign, combined-cohort medians in nanoseconds per lookup:
+
+| Value bytes | Buckets | Query | Baseline WF | Running-index WF | Rust | C++ |
+| ---: | ---: | --- | ---: | ---: | ---: | ---: |
+| 8 | 64 | hit | 2.699 | 2.074 | 2.134 | 1.593 |
+| 8 | 64 | miss | 3.433 | 2.850 | 1.586 | 1.569 |
+| 8 | 4096 | hit | 2.883 | 2.292 | 2.211 | 1.710 |
+| 8 | 4096 | miss | 3.639 | 3.173 | 2.148 | 1.453 |
+| 256 | 64 | hit | 2.691 | 2.092 | 2.300 | 1.596 |
+| 256 | 64 | miss | 3.375 | 2.833 | 1.575 | 1.556 |
+| 256 | 4096 | hit | 3.096 | 2.468 | 2.465 | 1.988 |
+| 256 | 4096 | miss | 3.837 | 3.402 | 2.167 | 1.764 |
+
+All eight WF medians improve, by approximately 11–23%, but this is not
+complete-range qualification. Only the 256-byte/64-bucket hit meets the
+registered peer target in both cohorts. The other hits overlap or trail;
+all misses still trail the slower peer. Retain the running-index source and
+continue the lookup investigation; no mutation API or complete-map target is
+qualified by this panel.
+
+The mask trial removes division on the selected power-of-two path, while
+retaining the generic modulo fallback. Each query body grows from 235 to 287
+instructions and its frame from 16 to 32 bytes, with one additional entry
+save/exit restore pair, but no new hot calls or inner-loop spills. Its native
+object SHA-256 is
+`63487bbad4747574b34885ab8b3b1e96066ff1164244fab667acbb809af41de5`.
+The shared timed peer bodies remain identical in bytes and linked addresses.
+
+Second campaign, combined-cohort WF medians in nanoseconds per lookup:
+
+| Value bytes | Buckets | Query | Running index | With mask |
+| ---: | ---: | --- | ---: | ---: |
+| 8 | 64 | hit | 2.117 | 1.832 |
+| 8 | 64 | miss | 2.965 | 2.649 |
+| 8 | 4096 | hit | 2.285 | 2.321 |
+| 8 | 4096 | miss | 3.198 | 3.268 |
+| 256 | 64 | hit | 2.034 | 1.880 |
+| 256 | 64 | miss | 2.890 | 2.547 |
+| 256 | 4096 | hit | 2.492 | 2.491 |
+| 256 | 4096 | miss | 3.383 | 3.213 |
+
+Masking qualifies both small-table hits against the peers, but neither large
+hit nor any miss. Its scalar large-table miss changes from 3.909 ns in cohort
+0 to 2.930 ns in cohort 1; this exceeds the stability criterion. Large wide
+misses also retain substantial outliers. Therefore the mask fast path is not
+selected: fewer division instructions alone do not settle its overall cost.
+Keep its ordinary-source acceptance and non-power-of-two regression as useful
+evidence, with the exact alternative retained for reproduction.
+
+Filled requested live bytes (allocator overhead excluded) are identical
+across WF variants:
+
+| Value bytes | Buckets | WF | Rust | C++ |
+| ---: | ---: | ---: | ---: | ---: |
+| 8 | 64 | 1536 | 1096 | 1536 |
+| 8 | 4096 | 98304 | 69640 | 98304 |
+| 256 | 64 | 17408 | 16968 | 9472 |
+| 256 | 4096 | 1114112 | 1085448 | 606208 |
+
+WF and Rust request one allocation; C++ requests 33/2049 for its bucket array
+and nodes. C++ stores only the live pairs, while the flat representations
+reserve value slots for empty buckets too. Every query allocates nothing and
+every final ledger is empty. Actual WF slots/C++ buckets are 64/4096; Rust
+reports 56/3584 usable entries, and its physical count remains an inference,
+not an observed public capacity. These are controlled-hash, half-load results,
+not a default-hasher or high-load qualification.
+
+Reproduce the current source with the explicit `ecosystem-lookup-check`,
+`ecosystem-lookup-account` and `ecosystem-lookup-measure` Makefile targets;
+`ECO_LOOKUP_WORK` defaults to the registered 2,097,152. The measured compiler
+and native tools are pinned in the evidence file. The remaining discriminator
+is the number and kind of probes on a miss, followed by a matched C linear
+probe control before attributing that gap to representation or lowering.
+
+### Matched linear-probe discriminator
+
+Next add the existing direct-C sparse storage to the isolated query driver,
+as attribution only, never as the Rust/C++ target denominator. Its 24/272-byte
+enum cells, bounded running-index probe, one initial remainder, exact keys,
+hash and digest match the retained WF lookup. Its old backing header adds
+16 bytes per allocation; report that difference and inspect whether its load
+is hoisted out of the query loop. Prepare and cleanup remain outside timing.
+Require the same geometry/content/cleanup observations, actual native probes,
+and two cohorts of nine samples at 2,097,152 queries before interpretation.
+Inspect tag dispatch, hashing, calls and surviving transfers in both native
+query bodies. A repeated C advantage identifies a concrete implementation
+cost to investigate; similar timings with both behind Rust/C++ motivate a
+probing/layout experiment. Neither result proves that the C implementation
+is an absolute lower bound on every possible linear-probe implementation.
+
+
+The retained C attribution campaign uses two cohorts with the same frozen
+running-index WF compiler, four peers, nine seeds and 2,097,152 queries.
+All 576 observations are in `lookup-api-samples.csv`; source, binaries,
+commands, direct exit statuses and allocation ledgers are pinned in
+`lookup-api-evidence.json`. Both campaigns returned zero; the shortest
+sample is 3.027 ms. C adds the disclosed 16-byte backing header; native
+inspection finds its header load outside the query loop and no hot calls.
+The C query has 191 instructions and a 16-byte frame, against WF's 235 and
+16. Both use an initial remainder and the same bounded linear probes.
+
+| Value bytes | Buckets | Query | WF ns/query | C linear ns/query | Rust ns/query | C++ ns/query |
+| ---: | ---: | :--- | ---: | ---: | ---: | ---: |
+| 8 | 64 | hit | 2.126 | 1.819 | 2.171 | 1.606 |
+| 8 | 64 | miss | 2.861 | 2.294 | 1.593 | 1.569 |
+| 8 | 4096 | hit | 2.294 | 2.787 | 2.230 | 1.643 |
+| 8 | 4096 | miss | 3.197 | 2.649 | 2.154 | 1.458 |
+| 256 | 64 | hit | 2.104 | 1.792 | 2.310 | 1.604 |
+| 256 | 64 | miss | 2.876 | 2.337 | 1.610 | 1.569 |
+| 256 | 4096 | hit | 2.490 | 2.721 | 2.495 | 2.249 |
+| 256 | 4096 | miss | 3.891 | 2.961 | 2.199 | 1.802 |
+
+These are medians over both cohorts, not sufficient target qualifications.
+The cohort-wise small-table WF miss penalty over C is 22–27%; C itself
+still trails Rust and C++ on misses. Large-table hits make C slower than WF,
+so this control is not an absolute performance floor. Its useful distinction
+is a same-algorithm miss cost that remains after isolating lookup. WF has
+three tag decisions on the vacant path, C two; the extra WF edge aborts for
+an invalid enum tag. That is a concrete code-generation hypothesis, not a
+claim that this edge explains the entire time difference.
+
+### Initialized enum-domain discriminator
+
+Before measuring the candidate, require source exhaustive matching (ERR-2)
+and ordinary typed values at both WF and linked boundaries (SCOPE-3) to map
+to the exhaustive IR targets retained by lowering. A complete initialized enum match may then expose
+its impossible default as LLVM `unreachable`. Do not infer validity of
+inactive payload bytes, unfinished constructors, cleanup inputs or arbitrary
+native bytes. Consume the existing checked exhaustiveness rather than repeat
+semantic coverage checking in the emitter. Execute all three variants
+through borrowed and owned matches, including
+linked constructors with dirty inactive owner bytes. Keep cleanup guards.
+
+Compare the frozen running-index compiler with this one change, the same
+WF source and four-peer harness. Inspect actual native queries before
+measurement, then use two reversed cohorts and the existing sufficient
+qualification and stability criteria. Select only a repeatable improvement
+without a new unexplained regression; do not select merely because a branch
+or instruction disappears. If misses still trail both peers, investigate
+ordinary-source grouped control-byte probing rather than attributing that
+remaining cost to the foundational storage types without a witness.

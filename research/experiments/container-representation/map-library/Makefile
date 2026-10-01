@@ -342,9 +342,10 @@ ecosystem-lookup-check: ecosystem-build
 	    test "$$status" = 1; test ! -s $(ECO_BUILD)/lookup-negative.stdout; \
 	    test "$$(cat $(ECO_BUILD)/lookup-negative.stderr)" = "map ecosystem: $$expected"; \
 	  done; \
-	  for fault in allocation leak; do \
+	  for fault in filled-allocation allocation leak; do \
 	    case $$fault in allocation) expected='lookup query has no allocation' ;; \
-	      leak) expected='every allocation is reclaimed' ;; esac; \
+	      leak) expected='every allocation is reclaimed' ;; \
+	      filled-allocation) expected='lookup filled allocation' ;; esac; \
 	    status=0; $(ECO_BUILD)/map-account$(EXE) negative-lookup $$fault \
 	      > $(ECO_BUILD)/lookup-negative.stdout 2> $(ECO_BUILD)/lookup-negative.stderr || status=$$?; \
 	    test "$$status" = 1; test ! -s $(ECO_BUILD)/lookup-negative.stdout; \
