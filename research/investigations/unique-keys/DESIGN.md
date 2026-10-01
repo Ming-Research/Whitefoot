@@ -1040,6 +1040,209 @@ and induction rules. No such calculus has been implemented or proved sound
 here. This reopens the current refusal of quantified storage facts; it is
 not expressible by the existing weighted-affine PRF-1 certificate alone.
 
+### How a certificate checker could run without proof search
+
+The ghost-field sketch is a substantial extension, not a few more affine
+rules. Termination of its logical definitions alone does not establish fast
+checking: evaluating a total recursive function or normalizing two arbitrary
+logical expressions can take enormous time. A candidate implementation must
+keep recursive calls opaque until one explicitly named unfolding and avoid
+general definitional-equality normalization. The following is an internal
+certificate design to assess, not a selected language rule or implementation.
+
+Keep the existing specification-fixed numeric derivation for its admitted
+goals. Add a typed first-order logical certificate layer whose primitive
+rules inspect explicitly supplied evidence. Its input consists of immutable
+term/formula nodes, scoped assumptions, checked lemma signatures and a finite
+proof graph. A proof record names its rule, earlier premise IDs, substitution
+arguments, exact rewrite occurrence when applicable, and claimed conclusion.
+The checker verifies that one inference; it never chooses another lemma,
+quantifier instance, rewrite position or induction argument after failure.
+
+Representative primitive checks are:
+
+| Certificate instruction | What the checker verifies |
+|---|---|
+| Conjunction elimination/introduction | Select the written component or combine the supplied component proofs in the declared order |
+| Universal elimination | The cited premise is universal, the supplied term has the quantified type, and the claimed result is its capture-avoiding substitution; bounded quantifiers still require bound evidence |
+| Universal introduction | Check one subproof with a fresh symbolic variable; assumptions and variables cannot escape their scopes |
+| Implication introduction/elimination | Check a subproof under its explicit assumption, or check that the supplied premise exactly matches the implication's antecedent |
+| Existential introduction/elimination | Check the written witness and its property, or open a fresh scoped witness that cannot escape into an unsupported conclusion |
+| Equality rewrite | Check the supplied equality, direction and occurrence path, and that only the selected occurrence changes |
+| Definition unfolding | Check one application against one definition body with the supplied arguments substituted; leave calls inside that body unexpanded |
+| Constructor cases/induction | Check all required constructor cases, with only the datatype rule's smaller subvalues receiving induction hypotheses |
+| Lemma application | Instantiate the previously checked signature and match a supplied proof for every requirement; do not expand or recheck its body at each use |
+| Numeric certificate | Check the explicit admitted arithmetic rule and its typed premises; the current PRF-1 family supplies only its current numeric fragment |
+
+These are rule schemas over types and propositions. There is no rule named
+`ForestIsValid` or `TrustRep`. Formula equality for rule matching is syntactic
+up to explicitly specified binder representation and simple canonical forms;
+mathematical equivalence requires evidence. Hash-consing can share identical
+terms, but a hash match alone is not equality. Memoization changes repeated
+work, never which inference is legal. The earlier `use unfold ... as [...]`
+surface sketch must elaborate to definition and logical-elimination steps;
+it cannot mean "expand this and solve the rest".
+
+#### A complete small inference chain
+
+Let A be one captured actual index sequence, with already checked facts:
+
+```text
+H: forall i,j. (B(i) and B(j) and i != j) implies A[i] != A[j]
+I: B(i)               // i is in the captured sequence's domain
+J: B(j)
+D: i != j
+L: a == A[i]          // actual load at the matching storage state
+R: b == A[j]
+```
+
+The certificate author supplies:
+
+```text
+1. universal_elim H with i
+2. universal_elim 1 with j
+3. and_intro I, J
+4. and_intro 3, D
+5. implication_elim 2, 4                 : A[i] != A[j]
+6. rewrite 5 at left  using L, backwards : a != A[j]
+7. rewrite 6 at right using R, backwards : a != b
+```
+
+The conjunction in H is left-associated as formed in steps 3 and 4.
+Index terms are formed under the supplied domain facts. Each step consists
+of type/scope checks and explicit formula substitution or selection. No loop
+runs over A, and no search chooses i or j. This checks an application of H;
+it does not establish H. The Forest's construction/mutation and sequence
+lemmas must have already proved that premise about this captured content.
+For parallel permission i and j must represent arbitrary distinct iterations,
+and all other conflicting access pairs remain obligations.
+
+#### Checking a quantified mutation proof and induction
+
+For an element-local property `forall i in domain(A). P(i, A[i])`, whose
+other parameters remain unchanged, introduce one fresh symbolic index i
+after `A[k] = value`. The primitive write law connects the captured states:
+
+```text
+read(write(A, k, value), i)
+    = if i == k then value else read(A, i)
+```
+
+The writer gives two proof branches, `i == k` and `i != k`; the checker
+verifies both and the completeness of the split. One branch checks the new
+element; the other instantiates the old universal property at i. There is
+no iteration over the runtime array. The write and both reads require their
+index bounds, and this write preserves the extent. A relation that depends
+on several elements or on other changed state needs the corresponding
+additional preservation proof; the pointwise example grants no general
+frame rule for an arbitrary `P(A, i)`. A field write needs the corresponding
+field/path law, including unchanged elements and other fields. Those laws
+must follow the primitive's specified runtime semantics and actual resolved
+write, not a writer's assertion that other storage was unchanged.
+
+For a sequence lemma such as `NoDup(A ++ B) -> Disjoint(A,B)`, the writer
+chooses induction on A and supplies the empty and cons cases. The cons case
+receives a fresh head x, tail xs and the induction hypothesis for xs. It
+cannot assume the theorem for `x :: xs`, an arbitrary other sequence, or an
+unverified mutually recursive lemma. The checker checks these symbolic
+cases once; it neither unrolls an actual sequence nor executes the proof
+recursively for its runtime length.
+
+Finite first-order inductive datatypes can supply these case/induction
+schemas mechanically. For the Tree/Seq combination, the mutual structural
+rule must account for both the Tree constructor and sequence constructors;
+recursive type admissibility and the precise smaller-subvalue rule still
+need specification. Merely observing that a source lemma body is finite
+does not admit unrestricted recursive proof calls. Ordinary library lemma
+dependencies can be acyclic, with induction hypotheses confined to this
+explicit rule; stronger recursion principles are not implicit.
+
+#### Internal representation and the runtime-state connection
+
+An illustrative checking loop is:
+
+```text
+for each proof record in dependency order:
+    verify its premise IDs are available in this assumption scope
+    verify its term types and supplied substitutions
+    expected = check_the_named_rule(record, premises)
+    require exact correspondence with its claimed conclusion
+    retain that checked conclusion with its dependencies
+require the final conclusion to match the requested goal
+```
+
+Subproofs for cases, quantifier introduction and induction have explicit
+scopes and are traversed as finite certificate syntax. A flat graph of
+earlier IDs alone does not enforce assumption discharge; the checker must
+track those scopes and dependencies. Logical definitions are checked for
+their admissible structural recursion separately from checking lemma bodies.
+One-layer unfold nodes refer to those checked definitions. Program loops
+and recursive calls are not evaluated to check a certificate.
+
+The existing structural/flow walk still owns storage identity, resolved
+references, effects and source-point availability. A new content-state
+extension would have to derive and validate logical images S0 and S1 from
+those identities and events, connect them by the specified store transition
+or verified call relation, and supply typed equalities for actual loads.
+Current numeric snapshots do not provide these logical content images.
+The logical checker could retain a theorem about S0, but could not silently
+attach it to S1. Calls would contribute only their verified content contracts
+and frame conditions. Facts established by this
+layer enter the same derivation/overlap consumers as other checked facts,
+after the ordinary support and alias judgments. This is an extension inside
+the one acceptance path, not an external answer that bypasses the flow walk.
+Its content-state bridge is new work and part of the correctness argument.
+
+Current code illustrates the narrower version of this organization:
+`compiler/src/semantic/check/control/proofs.rs` resolves and forms a source
+certificate; `compiler/src/semantic/entailment/flow/certificates.rs` checks
+its admitted premises, written multipliers and residual against the current
+proof context. It does not implement the logical rules above. Reusing its
+numeric routines and derivation infrastructure does not supply quantifiers,
+induction, state-content terms or recursive contract checking for free.
+
+#### What time guarantee this could establish
+
+There are three different claims:
+
+1. **No search-dependent acceptance.** Every submitted proof follows fixed
+   inference rules with explicit arguments. Failure does not trigger a
+   larger search, and timeout, fuel or machine speed selects no verdict.
+2. **Finite and accountable checking.** The certificate graph, definitions
+   and case subproofs are finite. Each primitive rule must have a terminating
+   local algorithm; recursive normalization and unbounded elaboration are
+   excluded. This permits an operation-count bound in terms of certificate
+   size, formula/term size, substitution work and arithmetic bit lengths.
+3. **Fast for the intended programs.** This is not established here. The
+   proof may be huge, substitutions may grow terms, and mathematical integer
+   arithmetic is not constant-time. Finite checking does not show practical
+   authoring or compilation cost, nor a hardware-independent wall-time bound.
+
+A useful candidate IR makes intermediate terms and formula sharing explicit,
+checks substitutions against the written result graph, and does not use
+semantic normalization to decide equality. Even then, a linear bound in the
+number of proof commands alone would be false: one command may mention a
+large definition or substitution. Any claimed complexity bound must include
+surface elaboration, type formation, generated terms, scope checking and
+numeric derivation, not only replay of an already expanded certificate.
+No aggregate asymptotic or measured bound has been established for this
+candidate. Fixed source structural ceilings could bound admitted forms, as
+current PRF-1 caps one certificate's entries, but no ceiling for these new
+forms has been selected, and a step-fuel cutoff is not a substitute.
+
+Before choosing the surface mechanism, a discriminating prototype would
+check explicit certificates for empty/create, one detach/attach, and one
+actual-content scatter chain. Record certificate bytes/steps, term nodes,
+substitution visits, arithmetic operand sizes, elaboration work and checking
+time separately. Compare shared lemma calls against repeated expansion;
+changing a quantified bound must not cause enumeration of that domain;
+one named unfolding must not recursively evaluate its descendants. Include
+wrong substitutions, escaping assumptions, circular lemma dependencies,
+missing reverse links, duplicate indices, stale storage images and induction
+on a non-smaller argument as rejecting cases. A practical budget and authoring
+criterion still need to be stated before measurements select a design.
+No prototype, timing result or completed calculus is claimed by this section.
+
 ### Moving proof state and preserving unrelated facts
 
 A theorem about f at state S is not a theorem about arbitrary future f, or
