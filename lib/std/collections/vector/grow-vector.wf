@@ -97,11 +97,11 @@ fn grow_vector_swap_remove<T, const ceiling: u64>(values: &GrowVector<T, ceiling
   ensures values^.storage.inner.len + 1_u64 == entry(values)^.storage.inner.len;
   ensures values^.storage.inner.cap == entry(values)^.storage.inner.cap;
 } {
-  doc "Returns the selected value and fills its position with the last value, without preserving order. OP-11 admits exchanging a slot with itself, so selecting the last element needs no separate branch. The operation moves a constant number of elements.";
-  let count = values^.storage.inner.len;
-  let last = count - 1_u64;
-  swap(first: &values^.storage.inner[index], second: &values^.storage.inner[last]);
+  doc "Returns the selected value and fills its position with the last value, without preserving order. Taking the last value first avoids writing the removed value back into the retired slot. Selecting that last position returns the local directly; an earlier position exchanges with the local through OP-11. The operation moves a constant number of elements.";
   let removed = take_back(window: &values^.storage.inner);
+  if index < values^.storage.inner.len {
+    swap(first: &values^.storage.inner[index], second: &removed);
+  }
   return move removed;
 }
 

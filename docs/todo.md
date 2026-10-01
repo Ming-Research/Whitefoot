@@ -1247,6 +1247,20 @@ rarely insert at the same place.
   whitelist. Node occupancy and key/child layout remain separate unresolved
   factors for lookup/traversal after these refused shift trials.
 
+- **Vector wide insertion still materializes records across bulk shifts.**
+  The reached native wide insertion constructs a 256-byte offered record
+  before `memmove` and spills 240 bytes across it; the Rust adapter constructs
+  the same fields afterward. Full insertion also resizes then shifts, whereas
+  C++ can copy prefix and suffix directly into their final positions. These
+  are distinct costs: instruction counts alone do not attribute their timing.
+  Reopen after the matched per-API measurements in the
+  [Vector results](../research/experiments/container-representation/vector-library/RESULTS.md)
+  with an ordinary-source witness separating pure value construction from
+  effectful construction, and compare optimized IR plus reached native code.
+  A lowering change must preserve evaluation, failure and ownership order;
+  a fused growth/insert interface needs its own grounds. Validate both element
+  widths, spare/full capacity, exact returned contents and owner cleanup.
+
 - **Box/window representation costs remain unqualified.** Runtime Slots uses
   an inline length/capacity/payload owner with an element allocation for positive physical extent; runtime
   Array, Ring and Segments retain thin owners and header-first allocations.

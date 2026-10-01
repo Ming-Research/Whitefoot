@@ -8986,3 +8986,63 @@ image hashes, and any failed prerequisite. Reuse `.build/ordinary-inline-owner`
 with distinct route-control/route-candidate outputs; retain compact evidence
 in this existing Vector home until production append qualification supersedes
 it. No other API or full-container timing is authorized by this comparison.
+
+#### Full-positive reallocation: original-link-order outcome
+
+Both ordinary-source compilers passed append spare/growth correctness, the
+exact allocation ledger, fault controls and consumer correctness/accounting.
+The same updated embedded library was used by both actual rebuilt compilers;
+[the control patch](full-positive-reallocation-control.patch) reconstructs the
+malloc/copy/free compiler from the recorded source revision. No LLVM edit or
+source-name optimization was used. All four fixed launches exited 0: MCF/R
+spare took 27.781/28.025 s and MCF/R growth 157.678/155.515 s. Their frozen image
+hashes, direct command/status records, source pins and native excerpts are in
+[the evidence record](ecosystem-append-full-positive-timing.json).
+
+The following are growth medians in ns/append, cohort 0 / cohort 1. R is the
+full-positive realloc candidate; both peers shown are from its same image.
+Complete per-peer ranges and both control-image peers are retained in the
+record and [all 2160 growth rows](ecosystem-append-full-positive-growth-samples.csv).
+
+| Element / capacity | WF MCF | WF R | Rust R-image | C++ R-image | MCF→R range observation |
+|---|---:|---:|---:|---:|---|
+| 8 B / 16 | 23.00 / 23.02 | 35.16 / 34.97 | 36.12 / 36.61 | 25.59 / 26.00 | R slower |
+| 8 B / 256 | 89.89 / 90.09 | 102.19 / 99.76 | 103.30 / 102.49 | 96.04 / 94.92 | R slower |
+| 8 B / 4096 | 706.54 / 718.38 | 679.35 / 687.36 | 732.71 / 736.46 | 668.11 / 655.06 | Overlap; peer drift 11.66% |
+| 256 B / 16 | 137.06 / 138.48 | 150.40 / 149.06 | 150.21 / 149.73 | 140.01 / 139.54 | R slower |
+| 256 B / 256 | 1340.78 / 1329.43 | 1321.54 / 1320.37 | 1324.28 / 1315.66 | 1315.18 / 1328.38 | Overlap |
+| 256 B / 4096 | 14852.69 / 14855.51 | 161.20 / 161.14 | 163.88 / 166.05 | 14833.13 / 14877.75 | R faster; peer drift 12.34% |
+
+MCF meets the registered range target in 3/6 matched growth cells; R meets it
+only at wide-4096 (1/6). R's medians closely approach Rust across these cells,
+but overlapping full ranges do not pass. The approximately 92-fold wide-4096
+WF difference is an observed magnitude, not qualified paired attribution:
+Rust drift exceeds 10%. Scalar-4096 also fails that drift condition. The small
+scalar and wide-16 regressions are separated in both cohorts with peer drift
+within the limit. Capacity-0/1 policy cells remain separate: both arms pass
+3/4, with the wide-capacity-1 realloc route also slower.
+
+Spare meets the range target in 6/6 MCF cells and 5/6 R cells: R wide-256 has
+a retained cohort-1 outlier crossing C++. The
+[1296 spare rows](ecosystem-append-full-positive-spare-samples.csv) also expose
+39–63% between-image Rust scalar median drift. Although all 17 shared linked
+inputs are byte-identical, the original link order puts changing WF code
+before the peers. The Rust scalar batch loop moves by 128 bytes and crosses a
+4 KiB address boundary; this identifies a placement confound without proving
+its hardware cause. A separately registered peer-first comparison must retain
+this adverse result rather than replace it.
+
+All real intervals exceed 1 ms: minima are 1.634/1.321 ms for MCF/R spare and
+1.352/1.302 ms for growth. Both growth RAW probes observe 41 ns, nondecreasing;
+all rows, controls and cohort spreads remain in the record. No samples were
+retried, removed or subtracted. Append remains unqualified.
+
+Actual reached scalar/wide append bodies contain 45/109 static instructions
+for MCF and 47/111 for R, with 80/64-byte frames respectively (the wide public
+forwarding branch is additional). Both already expose allocation directly:
+MCF calls malloc/copy/free, R calls realloc on positive full growth, and both
+retain length across allocation. Surviving out-of-line `grow_full` symbols are
+not the measured call path. R has no extra grow-helper call or record spill
+to remove; Rust and C++ still use their own growth helpers. These instructions
+do not assign the small realloc loss to compiler overhead or establish a
+universal allocator policy. No additional native variant follows this result.

@@ -54,10 +54,14 @@ static size_t realloc_requests, releases, peak_overlap_upper_bytes;
 #ifndef WF_FULL_SLOTS_REALLOC
 #define WF_FULL_SLOTS_REALLOC 0
 #endif
+#ifndef WF_ZERO_CAPACITY_NO_ALLOC
+#define WF_ZERO_CAPACITY_NO_ALLOC 1
+#endif
 // Physical requested extent: C controls retain their two-word header.
 static size_t owned_allocation_bytes(bool whitefoot, uint64_t capacity, size_t stride) {
     size_t payload = (size_t)capacity * stride;
-    if (whitefoot && WF_INLINE_SLOTS_OWNER) return payload ? payload : 1;
+    if (whitefoot && WF_INLINE_SLOTS_OWNER)
+        return payload ? payload : (WF_ZERO_CAPACITY_NO_ALLOC ? 0 : 1);
     return 16 + payload;
 }
 #endif
@@ -462,12 +466,16 @@ static void check_accounting(enum Variant variant, bool wide, uint64_t count,
     const size_t stride = wide ? sizeof(Record) : sizeof(uint64_t);
     const size_t empty_bytes = owned_allocation_bytes(variant == WHITEFOOT, 0, stride);
     const size_t reserved_bytes = owned_allocation_bytes(variant == WHITEFOOT, count + 1, stride);
-    size_t per_requests = 2, per_bytes = empty_bytes + reserved_bytes;
+    const bool empty_without_allocation =
+        variant == WHITEFOOT && WF_INLINE_SLOTS_OWNER && WF_ZERO_CAPACITY_NO_ALLOC;
+    size_t per_requests = empty_without_allocation ? 1 : 2;
+    size_t per_bytes = empty_bytes + reserved_bytes;
     size_t per_reallocs = 0;
     size_t per_peak = per_bytes;
     size_t per_overlap = per_bytes;
     if (path == 1) {
-        per_requests = 1; per_bytes = empty_bytes; per_peak = per_overlap = empty_bytes;
+        per_requests = empty_without_allocation ? 0 : 1;
+        per_bytes = empty_bytes; per_peak = per_overlap = empty_bytes;
         per_reallocs = 0;
         size_t old_bytes = empty_bytes;
         for (uint64_t capacity = 1;;) {
@@ -621,6 +629,8 @@ typedef struct {
     uint64_t (*drain)(void *, uint64_t, ApiObservation *);
     uint64_t (*inspect_shape)(void *, uint64_t, uint64_t, uint64_t, uint64_t,
                               uint64_t, ApiObservation *);
+    uint64_t (*swap_remove)(void *, uint64_t, uint64_t, ApiObservation *);
+    uint64_t (*truncate)(void *, uint64_t, uint64_t, ApiObservation *);
     const char *name;
 } ApiOperations;
 #define DECLARE_APPEND_OPERATIONS(prefix, width)                            \
@@ -633,7 +643,9 @@ typedef struct {
     extern uint64_t prefix##_##width##_insert(void *, uint64_t, uint64_t); \
     extern uint64_t prefix##_##width##_remove(void *, uint64_t, uint64_t, ApiObservation *); \
     extern uint64_t prefix##_##width##_drain(void *, uint64_t, ApiObservation *); \
-    extern uint64_t prefix##_##width##_inspect_shape(void *, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, ApiObservation *)
+    extern uint64_t prefix##_##width##_inspect_shape(void *, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, ApiObservation *); \
+    extern uint64_t prefix##_##width##_swap_remove(void *, uint64_t, uint64_t, ApiObservation *); \
+    extern uint64_t prefix##_##width##_truncate(void *, uint64_t, uint64_t, ApiObservation *)
 #define DECLARE_APPEND_API(prefix, width)                                   \
     extern void prefix##_##width##_prepare(uint64_t, void *);               \
     DECLARE_APPEND_OPERATIONS(prefix, width)
@@ -656,14 +668,16 @@ DECLARE_APPEND_API(cpp_vector_api, record);
     prefix##_##width##_destroy, prefix##_##width##_append_one,               \
     prefix##_##width##_snapshot, prefix##_##width##_reserve, \
     prefix##_##width##_insert, prefix##_##width##_remove, \
-    prefix##_##width##_drain, prefix##_##width##_inspect_shape, label }
+    prefix##_##width##_drain, prefix##_##width##_inspect_shape, \
+    prefix##_##width##_swap_remove, prefix##_##width##_truncate, label }
 static const ApiOperations append_api[2][3] = {
     { { wf_vector_api_word_prepare_slot, wf_vector_api_word_append_batch,
         wf_vector_api_word_inspect_reset, wf_vector_api_word_destroy,
         wf_vector_api_word_append_one, wf_vector_api_word_snapshot,
         wf_vector_api_word_reserve, wf_vector_api_word_insert,
         wf_vector_api_word_remove, wf_vector_api_word_drain,
-        wf_vector_api_word_inspect_shape, "whitefoot" },
+        wf_vector_api_word_inspect_shape, wf_vector_api_word_swap_remove,
+        wf_vector_api_word_truncate, "whitefoot" },
       APPEND_API(rust_vector_api, word, "rust-vec"),
       APPEND_API(cpp_vector_api, word, "cpp-std-vector") },
     { { wf_vector_api_record_prepare_slot, wf_vector_api_record_append_batch,
@@ -671,7 +685,8 @@ static const ApiOperations append_api[2][3] = {
         wf_vector_api_record_append_one, wf_vector_api_record_snapshot,
         wf_vector_api_record_reserve, wf_vector_api_record_insert,
         wf_vector_api_record_remove, wf_vector_api_record_drain,
-        wf_vector_api_record_inspect_shape, "whitefoot" },
+        wf_vector_api_record_inspect_shape, wf_vector_api_record_swap_remove,
+        wf_vector_api_record_truncate, "whitefoot" },
       APPEND_API(rust_vector_api, record, "rust-vec"),
       APPEND_API(cpp_vector_api, record, "cpp-std-vector") }
 };
@@ -687,13 +702,32 @@ static uint64_t append_oracle(uint64_t count, uint64_t seed, bool wide) {
 enum EditCase {
     RESERVE_NOOP, RESERVE_GROW, INSERT_FRONT_SPARE, INSERT_MID_SPARE,
     INSERT_FRONT_FULL, INSERT_MID_FULL, REMOVE_FRONT, REMOVE_MID,
-    REMOVE_BACK, DRAIN_ALL, EDIT_CASES
+    REMOVE_BACK, DRAIN_ALL, SWAP_FRONT, TRUNCATE_HALF, EDIT_CASES
 };
 #if !defined(ACCOUNT_ONLY)
 static const char *const edit_names[EDIT_CASES] = {
     "reserve-noop", "reserve-grow", "insert-front-spare", "insert-mid-spare",
     "insert-front-full", "insert-mid-full", "remove-front", "remove-mid",
-    "remove-back", "drain-all"
+    "remove-back-chain", "drain-all", "swap-remove-front-chain", "truncate-half"
+};
+// Fixed from the 4 MiB one-sample duration pilot, before the ranked run.
+// Each factor targets 2.5 ms from the pilot's shortest observed interval.
+static const uint8_t edit_work_factor[EDIT_CASES][2][3] = {
+    {{1, 1, 1}, {1, 1, 1}},
+    {{4, 15, 11}, {18, 5, 8}},
+    {{19, 26, 13}, {27, 8, 9}},
+    {{25, 44, 28}, {49, 13, 16}},
+    {{3, 14, 13}, {18, 5, 8}},
+    {{4, 13, 15}, {17, 4, 8}},
+    {{19, 28, 16}, {26, 8, 9}},
+    {{14, 47, 30}, {43, 14, 16}},
+    {{2, 2, 1}, {8, 2, 2}},
+    {{10, 6, 3}, {5, 2, 2}},
+    {{2, 2, 1}, {8, 2, 2}},
+    {{10, 10, 10}, {5, 5, 5}}
+};
+static const uint64_t noop_repeat[2][3] = {
+    {64, 2048, 16384}, {4096, 16384, 262144}
 };
 #endif
 static bool edit_insert(enum EditCase kind) {
@@ -715,16 +749,25 @@ static uint64_t edit_marker(uint64_t seed) {
 static uint64_t edit_oracle(enum EditCase kind, uint64_t count, uint64_t seed,
                             bool wide) {
     uint64_t digest = seed;
-    uint64_t length = kind == DRAIN_ALL ? 0
-        : count + (edit_insert(kind) ? 1 : 0) - (edit_remove(kind) ? 1 : 0);
+    uint64_t length = kind == DRAIN_ALL ? 0 : kind == TRUNCATE_HALF ? count / 2
+        : count + (edit_insert(kind) ? 1 : 0)
+                - (edit_remove(kind) || kind == SWAP_FRONT ? 1 : 0);
     uint64_t at = edit_index(kind, count);
     for (uint64_t position = 0; position < length; ++position) {
-        uint64_t base = edit_insert(kind) && position == at ? edit_marker(seed)
+        uint64_t base = kind == SWAP_FRONT && position == 0 ? seed + count - 1
+            : edit_insert(kind) && position == at ? edit_marker(seed)
             : seed + position - (edit_insert(kind) && position > at)
                              + (edit_remove(kind) && position >= at);
         for (unsigned word = 0; word < (wide ? RECORD_WORDS : 1); ++word)
             digest = digest * UINT64_C(131) + base + word;
     }
+    return digest;
+}
+static uint64_t edit_truncate_oracle(uint64_t count, uint64_t seed, bool wide) {
+    uint64_t digest = seed;
+    for (uint64_t position = count / 2; position < count; ++position)
+        for (unsigned word = 0; word < (wide ? RECORD_WORDS : 1); ++word)
+            digest = digest * UINT64_C(131) + seed + position + word;
     return digest;
 }
 static uint64_t edit_removed_oracle(uint64_t seed, uint64_t index, bool wide) {
@@ -849,6 +892,9 @@ static void growth_check(bool fail_values, bool fail_state, bool report) {
     const uint64_t capacities[] = {16, 256, 4096, 0, 1};
     const uint64_t seed = UINT64_MAX - 7;
 #if defined(ACCOUNT_ONLY)
+    const bool zero_anchor = WF_INLINE_SLOTS_OWNER && WF_ZERO_CAPACITY_NO_ALLOC;
+#endif
+#if defined(ACCOUNT_ONLY)
     if (report)
         puts("contract,element_bytes,requested_capacity,initial_capacity,variant,length,capacity,requests,reallocations,releases,requested_bytes,live_before,live_after");
 #else
@@ -869,9 +915,11 @@ static void growth_check(bool fail_values, bool fail_state, bool report) {
                 require(before.live == initial_bytes,
                         "growth append initial live bytes");
                 if (variant == 0)
-                    require(before.requests == (initial == 0 ? 1u : 2u)
+                    require(before.requests == (zero_anchor
+                                ? (initial == 0 ? 0u : 1u)
+                                : (initial == 0 ? 1u : 2u))
                             && before.reallocations == 0
-                            && before.releases == (initial != 0 ? 1u : 0u),
+                            && before.releases == (initial != 0 && !zero_anchor ? 1u : 0u),
                             "growth append WF preparation ledger");
 #endif
                 uint64_t length = api->append_one(&owner, seed + initial + fail_values);
@@ -887,12 +935,13 @@ static void growth_check(bool fail_values, bool fail_state, bool report) {
                         && after.requests - before.requests
                             == after.releases - before.releases
                                + after.reallocations - before.reallocations
-                               + (initial == 0 && variant != 0),
+                               + (initial == 0 && (variant != 0 || zero_anchor)),
                         "growth append allocation ledger");
                 if (variant == 0)
                     require(after.requests - before.requests == 1
                             && after.reallocations - before.reallocations == (initial != 0 && WF_FULL_SLOTS_REALLOC ? 1u : 0u)
-                            && after.releases - before.releases == (initial != 0 && WF_FULL_SLOTS_REALLOC ? 0u : 1u)
+                            && after.releases - before.releases == (initial != 0 && WF_FULL_SLOTS_REALLOC
+                                    ? 0u : initial == 0 && zero_anchor ? 0u : 1u)
                             && after.bytes - before.bytes == owned_allocation_bytes(true, capacity, stride),
                             "growth append WF route ledger");
                 if (report)
@@ -937,10 +986,12 @@ static uint64_t edit_run(const ApiOperations *api, ApiStorage *owner,
                          ApiObservation *operation) {
     uint64_t at = edit_index(kind, count);
     if (kind == RESERVE_NOOP) return api->reserve(owner, count);
-    if (kind == RESERVE_GROW) return api->reserve(owner, count + 1);
+    if (kind == RESERVE_GROW) return api->reserve(owner, 2 * count);
     if (edit_insert(kind)) return api->insert(owner, at, edit_marker(seed));
     if (edit_remove(kind)) return api->remove(owner, at, seed + at, operation);
-    return api->drain(owner, seed, operation);
+    if (kind == DRAIN_ALL) return api->drain(owner, seed, operation);
+    if (kind == SWAP_FRONT) return api->swap_remove(owner, 0, seed, operation);
+    return api->truncate(owner, count / 2, seed, operation);
 }
 
 static void edit_verify(const ApiOperations *api, ApiStorage *owner,
@@ -951,14 +1002,18 @@ static void edit_verify(const ApiOperations *api, ApiStorage *owner,
     const uint64_t length = count + (edit_insert(kind) ? 1 : 0)
                                   - (edit_remove(kind) ? 1 : 0)
                                   - (kind == DRAIN_ALL ? count : 0);
+    const uint64_t expected_length = kind == TRUNCATE_HALF ? count / 2
+        : kind == SWAP_FRONT ? count - 1 : length;
     ApiObservation state = {0};
-    require(api->snapshot(owner, &state) == length && state.length == length + fail_state
+    require(api->snapshot(owner, &state) == expected_length && state.length == expected_length + fail_state
             && state.valid == 1 && state.checksum == 0,
             "edit post state");
     require(state.capacity == initial || (edit_growth(kind) && state.capacity > initial),
             "edit post capacity");
     if (edit_growth(kind)) require(state.capacity > initial, "edit growth capacity");
     else require(state.capacity == initial, "edit retained capacity");
+    if (kind == RESERVE_GROW)
+        require(state.capacity == 2 * count, "edit matched reserve capacity");
     if (kind == RESERVE_NOOP || kind == RESERVE_GROW)
         require(returned == state.capacity, "edit reserve result");
     else if (edit_insert(kind))
@@ -968,17 +1023,28 @@ static void edit_verify(const ApiOperations *api, ApiStorage *owner,
                 && operation.length == count - 1 && operation.capacity == initial
                 && operation.checksum == returned && operation.valid == 1,
                 "edit removed owner and result");
-    else
+    else if (kind == DRAIN_ALL)
         require(returned == append_oracle(count, seed, wide)
                 && operation.length == 0 && operation.capacity == initial
                 && operation.checksum == returned && operation.valid == 1,
                 "edit drained owners and order");
+    else if (kind == SWAP_FRONT)
+        require(returned == edit_removed_oracle(seed, 0, wide)
+                && operation.length == count - 1 && operation.capacity == initial
+                && operation.checksum == returned && operation.valid == 1,
+                "edit swapped owner and result");
+    else
+        require(returned == edit_truncate_oracle(count, seed, wide)
+                && operation.length == count / 2 && operation.capacity == initial
+                && operation.checksum == returned && operation.valid == 1,
+                "edit truncated owners and order");
     ApiObservation content = {0};
-    uint64_t valid = edit_insert(kind) || edit_remove(kind)
-        ? api->inspect_shape(owner, length, seed, edit_insert(kind) ? 1 : 2,
-                             at, edit_marker(seed), &content)
-        : api->inspect_reset(owner, length, seed, &content);
-    require(valid == 1 && content.valid == 1 && content.length == length
+    uint64_t valid = edit_insert(kind) || edit_remove(kind) || kind == SWAP_FRONT
+        ? api->inspect_shape(owner, expected_length, seed,
+                             edit_insert(kind) ? 1 : kind == SWAP_FRONT ? 3 : 2,
+                             at, kind == SWAP_FRONT ? count : edit_marker(seed), &content)
+        : api->inspect_reset(owner, expected_length, seed, &content);
+    require(valid == 1 && content.valid == 1 && content.length == expected_length
             && content.capacity == state.capacity
             && content.checksum == edit_oracle(kind, count, seed, wide),
             "edit full ordered values and checksum");
@@ -1043,6 +1109,30 @@ static void edit_check(unsigned fault) {
 }
 
 #if !defined(ACCOUNT_ONLY)
+static void edit_verify_removal_chain(const ApiOperations *api, ApiStorage *owner,
+                                      enum EditCase kind, uint64_t count,
+                                      uint64_t seed, bool wide, uint64_t initial,
+                                      const uint64_t *returned,
+                                      const ApiObservation *operations) {
+    for (uint64_t step = 0; step < count; ++step) {
+        uint64_t remaining = count - step;
+        uint64_t source = kind == REMOVE_BACK ? remaining - 1
+            : step == 0 ? 0 : remaining;
+        require(returned[step] == edit_removed_oracle(seed, source, wide)
+                && operations[step].checksum == returned[step]
+                && operations[step].length == remaining - 1
+                && operations[step].capacity == initial
+                && operations[step].valid == 1,
+                "edit removal-chain complete owners and state");
+        observed = returned[step];
+    }
+    ApiObservation reset = {0};
+    require(api->inspect_reset(owner, 0, seed, &reset) == 1
+            && reset.length == 0 && reset.capacity == initial
+            && reset.checksum == seed && reset.valid == 1,
+            "edit removal-chain final empty state");
+}
+
 static void append_inspect_batch(const ApiOperations *api, ApiStorage *owners,
                                  size_t contexts, uint64_t count, uint64_t capacity,
                                  uint64_t seed, bool wide) {
@@ -1240,8 +1330,12 @@ static void edit_measure(uint64_t work_bytes, unsigned samples) {
                 if (contexts > 256) contexts = 256;
                 if (contexts == 0) contexts = 1;
                 const uint64_t batch_bytes = contexts * per_owner;
-                const uint64_t cycles = (work_bytes + batch_bytes - 1) / batch_bytes;
-                const uint64_t repeat = kind == RESERVE_NOOP ? 64 : 1;
+                const uint64_t scale = kind == RESERVE_NOOP || kind == DRAIN_ALL
+                    || kind == REMOVE_BACK || kind == SWAP_FRONT ? 1 : 4;
+                const uint64_t scaled_work = work_bytes * scale * edit_work_factor[kind][wide][n];
+                const uint64_t cycles = (scaled_work + batch_bytes - 1) / batch_bytes;
+                const uint64_t repeat = kind == RESERVE_NOOP ? noop_repeat[wide][n]
+                    : kind == REMOVE_BACK || kind == SWAP_FRONT ? count : 1;
                 for (unsigned cohort = 0; cohort < 2; ++cohort)
                     for (unsigned sample = 0; sample < samples; ++sample)
                         for (unsigned offset = 0; offset < 3; ++offset) {
@@ -1249,8 +1343,10 @@ static void edit_measure(uint64_t work_bytes, unsigned samples) {
                             unsigned variant = cohort ? 2 - position : position;
                             const ApiOperations *api = &append_api[wide][variant];
                             ApiStorage *owners = malloc(contexts * sizeof *owners);
-                            ApiObservation *operations = calloc(contexts, sizeof *operations);
-                            uint64_t *returned = malloc(contexts * sizeof *returned);
+                            const size_t slots = contexts *
+                                (kind == REMOVE_BACK || kind == SWAP_FRONT ? count : 1);
+                            ApiObservation *operations = calloc(slots, sizeof *operations);
+                            uint64_t *returned = malloc(slots * sizeof *returned);
                             require(owners && operations && returned, "edit timing contexts");
                             uint64_t elapsed = 0, control_elapsed = 0;
                             uint64_t final_capacity = 0, initial_capacity = 0;
@@ -1273,19 +1369,40 @@ static void edit_measure(uint64_t work_bytes, unsigned samples) {
                                             && operations[k].valid == 1,
                                             "edit snapshot control state");
                                 const uint64_t start = nanos();
-                                for (uint64_t pass = 0; pass < repeat; ++pass)
+                                if (kind == REMOVE_BACK || kind == SWAP_FRONT) {
                                     for (size_t k = 0; k < contexts; ++k)
-                                        returned[k] = edit_run(api, &owners[k],
-                                            (enum EditCase)kind, count, seed + k,
-                                            &operations[k]);
+                                        for (uint64_t step = 0; step < count; ++step) {
+                                            uint64_t remaining = count - step;
+                                            size_t slot = k * count + step;
+                                            uint64_t source = kind == REMOVE_BACK
+                                                ? remaining - 1 : step == 0 ? 0 : remaining;
+                                            returned[slot] = kind == REMOVE_BACK
+                                                ? api->remove(&owners[k], remaining - 1,
+                                                    seed + k + source, &operations[slot])
+                                                : api->swap_remove(&owners[k], 0,
+                                                    seed + k + source, &operations[slot]);
+                                        }
+                                } else {
+                                    for (uint64_t pass = 0; pass < repeat; ++pass)
+                                        for (size_t k = 0; k < contexts; ++k)
+                                            returned[k] = edit_run(api, &owners[k],
+                                                (enum EditCase)kind, count, seed + k,
+                                                &operations[k]);
+                                }
                                 elapsed += nanos() - start;
                                 for (size_t k = 0; k < contexts; ++k) {
                                     ApiObservation state = {0};
                                     (void)api->snapshot(&owners[k], &state);
                                     final_capacity = state.capacity;
-                                    edit_verify(api, &owners[k], (enum EditCase)kind,
-                                        count, seed + k, wide != 0, initial_capacity,
-                                        returned[k], operations[k], false);
+                                    if (kind == REMOVE_BACK || kind == SWAP_FRONT)
+                                        edit_verify_removal_chain(api, &owners[k],
+                                            (enum EditCase)kind, count,
+                                            seed + k, wide != 0, initial_capacity,
+                                            &returned[k * count], &operations[k * count]);
+                                    else
+                                        edit_verify(api, &owners[k], (enum EditCase)kind,
+                                            count, seed + k, wide != 0, initial_capacity,
+                                            returned[k], operations[k], false);
                                     (void)api->destroy(&owners[k]);
                                 }
                             }

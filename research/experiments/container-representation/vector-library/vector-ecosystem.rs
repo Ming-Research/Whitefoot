@@ -211,6 +211,48 @@ unsafe fn api_remove<T: ApiElement>(
     checksum
 }
 
+unsafe fn api_swap_remove<T: ApiElement>(
+    storage: *mut c_void,
+    index: u64,
+    seed: u64,
+    observation: &mut ApiObservation,
+) -> u64 {
+    let values = unsafe { &mut *storage.cast::<Vec<T>>() };
+    let removed = values.swap_remove(index as usize);
+    let mut checksum = seed;
+    let valid = removed.inspect(seed, &mut checksum);
+    *observation = ApiObservation {
+        length: values.len() as u64,
+        capacity: values.capacity() as u64,
+        checksum,
+        valid: u64::from(valid),
+    };
+    checksum
+}
+
+unsafe fn api_truncate<T: ApiElement>(
+    storage: *mut c_void,
+    retained: u64,
+    seed: u64,
+    observation: &mut ApiObservation,
+) -> u64 {
+    let values = unsafe { &mut *storage.cast::<Vec<T>>() };
+    let capacity = values.capacity() as u64;
+    let mut checksum = seed;
+    let mut valid = true;
+    for (offset, value) in values.drain(retained as usize..).enumerate() {
+        valid &= value.inspect(seed.wrapping_add(retained).wrapping_add(offset as u64),
+                               &mut checksum);
+    }
+    *observation = ApiObservation {
+        length: values.len() as u64,
+        capacity,
+        checksum,
+        valid: u64::from(valid),
+    };
+    checksum
+}
+
 unsafe fn api_drain<T: ApiElement>(
     storage: *mut c_void,
     seed: u64,
@@ -286,6 +328,8 @@ unsafe fn api_inspect_shape<T: ApiElement>(
             seed.wrapping_add(index - 1)
         } else if kind == 2 && index >= edit_index {
             seed.wrapping_add(index + 1)
+        } else if kind == 3 && index == edit_index {
+            seed.wrapping_add(marker - 1)
         } else {
             seed.wrapping_add(index)
         };
@@ -309,7 +353,8 @@ unsafe fn api_destroy<T>(storage: *mut c_void) -> u8 {
 
 macro_rules! api_exports {
     ($element:ty, $prepare:ident, $append:ident, $one:ident, $snapshot:ident, $inspect:ident, $destroy:ident,
-     $reserve:ident, $insert:ident, $remove:ident, $drain:ident, $shape:ident) => {
+     $reserve:ident, $insert:ident, $remove:ident, $drain:ident, $shape:ident,
+     $swap:ident, $truncate:ident) => {
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn $prepare(capacity: u64, storage: *mut c_void) {
             unsafe { api_prepare::<$element>(capacity, storage) }
@@ -378,6 +423,18 @@ macro_rules! api_exports {
             unsafe { api_inspect_shape::<$element>(storage, count, seed, kind, index, marker,
                                                    &mut *observation) }
         }
+
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn $swap(storage: *mut c_void, index: u64, seed: u64,
+                                        observation: *mut ApiObservation) -> u64 {
+            unsafe { api_swap_remove::<$element>(storage, index, seed, &mut *observation) }
+        }
+
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn $truncate(storage: *mut c_void, retained: u64, seed: u64,
+                                            observation: *mut ApiObservation) -> u64 {
+            unsafe { api_truncate::<$element>(storage, retained, seed, &mut *observation) }
+        }
     };
 }
 
@@ -393,7 +450,9 @@ api_exports!(
     rust_vector_api_word_insert,
     rust_vector_api_word_remove,
     rust_vector_api_word_drain,
-    rust_vector_api_word_inspect_shape
+    rust_vector_api_word_inspect_shape,
+    rust_vector_api_word_swap_remove,
+    rust_vector_api_word_truncate
 );
 api_exports!(
     Record,
@@ -407,5 +466,7 @@ api_exports!(
     rust_vector_api_record_insert,
     rust_vector_api_record_remove,
     rust_vector_api_record_drain,
-    rust_vector_api_record_inspect_shape
+    rust_vector_api_record_inspect_shape,
+    rust_vector_api_record_swap_remove,
+    rust_vector_api_record_truncate
 );

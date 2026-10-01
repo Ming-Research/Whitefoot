@@ -120,6 +120,38 @@ std::uint64_t api_drain(void *storage, std::uint64_t seed,
 }
 
 template<class T>
+std::uint64_t api_swap_remove(void *storage, std::uint64_t index,
+                              std::uint64_t seed, ApiObservation *observation) {
+    auto &values = *static_cast<Vector<T> *>(storage);
+    T removed = std::move(values[static_cast<std::size_t>(index)]);
+    if (index != values.size() - 1)
+        values[static_cast<std::size_t>(index)] = std::move(values.back());
+    values.pop_back();
+    std::uint64_t checksum = seed;
+    const bool valid = api_inspect(removed, seed, checksum);
+    *observation = {values.size(), values.capacity(), checksum,
+                    static_cast<std::uint64_t>(valid)};
+    return checksum;
+}
+
+template<class T>
+std::uint64_t api_truncate(void *storage, std::uint64_t retained,
+                            std::uint64_t seed, ApiObservation *observation) {
+    auto &values = *static_cast<Vector<T> *>(storage);
+    std::uint64_t checksum = seed;
+    bool valid = true;
+    for (std::size_t index = static_cast<std::size_t>(retained);
+         index < values.size(); ++index) {
+        T value = std::move(values[index]);
+        valid &= api_inspect(value, seed + index, checksum);
+    }
+    values.erase(values.begin() + static_cast<std::ptrdiff_t>(retained), values.end());
+    *observation = {values.size(), values.capacity(), checksum,
+                    static_cast<std::uint64_t>(valid)};
+    return checksum;
+}
+
+template<class T>
 std::uint64_t api_snapshot(void *storage, ApiObservation *observation) {
     const auto &values = *static_cast<const Vector<T> *>(storage);
     *observation = {values.size(), values.capacity(), 0, 1};
@@ -167,6 +199,7 @@ std::uint64_t api_inspect_shape(void *storage, std::uint64_t count,
         const auto expected = kind == 1 && index == edit_index ? marker
             : kind == 1 && index > edit_index ? seed + index - 1
             : kind == 2 && index >= edit_index ? seed + index + 1
+            : kind == 3 && index == edit_index ? seed + marker - 1
             : seed + index;
         valid &= api_inspect(values[position], expected, checksum);
     }
@@ -337,6 +370,12 @@ extern "C" std::uint64_t cpp_vector_api_##width##_drain(void *storage, std::uint
 } \
 extern "C" std::uint64_t cpp_vector_api_##width##_inspect_shape(void *storage, std::uint64_t count, std::uint64_t seed, std::uint64_t kind, std::uint64_t index, std::uint64_t marker, ApiObservation *observation) { \
     return api_inspect_shape<type>(storage, count, seed, kind, index, marker, observation); \
+} \
+extern "C" std::uint64_t cpp_vector_api_##width##_swap_remove(void *storage, std::uint64_t index, std::uint64_t seed, ApiObservation *observation) { \
+    return api_swap_remove<type>(storage, index, seed, observation); \
+} \
+extern "C" std::uint64_t cpp_vector_api_##width##_truncate(void *storage, std::uint64_t retained, std::uint64_t seed, ApiObservation *observation) { \
+    return api_truncate<type>(storage, retained, seed, observation); \
 }
 EXPORT_EDIT_API(word, std::uint64_t)
 EXPORT_EDIT_API(record, Record)

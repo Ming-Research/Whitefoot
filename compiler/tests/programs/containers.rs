@@ -230,7 +230,9 @@ fn grow_vector_executes_and_releases_every_allocation_in_both_lowering_modes() {
         "containers/grow-vector-program.wf",
         include_bytes!("../../../tests/programs/containers/grow-vector-program.wf"),
     )];
-    execute_container_program("grow-vector", &sources, 25, true);
+    // The five grow_vector_new calls (three in main and one in each
+    // consumption helper) now use the empty anchor, removing five requests.
+    execute_container_program("grow-vector", &sources, 20, true);
 }
 
 #[test]
@@ -245,9 +247,10 @@ fn slab_operations_and_memberships_release_every_owner_in_both_lowering_modes() 
             include_bytes!("../../../tests/programs/containers/slab-program.wf"),
         ),
     ];
-    // Seven total backings, nine operation payloads (four affine and five
+    // Six positive backings; the zero-capacity scalar slab uses the anchor.
+    // Nine operation payloads (four affine and five
     // nodrop), and three payloads in the two membership protocols.
-    execute_container_program("slab", &sources, 19, false);
+    execute_container_program("slab", &sources, 18, false);
 }
 
 #[test]
@@ -267,9 +270,11 @@ fn hash_map_operations_preserve_owned_pairs_in_both_lowering_modes() {
         "containers/hash-map-program.wf",
         include_bytes!("../../../tests/programs/containers/hash-map-program.wf"),
     )];
-    // Seventeen map backings, ten payload/query child Boxes, and one fresh
+    // Fifteen positive map backings: the zero-ceiling scalar map and the
+    // initially empty unit map use the anchor; rehash at zero is a no-op.
+    // Ten payload/query child Boxes, and one fresh
     // Box returned by the borrowed edit callback and consumed by its caller.
-    execute_container_program("hash-map", &sources, 28, false);
+    execute_container_program("hash-map", &sources, 26, false);
 }
 
 #[test]
@@ -278,11 +283,14 @@ fn priority_queue_orders_and_preserves_every_owner_in_both_lowering_modes() {
         "containers/priority-queue-program.wf",
         include_bytes!("../../../tests/programs/containers/priority-queue-program.wf"),
     )];
-    // Twenty-three backings and forty payload Boxes. The independent source
+    // Sixteen positive backings and forty payload Boxes. Five queue_new
+    // calls and the direct empty heapify use the anchor; the zero-sized
+    // queue's reserve also has no payload allocation. These remove seven
+    // requests from the former twenty-three backings. The independent source
     // oracle sorts a separate array and checks each owner identity. The native
     // ledger additionally observes actual releases, including growth, refused
     // owner retry, zero capacity and zero-sized u64-max logical capacity.
-    execute_container_program("priority-queue", &sources, 63, false);
+    execute_container_program("priority-queue", &sources, 56, false);
 }
 
 #[test]
@@ -297,13 +305,16 @@ fn indexed_memberships_match_the_model_and_release_every_owner_in_both_lowering_
             include_bytes!("../../../tests/programs/containers/indexed-membership-program.wf"),
         ),
     ];
-    // Four policy/payload traces each allocate six initial store backings,
-    // eight index growth backings and fifteen payload Boxes: 116 total.
-    // Capacity/refusal, retirement and zero capacity add nine backings;
+    // Four policy/payload traces each allocate two positive initial Slab
+    // backings, eight index growth backings and fifteen payload Boxes: 100
+    // total. Each trace's two initially empty ID maps and expiry heaps use
+    // the anchor. Capacity/refusal and retirement add four positive backings;
+    // the limited store's two empty indexes and the zero store's three
+    // empty backings add none.
     // direct indexed heapify adds one; the nodrop SlabEdit result adds one
     // backing and two payload Boxes. The source model independently checks
     // dictionary membership, sorted expiration and exact owner identities.
-    execute_container_program("indexed-membership", &sources, 129, false);
+    execute_container_program("indexed-membership", &sources, 108, false);
 }
 
 #[test]

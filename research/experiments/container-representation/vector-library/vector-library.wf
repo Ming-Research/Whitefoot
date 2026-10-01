@@ -269,6 +269,13 @@ struct VectorApiDigest {
   marker: u64;
 }
 
+struct VectorApiConsumeDigest {
+  seed: u64;
+  index: u64;
+  checksum: u64;
+  valid: u64;
+}
+
 fn vector_api_expected(env: &VectorApiDigest) -> expected: u64 reads(env) {
   let index = env^.index;
   if env^.edit_kind == 1_u64 {
@@ -286,12 +293,19 @@ fn vector_api_expected(env: &VectorApiDigest) -> expected: u64 reads(env) {
       return env^.seed +wrap following;
     }
   }
+  if env^.edit_kind == 3_u64 {
+    if index == env^.edit_index {
+      let last = env^.marker -wrap 1_u64;
+      return env^.seed +wrap last;
+    }
+  }
   return env^.seed +wrap index;
 }
 
 interface VectorApiElement<T: drop> {
   fn make(seed: u64) -> value: T pure;
   fn inspect(env: &VectorApiDigest, value: T) -> result: unit writes(env);
+  fn consume(env: &VectorApiConsumeDigest, value: T) -> result: unit writes(env);
 }
 
 fn vector_api_word_inspect(env: &VectorApiDigest, value: u64) -> result: unit writes(env) {
@@ -320,14 +334,42 @@ fn vector_api_record_inspect(env: &VectorApiDigest, value: VectorRecord) -> resu
   return unit;
 }
 
+fn vector_api_word_consume(env: &VectorApiConsumeDigest, value: u64) -> result: unit writes(env) {
+  let expected = env^.seed +wrap env^.index;
+  if value != expected {
+    set env^.valid = 0_u64;
+  }
+  let prefix = env^.checksum *wrap 131_u64;
+  set env^.checksum = prefix +wrap value;
+  set env^.index = env^.index +wrap 1_u64;
+  return unit;
+}
+
+fn vector_api_record_consume(env: &VectorApiConsumeDigest, value: VectorRecord) -> result: unit writes(env) {
+  let base = env^.seed +wrap env^.index;
+  for (word in 0_u64..32_u64) {
+    let actual = value.words[word];
+    let expected = base +wrap word;
+    if actual != expected {
+      set env^.valid = 0_u64;
+    }
+    let prefix = env^.checksum *wrap 131_u64;
+    set env^.checksum = prefix +wrap actual;
+  }
+  set env^.index = env^.index +wrap 1_u64;
+  return unit;
+}
+
 binding ApiWordElement : VectorApiElement<u64> {
   make = vector_word_make;
   inspect = vector_api_word_inspect;
+  consume = vector_api_word_consume;
 }
 
 binding ApiRecordElement : VectorApiElement<VectorRecord> {
   make = vector_record_make;
   inspect = vector_api_record_inspect;
+  consume = vector_api_record_consume;
 }
 
 fn vector_api_prepare<interface VectorApiElement<T>>(capacity: u64) -> made: GrowVector<T, 8193> pure contract {
@@ -423,9 +465,35 @@ fn vector_api_remove<interface VectorApiElement<T>>(values: &GrowVector<T, 8193>
   return digest.checksum;
 }
 
-fn vector_api_drain<interface VectorApiElement<T>>(values: &GrowVector<T, 8193>, seed: u64, observation: &VectorApiObservation) -> checksum: u64 writes(values.storage), writes(observation) {
+fn vector_api_swap_remove<interface VectorApiElement<T>>(values: &GrowVector<T, 8193>, index: u64, seed: u64, observation: &VectorApiObservation) -> checksum: u64 writes(values.storage), writes(observation) contract {
+  requires index < values^.storage.inner.len;
+} {
+  let removed = grow_vector_swap_remove::<T, 8193>(values: values, index: index);
   let digest = VectorApiDigest(seed: seed, index: 0_u64, checksum: seed, valid: 1_u64, edit_kind: 0_u64, edit_index: 0_u64, marker: 0_u64);
-  grow_vector_drain::<T, VectorApiDigest, fn VectorApiElement::inspect, 8193>(values: values, env: &digest);
+  VectorApiElement::inspect(env: &digest, value: move removed);
+  set observation^.length = values^.storage.inner.len;
+  set observation^.capacity = values^.storage.inner.cap;
+  set observation^.checksum = digest.checksum;
+  set observation^.valid = digest.valid;
+  return digest.checksum;
+}
+
+fn vector_api_truncate<interface VectorApiElement<T>>(values: &GrowVector<T, 8193>, retained: u64, seed: u64, observation: &VectorApiObservation) -> checksum: u64 writes(values.storage), writes(observation) contract {
+  requires retained <= values^.storage.inner.len;
+} {
+  let first = seed +wrap retained;
+  let digest = VectorApiConsumeDigest(seed: first, index: 0_u64, checksum: seed, valid: 1_u64);
+  grow_vector_truncate::<T, VectorApiConsumeDigest, fn VectorApiElement::consume, 8193>(values: values, retained: retained, env: &digest);
+  set observation^.length = values^.storage.inner.len;
+  set observation^.capacity = values^.storage.inner.cap;
+  set observation^.checksum = digest.checksum;
+  set observation^.valid = digest.valid;
+  return digest.checksum;
+}
+
+fn vector_api_drain<interface VectorApiElement<T>>(values: &GrowVector<T, 8193>, seed: u64, observation: &VectorApiObservation) -> checksum: u64 writes(values.storage), writes(observation) {
+  let digest = VectorApiConsumeDigest(seed: seed, index: 0_u64, checksum: seed, valid: 1_u64);
+  grow_vector_drain::<T, VectorApiConsumeDigest, fn VectorApiElement::consume, 8193>(values: values, env: &digest);
   set observation^.length = values^.storage.inner.len;
   set observation^.capacity = values^.storage.inner.cap;
   set observation^.checksum = digest.checksum;
@@ -571,6 +639,30 @@ fn vector_api_word_drain(values: &GrowVector<u64, 8193>, seed: u64, observation:
 
 fn vector_api_record_drain(values: &GrowVector<VectorRecord, 8193>, seed: u64, observation: &VectorApiObservation) -> checksum: u64 writes(values.storage), writes(observation) {
   return vector_api_drain::<ApiRecordElement>(values: values, seed: seed, observation: observation);
+}
+
+fn vector_api_word_swap_remove(values: &GrowVector<u64, 8193>, index: u64, seed: u64, observation: &VectorApiObservation) -> checksum: u64 writes(values.storage), writes(observation) contract {
+  requires index < values^.storage.inner.len;
+} {
+  return vector_api_swap_remove::<ApiWordElement>(values: values, index: index, seed: seed, observation: observation);
+}
+
+fn vector_api_record_swap_remove(values: &GrowVector<VectorRecord, 8193>, index: u64, seed: u64, observation: &VectorApiObservation) -> checksum: u64 writes(values.storage), writes(observation) contract {
+  requires index < values^.storage.inner.len;
+} {
+  return vector_api_swap_remove::<ApiRecordElement>(values: values, index: index, seed: seed, observation: observation);
+}
+
+fn vector_api_word_truncate(values: &GrowVector<u64, 8193>, retained: u64, seed: u64, observation: &VectorApiObservation) -> checksum: u64 writes(values.storage), writes(observation) contract {
+  requires retained <= values^.storage.inner.len;
+} {
+  return vector_api_truncate::<ApiWordElement>(values: values, retained: retained, seed: seed, observation: observation);
+}
+
+fn vector_api_record_truncate(values: &GrowVector<VectorRecord, 8193>, retained: u64, seed: u64, observation: &VectorApiObservation) -> checksum: u64 writes(values.storage), writes(observation) contract {
+  requires retained <= values^.storage.inner.len;
+} {
+  return vector_api_truncate::<ApiRecordElement>(values: values, retained: retained, seed: seed, observation: observation);
 }
 
 fn vector_api_word_destroy(values: GrowVector<u64, 8193>) -> result: unit pure contract {

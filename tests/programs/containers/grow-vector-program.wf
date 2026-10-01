@@ -100,6 +100,14 @@ fn scalar_consumption() -> code: u64 pure {
     return 5_u64;
   }
   let appended = grow_vector_append::<u64, 8>(values: &values, value: 6_u64);
+  let middle = grow_vector_swap_remove::<u64, 8>(values: &values, index: 1_u64);
+  if middle != 2_u64 {
+    return 15_u64;
+  }
+  if values.storage.inner[1_u64] != 6_u64 {
+    return 16_u64;
+  }
+  let restored = grow_vector_insert::<u64, 8>(values: &values, index: 1_u64, value: middle);
   let first = grow_vector_swap_remove::<u64, 8>(values: &values, index: 0_u64);
   let last = grow_vector_swap_remove::<u64, 8>(values: &values, index: 1_u64);
   if first != 1_u64 {

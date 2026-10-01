@@ -8,6 +8,7 @@ SOURCES := vector-library.wf
 LIBRARY_INPUTS := $(wildcard $(ROOT)/lib/std/collections/vector/*) $(ROOT)/lib/std/modules.wfg
 # Explicit observed-ledger selection; frozen old-compiler replay stays at 0.
 WF_FULL_SLOTS_REALLOC ?= 1
+WF_ZERO_CAPACITY_NO_ALLOC ?= 1
 .DELETE_ON_ERROR:
 
 include ../../../../compiler/runtime.mk
@@ -89,7 +90,7 @@ EDIT_SAMPLE_FILE ?= $(ECO_BUILD)/edit-api-measurements.csv
 include ../ecosystem.mk
 # Read only by observed code; the existing configuration records the choice
 # so changing it also invalidates a cached account driver.
-ECO_CFLAGS += -DWF_FULL_SLOTS_REALLOC=$(WF_FULL_SLOTS_REALLOC)
+ECO_CFLAGS += -DWF_FULL_SLOTS_REALLOC=$(WF_FULL_SLOTS_REALLOC) -DWF_ZERO_CAPACITY_NO_ALLOC=$(WF_ZERO_CAPACITY_NO_ALLOC)
 
 .PHONY: ecosystem-build ecosystem-check ecosystem-account ecosystem-measure ecosystem-append-check ecosystem-append-measure ecosystem-append-growth-check ecosystem-append-growth-account ecosystem-append-growth-measure ecosystem-edit-check ecosystem-edit-measure
 .SECONDARY: $(ECO_BUILD)/whitefoot-timed.ll $(ECO_BUILD)/whitefoot-account.ll \
@@ -116,8 +117,9 @@ $(ECO_BUILD)/driver-%.o: vector-costs.c Makefile $(ECO_CONFIG)
 
 $(ECO_BUILD)/vector-costs-%$(EXE): $(ECO_BUILD)/driver-%.o $(ECO_BUILD)/whitefoot-%.o \
                                    $(ECO_BUILD)/cpp-%.o $(ECO_BUILD)/rust-%.a $(NATIVE_OBJECTS) $(ECO_CONFIG)
-	$(CXX) $(ECO_LDFLAGS) $(ECO_BUILD)/driver-$*.o $(ECO_BUILD)/whitefoot-$*.o \
+	$(CXX) $(ECO_LDFLAGS) $(ECO_BUILD)/driver-$*.o \
 	  $(ECO_BUILD)/cpp-$*.o $(ECO_BUILD)/rust-$*.a $(NATIVE_OBJECTS) \
+	  $(ECO_BUILD)/whitefoot-$*.o \
 	  $(NATIVE_LINK_FLAGS) $(ECO_RUST_LINK_FLAGS) -o $@
 
 ecosystem-build: $(ECO_BUILD)/vector-costs-timed$(EXE) $(ECO_BUILD)/vector-costs-account$(EXE)
