@@ -3384,6 +3384,13 @@ condition under which it is taken up.
   callback checks and complete paired qualification. Avoid replacing it with
   the rejected backing-slot swap's three full 272-byte transfers.
 
+  Combining that source shape with a scratch fresh-Vacant initialization floor
+  gives a qualified small-wide gain, but large-wide overlap/gain and excessive
+  Rust/C++ peer drift fail the complete criterion. Preserve both the raw outlier
+  and unchanged initialization policy. Reopen only for a distinct mechanism
+  with complete ownership checks and qualified large-cell evidence; fewer stores
+  alone neither prove the elapsed cause nor authorize generic inactive bytes.
+
 - **Ordered insertion replacement costs need attribution.** Both the
   [aggregate-result candidate](../research/experiments/container-representation/ordered-library/RESULTS.md#single-descent-insertion-candidate)
   and [borrowed-promotion follow-up](../research/experiments/container-representation/ordered-library/RESULTS.md#borrowed-promotion-follow-up)

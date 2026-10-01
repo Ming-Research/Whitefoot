@@ -4848,5 +4848,53 @@ omitted compiler/generated-object dependencies and tool/path reconstruction, not
 a standalone replay; no published-package replay is claimed. All prior 222 entry
 byte sequences remain: 221 at their original names and the prior outer index at
 `component-index-before-owner-source-trials.json`. Only the outer component index
-is extended. Original/normalized hashes are explicit. The later initialization
-interaction experiment is not part of this record.
+is extended. Original/normalized hashes are explicit. The separate initialization
+interaction below has its own matched control and criterion.
+
+### Self-tail and initialization interaction: overall criterion failed
+
+This raw LLVM trial starts from self-tail v2 and deletes only its four fresh-Vacant
+aggregate zero stores. Explicit tags, complete owner operations and all four
+migration-helper instruction streams remain unchanged; wide caller argument
+staging still copies 256 bytes. Fresh bucket writes fall from 20/268 bytes to
+4 bytes for scalar/wide slots. Ordinary O3 also unrolls tag writes and changes
+22 of 140 bodies; frames, call and stack-access counts stay unchanged. These
+collateral changes prevent attribution to removed-store cycles alone.
+
+All 64 build/check stages match expectations: four images each pass 288 reserve
+cases, with 21 faults per arm, unchanged lookup/whole-trace checks and identical
+96-row ledgers. The fixed paired panel retains all 88,128 rows; every aggregate
+matches its batch elapsed-time/call-count sums. All four processes finish their
+22,032 rows then exit 1 for the unchanged fast-cell instrument failures; the
+outer guard returns 1 after 30.80 s. Input hashes remain fixed. No retry follows.
+
+Primary aligned wide growth, WF median [minimum, maximum] µs per reserve,
+cohort 0 / cohort 1:
+
+| Initial entry floor | Self-tail control | Initialization interaction | Verdict |
+|---:|---|---|---|
+| 64 | 1.719 [1.687, 1.825] / 1.695 [1.691, 1.747] | 1.362 [1.291, 1.542] / 1.357 [1.337, 1.405] | Qualified gain both cohorts |
+| 4096 | 103.548 [100.004, 115.007] / 101.813 [100.180, 108.263] | 92.155 [90.410, 116.268] / 90.630 [88.651, 95.951] | Overlap / gain; peer drift unresolved |
+
+Small wide growth improves with all gates satisfied but remains separated slower
+than both peers. Large wide growth overlaps in cohort 0 and improves in cohort 1;
+paired unchanged-peer drift reaches Rust 15.28% and C++ 21.53%, above the 10%
+limit. The Rust candidate-cohort-1 maximum of 352.992 µs is retained, not filtered;
+WF/Rust range overlap there does not establish parity. WF remains slower than
+C++ in both cohorts. The full primary criterion fails.
+
+Aligned and default small scalar growth also have qualified gains. No separated
+WF before/after loss appears, but large-cell instability and the existing fast-cell
+duration failures remain. All 16 cells and both peers are retained. The result
+neither adopts an initialization policy nor supplies a general inactive-byte
+safety proof or an explanation of the earlier initialization floor's regression.
+The original self-tail native partial/fail and source campaign limits stand.
+
+`selftail-init-interaction/` in the existing archive retains the exact four-line
+patch, criterion, native excerpts, checks, clocks, all raw samples and adverse
+reductions. Scripts are historical command records with omitted generated-module,
+compiler/object and tool/path dependencies; the published package has not been
+replayed. All prior 337 entry byte sequences remain, with the former outer index
+at `component-index-before-selftail-init-interaction.json` and the other 336 at
+unchanged names. Only the outer index is extended; original/normalized hashes are
+separate. No compiler, library or specification change is selected.
