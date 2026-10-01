@@ -169,6 +169,44 @@ pub fn compile_program(name: &str) -> whitefoot::LlvmModule {
     compile_programs(&[name])
 }
 
+/// Compiles the named entry of a module program the repository keeps under
+/// `apps/`, reading its graph and every record the graph registers [MOD-1,
+/// MOD-2, MOD-9]. Only the Linux-hosted network tests serve one today.
+#[cfg(target_os = "linux")]
+pub fn compile_app(name: &str, entry: &str) -> whitefoot::LlvmModule {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("the compiler package lives directly under the repository root")
+        .join("apps")
+        .join(name);
+    let graph_bytes = std::fs::read(root.join("modules.wfg"))
+        .unwrap_or_else(|error| panic!("read {}'s graph: {error}", root.display()));
+    let graph = whitefoot::form_module_graph(
+        SourceInput::new("modules.wfg", &graph_bytes),
+        CompilerLimits::default(),
+    )
+    .unwrap_or_else(|failure| panic!("{name}'s graph must form: {failure}"));
+    let sources = whitefoot::discover_module_sources(&root, &graph)
+        .unwrap_or_else(|failure| panic!("{name}'s records must read: {failure}"));
+    let inputs = sources
+        .iter()
+        .map(|source| {
+            SourceInput::new(&source.logical_path, &source.bytes)
+                .in_module(source.module, source.role)
+        })
+        .collect::<Vec<_>>();
+    crate::support::timed("whitefoot-compile", || {
+        whitefoot::compile_module_program(
+            &graph,
+            &inputs,
+            whitefoot::ModuleEntry::Named(entry),
+            CompilerLimits::default(),
+            OverlapLowering::On,
+        )
+        .unwrap_or_else(|failure| panic!("{name} must compile: {failure}"))
+    })
+}
+
 /// Compiles the explicit sequential lowering used by paired corpus controls.
 pub fn compile_program_without_overlap(name: &str) -> whitefoot::LlvmModule {
     let source = read_program(name);

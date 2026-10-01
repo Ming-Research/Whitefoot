@@ -1,0 +1,91 @@
+alias Bytes = pkg::bytes::Bytes;
+alias Key = pkg::bytes::Key;
+alias KeyEnv = pkg::bytes::KeyEnv;
+
+public struct Span {
+  doc "Where one argument lies in a client's input: its first byte's position and its length.";
+  public start: u64;
+  public length: u64;
+}
+
+public struct Parsed {
+  doc "What reading one request found. State 1 is a command whose arguments parse_request placed, ending before next; 0 means the bytes held end before the request does; 6 is a request of no arguments, which is skipped up to next; 2 to 5 are malformed requests, whose replies protocol_error writes.";
+  public state: u64;
+  public next: u64;
+}
+
+public struct Client {
+  doc "What one connection's commands work with. Replies are written into bytes, a window filled to its capacity, up to at, where the next reply starts. A command that changes or reads the keyspace in an atomic statement passes the client as its visitor's environment: now is the instant expiries are read against, low, high and number carry the command's numbers in and a visitor's results out, state reports what the visitor found, items and scores hold the owned keys and scores the command prepared, each key hashed when it was made so that no hash is computed inside an atomic statement, the last to be used first, keys is the environment the key protocols take, and random is the state SPOP draws from while it runs.";
+  public bytes: Box<Slots<u8>>;
+  public at: u64;
+  public now: u64;
+  public state: u64;
+  public number: u64;
+  public low: i64;
+  public high: i64;
+  public items: Box<Slots<Key>>;
+  public scores: Box<Slots<f64>>;
+  public keys: KeyEnv;
+  public random: u64;
+}
+
+public fn parse_request(input: &[u8], start: u64, held: u64, args: &Box<Slots<Span>>) -> parsed: Parsed reads(input), writes(args) doc "Reads one request from a position of the input, of which held bytes are filled: a RESP array of bulk strings, or an inline command of words separated by spaces and ended by a line feed. A command's arguments replace what args held, one span each.";
+
+public fn protocol_error(client: &Client, input: &[u8], parsed: Parsed) -> result: unit reads(input), writes(client) doc "Writes the error Redis replies to a malformed request parse_request reported; for a missing dollar sign, next is the position of the byte found instead.";
+
+public fn input_new(capacity: u64) -> made: Box<Slots<u8>> pure contract {
+  requires capacity <= 1073741824_u64;
+  ensures made.inner.len == capacity;
+} doc "A client's input window: capacity bytes, all filled.";
+
+public fn input_grow(input: &Box<Slots<u8>>) -> result: unit writes(input) doc "Doubles a full input window, filling its new bytes; one of 2^31 bytes or more stays as it is.";
+
+public fn keep_rest(input: &Box<Slots<u8>>, from: u64, held: u64) -> kept: u64 writes(input) doc "Moves the bytes from a position up to held, an incomplete request, to the front of the input and returns how many it moved.";
+
+public fn arg(args: &Box<Slots<Span>>, index: u64) -> span: Span reads(args) doc "The span of one argument, or an empty span past the last.";
+
+public fn client_new(capacity: u64) -> made: Client pure contract {
+  requires capacity <= 1073741824_u64;
+} doc "A client with no reply written, over a window of capacity bytes.";
+
+public fn clear_items(client: &Client) -> result: unit writes(client) doc "Drops every prepared key and score.";
+
+public fn push_item(client: &Client, item: Key) -> result: unit writes(client) doc "Adds a prepared key, growing the space for them when it is full.";
+
+public fn push_score(client: &Client, score: f64) -> result: unit writes(client) doc "Adds a prepared score, growing the space for them when it is full.";
+
+public fn reply_room(client: &Client, needed: u64) -> result: unit writes(client) doc "Grows the window, at least doubling it, until it has room for needed more bytes after at.";
+
+public fn reply_byte(client: &Client, value: u8) -> result: unit writes(client) doc "Writes one byte, growing the window when it is full.";
+
+public fn reply_word(client: &Client, word: &[u8]) -> result: unit reads(word), writes(client) doc "Writes every byte of a constant word.";
+
+public fn reply_echoed(client: &Client, input: &[u8], span: Span, limit: u64) -> written: u64 reads(input), writes(client) doc "Writes at most limit bytes of an argument into an error reply as Redis formats one with %s, stopping before a zero byte and writing carriage return and line feed as spaces, and returns how many it wrote.";
+
+public fn reply_decimal(client: &Client, value: u64) -> result: unit writes(client) doc "Writes a number in decimal.";
+
+public fn reply_integer(client: &Client, value: i64) -> result: unit writes(client) doc "Writes a RESP integer.";
+
+public fn reply_array(client: &Client, count: u64) -> result: unit writes(client) doc "Writes the header of a RESP array of count elements.";
+
+public fn reply_bulk(client: &Client, stored: &Box<Slots<u8>>) -> result: unit reads(stored), writes(client) doc "Writes a stored string as a RESP bulk string.";
+
+public fn reply_text(client: &Client, text: &Bytes) -> result: unit reads(text), writes(client) doc "Writes a stored string as a RESP bulk string.";
+
+public fn reply_bulk_input(client: &Client, input: &[u8], start: u64, length: u64) -> result: unit reads(input), writes(client) doc "Writes bytes of the input as a RESP bulk string.";
+
+public fn reply_bulk_decimal(client: &Client, value: i64) -> result: unit writes(client) doc "Writes a number as a RESP bulk string of its decimal digits, with a leading minus sign when it is negative.";
+
+public fn reply_ok(client: &Client) -> result: unit writes(client) doc "Writes +OK.";
+
+public fn reply_nil(client: &Client) -> result: unit writes(client) doc "Writes the RESP2 null bulk string.";
+
+public fn reply_nil_array(client: &Client) -> result: unit writes(client) doc "Writes the RESP2 null array.";
+
+public fn reply_error(client: &Client, word: &[u8]) -> result: unit reads(word), writes(client) doc "Writes a RESP error: a minus sign, the word, which carries its own ERR or WRONGTYPE prefix, and CR LF.";
+
+public fn reply_wrong_type(client: &Client) -> result: unit writes(client) doc "Writes the error Redis replies to a command on a key holding another kind of value.";
+
+public fn reply_arity(client: &Client, input: &[u8], name: Span) -> result: unit reads(input), writes(client) doc "Writes the error Redis replies to a known command given the wrong number of arguments, naming the command in lower case.";
+
+public fn reply_unknown(client: &Client, input: &[u8], args: &Box<Slots<Span>>) -> result: unit reads(input), reads(args), writes(client) doc "Writes the error Redis replies to a command it does not know, naming the command and its first arguments.";

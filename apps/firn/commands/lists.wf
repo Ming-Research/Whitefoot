@@ -1,0 +1,467 @@
+alias Key = pkg::bytes::Key;
+alias Keyed = pkg::bytes::Keyed;
+alias Client = pkg::protocol::Client;
+alias DequeVisit = std::collections::deque::DequeVisit;
+alias Entry = pkg::store::Entry;
+alias KeyEnv = pkg::bytes::KeyEnv;
+alias Span = pkg::protocol::Span;
+alias Store = pkg::store::Store;
+alias Time = pkg::store::Time;
+alias Value = pkg::store::Value;
+alias arg = pkg::protocol::arg;
+alias ceiling = pkg::store::ceiling;
+alias copy_key = pkg::bytes::copy_key;
+alias clear_items = pkg::protocol::clear_items;
+alias deque_new = std::collections::deque::deque_new;
+alias deque_pop_back = std::collections::deque::deque_pop_back;
+alias deque_pop_front = std::collections::deque::deque_pop_front;
+alias deque_push_back = std::collections::deque::deque_push_back;
+alias deque_push_front = std::collections::deque::deque_push_front;
+alias deque_rebase = std::collections::deque::deque_rebase;
+alias deque_visit_at = std::collections::deque::deque_visit_at;
+alias expired = pkg::store::expired;
+alias hash_map_edit = std::collections::hash_map::hash_map_edit;
+alias hash_map_lookup = std::collections::hash_map::hash_map_lookup;
+alias hash_map_remove = std::collections::hash_map::hash_map_remove;
+alias log_command = pkg::store::log_command;
+alias read_integer = pkg::bytes::read_integer;
+alias reply_array = pkg::protocol::reply_array;
+alias reply_bulk = pkg::protocol::reply_bulk;
+alias reply_error = pkg::protocol::reply_error;
+alias reply_integer = pkg::protocol::reply_integer;
+alias reply_nil = pkg::protocol::reply_nil;
+alias reply_nil_array = pkg::protocol::reply_nil_array;
+alias reply_wrong_type = pkg::protocol::reply_wrong_type;
+alias key_boxed = pkg::bytes::key_boxed;
+
+const text_positive: Array<u8, 43> =[69_u8, 82_u8, 82_u8, 32_u8, 118_u8, 97_u8, 108_u8, 117_u8, 101_u8, 32_u8, 105_u8, 115_u8, 32_u8, 111_u8, 117_u8, 116_u8, 32_u8, 111_u8, 102_u8, 32_u8, 114_u8, 97_u8, 110_u8, 103_u8, 101_u8, 44_u8, 32_u8, 109_u8, 117_u8, 115_u8, 116_u8, 32_u8, 98_u8, 101_u8, 32_u8, 112_u8, 111_u8, 115_u8, 105_u8, 116_u8, 105_u8, 118_u8, 101_u8];
+
+fn element_out(env: &Client, value: &Box<Slots<u8>>) -> result: unit reads(value), writes(env) {
+  doc "Writes one list element as a bulk string.";
+  reply_bulk(client: env, stored: value);
+  return unit;
+}
+
+binding ElementOut : DequeVisit<Box<Slots<u8>>, Client> {
+  accept = element_out;
+}
+
+fn list_room(list: &Box<Ring<Box<Slots<u8>>>>) -> result: unit writes(list) {
+  doc "Moves a full list to a new backing twice its capacity, at least eight elements; a list at the ceiling of 2^32 elements stays full.";
+  let length = list^.inner.len;
+  let capacity = list^.inner.cap;
+  if length < capacity {
+    return unit;
+  }
+  let doubled = capacity +wrap capacity;
+  let target = imax(doubled, 8_u64);
+  let fits = target <= ceiling;
+  let enough = target >= length;
+  let possible = band(fits, enough);
+  if possible {
+    let spare = deque_new::<Box<Slots<u8>>, ceiling>(capacity: 0_u64);
+    swap(first: list, second: &spare);
+    let old_length = spare.inner.len;
+    if target >= old_length {
+      let grown = deque_rebase::<Box<Slots<u8>>, ceiling>(values: move spare, capacity: target);
+      swap(first: list, second: &grown);
+    } else {
+      swap(first: list, second: &spare);
+      let discarded = move spare;
+    }
+  }
+  return unit;
+}
+
+fn push_all(list: &Box<Ring<Box<Slots<u8>>>>, client: &Client, front: Bool) -> result: unit writes(list), writes(client) {
+  doc "Pushes the string of every prepared key onto the list, in the order the command named them, at its head or its tail.";
+  loop @elements {
+    if client^.items.inner.len > 0_u64 {
+      let prepared = take_back(window: &client^.items.inner);
+      let element = key_boxed(key: move prepared);
+      list_room(list: list);
+      if list^.inner.len < list^.inner.cap {
+        if front {
+          let length = deque_push_front::<Box<Slots<u8>>>(values: list, value: move element);
+        } else {
+          let length = deque_push_back::<Box<Slots<u8>>>(values: list, value: move element);
+        }
+      } else {
+        let dropped = move element;
+      }
+    } else {
+      break @elements;
+    }
+  }
+  return unit;
+}
+
+fn push_items(env: &Client, key: &Key, value: &Entry) -> kind: u64 writes(env), writes(value) {
+  doc "Pushes the prepared keys onto a live list, at its head when low is 0 and its tail otherwise, recording done and the list's new length in number; records wrong for another kind and expired for an expired entry.";
+  let reached = expired(expires: value^.expires, now: env^.now);
+  if reached {
+    set env^.state = state_expired;
+    return 0_u64;
+  }
+  match value^.value {
+    Items(items: list) => {
+      let front = env^.low == 0_i64;
+      push_all(list: list, client: env, front: front);
+      set env^.number = list^.inner.len;
+      set env^.state = state_done;
+      return 2_u64;
+    }
+    Text(bytes: stored) => {
+      set env^.state = state_wrong;
+      return 1_u64;
+    }
+    Members(members: set_of) => {
+      set env^.state = state_wrong;
+      return 3_u64;
+    }
+    Fields(fields: hash_of) => {
+      set env^.state = state_wrong;
+      return 4_u64;
+    }
+    Ranked(ranked: sorted) => {
+      set env^.state = state_wrong;
+      return 5_u64;
+    }
+  }
+}
+
+fn run_push(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time, front: Bool) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), writes(client) waits {
+  doc "LPUSH key element [element ...] and RPUSH: pushes each element in turn at the list's head (front) or tail, creating the list for an absent key, and answers its length.";
+  prepare_keys(input: input, args: args, client: client, first: 2_u64);
+  let key = key_at(input: input, args: args, index: 1_u64);
+  set client^.now = time^.check;
+  set client^.state = state_absent;
+  set client^.low = 1_i64;
+  if front {
+    set client^.low = 0_i64;
+  }
+  let full = False();
+  atomic state = &store^ {
+    let edited = hash_map_edit::<Keyed, Entry, Client, u64, fn push_items, ceiling>(map: &state^.map, key: &key, key_env: env, edit_env: client);
+    let create = client^.state == state_absent;
+    if client^.state == state_expired {
+      let gone = hash_map_remove::<Keyed, Entry, ceiling>(map: &state^.map, key: &key, env: env);
+      set create = True();
+    }
+    if create {
+      let wanted = client^.items.inner.len;
+      let capacity = imax(wanted, 8_u64);
+      if capacity <= ceiling {
+        let list = deque_new::<Box<Slots<u8>>, ceiling>(capacity: capacity);
+        push_all(list: &list, client: client, front: front);
+        set client^.number = list.inner.len;
+        let made = Value::Items(items: move list);
+        let fresh = Entry(value: move made, expires: 0_u64);
+        let owned_key = copy_key(key: &key);
+        let put = put_entry(state: &state^, key: move owned_key, held: move fresh, env: env);
+        if put {
+          set client^.state = state_done;
+        } else {
+          set full = True();
+        }
+      }
+    }
+    if client^.state == state_done {
+      if state^.logging {
+        log_command(log: &state^.log, input: input, args: args);
+      }
+    }
+  }
+  clear_items(client: client);
+  if client^.state == state_done {
+    let length = cvt.wrap::<u64, i64>(client^.number);
+    reply_integer(client: client, value: length);
+    return unit;
+  }
+  if full {
+    reply_error(client: client, word: &text_full[0_u64..17_u64]);
+    return unit;
+  }
+  reply_wrong_type(client: client);
+  return unit;
+}
+
+fn pop_one(list: &Box<Ring<Box<Slots<u8>>>>, from_head: Bool) -> popped: Option<Box<Slots<u8>>> writes(list) {
+  doc "Removes and returns the element at the list's head or tail, none for an empty list.";
+  if list^.inner.len > 0_u64 {
+    if from_head {
+      let element = deque_pop_front::<Box<Slots<u8>>>(values: list);
+      return Some<Box<Slots<u8>>>(value: move element);
+    }
+    let element = deque_pop_back::<Box<Slots<u8>>>(values: list);
+    return Some<Box<Slots<u8>>>(value: move element);
+  }
+  return None<Box<Slots<u8>>>();
+}
+
+fn pop_items(env: &Client, key: &Key, value: &Entry) -> kind: u64 writes(env), writes(value) {
+  doc "Pops up to number elements from a live list, from its head when low is 0 and its tail otherwise, writing them as the reply: an array when high is 1, else the one bulk string. Records done, or emptied when the list is left empty; wrong for another kind and expired for an expired entry.";
+  let reached = expired(expires: value^.expires, now: env^.now);
+  if reached {
+    set env^.state = state_expired;
+    return 0_u64;
+  }
+  match value^.value {
+    Items(items: list) => {
+      let length = list^.inner.len;
+      let taken = imin(env^.number, length);
+      if env^.high == 1_i64 {
+        reply_array(client: env, count: taken);
+      }
+      let from_head = env^.low == 0_i64;
+      for @popping (step in 0_u64..taken) {
+        let popped = pop_one(list: list, from_head: from_head);
+        match move popped {
+          Some(value: element) => {
+            reply_bulk(client: env, stored: &element);
+          }
+          None() => {
+          }
+        }
+      }
+      set env^.state = state_done;
+      if list^.inner.len == 0_u64 {
+        set env^.state = state_emptied;
+      }
+      return 2_u64;
+    }
+    Text(bytes: stored) => {
+      set env^.state = state_wrong;
+      return 1_u64;
+    }
+    Members(members: set_of) => {
+      set env^.state = state_wrong;
+      return 3_u64;
+    }
+    Fields(fields: hash_of) => {
+      set env^.state = state_wrong;
+      return 4_u64;
+    }
+    Ranked(ranked: sorted) => {
+      set env^.state = state_wrong;
+      return 5_u64;
+    }
+  }
+}
+
+fn run_pop(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time, front: Bool) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), writes(client) waits {
+  doc "LPOP key [count] and RPOP: removes and answers the element at the list's head (front) or tail, or an array of up to count of them, removing the key when the list is left empty; an absent key answers the null bulk string, or the null array when a count is given.";
+  let counted = args^.inner.len == 3_u64;
+  let wanted = 1_u64;
+  if counted {
+    let amount = arg(args: args, index: 2_u64);
+    let number = read_integer(input: input, start: amount.start, length: amount.length);
+    let negative = number.value < 0_i64;
+    let invalid = number.state != 1_u64;
+    let refused = bor(invalid, negative);
+    if refused {
+      reply_error(client: client, word: &text_positive[0_u64..43_u64]);
+      return unit;
+    }
+    set wanted = cvt.wrap::<i64, u64>(number.value);
+  }
+  let key = key_at(input: input, args: args, index: 1_u64);
+  set client^.now = time^.check;
+  set client^.state = state_absent;
+  set client^.number = wanted;
+  set client^.low = 1_i64;
+  if front {
+    set client^.low = 0_i64;
+  }
+  set client^.high = 0_i64;
+  if counted {
+    set client^.high = 1_i64;
+  }
+  atomic state = &store^ {
+    let edited = hash_map_edit::<Keyed, Entry, Client, u64, fn pop_items, ceiling>(map: &state^.map, key: &key, key_env: env, edit_env: client);
+    let emptied = client^.state == state_emptied;
+    let lapsed = client^.state == state_expired;
+    let removing = bor(emptied, lapsed);
+    if removing {
+      let gone = hash_map_remove::<Keyed, Entry, ceiling>(map: &state^.map, key: &key, env: env);
+    }
+    let done = client^.state == state_done;
+    let changed = bor(done, emptied);
+    if changed {
+      if state^.logging {
+        log_command(log: &state^.log, input: input, args: args);
+      }
+    }
+  }
+  let done = client^.state == state_done;
+  let emptied = client^.state == state_emptied;
+  let answered = bor(done, emptied);
+  if answered {
+    return unit;
+  }
+  if client^.state == state_wrong {
+    reply_wrong_type(client: client);
+    return unit;
+  }
+  if counted {
+    reply_nil_array(client: client);
+    return unit;
+  }
+  reply_nil(client: client);
+  return unit;
+}
+
+fn range_items(env: &Client, key: &Key, value: &Entry) -> kind: u64 reads(value), writes(env) {
+  doc "Writes the elements of a live list from index low to index high, both inclusive and counted from the tail when negative, as an array reply, recording done; records wrong for another kind and expired for an expired entry.";
+  let reached = expired(expires: value^.expires, now: env^.now);
+  if reached {
+    set env^.state = state_expired;
+    return 0_u64;
+  }
+  match value^.value {
+    Items(items: list) => {
+      let length = list^.inner.len;
+      let signed_length = cvt.wrap::<u64, i64>(length);
+      let first = env^.low;
+      let last = env^.high;
+      if first < 0_i64 {
+        set first = signed_length +wrap first;
+      }
+      if last < 0_i64 {
+        set last = signed_length +wrap last;
+      }
+      if first < 0_i64 {
+        set first = 0_i64;
+      }
+      let past_end = first >= signed_length;
+      let crossed = first > last;
+      let empty = bor(past_end, crossed);
+      if empty {
+        reply_array(client: env, count: 0_u64);
+        set env^.state = state_done;
+        return 2_u64;
+      }
+      if last >= signed_length {
+        set last = signed_length -wrap 1_i64;
+      }
+      let start = cvt.wrap::<i64, u64>(first);
+      let stop = cvt.wrap::<i64, u64>(last);
+      let span = stop -wrap start;
+      let count = span +wrap 1_u64;
+      reply_array(client: env, count: count);
+      for @elements (step in 0_u64..count) {
+        let index = start +wrap step;
+        if index < list^.inner.len {
+          deque_visit_at::<ElementOut>(values: list, index: index, env: env);
+        }
+      }
+      set env^.state = state_done;
+      return 2_u64;
+    }
+    Text(bytes: stored) => {
+      set env^.state = state_wrong;
+      return 1_u64;
+    }
+    Members(members: set_of) => {
+      set env^.state = state_wrong;
+      return 3_u64;
+    }
+    Fields(fields: hash_of) => {
+      set env^.state = state_wrong;
+      return 4_u64;
+    }
+    Ranked(ranked: sorted) => {
+      set env^.state = state_wrong;
+      return 5_u64;
+    }
+  }
+}
+
+fn run_lrange(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), writes(client) waits {
+  doc "LRANGE key start stop: answers the list's elements from start to stop, both inclusive and counted from the tail when negative, written into the reply inside the atomic statement that finds the list.";
+  let first = arg(args: args, index: 2_u64);
+  let last = arg(args: args, index: 3_u64);
+  let start = read_integer(input: input, start: first.start, length: first.length);
+  let stop = read_integer(input: input, start: last.start, length: last.length);
+  let bad_start = start.state != 1_u64;
+  let bad_stop = stop.state != 1_u64;
+  let bad = bor(bad_start, bad_stop);
+  if bad {
+    reply_error(client: client, word: &text_not_integer[0_u64..43_u64]);
+    return unit;
+  }
+  let key = key_at(input: input, args: args, index: 1_u64);
+  set client^.now = time^.check;
+  set client^.state = state_absent;
+  set client^.low = start.value;
+  set client^.high = stop.value;
+  atomic state = &store^ {
+    let found = hash_map_lookup::<Keyed, Entry, Client, u64, fn range_items, ceiling>(map: &state^.map, key: &key, key_env: env, visit_env: client);
+    if client^.state == state_expired {
+      let gone = hash_map_remove::<Keyed, Entry, ceiling>(map: &state^.map, key: &key, env: env);
+    }
+  }
+  if client^.state == state_done {
+    return unit;
+  }
+  if client^.state == state_wrong {
+    reply_wrong_type(client: client);
+    return unit;
+  }
+  reply_array(client: client, count: 0_u64);
+  return unit;
+}
+
+fn list_length(env: &Client, key: &Key, value: &Entry) -> kind: u64 reads(value), writes(env) {
+  doc "Records a live list's length in number and done; wrong for another kind and expired for an expired entry.";
+  let reached = expired(expires: value^.expires, now: env^.now);
+  if reached {
+    set env^.state = state_expired;
+    return 0_u64;
+  }
+  match value^.value {
+    Items(items: list) => {
+      set env^.number = list^.inner.len;
+      set env^.state = state_done;
+      return 2_u64;
+    }
+    Text(bytes: stored) => {
+      set env^.state = state_wrong;
+      return 1_u64;
+    }
+    Members(members: set_of) => {
+      set env^.state = state_wrong;
+      return 3_u64;
+    }
+    Fields(fields: hash_of) => {
+      set env^.state = state_wrong;
+      return 4_u64;
+    }
+    Ranked(ranked: sorted) => {
+      set env^.state = state_wrong;
+      return 5_u64;
+    }
+  }
+}
+
+fn run_llen(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), writes(client) waits {
+  doc "LLEN key: answers the list's length, 0 for an absent key.";
+  let key = key_at(input: input, args: args, index: 1_u64);
+  set client^.now = time^.check;
+  set client^.state = state_absent;
+  set client^.number = 0_u64;
+  atomic state = &store^ {
+    let found = hash_map_lookup::<Keyed, Entry, Client, u64, fn list_length, ceiling>(map: &state^.map, key: &key, key_env: env, visit_env: client);
+    if client^.state == state_expired {
+      let gone = hash_map_remove::<Keyed, Entry, ceiling>(map: &state^.map, key: &key, env: env);
+      set client^.number = 0_u64;
+    }
+  }
+  if client^.state == state_wrong {
+    reply_wrong_type(client: client);
+    return unit;
+  }
+  let length = cvt.wrap::<u64, i64>(client^.number);
+  reply_integer(client: client, value: length);
+  return unit;
+}

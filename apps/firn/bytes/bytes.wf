@@ -1,0 +1,471 @@
+fn byte_at(input: &[u8], index: u64) -> result: u8 reads(input) {
+  doc "Reads one byte, or zero at a position the range does not hold.";
+  if index < input^.len {
+    let value = input^[index];
+    return value;
+  }
+  return 0_u8;
+}
+
+fn key_hash(env: &KeyEnv, key: &Key) -> hash: u64 reads(key) {
+  doc "The hash a key carries.";
+  return key^.hash;
+}
+
+fn key_equal(env: &KeyEnv, left: &Key, right: &Key) -> equal: Bool reads(left), reads(right) {
+  doc "Two keys are equal when their hashes and their bytes are.";
+  if left^.hash != right^.hash {
+    return False();
+  }
+  let same = bytes_same(left: &left^.bytes, right: &right^.bytes);
+  return same;
+}
+
+fn window_hash(input: &[u8], start: u64, length: u64) -> hash: u64 reads(input) {
+  doc "FNV-1a over bytes of the input from a position.";
+  let hash = 14695981039346656037_u64;
+  for @bytes (offset in 0_u64..length) {
+    let position = start +wrap offset;
+    let byte = byte_at(input: input, index: position);
+    let wide = cvt::<u8, u64>(byte);
+    let folded = ixor(hash, wide);
+    set hash = folded *wrap 1099511628211_u64;
+  }
+  return hash;
+}
+
+fn make_key(input: &[u8], start: u64, length: u64) -> made: Key reads(input) {
+  doc "Copies bytes of the input into a key with the FNV-1a hash of its bytes, the hash every key of firn carries.";
+  let hash = window_hash(input: input, start: start, length: length);
+  let bytes = bytes_new(input: input, start: start, length: length);
+  return Key(hash: hash, bytes: move bytes);
+}
+
+fn copy_key(key: &Key) -> made: Key reads(key) {
+  doc "A copy of a key, its hash kept.";
+  let bytes = bytes_copy(bytes: &key^.bytes);
+  return Key(hash: key^.hash, bytes: move bytes);
+}
+
+fn key_text(key: Key) -> bytes: Bytes pure {
+  doc "A key's string, its hash dropped, for a value that is stored where no hash map looks it up.";
+  let Key(hash: dropped, bytes: bytes) = move key;
+  return move bytes;
+}
+
+fn key_boxed(key: Key) -> bytes: Box<Slots<u8>> pure {
+  doc "A key's string in an allocation of its own, its hash dropped, for a list element or a hash's value.";
+  let Key(hash: dropped, bytes: bytes) = move key;
+  let boxed = bytes_boxed(bytes: move bytes);
+  return move boxed;
+}
+
+fn bytes_new(input: &[u8], start: u64, length: u64) -> made: Bytes reads(input) {
+  doc "Copies bytes of the input from a position into a string of its own, held inline when it has at most 24 bytes; a position the input does not hold reads as zero.";
+  if length <= 24_u64 {
+    let short = slots_new::<u8, 24>();
+    for @copy (offset in 0_u64..length) {
+      let position = start +wrap offset;
+      let byte = byte_at(input: input, index: position);
+      if short.len < short.cap {
+        place_back(window: &short, value: byte);
+      }
+    }
+    return Bytes::Short(bytes: move short);
+  }
+  let long = copy_bytes(input: input, start: start, length: length);
+  return Bytes::Long(bytes: move long);
+}
+
+fn bytes_copy(bytes: &Bytes) -> made: Bytes reads(bytes) {
+  doc "A copy of a string.";
+  match bytes^ {
+    Short(bytes: short) => {
+      let length = short^.len;
+      let window = &short^[0_u64..length];
+      let made = bytes_new(input: window, start: 0_u64, length: length);
+      return move made;
+    }
+    Long(bytes: long) => {
+      let length = long^.inner.len;
+      let window = &long^.inner[0_u64..length];
+      let made = bytes_new(input: window, start: 0_u64, length: length);
+      return move made;
+    }
+  }
+}
+
+fn bytes_length(bytes: &Bytes) -> length: u64 reads(bytes) {
+  doc "How many bytes a string holds.";
+  match bytes^ {
+    Short(bytes: short) => {
+      return short^.len;
+    }
+    Long(bytes: long) => {
+      return long^.inner.len;
+    }
+  }
+}
+
+fn windows_equal(left: &[u8], right: &[u8]) -> equal: Bool reads(left), reads(right) {
+  doc "Whether two ranges hold the same bytes.";
+  let length = left^.len;
+  if length != right^.len {
+    return False();
+  }
+  for @bytes (index in 0_u64..length) {
+    let first = left^[index];
+    let second = byte_at(input: right, index: index);
+    if first != second {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn same_as(window: &[u8], other: &Bytes) -> equal: Bool reads(window), reads(other) {
+  doc "Whether a range holds the bytes of a string.";
+  match other^ {
+    Short(bytes: short) => {
+      let length = short^.len;
+      let right = &short^[0_u64..length];
+      let equal = windows_equal(left: window, right: right);
+      return equal;
+    }
+    Long(bytes: long) => {
+      let length = long^.inner.len;
+      let right = &long^.inner[0_u64..length];
+      let equal = windows_equal(left: window, right: right);
+      return equal;
+    }
+  }
+}
+
+fn bytes_same(left: &Bytes, right: &Bytes) -> equal: Bool reads(left), reads(right) {
+  doc "Whether two strings hold the same bytes.";
+  match left^ {
+    Short(bytes: short) => {
+      let length = short^.len;
+      let window = &short^[0_u64..length];
+      let equal = same_as(window: window, other: right);
+      return equal;
+    }
+    Long(bytes: long) => {
+      let length = long^.inner.len;
+      let window = &long^.inner[0_u64..length];
+      let equal = same_as(window: window, other: right);
+      return equal;
+    }
+  }
+}
+
+fn windows_order(left: &[u8], right: &[u8]) -> order: i32 reads(left), reads(right) {
+  doc "Orders two ranges byte by byte as unsigned values, a proper prefix first: -1, 0 or 1.";
+  let left_length = left^.len;
+  let right_length = right^.len;
+  let shorter = imin(left_length, right_length);
+  for @bytes (index in 0_u64..shorter) {
+    let first = byte_at(input: left, index: index);
+    let second = byte_at(input: right, index: index);
+    if first < second {
+      return -1_i32;
+    }
+    if first > second {
+      return 1_i32;
+    }
+  }
+  if left_length < right_length {
+    return -1_i32;
+  }
+  if left_length > right_length {
+    return 1_i32;
+  }
+  return 0_i32;
+}
+
+fn order_against(window: &[u8], other: &Bytes) -> order: i32 reads(window), reads(other) {
+  doc "Orders a range against a string as windows_order orders two ranges.";
+  match other^ {
+    Short(bytes: short) => {
+      let length = short^.len;
+      let right = &short^[0_u64..length];
+      let order = windows_order(left: window, right: right);
+      return order;
+    }
+    Long(bytes: long) => {
+      let length = long^.inner.len;
+      let right = &long^.inner[0_u64..length];
+      let order = windows_order(left: window, right: right);
+      return order;
+    }
+  }
+}
+
+fn bytes_order(left: &Bytes, right: &Bytes) -> order: i32 reads(left), reads(right) {
+  doc "Orders two strings byte by byte as unsigned values, a proper prefix first: -1, 0 or 1.";
+  match left^ {
+    Short(bytes: short) => {
+      let length = short^.len;
+      let window = &short^[0_u64..length];
+      let order = order_against(window: window, other: right);
+      return order;
+    }
+    Long(bytes: long) => {
+      let length = long^.inner.len;
+      let window = &long^.inner[0_u64..length];
+      let order = order_against(window: window, other: right);
+      return order;
+    }
+  }
+}
+
+fn bytes_boxed(bytes: Bytes) -> made: Box<Slots<u8>> pure {
+  doc "A string in an allocation of its own, for a container of such strings.";
+  match move bytes {
+    Short(bytes: short) => {
+      let length = short.len;
+      let window = &short[0_u64..length];
+      let made = copy_bytes(input: window, start: 0_u64, length: length);
+      return move made;
+    }
+    Long(bytes: long) => {
+      return move long;
+    }
+  }
+}
+
+fn bytes_integer(bytes: &Bytes) -> number: Integer reads(bytes) {
+  doc "Reads a string as read_integer reads bytes of the input.";
+  match bytes^ {
+    Short(bytes: short) => {
+      let length = short^.len;
+      let window = &short^[0_u64..length];
+      let number = read_integer(input: window, start: 0_u64, length: length);
+      return number;
+    }
+    Long(bytes: long) => {
+      let length = long^.inner.len;
+      let window = &long^.inner[0_u64..length];
+      let number = read_integer(input: window, start: 0_u64, length: length);
+      return number;
+    }
+  }
+}
+
+fn copy_bytes(input: &[u8], start: u64, length: u64) -> made: Box<Slots<u8>> reads(input) {
+  doc "Copies the bytes of the input from a position into a string of its own; a position the input does not hold reads as zero. No request carries an argument of 2^62 bytes, the most a string holds; a longer one copies as the empty string.";
+  if length <= 4611686018427387904_u64 {
+    let made = box_slots_new::<u8>(capacity: length);
+    for @copy (offset in 0_u64..length) {
+      let position = start +wrap offset;
+      let byte = byte_at(input: input, index: position);
+      if made.inner.len < made.inner.cap {
+        place_back(window: &made.inner, value: byte);
+      }
+    }
+    return move made;
+  }
+  let empty = box_slots_new::<u8>(capacity: 0_u64);
+  return move empty;
+}
+
+fn decimal_text(value: i64) -> made: Bytes pure {
+  doc "A string holding a number in decimal, with a leading minus sign when it is negative.";
+  let negative = value < 0_i64;
+  let magnitude = cvt.wrap::<i64, u64>(value);
+  if negative {
+    set magnitude = 0_u64 -wrap magnitude;
+  }
+  let digits = array_filled::<u8, 20>(value: 0_u8);
+  let count = 0_u64;
+  let rest = magnitude;
+  loop @digits {
+    let low = rest % 10_u64;
+    let narrow = cvt.wrap::<u64, u8>(low);
+    let glyph = narrow +wrap 48_u8;
+    if count < 20_u64 {
+      set digits[count] = glyph;
+      set count = count +wrap 1_u64;
+    }
+    set rest = rest / 10_u64;
+    if rest == 0_u64 {
+      break @digits;
+    }
+  }
+  let spelled = slots_new::<u8, 24>();
+  if negative {
+    if spelled.len < spelled.cap {
+      place_back(window: &spelled, value: 45_u8);
+    }
+  }
+  for @emit (index in 0_u64..count) {
+    let back = count -wrap index;
+    let from = back -wrap 1_u64;
+    let glyph = 48_u8;
+    if from < 20_u64 {
+      set glyph = digits[from];
+    }
+    if spelled.len < spelled.cap {
+      place_back(window: &spelled, value: glyph);
+    }
+  }
+  let length = spelled.len;
+  let window = &spelled[0_u64..length];
+  let made = bytes_new(input: window, start: 0_u64, length: length);
+  return move made;
+}
+
+fn integer_digits(first: u8, length: u64) -> result: Integer pure {
+  doc "The verdict on a number's first byte before its digits are summed: state 1 when the digits may form a number, 0 when they cannot.";
+  let lead_low = first >= 49_u8;
+  let lead_high = first <= 57_u8;
+  let lead = band(lead_low, lead_high);
+  if lead {
+    return Integer(value: 0_i64, state: 1_u64);
+  }
+  let lone_zero = first == 48_u8;
+  let single = length == 1_u64;
+  let zero = band(lone_zero, single);
+  if zero {
+    return Integer(value: 0_i64, state: 1_u64);
+  }
+  return Integer(value: 0_i64, state: 0_u64);
+}
+
+fn read_digits(input: &[u8], start: u64, length: u64, negative: Bool) -> number: Integer reads(input) {
+  doc "Sums the digits of a number whose sign has been read, refusing a byte that is not a digit and a magnitude past the range of i64.";
+  let magnitude = 0_u64;
+  for @digits (offset in 0_u64..length) {
+    let position = start +wrap offset;
+    let byte = byte_at(input: input, index: position);
+    let low = byte >= 48_u8;
+    let high = byte <= 57_u8;
+    let digit = band(low, high);
+    if digit {
+    } else {
+      return Integer(value: 0_i64, state: 0_u64);
+    }
+    let face = byte -wrap 48_u8;
+    let wide = cvt::<u8, u64>(face);
+    match magnitude *checked 10_u64 {
+      Ok(value: scaled) => {
+        match scaled +checked wide {
+          Ok(value: summed) => {
+            set magnitude = summed;
+          }
+          Err(error: overflow) => {
+            return Integer(value: 0_i64, state: 0_u64);
+          }
+        }
+      }
+      Err(error: overflow) => {
+        return Integer(value: 0_i64, state: 0_u64);
+      }
+    }
+  }
+  if negative {
+    if magnitude > 9223372036854775808_u64 {
+      return Integer(value: 0_i64, state: 0_u64);
+    }
+    let flipped = 0_u64 -wrap magnitude;
+    let signed = cvt.wrap::<u64, i64>(flipped);
+    return Integer(value: signed, state: 1_u64);
+  }
+  if magnitude > 9223372036854775807_u64 {
+    return Integer(value: 0_i64, state: 0_u64);
+  }
+  let signed = cvt.wrap::<u64, i64>(magnitude);
+  return Integer(value: signed, state: 1_u64);
+}
+
+fn read_integer(input: &[u8], start: u64, length: u64) -> number: Integer reads(input) {
+  doc "Reads bytes of the input as a signed 64-bit decimal as Redis reads one: an optional minus sign, then digits without a leading zero unless the number is 0, and nothing else.";
+  let empty = length == 0_u64;
+  let long = length > 20_u64;
+  let outside = bor(empty, long);
+  if outside {
+    return Integer(value: 0_i64, state: 0_u64);
+  }
+  let first = byte_at(input: input, index: start);
+  if first == 45_u8 {
+    let digits_start = start +wrap 1_u64;
+    let digits_length = length -wrap 1_u64;
+    if digits_length == 0_u64 {
+      return Integer(value: 0_i64, state: 0_u64);
+    }
+    let lead = byte_at(input: input, index: digits_start);
+    let lead_low = lead >= 49_u8;
+    let lead_high = lead <= 57_u8;
+    let nonzero = band(lead_low, lead_high);
+    if nonzero {
+    } else {
+      return Integer(value: 0_i64, state: 0_u64);
+    }
+    let minus = True();
+    let summed = read_digits(input: input, start: digits_start, length: digits_length, negative: minus);
+    return summed;
+  }
+  let verdict = integer_digits(first: first, length: length);
+  if verdict.state != 1_u64 {
+    return verdict;
+  }
+  let plus = False();
+  let summed = read_digits(input: input, start: start, length: length, negative: plus);
+  return summed;
+}
+
+fn upper(byte: u8) -> result: u8 pure {
+  doc "A lower-case ASCII letter in upper case, and any other byte unchanged.";
+  let low = byte >= 97_u8;
+  let high = byte <= 122_u8;
+  let letter = band(low, high);
+  if letter {
+    let raised = byte -wrap 32_u8;
+    return raised;
+  }
+  return byte;
+}
+
+fn name_code(input: &[u8], start: u64, length: u64) -> code: u64 reads(input) {
+  doc "Packs a command name's first eight bytes, letters upper-cased, little end first, into one number; a name longer than eight bytes, or one holding a zero byte, which no command's name does, has its top byte set to 255, and a name of no bytes is 0.";
+  let code = 0_u64;
+  let unnamed = False();
+  let packed = imin(length, 8_u64);
+  for @pack (offset in 0_u64..packed) {
+    let position = start +wrap offset;
+    let byte = byte_at(input: input, index: position);
+    if byte == 0_u8 {
+      set unnamed = True();
+    }
+    let raised = upper(byte: byte);
+    let wide = cvt::<u8, u64>(raised);
+    let bits = offset *wrap 8_u64;
+    let narrow = cvt.wrap::<u64, u32>(bits);
+    let placed = ishl.wrap(wide, narrow);
+    set code = ior(code, placed);
+  }
+  let long = length > 8_u64;
+  let marked = bor(long, unnamed);
+  if marked {
+    let top = ishl.wrap(255_u64, 56_u32);
+    set code = ior(code, top);
+  }
+  return code;
+}
+
+fn name_is(input: &[u8], start: u64, length: u64, word: &[u8]) -> matched: Bool reads(input), reads(word) {
+  doc "Whether bytes of the input spell an upper-case word, letters in either case.";
+  if length != word^.len {
+    return False();
+  }
+  for @compare (offset in 0_u64..length) {
+    let position = start +wrap offset;
+    let byte = byte_at(input: input, index: position);
+    let raised = upper(byte: byte);
+    let expected = word^[offset];
+    if raised != expected {
+      return False();
+    }
+  }
+  return True();
+}

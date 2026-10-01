@@ -35,3 +35,12 @@ fn byte_string_builds_searches_and_publishes_its_report() {
     assert_eq!(output.stdout, b"length=43 brown=10 cat=none\n");
     assert!(output.stderr.is_empty());
 }
+
+#[test]
+fn a_borrowed_match_binder_passed_on_after_a_read_or_a_write_passes_its_field() {
+    let llvm = compile_program("borrowed_binders.wf");
+    let output = compile_and_run(&llvm);
+    assert!(output.status.success(), "{output:?}");
+    assert!(output.stdout.is_empty(), "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
+}

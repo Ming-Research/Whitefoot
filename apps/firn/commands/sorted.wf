@@ -1,0 +1,630 @@
+alias Key = pkg::bytes::Key;
+alias Keyed = pkg::bytes::Keyed;
+alias Client = pkg::protocol::Client;
+alias Entry = pkg::store::Entry;
+alias KeyEnv = pkg::bytes::KeyEnv;
+alias OrderedNode = std::collections::ordered_map::OrderedNode;
+alias Rank = pkg::store::Rank;
+alias RankOrder = pkg::store::RankOrder;
+alias Sorted = pkg::store::Sorted;
+alias Span = pkg::protocol::Span;
+alias Store = pkg::store::Store;
+alias Time = pkg::store::Time;
+alias Value = pkg::store::Value;
+alias arg = pkg::protocol::arg;
+alias byte_at = pkg::bytes::byte_at;
+alias ceiling = pkg::store::ceiling;
+alias copy_key = pkg::bytes::copy_key;
+alias clear_items = pkg::protocol::clear_items;
+alias expired = pkg::store::expired;
+alias hash_map_edit = std::collections::hash_map::hash_map_edit;
+alias hash_map_lookup = std::collections::hash_map::hash_map_lookup;
+alias hash_map_new = std::collections::hash_map::hash_map_new;
+alias hash_map_put = std::collections::hash_map::hash_map_put;
+alias hash_map_remove = std::collections::hash_map::hash_map_remove;
+alias name_is = pkg::bytes::name_is;
+alias log_command = pkg::store::log_command;
+alias ordered_map_len = std::collections::ordered_map::ordered_map_len;
+alias ordered_map_new = std::collections::ordered_map::ordered_map_new;
+alias ordered_map_put = std::collections::ordered_map::ordered_map_put;
+alias ordered_map_remove = std::collections::ordered_map::ordered_map_remove;
+alias push_item = pkg::protocol::push_item;
+alias push_score = pkg::protocol::push_score;
+alias read_integer = pkg::bytes::read_integer;
+alias reply_array = pkg::protocol::reply_array;
+alias reply_bulk_decimal = pkg::protocol::reply_bulk_decimal;
+alias reply_error = pkg::protocol::reply_error;
+alias reply_integer = pkg::protocol::reply_integer;
+alias reply_nil = pkg::protocol::reply_nil;
+alias reply_wrong_type = pkg::protocol::reply_wrong_type;
+alias reply_text = pkg::protocol::reply_text;
+
+const word_inf: Array<u8, 3> =[73_u8, 78_u8, 70_u8];
+
+const word_infinity: Array<u8, 8> =[73_u8, 78_u8, 70_u8, 73_u8, 78_u8, 73_u8, 84_u8, 89_u8];
+
+const text_not_float: Array<u8, 30> =[69_u8, 82_u8, 82_u8, 32_u8, 118_u8, 97_u8, 108_u8, 117_u8, 101_u8, 32_u8, 105_u8, 115_u8, 32_u8, 110_u8, 111_u8, 116_u8, 32_u8, 97_u8, 32_u8, 118_u8, 97_u8, 108_u8, 105_u8, 100_u8, 32_u8, 102_u8, 108_u8, 111_u8, 97_u8, 116_u8];
+
+const text_integer_scores: Array<u8, 59> =[69_u8, 82_u8, 82_u8, 32_u8, 102_u8, 105_u8, 114_u8, 110_u8, 32_u8, 115_u8, 116_u8, 111_u8, 114_u8, 101_u8, 115_u8, 32_u8, 111_u8, 110_u8, 108_u8, 121_u8, 32_u8, 105_u8, 110_u8, 116_u8, 101_u8, 103_u8, 101_u8, 114_u8, 32_u8, 115_u8, 99_u8, 111_u8, 114_u8, 101_u8, 115_u8, 32_u8, 98_u8, 101_u8, 108_u8, 111_u8, 119_u8, 32_u8, 50_u8, 94_u8, 53_u8, 50_u8, 32_u8, 105_u8, 110_u8, 32_u8, 109_u8, 97_u8, 103_u8, 110_u8, 105_u8, 116_u8, 117_u8, 100_u8, 101_u8];
+
+struct Score {
+  value: f64;
+  state: u64;
+}
+
+struct ScoreProbe {
+  score: f64;
+  found: Bool;
+}
+
+fn is_infinity(input: &[u8], start: u64, length: u64) -> infinite: Bool reads(input) {
+  doc "Whether bytes spell inf or infinity, letters in either case, as C's strtod reads an infinity.";
+  let short = name_is(input: input, start: start, length: length, word: &word_inf[0_u64..3_u64]);
+  let long = name_is(input: input, start: start, length: length, word: &word_infinity[0_u64..8_u64]);
+  let either = bor(short, long);
+  return either;
+}
+
+fn float_shaped(input: &[u8], span: Span) -> shaped: Bool reads(input) {
+  doc "Whether an argument is a floating-point number as C's strtod reads one whole, an optional sign then digits with an optional point and an optional exponent, or an infinity; firn refuses such a score as a limit of its own rather than as a malformed number.";
+  let length = span.length;
+  if length == 0_u64 {
+    return False();
+  }
+  let first = byte_at(input: input, index: span.start);
+  let plus = first == 43_u8;
+  let minus = first == 45_u8;
+  let signed = bor(plus, minus);
+  let position = 0_u64;
+  if signed {
+    set position = 1_u64;
+  }
+  let rest_start = span.start +wrap position;
+  let rest_length = length -wrap position;
+  let infinite = is_infinity(input: input, start: rest_start, length: rest_length);
+  if infinite {
+    return True();
+  }
+  let digits = 0_u64;
+  let seen_point = False();
+  let seen_exponent = False();
+  let exponent_digits = 0_u64;
+  let after_exponent = False();
+  loop @bytes {
+    if position >= length {
+      break @bytes;
+    }
+    let at = span.start +wrap position;
+    let byte = byte_at(input: input, index: at);
+    let low = byte >= 48_u8;
+    let high = byte <= 57_u8;
+    let digit = band(low, high);
+    let point = byte == 46_u8;
+    let upper_e = byte == 69_u8;
+    let lower_e = byte == 101_u8;
+    let exponent = bor(upper_e, lower_e);
+    let exponent_plus = byte == 43_u8;
+    let exponent_minus = byte == 45_u8;
+    let exponent_sign = bor(exponent_plus, exponent_minus);
+    if digit {
+      if seen_exponent {
+        set exponent_digits = exponent_digits +wrap 1_u64;
+      } else {
+        set digits = digits +wrap 1_u64;
+      }
+      set after_exponent = False();
+    } else if point {
+      let late = bor(seen_point, seen_exponent);
+      if late {
+        return False();
+      }
+      set seen_point = True();
+    } else if exponent {
+      let early = digits == 0_u64;
+      let twice = bor(seen_exponent, early);
+      if twice {
+        return False();
+      }
+      set seen_exponent = True();
+      set after_exponent = True();
+    } else if exponent_sign {
+      if after_exponent {
+        set after_exponent = False();
+      } else {
+        return False();
+      }
+    } else {
+      return False();
+    }
+    set position = position +wrap 1_u64;
+  }
+  if digits == 0_u64 {
+    return False();
+  }
+  if seen_exponent {
+    let bare = exponent_digits == 0_u64;
+    if bare {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn read_score(input: &[u8], span: Span) -> score: Score reads(input) {
+  doc "Reads a score written as an integer, with an optional sign and leading zeros, whose magnitude is below 2^52: state 1. A score spelled as another floating-point number is state 2, which firn does not store yet; anything else is state 0, not a number.";
+  let length = span.length;
+  if length == 0_u64 {
+    return Score(value: 0.0_f64, state: 0_u64);
+  }
+  let first = byte_at(input: input, index: span.start);
+  let negative = first == 45_u8;
+  let positive = first == 43_u8;
+  let signed = bor(negative, positive);
+  let skip = 0_u64;
+  if signed {
+    set skip = 1_u64;
+  }
+  let digits = length -wrap skip;
+  let integral = digits > 0_u64;
+  let magnitude = 0_u64;
+  for @digits (offset in skip..length) {
+    let position = span.start +wrap offset;
+    let byte = byte_at(input: input, index: position);
+    let low = byte >= 48_u8;
+    let high = byte <= 57_u8;
+    let digit = band(low, high);
+    if digit {
+      let face = byte -wrap 48_u8;
+      let wide = cvt::<u8, u64>(face);
+      let scaled = magnitude *sat 10_u64;
+      set magnitude = scaled +sat wide;
+    } else {
+      set integral = False();
+    }
+  }
+  let within = magnitude < 4503599627370496_u64;
+  let exact = band(integral, within);
+  if exact {
+    let value = cvt.nearest::<u64, f64>(magnitude);
+    if negative {
+      set value = fneg(value);
+    }
+    return Score(value: value, state: 1_u64);
+  }
+  let shaped = float_shaped(input: input, span: span);
+  if shaped {
+    return Score(value: 0.0_f64, state: 2_u64);
+  }
+  return Score(value: 0.0_f64, state: 0_u64);
+}
+
+fn score_integer(score: f64) -> value: i64 pure {
+  doc "A stored score as the integer it holds; every score firn stores is an integer below 2^52 in magnitude.";
+  match cvt.checked::<f64, i64>(score) {
+    Ok(value: whole) => {
+      return whole;
+    }
+    Err(error: narrow) => {
+      return 0_i64;
+    }
+  }
+}
+
+fn score_probe(env: &ScoreProbe, key: &Key, value: &f64) -> result: u64 reads(value), writes(env) {
+  doc "Records a member's score.";
+  set env^.score = value^;
+  set env^.found = True();
+  return 1_u64;
+}
+
+fn add_ranked(sorted: &Sorted, client: &Client) -> added: u64 writes(sorted), writes(client) {
+  doc "Gives every prepared member its prepared score, moving a member already held to its new place in the order, and returns how many members were new.";
+  let added = 0_u64;
+  loop @pairs {
+    let have_member = client^.items.inner.len > 0_u64;
+    let have_score = client^.scores.inner.len > 0_u64;
+    let both = band(have_member, have_score);
+    if both {
+    } else {
+      break @pairs;
+    }
+    let member = take_back(window: &client^.items.inner);
+    let score = take_back(window: &client^.scores.inner);
+    let keys = client^.keys;
+    let absent = False();
+    let probe = ScoreProbe(score: 0.0_f64, found: absent);
+    let seen = hash_map_lookup::<Keyed, f64, ScoreProbe, u64, fn score_probe, ceiling>(map: &sorted^.scores, key: &member, key_env: &keys, visit_env: &probe);
+    if probe.found {
+      let same = feq(probe.score, score);
+      if same {
+        let unchanged = move member;
+      } else {
+        let old_member = copy_key(key: &member);
+        let old = Rank(score: probe.score, member: move old_member);
+        let removed = ordered_map_remove::<RankOrder, unit, ceiling>(map: &sorted^.order, key: &old, env: &keys);
+        let new_member = copy_key(key: &member);
+        let rank = Rank(score: score, member: move new_member);
+        let placed = ordered_map_put::<RankOrder, unit, ceiling>(map: &sorted^.order, key: move rank, value: unit, env: &keys);
+        let updated = hash_map_put::<Keyed, f64, ceiling>(map: &sorted^.scores, key: move member, value: score, env: &keys);
+      }
+    } else {
+      let ranked_member = copy_key(key: &member);
+      let rank = Rank(score: score, member: move ranked_member);
+      let placed = ordered_map_put::<RankOrder, unit, ceiling>(map: &sorted^.order, key: move rank, value: unit, env: &keys);
+      let stored = hash_map_put::<Keyed, f64, ceiling>(map: &sorted^.scores, key: move member, value: score, env: &keys);
+      set added = added +wrap 1_u64;
+    }
+  }
+  return added;
+}
+
+fn add_scores(env: &Client, key: &Key, value: &Entry) -> kind: u64 writes(env), writes(value) {
+  doc "Adds the prepared members at their scores to a live sorted set, recording done and how many were new in number; records wrong for another kind and expired for an expired entry.";
+  let reached = expired(expires: value^.expires, now: env^.now);
+  if reached {
+    set env^.state = state_expired;
+    return 0_u64;
+  }
+  match value^.value {
+    Ranked(ranked: sorted) => {
+      set env^.number = add_ranked(sorted: sorted, client: env);
+      set env^.state = state_done;
+      return 5_u64;
+    }
+    Text(bytes: stored) => {
+      set env^.state = state_wrong;
+      return 1_u64;
+    }
+    Items(items: list) => {
+      set env^.state = state_wrong;
+      return 2_u64;
+    }
+    Members(members: set_of) => {
+      set env^.state = state_wrong;
+      return 3_u64;
+    }
+    Fields(fields: hash_of) => {
+      set env^.state = state_wrong;
+      return 4_u64;
+    }
+  }
+}
+
+fn run_zadd(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), writes(client) waits {
+  doc "ZADD key score member [score member ...]: gives each member its score, creating the sorted set for an absent key, and answers how many members were new. Redis's options are answered as a syntax error, and a score that is not an integer below 2^52 in magnitude is refused.";
+  let count = args^.inner.len;
+  let pairs_length = count -wrap 2_u64;
+  let odd = pairs_length % 2_u64;
+  if odd != 0_u64 {
+    reply_error(client: client, word: &text_syntax[0_u64..16_u64]);
+    return unit;
+  }
+  clear_items(client: client);
+  let pairs = pairs_length / 2_u64;
+  for @pairs (step in 0_u64..pairs) {
+    let back = pairs -wrap step;
+    let pair = back -wrap 1_u64;
+    let doubled = pair *wrap 2_u64;
+    let score_index = doubled +wrap 2_u64;
+    let member_index = score_index +wrap 1_u64;
+    let written = arg(args: args, index: score_index);
+    let score = read_score(input: input, span: written);
+    if score.state == 0_u64 {
+      clear_items(client: client);
+      reply_error(client: client, word: &text_not_float[0_u64..30_u64]);
+      return unit;
+    }
+    if score.state == 2_u64 {
+      clear_items(client: client);
+      reply_error(client: client, word: &text_integer_scores[0_u64..59_u64]);
+      return unit;
+    }
+    let member = key_at(input: input, args: args, index: member_index);
+    push_item(client: client, item: move member);
+    push_score(client: client, score: score.value);
+  }
+  let key = key_at(input: input, args: args, index: 1_u64);
+  set client^.now = time^.check;
+  set client^.state = state_absent;
+  set client^.number = 0_u64;
+  let full = False();
+  atomic state = &store^ {
+    let edited = hash_map_edit::<Keyed, Entry, Client, u64, fn add_scores, ceiling>(map: &state^.map, key: &key, key_env: env, edit_env: client);
+    let create = client^.state == state_absent;
+    if client^.state == state_expired {
+      let gone = hash_map_remove::<Keyed, Entry, ceiling>(map: &state^.map, key: &key, env: env);
+      set create = True();
+    }
+    if create {
+      let capacity = imax(pairs, 4_u64);
+      if capacity <= ceiling {
+        let order = ordered_map_new::<Rank, unit, ceiling>();
+        let scores = hash_map_new::<Key, f64, ceiling>(capacity: capacity);
+        let sorted = Sorted(order: move order, scores: move scores);
+        set client^.number = add_ranked(sorted: &sorted, client: client);
+        let made = Value::Ranked(ranked: move sorted);
+        let fresh = Entry(value: move made, expires: 0_u64);
+        let owned_key = copy_key(key: &key);
+        let put = put_entry(state: &state^, key: move owned_key, held: move fresh, env: env);
+        if put {
+          set client^.state = state_done;
+        } else {
+          set full = True();
+        }
+      }
+    }
+    if client^.state == state_done {
+      if state^.logging {
+        log_command(log: &state^.log, input: input, args: args);
+      }
+    }
+  }
+  clear_items(client: client);
+  if client^.state == state_done {
+    let added = cvt.wrap::<u64, i64>(client^.number);
+    reply_integer(client: client, value: added);
+    return unit;
+  }
+  if full {
+    reply_error(client: client, word: &text_full[0_u64..17_u64]);
+    return unit;
+  }
+  reply_wrong_type(client: client);
+  return unit;
+}
+
+fn leftmost(node: &OrderedNode<Rank, unit>) -> found: Option<Rank> reads(node) {
+  doc "A copy of the first rank in a node's subtree, the lowest score and among equal scores the lowest member; none for an empty subtree.";
+  if node^.leading.len > 0_u64 {
+    let below = leftmost(node: &node^.leading[0_u64].inner);
+    match move below {
+      Some(value: rank) => {
+        return Some<Rank>(value: move rank);
+      }
+      None() => {
+      }
+    }
+  }
+  if node^.entries.len > 0_u64 {
+    let first = &node^.entries[0_u64].pair.key;
+    let member = copy_key(key: &first^.member);
+    let rank = Rank(score: first^.score, member: move member);
+    return Some<Rank>(value: move rank);
+  }
+  return None<Rank>();
+}
+
+fn lowest(sorted: &Sorted) -> found: Option<Rank> reads(sorted) {
+  doc "A copy of a sorted set's first rank, none for an empty set.";
+  if sorted^.order.root.len > 0_u64 {
+    let first = leftmost(node: &sorted^.order.root[0_u64].inner);
+    return move first;
+  }
+  return None<Rank>();
+}
+
+fn pop_lowest(env: &Client, key: &Key, value: &Entry) -> kind: u64 writes(env), writes(value) {
+  doc "Removes up to number of a live sorted set's lowest members, writing each member and its score as an array reply. Records done, or emptied when the set is left empty; wrong for another kind and expired for an expired entry.";
+  let reached = expired(expires: value^.expires, now: env^.now);
+  if reached {
+    set env^.state = state_expired;
+    return 0_u64;
+  }
+  match value^.value {
+    Ranked(ranked: sorted) => {
+      let size = ordered_map_len::<Rank, unit, ceiling>(map: &sorted^.order);
+      let taken = imin(env^.number, size);
+      let fields = taken *wrap 2_u64;
+      reply_array(client: env, count: fields);
+      let keys = env^.keys;
+      for @popping (step in 0_u64..taken) {
+        let first = lowest(sorted: sorted);
+        match move first {
+          Some(value: rank) => {
+            let removed = ordered_map_remove::<RankOrder, unit, ceiling>(map: &sorted^.order, key: &rank, env: &keys);
+            let dropped = hash_map_remove::<Keyed, f64, ceiling>(map: &sorted^.scores, key: &rank.member, env: &keys);
+            reply_text(client: env, text: &rank.member.bytes);
+            let whole = score_integer(score: rank.score);
+            reply_bulk_decimal(client: env, value: whole);
+          }
+          None() => {
+          }
+        }
+      }
+      set env^.state = state_done;
+      let left = ordered_map_len::<Rank, unit, ceiling>(map: &sorted^.order);
+      if left == 0_u64 {
+        set env^.state = state_emptied;
+      }
+      return 5_u64;
+    }
+    Text(bytes: stored) => {
+      set env^.state = state_wrong;
+      return 1_u64;
+    }
+    Items(items: list) => {
+      set env^.state = state_wrong;
+      return 2_u64;
+    }
+    Members(members: set_of) => {
+      set env^.state = state_wrong;
+      return 3_u64;
+    }
+    Fields(fields: hash_of) => {
+      set env^.state = state_wrong;
+      return 4_u64;
+    }
+  }
+}
+
+fn run_zpopmin(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), writes(client) waits {
+  doc "ZPOPMIN key [count]: removes and answers the sorted set's lowest member and its score, or up to count of them, as one array, removing the key when the set is left empty; an absent key answers an empty array.";
+  let wanted = 1_u64;
+  if args^.inner.len == 3_u64 {
+    let amount = arg(args: args, index: 2_u64);
+    let number = read_integer(input: input, start: amount.start, length: amount.length);
+    if number.state != 1_u64 {
+      reply_error(client: client, word: &text_not_integer[0_u64..43_u64]);
+      return unit;
+    }
+    if number.value < 0_i64 {
+      reply_error(client: client, word: &text_positive[0_u64..43_u64]);
+      return unit;
+    }
+    set wanted = cvt.wrap::<i64, u64>(number.value);
+  }
+  let key = key_at(input: input, args: args, index: 1_u64);
+  set client^.now = time^.check;
+  set client^.state = state_absent;
+  set client^.number = wanted;
+  atomic state = &store^ {
+    let edited = hash_map_edit::<Keyed, Entry, Client, u64, fn pop_lowest, ceiling>(map: &state^.map, key: &key, key_env: env, edit_env: client);
+    let emptied = client^.state == state_emptied;
+    let lapsed = client^.state == state_expired;
+    let removing = bor(emptied, lapsed);
+    if removing {
+      let gone = hash_map_remove::<Keyed, Entry, ceiling>(map: &state^.map, key: &key, env: env);
+    }
+    let done = client^.state == state_done;
+    let changed = bor(done, emptied);
+    if changed {
+      if state^.logging {
+        log_command(log: &state^.log, input: input, args: args);
+      }
+    }
+  }
+  let done = client^.state == state_done;
+  let emptied = client^.state == state_emptied;
+  let answered = bor(done, emptied);
+  if answered {
+    return unit;
+  }
+  if client^.state == state_wrong {
+    reply_wrong_type(client: client);
+    return unit;
+  }
+  reply_array(client: client, count: 0_u64);
+  return unit;
+}
+
+fn sorted_size(env: &Client, key: &Key, value: &Entry) -> kind: u64 reads(value), writes(env) {
+  doc "Records a live sorted set's size in number and done; wrong for another kind and expired for an expired entry.";
+  let reached = expired(expires: value^.expires, now: env^.now);
+  if reached {
+    set env^.state = state_expired;
+    return 0_u64;
+  }
+  match value^.value {
+    Ranked(ranked: sorted) => {
+      set env^.number = ordered_map_len::<Rank, unit, ceiling>(map: &sorted^.order);
+      set env^.state = state_done;
+      return 5_u64;
+    }
+    Text(bytes: stored) => {
+      set env^.state = state_wrong;
+      return 1_u64;
+    }
+    Items(items: list) => {
+      set env^.state = state_wrong;
+      return 2_u64;
+    }
+    Members(members: set_of) => {
+      set env^.state = state_wrong;
+      return 3_u64;
+    }
+    Fields(fields: hash_of) => {
+      set env^.state = state_wrong;
+      return 4_u64;
+    }
+  }
+}
+
+fn run_zcard(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), writes(client) waits {
+  doc "ZCARD key: answers the sorted set's size, 0 for an absent key.";
+  let key = key_at(input: input, args: args, index: 1_u64);
+  set client^.now = time^.check;
+  set client^.state = state_absent;
+  set client^.number = 0_u64;
+  atomic state = &store^ {
+    let found = hash_map_lookup::<Keyed, Entry, Client, u64, fn sorted_size, ceiling>(map: &state^.map, key: &key, key_env: env, visit_env: client);
+    if client^.state == state_expired {
+      let gone = hash_map_remove::<Keyed, Entry, ceiling>(map: &state^.map, key: &key, env: env);
+      set client^.number = 0_u64;
+    }
+  }
+  if client^.state == state_wrong {
+    reply_wrong_type(client: client);
+    return unit;
+  }
+  let size = cvt.wrap::<u64, i64>(client^.number);
+  reply_integer(client: client, value: size);
+  return unit;
+}
+
+fn member_score(env: &Client, key: &Key, value: &Entry) -> kind: u64 reads(value), writes(env) {
+  doc "Writes the prepared member's score in a live sorted set as a bulk string, recording done, or records absent when the set does not hold it; wrong for another kind and expired for an expired entry.";
+  let reached = expired(expires: value^.expires, now: env^.now);
+  if reached {
+    set env^.state = state_expired;
+    return 0_u64;
+  }
+  match value^.value {
+    Ranked(ranked: sorted) => {
+      if env^.items.inner.len > 0_u64 {
+        let member = take_back(window: &env^.items.inner);
+        let keys = env^.keys;
+        let absent = False();
+        let probe = ScoreProbe(score: 0.0_f64, found: absent);
+        let seen = hash_map_lookup::<Keyed, f64, ScoreProbe, u64, fn score_probe, ceiling>(map: &sorted^.scores, key: &member, key_env: &keys, visit_env: &probe);
+        if probe.found {
+          let whole = score_integer(score: probe.score);
+          reply_bulk_decimal(client: env, value: whole);
+          set env^.state = state_done;
+        }
+      }
+      return 5_u64;
+    }
+    Text(bytes: stored) => {
+      set env^.state = state_wrong;
+      return 1_u64;
+    }
+    Items(items: list) => {
+      set env^.state = state_wrong;
+      return 2_u64;
+    }
+    Members(members: set_of) => {
+      set env^.state = state_wrong;
+      return 3_u64;
+    }
+    Fields(fields: hash_of) => {
+      set env^.state = state_wrong;
+      return 4_u64;
+    }
+  }
+}
+
+fn run_zscore(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), writes(client) waits {
+  doc "ZSCORE key member: answers the member's score, or the null bulk string when the key or the member is absent.";
+  clear_items(client: client);
+  let member = key_at(input: input, args: args, index: 2_u64);
+  push_item(client: client, item: move member);
+  let key = key_at(input: input, args: args, index: 1_u64);
+  set client^.now = time^.check;
+  set client^.state = state_absent;
+  atomic state = &store^ {
+    let found = hash_map_edit::<Keyed, Entry, Client, u64, fn member_score, ceiling>(map: &state^.map, key: &key, key_env: env, edit_env: client);
+    if client^.state == state_expired {
+      let gone = hash_map_remove::<Keyed, Entry, ceiling>(map: &state^.map, key: &key, env: env);
+    }
+  }
+  clear_items(client: client);
+  if client^.state == state_done {
+    return unit;
+  }
+  if client^.state == state_wrong {
+    reply_wrong_type(client: client);
+    return unit;
+  }
+  reply_nil(client: client);
+  return unit;
+}

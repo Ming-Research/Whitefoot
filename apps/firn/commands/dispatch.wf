@@ -1,0 +1,405 @@
+alias Client = pkg::protocol::Client;
+alias KeyEnv = pkg::bytes::KeyEnv;
+alias Span = pkg::protocol::Span;
+alias Store = pkg::store::Store;
+alias Time = pkg::store::Time;
+alias arg = pkg::protocol::arg;
+alias name_code = pkg::bytes::name_code;
+alias name_is = pkg::bytes::name_is;
+alias reply_arity = pkg::protocol::reply_arity;
+alias reply_unknown = pkg::protocol::reply_unknown;
+
+const code_ping: u64 = 1196312912_u64;
+
+const code_echo: u64 = 1330135877_u64;
+
+const code_set: u64 = 5522771_u64;
+
+const code_get: u64 = 5522759_u64;
+
+const code_del: u64 = 4998468_u64;
+
+const code_exists: u64 = 91621639673925_u64;
+
+const code_type: u64 = 1162893652_u64;
+
+const code_incr: u64 = 1380142665_u64;
+
+const code_mset: u64 = 1413829453_u64;
+
+const code_expire: u64 = 76219719637061_u64;
+
+const code_pexpire: u64 = 19512248227087696_u64;
+
+const code_pexpireat: u64 = 18394198727898711376_u64;
+
+const code_ttl: u64 = 5002324_u64;
+
+const code_pttl: u64 = 1280595024_u64;
+
+const code_persist: u64 = 23735472439313744_u64;
+
+const code_dbsize: u64 = 76254079566404_u64;
+
+const code_config: u64 = 78380037721923_u64;
+
+const code_lpush: u64 = 310635745356_u64;
+
+const code_rpush: u64 = 310635745362_u64;
+
+const code_lpop: u64 = 1347375180_u64;
+
+const code_rpop: u64 = 1347375186_u64;
+
+const code_lrange: u64 = 76172557898316_u64;
+
+const code_llen: u64 = 1313164364_u64;
+
+const code_sadd: u64 = 1145323859_u64;
+
+const code_srem: u64 = 1296388691_u64;
+
+const code_spop: u64 = 1347375187_u64;
+
+const code_scard: u64 = 293437784915_u64;
+
+const code_hset: u64 = 1413829448_u64;
+
+const code_hget: u64 = 1413826376_u64;
+
+const code_zadd: u64 = 1145323866_u64;
+
+const code_zpopmin: u64 = 22035644592115802_u64;
+
+const code_zcard: u64 = 293437784922_u64;
+
+const code_zscore: u64 = 76219819447130_u64;
+
+fn execute(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), writes(client) waits {
+  doc "Answers one command, whose arguments are spans of the input, by appending its reply to the client's. A command that changes the keyspace does so in one atomic statement, which also appends the change to the append-only file's pending bytes when the keyspace keeps them.";
+  let count = args^.inner.len;
+  let name = arg(args: args, index: 0_u64);
+  let code = name_code(input: input, start: name.start, length: name.length);
+  if code == code_pexpireat {
+    let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_pexpireat[0_u64..9_u64]);
+    if spelled {
+    } else {
+      set code = 0_u64;
+    }
+  }
+  let relative = False();
+  let calendar = True();
+  let whole_seconds = True();
+  let milliseconds = False();
+  let head = True();
+  let tail = False();
+  let pairs = count % 2_u64;
+  let odd = pairs == 1_u64;
+  let even = pairs == 0_u64;
+  let at_least_three = count >= 3_u64;
+  let at_least_four = count >= 4_u64;
+  let mset_shape = band(odd, at_least_three);
+  let hset_shape = band(even, at_least_four);
+  let one_or_two = count >= 2_u64;
+  let at_most_three = count <= 3_u64;
+  let pop_shape = band(one_or_two, at_most_three);
+  if code == code_ping {
+    let fits = count <= 2_u64;
+    if fits {
+      run_ping(input: input, args: args, client: client);
+    } else {
+      reply_arity(client: client, input: input, name: name);
+    }
+    return unit;
+  }
+  if code == code_echo {
+    let fits = count == 2_u64;
+    if fits {
+      run_echo(input: input, args: args, client: client);
+    } else {
+      reply_arity(client: client, input: input, name: name);
+    }
+    return unit;
+  }
+  if code == code_get {
+    let fits = count == 2_u64;
+    if fits {
+      run_get(store: store, input: input, args: args, client: client, env: env, time: time);
+    } else {
+      reply_arity(client: client, input: input, name: name);
+    }
+    return unit;
+  }
+  if code == code_set {
+    let fits = count >= 3_u64;
+    if fits {
+      run_set(store: store, input: input, args: args, client: client, env: env, time: time);
+    } else {
+      reply_arity(client: client, input: input, name: name);
+    }
+    return unit;
+  }
+  if code == code_del {
+    let fits = count >= 2_u64;
+    if fits {
+      run_del(store: store, input: input, args: args, client: client, env: env, time: time);
+    } else {
+      reply_arity(client: client, input: input, name: name);
+    }
+    return unit;
+  }
+  if code == code_exists {
+    let fits = count >= 2_u64;
+    if fits {
+      run_exists(store: store, input: input, args: args, client: client, env: env, time: time);
+    } else {
+      reply_arity(client: client, input: input, name: name);
+    }
+    return unit;
+  }
+  if code == code_type {
+    let fits = count == 2_u64;
+    if fits {
+      run_type(store: store, input: input, args: args, client: client, env: env, time: time);
+    } else {
+      reply_arity(client: client, input: input, name: name);
+    }
+    return unit;
+  }
+  if code == code_incr {
+    let fits = count == 2_u64;
+    if fits {
+      run_incr(store: store, input: input, args: args, client: client, env: env, time: time);
+    } else {
+      reply_arity(client: client, input: input, name: name);
+    }
+    return unit;
+  }
+  if code == code_mset {
+    let fits = mset_shape;
+    if fits {
+      run_mset(store: store, input: input, args: args, client: client, env: env);
+    } else {
+      reply_arity(client: client, input: input, name: name);
+    }
+    return unit;
+  }
+  if code == code_expire {
+    let fits = count == 3_u64;
+    if fits {
+      run_expire(store: store, input: input, args: args, client: client, env: env, time: time, scale: 1000_u64, absolute: relative, invalid: &text_expire_expire[0_u64..43_u64]);
+    } else {
+      reply_arity(client: client, input: input, name: name);
+    }
+    return unit;
+  }
+  if code == code_pexpire {
+    let fits = count == 3_u64;
+    if fits {
+      run_expire(store: store, input: input, args: args, client: client, env: env, time: time, scale: 1_u64, absolute: relative, invalid: &text_expire_pexpire[0_u64..44_u64]);
+    } else {
+      reply_arity(client: client, input: input, name: name);
+    }
+    return unit;
+  }
+  if code == code_pexpireat {
+    let fits = count == 3_u64;
+    if fits {
+      run_expire(store: store, input: input, args: args, client: client, env: env, time: time, scale: 1_u64, absolute: calendar, invalid: &text_expire_pexpireat[0_u64..46_u64]);
+    } else {
+      reply_arity(client: client, input: input, name: name);
+    }
+    return unit;
+  }
+  if code == code_ttl {
+    let fits = count == 2_u64;
+    if fits {
+      run_ttl(store: store, input: input, args: args, client: client, env: env, time: time, in_seconds: whole_seconds);
+    } else {
+      reply_arity(client: client, input: input, name: name);
+    }
+    return unit;
+  }
+  if code == code_pttl {
+    let fits = count == 2_u64;
+    if fits {
+      run_ttl(store: store, input: input, args: args, client: client, env: env, time: time, in_seconds: milliseconds);
+    } else {
+      reply_arity(client: client, input: input, name: name);
+    }
+    return unit;
+  }
+  if code == code_persist {
+    let fits = count == 2_u64;
+    if fits {
+      run_persist(store: store, input: input, args: args, client: client, env: env, time: time);
+    } else {
+      reply_arity(client: client, input: input, name: name);
+    }
+    return unit;
+  }
+  if code == code_dbsize {
+    let fits = count == 1_u64;
+    if fits {
+      run_dbsize(store: store, client: client);
+    } else {
+      reply_arity(client: client, input: input, name: name);
+    }
+    return unit;
+  }
+  if code == code_config {
+    let fits = count >= 2_u64;
+    if fits {
+      run_config(store: store, input: input, args: args, client: client);
+    } else {
+      reply_arity(client: client, input: input, name: name);
+    }
+    return unit;
+  }
+  if code == code_lpush {
+    let fits = count >= 3_u64;
+    if fits {
+      run_push(store: store, input: input, args: args, client: client, env: env, time: time, front: head);
+    } else {
+      reply_arity(client: client, input: input, name: name);
+    }
+    return unit;
+  }
+  if code == code_rpush {
+    let fits = count >= 3_u64;
+    if fits {
+      run_push(store: store, input: input, args: args, client: client, env: env, time: time, front: tail);
+    } else {
+      reply_arity(client: client, input: input, name: name);
+    }
+    return unit;
+  }
+  if code == code_lpop {
+    let fits = pop_shape;
+    if fits {
+      run_pop(store: store, input: input, args: args, client: client, env: env, time: time, front: head);
+    } else {
+      reply_arity(client: client, input: input, name: name);
+    }
+    return unit;
+  }
+  if code == code_rpop {
+    let fits = pop_shape;
+    if fits {
+      run_pop(store: store, input: input, args: args, client: client, env: env, time: time, front: tail);
+    } else {
+      reply_arity(client: client, input: input, name: name);
+    }
+    return unit;
+  }
+  if code == code_lrange {
+    let fits = count == 4_u64;
+    if fits {
+      run_lrange(store: store, input: input, args: args, client: client, env: env, time: time);
+    } else {
+      reply_arity(client: client, input: input, name: name);
+    }
+    return unit;
+  }
+  if code == code_llen {
+    let fits = count == 2_u64;
+    if fits {
+      run_llen(store: store, input: input, args: args, client: client, env: env, time: time);
+    } else {
+      reply_arity(client: client, input: input, name: name);
+    }
+    return unit;
+  }
+  if code == code_sadd {
+    let fits = count >= 3_u64;
+    if fits {
+      run_sadd(store: store, input: input, args: args, client: client, env: env, time: time);
+    } else {
+      reply_arity(client: client, input: input, name: name);
+    }
+    return unit;
+  }
+  if code == code_srem {
+    let fits = count >= 3_u64;
+    if fits {
+      run_srem(store: store, input: input, args: args, client: client, env: env, time: time);
+    } else {
+      reply_arity(client: client, input: input, name: name);
+    }
+    return unit;
+  }
+  if code == code_spop {
+    let fits = pop_shape;
+    if fits {
+      run_spop(store: store, input: input, args: args, client: client, env: env, time: time);
+    } else {
+      reply_arity(client: client, input: input, name: name);
+    }
+    return unit;
+  }
+  if code == code_scard {
+    let fits = count == 2_u64;
+    if fits {
+      run_scard(store: store, input: input, args: args, client: client, env: env, time: time);
+    } else {
+      reply_arity(client: client, input: input, name: name);
+    }
+    return unit;
+  }
+  if code == code_hset {
+    let fits = hset_shape;
+    if fits {
+      run_hset(store: store, input: input, args: args, client: client, env: env, time: time);
+    } else {
+      reply_arity(client: client, input: input, name: name);
+    }
+    return unit;
+  }
+  if code == code_hget {
+    let fits = count == 3_u64;
+    if fits {
+      run_hget(store: store, input: input, args: args, client: client, env: env, time: time);
+    } else {
+      reply_arity(client: client, input: input, name: name);
+    }
+    return unit;
+  }
+  if code == code_zadd {
+    let fits = count >= 4_u64;
+    if fits {
+      run_zadd(store: store, input: input, args: args, client: client, env: env, time: time);
+    } else {
+      reply_arity(client: client, input: input, name: name);
+    }
+    return unit;
+  }
+  if code == code_zpopmin {
+    let fits = pop_shape;
+    if fits {
+      run_zpopmin(store: store, input: input, args: args, client: client, env: env, time: time);
+    } else {
+      reply_arity(client: client, input: input, name: name);
+    }
+    return unit;
+  }
+  if code == code_zcard {
+    let fits = count == 2_u64;
+    if fits {
+      run_zcard(store: store, input: input, args: args, client: client, env: env, time: time);
+    } else {
+      reply_arity(client: client, input: input, name: name);
+    }
+    return unit;
+  }
+  if code == code_zscore {
+    let fits = count == 3_u64;
+    if fits {
+      run_zscore(store: store, input: input, args: args, client: client, env: env, time: time);
+    } else {
+      reply_arity(client: client, input: input, name: name);
+    }
+    return unit;
+  }
+  reply_unknown(client: client, input: input, args: args);
+  return unit;
+}

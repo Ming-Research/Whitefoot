@@ -77,6 +77,18 @@ rarely insert at the same place.
 
 ## Checker precision and proof cost
 
+- **A length guard on a match binder is not a fact inside a loop that
+  writes through it.** Minimal witness: a function matches `held^` as
+  `List(items: list)` and, in a `for` loop, pops from `list` under
+  `if list^.inner.len > 0_u64`; `deque_pop_front` then refuses [FN-8] for want
+  of `values^.inner.len > 0`, although the guard reads exactly that place
+  just before the call. The same guard on a parameter discharges it, so firn's
+  `pop_items` passes the binder to a helper, `pop_one`, that takes the list as
+  a parameter. Find why the binder's place loses the guard fact across the loop's
+  writes, likely the fact's place key naming the binder rather than the
+  matched field, and add a conformance case that the fixed checker accepts.
+  Reopen with the next program that needs the helper.
+
 - **A widening conversion's operand is read as any affine side.**
   [ENT-2] admits `cvt::<S, D>(e)` as a relation term or comparison-origin
   operand only for e a term or constant. [FN-9] relation terms match that:
@@ -612,6 +624,21 @@ rarely insert at the same place.
   changes between visits, every pair present throughout reported at least
   once. Reopen when a program must walk a shared map without holding it for
   the whole walk.
+
+- **A hash map that removes and inserts at its ceiling fills with vacated
+  buckets.** `hash_map_put` never rebuilds a map already at its ceiling
+  (`language/data-model/hash-map-storage`), so a map that churns there, a
+  bounded cache that evicts one key to admit another, keeps every bucket a
+  removal vacated until the program calls `hash_map_rehash`; once no bucket is
+  left vacant, every lookup of an absent key and every insertion probes the
+  whole backing. Rebuilding at the same capacity when few buckets are filled,
+  as below the ceiling, would clear them only for a map with fewer than three
+  eighths of its buckets filled and would allocate a second backing at the
+  ceiling; an in-place rehash that permutes the backing, the rebuild the node
+  refuses as the default, clears them without one. Measure a map held at its
+  ceiling under steady removal and insertion, probes per lookup of an absent
+  key over time, with and without an automatic rehash, before choosing. Reopen
+  with a program whose map churns at its ceiling.
 
 - **Validate a shared Ring wrap calculation independent of layout bounds.**
   The corrected front predecessor handles every admitted capacity. Remaining
@@ -1530,6 +1557,24 @@ rarely insert at the same place.
   ordering. Reopen when a real parallel workload loses overlap this way;
   validate direct field reads, worker capture, forced sequential fallback
   and exactly-once owner cleanup before measuring any gain.
+
+- **Every atomic statement counts a handle of its own, on the lock's cache
+  line.** The lowering retains the shared object before it acquires and
+  releases it after it unlocks (`compiler/src/lowering/builder/atomic.rs`), so
+  that the object outlives a block that moves or replaces the handle it was
+  reached through; `wf__shared_share` and `wf__shared_release` are two atomic
+  updates of the handle count, which shares the header's cache line with the
+  lock word and the holder count. Under firn's `SET` on two drivers they took
+  4% of the server's time, and each also moves the line the other driver is
+  spinning on ([firn](../research/investigations/firn/DESIGN.md#short-strings-inside-the-keyspace-results)).
+  A statement whose function cannot write the place it reaches the object
+  through, as in every firn command, which reads its `&Shared<Store>`, cannot
+  lose the handle during its block, so the pair could be omitted there; or
+  the count could move to a cache line of its own. Either revises the
+  `compiler/waiting-contexts` decision that a statement counts a handle of
+  its own. Measure firn's `SET` and `MSET` on two drivers with the pair
+  omitted for such statements before proposing it; reopen when the atomic
+  statement's lowering or the shared-object header next changes.
 
 - **Validate reuse of selected-target element layouts during emission.**
   [Zero-stride addressing](../compiler/src/target.rs) currently queries
@@ -2512,6 +2557,23 @@ rarely insert at the same place.
   green full gate.
 
 ## Modules and libraries
+
+- **A container operation that takes a callback cannot be called again
+  inside its own callback with another callback.** Minimal witness: a
+  generic `apply<F, fn visit>` called as `apply::<u64, fn outer>`, where
+  `outer` calls `apply::<u64, fn inner>`. The instances end after two, but
+  the cycle `apply` to `outer` to `apply` changes the function argument, and
+  [FN-6] deliberately refuses every such cycle. firn met it as a
+  `hash_map_lookup` on the keyspace whose callback looks a field up with
+  `hash_map_lookup` in the hash the key holds; it alternates `hash_map_edit`
+  and `hash_map_lookup` instead, which works only while two distinct
+  operations fit, and a third level of nesting, or two edits, has no such
+  way out. Two repairs are open: a library entry that reaches a stored value
+  without a callback, such as a probe that returns the bucket's index for a
+  second, bounds-checked access, or an FN-6 that admits a cycle whose
+  changed arguments come from a finite set written in the program. Reopen
+  when a program needs a third level or two edits nested, or when the
+  library's container interfaces are next revised.
 
 - **Complete the vector boundary witness when comparing independent fields.**
   The maintained GrowVector program checks the shipped vector and behavior
@@ -3517,6 +3579,18 @@ condition under which it is taken up.
   ambiguous stacks excluded rather than adjusting the profiler criterion to
   obtain a favorable share.
 
+- **No command renders a program in canonical form.** [FORM-2] refuses a
+  program that is not in canonical form, and the compiler has the renderer
+  (`render_canonical`, which the canonical corpus test calls), but neither
+  `whitefootc` nor a `make` target exposes it, so a writer repairs layout by
+  hand from the diagnostic's one marked position. Writing firn's 5,400 lines
+  needed a scratch binary over the `whitefoot` crate that rewrites files in
+  place. Add a `whitefootc --format <files>` mode that rewrites each file to
+  its rendering and fails on one that does not parse; validate that it
+  leaves every canonical corpus file unchanged and repairs a file with
+  reordered spacing. Reopen with the next program written outside the
+  corpus, or when the driver's modes are next changed.
+
 - **Nothing refuses a test that runs a compiled program without a
   deadline.** Every current test that runs a program it compiled goes
   through the owned process in `compiler/tests/support/process.rs`, which
@@ -3679,3 +3753,59 @@ condition under which it is taken up.
   growth path
   or a future production implementation. Recheck the final selected append
   implementation if its emitted code changes; keep both paths distinct.
+
+## firn
+
+- **firn lacks what a deployment needs beyond the benchmark's commands.**
+  The owner set this stage's features to the commands `redis-benchmark`'s
+  default suite sends ([firn](../research/investigations/firn/DESIGN.md#the-owners-rulings));
+  a server someone deploys in place of Redis needs more. Missing, among
+  others: `SET`'s `NX`, `XX`, `GET`, `KEEPTTL`, `EXAT` and `PXAT`, which
+  firn answers as a syntax error where Redis sets the key; `SET`'s `EX` and
+  `PX` beyond 10^9 seconds or 10^12 milliseconds, which firn refuses as an
+  invalid expire time where Redis accepts them, since firn keeps expiries as
+  nanoseconds; `CONFIG GET` patterns, which firn does not match, and
+  `CONFIG SET`, which firn answers as an unknown option for every parameter
+  where Redis sets those it knows; a zero byte in a request's count or
+  length line, where Redis's search for the line's carriage return stops at
+  the zero byte and waits for more input, answering that the count is too big
+  only past 64 KB, while firn answers the malformed line at once; sorted-set
+  scores that are not integers below 2^52, which need reading a
+  decimal to the nearest double and printing one with 17 significant digits
+  exactly;
+  quoted arguments in inline commands; a listening address other than the
+  loopback and options by name rather than by position; `AUTH`, `SELECT`,
+  `KEYS` and `SCAN`, `INFO`, `HELLO` and RESP3, the blocking list commands,
+  `MULTI` and `EXEC`, publish and subscribe, a random hash seed, and a
+  listener that a restarted server can bind while the stopped one's
+  connections wait out TIME_WAIT, which needs the runtime's `tcp_listen` to
+  set `SO_REUSEADDR` as Redis does. The owner
+  sets the list for the deployment stage; reopen when this stage's
+  measurement is handed back.
+- **A set never shrinks, so `SPOP` walks ever sparser buckets.** `SPOP`
+  picks the first filled bucket from a random position, and a hash map keeps
+  its buckets after its members are removed, so after most of a large set is
+  popped each pop scans many empty buckets inside the atomic statement;
+  Redis shrinks its table as it empties. A library hash map that rebuilds at
+  four times its pairs when a removal leaves it under an eighth full was
+  measured and refused by its criterion
+  ([firn](../research/investigations/firn/DESIGN.md#list-elements-inline-and-maps-that-shrink-results)):
+  `SPOP` at depth 1 gained 14% on two CPUs but only 4% on one, while its p99
+  fell to 0.32 and 0.58 of the unshrinking map's. The full suite then left
+  `SPOP` at depth 1 on two CPUs at 0.87 of Valkey with I/O threads and 0.94
+  of Dragonfly
+  ([firn](../research/investigations/firn/DESIGN.md#the-full-suite-results)).
+  Reopen with firn's next performance work after the scaling stage, or when a
+  criterion weighs depth-1 tail latency; the change is small
+  (`hash_map_rebuild` accepting fewer buckets than it had while they
+  outnumber the pairs, and a check after each removal) and would join the
+  growth decision of `hash-map-storage` in the design tree.
+- **`SPOP` reads the hash map's buckets.** The library has no entry that
+  returns a member at random, so firn's `pick_member`
+  (`apps/firn/commands/sets.wf`) reads the map's public bucket array and
+  matches its slot variants, which ties firn to the library's representation,
+  and takes the first filled bucket from a random position, which favors a
+  member that follows a run of empty buckets; Redis samples buckets instead.
+  A library entry that picks a filled bucket, as uniformly as its layout
+  allows, would remove both. Reopen with the library's next hash map change
+  or when a second program needs a random member.

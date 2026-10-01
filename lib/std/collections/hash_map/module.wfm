@@ -29,6 +29,7 @@ public enum HashMapAction {
 public struct HashMap<K, V, const ceiling: u64> {
   public readonly cells: Box<Slots<HashMapSlot<K, V>>>;
   public readonly length: u64;
+  public readonly vacated: u64;
 }
 
 public interface HashMapKey<K, E> {
@@ -60,11 +61,11 @@ public fn hash_map_try_put<interface HashMapKey<K, E>, V, const ceiling: u64>(ma
   ensures map^.cells.inner.cap == entry(map)^.cells.inner.cap;
 } doc "Inserts an owned pair within the current capacity, never growing it: HashMapInserted, or HashMapReturned with HashMapReplaced and the old pair, or HashMapFull and the offered pair.";
 
-public fn hash_map_reserve<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>, capacity: u64, env: &E) -> result: Result<unit, unit> reads(env), writes(map) doc "Rebuilds the map to hold at least capacity pairs within its ceiling; a no-op at or below the current capacity, and Err for a request above the ceiling.";
+public fn hash_map_reserve<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>, capacity: u64, env: &E) -> result: Result<unit, unit> reads(env), writes(map) doc "Rebuilds the map to at least capacity buckets within its ceiling; a no-op at or below the current capacity, and Err for a request above the ceiling. Below its ceiling, hash_map_put rebuilds the map again once three quarters of those buckets are filled or vacated.";
 
 public fn hash_map_rehash<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>, env: &E) -> result: Result<unit, unit> reads(env), writes(map) doc "Rebuilds the map at its current capacity, keeping every pair.";
 
-public fn hash_map_put<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>, key: K, value: V, env: &E) -> result: HashMapPut<K, V> reads(env), writes(map) doc "Inserts an owned pair, growing from zero to one and then doubling or saturating at the ceiling only after a full probe finds no reusable slot: HashMapInserted, or HashMapReturned with HashMapReplaced and the old pair, or HashMapFull and the offered pair.";
+public fn hash_map_put<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>, key: K, value: V, env: &E) -> result: HashMapPut<K, V> reads(env), writes(map) doc "Inserts an owned pair, first rebuilding a map below its ceiling whose filled and vacated buckets already number three quarters or more of its buckets: at the same capacity when fewer than half that mark, rounded down, are filled, and otherwise from zero buckets to one or at twice its buckets, saturating at the ceiling. A map at its ceiling is not rebuilt. HashMapInserted, or HashMapReturned with HashMapReplaced and the old pair, or HashMapFull and the offered pair.";
 
 public fn hash_map_remove<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>, key: &K, env: &E) -> result: Option<HashMapPair<K, V>> reads(key), reads(env), writes(map) doc "Removes the pair stored under key and returns it owned; None reports an absent key.";
 

@@ -274,7 +274,11 @@ fn hash_map_operations_preserve_owned_pairs_in_both_lowering_modes() {
     // initially empty unit map use the anchor; rehash at zero is a no-op.
     // Ten payload/query child Boxes, and one fresh
     // Box returned by the borrowed edit callback and consumed by its caller.
-    execute_container_program("hash-map", &sources, 26, false);
+    // The growth case adds ten backings: a map of eight buckets, its doubled
+    // and its same-capacity rebuild, a map of three buckets and its doubled
+    // rebuild, two maps of sixteen buckets, one doubled and one rebuilt at the
+    // same capacity, and a map at its ceiling that is not rebuilt.
+    execute_container_program("hash-map", &sources, 36, false);
 }
 
 #[test]
