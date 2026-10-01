@@ -291,9 +291,9 @@ statement's block runs once with its entry held:
   one array probed linearly from the key's golden-ratio hash. A lookup at
   half load reads one line nearly always, and the cells cost 32 bytes a key
   at that load, as growt's do.
-- **The key word carries the lock.** Its top bit locks the cell and the next
-  marks it moved; empty is zero and removed is all ones below them, so keys
-  lie in [1, 2^62 - 2]. A writer locks its key's cell, or claims an empty
+- **The key word carries the lock.** Its top bit locks the cell, and the
+  next is kept for marking parked waiters; empty is zero and removed is all
+  ones below them, so keys lie in [1, 2^62 - 2]. A writer locks its key's cell, or claims an empty
   one, by one compare-and-swap, runs once and stores the key back. A reader
   takes no lock: it waits while the cell is locked, since a claimed cell has
   no value yet, and then reads the value. A cell never holds another key and
@@ -310,9 +310,16 @@ statement's block runs once with its entry held:
   power of two, that hold the live keys in three eighths of them, at least
   half its size: growth doubles, and a churning map moves between tables
   of one size with at least an eighth of the cells left to claim. One
-  writer makes the next table; writers that meet the move mark blocks of
-  4,096 cells moved and copy their keys, readers go on reading the frozen
-  cells, and a writer that met the move retries in the new table. A map
+  writer makes the next table, and writers that meet the move copy blocks
+  of 4,096 cells into it and retry there. A writer checks for a move after
+  it locks its cell and gives the cell back unchanged when one has begun, a
+  claimed cell as removed, since another writer may have probed past it; a
+  mover publishes the move before it reads a cell and waits while the cell
+  is locked. All four steps are sequentially consistent, so either the
+  mover sees the lock or the writer sees the move, and the mover only reads
+  the old table: marking each cell moved by compare-and-swap, as the first
+  cell design did, wrote every line of it, and dropping the mark took
+  single-thread `grow` from about 9.5 to about 12.6 million a second. A map
   created for N keys starts half full at N, as dense as a table gets before
   it moves, since reads cost less in a smaller table: four times N cells
   took single-thread reads at 2^20 keys from about 26 to about 20 million a
@@ -359,12 +366,16 @@ without page reporting, measures the same cells without it.
 
 ### Measured
 
-The third duel, on 2026-10-01, gave 1 lead, 17 ties and no loss
+The fourth duel, on 2026-10-01, gave 3 leads, 15 ties and no loss
 ([results](../../experiments/concurrent-map-bench/RESULTS.md#the-index)):
-the lead is one-key `update` at four threads, and every cell's spread on
-this host is wide enough that a median a tenth to a fifth either side of
-growt's counts as a tie. At one thread it reaches `mutex-flat` in every mix
-but `churn`, whose first moves pay this host's cold fresh memory.
+uniform `balanced` and `mostly-read` at four threads and Zipf `balanced` at
+one. Every cell's spread on this host is wide enough that a median a tenth
+to a fifth either side of growt's counts as a tie. At one thread it reaches
+`mutex-flat` in every mix but `churn`, whose first moves pay this host's
+cold fresh memory. Uniform `read` at one thread is at the hardware's floor
+for one miss a read: a flat table with no concurrency control ran at 25 to
+27 million a second, growt at 19 to 26 and the index at 25 to 29, so that
+cell can tie but not lead.
 
 What would refute it: a lead lost at one thread to the single-thread floors
 would show the lock bit costing more than it saves; a lead lost on `update` with one key at four threads once waits

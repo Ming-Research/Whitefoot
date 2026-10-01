@@ -4,8 +4,9 @@
  *
  * Open addressing with linear probing over 16-byte cells, a key word and a
  * value, so that most operations touch one cache line. The key word's top
- * bit locks the cell and the next marks it moved to the next table; zero is
- * an empty cell and KEY_MASK a removed one, so keys lie in [1, 2^62 - 2].
+ * bit locks the cell, and the next is kept for marking waiters once they
+ * park; zero is an empty cell and KEY_MASK a removed one, so keys lie in
+ * [1, 2^62 - 2].
  *
  * A writer locks its key's cell by compare-and-swap, runs once and stores
  * the key back: changes to a key are exclusive. A reader takes no lock: it
@@ -18,9 +19,13 @@
  *
  * A table is moved, to a larger one or to one of its own size that drops
  * removed cells, once half its cells are used: one writer makes the next
- * table, writers mark blocks of cells moved and copy their keys, readers go
- * on reading the frozen cells, and writers that meet the move help it and
- * then retry in the new table. Each user publishes the table it works in, as
+ * table, and writers that meet the move copy blocks of cells into it and
+ * then retry there. A writer checks for a move after it locks its cell and
+ * gives the cell back unchanged when one has begun, and a mover publishes
+ * the move before it reads a cell and waits while the cell is locked, all
+ * sequentially consistent: either the mover sees the writer's lock, or the
+ * writer sees the move. So a mover only reads the cells, and readers go on
+ * reading cells no writer changes again. Each user publishes the table it works in, as
  * growt's handles do, and a moved table is freed once no user is in it; the
  * cells of the last one freed are kept for the next move to that size, so a
  * map whose size holds steady moves between warm tables.
@@ -40,7 +45,6 @@
 #include "concurrent_map.h"
 
 #define LOCKED (1ull << 63)
-#define MOVED (1ull << 62)
 #define KEY_MASK ((1ull << 62) - 1)
 #define EMPTY 0ull
 #define REMOVED KEY_MASK
@@ -312,23 +316,18 @@ static void place(table *t, uint64_t key, uint64_t value) {
     }
 }
 
-/* Freezes one block of t's cells, waiting out the writers that hold them,
- * and copies their keys into t's successor. */
+/* Copies one block of t's keys into t's successor, waiting out the writers
+ * that hold a cell; a writer that locks a cell after this read sees the
+ * move and leaves the cell as it was. */
 static void move_block(table *t, table *nt, uint64_t block) {
     uint64_t end = (block + 1) * BLOCK < t->capacity ? (block + 1) * BLOCK : t->capacity;
     for (uint64_t i = block * BLOCK; i < end; i++) {
         cell *c = &t->cells[i];
-        uint64_t k = atomic_load_explicit(&c->key, memory_order_acquire);
+        uint64_t k = atomic_load_explicit(&c->key, memory_order_seq_cst);
         unsigned round = 0;
-        for (;;) {
-            if (k & LOCKED) {
-                back_off(&round);
-                k = atomic_load_explicit(&c->key, memory_order_acquire);
-                continue;
-            }
-            if (atomic_compare_exchange_weak_explicit(&c->key, &k, k | MOVED, memory_order_acq_rel,
-                                                      memory_order_acquire))
-                break;
+        while (k & LOCKED) {
+            back_off(&round);
+            k = atomic_load_explicit(&c->key, memory_order_seq_cst);
         }
         if (k != EMPTY && k != REMOVED)
             place(nt, k, atomic_load_explicit(&c->value, memory_order_relaxed));
@@ -394,14 +393,13 @@ static void start_move(wf_cmap *map, table *t) {
     table *nt = new_table(map, capacity);
     if (nt == NULL)
         abort();
-    atomic_store_explicit(&t->next, nt, memory_order_release);
+    atomic_store_explicit(&t->next, nt, memory_order_seq_cst);
 }
 
-enum { FOUND, CLAIMED, ABSENT, MOVING, FULL };
+enum { FOUND, CLAIMED, ABSENT, FULL };
 
-/* Locks key's cell in t, or with claim set locks an empty cell for it.
- * MOVING when the probe met a moved cell, FULL when a claim found no empty
- * cell in the whole table. */
+/* Locks key's cell in t, or with claim set locks an empty cell for it; FULL
+ * when a claim found no empty cell in the whole table. */
 static int acquire(table *t, uint64_t key, int claim, cell **out) {
     uint64_t i = start_of(t, key);
     uint64_t left = t->capacity;
@@ -409,15 +407,13 @@ static int acquire(table *t, uint64_t key, int claim, cell **out) {
     for (;;) {
         cell *c = &t->cells[i];
         uint64_t k = atomic_load_explicit(&c->key, memory_order_acquire);
-        if (k & MOVED)
-            return MOVING;
         uint64_t bare = k & ~LOCKED;
         if (bare == key) {
             if (k & LOCKED) {
                 wait_for_cell(&round);
                 continue;
             }
-            if (atomic_compare_exchange_weak_explicit(&c->key, &k, k | LOCKED, memory_order_acquire,
+            if (atomic_compare_exchange_weak_explicit(&c->key, &k, k | LOCKED, memory_order_seq_cst,
                                                       memory_order_relaxed)) {
                 *out = c;
                 return FOUND;
@@ -427,7 +423,7 @@ static int acquire(table *t, uint64_t key, int claim, cell **out) {
         if (bare == EMPTY) {
             if (!claim)
                 return ABSENT;
-            if (atomic_compare_exchange_weak_explicit(&c->key, &k, key | LOCKED, memory_order_acquire,
+            if (atomic_compare_exchange_weak_explicit(&c->key, &k, key | LOCKED, memory_order_seq_cst,
                                                       memory_order_relaxed)) {
                 *out = c;
                 return CLAIMED;
@@ -440,17 +436,33 @@ static int acquire(table *t, uint64_t key, int claim, cell **out) {
     }
 }
 
+/* After acquire answered r for c: 1 when no move out of t has begun, so the
+ * cell is the writer's; otherwise 0, with the cell given back unchanged, a
+ * claimed one as removed, since another writer may have probed past it to a
+ * later cell. */
+static int keep_cell(table *t, cell *c, int r, uint64_t key) {
+    if (atomic_load_explicit(&t->next, memory_order_seq_cst) == NULL)
+        return 1;
+    atomic_store_explicit(&c->key, r == FOUND ? key : REMOVED, memory_order_release);
+    return 0;
+}
+
 /* Locks key's cell in the current table, helping any move it meets. */
 static int lock_key(wf_cmap_user *u, uint64_t key, int claim, cell **out, table **in) {
     for (;;) {
         table *t = use_current(u);
         if (atomic_load_explicit(&t->next, memory_order_acquire) == NULL) {
             int r = acquire(t, key, claim, out);
-            if (r == FOUND || r == CLAIMED || r == ABSENT) {
+            if (r == ABSENT) {
                 *in = t;
                 return r;
             }
-            if (r == FULL) {
+            if (r == FOUND || r == CLAIMED) {
+                if (keep_cell(t, *out, r, key)) {
+                    *in = t;
+                    return r;
+                }
+            } else {
                 start_move(u->map, t);
                 unsigned round = 0;
                 while (atomic_load_explicit(&t->next, memory_order_acquire) == NULL)
@@ -538,7 +550,7 @@ int wf_cmap_get(wf_cmap_user *u, uint64_t key, uint64_t *value) {
     for (;;) {
         cell *c = &t->cells[i];
         uint64_t k = atomic_load_explicit(&c->key, memory_order_acquire);
-        uint64_t bare = k & ~(LOCKED | MOVED);
+        uint64_t bare = k & ~LOCKED;
         if (__builtin_expect(bare == key, 1)) {
             if (__builtin_expect(k & LOCKED, 0)) {
                 pause_once();

@@ -8,7 +8,9 @@
  *   table grows, checked key by key for linearizability, which is local to
  *   each object (Herlihy and Wing), by Wing and Gong's search with Lowe's
  *   memoization as Porcupine implements it; the checker is first shown to
- *   refuse a history that is not linearizable and to accept one that is.
+ *   refuse a history that is not linearizable and to accept one that is;
+ * - interleavings too rare for threads to meet, driven step by step through
+ *   the map's own functions, which is why the test includes its source.
  *
  * Prints the first failure and exits 1, or exits 0.
  */
@@ -21,7 +23,7 @@
 #include <string.h>
 #include <time.h>
 
-#include "concurrent_map.h"
+#include "concurrent_map.c"
 
 #define THREADS 4
 
@@ -456,8 +458,47 @@ static void histories(unsigned rounds) {
     }
 }
 
+/* Two writers claim cells for two keys that start at the same cell, so the
+ * second claims the cell after the first's. The second finishes before a
+ * move begins and the first sees the move: the first's cell must stay in the
+ * probe, or a read of the second key stops short of it in the table that is
+ * still current. */
+static void claim_given_back(void) {
+    wf_cmap *map = wf_cmap_create(1);
+    wf_cmap_user *first = wf_cmap_enter(map), *second = wf_cmap_enter(map);
+    table *t = atomic_load(&map->current);
+    uint64_t a = key_of(0), b = 0;
+    for (uint64_t i = 1; b == 0; i++)
+        if (start_of(t, key_of(i)) == start_of(t, a))
+            b = key_of(i);
+    cell *ca, *cb;
+    if (acquire(t, a, 1, &ca) != CLAIMED || acquire(t, b, 1, &cb) != CLAIMED || cb == ca)
+        fail("the two claims did not take two cells", 0, 0);
+    if (!keep_cell(t, cb, CLAIMED, b))
+        fail("a claim before any move was given back", 0, 0);
+    atomic_store(&cb->value, 7);
+    unlock(cb, b);
+    count(second, 1, 1);
+    start_move(map, t);
+    if (keep_cell(t, ca, CLAIMED, a))
+        fail("a claim kept its cell after a move began", 0, 0);
+    uint64_t v = 0;
+    if (!wf_cmap_get(first, b, &v) || v != 7)
+        fail("a key claimed past a cell given back was lost", v, 0);
+    /* An insert helps the move to its end; t may be freed after it, and with
+     * locked reads the get above already moved it. */
+    if (wf_cmap_insert(second, b, 7) != 0)
+        fail("the move lost a key", 0, 0);
+    if (!wf_cmap_get(first, b, &v) || v != 7 || wf_cmap_get(first, a, &v))
+        fail("the move did not carry the keys as they were", v, 0);
+    wf_cmap_leave(first);
+    wf_cmap_leave(second);
+    wf_cmap_destroy(map);
+}
+
 int main(void) {
     checker_self_test();
+    claim_given_back();
     sequential();
     concurrent(0);
     concurrent(1);
