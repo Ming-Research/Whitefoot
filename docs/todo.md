@@ -3332,9 +3332,12 @@ condition under which it is taken up.
   small-table hits, but the large-table miss is unstable across cohorts and
   the generic query body/frame grow; the mask fast path is not selected.
   The retained running index reduces bucket reconstruction, but misses still
-  trail Rust/C++ at matched half load. Reopen indexing with an explanation of
-  the selected-path costs and stable paired evidence; first separate probe
-  counts and a matched C linear-probe floor from compiler overhead. Preserve
+  trail Rust/C++ at matched half load. The matched C linear-probe control
+  separates part of that miss cost from the probing algorithm, and the
+  [grouped lookup screen](../research/experiments/container-representation/map-library/RESULTS.md#single-backing-grouped-lookup-screen)
+  rejects its tested single-backing group shape for separated hit losses.
+  Reopen indexing with an explanation of the selected-path costs and stable
+  paired evidence. Preserve
   arbitrary capacities, non-power-of-two lookup, wrap and empty-table behavior.
 - **Handing checker facts to the backend.** Emitted since the v0.60 port:
   `noalias` (not on `swap`), `nonnull`, `dereferenceable`,

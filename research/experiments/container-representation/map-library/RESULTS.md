@@ -3099,3 +3099,68 @@ the combined large gain is not qualified causal attribution. Only the
 64-bucket wide hit meets the registered complete-range slower-peer target;
 lookup as a whole remains unqualified and every miss cell still loses.
 This selects neither a new enum layout nor a primitive container change.
+
+### Single-backing grouped lookup screen
+
+The next ordinary-source screen groups one `u64` control word with eight
+ordinary `HashMapSlot<K, V>` elements in an array, all in one backing. This
+differs from the earlier rejected sidecar experiment: probing starts at a
+group boundary, without rotating a partial control word. Fingerprints only
+select candidates; every payload access still matches the actual enum.
+The pre-timing criterion requires the existing independent query and cleanup
+oracles, exact allocation accounting and native evidence of control-word
+filtering. Only repeatable improvement without separated query regressions
+would justify implementing the complete mutation protocol. Arbitrary
+capacity tails, mutation and refusal handling are outside this narrow screen.
+
+Both arms use the same frozen enum-domain compiler and the existing
+four-peer, half-load, controlled-hash protocol. The candidate passes 96 timed
+and 96 accounting cases and all seven fault controls; 32 accounting rows
+end with zero live bytes. There is one allocation and no query allocation.
+At 64/4096 payload slots, scalar backing bytes rise from 1536/98304 to
+1600/102400; wide backing bytes rise from 17408/1114112 to 17472/1118208.
+The eight-slot group strides are 200 and 2184 bytes.
+
+Two reversed cohorts retain 1152 observations, with a shortest sample of
+3.015 ms. The exact source patch, driver transformation, compiler and image
+identities, criterion and accounting are in `lookup-api-evidence.json`;
+`lookup-api-samples.csv` retains every row. An initial control run used the
+older index compiler by mistake; its 288 rows are preserved separately as
+`wrong-cli-calibration` and excluded from these comparisons.
+
+| Value bytes | Buckets | Query | Flat enum-domain ns/query | Grouped ns/query |
+| ---: | ---: | :--- | ---: | ---: |
+| 8 | 64 | hit | 2.062 | 3.809 |
+| 8 | 64 | miss | 2.664 | 3.064 |
+| 8 | 4096 | hit | 2.288 | 3.942 |
+| 8 | 4096 | miss | 2.982 | 3.283 |
+| 256 | 64 | hit | 2.061 | 3.697 |
+| 256 | 64 | miss | 2.651 | 2.949 |
+| 256 | 4096 | hit | 2.440 | 4.232 |
+| 256 | 4096 | miss | 3.159 | 3.234 |
+
+These are combined-cohort medians. Every hit shape has separated adverse
+ranges in both cohorts: candidate minimum exceeds control maximum by at
+least 1.60, and cohort median ratios range from 1.719 to 1.887. Miss medians
+are also worse, with overlapping ranges. Reject this source shape; do not
+proceed to its full mutation implementation on this evidence.
+
+The grouped query has fewer static instructions (189 versus 237) but a
+longer first-candidate dependency chain. After hashing, the first-group,
+first-candidate hit executes 28 instructions through its first value load,
+versus 14 for flat WF and 20 for Rust on the inspected paths. This is a
+path observation, not an average probe count or a timing attribution.
+Grouping adds fingerprint-mask production, lane selection and the resulting
+slot address before the actual enum and key checks. Its frame is 80 bytes,
+with no hot calls or loop spills. The six native peer query bodies retain
+identical bytes and addresses across the two images.
+
+The next bounded discriminator changes only mask production, preserving
+group layout, probing and enum checks. An equivalent LLVM vector mask is a
+measurement instrument, not an implemented WF capability: first check its
+byte-wise equivalence, query oracle and ledger, then measure it against the
+original grouped body with the same harness. A loss even with that mask
+rules out mask packing as a sufficient repair of this shape. Ordinary-source
+byte-array forms are screened separately to distinguish an unexpressible
+operation from a missed code-generation opportunity; neither instruction
+counts nor SIMD instructions alone select a representation.
