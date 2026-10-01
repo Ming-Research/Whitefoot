@@ -546,6 +546,7 @@ struct HashMapOwnedRecord {
 
 nodrop struct HashMapOwnedNode {
   child: Box<HashMapOwnedRecord>;
+  words: Array<u64, 31>;
 }
 
 struct HashMapOwnerEnv {
@@ -560,7 +561,12 @@ struct HashMapOwnerLedger {
 fn hash_map_test_owned_make(id: u64, serial: u64) -> result: HashMapOwnedNode pure {
   let record = HashMapOwnedRecord(id: id, serial: serial);
   let child = box_new::<HashMapOwnedRecord>(value: record);
-  return HashMapOwnedNode(child: move child);
+  let words = array_filled::<u64, 31>(value: 0_u64);
+  for (index in 0_u64..31_u64) {
+    let base = serial *wrap 257_u64;
+    set words[index] = base +wrap index;
+  }
+  return HashMapOwnedNode(child: move child, words: words);
 }
 
 fn hash_map_test_owned_fail(ledger: &HashMapOwnerLedger) -> result: unit writes(ledger) {
@@ -569,8 +575,15 @@ fn hash_map_test_owned_fail(ledger: &HashMapOwnerLedger) -> result: unit writes(
 }
 
 fn hash_map_test_owned_release(value: HashMapOwnedNode, ledger: &HashMapOwnerLedger) -> result: unit writes(ledger) {
-  let HashMapOwnedNode(child: owned_child) = move value;
+  let HashMapOwnedNode(child: owned_child, words: owned_words) = move value;
   let serial = owned_child.inner.serial;
+  for (index in 0_u64..31_u64) {
+    let base = serial *wrap 257_u64;
+    let expected = base +wrap index;
+    if owned_words[index] != expected {
+      hash_map_test_owned_fail(ledger: ledger);
+    }
+  }
   if serial < ledger^.releases.len {
     set ledger^.releases[serial] = ledger^.releases[serial] +wrap 1_u64;
   } else {
@@ -636,7 +649,7 @@ fn hash_map_test_owned_check_pair(pair: &HashMapPair<HashMapOwnedNode, HashMapOw
 }
 
 fn hash_map_test_owned() -> result: u64 pure {
-  doc "Distinct child serials distinguish the replaced pair from the offered pair even when key IDs compare equal. Callbacks check retained identities around edit, and a second edit returns a fresh owned Box holding the prior value for separate caller consumption.";
+  doc "Distinct child serials distinguish the replaced pair from the offered pair even when key IDs compare equal. Each node also carries thirty-one distinct inline words, all checked against its immutable serial when the owner is consumed; an old/new payload mix or partial wide transfer fails independently of the child-release ledger. Callbacks check retained identities around edit, and a second edit returns a fresh owned Box holding the prior value for separate caller consumption.";
   let releases = array_filled::<u64, 32>(value: 0_u64);
   let ledger = HashMapOwnerLedger(releases: releases, failures: 0_u64, visits: 0_u64);
   let env = HashMapOwnerEnv();

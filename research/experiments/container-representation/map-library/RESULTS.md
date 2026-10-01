@@ -3566,3 +3566,207 @@ timing, use the same hash, keys, seeds and payloads, and exclude automatic
 pressure-policy changes by using the no-growth insertion operation. Rehash
 and reserve costs follow separately. Their measurements and independent
 oracles remain outstanding.
+
+
+#### Isolated mutation comparison contract
+
+The next comparison fixes capacity at 64 or 4096 buckets and population at
+half that value, with the same salted hash, odd keys, nine seeds and 8/256-byte
+payloads as the query comparison. It measures two operations separately:
+duplicate replacement, and remove followed by reinsertion of that key.
+Construction, geometry checks, verification and final cleanup are outside the
+clock. Each timed operation constructs a new value and consumes every word of
+the returned old value. These are complete owning-operation costs, not bare
+insertion latency. Generation persists across warmup and measured batches;
+the independent oracle must account for that state rather than accepting a
+checksum from a reset population.
+
+WF uses the existing no-growth insertion operation to exclude the prototypes'
+different automatic-pressure policy. Rust uses ordinary `insert` and
+`remove_entry`; C++ uses `try_emplace`, mapped-value exchange, and extraction
+whose node is destroyed before reinsertion. Native node allocation during
+churn is part of that container's ordinary cost. Accounting is separate from
+timing and must report it, not require every implementation to allocate zero.
+All implementations retain the full offered-value construction and returned
+payload observation; optimizers may eliminate legitimate redundant copies.
+No artificial transfer is added to equalize their generated instructions.
+
+Before timing, independently check batch results, persistent generation,
+post-batch hits and misses, geometry, full final contents and release ledgers.
+Faulted result, generation, wide-payload and cleanup observations must fail.
+Inspect the actual linked batch paths and retained helpers. Run one matched
+campaign with two reversed-order cohorts, retain every sample, and apply the
+existing range and cohort-stability criteria without pooling query samples.
+Report Rust and C++ separately, with the flat WF implementation as the
+representation baseline. Fix work at 1,048,576 logical replacements or
+remove/reinsert pairs per sample before timing; report a pair as one churn
+operation, not as either component's isolated latency. Rehash, reserve and
+the final public representation remain outside this comparison.
+
+
+#### Mutation running-index discriminator
+
+The current lookup alone uses a bounded running bucket index. `find` and
+`try_put`, reached by removal and replacement, still derive each bucket from
+home and step; the inspected wide native path retains a compare, select and
+addition per probe. Apply lookup's ordinary running-index spelling to these
+two helpers, preserving the same visited slots, hash/equality call order,
+arbitrary capacities, first deleted-slot preference and complete refusal
+outcome. This changes no layout or API contract.
+
+Compare that source-only candidate with the frozen baseline through the same
+isolated mutation adapters and linked peer objects. Inspect the reached native
+probe loops, then require repeatable measured gains with no separated loss
+before selecting it. Keep all unchanged and adverse cells. Full correctness
+includes wrap at a non-power-of-two capacity, replacement beyond a tombstone,
+a complete probe cycle and preservation of a refused owner. Removing native
+instructions alone is not the selection criterion.
+
+
+#### Mutation running-index outcome
+
+The four frozen arms each completed with 288 observations, retained separately
+in `mutation-api-samples.csv`; the shortest interval was 2.328 ms. Each sample
+uses one full untimed warmup on the same owner, then 1,048,576 timed operations.
+The following are nanoseconds per complete replacement or remove/reinsert pair,
+cohort zero / cohort one. New-value construction and full old-value digestion
+are included; preparation, verification and final cleanup are excluded.
+
+| Payload bytes | Buckets | Operation | Previous WF | Running-index WF | Rust | C++ |
+|---:|---:|---|---:|---:|---:|---:|
+| 8 | 64 | replace | 2.671 / 2.679 | 2.503 / 2.413 | 2.522 / 2.504 | 2.779 / 2.743 |
+| 8 | 64 | churn | 8.894 / 8.452 | 7.906 / 8.231 | 16.278 / 16.270 | 27.994 / 27.997 |
+| 8 | 4096 | replace | 3.616 / 3.708 | 3.599 / 3.469 | 2.587 / 2.660 | 4.141 / 4.264 |
+| 8 | 4096 | churn | 13.753 / 13.943 | 13.040 / 12.534 | 10.340 / 10.547 | 30.078 / 30.921 |
+| 256 | 64 | replace | 29.129 / 29.389 | 27.680 / 28.119 | 22.154 / 22.393 | 19.079 / 19.045 |
+| 256 | 64 | churn | 37.863 / 37.658 | 36.701 / 37.154 | 27.450 / 27.288 | 50.461 / 49.797 |
+| 256 | 4096 | replace | 32.839 / 32.965 | 31.555 / 31.562 | 27.600 / 27.148 | 23.358 / 23.636 |
+| 256 | 4096 | churn | 53.796 / 52.109 | 48.171 / 47.989 | 32.132 / 32.205 | 60.997 / 60.954 |
+
+All sixteen candidate cohort medians improve, with candidate/control ratios
+0.889--0.995. The large-record, large-table churn shape has separated sample
+ranges in both cohorts, improving by 10.5 and 7.9 percent. In that shape,
+the unchanged Rust and C++ peer medians instead rise by 0.7--2.5 percent;
+normalizing WF's median ratio by either peer retains an 8.5--12.6 percent
+improvement. The other shapes have overlapping before/after ranges; no
+separated loss occurs. The largest
+between-cohort spread of the paired median ratio is 9.553 percent, within
+the registered ten-percent limit. Retain the source change on this bounded
+benefit and unchanged operation contract; do not interpret every median
+movement as an independently established gain.
+
+All four churn shapes separate from the median-slower native peer in both
+cohorts. Scalar replacement medians beat C++, but the full ranges do not
+qualify in both cohorts. Wide replacement remains slower than both peers.
+Thus four of eight shapes pass the strict target; this does not complete
+HashMap optimization. The retained chain prototype improves scalar mutation
+medians but has worse wide replacement medians than the flat candidate:
+31.465/31.550 ns at 64 buckets and 33.634/33.707 ns at 4096. Its wide small
+churn is also slower. Its lookup gains alone therefore do not select it as
+the production representation.
+
+Native inspection confirms the intended attribution: the scalar flat batch
+shrinks from 205 to 197 instructions and from a 144-byte to a 112-byte frame;
+the wide batch changes from 384 to 381 instructions with its 1024-byte frame
+unchanged. Probe reconstruction disappears, but the wide `try_put` entry
+snapshot, returned-pair transfers and inactive enum clears remain. The latter
+are a previously rejected compiler optimization, with its losses retained in
+TODO; these observations do not reverse that rejection. All nineteen examined
+chain definitions have unchanged normalized instructions and relocations.
+Peer loop addresses agree across the final pair, but their call bytes differ
+at relocated Rust rehash and C++ allocation/unwind targets; ordinary C++ churn
+reaches the relocated allocation stubs. Retain that linked-layout limitation.
+
+The extended maintained HashMap program passes sequential and parallel
+lowering, each both normally and with 36 allocations observed released once.
+Its new capacity-three sequence observes full refusal, a missing removal,
+wrapped removal, replacement beyond a tombstone, reuse, rehash and the exact
+returned/final values. The focused gate-profile test took 11.46 seconds,
+including 5.59 seconds building its test executable and 5.27 seconds executing;
+the separate clean compiler build took 72.11 seconds.
+
+Each of the four measurement/accounting images passes 96 owner traces with
+three successive batches of zero, one and two rounds. Twenty deliberately
+faulted runs fail with the intended diagnostics, including corruption of the
+last wide-payload word that leaves the first-word lookup check unchanged.
+The two 32-row allocation tables are byte-identical. Flat WF reserves one
+backing of 24/272 bytes per bucket; chain WF reserves two backings totaling
+32/280 bytes per bucket. Rust reserves 17/265 bytes per physical bucket plus
+eight bytes. C++ reserves eight bytes per head plus 32/280 bytes per live
+node. Those are observed allocation requests, excluding allocator overhead.
+WF, Rust and C++ replacement allocate nothing during the batch; C++ churn
+releases and allocates one node per operation. Every final ledger is empty.
+`mutation-api-evidence.json` retains source, compiler and image identities,
+commands, exact sources, independent checks and raw accounting observations.
+
+
+#### Direct-field replacement rejected
+
+The next discriminator was recorded before applying the candidate in the
+retained evidence: match the borrowed bucket, swap its key and value fields
+with the offered locals, and return the old complete pair. Insertion and
+migration keep the exchange helper. The public interface, probes, callback
+arguments and order, ownership outcomes and representation are unchanged.
+The native test asks whether the complete reached replacement path removes
+staging and the exchange call without increasing hot spill traffic; if it
+does, apply the same timing contract with the running-index version as control.
+
+Native inspection supports timing but does not establish a gain. On a
+nonempty map with the first probed filled key equal, the control's `try_put`
+and exchange together execute 135 instructions versus 131 for direct fields.
+The offered snapshot and its reload each shrink from 256 to 112 bytes;
+total register-save traffic is unchanged at 96 bytes, and the nested call
+disappears. However, the nested peak helper stack rises from 352 to 480 bytes,
+and the static `try_put` body grows from 126 to 217 instructions. The outer
+wide batch still has 381 instructions and a 1024-byte frame, constructing and
+observing all 32 words. Counting `try_put` alone would misattribute the
+control's work in exchange, so the comparison includes both helpers.
+
+The separate fresh campaign retains every sample in phase
+`rejected-direct-field-discriminator` of `mutation-api-samples.csv`, without pooling
+with the prior running-index campaign. Two reversed-order cohorts use the
+same driver, peers, runtime objects, seeds and work. Values below are ns per
+complete operation, cohort zero / one.
+
+| Payload bytes | Buckets | Operation | Running-index control | Direct fields | Rust | C++ |
+|---:|---:|---|---:|---:|---:|---:|
+| 8 | 64 | replace | 2.376 / 2.443 | 2.360 / 2.341 | 2.501 / 2.500 | 2.785 / 2.740 |
+| 8 | 64 | churn | 7.996 / 7.939 | 7.907 / 7.892 | 16.090 / 16.255 | 27.705 / 27.739 |
+| 8 | 4096 | replace | 3.378 / 3.386 | 3.217 / 3.208 | 2.594 / 2.620 | 4.306 / 4.420 |
+| 8 | 4096 | churn | 14.040 / 12.855 | 17.666 / 16.681 | 10.530 / 10.328 | 29.963 / 30.302 |
+| 256 | 64 | replace | 27.484 / 27.590 | 30.813 / 31.012 | 22.119 / 22.373 | 18.939 / 19.074 |
+| 256 | 64 | churn | 37.086 / 37.554 | 42.089 / 41.413 | 27.087 / 27.425 | 51.071 / 50.165 |
+| 256 | 4096 | replace | 30.853 / 31.147 | 29.260 / 29.428 | 27.224 / 27.683 | 22.943 / 23.548 |
+| 256 | 4096 | churn | 47.649 / 47.751 | 54.024 / 54.757 | 31.404 / 31.567 | 59.574 / 60.182 |
+
+All 1152 rows are retained; the shortest interval is 2.327 ms.
+Wide replacement at 4096 buckets improves by about five percent with separated
+ranges in both cohorts, but wide replacement at 64 buckets regresses by about
+twelve percent, also separated. Wide churn regresses by ten to fifteen percent
+with separated ranges at both sizes. Scalar large churn medians also worsen,
+though its ranges overlap. The candidate fails the registered no-separated-loss
+criterion and is not retained. Fewer executed instructions and less snapshot
+traffic are insufficient grounds to override these observations.
+
+The candidate passes the strengthened maintained owning program and each
+native image's 96 owner traces; ten fault controls fail with the intended
+diagnostics, and its 32-row accounting record equals the running-index control.
+The existing owning corpus now also checks all 31 inline words of each
+256-byte node against its child serial on consumption. Existing observations
+already distinguish the returned old equivalent key from the retained offered
+key and observe each child release exactly once. The added full-content
+observation is retained independently of the rejected optimization.
+
+On the restored running-index implementation, the strengthened fixture passes
+in 37.26 seconds including test-executable rebuild, with 27.34 seconds in the
+case. Phase timings locate the increase in the two parallel native builds
+(11.32 and 11.40 seconds); WF compilation stays below 0.70 seconds per mode,
+and each program execution below 0.28 seconds. The sequential native builds
+take 1.53 and 0.70 seconds. This is additional test compilation cost, not a
+container runtime measurement; the full-content ownership observation remains.
+
+A separate native sensitivity check with the frozen running-index compiler
+returns zero for the unchanged strengthened program. Incrementing only word 30
+in each constructed node, while leaving every child and key serial unchanged,
+returns status one. The new full-content observation therefore detects a
+corrupted tail independently of the existing identity and release checks.

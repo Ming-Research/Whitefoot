@@ -1241,9 +1241,23 @@ rarely insert at the same place.
   The isolated HashMap follow-up also finds two 256-byte snapshots across
   `hash_map_put` and `hash_map_try_put`: each indirect owned parameter is
   copied by the general function-entry materialization, while call lowering
-  passes its address. Reopen on insert/replacement API measurements after
-  lookup; forwarding needs the same complete liveness, interference and
-  result/input alias analysis, not a HashMap-specific bypass.
+  passes its address. The isolated mutation adapter calls `try_put` directly,
+  so its reached path retains only that helper's entry snapshot; `exchange`'s
+  raw-IR copy already folds into register capture in the optimized native code.
+  Reopen on the insert/replacement API measurements, not the unreached `put`
+  wrapper. Forwarding needs complete liveness, interference and result/input
+  alias analysis: the incoming content pointer is not writable private storage,
+  and refusal must preserve its bytes before an overlapping result is written.
+  This requires a general argument, not a HashMap-specific bypass. The
+  [isolated mutation comparison](../research/experiments/container-representation/map-library/RESULTS.md#mutation-running-index-outcome)
+  now supplies a measured consumer: 256-byte duplicate replacement still
+  trails both Rust and C++ at matched half load. The direct-field swap control
+  reduces offered snapshot traffic but regresses wide replacement at small
+  capacity and wide churn at both capacities, so it is rejected; fewer copies
+  alone do not settle the cost. Attribute the swap's scalar-register/spill
+  shape and generic aggregate transfer lowering before changing general entry
+  materialization. Any compiler forwarding change must preserve overlapping-result,
+  retained input and constant-input cases.
 
 - **Ordered node construction retains wide transfers.** The
   [ordered-map attribution](../research/experiments/container-representation/ordered-library/RESULTS.md#transfer-and-generated-code-attribution)
