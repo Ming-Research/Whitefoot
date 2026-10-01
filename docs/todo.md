@@ -155,16 +155,21 @@ rarely insert at the same place.
     intermediate local invariant (`hash_map_rebuild`'s park loop).
   - Reopen together with the next change to [ENT-3.S7]'s rows or to AUTO.
 
-- **Measure the cost of carrying owed relations through joins.** [ENT-6]
+- **Carrying owed relations through joins fails its cost criterion.** [ENT-6]
   now proves each relation a loop owes at every join inside its body, once
   per joined state, cloning each state per relation
   (`join_carrying` in `compiler/src/semantic/entailment/flow/walk.rs`).
-  - The branch-join investigation's 10% time and RSS criterion was not run
-    for it.
+  - Measured against the branch-join investigation's 10% time and RSS
+    criterion
+    ([run](../research/investigations/termination/runs/join-carry-cost.md)):
+    Snowghost's library modules (1.018) and the conformance sources (1.029)
+    pass, the single-file programs fail at 2.07 times the wall time, almost
+    all of it `wfgrep.wf` (10.06 s against 2.61 s), with `dir_walk.wf` and
+    `redis_subset.wf` about three times slower each.
   - Change: clone each input once and prove every relation against it, and
     skip relations whose operands no input wrote.
-  - Validate with that investigation's replay on the Snowghost modules and
-    the scale family.
+  - Validate by repeating the run's method; the three I/O programs must
+    come within the criterion.
   - Reopen before the rule leaves draft or when a check stage exceeds its
     budget.
 

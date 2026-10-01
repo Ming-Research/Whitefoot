@@ -39,4 +39,34 @@ nothing about the carry.
 
 ## Results
 
-Pending.
+Run on 2026-10-01 at `96a6aacf` with the two switches, one release build
+(`q30-time` stage, 1,456 s). Wall time is the median of the five rounds'
+sums; resident set is the largest of any process in any round.
+
+| Group | Inputs | Timed | Verdict changes | Wall, carry on | Wall, carry off | Ratio | Largest RSS ratio |
+|---|---|---|---|---|---|---|---|
+| Snowghost library modules | 17 | 17 | 0 | 67.15 s | 65.96 s | 1.018 | 1.001 |
+| `tests/programs` single files | 61 | 60 | 1 | 15.51 s | 7.49 s | 2.071 | 1.021 |
+| Conformance case sources | 1,537 | 1,533 | 4 | 25.91 s | 25.18 s | 1.029 | 1.001 |
+
+The programs group fails the criterion. One run of each program in each
+configuration attributes the difference: `wfgrep.wf` takes 10.06 s with the
+carry and 2.61 s without it, `dir_walk.wf` 0.98 s and 0.48 s, and
+`redis_subset.wf`, untimed because its verdict changes, 1.51 s and 0.46 s;
+every other program differs by at most 0.05 s. All three are I/O programs
+whose waiting loops hold `match` joins over many owed relations, so each
+join re-proves every candidate against a clone of every input state.
+
+The verdict changes are the inputs the carry exists to accept:
+`redis_subset.wf` (INV-1 without the carry),
+`ent6-pos-break-join-keeps-header-invariant` (FN-9),
+`inv1-pos-guarded-cursor-patterns` (TERM-1),
+`inv1-pos-sequential-guarded-steps` (INV-1) and `term1-pos-bisection-join`
+(INV-1). Snowghost's library modules and the conformance sources stay within
+the criterion.
+
+The carry as implemented therefore does not meet the condition of Q30. The
+repair `docs/todo.md` names, cloning each input once and proving every
+relation against it and skipping relations whose operands no input wrote,
+targets exactly the per-relation clone that these programs multiply; it is
+measured again with this method before the rule leaves draft.
