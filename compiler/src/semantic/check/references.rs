@@ -775,6 +775,38 @@ impl<'unit> Checker<'_, 'unit> {
         bindings: &HashMap<DeclarationId, LocalBinding>,
         loop_depth: usize,
     ) -> Result<TypedExpression, CheckStop> {
+        self.check_place_borrow_through(
+            context, carrier, site, place_node, bindings, loop_depth, false,
+        )
+    }
+
+    /// [SHARE-2] the borrow of a place without its last step, which the
+    /// caller has read as a map's key: `&m` for the target `&m[k]`.
+    pub(super) fn check_place_borrow_prefix(
+        &mut self,
+        context: FunctionContext<'_, '_>,
+        carrier: NodeId,
+        site: NodeId,
+        place_node: NodeId,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+        loop_depth: usize,
+    ) -> Result<TypedExpression, CheckStop> {
+        self.check_place_borrow_through(
+            context, carrier, site, place_node, bindings, loop_depth, true,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn check_place_borrow_through(
+        &mut self,
+        context: FunctionContext<'_, '_>,
+        carrier: NodeId,
+        site: NodeId,
+        place_node: NodeId,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+        loop_depth: usize,
+        without_last: bool,
+    ) -> Result<TypedExpression, CheckStop> {
         let FunctionContext { check_context, .. } = context;
         let pbase = self
             .types
@@ -802,6 +834,11 @@ impl<'unit> Checker<'_, 'unit> {
             &suffixes[1..]
         } else {
             suffixes.as_slice()
+        };
+        let suffixes = match (without_last, suffixes.split_last()) {
+            (true, Some((_, prefix))) => prefix,
+            (true, None) => return Err(SemanticCompilerFailure::InvalidCanonicalTree.into()),
+            (false, _) => suffixes,
         };
         let root_use =
             self.types

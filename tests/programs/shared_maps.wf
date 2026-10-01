@@ -1,0 +1,128 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+const names: Array<u8, 8> =[97_u8, 98_u8, 99_u8, 100_u8, 101_u8, 102_u8, 103_u8, 104_u8];
+
+fn bump_keys(map: SharedMap<u64>, total: Shared<u64>) -> result: unit pure waits {
+  for @round (index in 0_u64..2000_u64) {
+    for @key (at in 1_u64..9_u64) {
+      atomic slot = &map[&names[0_u64..at]] {
+        match slot^ {
+          Some(value: seen) => {
+            let next = seen^ +wrap 1_u64;
+            set slot^ = Some<u64>(value: next);
+          }
+          None() => {
+            set slot^ = Some<u64>(value: 1_u64);
+          }
+        }
+        atomic sum = &total {
+          set sum^ = sum^ +wrap 1_u64;
+        }
+      }
+    }
+  }
+  return unit;
+}
+
+fn watch_sums(map: SharedMap<u64>, total: Shared<u64>, mismatches: Shared<u64>) -> result: unit pure waits {
+  for @look (index in 0_u64..300_u64) {
+    let sum = 0_u64;
+    let counted = 0_u64;
+    atomic state = &map {
+      for @key (at in 1_u64..9_u64) {
+        atomic slot = &state^[&names[0_u64..at]] {
+          match slot^ {
+            Some(value: seen) => {
+              set sum = sum +wrap seen^;
+            }
+            None() => {
+            }
+          }
+        }
+      }
+      atomic seen = &total {
+        set counted = seen^;
+      }
+    }
+    if sum != counted {
+      atomic wrong = &mismatches {
+        set wrong^ = wrong^ +wrap 1_u64;
+      }
+    }
+  }
+  return unit;
+}
+
+fn bump_together(map: &SharedMap<u64>, total: &Shared<u64>, mismatches: &Shared<u64>) -> result: unit reads(map), reads(total), reads(mismatches) waits {
+  for @start (index in 0_u64..8_u64) {
+    let handle = shared_map_share::<u64>(shared: map);
+    let summed = shared_share::<u64>(shared: total);
+    spawn bump_keys(map: move handle, total: move summed);
+  }
+  for @watch (index in 0_u64..2_u64) {
+    let handle = shared_map_share::<u64>(shared: map);
+    let summed = shared_share::<u64>(shared: total);
+    let seen = shared_share::<u64>(shared: mismatches);
+    spawn watch_sums(map: move handle, total: move summed, mismatches: move seen);
+  }
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure waits {
+  doc "One shared map reached from ten contexts at once: eight each add one to the entries under eight keys, the prefixes of one name, two thousand times, and to a shared total inside each keyed statement; two others hold the whole map three hundred times each and compare the entries' sum with the total, which agree whenever no keyed statement is under way. A statement over the whole map then counts the entries, reads each, and removes one. Every order of the statements gives the same counts, so the status is 0 on every driver count and names the first wrong one otherwise.";
+  let map = shared_map_new::<u64>(capacity: 0_u64);
+  let total = shared_new::<u64>(value: 0_u64);
+  let mismatches = shared_new::<u64>(value: 0_u64);
+  bump_together(map: &map, total: &total, mismatches: &mismatches);
+  let counted = 0_u64;
+  let wrong = 0_u64;
+  atomic state = &map {
+    set counted = keyed_count::<u64>(state: state);
+    for @check (at in 1_u64..9_u64) {
+      atomic slot = &state^[&names[0_u64..at]] {
+        match slot^ {
+          Some(value: seen) => {
+            if seen^ != 16000_u64 {
+              set wrong = wrong +wrap 1_u64;
+            }
+          }
+          None() => {
+            set wrong = wrong +wrap 1_u64;
+          }
+        }
+      }
+    }
+    atomic slot = &state^[&names[0_u64..1_u64]] {
+      set slot^ = None<u64>();
+    }
+  }
+  if counted != 8_u64 {
+    return exit_status(code: 1_u8);
+  }
+  if wrong != 0_u64 {
+    return exit_status(code: 2_u8);
+  }
+  let left = 0_u64;
+  atomic state = &map {
+    set left = keyed_count::<u64>(state: state);
+  }
+  if left != 7_u64 {
+    return exit_status(code: 3_u8);
+  }
+  let sum = 0_u64;
+  atomic seen = &total {
+    set sum = seen^;
+  }
+  if sum != 128000_u64 {
+    return exit_status(code: 4_u8);
+  }
+  let missed = 0_u64;
+  atomic noted = &mismatches {
+    set missed = noted^;
+  }
+  if missed != 0_u64 {
+    return exit_status(code: 5_u8);
+  }
+  return exit_status(code: 0_u8);
+}

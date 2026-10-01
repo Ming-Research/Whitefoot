@@ -40,6 +40,7 @@
 
 #include "../sched/entry.h"
 #include "../sched/prim.h"
+#include "../concurrent_map.h"
 #if defined(__linux__)
 #include "linux_io_uring.h"
 #elif defined(_WIN32)
@@ -1084,15 +1085,23 @@ static void *wf_pool_take(size_t bytes, size_t *granted) {
     return block;
 }
 
+/* The whole size of the block a request of `bytes` is granted. */
+static size_t wf_pool_granted(size_t bytes) {
+    if (bytes > WF_POOL_LARGEST) {
+        if (bytes > SIZE_MAX - WF_POOL_LARGE_GRAIN) {
+            wf_context_exhausted();
+        }
+        return (bytes + WF_POOL_LARGE_GRAIN - 1u) / WF_POOL_LARGE_GRAIN * WF_POOL_LARGE_GRAIN;
+    }
+    return (size_t)1u << (WF_POOL_SMALLEST_SHIFT + wf_pool_class_of(bytes));
+}
+
 static void *wf_pool_take_locked(size_t bytes, size_t *granted) {
     unsigned index;
     size_t size;
     void *block;
     if (bytes > WF_POOL_LARGEST) {
-        if (bytes > SIZE_MAX - WF_POOL_LARGE_GRAIN) {
-            wf_context_exhausted();
-        }
-        size = (bytes + WF_POOL_LARGE_GRAIN - 1u) / WF_POOL_LARGE_GRAIN * WF_POOL_LARGE_GRAIN;
+        size = wf_pool_granted(bytes);
         block = wf_pool_host_reserve(size);
         if (block == NULL) {
             wf_context_exhausted();
@@ -1199,7 +1208,7 @@ struct wf_context {
      * and whether an unlock handed it the object while it was parked. */
     uint32_t shared_woken;
     uint32_t shared_write;
-    uint32_t shared_granted;
+    _Atomic uint32_t shared_granted;
     /* How many waits in a row the host, an object or a join answered at once
      * since the driver last resumed the context [WAIT-2]. */
     uint32_t passes;
@@ -1266,6 +1275,9 @@ struct wf_driver {
     wf_prim_thread thread;
 #endif
     _Atomic unsigned exited;
+    /* Its slot in wf_drivers, which numbers its thread for the runtime's
+     * concurrent maps. */
+    unsigned index;
     size_t pool_bytes;
     /* Contexts resumed since this driver last looked for host completions. */
     unsigned runs_since_reap;
@@ -2200,6 +2212,9 @@ typedef struct wf_shared {
     wf_context *waiting_head;
     wf_context *waiting_tail;
     wf_context *watching;
+    /* The parked context an unlock handed the object to, until it resumes
+     * and takes it or a statement that cannot park takes the hold back. */
+    _Atomic(wf_context *) granted;
     size_t pool_bytes;
 } wf_shared;
 _Static_assert(
@@ -2216,6 +2231,37 @@ _Static_assert(
  * running context, and the bound keeps a statement from being overtaken
  * without end. */
 #define WF_SHARED_HANDOFF 2u
+
+/* The runtime's concurrent maps (shared_map.c) number their users by
+ * driver. */
+_Static_assert(
+    WF_DRIVER_LIMIT <= WF_CMAP_MAX_USERS,
+    "every driver must number a user of a concurrent map"
+);
+
+unsigned wf__driver_index(void) {
+    return wf_driver_self != NULL ? wf_driver_self->index : 0u;
+}
+
+void *wf__runtime_take(uint64_t bytes) {
+    size_t granted;
+    if (bytes > SIZE_MAX) {
+        wf_context_exhausted();
+    }
+    return wf_pool_take((size_t)bytes, &granted);
+}
+
+void wf__runtime_give(void *block, uint64_t bytes) {
+    wf_pool_give(block, wf_pool_granted((size_t)bytes));
+}
+
+void wf__runtime_yield(void) {
+    wf_prim_yield();
+}
+
+_Noreturn void wf__runtime_exhausted(void) {
+    wf_context_exhausted();
+}
 
 void *wf__shared_new(uint64_t state_bytes) {
     size_t granted;
@@ -2302,7 +2348,8 @@ static wf_context *wf_shared_wake_locked(wf_shared *shared) {
     first->next = NULL;
     if (first->shared_woken >= WF_SHARED_HANDOFF) {
         wf_shared_hold_locked(shared, first->shared_write);
-        first->shared_granted = 1u;
+        atomic_store_explicit(&first->shared_granted, 1u, memory_order_relaxed);
+        atomic_store_explicit(&shared->granted, first, memory_order_relaxed);
     } else {
         first->shared_woken += 1u;
     }
@@ -2328,10 +2375,22 @@ int wf__shared_acquire(void *object, uint32_t write, void *frame) {
     if (self == NULL || frame == NULL) {
         wf_bridge_fail("an atomic statement ran outside every context");
     }
-    if (self->shared_granted != 0u) {
-        self->shared_granted = 0u;
-        self->shared_woken = 0u;
-        return 0;
+    /* A grant is read again under the lock, since wf__shared_take may have
+     * taken it back; the context then asks as any other does, keeping its
+     * place at the head of the queue. */
+    if (atomic_load_explicit(&self->shared_granted, memory_order_relaxed) != 0u) {
+        int kept;
+        wf_spin_lock(&shared->lock);
+        kept = atomic_load_explicit(&self->shared_granted, memory_order_relaxed) != 0u;
+        if (kept) {
+            atomic_store_explicit(&self->shared_granted, 0u, memory_order_relaxed);
+            atomic_store_explicit(&shared->granted, NULL, memory_order_relaxed);
+        }
+        wf_spin_unlock(&shared->lock);
+        if (kept) {
+            self->shared_woken = 0u;
+            return 0;
+        }
     }
     /* Before trying the object, never while holding it: a statement's block
      * does not wait, and a yield is a wait. */
@@ -2367,6 +2426,44 @@ int wf__shared_acquire(void *object, uint32_t write, void *frame) {
     wf_shared_park_locked(shared, self, write);
     wf_spin_unlock(&shared->lock);
     return 1;
+}
+
+/* [SHARE-2] An object's statement inside the block of a statement holding
+ * a map's state or an entry, which keeps its driver until it ends, so this
+ * statement spins rather than parks.  Every holder of an object is a running
+ * context whose block waits for nothing, but for a parked context an unlock
+ * handed the object to, which may wait in this very driver's queue: this
+ * statement takes such a hold back, and that context asks again when it
+ * resumes. */
+void wf__shared_take(void *object, uint32_t write) {
+    wf_shared *shared = (wf_shared *)object;
+    for (;;) {
+        if (wf_shared_admits(shared, write)
+            || atomic_load_explicit(&shared->granted, memory_order_relaxed) != NULL) {
+            wf_context *granted;
+            int held = 0;
+            wf_spin_lock(&shared->lock);
+            granted = atomic_load_explicit(&shared->granted, memory_order_relaxed);
+            if (granted != NULL) {
+                atomic_store_explicit(&granted->shared_granted, 0u, memory_order_relaxed);
+                atomic_store_explicit(&shared->granted, NULL, memory_order_relaxed);
+                if (granted->shared_write != 0u) {
+                    atomic_store_explicit(&shared->holders, 0u, memory_order_relaxed);
+                } else {
+                    atomic_fetch_sub_explicit(&shared->holders, 1u, memory_order_relaxed);
+                }
+            }
+            if (wf_shared_admits(shared, write)) {
+                wf_shared_hold_locked(shared, write);
+                held = 1;
+            }
+            wf_spin_unlock(&shared->lock);
+            if (held) {
+                return;
+            }
+        }
+        wf_prim_spin_hint();
+    }
 }
 
 /* Ends one hold under the object's lock and returns the contexts to make
@@ -2677,6 +2774,7 @@ static void wf_drivers_begin(void) {
         wf_driver *driver = (wf_driver *)wf_pool_take(sizeof(*driver), &granted);
         memset(driver, 0, sizeof(*driver));
         driver->pool_bytes = granted;
+        driver->index = index;
         atomic_flag_clear(&driver->run_lock);
         if (wf_completion_runtime_init(&driver->own_runtime) != 0) {
             wf_pool_give(driver, granted);

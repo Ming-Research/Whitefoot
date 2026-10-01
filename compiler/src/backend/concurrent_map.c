@@ -736,10 +736,10 @@ static void enter_keyed(wf_cmap_user *u) {
     atomic_fetch_sub_explicit(&map->waiting, 1, memory_order_release);
 }
 
-wf_cmap *wf_cmap_create_entries(uint64_t slot_size, uint64_t slot_align) {
+wf_cmap *wf_cmap_create_entries(uint64_t slot_size, uint64_t slot_align, uint64_t capacity) {
     if (slot_align == 0 || slot_align > ENTRY_GRAIN || (slot_align & (slot_align - 1)) != 0)
         abort();
-    wf_cmap *map = wf_cmap_create(0);
+    wf_cmap *map = wf_cmap_create(capacity);
     map->slot_size = slot_size;
     map->slot_align = slot_align;
     return map;
@@ -770,6 +770,7 @@ void *wf_cmap_lock_entry(wf_cmap_user *u, const unsigned char *key, uint64_t len
         n = new_node(u, node_bytes(map, length));
         n->length = length;
         memcpy(n->bytes, key, (size_t)length);
+        memset(slot_of(map, n), 0, (size_t)map->slot_size);
         atomic_store_explicit(&c->value, (uint64_t)(uintptr_t)n, memory_order_relaxed);
         count(u, 1, 0);
     } else {

@@ -1,0 +1,41 @@
+const key: Array<u8, 1> =[107_u8];
+
+fn record(map: SharedMap<u8>, seen: Shared<u8>) -> result: unit pure waits {
+  atomic slot = &map[&key[0_u64..1_u64]] {
+    set slot^ = Some<u8>(value: 3_u8);
+    atomic count = &seen {
+      set count^ = count^ +wrap 1_u8;
+    }
+  }
+  return unit;
+}
+
+fn record_twice(map: &SharedMap<u8>, seen: &Shared<u8>) -> result: unit reads(map), reads(seen) waits {
+  let first = shared_map_share::<u8>(shared: map);
+  let counted = shared_share::<u8>(shared: seen);
+  spawn record(map: move first, seen: move counted);
+  let second = shared_map_share::<u8>(shared: map);
+  let recounted = shared_share::<u8>(shared: seen);
+  spawn record(map: move second, seen: move recounted);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let map = shared_map_new::<u8>(capacity: 0_u64);
+  let seen = shared_new::<u8>(value: 0_u8);
+  record_twice(map: &map, seen: &seen);
+  let code = 0_u8;
+  atomic count = &seen {
+    set code = count^;
+  }
+  atomic state = &map {
+    let counted = keyed_count::<u8>(state: state);
+    atomic count = &seen {
+      set code = code +wrap count^;
+    }
+    if counted == 1_u64 {
+      set code = code +wrap 1_u8;
+    }
+  }
+  return std::process::exit_status(code: code);
+}

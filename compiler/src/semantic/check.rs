@@ -51,9 +51,9 @@ use super::goal::{
 use super::model::{
     BindingId, CheckedConst, CheckedConstant, CheckedConstantId, CheckedElement, CheckedExpression,
     CheckedFunction, CheckedGenericRequirement, CheckedMode, CheckedNominal, CheckedNominalKind,
-    CheckedNumericType, CheckedParameter, CheckedProgramData, CheckedSetTarget, CheckedStatement,
-    CheckedType, CheckedValue, DerivedConst, DerivedConstId, FunctionId, NominalId,
-    ValueInitializerKind, evaluate_const_operation,
+    CheckedNumericType, CheckedParameter, CheckedProgramData, CheckedSetTarget, CheckedShared,
+    CheckedStatement, CheckedType, CheckedValue, DerivedConst, DerivedConstId, FunctionId,
+    NominalId, ValueInitializerKind, evaluate_const_operation,
 };
 use super::permission::{PermissionSignature, analyze_permission, plan_permission_separations};
 use super::permission_ledger::{LedgerSource, render_ledger};
@@ -616,9 +616,22 @@ struct BodyChecker {
     /// Every retry starts fresh; only its complete final walk is published.
     reference_origins: Vec<Vec<ResolvedPlace>>,
     /// [SHARE-2] how many atomic statements enclose the construct being
-    /// checked: inside one, a waiting call or another atomic statement is
-    /// refused.
+    /// checked: inside one, a waiting call is refused.
     atomic_depth: u32,
+    /// [SHARE-2] what each enclosing atomic statement holds, innermost last,
+    /// which decides the atomic statements its block may contain.
+    atomic_holds: Vec<AtomicHold>,
+}
+
+/// [SHARE-2] what an enclosing atomic statement holds.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AtomicHold {
+    /// An object's state.
+    Object,
+    /// A map's state, named by this binder.
+    Map(BindingId),
+    /// One entry of a map.
+    Entry,
 }
 
 /// Program-wide judgments and reuse records, published after checking succeeds.
@@ -2374,11 +2387,19 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 }
                 CheckedStatement::Atomic {
                     target,
+                    key,
                     guard,
                     body,
                     ..
                 } => {
                     self.install_expression_call_requirements(check_context, target, requirements)?;
+                    if let Some(key) = key {
+                        self.install_expression_call_requirements(
+                            check_context,
+                            key,
+                            requirements,
+                        )?;
+                    }
                     if let Some(guard) = guard {
                         self.install_expression_call_requirements(
                             check_context,

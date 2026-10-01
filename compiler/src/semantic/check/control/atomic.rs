@@ -11,23 +11,48 @@ use crate::{
 };
 
 use super::super::super::model::{
-    CheckedExpression, CheckedMode, CheckedNominalKind, CheckedStatement, CheckedType,
-    expression_children,
+    BindingId, CheckedAtomicForm, CheckedExpression, CheckedMode, CheckedNominalKind,
+    CheckedShared, CheckedStatement, CheckedType, IntegerType, expression_children,
 };
-use super::super::super::places::ResolvedPlace;
+use super::super::super::places::{PlaceRoot, ResolvedPlace};
 use super::super::expressions::calls::user::WAIT1_DECLARE_THE_CALLER_WAITING;
 use super::super::references::{ReferenceInfo, ReferenceKind};
-use super::super::{CheckStop, Checker, EffectSet, LocalBinding};
+use super::super::{AtomicHold, CheckStop, Checker, EffectSet, LocalBinding, TypedExpression};
 use super::{ControlCounters, ControlScope, StatementResult};
 
-/// The repair for a target that is not a `Shared<T>` place [SHARE-2, DIAG-1].
-pub(in crate::semantic::check) const SHARE2_NAME_A_SHARED_HANDLE: &str = "name a place of type `Shared<T>`: create the object with `shared_new` and give each context its own handle made with `shared_share`";
+/// The repair for a target that is not a `Shared<T>` or `SharedMap<V>` place
+/// [SHARE-2, DIAG-1].
+pub(in crate::semantic::check) const SHARE2_NAME_A_SHARED_HANDLE: &str = "name a place of type `Shared<T>` or `SharedMap<V>`, or an entry `m[key]` of a map: create the object with `shared_new` or the map with `shared_map_new`, and give each context its own handle made with `shared_share` or `shared_map_share`";
+/// The repair for an entry `s^[k]` of a state no enclosing statement holds
+/// [SHARE-2].
+pub(in crate::semantic::check) const SHARE2_HOLD_THE_STATE: &str = "name the entry `m[key]` of a `SharedMap<V>` handle, or hold the map's state in an enclosing `atomic s = &m` statement and name the entry `s^[key]` inside its block";
+/// The repair for a key that is not a byte range [SHARE-2].
+pub(in crate::semantic::check) const SHARE2_KEY_A_BYTE_RANGE: &str = "name the key as a `&[u8]` range, such as `&bytes[start..end]`, or a reference variable holding one";
+/// The repair for a guard on a statement holding a map's state or entry, or
+/// inside the block of one [SHARE-2].
+pub(in crate::semantic::check) const SHARE2_NO_GUARD_ON_A_MAP: &str = "remove the guard and test the condition inside the block; only a statement on a `Shared<T>` object outside every map's and entry's statement waits for a guard";
 /// The repair for a waiting call inside an atomic statement [SHARE-2].
 pub(in crate::semantic::check) const SHARE2_WAIT_OUTSIDE_THE_BLOCK: &str = "move the waiting call out of the atomic statement: end the statement first, wait, and start another atomic statement for any update that depends on the outcome";
 /// The repair for an atomic statement inside another [SHARE-2].
-pub(in crate::semantic::check) const SHARE2_END_THE_OUTER_STATEMENT: &str = "end the outer atomic statement before starting the inner one, carrying what the inner one needs in a local";
+pub(in crate::semantic::check) const SHARE2_END_THE_OUTER_STATEMENT: &str = "end the outer atomic statement before starting the inner one, carrying what the inner one needs in a local; only a statement on an object, or on an entry of the map the outer statement holds, may be inside one";
 /// The repair for a guard that writes [SHARE-2].
 pub(in crate::semantic::check) const SHARE2_READ_ONLY_GUARD: &str = "make the guard read only, calling a function whose row writes nothing and moves no argument, and make the update in the block";
+
+/// [SHARE-2] which of the four target forms an atomic statement has.
+enum AtomicTarget {
+    /// `&h`, `h` a `Shared<T>`: the state, of type `T`.
+    Object { state: CheckedType },
+    /// `&h`, `h` a `SharedMap<V>`: the map's state, a `Keyed<V>`.
+    Map { state: CheckedType },
+    /// `&m[k]` or `&s^[k]`: the entry, an `Option<V>`; `holder` is the
+    /// binder of the enclosing statement holding the map's state, when the
+    /// map is reached through it.
+    Entry {
+        entry: CheckedType,
+        key: Box<TypedExpression>,
+        holder: Option<BindingId>,
+    },
+}
 
 impl Checker<'_, '_> {
     pub(super) fn check_atomic(
@@ -42,9 +67,54 @@ impl Checker<'_, '_> {
             check_context,
             function,
         } = context;
-        // [SHARE-2] a guard or block contains no atomic statement; the inner
-        // statement is the offending one.
-        if self.body.atomic_depth > 0 {
+        let place_node = self
+            .types
+            .declarations
+            .tree
+            .first_child_with(node, Production::Place)?
+            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+        // [SHARE-2] the target, read when the statement begins.
+        let (target, form) =
+            self.check_atomic_target(context, node, place_node, bindings, scope.loops.len())?;
+        // [SHARE-2] `s^[k]` names an entry of the state an enclosing
+        // statement holds through that statement's binding.
+        if let AtomicTarget::Entry {
+            holder: Some(holder),
+            ..
+        } = &form
+            && !self
+                .body
+                .atomic_holds
+                .iter()
+                .any(|hold| matches!(hold, AtomicHold::Map(held) if held == holder))
+        {
+            return self.types.declarations.issue_node(
+                SemanticRule::Share2,
+                node,
+                SemanticIssueKind::AtomicTargetNotShared {
+                    found: "an entry of a map state no enclosing atomic statement holds".to_owned(),
+                    mechanical_fix: SHARE2_HOLD_THE_STATE,
+                },
+            );
+        }
+        // [SHARE-2] an object's statement contains no atomic statement; a
+        // map's or an entry's contains one on an object, and a map's one on
+        // an entry of the state it holds. The inner statement is the
+        // offending one.
+        let admitted = match (self.body.atomic_holds.last(), &form) {
+            (None, AtomicTarget::Entry { holder: None, .. })
+            | (None, AtomicTarget::Object { .. } | AtomicTarget::Map { .. }) => true,
+            (Some(AtomicHold::Map(_) | AtomicHold::Entry), AtomicTarget::Object { .. }) => true,
+            (
+                Some(AtomicHold::Map(held)),
+                AtomicTarget::Entry {
+                    holder: Some(holder),
+                    ..
+                },
+            ) => held == holder,
+            _ => false,
+        };
+        if !admitted {
             return self.types.declarations.issue_node(
                 SemanticRule::Share2,
                 node,
@@ -54,52 +124,30 @@ impl Checker<'_, '_> {
                 },
             );
         }
-        // [WAIT-1, SHARE-2] the statement counts as a waiting call.
-        if !function.waits {
-            return self.types.declarations.issue_node(
-                SemanticRule::Wait1,
-                node,
-                SemanticIssueKind::WaitingCallOutsideWaitingFunction {
-                    callee: "an atomic statement".to_owned(),
-                    context: "a function that does not wait",
-                    mechanical_fix: WAIT1_DECLARE_THE_CALLER_WAITING,
-                },
-            );
-        }
         let node_path = self.types.declarations.tree.path(node)?.clone();
-        self.body.waiting.calls.push(node_path.clone());
-
-        // [SHARE-2] the target: `&place` of type `Shared<T>`, read when the
-        // statement begins.
-        let place_node = self
-            .types
-            .declarations
-            .tree
-            .first_child_with(node, Production::Place)?
-            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        let target =
-            self.check_place_borrow(context, node, node, place_node, bindings, scope.loops.len())?;
-        let state = match (target.mode, target.expression.ty()) {
-            (CheckedMode::Reference, CheckedType::Nominal(nominal)) => {
-                match &self.types.nominal(nominal)?.kind {
-                    CheckedNominalKind::Shared { state } => Some(*state),
-                    _ => None,
-                }
+        // [WAIT-1, SHARE-2] every statement but one on an entry of a held
+        // state counts as a waiting call.
+        let waits = !matches!(
+            form,
+            AtomicTarget::Entry {
+                holder: Some(_),
+                ..
             }
-            _ => None,
-        };
-        let Some(state) = state else {
-            return self.types.declarations.issue_node(
-                SemanticRule::Share2,
-                node,
-                SemanticIssueKind::AtomicTargetNotShared {
-                    found: self
-                        .types
-                        .checked_value_name(target.mode, target.expression.ty())?,
-                    mechanical_fix: SHARE2_NAME_A_SHARED_HANDLE,
-                },
-            );
-        };
+        );
+        if waits {
+            if !function.waits {
+                return self.types.declarations.issue_node(
+                    SemanticRule::Wait1,
+                    node,
+                    SemanticIssueKind::WaitingCallOutsideWaitingFunction {
+                        callee: "an atomic statement".to_owned(),
+                        context: "a function that does not wait",
+                        mechanical_fix: WAIT1_DECLARE_THE_CALLER_WAITING,
+                    },
+                );
+            }
+            self.body.waiting.calls.push(node_path.clone());
+        }
         let mut effects = target.effects.clone();
         for place in target
             .reference
@@ -111,10 +159,32 @@ impl Checker<'_, '_> {
                 effects.add_read(path);
             }
         }
+        let (state, checked_form, key, hold) = match form {
+            AtomicTarget::Object { state } => {
+                (state, CheckedAtomicForm::Object, None, AtomicHold::Object)
+            }
+            AtomicTarget::Map { state } => (
+                state,
+                CheckedAtomicForm::Map,
+                None,
+                AtomicHold::Map(BindingId(0)),
+            ),
+            AtomicTarget::Entry { entry, key, holder } => {
+                effects = effects.union(key.effects.clone());
+                (
+                    entry,
+                    CheckedAtomicForm::Entry {
+                        held: holder.is_some(),
+                    },
+                    Some(Box::new(key.expression)),
+                    AtomicHold::Entry,
+                )
+            }
+        };
 
-        // [SHARE-2] the binding: a reference variable of kind `&T` whose path
-        // is the state. It anchors at itself, as a reference parameter does:
-        // the state belongs to no binding [SHARE-1], so no path reaches it
+        // [SHARE-2] the binding: a reference variable naming what the
+        // statement holds. It anchors at itself, as a reference parameter
+        // does: that belongs to no binding [SHARE-1], so no path reaches it
         // except through this binder.
         let declaration = self
             .types
@@ -124,6 +194,10 @@ impl Checker<'_, '_> {
         counters
             .binding_names
             .push(declaration.spelling().to_owned());
+        let hold = match hold {
+            AtomicHold::Map(_) => AtomicHold::Map(binding),
+            other => other,
+        };
         let base_keys = bindings.keys().copied().collect::<Vec<_>>();
         let preserved = base_keys.iter().copied().collect::<HashSet<_>>();
         let mut block_bindings = bindings.clone();
@@ -147,8 +221,22 @@ impl Checker<'_, '_> {
             },
         );
 
+        // [SHARE-2] only an object's statement outside every other atomic
+        // statement waits for a guard: one inside a map's or an entry's
+        // block would wait holding what that statement holds.
+        let allow_guard =
+            matches!(checked_form, CheckedAtomicForm::Object) && self.body.atomic_holds.is_empty();
         self.body.atomic_depth += 1;
-        let checked = self.check_atomic_parts(context, node, &mut block_bindings, counters, scope);
+        self.body.atomic_holds.push(hold);
+        let checked = self.check_atomic_parts(
+            context,
+            node,
+            &mut block_bindings,
+            counters,
+            scope,
+            allow_guard,
+        );
+        self.body.atomic_holds.pop();
         self.body.atomic_depth -= 1;
         let (guard, mut checked) = checked?;
         if let Some(guard) = &guard {
@@ -181,17 +269,24 @@ impl Checker<'_, '_> {
                 bindings,
             )?;
         }
+        let invariants = if matches!(checked_form, CheckedAtomicForm::Object) {
+            self.atomic_invariants(state, binding)
+        } else {
+            Vec::new()
+        };
         Ok(StatementResult {
             statement: CheckedStatement::Atomic {
                 node_path,
                 target: Box::new(target.expression),
+                form: checked_form,
+                key,
                 binding,
                 state,
                 guard: guard.map(|guard| Box::new(guard.0)),
                 body: checked.statements,
                 fallthrough_drops,
                 continues: checked.can_continue,
-                invariants: self.atomic_invariants(state, binding),
+                invariants,
             },
             can_continue: checked.can_continue,
             effects,
@@ -200,6 +295,120 @@ impl Checker<'_, '_> {
             give_states: checked.give_states,
             break_states: checked.break_states,
         })
+    }
+
+    /// [SHARE-2] the target and what it holds: a place of type `Shared<T>`
+    /// or `SharedMap<V>`, or a map's entry `m[k]` or `s^[k]` whose key `k` is
+    /// a `&[u8]` range. A place whose last step is an index over anything
+    /// but a map, or its state, is an ordinary place.
+    fn check_atomic_target(
+        &mut self,
+        context: FunctionContext<'_, '_>,
+        node: NodeId,
+        place_node: NodeId,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+        loop_depth: usize,
+    ) -> Result<(TypedExpression, AtomicTarget), CheckStop> {
+        let suffixes = self
+            .types
+            .declarations
+            .tree
+            .children_with(place_node, Production::Psuffix)?;
+        if let Some(last) = suffixes.last().copied()
+            && let Some(offset_node) = self.types.declarations.tree.subscript_offset(last)?
+        {
+            let prefix = self
+                .check_place_borrow_prefix(context, node, node, place_node, bindings, loop_depth)?;
+            let shape = match (prefix.mode, prefix.expression.ty()) {
+                (CheckedMode::Reference, CheckedType::Nominal(nominal)) => {
+                    match &self.types.nominal(nominal)?.kind {
+                        CheckedNominalKind::Shared { shape, .. } => Some(*shape),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+            let entry = match shape {
+                Some(CheckedShared::Map { entry }) => Some((entry, None)),
+                Some(CheckedShared::State { entry }) => {
+                    // The state is named only by the binder of the statement
+                    // that holds it, so the path the prefix names is rooted
+                    // at that binder.
+                    let holder = prefix
+                        .reference
+                        .as_ref()
+                        .and_then(|reference| match reference.paths.as_slice() {
+                            [place] => match place.root {
+                                PlaceRoot::Binding(binding) => Some(binding),
+                                PlaceRoot::Constant(_) => None,
+                            },
+                            _ => None,
+                        })
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                    Some((entry, Some(holder)))
+                }
+                Some(CheckedShared::Object) | None => None,
+            };
+            if let Some((entry, holder)) = entry {
+                let mut probe = bindings.clone();
+                let key = self.check_atom(context, offset_node, &mut probe, loop_depth)?;
+                let bytes = key.mode == CheckedMode::Range
+                    && key.expression.ty() == CheckedType::Integer(IntegerType::U8);
+                if !bytes {
+                    return self.types.declarations.issue_node(
+                        SemanticRule::Share2,
+                        offset_node,
+                        SemanticIssueKind::AtomicKeyNotBytes {
+                            found: self
+                                .types
+                                .checked_value_name(key.mode, key.expression.ty())?,
+                            mechanical_fix: SHARE2_KEY_A_BYTE_RANGE,
+                        },
+                    );
+                }
+                return Ok((
+                    prefix,
+                    AtomicTarget::Entry {
+                        entry,
+                        key: Box::new(key),
+                        holder,
+                    },
+                ));
+            }
+        }
+        let target =
+            self.check_place_borrow(context, node, node, place_node, bindings, loop_depth)?;
+        let form = match (target.mode, target.expression.ty()) {
+            (CheckedMode::Reference, CheckedType::Nominal(nominal)) => {
+                match self.types.nominal(nominal)?.kind.clone() {
+                    CheckedNominalKind::Shared {
+                        state,
+                        shape: CheckedShared::Object,
+                    } => Some(AtomicTarget::Object { state }),
+                    CheckedNominalKind::Shared {
+                        state,
+                        shape: CheckedShared::Map { .. },
+                    } => Some(AtomicTarget::Map {
+                        state: CheckedType::Nominal(self.keyed_state(context, state)?),
+                    }),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        let Some(form) = form else {
+            return self.types.declarations.issue_node(
+                SemanticRule::Share2,
+                node,
+                SemanticIssueKind::AtomicTargetNotShared {
+                    found: self
+                        .types
+                        .checked_value_name(target.mode, target.expression.ty())?,
+                    mechanical_fix: SHARE2_NAME_A_SHARED_HANDLE,
+                },
+            );
+        };
+        Ok((target, form))
     }
 
     /// The guard and the block, checked with the binder in scope and inside
@@ -213,6 +422,7 @@ impl Checker<'_, '_> {
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         counters: &mut ControlCounters<'_>,
         scope: ControlScope<'_>,
+        allow_guard: bool,
     ) -> Result<(Option<(CheckedExpression, EffectSet)>, super::BlockResult), CheckStop> {
         let guard = match self
             .types
@@ -220,6 +430,15 @@ impl Checker<'_, '_> {
             .tree
             .first_child_with(node, Production::Expr)?
         {
+            Some(expression_node) if !allow_guard => {
+                return self.types.declarations.issue_node(
+                    SemanticRule::Share2,
+                    expression_node,
+                    SemanticIssueKind::AtomicGuardOnMap {
+                        mechanical_fix: SHARE2_NO_GUARD_ON_A_MAP,
+                    },
+                );
+            }
             Some(expression_node) => {
                 let condition =
                     self.check_condition(context, expression_node, bindings, scope.loops.len())?;

@@ -1,4 +1,4 @@
-# Kernel Specification v0.84
+# Kernel Specification v0.83
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -638,7 +638,7 @@ After any consuming use, the whole binding rooting `p` is dead (partial moves ki
 SET-1 rechecks its premises after its right-hand side under [LIV-1]; a dead binding is revived only by a [SET-1] commit whose target is that complete binding, which reinitializes it, and by nothing else.
 
 [REF-1] A reference is a local name for a path.
-A path starts at a local variable, a parameter, a named const [CONST-2], the state of a shared object or of a shared map, or an entry of a shared map [SHARE-1] and continues through field selections, `^` (a reference's referent [TYPE-7]), an index step, a range step [REF-4], or an enum payload step [GRAM-5].
+A path starts at a local variable, a parameter, a named const [CONST-2], or the state of a shared object [SHARE-1] and continues through field selections, `^` (a reference's referent [TYPE-7]), an index step, a range step [REF-4], or an enum payload step [GRAM-5].
 A payload step is available only under the refinement fact that the enum currently holds that variant, which a `match` arm establishes [ENT-3.S15] and which any write to the enum invalidates [REF-2].
 A reference variable denotes the reference, and the storage it names is reached only through `^` [TYPE-7]: every place expression, subscript, field selection, payload step, and measure read that goes through a reference variable `p` is written under that step — `p^`, `p^.field`, `part^[i]`, `part^.len`, and `p^.Some.value`.
 `let q = p;` where `p` is a reference variable makes `q` a reference to the same path — an alias, not a copy of the referent — and passing a bare reference variable where a `&T` or `&[T]` parameter is expected passes that reference.
@@ -820,7 +820,7 @@ A component of the closure's call graph introduces the requirement when its func
 [STOR-3] Deallocation and resource release are compiler-derived and explicit in the checked program [DIAG-2]: every release is represented before lowering.
 Release actions run on every source control-flow edge that leaves their owner scope, in reverse declaration order; [FN-10] places a guaranteed self-tail transfer's releases before that transfer.
 Host termination caused solely by unavailable external resources under [SCOPE-3] is not a Whitefoot control-flow edge, and this specification makes no source-level cleanup promise for that case.
-A binding's value is released at points the checked program fixes; the state of a shared object or of a shared map belongs to no binding, and [SHARE-1] fixes its release.
+A binding's value is released at points the checked program fixes; a shared object's state belongs to no binding, and [SHARE-1] fixes its release.
 
 Every edge that leaves one entered `for_stmt` body normally — its fallthrough, a `break` resolved to that counted loop or an enclosing loop, a `return`, or a `propagate` error edge — carries exactly once every compiler-derived release for the body scopes that edge leaves, innermost scope first and in reverse declaration order within each scope.
 On body fallthrough those actions complete before the hidden counted update [FN-1].
@@ -2187,35 +2187,24 @@ The starting context joins the started one, waiting there until it has completed
 1. for an `expr_stmt`, when the activation that executed the spawn leaves by any edge [FN-1, ERR-3], the started context having released the call's result;
 2. for a `let_stmt`, at the beginning of the first later statement of the `let_stmt`'s block that names the binding or contains an edge leaving that block [ERR-3, GIVE-1], and otherwise at that block's end; the binding holds the call's result from the join on.
 
-[SHARE-1] Shared objects and shared maps.
+[SHARE-1] Shared objects.
 A value of the prelude type `Shared<T>` [PRE-1] is a handle to a shared object, which holds one value of type `T`, its state.
 `shared_new` moves its argument into a new shared object and returns a handle to it, and `shared_share` returns a further handle to the object its argument names.
-A value of the prelude type `SharedMap<V>` is a handle to a shared map, whose state, of the prelude type `Keyed<V>`, holds for each sequence of bytes, its key, an entry of type `Option<V>`: `Some` with the value the map holds under that key, or `None`.
-`shared_map_new` returns a handle to a new shared map whose every entry is `None`, sized for its argument's number of `Some` entries, `shared_map_share` returns a further handle to the map its argument names, and `keyed_count` returns how many entries of the state its argument names are `Some`.
-Releasing a handle [OWN-1, STOR-3] releases that handle. An object's state, or a map's state with every value its entries hold, is released when its last handle has been released and no atomic statement on it is executing.
-The state of a shared object or of a shared map, and an entry of a shared map, are storage of no binding and belong to no context [WAIT-2]. Paths into each start at it [REF-1], and the binding of an atomic statement [SHARE-2] is the only form that forms one.
+Releasing a handle [OWN-1, STOR-3] releases that handle. An object's state is released when its last handle has been released and no atomic statement on it is executing.
+A shared object's state is storage of no binding and belongs to no context [WAIT-2]. Paths into it start at the state itself [REF-1], and the binding of an atomic statement [SHARE-2] is the only form that forms one.
 
 [SHARE-2] Atomic statements.
-An `atomic_stmt` [GRAM-4] has a target, the `place` after `&`; a binding, its `IDENT`; a block; and optionally a guard, the `expr` after `when`. Its target and binding take one of these forms:
-
-| target | the statement holds | binding |
-|---|---|---|
-| a place of type `Shared<T>` | the object's state | `&T`, whose path is the state |
-| a place of type `SharedMap<V>` | the map's state | `&Keyed<V>`, whose path is the state |
-| `m[k]`, where `m` is a place of type `SharedMap<V>` and the index atom `k` has type `&[u8]` | the map's entry under the bytes `k` names | `&Option<V>`, whose path is the entry |
-| `s^[k]`, where `s` is the binding of an atomic statement holding a map's state whose block encloses this statement and `k` has type `&[u8]` | the entry of that map under the bytes `k` names | `&Option<V>`, whose path is the entry |
-
-The statement reads its target place, or `m` and `k`, when it begins. The object or map stays live until the statement completes, whatever its block does with the target place [SHARE-1].
-The binding is a reference variable of the kind the table gives. It is in scope in the guard and the block, and its root leaves scope when the block ends by any edge [REF-2].
-A statement of the last form counts as no call. Every other atomic statement counts as a waiting call for [WAIT-1], [PAR-1] and [PAR-2], so one in the body of a function that does not wait is WAIT-1's hard error at that `atomic_stmt`.
-The guard, and the block of a statement holding an object's state, contain no waiting call and no atomic statement. The block of a statement holding a map's state or an entry contains no waiting call; it contains an atomic statement only when that statement holds an object's state, or when it holds an entry of the map the outer statement holds the state of and the outer statement holds that state.
-Only a statement holding an object's state, inside the block of no other atomic statement, has a guard; the guard has the condition judgment of an `if` [GRAM-6], and its footprint [PAR-1] writes no path.
+An `atomic_stmt` [GRAM-4] has a target, the `place` after `&`; a binding, its `IDENT`; a block; and optionally a guard, the `expr` after `when`.
+The target has type `Shared<T>`, and the statement reads the target place when it begins. The object stays live until the statement completes, whatever its block does with the target place [SHARE-1].
+The binding is a reference variable of kind `&T` whose path is the state of the object the target names [REF-1]. It is in scope in the guard and the block, and its root leaves scope when the block ends by any edge [REF-2].
+An atomic statement counts as a waiting call for [WAIT-1], [PAR-1] and [PAR-2], so one in the body of a function that does not wait is WAIT-1's hard error at that `atomic_stmt`. Its guard and its block contain no waiting call and no atomic statement.
+The guard has the condition judgment of an `if` [GRAM-6], and its footprint [PAR-1] writes no path.
 A violation is a hard error citing SHARE-2 at the offending `call`, `atomic_stmt` or guard `expr`, with a repair [DIAG-1].
-The statement's footprint is its target place, or `m` and `k`, read, together with the footprint of its guard and block from which every path rooted at the state or entry it holds is removed.
+The statement's footprint is its target place, read, together with the footprint of its guard and block from which every path rooted at the object's state is removed.
 
 [SHARE-3] An atomic statement takes effect at one point after it begins and before it completes.
-Its block executes with exclusive access to what it holds, a map's state including every entry of the map, and every read and write its guard and block make of that takes effect at that point. When the statement has a guard, the guard is true in the state at that point.
-The atomic statements holding one object's state take effect in one order [WAIT-2], as do the statements holding one map's entry under one key together with those holding that map's state, and the statements of one context take effect in its source order.
+Its block executes with exclusive access to the object's state, and every read and write its guard and block make of that state takes effect at that point. When the statement has a guard, the guard is true in the state at that point.
+The atomic statements on one object take effect in one order [WAIT-2], and the statements of one context take effect in its source order.
 A statement whose guard is false in the state at every point after it begins does not complete, as a waiting host operation whose outcome never arrives does not complete [WAIT-2].
 A statement that has begun and has not taken effect waits for its guard while its guard is false in the object's state, and [WAIT-2] states when it takes effect.
 How many times an implementation evaluates a guard is not observable, since the guard writes nothing.
@@ -2224,7 +2213,7 @@ How many times an implementation evaluates a guard is not observable, since the 
 
 [PRE-1] The prelude contributes ordinary nominal, constructor, numeric-bound and function declarations to every module. Their source visibility, collisions, typing, ownership and calls are the ordinary rules; an entry's prelude origin supplies only its deterministic diagnostic ordinal [TYPE-6, DIAG-1].
 
-The prelude's opaque structs [TYPE-2] are the four storage shapes and the cell `Box` [TYPE-9], built by the construction rows [OP-13], the shared-object handle `Shared`, and the shared-map handle `SharedMap` with its state `Keyed` [SHARE-1]. An opaque struct is not const-eligible [CONST-2]; its capability modifier and the ordinary ownership closure are exactly [OWN-1, PROV-6]. Their declarations are:
+The prelude's opaque structs [TYPE-2] are the four storage shapes and the cell `Box` [TYPE-9], built by the construction rows [OP-13], and the shared-object handle `Shared` [SHARE-1]. An opaque struct is not const-eligible [CONST-2]; its capability modifier and the ordinary ownership closure are exactly [OWN-1, PROV-6]. Their declarations are:
 
 ```
 opaque struct Array<T, const n: u64> {
@@ -2251,12 +2240,6 @@ opaque nocopy struct Box<T> {
 }
 
 opaque nocopy struct Shared<T: drop> {
-}
-
-opaque nocopy struct SharedMap<V: drop> {
-}
-
-opaque nocopy struct Keyed<V: drop> {
 }
 ```
 
@@ -2384,9 +2367,6 @@ fn take_front<W, T>(window: &W) -> value: T writes(window) contract {
 fn swap<T>(first: &T, second: &T) -> result: unit writes(first), writes(second);
 fn shared_new<T: drop>(value: T) -> result: Shared<T> pure;
 fn shared_share<T: drop>(shared: &Shared<T>) -> result: Shared<T> reads(shared);
-fn shared_map_new<V: drop>(capacity: u64) -> result: SharedMap<V> pure;
-fn shared_map_share<V: drop>(shared: &SharedMap<V>) -> result: SharedMap<V> reads(shared);
-fn keyed_count<V: drop>(state: &Keyed<V>) -> count: u64 reads(state);
 fn free_empty<W>(window: W) -> result: unit pure contract {
   requires window.len == 0_u64;
 };
@@ -2394,7 +2374,7 @@ fn free_empty<W>(window: W) -> result: unit pure contract {
 
 Each record is an ordinary callable boundary usable by a direct call or a function-kind binding under FN-2 through FN-5. Its definition is supplied by the build and must satisfy the declared boundary [SCOPE-3]; calls neither inspect nor classify that definition. There is one ordinary callable ABI for definitions written in Whitefoot and definitions supplied by linking. A reference passed to either lasts through that call's return and is not retained beyond it [REF-3]. A missing definition or incompatible physical representation is a build/link failure, not a source-language rejection.
 PRE-1 requirement templates are discharged by FN-8 and declared postconditions are instantiated only by CALL-6 and FN-9's ordinary selected-result rules. The supplied definition is responsible for those propositions under SCOPE-3; its declaration has no Whitefoot body for FN-9 to verify. No compiler-owned operation fact or alternative acceptance judgment exists.
-The declaration preorder is each opaque struct above in written order with its refused constructor and its fields in declaration order, then each enum above in written order with its variants and their fields in declaration order, then `Int`, `Float`, then each construction function above in written order, then each window operation above in written order, then `swap`, `shared_new`, `shared_share`, `shared_map_new`, `shared_map_share`, `keyed_count` and `free_empty`, each with its type, const and value parameters in declared order. Owner-local fields and parameters do not enter compilation-root name lookup. This preorder fixes each PRE-1 diagnostic ordinal [DIAG-1].
+The declaration preorder is each opaque struct above in written order with its refused constructor and its fields in declaration order, then each enum above in written order with its variants and their fields in declaration order, then `Int`, `Float`, then each construction function above in written order, then each window operation above in written order, then `swap` and `free_empty`, each with its type, const and value parameters in declared order. Owner-local fields and parameters do not enter compilation-root name lookup. This preorder fixes each PRE-1 diagnostic ordinal [DIAG-1].
 
 [PRE-2] The host modules are the six standard library modules [MOD-10] `std::time`, `std::io`, `std::text`, `std::fs`, `std::net` and `std::process`, registered by these rows of the standard library's graph:
 

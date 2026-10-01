@@ -1,0 +1,29 @@
+const names: Array<u8, 4> =[119_u8, 120_u8, 121_u8, 122_u8];
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let map = shared_map_new::<u8>(capacity: 0_u64);
+  let total = 0_u8;
+  atomic state = &map {
+    for @fill (at in 1_u64..5_u64) {
+      atomic slot = &state^[&names[0_u64..at]] {
+        set slot^ = Some<u8>(value: 2_u8);
+      }
+    }
+    for @read (at in 1_u64..5_u64) {
+      atomic slot = &state^[&names[0_u64..at]] {
+        match slot^ {
+          Some(value: seen) => {
+            set total = total +wrap seen^;
+          }
+          None() => {
+          }
+        }
+      }
+    }
+    let counted = keyed_count::<u8>(state: state);
+    if counted == 4_u64 {
+      set total = total +wrap 4_u8;
+    }
+  }
+  return std::process::exit_status(code: total);
+}

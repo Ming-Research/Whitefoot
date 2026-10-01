@@ -59,7 +59,9 @@ impl IrBuilder<'_> {
             "swap" => self.row_swap(),
             "free_empty" => self.row_free_empty(),
             "shared_new" => self.row_shared_new(),
-            "shared_share" => self.row_shared_share(),
+            "shared_share" | "shared_map_share" => self.row_shared_share(),
+            "shared_map_new" => self.row_shared_map_new(),
+            "keyed_count" => self.row_keyed_count(),
             _ => Err(LoweringFailure::UnimplementedPreludeRow(
                 crate::lowering::COMPILER_OWNED_PRELUDE_ROWS
                     .iter()
@@ -151,8 +153,28 @@ impl IrBuilder<'_> {
         self.return_value(object)
     }
 
-    /// `shared_share<T>(shared: &Shared<T>) -> Shared<T>`: a further handle
-    /// to the object the argument names [SHARE-1].
+    /// `shared_map_new<V>(capacity: u64) -> SharedMap<V>`: a new map holding
+    /// one handle and no entry, sized for `capacity` values [SHARE-1].
+    fn row_shared_map_new(&mut self) -> Result<(), LoweringFailure> {
+        let [capacity] = self.row_parameters()?;
+        let IrType::Nominal(nominal) = self.result else {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        };
+        let object = self.define(self.result, IrOperation::SharedMapNew { nominal, capacity })?;
+        self.return_value(object)
+    }
+
+    /// `keyed_count<V>(state: &Keyed<V>) -> u64`: how many entries of the
+    /// state the argument names hold `Some` [SHARE-1].
+    fn row_keyed_count(&mut self) -> Result<(), LoweringFailure> {
+        let [state] = self.row_parameters()?;
+        let count = self.define(self.result, IrOperation::SharedMapCount { state })?;
+        self.return_value(count)
+    }
+
+    /// `shared_share<T>(shared: &Shared<T>) -> Shared<T>` and
+    /// `shared_map_share<V>(shared: &SharedMap<V>) -> SharedMap<V>`: a further
+    /// handle to the object or map the argument names [SHARE-1].
     fn row_shared_share(&mut self) -> Result<(), LoweringFailure> {
         let [shared] = self.row_parameters()?;
         let IrType::Nominal(nominal) = self.result else {

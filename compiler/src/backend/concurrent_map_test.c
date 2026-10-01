@@ -530,7 +530,7 @@ static void entries_sequential(void) {
     static uint8_t present[ENTRY_KEYS];
     static uint64_t value[ENTRY_KEYS];
     unsigned char bytes[ENTRY_KEY_BYTES];
-    wf_cmap *map = wf_cmap_create_entries(16, 8);
+    wf_cmap *map = wf_cmap_create_entries(16, 8, 0);
     wf_cmap_user *user = wf_cmap_user_at(map, 0);
     uint64_t state = 11, live = 0;
     for (unsigned i = 0; i < OPS; i++) {
@@ -541,6 +541,8 @@ static void entries_sequential(void) {
         uint64_t *slot = wf_cmap_lock_entry(user, bytes, length, 0, &entry);
         if (entry.fresh != !present[k])
             fail("an entry's freshness disagrees with the reference", k, entry.fresh);
+        if (entry.fresh && (slot[0] != 0 || slot[1] != 0))
+            fail("a fresh entry's slot is not zero", k, slot[0]);
         if (present[k] && slot[0] != value[k])
             fail("an entry's value disagrees with the reference", k, slot[0]);
         int keep = (r & 3) != 0;
@@ -626,7 +628,7 @@ static void *hold_entries(void *arg) {
 }
 
 static void entries_held(void) {
-    wf_cmap *map = wf_cmap_create_entries(8, 8);
+    wf_cmap *map = wf_cmap_create_entries(8, 8, 0);
     _Atomic uint64_t total = 0;
     _Atomic int stop = 0;
     pthread_t t[THREADS + 1];

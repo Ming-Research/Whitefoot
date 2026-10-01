@@ -311,6 +311,21 @@ void wf__shared_free(void *object);
 int wf__shared_acquire(void *object, uint32_t write, void *frame);
 void wf__shared_unlock(void *object, uint32_t write);
 int wf__shared_watch(void *object, uint32_t write, void *frame);
+/* The acquire of a statement inside the block of a statement holding a
+ * map's state or an entry, which keeps its driver and never suspends: it
+ * returns once the running context holds the object. */
+void wf__shared_take(void *object, uint32_t write);
+
+/* What the runtime's concurrent maps take from this runtime: the number of
+ * the driver running the caller, below WF_CMAP_MAX_USERS, which numbers a
+ * map's users; blocks from the context pool, never from the program's
+ * allocator [STOR-8]; a yield of the processor; and the end a frame no
+ * memory can hold brings. */
+unsigned wf__driver_index(void);
+void *wf__runtime_take(uint64_t bytes);
+void wf__runtime_give(void *block, uint64_t bytes);
+void wf__runtime_yield(void);
+_Noreturn void wf__runtime_exhausted(void);
 
 /* The root context runs the entry: `wf__context_root_begin` makes it the
  * running context, the launcher calls the entry's ramp, and

@@ -730,11 +730,15 @@ impl<'check> Program<'check> {
             }
             CheckedStatement::Atomic {
                 target,
+                key,
                 guard,
                 body,
                 ..
             } => {
-                expression(target) || guard.as_deref().is_some_and(expression) || block(body, inner)
+                expression(target)
+                    || key.as_deref().is_some_and(expression)
+                    || guard.as_deref().is_some_and(expression)
+                    || block(body, inner)
             }
             CheckedStatement::Break { target, .. } => !inner.loops.contains(target),
             CheckedStatement::Give { value, .. } => inner.values == 0 || expression(value),

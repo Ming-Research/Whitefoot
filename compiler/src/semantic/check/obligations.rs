@@ -284,6 +284,7 @@ impl Records<'_> {
             CheckedStatement::Atomic {
                 node_path,
                 target,
+                key,
                 guard,
                 body,
                 continues,
@@ -291,6 +292,9 @@ impl Records<'_> {
                 ..
             } => {
                 self.expression(target);
+                if let Some(key) = key {
+                    self.expression(key);
+                }
                 if let Some(guard) = guard {
                     self.expression(guard);
                 }

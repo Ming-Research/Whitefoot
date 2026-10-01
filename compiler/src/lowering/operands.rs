@@ -120,7 +120,19 @@ macro_rules! operation_operands {
             | IrOperation::SharedRetain { object: value, .. }
             | IrOperation::SharedAcquire { object: value }
             | IrOperation::SharedWatch { object: value }
-            | IrOperation::SharedUnlock { object: value } => vec![$value(value)],
+            | IrOperation::SharedTake { object: value }
+            | IrOperation::SharedUnlock { object: value }
+            | IrOperation::SharedMapNew {
+                capacity: value, ..
+            }
+            | IrOperation::SharedMapState { object: value, .. }
+            | IrOperation::SharedMapHold { object: value }
+            | IrOperation::SharedMapUnhold { object: value }
+            | IrOperation::SharedMapCount { state: value } => vec![$value(value)],
+            IrOperation::SharedMapLock { object, key, .. } => vec![$value(object), $value(key)],
+            IrOperation::SharedMapUnlock { object, entry, .. } => {
+                vec![$value(object), $value(entry)]
+            }
             IrOperation::ArrayIndex { root, offset, .. } => match root {
                 IrArrayRoot::Value(value) => vec![$value(value), $value(offset)],
                 IrArrayRoot::Constant(_) => vec![$value(offset)],

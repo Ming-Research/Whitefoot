@@ -36,11 +36,11 @@ int wf_cmap_remove(wf_cmap_user *user, uint64_t key);
  * was present, 0 without running edit otherwise. */
 int wf_cmap_update(wf_cmap_user *user, uint64_t key, void (*edit)(uint64_t *value, void *env), void *env);
 
-/* A map of entries: byte-string keys of any length, each with a slot of
- * slot_size bytes aligned to slot_align, at most 16, that the caller fills.
- * A keyed statement locks one entry; a statement over the whole map holds
- * every entry. */
-wf_cmap *wf_cmap_create_entries(uint64_t slot_size, uint64_t slot_align);
+/* A map of entries sized for capacity keys: byte-string keys of any length,
+ * each with a slot of slot_size bytes aligned to slot_align, at most 16, that
+ * the caller fills. A keyed statement locks one entry; a statement over the
+ * whole map holds every entry. */
+wf_cmap *wf_cmap_create_entries(uint64_t slot_size, uint64_t slot_align, uint64_t capacity);
 /* The user numbered index, below WF_CMAP_MAX_USERS, which one thread holds
  * at a time; a runtime numbers its threads and never leaves. */
 wf_cmap_user *wf_cmap_user_at(wf_cmap *map, unsigned index);
@@ -53,8 +53,8 @@ typedef struct {
 } wf_cmap_entry;
 
 /* Locks key's entry, creating it when absent, and returns its slot's address;
- * entry->fresh is 1 when the entry was created, its slot unfilled. With held
- * set, the caller holds the whole map. */
+ * entry->fresh is 1 when the entry was created, its slot filled with zeros.
+ * With held set, the caller holds the whole map. */
 void *wf_cmap_lock_entry(wf_cmap_user *user, const unsigned char *key, uint64_t length, int held,
                          wf_cmap_entry *entry);
 /* Unlocks the entry: kept when present, else removed with its slot, which
