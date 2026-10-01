@@ -1,0 +1,11 @@
+fn pair(n: u64) -> (cells: Box<Array<u64>>, count: u64) pure contract {
+  ensures forall zero(k in 0_u64..cells.inner.len): cells.inner[k] == 0_u64;
+} {
+  doc "Returns zeroed cells and their count.";
+  let made = box_array_filled::<u64>(count: n, value: 0_u64);
+  return move made, n;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

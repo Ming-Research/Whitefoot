@@ -43,18 +43,17 @@ proves, is never needed: each pass walks the elements it styles in preorder,
 and that walk already refuses a parent that does not precede its element.
 The facts are stated about the arrays the pass derives (depths, per-level
 lists, positions) and are established by the loops that build them, as loop
-invariants, then handed to a callee as its requirements. Range facts cross a
-call only that way: there are no range postconditions, so a consumer that
-receives arrays from elsewhere validates them with a loop whose invariants
-state the facts. The cost is the walk the pass makes anyway, plus one
-grouping pass.
+invariants, then handed to a callee as its requirements, or back to a caller
+as the postconditions of the function that built them; no fact outlives the
+pass. The cost is the walk the pass makes anyway, plus one grouping pass.
 
 ## The language
 
 What is new, with the rule that defines it:
 
-- **A range clause** [RANGE-1], as a function requirement or a loop header
-  invariant: `forall NAME(x in a..b, y in c..d) when g1, g2: c1, c2`, one or
+- **A range clause** [RANGE-1], as a function requirement or postcondition
+  or a loop header invariant:
+  `forall NAME(x in a..b, y in c..d) when g1, g2: c1, c2`, one or
   two bound variables, guards and conclusions comparing integer terms. Terms
   are literals, consts, bound variables, live integer values, measures,
   segment lengths and integer element reads (`p^[i]`, `b.inner[i]`,
@@ -62,11 +61,13 @@ What is new, with the rule that defines it:
   instance claims its conclusions only where its reads select existing
   elements.
 - **The range judgment** [RANGE-2, RANGE-3]: a fact is proved at every call
-  of a function requiring it, at its loop's entry and on every backedge, by
-  the fixed derivation described [below](#how-the-compiler-proves-it).
-- **Fill contents** [RANGE-2]: `box_array_filled(count, v)` gives every
-  element v, and `box_segments_filled(lengths, v)`, under `Some`, gives every
-  element v and each segment its length.
+  of a function requiring it, at its loop's entry, on every backedge and at
+  every exit of a function promising it, by the fixed derivation described
+  [below](#how-the-compiler-proves-it); after a call the caller holds the
+  callee's postconditions, a routed one in the arm that takes its variant.
+- **Fill contents** [PRE-1]: `box_array_filled(count, v)`'s row promises
+  every element v, and `box_segments_filled(lengths, v)`'s, under `Some`,
+  every element v and each segment its length, as range postconditions.
 - **A certificate** [RANGE-5]: `apart(i, j) { use NAME(args); ... }` on a
   counted loop asks the judgment to prove that two distinct iterations touch
   no element of shared storage in common. Usually the block is empty: the
@@ -159,10 +160,10 @@ the join each value, version and condition the arms disagree on is defined by
 the arm taken, through one selector per join. A loop header forgets what a
 dry walk of the body writes, then assumes the loop's invariants.
 
-**One obligation** (a call's requirement, a loop entry, a backedge) becomes
-a finite problem: fresh bound variables, their ranges, the guards and the
-existence of every read as hypotheses, the state's conditions and joins, and
-the negated conclusion. The derivation then:
+**One obligation** (a call's requirement, a loop entry, a backedge, an
+exit) becomes a finite problem: fresh bound variables, their ranges, the
+guards and the existence of every read as hypotheses, the state's conditions
+and joins, and the negated conclusion. The derivation then:
 
 1. instantiates every active fact at each tuple an element read of the
    problem selects through one of the fact's own reads, after expanding
@@ -335,10 +336,9 @@ criteria before the paper derivation:
 
 ## Limits
 
-- **No range postconditions.** A written function cannot hand a range fact
-  to its caller; only the prelude's fill constructors' contents come back
-  from a call. A producer in its own function means its consumer validates what it
-  receives. The design tree records the reopening condition.
+- **One result.** A range postcondition names its function's single result,
+  through an `Ok` or `Some` route where it is routed, and its reference
+  parameters' storage; a function that returns a result list states none.
 - **The live DOM.** Nothing is stated about the linked arena itself: not
   acyclicity, not facts that survive a mutation. Incremental restyling that
   keeps a numbering across edits would need order keys with gaps, or the

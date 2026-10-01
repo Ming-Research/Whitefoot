@@ -492,6 +492,8 @@ impl<'program> Walker<'program> {
             } => {
                 self.cite = node_path.clone();
                 let _ = self.eval(&mut state, scrutinee);
+                // [FN-9] the `Err` edge returns the propagated error.
+                self.owe_postconditions(&mut state, None, node_path, "a propagated error exit");
                 self.bind(&mut state, *binding, *ok_type, Value::Unknown);
                 Some(state)
             }
@@ -523,10 +525,9 @@ impl<'program> Walker<'program> {
             CheckedStatement::Return {
                 node_path, value, ..
             } => {
-                // No range fact is owed at a return [RANGE-3]: the returned
-                // value is evaluated only for the obligations it contains.
                 self.cite = node_path.clone();
-                self.eval(&mut state, value);
+                let returned = self.eval(&mut state, value);
+                self.owe_postconditions(&mut state, Some(&returned), node_path, "a return");
                 None
             }
             CheckedStatement::Match {
@@ -1759,129 +1760,105 @@ impl<'program> Walker<'program> {
             CheckedType::Unit | CheckedType::Float(_) => Value::Unknown,
             _ => Value::Owned(Location::root(Origin::CallResult(self.world.new_origin()))),
         };
-        if callee.body.is_none() {
-            // The fill value's type is the element type of both rows.
-            let element = arguments.get(1).and_then(|fill| integer_type(fill.ty()));
-            self.content_law(state, callee, &values, &value, element);
-        }
+        self.assume_postconditions(state, callee, &values, &value);
         value
     }
 
-    /// [RANGE-2] the content a fill constructor gives its result.
-    fn content_law(
+    /// [RANGE-2] a callee's postconditions after a call: each parameter
+    /// denotes its argument, a reference's storage as the call left it, and
+    /// the result the call's result; a routed one holds in the arm of a
+    /// `match` on the result that takes its variant.
+    fn assume_postconditions(
         &mut self,
         state: &mut State,
         callee: &CheckedFunction,
         arguments: &[Value],
         result: &Value,
-        element: Option<IntegerType>,
     ) {
-        let Value::Owned(location) = result else {
-            return;
-        };
-        match callee.name.as_str() {
-            "box_array_filled" => {
-                let (Some(Value::Int(count)), Some(Value::Int(fill))) =
-                    (arguments.first(), arguments.get(1))
-                else {
-                    return;
-                };
-                let content = location.child(Step::BoxContent);
-                let Some(container) = self.world.container(content, 1) else {
-                    return;
-                };
-                let length = self.world.measure(container, 0, CheckedMeasure::Length);
-                state
-                    .conds
-                    .push(literal(length.clone(), Relation::Equal, count.clone()));
-                let clause = law_clause(element, CheckedRangeShape::Run);
-                let mut frame = Frame::default();
-                let version = state.version(&mut self.world, container);
-                frame.places.insert(
-                    law_place(),
-                    PlaceView::Run {
-                        container,
-                        version,
-                        generation: 0,
-                        prefix: Vec::new(),
-                        offset: Linear::constant(0),
-                        length,
-                    },
-                );
-                frame
-                    .values
-                    .insert(CheckedRangeRoot::Argument(1), fill.clone());
-                let id = self.add_fact(clause, frame);
-                state.facts.push(id);
-            }
-            "box_segments_filled" => {
-                let (
-                    Some(Value::Ref(View::Run {
-                        container: lengths,
-                        prefix,
-                        offset,
-                        length: count,
-                    })),
-                    Some(Value::Int(fill)),
-                ) = (arguments.first().cloned(), arguments.get(1).cloned())
-                else {
-                    return;
-                };
-                if !prefix.is_empty() {
-                    return;
-                }
-                let payload = location
-                    .child(Step::Payload {
-                        variant: 1,
+        let parameters: Vec<BindingId> = callee
+            .parameters
+            .iter()
+            .map(|parameter| parameter.binding)
+            .collect();
+        for post in &callee.range_facts.postconditions {
+            let (result, routed) = match (post.route, result) {
+                (None, _) => (result.clone(), None),
+                (Some(tag), Value::Owned(location)) => {
+                    let at = state.resolve(location);
+                    let payload = at.child(Step::Payload {
+                        variant: tag,
                         field: 0,
-                    })
-                    .child(Step::BoxContent);
-                let Some(container) = self.world.container(payload, 2) else {
-                    return;
-                };
-                let rows = self.world.measure(container, 0, CheckedMeasure::Length);
-                let lengths_version = state.version(&mut self.world, lengths);
-                let version = state.version(&mut self.world, container);
-                // Under `Some`: `s.len == lengths.len`, each segment's length
-                // is its entry of `lengths`, and every element is the fill.
-                let mut frame = Frame::default();
-                frame.places.insert(
-                    law_place(),
-                    PlaceView::Segments {
-                        container,
-                        version,
-                        generation: 0,
-                        rows: rows.clone(),
-                    },
-                );
-                frame.places.insert(
-                    law_lengths(),
-                    PlaceView::Run {
-                        container: lengths,
-                        version: lengths_version,
-                        generation: state.generation(lengths),
-                        prefix: Vec::new(),
-                        offset,
-                        length: count.clone(),
-                    },
-                );
-                frame.values.insert(CheckedRangeRoot::Argument(1), fill);
-                let frame_rows = frame.clone();
-                let filled = self.add_fact(
-                    law_clause(element, CheckedRangeShape::Segments),
-                    frame.clone(),
-                );
-                let sized = self.add_fact(segment_lengths_clause(), frame);
-                let at = state.resolve(location);
-                state.routed.push((at.clone(), 1, filled));
-                state.routed.push((at, 1, sized));
-                // The row count is a routed fact too: a clause without
-                // bound variables.
-                let rows_fact = self.add_fact(rows_clause(), frame_rows);
-                let at = state.resolve(location);
-                state.routed.push((at, 1, rows_fact));
+                    });
+                    let value = self.read_location(state, &payload, post.result_type);
+                    (value, Some((at, tag)))
+                }
+                (Some(_), _) => continue,
+            };
+            let roots = |root: CheckedRangeRoot| match root {
+                CheckedRangeRoot::Binding(binding) => parameters
+                    .iter()
+                    .position(|parameter| *parameter == binding)
+                    .and_then(|position| arguments.get(position).cloned()),
+                CheckedRangeRoot::Result => Some(result.clone()),
+            };
+            let frame = self.frame(state, &post.clause, &roots);
+            let id = self.add_fact(post.clause.clone(), frame);
+            match routed {
+                None => state.facts.push(id),
+                Some((at, tag)) => state.routed.push((at, tag, id)),
             }
-            _ => {}
+        }
+    }
+
+    /// [RANGE-3] the function's range postconditions an exit selects
+    /// [FN-9]: at a return, `returned` is its value; at a propagated error
+    /// exit there is none, and only the unrouted ones are selected.
+    fn owe_postconditions(
+        &mut self,
+        state: &mut State,
+        returned: Option<&Value>,
+        node: &NodePath,
+        site: &'static str,
+    ) {
+        if self.dry > 0 {
+            return;
+        }
+        let function = self.function;
+        for post in function
+            .range_facts
+            .postconditions
+            .iter()
+            .filter(|post| post.owed)
+        {
+            let result = match (post.route, returned) {
+                (None, returned) => returned.cloned(),
+                (Some(_), None) => continue,
+                (Some(tag), Some(Value::Variant { variant, fields })) => {
+                    if *variant != tag {
+                        continue;
+                    }
+                    fields.first().cloned()
+                }
+                (Some(tag), Some(Value::Owned(location))) => {
+                    let at = state.resolve(location);
+                    if state.variants.get(&at).is_some_and(|known| *known != tag) {
+                        continue;
+                    }
+                    let payload = at.child(Step::Payload {
+                        variant: tag,
+                        field: 0,
+                    });
+                    Some(self.read_location(state, &payload, post.result_type))
+                }
+                (Some(_), Some(_)) => None,
+            };
+            let entry = self.entry.clone();
+            let roots = |root: CheckedRangeRoot| match root {
+                CheckedRangeRoot::Binding(binding) => entry.get(&binding).cloned(),
+                CheckedRangeRoot::Result => result.clone(),
+            };
+            let frame = self.frame(state, &post.clause, &roots);
+            self.require(state, &post.clause, &frame, node, site);
         }
     }
 
@@ -2633,6 +2610,13 @@ fn segment_places(term: &CheckedRangeTerm, out: &mut BTreeSet<CheckedRangePlace>
             out.insert(place.clone());
             segment_places(segment, out);
         }
+        CheckedRangeTerm::Measure {
+            place,
+            shape: CheckedRangeShape::Segments,
+            ..
+        } => {
+            out.insert(place.clone());
+        }
         CheckedRangeTerm::Sum { terms, .. } => {
             for (_, part) in terms {
                 segment_places(part, out);
@@ -2651,133 +2635,5 @@ fn synthetic_declaration() -> crate::DeclarationId {
 fn empty_path() -> NodePath {
     NodePath {
         components: Vec::new(),
-    }
-}
-
-/// The one place a content law's clause reads: the filled content.
-fn law_place() -> CheckedRangePlace {
-    CheckedRangePlace {
-        root: CheckedRangeRoot::Result,
-        path: Vec::new(),
-    }
-}
-
-/// The lengths a `box_segments_filled` call was given.
-fn law_lengths() -> CheckedRangePlace {
-    CheckedRangePlace {
-        root: CheckedRangeRoot::Argument(0),
-        path: vec![CheckedRangeStep::Referent],
-    }
-}
-
-/// `forall filled(k...): content[k...] == fill`.
-fn law_clause(element: Option<IntegerType>, shape: CheckedRangeShape) -> CheckedRangeClause {
-    use super::super::range_facts::{CheckedRangeBinder, CheckedRangeRelation, RangeComparison};
-    let place = law_place();
-    let (ranges, indices) = match shape {
-        CheckedRangeShape::Run => (
-            vec![CheckedRangeBinder {
-                start: CheckedRangeTerm::Constant(0),
-                end: CheckedRangeTerm::Measure {
-                    place: place.clone(),
-                    measure: CheckedMeasure::Length,
-                },
-            }],
-            vec![CheckedRangeTerm::Bound(0)],
-        ),
-        CheckedRangeShape::Segments => (
-            vec![
-                CheckedRangeBinder {
-                    start: CheckedRangeTerm::Constant(0),
-                    end: CheckedRangeTerm::Measure {
-                        place: place.clone(),
-                        measure: CheckedMeasure::Length,
-                    },
-                },
-                CheckedRangeBinder {
-                    start: CheckedRangeTerm::Constant(0),
-                    end: CheckedRangeTerm::SegmentLength {
-                        place: place.clone(),
-                        segment: Box::new(CheckedRangeTerm::Bound(0)),
-                    },
-                },
-            ],
-            vec![CheckedRangeTerm::Bound(0), CheckedRangeTerm::Bound(1)],
-        ),
-    };
-    CheckedRangeClause {
-        declaration: synthetic_declaration(),
-        name: "filled".to_owned(),
-        node: empty_path(),
-        binders: ranges,
-        guards: Vec::new(),
-        conclusions: vec![CheckedRangeRelation {
-            node: empty_path(),
-            left: CheckedRangeTerm::Read {
-                place,
-                shape,
-                indices,
-                element: element.unwrap_or(IntegerType::U64),
-            },
-            comparison: RangeComparison::Equal,
-            right: CheckedRangeTerm::Value(CheckedRangeRoot::Argument(1)),
-        }],
-    }
-}
-
-/// `forall sized(d in 0..s.len): s[d].len == lengths[d]`.
-fn segment_lengths_clause() -> CheckedRangeClause {
-    use super::super::range_facts::{CheckedRangeBinder, CheckedRangeRelation, RangeComparison};
-    let place = law_place();
-    CheckedRangeClause {
-        declaration: synthetic_declaration(),
-        name: "sized".to_owned(),
-        node: empty_path(),
-        binders: vec![CheckedRangeBinder {
-            start: CheckedRangeTerm::Constant(0),
-            end: CheckedRangeTerm::Measure {
-                place: place.clone(),
-                measure: CheckedMeasure::Length,
-            },
-        }],
-        guards: Vec::new(),
-        conclusions: vec![CheckedRangeRelation {
-            node: empty_path(),
-            left: CheckedRangeTerm::SegmentLength {
-                place,
-                segment: Box::new(CheckedRangeTerm::Bound(0)),
-            },
-            comparison: RangeComparison::Equal,
-            right: CheckedRangeTerm::Read {
-                place: law_lengths(),
-                shape: CheckedRangeShape::Run,
-                indices: vec![CheckedRangeTerm::Bound(0)],
-                element: IntegerType::U64,
-            },
-        }],
-    }
-}
-
-/// `s.len == lengths.len`, as a clause without bound variables.
-fn rows_clause() -> CheckedRangeClause {
-    use super::super::range_facts::{CheckedRangeRelation, RangeComparison};
-    CheckedRangeClause {
-        declaration: synthetic_declaration(),
-        name: "rows".to_owned(),
-        node: empty_path(),
-        binders: Vec::new(),
-        guards: Vec::new(),
-        conclusions: vec![CheckedRangeRelation {
-            node: empty_path(),
-            left: CheckedRangeTerm::Measure {
-                place: law_place(),
-                measure: CheckedMeasure::Length,
-            },
-            comparison: RangeComparison::Equal,
-            right: CheckedRangeTerm::Measure {
-                place: law_lengths(),
-                measure: CheckedMeasure::Length,
-            },
-        }],
     }
 }

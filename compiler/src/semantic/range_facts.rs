@@ -12,17 +12,16 @@ use std::collections::BTreeMap;
 
 use crate::{DeclarationId, NodePath};
 
-use super::model::{BindingId, CheckedLoopId, CheckedMeasure, IntegerType};
+use super::model::{BindingId, CheckedLoopId, CheckedMeasure, CheckedType, IntegerType};
 
 /// What a range term's place or value starts from.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) enum CheckedRangeRoot {
     /// A parameter or a binding live where the clause is written.
     Binding(BindingId),
-    /// A fill constructor's result, in the clause of its content [RANGE-2].
+    /// The function's result, in a postcondition: the whole result, or the
+    /// payload of the variant the clause is routed through [RANGE-1].
     Result,
-    /// One of a fill constructor's arguments, by position.
-    Argument(u32),
 }
 
 /// One storage place a range term reads: a root and the field, `Box`
@@ -65,10 +64,12 @@ pub(crate) enum CheckedRangeTerm {
     Iteration(u32),
     /// The current value of an own integer binding.
     Value(CheckedRangeRoot),
-    /// One measure of a place: `p.len` or `p.cap`.
+    /// One measure of a place: `p.len` or `p.cap`. The shape is the measured
+    /// value's, a `Segments` counting its segments.
     Measure {
         place: CheckedRangePlace,
         measure: CheckedMeasure,
+        shape: CheckedRangeShape,
     },
     /// The length of one segment of a `Segments` place, `s[d].len`.
     SegmentLength {
@@ -163,24 +164,47 @@ pub(crate) struct CheckedCertifiedLoop {
     pub(crate) reads: Vec<NodePath>,
 }
 
+/// One postcondition a caller takes as a range fact after a call [RANGE-2].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CheckedRangePostcondition {
+    pub(crate) clause: CheckedRangeClause,
+    /// The tag of the success variant `when V(value: r)` routes the clause
+    /// through, whose payload [`CheckedRangeRoot::Result`] then names; `None`
+    /// for an unrouted clause [FN-9].
+    pub(crate) route: Option<u32>,
+    /// The type of what [`CheckedRangeRoot::Result`] names: the result's, or
+    /// the routed payload's.
+    pub(crate) result_type: CheckedType,
+    /// Whether the range judgment owes it at the function's exits: a range
+    /// postcondition is owed [RANGE-3], while an [FN-9] relation whose sides
+    /// are range terms, a clause without bound variables, is ordinary
+    /// entailment's to prove and only taken here.
+    pub(crate) owed: bool,
+}
+
 /// Every range clause of one function, and the certificates the range
 /// judgment found to hold.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct CheckedRangeFacts {
     pub(crate) requirements: Vec<CheckedRangeClause>,
+    pub(crate) postconditions: Vec<CheckedRangePostcondition>,
     pub(crate) loops: BTreeMap<CheckedLoopId, CheckedRangeLoop>,
     pub(crate) certified: Vec<CheckedCertifiedLoop>,
 }
 
 impl CheckedRangeFacts {
+    /// Whether the function states no range clause the range judgment owes.
     pub(crate) fn is_empty(&self) -> bool {
-        self.requirements.is_empty() && self.loops.is_empty()
+        self.requirements.is_empty()
+            && self.loops.is_empty()
+            && !self.postconditions.iter().any(|post| post.owed)
     }
 
     /// Whether `declaration` names one of these range facts.
     pub(crate) fn declares(&self, declaration: DeclarationId) -> bool {
         self.requirements
             .iter()
+            .chain(self.postconditions.iter().map(|post| &post.clause))
             .chain(
                 self.loops
                     .values()

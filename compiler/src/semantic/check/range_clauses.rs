@@ -8,6 +8,7 @@
 //! it forms selects an existing element, and every user of an instance proves
 //! that where it uses one [RANGE-3].
 
+use std::cell::Cell;
 use std::collections::HashMap;
 
 use crate::syntax::NodeId;
@@ -21,12 +22,28 @@ use crate::{
 use super::super::model::{
     CheckedMeasure, CheckedMode, CheckedNominalKind, CheckedType, CheckedValue, IntegerType,
 };
+use super::super::postcondition::CheckedPostconditionSelector;
 use super::super::range_facts::{
-    CheckedApart, CheckedRangeBinder, CheckedRangeClause, CheckedRangePlace, CheckedRangeRelation,
-    CheckedRangeRoot, CheckedRangeShape, CheckedRangeStep, CheckedRangeTerm, CheckedRangeUse,
-    RangeComparison,
+    CheckedApart, CheckedRangeBinder, CheckedRangeClause, CheckedRangePlace,
+    CheckedRangePostcondition, CheckedRangeRelation, CheckedRangeRoot, CheckedRangeShape,
+    CheckedRangeStep, CheckedRangeTerm, CheckedRangeUse, RangeComparison,
 };
-use super::{CheckStop, Checker, FunctionContext, LocalBinding};
+use super::{CheckContext, CheckStop, Checker, FunctionContext, LocalBinding};
+
+/// How a function's type parameters stand in the clauses formed for it
+/// [RANGE-1].
+#[derive(Clone, Copy, Default, Eq, PartialEq)]
+enum RangeGeneric {
+    /// A nongeneric function: every type is the written one.
+    #[default]
+    Exact,
+    /// A generic function's symbolic instance: a value or element of a type
+    /// parameter is taken as an integer.
+    Symbolic,
+    /// A concrete instance of a generic function: a value or element whose
+    /// type is not an integer leaves the clause stating nothing here.
+    Instance,
+}
 
 /// The names a range term may read besides the function's own bindings.
 #[derive(Default)]
@@ -35,6 +52,10 @@ struct RangeNames {
     binders: HashMap<DeclarationId, u32>,
     /// A certificate's two iterations.
     iterations: HashMap<DeclarationId, u32>,
+    generic: RangeGeneric,
+    /// Set when a term's type leaves the clause stating nothing at this
+    /// concrete instance.
+    unformed: Cell<bool>,
 }
 
 /// What the suffixes of a range place have selected so far.
@@ -49,20 +70,24 @@ enum Selected {
 }
 
 impl Checker<'_, '_> {
-    /// [RANGE-1] forms one `forall NAME(binders) when guards: conclusions`.
+    /// [RANGE-1] forms one `forall NAME(binders) when guards: conclusions`,
+    /// or `None` where it states nothing at this concrete instance.
     pub(super) fn check_range_clause(
         &mut self,
         context: FunctionContext<'_, '_>,
         clause: NodeId,
         bindings: &HashMap<DeclarationId, LocalBinding>,
-    ) -> Result<CheckedRangeClause, CheckStop> {
+    ) -> Result<Option<CheckedRangeClause>, CheckStop> {
         let declaration = self
             .types
             .declarations
             .declaration_at(clause, DeclarationRole::RangeFact)?;
         let name = declaration.spelling().to_owned();
         let declaration = declaration.id();
-        let mut names = RangeNames::default();
+        let mut names = RangeNames {
+            generic: self.range_generic(context),
+            ..RangeNames::default()
+        };
         let mut binders = Vec::new();
         for binder in self
             .types
@@ -132,14 +157,183 @@ impl Checker<'_, '_> {
         if conclusions.is_empty() {
             return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
         }
-        Ok(CheckedRangeClause {
+        if names.unformed.get() {
+            self.body.unformed_range_facts.insert(declaration);
+            return Ok(None);
+        }
+        Ok(Some(CheckedRangeClause {
             declaration,
             name,
             node: self.types.declarations.tree.path(clause)?.clone(),
             binders,
             guards,
             conclusions,
-        })
+        }))
+    }
+
+    /// [RANGE-1, RANGE-2] the range facts a caller takes from this
+    /// function's postconditions, in source order: each range postcondition,
+    /// which the range judgment owes at the function's exits, and each
+    /// [FN-9] relation whose two sides are range terms.
+    pub(super) fn check_range_postconditions(
+        &mut self,
+        context: FunctionContext<'_, '_>,
+        selectors: &[CheckedPostconditionSelector],
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+    ) -> Result<Vec<CheckedRangePostcondition>, CheckStop> {
+        let FunctionContext {
+            check_context,
+            function,
+        } = context;
+        let mut out = Vec::new();
+        for selector in selectors {
+            let clause = self
+                .types
+                .declarations
+                .tree
+                .node_with_path(&selector.block)
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+            let records = self.types.declarations.resolved.postconditions();
+            let index = records
+                .iter()
+                .position(|record| record.block == selector.block)
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+            let datums = Checker::postcondition_result_datums(&records[index], function, selector);
+            let check_context = &CheckContext {
+                active_postcondition: Some(super::PostconditionCheckContext {
+                    record: index,
+                    result_type: selector.result_type,
+                }),
+                active_result_datums: &datums,
+                ..*check_context
+            };
+            let context = FunctionContext {
+                check_context,
+                function,
+            };
+            // [FN-9] the success variant a route names, by its tag.
+            let route = match selector.variant {
+                None => None,
+                Some(crate::BuiltinPreludeId::SOME) => Some(1),
+                Some(crate::BuiltinPreludeId::OK) => Some(0),
+                Some(_) => return Err(SemanticCompilerFailure::InvalidResolution.into()),
+            };
+            if let Some(range) = self
+                .types
+                .declarations
+                .tree
+                .first_child_with(clause, Production::RangeClause)?
+            {
+                if function.results.len() > 1 {
+                    return self.invalid_range(
+                        SemanticRule::Range1,
+                        range,
+                        "a range postcondition belongs to a function that returns a result list",
+                        "return one result, a struct holding the values, and state the fact over its fields",
+                    );
+                }
+                if let Some(clause) = self.check_range_clause(context, range, bindings)? {
+                    out.push(CheckedRangePostcondition {
+                        clause,
+                        route,
+                        result_type: selector.result_type,
+                        owed: true,
+                    });
+                }
+            } else if let Some(expression) = self
+                .types
+                .declarations
+                .tree
+                .first_child_with(clause, Production::ClauseExpr)?
+                && let Some(clause) = self.range_relation_clause(context, expression, bindings)?
+            {
+                out.push(CheckedRangePostcondition {
+                    clause,
+                    route,
+                    result_type: selector.result_type,
+                    owed: false,
+                });
+            }
+        }
+        Ok(out)
+    }
+
+    /// [RANGE-1] forms an [FN-9] relation as a clause without bound
+    /// variables, when both of its sides are range terms; `None` otherwise.
+    /// The relation stays ordinary entailment's to prove, so a side that is
+    /// no range term is no error here.
+    pub(super) fn range_relation_clause(
+        &mut self,
+        context: FunctionContext<'_, '_>,
+        expression: NodeId,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+    ) -> Result<Option<CheckedRangeClause>, CheckStop> {
+        let names = RangeNames {
+            generic: self.range_generic(context),
+            ..RangeNames::default()
+        };
+        let tree = &self.types.declarations.tree;
+        let Some(operator) = tree.first_child_with(expression, Production::ClauseOp)? else {
+            return Ok(None);
+        };
+        if tree
+            .first_child_with(operator, Production::CompareOp)?
+            .is_none()
+        {
+            return Ok(None);
+        }
+        let relation = match self.range_comparison(context, expression, operator, bindings, &names)
+        {
+            Ok(relation) => relation,
+            Err(CheckStop::Issue(_)) => return Ok(None),
+            Err(stop) => return Err(stop),
+        };
+        if names.unformed.get() {
+            return Ok(None);
+        }
+        // The clause has no fact name of its own; it carries its function's.
+        Ok(Some(CheckedRangeClause {
+            declaration: context.function.declaration,
+            name: String::new(),
+            node: relation.node.clone(),
+            binders: Vec::new(),
+            guards: Vec::new(),
+            conclusions: vec![relation],
+        }))
+    }
+
+    /// How the function's type parameters stand in its range clauses.
+    fn range_generic(&self, context: FunctionContext<'_, '_>) -> RangeGeneric {
+        let substitution = &context.function.substitution;
+        if substitution.is_symbolic() {
+            RangeGeneric::Symbolic
+        } else if substitution
+            .entries()
+            .iter()
+            .any(|(_, argument)| matches!(argument, super::generics::GenericArgument::Type(_)))
+        {
+            RangeGeneric::Instance
+        } else {
+            RangeGeneric::Exact
+        }
+    }
+
+    /// [RANGE-1] the integer type a value or element of type `ty` gives a
+    /// term: a type parameter's is an integer at the symbolic instance, and
+    /// at a concrete instance a type that is not an integer leaves the clause
+    /// stating nothing.
+    fn range_integer(ty: CheckedType, names: &RangeNames) -> Option<IntegerType> {
+        match (ty, names.generic) {
+            (CheckedType::Integer(integer), _) => Some(integer),
+            (CheckedType::Generic(_) | CheckedType::GenericInt(_), RangeGeneric::Symbolic) => {
+                Some(IntegerType::U64)
+            }
+            (_, RangeGeneric::Instance) => {
+                names.unformed.set(true);
+                Some(IntegerType::U64)
+            }
+            _ => None,
+        }
     }
 
     /// [RANGE-5, RANGE-4] forms a counted loop's certificate: two iteration
@@ -168,7 +362,10 @@ impl Checker<'_, '_> {
                 "give the two iterations of `apart` distinct names",
             );
         }
-        let mut names = RangeNames::default();
+        let mut names = RangeNames {
+            generic: self.range_generic(context),
+            ..RangeNames::default()
+        };
         names.iterations.insert(first.id(), 0);
         names.iterations.insert(second.id(), 1);
         let mut uses = Vec::new();
@@ -218,6 +415,11 @@ impl Checker<'_, '_> {
             let ResolvedTarget::Source { declaration, .. } = usage.target() else {
                 return Err(SemanticCompilerFailure::InvalidResolution.into());
             };
+            // [RANGE-1] a use of a fact that states nothing at this concrete
+            // instance instantiates nothing.
+            if self.body.unformed_range_facts.contains(&declaration) {
+                continue;
+            }
             let Some(arity) = facts.get(&declaration).copied() else {
                 return self.invalid_range(
                     SemanticRule::Range4,
@@ -388,6 +590,19 @@ impl Checker<'_, '_> {
         bindings: &HashMap<DeclarationId, LocalBinding>,
         names: &RangeNames,
     ) -> Result<CheckedRangeRelation, CheckStop> {
+        self.range_comparison(context, node, node, bindings, names)
+    }
+
+    /// One comparison of two range terms: the `affine_expr` children of
+    /// `node` around the `compare_op` under `operator`.
+    fn range_comparison(
+        &mut self,
+        context: FunctionContext<'_, '_>,
+        node: NodeId,
+        operator: NodeId,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+        names: &RangeNames,
+    ) -> Result<CheckedRangeRelation, CheckStop> {
         let expressions = self
             .types
             .declarations
@@ -400,7 +615,7 @@ impl Checker<'_, '_> {
             .types
             .declarations
             .tree
-            .first_child_with(node, Production::CompareOp)?
+            .first_child_with(operator, Production::CompareOp)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
         let [token] = self
             .types
@@ -605,6 +820,23 @@ impl Checker<'_, '_> {
             .declarations
             .tree
             .children_with(place, Production::Psuffix)?;
+        // [RANGE-1] a postcondition names the result through its selector
+        // spelling, which resolves to no declaration [FN-9].
+        if let Some((_, ty)) = self
+            .types
+            .declarations
+            .postcondition_selector_place_base(check_context, place)?
+        {
+            return self.range_suffixes(
+                context,
+                place,
+                &suffixes,
+                CheckedRangeRoot::Result,
+                Selected::Value(ty),
+                bindings,
+                names,
+            );
+        }
         let usage =
             self.types
                 .declarations
@@ -660,10 +892,34 @@ impl Checker<'_, '_> {
                 "name a parameter or a value bound before this clause",
             );
         };
-        let mut selected = match local.mode {
+        let selected = match local.mode {
             CheckedMode::Own => Selected::Value(local.ty),
             mode => Selected::Holder { mode, ty: local.ty },
         };
+        self.range_suffixes(
+            context,
+            place,
+            &suffixes,
+            CheckedRangeRoot::Binding(local.binding),
+            selected,
+            bindings,
+            names,
+        )
+    }
+
+    /// The term `place` forms from `root`, whose value `selected` describes,
+    /// through its written suffixes.
+    #[allow(clippy::too_many_arguments)]
+    fn range_suffixes(
+        &mut self,
+        context: FunctionContext<'_, '_>,
+        place: NodeId,
+        suffixes: &[NodeId],
+        root: CheckedRangeRoot,
+        mut selected: Selected,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+        names: &RangeNames,
+    ) -> Result<CheckedRangeTerm, CheckStop> {
         let mut path = Vec::new();
         let last = suffixes.len();
         let mut index = 0;
@@ -697,8 +953,8 @@ impl Checker<'_, '_> {
                 }
                 PlaceSuffix::Index { offset } => {
                     let index_term = self.range_atom(context, offset, bindings, names)?;
-                    let root = CheckedRangePlace {
-                        root: CheckedRangeRoot::Binding(local.binding),
+                    let base = CheckedRangePlace {
+                        root,
                         path: path.clone(),
                     };
                     let element = match selected {
@@ -732,11 +988,11 @@ impl Checker<'_, '_> {
                                 PlaceSuffix::Index { offset } => {
                                     let element_index =
                                         self.range_atom(context, offset, bindings, names)?;
-                                    let CheckedType::Integer(integer) = element else {
+                                    let Some(integer) = Self::range_integer(element, names) else {
                                         return self.not_integer_element(next);
                                     };
                                     Ok(CheckedRangeTerm::Read {
-                                        place: root,
+                                        place: base,
                                         shape: CheckedRangeShape::Segments,
                                         indices: vec![index_term, element_index],
                                         element: integer,
@@ -753,7 +1009,7 @@ impl Checker<'_, '_> {
                                         );
                                     }
                                     Ok(CheckedRangeTerm::SegmentLength {
-                                        place: root,
+                                        place: base,
                                         segment: Box::new(index_term),
                                     })
                                 }
@@ -782,11 +1038,11 @@ impl Checker<'_, '_> {
                             "end the term at the integer element it reads",
                         );
                     }
-                    let CheckedType::Integer(integer) = element else {
+                    let Some(integer) = Self::range_integer(element, names) else {
                         return self.not_integer_element(suffix);
                     };
                     return Ok(CheckedRangeTerm::Read {
-                        place: root,
+                        place: base,
                         shape: CheckedRangeShape::Run,
                         indices: vec![index_term],
                         element: integer,
@@ -806,12 +1062,16 @@ impl Checker<'_, '_> {
                             Selected::Holder { .. } => false,
                         };
                         if measured {
+                            let shape = match selected {
+                                Selected::Value(CheckedType::Segments { .. }) => {
+                                    CheckedRangeShape::Segments
+                                }
+                                _ => CheckedRangeShape::Run,
+                            };
                             return Ok(CheckedRangeTerm::Measure {
-                                place: CheckedRangePlace {
-                                    root: CheckedRangeRoot::Binding(local.binding),
-                                    path,
-                                },
+                                place: CheckedRangePlace { root, path },
                                 measure,
+                                shape,
                             });
                         }
                     }
@@ -877,9 +1137,9 @@ impl Checker<'_, '_> {
             index += 1;
         }
         match selected {
-            Selected::Value(CheckedType::Integer(_)) if path.is_empty() => Ok(
-                CheckedRangeTerm::Value(CheckedRangeRoot::Binding(local.binding)),
-            ),
+            Selected::Value(ty) if path.is_empty() && Self::range_integer(ty, names).is_some() => {
+                Ok(CheckedRangeTerm::Value(root))
+            }
             _ => self.invalid_range(
                 SemanticRule::Range1,
                 place,

@@ -322,6 +322,35 @@ impl<'unit> Checker<'_, 'unit> {
             .collect();
         let mut ensures = Vec::new();
         let selectors = self.types.postcondition_selectors_from_source(signature)?;
+        // [RANGE-1] a signature's contract states no range clause.
+        for selector in &selectors {
+            if self
+                .types
+                .declarations
+                .is_range_postcondition(&selector.block)?
+            {
+                let clause = self
+                    .types
+                    .declarations
+                    .tree
+                    .node_with_path(&selector.block)
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                let node = self
+                    .types
+                    .declarations
+                    .tree
+                    .first_child_with(clause, Production::RangeClause)?
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                return self.types.declarations.issue_node(
+                    crate::SemanticRule::Range1,
+                    node,
+                    crate::SemanticIssueKind::InvalidRangeClause {
+                        reason: "a function signature's contract states a range clause",
+                        mechanical_fix: "state the range postcondition on the function that implements the signature",
+                    },
+                );
+            }
+        }
         let mut relations = Vec::with_capacity(selectors.len());
         for (relation_ordinal, selector) in selectors.iter().enumerate() {
             let relation = self.check_postcondition_clause(

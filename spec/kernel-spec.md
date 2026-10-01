@@ -199,7 +199,7 @@ result_binding:= IDENT ":" rtype
 contract_block:= "contract" "{" contract_define* requires_clause* ensures_clause* "}"
 contract_define:= "define" IDENT "=" expr ";"
 requires_clause:= "requires" (clause_expr | range_clause) ";"
-ensures_clause:= "ensures" ("when" result_route ":")? clause_expr ";"
+ensures_clause:= "ensures" ("when" result_route ":")? (clause_expr | range_clause) ";"
 result_route:= (IDENT "is")? TYPEID "(" fieldbind ")"
 interface_decl  := "interface" TYPEID generics? "{" doc? (fn_sig ";")* "}"
 binding_decl  := "binding" TYPEID ":" (pack_use | type_path targs?) "{" doc? fn_bind* "}"
@@ -1392,7 +1392,7 @@ An uninhabited instance publishes no postcondition summary.
 Lowering must preserve its ordinary ABI and symbol but emit exactly one empty entry block terminated by `unreachable`, without traversing or lowering any source statement.
 A source call must still prove every contradictory requirement, which no reachable non-contradictory caller state can do.
 
-[FN-9] Each `ensures_clause` in a FN-8 `contract_block` declares one independent normal-return relation.
+[FN-9] Each `ensures_clause` in a FN-8 `contract_block` declares one independent normal-return relation: one whose body is a `clause_expr` is the relation this rule forms and proves, and one whose body is a `range_clause` is a range postcondition, which takes this rule's route admission and return selection and which [RANGE-1] forms and [RANGE-3] proves.
 A source declaration is not a trusted assertion: its body proves the relation by the selected-return judgment below. A PRE-1 or PRE-2 signature supplies its declared relation under SCOPE-3 and has no source returns to check. Formation and caller instantiation are the same ordinary judgments in both cases.
 No contract definition or clause contributes an effect, executable epilogue, runtime operation, storage slot, or runtime report.
 
@@ -2302,9 +2302,12 @@ fn ring_new<T, const n: u64>() -> result: Ring<T, n> pure contract {
 };
 fn box_array_filled<T: copy>(count: u64, value: T) -> result: Box<Array<T>> pure contract {
   ensures result.inner.len == count;
+  ensures forall filled(k in 0_u64..result.inner.len): result.inner[k] == value;
 };
 fn box_segments_filled<T: copy>(lengths: &[u64], value: T) -> result: Option<Box<Segments<T>>> reads(lengths) contract {
   ensures when Some(value: made): made.inner.len == lengths^.len;
+  ensures when Some(value: made): forall sized(d in 0_u64..made.inner.len): made.inner[d].len == lengths^[d];
+  ensures when Some(value: made): forall filled(d in 0_u64..made.inner.len, k in 0_u64..made.inner[d].len): made.inner[d][k] == value;
 };
 fn box_slots_new<T>(capacity: u64) -> result: Box<Slots<T>> pure contract {
   ensures result.inner.len == 0_u64;
@@ -2380,8 +2383,8 @@ fn free_empty<W>(window: W) -> result: unit pure contract {
 ```
 
 Each record is an ordinary callable boundary usable by a direct call or a function-kind binding under FN-2 through FN-5. Its definition is supplied by the build and must satisfy the declared boundary [SCOPE-3]; calls neither inspect nor classify that definition. There is one ordinary callable ABI for definitions written in Whitefoot and definitions supplied by linking. A reference passed to either lasts through that call's return and is not retained beyond it [REF-3]. A missing definition or incompatible physical representation is a build/link failure, not a source-language rejection.
-PRE-1 requirement templates are discharged by FN-8 and declared postconditions are instantiated only by CALL-6 and FN-9's ordinary selected-result rules. The supplied definition is responsible for those propositions under SCOPE-3; its declaration has no Whitefoot body for FN-9 to verify. No compiler-owned operation fact or alternative acceptance judgment exists.
-The declaration preorder is each opaque struct above in written order with its refused constructor and its fields in declaration order, then each enum above in written order with its variants and their fields in declaration order, then `Int`, `Float`, then each construction function above in written order, then each window operation above in written order, then `swap` and `free_empty`, each with its type, const and value parameters in declared order. Owner-local fields and parameters do not enter compilation-root name lookup. This preorder fixes each PRE-1 diagnostic ordinal [DIAG-1].
+PRE-1 requirement templates are discharged by FN-8, declared postconditions are instantiated only by CALL-6 and FN-9's ordinary selected-result rules, and range postconditions are taken after a call by [RANGE-2]. The supplied definition is responsible for those propositions under SCOPE-3; its declaration has no Whitefoot body for FN-9 to verify. No compiler-owned operation fact or alternative acceptance judgment exists.
+The declaration preorder is each opaque struct above in written order with its refused constructor and its fields in declaration order, then each enum above in written order with its variants and their fields in declaration order, then `Int`, `Float`, then each construction function above in written order, then each window operation above in written order, then `swap` and `free_empty`, each with its type, const and value parameters in declared order and then each name and bound variable its range postconditions declare, in written order [RANGE-1]. Owner-local fields and parameters do not enter compilation-root name lookup. This preorder fixes each PRE-1 diagnostic ordinal [DIAG-1].
 
 [PRE-2] The host modules are the six standard library modules [MOD-10] `std::time`, `std::io`, `std::text`, `std::fs`, `std::net` and `std::process`, registered by these rows of the standard library's graph:
 
@@ -3644,21 +3647,23 @@ An unresolved invariant name is the ordinary INV-1 lexical-scope failure and for
 A resolved but unavailable named source, undischarged or malformed relation source, invalid multiplicity, duplicate source, arithmetic or structural overflow, unfolded nonlinear monomial in S, failed final `DIRECT` residual, or redundant block cites PRF-1 at the smallest owning source node and publishes no target.
 
 [RANGE-1] A range clause states one bounded quantified fact over storage contents: `forall NAME(x in a..b, ...) when g1, ...: c1, ...` holds when, for every tuple of mathematical integers each within its half-open range, every conclusion `c` holds wherever every guard `g` holds [GRAM-5].
-A range clause is admitted as the body of a `requires_clause` of a `fn_decl` and as a `header_invariant` of a `for_stmt` or a `loop_stmt`; in the `contract_block` of a `fn_sig` it is a hard error citing RANGE-1 at the `range_clause` node.
-Its IDENT declares the fact's name: a requirement's in the function's signature scope and a header invariant's in the loop's header scope, alongside the names [INV-1] declares there.
+A range clause is admitted as the body of a `requires_clause` or an `ensures_clause` of a `fn_decl` and as a `header_invariant` of a `for_stmt` or a `loop_stmt`; in the `contract_block` of a `fn_sig` it is a hard error citing RANGE-1 at the `range_clause` node.
+Its IDENT declares the fact's name: a requirement's or a postcondition's in the function's signature scope and a header invariant's in the loop's header scope, alongside the names [INV-1] declares there.
 Its bound variables are declared in order, each in scope in the ranges after its own, in the guards and in the conclusions; a range endpoint is a range term written as an `atom`.
 A clause has one to two bound variables, the guards are optional, and there is at least one conclusion.
 A `range_relation` compares two range terms with any of the six `compare_op` spellings; it is a proof-domain relation over mathematical integers and performs no [OP-1] operation.
 
 A range term is formed from `affine_expr` syntax over these atoms: an integer literal or an integer-typed named const, read as its mathematical value; a bound variable of the clause, or in a certificate one of its two iteration names [RANGE-5]; a live own-mode integer binding, read as its value where the clause is formed; a measure `p.len` or `p.cap` of a place p; the length `s[d].len` of one segment of a `Segments` place s; and one element read, `p[i]` of a place whose selected value is an `Array`, a `Slots` or the run a range reference names, or `s[d][k]` of a `Segments`, whose element type is an integer type [TYPE-1].
 A place in a range term is a live binding followed by `^`, field and `Box` `inner` steps [GRAM-5, TYPE-7, TYPE-9]; its subscripts are range terms; it reads no entry image, forms no range step, and selects nothing below an element.
+In a range postcondition a term may also name the function's result, through its `result_binding` spelling or, under a route `when V(value: r)` [FN-9], through r, which denotes V's payload; there a parameter that holds an integer denotes its value at entry, and a place reached through a reference parameter denotes that storage as the return leaves it. A range postcondition of a function that writes a result list is a hard error citing RANGE-1 at the `range_clause` node.
+In a generic function a range clause is formed at its symbolic instance, with each value and element whose type is a type parameter taken as an integer, and again at each concrete instance; at a concrete instance where such a type is not an integer type the clause states nothing there, being neither a fact nor owed, and a `use` of it instantiates nothing.
 `+` and `-` combine terms and `*` scales one by an integer literal or named const; a call, a moved value, a borrow and every other form is a hard error citing RANGE-1 at the smallest offending node.
 A read in a range term executes nothing and owes no [OP-4] obligation where it is written: an instance of a clause claims its conclusions only where every read the instance forms selects an existing element [RANGE-3].
 
 [RANGE-2] The range judgment runs after every function's ordinary entailment [ENT-1] has succeeded, over one forward walk of each function body that states a range clause or calls a function with a range requirement; no ordinary obligation consumes a range fact.
 The walk carries a symbolic state: each binding's value, each storage location's contents as one version, the path conditions of the branches taken, the facts that hold, and the joins the walk passed.
 A fact is a range clause with what each of its places and values denotes where it became active: a place denotes one version of one storage location, so a fact never changes meaning. A write makes a new version defined by the old one, with the written value at the written index tuple and the old version's element at every other; a question about the new version reaches the old version's facts only through that definition [RANGE-3].
-Facts become active from three sources and no other: a function's range requirements at entry; a counted or ordinary loop's range invariants at its header; and the contents of a fill constructor, `box_array_filled(count, v)` giving its result's `inner` the length count and every element the value v, and `box_segments_filled(lengths, v)`, under the `Some` arm of a `match` on its result, giving the segments' count `lengths^.len`, each segment's length its entry of `lengths` and every element the value v [OP-13].
+Facts become active from three sources and no other: a function's range requirements at entry; a counted or ordinary loop's range invariants at its header; and a callee's postconditions after each call: its range postconditions and each of its [FN-9] relations whose two sides are range terms, as a clause without bound variables, with each parameter denoting its argument, a reference parameter's storage as the call leaves it, and the result the call's result. An unrouted one holds at once; one under `when V(value: r)` holds in the arm of a `match` on the call's result that takes V, with r denoting that arm's payload.
 The walk evaluates integer expressions it can name exactly — literals, consts, bindings, the measures and element reads above, exact `+` and `-`, exact `*` by a constant, and exact integer `cvt` [OP-1, OP-7] — and an integer comparison as a path condition; every other expression is a fresh unknown of its type.
 A `let`, a `set`, a `give`, a construction field and a by-value `match` binder that take an aggregate from storage without consuming it copy it [OWN-1], and the copy is new storage whose contents are unknown; a consuming read hands the storage itself over, and an aggregate a call or a construction yields is new storage of its own.
 An `if` and a `match` fork the state; at the join each binding, version and value the arms disagree on becomes one defined by the arm taken, and the join records that one of its arms' conditions held.
@@ -3667,7 +3672,7 @@ The state after a loop is the join, as at an `if`, of the states that leave it: 
 A call forgets every location the callee's row writes through a reference argument [EFF-5], one element where the argument names one element; an `atomic_stmt` and every write the walk cannot place forget every location.
 An affine requirement of the function and every published [INV-1] target are path conditions where they hold.
 
-[RANGE-3] A range fact is owed at three sites, and the range judgment proves it at each: a callee's range requirement at every call, with each parameter denoting its argument; a range invariant at its loop's entry, with a counted loop's binder at the lower endpoint; and a range invariant on every normal backedge, with a counted loop's binder at its next value.
+[RANGE-3] A range fact is owed at four sites, and the range judgment proves it at each: a callee's range requirement at every call, with each parameter denoting its argument; a range invariant at its loop's entry, with a counted loop's binder at the lower endpoint; a range invariant on every normal backedge, with a counted loop's binder at its next value; and a range postcondition at every exit [FN-9] selects for it, with the result denoting the returned value. Under a route `when V(value: r)`, r denotes the payload of the returned construction where the return writes `V(value: a)`, and the payload V holds in the returned value where it returns a value of the routed type; an exit whose value the walk knows to hold another variant is not selected.
 An owed clause holds when, for fresh bound variables within their ranges whose guards hold and whose reads select existing elements, every conclusion follows by this fixed derivation, together with the state's path conditions and joins and each typed value's range:
 
 1. Instances. Every active fact is instantiated once at each tuple whose every bound variable takes a value that an element read already in the problem selects through one of the fact's own element reads whose index is that bare bound variable, after every definition below has been added; an instance's own reads form no further instance. An instance asserts its conclusions where its ranges, its guards and its reads' existence hold.
@@ -3676,7 +3681,7 @@ An owed clause holds when, for fresh bound variables within their ranges whose g
 4. Decision. An instance whose premises the literals entail asserts its conclusions; a definition with one case left consistent takes it; then each undecided definition is tried case by case, then each pair of reads of one version at index tuples that may be equal is tried equal and apart, then each open disequality is tried as `<` and as `>`. The clause holds when every branch is contradictory.
 
 Nothing is searched beyond these fixed steps, and the derivation runs to completion over exact integer and rational arithmetic. One problem holds at most 4096 atoms, counted after step 2 adds every definition, and step 1 forms at most 256 instances of one fact. These are structural ceilings of the problem, not of the derivation's work: a site whose problem exceeds one is a hard error citing RANGE-3, or RANGE-5 for a certificate, that names the ceiling, never an unproved verdict.
-A clause that does not hold is a hard error citing RANGE-3 at the call, at the loop, or at its backedge's loop, naming the fact, the site and the first conclusion not established, with a repair [DIAG-1].
+A clause that does not hold is a hard error citing RANGE-3 at the call, at the loop, at its backedge's loop, or at the exit, naming the fact, the site and the first conclusion not established, with a repair [DIAG-1].
 
 [RANGE-4] A `proof_use` whose `use_premise` is `NAME(atom, ...)` instantiates the range fact NAME at the written terms: one range term per bound variable, in order, formed by [RANGE-1] in the certificate's scope.
 It is admitted only in an `apart_clause`, where NAME is a range requirement of the function or a range invariant of a loop enclosing the certificate's loop; such a use anywhere else, a named `use_premise` of an `invariant_stmt` naming a range fact, a `times` multiplicity, a name that is no such fact, and a term count other than the fact's bound variables are each a hard error citing RANGE-4 at the smallest offending node.

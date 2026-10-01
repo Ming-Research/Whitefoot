@@ -1270,6 +1270,37 @@ fn returned_projection_is_fragment(
 }
 
 impl<'unit> DeclarationInventory<'unit> {
+    /// Whether the `ensures_clause` at `block` is a range postcondition
+    /// [FN-9, RANGE-1].
+    pub(super) fn is_range_postcondition(
+        &self,
+        block: &crate::NodePath,
+    ) -> Result<bool, CheckStop> {
+        let clause = self
+            .tree
+            .node_with_path(block)
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        Ok(self
+            .tree
+            .first_child_with(clause, Production::RangeClause)?
+            .is_some())
+    }
+
+    /// The selectors whose clauses are [FN-9] relations: every one but the
+    /// range postconditions, which the range judgment proves.
+    pub(super) fn relation_postcondition_selectors(
+        &self,
+        selectors: Vec<CheckedPostconditionSelector>,
+    ) -> Result<Vec<CheckedPostconditionSelector>, CheckStop> {
+        let mut out = Vec::with_capacity(selectors.len());
+        for selector in selectors {
+            if !self.is_range_postcondition(&selector.block)? {
+                out.push(selector);
+            }
+        }
+        Ok(out)
+    }
+
     /// The written selector use one clause atom contains and the type of the
     /// result datum its spelling names [CALL-4], when the atom contains one.
     fn postcondition_selector_datum(

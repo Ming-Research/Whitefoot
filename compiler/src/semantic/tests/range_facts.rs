@@ -632,7 +632,10 @@ fn undischarged(source: &[u8]) -> Option<String> {
         };
         assert_eq!(issue.rule(), SemanticRule::Range3);
         let SemanticIssueKind::UndischargedRangeFact { fact, missing, .. } = issue.kind() else {
-            panic!("expected an undischarged range fact, got {:?}", issue.kind());
+            panic!(
+                "expected an undischarged range fact, got {:?}",
+                issue.kind()
+            );
         };
         assert_eq!(fact, "zero");
         Some(missing.clone())
@@ -646,9 +649,84 @@ fn the_instance_ceiling_counts_the_instances_a_fact_forms() {
     // at the owed read proves `zero`; 300 select 301, past the ceiling.
     assert_eq!(undischarged(&guarded_reads(200, false)), None);
     let past = undischarged(&guarded_reads(300, false)).expect("a RANGE-3 rejection");
-    assert!(past.contains("256 instances"), "the ceiling is named: {past}");
+    assert!(
+        past.contains("256 instances"),
+        "the ceiling is named: {past}"
+    );
     // With a second binder no read selects, `known` forms no instance at
     // all, however many values its first binder has, so it reaches no
     // ceiling, and `held` proves `zero` over `other`.
     assert_eq!(undischarged(&guarded_reads(300, true)), None);
+}
+
+/// A producer owing `cleared` over the run it writes, which `fault` leaves
+/// before the loop clears the run: at the return when `early` is false, and
+/// through a propagated error exit before it when `early` is true.
+fn unproved_postcondition(early: bool) -> Vec<u8> {
+    let exit = if early {
+        "  let y = propagate step(x: x);
+"
+    } else {
+        ""
+    };
+    let tail = if early {
+        "  return Ok<i32, StepError>(value: y);"
+    } else {
+        "  return Ok<i32, StepError>(value: x);"
+    };
+    format!(
+        "enum StepError {{
+  Negative();
+}}
+
+fn step(x: i32) -> result: Result<i32, StepError> pure {{
+  if x < 0_i32 {{
+    let negative = StepError::Negative();
+    return Err<i32, StepError>(error: negative);
+  }}
+  return Ok<i32, StepError>(value: x);
+}}
+
+fn fault(x: i32, out: &[u64]) -> result: Result<i32, StepError> writes(out) contract {{
+  ensures forall cleared(k in 0_u64..out^.len): out^[k] == 0_u64;
+}} {{
+{exit}  if 0_u64 < out^.len {{
+    set out^[0_u64] = 1_u64;
+  }}
+{tail}
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+    )
+    .into_bytes()
+}
+
+#[test]
+fn an_unproved_postcondition_names_the_exit_that_owes_it() {
+    for (early, site) in [(false, "a return"), (true, "a propagated error exit")] {
+        with_semantics(&unproved_postcondition(early), |outcome| {
+            let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+                panic!("expected a RANGE-3 rejection, got {outcome:?}");
+            };
+            assert_eq!(issue.rule(), SemanticRule::Range3);
+            let SemanticIssueKind::UndischargedRangeFact {
+                fact,
+                site: named,
+                missing,
+                ..
+            } = issue.kind()
+            else {
+                panic!(
+                    "expected an undischarged range fact, got {:?}",
+                    issue.kind()
+                );
+            };
+            assert_eq!(fact, "cleared");
+            assert_eq!(*named, site);
+            assert!(missing.contains("out^[k] == 0_u64"), "{missing}");
+        });
+    }
 }

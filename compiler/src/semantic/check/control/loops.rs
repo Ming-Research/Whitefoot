@@ -435,7 +435,7 @@ impl<'unit> Checker<'_, 'unit> {
                 .tree
                 .first_child_with(invariant, Production::RangeClause)?
             {
-                Some(clause) => ranges.push(self.check_range_clause(context, clause, bindings)?),
+                Some(clause) => ranges.extend(self.check_range_clause(context, clause, bindings)?),
                 None => affine.push(invariant),
             }
         }

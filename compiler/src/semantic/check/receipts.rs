@@ -504,7 +504,8 @@ fn analyzed_rendering(function: &CheckedFunction) -> String {
 
 /// The rendering of what a caller's analysis reads of one callee's written
 /// boundary [FN-8, FN-9]: its signature, requirements and each
-/// postcondition's selector, substitutions and relation. The occurrences a
+/// postcondition's selector, substitutions and relation, and its range
+/// requirements and the range facts it gives callers [RANGE-2]. The occurrences a
 /// postcondition selects in the callee's body are the callee's own proof and
 /// no caller reads them, so an edit to the callee's body that keeps its
 /// boundary leaves every caller's key unchanged.
@@ -522,7 +523,7 @@ fn claims_rendering(function: &CheckedFunction) -> String {
         })
         .collect::<Vec<_>>();
     format!(
-        "{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{postconditions:?}\n{:?}\n{:?}",
+        "{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{postconditions:?}\n{:?}\n{:?}\n{:?}",
         function.formal_hypothesis,
         function.symbol,
         function.module,
@@ -534,6 +535,7 @@ fn claims_rendering(function: &CheckedFunction) -> String {
         function.requirements,
         function.function_actuals,
         function.range_facts.requirements,
+        function.range_facts.postconditions,
     )
 }
 

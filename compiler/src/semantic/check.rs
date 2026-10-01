@@ -623,6 +623,9 @@ struct BodyChecker {
     /// [RANGE-1] the range clauses of the function being checked, published
     /// with its finished body. Every retry starts empty.
     range_facts: super::range_facts::CheckedRangeFacts,
+    /// [RANGE-1, RANGE-4] the range facts that state nothing at this
+    /// concrete instance, which a certificate's `use` of them skips.
+    unformed_range_facts: HashSet<DeclarationId>,
 }
 
 /// Program-wide judgments and reuse records, published after checking succeeds.
@@ -1739,11 +1742,25 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             requirement_places.push(Vec::new());
         }
 
-        let postcondition_selectors = if unsupplied_window_row {
+        let mut postcondition_selectors = if unsupplied_window_row {
             Vec::new()
         } else {
             self.postcondition_selectors_for_signature(signature)?
         };
+        // [RANGE-1, FN-9] a range postcondition is formed as a range clause
+        // and judged by the range judgment, not as a relation.
+        self.body.range_facts.postconditions = self.check_range_postconditions(
+            FunctionContext {
+                check_context,
+                function: signature,
+            },
+            &postcondition_selectors,
+            &parameter_bindings,
+        )?;
+        postcondition_selectors = self
+            .types
+            .declarations
+            .relation_postcondition_selectors(postcondition_selectors)?;
         let mut postcondition_relations = Vec::with_capacity(postcondition_selectors.len());
         for selector in &postcondition_selectors {
             let mut postcondition_bindings = parameter_bindings.clone();

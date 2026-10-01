@@ -90,7 +90,7 @@ impl Former<'_> {
                 self.iterations.get(*position as usize).cloned()
             }
             CheckedRangeTerm::Value(root) => self.frame.values.get(root).cloned(),
-            CheckedRangeTerm::Measure { place, measure } => {
+            CheckedRangeTerm::Measure { place, measure, .. } => {
                 match (self.frame.places.get(place)?, measure) {
                     (PlaceView::Run { length, .. }, CheckedMeasure::Length) => Some(length.clone()),
                     (

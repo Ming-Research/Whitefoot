@@ -459,7 +459,7 @@ impl<'unit> Checker<'_, 'unit> {
                 .tree
                 .first_child_with(clause, Production::RangeClause)?
             {
-                range.push(self.check_range_clause(context, range_clause, bindings)?);
+                range.extend(self.check_range_clause(context, range_clause, bindings)?);
                 continue;
             }
             let expression = self

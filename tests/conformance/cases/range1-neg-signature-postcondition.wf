@@ -1,0 +1,13 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+interface Filler {
+  fn fill(cells: &[u64]) -> value: u64 writes(cells) contract {
+    ensures forall zero(k in 0_u64..cells^.len): cells^[k] == 0_u64;
+  };
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "RANGE-1: a range clause is admitted as a postcondition of a function declaration, not in the contract of a function signature.";
+  return exit_status(code: 0_u8);
+}

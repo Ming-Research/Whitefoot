@@ -613,9 +613,11 @@ distinct where the arrays are built, as range invariants of the loops that
 fill them, and pass them to the consumer as its range requirements. Two forms
 cover the common cases: a left inverse, `pos^[order^[k]] == k` for every k,
 and stored values that each exceed every value stored before, as preorder
-indices appended in document order do. A range fact does not cross a return,
-so a consumer handed arrays from elsewhere checks them with a loop whose
-invariants state the facts; that pass is the cost.
+indices appended in document order do. A function that builds the arrays
+can hand the facts back as range postconditions, `ensures when Some(value:
+made): forall ...` for a builder that may refuse its input [RANGE-3], so the
+validating pass is one function its consumers call; nothing carries a fact
+past the call that returned it, so each pass pays for that walk.
 [A scatter through a left inverse](../tests/conformance/cases/range5-pos-scatter-through-left-inverse.wf),
 [a children array kept free of repeats by fresh values](../tests/conformance/cases/range5-pos-children-fresh-values.wf)
 and [a level-by-level cascade over a tree](../tests/conformance/cases/range5-pos-level-cascade.wf)
