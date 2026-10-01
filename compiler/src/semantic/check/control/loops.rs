@@ -1033,6 +1033,7 @@ impl<'unit> Checker<'_, 'unit> {
         Ok(StatementResult {
             statement: CheckedStatement::Loop {
                 id,
+                node_path: self.types.declarations.tree.path(node)?.clone(),
                 invariants,
                 body: checked.statements,
                 backedge_drops,

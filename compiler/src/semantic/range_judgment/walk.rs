@@ -108,10 +108,12 @@ pub(super) fn integer_range(ty: IntegerType) -> (i128, i128) {
     }
 }
 
-/// Whether reading `expression` hands its storage over rather than copying
-/// it: a consuming read of a binding or a place.
-const fn consumes(expression: &CheckedExpression) -> bool {
-    matches!(
+/// Whether an aggregate `expression` yields is a copy of storage: it reads
+/// a binding or a place, and does not consume it. A consuming read hands
+/// the storage itself over, and any other expression, such as a call,
+/// yields a new value.
+const fn copies(expression: &CheckedExpression) -> bool {
+    let consumed = matches!(
         expression,
         CheckedExpression::Binding {
             consume_root: true,
@@ -120,7 +122,20 @@ const fn consumes(expression: &CheckedExpression) -> bool {
             consume_root: true,
             ..
         }
-    )
+    );
+    let reads_storage = matches!(
+        expression,
+        CheckedExpression::Binding { .. }
+            | CheckedExpression::Project { .. }
+            | CheckedExpression::ProjectValue { .. }
+            | CheckedExpression::ArrayIndex { .. }
+            | CheckedExpression::RangeIndex { .. }
+            | CheckedExpression::BufferIndex { .. }
+            | CheckedExpression::ReadStorage { .. }
+            | CheckedExpression::BoxDeref { .. }
+            | CheckedExpression::DerefAddressed { .. }
+    );
+    reads_storage && !consumed
 }
 
 const fn integer_type(ty: CheckedType) -> Option<IntegerType> {
@@ -444,7 +459,7 @@ impl<'program> Walker<'program> {
             } => {
                 self.cite = node_path.clone();
                 let evaluated = self.eval(&mut state, value);
-                let consumed = consumes(value);
+                let copied = copies(value);
                 for (binding, ty, ordinal) in bindings {
                     let field = match &evaluated {
                         Value::Owned(location) => match self.read_location(
@@ -453,8 +468,9 @@ impl<'program> Walker<'program> {
                             *ty,
                         ) {
                             // A field of storage that is not handed over is
-                            // a copy.
-                            Value::Owned(_) if !consumed => self.copied(),
+                            // a copy; a statement form that always consumes
+                            // its operand [OWN-1] never reaches this arm.
+                            Value::Owned(_) if copied => self.copied(),
                             other => other,
                         },
                         Value::Struct(fields) => fields
@@ -562,7 +578,15 @@ impl<'program> Walker<'program> {
                 }
                 None
             }
-            CheckedStatement::Loop { id, body, .. } => self.unbounded_loop(state, *id, body),
+            CheckedStatement::Loop {
+                id,
+                node_path,
+                body,
+                ..
+            } => {
+                self.cite = node_path.clone();
+                self.unbounded_loop(state, *id, body)
+            }
             CheckedStatement::CountedRange {
                 id,
                 node_path,
@@ -620,9 +644,9 @@ impl<'program> Walker<'program> {
         arms: &[CheckedMatchArm],
     ) -> Vec<State> {
         let value = self.eval(state, scrutinee);
-        // A by-value binder of a scrutinee the match does not consume is a
-        // copy of the payload, as a `let` of it would be.
-        let consumed = consumes(scrutinee);
+        // A by-value binder of storage the match does not consume is a copy
+        // of the payload, as a `let` of it would be.
+        let copied = copies(scrutinee);
         let mut live = Vec::new();
         match enum_type {
             CheckedEnumType::Bool => {
@@ -684,7 +708,7 @@ impl<'program> Walker<'program> {
                                     Value::Ref(View::Place(forked.resolve(&payload)))
                                 } else {
                                     match self.read_location(&mut forked, &payload, binder.ty) {
-                                        Value::Owned(_) if !consumed => self.copied(),
+                                        Value::Owned(_) if copied => self.copied(),
                                         other => other,
                                     }
                                 }
@@ -1179,21 +1203,8 @@ impl<'program> Walker<'program> {
     /// source.
     fn stored_value(&mut self, state: &mut State, expression: &CheckedExpression) -> Value {
         let value = self.eval(state, expression);
-        let consumed = consumes(expression);
-        let reads_storage = matches!(
-            expression,
-            CheckedExpression::Binding { .. }
-                | CheckedExpression::Project { .. }
-                | CheckedExpression::ProjectValue { .. }
-                | CheckedExpression::ArrayIndex { .. }
-                | CheckedExpression::RangeIndex { .. }
-                | CheckedExpression::BufferIndex { .. }
-                | CheckedExpression::ReadStorage { .. }
-                | CheckedExpression::BoxDeref { .. }
-                | CheckedExpression::DerefAddressed { .. }
-        );
         match value {
-            Value::Owned(_) if reads_storage && !consumed => self.copied(),
+            Value::Owned(_) if copies(expression) => self.copied(),
             other => other,
         }
     }
@@ -2087,6 +2098,8 @@ impl<'program> Walker<'program> {
         {
             self.apart(&entry, id, node, binder, &low, &high, &apart, body);
         }
+        // The certificate's walks moved the cite into the body.
+        self.cite = node.clone();
         let modified = self.modified(&entry, body, Some(binder));
         let mut header = self.header(&entry, &modified);
         let index = self.world.opaque(None);

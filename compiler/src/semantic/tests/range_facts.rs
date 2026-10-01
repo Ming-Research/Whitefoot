@@ -456,8 +456,9 @@ fn main() -> status: std::process::ExitStatus pure {
 
 /// A loop whose write to `cells` waits behind a chain of `flags` flags,
 /// each set an iteration after the one before, so each dry walk of the
-/// header reaches one more of them.
-fn flag_chain(flags: usize) -> Vec<u8> {
+/// header reaches one more of them. `header` opens the loop; an ordinary
+/// `loop` ends its body with a `break`.
+fn flag_chain(flags: usize, header: &str) -> Vec<u8> {
     let mut lets = String::new();
     let mut steps = format!(
         "    if f{flags} {{
@@ -484,6 +485,11 @@ fn flag_chain(flags: usize) -> Vec<u8> {
         "    set f1 = True();
 ",
     );
+    let close = if header.starts_with("  loop") {
+        "    break;\n"
+    } else {
+        ""
+    };
     format!(
         "fn zeros(cells: &[u64]) -> result: u64 reads(cells) contract {{
   requires forall zero(k in 0_u64..cells^.len): cells^[k] == 0_u64;
@@ -498,10 +504,10 @@ fn flag_chain(flags: usize) -> Vec<u8> {
 fn main() -> status: std::process::ExitStatus pure {{
   let cells = box_array_filled::<u64>(count: 4_u64, value: 0_u64);
 {lets}  let seen = 0_u64;
-  for (i in 0_u64..16_u64) {{
+{header}
     let got = zeros(cells: &cells.inner[0_u64..4_u64]);
     set seen = got;
-{steps}  }}
+{steps}{close}  }}
   if seen != 0_u64 {{
     return std::process::exit_status(code: 1_u8);
   }}
@@ -517,27 +523,37 @@ fn a_header_that_does_not_settle_is_unsupported_at_its_loop() {
     // Six flags settle within the walks a header takes, and the write they
     // guard refutes the requirement; twelve do not, the header forgets
     // everything, and the verdict is the checker's capability, cited at
-    // the loop.
-    with_semantics(&flag_chain(6), |outcome| {
+    // the loop: a counted loop, one whose certificate is walked first, and
+    // an ordinary loop.
+    const COUNTED: &str = "  for (i in 0_u64..16_u64) {";
+    const CERTIFIED: &str = "  for (\n    i in 0_u64..16_u64,\n    apart(p, q) {\n    }\n  ) {";
+    const ORDINARY: &str = "  loop {";
+    with_semantics(&flag_chain(6, COUNTED), |outcome| {
         let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
             panic!("expected a RANGE-3 rejection, got {outcome:?}");
         };
         assert_eq!(issue.rule(), SemanticRule::Range3);
     });
-    let source = flag_chain(12);
-    with_semantics(&source, |outcome| {
-        let SemanticOutcome::Unsupported { unsupported, .. } = outcome else {
-            panic!("expected an unsupported capability, got {outcome:?}");
-        };
-        assert_eq!(
-            unsupported.feature(),
-            crate::UnsupportedSemanticFeature::RangeLoopNesting
-        );
-        let crate::SemanticLocation::SourceNode(_, coordinate) = &unsupported.node;
-        let start = usize::try_from(coordinate.start().value()).expect("offset fits");
-        assert!(
-            source[start..].starts_with(b"for (i in"),
-            "cited at the loop"
-        );
-    });
+    for (header, opening) in [
+        (COUNTED, b"for (".as_slice()),
+        (CERTIFIED, b"for (".as_slice()),
+        (ORDINARY, b"loop {".as_slice()),
+    ] {
+        let source = flag_chain(12, header);
+        with_semantics(&source, |outcome| {
+            let SemanticOutcome::Unsupported { unsupported, .. } = outcome else {
+                panic!("expected an unsupported capability, got {outcome:?}");
+            };
+            assert_eq!(
+                unsupported.feature(),
+                crate::UnsupportedSemanticFeature::RangeLoopNesting
+            );
+            let crate::SemanticLocation::SourceNode(_, coordinate) = &unsupported.node;
+            let start = usize::try_from(coordinate.start().value()).expect("offset fits");
+            assert!(
+                source[start..].starts_with(opening),
+                "cited at the loop: {header}"
+            );
+        });
+    }
 }

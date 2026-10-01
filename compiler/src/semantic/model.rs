@@ -2683,6 +2683,8 @@ pub(crate) enum CheckedStatement {
     },
     Loop {
         id: CheckedLoopId,
+        /// The `loop_stmt`, which the range judgment cites [RANGE-3].
+        node_path: NodePath,
         /// Formed source invariants awaiting the normal semantic proof
         /// checker. Their presence alone grants no authority.
         invariants: Vec<CheckedLoopInvariant>,
