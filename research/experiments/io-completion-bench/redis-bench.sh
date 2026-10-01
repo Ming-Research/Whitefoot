@@ -15,7 +15,9 @@
 # BASELINE_ROOT, when set, is a worktree of the revision before expiry with its
 # compiler built; its subset is measured as the baseline lines of Experiment 8.
 # DRAGONFLY and GARNET name those servers' executables; the suite skips a line
-# whose executable is absent and says so.
+# whose executable is absent and says so. FIRN_BASELINE, when set, names
+# another firn executable, such as one built from an earlier revision, which
+# the suite measures as the firn-base lines beside firn.
 #
 # The servers run pinned to SERVER_CPUS and the client to CLIENT_CPUS, so the
 # two never share a core; nothing else should run on the host meanwhile. The
@@ -29,6 +31,7 @@ WHITEFOOTC=${WHITEFOOTC:-$ROOT/compiler/target/gate/whitefootc}
 BASELINE_ROOT=${BASELINE_ROOT:-}
 DRAGONFLY=${DRAGONFLY:-dragonfly}
 GARNET=${GARNET:-garnet-server}
+FIRN_BASELINE=${FIRN_BASELINE:-}
 SERVER_CPUS=${SERVER_CPUS:-0,1}
 CLIENT_CPUS=${CLIENT_CPUS:-2,3}
 CLIENT_THREADS=${CLIENT_THREADS:-2}
@@ -62,6 +65,7 @@ available() {
     case $1 in
         dragonfly-*) command -v "$DRAGONFLY" >/dev/null 2>&1 ;;
         garnet-*) command -v "$GARNET" >/dev/null 2>&1 ;;
+        firn-base-*) test -n "$FIRN_BASELINE" && test -x "$FIRN_BASELINE" ;;
         valkey*) command -v valkey-server >/dev/null 2>&1 ;;
         *) true ;;
     esac
@@ -107,6 +111,11 @@ start() {
         garnet-*)
             taskset -c "$SERVER_CPUS" "$GARNET" --port "$PORT" \
                 --bind 127.0.0.1 >"$OUT/server.log" 2>&1 &
+            ;;
+        firn-base-*)
+            WF_DRIVERS=${1#firn-base-} taskset -c "$SERVER_CPUS" \
+                "$FIRN_BASELINE" "$PORT" 0 - "${IDLE:-0}" \
+                >"$OUT/server.log" 2>&1 &
             ;;
         firn-aof-*)
             (cd "$OUT" && WF_DRIVERS=${1##*-} exec taskset -c "$SERVER_CPUS" \
@@ -361,8 +370,8 @@ suite_run() {
 }
 
 if [ "$MODE" = suite ]; then
-    two="reference valkey valkey-io dragonfly-2 garnet-2 firn-2"
-    one="reference valkey dragonfly-1 garnet-1 firn-1"
+    two="reference valkey valkey-io dragonfly-2 garnet-2 firn-2 firn-base-2"
+    one="reference valkey dragonfly-1 garnet-1 firn-1 firn-base-1"
     for line in $two; do
         if available "$line"; then
             verify_suite "$line"
