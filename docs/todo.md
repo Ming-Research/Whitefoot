@@ -1340,6 +1340,19 @@ rarely insert at the same place.
   whitelist. Node occupancy and key/child layout remain separate unresolved
   factors for lookup/traversal after these refused shift trials.
 
+- **Vector reserve no-op still executes growth-path register saves.**
+  The retained scalar4096 reserve-noop cell overlaps C++ but is separated
+  slower than Rust in both cohorts of one launch. Reached WF and C++ paths
+  eagerly save 64 bytes; Rust saves registers only after selecting growth.
+  The source already returns early when capacity suffices. Investigate general
+  fast-path frame placement, using the exact image and per-peer ranges in the
+  [matched Vector API results](../research/experiments/container-representation/vector-library/RESULTS.md#matched-edit-apis-inline-owner-zero-extents-and-local-swap-remove).
+  Reopen with native evidence that removes no-op stack traffic without adding
+  growth-path calls, copies or spills, then measure both widths and preserve
+  reserve growth, arbitrary admitted capacities, allocation failure and owner
+  cleanup checks. Instruction counts do not assign the observed timing cost;
+  overlap alone establishes neither an unavoidable floor nor qualification.
+
 - **Vector wide insertion still materializes records across bulk shifts.**
   The reached native wide insertion constructs a 256-byte offered record
   before `memmove` and spills 240 bytes across it; the Rust adapter constructs
@@ -3446,6 +3459,14 @@ condition under which it is taken up.
   is admitted but LLVM selects between eagerly computed mask and modulo results,
   restoring division on the power-of-two path. That native-only trial stops
   without timing; another spelling needs a distinct code-generation ground.
+  The [first-probe peel](../research/experiments/container-representation/map-library/RESULTS.md#first-probe-peel-partial-native-mechanism-unqualified-peer-panel)
+  shortens the first equal-hit native path but still sets the available-slot
+  sentinel. Its separate full peer panel reaches six of eight strict cells,
+  fails both scalar replacement cells, and exceeds paired-spread and unchanged
+  chain-drift limits. The linked chain bytes stay equal while their placement
+  moves; that is a lead, not an established cause. Reopen a first-probe source
+  change only with a complete owner-safe continuation and a stable peer panel
+  that qualifies replacement as well as churn; do not select this peel.
 - **Packing a byte-comparison mask loses the vector form.** Three ordinary
   `Array<u8, 8>` source forms generate vector comparisons, but packing their
   0x80/0 results into a word becomes lane widening and an AND/OR reduction.

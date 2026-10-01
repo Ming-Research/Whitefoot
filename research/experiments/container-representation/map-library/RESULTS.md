@@ -4405,6 +4405,84 @@ available at retention; current text is not claimed byte-identical to that
 preregistration. Object identity independently establishes this negative result.
 No production mechanism is selected.
 
+#### First-probe peel: partial native mechanism, unqualified peer panel
+
+An ordinary-source trial starts `try_put` with one `hash_map_action` at the home
+bucket, returns through the unchanged `hash_map_exchange` on an equal hit,
+records the home bucket and stops on Stop, and continues the original bounded
+scan after Deleted or Miss. It retains the
+conditional power-of-two mask with modulo fallback, ownership, tombstones and
+all public outcomes. The first candidate CLI built but source admission stopped
+at a `TYPE-6` collision between the new first-advance `next` binding and the
+existing loop binding. A mechanical rename to `first_next` admitted both the
+mutation witness and maintained capacity-three program; the failed attempt and
+repair are retained separately. Production library bytes were restored.
+
+The registered native preflight is **partial/fail**: a first equal bucket still
+sets the available-slot sentinel, even though the remaining-count setup and
+entry branch into the shared loop disappear. Reached first-hit work shortens
+from 21 to 20 instructions in the scalar batch and 18 to 16 in wide `try_put`;
+there is no new hot call, spill or frame growth. Static cold code grows. A
+**separate**, preregistered performance question therefore tested the unchanged
+source-mask control and peeled candidate, without reclassifying the native gate.
+Both arms pass 30 direct check stages: four 96-owner positives in total,
+20 exact fault refusals, identical allocation ledgers, and maintained native
+program execution. The fixed 4,194,304-operation C0/B0/B1/C1 panel exits zero
+and retains all 1,152 rows, nine seeds per cell and cohort, with matching
+non-time fields and unchanged image pins.
+
+| Width | Buckets | Operation | Source-mask WF median ns/op, cohorts 0/1 | Peeled WF median ns/op, cohorts 0/1 | Peeled vs Rust, cohorts 0/1 | Peeled vs C++, cohorts 0/1 |
+|---|---:|---|---:|---:|---|---|
+| word8 | 64 | replace | 2.803 / 2.694 | 3.174 / 3.195 | loss / loss | overlap / overlap |
+| word8 | 64 | churn | 6.997 / 7.131 | 6.644 / 6.542 | win / win | win / win |
+| word8 | 4096 | replace | 3.694 / 3.739 | 3.727 / 3.937 | loss / loss | overlap / overlap |
+| word8 | 4096 | churn | 11.766 / 12.009 | 12.573 / 11.290 | loss / overlap | win / win |
+| wide256 | 64 | replace | 20.778 / 21.135 | 21.041 / 20.801 | win / win | loss / loss |
+| wide256 | 64 | churn | 28.011 / 27.779 | 27.753 / 28.074 | overlap / overlap | win / win |
+| wide256 | 4096 | replace | 25.476 / 25.995 | 25.811 / 25.745 | win / win | loss / loss |
+| wide256 | 4096 | churn | 39.419 / 39.280 | 43.034 / 42.546 | loss / loss | win / win |
+
+The peeled image wins the strict median-slower Rust/C++ full-range comparison
+in six of eight cells in both cohorts; scalar replacement fails both sizes.
+There is no separated before/after gain, and wide 4096-bucket churn has a
+separated loss in cohort one. Minimum real interval is 9.315 ms, but the
+maximum paired WF cohort-ratio spread is 13.656 percent (scalar 4096 churn)
+and unchanged-chain median drift is 17.193 percent in cohort-one scalar 4096
+churn, each over the registered 10-percent limit. The native-peer drift
+maximum is 3.727 percent. The campaign and complete peer goal fail; the
+candidate is not adopted. A read-only linked audit found the scalar chain
+body's 928 machine-code bytes equal across these images while its address
+moves by 420 bytes (modulo 64: 28 to 0). That placement observation does not
+establish the cause of the drift. The source attempts, criterion, direct
+statuses, exact ledgers, native excerpts, all raw rows and reduction are
+retained under `first-probe-peel` in the same archive and indexed by
+`mutation-api-evidence.json`.
+
+#### Linked chain placement A/A: no qualified explanation
+
+A separate layout-only A/A diagnostic relinks the same frozen objects with
+one 164-byte helper moved ahead of the scalar chain batch. The linked chain
+body remains 928 identical machine-code bytes and 232 instructions with a
+112-byte frame; its address moves from `0x1000a50dc` to `0x1000a5180`
+(modulo 64: 28 to 0). Fifteen function addresses move and all 2,917
+disassembled symbol occurrences retain their instructions modulo branch
+relocations. The explicit-order control is not globally the prior image:
+Rust/C++ placement also differs from that older image, although their code and
+addresses match between these A/A arms. The test therefore does not isolate a
+cache or predictor cause for the preceding unchanged-chain drift.
+
+All 29 check exits, including 26 broad checks and exact ledger, have the
+registered results. The fixed 4M-operation C0/B0/B1/C1 panel exits zero and
+retains 1,152 rows. Scalar 4096-bucket chain churn full ranges overlap in both
+cohorts: median 7.687 to 7.740 ns/op in cohort zero and 8.363 to 7.827 in
+cohort one. Its paired-ratio spread is 7.587 percent and native-peer maximum
+drift 5.372 percent, but full-panel flat scalar 4096 churn spread is 19.092
+percent, beyond the 10-percent limit. Minimum interval is 9.309 ms. There is
+no qualified layout response or established cause of the earlier drift; no
+source choice changes. Criteria, exact order files, native comparison, checks,
+raw rows and full peer ranges are retained under `chain-layout-aa` in the
+same archive and indexed by `mutation-api-evidence.json`.
+
 [`entry-forward-evidence.tar.gz`](entry-forward-evidence.tar.gz) serves this
 section's reader with scripts, criteria, raw API/whole-Map/long-hit records,
 commands, metadata, statuses, source patch and native excerpts, without binaries.

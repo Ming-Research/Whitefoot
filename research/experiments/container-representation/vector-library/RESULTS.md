@@ -9106,6 +9106,47 @@ into final positions. These observations identify operations, not a universal
 allocator or instruction-count performance prediction. The remaining wide
 swap-remove local materialization and insertion costs are retained in TODO.
 
+The scalar reserve-noop cell at count/capacity 4096 exposes a separate fast-path
+cost. Filtering the retained CSV by `operation == reserve-noop`,
+`element_bytes == 8` and `count == 4096` gives 54 rows: nine samples per peer
+in each cohort. Dividing `elapsed_ns` by `operations` (4194304 per sample)
+gives these medians and complete ranges in ns/op:
+
+| Peer | Cohort 0 median [range] | Cohort 1 median [range] |
+|---|---:|---:|
+| WF | 1.260906458 [1.256783962–1.315335512] | 1.283277988 [1.258641481–1.502474308] |
+| C++ | 1.263648272 [1.259366512–1.308917999] | 1.305937767 [1.260131598–1.397977352] |
+| Rust | 0.954945803 [0.949462175–1.008977413] | 0.964005709 [0.949362755–0.980069160] |
+
+All intervals in this cell exceed 3.98 ms and its cohort-ratio stability checks
+pass. WF overlaps C++ and is separated slower than Rust in both cohorts; the
+cell remains unqualified. This is still one launch, not repeatability evidence.
+The common driver times ordinary reserve calls and returned-capacity stores;
+setup, snapshot controls, verification and cleanup are outside that interval.
+
+The frozen `swap-final/ecosystem/vector-costs-timed` image has SHA256
+`df7099c62d0aad27d7ea8605da142e88bb22eb07f976a62a44cfe07e69e1e20a`,
+also pinned in the API evidence. Its reached WF reserve entry at `0x1000af6dc`
+saves four register pairs before loading capacity and testing `cap >= total`
+at `0x1000af6f0`; the no-op return restores them. C++ at `0x100012eb8` likewise
+eagerly saves 64 bytes. Rust at `0x100017280` returns without stack traffic;
+its growth-only saves begin at `0x1000172a8`. Counting the executed no-op paths
+gives WF 15 instructions/64-byte frame, C++ 17/64 and Rust 10/no frame. None
+allocates, copies payload or mutates the vector on this path. Reproduce the
+inspection on that exact image with:
+
+```sh
+llvm-objdump -d --no-show-raw-insn \
+  --disassemble-symbols=_wf_vector_api_word_reserve,_cpp_vector_api_word_reserve,_rust_vector_api_word_reserve \
+  <scratch-root>/ordinary-inline-owner/swap-final/ecosystem/vector-costs-timed
+```
+
+Ordinary `grow_vector_reserve` already returns before `grow` when capacity
+suffices. General fast-path frame placement is therefore a concrete remaining
+code-generation hypothesis. These instruction counts do not attribute the
+timing difference or promise a gain; overlapping C++ ranges do not establish
+an unavoidable performance floor or justify relaxing qualification.
+
 The final linked timed/accounting correctness checks and deliberate oracle
 fault controls pass. The source revision passes all canonical Linux/macOS
 gate groups and Linux/Windows native-host CI. Those functional results do not

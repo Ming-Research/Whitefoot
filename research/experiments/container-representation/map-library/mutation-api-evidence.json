@@ -7391,5 +7391,81 @@
     "replay": "<frozen-running-index-compiler> --par --emit-llvm tests/programs/containers/hash-map-program.wf -o <scratch-root>/wide-node-par.ll",
     "source_path": "tests/programs/containers/hash-map-program.wf",
     "source_revision": "b9ccb67de4d2ab3110418f47670944c5d000970a"
+  },
+  "first_probe_peel": {
+    "decision": "unselected; original native criterion partial/FAIL and distinct 4M peer campaign unqualified",
+    "archive_prefix": "first-probe-peel/",
+    "archive_sha256": "4136bf5c0d2bd7561f86c20cc086457fbf3c074b273cb35f5520880535eb7482",
+    "initial_source_sha256": "3a682ccda3156a055fc548f3eba0deed2d2f7ff666ad514d0b007c45b7cc5d02",
+    "admission_failure": "TYPE-6 next binding collision; exact diagnostic retained",
+    "repair": "outer first-advance next renamed first_next only",
+    "repaired_source_sha256": "623f37e40c6973a18cb75e3c9c631cec2e3b6a4dc7db20f8195239184679e446",
+    "control_source_mask_sha256": "252e813fcb0c335df6be73f9557b88dd183f7cf9e48fb0da7c3d81cfcadab162",
+    "control_timed_image_sha256": "6e348aa6820bc9517067954693ee1b4d15c9249f884d625e71d6c79a66d7d02a",
+    "candidate_timed_image_sha256": "cccfe6994d0684c1a5636d0e1a0eac50449c7b18d83d1db176ac9b41c1bf4ef6",
+    "production_library_restored_sha256": "bd482f345505ab2c1a30b323f5d0667839febbb6c57c06f82e3675b628e20a89",
+    "original_native_preflight": "partial/FAIL: available sentinel remains; first equal hit scalar 21 to 20, wide 18 to 16 instructions",
+    "separate_performance_question_sha256": "9e5e16f81248cf6254e1b7fc0689d0de82a2645f5bfc1d96a4b8c198fb397703",
+    "direct_checks": {
+      "stages": 30,
+      "fault_exits": 20,
+      "positive_owner_traces": 4,
+      "identical_ledger_sha256": "75bcb01092141bcb20958473838a5d65df03cab359630981eed220412c84b252"
+    },
+    "timing": {
+      "rows": 1152,
+      "order": "control0,candidate0,candidate1,control1",
+      "work": 4194304,
+      "minimum_interval_ns": 9315000,
+      "candidate_strict_cells_both_cohorts": 6,
+      "max_paired_spread": {
+        "spread": 0.1365606517424045,
+        "width": "word8",
+        "slots": 4096,
+        "operation": "churn",
+        "ratios": [
+          1.0685281244934348,
+          0.9401417538565388
+        ]
+      },
+      "max_unchanged_peer_drift": {
+        "drift": 0.1719294464202321,
+        "variant": "whitefoot-chain",
+        "width": "word8",
+        "slots": 4096,
+        "operation": "churn",
+        "cohort": 1
+      },
+      "instrument_pass": false,
+      "campaign_qualified": false,
+      "raw_sha256": {
+        "control-cohort-0.csv": "768a376bfc8a2e484e104c175a0a39cbed2b7e419d5bcb09295d849087582896",
+        "control-cohort-1.csv": "e010d7491b5b4fd351443d8e9facd6eba30c61298436d4e4d700c7f5f77823e4",
+        "candidate-cohort-0.csv": "b47b753011b50c5842c2d6b53bf68a6c2ab2d2dc87461d1659086972cca6eb23",
+        "candidate-cohort-1.csv": "83df2aae89954e905cf5cf6fe0473fdb4c9fe982ffd6a0c0bc4e03f2b29231d2"
+      }
+    },
+    "native_audit_observation": "linked scalar chain 928 code bytes equal; address +420 bytes and modulo64 28 to 0; cause not established"
+  },
+  "chain_layout_aa": {
+    "decision": "layout-only A/A unqualified; no causal attribution or source adoption",
+    "archive_prefix": "chain-layout-aa/",
+    "archive_sha256": "4136bf5c0d2bd7561f86c20cc086457fbf3c074b273cb35f5520880535eb7482",
+    "manifest_sha256": "c07e025ed017b2cbc50b80f5de94d9e253e1d3785d5d97a12a305defae438bdf",
+    "native_observation": "chain 928 equal code bytes; address 0x1000a50dc to 0x1000a5180, modulo64 28 to 0; 15 moved functions",
+    "direct_checks": {
+      "expected_exits": 29,
+      "ledger_sha256": "75bcb01092141bcb20958473838a5d65df03cab359630981eed220412c84b252"
+    },
+    "timing": {
+      "rows": 1152,
+      "work": 4194304,
+      "chain_primary_ranges": "overlap in both cohorts",
+      "chain_paired_spread_percent": 7.586806,
+      "flat_panel_max_paired_spread_percent": 19.091684,
+      "native_peer_max_drift_percent": 5.371692,
+      "minimum_interval_ns": 9309000
+    },
+    "limitation": "explicit-order control is not globally the prior image; native peers match between A/A arms but differ in placement from older first-probe images"
   }
 }
