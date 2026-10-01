@@ -32,13 +32,16 @@ RUSTLIB  := $(DEPS)/cmaps-target/release/libcmaps.a
 NATIVE := empty mutex_flat flat boost_cfm tbb_chm libcuckoo urcu_lfht papaya dashmap scc stdmap
 BINS   := $(addprefix $(BUILD)/bench-,$(NATIVE))
 MANAGED := $(BUILD)/java/Bench.class $(BUILD)/bench-go $(BUILD)/dotnet/Bench.dll
+# The wf-current control needs the gate compiler (`make -C compiler build`
+# builds a different profile; `cargo build --profile gate` builds this one).
+WFC := $(ROOT)/compiler/target/gate/whitefootc
 
 .PHONY: deps build verify quick full
 deps:
 	sh deps.sh fetch
 	OUT=$(DEPS) sh deps.sh build
 
-build: $(BUILD)/zipfgen $(BINS) $(MANAGED)
+build: $(BUILD)/zipfgen $(BINS) $(MANAGED) $(BUILD)/wf-current
 
 $(BUILD)/zipfgen: zipfgen.c workload.h | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ zipfgen.c -lm
@@ -92,6 +95,9 @@ $(BUILD)/dotnet/Bench.dll: dotnet/Program.cs dotnet/Bench.csproj | $(BUILD)
 	rm -rf $(BUILD)/dotnet-src && mkdir -p $(BUILD)/dotnet-src
 	cp dotnet/Program.cs dotnet/Bench.csproj $(BUILD)/dotnet-src/
 	dotnet build $(BUILD)/dotnet-src/Bench.csproj -c Release -o $(BUILD)/dotnet --nologo -v q
+
+$(BUILD)/wf-current: wf/current.wf $(WFC) | $(BUILD)
+	$(WFC) -o $@ wf/current.wf
 
 $(BUILD):
 	mkdir -p $@

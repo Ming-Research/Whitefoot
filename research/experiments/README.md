@@ -187,6 +187,16 @@ completion criterion were refused.
   execution
   ([`compute-runtime/PRIOR-BUNDLE.md`](../investigations/compute-runtime/PRIOR-BUNDLE.md)).
   It goes when §12 item 1 and the chain bar are answered or retired.
+- [concurrent-map-bench/](concurrent-map-bench/RESULTS.md) — the
+  standalone measurement of the
+  [concurrent hash index investigation](../investigations/concurrent-map/DESIGN.md):
+  one C driver linked with each native concurrent map (Boost, TBB, libcuckoo,
+  liburcu, papaya, DashMap, scc), Java, Go and .NET drivers for their maps,
+  and three controls (an empty map, a flat table behind one mutex, and a
+  Whitefoot `HashMap` behind one `Shared` object, the map firn uses), every
+  cell checking its own result. `make -C research/experiments/concurrent-map-bench deps build verify quick`;
+  never part of `make check`. It goes when the index it measures is settled
+  and a maintained successor keeps its comparisons.
 - `io-completion-bench/` — program-level measurement of ordinary linked I/O
   calls against native C controls (a direct loop, a thread pool and, on Linux,
   a raw io_uring pipeline) and the same Whitefoot source built with and without
