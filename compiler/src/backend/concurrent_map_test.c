@@ -534,6 +534,19 @@ static void claim_given_back(void) {
 
 /* Entries. */
 
+/* At rest, a map's used cells less those counted before its table became
+ * current are exactly the cells of that table that are not empty: every
+ * claim of an empty cell is counted once, whether it is kept or given back. */
+static void check_cells(wf_cmap *map, const char *what) {
+    table *t = atomic_load(&map->current);
+    int64_t used, live, taken = 0;
+    totals(map, &used, &live);
+    for (uint64_t i = 0; i < t->capacity; i++)
+        taken += atomic_load(&t->cells[i].key) != EMPTY;
+    if (used - t->base != taken)
+        fail(what, (uint64_t)(used - t->base), (uint64_t)taken);
+}
+
 /* A step another writer takes once, when the writer under test is about to
  * claim the cell at index; the claim tests below set it. */
 static void (*at_claim)(struct table *t, unsigned long long index);
@@ -705,6 +718,45 @@ static void settle_pending(void) {
     wf_cmap_destroy(map);
 }
 
+/* As another writer of claim_key that claimed the cell of the key the
+ * writer under test passed, removed meanwhile, and gives its claim back a
+ * little later: marks that cell pending for claim_key. */
+static pthread_t pending_thread;
+
+static void claim_pending_behind(struct table *t, unsigned long long index) {
+    (void)index;
+    uint64_t tag = tag_of(claim_key, claim_length);
+    cell *c = &t->cells[start_of(t, tag)];
+    atomic_store(&c->key, tag | LOCKED | PENDING);
+    pthread_create(&pending_thread, NULL, give_back_later, c);
+}
+
+/* Key k claims the empty cell after a live key's cell that another writer of
+ * k has meanwhile claimed, pending: k gives its empty cell back, counted as
+ * taken, and claims again once the other claim is given back. */
+static void claim_yields(void) {
+    wf_cmap *map = wf_cmap_create_entries(8, 8, 0);
+    wf_cmap_user *first = wf_cmap_user_at(map, 0);
+    table *t = atomic_load(&map->current);
+    unsigned char k[16], gone[16];
+    uint64_t k_length = counted_key(0, k), skip = 0;
+    uint64_t gone_bytes = key_beside(t, k, k_length, &skip, gone);
+    wf_cmap_entry entry;
+    wf_cmap_lock_entry(first, gone, gone_bytes, 0, &entry);
+    wf_cmap_unlock_entry(first, &entry, 0, 1);
+    claim_key = k;
+    claim_length = k_length;
+    at_claim = claim_pending_behind;
+    uint64_t *slot = wf_cmap_lock_entry(first, k, k_length, 0, &entry);
+    pthread_join(pending_thread, NULL);
+    if (at_claim != NULL || !entry.fresh)
+        fail("the key did not claim again after giving way", at_claim == NULL, entry.fresh);
+    slot[0] = 1;
+    wf_cmap_unlock_entry(first, &entry, 0, 1);
+    check_cells(map, "an empty cell claimed and given back went uncounted (counted, taken)");
+    wf_cmap_destroy(map);
+}
+
 enum { ENTRY_KEYS = 3000, ENTRY_KEY_BYTES = 600 };
 
 /* Key k's bytes: k's own eight bytes, so that keys differ, then up to 55
@@ -751,6 +803,7 @@ static void entries_sequential(void) {
     }
     if (wf_cmap_count(map) != live)
         fail("the count of entries disagrees with the reference", wf_cmap_count(map), live);
+    check_cells(map, "claims miscounted the cells they took (counted, taken)");
     uint64_t drained = 0;
     for (uint64_t *slot; (slot = wf_cmap_drain(map)) != NULL;)
         drained++;
@@ -923,6 +976,7 @@ static void entries_churn(int crowded) {
         pthread_join(threads[i], NULL);
     if (wf_cmap_count(map) > CHURN_KEYS)
         fail("churned keys counted more than once (crowded, count)", (uint64_t)crowded, wf_cmap_count(map));
+    check_cells(map, "churned claims miscounted the cells they took (counted, taken)");
     uint64_t sum = atomic_load(&churn_removed), cells = 0;
     for (uint64_t *slot; (slot = wf_cmap_drain(map)) != NULL; cells++)
         sum += slot[0];
@@ -964,6 +1018,7 @@ int main(void) {
         claim_behind(1);
         claim_behind(0);
         settle_pending();
+        claim_yields();
         entries_misses();
         entries_churn(0);
         entries_churn(1);

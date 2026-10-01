@@ -147,8 +147,10 @@ handed back. Each choice is a proposal until then.
   time (Q37, the four `LRANGE` tests) stay open.
 - **A statement that finds its entry or its map held waits in the runtime
   without parking,** since a holder's block contains no waiting call and so
-  runs to its end without yielding its driver; parking, with the key word's
-  second bit marking waiters, comes with bounded overtaking.
+  runs to its end without yielding its driver; parking, with a mark for
+  waiters that takes a bit from the hash or a word beside the cell, since
+  the key word's second bit now marks a pending claim, comes with bounded
+  overtaking.
 - **A keyed or whole-map statement's block may contain an atomic statement
   on a `Shared` object, whose own block contains none,** so that an
   append-only file's record of a change is made in the same step as the

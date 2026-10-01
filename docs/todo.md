@@ -956,11 +956,12 @@ rarely insert at the same place.
   object also reached from map blocks can lose it at every hand-off while
   such statements keep arriving. [SHARE-3] promises a begun statement
   eventually takes effect. The change: park waiting keyed statements with
-  the key word's second bit marking waiters, hand the entry over after a
-  bounded number of vain wakes as objects do, and let a statement that
-  takes back a hand-off owe the next hand-off to the context it took it
-  from. Reopen with that parking, or when a workload's tail latency shows a
-  keyed or nested wait.
+  a mark for waiters, a bit taken from the hash or a word beside the cell
+  since the key word's second bit marks a pending claim, hand the entry
+  over after a bounded number of vain wakes as objects do, and let a
+  statement that takes back a hand-off owe the next hand-off to the
+  context it took it from. Reopen with that parking, or when a workload's
+  tail latency shows a keyed or nested wait.
 
 - **`SharedMap<unit>` and maps of other payload-free values do not lower.**
   The unlock reads the entry's `Option` tag as an `i32`
