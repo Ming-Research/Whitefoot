@@ -9046,3 +9046,90 @@ not the measured call path. R has no extra grow-helper call or record spill
 to remove; Rust and C++ still use their own growth helpers. These instructions
 do not assign the small realloc loss to compiler overhead or establish a
 universal allocator policy. No additional native variant follows this result.
+
+#### Matched edit APIs: inline owner, zero extents and local swap-remove
+
+The current source is `d03ee3709c437cf20d8c0271f57f9c0e87638a97`.
+The frozen compiler and source hashes, per-peer medians and complete ranges are
+in [the API evidence](ecosystem-edit-swap-final.json), with
+[all 3888 samples](ecosystem-edit-swap-final-samples.csv). The fixed nine-sample
+launch exited 0 in 283.47 s. All real intervals exceed 1 ms (minimum
+1.283459 ms). Four cells fail the 10% cohort-ratio stability condition.
+
+Each row below comprises six width/count cells: 8/256-byte values and initial
+counts 16/256/4096. The median column compares WF with the slower standard
+peer's combined median: less than 1 is faster. This descriptive ratio is not
+the qualification criterion. The final column counts cells whose WF complete
+range is below that cohort's median-slower peer in both cohorts, with duration
+and stability also passing. This one launch establishes no repeatability.
+
+| Operation | WF/slower-peer median ratio range | Qualified cells |
+|---|---:|---:|
+| reserve-noop | 0.987–1.008 | 0/6 |
+| reserve-grow | 0.935–0.997 | 0/6 |
+| insert-front-spare | 0.860–1.018 | 2/6 |
+| insert-mid-spare | 0.433–1.026 | 1/6 |
+| insert-front-full | 0.948–0.997 | 1/6 |
+| insert-mid-full | 0.927–1.018 | 1/6 |
+| remove-front | 0.964–1.049 | 1/6 |
+| remove-mid | 0.931–1.069 | 1/6 |
+| remove-back-chain | 0.834–1.031 | 3/6 |
+| drain-all | 0.833–1.012 | 1/6 |
+| swap-remove-front-chain | 0.951–1.182 | 0/6 |
+| truncate-half | 0.786–1.007 | 1/6 |
+
+Overall, 50/72 combined medians are no slower than the slower peer; only
+12/72 cells meet the complete-range, duration and stability criterion. Rust
+and C++ separately have 6/72 and 9/72 complete-range wins for WF. This does
+not qualify Vector. Construction and `free_empty` have no dedicated API
+timing rows, and current whole-Vector performance qualification is missing.
+Back-pop and swap-remove measure complete removal chains from the stated
+initial count; their averages do not identify first-removal latency. Setup,
+independent final-state verification and cleanup are outside the operation
+clock; calls include the ordinary adapter and owned-value consumption.
+
+The [earlier 3888-row panel](ecosystem-edit-precallback-samples.csv) is retained
+as adverse, nonmatching evidence for drain/truncate: its WF callback carried
+edit-shape dispatch absent from the peers. The current four-field sequential
+consume callback retains value and checksum checks without that dispatch.
+Separately, public `swap_remove` now takes the last owner before exchanging
+with an earlier selected slot. Reached native code removes the retired-slot
+write/reload; the independent source program checks first, middle, last and
+owning cases, and the allocator ledger remains exact. Both panels ran once;
+no adverse sample was removed or retried.
+
+Native inspection also finds remaining costs: wide insertion materializes a
+256-byte record before its bulk shift and spills 240 bytes across `memmove`;
+Rust constructs those fields after shifting. Full insertion in WF and Rust
+resizes then shifts, while C++ can copy the old prefix and suffix directly
+into final positions. These observations identify operations, not a universal
+allocator or instruction-count performance prediction. The remaining wide
+swap-remove local materialization and insertion costs are retained in TODO.
+
+The final linked timed/accounting correctness checks and deliberate oracle
+fault controls pass. The source revision passes all canonical Linux/macOS
+gate groups and Linux/Windows native-host CI. Those functional results do not
+turn overlapping timing ranges into performance wins.
+
+
+#### Current-source append after the API fixes
+
+The same frozen current-source image was measured once with the retained
+append work budgets: spare `api-measure 4194304 9` and growth
+`growth-api-measure 67108864 9 8589934592`. Direct exits are both 0; elapsed
+times are 27.871 and 156.158 s. [The evidence record](ecosystem-append-swap-final.json)
+contains both peer ranges, command/status records, identities and placement
+checks; [648 spare rows](ecosystem-append-swap-final-spare-samples.csv) and
+[1080 growth rows](ecosystem-append-swap-final-growth-samples.csv) retain every
+sample and control. Minimum real intervals are 1.322 and 1.224 ms; the RAW
+clock probe observes 41 ns and maximum cohort-ratio spread is 6.66%.
+
+Spare append meets the selected-peer range target in 6/6 cells. Full growth
+meets it in 2/6 canonical cells (8-byte/capacity16 and 256-byte/capacity4096);
+the other four overlap. The separate capacity0/1 policy cells pass 4/4.
+Scalar capacity16 still loses to C++ despite beating the median-slower Rust
+control. Thus append as a whole remains unqualified.
+
+The common driver and peer objects, and all 52 peer entry addresses, match
+the preceding image. Constant-pool operands still move: this is a current
+image comparison, not clean causal attribution of an old/new speedup.

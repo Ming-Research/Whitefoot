@@ -1,0 +1,1465 @@
+{
+  "cells": [
+    {
+      "phase": "spare",
+      "arm": "append-final",
+      "element_bytes": 8,
+      "count": 16,
+      "samples": {
+        "whitefoot": [
+          {
+            "min": 0.467418909072876,
+            "median": 0.46919679641723633,
+            "max": 0.4984421730041504,
+            "min_elapsed_ns": 1960497
+          },
+          {
+            "min": 0.46779656410217285,
+            "median": 0.4682657718658447,
+            "max": 0.4853208065032959,
+            "min_elapsed_ns": 1962081
+          }
+        ],
+        "rust-vec": [
+          {
+            "min": 0.4674100875854492,
+            "median": 0.47258472442626953,
+            "max": 0.49783921241760254,
+            "min_elapsed_ns": 1960460
+          },
+          {
+            "min": 0.4723961353302002,
+            "median": 0.4790921211242676,
+            "max": 0.5039780139923096,
+            "min_elapsed_ns": 1981373
+          }
+        ],
+        "cpp-std-vector": [
+          {
+            "min": 1.0057799816131592,
+            "median": 1.0070407390594482,
+            "max": 1.045494794845581,
+            "min_elapsed_ns": 4218547
+          },
+          {
+            "min": 1.0065648555755615,
+            "median": 1.0164601802825928,
+            "max": 1.0500969886779785,
+            "min_elapsed_ns": 4221839
+          }
+        ]
+      },
+      "ratios": {
+        "rust-vec": [
+          0.9928310674596048,
+          0.9774023642196055
+        ],
+        "cpp-std-vector": [
+          0.46591640061697487,
+          0.4606828491162921
+        ]
+      },
+      "spreads_percent": {
+        "rust-vec": 1.5785416328840451,
+        "cpp-std-vector": 1.1360421840583168
+      },
+      "selected_peers": [
+        "cpp-std-vector",
+        "cpp-std-vector"
+      ],
+      "target_pass": true,
+      "peer_deficits": {
+        "rust-vec": false,
+        "cpp-std-vector": false
+      }
+    },
+    {
+      "phase": "spare",
+      "arm": "append-final",
+      "element_bytes": 8,
+      "count": 256,
+      "samples": {
+        "whitefoot": [
+          {
+            "min": 0.35409116744995117,
+            "median": 0.35711169242858887,
+            "max": 0.37192320823669434,
+            "min_elapsed_ns": 1485166
+          },
+          {
+            "min": 0.3571012020111084,
+            "median": 0.36201953887939453,
+            "max": 0.3815584182739258,
+            "min_elapsed_ns": 1497791
+          }
+        ],
+        "rust-vec": [
+          {
+            "min": 0.4210662841796875,
+            "median": 0.42597365379333496,
+            "max": 0.4511573314666748,
+            "min_elapsed_ns": 1766080
+          },
+          {
+            "min": 0.42130494117736816,
+            "median": 0.4250011444091797,
+            "max": 0.4357790946960449,
+            "min_elapsed_ns": 1767081
+          }
+        ],
+        "cpp-std-vector": [
+          {
+            "min": 0.9280750751495361,
+            "median": 0.9320876598358154,
+            "max": 0.9697771072387695,
+            "min_elapsed_ns": 3892629
+          },
+          {
+            "min": 0.9283225536346436,
+            "median": 0.9347996711730957,
+            "max": 0.9722015857696533,
+            "min_elapsed_ns": 3893667
+          }
+        ]
+      },
+      "ratios": {
+        "rust-vec": [
+          0.8383422055530337,
+          0.8518083860283723
+        ],
+        "cpp-std-vector": [
+          0.38313101633755464,
+          0.38726964722301427
+        ]
+      },
+      "spreads_percent": {
+        "rust-vec": 1.606286834438353,
+        "cpp-std-vector": 1.0802129582255793
+      },
+      "selected_peers": [
+        "cpp-std-vector",
+        "cpp-std-vector"
+      ],
+      "target_pass": true,
+      "peer_deficits": {
+        "rust-vec": false,
+        "cpp-std-vector": false
+      }
+    },
+    {
+      "phase": "spare",
+      "arm": "append-final",
+      "element_bytes": 8,
+      "count": 4096,
+      "samples": {
+        "whitefoot": [
+          {
+            "min": 0.31529831886291504,
+            "median": 0.317354679107666,
+            "max": 0.34354066848754883,
+            "min_elapsed_ns": 1322457
+          },
+          {
+            "min": 0.31523966789245605,
+            "median": 0.31626129150390625,
+            "max": 0.34082961082458496,
+            "min_elapsed_ns": 1322211
+          }
+        ],
+        "rust-vec": [
+          {
+            "min": 0.8173980712890625,
+            "median": 0.8498032093048096,
+            "max": 0.9149703979492188,
+            "min_elapsed_ns": 3428416
+          },
+          {
+            "min": 0.8190176486968994,
+            "median": 0.8332729339599609,
+            "max": 0.8479254245758057,
+            "min_elapsed_ns": 3435209
+          }
+        ],
+        "cpp-std-vector": [
+          {
+            "min": 0.9191336631774902,
+            "median": 0.9422991275787354,
+            "max": 1.0059478282928467,
+            "min_elapsed_ns": 3855126
+          },
+          {
+            "min": 0.9225504398345947,
+            "median": 0.9307456016540527,
+            "max": 0.9587810039520264,
+            "min_elapsed_ns": 3869457
+          }
+        ]
+      },
+      "ratios": {
+        "rust-vec": [
+          0.373444905400253,
+          0.37954105865522175
+        ],
+        "cpp-std-vector": [
+          0.3367876185167633,
+          0.3397934848597403
+        ]
+      },
+      "spreads_percent": {
+        "rust-vec": 1.6324103413420499,
+        "cpp-std-vector": 0.8925109409351428
+      },
+      "selected_peers": [
+        "cpp-std-vector",
+        "cpp-std-vector"
+      ],
+      "target_pass": true,
+      "peer_deficits": {
+        "rust-vec": false,
+        "cpp-std-vector": false
+      }
+    },
+    {
+      "phase": "spare",
+      "arm": "append-final",
+      "element_bytes": 256,
+      "count": 16,
+      "samples": {
+        "whitefoot": [
+          {
+            "min": 4.503100156784058,
+            "median": 4.515864849090576,
+            "max": 4.622858285903931,
+            "min_elapsed_ns": 18887371
+          },
+          {
+            "min": 4.509259462356567,
+            "median": 4.591211795806885,
+            "max": 5.256988763809204,
+            "min_elapsed_ns": 18913205
+          }
+        ],
+        "rust-vec": [
+          {
+            "min": 4.5914740562438965,
+            "median": 4.61712384223938,
+            "max": 4.711968421936035,
+            "min_elapsed_ns": 19258038
+          },
+          {
+            "min": 4.585377931594849,
+            "median": 4.624904632568359,
+            "max": 4.692424535751343,
+            "min_elapsed_ns": 19232469
+          }
+        ],
+        "cpp-std-vector": [
+          {
+            "min": 7.164875030517578,
+            "median": 7.220451831817627,
+            "max": 7.301559925079346,
+            "min_elapsed_ns": 30051664
+          },
+          {
+            "min": 7.162077903747559,
+            "median": 7.2049407958984375,
+            "max": 7.5689966678619385,
+            "min_elapsed_ns": 30039932
+          }
+        ]
+      },
+      "ratios": {
+        "rust-vec": [
+          0.9780688158670461,
+          0.9927149121034385
+        ],
+        "cpp-std-vector": [
+          0.6254269059992861,
+          0.6372310232473427
+        ]
+      },
+      "spreads_percent": {
+        "rust-vec": 1.497450485977203,
+        "cpp-std-vector": 1.8873695926459044
+      },
+      "selected_peers": [
+        "cpp-std-vector",
+        "cpp-std-vector"
+      ],
+      "target_pass": true,
+      "peer_deficits": {
+        "rust-vec": false,
+        "cpp-std-vector": false
+      }
+    },
+    {
+      "phase": "spare",
+      "arm": "append-final",
+      "element_bytes": 256,
+      "count": 256,
+      "samples": {
+        "whitefoot": [
+          {
+            "min": 4.2415900230407715,
+            "median": 4.257378339767456,
+            "max": 4.333661794662476,
+            "min_elapsed_ns": 17790518
+          },
+          {
+            "min": 4.252419948577881,
+            "median": 4.270222425460815,
+            "max": 4.35730767250061,
+            "min_elapsed_ns": 17835942
+          }
+        ],
+        "rust-vec": [
+          {
+            "min": 4.290884494781494,
+            "median": 4.323052644729614,
+            "max": 4.378349542617798,
+            "min_elapsed_ns": 17997274
+          },
+          {
+            "min": 4.3103227615356445,
+            "median": 4.331256151199341,
+            "max": 4.463346004486084,
+            "min_elapsed_ns": 18078804
+          }
+        ],
+        "cpp-std-vector": [
+          {
+            "min": 7.103891372680664,
+            "median": 7.145352125167847,
+            "max": 7.287970066070557,
+            "min_elapsed_ns": 29795880
+          },
+          {
+            "min": 7.113154649734497,
+            "median": 7.1914381980896,
+            "max": 7.562902450561523,
+            "min_elapsed_ns": 29834733
+          }
+        ]
+      },
+      "ratios": {
+        "rust-vec": [
+          0.9848083494791061,
+          0.9859085393225647
+        ],
+        "cpp-std-vector": [
+          0.5958248474237998,
+          0.5937925499513014
+        ]
+      },
+      "spreads_percent": {
+        "rust-vec": 0.11171613685450055,
+        "cpp-std-vector": 0.34225715237841126
+      },
+      "selected_peers": [
+        "cpp-std-vector",
+        "cpp-std-vector"
+      ],
+      "target_pass": true,
+      "peer_deficits": {
+        "rust-vec": false,
+        "cpp-std-vector": false
+      }
+    },
+    {
+      "phase": "spare",
+      "arm": "append-final",
+      "element_bytes": 256,
+      "count": 4096,
+      "samples": {
+        "whitefoot": [
+          {
+            "min": 4.222401142120361,
+            "median": 4.273206472396851,
+            "max": 4.3713109493255615,
+            "min_elapsed_ns": 17710034
+          },
+          {
+            "min": 4.231413841247559,
+            "median": 4.27477765083313,
+            "max": 4.838483095169067,
+            "min_elapsed_ns": 17747836
+          }
+        ],
+        "rust-vec": [
+          {
+            "min": 4.264779090881348,
+            "median": 4.3285791873931885,
+            "max": 4.378606081008911,
+            "min_elapsed_ns": 17887780
+          },
+          {
+            "min": 4.259315252304077,
+            "median": 4.282469272613525,
+            "max": 4.401238203048706,
+            "min_elapsed_ns": 17864863
+          }
+        ],
+        "cpp-std-vector": [
+          {
+            "min": 7.08341646194458,
+            "median": 7.1848835945129395,
+            "max": 7.39226508140564,
+            "min_elapsed_ns": 29710002
+          },
+          {
+            "min": 7.102263689041138,
+            "median": 7.154021739959717,
+            "max": 7.388338327407837,
+            "min_elapsed_ns": 29789053
+          }
+        ]
+      },
+      "ratios": {
+        "rust-vec": [
+          0.9872076465280781,
+          0.9982039283201438
+        ],
+        "cpp-std-vector": [
+          0.5947495761323507,
+          0.5975348980218783
+        ]
+      },
+      "spreads_percent": {
+        "rust-vec": 1.1138772912404615,
+        "cpp-std-vector": 0.46831843204337975
+      },
+      "selected_peers": [
+        "cpp-std-vector",
+        "cpp-std-vector"
+      ],
+      "target_pass": true,
+      "peer_deficits": {
+        "rust-vec": false,
+        "cpp-std-vector": false
+      }
+    },
+    {
+      "phase": "growth",
+      "arm": "append-final",
+      "element_bytes": 8,
+      "count": 0,
+      "samples": {
+        "whitefoot": [
+          {
+            "min": 7.582805633544922,
+            "median": 7.604743957519531,
+            "max": 8.234512329101562,
+            "min_elapsed_ns": 1987787
+          },
+          {
+            "min": 7.5878753662109375,
+            "median": 7.678180694580078,
+            "max": 8.016120910644531,
+            "min_elapsed_ns": 1989116
+          }
+        ],
+        "rust-vec": [
+          {
+            "min": 10.869823455810547,
+            "median": 10.974418640136719,
+            "max": 11.460128784179688,
+            "min_elapsed_ns": 2849459
+          },
+          {
+            "min": 10.841686248779297,
+            "median": 10.978519439697266,
+            "max": 11.433624267578125,
+            "min_elapsed_ns": 2842083
+          }
+        ],
+        "cpp-std-vector": [
+          {
+            "min": 10.924812316894531,
+            "median": 11.039241790771484,
+            "max": 11.40310287475586,
+            "min_elapsed_ns": 2863874
+          },
+          {
+            "min": 10.913677215576172,
+            "median": 11.014163970947266,
+            "max": 11.541488647460938,
+            "min_elapsed_ns": 2860955
+          }
+        ]
+      },
+      "ratios": {
+        "rust-vec": [
+          0.6929518735240077,
+          0.699382165031882
+        ],
+        "cpp-std-vector": [
+          0.6888828147488261,
+          0.6971187931134206
+        ]
+      },
+      "spreads_percent": {
+        "rust-vec": 0.9279564358738224,
+        "cpp-std-vector": 1.1955557880475531
+      },
+      "selected_peers": [
+        "cpp-std-vector",
+        "cpp-std-vector"
+      ],
+      "target_pass": true,
+      "peer_deficits": {
+        "rust-vec": false,
+        "cpp-std-vector": false
+      }
+    },
+    {
+      "phase": "growth",
+      "arm": "append-final",
+      "element_bytes": 8,
+      "count": 1,
+      "samples": {
+        "whitefoot": [
+          {
+            "min": 18.249278363453815,
+            "median": 18.336996423192772,
+            "max": 18.59878184613454,
+            "min_elapsed_ns": 4653128
+          },
+          {
+            "min": 18.22933138805221,
+            "median": 18.325101185993976,
+            "max": 18.82894076305221,
+            "min_elapsed_ns": 4648042
+          }
+        ],
+        "rust-vec": [
+          {
+            "min": 31.32452073920683,
+            "median": 31.504514150351405,
+            "max": 32.308597671937754,
+            "min_elapsed_ns": 7987001
+          },
+          {
+            "min": 31.32514824924699,
+            "median": 31.65461063002008,
+            "max": 32.31465706576305,
+            "min_elapsed_ns": 7987161
+          }
+        ],
+        "cpp-std-vector": [
+          {
+            "min": 19.033030559738958,
+            "median": 19.136126537399598,
+            "max": 19.86706591992972,
+            "min_elapsed_ns": 4852966
+          },
+          {
+            "min": 19.021217683232933,
+            "median": 19.07823873619478,
+            "max": 20.34307934864458,
+            "min_elapsed_ns": 4849954
+          }
+        ]
+      },
+      "ratios": {
+        "rust-vec": [
+          0.5820434600477163,
+          0.5789078058857915
+        ],
+        "cpp-std-vector": [
+          0.9582397141529657,
+          0.9605237380339533
+        ]
+      },
+      "spreads_percent": {
+        "rust-vec": 0.541650005414418,
+        "cpp-std-vector": 0.2383562116298421
+      },
+      "selected_peers": [
+        "rust-vec",
+        "rust-vec"
+      ],
+      "target_pass": true,
+      "peer_deficits": {
+        "rust-vec": false,
+        "cpp-std-vector": false
+      }
+    },
+    {
+      "phase": "growth",
+      "arm": "append-final",
+      "element_bytes": 8,
+      "count": 16,
+      "samples": {
+        "whitefoot": [
+          {
+            "min": 34.18256007858187,
+            "median": 34.478298611111114,
+            "max": 35.7513763249269,
+            "min_elapsed_ns": 5985503
+          },
+          {
+            "min": 34.12782118055556,
+            "median": 34.41716351425438,
+            "max": 34.51445997807018,
+            "min_elapsed_ns": 5975918
+          }
+        ],
+        "rust-vec": [
+          {
+            "min": 35.911326982821635,
+            "median": 36.02837742141813,
+            "max": 37.10295595760234,
+            "min_elapsed_ns": 6288217
+          },
+          {
+            "min": 35.8700715003655,
+            "median": 36.009817023026315,
+            "max": 36.5109649122807,
+            "min_elapsed_ns": 6280993
+          }
+        ],
+        "cpp-std-vector": [
+          {
+            "min": 25.44371916118421,
+            "median": 25.61074561403509,
+            "max": 26.55301420869883,
+            "min_elapsed_ns": 4455297
+          },
+          {
+            "min": 25.52176420869883,
+            "median": 25.591202942251464,
+            "max": 25.96193690606725,
+            "min_elapsed_ns": 4468963
+          }
+        ]
+      },
+      "ratios": {
+        "rust-vec": [
+          0.9569761693074326,
+          0.9557716856002485
+        ],
+        "cpp-std-vector": [
+          1.34624345306903,
+          1.34488259859919
+        ]
+      },
+      "spreads_percent": {
+        "rust-vec": 0.1260221165086728,
+        "cpp-std-vector": 0.10118760338317934
+      },
+      "selected_peers": [
+        "rust-vec",
+        "rust-vec"
+      ],
+      "target_pass": true,
+      "peer_deficits": {
+        "rust-vec": false,
+        "cpp-std-vector": true
+      }
+    },
+    {
+      "phase": "growth",
+      "arm": "append-final",
+      "element_bytes": 8,
+      "count": 256,
+      "samples": {
+        "whitefoot": [
+          {
+            "min": 98.19962806424346,
+            "median": 99.79313609467455,
+            "max": 111.43012679628065,
+            "min_elapsed_ns": 2904254
+          },
+          {
+            "min": 98.53203719357566,
+            "median": 102.87820794590026,
+            "max": 109.02928148774302,
+            "min_elapsed_ns": 2914085
+          }
+        ],
+        "rust-vec": [
+          {
+            "min": 100.27195266272189,
+            "median": 103.18539306846999,
+            "max": 115.2830092983939,
+            "min_elapsed_ns": 2965543
+          },
+          {
+            "min": 101.93548605240913,
+            "median": 106.23976331360947,
+            "max": 111.27083685545225,
+            "min_elapsed_ns": 3014742
+          }
+        ],
+        "cpp-std-vector": [
+          {
+            "min": 91.0624852071006,
+            "median": 91.53021132713441,
+            "max": 98.68135249366019,
+            "min_elapsed_ns": 2693173
+          },
+          {
+            "min": 91.38346576500423,
+            "median": 93.92639053254437,
+            "max": 105.83276415891801,
+            "min_elapsed_ns": 2702666
+          }
+        ]
+      },
+      "ratios": {
+        "rust-vec": [
+          0.9671246397099591,
+          0.9683587833513312
+        ],
+        "cpp-std-vector": [
+          1.090275381731699,
+          1.0953067328851969
+        ]
+      },
+      "spreads_percent": {
+        "rust-vec": 0.1276095748881101,
+        "cpp-std-vector": 0.4614752600857974
+      },
+      "selected_peers": [
+        "rust-vec",
+        "rust-vec"
+      ],
+      "target_pass": false,
+      "peer_deficits": {
+        "rust-vec": false,
+        "cpp-std-vector": false
+      }
+    },
+    {
+      "phase": "growth",
+      "arm": "append-final",
+      "element_bytes": 8,
+      "count": 4096,
+      "samples": {
+        "whitefoot": [
+          {
+            "min": 645.6725317693059,
+            "median": 679.7590420332356,
+            "max": 850.8074291300097,
+            "min_elapsed_ns": 1321046
+          },
+          {
+            "min": 664.4276637341153,
+            "median": 733.1397849462365,
+            "max": 751.9956011730205,
+            "min_elapsed_ns": 1359419
+          }
+        ],
+        "rust-vec": [
+          {
+            "min": 659.4970674486804,
+            "median": 677.6417399804496,
+            "max": 744.6427174975562,
+            "min_elapsed_ns": 1349331
+          },
+          {
+            "min": 662.1236559139785,
+            "median": 694.5083088954057,
+            "max": 749.3890518084066,
+            "min_elapsed_ns": 1354705
+          }
+        ],
+        "cpp-std-vector": [
+          {
+            "min": 684.8357771260997,
+            "median": 692.4291300097751,
+            "max": 747.55522971652,
+            "min_elapsed_ns": 1401174
+          },
+          {
+            "min": 688.9667644183774,
+            "median": 707.010752688172,
+            "max": 759.7517106549365,
+            "min_elapsed_ns": 1409626
+          }
+        ]
+      },
+      "ratios": {
+        "rust-vec": [
+          1.0031245154007884,
+          1.0556242100433226
+        ],
+        "cpp-std-vector": [
+          0.9817019714691081,
+          1.0369570507360992
+        ]
+      },
+      "spreads_percent": {
+        "rust-vec": 5.233616947499131,
+        "cpp-std-vector": 5.6284983500952235
+      },
+      "selected_peers": [
+        "cpp-std-vector",
+        "cpp-std-vector"
+      ],
+      "target_pass": false,
+      "peer_deficits": {
+        "rust-vec": false,
+        "cpp-std-vector": false
+      }
+    },
+    {
+      "phase": "growth",
+      "arm": "append-final",
+      "element_bytes": 256,
+      "count": 0,
+      "samples": {
+        "whitefoot": [
+          {
+            "min": 12.333229064941406,
+            "median": 12.49295425415039,
+            "max": 13.07769775390625,
+            "min_elapsed_ns": 3233082
+          },
+          {
+            "min": 12.40411376953125,
+            "median": 12.677677154541016,
+            "max": 12.807350158691406,
+            "min_elapsed_ns": 3251664
+          }
+        ],
+        "rust-vec": [
+          {
+            "min": 21.755229949951172,
+            "median": 21.920696258544922,
+            "max": 23.244831085205078,
+            "min_elapsed_ns": 5703003
+          },
+          {
+            "min": 21.764293670654297,
+            "median": 22.397361755371094,
+            "max": 22.838565826416016,
+            "min_elapsed_ns": 5705379
+          }
+        ],
+        "cpp-std-vector": [
+          {
+            "min": 15.645622253417969,
+            "median": 15.855308532714844,
+            "max": 16.80405044555664,
+            "min_elapsed_ns": 4101406
+          },
+          {
+            "min": 15.879020690917969,
+            "median": 15.979434967041016,
+            "max": 16.399818420410156,
+            "min_elapsed_ns": 4162590
+          }
+        ]
+      },
+      "ratios": {
+        "rust-vec": [
+          0.5699159418479011,
+          0.5660343969530605
+        ],
+        "cpp-std-vector": [
+          0.7879351088232195,
+          0.7933745580297323
+        ]
+      },
+      "spreads_percent": {
+        "rust-vec": 0.685743643095682,
+        "cpp-std-vector": 0.6903422814394711
+      },
+      "selected_peers": [
+        "rust-vec",
+        "rust-vec"
+      ],
+      "target_pass": true,
+      "peer_deficits": {
+        "rust-vec": false,
+        "cpp-std-vector": false
+      }
+    },
+    {
+      "phase": "growth",
+      "arm": "append-final",
+      "element_bytes": 256,
+      "count": 1,
+      "samples": {
+        "whitefoot": [
+          {
+            "min": 48.549652099609375,
+            "median": 49.19147491455078,
+            "max": 50.86164093017578,
+            "min_elapsed_ns": 6363500
+          },
+          {
+            "min": 48.571266174316406,
+            "median": 49.02204895019531,
+            "max": 50.62226104736328,
+            "min_elapsed_ns": 6366333
+          }
+        ],
+        "rust-vec": [
+          {
+            "min": 51.89800262451172,
+            "median": 52.203834533691406,
+            "max": 54.01868438720703,
+            "min_elapsed_ns": 6802375
+          },
+          {
+            "min": 51.89128875732422,
+            "median": 52.523223876953125,
+            "max": 53.94775390625,
+            "min_elapsed_ns": 6801495
+          }
+        ],
+        "cpp-std-vector": [
+          {
+            "min": 43.05711364746094,
+            "median": 43.68975067138672,
+            "max": 45.44415283203125,
+            "min_elapsed_ns": 5643582
+          },
+          {
+            "min": 43.192535400390625,
+            "median": 43.60044860839844,
+            "max": 44.48956298828125,
+            "min_elapsed_ns": 5661332
+          }
+        ]
+      },
+      "ratios": {
+        "rust-vec": [
+          0.9422962001537166,
+          0.933340441269179
+        ],
+        "cpp-std-vector": [
+          1.1259271146806349,
+          1.12434735225987
+        ]
+      },
+      "spreads_percent": {
+        "rust-vec": 0.9595382872684022,
+        "cpp-std-vector": 0.14050483754772802
+      },
+      "selected_peers": [
+        "rust-vec",
+        "rust-vec"
+      ],
+      "target_pass": true,
+      "peer_deficits": {
+        "rust-vec": false,
+        "cpp-std-vector": true
+      }
+    },
+    {
+      "phase": "growth",
+      "arm": "append-final",
+      "element_bytes": 256,
+      "count": 16,
+      "samples": {
+        "whitefoot": [
+          {
+            "min": 144.65807692307692,
+            "median": 149.64743589743588,
+            "max": 159.15602564102565,
+            "min_elapsed_ns": 2256666
+          },
+          {
+            "min": 145.195,
+            "median": 149.63679487179488,
+            "max": 162.57185897435897,
+            "min_elapsed_ns": 2265042
+          }
+        ],
+        "rust-vec": [
+          {
+            "min": 146.8376923076923,
+            "median": 151.96871794871794,
+            "max": 160.82814102564103,
+            "min_elapsed_ns": 2290668
+          },
+          {
+            "min": 146.34057692307692,
+            "median": 152.7675,
+            "max": 163.57628205128205,
+            "min_elapsed_ns": 2282913
+          }
+        ],
+        "cpp-std-vector": [
+          {
+            "min": 142.2274358974359,
+            "median": 143.39217948717948,
+            "max": 151.3325641025641,
+            "min_elapsed_ns": 2218748
+          },
+          {
+            "min": 141.07666666666665,
+            "median": 144.69288461538463,
+            "max": 149.90160256410257,
+            "min_elapsed_ns": 2200796
+          }
+        ]
+      },
+      "ratios": {
+        "rust-vec": [
+          0.9847252639713301,
+          0.9795067332501668
+        ],
+        "cpp-std-vector": [
+          1.0436234140008709,
+          1.034168302536451
+        ]
+      },
+      "spreads_percent": {
+        "rust-vec": 0.5327712964103171,
+        "cpp-std-vector": 0.9142720233476398
+      },
+      "selected_peers": [
+        "rust-vec",
+        "rust-vec"
+      ],
+      "target_pass": false,
+      "peer_deficits": {
+        "rust-vec": false,
+        "cpp-std-vector": false
+      }
+    },
+    {
+      "phase": "growth",
+      "arm": "append-final",
+      "element_bytes": 256,
+      "count": 256,
+      "samples": {
+        "whitefoot": [
+          {
+            "min": 1312.0782608695652,
+            "median": 1325.5246376811594,
+            "max": 1393.0019323671497,
+            "min_elapsed_ns": 1358001
+          },
+          {
+            "min": 1303.3806763285024,
+            "median": 1321.583574879227,
+            "max": 1396.5777777777778,
+            "min_elapsed_ns": 1348999
+          }
+        ],
+        "rust-vec": [
+          {
+            "min": 1301.287922705314,
+            "median": 1326.0859903381643,
+            "max": 1360.9893719806764,
+            "min_elapsed_ns": 1346833
+          },
+          {
+            "min": 1300.727536231884,
+            "median": 1331.8019323671497,
+            "max": 1371.6985507246377,
+            "min_elapsed_ns": 1346253
+          }
+        ],
+        "cpp-std-vector": [
+          {
+            "min": 1308.8183574879226,
+            "median": 1318.8840579710145,
+            "max": 1575.4009661835748,
+            "min_elapsed_ns": 1354627
+          },
+          {
+            "min": 1305.2763285024155,
+            "median": 1316.4666666666667,
+            "max": 1428.8647342995168,
+            "min_elapsed_ns": 1350961
+          }
+        ]
+      },
+      "ratios": {
+        "rust-vec": [
+          0.9995766845731764,
+          0.9923274195362064
+        ],
+        "cpp-std-vector": [
+          1.005034998846192,
+          1.0038868498095106
+        ]
+      },
+      "spreads_percent": {
+        "rust-vec": 0.7305315659178468,
+        "cpp-std-vector": 0.11437036324355443
+      },
+      "selected_peers": [
+        "rust-vec",
+        "rust-vec"
+      ],
+      "target_pass": false,
+      "peer_deficits": {
+        "rust-vec": false,
+        "cpp-std-vector": false
+      }
+    },
+    {
+      "phase": "growth",
+      "arm": "append-final",
+      "element_bytes": 256,
+      "count": 4096,
+      "samples": {
+        "whitefoot": [
+          {
+            "min": 156.2348919545843,
+            "median": 165.66365523135147,
+            "max": 174.57746306922232,
+            "min_elapsed_ns": 1279720
+          },
+          {
+            "min": 149.38224880966914,
+            "median": 154.20888780368696,
+            "max": 170.48077157856184,
+            "min_elapsed_ns": 1223590
+          }
+        ],
+        "rust-vec": [
+          {
+            "min": 158.82663899401783,
+            "median": 173.88230985227688,
+            "max": 231.44146013917714,
+            "min_elapsed_ns": 1300949
+          },
+          {
+            "min": 157.33219387132218,
+            "median": 160.40593334147235,
+            "max": 181.65571969234526,
+            "min_elapsed_ns": 1288708
+          }
+        ],
+        "cpp-std-vector": [
+          {
+            "min": 14875.821267244537,
+            "median": 15090.481992430716,
+            "max": 15399.010987669393,
+            "min_elapsed_ns": 121847852
+          },
+          {
+            "min": 14767.671346599927,
+            "median": 14982.570382126725,
+            "max": 15425.6553534367,
+            "min_elapsed_ns": 120961996
+          }
+        ]
+      },
+      "ratios": {
+        "rust-vec": [
+          0.9527343832278992,
+          0.9613664818458236
+        ],
+        "cpp-std-vector": [
+          0.010978022790421621,
+          0.010292552203702548
+        ]
+      },
+      "spreads_percent": {
+        "rust-vec": 0.9060341234540692,
+        "cpp-std-vector": 6.659869905469007
+      },
+      "selected_peers": [
+        "cpp-std-vector",
+        "cpp-std-vector"
+      ],
+      "target_pass": true,
+      "peer_deficits": {
+        "rust-vec": false,
+        "cpp-std-vector": false
+      }
+    }
+  ],
+  "minimum_real_ns": {
+    "append-final-spare": 1322211,
+    "append-final-growth": 1223590
+  },
+  "status": [
+    {
+      "phase": "spare",
+      "argv": [
+        "perl",
+        ".github/run-check.pl",
+        "swap-final-append-spare",
+        "python3",
+        "-c",
+        "import subprocess,sys,time,json; t=time.monotonic(); out=open(sys.argv[2],\"w\"); err=open(sys.argv[3],\"w\"); p=subprocess.Popen([sys.argv[1]]+sys.argv[5:],stdout=out,stderr=err); print(\"CHILD_PID\",p.pid,flush=True); r=p.wait(); out.close();err.close();json.dump({\"pid\":p.pid,\"exit\":r,\"wall_seconds\":time.monotonic()-t},open(sys.argv[4],\"w\"));sys.exit(r)",
+        "/private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/ordinary-inline-owner/swap-final/ecosystem/vector-costs-timed",
+        "/private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/ordinary-inline-owner/swap-final/ecosystem/append-final-spare.csv",
+        "/private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/ordinary-inline-owner/swap-final/ecosystem/append-final-spare.stderr",
+        "/private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/ordinary-inline-owner/swap-final/ecosystem/append-final-spare-child.json",
+        "api-measure",
+        "4194304",
+        "9"
+      ],
+      "guard_pid": 46401,
+      "exit": 0,
+      "wall_seconds": 27.870754125062376,
+      "sha_before": "df7099c62d0aad27d7ea8605da142e88bb22eb07f976a62a44cfe07e69e1e20a",
+      "sha_after": "df7099c62d0aad27d7ea8605da142e88bb22eb07f976a62a44cfe07e69e1e20a"
+    },
+    {
+      "phase": "growth",
+      "argv": [
+        "perl",
+        ".github/run-check.pl",
+        "swap-final-append-growth",
+        "python3",
+        "-c",
+        "import subprocess,sys,time,json; t=time.monotonic(); out=open(sys.argv[2],\"w\"); err=open(sys.argv[3],\"w\"); p=subprocess.Popen([sys.argv[1]]+sys.argv[5:],stdout=out,stderr=err); print(\"CHILD_PID\",p.pid,flush=True); r=p.wait(); out.close();err.close();json.dump({\"pid\":p.pid,\"exit\":r,\"wall_seconds\":time.monotonic()-t},open(sys.argv[4],\"w\"));sys.exit(r)",
+        "/private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/ordinary-inline-owner/swap-final/ecosystem/vector-costs-timed",
+        "/private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/ordinary-inline-owner/swap-final/ecosystem/append-final-growth.csv",
+        "/private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/ordinary-inline-owner/swap-final/ecosystem/append-final-growth.stderr",
+        "/private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/ordinary-inline-owner/swap-final/ecosystem/append-final-growth-child.json",
+        "growth-api-measure",
+        "67108864",
+        "9",
+        "8589934592"
+      ],
+      "guard_pid": 47384,
+      "exit": 0,
+      "wall_seconds": 156.15752787468955,
+      "sha_before": "df7099c62d0aad27d7ea8605da142e88bb22eb07f976a62a44cfe07e69e1e20a",
+      "sha_after": "df7099c62d0aad27d7ea8605da142e88bb22eb07f976a62a44cfe07e69e1e20a"
+    }
+  ],
+  "peer_placement": {
+    "objects": {
+      "driver-timed.o": {
+        "anchor-final": "b19138b78406bb898c0e01673f2a6810b5d7686d97c8a78e892d201013a6c9f5",
+        "swap-final": "b19138b78406bb898c0e01673f2a6810b5d7686d97c8a78e892d201013a6c9f5"
+      },
+      "cpp-timed.o": {
+        "anchor-final": "fdc4cf47af2e4b1b7d58d30e8e72d6003fc5a07257b606c0403c6e5c8ae2eaa5",
+        "swap-final": "fdc4cf47af2e4b1b7d58d30e8e72d6003fc5a07257b606c0403c6e5c8ae2eaa5"
+      },
+      "rust-timed.a": {
+        "anchor-final": "d52f7c8f835bd7a77b24c268c3aad3d36313550256bb347291a36367096173a3",
+        "swap-final": "d52f7c8f835bd7a77b24c268c3aad3d36313550256bb347291a36367096173a3"
+      }
+    },
+    "peer_api_entry_addresses": {
+      "_cpp_vector_api_word_prepare:": {
+        "anchor": "0000000100012954",
+        "swap": "0000000100012954"
+      },
+      "_cpp_vector_api_word_append_batch:": {
+        "anchor": "00000001000129a0",
+        "swap": "00000001000129a0"
+      },
+      "_cpp_vector_api_word_append_one:": {
+        "anchor": "0000000100012a58",
+        "swap": "0000000100012a58"
+      },
+      "_cpp_vector_api_word_snapshot:": {
+        "anchor": "0000000100012ac4",
+        "swap": "0000000100012ac4"
+      },
+      "_cpp_vector_api_word_inspect_reset:": {
+        "anchor": "0000000100012af4",
+        "swap": "0000000100012af4"
+      },
+      "_cpp_vector_api_word_destroy:": {
+        "anchor": "0000000100012b6c",
+        "swap": "0000000100012b6c"
+      },
+      "_cpp_vector_api_record_prepare:": {
+        "anchor": "0000000100012b94",
+        "swap": "0000000100012b94"
+      },
+      "_cpp_vector_api_record_append_batch:": {
+        "anchor": "0000000100012be0",
+        "swap": "0000000100012be0"
+      },
+      "_cpp_vector_api_record_append_one:": {
+        "anchor": "0000000100012c40",
+        "swap": "0000000100012c40"
+      },
+      "_cpp_vector_api_record_snapshot:": {
+        "anchor": "0000000100012db0",
+        "swap": "0000000100012db0"
+      },
+      "_cpp_vector_api_record_inspect_reset:": {
+        "anchor": "0000000100012de0",
+        "swap": "0000000100012de0"
+      },
+      "_cpp_vector_api_record_destroy:": {
+        "anchor": "0000000100012e90",
+        "swap": "0000000100012e90"
+      },
+      "_cpp_vector_api_word_reserve:": {
+        "anchor": "0000000100012eb8",
+        "swap": "0000000100012eb8"
+      },
+      "_cpp_vector_api_word_insert:": {
+        "anchor": "0000000100012f5c",
+        "swap": "0000000100012f5c"
+      },
+      "_cpp_vector_api_word_remove:": {
+        "anchor": "0000000100012fa0",
+        "swap": "0000000100012fa0"
+      },
+      "_cpp_vector_api_word_drain:": {
+        "anchor": "0000000100013024",
+        "swap": "0000000100013024"
+      },
+      "_cpp_vector_api_word_inspect_shape:": {
+        "anchor": "0000000100013090",
+        "swap": "0000000100013090"
+      },
+      "_cpp_vector_api_word_swap_remove:": {
+        "anchor": "00000001000131ec",
+        "swap": "00000001000131ec"
+      },
+      "_cpp_vector_api_word_truncate:": {
+        "anchor": "000000010001324c",
+        "swap": "000000010001324c"
+      },
+      "_cpp_vector_api_record_reserve:": {
+        "anchor": "0000000100013324",
+        "swap": "0000000100013324"
+      },
+      "_cpp_vector_api_record_insert:": {
+        "anchor": "00000001000133c8",
+        "swap": "00000001000133c8"
+      },
+      "_cpp_vector_api_record_remove:": {
+        "anchor": "000000010001393c",
+        "swap": "000000010001393c"
+      },
+      "_cpp_vector_api_record_drain:": {
+        "anchor": "0000000100013a18",
+        "swap": "0000000100013a18"
+      },
+      "_cpp_vector_api_record_inspect_shape:": {
+        "anchor": "0000000100013ac4",
+        "swap": "0000000100013ac4"
+      },
+      "_cpp_vector_api_record_swap_remove:": {
+        "anchor": "0000000100013c54",
+        "swap": "0000000100013c54"
+      },
+      "_cpp_vector_api_record_truncate:": {
+        "anchor": "0000000100013d78",
+        "swap": "0000000100013d78"
+      },
+      "_rust_vector_api_record_append_batch:": {
+        "anchor": "0000000100016240",
+        "swap": "0000000100016240"
+      },
+      "_rust_vector_api_record_append_one:": {
+        "anchor": "000000010001641c",
+        "swap": "000000010001641c"
+      },
+      "_rust_vector_api_record_destroy:": {
+        "anchor": "0000000100016578",
+        "swap": "0000000100016578"
+      },
+      "_rust_vector_api_record_drain:": {
+        "anchor": "00000001000165a4",
+        "swap": "00000001000165a4"
+      },
+      "_rust_vector_api_record_insert:": {
+        "anchor": "0000000100016638",
+        "swap": "0000000100016638"
+      },
+      "_rust_vector_api_record_inspect_reset:": {
+        "anchor": "00000001000167d8",
+        "swap": "00000001000167d8"
+      },
+      "_rust_vector_api_record_inspect_shape:": {
+        "anchor": "0000000100016874",
+        "swap": "0000000100016874"
+      },
+      "_rust_vector_api_record_prepare:": {
+        "anchor": "00000001000169e0",
+        "swap": "00000001000169e0"
+      },
+      "_rust_vector_api_record_remove:": {
+        "anchor": "0000000100016a74",
+        "swap": "0000000100016a74"
+      },
+      "_rust_vector_api_record_reserve:": {
+        "anchor": "0000000100016b60",
+        "swap": "0000000100016b60"
+      },
+      "_rust_vector_api_record_snapshot:": {
+        "anchor": "0000000100016bb4",
+        "swap": "0000000100016bb4"
+      },
+      "_rust_vector_api_record_swap_remove:": {
+        "anchor": "0000000100016bd4",
+        "swap": "0000000100016bd4"
+      },
+      "_rust_vector_api_record_truncate:": {
+        "anchor": "0000000100016ce0",
+        "swap": "0000000100016ce0"
+      },
+      "_rust_vector_api_word_append_batch:": {
+        "anchor": "0000000100016dac",
+        "swap": "0000000100016dac"
+      },
+      "_rust_vector_api_word_append_one:": {
+        "anchor": "0000000100016e20",
+        "swap": "0000000100016e20"
+      },
+      "_rust_vector_api_word_destroy:": {
+        "anchor": "0000000100016e7c",
+        "swap": "0000000100016e7c"
+      },
+      "_rust_vector_api_word_drain:": {
+        "anchor": "0000000100016ea8",
+        "swap": "0000000100016ea8"
+      },
+      "_rust_vector_api_word_insert:": {
+        "anchor": "0000000100016f10",
+        "swap": "0000000100016f10"
+      },
+      "_rust_vector_api_word_inspect_reset:": {
+        "anchor": "0000000100016fb4",
+        "swap": "0000000100016fb4"
+      },
+      "_rust_vector_api_word_inspect_shape:": {
+        "anchor": "0000000100017010",
+        "swap": "0000000100017010"
+      },
+      "_rust_vector_api_word_prepare:": {
+        "anchor": "0000000100017150",
+        "swap": "0000000100017150"
+      },
+      "_rust_vector_api_word_remove:": {
+        "anchor": "00000001000171e4",
+        "swap": "00000001000171e4"
+      },
+      "_rust_vector_api_word_reserve:": {
+        "anchor": "0000000100017280",
+        "swap": "0000000100017280"
+      },
+      "_rust_vector_api_word_snapshot:": {
+        "anchor": "00000001000172d4",
+        "swap": "00000001000172d4"
+      },
+      "_rust_vector_api_word_swap_remove:": {
+        "anchor": "00000001000172f4",
+        "swap": "00000001000172f4"
+      },
+      "_rust_vector_api_word_truncate:": {
+        "anchor": "0000000100017350",
+        "swap": "0000000100017350"
+      }
+    },
+    "entry_addresses_identical": true,
+    "qualification": "Same current image only. Equal peer code entry/loop locations do not mean all relocation operands equal: Rust wide constant pool offset q17 at0x16274 changed0xc0 to0x7e0; no old/new causal improvement claim."
+  },
+  "code_revision": "d03ee3709c437cf20d8c0271f57f9c0e87638a97",
+  "compiler_sha256": "b04f54b08df79f77f11c3a2143e6e9572b0aa93c5ccecf675169d076f270e18b",
+  "raw_samples": {
+    "spare": {
+      "path": "ecosystem-append-swap-final-spare-samples.csv",
+      "sha256": "4fbba1442669dd4dd3fe049f12fa44d463a4c1b98541a162f22492ce6899a395"
+    },
+    "growth": {
+      "path": "ecosystem-append-swap-final-growth-samples.csv",
+      "sha256": "f057ab4aa879aa91be4536292d8ce90782edceb44e8de73ae7258df1b521f08b"
+    }
+  }
+}

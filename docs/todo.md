@@ -1258,8 +1258,14 @@ rarely insert at the same place.
   with an ordinary-source witness separating pure value construction from
   effectful construction, and compare optimized IR plus reached native code.
   A lowering change must preserve evaluation, failure and ownership order;
-  a fused growth/insert interface needs its own grounds. Validate both element
-  widths, spare/full capacity, exact returned contents and owner cleanup.
+  a fused growth/insert interface needs its own grounds. Swap-remove now avoids
+  writing the removed owner into the retired slot, but reached wide code still
+  materializes the last value into a local before an earlier-slot exchange;
+  compare that remaining transfer with the peer paths before selecting another
+  transform. Validate both element widths, spare/full capacity, exact returned
+  contents and owner cleanup. Construction/destruction still need independent
+  timing rows, followed by a current whole-Vector performance qualification;
+  successful API correctness runs do not establish those missing measurements.
 
 - **Box/window representation costs remain unqualified.** Runtime Slots uses
   an inline length/capacity/payload owner with an element allocation for positive physical extent; runtime
