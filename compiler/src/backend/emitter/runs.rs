@@ -6,12 +6,10 @@
 //! operation updates those words and the selected slot through the reference
 //! the operand names.
 //!
-//! The layout is header-first, so the inline and the boxed placement of one
-//! shape share one address computation
-//! (compiler/storage-representation): a `Slots` is `{ len, slots }` and a
-//! `Ring` is `{ len, head, slots }`, each with a `cap` word after `len` in
-//! the runtime-capacity placement and none at all where the type constant
-//! already fixes it.
+//! Fixed windows keep their descriptor before their inline elements. A runtime
+//! Slots owner keeps `{ len, cap, payload }` inline and allocates only the
+//! payload. Runtime Ring keeps its descriptor and elements in one heap block.
+//! The typed shape selects the corresponding element-address computation.
 //!
 //! Slots uses its proved logical offset directly. A Ring window is `len`
 //! slots beginning at `head` modulo `cap` [WIN-1], so its subscript at
@@ -93,6 +91,14 @@ impl RunShape {
             (IrWindowShape::Slots, None) | (IrWindowShape::Ring, Some(_)) => 2,
             (IrWindowShape::Ring, None) => 3,
         }
+    }
+
+    const fn split_payload(self) -> bool {
+        crate::target::inline_slots_descriptor(IrType::Window {
+            shape: self.shape,
+            element: self.element,
+            capacity: self.capacity,
+        })
     }
 }
 
@@ -720,7 +726,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
 
     /// The address of one physical slot of a window.
     ///
-    /// The slots follow the header in the same block in both placements
+    /// Runtime Slots load the payload pointer; other placements keep their
+    /// slots after the header in the same block
     /// (compiler/storage-representation), so one `getelementptr` serves the
     /// inline window and the boxed one alike; only where the block address
     /// comes from differs.
@@ -736,6 +743,21 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let llvm = self.output.type_name(self.program, run_type)?;
         let slot = self.run_storage(run)?.ok_or(BackendFailure::InvalidIr)?;
         let pointer = self.next_temporary()?;
+        let address = if shape.split_payload() {
+            let payload_field = self.aggregate_field_pointer(run_type, &slot, 2)?;
+            let payload = self.next_temporary()?;
+            writeln!(self.output, "  %{payload} = load ptr, ptr {payload_field}")
+                .map_err(|_| BackendFailure::TextEmission)?;
+            let element = self
+                .output
+                .type_name(self.program, shape.element_type(self.program)?)?;
+            format!("getelementptr inbounds {element}, ptr %{payload}, i64 {physical}")
+        } else {
+            format!(
+                "getelementptr inbounds {llvm}, ptr {slot}, i64 0, i32 {}, i64 {physical}",
+                shape.slots_field()
+            )
+        };
         if self.window_address_facts == WindowAddressFacts::Emit {
             // For positive stride S, the qualified complete object or
             // allocation has H + cap*S within the signed address domain.
@@ -753,12 +775,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             )
             .map_err(|_| BackendFailure::TextEmission)?;
         }
-        writeln!(
-            self.output,
-            "  %{pointer} = getelementptr inbounds {llvm}, ptr {slot}, i64 0, i32 {}, i64 {physical}",
-            shape.slots_field(),
-        )
-        .map_err(|_| BackendFailure::TextEmission)?;
+        writeln!(self.output, "  %{pointer} = {address}")
+            .map_err(|_| BackendFailure::TextEmission)?;
         Ok(pointer)
     }
 }
@@ -833,6 +851,38 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         ))
     }
 
+    /// Allocate the runtime Slots payload, retaining a nonnull one-byte
+    /// allocation for zero extent. Target qualification has checked the
+    /// stride, allocation domain and alignment before this multiplication.
+    fn allocate_window_payload(
+        &mut self,
+        result: IrValueId,
+        capacity: IrValueId,
+        element_size: &str,
+    ) -> Result<String, BackendFailure> {
+        let extent = self.next_temporary()?;
+        let zero = self.next_temporary()?;
+        let bytes = self.next_temporary()?;
+        let payload = self.next_temporary()?;
+        let nonnull = self.next_temporary()?;
+        let ready = window_block_ready_label(result);
+        let oom = window_block_oom_label(result);
+        self.output.symbol("malloc");
+        writeln!(self.output,
+            "  %{extent} = mul nuw i64 {}, {element_size}\n  %{zero} = icmp eq i64 %{extent}, 0\n  %{bytes} = select i1 %{zero}, i64 1, i64 %{extent}\n  %{payload} = call ptr @malloc(i64 %{bytes})\n  %{nonnull} = icmp ne ptr %{payload}, null\n  br i1 %{nonnull}, label %{ready}, label %{oom}",
+            self.value_name(capacity)
+        ).map_err(|_| BackendFailure::TextEmission)?;
+        self.output.open_block(oom.to_string());
+        self.output.symbol("wf_resource_abort");
+        writeln!(
+            self.output,
+            "  call void @wf_resource_abort()\n  unreachable"
+        )
+        .map_err(|_| BackendFailure::TextEmission)?;
+        self.output.open_block(ready.to_string());
+        Ok(format!("%{payload}"))
+    }
+
     /// Copies one element between two physical slots of two windows.
     fn copy_between_slots(
         &mut self,
@@ -846,10 +896,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     /// [OP-10] `insert_at`'s and `remove_at`'s one shift of `window.filled`,
     /// with the boundary move that shift makes room for or closes.
     ///
-    /// The walk runs in the direction that never overwrites a slot it has
-    /// not yet read, and every slot it touches is reached through the
-    /// window's own coordinate system, so one walk serves a `Slots` and a
-    /// wrapped `Ring` alike [WIN-1].
+    /// Slots move their contiguous live tail with one overlap-safe byte copy.
+    /// Ring walks in the direction that never overwrites an unread slot,
+    /// translating each index through its wrapped coordinate system [WIN-1].
     pub(super) fn emit_run_shift(
         &mut self,
         result: IrValueId,
@@ -884,50 +933,89 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             self.output.open_block(pre.to_string());
         };
         let length = self.run_word(run_type, run, shape.length_field())?;
-        let origin = self.window_origin(shape, run_type, run)?;
-        // A closing shift stops one slot below the window's last.
-        let limit = if open {
-            index.clone()
+        if shape.shape == IrWindowShape::Slots {
+            // The live tail is contiguous. Both shift directions may overlap;
+            // one memmove preserves the original bytes without reading spare
+            // slots or invoking any element's ownership action.
+            let adjacent = self.next_temporary()?;
+            let tail = self.next_temporary()?;
+            writeln!(
+                self.output,
+                "  %{adjacent} = add nuw i64 {index}, 1\n  %{tail} = sub nuw i64 {length}, {index}"
+            )
+            .map_err(|_| BackendFailure::TextEmission)?;
+            let count = if open {
+                format!("%{tail}")
+            } else {
+                let count = self.next_temporary()?;
+                writeln!(self.output, "  %{count} = sub nuw i64 %{tail}, 1")
+                    .map_err(|_| BackendFailure::TextEmission)?;
+                format!("%{count}")
+            };
+            let (source_index, destination_index) = if open {
+                (index.clone(), format!("%{adjacent}"))
+            } else {
+                (format!("%{adjacent}"), index.clone())
+            };
+            // End insertion and last removal form valid one-past pointers
+            // with a zero byte count. Zero-stride elements use normalized
+            // address indices while retaining their complete logical counts.
+            let source = self.element_pointer(result, shape, run_type, run, &source_index)?;
+            let destination =
+                self.element_pointer(result, shape, run_type, run, &destination_index)?;
+            let stride = self.window_element_size(shape)?;
+            let bytes = self.next_temporary()?;
+            self.intrinsics.insert(IntrinsicDeclaration::MemoryMove);
+            self.output.symbol("llvm.memmove.p0.p0.i64");
+            writeln!(self.output,
+                "  %{bytes} = mul nuw i64 {count}, {stride}\n  call void @llvm.memmove.p0.p0.i64(ptr %{destination}, ptr %{source}, i64 %{bytes}, i1 false)\n  br label %{done}"
+            ).map_err(|_| BackendFailure::TextEmission)?;
         } else {
-            let limit = self.next_temporary()?;
-            writeln!(self.output, "  %{limit} = sub i64 {length}, 1")
-                .map_err(|_| BackendFailure::TextEmission)?;
-            format!("%{limit}")
-        };
-        let counter = self.next_temporary()?;
-        let stepped = self.next_temporary()?;
-        let more = self.next_temporary()?;
-        let start = if open { length.clone() } else { index.clone() };
-        let comparison = if open { "ugt" } else { "ult" };
-        {
-            writeln!(self.output, "  br label %{head_label}")
-                .map_err(|_| BackendFailure::TextEmission)?;
-            self.output.open_block(head_label.to_string());
-            write!(self.output, "  %{counter} = phi i64 [ {start}, %{pre} ], [ %{stepped}, %{body} ]\n  %{more} = icmp {comparison} i64 %{counter}, {limit}\n  br i1 %{more}, label %{body}, label %{done}\n").map_err(|_| BackendFailure::TextEmission)?;
-            self.output.open_block(body.to_string());
-        };
-        writeln!(
-            self.output,
-            "  %{stepped} = {} i64 %{counter}, 1",
-            if open { "sub" } else { "add" }
-        )
-        .map_err(|_| BackendFailure::TextEmission)?;
-        // An opening shift reads the slot below and writes the one at the
-        // counter; a closing shift reads the slot above and writes the one at
-        // the counter.
-        let destination_offset =
-            self.wrap_offset(shape, run_type, run, &origin, &format!("%{counter}"))?;
-        let destination =
-            self.element_pointer(result, shape, run_type, run, &destination_offset)?;
-        let source_offset =
-            self.wrap_offset(shape, run_type, run, &origin, &format!("%{stepped}"))?;
-        let source = self.element_pointer(result, shape, run_type, run, &source_offset)?;
-        self.copy_between_slots(element, &format!("%{source}"), &format!("%{destination}"))?;
-        {
-            writeln!(self.output, "  br label %{head_label}")
-                .map_err(|_| BackendFailure::TextEmission)?;
-            self.output.open_block(done.to_string());
-        };
+            let origin = self.window_origin(shape, run_type, run)?;
+            // A closing shift stops one slot below the window's last.
+            let limit = if open {
+                index.clone()
+            } else {
+                let limit = self.next_temporary()?;
+                writeln!(self.output, "  %{limit} = sub i64 {length}, 1")
+                    .map_err(|_| BackendFailure::TextEmission)?;
+                format!("%{limit}")
+            };
+            let counter = self.next_temporary()?;
+            let stepped = self.next_temporary()?;
+            let more = self.next_temporary()?;
+            let start = if open { length.clone() } else { index.clone() };
+            let comparison = if open { "ugt" } else { "ult" };
+            {
+                writeln!(self.output, "  br label %{head_label}")
+                    .map_err(|_| BackendFailure::TextEmission)?;
+                self.output.open_block(head_label.to_string());
+                write!(self.output, "  %{counter} = phi i64 [ {start}, %{pre} ], [ %{stepped}, %{body} ]\n  %{more} = icmp {comparison} i64 %{counter}, {limit}\n  br i1 %{more}, label %{body}, label %{done}\n").map_err(|_| BackendFailure::TextEmission)?;
+                self.output.open_block(body.to_string());
+            };
+            writeln!(
+                self.output,
+                "  %{stepped} = {} i64 %{counter}, 1",
+                if open { "sub" } else { "add" }
+            )
+            .map_err(|_| BackendFailure::TextEmission)?;
+            // An opening shift reads the slot below and writes the one at the
+            // counter; a closing shift reads the slot above and writes the one at
+            // the counter.
+            let destination_offset =
+                self.wrap_offset(shape, run_type, run, &origin, &format!("%{counter}"))?;
+            let destination =
+                self.element_pointer(result, shape, run_type, run, &destination_offset)?;
+            let source_offset =
+                self.wrap_offset(shape, run_type, run, &origin, &format!("%{stepped}"))?;
+            let source = self.element_pointer(result, shape, run_type, run, &source_offset)?;
+            self.copy_between_slots(element, &format!("%{source}"), &format!("%{destination}"))?;
+            {
+                writeln!(self.output, "  br label %{head_label}")
+                    .map_err(|_| BackendFailure::TextEmission)?;
+            };
+        }
+        self.output.open_block(done.to_string());
         // The boundary move the shift opened or closed.
         let moved = self.next_temporary()?;
         writeln!(
@@ -1108,11 +1196,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
 
     /// [OP-13] one runtime-capacity window block and the cell that owns it.
     ///
-    /// The block is `[len | cap | head? | slots]` in one allocation, so the
-    /// cell pointer is the block pointer and every later access reaches the
-    /// header and the slots through one address
-    /// (compiler/storage-representation). The window starts empty, which is
-    /// exactly what the row's `ensures` publishes.
+    /// Runtime Slots construct an inline descriptor over a payload allocation;
+    /// Ring retains its descriptor and elements in one heap block. Both start
+    /// empty, exactly as the row's `ensures` publishes.
     pub(super) fn emit_window_block_new(
         &mut self,
         result: IrValueId,
@@ -1141,6 +1227,18 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             return Err(BackendFailure::InvalidIr);
         }
         let element_size = self.window_element_size(shape)?;
+        if shape.split_payload() {
+            let payload = self.allocate_window_payload(result, capacity, &element_size)?;
+            let descriptor = self.value_place(result)?;
+            let length_field = self.aggregate_field_pointer(block_type, &descriptor, 0)?;
+            let capacity_field = self.aggregate_field_pointer(block_type, &descriptor, 1)?;
+            let payload_field = self.aggregate_field_pointer(block_type, &descriptor, 2)?;
+            writeln!(self.output,
+                "  store i64 0, ptr {length_field}\n  store i64 {}, ptr {capacity_field}\n  store ptr {payload}, ptr {payload_field}",
+                self.value_name(capacity)
+            ).map_err(|_| BackendFailure::TextEmission)?;
+            return Ok(());
+        }
         let header_size = self.window_header_size(shape, block_type)?;
         let block = self.output.type_name(self.program, block_type)?;
         let slots_bytes = self.next_temporary()?;
@@ -1200,8 +1298,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     /// [OP-10] `grow`: the cell's content is remade whole at the new
     /// capacity.
     ///
-    /// One allocation, header stores and one filled-prefix byte copy, one
-    /// free, and the cell's pointer slot takes the new block. [STOR-7] makes
+    /// A full positive payload may reallocate; other payloads allocate and
+    /// copy their initialized prefix before freeing the old storage. [STOR-7] makes
     /// the copying route legal at every value, because no judgment depends
     /// on the block's address.
     pub(super) fn emit_window_grow(
@@ -1230,84 +1328,70 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             return Err(BackendFailure::InvalidIr);
         }
         let element_size = self.window_element_size(shape)?;
-        let header_size = self.window_header_size(shape, block_type)?;
-        let cell_address = self.value_name(cell);
-        let old = self.next_temporary()?;
-        writeln!(self.output, "  %{old} = load ptr, ptr {cell_address}")
-            .map_err(|_| BackendFailure::TextEmission)?;
-        let old_block = format!("%{old}");
-        let old_length_address =
-            self.aggregate_field_pointer(block_type, &old_block, shape.length_field() as usize)?;
+        let descriptor = self.value_name(cell);
+        let length_field = self.aggregate_field_pointer(block_type, &descriptor, 0)?;
+        let capacity_field = self.aggregate_field_pointer(block_type, &descriptor, 1)?;
+        let payload_field = self.aggregate_field_pointer(block_type, &descriptor, 2)?;
         let length = self.next_temporary()?;
-        writeln!(
-            self.output,
-            "  %{length} = load i64, ptr {old_length_address}"
-        )
-        .map_err(|_| BackendFailure::TextEmission)?;
-        let slots_bytes = self.next_temporary()?;
+        let old_capacity = self.next_temporary()?;
+        let old_payload = self.next_temporary()?;
+        let old_bytes = self.next_temporary()?;
         let bytes = self.next_temporary()?;
+        let full = self.next_temporary()?;
+        let positive = self.next_temporary()?;
+        let reuse = self.next_temporary()?;
+        let resized = self.next_temporary()?;
+        let resized_nonnull = self.next_temporary()?;
+        let zero = self.next_temporary()?;
+        let allocated = self.next_temporary()?;
         let fresh = self.next_temporary()?;
-        let nonnull = self.next_temporary()?;
+        let fresh_nonnull = self.next_temporary()?;
+        let moved = self.next_temporary()?;
+        let selected = self.next_temporary()?;
+        let reallocate = format!("window.grow.reallocate.v{}", result.ordinal());
+        let copy = format!("window.grow.copy.v{}", result.ordinal());
+        let copy_ready = format!("window.grow.copy.ready.v{}", result.ordinal());
         let ready = window_block_ready_label(result);
         let oom = window_block_oom_label(result);
-        {
-            let emission_argument_0 = self.value_name(capacity);
-
-            {
-                self.output.symbol("malloc");
-                write!(
-                    self.output,
-                    "  %{slots_bytes} = mul nuw i64 {emission_argument_0}, {element_size}\n  %{bytes} = add nuw i64 %{slots_bytes}, {header_size}\n  %{fresh} = call ptr @malloc(i64 %{bytes})\n  %{nonnull} = icmp ne ptr %{fresh}, null\n  br i1 %{nonnull}, label %{ready}, label %{oom}\n"
-                )
-            }?;
-            self.output.open_block(oom.to_string());
-            {
-                self.output.symbol("wf_resource_abort");
-                write!(
-                    self.output,
-                    "  call void @wf_resource_abort()\n  unreachable\n"
-                )
-            }?;
-            self.output.open_block(ready.to_string());
-        };
-        let fresh_block = format!("%{fresh}");
-        let fresh_length_address =
-            self.aggregate_field_pointer(block_type, &fresh_block, shape.length_field() as usize)?;
-        writeln!(
-            self.output,
-            "  store i64 %{length}, ptr {fresh_length_address}"
-        )
-        .map_err(|_| BackendFailure::TextEmission)?;
-        let capacity_field = shape.capacity_field().ok_or(BackendFailure::InvalidIr)?;
-        let fresh_capacity_address =
-            self.aggregate_field_pointer(block_type, &fresh_block, capacity_field as usize)?;
-        writeln!(
-            self.output,
-            "  store i64 {}, ptr {fresh_capacity_address}",
+        writeln!(self.output,
+            "  %{length} = load i64, ptr {length_field}\n  %{old_capacity} = load i64, ptr {capacity_field}\n  %{old_payload} = load ptr, ptr {payload_field}\n  %{old_bytes} = mul nuw i64 %{old_capacity}, {element_size}\n  %{bytes} = mul nuw i64 {}, {element_size}\n  %{full} = icmp eq i64 %{length}, %{old_capacity}\n  %{positive} = icmp ne i64 %{old_bytes}, 0\n  %{reuse} = and i1 %{full}, %{positive}\n  br i1 %{reuse}, label %{reallocate}, label %{copy}",
             self.value_name(capacity)
-        )
-        .map_err(|_| BackendFailure::TextEmission)?;
-        // The filled slots move as bytes: no value's judgment depends on its
-        // address [STOR-7], and a `Slots` window begins at slot zero, so the
-        // filled prefix is one contiguous extent.
-        let old_slots = self.next_temporary()?;
-        let fresh_slots = self.next_temporary()?;
-        let moved = self.next_temporary()?;
-        let block = self.output.type_name(self.program, block_type)?;
-        writeln!(
-            self.output,
-            "  %{old_slots} = getelementptr inbounds {block}, ptr %{old}, i64 0, i32 {slots}, i64 0\n  %{fresh_slots} = getelementptr inbounds {block}, ptr %{fresh}, i64 0, i32 {slots}, i64 0\n  %{moved} = mul nuw i64 %{length}, {element_size}",
-            slots = shape.slots_field(),
-        )
-        .map_err(|_| BackendFailure::TextEmission)?;
-        self.intrinsics.insert(IntrinsicDeclaration::MemoryMove);
-        self.output.symbol("llvm.memmove.p0.p0.i64");
+        ).map_err(|_| BackendFailure::TextEmission)?;
+        // A full positive payload contains only initialized elements.
+        // realloc may retain or move it; failure leaves the original live.
+        self.output.open_block(reallocate.clone());
+        self.output.symbol("realloc");
+        writeln!(self.output,
+            "  %{resized} = call ptr @realloc(ptr %{old_payload}, i64 %{bytes})\n  %{resized_nonnull} = icmp ne ptr %{resized}, null\n  br i1 %{resized_nonnull}, label %{ready}, label %{oom}"
+        ).map_err(|_| BackendFailure::TextEmission)?;
+        self.output.open_block(copy.clone());
+        self.output.symbol("malloc");
+        writeln!(self.output,
+            "  %{zero} = icmp eq i64 %{bytes}, 0\n  %{allocated} = select i1 %{zero}, i64 1, i64 %{bytes}\n  %{fresh} = call ptr @malloc(i64 %{allocated})\n  %{fresh_nonnull} = icmp ne ptr %{fresh}, null\n  br i1 %{fresh_nonnull}, label %{copy_ready}, label %{oom}"
+        ).map_err(|_| BackendFailure::TextEmission)?;
+        self.output.open_block(copy_ready.clone());
+        // A partial payload copies only initialized elements. Successful
+        // malloc provides disjoint storage; zero extents still allocate one
+        // byte and preserve their logical length and capacity independently.
+        self.intrinsics.insert(IntrinsicDeclaration::MemoryCopy);
+        self.output.symbol("llvm.memcpy.p0.p0.i64");
         self.output.symbol("free");
+        writeln!(self.output,
+            "  %{moved} = mul nuw i64 %{length}, {element_size}\n  call void @llvm.memcpy.p0.p0.i64(ptr %{fresh}, ptr %{old_payload}, i64 %{moved}, i1 false)\n  call void @free(ptr %{old_payload})\n  br label %{ready}"
+        ).map_err(|_| BackendFailure::TextEmission)?;
+        self.output.open_block(oom.clone());
+        self.output.symbol("wf_resource_abort");
         writeln!(
             self.output,
-            "  call void @llvm.memmove.p0.p0.i64(ptr %{fresh_slots}, ptr %{old_slots}, i64 %{moved}, i1 false)\n  call void @free(ptr %{old})\n  store ptr %{fresh}, ptr {cell_address}"
+            "  call void @wf_resource_abort()\n  unreachable"
         )
         .map_err(|_| BackendFailure::TextEmission)?;
+        // Keep the established exit label for successor phi predecessors.
+        self.output.open_block(ready);
+        writeln!(self.output,
+            "  %{selected} = phi ptr [ %{resized}, %{reallocate} ], [ %{fresh}, %{copy_ready} ]\n  store ptr %{selected}, ptr {payload_field}\n  store i64 {}, ptr {capacity_field}",
+            self.value_name(capacity)
+        ).map_err(|_| BackendFailure::TextEmission)?;
         self.emit_constant(result, ty, IrConstant::Unit)
     }
 
@@ -1322,9 +1406,22 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         if ty != IrType::Unit || self.value_type(value) != Some(IrType::Nominal(nominal)) {
             return Err(BackendFailure::InvalidIr);
         }
-        let IrNominalKind::Box { .. } = self.nominal(nominal)?.kind() else {
+        let IrNominalKind::Box { referent, .. } = self.nominal(nominal)?.kind() else {
             return Err(BackendFailure::InvalidIr);
         };
+        if crate::target::inline_slots_descriptor(*referent) {
+            let block_type = *referent;
+            let value = self.value_place(value)?;
+            let payload_field = self.aggregate_field_pointer(block_type, &value, 2)?;
+            let payload = self.next_temporary()?;
+            self.output.symbol("free");
+            writeln!(
+                self.output,
+                "  %{payload} = load ptr, ptr {payload_field}\n  call void @free(ptr %{payload})"
+            )
+            .map_err(|_| BackendFailure::TextEmission)?;
+            return self.emit_constant(result, ty, IrConstant::Unit);
+        }
         {
             self.output.symbol("free");
             writeln!(

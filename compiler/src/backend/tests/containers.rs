@@ -14,17 +14,20 @@ fn observe_allocations(module: &str) -> String {
     for symbol in [
         "wf_observe_allocate",
         "wf_observe_release",
+        "wf_observe_reallocate",
         "wf_fixture_main",
     ] {
         assert!(!module.contains(symbol));
     }
     let result = module
         .replace("@malloc(", "@wf_observe_allocate(")
+        .replace("@realloc(", "@wf_observe_reallocate(")
         .replace("@free(", "@wf_observe_release(")
         .replace("@main(", "@wf_fixture_main(");
     assert_eq!(
         result
             .replace("@wf_observe_allocate(", "@malloc(")
+            .replace("@wf_observe_reallocate(", "@realloc(")
             .replace("@wf_observe_release(", "@free(")
             .replace("@wf_fixture_main(", "@main("),
         module
@@ -357,6 +360,26 @@ fn main() -> status: std::process::ExitStatus pure {
 fn growing_a_run_keeps_the_original_data_at_capacity_and_target_limits() {
     let source = include_bytes!("../../../../tests/programs/growable_vec.wf");
     let mut module = observe_allocations(&emit(source));
+    let growth_rows = module
+        .split("\ndefine ")
+        .filter(|body| {
+            body.lines()
+                .next()
+                .is_some_and(|header| header.contains("@wf_grow$instance$"))
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        !growth_rows.is_empty(),
+        "the fixture must exercise fresh-payload growth"
+    );
+    for row in growth_rows {
+        let body = row.split("\n}").next().expect("growth definition");
+        assert!(body.contains("call void @llvm.memcpy.p0.p0.i64("), "{body}");
+        assert!(
+            !body.contains("call void @llvm.memmove.p0.p0.i64("),
+            "{body}"
+        );
+    }
     // The retired region/store actual was the leading pointer in v0.59.
     // v0.60's one heap leaves exactly the four declared scalar parameters.
     assert!(module.contains("define i64 @wf_growth_trace(i8 %v0, i64 %v1, i64 %v2, i64 %v3)"));

@@ -10,7 +10,6 @@ extern int wf__floor_run(int, char **);
 static void *owners[2];
 static size_t requests, releases, initial_size, grown_size;
 static unsigned live[2];
-static const uint64_t slots_header_size = 16;
 
 static void require(int okay, const char *message) {
     if (!okay) { fprintf(stderr, "growth observer: %s\n", message); exit(1); }
@@ -19,7 +18,7 @@ void *wf_observe_allocate(uint64_t bytes) {
     size_t at = requests++;
     require(at < 2, "extra allocation");
     uint64_t payload = at ? grown_size : initial_size;
-    require(bytes == slots_header_size + payload, "wrong requested extent");
+    require(bytes == payload, "wrong requested extent");
     owners[at] = malloc((size_t)bytes);
     require(owners[at] != NULL, "host allocation failed");
     memset(owners[at], 0xa5, (size_t)bytes);
@@ -32,10 +31,19 @@ void wf_observe_release(void *owner) {
         require(live[at], "repeated release");
         live[at] = 0; ++releases;
         /* Quarantine addresses until the whole case has returned. */
-        memset(owner, 0xdd, slots_header_size + (at ? grown_size : initial_size));
+        memset(owner, 0xdd, (at ? grown_size : initial_size));
         return;
     }
     require(0, "release of a foreign address");
+}
+/* Force realloc to move, preserving the exact allocation/retirement ledger. */
+void *wf_observe_reallocate(void *old, uint64_t bytes) {
+    require(requests == 1 && old == owners[0] && live[0], "realloc owner");
+    require(bytes >= initial_size, "realloc cannot shrink this growth");
+    void *fresh = wf_observe_allocate(bytes);
+    memcpy(fresh, old, initial_size);
+    wf_observe_release(old);
+    return fresh;
 }
 static uint64_t expected(uint8_t seed, size_t initial, size_t count,
                          size_t limit) {

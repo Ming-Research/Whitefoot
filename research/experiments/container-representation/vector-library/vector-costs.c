@@ -38,6 +38,12 @@ extern uint64_t cpp_vector_word_trace(uint64_t, uint64_t, uint64_t, uint64_t);
 extern uint64_t cpp_vector_record_trace(uint64_t, uint64_t, uint64_t, uint64_t);
 #endif
 
+// Current inline owner layout; retained thin-compiler replay sets this to 0
+// explicitly through ECO_CFLAGS so the build configuration records the ABI.
+#ifndef WF_INLINE_SLOTS_OWNER
+#define WF_INLINE_SLOTS_OWNER 1
+#endif
+
 #if !defined(ECOSYSTEM) || defined(ACCOUNT_ONLY)
 typedef union {
     struct { size_t bytes; uint64_t magic; } value;
@@ -48,6 +54,12 @@ static size_t realloc_requests, releases, peak_overlap_upper_bytes;
 #ifndef WF_FULL_SLOTS_REALLOC
 #define WF_FULL_SLOTS_REALLOC 0
 #endif
+// Physical requested extent: C controls retain their two-word header.
+static size_t owned_allocation_bytes(bool whitefoot, uint64_t capacity, size_t stride) {
+    size_t payload = (size_t)capacity * stride;
+    if (whitefoot && WF_INLINE_SLOTS_OWNER) return payload ? payload : 1;
+    return 16 + payload;
+}
 #endif
 static volatile uint64_t observed;
 
@@ -444,24 +456,25 @@ static void check_accounting(enum Variant variant, bool wide, uint64_t count,
 #if defined(ECOSYSTEM)
     if (variant >= RUST_VECTOR) return;
 #endif
-    // Source trace: one initial header, then only full-window growth for WF;
-    // the C controls retain allocate/move/free. The expectation flag is fixed
-    // by the compiler being qualified, never selected from observed counters.
+    // Empty-capacity growth allocates a new backing and releases the old one.
+    // The selected WF route may reallocate only after positive full capacity.
     const bool resizing = variant == WHITEFOOT && WF_FULL_SLOTS_REALLOC;
     const size_t stride = wide ? sizeof(Record) : sizeof(uint64_t);
-    size_t per_requests = 2, per_bytes = 32 + (count + 1) * stride;
-    size_t per_reallocs = resizing ? 1 : 0;
-    size_t per_peak = resizing ? per_bytes - 16 : per_bytes;
+    const size_t empty_bytes = owned_allocation_bytes(variant == WHITEFOOT, 0, stride);
+    const size_t reserved_bytes = owned_allocation_bytes(variant == WHITEFOOT, count + 1, stride);
+    size_t per_requests = 2, per_bytes = empty_bytes + reserved_bytes;
+    size_t per_reallocs = 0;
+    size_t per_peak = per_bytes;
     size_t per_overlap = per_bytes;
     if (path == 1) {
-        per_requests = 1; per_bytes = 16; per_peak = per_overlap = 16;
+        per_requests = 1; per_bytes = empty_bytes; per_peak = per_overlap = empty_bytes;
         per_reallocs = 0;
-        size_t old_bytes = 16;
+        size_t old_bytes = empty_bytes;
         for (uint64_t capacity = 1;;) {
-            size_t bytes = 16 + capacity * stride;
+            size_t bytes = owned_allocation_bytes(variant == WHITEFOOT, capacity, stride);
             ++per_requests; per_bytes += bytes;
-            if (resizing) ++per_reallocs;
-            per_peak = resizing ? bytes : old_bytes + bytes;
+            if (resizing && capacity > 1) ++per_reallocs;
+            per_peak = resizing && capacity > 1 ? bytes : old_bytes + bytes;
             per_overlap = old_bytes + bytes;
             if (capacity >= count + 1) break;
             old_bytes = bytes;
@@ -581,9 +594,18 @@ static const char *const ecosystem_variants[] = {
     "whitefoot", "reverse-c", "direct-c", "swap-take-c", "take-swap-c", "rust-vec", "cpp-std-vector"
 };
 
-// The language-specific descriptors stay opaque. Whitefoot's ordinary result
-// ABI is a one-pointer struct; mutation and consumption borrow that owner slot.
+#if WF_INLINE_SLOTS_OWNER
+typedef struct { uint64_t length, capacity; void *payload; } ApiOwner;
+#else
 typedef struct { void *state; } ApiOwner;
+#endif
+// Both source prepare wrappers use the shared destination-first result ABI.
+// Only setup copies the returned owner's representation into the opaque slot;
+// mutation and consumption receive that slot directly for either layout.
+typedef struct { ApiOwner owner; uint64_t abi_padding[3]; } ApiPrepared;
+_Static_assert(offsetof(ApiPrepared, owner) == 0, "prepared owner prefix");
+_Static_assert(offsetof(ApiPrepared, abi_padding) == sizeof(ApiOwner),
+               "prepared result layout");
 typedef union { max_align_t alignment; unsigned char bytes[3 * sizeof(void *)]; } ApiStorage;
 typedef struct { uint64_t length, capacity, checksum, valid; } ApiObservation;
 typedef struct {
@@ -593,6 +615,12 @@ typedef struct {
     uint8_t (*destroy)(void *);
     uint64_t (*append_one)(void *, uint64_t);
     uint64_t (*snapshot)(void *, ApiObservation *);
+    uint64_t (*reserve)(void *, uint64_t);
+    uint64_t (*insert)(void *, uint64_t, uint64_t);
+    uint64_t (*remove)(void *, uint64_t, uint64_t, ApiObservation *);
+    uint64_t (*drain)(void *, uint64_t, ApiObservation *);
+    uint64_t (*inspect_shape)(void *, uint64_t, uint64_t, uint64_t, uint64_t,
+                              uint64_t, ApiObservation *);
     const char *name;
 } ApiOperations;
 #define DECLARE_APPEND_OPERATIONS(prefix, width)                            \
@@ -600,16 +628,22 @@ typedef struct {
     extern uint64_t prefix##_##width##_inspect_reset(void *, uint64_t, uint64_t, ApiObservation *); \
     extern uint8_t prefix##_##width##_destroy(void *);                        \
     extern uint64_t prefix##_##width##_append_one(void *, uint64_t);          \
-    extern uint64_t prefix##_##width##_snapshot(void *, ApiObservation *)
+    extern uint64_t prefix##_##width##_snapshot(void *, ApiObservation *); \
+    extern uint64_t prefix##_##width##_reserve(void *, uint64_t); \
+    extern uint64_t prefix##_##width##_insert(void *, uint64_t, uint64_t); \
+    extern uint64_t prefix##_##width##_remove(void *, uint64_t, uint64_t, ApiObservation *); \
+    extern uint64_t prefix##_##width##_drain(void *, uint64_t, ApiObservation *); \
+    extern uint64_t prefix##_##width##_inspect_shape(void *, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, ApiObservation *)
 #define DECLARE_APPEND_API(prefix, width)                                   \
     extern void prefix##_##width##_prepare(uint64_t, void *);               \
     DECLARE_APPEND_OPERATIONS(prefix, width)
 #define DECLARE_WF_APPEND_API(width)                                        \
-    extern ApiOwner wf_vector_api_##width##_prepare(uint64_t);             \
+    extern void wf_vector_api_##width##_prepare_for_c(void *, uint64_t);   \
     DECLARE_APPEND_OPERATIONS(wf_vector_api, width);                         \
     static void wf_vector_api_##width##_prepare_slot(uint64_t capacity, void *storage) { \
-        ApiOwner owner = wf_vector_api_##width##_prepare(capacity);         \
-        memcpy(storage, &owner, sizeof owner);                             \
+        ApiPrepared prepared;                                             \
+        wf_vector_api_##width##_prepare_for_c(&prepared, capacity);         \
+        memcpy(storage, &prepared.owner, sizeof prepared.owner);           \
     }
 DECLARE_WF_APPEND_API(word)
 DECLARE_WF_APPEND_API(record)
@@ -620,16 +654,24 @@ DECLARE_APPEND_API(cpp_vector_api, record);
 #define APPEND_API(prefix, width, label) { prefix##_##width##_prepare,       \
     prefix##_##width##_append_batch, prefix##_##width##_inspect_reset,       \
     prefix##_##width##_destroy, prefix##_##width##_append_one,               \
-    prefix##_##width##_snapshot, label }
+    prefix##_##width##_snapshot, prefix##_##width##_reserve, \
+    prefix##_##width##_insert, prefix##_##width##_remove, \
+    prefix##_##width##_drain, prefix##_##width##_inspect_shape, label }
 static const ApiOperations append_api[2][3] = {
     { { wf_vector_api_word_prepare_slot, wf_vector_api_word_append_batch,
         wf_vector_api_word_inspect_reset, wf_vector_api_word_destroy,
-        wf_vector_api_word_append_one, wf_vector_api_word_snapshot, "whitefoot" },
+        wf_vector_api_word_append_one, wf_vector_api_word_snapshot,
+        wf_vector_api_word_reserve, wf_vector_api_word_insert,
+        wf_vector_api_word_remove, wf_vector_api_word_drain,
+        wf_vector_api_word_inspect_shape, "whitefoot" },
       APPEND_API(rust_vector_api, word, "rust-vec"),
       APPEND_API(cpp_vector_api, word, "cpp-std-vector") },
     { { wf_vector_api_record_prepare_slot, wf_vector_api_record_append_batch,
         wf_vector_api_record_inspect_reset, wf_vector_api_record_destroy,
-        wf_vector_api_record_append_one, wf_vector_api_record_snapshot, "whitefoot" },
+        wf_vector_api_record_append_one, wf_vector_api_record_snapshot,
+        wf_vector_api_record_reserve, wf_vector_api_record_insert,
+        wf_vector_api_record_remove, wf_vector_api_record_drain,
+        wf_vector_api_record_inspect_shape, "whitefoot" },
       APPEND_API(rust_vector_api, record, "rust-vec"),
       APPEND_API(cpp_vector_api, record, "cpp-std-vector") }
 };
@@ -640,6 +682,56 @@ static uint64_t append_oracle(uint64_t count, uint64_t seed, bool wide) {
         for (unsigned word = 0; word < (wide ? RECORD_WORDS : 1); ++word)
             checksum = checksum * UINT64_C(131) + seed + index + word;
     return checksum;
+}
+
+enum EditCase {
+    RESERVE_NOOP, RESERVE_GROW, INSERT_FRONT_SPARE, INSERT_MID_SPARE,
+    INSERT_FRONT_FULL, INSERT_MID_FULL, REMOVE_FRONT, REMOVE_MID,
+    REMOVE_BACK, DRAIN_ALL, EDIT_CASES
+};
+#if !defined(ACCOUNT_ONLY)
+static const char *const edit_names[EDIT_CASES] = {
+    "reserve-noop", "reserve-grow", "insert-front-spare", "insert-mid-spare",
+    "insert-front-full", "insert-mid-full", "remove-front", "remove-mid",
+    "remove-back", "drain-all"
+};
+#endif
+static bool edit_insert(enum EditCase kind) {
+    return kind >= INSERT_FRONT_SPARE && kind <= INSERT_MID_FULL;
+}
+static bool edit_remove(enum EditCase kind) {
+    return kind >= REMOVE_FRONT && kind <= REMOVE_BACK;
+}
+static bool edit_growth(enum EditCase kind) {
+    return kind == RESERVE_GROW || kind == INSERT_FRONT_FULL || kind == INSERT_MID_FULL;
+}
+static uint64_t edit_index(enum EditCase kind, uint64_t count) {
+    return kind == INSERT_MID_SPARE || kind == INSERT_MID_FULL || kind == REMOVE_MID
+        ? count / 2 : kind == REMOVE_BACK ? count - 1 : 0;
+}
+static uint64_t edit_marker(uint64_t seed) {
+    return seed ^ UINT64_C(11400714819323198485);
+}
+static uint64_t edit_oracle(enum EditCase kind, uint64_t count, uint64_t seed,
+                            bool wide) {
+    uint64_t digest = seed;
+    uint64_t length = kind == DRAIN_ALL ? 0
+        : count + (edit_insert(kind) ? 1 : 0) - (edit_remove(kind) ? 1 : 0);
+    uint64_t at = edit_index(kind, count);
+    for (uint64_t position = 0; position < length; ++position) {
+        uint64_t base = edit_insert(kind) && position == at ? edit_marker(seed)
+            : seed + position - (edit_insert(kind) && position > at)
+                             + (edit_remove(kind) && position >= at);
+        for (unsigned word = 0; word < (wide ? RECORD_WORDS : 1); ++word)
+            digest = digest * UINT64_C(131) + base + word;
+    }
+    return digest;
+}
+static uint64_t edit_removed_oracle(uint64_t seed, uint64_t index, bool wide) {
+    uint64_t digest = seed + index;
+    for (unsigned word = 0; word < (wide ? RECORD_WORDS : 1); ++word)
+        digest = digest * UINT64_C(131) + seed + index + word;
+    return digest;
 }
 
 #if defined(ACCOUNT_ONLY)
@@ -772,9 +864,15 @@ static void growth_check(bool fail_values, bool fail_state, bool report) {
                 uint64_t initial = growth_prepare(api, &owner, capacities[n], seed);
 #if defined(ACCOUNT_ONLY)
                 ApiAccount before = append_account_snapshot();
-                const size_t header = variant == 0 ? 16 : 0;
-                require(before.live == header + initial * stride,
+                const size_t initial_bytes = variant == 0
+                    ? owned_allocation_bytes(true, initial, stride) : initial * stride;
+                require(before.live == initial_bytes,
                         "growth append initial live bytes");
+                if (variant == 0)
+                    require(before.requests == (initial == 0 ? 1u : 2u)
+                            && before.reallocations == 0
+                            && before.releases == (initial != 0 ? 1u : 0u),
+                            "growth append WF preparation ledger");
 #endif
                 uint64_t length = api->append_one(&owner, seed + initial + fail_values);
 #if defined(ACCOUNT_ONLY)
@@ -784,12 +882,19 @@ static void growth_check(bool fail_values, bool fail_state, bool report) {
                                                          length, wide != 0, fail_state);
 #if defined(ACCOUNT_ONLY)
                 require(after.requests > before.requests && after.bytes > before.bytes
-                        && after.live == header + capacity * stride
+                        && after.live == (variant == 0
+                            ? owned_allocation_bytes(true, capacity, stride) : capacity * stride)
                         && after.requests - before.requests
                             == after.releases - before.releases
                                + after.reallocations - before.reallocations
                                + (initial == 0 && variant != 0),
                         "growth append allocation ledger");
+                if (variant == 0)
+                    require(after.requests - before.requests == 1
+                            && after.reallocations - before.reallocations == (initial != 0 && WF_FULL_SLOTS_REALLOC ? 1u : 0u)
+                            && after.releases - before.releases == (initial != 0 && WF_FULL_SLOTS_REALLOC ? 0u : 1u)
+                            && after.bytes - before.bytes == owned_allocation_bytes(true, capacity, stride),
+                            "growth append WF route ledger");
                 if (report)
                     printf("append-growth-o3,%zu,%" PRIu64 ",%" PRIu64 ",%s,%" PRIu64 ",%" PRIu64 ",%zu,%zu,%zu,%zu,%zu,%zu\n",
                            stride, capacities[n], initial, api->name, length, capacity,
@@ -809,6 +914,132 @@ static void growth_check(bool fail_values, bool fail_state, bool report) {
 #endif
             }
     if (!report) puts("vector append growth: scalar/256B, five capacities, three APIs passed");
+}
+
+static uint64_t edit_setup(const ApiOperations *api, ApiStorage *owner,
+                           enum EditCase kind, uint64_t count, uint64_t seed) {
+    uint64_t requested = count + (kind == INSERT_FRONT_SPARE || kind == INSERT_MID_SPARE);
+    api->prepare(requested, owner);
+    ApiObservation state = {0};
+    require(api->snapshot(owner, &state) == 0 && state.length == 0
+            && state.capacity == requested && state.valid == 1,
+            "edit prepared capacity");
+    require(api->append_batch(owner, count, seed) == count,
+            "edit prepared contents length");
+    require(api->snapshot(owner, &state) == count && state.length == count
+            && state.capacity == requested && state.valid == 1,
+            "edit prepared state");
+    return state.capacity;
+}
+
+static uint64_t edit_run(const ApiOperations *api, ApiStorage *owner,
+                         enum EditCase kind, uint64_t count, uint64_t seed,
+                         ApiObservation *operation) {
+    uint64_t at = edit_index(kind, count);
+    if (kind == RESERVE_NOOP) return api->reserve(owner, count);
+    if (kind == RESERVE_GROW) return api->reserve(owner, count + 1);
+    if (edit_insert(kind)) return api->insert(owner, at, edit_marker(seed));
+    if (edit_remove(kind)) return api->remove(owner, at, seed + at, operation);
+    return api->drain(owner, seed, operation);
+}
+
+static void edit_verify(const ApiOperations *api, ApiStorage *owner,
+                        enum EditCase kind, uint64_t count, uint64_t seed,
+                        bool wide, uint64_t initial, uint64_t returned,
+                        ApiObservation operation, bool fail_state) {
+    const uint64_t at = edit_index(kind, count);
+    const uint64_t length = count + (edit_insert(kind) ? 1 : 0)
+                                  - (edit_remove(kind) ? 1 : 0)
+                                  - (kind == DRAIN_ALL ? count : 0);
+    ApiObservation state = {0};
+    require(api->snapshot(owner, &state) == length && state.length == length + fail_state
+            && state.valid == 1 && state.checksum == 0,
+            "edit post state");
+    require(state.capacity == initial || (edit_growth(kind) && state.capacity > initial),
+            "edit post capacity");
+    if (edit_growth(kind)) require(state.capacity > initial, "edit growth capacity");
+    else require(state.capacity == initial, "edit retained capacity");
+    if (kind == RESERVE_NOOP || kind == RESERVE_GROW)
+        require(returned == state.capacity, "edit reserve result");
+    else if (edit_insert(kind))
+        require(returned == count + 1, "edit insert result");
+    else if (edit_remove(kind))
+        require(returned == edit_removed_oracle(seed, at, wide)
+                && operation.length == count - 1 && operation.capacity == initial
+                && operation.checksum == returned && operation.valid == 1,
+                "edit removed owner and result");
+    else
+        require(returned == append_oracle(count, seed, wide)
+                && operation.length == 0 && operation.capacity == initial
+                && operation.checksum == returned && operation.valid == 1,
+                "edit drained owners and order");
+    ApiObservation content = {0};
+    uint64_t valid = edit_insert(kind) || edit_remove(kind)
+        ? api->inspect_shape(owner, length, seed, edit_insert(kind) ? 1 : 2,
+                             at, edit_marker(seed), &content)
+        : api->inspect_reset(owner, length, seed, &content);
+    require(valid == 1 && content.valid == 1 && content.length == length
+            && content.capacity == state.capacity
+            && content.checksum == edit_oracle(kind, count, seed, wide),
+            "edit full ordered values and checksum");
+    ApiObservation reset = {0};
+    require(api->snapshot(owner, &reset) == 0 && reset.length == 0
+            && reset.capacity == state.capacity, "edit reset state");
+    observed = content.checksum ^ returned;
+}
+
+static void edit_check(unsigned fault) {
+    const uint64_t counts[] = {16, 256, 4096};
+    const uint64_t seed = UINT64_MAX - 7;
+    for (unsigned kind = 0; kind < EDIT_CASES; ++kind)
+        for (unsigned wide = 0; wide < 2; ++wide)
+            for (size_t n = 0; n < sizeof counts / sizeof counts[0]; ++n)
+                for (unsigned variant = 0; variant < 3; ++variant) {
+                    const ApiOperations *api = &append_api[wide][variant];
+                    const uint64_t count = counts[n];
+                    reset_accounting();
+                    ApiStorage owner;
+                    uint64_t initial = edit_setup(api, &owner, (enum EditCase)kind,
+                                                  count, seed + (fault == 1));
+#if defined(ACCOUNT_ONLY)
+                    ApiAccount before = append_account_snapshot();
+#endif
+                    ApiObservation operation = {0};
+                    uint64_t returned = edit_run(api, &owner, (enum EditCase)kind,
+                                                 count, seed, &operation);
+#if defined(ACCOUNT_ONLY)
+                    ApiAccount after = append_account_snapshot();
+                    if (!edit_growth((enum EditCase)kind))
+                        require(after.requests == before.requests
+                                && after.reallocations == before.reallocations
+                                && after.releases == before.releases
+                                && after.live == before.live,
+                                "edit spare operation zero allocation");
+                    else {
+                        require(after.requests == before.requests + 1
+                                && after.bytes > before.bytes
+                                && after.live > before.live,
+                                "edit growth allocation");
+                        if (variant == 0)
+                            require(after.reallocations - before.reallocations
+                                    == (WF_FULL_SLOTS_REALLOC ? 1u : 0u)
+                                    && after.releases - before.releases
+                                    == (WF_FULL_SLOTS_REALLOC ? 0u : 1u),
+                                    "edit Whitefoot full-growth route");
+                    }
+#endif
+                    edit_verify(api, &owner, (enum EditCase)kind, count, seed,
+                                wide != 0, initial, returned, operation, fault == 2);
+                    (void)api->destroy(&owner);
+#if defined(ACCOUNT_ONLY)
+                    if (fault == 3) (void)wf_cost_allocate(1);
+                    require(live_bytes == 0 && requests == releases + realloc_requests,
+                            "edit complete cleanup");
+#else
+                    (void)fault;
+#endif
+                }
+    puts("vector reserve/insert/remove/drain: two widths, three counts, three APIs passed");
 }
 
 #if !defined(ACCOUNT_ONLY)
@@ -996,6 +1227,78 @@ static void growth_measure(uint64_t work_bytes, unsigned samples, uint64_t large
         }
 }
 
+static void edit_measure(uint64_t work_bytes, unsigned samples) {
+    const uint64_t counts[] = {16, 256, 4096};
+    puts("contract,cohort,operation,element_bytes,count,variant,sample,contexts,cycles,operations,payload_bytes,descriptor_bytes,elapsed_ns,control_elapsed_ns,initial_capacity,capacity");
+    for (unsigned kind = 0; kind < EDIT_CASES; ++kind)
+        for (unsigned wide = 0; wide < 2; ++wide)
+            for (size_t n = 0; n < sizeof counts / sizeof counts[0]; ++n) {
+                const uint64_t count = counts[n];
+                const size_t stride = wide ? sizeof(Record) : sizeof(uint64_t);
+                const uint64_t per_owner = count * stride;
+                size_t contexts = (size_t)(UINT64_C(16777216) / per_owner);
+                if (contexts > 256) contexts = 256;
+                if (contexts == 0) contexts = 1;
+                const uint64_t batch_bytes = contexts * per_owner;
+                const uint64_t cycles = (work_bytes + batch_bytes - 1) / batch_bytes;
+                const uint64_t repeat = kind == RESERVE_NOOP ? 64 : 1;
+                for (unsigned cohort = 0; cohort < 2; ++cohort)
+                    for (unsigned sample = 0; sample < samples; ++sample)
+                        for (unsigned offset = 0; offset < 3; ++offset) {
+                            unsigned position = (sample + offset) % 3;
+                            unsigned variant = cohort ? 2 - position : position;
+                            const ApiOperations *api = &append_api[wide][variant];
+                            ApiStorage *owners = malloc(contexts * sizeof *owners);
+                            ApiObservation *operations = calloc(contexts, sizeof *operations);
+                            uint64_t *returned = malloc(contexts * sizeof *returned);
+                            require(owners && operations && returned, "edit timing contexts");
+                            uint64_t elapsed = 0, control_elapsed = 0;
+                            uint64_t final_capacity = 0, initial_capacity = 0;
+                            for (uint64_t cycle = 0; cycle < cycles; ++cycle) {
+                                const uint64_t seed = 101 + sample + cycle;
+                                for (size_t k = 0; k < contexts; ++k) {
+                                    uint64_t cap = edit_setup(api, &owners[k],
+                                        (enum EditCase)kind, count, seed + k);
+                                    if (k == 0) initial_capacity = cap;
+                                    require(cap == initial_capacity, "edit stable initial capacity");
+                                }
+                                const uint64_t control_start = nanos();
+                                for (uint64_t pass = 0; pass < repeat; ++pass)
+                                    for (size_t k = 0; k < contexts; ++k)
+                                        (void)api->snapshot(&owners[k], &operations[k]);
+                                control_elapsed += nanos() - control_start;
+                                for (size_t k = 0; k < contexts; ++k)
+                                    require(operations[k].length == count
+                                            && operations[k].capacity == initial_capacity
+                                            && operations[k].valid == 1,
+                                            "edit snapshot control state");
+                                const uint64_t start = nanos();
+                                for (uint64_t pass = 0; pass < repeat; ++pass)
+                                    for (size_t k = 0; k < contexts; ++k)
+                                        returned[k] = edit_run(api, &owners[k],
+                                            (enum EditCase)kind, count, seed + k,
+                                            &operations[k]);
+                                elapsed += nanos() - start;
+                                for (size_t k = 0; k < contexts; ++k) {
+                                    ApiObservation state = {0};
+                                    (void)api->snapshot(&owners[k], &state);
+                                    final_capacity = state.capacity;
+                                    edit_verify(api, &owners[k], (enum EditCase)kind,
+                                        count, seed + k, wide != 0, initial_capacity,
+                                        returned[k], operations[k], false);
+                                    (void)api->destroy(&owners[k]);
+                                }
+                            }
+                            printf("vector-edit-o3,%u,%s,%zu,%" PRIu64 ",%s,%u,%zu,%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%zu,%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 "\n",
+                                   cohort, edit_names[kind], stride, count, api->name, sample,
+                                   contexts, cycles, cycles * contexts * repeat,
+                                   batch_bytes, contexts * sizeof(ApiStorage), elapsed, control_elapsed,
+                                   initial_capacity, final_capacity);
+                            free(returned); free(operations); free(owners);
+                        }
+            }
+}
+
 #endif
 
 static uint64_t checked_run(enum Variant variant, bool wide, uint64_t count,
@@ -1099,6 +1402,10 @@ int main(int argc, char **argv) {
 #endif
         growth_check(false, false, false);
     }
+    else if (strcmp(argv[1], "edit-api-check") == 0) { require(argc == 2, "edit-api-check argument count"); edit_check(0); }
+    else if (strcmp(argv[1], "edit-api-fail-values") == 0) { require(argc == 2, "edit-api-fail-values argument count"); edit_check(1); }
+    else if (strcmp(argv[1], "edit-api-fail-state") == 0) { require(argc == 2, "edit-api-fail-state argument count"); edit_check(2); }
+    else if (strcmp(argv[1], "edit-api-fail-cleanup") == 0) { require(argc == 2, "edit-api-fail-cleanup argument count"); edit_check(3); }
     else if (strcmp(argv[1], "growth-api-fail-values") == 0) { require(argc == 2, "growth-api-fail-values argument count"); growth_check(true, false, false); }
     else if (strcmp(argv[1], "growth-api-fail-state") == 0) { require(argc == 2, "growth-api-fail-state argument count"); growth_check(false, true, false); }
     else if (strcmp(argv[1], "api-fail-values") == 0) { require(argc == 2, "api-fail-values argument count"); append_check(true, false); }
@@ -1132,6 +1439,11 @@ int main(int argc, char **argv) {
         require(large_work >= work, "growth append large-cell budget at least base");
         growth_clock_check(false);
         growth_measure(work, (unsigned)positive_argument(argv[3], 101), large_work);
+    }
+    else if (strcmp(argv[1], "edit-api-measure") == 0) {
+        require(argc == 4, "edit-api-measure requires byte budget and samples");
+        edit_measure(positive_argument(argv[2], UINT64_C(4294967296)),
+                     (unsigned)positive_argument(argv[3], 101));
     }
     else if (strcmp(argv[1], "api-measure") == 0) {
         require(argc == 4, "api-measure requires work and samples");

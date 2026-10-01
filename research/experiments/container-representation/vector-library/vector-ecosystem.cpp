@@ -74,6 +74,52 @@ std::uint64_t api_append_one(void *storage, std::uint64_t seed) {
 }
 
 template<class T>
+std::uint64_t api_reserve(void *storage, std::uint64_t total) {
+    auto &values = *static_cast<Vector<T> *>(storage);
+    values.reserve(static_cast<std::size_t>(total));
+    return values.capacity();
+}
+
+bool api_inspect(std::uint64_t value, std::uint64_t expected, std::uint64_t &digest);
+bool api_inspect(const Record &value, std::uint64_t expected, std::uint64_t &digest);
+
+template<class T>
+std::uint64_t api_insert(void *storage, std::uint64_t index, std::uint64_t seed) {
+    auto &values = *static_cast<Vector<T> *>(storage);
+    values.emplace(values.begin() + static_cast<std::ptrdiff_t>(index), seed);
+    return values.size();
+}
+
+template<class T>
+std::uint64_t api_remove(void *storage, std::uint64_t index, std::uint64_t seed,
+                         ApiObservation *observation) {
+    auto &values = *static_cast<Vector<T> *>(storage);
+    T removed = std::move(values[static_cast<std::size_t>(index)]);
+    values.erase(values.begin() + static_cast<std::ptrdiff_t>(index));
+    std::uint64_t checksum = seed;
+    const bool valid = api_inspect(removed, seed, checksum);
+    *observation = {values.size(), values.capacity(), checksum,
+                    static_cast<std::uint64_t>(valid)};
+    return checksum;
+}
+
+template<class T>
+std::uint64_t api_drain(void *storage, std::uint64_t seed,
+                        ApiObservation *observation) {
+    auto &values = *static_cast<Vector<T> *>(storage);
+    const auto capacity = values.capacity();
+    std::uint64_t checksum = seed;
+    bool valid = true;
+    for (std::size_t index = 0; index < values.size(); ++index) {
+        T value = std::move(values[index]);
+        valid &= api_inspect(value, seed + index, checksum);
+    }
+    values.clear();
+    *observation = {values.size(), capacity, checksum, static_cast<std::uint64_t>(valid)};
+    return checksum;
+}
+
+template<class T>
 std::uint64_t api_snapshot(void *storage, ApiObservation *observation) {
     const auto &values = *static_cast<const Vector<T> *>(storage);
     *observation = {values.size(), values.capacity(), 0, 1};
@@ -103,6 +149,28 @@ std::uint64_t api_inspect_reset(void *storage, std::uint64_t count,
     for (std::size_t index = 0; index < values.size(); ++index)
         valid &= api_inspect(values[index], seed + index, digest);
     *observation = {values.size(), values.capacity(), digest,
+                    static_cast<std::uint64_t>(valid)};
+    values.clear();
+    return observation->valid;
+}
+
+template<class T>
+std::uint64_t api_inspect_shape(void *storage, std::uint64_t count,
+                                std::uint64_t seed, std::uint64_t kind,
+                                std::uint64_t edit_index, std::uint64_t marker,
+                                ApiObservation *observation) {
+    auto &values = *static_cast<Vector<T> *>(storage);
+    std::uint64_t checksum = seed;
+    bool valid = values.size() == count;
+    for (std::size_t position = 0; position < values.size(); ++position) {
+        const auto index = static_cast<std::uint64_t>(position);
+        const auto expected = kind == 1 && index == edit_index ? marker
+            : kind == 1 && index > edit_index ? seed + index - 1
+            : kind == 2 && index >= edit_index ? seed + index + 1
+            : seed + index;
+        valid &= api_inspect(values[position], expected, checksum);
+    }
+    *observation = {values.size(), values.capacity(), checksum,
                     static_cast<std::uint64_t>(valid)};
     values.clear();
     return observation->valid;
@@ -253,3 +321,22 @@ extern "C" std::uint64_t cpp_vector_api_record_inspect_reset(void *storage,
 extern "C" std::uint8_t cpp_vector_api_record_destroy(void *storage) {
     return api_destroy<Record>(storage);
 }
+
+#define EXPORT_EDIT_API(width, type) \
+extern "C" std::uint64_t cpp_vector_api_##width##_reserve(void *storage, std::uint64_t total) { \
+    return api_reserve<type>(storage, total); \
+} \
+extern "C" std::uint64_t cpp_vector_api_##width##_insert(void *storage, std::uint64_t index, std::uint64_t seed) { \
+    return api_insert<type>(storage, index, seed); \
+} \
+extern "C" std::uint64_t cpp_vector_api_##width##_remove(void *storage, std::uint64_t index, std::uint64_t seed, ApiObservation *observation) { \
+    return api_remove<type>(storage, index, seed, observation); \
+} \
+extern "C" std::uint64_t cpp_vector_api_##width##_drain(void *storage, std::uint64_t seed, ApiObservation *observation) { \
+    return api_drain<type>(storage, seed, observation); \
+} \
+extern "C" std::uint64_t cpp_vector_api_##width##_inspect_shape(void *storage, std::uint64_t count, std::uint64_t seed, std::uint64_t kind, std::uint64_t index, std::uint64_t marker, ApiObservation *observation) { \
+    return api_inspect_shape<type>(storage, count, seed, kind, index, marker, observation); \
+}
+EXPORT_EDIT_API(word, std::uint64_t)
+EXPORT_EDIT_API(record, Record)

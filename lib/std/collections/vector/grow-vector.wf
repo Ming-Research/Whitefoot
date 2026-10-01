@@ -28,18 +28,16 @@ fn grow_vector_grow_full<T, const ceiling: u64>(values: &GrowVector<T, ceiling>)
   ensures values^.storage.inner.len == entry(values)^.storage.inner.len;
 } {
   let current = values^.storage.inner.cap;
+  let requested = ceiling;
   if current == 0_u64 {
-    let opened = grow_vector_reserve::<T, ceiling>(values: values, total: 1_u64);
-    return unit;
-  }
-  if current <= 9223372036854775807_u64 {
+    set requested = 1_u64;
+  } else if current <= 9223372036854775807_u64 {
     let doubled = current + current;
     if doubled <= ceiling {
-      let widened = grow_vector_reserve::<T, ceiling>(values: values, total: doubled);
-      return unit;
+      set requested = doubled;
     }
   }
-  let stretched = grow_vector_reserve::<T, ceiling>(values: values, total: ceiling);
+  let grown = grow_vector_reserve::<T, ceiling>(values: values, total: requested);
   return unit;
 }
 

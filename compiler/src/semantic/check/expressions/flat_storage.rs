@@ -2059,9 +2059,25 @@ impl<'unit> TypeContext<'unit> {
                 }
                 let nominal = self.nominal(id).ok()?;
                 let result = match &nominal.kind {
-                    // [OP-9] `Box<T>` is `(8,8)`, one pointer; its `inner`
-                    // field lives in the heap object and enters no sequence.
-                    CheckedNominalKind::Box { .. } => finish(CheckedLayoutMagnitude::Finite(8), 8),
+                    // [OP-9] runtime Slots owns an inline descriptor; other
+                    // Boxes are one pointer. Neither expands its content.
+                    CheckedNominalKind::Box { referent, .. } => finish(
+                        CheckedLayoutMagnitude::Finite(
+                            if matches!(
+                                referent,
+                                CheckedType::Window {
+                                    shape: super::super::super::model::WindowShape::Slots,
+                                    capacity: None,
+                                    ..
+                                }
+                            ) {
+                                24
+                            } else {
+                                8
+                            },
+                        ),
+                        8,
+                    ),
                     // A handle is one pointer to its shared object [SHARE-1].
                     CheckedNominalKind::Shared { .. } => {
                         finish(CheckedLayoutMagnitude::Finite(8), 8)

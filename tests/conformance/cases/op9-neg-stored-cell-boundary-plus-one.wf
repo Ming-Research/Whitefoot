@@ -2,9 +2,9 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn stored_cell_overflow(count: u64) -> made: Box<Slots<Box<Slots<u8>>>> pure contract {
-  requires count <= 2305843009213693952_u64;
+  requires count <= 768614336404564651_u64;
 } {
-  doc "A stored Box is one pointer with stride ceiling eight. Its referent does not change that layout; the permitted count still exceeds its OP-9 limit by one.";
+  doc "A stored runtime Slots owner is an inline three-word descriptor with stride ceiling twenty-four. The permitted count exceeds its OP-9 limit by one.";
   let taken = box_slots_new::<Box<Slots<u8>>>(capacity: count);
   return move taken;
 }

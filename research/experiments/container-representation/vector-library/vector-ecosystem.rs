@@ -180,6 +180,58 @@ unsafe fn api_append_one<T: Element>(storage: *mut c_void, seed: u64) -> u64 {
     values.len() as u64
 }
 
+unsafe fn api_reserve<T>(storage: *mut c_void, total: u64) -> u64 {
+    let values = unsafe { &mut *storage.cast::<Vec<T>>() };
+    values.reserve((total as usize).saturating_sub(values.len()));
+    values.capacity() as u64
+}
+
+unsafe fn api_insert<T: Element>(storage: *mut c_void, index: u64, seed: u64) -> u64 {
+    let values = unsafe { &mut *storage.cast::<Vec<T>>() };
+    values.insert(index as usize, T::make(seed));
+    values.len() as u64
+}
+
+unsafe fn api_remove<T: ApiElement>(
+    storage: *mut c_void,
+    index: u64,
+    seed: u64,
+    observation: &mut ApiObservation,
+) -> u64 {
+    let values = unsafe { &mut *storage.cast::<Vec<T>>() };
+    let removed = values.remove(index as usize);
+    let mut checksum = seed;
+    let valid = removed.inspect(seed, &mut checksum);
+    *observation = ApiObservation {
+        length: values.len() as u64,
+        capacity: values.capacity() as u64,
+        checksum,
+        valid: u64::from(valid),
+    };
+    checksum
+}
+
+unsafe fn api_drain<T: ApiElement>(
+    storage: *mut c_void,
+    seed: u64,
+    observation: &mut ApiObservation,
+) -> u64 {
+    let values = unsafe { &mut *storage.cast::<Vec<T>>() };
+    let capacity = values.capacity() as u64;
+    let mut checksum = seed;
+    let mut valid = true;
+    for (index, value) in values.drain(..).enumerate() {
+        valid &= value.inspect(seed.wrapping_add(index as u64), &mut checksum);
+    }
+    *observation = ApiObservation {
+        length: values.len() as u64,
+        capacity,
+        checksum,
+        valid: u64::from(valid),
+    };
+    checksum
+}
+
 unsafe fn api_snapshot<T>(storage: *mut c_void, observation: &mut ApiObservation) -> u64 {
     let values = unsafe { &*storage.cast::<Vec<T>>() };
     *observation = ApiObservation {
@@ -214,6 +266,41 @@ unsafe fn api_inspect_reset<T: ApiElement>(
     observation.valid
 }
 
+unsafe fn api_inspect_shape<T: ApiElement>(
+    storage: *mut c_void,
+    count: u64,
+    seed: u64,
+    kind: u64,
+    edit_index: u64,
+    marker: u64,
+    observation: &mut ApiObservation,
+) -> u64 {
+    let values = unsafe { &mut *storage.cast::<Vec<T>>() };
+    let mut checksum = seed;
+    let mut valid = values.len() as u64 == count;
+    for (index, value) in values.iter().enumerate() {
+        let index = index as u64;
+        let expected = if kind == 1 && index == edit_index {
+            marker
+        } else if kind == 1 && index > edit_index {
+            seed.wrapping_add(index - 1)
+        } else if kind == 2 && index >= edit_index {
+            seed.wrapping_add(index + 1)
+        } else {
+            seed.wrapping_add(index)
+        };
+        valid &= value.inspect(expected, &mut checksum);
+    }
+    *observation = ApiObservation {
+        length: values.len() as u64,
+        capacity: values.capacity() as u64,
+        checksum,
+        valid: u64::from(valid),
+    };
+    values.clear();
+    observation.valid
+}
+
 unsafe fn api_destroy<T>(storage: *mut c_void) -> u8 {
     // Drop releases the backing; the C driver retains its descriptor storage.
     unsafe { std::ptr::drop_in_place(storage.cast::<Vec<T>>()) };
@@ -221,7 +308,8 @@ unsafe fn api_destroy<T>(storage: *mut c_void) -> u8 {
 }
 
 macro_rules! api_exports {
-    ($element:ty, $prepare:ident, $append:ident, $one:ident, $snapshot:ident, $inspect:ident, $destroy:ident) => {
+    ($element:ty, $prepare:ident, $append:ident, $one:ident, $snapshot:ident, $inspect:ident, $destroy:ident,
+     $reserve:ident, $insert:ident, $remove:ident, $drain:ident, $shape:ident) => {
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn $prepare(capacity: u64, storage: *mut c_void) {
             unsafe { api_prepare::<$element>(capacity, storage) }
@@ -260,6 +348,36 @@ macro_rules! api_exports {
         pub unsafe extern "C" fn $destroy(storage: *mut c_void) -> u8 {
             unsafe { api_destroy::<$element>(storage) }
         }
+
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn $reserve(storage: *mut c_void, total: u64) -> u64 {
+            unsafe { api_reserve::<$element>(storage, total) }
+        }
+
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn $insert(storage: *mut c_void, index: u64, seed: u64) -> u64 {
+            unsafe { api_insert::<$element>(storage, index, seed) }
+        }
+
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn $remove(storage: *mut c_void, index: u64, seed: u64,
+                                           observation: *mut ApiObservation) -> u64 {
+            unsafe { api_remove::<$element>(storage, index, seed, &mut *observation) }
+        }
+
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn $drain(storage: *mut c_void, seed: u64,
+                                          observation: *mut ApiObservation) -> u64 {
+            unsafe { api_drain::<$element>(storage, seed, &mut *observation) }
+        }
+
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn $shape(storage: *mut c_void, count: u64, seed: u64,
+                                          kind: u64, index: u64, marker: u64,
+                                          observation: *mut ApiObservation) -> u64 {
+            unsafe { api_inspect_shape::<$element>(storage, count, seed, kind, index, marker,
+                                                   &mut *observation) }
+        }
     };
 }
 
@@ -270,7 +388,12 @@ api_exports!(
     rust_vector_api_word_append_one,
     rust_vector_api_word_snapshot,
     rust_vector_api_word_inspect_reset,
-    rust_vector_api_word_destroy
+    rust_vector_api_word_destroy,
+    rust_vector_api_word_reserve,
+    rust_vector_api_word_insert,
+    rust_vector_api_word_remove,
+    rust_vector_api_word_drain,
+    rust_vector_api_word_inspect_shape
 );
 api_exports!(
     Record,
@@ -279,5 +402,10 @@ api_exports!(
     rust_vector_api_record_append_one,
     rust_vector_api_record_snapshot,
     rust_vector_api_record_inspect_reset,
-    rust_vector_api_record_destroy
+    rust_vector_api_record_destroy,
+    rust_vector_api_record_reserve,
+    rust_vector_api_record_insert,
+    rust_vector_api_record_remove,
+    rust_vector_api_record_drain,
+    rust_vector_api_record_inspect_shape
 );

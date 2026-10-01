@@ -1646,6 +1646,85 @@ fn owned_pair_results_survive_ordinary_join_and_forced_refusal() {
     run_owned_lane_cases(OWNED_PAIR_RESULTS, &module, 0, 1, 0, 0, 1);
 }
 
+/// Both the owned parameter and the result occupy three words in a worker
+/// frame. Granted, deferred and refused lanes must return each payload once.
+#[test]
+fn runtime_slots_owner_survives_worker_capture_result_and_refusal() {
+    let source = br#"fn make(seed: u64) -> result: Box<Slots<Box<u64>>> pure {
+  let owner = box_slots_new::<Box<u64>>(capacity: 1_u64);
+  let value = box_new::<u64>(value: seed);
+  place_back(window: &owner.inner, value: move value);
+  return move owner;
+}
+
+fn handoff(owner: Box<Slots<Box<u64>>>) -> result: Box<Slots<Box<u64>>> pure {
+  if owner.inner.len == 1_u64 {
+    let value = take_back(window: &owner.inner);
+    place_back(window: &owner.inner, value: move value);
+  }
+  return move owner;
+}
+
+fn consume(owner: Box<Slots<Box<u64>>>) -> result: u64 pure {
+  if owner.inner.cap != 1_u64 {
+    return 0_u64;
+  }
+  if owner.inner.len != 1_u64 {
+    return 0_u64;
+  }
+  let value = take_back(window: &owner.inner);
+  return value.inner;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let left = make(seed: 17_u64);
+  let right = make(seed: 29_u64);
+  let first = handoff(owner: move left);
+  let second = handoff(owner: move right);
+  let first_value = consume(owner: move first);
+  let second_value = consume(owner: move second);
+  if first_value != 17_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if second_value != 29_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_ir(source, |program| {
+        let handoff = program
+            .functions()
+            .iter()
+            .find(|f| f.name() == "handoff")
+            .unwrap();
+        let layout = parallel_lane_frame_layout(
+            TargetLayout::host().unwrap(),
+            program.nominals(),
+            program.elements(),
+            handoff.parameters().iter().map(|(_, ty)| *ty),
+            handoff.result(),
+            false,
+        )
+        .expect("the complete owner frame qualifies")
+        .expect("the owner frame fits a lane");
+        assert_eq!(
+            layout.size(),
+            48,
+            "one 24-byte argument plus one 24-byte result"
+        );
+        assert_eq!(layout.align(), 8);
+    });
+    let module = emit_with_overlap(source);
+    assert!(module.contains("call void @wf__par_publish(ptr "));
+    let thunk = function_body(&module, "@wf__par_thunk_main.1");
+    assert!(
+        thunk.contains("call { i64, i64, ptr } @wf_handoff(ptr "),
+        "{thunk}"
+    );
+    run_owned_lane_cases(source, &module, 0, 3, 4, 0, 1);
+}
+
 /// Both Empty and a partial window of Box owners cross argument and result
 /// boundaries. Each granted frame keeps its dirty inactive storage until join;
 /// refusal executes the same calls and must release the same four cells.

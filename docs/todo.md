@@ -1235,15 +1235,14 @@ rarely insert at the same place.
   whitelist. Node occupancy and key/child layout remain separate unresolved
   factors for lookup/traversal after these refused shift trials.
 
-- **Box/window representation costs remain unqualified.** The current runtime-
-  capacity Box is one pointer to one header-first allocation; `grow` uses
-  allocation, memmove and free. A one-word owner, one allocation and header
-  placement are distinct choices: a fat descriptor can also own one element
-  allocation and make measure reads direct, while widening transport and
-  capture storage. Neither alternative is established as generally faster.
-  Keep the current implementation while separating owner width, measure loads,
-  allocation count, copying and linked layout in representative single-thread
-  and parallel comparisons. The successful bounded capture repair above is
+- **Box/window representation costs remain unqualified.** Runtime Slots uses
+  an inline length/capacity/payload owner with one element allocation; runtime
+  Array, Ring and Segments retain thin owners and header-first allocations.
+  `grow` now trials full positive-extent reallocation and retains a disjoint initialized-prefix copy for partial or zero-extent windows; the small-growth tradeoff remains to be measured. Owner width, measure loads, allocation
+  count, copying and linked layout remain distinct costs: direct measure reads
+  widen transport and capture storage, and no representation is established as
+  generally faster. Separate these costs in representative single-thread and
+  parallel comparisons. The successful bounded capture repair above is
   evidence about the synthesized task ABI; it neither attributes the earlier
   `records` failure nor proves that any one general layout choice caused it.
   Keep the deferred general representation study separate, and close this item
@@ -1252,7 +1251,8 @@ rarely insert at the same place.
   The [inline runtime-Slots owner screen](../research/experiments/container-representation/vector-library/RESULTS.md#inline-runtime-slots-owner-registered-descriptor-placement-discriminator)
   removes the descriptor-pointer load and heap descriptor while retaining the
   separate payload, full realloc and allocated empty placeholder. It qualifies
-  only two of six matched growth-append cells and does not justify selection.
+  only two of six matched growth-append cells and does not by itself justify
+  representation selection.
   Source and post-lowering linked ownership checks pass; worker lifetimes and
   changed containing-layout ceilings remain open. The independent
   [allocation-free empty-payload screen](../research/experiments/container-representation/vector-library/RESULTS.md#allocation-free-empty-payload-registered-independent-discriminator)
@@ -1486,6 +1486,17 @@ rarely insert at the same place.
   again.
 
 ## Parallel lowering and runtime
+
+- **Addressed call results can suppress proved overlap.** In
+  `lowering/builder.rs::overlaps`, promoting a non-final call result to local
+  storage would read it before its join, so that call ends the offered group.
+  Direct field observations of a returned Slots owner expose this boundary;
+  the worker-owner regression uses ordinary consuming helpers to exercise
+  the currently supported capture and return path. Investigate delaying the
+  placement until the join, preserving every original permission and read
+  ordering. Reopen when a real parallel workload loses overlap this way;
+  validate direct field reads, worker capture, forced sequential fallback
+  and exactly-once owner cleanup before measuring any gain.
 
 - **Validate reuse of selected-target element layouts during emission.**
   [Zero-stride addressing](../compiler/src/target.rs) currently queries

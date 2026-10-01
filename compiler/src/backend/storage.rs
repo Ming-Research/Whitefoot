@@ -20,9 +20,9 @@ use crate::{
 
 use super::BackendFailure;
 
-/// These values contain their payload inline. Descriptors retain their
-/// ordinary SSA representation: their payload is elsewhere. This
-/// choice depends on representation, not source names or a size threshold.
+/// Values with complete inline storage, including a runtime Slots owner's
+/// descriptor. This choice depends on representation, not source names or a
+/// size threshold; its element payload remains separately heap-owned.
 pub(super) fn is_stored_aggregate(program: &IrProgram, ty: IrType) -> Result<bool, BackendFailure> {
     Ok(match ty {
         IrType::Array { .. }
@@ -34,7 +34,10 @@ pub(super) fn is_stored_aggregate(program: &IrProgram, ty: IrType) -> Result<boo
             match nominal.kind() {
                 IrNominalKind::Struct { .. } | IrNominalKind::Opaque => true,
                 IrNominalKind::Enum { .. } => !nominal.is_tag_only_enum(),
-                IrNominalKind::Box { .. } | IrNominalKind::Shared { .. } => false,
+                IrNominalKind::Box { referent, .. } => {
+                    crate::target::inline_slots_descriptor(*referent)
+                }
+                IrNominalKind::Shared { .. } => false,
             }
         }
         IrType::Unit

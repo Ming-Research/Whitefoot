@@ -85,7 +85,7 @@ fn main() -> status: std::process::ExitStatus pure {{
 }
 
 /// [STOR-6] qualifies each accepted runtime allocation at its source call,
-/// using the selected target's actual element stride and padded block header.
+/// using the selected target's element stride and allocation-resident header.
 /// The retained bound comes from an invariant rather than a literal count.
 /// Validation alone observes the oversized cases, so no impossible allocation
 /// is executed.
@@ -98,7 +98,7 @@ fn runtime_allocation_bounds_include_each_shape_header_at_target_qualification()
             "box_array_filled::<u16>(count: n, value: 0_u16)",
             8_u64,
         ),
-        ("Slots", "box_slots_new::<u16>(capacity: n)", 16_u64),
+        ("Slots", "box_slots_new::<u16>(capacity: n)", 0_u64),
         ("Ring", "box_ring_new::<u16>(capacity: n)", 24_u64),
     ] {
         let boundary = invariant_bounded_runtime_allocation(construction, 500, 1_000);

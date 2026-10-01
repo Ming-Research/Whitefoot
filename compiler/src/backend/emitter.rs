@@ -403,6 +403,11 @@ pub(super) fn emit_llvm_with_window_address_facts(
             vec![Parameter::unnamed("i64")],
         ));
         text.declare(Signature::new(
+            "realloc",
+            "ptr",
+            vec![Parameter::unnamed("ptr"), Parameter::unnamed("i64")],
+        ));
+        text.declare(Signature::new(
             "free",
             "void",
             vec![Parameter::unnamed("ptr")],
@@ -1596,17 +1601,21 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         facts.push_str(" nonnull ");
         facts.push_str(NO_CAPTURE_ATTRIBUTE);
         // State the selected-target extent of the storage actually addressed.
-        // Runtime-content references address one Box pointer slot, not the
-        // dynamically sized allocation that the slot currently owns.
+        // Runtime-content references address the owner: an inline Slots
+        // descriptor or another shape's pointer slot, never its payload.
         if let Some(referent) = referent
             && let Ok(layout) = crate::target::validate_static_storage(
                 self.target,
                 self.program,
-                &crate::target::TargetStorageType::source(if referent.is_runtime_content() {
-                    IrType::Address(referent)
-                } else {
-                    referent.ty()
-                }),
+                &crate::target::TargetStorageType::source(
+                    if referent.is_runtime_content()
+                        && !crate::target::inline_slots_descriptor(referent.ty())
+                    {
+                        IrType::Address(referent)
+                    } else {
+                        referent.ty()
+                    },
+                ),
             )
             && layout.size() > 0
         {
@@ -3006,13 +3015,18 @@ pub(super) fn llvm_type_with_references(
                 references,
             )?;
             Ok(match shape {
-                IrWindowShape::Slots => format!("{{ i64, i64, [0 x {element}] }}"),
+                IrWindowShape::Slots => "{ i64, i64, ptr }".to_owned(),
                 IrWindowShape::Ring => format!("{{ i64, i64, i64, [0 x {element}] }}"),
             })
         }
         IrType::Address(_) | IrType::RuntimeBoxPayload { .. } => Ok("ptr".to_owned()),
         IrType::Nominal(id) => {
             let nominal = program.nominal(id).ok_or(BackendFailure::InvalidIr)?;
+            if let IrNominalKind::Box { referent, .. } = nominal.kind()
+                && crate::target::inline_slots_descriptor(*referent)
+            {
+                return llvm_type_with_references(program, *referent, references);
+            }
             if matches!(
                 nominal.kind(),
                 IrNominalKind::Box { .. } | IrNominalKind::Shared { .. }

@@ -630,6 +630,19 @@ fn holds_union_enum(
     }
 }
 
+/// Runtime Slots metadata occupies its Box owner's inline storage. Other
+/// runtime shapes retain their pointer-owned header and payload block.
+pub(crate) const fn inline_slots_descriptor(ty: IrType) -> bool {
+    matches!(
+        ty,
+        IrType::Window {
+            shape: IrWindowShape::Slots,
+            capacity: None,
+            ..
+        }
+    )
+}
+
 /// The integer-class words one returned first-class value can occupy on
 /// every admitted target: LLVM's x86-64 return convention assigns RAX, RDX
 /// and RCX, one per scalar leaf, and AArch64 assigns X0 to X7.
@@ -725,7 +738,8 @@ impl<'types> ReturnLeaves<'types> {
             } => {
                 let header = match (shape, capacity) {
                     (IrWindowShape::Slots, Some(_)) => 1,
-                    (IrWindowShape::Slots, None) | (IrWindowShape::Ring, Some(_)) => 2,
+                    (IrWindowShape::Slots, None) => 3,
+                    (IrWindowShape::Ring, Some(_)) => 2,
                     (IrWindowShape::Ring, None) => 3,
                 };
                 self.integer(copies, header);
@@ -739,6 +753,9 @@ impl<'types> ReturnLeaves<'types> {
                     .get(id.index())
                     .ok_or(TargetLayoutFailure::InvalidIr)?;
                 match nominal.kind() {
+                    IrNominalKind::Box { referent, .. } if inline_slots_descriptor(*referent) => {
+                        self.integer(copies, 3)
+                    }
                     // A pointer owner or a shared object's handle.
                     IrNominalKind::Box { .. } | IrNominalKind::Shared { .. } => {
                         self.integer(copies, 1)
@@ -1162,16 +1179,21 @@ struct RuntimeCapacityAllocationLayout {
     header: u64,
 }
 
-/// Computes the exact terms the emitter uses for `header + count * stride`.
-/// The zero-length tail array can require padding after the fixed words, so
-/// the header is its selected-target field offset rather than merely its word
-/// count.
+/// Computes the exact terms used for the heap allocation. Runtime Slots
+/// allocate only their payload; other shapes include the padded header. A
+/// zero payload receives a one-byte allocation, within every admitted target's
+/// nonzero allocation domain, while its inline descriptor is checked separately.
 fn runtime_capacity_allocation_layout(
     layouts: &mut LayoutComputer<'_>,
     content: IrType,
     ceiling: IrLayoutCeiling,
 ) -> Result<RuntimeCapacityAllocationLayout, TargetLayoutFailure> {
     let (actual, allocation) = runtime_capacity_layout(layouts, content)?;
+    if layouts.target.runtime_allocation_max() == 0 {
+        return Err(TargetLayoutFailure::Unrepresentable(
+            TargetObject::RuntimeSizedAllocation,
+        ));
+    }
     if !ceiling.size.permits(actual.size)
         || actual.align > ceiling.align
         || !ceiling.stride.permits(allocation.stride)
@@ -1217,7 +1239,7 @@ fn runtime_capacity_layout(
                 .copied()
                 .ok_or(TargetLayoutFailure::InvalidIr)?,
             match shape {
-                IrWindowShape::Slots => 2,
+                IrWindowShape::Slots => 0,
                 IrWindowShape::Ring => 3,
             },
         ),
@@ -1740,8 +1762,13 @@ impl<'types> LayoutComputer<'types> {
                 self.element(element)?;
                 Ok(Layout { size: 16, align: 8 })
             }
-            // [TYPE-9] a runtime-capacity block is reached only through the
-            // `Box` that owns it, so it never occupies inline storage.
+            IrType::Window {
+                shape: IrWindowShape::Slots,
+                capacity: None,
+                ..
+            } => Ok(Layout { size: 24, align: 8 }),
+            // Other runtime-capacity blocks are reached through the Box's
+            // pointer rather than occupying the owner's inline storage.
             IrType::Window { capacity: None, .. } => Ok(Layout { size: 8, align: 8 }),
             // compiler/storage-representation: header first, `len` always,
             // `head` only for a `Ring`, and no capacity word where the type
@@ -1831,7 +1858,10 @@ impl<'types> LayoutComputer<'types> {
             self.nominal.insert(id, layout);
             return Ok(layout);
         }
-        let layout = if matches!(
+        let layout = if matches!(nominal.kind(), IrNominalKind::Box { referent, .. } if inline_slots_descriptor(*referent))
+        {
+            Layout { size: 24, align: 8 }
+        } else if matches!(
             nominal.kind(),
             IrNominalKind::Box { .. } | IrNominalKind::Shared { .. }
         ) {

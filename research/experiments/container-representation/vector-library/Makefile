@@ -7,7 +7,7 @@ BUILD ?= .build
 SOURCES := vector-library.wf
 LIBRARY_INPUTS := $(wildcard $(ROOT)/lib/std/collections/vector/*) $(ROOT)/lib/std/modules.wfg
 # Explicit observed-ledger selection; frozen old-compiler replay stays at 0.
-WF_FULL_SLOTS_REALLOC ?= 0
+WF_FULL_SLOTS_REALLOC ?= 1
 .DELETE_ON_ERROR:
 
 include ../../../../compiler/runtime.mk
@@ -84,12 +84,14 @@ GROWTH_ACCOUNT ?= $(ECO_BUILD)/append-growth-accounting.csv
 GROWTH_WORK ?= 67108864
 GROWTH_LARGE_WORK ?= $(GROWTH_WORK)
 GROWTH_SAMPLE_FILE ?= $(ECO_BUILD)/append-growth-measurements.csv
+EDIT_WORK ?= 4194304
+EDIT_SAMPLE_FILE ?= $(ECO_BUILD)/edit-api-measurements.csv
 include ../ecosystem.mk
 # Read only by observed code; the existing configuration records the choice
 # so changing it also invalidates a cached account driver.
 ECO_CFLAGS += -DWF_FULL_SLOTS_REALLOC=$(WF_FULL_SLOTS_REALLOC)
 
-.PHONY: ecosystem-build ecosystem-check ecosystem-account ecosystem-measure ecosystem-append-check ecosystem-append-measure ecosystem-append-growth-check ecosystem-append-growth-account ecosystem-append-growth-measure
+.PHONY: ecosystem-build ecosystem-check ecosystem-account ecosystem-measure ecosystem-append-check ecosystem-append-measure ecosystem-append-growth-check ecosystem-append-growth-account ecosystem-append-growth-measure ecosystem-edit-check ecosystem-edit-measure
 .SECONDARY: $(ECO_BUILD)/whitefoot-timed.ll $(ECO_BUILD)/whitefoot-account.ll \
             $(ECO_BUILD)/whitefoot-timed.o $(ECO_BUILD)/whitefoot-account.o \
             $(ECO_BUILD)/driver-timed.o $(ECO_BUILD)/driver-account.o \
@@ -163,6 +165,27 @@ ecosystem-append-growth-account: $(ECO_BUILD)/vector-costs-account$(EXE)
 ecosystem-append-growth-measure: $(ECO_BUILD)/vector-costs-timed$(EXE)
 	$(ECO_BUILD)/vector-costs-timed$(EXE) growth-api-measure $(GROWTH_WORK) $(ECO_REPEATS) $(GROWTH_LARGE_WORK) > '$(GROWTH_SAMPLE_FILE)'
 	@echo 'Raw append growth samples: $(GROWTH_SAMPLE_FILE)'
+
+ecosystem-edit-check: ecosystem-build
+	$(ECO_BUILD)/vector-costs-timed$(EXE) edit-api-check
+	$(ECO_BUILD)/vector-costs-account$(EXE) edit-api-check
+	@set -eu; for image in timed account; do for fault in values state; do \
+	  log='$(ECO_BUILD)/edit-fail-'$$image'-'$$fault'.txt'; \
+	  if $(ECO_BUILD)/vector-costs-$$image$(EXE) edit-api-fail-$$fault > "$$log" 2>&1; then \
+	    echo "Vector edit $$image $$fault fault was accepted" >&2; exit 1; \
+	  else status=$$?; test "$$status" = 1; fi; \
+	  case $$fault in values) message='edit full ordered values and checksum' ;; state) message='edit post state' ;; esac; \
+	  grep -Fx "vector library costs: $$message" "$$log"; \
+	 done; done
+	@set -eu; log='$(ECO_BUILD)/edit-fail-cleanup.txt'; \
+	  if $(ECO_BUILD)/vector-costs-account$(EXE) edit-api-fail-cleanup > "$$log" 2>&1; then \
+	    echo 'Vector edit cleanup fault was accepted' >&2; exit 1; \
+	  else status=$$?; test "$$status" = 1; fi; \
+	  grep -Fx 'vector library costs: edit complete cleanup' "$$log"
+
+ecosystem-edit-measure: $(ECO_BUILD)/vector-costs-timed$(EXE)
+	$(ECO_BUILD)/vector-costs-timed$(EXE) edit-api-measure $(EDIT_WORK) $(ECO_REPEATS) > '$(EDIT_SAMPLE_FILE)'
+	@echo 'Raw reserve/insert/remove/drain samples: $(EDIT_SAMPLE_FILE)'
 
 ecosystem-check: ecosystem-build
 	$(ECO_BUILD)/vector-costs-timed$(EXE) check

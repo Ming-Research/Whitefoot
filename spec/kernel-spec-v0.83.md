@@ -1,4 +1,4 @@
-# Kernel Specification v0.84
+# Kernel Specification v0.83
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -542,10 +542,10 @@ Every aggregate therefore holds only owned values, which is what [STOR-7] rests 
 [TYPE-9] Four storage shapes and one cell.
 `Array`, `Slots`, and `Ring` are the prelude's opaque structs [TYPE-2, PRE-1], each declared with a const capacity parameter N and its measures as readonly fields [MSR-1]; their element storage is compiler-owned and reached only by a subscript [OP-4] and the window operations [OP-10].
 `Array<T, N>`, `Slots<T, N>`, and `Ring<T, N>` are the constant-capacity forms, whose capacity is the type constant N [CONST-1] and whose storage is inline in the owner or the stack frame [STOR-1].
-`Array<T>`, `Slots<T>`, and `Ring<T>` are the runtime-capacity forms, written by omitting the const argument N, whose capacity is fixed at construction and read as the readonly field `cap`, or as `len` for an `Array<T>` [MSR-1]; a runtime-capacity form may appear only as the content of a `Box` — the type of its `inner` field —; every other position is a hard error citing TYPE-9 at the complete `type`, with a repair [DIAG-1].
+`Array<T>`, `Slots<T>`, and `Ring<T>` are the runtime-capacity forms, written by omitting the const argument N, whose capacity is fixed at construction and read as the readonly field `cap`, or as `len` for an `Array<T>` [MSR-1]; a runtime-capacity form may appear only as the content of a `Box` — the type of its `inner` field — and never inline in another value and never as a local binding; every other position is a hard error citing TYPE-9 at the complete `type`, with a repair [DIAG-1].
 `Segments<T>` is the prelude's opaque struct `Segments` [TYPE-2, PRE-1], declared with no capacity parameter and its one measure `len` as a readonly field [MSR-1]: a run of `len` segments of T whose boundaries `box_segments_filled` fixes when it builds the run [OP-13] and no operation changes, its elements stored contiguously in segment order. It has no constant-capacity form and is placed exactly as a runtime-capacity form is, only as the content of a `Box`, every other position being the same hard error citing TYPE-9. Its segments and the run of all its elements are reached only as range references [REF-4].
-`Box<T>` is the prelude's opaque struct `opaque nocopy struct Box<T> { inner: T; }` [TYPE-2, PRE-1]: its one field `inner` denotes its owned content, whose placement and allocation are fixed by [STOR-1]; T is any nameable type [TYPE-3], including a runtime-capacity form and a `Segments<T>`; there is one heap [STOR-8], a `Box` carries no brand, and it may be moved, stored in an aggregate, and returned freely.
-The content is reached by the ordinary field step, `b.inner`, and through a reference to the cell as `cell^.inner`, where `^` steps through the reference and `inner` through the cell; `^` never reaches the content itself [TYPE-7, REF-1]. `let n = move b.inner;` consumes the `Box`, yields its content, and frees its owned allocation [WIN-3, STOR-3].
+`Box<T>` is the prelude's opaque struct `opaque nocopy struct Box<T> { inner: T; }` [TYPE-2, PRE-1]: its one field `inner` is its content, stored in exactly one heap object the `Box` value owns [STOR-1]; T is any nameable type [TYPE-3], including a runtime-capacity form and a `Segments<T>`; there is one heap [STOR-8], a `Box` carries no brand, and it may be moved, stored in an aggregate, and returned freely.
+The content is reached by the ordinary field step, `b.inner`, and through a reference to the cell as `cell^.inner`, where `^` steps through the reference and `inner` through the cell; `^` never reaches the content itself [TYPE-7, REF-1]. `let n = move b.inner;` consumes the `Box`, yields its content, and frees the cell [WIN-3].
 A `move` of a runtime-capacity or `Segments` content is a hard error citing TYPE-9 at the complete `place`, with a repair [DIAG-1].
 The element type of any shape is any nameable type, copy, affine, or linear [OWN-1, PROV-6].
 A constructor `call` and a destructuring `let_stmt` naming any of the five is refused by [TYPE-2] like every opaque struct's, with a repair [DIAG-1].
@@ -753,7 +753,7 @@ The release graph of a type `T` has as its nodes the types reachable from `T` th
 A runtime-capacity `Array<T>`, `Slots<T>`, or `Ring<T>`, and a `Segments<T>`, is reached in that graph only as the content of its `Box` [TYPE-9], so the `Box` is the leaf every owner's edge lands on and no such shape is ever a node of an owner other than its own cell.
 A type's release action is non-empty by the least fixed point of two clauses: a `Box` [TYPE-9] is non-empty, and any type owning a non-empty type is non-empty [STOR-3].
 The graph has an edge from a node to a sub-node exactly when that sub-node's release action is non-empty.
-One walk performs the compiler-derived release, and it visits exactly the nodes of that graph in [STOR-3]'s order — every field of a struct in declaration order, an enum's active variant's payload selected by the discriminant, a cell's content before the cell itself, every element of an `Array` and every slot of a `Slots` or a `Ring` window [WIN-1] in ascending logical index order — freeing each `Box` allocation after its content [STOR-1, STOR-8] and running each other non-empty node's release action.
+One walk performs the compiler-derived release, and it visits exactly the nodes of that graph in [STOR-3]'s order — every field of a struct in declaration order, an enum's active variant's payload selected by the discriminant, a cell's content before the cell itself, every element of an `Array` and every slot of a `Slots` or a `Ring` window [WIN-1] in ascending logical index order — freeing each `Box` cell after its content [STOR-8] and running each other non-empty node's release action.
 A field, payload, or element whose release action is empty is never visited, and a container's elements are visited before its backing is released, so a release of a full container needs no emptiness premise.
 A type whose release graph has a cycle makes that walk's depth a runtime quantity rather than a compile-time constant, and is admitted: the derived release of such a type is one release action per node type, entering itself where the graph closes, and the walk's depth is the value's own.
 Every judgment of this rule that reads the graph reads each node once, which terminates on a cyclic graph and is exactly the node set this version's release actions need.
@@ -775,10 +775,9 @@ The checked program retains, before lowering [DIAG-2], each type's linearity cla
 
 ## 6. Storage
 
-[STOR-1] Storage class is a function of type, stated once: `Box<T>` is heap-owned, one compiler-derived allocation released by one compiler-derived free at owner scope exit [STOR-3]; a constant-capacity `Array<T, N>`, `Slots<T, N>`, or `Ring<T, N>` is frame-resident, its slots inline in its owner or the stack frame; a runtime-capacity `Array<T>`, `Slots<T>`, or `Ring<T>`, and a `Segments<T>`, exists only as `Box` content [TYPE-9] and its element storage is heap-owned with that `Box`; a `const` item [CONST-2] is immutable static storage; every other owned value is frame-resident, inline in its owner or the stack frame.
-A `Box<Slots<T>>` owner is an inline descriptor holding its length, capacity, and element-storage pointer; its one allocation holds only the slots. Every other `Box<T>` owner is one pointer to an allocation holding its content, with a runtime-capacity shape's metadata preceding its elements.
+[STOR-1] Storage class is a function of type, stated once: `Box<T>` is heap-owned, one compiler-derived allocation released by one compiler-derived free at owner scope exit [STOR-3]; a constant-capacity `Array<T, N>`, `Slots<T, N>`, or `Ring<T, N>` is frame-resident, its slots inline in its owner or the stack frame; a runtime-capacity `Array<T>`, `Slots<T>`, or `Ring<T>`, and a `Segments<T>`, exists only as `Box` content [TYPE-9] and is heap-owned with that `Box`; a `const` item [CONST-2] is immutable static storage; every other owned value is frame-resident, inline in its owner or the stack frame.
 There is no per-binding storage annotation and no default clause.
-An `Array<T, N>` holds exactly N stride-spaced element representations in index order and stores no length, capacity, head, occupancy, or discriminant; a `Slots` or `Ring` stores its `len`, and a `Ring` its `head`, in the representation selected above [WIN-1].
+An `Array<T, N>` holds exactly N stride-spaced element representations in index order and stores no length, capacity, head, occupancy, or discriminant; a `Slots` or `Ring` stores its `len`, and a `Ring` its `head`, with the block [WIN-1].
 A shape's concrete size, stride, padding, and zero-extent representation obey [STOR-6]; placing a shape inside another owner changes no element order or ownership.
 Char and Unicode text are out-of-v0, recorded.
 
@@ -786,7 +785,7 @@ Char and Unicode text are out-of-v0, recorded.
 `head` exists on `Ring` alone; on `Slots` the window begins at slot zero.
 An `Array` has no window: every slot always holds a value, and its one measure `a.len` is its slot count [MSR-1].
 No slot carries a tag, no occupancy bitmap, and no runtime discriminant; the window is the complete typestate, and no program point can observe a slot inside the window as empty.
-`len` is a runtime number stored in the shape's descriptor [STOR-1] and is changed only by the operations of [OP-10] and [OP-13].
+`len` is a runtime number stored with the block [STOR-1] and is changed only by the operations of [OP-10] and [OP-13].
 A subscript `r[i]` selects the element at logical offset `i` and carries [OP-4]'s obligation `i < r.len`, stated against `len` and never against `cap` or `head`; the storage it selects is slot `(r.head + i) mod r.cap`, which is the coordinate system [MSR-1] fixes.
 
 [WIN-2] Besides its slots, a window has four named parts that paths and effect rows may name, all interpreted at call entry: `r.next` is the append slot at index `r.len`, `r.last` is the last filled slot at index `r.len - 1`, `r.filled` is every slot below `r.len`, and `r.free` is every slot from `r.len` up.
@@ -800,9 +799,9 @@ A move out of a field or out of `Box` content consumes the whole owner: the owne
 A destructuring consume binds the fields it names and covers the rest with `..` [GRAM-4], and an own-place `arm` does the same [GRAM-10].
 A move out of a window slot or an array element is a hard error citing WIN-3 at that `place`, with a repair [DIAG-1].
 Assigning over any owned place releases the old value when it is affine and is a hard error citing WIN-3 at the target `place` when it is linear.
-At scope exit the compiler releases the slots inside the window recursively; an `Array` releases every slot. An owning `Box` then frees its allocation [STOR-3].
+At scope exit the compiler releases the slots inside the window recursively and frees the block; an `Array` releases every slot.
 No operation releases a linear element: a storage whose element type is linear is itself linear [PROV-6] and the program must take every element out and consume it, and then, with the storage proved empty, call `free_empty` [OP-14].
-That one route also consumes a `Box` whose content is such a window and frees its allocation [OP-14].
+That one route also consumes a `Box` whose content is such a window, freeing the cell with it [OP-14].
 
 [STOR-7] Any value may be relocated by copying its bytes, because no value contains a reference [TYPE-8, STOR-5].
 No judgment of this specification depends on a value's address being stable, and no accepted program can observe one.
@@ -831,7 +830,7 @@ No exit duplicates an action already carried by an inner scope edge.
 
 The release action of a type is compiler-owned semantic data selected by that type, not a fixed enumeration of memory-reclamation actions.
 Which components of a value that action visits, and in which order, is [PROV-6]'s release graph and its one walk; the per-type actions below are the leaves that walk runs.
-A `Box<T>` release is its content's compiler-derived release followed by one compiler-derived heap free of the allocation [STOR-1] selects.
+A `Box<T>` release is its content's compiler-derived release followed by one compiler-derived heap free.
 An `Array` release is each element's compiler-derived release in ascending index order and no storage reclamation of its own.
 A `Slots` or `Ring` release is each element's compiler-derived release over its window in ascending logical index order and no storage reclamation of its own.
 A `const` item [CONST-2] is never released.
@@ -867,9 +866,9 @@ This stop is a target-layout failure under [DIAG-1], not a source-language rejec
 
 For a runtime-sized allocation, the concrete descriptor and element layout are checked statically as above.
 For every runtime-capacity shape materialized by a construction function [OP-13] or resized by `grow` [OP-10], target qualification additionally verifies the actual size, alignment, and element stride against [OP-9]'s language ceilings before lowering the operation.
-The accepted [OP-9] judgment retains a numeric upper bound for the source length at that allocation site; target qualification computes the complete allocation size from the metadata and padding stored in that allocation under [STOR-1], plus that bound multiplied by the actual target stride, using checked mathematical arithmetic, and requires the result to fit both the allocator-parameter and address-index domains before lowering the operation. An inline owner descriptor is qualified separately as an ordinary target object. A zero-byte element allocation holds at least one allocated byte, retaining a nonnull element-storage pointer, and that extent also satisfies the allocation domains.
-At this target stage, when the actual element stride is positive, the exact SSA result of a runtime-capacity shape's `len` measure additionally carries the selected target's runtime-allocation byte maximum minus the metadata and padding stored before its elements in that allocation [STOR-1], divided by its actual element stride and rounded down, because every materialized shape already satisfies the successful-allocation representation invariant.
-When that stride is zero, the invariant contributes no additional count bound beyond the source length type; the descriptor and zero-extent allocation must still satisfy target qualification, and every actually emitted address operand still obeys the exact-representation requirement below.
+The accepted [OP-9] judgment retains a numeric upper bound for the source length at that allocation site; target qualification computes the complete allocation size, including the shape's descriptor, its padding before the elements, and that bound multiplied by the actual target stride, using checked mathematical arithmetic, and requires the result to fit both the allocator-parameter and address-index domains before lowering the operation.
+At this target stage, when the actual element stride is positive, the exact SSA result of a runtime-capacity shape's `len` measure additionally carries the selected target's runtime-allocation byte maximum minus that shape's padded descriptor size, divided by its actual element stride and rounded down, because every materialized shape already satisfies the successful-allocation representation invariant.
+When that stride is zero, the invariant contributes no additional count bound beyond the source length type; the complete padded descriptor must still satisfy target qualification, and every actually emitted address operand still obeys the exact-representation requirement below.
 For every `Segments<T>` that `box_segments_filled` materializes [OP-13], target qualification verifies the element's actual size, alignment, and stride against [OP-9]'s language ceilings, and requires the largest block its predicate admits, `2^62` bytes of elements and boundaries together with the shape's own descriptor and its padding before the elements, to fit both the allocator-parameter and address-index domains, before lowering the operation.
 Qualification may intersect this target bound with the retained source bound only for that exact SSA result; it does not publish a Whitefoot comparison fact or transfer the bound through a block parameter, storage load, conversion, user call, or another value merely because its source spelling or type is similar.
 The source allocation proof and this target qualification jointly establish that every reachable runtime byte count has one exact value-preserving target representation; neither alone authorizes emission, and the allocator receives exactly that value.
@@ -1139,7 +1138,7 @@ No written conclusion alone, runtime multiplication guard, or fallback is retain
 All layout-ceiling arithmetic is over unbounded mathematical integers.
 Let `round_up(x,a) = ceil(x/a) * a`.
 For a sequence of `(size, alignment)` pairs, start at offset zero, round each current offset up to the next field's alignment, add that field's size, take aggregate alignment as the maximum of one and the field alignments, and round the final offset to that aggregate alignment.
-The primitive `(size_ceiling, align_ceiling)` pairs are: `unit`, `Bool`, `i8`, and `u8` `(1,1)`; `i16` and `u16` `(2,2)`; `i32`, `u32`, and `f32` `(4,4)`; `i64`, `u64`, and `f64` `(8,8)`; `Box<Slots<T>>` `(24,8)`, its inline length, capacity, and element-storage pointer; every other `Box<T>` `(8,8)`, one pointer, its `inner` field living in the heap object and entering no sequence; a runtime-capacity `Array<T>` `(16,8)`, a pointer and a length; a runtime-capacity `Slots<T>` `(24,8)`, a pointer, a capacity, and a length; a runtime-capacity `Ring<T>` `(32,8)`, those three and a window origin; a `Segments<T>` `(16,8)`, a pointer and a length; and every fieldless opaque struct `(32,16)`, the host handles' host-supplied representation [PRE-1].
+The primitive `(size_ceiling, align_ceiling)` pairs are: `unit`, `Bool`, `i8`, and `u8` `(1,1)`; `i16` and `u16` `(2,2)`; `i32`, `u32`, and `f32` `(4,4)`; `i64`, `u64`, and `f64` `(8,8)`; `Box<T>` `(8,8)`, one pointer, its `inner` field living in the heap object and entering no sequence; a runtime-capacity `Array<T>` `(16,8)`, a pointer and a length; a runtime-capacity `Slots<T>` `(24,8)`, a pointer, a capacity, and a length; a runtime-capacity `Ring<T>` `(32,8)`, those three and a window origin; a `Segments<T>` `(16,8)`, a pointer and a length; and every fieldless opaque struct `(32,16)`, the host handles' host-supplied representation [PRE-1].
 Every other struct applies the sequence rule to fields in declaration order.
 A constant-capacity `Array<T, N>` repeats T's pair N times.
 A constant-capacity `Slots<T, N>` repeats T's pair N times and then applies the sequence rule to that block followed by one `(8,8)` word, its length.
@@ -1208,7 +1207,7 @@ A stale index that is still in bounds names the current occupant of that slot, w
 
 [OP-14] `free_empty`.
 `free_empty(window: move r)` consumes any window proved empty, an affine element type and a linear one alike, with the contract `requires window.len == 0_u64` submitted to [MSR-4] at the call.
-Its compiler-owned shape parameter W has exactly the admitted arguments `Slots<T, n>`, `Slots<T>`, `Ring<T, n>`, `Ring<T>`, `Box<Slots<T>>`, and `Box<Ring<T>>`, so `free_empty(window: move b)` consumes a boxed runtime-capacity window and frees its owned allocation [STOR-1]; at a boxed argument the row's measure place instantiates as `window.inner` and the clause reads `window.inner.len == 0_u64`, exactly as any `Box` content is reached [TYPE-9, OP-4].
+Its compiler-owned shape parameter W has exactly the admitted arguments `Slots<T, n>`, `Slots<T>`, `Ring<T, n>`, `Ring<T>`, `Box<Slots<T>>`, and `Box<Ring<T>>`, so `free_empty(window: move b)` consumes a boxed runtime-capacity window and frees its cell with it; at a boxed argument the row's measure place instantiates as `window.inner` and the clause reads `window.inner.len == 0_u64`, exactly as any `Box` content is reached [TYPE-9, OP-4].
 An operand whose shape is outside that admitted set is a hard error citing OP-14 at the complete `call`, with a repair [DIAG-1], exactly as [OP-10] refuses its own operands.
 A linear element type stays linear [PROV-6]; the proof is about the runtime length and never about the class.
 An undischarged obligation is a hard error citing OP-14 at the complete `call`, rendering the residual and its disposition [ENT-4], with a repair [DIAG-1].

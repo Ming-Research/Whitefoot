@@ -93,6 +93,15 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         }
         let first_slot = self.value_name(first);
         let second_slot = self.value_name(second);
+        if crate::target::inline_slots_descriptor(referent.ty()) {
+            let llvm = self.output.type_name(self.program, referent.ty())?;
+            let first_owner = self.next_temporary()?;
+            let second_owner = self.next_temporary()?;
+            writeln!(self.output,
+                "  %{first_owner} = load {llvm}, ptr {first_slot}\n  %{second_owner} = load {llvm}, ptr {second_slot}\n  store {llvm} %{second_owner}, ptr {first_slot}\n  store {llvm} %{first_owner}, ptr {second_slot}"
+            ).map_err(|_| BackendFailure::TextEmission)?;
+            return self.emit_constant(result, ty, IrConstant::Unit);
+        }
         let first_owner = self.load_pointer_at(&first_slot)?;
         let second_owner = self.load_pointer_at(&second_slot)?;
         writeln!(

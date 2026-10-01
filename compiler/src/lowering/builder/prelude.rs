@@ -206,9 +206,9 @@ impl IrBuilder<'_> {
     /// block `[len | elements]`, filled, which is the cell itself
     /// (compiler/storage-representation).
     ///
-    /// [TYPE-9] stores the content "in exactly one heap object the `Box`
-    /// value owns" and [STOR-3] reclaims it with "one compiler-derived heap
-    /// free", so the header and the elements are one allocation and the cell
+    /// [STOR-1] stores this Array content in one heap allocation and
+    /// [STOR-3] reclaims it with one heap free, so the header and the
+    /// elements are one allocation and the cell
     /// pointer is the block pointer. A descriptor cell beside a separate
     /// element block would spend a second `malloc`, a second `free`, and a
     /// second word kept live through loops that read none of it.
@@ -773,9 +773,25 @@ fn ceiling_pair(
             }
             let nominal = nominals.get(id.index())?;
             let pair = match nominal.kind() {
-                // One pointer; the content lives in the heap object and
-                // enters no sequence.
-                IrNominalKind::Box { .. } => (Finite(8), 8),
+                // Runtime Slots owns an inline descriptor; other Boxes are
+                // one pointer. Neither expands its content [OP-9].
+                IrNominalKind::Box { referent, .. } => (
+                    Finite(
+                        if matches!(
+                            referent,
+                            IrType::Window {
+                                shape: IrWindowShape::Slots,
+                                capacity: None,
+                                ..
+                            }
+                        ) {
+                            24
+                        } else {
+                            8
+                        },
+                    ),
+                    8,
+                ),
                 // One pointer to the shared object [SHARE-1].
                 IrNominalKind::Shared { .. } => (Finite(8), 8),
                 // Every fieldless opaque struct carries the host handles'

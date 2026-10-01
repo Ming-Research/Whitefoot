@@ -179,16 +179,17 @@ fn emit_run_drop_helper(
     let mut output = FunctionBody::default();
     let run_llvm = output.type_name(program, ty)?;
     let symbol = run_drop_helper_symbol(program, ty)?;
-    // A runtime-capacity block is reached only through the `Box` that owns
-    // it [TYPE-9], so its helper takes the block pointer. A memory-only run
+    // Runtime Slots pass their inline descriptor; other runtime-capacity
+    // blocks pass the owning Box's pointer. A memory-only run
     // (compiler/payload-enum-layout) is released from its address too; every
     // other run is a value and its helper takes that value.
     let by_address = is_memory_only(program, ty)?;
     let parameter = if by_address
-        || matches!(
-            ty,
-            IrType::Window { capacity: None, .. } | IrType::Buffer { .. }
-        ) {
+        || (!crate::target::inline_slots_descriptor(ty)
+            && matches!(
+                ty,
+                IrType::Window { capacity: None, .. } | IrType::Buffer { .. }
+            )) {
         "ptr".to_owned()
     } else {
         run_llvm.clone()
@@ -273,10 +274,19 @@ fn emit_run_drop_helper(
             .map_err(|_| BackendFailure::TextEmission)?;
             element
         }
-        // A runtime-capacity block is `[len | cap | head? | slots]` in one
-        // allocation (compiler/storage-representation): every measure the
-        // walk needs is a header word of the block the parameter points at,
-        // and the slots follow that header.
+        IrType::Window {
+            shape: IrWindowShape::Slots,
+            element,
+            capacity: None,
+        } => {
+            // No temporary descriptor allocation: the private release helper
+            // consumes these three scalar words directly, including when this
+            // owner is nested inside an ordinary first-class aggregate.
+            writeln!(output,
+                "  %length = extractvalue {run_llvm} %value, 0\n  %capacity = extractvalue {run_llvm} %value, 1\n  %pointer = extractvalue {run_llvm} %value, 2\n  %origin = add i64 0, 0"
+            ).map_err(|_| BackendFailure::TextEmission)?;
+            element
+        }
         IrType::Window {
             shape,
             element,
@@ -790,7 +800,22 @@ fn emit_cleanup_jobs(
                         // [PROV-6, STOR-3] release the referent first, then
                         // free the cell back to the one heap.
                         IrNominalKind::Box { referent, release } => {
-                            // A boxed runtime-capacity shape is thin: the
+                            if crate::target::inline_slots_descriptor(*referent) {
+                                let llvm = output.type_name(program, ty)?;
+                                let payload = next_temporary(temporary)?;
+                                writeln!(output, "  %{payload} = extractvalue {llvm} {operand}, 2")
+                                    .map_err(|_| BackendFailure::TextEmission)?;
+                                if let Some(symbol) = run_drop_helper(program, *referent)? {
+                                    output.symbol(&symbol);
+                                    writeln!(output, "  call void @{symbol}({llvm} {operand})")
+                                        .map_err(|_| BackendFailure::TextEmission)?;
+                                }
+                                if *release == IrReleaseClass::General {
+                                    jobs.push(CleanupJob::FreePointer(format!("%{payload}")));
+                                }
+                                continue;
+                            }
+                            // The remaining boxed runtime-capacity shapes are thin: the
                             // cell pointer is the block, whose header and
                             // elements are the same allocation
                             // (compiler/storage-representation), which is

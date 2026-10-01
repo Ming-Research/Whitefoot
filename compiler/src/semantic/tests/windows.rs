@@ -642,6 +642,38 @@ fn bounded_numeric_layouts_keep_their_exact_symbolic_op9_limit() {
     }
 }
 
+/// [OP-9] a runtime Slots Box stores its three-word descriptor by value.
+/// Nested field padding contributes to the stored aggregate's own ceiling;
+/// ordinary Boxes and other runtime shapes retain their pointer ceiling.
+#[test]
+fn stored_runtime_slots_descriptor_has_its_own_op9_ceiling() {
+    for (declaration, stored, stride) in [
+        ("", "Box<Slots<u8>>", 24),
+        (
+            "struct Envelope {\n  tag: u8;\n  storage: Box<Slots<u8>>;\n  tail: u8;\n}\n\n",
+            "Envelope",
+            40,
+        ),
+        ("", "Box<u64>", 8),
+        ("", "Box<Array<u8>>", 8),
+        ("", "Box<Ring<u8>>", 8),
+        ("", "Box<Slots<u8, 2>>", 8),
+        ("", "Box<Box<Slots<u8>>>", 8),
+    ] {
+        let source = |upper| {
+            format!(
+                "{declaration}fn allocate(count: u64) -> result: unit pure contract {{\n  requires count <= {upper}_u64;\n}} {{\n  let cells = box_slots_new::<{stored}>(capacity: count);\n  free_empty(window: move cells);\n  return unit;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
+            )
+        };
+        let limit = u64::MAX / stride;
+        assert_accepts(source(limit).as_bytes());
+        assert_op9_allocation_fit(
+            source(limit + 1).as_bytes(),
+            &format!("stored {stored} above its {stride}-byte limit"),
+        );
+    }
+}
+
 /// A by-value array with a symbolic length has no schema layout ceiling, but
 /// every concrete replay recomputes it. A small array admits one stored value;
 /// an array whose concrete stride is AboveU64 rejects that same count.

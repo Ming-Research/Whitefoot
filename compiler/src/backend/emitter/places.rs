@@ -91,6 +91,13 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             } if !self.overlap_handed_out.contains(&result) => {
                 self.emit_call(result, ty, *function, arguments)?;
             }
+            IrOperation::WindowBlockNew {
+                nominal,
+                capacity,
+                obligations,
+            } if self.storage.slot(result).is_some() => {
+                self.emit_window_block_new(result, ty, *nominal, *capacity, *obligations)?;
+            }
             IrOperation::Window => self.emit_fixed_vector(result, ty)?,
             IrOperation::ArrayFill {
                 value,
@@ -452,7 +459,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         referent: IrAddressed,
         address: String,
     ) -> Result<String, BackendFailure> {
-        if referent.is_runtime_content() {
+        if referent.is_runtime_content() && !crate::target::inline_slots_descriptor(referent.ty()) {
             self.load_pointer_at(&address)
         } else {
             Ok(address)

@@ -8803,3 +8803,186 @@ NULL-preservation, ownership or timing tests were run, and no C permutation
 followed. C is an independent reference, not a proven performance floor or a
 selected implementation. Vector append remains unqualified; other APIs do not
 advance.
+
+
+#### Ordinary source compilation of inline Slots ownership
+
+Implement the descriptor-placement candidate in the normal compiler, keeping
+allocated one-byte zero extents and the existing allocation/copy/free growth
+route. The isolated earlier control was a separately allocated descriptor,
+not the current header-first implementation; those results do not establish
+a win over the current compiler. This comparison uses the retained production
+compiler from the boundary-length-reuse experiment as its control and identical
+ordinary WF source, including setup-only destination-return adapters. Neither
+image receives hand-edited optimization attributes or a rewritten function body.
+The expected native difference is direct owner metadata access and payload-only
+allocation, with wider owner transport remaining a possible cost.
+
+Before timing, require spare/growth value and state checks, the exact allocation
+ledger, retained-call and nested-owner regressions, and failed-growth preservation.
+Inspect actual public signatures and native append paths; confirm identical peer
+and runtime inputs. Use the existing nine-sample balanced two-cohort schedule,
+RAW-clock controls and unchanged range-separation criterion. Begin with baseline
+then candidate: spare `api-measure 4194304 9`, growth
+`growth-api-measure 67108864 9 8589934592`. This is an initial comparison, not
+repeatability qualification; a candidate that clears all cells requires a second
+fixed candidate/baseline pair. Retain every sample, including losses and overlaps.
+Do not infer allocator costs from instruction counts. No layout adoption or
+completion of append follows merely from successful compilation or fewer loads.
+
+#### Ordinary source inline ownership: initial append outcome
+
+The [ordinary source/compiler replay patch](ordinary-inline-owner.patch),
+[spare samples](ecosystem-append-inline-owner-spare-samples.csv),
+[growth samples](ecosystem-append-inline-owner-growth-samples.csv), and
+[commands, statuses, pins, ledgers and full per-peer ranges](ecosystem-append-inline-owner-timing.json)
+retain this first source-compiled comparison. The compiler replay delta is
+explicitly reconstructed from the frozen compiler implementation before later
+copy/shift changes; it is not claimed to be an original source snapshot or a
+byte-identical rebuilt executable. The measured CLI and image hashes are retained.
+
+Both ordinary-source builds, append checks/accounting and existing whole-trace
+consumer correctness/accounting checks passed. The initial baseline compile
+rejected an unsupported explanatory WF comment; removing only that comment
+fixed the syntax, and the failure is retained. No whole-trace timing ran.
+The ordinary destination-first prepare signatures agree across both layouts;
+append owner references widen from 8 to 24 bytes. All 16 peer/runtime object inputs
+are byte-identical. Append callers retain 32-byte frames and the 64-byte growth
+helper; full growth still executes malloc, initialized-prefix memmove and free.
+Wide append-one has no payload spill; both wide batch callers retain 272-byte
+frames with 224 bytes of saved vector constant state. This comparison changes
+owner placement and payload allocation extent, without importing the earlier
+anchor, realloc or forced-inlining prototypes.
+
+All four screens exited 0: spare baseline/candidate 27.399/26.964 s and growth
+153.988/152.447 s. All 3456 rows are retained, half real and half controls, with
+nine balanced samples per implementation/cohort. Minimum real intervals are
+1.768/1.479 ms for spare and 1.298/1.229 ms for growth. Both growth RAW probes
+observed 41 ns. Maximum WF/peer cohort-ratio spread is 5.611%; maximum between-image
+peer median drift is 9.345%. No samples were filtered or repeated.
+
+Medians below are **ns/append, cohort 0/cohort 1**. The final column is the
+candidate sufficient range target against the median-slower peer, not a median
+ranking or a claim of repeatability. Full ranges and both baseline peers remain
+in the record.
+
+| Path / element / count | WF baseline | WF inline | Rust inline | C++ inline | Target |
+| --- | ---: | ---: | ---: | ---: | --- |
+| spare / 8 B / 16 | 0.478/0.477 | 0.487/0.479 | 0.478/0.477 | 1.028/1.019 | unresolved |
+| spare / 8 B / 256 | 0.505/0.510 | 0.397/0.400 | 0.426/0.426 | 0.939/0.936 | pass |
+| spare / 8 B / 4096 | 0.527/0.570 | 0.354/0.370 | 0.849/0.859 | 0.927/0.932 | pass |
+| spare / 256 B / 16 | 5.072/4.990 | 4.702/4.631 | 4.585/4.579 | 7.342/7.316 | pass |
+| spare / 256 B / 256 | 4.490/4.807 | 4.420/4.426 | 4.341/4.382 | 7.080/7.121 | pass |
+| spare / 256 B / 4096 | 4.594/4.435 | 4.415/4.376 | 4.318/4.321 | 7.073/7.112 | pass |
+| growth / 8 B / 16 | 28.743/28.871 | 22.976/22.764 | 37.232/36.918 | 25.912/25.557 | pass |
+| growth / 8 B / 256 | 93.546/91.530 | 89.100/87.908 | 101.840/101.710 | 94.511/94.349 | pass |
+| growth / 8 B / 4096 | 2221.876/2226.557 | 706.337/696.237 | 735.194/736.028 | 627.812/639.890 | unresolved |
+| growth / 256 B / 16 | 145.520/147.367 | 137.302/138.064 | 151.467/148.032 | 146.797/144.161 | unresolved |
+| growth / 256 B / 256 | 1544.930/1528.068 | 1306.882/1309.783 | 1314.572/1314.332 | 1319.441/1318.120 | unresolved |
+| growth / 256 B / 4096 | 17702.229/17733.905 | 14864.965/14814.807 | 157.691/155.709 | 14881.866/14778.903 | unresolved |
+
+Spare target coverage is baseline 6/6 versus inline 5/6: inline scalar 16 retains
+a cohort 0 WF maximum 2.078 ns, crossing C++'s minimum 1.012 ns. Scalar 256/4096
+spare before/after ranges separate in both cohorts; the other four overlap.
+Growth stays 2/6 matched cells. The inline scalar 16/4096 and wide 256/4096
+growth ranges separate below baseline in both cohorts; scalar 256 and wide 16
+before/after ranges overlap. The remaining peer targets remain unresolved.
+Wide 4096 is still separated slower than Rust, while overlapping C++; its
+explicit 1 MiB relocation remains, unlike Rust's realloc route. Empty/capacity-one
+policy cells are separate: inline 3/4 targets versus baseline 2/4, without matched
+capacity-growth claims.
+
+This initial pair does not qualify append or select another growth policy.
+The registered all-cell condition for a reverse qualification pair is unmet.
+The host resolves memcpy and memmove to the same address (reproducible check
+in the record), so changing the call name alone supplies no dynamic speedup
+claim; a later compiler change requires its own native and timing evidence.
+Keep Vector append spare and growth separate; no other API or full-container
+timing substitutes for their qualification.
+
+#### Single-reserve full-growth source screen
+
+The [current library edit](../../../../lib/std/collections/vector/grow-vector.wf)
+selects `1`, doubled capacity when it fits, or the ceiling before one
+`grow_vector_reserve` call. The three previous reserve sites duplicated the
+allocation/copy/free blocks in the optimized growth helper. This is the same
+capacity policy and public contract; it changes no payload movement rule.
+
+The retained inline-owner compiler embeds the older library source, so simply
+recompiling the unchanged Vector program with that binary emitted byte-identical
+raw LLVM and did not test this edit. For a source-admissibility screen, an exact
+copy of the edited generic body was compiled as a local `trial_grow_full`, with
+a monomorphic `GrowVector<u64, 8193>` caller carrying the same preconditions.
+The first scratch assembly had one extra blank line and failed `FORM-2`; after
+canonical spacing, the frozen compiler's `--emit-llvm` exited 0. Apple clang
+`-O3 -x ir -c` also exited 0. In that one object, the trial function has 40
+instructions and four calls versus 61 and ten in the separately emitted old
+embedded helper; its selected growth path has one malloc/memmove/free sequence
+and one resource-abort edge. These are static code observations, not timing or
+a comparison of actual new library images.
+
+The subsequently rebuilt malloc/copy/free control compiler (`4685a08a…abd4`)
+embeds the edited library (`63286949…5ca83`). Ordinary Vector source emission
+and Apple clang `-O3` object compilation both exited 0. Each actual scalar/wide
+`grow_full` instance has one reserve call in raw LLVM and 40 static instructions
+with four calls in the optimized object, versus 61 instructions and ten calls
+in the previous inline-owner object. This confirms the embedded-library change
+in an actual compiler; it does not supply timing or substitute for the pending
+full correctness/accounting comparison.
+
+#### Full-positive reallocation: registered ordinary-source comparison
+
+Compare two actual rebuilt compilers containing the same updated Vector
+library and inline runtime-Slots owner representation. The control retains
+malloc/copy/free growth; the candidate reallocates only when the old run is
+full and its old payload extent is positive. Empty, partial and zero-stride
+runs retain fresh allocation, initialized-prefix copy and retirement. The
+allocated one-byte zero extent remains. There is no byte cutoff, source-name
+specialization, local copy of the standard library or hand-edited LLVM body.
+The older frozen inline compiler embeds the old library and is not this
+comparison's control. Freeze both compiler implementation deltas, embedded
+library inputs, emitted modules and linked images before measurement.
+
+The concrete target is the current wide-4096 growth path's explicit 1 MiB
+copy, which remains about 94 times Rust's realloc time while overlapping C++.
+Earlier route trials predict a small-scalar tradeoff; they do not establish a
+universal gain or select this production policy. Using the same updated
+single-reserve library in both newly built compilers keeps that source edit
+out of the allocation-route comparison. Inspect actual append paths, including
+spare loops, helper boundaries, frames, copies and retirement/publication order.
+Do not infer cost from a changed memcpy/memmove symbol name: they resolve to
+the same address on the current host, although LLVM's treatment may differ.
+
+Require the existing ordinary-source append value/state checks, exact growth
+allocation ledger and complete cleanup, zero-allocation spare checks, negative
+value/state/allocation/clock observations, and maintained failed-growth and
+nested-owner regressions before timing. Observe positive-full realloc,
+cap-zero fresh allocation and partial fresh allocation explicitly; preserve
+old owner/payload on real allocation failure and retain both moved and in-place
+realloc witnesses. Check that both ordinary public adapters have the intended
+ABI and that peer/runtime linked inputs are identical. Existing consumer
+correctness/accounting checks may validate the migrated ledger without timing
+another API or the whole workload.
+
+Then run only one fixed control/candidate pair for each append path, serialized
+under the guard: control spare, candidate spare, control growth, candidate
+growth. Use `api-measure 4194304 9` and
+`growth-api-measure 67108864 9 8589934592`, unchanged two cohorts and balanced
+three positions per peer. Retain all 648 spare rows and 1080 growth rows per
+image, including every empty/snapshot control and the separate capacity-0/1
+policy cells. Every real ranked sample must reach 1 ms; keep controls unranked
+and never subtract them. Require a nondecreasing RAW clock with observed
+nonzero resolution at most 100 ns, WF/peer cohort-ratio spread at most 10%, and
+report between-image peer median drift above 10% as unresolved attribution.
+Use the existing full-range target independently in both cohorts against the
+median-slower peer; show Rust and C++ separately. Overlapping before/after
+ranges remain unresolved, and all real samples remain in the envelopes.
+
+No retries, cutoff sweep or extra samples follow an adverse result. Passing
+only a subset does not qualify append. A reverse fixed candidate/control pair
+is considered only after all append cells pass the registered prerequisites
+and range target. Preserve direct exits, elapsed times, raw samples, source and
+image hashes, and any failed prerequisite. Reuse `.build/ordinary-inline-owner`
+with distinct route-control/route-candidate outputs; retain compact evidence
+in this existing Vector home until production append qualification supersedes
+it. No other API or full-container timing is authorized by this comparison.

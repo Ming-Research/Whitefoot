@@ -1900,7 +1900,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#;
     let llvm = compile(source);
-    let take = emitted_function(&llvm, "take");
+    let take = emitted_body(&llvm, "take");
     // Three residual siblings released where the projected field left
     // [WIN-3, PROV-6].
     assert_eq!(take.matches("call void @free").count(), 3);
@@ -2003,4 +2003,195 @@ fn main() -> status: std::process::ExitStatus pure {
     assert!(output.status.success());
     assert!(output.stdout.is_empty());
     assert!(output.stderr.is_empty());
+}
+
+/// Contiguous shifts preserve each distinct owner, including empty tails;
+/// wrapped Rings retain their coordinate loop. The allocation ledger catches
+/// duplicated or lost ownership independently of the element-value checks.
+#[test]
+fn slots_bulk_shifts_preserve_order_boundaries_and_owning_elements() {
+    for shape in ["Slots", "Ring"] {
+        for runtime in [false, true] {
+            let lower = shape.to_ascii_lowercase();
+            let capacity = if shape == "Slots" { 5 } else { 6 };
+            let construct = if runtime {
+                format!("box_{lower}_new::<Box<u64>>(capacity: {capacity}_u64)")
+            } else {
+                format!("{lower}_new::<Box<u64>, {capacity}>()")
+            };
+            let window = if runtime { "values.inner" } else { "values" };
+            let wrap = if shape == "Ring" {
+                format!(
+                    "  let sentinel = box_new::<u64>(value: 99_u64);\n  place_back(window: &{window}, value: move sentinel);\n  let step_one = take_front(window: &{window});\n  place_back(window: &{window}, value: move step_one);\n  let step_two = take_front(window: &{window});\n  place_back(window: &{window}, value: move step_two);\n  let step_three = take_front(window: &{window});\n  place_back(window: &{window}, value: move step_three);\n  let removed_sentinel = take_front(window: &{window});\n"
+                )
+            } else {
+                String::new()
+            };
+            let source = format!(
+                r#"fn main() -> status: std::process::ExitStatus pure {{
+  let values = {construct};
+{wrap}  let a = box_new::<u64>(value: 11_u64);
+  insert_at(window: &{window}, index: 0_u64, value: move a);
+  let c = box_new::<u64>(value: 33_u64);
+  insert_at(window: &{window}, index: 1_u64, value: move c);
+  let b = box_new::<u64>(value: 22_u64);
+  insert_at(window: &{window}, index: 1_u64, value: move b);
+  let front = box_new::<u64>(value: 7_u64);
+  insert_at(window: &{window}, index: 0_u64, value: move front);
+  let end = box_new::<u64>(value: 44_u64);
+  insert_at(window: &{window}, index: 4_u64, value: move end);
+  let checked_end = remove_at(window: &{window}, index: 4_u64);
+  if checked_end.inner != 44_u64 {{
+    return std::process::exit_status(code: 7_u8);
+  }}
+  insert_at(window: &{window}, index: 4_u64, value: move checked_end);
+  let middle = remove_at(window: &{window}, index: 2_u64);
+  let first = remove_at(window: &{window}, index: 0_u64);
+  let last = remove_at(window: &{window}, index: 2_u64);
+  if middle.inner != 22_u64 {{
+    return std::process::exit_status(code: 1_u8);
+  }}
+  if first.inner != 7_u64 {{
+    return std::process::exit_status(code: 2_u8);
+  }}
+  if last.inner != 44_u64 {{
+    return std::process::exit_status(code: 3_u8);
+  }}
+  if {window}.len != 2_u64 {{
+    return std::process::exit_status(code: 4_u8);
+  }}
+  if {window}[0_u64].inner != 11_u64 {{
+    return std::process::exit_status(code: 5_u8);
+  }}
+  if {window}[1_u64].inner != 33_u64 {{
+    return std::process::exit_status(code: 6_u8);
+  }}
+  return std::process::exit_status(code: 0_u8);
+}}
+"#
+            );
+            let module = compile(source.as_bytes());
+            for row in ["insert_at", "remove_at"] {
+                let body = emitted_prelude_row(&module, row);
+                assert_eq!(body.contains("run.shift.head."), shape == "Ring", "{body}");
+                if shape == "Slots" {
+                    assert!(
+                        body.contains("call void @llvm.memmove.p0.p0.i64("),
+                        "{body}"
+                    );
+                    assert!(body.contains("run.shift.done."), "{body}");
+                }
+            }
+            let observed = super::owned_places::retain_calls(&module)
+                .replace("@malloc(", "@wf_test_allocate(")
+                .replace("@free(", "@wf_test_release(");
+            let allocations = 5 + usize::from(runtime) + usize::from(shape == "Ring");
+            let observer = super::owned_places::allocation_observer(allocations, 0);
+            let output = compile_link_and_run(&observed, Some(&observer), &[]);
+            assert_eq!(
+                output.status.code(),
+                Some(0),
+                "{shape}/{runtime}: {output:?}"
+            );
+            assert!(output.stderr.is_empty(), "{output:?}");
+            let trace = std::str::from_utf8(&output.stdout).unwrap();
+            let mut released = trace
+                .split(';')
+                .filter_map(|record| record.strip_prefix('F'))
+                .map(|id| id.parse::<usize>().unwrap())
+                .collect::<Vec<_>>();
+            released.sort_unstable();
+            assert_eq!(released, (1..=allocations).collect::<Vec<_>>(), "{trace}");
+            if shape == "Slots" && !runtime {
+                for row in ["insert_at", "remove_at"] {
+                    let body = emitted_prelude_row(&observed, row);
+                    let transfer = body
+                        .lines()
+                        .find(|line| {
+                            line.contains("call void @llvm.memmove.") && line.contains("i64 %")
+                        })
+                        .expect("one contiguous tail transfer");
+                    let broken = observed.replacen(transfer, "  ; omitted tail transfer", 1);
+                    let output = compile_link_and_run(&broken, Some(&observer), &[]);
+                    assert!(
+                        !output.status.success(),
+                        "missing {row} transfer escaped the value/ownership observer"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// A zero-byte element retains its full logical index domain. One shift at
+/// u64's boundary must execute zero-byte movement rather than a cardinality
+/// loop, for both inline and heap-backed payload placements.
+#[test]
+fn zero_stride_slots_shifts_preserve_maximum_logical_coordinates() {
+    for runtime in [false, true] {
+        let ty = if runtime {
+            "Box<Slots<Array<u64, 0>>>"
+        } else {
+            "Slots<Array<u64, 0>, 18446744073709551615>"
+        };
+        let window = if runtime { "values^.inner" } else { "values^" };
+        let source = format!(
+            r#"fn insert_zero(values: &{ty}, index: u64) -> result: unit writes(values) contract {{
+  requires {window}.len < {window}.cap;
+  requires index <= {window}.len;
+}} {{
+  let value = array_filled::<u64, 0>(value: 0_u64);
+  insert_at(window: &{window}, index: index, value: value);
+  return unit;
+}}
+
+fn remove_zero(values: &{ty}, index: u64) -> result: unit writes(values) contract {{
+  requires index < {window}.len;
+}} {{
+  let value = remove_at(window: &{window}, index: index);
+  return unit;
+}}
+"#
+        );
+        let module = compile(source.as_bytes());
+        for row in ["insert_at", "remove_at"] {
+            assert!(!emitted_prelude_row(&module, row).contains("run.shift.head."));
+        }
+        let host = format!(
+            r#"#include <stdint.h>
+#include <stdlib.h>
+extern uint8_t wf_insert_zero(void *, uint64_t);
+extern uint8_t wf_remove_zero(void *, uint64_t);
+extern int wf__floor_run(int, char **);
+int wf__main_body(int argc, char **argv) {{
+    (void)argc; (void)argv;
+    struct {{ uint64_t len, cap; void *payload; }} owner = {{UINT64_MAX - 1, UINT64_MAX, malloc(1)}};
+    if (!owner.payload) return 10;
+    void *storage = {storage};
+    (void)wf_insert_zero(storage, 0);
+    if (owner.len != UINT64_MAX) return 1;
+    (void)wf_remove_zero(storage, UINT64_MAX - 1);
+    if (owner.len != UINT64_MAX - 1) return 2;
+    (void)wf_insert_zero(storage, UINT64_MAX - 1);
+    if (owner.len != UINT64_MAX) return 3;
+    (void)wf_remove_zero(storage, 0);
+    if (owner.len != UINT64_MAX - 1) return 4;
+    free(owner.payload);
+    return 0;
+}}
+int main(int argc, char **argv) {{ return wf__floor_run(argc, argv); }}
+"#,
+            storage = if runtime { "&owner" } else { "&owner.len" }
+        );
+        let output = compile_link_and_run(&module, Some(&host), &[]);
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "runtime={runtime}: {output:?}"
+        );
+        assert!(
+            output.stdout.is_empty() && output.stderr.is_empty(),
+            "{output:?}"
+        );
+    }
 }
