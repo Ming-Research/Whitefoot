@@ -3836,3 +3836,37 @@ The eligibility check passes (0.03 seconds after a reported 1m 12s test build;
 73.20 seconds guarded total), and all 30 owning-place regressions pass
 (16.56 seconds execution, 16.66 seconds guarded total). The trial is rejected;
 these timings select no compiler, library or representation change.
+
+#### Diagnostic entry-forwarding floor
+
+A separate hand-edited LLVM diagnostic removes the 256-byte private input
+capture from the reached wide `try_put` and redirects its three uses to incoming
+backing. All other raw functions are unchanged. The native body shrinks from
+126 to 95 instructions and its frame from 288 to zero bytes; eight paired
+load/store entry transfers disappear. The tested first-hit boundary executes
+23 fewer instructions. The 381-instruction wide caller and 87-instruction
+exchange remain identical after address normalization. The patch, criterion,
+raw LLVM pins, images, commands and controls are retained under
+`entry_forward_floor_diagnostic` in `mutation-api-evidence.json`.
+
+All 1152 samples are retained separately in phase
+`diagnostic-entry-forward-floor`. Wide replacement has separated lower ranges
+at both capacities in both cohorts. One wide 64-bucket churn cohort also
+separates; no matched flat-map cohort cell has a separated loss. Values below
+are median ns per complete wide replacement, cohort zero / one; peers are
+from the same diagnostic images.
+
+| Buckets | Running-index control | Diagnostic floor | Rust | C++ |
+|---:|---:|---:|---:|---:|
+| 64 | 27.503 / 27.733 | 23.910 / 24.293 | 22.305 / 22.612 | 18.914 / 19.072 |
+| 4096 | 31.473 / 31.819 | 28.594 / 28.813 | 27.770 / 28.003 | 24.115 / 23.894 |
+
+Both arms pass 96 owner traces in timed and accounted images, all ten fault
+controls per arm fail with the intended diagnostics, and their 32-row ledgers
+are identical. This is a diagnostic floor, with no production selection:
+general result/input aliasing, backing writes, capture before output writes
+and scheduling lifetimes remain unproved by the IR patch. The benchmark's
+distinct input/output storage and synchronous helper calls do not establish
+those premises for arbitrary programs. The measurements motivate a sound
+capture optimization; they are not evidence for the separate compiler
+prototype currently being tested.

@@ -3212,6 +3212,17 @@ condition under which it is taken up.
   spelling; it does not narrow the public Map domain or block the admitted
   source experiment. Defer that separate diagnosis because the five-scan
   experiment already failed its independent native gate.
+- **Legacy HashMap research targets reference retired library paths.**
+  `research/experiments/container-representation/map-library/Makefile` still
+  sets `LIBRARY_SOURCE` to the absent `lib/containers/hash-map.wf`; its older
+  normal/retained recipes and allocation expectations therefore do not replay
+  against the current ordinary module. The current `ecosystem-*` comparison
+  uses the maintained source and is the route for new measurements. Before
+  reusing a legacy recipe, migrate its actual bundle, symbols and full-content
+  ownership oracle together or mark it as a historical replay tied to its
+  recorded revision. Validate both normal and retained executions and exact
+  allocation ledgers; changing only the path would not establish equivalence.
+
 - **Owning HashMap has a remaining large-value performance gap.** The
   [matched comparison](../research/experiments/container-representation/map-library/RESULTS.md)
   exercises the actual generic library, including must-consume pairs, without
