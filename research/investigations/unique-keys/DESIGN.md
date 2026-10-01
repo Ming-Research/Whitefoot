@@ -136,6 +136,44 @@ the targets are subtree ranges, not W2.
 **G. The workaround.** Compute in a level-ordered array and gather back
 into document order in a second parallel loop. Provable today; breaks R3.
 
+## Source identity for K
+
+Single ownership gives "two places hold two different key values", not
+"two different integers": keys from two sources of one key type can carry
+the same integer. Whitefoot's identity for storage is the place, and a key
+moved from one structure into another keeps no record of its source, so the
+overlap clause needs the source in the key's type. What the language offers
+and lacks:
+
+- **Generics.** Type, const and function parameters on functions and
+  nominals, instantiated explicitly and erased by monomorphization; a
+  function-kind parameter's `fn_sig` takes no type parameters of its own,
+  so no function is polymorphic in a type its caller does not name
+  (no rank-2 types), and there are no existential types.
+- **No global state.** A source that may exist only once per program would
+  be global state (`design/language/ownership.md`).
+
+Three directions follow:
+
+1. **A brand fresh per scope.** A block form introduces a type `B` that no
+   other block shares, and a value whose type mentions `B` cannot leave the
+   block, as Haskell's `runST` and Rust's generativity through invariant
+   lifetimes do. Keys are `Key<B>`, sources `Source<B>`, and only arrays
+   made for `B` accept `Key<B>`. `B` is phantom and erased. It costs one
+   scoping construct and its escape check; a document kept across frames
+   puts its frame loop inside the block.
+2. **Provenance the checker tracks.** Each key value carries, as a proof
+   fact, the place of the source that minted it, and storing it keeps that
+   fact. It needs no new type form but brings back origin tracking through
+   storage, which the language retired with stored references.
+3. **Give up source identity.** Distinctness is promised only inside one
+   structure (M) or one kernel shape (P), at the cost of R1 and R2.
+
+Direction 1 is the one that keeps R1, R2 and R3 and stays within the
+language's ownership and generics model; its cost is the scoping construct
+and its effect on long-lived state, which the next step sketches on W1, W2
+and a document kept across frames.
+
 ## Criteria
 
 Recorded before any prototype; a candidate is proposed to the owner only if
