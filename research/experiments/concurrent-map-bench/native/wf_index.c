@@ -95,6 +95,48 @@ static table *new_table(unsigned bits) {
     return t;
 }
 
+#ifdef WF_INDEX_SHARED_READ
+/* Built with WF_INDEX_SHARED_READ, the state is a reader-writer ticket lock
+ * (Mellor-Crummey and Scott): taken counts writers in its high half and
+ * readers in its low half, served counts those that have left. A writer
+ * waits for every writer and reader that came before it; a reader waits
+ * only for the writers before it, so readers of one bucket hold it together
+ * and arrival order is kept between readers and writers. Halves count
+ * modulo 2^16 and a reader changes its half without carrying into the
+ * writers'. */
+static inline uint32_t lock(bucket *b) {
+    uint32_t t = atomic_fetch_add_explicit(&b->taken, 1u << 16, memory_order_relaxed);
+    for (;;) {
+        uint32_t served = atomic_load_explicit(&b->served, memory_order_acquire);
+        if ((served >> 16) == (t >> 16) && (served & 0xFFFFu) == (t & 0xFFFFu))
+            return t;
+        pause_once();
+    }
+}
+
+static inline void unlock(bucket *b, uint32_t ticket) {
+    (void)ticket;
+    atomic_fetch_add_explicit(&b->served, 1u << 16, memory_order_release);
+}
+
+static inline uint32_t low_increment(uint32_t word) { return (word & 0xFFFF0000u) | ((word + 1) & 0xFFFFu); }
+
+static inline void lock_shared(bucket *b) {
+    uint32_t old = atomic_load_explicit(&b->taken, memory_order_relaxed);
+    while (!atomic_compare_exchange_weak_explicit(&b->taken, &old, low_increment(old), memory_order_relaxed,
+                                                  memory_order_relaxed)) {
+    }
+    while ((atomic_load_explicit(&b->served, memory_order_acquire) >> 16) != (old >> 16))
+        pause_once();
+}
+
+static inline void unlock_shared(bucket *b) {
+    uint32_t old = atomic_load_explicit(&b->served, memory_order_relaxed);
+    while (!atomic_compare_exchange_weak_explicit(&b->served, &old, low_increment(old), memory_order_release,
+                                                  memory_order_relaxed)) {
+    }
+}
+#else
 /* Takes the bucket's ticket and waits to be served. */
 static inline uint32_t lock(bucket *b) {
     uint32_t ticket = atomic_fetch_add_explicit(&b->taken, 1, memory_order_relaxed);
@@ -124,6 +166,7 @@ static inline uint32_t lock(bucket *b) {
 static inline void unlock(bucket *b, uint32_t ticket) {
     atomic_store_explicit(&b->served, ticket + 1, memory_order_release);
 }
+#endif
 
 static void count_keys(cm_map *map, int64_t delta) {
     counter *c = my_count;
@@ -253,7 +296,18 @@ static bucket *lock_home(cm_map *map, uint64_t h, uint32_t *ticket) {
     }
 }
 
+/* Built with WF_INDEX_LOCKED_READ, a read holds its bucket's ticket like a
+ * writer: the read an atomic statement gets when every statement holds its
+ * entry exclusively. Built with WF_INDEX_SHARED_READ, a read holds the
+ * bucket together with other readers. Both are measured beside the copy-out
+ * read and not judged (DESIGN.md, "Criteria"). */
+#if defined(WF_INDEX_LOCKED_READ)
+const char *CM(name)(void) { return "wf-index-locked"; }
+#elif defined(WF_INDEX_SHARED_READ)
+const char *CM(name)(void) { return "wf-index-shared"; }
+#else
 const char *CM(name)(void) { return "wf-index"; }
+#endif
 int CM(flags)(void) { return 0; }
 
 cm_map *CM(create)(uint64_t capacity) {
@@ -325,7 +379,38 @@ void CM(leave)(cm_map *map) {
     my_count = NULL;
 }
 
+static _Atomic uint64_t *slot_of(bucket *b, uint64_t key, _Atomic uint64_t **value);
+static bucket *lock_home(cm_map *map, uint64_t h, uint32_t *ticket);
+
 int CM(get)(cm_map *map, uint64_t key, uint64_t *value) {
+#ifdef WF_INDEX_LOCKED_READ
+    uint32_t ticket;
+    bucket *held = lock_home(map, hash_of(key), &ticket);
+    _Atomic uint64_t *v;
+    int present = slot_of(held, key, &v) != NULL;
+    if (present)
+        *value = atomic_load_explicit(v, memory_order_relaxed);
+    unlock(held, ticket);
+    return present;
+#elif defined(WF_INDEX_SHARED_READ)
+    uint64_t hashed = hash_of(key);
+    table *tab = atomic_load_explicit(&map->current, memory_order_acquire);
+    bucket *held;
+    for (;;) {
+        held = home(tab, hashed);
+        lock_shared(held);
+        if (!(atomic_load_explicit(&held->next, memory_order_relaxed) & MOVED))
+            break;
+        unlock_shared(held);
+        tab = atomic_load_explicit(&tab->next, memory_order_acquire);
+    }
+    _Atomic uint64_t *v;
+    int present = slot_of(held, key, &v) != NULL;
+    if (present)
+        *value = atomic_load_explicit(v, memory_order_relaxed);
+    unlock_shared(held);
+    return present;
+#endif
     uint64_t h = hash_of(key);
     table *t = atomic_load_explicit(&map->current, memory_order_acquire);
     bucket *b = home(t, h);

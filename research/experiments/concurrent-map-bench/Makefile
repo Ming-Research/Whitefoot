@@ -6,8 +6,9 @@
 #   make build     the Zipf generator and one driver binary per implementation
 #   make verify    every implementation at a small size, every mix, short
 #                  cells; fails on any failed check
-#   make stress    the linearizability mode on wf-index, with Boost's map and
-#                  the mutex control as known-good implementations
+#   make stress    the linearizability mode on wf-index and its two read
+#                  variants, with Boost's map and the mutex control as
+#                  known-good implementations
 #   make quick     the quick profile, for iteration (a few minutes)
 #   make full      the whole matrix, on request
 #
@@ -31,7 +32,7 @@ CFLAGS   := -O3 $(MARCH) -g0 -std=c11 -Wall -Wextra -I$(HERE) -isystem $(DEPS)/i
 CXXFLAGS := -O3 $(MARCH) -g0 -std=c++20 -Wall -Wextra -I$(HERE) -isystem $(DEPS)/include -pthread
 RUSTLIB  := $(DEPS)/cmaps-target/release/libcmaps.a
 
-NATIVE := wf_index empty mutex_flat flat boost_cfm tbb_chm libcuckoo urcu_lfht growt phmap papaya dashmap scc stdmap
+NATIVE := wf_index wf_index_locked wf_index_shared empty mutex_flat flat boost_cfm tbb_chm libcuckoo urcu_lfht growt phmap papaya dashmap scc stdmap
 BINS   := $(addprefix $(BUILD)/bench-,$(NATIVE))
 MANAGED := $(BUILD)/java/Bench.class $(BUILD)/bench-go $(BUILD)/dotnet/Bench.dll
 # The wf-current control needs the gate compiler (`make -C compiler build`
@@ -53,6 +54,10 @@ $(BUILD)/driver-%.o: driver.c cmap.h workload.h | $(BUILD)
 
 $(BUILD)/impl-wf_index.o: native/wf_index.c cmap.h | $(BUILD)
 	$(CC) $(CFLAGS) -DCM_PREFIX=wf_index -c -o $@ $<
+$(BUILD)/impl-wf_index_locked.o: native/wf_index.c cmap.h | $(BUILD)
+	$(CC) $(CFLAGS) -DCM_PREFIX=wf_index_locked -DWF_INDEX_LOCKED_READ -c -o $@ $<
+$(BUILD)/impl-wf_index_shared.o: native/wf_index.c cmap.h | $(BUILD)
+	$(CC) $(CFLAGS) -DCM_PREFIX=wf_index_shared -DWF_INDEX_SHARED_READ -c -o $@ $<
 $(BUILD)/impl-empty.o: native/empty.c cmap.h | $(BUILD)
 	$(CC) $(CFLAGS) -DCM_PREFIX=empty -c -o $@ $<
 $(BUILD)/impl-mutex_flat.o: native/flat.cpp cmap.h | $(BUILD)
@@ -75,6 +80,10 @@ $(BUILD)/impl-phmap.o: native/phmap.cpp cmap.h | $(BUILD)
 LINK_C   = $(CC) $(CFLAGS) -o $@ $^
 LINK_CXX = $(CXX) $(CXXFLAGS) -o $@ $^
 $(BUILD)/bench-wf_index: $(BUILD)/driver-wf_index.o $(BUILD)/impl-wf_index.o
+	$(LINK_C)
+$(BUILD)/bench-wf_index_locked: $(BUILD)/driver-wf_index_locked.o $(BUILD)/impl-wf_index_locked.o
+	$(LINK_C)
+$(BUILD)/bench-wf_index_shared: $(BUILD)/driver-wf_index_shared.o $(BUILD)/impl-wf_index_shared.o
 	$(LINK_C)
 $(BUILD)/bench-empty: $(BUILD)/driver-empty.o $(BUILD)/impl-empty.o
 	$(LINK_C)
@@ -110,10 +119,14 @@ $(BUILD)/dotnet/Bench.dll: dotnet/Program.cs dotnet/Bench.csproj | $(BUILD)
 	cp dotnet/Program.cs dotnet/Bench.csproj $(BUILD)/dotnet-src/
 	dotnet build $(BUILD)/dotnet-src/Bench.csproj -c Release -o $(BUILD)/dotnet --nologo -v q
 
-STRESS := $(addprefix $(BUILD)/stress-,wf_index boost_cfm mutex_flat)
+STRESS := $(addprefix $(BUILD)/stress-,wf_index wf_index_locked wf_index_shared boost_cfm mutex_flat)
 $(BUILD)/stress-%.o: stress.c cmap.h workload.h | $(BUILD)
 	$(CC) $(CFLAGS) -DCM_PREFIX=$* -c -o $@ stress.c
 $(BUILD)/stress-wf_index: $(BUILD)/stress-wf_index.o $(BUILD)/impl-wf_index.o
+	$(LINK_C)
+$(BUILD)/stress-wf_index_locked: $(BUILD)/stress-wf_index_locked.o $(BUILD)/impl-wf_index_locked.o
+	$(LINK_C)
+$(BUILD)/stress-wf_index_shared: $(BUILD)/stress-wf_index_shared.o $(BUILD)/impl-wf_index_shared.o
 	$(LINK_C)
 $(BUILD)/stress-boost_cfm: $(BUILD)/stress-boost_cfm.o $(BUILD)/impl-boost_cfm.o
 	$(LINK_CXX)

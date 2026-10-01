@@ -42,10 +42,10 @@ On 2026-10-01, after the [firn suite](../firn/DESIGN.md#the-full-suite-results):
   through parsing, replies and the network, which obscures attribution.
 - **The comparators** are the ones listed under [Comparators](#comparators).
 - **Win on the index first, then return to firn.** The new index must lead
-  the comparators and also be much faster than the map firn uses now, so that
-  the return to firn is easy to attribute. The criteria's numbers are fixed
-  after the comparators' baseline and before this implementation's first
-  measurement.
+  the comparators; being much faster than the map firn uses now follows and
+  makes the return to firn easy to attribute, and is reported rather than
+  made a criterion. The criteria's numbers are fixed before this
+  implementation's first measurement.
 - **The host for scaling** is the owner's i9-14900K, reached through a
   session running on that machine; this 4-CPU host measures one to four
   threads.
@@ -175,16 +175,31 @@ write only to the scratch root; neither is part of `make check`.
 
 ## Criteria, stated before measuring
 
-The form, ruled by the owner; the numbers are written here after the
-comparators' baseline and before this implementation's first measurement.
+The owner ruled the form when the work began and the numbers on 2026-10-01,
+before this implementation's first measurement. A cell is one size (2^10,
+2^20, 2^24), one key choice and mix (uniform `read`, `mostly-read`,
+`balanced`, `update`, `churn` and `grow`; Zipf `read`, `mostly-read`,
+`balanced` and `update`; one key `update`) and one thread count (one, two
+and four on this host): 99 cells. The 14900K judges them again with its own
+thread counts.
 
-- **It leads.** In every cell of the matrix, at every thread count, this
-  index reaches at least the fastest native comparator's rate, with flagged
-  updates reported beside it.
-- **It is much faster than firn's map.** In every cell it reaches at least a
-  stated multiple of `wf-current`.
-- **Its single thread is not paid for concurrency.** At one thread it reaches
-  a stated fraction of `mutex-flat`.
+- **It leads.** In every cell its median reaches at least the median of the
+  fastest comparator, native or managed, flagged or not, with the flags
+  reported beside it. A margin smaller than the cell's spread, the larger
+  of the two implementations' differences between their fastest and slowest
+  repetitions as a fraction of their medians, counts as a tie and is listed
+  apart, not as a lead.
+- **No criterion against firn's map.** The owner ruled that leading the
+  comparators suffices; `wf-current` is measured beside the index and its
+  ratio reported, not judged.
+- **Its single thread is not paid for concurrency.** At one thread, in every
+  mix, it reaches at least `mutex-flat`'s rate.
+- **The read path judged is the copy-out read.** Every comparator's `get`
+  copies a value out, and so does this index's lock-free read. A variant
+  whose reads hold the bucket's lock, the read a Whitefoot block needs
+  unless it may run again without effect, is measured and reported beside
+  it, not judged: it is evidence for stage (b)'s question on statements
+  that only read.
 - **It passes every check**, including the linearizability mode.
 
 ## Comparators
