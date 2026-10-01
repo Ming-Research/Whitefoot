@@ -9,10 +9,12 @@
  *
  * A writer locks its key's cell by compare-and-swap, runs once and stores
  * the key back: changes to a key are exclusive. A reader takes no lock: it
- * reads the key word, the value and the key word again, and starts over when
- * the cell was locked or changed between. A removed key leaves its cell
- * marked removed until the table is moved, so a probe never stops early, and
- * a probe that has seen every cell stops there.
+ * waits while the cell is locked, since a claimed cell has no value yet, and
+ * then reads the value. A cell never holds another key and its value is
+ * written by one store, so the value read is one the key held during the
+ * read; an entry larger than a word will need a version. A removed key
+ * leaves its cell marked removed until the table is moved, so a probe never
+ * stops early, and a probe that has seen every cell stops there.
  *
  * A table is moved, to a larger one or to one of its own size that drops
  * removed cells, once half its cells are used: one writer makes the next
@@ -542,11 +544,7 @@ int wf_cmap_get(wf_cmap_user *u, uint64_t key, uint64_t *value) {
                 pause_once();
                 continue;
             }
-            uint64_t v = atomic_load_explicit(&c->value, memory_order_relaxed);
-            atomic_thread_fence(memory_order_acquire);
-            if (__builtin_expect(atomic_load_explicit(&c->key, memory_order_relaxed) != k, 0))
-                continue;
-            *value = v;
+            *value = atomic_load_explicit(&c->value, memory_order_relaxed);
             return 1;
         }
         if (bare == EMPTY || --left == 0)

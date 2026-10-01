@@ -17,7 +17,7 @@ build=${2:?build directory}
 out=${3:?output directory}
 cpus=${CMAP_CPUS:-$(seq -s, 0 $(($(getconf _NPROCESSORS_ONLN) - 1)))}
 ncpu=$(echo "$cpus" | tr ',' '\n' | wc -l | tr -d ' ')
-impls=${CMAP_IMPLS:-"empty mutex_flat flat boost_cfm tbb_chm libcuckoo urcu_lfht growt phmap papaya dashmap scc stdmap java_chm go_syncmap go_xsync dotnet_cd"}
+impls=${CMAP_IMPLS:-"wf_index wf_index_locked empty mutex_flat flat boost_cfm tbb_chm libcuckoo urcu_lfht growt phmap papaya dashmap scc stdmap java_chm go_syncmap go_xsync dotnet_cd"}
 all="uniform:read,mostly-read,balanced,update,churn,grow zipf:read,mostly-read,balanced,update one:update"
 case "$profile" in
 verify) sizes=1024 reps=1 warm=20 dur=50 threads="1,$ncpu" plan=$all ;;

@@ -922,6 +922,17 @@ rarely insert at the same place.
 
 ## Parallel lowering and runtime
 
+- **The concurrent map's writers wait a count of pauses, not a time.** A
+  writer that finds its key locked waits 16 to 1,024 pauses
+  (`compiler/src/backend/concurrent_map.c`, `wait_for_cell`), about 0.2 to
+  12 microseconds on the 4-CPU measuring host, where a pause took about
+  12 ns; pause latency differs several times over between x86 cores, so
+  the same counts wait longer elsewhere and the batching that won one-key
+  `update` may cost latency instead. The change: bound the wait by elapsed time,
+  read from the cycle counter, or let stage (b)'s parking replace it.
+  Reopen when the 14900K measures one-key `update`, or when waiting writers
+  park.
+
 - **Every atomic statement counts a handle of its own, on the lock's cache
   line.** The lowering retains the shared object before it acquires and
   releases it after it unlocks (`compiler/src/lowering/builder/atomic.rs`), so
@@ -1925,18 +1936,17 @@ rarely insert at the same place.
   when a program needs a third level or two edits nested, or when the
   library's container interfaces are next revised.
 
-- **The standard library has no decimal conversion of integers.** Three
-  programs now write their own: firn's `read_number` and `put_decimal`
-  (`apps/firn/protocol/protocol.wf`), `parse_port` in
-  `tests/programs/deadlines.wf`, and `parse_number` and `put_number` in the
-  concurrent-map bench's `wf/current.wf`, each with its own handling of
-  digits, length and room. A program that reads a numeric argument or prints
+- **The standard library has no decimal conversion of integers.** Two
+  programs now write their own, firn's `read_number` and `put_decimal`
+  (`apps/firn/protocol/protocol.wf`) and `parse_port` in
+  `tests/programs/deadlines.wf`, each with its own handling of digits,
+  length and room. A program that reads a numeric argument or prints
   a count repeats this, and each copy can differ at the edges (overflow past
   19 digits, an empty field, no room left). The change: a `std::text` entry
   that parses a decimal `u64` from a byte range with a result naming a
   malformed or overlong field, and one that appends a `u64` in decimal into a
-  byte window it reports room for; then the three copies move to them.
-  Reopen when the library's text interfaces are next revised or a fourth
+  byte window it reports room for; then the two copies move to them.
+  Reopen when the library's text interfaces are next revised or a third
   program needs one.
 
 - **Complete the vector boundary witness when comparing independent fields.**

@@ -295,10 +295,13 @@ statement's block runs once with its entry held:
   marks it moved; empty is zero and removed is all ones below them, so keys
   lie in [1, 2^62 - 2]. A writer locks its key's cell, or claims an empty
   one, by one compare-and-swap, runs once and stores the key back. A reader
-  takes no lock: it reads the key word, the value and the key word again,
-  and starts over when the cell was locked or changed between, which is
-  exact for an 8-byte value; entries larger than a word need a version in
-  their header, which stage (b) adds with the byte-string keys.
+  takes no lock: it waits while the cell is locked, since a claimed cell has
+  no value yet, and then reads the value. A cell never holds another key and
+  its value is written by one store, so the value read is one the key held
+  during the read; entries larger than a word need a version in their
+  header, which stage (b) adds with the byte-string keys. The runtime's test
+  fails when a read does not wait, and cannot fail when a read checks the
+  key word again after the value, so that check was removed.
 - **A removed key stays a removed cell until the table moves,** so a probe
   never stops early. A probe that has seen every cell stops there: a full
   table, which racing claims can leave in a small one, answers absent to a
@@ -354,9 +357,17 @@ to 2.3 s each. One writer now makes the table, and reuse
 leaves the cold cost to the first moves of each size. The 14900K, a host
 without page reporting, measures the same cells without it.
 
+### Measured
+
+The third duel, on 2026-10-01, gave 1 lead, 17 ties and no loss
+([results](../../experiments/concurrent-map-bench/RESULTS.md#the-index)):
+the lead is one-key `update` at four threads, and every cell's spread on
+this host is wide enough that a median a tenth to a fifth either side of
+growt's counts as a tie. At one thread it reaches `mutex-flat` in every mix
+but `churn`, whose first moves pay this host's cold fresh memory.
+
 What would refute it: a lead lost at one thread to the single-thread floors
-would show the lock bit and the read's second key load costing more than
-they save; a lead lost on `update` with one key at four threads once waits
+would show the lock bit costing more than it saves; a lead lost on `update` with one key at four threads once waits
 park would show the batching depended on unbounded overtaking; a lead lost
 in `grow` on the 14900K would show the cooperative move slower than the
 comparators' rebuilds.
