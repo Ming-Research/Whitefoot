@@ -938,8 +938,8 @@ rarely insert at the same place.
   cell for an absent key, reusing the first removed cell its probe passed,
   and allocates the key's node so the block can write `Some`; a block that
   leaves the entry `None`, a `GET` that misses, frees the node again. Misses
-  no longer grow the table or lengthen the next probe (one key missed 200,000
-  times answered `SPOP` at about 159,000 a second in every round), but each
+  no longer grow the table or lengthen the next probe (one key missed in
+  rounds of 400,000 answered `SPOP` at 159,680 to 177,699 a second), but each
   costs an allocation and a free from the user's free lists. The change:
   claim without a node and allocate it when the block first writes the slot,
   which needs the lowering to call the runtime there, or keep a freed node on
@@ -977,6 +977,33 @@ rarely insert at the same place.
   `compiler/src/backend/completion/bridge.c`), while smaller nodes come from
   per-user chunks. A workload of long keys from many drivers would contend
   on it. Reopen when a measured workload's keys exceed 512 bytes.
+
+- **A keyed statement takes two dependent cache misses where firn's old
+  keyspace took one.** `wf_cmap_lock_entry`
+  (`compiler/src/backend/concurrent_map.c`) loads the probed cell's key word
+  and then the node it points to, both missing the cache under the suite's
+  100,000 keys: under `INCR` at depth 16 on one server CPU it took 28.1% of
+  firn's samples, 43% of them on the cell's load and 41% on the node's,
+  while the old keyspace's bucket held the key and a short value together
+  (`hash_map_edit`, 19.0%). On one server CPU firn answered `SET`, `GET` and
+  `INCR` 8 to 12% below firn at `e92a54ed7`; on two the map's parallelism
+  outweighs the miss. The change: keep a short entry's key bytes and slot in
+  the cell's cache line, or start the probes of a pipeline's later requests
+  before running the first. Reopen when a single-driver workload matters or
+  the many-core run shows the misses limiting it
+  (`research/investigations/concurrent-map/DESIGN.md`, the suite).
+
+- **Drivers park more often per request than Dragonfly's threads without
+  pipelining.** At depth 1 on two server CPUs `redis-benchmark` is the limit
+  (1.91 of its two CPUs, firn at 1.57 of its two); firn's threads slept 0.077
+  times per `GET` against Dragonfly's 0.031, and the client spent 12.1% of
+  its time waking the server in its send path against 7.1%, so the same
+  client reached 2 to 7% fewer requests a second than against Dragonfly on
+  11 of the suite's 19 tests, firn before the shared map alike. The change:
+  let a driver spin for a bounded time before it parks in its completion
+  wait, and measure what the spin costs an idle server. Reopen when depth-1
+  rates on few cores become a goal, or with the next change to the
+  completion wait.
 
 - **Validate reuse of selected-target element layouts during emission.**
   [Zero-stride addressing](../compiler/src/target.rs) currently queries

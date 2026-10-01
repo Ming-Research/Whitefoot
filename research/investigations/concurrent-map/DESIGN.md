@@ -268,6 +268,99 @@ those cells did not separate them. `MSET` holds the whole map, as the old
 keyspace held its one lock, and adds a lock per key and the hold's wait for
 keyed statements under way.
 
+### The suite
+
+The suite (`redis-bench.sh suite`) ran at `ec0bb2e99` from 14:17 to 22:35
+UTC on 2026-10-01: every line passed the default suite's 20 tests with no
+error, then three interleaved passes ran the 19 measured tests at depths 1
+and 16, on two server CPUs (the client on two, `--threads 2`) and on one (the
+client on three). firn is this revision; firn-base is firn at `e92a54ed7`,
+before its keyspace moved to the map, built with the same compiler. The raw
+lines are in
+[keyspace-samples.csv](../../experiments/io-completion-bench/keyspace-samples.csv).
+firn's rate over the fastest other server's, medians of the three passes,
+and firn over firn-base:
+
+| Test | 2 CPUs, d16 | 2 CPUs, d1 | 1 CPU, d16 | 1 CPU, d1 | over base, 2 CPUs d16 | over base, 1 CPU d16 |
+|---|---|---|---|---|---|---|
+| `PING_INLINE` | 1.09 | 0.98 | 1.33 | 1.00 | 0.97 | 0.95 |
+| `PING_MBULK` | 1.12 | 0.96 | 1.24 | 1.02 | 1.00 | 0.95 |
+| `SET` | 1.89 | 0.95 | 1.29 | 1.11 | 1.74 | 0.92 |
+| `GET` | 1.67 | 0.93 | 1.29 | 1.10 | 1.51 | 0.92 |
+| `INCR` | 1.74 | 0.93 | 1.11 | 1.11 | 1.37 | 0.88 |
+| `LPUSH` | 1.81 | 1.00 | 1.16 | 1.11 | 1.41 | 0.94 |
+| `RPUSH` | 1.67 | 1.04 | 1.13 | 1.05 | 1.33 | 1.00 |
+| `LPOP` | 2.06 | 0.98 | 1.43 | 1.11 | 1.33 | 0.98 |
+| `RPOP` | 1.94 | 0.94 | 1.40 | 1.14 | 1.31 | 0.98 |
+| `SADD` | 1.63 | 0.98 | 1.20 | 1.12 | 1.00 | 0.96 |
+| `HSET` | 1.62 | 1.04 | 1.31 | 1.11 | 1.00 | 0.95 |
+| `SPOP` | 1.53 | 0.93 | 1.14 | 1.11 | 0.97 | 0.94 |
+| `ZADD` | 0.92 | 1.31 | 1.36 | 1.09 | 0.96 | 0.98 |
+| `ZPOPMIN` | 1.44 | 0.98 | 1.19 | 1.11 | 1.00 | 0.94 |
+| `LRANGE_100` | 0.98 | 1.23 | 1.63 | 1.35 | 0.95 | 0.97 |
+| `LRANGE_300` | 1.02 | 1.10 | 1.10 | 1.94 | 1.00 | 1.00 |
+| `LRANGE_500` | 1.00 | 0.98 | 1.00 | 2.16 | 1.02 | 0.90 |
+| `LRANGE_600` | 0.98 | 1.02 | 1.07 | 1.89 | 0.98 | 1.00 |
+| `MSET` | 1.25 | 1.73 | 1.73 | 1.17 | 1.16 | 1.05 |
+
+The fastest other server at depth 16 on two CPUs is Garnet on 11 tests,
+Redis or Valkey on 5 and Dragonfly on the `PING` tests and `ZADD`; at depth 1
+on two CPUs it is Dragonfly on every test but `PING_MBULK` (Valkey with I/O
+threads) and the list ranges (Garnet). Against the firn investigation's criteria
+([firn's criteria](../firn/DESIGN.md#criteria-stated-before-measuring)):
+
+- **Latency is met:** firn's median p99 at depth 16 is at most the fastest
+  server's on every test on both CPU counts, `ZADD` on two CPUs at 3.69 ms
+  against Dragonfly's 30.67.
+- **The pipelined lead is met on 11 of 19 tests on two CPUs** (at least 1.4
+  times), where firn-base met it on 6: the keyspace took `SET`, `GET`,
+  `INCR`, the pushes and pops and `MSET` 1.16 to 1.74 times firn-base's
+  rate. On one CPU it is met on 17 of 19 (at least 1.1), firn-base on 18.
+- **Without pipelining, firn is behind on two CPUs** by 2 to 7% on 11 tests,
+  9 of them against Dragonfly, as firn-base is on 11; on one CPU it is behind
+  on none, `PING_INLINE` equal.
+
+Each shortfall was attributed after the suite, on the idle host, with the
+servers and the client pinned as in the suite:
+
+- **The list ranges are the client's limit.** During `LRANGE mylist 0 599`
+  at depth 16 on two server CPUs, `redis-benchmark` used 1.99 of its two
+  CPUs, 35.5 µs of CPU per reply against firn and 35.7 against Garnet, while
+  the servers used 0.89 and 0.79 of theirs; both answered about 55,000 a
+  second (`perf stat` on each process). With one server CPU the client has
+  three, and firn answered 82,520, the client at 2.94 of its three. The two
+  servers tie because the client parses the same replies at the same cost.
+- **Without pipelining on two CPUs, the client is again the limit, and firn's
+  drivers make it pay for waking them.** During `GET` at depth 1 the client
+  used 1.91 of its two CPUs and firn 1.57 of its two (Dragonfly 1.77).
+  firn's threads went to sleep 0.077 times per request, Dragonfly's 0.031
+  (voluntary context switches over 1,500,000 requests), and a profile of the
+  client puts 12.1% of its time in the send path's wakeup of the server
+  (`sock_def_readable` to `__wake_up_sync_key`) against firn and 7.1%
+  against Dragonfly. firn-base answers the same depth-1 rates as firn, so
+  the keyspace is not the cause; the runtime's drivers park more often per
+  request than Dragonfly's threads ([todo](../../../docs/todo.md)).
+- **On one CPU, a keyed statement takes two dependent cache misses where the
+  old keyspace took one.** Under `INCR` at depth 16 with one server CPU,
+  firn answered 799,361 and firn-base 887,837 a second; `wf_cmap_lock_entry`
+  took 28.1% of firn's samples, 43% of them on the load of the cell's key
+  word and 41% on the load of the node's length behind it, while firn-base's
+  `hash_map_edit` took 19.0%, its bucket holding the key and a short value
+  inline (firn's investigation, short strings inside the keyspace). With two
+  drivers the map's parallelism outweighs the extra miss; with one nothing
+  does ([todo](../../../docs/todo.md)).
+- **`ZADD` on two CPUs ties Dragonfly**, 402,000 to 449,000 a second over
+  the passes against 420,000 to 449,000, the same steps of the benchmark's
+  clock; it adds to one sorted set, so its rate is that of one key's
+  critical section in every server, and firn-base answered 411,000 to
+  420,000. It was not profiled here.
+- **The `PING` tests touch no key**, and firn and firn-base answered them
+  alike on both CPU counts.
+- **One key read from two drivers costs CPU while they wait.** firn spent
+  15.9 µs of server CPU per `LRANGE mylist 0 599` reply with two drivers and
+  8.6 µs with one: every statement on the one list holds its entry, so the
+  waiting driver spins (Q37).
+
 ## The measurement
 
 The bundle is `research/experiments/concurrent-map-bench/`. These rules are

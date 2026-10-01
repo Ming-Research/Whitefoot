@@ -362,10 +362,15 @@ threads, Dragonfly and Garnet (`DRAGONFLY` and `GARNET` name their
 executables; a line whose executable is absent is skipped). The servers and
 the client are pinned to disjoint CPUs; the output is `redis-benchmark`'s CSV
 line per run, prefixed with the server line, the pass and the pipeline depth.
+With `scale` it instead runs the suite's lines on each server CPU count in
+`SCALE`, the client on the host's other CPUs, for the tests in `SCALE_TESTS`
+at the depths in `SCALE_PIPELINES`, for a host with many more CPUs than the
+four the suite assumes.
 `redis-samples.csv` holds the raw output of Experiment 7's runs, including its
-attribution runs, `redis-persistence-samples.csv` that of Experiment 8, and
-`firn-samples.csv` that of the firn investigation. They are removed with the
-experiments' records.
+attribution runs, `redis-persistence-samples.csv` that of Experiment 8,
+`firn-samples.csv` that of the firn investigation, and `keyspace-samples.csv`
+the suite of the concurrent-map investigation's stage (c). They are removed
+with the experiments' records.
 
 ## Reproducing
 
@@ -386,6 +391,7 @@ experiments' records.
     make -C research/experiments/io-completion-bench linux-net    # the TCP table
     sh research/experiments/io-completion-bench/redis-bench.sh        # firn, Experiments 7 and 8
     sh research/experiments/io-completion-bench/redis-bench.sh suite  # firn, its criteria
+    sh research/experiments/io-completion-bench/redis-bench.sh scale  # firn on more server CPUs
 
 The TCP targets are Linux-only, as `linux` and `linux-read` are: `epoll_echo`
 and `uring_echo` are written against Linux interfaces, and the workload's
