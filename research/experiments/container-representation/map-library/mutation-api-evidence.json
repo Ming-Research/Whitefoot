@@ -3334,9 +3334,9 @@
       }
     ],
     "archive": {
-      "bytes": 1940712,
+      "bytes": 2167197,
       "path": "research/experiments/container-representation/map-library/entry-forward-evidence.tar.gz",
-      "sha256": "fbd1fbeb0c8b6225631d3072fce9a262c5dd6d2b04a2704b77a69c48dd64690a"
+      "sha256": "4136bf5c0d2bd7561f86c20cc086457fbf3c074b273cb35f5520880535eb7482"
     },
     "archive_purpose": "Raw auditable API and whole-Map/long-hit replay for this RESULTS section; retire or replace when superseded. No binaries.",
     "atomic_slot_admission_stop": {
