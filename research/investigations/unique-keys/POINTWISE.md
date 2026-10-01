@@ -1,400 +1,320 @@
-# Pointwise facts over a derived numbering
+# Range facts over a derived numbering
 
-Status: paper derivation of candidate N in [the investigation](DESIGN.md#candidates).
-Nothing here is selected, specified or implemented. The runtime half of the
-witness compiles and runs today; every proof form below is a proposal.
+Status: candidate N of [the investigation](DESIGN.md#candidates), selected
+and implemented on this branch as [RANGE-1] through [RANGE-5] of the active
+specification, with [PAR-2]'s certified elements. The owner's rulings Q1 to
+Q4 of 2026-10-01 selected the direction; the design tree's
+[checks and proofs](../../../design/language/checks-and-proofs.md),
+[range facts](../../../design/language/checks-and-proofs/range-facts.md),
+[loop permission](../../../design/language/parallelism/loop-permission.md)
+and [range judgment](../../../design/compiler/range-judgment.md) nodes hold
+the decisions; this record holds the derivation, the programs and the
+measurements.
 
-## The candidate
+## The problem
 
-The library Forest derivation proves that the live, linked DOM is a forest
-and derives distinct indices from a ghost model. W1 and W2, however, write
-through index arrays that the style stage rebuilds on every pass from that
-DOM: Snowghost's `walk_elements`, `child_ranges` and `level_arrays`
-(`renderer/proto/style/traversal.wf` at Snowghost
-`7503e37b887b79da66a7c2161551fc1c9175df6a`). Whether those arrays repeat an
-index is a property of the functions that build them, not of the DOM; the
-walk already refuses links that do not form its preorder.
-
-Candidate N therefore proves facts about the derived numbering only, and only
-facts of one shape:
-
-- **Pointwise.** A fact is `forall x in R: P(x)`, where `P` is quantifier-free
-  and reads only the element at `x` and elements at values it reads, such as
-  `positions[slots[x]]`. A write at one index can falsify at most the
-  instances that read that index, so a preservation proof is a case split on
-  the written index rather than a derivation over all elements.
-- **Separation by a stored function.** Two indices read from storage differ
-  when some array maps them to values already known to differ: in one state,
-  `f[x] != f[y]` implies `x != y`. A stored left inverse, `positions[slots[k]]
-  == k`, makes the slots of one level pairwise distinct; a stored depth makes a
-  parent and an element of the next level distinct. [PAR-2]'s affine element
-  rests on the same argument with an arithmetic inverse.
-- **Numbering turns global properties into pointwise ones.** In preorder,
-  "my parent precedes me" is a pointwise fact that excludes cycles; depth is
-  a pointwise relation to the parent; a left inverse replaces "no
-  duplicates". Reachability or acyclicity of the linked arena itself is never
-  stated.
-
-Facts are ordinary checked facts rather than type invariants: a write that
-overlaps their support kills them, and only code that wants to keep one
-proves its preservation. No ghost model, inductive type, recursive logical
-function, structural induction, existential witness, content snapshot value,
-struct-invariant generalization or type brand appears below.
-
-## The witness program
-
-`level_cascade.wf` in this directory is the runtime half of W1 as Snowghost
-would write it with level-parallel cascading into document order. Its
-`measure_depths` stands in for the element walk's per-element step: it
-refuses a parent that does not precede its element, as `walk_elements` and
-`parent_slot` do. `level_segments` groups the elements by depth into a
-`Segments`, as `level_arrays` groups them into `level_start` and
-`level_elements`, and writes each element's offset into `positions`, as
-`level_arrays` writes `level_positions`. `cascade_level` is one level of the
-cascade: each element's result, written at its own preorder index, from its
-parent's result. The tree is `div(section(span, img), article(p, a))`; level
-2 writes preorder indices 2, 3, 5 and 6.
-
-Observations at compiler source `22d0923bdf5ce7dbf4752cf9a302dc4154254869`
-(no compiler source differs on this branch), built with
-`cargo build --profile gate --bin whitefootc --locked`:
-
-- `whitefootc --check level_cascade.wf` exits 0, and the native executable
-  exits 0, its result sum 748 and last result 113 matching sequential order.
-- Changing the cascade's `base` from 100 to 101 makes the executable exit 3,
-  so the result check is not vacuous. Making element 2's parent element 3, a
-  parent that follows it, makes `measure_depths` refuse and the executable
-  exit 1.
-- `whitefootc --par --par-ledger --emit-llvm` denies the cascade loop at
-  line 108 with condition 2 ("the body writes storage that is neither
-  introduced by the iteration nor the accumulator, at set
-  results^[element] = ..."). That loop is the consumer this derivation
-  targets. The loops of `measure_depths` and `level_segments` are denied too
-  and stay sequential by design: each reads or advances state an earlier
-  iteration wrote.
-
-## Annotated program
-
-The proposed forms used below are:
-
-1. **Quantified clauses.** `forall x in a..b: P` and
-   `forall d in a..b, k in c..e: P` in a named `requires`, a named `ensures`
-   and a loop header `invariant`. `P` combines comparisons with `and`, `or`
-   and `implies` over existing terms and element reads `a^[t]`, whose offset
-   may itself be a bound variable or an element read. For a `Segments` place
-   `s`, `s[d][k]` names element k of segment d. These reads are terms only
-   inside quantified facts.
-2. **Support and kill.** A quantified fact's support is every storage and
-   measure its reads name. Any overlapping write kills it, as a write kills
-   an existing fact today [ENT-5, OWN-7].
-3. **Instantiation.** `use name at (t, ...)` instantiates a quantified fact at
-   written terms and owes their range bounds. Nothing chooses an instance.
-4. **Write laws and case splits.** After `set a[t] = v`, a read `a[u]` equals
-   `v` when `u == t` and its old value otherwise. A header invariant's
-   preservation splits a fresh bound element on equality with each written
-   index; each case is discharged with listed `use` steps.
-5. **Content laws.** `box_segments_filled` and `box_array_filled` publish
-   that every element equals the supplied value; [OP-13] already states this
-   behavior, but no contract carries it as a fact.
-6. **Read congruence.** In one state, `a[x] != a[y]` proves `x != y`. This
-   is the only new separation rule; it feeds the shared overlap judgment
-   [OWN-7].
-7. **Cross-iteration certificate.** `apart (i, j) { use ...; }` in a counted
-   loop's header introduces two fresh iterations `i != j`. Every pair of
-   accesses to a written root, from different iterations and with at least
-   one write, must then be proved separated from the listed instances, the
-   access paths' guards, read congruence and the existing affine families.
-8. **Transport.** Quantified facts travel through routed results, struct
-   construction and written-reference exits as integer facts do today
-   [FN-9, CALL-4, MSR-3].
-
-The certificate syntax is illustrative. Where a body is unchanged from
-`level_cascade.wf`, it is elided.
-
-### The walk's step
+Snowghost's style stage cascades each element from its parent. Done level by
+level, the elements of one tree level are independent, and the result of each
+belongs at the element's document (preorder) index. The loop that does it,
 
 ```text
-fn measure_depths(parents: &[u64], depths: &[u64]) -> result: Option<u64>
-    reads(parents), writes(depths) contract {
-  requires depths^.len == parents^.len;
-  ensures shaped when Some(value: deepest):
-    forall x in 0_u64..parents^.len:
-      parents^[x] == top or
-        (parents^[x] < x and depths^[x] == depths^[parents^[x]] + 1);
-} {
-  let count = parents^.len;
-  let deepest = 0_u64;
-  for (
-    at in 0_u64..count,
-    invariant shaped: forall x in 0_u64..at:
-      parents^[x] == top or
-        (parents^[x] < x and depths^[x] == depths^[parents^[x]] + 1)
-  ) {
-    ... unchanged: the parent == top case, the parent < at case
-        and the refusal ...
-  }
-  return Some<u64>(value: deepest);
+for (k in 0..count) {
+  let element = slots^[k];          // this level's k-th element, a preorder index
+  let parent = parents^[element];   // its parent's preorder index
+  set results^[element] = cascade(results^[parent], ...);
 }
 ```
 
-### Grouping by depth
+writes `results^` at an index read from storage. [PAR-2] admits a write only
+through an affine element `a*k + b` or a proved range, so the loop was denied,
+and the only parallel alternative stored results in level order and copied
+them back. Whether two iterations collide depends on two facts about the
+derived arrays: a level lists no element twice, and a parent lies one level
+above its element. Neither is a relation between scalar terms, so the fact
+language had no way to state them, and the design tree had refused quantified
+storage facts outright.
 
-```text
-fn level_segments(depths: &[u64], levels: u64) -> result: Option<Levels>
-    reads(depths) contract {
-  requires levels <= depth_ceiling;
-  requires depths^.len <= 4294967294_u64;
-  ensures when Some(value: made): made.positions.inner.len == depths^.len;
-  ensures inverse when Some(value: made):
-    forall d in 0_u64..made.slots.inner.len, k in 0_u64..made.slots.inner[d].len:
-      made.slots.inner[d][k] < depths^.len implies
-        made.positions.inner[made.slots.inner[d][k]] == k;
-  ensures leveled when Some(value: made):
-    forall d in 0_u64..made.slots.inner.len, k in 0_u64..made.slots.inner[d].len:
-      made.slots.inner[d][k] < depths^.len implies
-        depths^[made.slots.inner[d][k]] == d;
-} {
-  ... counting loop and box_segments_filled unchanged ...
-      let rows = slots.inner.len;
-      for (
-        at in 0_u64..count,
-        invariant fresh: forall d in 0_u64..rows, k in 0_u64..slots.inner[d].len:
-          slots.inner[d][k] == absent or slots.inner[d][k] < at,
-        invariant inverse: forall d in 0_u64..rows, k in 0_u64..slots.inner[d].len:
-          slots.inner[d][k] < count implies
-            positions.inner[slots.inner[d][k]] == k,
-        invariant leveled: forall d in 0_u64..rows, k in 0_u64..slots.inner[d].len:
-          slots.inner[d][k] < count implies depths^[slots.inner[d][k]] == d
-      ) {
-        ... unchanged: segment^[offset] = at; positions.inner[at] = offset;
-            fill.inner[depth] = offset + 1, after the existing checks ...
-      }
-  ...
-}
+## The architecture rule: each pass derives its facts
+
+The live document carries no range fact (owner ruling Q2). Scripts change the
+DOM between passes, so a fact kept with it would be owed again by every
+mutation, and acyclicity of the linked arena, which the library Forest route
+proves, is never needed: each pass walks the elements it styles in preorder,
+and that walk already refuses a parent that does not precede its element.
+The facts are stated about the arrays the pass derives (depths, per-level
+lists, positions) and are established by the loops that build them, as loop
+invariants, then handed to a callee as its requirements. Range facts cross a
+call only that way: there are no range postconditions, so a consumer that
+receives arrays from elsewhere validates them with a loop whose invariants
+state the facts. The cost is the walk the pass makes anyway, plus one
+grouping pass.
+
+## The language
+
+What is new, with the rule that defines it:
+
+- **A range clause** [RANGE-1], as a function requirement or a loop header
+  invariant: `forall NAME(x in a..b, y in c..d) when g1, g2: c1, c2`, one or
+  two bound variables, guards and conclusions comparing integer terms. Terms
+  are literals, consts, bound variables, live integer values, measures,
+  segment lengths and integer element reads (`p^[i]`, `b.inner[i]`,
+  `s.inner[d][k]`). A read in a clause owes nothing where it is written: an
+  instance claims its conclusions only where its reads select existing
+  elements.
+- **The range judgment** [RANGE-2, RANGE-3]: a fact is proved at every call
+  of a function requiring it, at its loop's entry and on every backedge, by
+  the fixed derivation described [below](#how-the-compiler-proves-it).
+- **Fill contents** [RANGE-2]: `box_array_filled(count, v)` gives every
+  element v, and `box_segments_filled(lengths, v)`, under `Some`, gives every
+  element v and each segment its length.
+- **A certificate** [RANGE-5]: `apart(i, j) { use NAME(args); ... }` on a
+  counted loop asks the judgment to prove that two distinct iterations touch
+  no element of shared storage in common. Usually the block is empty: the
+  instances the proof needs are formed from the reads the body makes.
+  A certificate that does not hold is a compile error (owner ruling Q3).
+- **Certified elements** [PAR-2]: the writes a holding certificate placed
+  become a further admitted family of the counted permission judgment, whose
+  reads of the written storage must be the certificate's own.
+
+Everything else is the existing language: affine requirements, loop
+invariants, ordinary bounds proofs, effect rows.
+
+## The witness programs
+
+Both are in this directory and check and run at this branch's compiler.
+
+### `level_cascade.wf`: the level cascade
+
+`cascade` stands in for a style pass. Its first loop derives each element's
+depth from its parent, refusing a parent that does not precede its element,
+with the invariant
+
+```wf
+invariant forall up(e in 0_u64..at) when parents^[e] < n: parents^[e] < e, depths.inner[parents^[e]] + 1_u64 == depths.inner[e]
 ```
 
-### One level of the cascade
+Its third loop groups the elements by depth into a `Segments`, writing each
+element's preorder index `at` into its level's next slot and the slot's
+offset into `positions`, with
 
-```text
-fn cascade_level(slots: &[u64], parents: &[u64], depths: &[u64],
-                 positions: &[u64], matched: &[u64], results: &[u64],
-                 level: u64, base: u64) -> result: unit
-    reads(slots), reads(parents), reads(depths), reads(positions),
-    reads(matched), writes(results) contract {
-  requires parents^.len == results^.len;
-  requires matched^.len == results^.len;
-  requires depths^.len == results^.len;
-  requires positions^.len == results^.len;
-  requires inverse: forall k in 0_u64..slots^.len:
-    slots^[k] < results^.len implies positions^[slots^[k]] == k;
-  requires leveled: forall k in 0_u64..slots^.len:
-    slots^[k] < results^.len implies depths^[slots^[k]] == level;
-  requires shaped: forall x in 0_u64..parents^.len:
-    parents^[x] == top or
-      (parents^[x] < x and depths^[x] == depths^[parents^[x]] + 1);
-} {
-  let count = slots^.len;
-  let total = results^.len;
-  for (
-    k in 0_u64..count,
-    apart (i, j) {
-      use inverse at (i);
-      use inverse at (j);
-      use leveled at (i);
-      use leveled at (j);
-      use shaped at (slots^[i]);
-      use shaped at (slots^[j]);
-    }
-  ) {
-    ... unchanged body: element = slots^[k]; if element < total,
-        read matched^[element] and parents^[element], read
-        results^[parent] when parent < total, and write
-        results^[element] ...
-  }
-  return unit;
-}
+```wf
+invariant forall fresh(d in 0_u64..rows, k in 0_u64..slots.inner[d].len) when slots.inner[d][k] != absent: slots.inner[d][k] < at,
+invariant forall listed(d in 0_u64..rows, k in 0_u64..slots.inner[d].len) when slots.inner[d][k] != absent: positions.inner[slots.inner[d][k]] == k, depths.inner[slots.inner[d][k]] == d
 ```
 
-`depths`, `positions` and `level` are new parameters that the body never
-reads. They name the proof's support. Lowering would pass two range
-references and one integer per level call; an erasure rule for parameters
-read only by contracts is a separate question.
+and then calls `cascade_level` for each level. `cascade_level` requires
 
-### The caller
-
-```text
-for (level in 0_u64..rows) {
-  cascade_level(slots: &made.slots.inner[level], parents: ..., depths: ...,
-                positions: &made.positions.inner[0_u64..count], matched: ...,
-                results: ..., level: level, base: 100_u64);
-}
+```wf
+requires forall listed(k in 0_u64..slots^.len) when slots^[k] < results^.len: positions^[slots^[k]] == k, depths^[slots^[k]] == level;
+requires forall up(e in 0_u64..parents^.len) when parents^[e] < parents^.len: depths^[parents^[e]] + 1_u64 == depths^[e];
 ```
 
-At each call the caller instantiates `inverse` and `leveled` of
-`level_segments` at `d = level`, leaving `k` bound; this gives the callee's
-`inverse` and `leveled` for the segment `&made.slots.inner[level]`. `shaped`
-passes unchanged. The level loop writes only `results`, whose storage
-overlaps none of the facts' support, so the facts survive every level. The
-level loop itself stays sequential, since level d reads level d - 1's
-results.
+and its loop carries `apart(i, j) { }`.
 
-## What the checker proves
+### `children.wf`: one array of children, distinct by fresh values
 
-### `measure_depths`: one invariant, five steps
+This is the shape Snowghost's `child_ranges` has: one array holding every
+element's children, each parent's run contiguous, filled in document order.
+No inverse table exists. The producer writes each child as its own document
+index `at`, larger than every index already in the array, so
 
-The iteration writes only `depths^[at]`.
+```wf
+invariant forall fresh(q in 0_u64..children.inner.len) when children.inner[q] != absent: children.inner[q] < at,
+invariant forall nodup(a in 0_u64..children.inner.len, b in 0_u64..children.inner.len) when a != b, children.inner[a] != absent: children.inner[a] != children.inner[b]
+```
 
-- **Entry.** The range `0..0` is empty.
-- **New element `x == at`.** On `parent == top`, the left disjunct. On
-  `parent < at`, the existing check, the right disjunct: `parents^[at] < at`
-  is that check, and `depths^[at] == depths^[parent] + 1` holds after the
-  write because `parent != at` leaves `depths^[parent]` unchanged (one write
-  law step).
-- **Old element `x < at`.** Instantiate the old invariant at `x`. Its reads
-  `depths^[x]` and `depths^[parents^[x]]` are at indices below `at`, `x < at`
-  directly and `parents^[x] < x` from the instance, so two write-law steps
-  keep both reads.
+hold at every header. `mark_children` takes one parent's run and requires
+`nodup` over it; its loop writes `results^[kids^[k]]` under `apart(i, j) { }`.
 
-The refusal exits carry no `ensures`, since `shaped` is routed to `Some`.
+The preservation of `nodup` after `set children.inner[place] = at` is one case
+split per position:
 
-### `level_segments`: three invariants, about twelve steps
+| Case | Why the two slots still differ |
+|---|---|
+| neither is `place` | both are unchanged, and the old `nodup` holds |
+| `a` is `place` | `children[a]` is now `at`; `children[b]` is unchanged, so by the old `fresh` it is `absent` or below `at` |
+| `b` is `place` | symmetric: `children[a]` is not `absent`, so it is below `at` |
 
-The iteration writes `slots[depth][offset] = at`, `positions[at] = offset` and
-`fill[depth] = offset + 1`.
+The array needs `absent` as its fill: with a fill of 0, an unwritten slot
+would equal element 0.
 
-- **Entry.** The `box_segments_filled` content law makes every slot `absent`.
-  `fresh` follows, and `inverse` and `leveled` hold vacuously because
-  `absent` exceeds `count` (`count <= 4294967294`): three steps.
-- **`fresh`, for a fresh `(d, k)`.** If `(d, k) == (depth, offset)`, the slot
-  holds `at < at + 1`. Otherwise the slot is unchanged and the old instance
-  gives `absent` or a value below `at`. Two cases. Element separation for
-  the "otherwise" case comes from the `Segments` element rule [REF-4, OWN-7]:
-  a different segment index or a different offset in one segment is a
-  different place.
-- **`inverse`.** In the written slot, `positions[at] == offset` by the write
-  law. In any other slot holding `v < count`, the old `fresh` instance gives
-  `v < at`, so `v != at`, so the write at `positions[at]` leaves
-  `positions[v]` unchanged, and the old `inverse` instance gives `k`. Four
-  steps.
-- **`leveled`.** In the written slot, `depths^[at] == depth` because `depth`
-  was read from `depths^[at]` and nothing writes `depths`. Elsewhere the
-  slot is unchanged. Two steps.
-- **Exit.** At `at == count` the invariants become the `ensures` and travel
-  into `made` with the construction `Levels(slots: move slots, positions:
-  move positions)`.
+## How the compiler proves it
 
-No fact about `fill` or `sizes` is needed. `offset < segment^.len`, the
-existing refusal moved from the whole array to the element's own segment,
-supplies the write's bounds. A wrong count therefore leaves slots `absent`
-or refuses the element; it never falsifies `inverse` or `leveled`, because
-an overwritten or never written slot simply has no instance with a value
-below `count`.
+The range judgment runs after ordinary entailment, over the checked program
+(`compiler/src/semantic/range_judgment/`). It walks each function that
+states a range clause or calls one that requires one.
 
-### `cascade_level`: the cross-iteration obligation
+**The state.** Each binding has a symbolic value; each storage location
+holding a run of elements (a `Box<Array>`'s content, a range parameter's run,
+a `Segments`) has a current *version*. A write makes a new version defined
+by the old one; a move into a struct or out of a payload aliases the
+location, so `made.slots.inner` and `slots.inner` stay one container. A fact
+is a clause plus what its places and values denoted when it became active:
+it never changes meaning, and a question about a newer version reaches it
+only through the newer version's definition. A branch forks the state; at
+the join each value, version and condition the arms disagree on is defined by
+the arm taken, through one selector per join. A loop header forgets what a
+dry walk of the body writes, then assumes the loop's invariants.
 
-For fresh iterations `i != j`, write `e_i = slots^[i]`, `e_j = slots^[j]` and
-`p_i = parents^[e_i]`. The loop writes only `results`; `slots`, `positions`,
-`depths`, `parents` and `matched` are read-only, so every iteration reads them
-in the loop's entry state and the required facts hold throughout. The
-accesses to `results` from two iterations give three kinds of pairs:
+**One obligation** (a call's requirement, a loop entry, a backedge) becomes
+a finite problem: fresh bound variables, their ranges, the guards and the
+existence of every read as hypotheses, the state's conditions and joins, and
+the negated conclusion. The derivation then:
 
-- **Write against write**, under `e_i < total` and `e_j < total`: `inverse`
-  at `i` and `j` give `positions^[e_i] == i` and `positions^[e_j] == j`, so
-  `positions^[e_i] != positions^[e_j]`, and read congruence gives
-  `e_i != e_j`.
-- **Read against write**, under `p_i < total` and `e_j < total`: `leveled` at
-  `i` and `j` give `depths^[e_i] == level == depths^[e_j]`. `shaped` at `e_i`
-  rules out `p_i == top`, since `p_i < total`, and gives
-  `depths^[e_i] == depths^[p_i] + 1`. Hence `depths^[p_i] + 1 ==
-  depths^[e_j]`, so the two depth reads differ, and read congruence gives
-  `p_i != e_j`.
-- **Write against read**: the same with `i` and `j` exchanged, using `shaped`
-  at `e_j`.
+1. instantiates every active fact at each tuple an element read of the
+   problem selects through one of the fact's own reads, after expanding
+   every definition; an instance's own reads form no further instance;
+2. fires an instance whose premises the hypotheses entail;
+3. decides a write's read, the written element or the old one, when only
+   one case is consistent, and otherwise tries both; likewise a join's arm,
+   two reads of one version that may be one element, and a disequality as
+   `<` or `>`;
+4. judges each branch's literals by solving unit equalities, identifying
+   reads of one version at one solved index tuple (read congruence), and
+   Fourier-Motzkin elimination tightened over the integers.
 
-Reads against reads need nothing. Within one iteration, source order is
-kept. These are the six listed instances, three applications of read
-congruence and the existing affine derivation.
+The frontier case of a backedge (`e == at` after `for (at ...)`) is step 3's
+read pair: `parents^[e]` and `parents^[at]` are either one element, where the
+body's own condition on `parent` applies, or different, where the old fact
+does.
 
-### The whole chain
+**The certificate** walks the loop body twice from the loop's entry state,
+with the binder at i and at j, recording every element read and write of
+storage that exists before the body runs. For each write of the i-walk and
+each access of the j-walk to the same container, the problem adds `i != j`
+and the two index tuples' equality and must be contradictory. In
+`cascade_level`, the write pair `results^[slots^[i]]` and
+`results^[slots^[j]]` closes by `listed(i)`, `listed(j)` and read
+congruence: equal slots give equal positions, so `i == j`. The write and the
+parent read, `results^[slots^[i]]` and `results^[parents^[slots^[j]]]`, close
+by `listed(i)`, `listed(j)` and `up(slots^[j])`: one is at depth `level` and
+the other at `level - 1`. Every instance is formed from a read the body
+makes, so the certificate block is empty.
 
-About 25 written steps prove the chain from the walk to the parallel
-cascade: five in `measure_depths`, about twelve in `level_segments`, two
-partial instantiations at the call and six in the loop certificate. These
-counts are hand counts of the derivation above, not measurements of a
-checker.
+**PAR-2** then admits the certified writes as a family, provided every read
+of the written storage is a measure or one of the certificate's reads.
+
+## Observations
+
+At compiler revision 450fea25 (`make -C compiler build`), on the 4-processor
+Linux host the timings below name:
+
+- **The witnesses.** `whitefootc --check` accepts `level_cascade.wf` and
+  `children.wf`; both exit 0 built sequentially and with `--par`.
+  `--par-ledger` permits `cascade_level`'s level loop (line 27) and
+  `mark_children`'s loop (line 13), each "eligible; no accumulator". The
+  other loops stay denied, rightly: each depends on what earlier iterations
+  wrote (a depth read at the parent, a per-parent or per-level counter, a
+  running offset) or hands the whole result run to a callee.
+- **No runtime trace.** The scatter case
+  `tests/conformance/cases/range5-pos-scatter-through-left-inverse.wf`
+  emits byte-identical LLVM sequentially with and without its `apart`
+  clause, and its `--par` chunk function's loop body has the same compares,
+  branches, loads and stores as the sequential loop.
+- **Soundness cases.** Each rejection in the `range*` conformance cases
+  names the rule and the site: a false left inverse (`<=` for `==`), a
+  missing depth requirement, a call handing the whole written run to a
+  writer, a grouping that writes 0 instead of the element, a chained
+  instance with no written `use`, and the state after a break.
+- **Proof cost.** Checking `level_cascade.wf` takes 1.2 s; callgrind
+  attributes 91% of its 10.1 billion instructions to the range judgment,
+  90% to solving owed facts (`Walker::require`), with repeated
+  Fourier-Motzkin elimination the largest part. `children.wf` checks in
+  0.08 s. Over Snowghost's whole renderer the judgment is about 2.5 s of a
+  105 s front end: 102.9 s and 102.7 s with the judgment skipped by a
+  temporary switch, against 105.4 s and 105.1 s with it, two builds each.
+  Making the derivation incremental is recorded in `docs/todo.md`.
+
+## Snowghost shape D
+
+Snowghost's style prototype gained shape D on its branch
+`proved-level-cascade`, commits 7358347 (code) and 8684f92 (record), built
+with this branch's compiler at 450fea25: C's flat match, then
+`cascade_levels`, the program of `level_cascade.wf` over the prototype's
+traversal, with `cascade_level`'s loop writing each element's computed
+values at its preorder index under an empty certificate. The Snowghost
+record, `research/investigations/concurrency/DESIGN.md`, "Shape D: a
+proved level cascade", holds the tables and runs 22 to 24.
+
+- **Accepted as written.** The facts and the empty certificate checked on
+  the first build; the only rewrite was for the permission judgment, not
+  the proof: the loop body's call of `cascade_element`, which returns two
+  values, moved into `cascade_into`, since [PAR-2] refuses a body binding an
+  ordered result list (`docs/todo.md`).
+- **Same results.** `proto_style check` agrees on the six pages present
+  on the host, `--par` and sequential, with the checksums Snowghost
+  recorded before the port.
+- **Permitted and split.** `--par-ledger` permits the level loop, one
+  accumulator under `band`, and splits it; the depth walk, the grouping and
+  the loop over levels stay sequential, as they must.
+- **Speed.** At four workers the cascade alone, over one match, takes
+  0.0350 s against shape C's sequential preorder cascade at 0.0425 s on
+  ecma262 (1.21 times faster), 0.0062 s against 0.0168 s on html5 (2.71
+  times), and 1.6 and 1.5 times faster on the flat and unbalanced synthetic
+  pages. The cascade is 2.5 to 5 percent of the real pages' style stage,
+  which matching dominates, so the whole stage changes by about the
+  cascade's gain. D's sequential cascade adds the validating walk and the
+  grouping: 0.0517 s against C's 0.0415 s on ecma262, though 0.0128 s
+  against 0.0168 s on html5, a difference not attributed further.
+- **Compile time.** The range judgment is about 2.5 s of the renderer's
+  105 s front end ([Observations](#observations)).
 
 ## Criteria and result
 
-Candidate N's entry under [Candidates](DESIGN.md#candidates) records four
-criteria, stated to the owner before this derivation was written:
+Candidate N's entry under [Candidates](DESIGN.md#candidates) recorded four
+criteria before the paper derivation:
 
 | Criterion | Result |
 |---|---|
-| Every fact used is pointwise | Met: `shaped`, `fresh`, `inverse` and `leveled` each read one element and elements at values it holds |
-| Every preservation premise is an existing runtime check or loop bound | Met: `parent < at` is the walk's precedence refusal, and `offset < segment^.len` is `level_arrays`' room check against the element's own segment |
-| The consumer gains no state and no branch | Met in the loop body; the guards `element < total` and `parent < total` are the sequential program's. Each level call passes three proof-only arguments |
-| Step count per write | About 25 written steps for the chain, at most four per case |
+| Every fact used is pointwise or pairwise over one structure | Met: `up`, `fresh`, `listed` and `nodup` |
+| Every preservation premise is an existing runtime check or loop bound | Met: the walk's precedence refusal and the grouping's room check |
+| The consumer gains no state and no branch | Met in the loop body; `cascade_level` takes `positions`, `depths` and `level` as proof-only arguments |
+| No written instance is needed | Met: every certificate in the two programs and in Snowghost is empty |
 
-The derivation found one fact that is not pointwise: disjointness of the
-level ranges. With `level_start` and `level_elements` as separate arrays,
-deciding that a slot of level d's range belongs to no other level needs
-`level_start` to be monotone across arbitrary gaps, a two-index fact.
-`Segments` already owns exactly that disjointness in the kernel, so writing
-the grouping as a `Segments` removes the only non-pointwise step. This
-matches the `Segments` boundary rule: no operation changes the boundaries
-after `box_segments_filled` builds them [TYPE-9].
+## Found by the derivation and the implementation
 
-## Found by the derivation
-
+- **The frontier element needs a read-pair split.** A backedge's new element
+  `e == at` is covered by the body's condition on `parents^[at]`, and the old
+  ones by the old fact; neither applies until the derivation asks whether
+  `parents^[e]` and `parents^[at]` are one element.
+- **A join must remember which arm was taken.** A loop body with an `if` on
+  the parent's kind joins two writes; without the join's arm conditions as a
+  disjunction the backedge cannot tell which write applied.
 - **No completeness proof.** Neither the counting argument nor "every slot
-  of a level is filled" is needed. An unfilled slot stays `absent`, which
-  the consumer's existing bounds guard skips.
-- **Existing checks are the premises.** The walk's refusal of a parent that
-  does not precede its element and the room check before a level write are
-  each the exact premise of one preservation case.
-- **The proof's support must stay alive.** `depths` and `positions` must
-  outlive the cascade. Snowghost's `level_arrays` already writes
-  `level_positions` and the walk already writes `depths`; `Traversal` keeps
-  the former but not the latter. Keeping an array that is already built adds
-  memory lifetime, not computation; a ghost array would remove even that.
-- **Proof-only parameters.** The consumer takes `depths`, `positions` and
-  `level` only so its contract can name them. Erasing such parameters would
-  need its own rule.
+  of a level is filled" is needed. An unfilled slot stays `absent`, which the
+  consumer's existing bounds guard skips.
+- **Proof-only parameters.** `cascade_level` takes `depths`, `positions` and
+  `level` only so its contract can name them. Erasing them would need its
+  own rule.
+- **A loop's exits must be joined.** A first implementation gave back a
+  loop's forgotten header state after a `break`, which lost an ordinary
+  `loop`'s range invariants after it and kept a counted loop's affine
+  invariants as conditions after a break had changed the values. The state
+  after a loop is now the join of its breaks and, for a counted loop, its
+  last header; `range2-neg-break-state` was accepted before and is rejected
+  now, and `range3-pos-ordinary-loop-invariant` the reverse.
 
 ## Limits
 
-- **The live DOM.** The candidate states nothing about the linked arena:
-  not acyclicity, not that a sibling chain repeats no node, not facts that
-  survive its mutation. If a consumer needs proofs carried across DOM edits,
-  such as incremental restyling that keeps a numbering instead of rebuilding
-  it, this candidate does not cover it. Maintaining a numbering under edits
-  would need order keys with gaps, or the model route.
-- **Unwritten consumers.** W2's permutation and the per-parent sibling-
-  position pass have not been written. The sibling-position pass would use
-  `parent` as the separating function between parents and a stored position
-  as the left inverse within one parent.
-- **The calculus.** The fact grammar, certificate syntax, write-law case
-  generation, content laws, transport rules and the PAR-2 amendment are
-  sketches. Neither their soundness nor their checking cost is established.
-  The step counts above are by hand.
-- **The refusal it reopens.** The fact language carries no quantified
-  storage-element facts
-  ([checks and proofs](../../../design/language/checks-and-proofs.md)), for
-  two reasons: every write would owe the fact again, and establishing one
-  needs a derivation over elements. Here a write kills the fact unless the
-  writer proves its preservation, and both introduction forms are fixed and
-  finite. The refusal's alternative, occupancy as tags or options checked
-  through a bounded index, cannot express distinctness without a runtime
-  check. Reopening it is an owner decision; this record does not make it.
-- **Prior art.** The left-inverse witness of injectivity and the use of
-  preorder intervals for ancestry are standard; they are not claimed as new.
+- **No range postconditions.** A function cannot hand a range fact to its
+  caller. A producer in its own function means its consumer validates what it
+  receives. The design tree records the reopening condition.
+- **The live DOM.** Nothing is stated about the linked arena itself: not
+  acyclicity, not facts that survive a mutation. Incremental restyling that
+  keeps a numbering across edits would need order keys with gaps, or the
+  model route.
+- **Bound variables.** At most two; distinctness within each segment of a
+  `Segments` is stated as a left inverse instead of a three-variable
+  `nodup`.
+- **Proof cost.** The judgment re-solves each problem from scratch; its
+  time is in [Observations](#observations).
 
 ## Comparison with the library Forest route
 
-| Need | Library Forest ([derivation](DESIGN.md#worked-derivation-a-library-forest)) | Candidate N |
+| Need | Library Forest ([derivation](DESIGN.md#worked-derivation-a-library-forest)) | Range facts |
 |---|---|---|
-| Object proved | The live linked arena under every mutation | Each stage's derived numbering, rebuilt from the arena |
-| Distinctness | `NoDup` of a flattened ghost model, through structural induction | A stored left inverse and read congruence |
+| Object proved | The live linked arena under every mutation | Each pass's derived arrays, rebuilt from the arena |
+| Distinctness | `NoDup` of a flattened ghost model, through structural induction | A stored left inverse or fresh values, and read congruence |
 | Read/write separation | Subtree footprints over the model | A stored depth and read congruence |
-| New proof machinery | Ghost types, Seq/Nat models, recursive definitions, induction, unfold, existentials, content snapshots, generalized invariants | Pointwise quantified facts, instantiation, write-law case splits, content laws, one congruence rule, a cross-iteration certificate |
+| New proof machinery | Ghost types, Seq/Nat models, recursive definitions, induction, unfold, existentials, content snapshots, generalized invariants | Range clauses, a fixed derivation, a two-iteration certificate |
 | Facts across DOM edits | Covered | Not covered |

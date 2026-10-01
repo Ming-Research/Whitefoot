@@ -1,14 +1,14 @@
 # Indices a program knows are distinct
 
-Status: language-gap investigation, with a worked library-forest model below.
-The required direction is a user-defined structure with checked, erased
-proofs. The proof language remains a proposal; no specification or compiler
-change is selected here. The current derivation uses boundary contracts.
-Stronger lifetime validity and its surface spelling are deferred questions,
-not prerequisites for proving the Forest. Candidate N, pointwise facts over a
-derived numbering, has a separate paper derivation in
-[POINTWISE.md](POINTWISE.md); the owner has not chosen between the two
-routes.
+Status: language-gap investigation. The owner selected candidate N,
+pointwise facts over a derived numbering, which is implemented as range facts
+and certified elements; [POINTWISE.md](POINTWISE.md) holds its derivation,
+programs and measurements. Selecting it reopened, in restricted form, the
+refusal of quantified storage-element facts that criterion 3 below records.
+The worked library-forest model below remains the comparison and the route
+for facts about live storage across edits, which range facts do not cover;
+its proof language is a proposal, and no specification or compiler change
+follows from it.
 
 ## Question
 
