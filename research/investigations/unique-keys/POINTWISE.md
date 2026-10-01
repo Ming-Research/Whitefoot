@@ -207,7 +207,7 @@ of the written storage is a measure or one of the certificate's reads.
 
 ## Observations
 
-At compiler revision b787fe51 (`make -C compiler build`), on the
+At compiler revision 60b4b3b9 (`make -C compiler build`), on the
 4-processor Linux host the timings below name:
 
 - **The witnesses.** `whitefootc --check` accepts the level cascade and the
@@ -231,14 +231,14 @@ At compiler revision b787fe51 (`make -C compiler build`), on the
   header that forgot neither a write only later iterations reach nor the
   variant of a written enum. Earlier builds of this branch accepted the last
   five.
-- **Proof cost.** Checking the level cascade takes 1.14 s; callgrind
+- **Proof cost.** Checking the level cascade takes 1.08 to 1.15 s; callgrind
   attributes 91% of its 10.1 billion instructions to the range judgment,
   90% to solving owed facts (`Walker::require`), with repeated
   Fourier-Motzkin elimination the largest part. The children array checks in
-  0.08 s. Over Snowghost's whole renderer the judgment is within the
-  run-to-run spread of the front end: 108.3 s and 106.2 s with the judgment
-  skipped by a temporary switch, against 108.5 s and 109.2 s with it, two
-  builds each; at 450fea25 the same comparison gave 102.9 s and 102.7 s
+  0.08 s. Over Snowghost's whole renderer, at b787fe51, the judgment is
+  within the run-to-run spread of the front end: 108.3 s and 106.2 s with
+  the judgment skipped by a temporary switch, against 108.5 s and 109.2 s
+  with it, two builds each; at 450fea25 the same comparison gave 102.9 s and 102.7 s
   against 105.4 s and 105.1 s. Making the derivation incremental is
   recorded in `docs/todo.md`.
 
@@ -257,8 +257,8 @@ variable `WF_SKIP_RANGE` was set.
 Snowghost's style prototype gained shape D on its branch
 `proved-level-cascade`, commits 7358347 (code) and 8684f92 (record), built
 and timed with this branch's compiler at 450fea25 and checked again at
-b787fe51, whose later changes are to range checking alone, with the same
-checksums and ledger lines: C's flat match, then
+b787fe51 and 60b4b3b9, whose later changes are to range checking alone,
+with the same checksums and ledger lines: C's flat match, then
 `cascade_levels`, the level cascade's program over the prototype's
 traversal, with `cascade_level`'s loop writing each element's computed
 values at its preorder index under an empty certificate. The Snowghost
