@@ -3334,9 +3334,9 @@
       }
     ],
     "archive": {
-      "bytes": 1315991,
+      "bytes": 1397257,
       "path": "research/experiments/container-representation/map-library/entry-forward-evidence.tar.gz",
-      "sha256": "407b96d635fc6b1af15d16f20c5b6c13475fbf34347e48f84c7bcdde3d4cba26"
+      "sha256": "e8aae829cab1665ab0b4f40b70a06903b9c9a2a8560133228c9e63f3ff1ac072"
     },
     "archive_purpose": "Raw auditable API and whole-Map/long-hit replay for this RESULTS section; retire or replace when superseded. No binaries.",
     "construction": [
@@ -3785,6 +3785,91 @@
         "stdout": "variant,capacity_kind,width,slots,population,capacity,operation,rounds,filled_requests,filled_releases,filled_bytes,filled_live,filled_peak,batch_requests,batch_releases,batch_bytes,batch_live,final_requests,final_releases,final_bytes,final_live,final_peak\nwhitefoot-flat,physical-slots,word8,64,32,64,replace,3,1,0,1536,1536,1536,0,0,0,1536,1,1,1536,0,1536\nwhitefoot-flat,physical-slots,word8,64,32,64,churn,3,1,0,1536,1536,1536,0,0,0,1536,1,1,1536,0,1536\nwhitefoot-flat,physical-slots,word8,4096,2048,4096,replace,3,1,0,98304,98304,98304,0,0,0,98304,1,1,98304,0,98304\nwhitefoot-flat,physical-slots,word8,4096,2048,4096,churn,3,1,0,98304,98304,98304,0,0,0,98304,1,1,98304,0,98304\nwhitefoot-chain,head-buckets,word8,64,32,64,replace,3,2,0,2048,2048,2048,0,0,0,2048,2,2,2048,0,2048\nwhitefoot-chain,head-buckets,word8,64,32,64,churn,3,2,0,2048,2048,2048,0,0,0,2048,2,2,2048,0,2048\nwhitefoot-chain,head-buckets,word8,4096,2048,4096,replace,3,2,0,131072,131072,131072,0,0,0,131072,2,2,131072,0,131072\nwhitefoot-chain,head-buckets,word8,4096,2048,4096,churn,3,2,0,131072,131072,131072,0,0,0,131072,2,2,131072,0,131072\nrust-hash-map,usable-entries,word8,64,32,56,replace,3,1,0,1096,1096,1096,0,0,0,1096,1,1,1096,0,1096\nrust-hash-map,usable-entries,word8,64,32,56,churn,3,1,0,1096,1096,1096,0,0,0,1096,1,1,1096,0,1096\nrust-hash-map,usable-entries,word8,4096,2048,3584,replace,3,1,0,69640,69640,69640,0,0,0,69640,1,1,69640,0,69640\nrust-hash-map,usable-entries,word8,4096,2048,3584,churn,3,1,0,69640,69640,69640,0,0,0,69640,1,1,69640,0,69640\ncpp-unordered-map,chaining-buckets,word8,64,32,64,replace,3,33,0,1536,1536,1536,0,0,0,1536,33,33,1536,0,1536\ncpp-unordered-map,chaining-buckets,word8,64,32,64,churn,3,33,0,1536,1536,1536,96,96,3072,1536,129,129,4608,0,1536\ncpp-unordered-map,chaining-buckets,word8,4096,2048,4096,replace,3,2049,0,98304,98304,98304,0,0,0,98304,2049,2049,98304,0,98304\ncpp-unordered-map,chaining-buckets,word8,4096,2048,4096,churn,3,2049,0,98304,98304,98304,6144,6144,196608,98304,8193,8193,294912,0,98304\nwhitefoot-flat,physical-slots,wide256,64,32,64,replace,3,1,0,17408,17408,17408,0,0,0,17408,1,1,17408,0,17408\nwhitefoot-flat,physical-slots,wide256,64,32,64,churn,3,1,0,17408,17408,17408,0,0,0,17408,1,1,17408,0,17408\nwhitefoot-flat,physical-slots,wide256,4096,2048,4096,replace,3,1,0,1114112,1114112,1114112,0,0,0,1114112,1,1,1114112,0,1114112\nwhitefoot-flat,physical-slots,wide256,4096,2048,4096,churn,3,1,0,1114112,1114112,1114112,0,0,0,1114112,1,1,1114112,0,1114112\nwhitefoot-chain,head-buckets,wide256,64,32,64,replace,3,2,0,17920,17920,17920,0,0,0,17920,2,2,17920,0,17920\nwhitefoot-chain,head-buckets,wide256,64,32,64,churn,3,2,0,17920,17920,17920,0,0,0,17920,2,2,17920,0,17920\nwhitefoot-chain,head-buckets,wide256,4096,2048,4096,replace,3,2,0,1146880,1146880,1146880,0,0,0,1146880,2,2,1146880,0,1146880\nwhitefoot-chain,head-buckets,wide256,4096,2048,4096,churn,3,2,0,1146880,1146880,1146880,0,0,0,1146880,2,2,1146880,0,1146880\nrust-hash-map,usable-entries,wide256,64,32,56,replace,3,1,0,16968,16968,16968,0,0,0,16968,1,1,16968,0,16968\nrust-hash-map,usable-entries,wide256,64,32,56,churn,3,1,0,16968,16968,16968,0,0,0,16968,1,1,16968,0,16968\nrust-hash-map,usable-entries,wide256,4096,2048,3584,replace,3,1,0,1085448,1085448,1085448,0,0,0,1085448,1,1,1085448,0,1085448\nrust-hash-map,usable-entries,wide256,4096,2048,3584,churn,3,1,0,1085448,1085448,1085448,0,0,0,1085448,1,1,1085448,0,1085448\ncpp-unordered-map,chaining-buckets,wide256,64,32,64,replace,3,33,0,9472,9472,9472,0,0,0,9472,33,33,9472,0,9472\ncpp-unordered-map,chaining-buckets,wide256,64,32,64,churn,3,33,0,9472,9472,9472,96,96,26880,9472,129,129,36352,0,9472\ncpp-unordered-map,chaining-buckets,wide256,4096,2048,4096,replace,3,2049,0,606208,606208,606208,0,0,0,606208,2049,2049,606208,0,606208\ncpp-unordered-map,chaining-buckets,wide256,4096,2048,4096,churn,3,2049,0,606208,606208,606208,6144,6144,1720320,606208,8193,8193,2326528,0,606208\n"
       }
     ],
+    "descriptor_alias_native_diagnostic": {
+      "access_counts": {
+        "local_unannotated": 5,
+        "owner": 18,
+        "payload": 19
+      },
+      "classification": {
+        "archive_member": "descriptor-alias-native/access-classification.json",
+        "bytes": 10140,
+        "sha256": "3352af5a59e04afcdda24ed02f048f9d00341c9a146f7d69baea8006b1f93103"
+      },
+      "construction": {
+        "all_native_direct_exits": 0,
+        "extract_guard_seconds": 0.55,
+        "extract_statuses": {
+          "archive_member": "descriptor-alias-native/extract-statuses.json",
+          "bytes": 389,
+          "sha256": "1226dbda64a2f83c4857636c5fdbeb69a505c4634660ee6963a8f8e0ff370d1f"
+        },
+        "native_guard_seconds": 2.08,
+        "native_stages": 6,
+        "native_statuses": {
+          "archive_member": "descriptor-alias-native/native-statuses.json",
+          "bytes": 5320,
+          "sha256": "2ccbfa443d644f9241ffaaf72653cba50e189ddc0bdd39458ee18dd1ee0afca0"
+        }
+      },
+      "criterion": {
+        "archive_member": "descriptor-alias-native/criterion.txt",
+        "bytes": 3820,
+        "sha256": "bd1d503df0ef9b104992fb9c72de831f0e7eaeae4493bc6b1dc0095dca153bf6"
+      },
+      "native": {
+        "extra_pass_confound": "Equal second O3 pass changes four scalar instruction lines versus original mask image; these are not alias-metadata effects.",
+        "frame_bytes": 112,
+        "helper_BL_edges": 0,
+        "in_loop_count_mask_selections": "Both remain; no partial hoist.",
+        "licm_remarks": "Metadata survives reoptimization, but unknown:0:0 remarks cannot attribute a particular missed load.",
+        "linked_disassembly_lines": 191839,
+        "object_sha256": "b5198686bffb9c03e2dbeb61412d8d90b15aea31f1bc339a2f07283899b2a259",
+        "objects_byte_identical": true,
+        "only_difference": "Filename header.",
+        "scalar_instructions": 205
+      },
+      "native_comparison": {
+        "archive_member": "descriptor-alias-native/native-comparison.json",
+        "bytes": 419,
+        "sha256": "32c58b0a87a844e2a781d20e602cd592378e9b14709a12ef392099fbdf6b3f2d"
+      },
+      "normalization": {
+        "archive_member": "descriptor-alias-native/text-normalization.json",
+        "bytes": 851,
+        "sha256": "8166a51f1d57698d627b0c5d6004c29d0631348c105b49012fc10d1e81bc988d"
+      },
+      "patch": {
+        "archive_member": "descriptor-alias-native/metadata.patch",
+        "bytes": 15167,
+        "sha256": "d4aa62475294666f43e344745ffe8a91294608018b545c25db3b9fb3727869de"
+      },
+      "pins": {
+        "archive_member": "descriptor-alias-native/artifact-pins.json",
+        "bytes": 3831,
+        "sha256": "d276eebf1aaff9b18028e534473b034610c3dc9ec562e4274d7dc83b9947049a"
+      },
+      "premise": "One entry-declared scope separates live80-byte caller owner from its separately allocated bucket backing for this prepared scalar invocation; no allocation/growth/callback escape, no owner immutability or sibling-range promise.",
+      "recipes": [
+        {
+          "archive_member": "descriptor-alias-native/annotate.py",
+          "bytes": 3093,
+          "sha256": "e92b6ec2a4c53e3cc53ea3d92369bb17ac530cb208d840a0b277df63ed34df47"
+        },
+        {
+          "archive_member": "descriptor-alias-native/build.py",
+          "bytes": 2282,
+          "sha256": "9b658530355548d39cbe899fb924c3d29acf69f1cf978ba8cae32e5110661c58"
+        }
+      ],
+      "scope_and_outcome": {
+        "archive_member": "descriptor-alias-native/result.txt",
+        "bytes": 4163,
+        "sha256": "7970610951d02e78d446aebfecac6def9fa00eb94c01861d44ef98fb2ef9e318"
+      },
+      "status": "Native criterion FAIL; no correctness or timing run. No production metadata policy selected.",
+      "strip_metadata_recovers_control_bytes": true
+    },
     "edge_guard_counterfactual": {
       "direct_cargo_exit": 101,
       "execution_s": 1.29,
@@ -4754,6 +4839,156 @@
       "bytes": 2222,
       "path": "research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/entry-forward-implementation-criterion.txt",
       "sha256": "ec7dfc6ffed9d988ed3becd454fc69ce029a4ff20f194474bc86f1d310ab54ec"
+    },
+    "prepared_capacity_snapshot_diagnostic": {
+      "access_proof": {
+        "archive_member": "prepared-capacity-snapshot/access-proof.json",
+        "bytes": 13310,
+        "sha256": "bc1d79f2717b2fafbc179295c5ba2892e1ee03e1feda81aa6a7cb53c6beb2661"
+      },
+      "construction": {
+        "all_direct_exits": 0,
+        "guard_seconds": 2.17,
+        "native_stages": 6,
+        "statuses": {
+          "archive_member": "prepared-capacity-snapshot/statuses.json",
+          "bytes": 5371,
+          "sha256": "7df3f4dfa84d12ca98c4fae65c977cfafb735c1a8acf0f856f966b76c6455694"
+        }
+      },
+      "correctness": {
+        "expected_statuses": 30,
+        "full_owner_cases_per_image": 96,
+        "guard_seconds": 3.11,
+        "ledger_byte_equal_to_each_other_and_source_mask": true,
+        "ledger_rows": 32,
+        "specific_fault_controls_per_arm": 10,
+        "statuses": {
+          "archive_member": "prepared-capacity-snapshot/check-statuses.json",
+          "bytes": 10995,
+          "sha256": "c338e6392ef6acfde569e666bc9bb067f92951db612caa5fc4fe77af624b5200"
+        }
+      },
+      "criterion": {
+        "archive_member": "prepared-capacity-snapshot/criterion.txt",
+        "bytes": 2784,
+        "sha256": "28b409c03fa04fb45f2b4c45a37d63167fea283779856f6a2031c5ff4bfa41d3"
+      },
+      "image_pins": {
+        "archive_member": "prepared-capacity-snapshot/images.json",
+        "bytes": 539,
+        "sha256": "4d5c3c66d6684b7ce23003872d4aa753b295c00516a5677bdfa236a615386f74"
+      },
+      "native": {
+        "details": {
+          "archive_member": "prepared-capacity-snapshot/native-result.txt",
+          "bytes": 2948,
+          "sha256": "9c921a736b5fbc54176d3ef456b8bddee251e14b89ab01b90fdcb9bd98f007ad"
+        },
+        "extra_pass_collateral": "Wide batch665instructions in both second-pass arms, versus386in original one-pass source-mask candidate (381in its no-mask baseline). No attribution across those distinct controls.",
+        "frame_bytes": [
+          112,
+          112
+        ],
+        "helper_BL_edges": [
+          0,
+          0
+        ],
+        "retained_cost": "Per-item TST/branch and payload loads remain; rounds newly spills once per outer round, prologue loses zero-work shrink wrapping.",
+        "scalar_instructions": [
+          205,
+          201
+        ],
+        "useful_reduction": "Count load and count-1 move before outer/item loops; positive power2 replacement saves one load/subtraction per item, churn twice.",
+        "wf_object_text_bytes": [
+          72676,
+          72660
+        ]
+      },
+      "normalization": {
+        "archive_member": "prepared-capacity-snapshot/text-normalization.json",
+        "bytes": 1684,
+        "sha256": "6af6c9a69de8d433aa30a29d506ec408d10533965ac54f216dacdf36431a791a"
+      },
+      "patch": {
+        "archive_member": "prepared-capacity-snapshot/snapshot.patch",
+        "bytes": 6496,
+        "sha256": "2dfb4a56c42a8d2e6a997bea4efc9f5bdc5dac1e6826a31e206d2358d20fad51"
+      },
+      "premise": "Prepared80-byte owner live even for zero rounds/count; audited42accesses only write owner offsets24/32/72, bucket accesses use separate backing at offset16, local accesses use separate alloca; complete call inventory has only bounded LLVM intrinsics.",
+      "recipes": [
+        {
+          "archive_member": "prepared-capacity-snapshot/run.py",
+          "bytes": 4615,
+          "sha256": "9bdff8da695bd1b143c5f69dbf52a0852626d6ae751ee407a204bd4c1c98d763"
+        },
+        {
+          "archive_member": "prepared-capacity-snapshot/check.py",
+          "bytes": 2850,
+          "sha256": "196480e378f330aa23cab442cbe232e2093c35161fd80b7ba6e1d5b3ce495d74"
+        },
+        {
+          "archive_member": "prepared-capacity-snapshot/measure.py",
+          "bytes": 3773,
+          "sha256": "376898389119dd0774ce4084c017daf60639caf937669d40fa18224ac9cae89e"
+        },
+        {
+          "archive_member": "prepared-capacity-snapshot/reduce.py",
+          "bytes": 4087,
+          "sha256": "f168af84239fb47ff0b7fdb3424af5e74f9e72c4e25aa12779790bffc3210b62"
+        }
+      ],
+      "scope": "Only two scalar batch owner-offset0 bucket-count loads replaced by one plain entry snapshot; no new metadata, source/API/compiler policy, constant capacity or immutability promise.",
+      "status": "Manual dataflow cost floor; no selection. Fixed panel has no separated gain/loss and fails paired-ratio and chain-drift limits.",
+      "summary": {
+        "all_overlapping": true,
+        "failed_chain_drift_percent": [
+          14.011335012594461,
+          16.595883698137868
+        ],
+        "flat_cohort_cells": 16,
+        "full_reduction": {
+          "archive_member": "prepared-capacity-snapshot/reduction.json",
+          "bytes": 33523,
+          "sha256": "72f4579b58b60455fa6e175f291dac0f7a3dab849b6079f2003817d62d2fa880"
+        },
+        "maximum_paired_ratio_spread_percent": 12.771678552757471,
+        "maximum_rust_cpp_drift_percent": 3.334094542132915,
+        "minimum_interval_ns": 2328000,
+        "scalar_replacement_median_changes_percent": {
+          "4096": [
+            -1.6147308781869651,
+            1.7021276595744705
+          ],
+          "64": [
+            1.570048309178751,
+            3.5562427522226603
+          ]
+        },
+        "separated_gains": 0,
+        "separated_losses": 0
+      },
+      "timing": {
+        "all_direct_exits": 0,
+        "guard_seconds": 52.58,
+        "images_before_after_equal": true,
+        "metadata": {
+          "archive_member": "prepared-capacity-snapshot/timing/metadata.json",
+          "bytes": 2849,
+          "sha256": "01dc61b18830a748eacd3cf0e54d6930748cd6a15490d831bf88445eccdaad13"
+        },
+        "processes": 4,
+        "raw_cohorts": [
+          "prepared-capacity-snapshot/timing/control-cohort-0.csv",
+          "prepared-capacity-snapshot/timing/control-cohort-1.csv",
+          "prepared-capacity-snapshot/timing/candidate-cohort-0.csv",
+          "prepared-capacity-snapshot/timing/candidate-cohort-1.csv"
+        ],
+        "raw_pins": "Exact bytes/sha256 in archive MANIFEST.json.",
+        "rows": 1152,
+        "samples": 9,
+        "work": 1048576
+      }
     },
     "proof_boundary": "Only unexposed Own input plus typed identity carries in its complete storage group; liveness requires eager private capture before all result-root writes, including Jump edges. Defined synchronous callees require finite nonrecursive eager-capture guarantee. Exposed, mixed, result-backed, waiting/scheduled, unknown and cyclic cases retain copies.",
     "rejected_inline_boundary": {

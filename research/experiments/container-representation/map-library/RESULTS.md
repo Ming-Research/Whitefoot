@@ -4072,6 +4072,60 @@ retained under `mutation-home-mask` in the same archive; the JSON separates this
 source trial from the two rejected native ordering floors. The overall container
 performance goal remains unestablished.
 
+#### Descriptor and payload alias metadata
+
+A fact-only LLVM diagnostic gives the reached scalar mutation batch one fresh
+entry-declared scope separating its live 80-byte caller owner from separately
+allocated bucket backing. Its audited inventory marks 18 owner and 19 payload
+accesses, leaving five locals unannotated; it asserts neither owner immutability
+nor sibling-field or bucket-entry disjointness. Stripping the additions recovers
+the control bytes. Both arms receive the same extra O3 pass and produce
+byte-identical native objects; all 191839 linked disassembly lines match except
+the filename header. The 205-instruction, 112-byte-frame scalar body retains both
+in-loop count/mask selections. The equal extra pass itself changes four scalar
+instructions versus the original mask image, so those changes are not metadata
+effects. Scope metadata survives reoptimization, but unlocated LICM remarks
+cannot explain a particular missed hoist. The native criterion fails: correctness
+and timing are not run. This is no native response to one audited instrument,
+not a general conclusion about aliasing. Exact premises, classification, recipes,
+patch, pins, direct statuses and compact excerpts remain under
+`descriptor-alias-native` in the archive.
+
+#### Prepared capacity snapshot cost floor
+
+The subsequent manual LLVM diagnostic uses that same unannotated extra-pass
+control and replaces exactly two scalar bucket-count loads with one plain entry
+snapshot. This is owner offset zero, distinct from allocation capacity at offset
+eight. The prepared owner is live even for zero rounds/count; the 42-access audit
+writes only owner offsets 24/32/72, accesses buckets through separate live backing,
+and calls only bounded LLVM intrinsics. These local premises do not establish
+a general WF contract or select a compiler transport. Native instructions shrink
+205 to 201 with the same 112-byte frame and no helper call. Count and count-minus-one
+move before both loops, saving one load/subtraction per positive power-of-two
+replacement and two per churn. Per-item power-of-two tests/branches and payload
+pointer loads remain. New rounds spill/reload occurs once per outer round and the
+prologue now runs on zero-work paths. The shared extra pass also changes the wide
+body from the source-mask candidate's 386 instructions to 665 in both current
+arms (381 belongs to its no-mask baseline);
+this collateral cannot be attributed to the snapshot.
+
+All six native stages pass (2.17 seconds guarded). Both arms pass their timed and
+accounted 96-owner checks, all ten specific negatives per arm and exact 32-row
+ledger equality, including equality to the source-mask ledger: 30 expected
+statuses pass in 3.11 seconds. The fixed four-process panel exits zero in 52.58
+seconds and retains all 1152 rows with stable image hashes. Every one of the 16
+flat cohort cells overlaps; there is no separated gain or loss. Scalar 64-bucket
+replacement medians worsen by 1.570 / 3.556 percent, while scalar 4096-bucket
+replacement changes by -1.615 / +1.702 percent; all complete ranges overlap. The shortest
+interval is 2.328 ms, but scalar 4096-bucket churn's paired-ratio spread is 12.772
+percent and unchanged chain scalar 4096-bucket replacement median drift is
+14.011 / 16.596 percent, both exceeding the registered 10-percent limits.
+Rust/C++ maximum drift is 3.334 percent. The cost floor fails its criterion and
+selects no implementation or cause for the earlier scalar observations. Its
+criterion, patch, complete access/call proof, recipes, controls, ledgers, raw
+cohorts and all peer/adverse reductions remain under `prepared-capacity-snapshot`
+in the same archive, separate from the alias negative.
+
 [`entry-forward-evidence.tar.gz`](entry-forward-evidence.tar.gz) serves this
 section's reader with scripts, criteria, raw API/whole-Map/long-hit records,
 commands, metadata, statuses, source patch and native excerpts, without binaries.

@@ -3389,8 +3389,15 @@ condition under which it is taken up.
   removes the previous frame growth and gives separated small-hit gains,
   but still qualifies no miss against the slower native peer; some control
   medians drift. Keep it unselected while the representation comparison
-  proceeds. Reopen indexing with stable paired evidence on the selected
-  complete representation. Preserve
+  proceeds. The later [conditional mutation-home mask](../research/experiments/container-representation/map-library/RESULTS.md#conditional-home-mask-in-the-source-library)
+  gives separated wide gains, but scalar replacement medians worsen
+  12.07–16.86 percent while full ranges overlap; unchanged chain drift exceeds
+  the registered limit. The scalar direction remains uncertain and the mask
+  remains unselected. The separate [prepared capacity snapshot](../research/experiments/container-representation/map-library/RESULTS.md#prepared-capacity-snapshot-cost-floor)
+  partially hoists count/mask work but qualifies no separated benefit and fails
+  its spread/drift controls. Reopen indexing with stable paired evidence on the
+  selected complete representation, distinguishing home arithmetic from count
+  lifetime and descriptor accesses. Preserve
   arbitrary capacities, non-power-of-two lookup, wrap and empty-table behavior.
 - **Packing a byte-comparison mask loses the vector form.** Three ordinary
   `Array<u8, 8>` source forms generate vector comparisons, but packing their
@@ -3418,7 +3425,11 @@ condition under which it is taken up.
   EFF-3 `allocates` fact is not itself such a summary), scoped
   alias metadata and `llvm.loop.parallel_accesses` (the emitter has no
   metadata table). Build the metadata subsystem as its own step with a
-  before/after benchmark.
+  before/after benchmark. The scoped [descriptor-versus-payload trial](../research/experiments/container-representation/map-library/RESULTS.md#descriptor-and-payload-alias-metadata)
+  has byte-identical native output under equal extra O3 passes; it neither
+  establishes a general alias bottleneck nor justifies a metadata policy.
+  Preserve its audited access/lifetime premise separately from the manual
+  count-snapshot cost floor, and reopen with a discriminating real consumer.
   The [Vector full-growth helper](../lib/std/collections/vector/grow-vector.wf)
   also exposes a scalar-contract case: `len < ceiling` and `cap <= len`, with
   the Slots window invariant, imply `len == cap < ceiling`. The
