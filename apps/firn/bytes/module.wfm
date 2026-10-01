@@ -44,7 +44,7 @@ public fn key_hash(env: &KeyEnv, key: &Key) -> hash: u64 reads(key) doc "The has
 
 public fn key_equal(env: &KeyEnv, left: &Key, right: &Key) -> equal: Bool reads(left), reads(right) doc "Two keys are equal when their hashes, lengths and every byte are.";
 
-public binding Keyed : HashMapKey<Key, KeyEnv> {
+public binding KeyHash : HashMapKey<Key, KeyEnv> {
   hash = key_hash;
   equal = key_equal;
 }

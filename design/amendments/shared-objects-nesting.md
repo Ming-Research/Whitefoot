@@ -1,0 +1,5 @@
+Node: language/waiting/shared-objects
+
+Replaces the decision beginning "An atomic statement counts as a waiting call, and its block and guard contain no waiting call and no atomic statement" with the one below, since a keyed or whole-map statement's block now contains a statement on an object (language/waiting/shared-objects/shared-maps).
+
+Decision: An atomic statement counts as a waiting call, except one on an entry of a map state its enclosing statement holds, and an object statement's block and guard contain no call to a waiting function and no atomic statement, because the existing waiting-function rule [WAIT-1] then makes nested acquisition of objects, lock-order deadlock and holding an object across a host wait unrepresentable, instead of lock ordering or deadlock detection; a map's or an entry's block admits object statements, which are always taken after the entry and whose holders take nothing, so no cycle forms.

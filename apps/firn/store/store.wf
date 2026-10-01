@@ -2,7 +2,7 @@ alias Bytes = pkg::bytes::Bytes;
 alias Key = pkg::bytes::Key;
 alias KeyEnv = pkg::bytes::KeyEnv;
 alias Span = pkg::protocol::Span;
-alias Keyed = pkg::bytes::Keyed;
+alias KeyHash = pkg::bytes::KeyHash;
 alias byte_at = pkg::bytes::byte_at;
 alias bytes_order = pkg::bytes::bytes_order;
 alias hash_map_lookup = std::collections::hash_map::hash_map_lookup;
@@ -85,11 +85,11 @@ fn expire_batch(store: &Store, now: u64, env: &KeyEnv) -> more: Bool reads(env),
       }
       let due = priority_queue_pop::<DueOrder, ceiling>(queue: &store^.due, env: env);
       let seen = Probe(at: 0_u64);
-      let found = hash_map_lookup::<Keyed, Entry, Probe, u64, fn entry_expiry, ceiling>(map: &store^.map, key: &due.key, key_env: env, visit_env: &seen);
+      let found = hash_map_lookup::<KeyHash, Entry, Probe, u64, fn entry_expiry, ceiling>(map: &store^.map, key: &due.key, key_env: env, visit_env: &seen);
       match found {
         Ok(value: expires) => {
           if expires == due.at {
-            let gone = hash_map_remove::<Keyed, Entry, ceiling>(map: &store^.map, key: &due.key, env: env);
+            let gone = hash_map_remove::<KeyHash, Entry, ceiling>(map: &store^.map, key: &due.key, env: env);
           }
         }
         Err(error: absent) => {

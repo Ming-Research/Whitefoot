@@ -1,5 +1,5 @@
 alias Key = pkg::bytes::Key;
-alias Keyed = pkg::bytes::Keyed;
+alias KeyHash = pkg::bytes::KeyHash;
 alias Client = pkg::protocol::Client;
 alias Entry = pkg::store::Entry;
 alias KeyEnv = pkg::bytes::KeyEnv;
@@ -137,9 +137,9 @@ fn run_get(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client:
   set client^.now = time^.check;
   set client^.state = state_absent;
   atomic state = &store^ {
-    let found = hash_map_lookup::<Keyed, Entry, Client, u64, fn text_value, ceiling>(map: &state^.map, key: &key, key_env: env, visit_env: client);
+    let found = hash_map_lookup::<KeyHash, Entry, Client, u64, fn text_value, ceiling>(map: &state^.map, key: &key, key_env: env, visit_env: client);
     if client^.state == state_expired {
-      let gone = hash_map_remove::<Keyed, Entry, ceiling>(map: &state^.map, key: &key, env: env);
+      let gone = hash_map_remove::<KeyHash, Entry, ceiling>(map: &state^.map, key: &key, env: env);
     }
   }
   if client^.state == state_done {
@@ -324,12 +324,12 @@ fn run_incr(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client
   let key = key_at(input: input, args: args, index: 1_u64);
   let counted = Counted(value: 0_i64, now: time^.check, state: state_absent);
   atomic state = &store^ {
-    let edited = hash_map_edit::<Keyed, Entry, Counted, u64, fn bump_value, ceiling>(map: &state^.map, key: &key, key_env: env, edit_env: &counted);
+    let edited = hash_map_edit::<KeyHash, Entry, Counted, u64, fn bump_value, ceiling>(map: &state^.map, key: &key, key_env: env, edit_env: &counted);
     let fresh_needed = False();
     match edited {
       Ok(value: outcome) => {
         if counted.state == state_expired {
-          let gone = hash_map_remove::<Keyed, Entry, ceiling>(map: &state^.map, key: &key, env: env);
+          let gone = hash_map_remove::<KeyHash, Entry, ceiling>(map: &state^.map, key: &key, env: env);
           set fresh_needed = True();
         }
       }

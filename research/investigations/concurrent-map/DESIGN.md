@@ -364,8 +364,9 @@ statement's block runs once with its entry held:
   takes no lock: it waits while the cell is locked, since a claimed cell has
   no value yet, and then reads the value. A cell never holds another key and
   its value is written by one store, so the value read is one the key held
-  during the read; entries larger than a word need a version in their
-  header, which stage (b) adds with the byte-string keys. The runtime's test
+  during the read; entries larger than a word would need a version in their
+  header, and stage (b)'s entries are read only under the cell's lock, since
+  every keyed statement holds its entry (Q37). The runtime's test
   fails when a read does not wait, and cannot fail when a read checks the
   key word again after the value, so that check was removed.
 - **A removed key stays a removed cell until the table moves,** so a probe
@@ -406,9 +407,10 @@ statement's block runs once with its entry held:
   instead of handing the cell's line to a waiter on each: one-key `update` at
   four threads went from about 6.5 to about 24 million a second, where
   waiting that started at one pause or yielded the processor stayed between
-  6 and 16. A waiting writer can be overtaken without bound; stage (b)
-  parks waiting statements and hands the entry over after a bounded number
-  of vain wakes, as the shared-object runtime does [SHARE-3].
+  6 and 16. A waiting writer can be overtaken without bound; parking
+  waiting statements and handing the entry over after a bounded number of
+  vain wakes, as the shared-object runtime does [SHARE-3], is recorded in
+  `docs/todo.md`.
 - **Cell arrays of 2 MiB or more are mapped and advised into huge pages,**
   since a random probe in a large table otherwise pays a page walk on most
   accesses: uniform `read` at four threads ran at about 127 million a second

@@ -105,11 +105,12 @@ impl IrBuilder<'_> {
                 },
             )?
         };
-        let (address, hold) = match form {
-            CheckedAtomicForm::Object => (
-                self.acquire_object(object, nominal, referent, guard)?,
-                Hold::Object,
-            ),
+        let enclosing = self.bindings.keys().copied().collect::<Vec<_>>();
+        let hold = match form {
+            CheckedAtomicForm::Object => {
+                self.acquire_object(object, nominal, referent, binding, guard)?;
+                Hold::Object
+            }
             CheckedAtomicForm::Map => {
                 let IrType::Nominal(state_nominal) = state_type else {
                     return Err(LoweringFailure::InvalidCheckedProgram);
@@ -122,7 +123,8 @@ impl IrBuilder<'_> {
                         object,
                     },
                 )?;
-                (address, Hold::Map)
+                self.bind_atomic(binding, address)?;
+                Hold::Map
             }
             CheckedAtomicForm::Entry { held } => {
                 let key = key.ok_or(LoweringFailure::InvalidCheckedProgram)?;
@@ -139,16 +141,10 @@ impl IrBuilder<'_> {
                         held,
                     },
                 )?;
-                (entry, Hold::Entry { entry, held })
+                self.bind_atomic(binding, entry)?;
+                Hold::Entry { entry, held }
             }
         };
-        let enclosing = self.bindings.keys().copied().collect::<Vec<_>>();
-        if self.bindings.insert(binding, address).is_some() {
-            return Err(LoweringFailure::InvalidCheckedProgram);
-        }
-        // The binder carries the address itself, as a borrow parameter does,
-        // so a use of it as a value is that address, not a load through it.
-        self.promote_binding_if_needed(binding)?;
         let region = AtomicRegion {
             object,
             nominal,
@@ -168,15 +164,30 @@ impl IrBuilder<'_> {
         Ok(())
     }
 
-    /// Acquires an object for a statement, waiting for its guard, and
-    /// returns its state's address.
+    /// Binds a statement's binder to the address of what it holds. The
+    /// binder carries the address itself, as a borrow parameter does, so a
+    /// use of it as a value is that address, not a load through it.
+    fn bind_atomic(
+        &mut self,
+        binding: BindingId,
+        address: IrValueId,
+    ) -> Result<(), LoweringFailure> {
+        if self.bindings.insert(binding, address).is_some() {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        }
+        self.promote_binding_if_needed(binding)
+    }
+
+    /// Acquires an object for a statement and binds its binder to the
+    /// object's state, which the guard reads, waiting for the guard.
     fn acquire_object(
         &mut self,
         object: IrValueId,
         nominal: IrNominalId,
         referent: IrAddressed,
+        binding: BindingId,
         guard: Option<&CheckedExpression>,
-    ) -> Result<IrValueId, LoweringFailure> {
+    ) -> Result<(), LoweringFailure> {
         let acquire = self.new_block(&[])?.0;
         self.terminate(IrTerminator::Jump {
             target: acquire,
@@ -197,6 +208,7 @@ impl IrBuilder<'_> {
             IrType::Address(referent),
             IrOperation::SharedState { nominal, object },
         )?;
+        self.bind_atomic(binding, state_address)?;
         if let Some(guard) = guard {
             let holds = self.expression(guard)?;
             let proceed = self.new_block(&[])?.0;
@@ -224,7 +236,7 @@ impl IrBuilder<'_> {
             })?;
             self.current = Some(proceed);
         }
-        Ok(state_address)
+        Ok(())
     }
 
     /// Before an edge that leaves the blocks of the atomic statements from

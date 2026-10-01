@@ -933,6 +933,56 @@ rarely insert at the same place.
   Reopen when the 14900K measures one-key `update`, or when waiting writers
   park.
 
+- **A keyed statement on an absent key claims a cell it then removes.**
+  `wf_cmap_lock_entry` (`compiler/src/backend/concurrent_map.c`) creates an
+  absent key's entry so the block can write `Some`; a block that leaves it
+  `None`, a `GET` that misses, leaves a removed cell that counts toward the
+  half-full threshold until the next move, so a workload of misses moves the
+  table at a rate set by misses rather than by keys. The change: probe
+  without claiming first and claim only when the block writes, which needs
+  the lowering to tell a block that may write `Some` from one that cannot,
+  or let a claimed-and-abandoned cell go back to empty when no probe has
+  passed it. Reopen when a measured workload misses often, such as
+  redis-benchmark's `GET` before `SET` has filled its keys.
+
+- **Statements waiting for an entry or a map spin, and can be overtaken
+  without bound.** A keyed statement that finds its entry locked, and a
+  whole-map statement that finds keyed statements under way, wait in
+  `wait_for_cell` and `back_off` without parking, and an object statement
+  inside a keyed block takes back a hand-off the bounded-overtaking rule
+  gave a parked context (`wf__shared_take` in
+  `compiler/src/backend/completion/bridge.c`), so a parked statement on an
+  object also reached from map blocks can lose it at every hand-off while
+  such statements keep arriving. [SHARE-3] promises a begun statement
+  eventually takes effect. The change: park waiting keyed statements with
+  the key word's second bit marking waiters, hand the entry over after a
+  bounded number of vain wakes as objects do, and let a statement that
+  takes back a hand-off owe the next hand-off to the context it took it
+  from. Reopen with that parking, or when a workload's tail latency shows a
+  keyed or nested wait.
+
+- **A shared map's slot alignment above 16 bytes aborts.**
+  `wf_cmap_create_entries` calls `abort()` for an alignment the node layout
+  does not serve, outside the bridge's report path; no prelude type has one
+  today. The change: report through `wf__runtime_exhausted`'s path with a
+  message, or align nodes to the slot's alignment. Reopen when a type with a
+  larger alignment can be a map's value.
+
+- **`SharedMap<unit>` and maps of other payload-free values do not lower.**
+  The unlock reads the entry's `Option` tag as an `i32`
+  (`emit_shared_map_unlock` in `compiler/src/backend/emitter/shared.rs`) and
+  refuses a tag-only enum, which `Option<unit>` may lower to, so a byte-keyed
+  set fails with `InvalidIr` instead of compiling. The change: read the tag
+  at the width the enum's layout gives. Reopen when a program needs a set of
+  byte strings shared between contexts.
+
+- **Entry nodes over 512 bytes come from the pool under its one lock.**
+  `new_node` takes a large key's node from the context pool, whose free
+  lists sit behind one spin lock (`wf_pool_take` in
+  `compiler/src/backend/completion/bridge.c`), while smaller nodes come from
+  per-user chunks. A workload of long keys from many drivers would contend
+  on it. Reopen when a measured workload's keys exceed 512 bytes.
+
 - **Every atomic statement counts a handle of its own, on the lock's cache
   line.** The lowering retains the shared object before it acquires and
   releases it after it unlocks (`compiler/src/lowering/builder/atomic.rs`), so

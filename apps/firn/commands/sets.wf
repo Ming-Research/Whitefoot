@@ -1,5 +1,5 @@
 alias Key = pkg::bytes::Key;
-alias Keyed = pkg::bytes::Keyed;
+alias KeyHash = pkg::bytes::KeyHash;
 alias Client = pkg::protocol::Client;
 alias Entry = pkg::store::Entry;
 alias HashMap = std::collections::hash_map::HashMap;
@@ -41,7 +41,7 @@ fn add_all(members: &HashMap<Key, unit, ceiling>, client: &Client) -> added: u64
   loop @members {
     if client^.items.inner.len > 0_u64 {
       let member = take_back(window: &client^.items.inner);
-      let put = hash_map_put::<Keyed, unit, ceiling>(map: members, key: move member, value: unit, env: &client^.keys);
+      let put = hash_map_put::<KeyHash, unit, ceiling>(map: members, key: move member, value: unit, env: &client^.keys);
       match move put {
         HashMapInserted() => {
           set added = added +wrap 1_u64;
@@ -97,10 +97,10 @@ fn run_sadd(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client
   set client^.number = 0_u64;
   let full = False();
   atomic state = &store^ {
-    let edited = hash_map_edit::<Keyed, Entry, Client, u64, fn add_members, ceiling>(map: &state^.map, key: &key, key_env: env, edit_env: client);
+    let edited = hash_map_edit::<KeyHash, Entry, Client, u64, fn add_members, ceiling>(map: &state^.map, key: &key, key_env: env, edit_env: client);
     let create = client^.state == state_absent;
     if client^.state == state_expired {
-      let gone = hash_map_remove::<Keyed, Entry, ceiling>(map: &state^.map, key: &key, env: env);
+      let gone = hash_map_remove::<KeyHash, Entry, ceiling>(map: &state^.map, key: &key, env: env);
       set create = True();
     }
     if create {
@@ -155,7 +155,7 @@ fn remove_members(env: &Client, key: &Key, value: &Entry) -> kind: u64 writes(en
       loop @members {
         if env^.items.inner.len > 0_u64 {
           let member = take_back(window: &env^.items.inner);
-          let pair = hash_map_remove::<Keyed, unit, ceiling>(map: set_of, key: &member, env: &env^.keys);
+          let pair = hash_map_remove::<KeyHash, unit, ceiling>(map: set_of, key: &member, env: &env^.keys);
           match move pair {
             Some(value: gone) => {
               set removed = removed +wrap 1_u64;
@@ -202,12 +202,12 @@ fn run_srem(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client
   set client^.state = state_absent;
   set client^.number = 0_u64;
   atomic state = &store^ {
-    let edited = hash_map_edit::<Keyed, Entry, Client, u64, fn remove_members, ceiling>(map: &state^.map, key: &key, key_env: env, edit_env: client);
+    let edited = hash_map_edit::<KeyHash, Entry, Client, u64, fn remove_members, ceiling>(map: &state^.map, key: &key, key_env: env, edit_env: client);
     let emptied = client^.state == state_emptied;
     let lapsed = client^.state == state_expired;
     let removing = bor(emptied, lapsed);
     if removing {
-      let gone = hash_map_remove::<Keyed, Entry, ceiling>(map: &state^.map, key: &key, env: env);
+      let gone = hash_map_remove::<KeyHash, Entry, ceiling>(map: &state^.map, key: &key, env: env);
     }
     if client^.number > 0_u64 {
       if state^.logging {
@@ -286,7 +286,7 @@ fn pop_members(env: &Client, key: &Key, value: &Entry) -> kind: u64 writes(env),
         let picked = pick_member(members: set_of, start: env^.random);
         match move picked {
           Some(value: member) => {
-            let pair = hash_map_remove::<Keyed, unit, ceiling>(map: set_of, key: &member, env: &env^.keys);
+            let pair = hash_map_remove::<KeyHash, unit, ceiling>(map: set_of, key: &member, env: &env^.keys);
             reply_text(client: env, text: &member.bytes);
             push_item(client: env, item: move member);
           }
@@ -348,13 +348,13 @@ fn run_spop(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client
   }
   atomic state = &store^ {
     set client^.random = state^.random;
-    let edited = hash_map_edit::<Keyed, Entry, Client, u64, fn pop_members, ceiling>(map: &state^.map, key: &key, key_env: env, edit_env: client);
+    let edited = hash_map_edit::<KeyHash, Entry, Client, u64, fn pop_members, ceiling>(map: &state^.map, key: &key, key_env: env, edit_env: client);
     set state^.random = client^.random;
     let emptied = client^.state == state_emptied;
     let lapsed = client^.state == state_expired;
     let removing = bor(emptied, lapsed);
     if removing {
-      let gone = hash_map_remove::<Keyed, Entry, ceiling>(map: &state^.map, key: &key, env: env);
+      let gone = hash_map_remove::<KeyHash, Entry, ceiling>(map: &state^.map, key: &key, env: env);
     }
     let popped = client^.items.inner.len;
     if popped > 0_u64 {
@@ -429,9 +429,9 @@ fn run_scard(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, clien
   set client^.state = state_absent;
   set client^.number = 0_u64;
   atomic state = &store^ {
-    let found = hash_map_lookup::<Keyed, Entry, Client, u64, fn set_size, ceiling>(map: &state^.map, key: &key, key_env: env, visit_env: client);
+    let found = hash_map_lookup::<KeyHash, Entry, Client, u64, fn set_size, ceiling>(map: &state^.map, key: &key, key_env: env, visit_env: client);
     if client^.state == state_expired {
-      let gone = hash_map_remove::<Keyed, Entry, ceiling>(map: &state^.map, key: &key, env: env);
+      let gone = hash_map_remove::<KeyHash, Entry, ceiling>(map: &state^.map, key: &key, env: env);
       set client^.number = 0_u64;
     }
   }

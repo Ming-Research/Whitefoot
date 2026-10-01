@@ -1,5 +1,5 @@
 alias Key = pkg::bytes::Key;
-alias Keyed = pkg::bytes::Keyed;
+alias KeyHash = pkg::bytes::KeyHash;
 alias Client = pkg::protocol::Client;
 alias Entry = pkg::store::Entry;
 alias HashMap = std::collections::hash_map::HashMap;
@@ -35,7 +35,7 @@ fn put_fields(fields: &HashMap<Key, Bytes, ceiling>, client: &Client) -> added: 
       let field = take_back(window: &client^.items.inner);
       let prepared = take_back(window: &client^.items.inner);
       let stored = key_text(key: move prepared);
-      let put = hash_map_put::<Keyed, Bytes, ceiling>(map: fields, key: move field, value: move stored, env: &client^.keys);
+      let put = hash_map_put::<KeyHash, Bytes, ceiling>(map: fields, key: move field, value: move stored, env: &client^.keys);
       match move put {
         HashMapInserted() => {
           set added = added +wrap 1_u64;
@@ -91,10 +91,10 @@ fn run_hset(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client
   set client^.number = 0_u64;
   let full = False();
   atomic state = &store^ {
-    let edited = hash_map_edit::<Keyed, Entry, Client, u64, fn set_fields, ceiling>(map: &state^.map, key: &key, key_env: env, edit_env: client);
+    let edited = hash_map_edit::<KeyHash, Entry, Client, u64, fn set_fields, ceiling>(map: &state^.map, key: &key, key_env: env, edit_env: client);
     let create = client^.state == state_absent;
     if client^.state == state_expired {
-      let gone = hash_map_remove::<Keyed, Entry, ceiling>(map: &state^.map, key: &key, env: env);
+      let gone = hash_map_remove::<KeyHash, Entry, ceiling>(map: &state^.map, key: &key, env: env);
       set create = True();
     }
     if create {
@@ -153,7 +153,7 @@ fn get_field(env: &Client, key: &Key, value: &Entry) -> kind: u64 reads(value), 
       if env^.items.inner.len > 0_u64 {
         let field = take_back(window: &env^.items.inner);
         let keys = env^.keys;
-        let found = hash_map_lookup::<Keyed, Bytes, Client, u64, fn field_out, ceiling>(map: hash_of, key: &field, key_env: &keys, visit_env: env);
+        let found = hash_map_lookup::<KeyHash, Bytes, Client, u64, fn field_out, ceiling>(map: hash_of, key: &field, key_env: &keys, visit_env: env);
       }
       return 4_u64;
     }
@@ -185,9 +185,9 @@ fn run_hget(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client
   set client^.now = time^.check;
   set client^.state = state_absent;
   atomic state = &store^ {
-    let found = hash_map_edit::<Keyed, Entry, Client, u64, fn get_field, ceiling>(map: &state^.map, key: &key, key_env: env, edit_env: client);
+    let found = hash_map_edit::<KeyHash, Entry, Client, u64, fn get_field, ceiling>(map: &state^.map, key: &key, key_env: env, edit_env: client);
     if client^.state == state_expired {
-      let gone = hash_map_remove::<Keyed, Entry, ceiling>(map: &state^.map, key: &key, env: env);
+      let gone = hash_map_remove::<KeyHash, Entry, ceiling>(map: &state^.map, key: &key, env: env);
     }
   }
   clear_items(client: client);

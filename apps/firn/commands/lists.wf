@@ -1,5 +1,5 @@
 alias Key = pkg::bytes::Key;
-alias Keyed = pkg::bytes::Keyed;
+alias KeyHash = pkg::bytes::KeyHash;
 alias Client = pkg::protocol::Client;
 alias DequeVisit = std::collections::deque::DequeVisit;
 alias Entry = pkg::store::Entry;
@@ -142,10 +142,10 @@ fn run_push(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client
   }
   let full = False();
   atomic state = &store^ {
-    let edited = hash_map_edit::<Keyed, Entry, Client, u64, fn push_items, ceiling>(map: &state^.map, key: &key, key_env: env, edit_env: client);
+    let edited = hash_map_edit::<KeyHash, Entry, Client, u64, fn push_items, ceiling>(map: &state^.map, key: &key, key_env: env, edit_env: client);
     let create = client^.state == state_absent;
     if client^.state == state_expired {
-      let gone = hash_map_remove::<Keyed, Entry, ceiling>(map: &state^.map, key: &key, env: env);
+      let gone = hash_map_remove::<KeyHash, Entry, ceiling>(map: &state^.map, key: &key, env: env);
       set create = True();
     }
     if create {
@@ -278,12 +278,12 @@ fn run_pop(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client:
     set client^.high = 1_i64;
   }
   atomic state = &store^ {
-    let edited = hash_map_edit::<Keyed, Entry, Client, u64, fn pop_items, ceiling>(map: &state^.map, key: &key, key_env: env, edit_env: client);
+    let edited = hash_map_edit::<KeyHash, Entry, Client, u64, fn pop_items, ceiling>(map: &state^.map, key: &key, key_env: env, edit_env: client);
     let emptied = client^.state == state_emptied;
     let lapsed = client^.state == state_expired;
     let removing = bor(emptied, lapsed);
     if removing {
-      let gone = hash_map_remove::<Keyed, Entry, ceiling>(map: &state^.map, key: &key, env: env);
+      let gone = hash_map_remove::<KeyHash, Entry, ceiling>(map: &state^.map, key: &key, env: env);
     }
     let done = client^.state == state_done;
     let changed = bor(done, emptied);
@@ -396,9 +396,9 @@ fn run_lrange(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, clie
   set client^.low = start.value;
   set client^.high = stop.value;
   atomic state = &store^ {
-    let found = hash_map_lookup::<Keyed, Entry, Client, u64, fn range_items, ceiling>(map: &state^.map, key: &key, key_env: env, visit_env: client);
+    let found = hash_map_lookup::<KeyHash, Entry, Client, u64, fn range_items, ceiling>(map: &state^.map, key: &key, key_env: env, visit_env: client);
     if client^.state == state_expired {
-      let gone = hash_map_remove::<Keyed, Entry, ceiling>(map: &state^.map, key: &key, env: env);
+      let gone = hash_map_remove::<KeyHash, Entry, ceiling>(map: &state^.map, key: &key, env: env);
     }
   }
   if client^.state == state_done {
@@ -451,9 +451,9 @@ fn run_llen(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client
   set client^.state = state_absent;
   set client^.number = 0_u64;
   atomic state = &store^ {
-    let found = hash_map_lookup::<Keyed, Entry, Client, u64, fn list_length, ceiling>(map: &state^.map, key: &key, key_env: env, visit_env: client);
+    let found = hash_map_lookup::<KeyHash, Entry, Client, u64, fn list_length, ceiling>(map: &state^.map, key: &key, key_env: env, visit_env: client);
     if client^.state == state_expired {
-      let gone = hash_map_remove::<Keyed, Entry, ceiling>(map: &state^.map, key: &key, env: env);
+      let gone = hash_map_remove::<KeyHash, Entry, ceiling>(map: &state^.map, key: &key, env: env);
       set client^.number = 0_u64;
     }
   }
