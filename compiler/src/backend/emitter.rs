@@ -2,8 +2,8 @@
 //!
 //! Emission consumes typed IR after optional loop shapes have been selected for
 //! the same target. It preserves every retained
-//! check, emits no overflow or alias promises, initializes complete aggregate
-//! representations, and keeps a defensive abort edge for enum discriminants.
+//! check, emits qualified target facts, initializes complete aggregate
+//! representations, and exposes the closed domain of initialized enum tags.
 
 mod array;
 mod boxes;
@@ -2618,6 +2618,12 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 enum_type,
                 targets,
             } => {
+                // [ERR-2, SCOPE-3] Checked matches cover every declared tag;
+                // lowering preserves their arms and synthesizes complete
+                // Bool/Result matches. An initialized typed scrutinee has one
+                // of those tags, including at an ordinary linked boundary.
+                // Its default is unreachable without constraining inactive
+                // payload bytes or rechecking semantic exhaustiveness here.
                 self.materialize_operands([*scrutinee])?;
                 let (tag, tag_ty) = self.match_tag(*scrutinee, *enum_type)?;
                 writeln!(
@@ -2644,10 +2650,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
 
                     writeln!(self.output, "  ]").map_err(|_| BackendFailure::TextEmission)?;
                     self.output.open_block(emission_argument_0.to_string());
-                    {
-                        self.output.symbol("abort");
-                        write!(self.output, "  call void @abort()\n  unreachable\n")
-                    }?;
+                    self.output.push_str("  unreachable\n");
                     Ok::<_, BackendFailure>(())
                 }
             }

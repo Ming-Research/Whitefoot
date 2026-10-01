@@ -3038,3 +3038,64 @@ without a new unexplained regression; do not select merely because a branch
 or instruction disappears. If misses still trail both peers, investigate
 ordinary-source grouped control-byte probing rather than attributing that
 remaining cost to the foundational storage types without a witness.
+
+
+The initialized-enum candidate passes 4 resource-enum and 7 payload-enum
+focused tests. The final gate test build takes 73.54 s, their guarded
+executions 3.85 s and 3.20 s, and the final optimized CLI build 44.17 s.
+The fresh paired query fixture differs in raw LLVM only by removing 218
+`call void @abort()` instructions from impossible match defaults; no
+algorithm or payload access changes. Each harness arm passes 96 timed and
+96 accounting cases plus the seven deliberately faulty observations, and
+all 32 accounting rows finish with zero live bytes.
+
+Native inspection finds one fewer conditional branch on the vacant probe
+path (three to two) in both widths, unchanged modulo, stride, wrap, hash,
+key/first-word reads and digest. Nonempty query frames remain 16 bytes with
+no hot calls or spills. Static instruction counts increase from 235 to 237
+because LLVM duplicates the final digest/return after moving the prologue
+behind empty guards; this does not substitute for timing the executed path.
+All six Rust/C++/C query bodies retain identical bytes and linked addresses
+between the fresh pair. The fixture is therefore ready for the registered
+measurement; no timing conclusion is implied by this native inspection.
+
+
+The two-cohort pair completed with direct exit zero, 576 rows per arm and
+minimum sample intervals of 3.135 ms (index control) and 3.018 ms (enum
+domain). Carry this as a provisional recommendation under Q202, not a
+claim that the registered no-regression condition passed. In
+both widths at 64 buckets, every same-seed miss sample is faster in each
+cohort (36 of 36 pairs across the two widths). The medians of those paired
+candidate/control ratios are 0.915/0.945 for scalar values and 0.947/0.946
+for wide values. Corresponding native-peer paired ratios remain near one.
+The same-input ratios distinguish the branch effect from different seeds'
+probe lengths; they supplement, and do not replace, the registered target
+qualification.
+
+| Value bytes | Buckets | Query | Index WF ns/query | Enum-domain WF ns/query |
+| ---: | ---: | :--- | ---: | ---: |
+| 8 | 64 | hit | 2.110 | 2.091 |
+| 8 | 64 | miss | 3.016 | 2.708 |
+| 8 | 4096 | hit | 2.293 | 2.331 |
+| 8 | 4096 | miss | 3.248 | 3.023 |
+| 256 | 64 | hit | 2.102 | 2.070 |
+| 256 | 64 | miss | 2.832 | 2.744 |
+| 256 | 4096 | hit | 2.486 | 2.494 |
+| 256 | 4096 | miss | 3.787 | 3.168 |
+
+The table combines both cohorts. Hits overlap; scalar 4096-bucket hits have
+a same-seed median ratio of 1.018 in both cohorts. Wide 64-bucket hits are
+slower in all nine same-seed pairs in cohort 1 (median ratio 1.0059), while
+seven of nine improve in cohort 0. Overlapping ranges establish neither a
+qualified regression nor the required absence of one; these recurrent
+adverse observations remain unexplained. The registered selection condition
+is therefore unresolved. Q202 recommends retaining the valid tag-domain
+fact provisionally for its bounded small-miss gain while accepting that
+unresolved hit tradeoff; the owner has not approved that tradeoff, and the
+proposal does not relax the all-API performance target. Large-table misses
+have substantial spread: the wide
+cohort medians change from 4.039 to 3.109 ns and from 3.398 to 3.262 ns, so
+the combined large gain is not qualified causal attribution. Only the
+64-bucket wide hit meets the registered complete-range slower-peer target;
+lookup as a whole remains unqualified and every miss cell still loses.
+This selects neither a new enum layout nor a primitive container change.
