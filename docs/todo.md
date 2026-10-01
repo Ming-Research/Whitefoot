@@ -2161,6 +2161,9 @@ each is resolved by a discussion and a tree change.
   granting facts at every read. Validate nested storage, generic mutation,
   interior-reference calls and propagation, with a failing case for each
   route that would expose a value without establishing its invariant.
+  Cached subtree counts also expose a runtime-sized update that a finite
+  tuple cannot commit at once; any checked unpack/repack route must exclude
+  intermediate observations and prove the invariant before republishing.
 - **A standard collection restates at every operation that its capacity is
   unchanged.** `ensures queue^.storage.inner.cap == entry(queue)^.storage.inner.cap`
   appears 15 times across the priority queue's interface and body

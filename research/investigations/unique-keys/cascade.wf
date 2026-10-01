@@ -5,7 +5,7 @@ fn cascade_one(parent: u64, own: u64) -> result: u64 pure {
 }
 
 fn cascade_children(children: &[u64], matched: &[u64], parent: u64, results: &[u64]) -> result: unit reads(children), reads(matched), writes(results) {
-  doc "Writes each child's result at the child's own index. The children's indices are distinct, since each node has one parent, but the checker sees only integers read from storage.";
+  doc "Writes each child's result at the child's own index. The caller below supplies distinct indices, but this function has no contract that carries that fact to writes through values read from storage.";
   let count = children^.len;
   for (k in 0_u64..count) {
     let child = children^[k];

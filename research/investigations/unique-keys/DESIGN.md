@@ -140,12 +140,14 @@ or through all of them, are distinct and in bounds.
 - Breaks R1 and R2, puts a sort in the trusted base, and must be rebuilt
   when the tree changes.
 
-**R. No language change: recursion over subtrees.** In document order every
-subtree is a contiguous range, so cascading by recursion over children's
-ranges is provable today. Snowghost's measured halving shape lost to the
+**R. No language change: recursion over contiguous subtree ranges.** When
+the target layout makes every subtree contiguous, cascading by recursion
+over children's ranges is provable today. Arena allocation order need not
+have that property after reparenting. Snowghost's measured halving shape lost to the
 runtime's fixed recursion budget on unbalanced trees (a four-worker speedup
-of 1.11 against 3.62 for flat matching on apollo11); a budget that
-follows the tree's shape would remove that limit. It answers W1 only where
+of 1.11 against 3.62 for flat matching on apollo11); a budget that follows
+the tree's shape could address that scheduling limit. It has not established
+R3 or separation for scattered subtree targets. It answers W1 only where
 the targets are subtree ranges, not W2.
 
 **G. The workaround.** Compute in a level-ordered array and gather back
@@ -157,8 +159,8 @@ Single ownership gives "two places hold two different key values", not
 "two different integers": keys from two sources of one key type can carry
 the same integer. Whitefoot's identity for storage is the place, and a key
 moved from one structure into another keeps no record of its source, so the
-overlap clause needs the source in the key's type. What the language offers
-and lacks:
+overlap clause needs checked source identity, whether in the key's type or
+in another retained fact. What the language offers and lacks:
 
 - **Generics.** Type, const and function parameters on functions and
   nominals, instantiated explicitly and erased by monomorphization; a
@@ -274,6 +276,38 @@ makes many fixed-size link updates compatible with the stronger boundary;
 it does not choose between these two meanings or solve interior-reference
 composition by itself. The source rule must settle this before an invariant
 is freely assumed on any read.
+
+An extensibility example makes the distinction consequential. Add a cached
+`subtree_size` to every node and require it to equal the node count of its
+logical subtree. Attaching a new leaf changes that count for every ancestor.
+Updating the counts first violates their old-tree meaning; changing the
+links first violates their new-tree meaning. The number of ancestors is
+determined at runtime, so no fixed source-arity tuple covers all such edits.
+A loop of bounded-size commits cannot perform this direct update while
+establishing the complete invariant after every commit. Tuple assignment
+therefore does not by itself support this natural extension at R3's cost.
+
+One candidate is a checked, erased unpack/update/repack protocol. Consuming
+the valid Forest exposes its exclusively owned raw representation and a
+proof about the old state. During the update there is no usable Forest value
+whose full invariant may be assumed. Helpers operate on that raw state with
+their stated partial properties; a loop can update the ancestor counts.
+Repacking establishes the complete new invariant before producing a Forest
+again. This preserves validity of every usable value of the public type,
+while permitting intermediate bytes that do not represent such a value.
+
+Such a protocol must consume or suspend all authority to observe the value
+as a Forest, prevent aliases or callbacks from exposing the intermediate
+state, and require each return/propagation path either to re-establish the
+public invariant or to dispose of the consumed representation where the
+API permits that. Old-state proofs must not be treated as current-state
+facts. Private visibility alone establishes none of these obligations.
+The protocol might use ordinary consuming representation conversion or a
+scoped proof form; neither syntax nor a lowering guarantee is selected here.
+It is the checked-intermediate-state alternative above, not an unchecked
+escape. Whether to provide it, a more general simultaneous update form, or
+require the stronger boundary and accept its algorithmic restrictions is
+an open choice that the fixed-link example alone cannot settle.
 
 ### Runtime representation and an independent finite model
 
@@ -503,7 +537,7 @@ of proof checking; PR #199 has not landed that judgment.
 
 | Capability absent or incomplete today | Where the worked derivation stops without it | Required negative case |
 |---|---|---|
-| Generic and recursively contained struct invariants, with a complete mutation/observation boundary | `Forest<T>`, stored invariant-bearing values, and a write through an interior reference | `restore(&pair.left)` cannot count as preserving the invariant at every internal commit merely from its exit contract |
+| Generic and recursively contained struct invariants, with a complete mutation/observation boundary | `Forest<T>`, stored invariant-bearing values, an interior-reference write, and cached ancestor counts needing a runtime-sized update | `restore(&pair.left)` cannot count as preserving the invariant at every internal commit merely from its exit contract; an incomplete unpacked update cannot escape as a valid Forest |
 | Simultaneous multi-place assignment and its invariant/ownership judgment | A bidirectional detach changes several links together | Repeated/overlapping targets and an omitted reverse link cannot pass the proposed final-state proof |
 | User-defined logical predicates, finite models and checked structural lemmas | Defining Rep, proving no duplication and deriving non-ancestry | A cyclic raw graph cannot acquire height by assuming its own well-foundedness; a circular lemma cannot prove itself |
 | Relational content contracts, result/entry snapshots and generic-library transport | First push/grow, next-sibling accessor, cycle-walk success, and a returned index array | Correct lengths with a duplicated or changed old element must not satisfy the content contract |
@@ -518,7 +552,7 @@ Forest value. A permutation mapping (W2) should reuse the same sequence
 proofs and content contracts without any forest-specific checker rule.
 
 Still unverified: an exact proof grammar and checking calculus, modular
-interior-write preservation, all mutation/error paths of the actual SG
+interior-write preservation and any unpack/repack protocol, all mutation/error paths of the actual SG
 Forest library, proof-checking cost, and generated-code equality under R3.
 The finite-model witness is a constructive paper route, not evidence that
 this whole capability set has already been implemented or minimized.
