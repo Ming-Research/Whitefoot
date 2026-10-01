@@ -1,0 +1,176 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+const top: u64 = 18446744073709551615_u64;
+
+const absent: u64 = 18446744073709551615_u64;
+
+const depth_ceiling: u64 = 4096_u64;
+
+struct Levels {
+  slots: Box<Segments<u64>>;
+  positions: Box<Array<u64>>;
+}
+
+fn measure_depths(parents: &[u64], depths: &[u64]) -> result: Option<u64> reads(parents), writes(depths) contract {
+  requires depths^.len == parents^.len;
+} {
+  doc "Stands in for the element walk: element at, in preorder, has parent parents^[at], or top for a top-level element. Refuses a parent that does not precede its element, as the walk does, writes each element's depth and returns the deepest.";
+  let count = parents^.len;
+  let deepest = 0_u64;
+  for (at in 0_u64..count) {
+    let parent = parents^[at];
+    if parent == top {
+      set depths^[at] = 0_u64;
+    } else if parent < at {
+      let above = depths^[parent];
+      if above < depth_ceiling {
+        let depth = above + 1_u64;
+        set depths^[at] = depth;
+        set deepest = imax(deepest, depth);
+      } else {
+        return None<u64>();
+      }
+    } else {
+      return None<u64>();
+    }
+  }
+  return Some<u64>(value: deepest);
+}
+
+fn level_segments(depths: &[u64], levels: u64) -> result: Option<Levels> reads(depths) contract {
+  requires levels <= depth_ceiling;
+  requires depths^.len <= 4294967294_u64;
+} {
+  doc "Groups the elements by depth: segment d of slots lists the elements of depth d in preorder, and positions^[at] is element at's offset in its segment. Slots start absent; an element whose segment is already full is refused, the check the walk's room test makes against the whole array.";
+  let count = depths^.len;
+  let sizes = box_array_filled::<u64>(count: levels, value: 0_u64);
+  for (at in 0_u64..count) {
+    let depth = depths^[at];
+    if depth < levels {
+      let seen = sizes.inner[depth];
+      if seen < count {
+        set sizes.inner[depth] = seen + 1_u64;
+      } else {
+        return None<Levels>();
+      }
+    } else {
+      return None<Levels>();
+    }
+  }
+  let made = box_segments_filled::<u64>(lengths: &sizes.inner[0_u64..levels], value: absent);
+  match move made {
+    None() => {
+      return None<Levels>();
+    }
+    Some(value: slots) => {
+      let fill = box_array_filled::<u64>(count: levels, value: 0_u64);
+      let positions = box_array_filled::<u64>(count: count, value: 0_u64);
+      let rows = slots.inner.len;
+      for (at in 0_u64..count) {
+        let depth = depths^[at];
+        let listed = depth < rows;
+        let counted = depth < levels;
+        let known = band(listed, counted);
+        if known {
+          let offset = fill.inner[depth];
+          let segment = &slots.inner[depth];
+          if offset < segment^.len {
+            set segment^[offset] = at;
+            set positions.inner[at] = offset;
+            set fill.inner[depth] = offset + 1_u64;
+          } else {
+            return None<Levels>();
+          }
+        } else {
+          return None<Levels>();
+        }
+      }
+      let grouped = Levels(slots: move slots, positions: move positions);
+      return Some<Levels>(value: move grouped);
+    }
+  }
+}
+
+fn cascade_one(parent: u64, own: u64) -> result: u64 pure {
+  doc "Stands in for an element's cascade: its value from its parent's and its own matched rules.";
+  let mixed = parent +wrap own;
+  return mixed;
+}
+
+fn cascade_level(slots: &[u64], parents: &[u64], matched: &[u64], results: &[u64], base: u64) -> result: unit reads(slots), reads(parents), reads(matched), writes(results) contract {
+  requires parents^.len == results^.len;
+  requires matched^.len == results^.len;
+} {
+  doc "Cascades one level: each listed element's result, written at its own preorder index, from its parent's result, read at the parent's index, or from base for a top-level element. The slots of one level are distinct and the parents lie one level up, but nothing carries that to the writes.";
+  let count = slots^.len;
+  let total = results^.len;
+  for (k in 0_u64..count) {
+    let element = slots^[k];
+    if element < total {
+      let own = matched^[element];
+      let parent = parents^[element];
+      let inherited = if parent < total {
+        give results^[parent];
+      } else {
+        give base;
+      }
+      set results^[element] = cascade_one(parent: inherited, own: own);
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The tree div(section(span, img), article(p, a)) in preorder. Level 2 lists elements 2, 3, 5 and 6, scattered through the preorder results.";
+  let parents = box_array_filled::<u64>(count: 7_u64, value: top);
+  set parents.inner[1_u64] = 0_u64;
+  set parents.inner[2_u64] = 1_u64;
+  set parents.inner[3_u64] = 1_u64;
+  set parents.inner[4_u64] = 0_u64;
+  set parents.inner[5_u64] = 4_u64;
+  set parents.inner[6_u64] = 4_u64;
+  let depths = box_array_filled::<u64>(count: 7_u64, value: 0_u64);
+  let measured = measure_depths(parents: &parents.inner[0_u64..7_u64], depths: &depths.inner[0_u64..7_u64]);
+  let deepest = match measured {
+    None() => {
+      return exit_status(code: 1_u8);
+    }
+    Some(value: found) => {
+      give found;
+    }
+  }
+  if deepest >= depth_ceiling {
+    return exit_status(code: 5_u8);
+  }
+  let levels = deepest + 1_u64;
+  let grouped = level_segments(depths: &depths.inner[0_u64..7_u64], levels: levels);
+  match move grouped {
+    None() => {
+      return exit_status(code: 2_u8);
+    }
+    Some(value: made) => {
+      let matched = box_array_filled::<u64>(count: 7_u64, value: 0_u64);
+      for (at in 0_u64..7_u64) {
+        set matched.inner[at] = at + 1_u64;
+      }
+      let results = box_array_filled::<u64>(count: 7_u64, value: 0_u64);
+      let rows = made.slots.inner.len;
+      for (level in 0_u64..rows) {
+        cascade_level(slots: &made.slots.inner[level], parents: &parents.inner[0_u64..7_u64], matched: &matched.inner[0_u64..7_u64], results: &results.inner[0_u64..7_u64], base: 100_u64);
+      }
+      let sum = 0_u64;
+      for (at in 0_u64..7_u64) {
+        set sum = sum +wrap results.inner[at];
+      }
+      if sum != 748_u64 {
+        return exit_status(code: 3_u8);
+      }
+      let last = results.inner[6_u64];
+      if last != 113_u64 {
+        return exit_status(code: 4_u8);
+      }
+      return exit_status(code: 0_u8);
+    }
+  }
+}

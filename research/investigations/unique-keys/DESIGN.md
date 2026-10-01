@@ -5,7 +5,10 @@ The required direction is a user-defined structure with checked, erased
 proofs. The proof language remains a proposal; no specification or compiler
 change is selected here. The current derivation uses boundary contracts.
 Stronger lifetime validity and its surface spelling are deferred questions,
-not prerequisites for proving the Forest.
+not prerequisites for proving the Forest. Candidate N, pointwise facts over a
+derived numbering, has a separate paper derivation in
+[POINTWISE.md](POINTWISE.md); the owner has not chosen between the two
+routes.
 
 ## Question
 
@@ -160,6 +163,29 @@ the targets are subtree ranges, not W2.
 
 **G. The workaround.** Compute in a level-ordered array and gather back
 into document order in a second parallel loop. Provable today; breaks R3.
+
+**N. Pointwise facts over a derived numbering.** Prove nothing about the
+live linked DOM. Prove facts about the index arrays that each stage rebuilds
+from it, and only pointwise facts: a quantified fact whose body reads one
+element and elements at values it holds. Distinctness comes from a stored
+left inverse and read/write separation from a stored depth: two indices
+read from storage differ when an array maps them to values known to differ.
+[POINTWISE.md](POINTWISE.md) writes W1 end to end on paper, with a runtime
+witness that compiles today.
+
+- Its paper experiment had four criteria, stated to the owner before the
+  derivation was written: every fact used is pointwise; every preservation
+  premise is an existing runtime check or loop bound; the consumer gains no
+  state and no branch; and the written certificate steps are counted. The
+  derivation meets all four. The one non-pointwise fact, disjointness of
+  level ranges, is the one the kernel's `Segments` already owns.
+- Meets R1–R4 for consumers of a derived numbering. It states no fact about
+  the linked arena, so proofs that must survive DOM edits remain outside it.
+- Adds pointwise quantified facts, instantiation, write-law case splits,
+  content laws for the filling constructors, one read-congruence separation
+  rule and a cross-iteration certificate for PAR-2. It reopens the refusal
+  of quantified storage-element facts. It needs no ghost model, induction,
+  existential, generalized struct invariant or type brand.
 
 ## Source identity for K
 
