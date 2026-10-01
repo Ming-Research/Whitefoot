@@ -4725,8 +4725,9 @@ emits these concrete adapters, but the maintained generic program fails INV-1
 at the new loop backedge. Normal-hash probe work falls 10→8 instructions;
 forced-collision work rises scalar 6→8 and wide 7→8. Scalar/wide frames remain
 96/688 bytes. Parallel admission, runtime checks and timing were not run;
-production library bytes were restored. Neither this rejected candidate nor the
-separate pending initialization diagnostic contributes to the baseline table.
+production library bytes were restored. This rejected source candidate does not
+contribute to the baseline table; the separate initialization diagnostic below
+retains its own matched control.
 
 [`reserve-api-evidence.json`](reserve-api-evidence.json) pins sources, image,
 archive and per-peer reductions. [`reserve-api-evidence.tar.gz`](reserve-api-evidence.tar.gz)
@@ -4736,3 +4737,50 @@ replay commands and compact allocator/rebuild native evidence. It contains no
 compiler binaries or full disassembly dumps. Original versus path-normalized
 record hashes are distinguished. These files serve this baseline's reader and
 are replaced or retired with the experiment; research remains outside the gate.
+
+### Fresh-Vacant initialization floor: rejected
+
+A raw LLVM diagnostic removes only four aggregate zero stores in
+`hash_map_extend`, keeping valid Vacant tags, all exchange/result initialization,
+allocation geometry and ownership operations. Ordinary single-pass O3 removes
+16/264 inactive payload bytes per scalar/wide bucket without new calls, spills
+or frame growth. Tag-loop unrolling changes 22 bodies and grows the object by
+1,008 bytes. This bounded diagnostic does not implement a compiler rule or select
+a new inactive-byte initialization policy.
+
+All 64 build/check stages match their expected outcomes. Each of the four timed
+and account images passes 288 reserve cases; each arm passes 21 fault controls
+across its timed/account pair. Existing lookup/whole-trace checks pass and both
+96-row ledgers equal the baseline. The fixed control0, candidate0, candidate1,
+control1 panel retains 88,128 rows. All four processes return 1 after completing
+the panel because the unchanged fast-cell instrument failures remain; the guard
+returns 1 after 31.38 s. No retries or discarded cells follow.
+
+The two primary aligned-hash wide growth cells pass their duration, overhead,
+cohort-spread and peer-drift gates. Values below are median [minimum, maximum]
+µs per reserve, cohort 0 / cohort 1; complete Rust/C++ ranges and every other
+cell remain in the prefixed archive reduction.
+
+| Initial entry floor | Control WF | Initialization floor WF | Paired verdict |
+|---:|---|---|---|
+| 64 | 2.041 [2.023, 2.241] / 2.035 [2.026, 2.088] | 1.924 [1.872, 2.441] / 1.930 [1.866, 2.204] | Overlap both cohorts |
+| 4096 | 121.422 [120.981, 123.642] / 121.337 [120.993, 124.682] | 132.814 [131.063, 156.213] / 133.598 [131.991, 163.260] | Slower both cohorts |
+
+Large wide growth loses 9.38/10.11% by median; both primary candidate cells
+remain separated slower than Rust and C++ individually. Paired ratio spreads
+are 0.625/0.661%, and maximum unchanged-peer drift is 4.876%. Default small
+scalar growth improves in both cohorts, but does not answer the primary wide
+question. All noop before/after ranges overlap. Thus the primary criterion fails;
+no pure store-cycle, cache or allocator cause is inferred from the loss.
+
+`vacant-init-floor/` inside the existing reserve archive retains this diagnostic's
+criterion, exact four-line patch, historical build/check scripts, native excerpts,
+64-stage qualification, all four raw panels and adverse reductions. `component-index.json`
+distinguishes it from the ordinary baseline and pins every payload; all 145 prior
+archive entries remain byte-for-byte unchanged. The matched diagnostic control
+has identical code sections to the earlier baseline but different UUID/signature
+metadata; only the new matched pair is compared. The scripts require regenerated
+timed LLVM, omitted baseline objects/binaries,
+resolved tool/path roles and the recorded scratch hierarchy; the component's
+replay.txt lists those dependencies. The published package has not been replayed.
+No production source changes or general zero-omission mechanism are selected.

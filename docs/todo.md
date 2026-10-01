@@ -3367,6 +3367,13 @@ condition under which it is taken up.
   savings for more collision work. This does not close scalar replacement or
   select the previously rejected inactive-payload initialization policy.
 
+  The isolated fresh-Vacant zero-store floor also fails its wide reserve
+  criterion: aligned S64 overlaps and S4096 is slower in both valid cohorts,
+  despite removing payload initialization stores. Preserve the current policy;
+  reopen storage or migration changes for a distinct reached-code mechanism
+  with complete-content and ownership checks. This result neither attributes
+  the loss to cache/allocation state nor rules out every inactive-byte strategy.
+
 - **Ordered insertion replacement costs need attribution.** Both the
   [aggregate-result candidate](../research/experiments/container-representation/ordered-library/RESULTS.md#single-descent-insertion-candidate)
   and [borrowed-promotion follow-up](../research/experiments/container-representation/ordered-library/RESULTS.md#borrowed-promotion-follow-up)
