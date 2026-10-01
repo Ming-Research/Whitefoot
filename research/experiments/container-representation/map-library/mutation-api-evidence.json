@@ -3334,9 +3334,9 @@
       }
     ],
     "archive": {
-      "bytes": 1156977,
+      "bytes": 1205165,
       "path": "research/experiments/container-representation/map-library/entry-forward-evidence.tar.gz",
-      "sha256": "f22066ca3c51f1ac8c60850cfde780b6d0d7b3fea3a29fb8bdb8651b21501fd5"
+      "sha256": "fdc654137b64df75b0f35af63eb07e0fd10ac40b43beeaf4492a2dceda94f3fd"
     },
     "archive_purpose": "Raw auditable API and whole-Map/long-hit replay for this RESULTS section; retire or replace when superseded. No binaries.",
     "construction": [
@@ -3871,7 +3871,7 @@
         "exit": 101,
         "guard_s": 77.75
       },
-      "limit": "Final focused tests and benchmark output identity pass. Canonical gate and independent review remain pending.",
+      "limit": "Final focused/storage/owning-place tests, format/lint and benchmark output identity pass. Bounded compiler/design review is complete; exact-head CI remains pending.",
       "owned_places": {
         "execution_s": 18.46,
         "exit": 0,
@@ -3955,6 +3955,122 @@
         "bytes": 9726256,
         "path": "research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/whitefootc-running-index",
         "sha256": "64cd73e5a10130ab1fff5a9360ecfbb4a2918e6904235f1f461dcd5477a57422"
+      }
+    },
+    "inline_partial_cost_diagnostic": {
+      "archive_directory": "inline-partial-cost",
+      "controls": {
+        "account_byte_identical": true,
+        "account_rows": 32,
+        "account_sha256": "75bcb01092141bcb20958473838a5d65df03cab359630981eed220412c84b252",
+        "all_expected_statuses": true,
+        "cases_per_image": 96,
+        "commands": 26,
+        "direct_exit": 0,
+        "full_commands_statuses": {
+          "archive_member": "inline-partial-cost/check-statuses.json",
+          "bytes": 7468,
+          "sha256": "8ce755a0c6ff8374556188051f9a77dc0d534ac99e92afcd08d121bbf3e08f90"
+        },
+        "guard_s": 0.98,
+        "negative_controls_per_arm": 10,
+        "raw_stdout_stderr_directory": "inline-partial-cost/controls"
+      },
+      "criterion": {
+        "archive_member": "inline-partial-cost/partial-cost-criterion.txt",
+        "bytes": 1827,
+        "sha256": "2590054ba4c6baee17714776997c6085f4570eb334ec7928101432b91fba9513"
+      },
+      "instrument_gates": {
+        "drift_definition": "100*(max(control_median,candidate_median)/min(control_median,candidate_median)-1)",
+        "max_all_peer_symmetric_drift_percent": 8.981033841576803,
+        "max_paired_ratio_spread_percent": 17.68122547848232,
+        "max_rust_cpp_symmetric_drift_percent": 2.8750289821469988,
+        "max_spread_cell": "word8/4096/churn",
+        "minimum_interval_limit_ns": 1000000,
+        "minimum_interval_pass": true,
+        "paired_ratio_definition": "100*(max(candidate/control cohort median ratios)/min(those ratios)-1)",
+        "paired_ratio_spread_limit_percent": 10,
+        "paired_ratio_spread_pass": false,
+        "peer_drift_pass": true,
+        "peer_symmetric_drift_limit_percent": 10
+      },
+      "interpretation": "Only wide4096 replacement separates positively in both cohorts. Small wide replacement overlaps and the paired-ratio gate fails; adverse scalar4096 churn cohort0 and wide64 churn medians are retained. This single panel supplies no qualified benefit, independent repeatability or production inline selection.",
+      "question": "Whether offered staging256\u2192120 bytes, removed successful helper edges and reached stack1024+64\u2192448 bytes offset the retained old-payload scalar spills; separate from the earlier failed no-relocated-transfer hypothesis.",
+      "samples": {
+        "archive_only": true,
+        "complete_cell_peer_reduction": {
+          "archive_member": "inline-partial-cost/summary.json",
+          "bytes": 21528,
+          "sha256": "5fbfe6a63cc9de1bce012e8913dad07462299b65872988f4344726451fe1c83f"
+        },
+        "existing_combined_samples_unchanged": true,
+        "matched_flat_cohort_cells": 16,
+        "minimum_elapsed_ns": 2326000,
+        "overlaps": 14,
+        "phase_label": "diagnostic-inline-partial-cost",
+        "raw_cohorts": [
+          {
+            "archive_member": "inline-partial-cost/control-cohort-0.csv",
+            "bytes": 44062,
+            "sha256": "8f971f3b6b88b6de1a09b569acf3ccab801d5639d231f5f34f915829ef3cc6f7"
+          },
+          {
+            "archive_member": "inline-partial-cost/candidate-cohort-0.csv",
+            "bytes": 44062,
+            "sha256": "ffa12b1787bf1ca0819f8041d1893d30c029430f3fd9019767a5967bc91e3a27"
+          },
+          {
+            "archive_member": "inline-partial-cost/candidate-cohort-1.csv",
+            "bytes": 44062,
+            "sha256": "bfe81f0b7607c652320b7090f4e96b3bb1f3ce50619c159342e45a5a8b1dc7ad"
+          },
+          {
+            "archive_member": "inline-partial-cost/control-cohort-1.csv",
+            "bytes": 44062,
+            "sha256": "d2a1e94d358956306bec521138e952b4e86c1464a23cdfb9c57c12133013e731"
+          }
+        ],
+        "rows": 1152,
+        "separated_gains": 2,
+        "separated_losses": 0
+      },
+      "scope": "Frozen-IR diagnostic only. No source, algorithm, oracle, ownership, alias, compiler-policy or production changes.",
+      "shared_images": {
+        "<repository-root>/research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/entry-forward-timed": "f2e2cf0b6eb8edfe00c72119064e7ded8dbacb2be944c3a929c06c5074aa8ae0",
+        "<scratch-root>/whitefoot-map-replacement-inline/candidate-timed": "603de9045caa7c68c04e85461cf6d8165b0fb3638a48fe7c19e2c510854fda21"
+      },
+      "shared_recipe": {
+        "archive_member": "rejected-inline-boundary/run.py",
+        "bytes": 6697,
+        "sha256": "1cf25db620fff57fe967e41902c81e426ea150395c849ef125bc174201e6dffa"
+      },
+      "status": "Does not meet registered diagnostic criterion: wide64 replacement overlapping ranges and scalar4096 churn ratio spread17.6812%>10%; no production inline-policy selection.",
+      "timing": {
+        "cohorts": 2,
+        "direct_exit": 0,
+        "full_commands_statuses": {
+          "archive_member": "inline-partial-cost/metadata.json",
+          "bytes": 2216,
+          "sha256": "50792c1b07e333637dc6c1418bffe9f6355be47dce75024d40b872c2f6298b36"
+        },
+        "guard_s": 55.35,
+        "images_unchanged": true,
+        "order": [
+          "control0",
+          "candidate0",
+          "candidate1",
+          "control1"
+        ],
+        "processes": 4,
+        "retries": 0,
+        "samples": 9,
+        "script": {
+          "archive_member": "inline-partial-cost/whitefoot-map-replacement-inline-time.py",
+          "bytes": 1676,
+          "sha256": "24535a3ecd820831c84702e3b3213c8ebf3ed857fb17a1473bab9e2831a949b0"
+        },
+        "work": 1048576
       }
     },
     "long_hit_discriminator": {
@@ -4290,7 +4406,7 @@
         "patch_member": "source/final-implementation.patch",
         "sha256": "bdd37a42ab4262d5feb038ab4d9a352d99b69d2d9412879c77af15e4bb147b30",
         "source_hash_verification": "Final frozen source independently rehashed; root-supplied storage/owned_places hashes match.",
-        "verification": "Final focused/storage/owning-place tests, format/lint and all five benchmark output identities independently verified; full CI and review remain pending."
+        "verification": "Final focused/storage/owning-place tests, format/lint and five benchmark output identities independently verified; bounded compiler/design review complete, exact-head CI pending."
       },
       "measured_code": "Timings use the preguard frozen compiler. Final guarded compiler reemits both benchmark raw modules and three native objects byte-identically; those timings therefore apply to the final benchmark outputs without rerunning timing.",
       "measured_compiler_sha256": "ec194c6af770f59a5871690a2d60608cb7e4e27956b6f6688f0d24acdcc1c736"
@@ -4456,7 +4572,7 @@
         "path": "<scratch-root>/whitefoot-map-replacement-inline/candidate.raw.ll",
         "sha256": "a8248c2c9ad3eec51768e954d3acbf9db23d84ab961bb5424b10f474b2a9175f"
       },
-      "correctness": "NOT RUN after native gate failure.",
+      "correctness": "NOT RUN for the earlier failed transfer-elimination hypothesis; later partial-cost diagnostic runs its own controls.",
       "criterion": {
         "bytes": 3884,
         "path": "<scratch-root>/whitefoot-map-replacement-inline/criterion.txt",
@@ -4498,7 +4614,7 @@
         "path": "research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/entry-forward.raw.ll",
         "sha256": "09cb4c4ea979d9dedb46dbc2bcb267d984d472777f0a69f4af86df68ede57b41"
       },
-      "status": "Rejected at preregistered native aggregate-transfer gate, before correctness or timing; not a measured performance loss.",
+      "status": "Earlier stage: rejected at strict native aggregate-transfer gate before later separately registered partial-cost correctness/timing campaign.",
       "text_normalization": {
         "archive_records": [
           {
@@ -4538,6 +4654,110 @@
         },
         "scope": "Recorded native commands are normalized displays using <LLVM_OBJDUMP>; see archive text-normalization.json for original measured versus normalized hashes. No measurement or expectation changed."
       },
+      "timing": "NOT RUN for the earlier failed transfer-elimination hypothesis; see separate inline_partial_cost_diagnostic."
+    },
+    "result_only_disjoint_diagnostic": {
+      "build": {
+        "all_direct_exits": 0,
+        "outer_guard_cost": "Omitted: no retained outer log; per-stage costs remain primary.",
+        "stages": 6,
+        "statuses_and_elapsed": {
+          "archive_member": "result-only-disjoint/build-statuses.json",
+          "bytes": 5576,
+          "sha256": "f3035760a242477c4b5980e675003628eabb9d6bb8d740129a88c2dcb4069b6e"
+        }
+      },
+      "callgraph": {
+        "archive_member": "result-only-disjoint/callgraph.json",
+        "bytes": 1182,
+        "sha256": "267f4b453de6ac893f1683bac1b472e44cf34343e65e2b69b8ef70635916aa28"
+      },
+      "correctness": "NOT RUN after native gate failure.",
+      "criterion": {
+        "archive_member": "result-only-disjoint/criterion.txt",
+        "bytes": 3116,
+        "sha256": "e18a631b81de88741dc079891ed0fff8bb660f4a0f30d6e0ff8f2249b354e475"
+      },
+      "input_pins": {
+        "archive_member": "result-only-disjoint/inputs.json",
+        "bytes": 6942,
+        "sha256": "55f7f827e488f14e2ebb641dfa191ddd1c9bc8fa32565e0aa0794ef5b669e346"
+      },
+      "interpretation": "Rules out benefit from this narrow result-only attribute diagnostic. Does not rule out stronger independently justified disjointness or ordering transformations.",
+      "native": {
+        "batch_frame_bytes": [
+          1024,
+          1024
+        ],
+        "batch_instructions": [
+          381,
+          381
+        ],
+        "excerpts": [
+          {
+            "archive_member": "result-only-disjoint/batch.asm",
+            "bytes": 16928,
+            "sha256": "4618abc07d5548a5a92bd4763ff4e64b318c888aff50408678c2bf67417594f0"
+          },
+          {
+            "archive_member": "result-only-disjoint/tryput.asm",
+            "bytes": 4830,
+            "sha256": "1b4563acf71dd57e7a0bb7b86948f0164290a06be049c680237beff72ddb9099"
+          },
+          {
+            "archive_member": "result-only-disjoint/exchange.asm",
+            "bytes": 3668,
+            "sha256": "98c83e3914e8c85baad7da01d439c95c2c7ee6297c346e6432da487ae23c4464"
+          }
+        ],
+        "exchange_frame_bytes": [
+          64,
+          64
+        ],
+        "exchange_instructions": [
+          87,
+          87
+        ],
+        "exchange_normalized_sequence_equal": true,
+        "exchange_observation": "Complete old264-byte content and offered256-byte content remain simultaneously live; 64-byte vector-register frame and transfers remain.",
+        "full_reduction": {
+          "archive_member": "result-only-disjoint/native-summary.json",
+          "bytes": 760,
+          "sha256": "65c6f733a096ebb23244f16da9df310a1942b27ab15d119f8695c43946d0f025"
+        },
+        "try_put_frame_bytes": [
+          0,
+          0
+        ],
+        "try_put_instructions": [
+          95,
+          95
+        ],
+        "try_put_qualification": "Successful replacement prefix and tail calls unchanged; refusal changes gather-before-store to streamed q0/q1 LDP/STP. Not whole-function identity."
+      },
+      "normalization": {
+        "archive_member": "result-only-disjoint/text-normalization.json",
+        "bytes": 994,
+        "sha256": "1b6714d1cd3eb7f7a43556bf2b12b36a5fb1353a49e719af41be511261dae97a"
+      },
+      "output_pins": {
+        "archive_member": "result-only-disjoint/outputs.json",
+        "bytes": 855,
+        "sha256": "7bd7d8abe227a1ce9bf6cd7a4a6c5a4dd088a13b501c9d017faac47702e0c6ca"
+      },
+      "patch": {
+        "archive_member": "result-only-disjoint/modules.patch",
+        "bytes": 15891,
+        "sha256": "406e5f40ce6336e26fc6c95c7c77f9b7ba92eec03a255d48521125a940aee179"
+      },
+      "premise": "Audited distinct batchallocas:272-byte result slot9 versus256-byte input slot8; this is a diagnostic callsite fact, not a general ABI promise.",
+      "recipe": {
+        "archive_member": "result-only-disjoint/run.py",
+        "bytes": 9070,
+        "sha256": "a03bee937d6cdc65d071719035f13cfea9a8cd74304ec961c6cbf8c92db1ba44"
+      },
+      "scope": "Clone wide try_put/exchange, add noalias to clone result only, reroute one wide-batch call and its two clone exchange calls. Original helpers/other callers and compiler/API remain unchanged; no inline hint or owned-input attribute.",
+      "status": "Native gate failed: result-only noalias did not reduce successful replacement transfer/frame cost. No correctness or timing run.",
       "timing": "NOT RUN; no samples or throughput conclusion."
     },
     "sample_summary": {
@@ -4887,7 +5107,7 @@
       "shortest_elapsed_ns": 2328000
     },
     "scope": "Ordinary indirect Own incoming backing with private capture and conservative deferred/callee/result-alias fallbacks. Source Loads/interior projections remain snapshots; no source-language, ABI, LLVM alias-attribute or HashMap-name special case.",
-    "status": "Final guarded work-branch implementation provisionally selected as Q203, measured benchmark outputs byte-identical; full CI and review pending.",
+    "status": "Final guarded work-branch implementation provisionally selected as Q203; measured outputs byte-identical, bounded compiler/design review complete, exact-head CI pending.",
     "whole_map": {
       "adverse_cells": [
         {
@@ -5020,7 +5240,7 @@
       "sha256": "279b9bf47bd30f028656a246309698e38a098a56b2e7b460fb3b7e0644095c10"
     }
   },
-  "selection": "No library or representation is selected by this evidence. Ordinary incoming backing is provisional work-branch compiler placement choice Q203; full CI and review remain pending.",
+  "selection": "No library or representation is selected by this evidence. Ordinary incoming backing is provisional work-branch compiler placement choice Q203; bounded compiler/design review is complete and exact-head CI remains pending.",
   "sources": {
     "cpp": {
       "path": "research/experiments/container-representation/map-library/.build/lookup-api/mutation-screen/map-mutation.cpp",

@@ -3888,7 +3888,8 @@ Both final focused tests pass (66.33 seconds guarded, a reported 1m 01s build
 and 4.04 seconds execution); the final CLI build takes 34.42 seconds. Source
 pins, patch and all five identity comparisons are retained. Source acceptance,
 ABI and alias attributes are unchanged; the compiler placement choice is
-provisional work-branch choice Q203, with full CI and review pending.
+provisional work-branch choice Q203. Its bounded compiler/design review is
+complete; exact-head CI remains pending.
 
 The separate `actual-incoming-forward-discriminator` phase retains 1152 samples
 in `mutation-api-samples.csv`; it is not pooled with the diagnostic floor. The
@@ -3912,7 +3913,7 @@ and owning-place tests pass 31 (18.06 seconds execution, 18.15 guarded).
 Final formatting/lint passes in 4.11 seconds. These include full copied content, retained inputs, nested-owner
 cleanup, identical and partially overlapping input/result storage, and independent
 tag/tail corruption. The initial fixture parse failure is retained. The complete
-gate and independent review remain pending.
+gate remains pending; the bounded compiler/design review is complete.
 
 The edge regression uses valid typed IR: unused `AddressOf` operations expose
 the two live private alternatives without changing their values or introducing
@@ -3933,19 +3934,72 @@ eight WF cohort cells overlap, and the wide medians differ by less than 0.18
 percent. The original adverse observations remain; their direction is not
 reproduced, and this does not establish a layout or codegen cause. Neither
 screen includes retained callbacks or explicit rehash timing. The provisional
-compiler choice still needs full CI and review; the overall container performance
-goal is not established and the PR remains Draft.
+compiler choice still needs exact-head CI; its bounded compiler/design review
+is complete. The overall container performance goal is not established and
+the PR remains Draft.
 
 A separate native boundary diagnostic adds exactly two `alwaysinline` tokens
 on wide `try_put` and exchange. Native construction exits zero in 2.29 seconds,
 but the wide caller grows from 381 to 570 instructions. Its frame shrinks from
 1024 to 448 bytes and the old 264-byte result staging disappears, while equivalent
 256-byte scalar spill/reload traffic remains. This fails the preregistered
-no-relocated-transfer gate. Correctness and timing were not run: it is a rejected
-native-code hypothesis, not a measured performance loss or a general inline
-recommendation. The tiny recipe, criterion, exact patch, pins, direct build
+no-relocated-transfer gate. Correctness and timing were not run at that earlier
+stage: it is a rejected native-code hypothesis, not a measured performance loss
+or a general inline recommendation. The later partial-cost question below does
+not revise that verdict. The tiny recipe, criterion, exact patch, pins, direct build
 statuses and relevant caller excerpts are retained separately in the same archive
 under `rejected-inline-boundary`.
+
+#### Partial savings at the inline boundary
+
+A later preregistered question asks whether the same diagnostic's smaller offered
+staging (256 to 120 bytes), removed helper edges and smaller reached stack
+(1024 + 64 to 448 bytes) outweigh its retained old-payload spills. This is a
+separate frozen-IR cost question; it does not rescue the failed transfer-elimination
+hypothesis or select a production inline policy. Both arms pass all 96 owner
+cases in timed and accounted images, all ten fault controls per arm fail with
+their exact diagnostics, and the 32-row ledgers are identical (0.98 seconds
+guarded). The single fixed panel exits zero in 55.35 seconds and retains all
+1152 rows separately in the archive; no retry occurred. Median ns per operation
+(cohort zero / one), including all eight cells, are:
+
+| Width | Buckets | Operation | Entry-forward control | Inline diagnostic | Rust | C++ |
+|---|---:|---|---:|---:|---:|---:|
+| word8 | 64 | replace | 2.338/2.340 | 2.357/2.336 | 2.481/2.468 | 2.772/2.740 |
+| word8 | 64 | churn | 7.826/8.028 | 7.793/7.947 | 15.967/16.023 | 27.501/27.713 |
+| word8 | 4096 | replace | 3.184/3.507 | 3.127/3.411 | 2.583/2.567 | 4.113/4.259 |
+| word8 | 4096 | churn | 12.691/15.085 | 14.447/14.593 | 10.384/10.252 | 30.424/29.739 |
+| wide256 | 64 | replace | 23.824/23.751 | 23.295/23.222 | 22.141/22.053 | 18.927/18.869 |
+| wide256 | 64 | churn | 32.722/32.290 | 34.454/35.175 | 27.106/27.000 | 49.524/49.210 |
+| wide256 | 4096 | replace | 28.419/28.044 | 26.124/26.545 | 27.012/26.994 | 23.250/23.401 |
+| wide256 | 4096 | churn | 47.568/47.860 | 45.623/46.084 | 31.176/31.286 | 59.895/60.297 |
+
+Only wide 4096-bucket replacement has separated lower ranges in both cohorts.
+Wide 64-bucket replacement overlaps, so the required two-size improvement is
+absent. Its wide churn medians worsen by 5.29 and 8.94 percent, although ranges
+overlap. Scalar 4096-bucket churn changes by +13.84 percent in cohort zero and
+-3.26 percent in cohort one: its paired-ratio spread of 17.681 percent exceeds
+the registered 10-percent limit. The shortest interval is 2.326 ms; maximum
+symmetric unchanged-peer median drift is 8.981 percent (chain control), or
+2.875 percent for Rust/C++, within its separate limit. Fourteen flat cohort
+cells overlap and none has a separated loss. The diagnostic still fails its
+registered criterion; the large replacement observation supplies no qualified
+global benefit or independent repeatability. Raw cohorts, criterion, commands,
+controls, ledger, script and full reduction remain under `inline-partial-cost`
+in the same archive and `inline_partial_cost_diagnostic` in the JSON.
+
+A separate result-only disjointness diagnostic clones wide `try_put` and exchange
+for the audited distinct input/result batch allocas, leaving original helpers and
+other callers unchanged. All six native construction stages exit zero. Batch,
+clone `try_put` and clone exchange remain at 381/95/87 instructions with
+1024/0/64-byte frames; exchange has the same normalized sequence and simultaneous
+complete old/offered payload lifetimes. `try_put` changes only its refusal copy
+schedule to streamed vector pairs, with no successful-replacement improvement.
+The registered native gate fails, so correctness and timing are not run. This
+rules out that narrow result-only attribute benefit, not all disjointness or
+ordering optimizations. Its minimal recipe, criterion, patch, callgraph, pins,
+stage statuses and three reached-body excerpts are retained under
+`result-only-disjoint` in the same archive.
 
 [`entry-forward-evidence.tar.gz`](entry-forward-evidence.tar.gz) serves this
 section's reader with scripts, criteria, raw API/whole-Map/long-hit records,
