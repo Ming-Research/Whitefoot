@@ -223,6 +223,21 @@ answered 159,363 to 160,000. The runtime's test drives that interleaving step
 by step and fails when the look ahead is left out. The quick comparison above
 predates the change; none of its four tests misses a key.
 
+**The handle each statement counted.** Every keyed statement retained and
+released its map's handle, two atomic updates of one count every driver's
+statements share, so that the map outlives a block that moves the handle it
+was reached through. Criterion, stated before measuring: if firn built
+without the pair answers depth-16 `SET` or `GET` on two server CPUs at least
+5% faster, medians of two interleaved rounds beyond their spread, a statement
+that cannot lose its handle omits the pair. Built so (a measurement build, not
+safe in general), firn answered `SET` at 1,888,376 and 2,117,149 a second
+against 1,713,633 and 1,799,280, `GET` at 1,893,940 twice against 1,713,633
+and 1,799,640, and `INCR` at 1,799,280 and 1,999,556 against 1,634,877 and
+1,636,066. A statement now omits the pair when it reaches the handle through
+a reference parameter whose declared row writes nothing below it, since the
+caller keeps that handle live for the call; every firn command reaches its
+map and `meta` that way.
+
 At depth 1 firn before and after both answered 171,298 to 179,928 a second
 on `SET`, `GET` and `LPUSH`, the same steps of the benchmark's clock, so
 those cells did not separate them. `MSET` holds the whole map, as the old

@@ -30,6 +30,9 @@ pub(super) struct AtomicRegion {
     object: IrValueId,
     nominal: IrNominalId,
     hold: Hold,
+    /// Whether the statement holds a handle of its own, which each edge
+    /// leaving the block releases.
+    owned: bool,
 }
 
 /// What a region holds, which decides how an edge leaving it gives it up.
@@ -51,6 +54,7 @@ impl IrBuilder<'_> {
         &mut self,
         target: &CheckedExpression,
         form: CheckedAtomicForm,
+        borrowed: bool,
         key: Option<&CheckedExpression>,
         binding: BindingId,
         state: CheckedType,
@@ -86,9 +90,18 @@ impl IrBuilder<'_> {
         if !expected {
             return Err(LoweringFailure::InvalidCheckedProgram);
         }
-        // The statement's own handle, or the held state's address.
+        // The statement's own handle, the handle a caller lends it, or the
+        // held state's address.
         let object = if held {
             target_value
+        } else if borrowed {
+            self.define(
+                IrType::Nominal(nominal),
+                IrOperation::Load {
+                    address: target_value,
+                    referent: IrAddressed::Nominal(nominal),
+                },
+            )?
         } else {
             let loaded = self.define(
                 IrType::Nominal(nominal),
@@ -149,6 +162,7 @@ impl IrBuilder<'_> {
             object,
             nominal,
             hold,
+            owned: !held && !borrowed,
         };
         self.atomics.push(region);
         let lowered = self.lower_statements(body, give_target);
@@ -268,7 +282,7 @@ impl IrBuilder<'_> {
                 },
             )?,
         };
-        if matches!(region.hold, Hold::Entry { held: true, .. }) {
+        if !region.owned {
             return Ok(());
         }
         self.append_drops(vec![IrDrop {

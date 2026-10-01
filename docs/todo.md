@@ -977,36 +977,6 @@ rarely insert at the same place.
   per-user chunks. A workload of long keys from many drivers would contend
   on it. Reopen when a measured workload's keys exceed 512 bytes.
 
-- **Every keyed statement counts a handle of its own on the map's one
-  handle count.** A keyed or whole-map statement reached through a handle
-  retains and releases it (`compiler/src/lowering/builder/atomic.rs`), two
-  atomic updates of `wf_shared_map.handles` in
-  `compiler/src/backend/shared_map.c`, one word every driver's statements
-  update, so it moves between cores on every statement while the entries
-  themselves do not. The change is the one the next item proposes for
-  objects: omit the pair for a statement whose function cannot write the
-  place it reaches the map through, such as firn's `store^.map` through a
-  read-only reference. Reopen when a profile of firn's keyed commands on two
-  or more drivers shows the count's line, or with the next item.
-
-- **Every atomic statement counts a handle of its own, on the lock's cache
-  line.** The lowering retains the shared object before it acquires and
-  releases it after it unlocks (`compiler/src/lowering/builder/atomic.rs`), so
-  that the object outlives a block that moves or replaces the handle it was
-  reached through; `wf__shared_share` and `wf__shared_release` are two atomic
-  updates of the handle count, which shares the header's cache line with the
-  lock word and the holder count. Under firn's `SET` on two drivers they took
-  4% of the server's time, and each also moves the line the other driver is
-  spinning on ([firn](../research/investigations/firn/DESIGN.md#short-strings-inside-the-keyspace-results)).
-  A statement whose function cannot write the place it reaches the object
-  through, as in every firn command, which reads its `&Shared<Store>`, cannot
-  lose the handle during its block, so the pair could be omitted there; or
-  the count could move to a cache line of its own. Either revises the
-  `compiler/waiting-contexts` decision that a statement counts a handle of
-  its own. Measure firn's `SET` and `MSET` on two drivers with the pair
-  omitted for such statements before proposing it; reopen when the atomic
-  statement's lowering or the shared-object header next changes.
-
 - **Validate reuse of selected-target element layouts during emission.**
   [Zero-stride addressing](../compiler/src/target.rs) currently queries
   the ordinary layout calculator afresh for each element-address step. Repeated

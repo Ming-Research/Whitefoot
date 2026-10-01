@@ -1292,6 +1292,7 @@ impl<'program> IrBuilder<'program> {
                 CheckedStatement::Atomic {
                     target,
                     form,
+                    borrowed,
                     key,
                     binding,
                     state,
@@ -1302,6 +1303,7 @@ impl<'program> IrBuilder<'program> {
                 } => self.lower_atomic(
                     target,
                     *form,
+                    *borrowed,
                     key.as_deref(),
                     *binding,
                     *state,

@@ -167,6 +167,32 @@ impl Checker<'_, '_> {
                 effects.add_read(path);
             }
         }
+        // [SHARE-2] a handle the caller lends through a reference parameter
+        // whose row writes nothing below it stays live for the whole call,
+        // so the statement needs none of its own.
+        let borrowed = match target
+            .reference
+            .as_ref()
+            .map(|reference| reference.paths.as_slice())
+        {
+            Some([place]) => match place.root {
+                PlaceRoot::Binding(root) => bindings.values().any(|local| {
+                    local.binding == root
+                        && local.mode.is_reference()
+                        && function
+                            .parameters
+                            .iter()
+                            .any(|parameter| parameter.declaration == local.declaration)
+                        && !function
+                            .declared_effects
+                            .writes
+                            .iter()
+                            .any(|path| path.root == local.declaration)
+                }),
+                PlaceRoot::Constant(_) => false,
+            },
+            _ => false,
+        };
         let (state, checked_form, key, hold) = match form {
             AtomicTarget::Object { state } => {
                 (state, CheckedAtomicForm::Object, None, AtomicHold::Object)
@@ -298,6 +324,7 @@ impl Checker<'_, '_> {
                 node_path,
                 target: Box::new(target.expression),
                 form: checked_form,
+                borrowed,
                 key,
                 binding,
                 state,

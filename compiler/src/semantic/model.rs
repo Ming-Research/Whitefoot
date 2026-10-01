@@ -2749,6 +2749,11 @@ pub(crate) enum CheckedStatement {
         target: Box<CheckedExpression>,
         /// What the statement holds [SHARE-2].
         form: CheckedAtomicForm,
+        /// Whether the handle is reached through a reference parameter whose
+        /// declared row writes nothing below it, so that the caller's handle
+        /// stays live until the statement completes and the statement needs
+        /// no handle of its own [SHARE-2].
+        borrowed: bool,
         /// For an entry, the `&[u8]` key the statement reads when it begins.
         key: Option<Box<CheckedExpression>>,
         /// The binder, a reference variable naming what the statement holds.
