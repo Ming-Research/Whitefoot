@@ -3334,9 +3334,9 @@
       }
     ],
     "archive": {
-      "bytes": 2167197,
+      "bytes": 2175915,
       "path": "research/experiments/container-representation/map-library/entry-forward-evidence.tar.gz",
-      "sha256": "4136bf5c0d2bd7561f86c20cc086457fbf3c074b273cb35f5520880535eb7482"
+      "sha256": "8ad5d09e5f1716c629c498994bd3d4a59cbbcf3065c8480d68e0f581fef87597"
     },
     "archive_purpose": "Raw auditable API and whole-Map/long-hit replay for this RESULTS section; retire or replace when superseded. No binaries.",
     "atomic_slot_admission_stop": {
@@ -7395,7 +7395,7 @@
   "first_probe_peel": {
     "decision": "unselected; original native criterion partial/FAIL and distinct 4M peer campaign unqualified",
     "archive_prefix": "first-probe-peel/",
-    "archive_sha256": "4136bf5c0d2bd7561f86c20cc086457fbf3c074b273cb35f5520880535eb7482",
+    "archive_sha256": "8ad5d09e5f1716c629c498994bd3d4a59cbbcf3065c8480d68e0f581fef87597",
     "initial_source_sha256": "3a682ccda3156a055fc548f3eba0deed2d2f7ff666ad514d0b007c45b7cc5d02",
     "admission_failure": "TYPE-6 next binding collision; exact diagnostic retained",
     "repair": "outer first-advance next renamed first_next only",
@@ -7450,7 +7450,7 @@
   "chain_layout_aa": {
     "decision": "layout-only A/A unqualified; no causal attribution or source adoption",
     "archive_prefix": "chain-layout-aa/",
-    "archive_sha256": "4136bf5c0d2bd7561f86c20cc086457fbf3c074b273cb35f5520880535eb7482",
+    "archive_sha256": "8ad5d09e5f1716c629c498994bd3d4a59cbbcf3065c8480d68e0f581fef87597",
     "manifest_sha256": "c07e025ed017b2cbc50b80f5de94d9e253e1d3785d5d97a12a305defae438bdf",
     "native_observation": "chain 928 equal code bytes; address 0x1000a50dc to 0x1000a5180, modulo64 28 to 0; 15 moved functions",
     "direct_checks": {
@@ -7467,5 +7467,31 @@
       "minimum_interval_ns": 9309000
     },
     "limitation": "explicit-order control is not globally the prior image; native peers match between A/A arms but differ in placement from older first-probe images"
+  },
+  "filled_first_order": {
+    "decision": "native-only source-arm-order discriminator rejected; matched -O3 scalar replacement batch is unchanged; no timing or production selection",
+    "archive_prefix": "filled-first-order/",
+    "archive_sha256": "8ad5d09e5f1716c629c498994bd3d4a59cbbcf3065c8480d68e0f581fef87597",
+    "prefix_manifest_sha256": "24bcd84a37ea4bb0c07010116bcda8b5fb3a0284e1219b07936b8e172bb450ee",
+    "criterion_sha256": "fecbd4f2d7ac94b864b78fddfdcfe6e94aaecc2152c4c83b404ca29d92044198",
+    "original_criterion_sha256": "d11279341fddf88e532faecfbc3a85d941e2ccfdcb0550368fc591dda6ec6c56",
+    "source_patch_sha256": "1f2a9dd20f87cd3b6e569f0e8f42e21bb3e7b5610fd1fbd891ef21df6472f4c9",
+    "source_sha256": {
+      "source_mask_control": "252e813fcb0c335df6be73f9557b88dd183f7cf9e48fb0da7c3d81cfcadab162",
+      "filled_first_candidate": "d5d7ca9e7601e163a72c69dc18a181de795d1edd7fb451411726e2a889617697",
+      "production_restored": "bd482f345505ab2c1a30b323f5d0667839febbb6c57c06f82e3675b628e20a89"
+    },
+    "source_admission_exits": {
+      "gate_cli_build": 0,
+      "mutation_emit": 0,
+      "maintained_arbitrary_capacity_three_emit": 0
+    },
+    "o3_object_sha256": {
+      "control": "8d4ebc232869bc767bd3d979a3667f31f820d3c8b8852c7d980bb9a8d4a4c523",
+      "candidate": "c22666fb5f1f4f989def87281085b03952791289bf89f1d2e7a6e7570bc0a20b"
+    },
+    "o3_observation": "both scalar batches 205 identical instruction words, 112-byte frame, zero calls; both try_put inlined at cost 305/threshold 525; diagnostic object bytes equal nondiagnostic on each arm",
+    "invalid_setup": "earlier candidate -O2 versus control -O3; prior hot call, 137 versus 205 instructions and 144 versus 112-byte frame are not arm-order evidence; old artifact hashes/statuses retained under prefix",
+    "limit": "No owner/fault/account checks or timing after native stop. Old untransformed raw link collision had directly observed exit 1 but no primary stderr. Neither the older removal caller excerpt nor corrected O2 callee excerpt proves a replacement gain."
   }
 }

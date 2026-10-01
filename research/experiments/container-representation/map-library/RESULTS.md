@@ -4483,6 +4483,26 @@ source choice changes. Criteria, exact order files, native comparison, checks,
 raw rows and full peer ranges are retained under `chain-layout-aa` in the
 same archive and indexed by `mutation-api-evidence.json`.
 
+#### Filled-first source order: native stop
+
+A one-hunk source trial moves the `HashMapFilled` match arm ahead of Vacant and
+Deleted in `hash_map_action`, against the frozen source-mask control. The
+registered native criterion requires one Filled tag test before the key load
+in the reached scalar replacement path, with no added hot call or exchange cost.
+The candidate compiler admits the mutation witness and maintained
+capacity-three program; production library bytes are restored exactly.
+An initial candidate object used `-O2` against a `-O3` control. Its apparent
+hot call and 137-versus-205 instruction comparison are invalid setup evidence,
+not an arm-order effect. With the exact matched `-O3` commands, LLVM inlines
+scalar `try_put` into the batch in both arms (cost 305, threshold 525).
+Both linked scalar batches have 205 identical machine instruction words, a
+112-byte frame and no calls; their two tag tests remain. Diagnostic-only
+inliner remarks leave each object byte-identical to its ordinary build.
+The native criterion fails, so no correctness/accounting or timing campaign
+follows and no source change is selected. Criterion, patch, commands, pins,
+native excerpts and the invalid setup's artifact hashes are retained under
+`filled-first-order` in the same archive, indexed by `mutation-api-evidence.json`.
+
 [`entry-forward-evidence.tar.gz`](entry-forward-evidence.tar.gz) serves this
 section's reader with scripts, criteria, raw API/whole-Map/long-hit records,
 commands, metadata, statuses, source patch and native excerpts, without binaries.
