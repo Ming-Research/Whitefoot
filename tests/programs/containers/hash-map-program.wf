@@ -439,7 +439,7 @@ binding HashMapCycleKey : HashMapKey<u64, HashMapHashEnv> {
 }
 
 fn hash_map_test_cycle() -> result: u64 pure {
-  doc "Three live entries collide at home two in a three-slot table. Rehash must preserve every pair; all subsequent lookups are checked without depending on physical order.";
+  doc "Three live entries collide at home two in a three-slot table. A full cycle must refuse a new owner and report a missing removal. Removing a wrapped entry leaves a tombstone before a duplicate: replacement must find the duplicate before reusing that tombstone for a new key. Rehash then preserves every remaining pair.";
   let seen = HashMapTestSeen(failures: 0_u64, consumed: 0_u64, key_sum: 0_u64, value_sum: 0_u64, visits: 0_u64, observed: 0_u64);
   let false_value = False();
   let true_value = True();
@@ -450,10 +450,61 @@ fn hash_map_test_cycle() -> result: u64 pure {
     let inserted = hash_map_put::<HashMapCycleKey, u64, 3>(map: &map, key: key, value: value, env: &env);
     hash_map_test_scalar_outcome(outcome: inserted, expected: 0_u64, key: key, value: value, seen: &seen);
   }
+  let refused = hash_map_try_put::<HashMapCycleKey, u64, 3>(map: &map, key: 4_u64, value: 40_u64, env: &env);
+  hash_map_test_scalar_outcome(outcome: refused, expected: 2_u64, key: 4_u64, value: 40_u64, seen: &seen);
+  let absent_key = 5_u64;
+  let absent = hash_map_remove::<HashMapCycleKey, u64, 3>(map: &map, key: &absent_key, env: &env);
+  match absent {
+    Some(value: unexpected) => {
+      hash_map_test_fail(seen: &seen);
+      hash_map_pair_consume::<HashMapScalarConsume>(pair: unexpected, env: &seen);
+    }
+    None() => {
+    }
+  }
+  let removed_key = 2_u64;
+  let removed = hash_map_remove::<HashMapCycleKey, u64, 3>(map: &map, key: &removed_key, env: &env);
+  match removed {
+    Some(value: previous) => {
+      if previous.key != 2_u64 {
+        hash_map_test_fail(seen: &seen);
+      }
+      if previous.value != 20_u64 {
+        hash_map_test_fail(seen: &seen);
+      }
+      hash_map_pair_consume::<HashMapScalarConsume>(pair: previous, env: &seen);
+    }
+    None() => {
+      hash_map_test_fail(seen: &seen);
+    }
+  }
+  let replaced = hash_map_try_put::<HashMapCycleKey, u64, 3>(map: &map, key: 3_u64, value: 300_u64, env: &env);
+  hash_map_test_scalar_outcome(outcome: replaced, expected: 1_u64, key: 3_u64, value: 30_u64, seen: &seen);
+  if map.length != 2_u64 {
+    hash_map_test_fail(seen: &seen);
+  }
+  if map.vacated != 1_u64 {
+    hash_map_test_fail(seen: &seen);
+  }
+  let reused = hash_map_try_put::<HashMapCycleKey, u64, 3>(map: &map, key: 4_u64, value: 40_u64, env: &env);
+  hash_map_test_scalar_outcome(outcome: reused, expected: 0_u64, key: 4_u64, value: 40_u64, seen: &seen);
+  if map.length != 3_u64 {
+    hash_map_test_fail(seen: &seen);
+  }
+  if map.vacated != 0_u64 {
+    hash_map_test_fail(seen: &seen);
+  }
   let rebuilt = hash_map_rehash::<HashMapCycleKey, u64, 3>(map: &map, env: &env);
   hash_map_test_check_reserve(outcome: rebuilt, expected: true_value, seen: &seen);
-  for (key in 1_u64..4_u64) {
+  for (visit in 0_u64..3_u64) {
+    let key = visit + 2_u64;
+    if visit == 0_u64 {
+      set key = 1_u64;
+    }
     let expected = key * 10_u64;
+    if key == 3_u64 {
+      set expected = 300_u64;
+    }
     let observed = hash_map_lookup::<HashMapCycleKey, u64, HashMapTestSeen, u64, fn hash_map_test_scalar_read, 3>(map: &map, key: &key, key_env: &env, visit_env: &seen);
     match observed {
       Ok(value: actual) => {
@@ -467,13 +518,13 @@ fn hash_map_test_cycle() -> result: u64 pure {
     }
   }
   hash_map_free::<HashMapScalarConsume, 3>(map: move map, env: &seen);
-  if seen.consumed != 3_u64 {
+  if seen.consumed != 6_u64 {
     hash_map_test_fail(seen: &seen);
   }
-  if seen.key_sum != 6_u64 {
+  if seen.key_sum != 17_u64 {
     hash_map_test_fail(seen: &seen);
   }
-  if seen.value_sum != 60_u64 {
+  if seen.value_sum != 440_u64 {
     hash_map_test_fail(seen: &seen);
   }
   if seen.visits != 3_u64 {

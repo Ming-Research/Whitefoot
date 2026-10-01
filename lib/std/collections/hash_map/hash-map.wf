@@ -77,9 +77,14 @@ fn hash_map_find<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMa
 } {
   let hash = HashMapKey::hash(env: env, key: key);
   let count = map^.cells.inner.len;
-  for (step in 0_u64..count) {
-    let home = hash % count;
-    let index = hash_map_probe(home: home, step: step, count: count);
+  if count == 0_u64 {
+    return Err<u64, unit>(error: unit);
+  }
+  let index = hash % count;
+  for @find (
+    step in 0_u64..count,
+    invariant bucket: index < count
+  ) {
     let action = hash_map_action::<HashMapKey<K, E>, V>(slot: &map^.cells.inner[index], key: key, env: env);
     match action {
       HashMapMatch() => {
@@ -92,6 +97,12 @@ fn hash_map_find<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMa
       }
       HashMapMiss() => {
       }
+    }
+    let next = index + 1_u64;
+    if next < count {
+      set index = next;
+    } else {
+      set index = 0_u64;
     }
   }
   return Err<u64, unit>(error: unit);
@@ -191,27 +202,37 @@ fn hash_map_try_put<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &Has
   let hash = HashMapKey::hash(env: env, key: &key);
   let count = map^.cells.inner.len;
   let available = count;
-  for @probe (step in 0_u64..count) {
-    let home = hash % count;
-    let index = hash_map_probe(home: home, step: step, count: count);
-    let action = hash_map_action::<HashMapKey<K, E>, V>(slot: &map^.cells.inner[index], key: &key, env: env);
-    match action {
-      HashMapMatch() => {
-        let replaced = hash_map_exchange::<K, V>(cells: &map^.cells, index: index, key: move key, value: move value);
-        return move replaced;
-      }
-      HashMapStop() => {
-        if available == count {
-          set available = index;
+  if count > 0_u64 {
+    let index = hash % count;
+    for @probe (
+      step in 0_u64..count,
+      invariant bucket: index < count
+    ) {
+      let action = hash_map_action::<HashMapKey<K, E>, V>(slot: &map^.cells.inner[index], key: &key, env: env);
+      match action {
+        HashMapMatch() => {
+          let replaced = hash_map_exchange::<K, V>(cells: &map^.cells, index: index, key: move key, value: move value);
+          return move replaced;
         }
-        break @probe;
-      }
-      HashMapSkip() => {
-        if available == count {
-          set available = index;
+        HashMapStop() => {
+          if available == count {
+            set available = index;
+          }
+          break @probe;
+        }
+        HashMapSkip() => {
+          if available == count {
+            set available = index;
+          }
+        }
+        HashMapMiss() => {
         }
       }
-      HashMapMiss() => {
+      let next = index + 1_u64;
+      if next < count {
+        set index = next;
+      } else {
+        set index = 0_u64;
       }
     }
   }
