@@ -2,16 +2,14 @@
  * (compiler/src/backend/concurrent_map.c) behind the driver's functions.
  * The runtime source is compiled into this file, so the driver measures the
  * runtime's own code with one call per operation, as the comparators get.
- * Built with WF_CMAP_LOCKED_READ or WF_CMAP_SHARED_READ it measures the read
- * variants the runtime keeps for measurement. */
+ * Built with WF_CMAP_LOCKED_READ it measures the locked read the runtime
+ * keeps for measurement. */
 #include "concurrent_map.c"
 
 #include "cmap.h"
 
 #if defined(WF_CMAP_LOCKED_READ)
 const char *CM(name)(void) { return "wf-index-locked"; }
-#elif defined(WF_CMAP_SHARED_READ)
-const char *CM(name)(void) { return "wf-index-shared"; }
 #else
 const char *CM(name)(void) { return "wf-index"; }
 #endif

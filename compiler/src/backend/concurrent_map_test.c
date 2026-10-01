@@ -31,19 +31,32 @@ static uint64_t mix64(uint64_t z) {
     return z ^ (z >> 31);
 }
 
+static void fail(const char *what, unsigned long long a, unsigned long long b) {
+    printf("concurrent-map-test: %s (%llu, %llu)\n", what, a, b);
+    exit(1);
+}
+
 static uint64_t next(uint64_t *state) {
     *state += 0x9E3779B97F4A7C15ull;
     return mix64(*state);
 }
 
-/* Distinct nonzero keys: the finalizer is a bijection that maps only zero
- * to zero. */
-static uint64_t key_of(uint64_t index) { return mix64(index + 1); }
-
-static void fail(const char *what, unsigned long long a, unsigned long long b) {
-    printf("concurrent-map-test: %s (%llu, %llu)\n", what, a, b);
-    exit(1);
+/* Distinct keys in the map's range [1, 2^62 - 2]: the finalizer's steps
+ * taken modulo 2^62 are a bijection, and the two values it could give that
+ * fall outside the range are checked for. */
+static uint64_t key_of(uint64_t index) {
+    const uint64_t mask = (1ull << 62) - 1;
+    uint64_t x = index & mask;
+    x ^= x >> 31;
+    x = (x * 0xBF58476D1CE4E5B9ull) & mask;
+    x ^= x >> 29;
+    x = (x * 0x94D049BB133111EBull) & mask;
+    x ^= x >> 32;
+    if (x + 1 >= mask)
+        fail("a test key falls outside the map's range", index, x);
+    return x + 1;
 }
+
 
 static void add_one(uint64_t *value, void *env) {
     (void)env;

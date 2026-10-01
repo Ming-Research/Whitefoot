@@ -30,7 +30,7 @@ CFLAGS   := -O3 $(MARCH) -g0 -std=c11 -Wall -Wextra -I$(HERE) -isystem $(DEPS)/i
 CXXFLAGS := -O3 $(MARCH) -g0 -std=c++20 -Wall -Wextra -I$(HERE) -isystem $(DEPS)/include -pthread
 RUSTLIB  := $(DEPS)/cmaps-target/release/libcmaps.a
 
-NATIVE := wf_index wf_index_locked wf_index_shared empty mutex_flat flat boost_cfm tbb_chm libcuckoo urcu_lfht growt phmap papaya dashmap scc stdmap
+NATIVE := wf_index wf_index_locked empty mutex_flat flat boost_cfm tbb_chm libcuckoo urcu_lfht growt phmap papaya dashmap scc stdmap
 BINS   := $(addprefix $(BUILD)/bench-,$(NATIVE))
 MANAGED := $(BUILD)/java/Bench.class $(BUILD)/bench-go $(BUILD)/dotnet/Bench.dll
 # The runtime's concurrent map, compiled into its driver adapter.
@@ -53,8 +53,6 @@ $(BUILD)/impl-wf_index.o: native/wf_index.c cmap.h $(RUNTIME_BACKEND)/concurrent
 	$(CC) $(CFLAGS) -I$(RUNTIME_BACKEND) -DCM_PREFIX=wf_index -c -o $@ $<
 $(BUILD)/impl-wf_index_locked.o: native/wf_index.c cmap.h $(RUNTIME_BACKEND)/concurrent_map.c $(RUNTIME_BACKEND)/concurrent_map.h | $(BUILD)
 	$(CC) $(CFLAGS) -I$(RUNTIME_BACKEND) -DCM_PREFIX=wf_index_locked -DWF_CMAP_LOCKED_READ -c -o $@ $<
-$(BUILD)/impl-wf_index_shared.o: native/wf_index.c cmap.h $(RUNTIME_BACKEND)/concurrent_map.c $(RUNTIME_BACKEND)/concurrent_map.h | $(BUILD)
-	$(CC) $(CFLAGS) -I$(RUNTIME_BACKEND) -DCM_PREFIX=wf_index_shared -DWF_CMAP_SHARED_READ -c -o $@ $<
 $(BUILD)/impl-empty.o: native/empty.c cmap.h | $(BUILD)
 	$(CC) $(CFLAGS) -DCM_PREFIX=empty -c -o $@ $<
 $(BUILD)/impl-mutex_flat.o: native/flat.cpp cmap.h | $(BUILD)
@@ -79,8 +77,6 @@ LINK_CXX = $(CXX) $(CXXFLAGS) -o $@ $^
 $(BUILD)/bench-wf_index: $(BUILD)/driver-wf_index.o $(BUILD)/impl-wf_index.o
 	$(LINK_C)
 $(BUILD)/bench-wf_index_locked: $(BUILD)/driver-wf_index_locked.o $(BUILD)/impl-wf_index_locked.o
-	$(LINK_C)
-$(BUILD)/bench-wf_index_shared: $(BUILD)/driver-wf_index_shared.o $(BUILD)/impl-wf_index_shared.o
 	$(LINK_C)
 $(BUILD)/bench-empty: $(BUILD)/driver-empty.o $(BUILD)/impl-empty.o
 	$(LINK_C)

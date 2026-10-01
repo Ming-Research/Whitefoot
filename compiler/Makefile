@@ -389,11 +389,11 @@ floor-test: $(COMPLETION_TMP)/floor-probe $(COMPLETION_TMP)/floor-probe-hooks
 	WF_WORKERS=4 "$(COMPLETION_TMP)/floor-probe"
 	WF_WORKERS=4 "$(COMPLETION_TMP)/floor-probe-hooks"
 
-# The concurrent map, and the two read variants built for measurement, each
-# against a reference, accounting checks and recorded histories checked for
+# The concurrent map, and its locked read built for measurement, each against
+# a reference, accounting checks and recorded histories checked for
 # linearizability (concurrent_map_test.c).
 CONCURRENT_MAP_SOURCES := src/backend/concurrent_map.c src/backend/concurrent_map_test.c
-CONCURRENT_MAP_VARIANTS := copy-out locked shared
+CONCURRENT_MAP_VARIANTS := copy-out locked
 concurrent-map-test: $(foreach v,$(CONCURRENT_MAP_VARIANTS),$(COMPLETION_TMP)/concurrent-map-test-$(v))
 	@set -e; for v in $(CONCURRENT_MAP_VARIANTS); do "$(COMPLETION_TMP)/concurrent-map-test-$$v"; done
 $(COMPLETION_TMP)/concurrent-map-test-copy-out: $(CONCURRENT_MAP_SOURCES) src/backend/concurrent_map.h Makefile
@@ -402,9 +402,6 @@ $(COMPLETION_TMP)/concurrent-map-test-copy-out: $(CONCURRENT_MAP_SOURCES) src/ba
 $(COMPLETION_TMP)/concurrent-map-test-locked: $(CONCURRENT_MAP_SOURCES) src/backend/concurrent_map.h Makefile
 	@mkdir -p "$(dir $@)"
 	$(CC) $(COMPLETION_BASE_CFLAGS) -DWF_CMAP_LOCKED_READ $(CONCURRENT_MAP_SOURCES) -o "$@"
-$(COMPLETION_TMP)/concurrent-map-test-shared: $(CONCURRENT_MAP_SOURCES) src/backend/concurrent_map.h Makefile
-	@mkdir -p "$(dir $@)"
-	$(CC) $(COMPLETION_BASE_CFLAGS) -DWF_CMAP_SHARED_READ $(CONCURRENT_MAP_SOURCES) -o "$@"
 
 # Manual calibration, never a correctness or automatic performance input.
 sched-wake-measure: $(COMPLETION_TMP)/sched-policy

@@ -1,20 +1,28 @@
 /* The runtime's concurrent map (concurrent_map.h). Its design and the
  * measurements behind it are in research/investigations/concurrent-map/
- * DESIGN.md, "The index: a first design".
+ * DESIGN.md, "The index".
  *
- * A bucket is one 64-byte line: a ticket lock whose taken count doubles as
- * the bucket's version, three key and value slots, and a pointer to an
- * overflow bucket whose low bit marks a bucket moved to the next table.
- * Writers hold the home bucket's ticket; readers take none and check that
- * no ticket was taken while they read. Keys are never zero; zero marks an
- * empty slot.
+ * Open addressing with linear probing over 16-byte cells, a key word and a
+ * value, so that most operations touch one cache line. The key word's top
+ * bit locks the cell and the next marks it moved to the next table; zero is
+ * an empty cell and KEY_MASK a removed one, so keys lie in [1, 2^62 - 2].
  *
- * Two read variants are built only for measurement, beside the copy-out
- * read: WF_CMAP_LOCKED_READ, where a read holds its bucket's ticket like a
- * writer, as every atomic statement holds its object today, and
- * WF_CMAP_SHARED_READ, where readers of a bucket hold it together under a
- * reader-writer ticket lock. Which read the language uses for statements
- * that only read is an open question of the investigation's stage (b).
+ * A writer locks its key's cell by compare-and-swap, runs once and stores
+ * the key back: changes to a key are exclusive. A reader takes no lock: it
+ * reads the key word, the value and the key word again, and starts over when
+ * the cell was locked or changed between. A removed key leaves its cell
+ * marked removed until the table is moved, so a probe never stops early.
+ *
+ * A table is moved, to a larger one or to one of its own size that drops
+ * removed cells, once half its cells are used: writers mark blocks of cells
+ * moved and copy their keys, readers go on reading the frozen cells, and
+ * writers that meet the move help it and then retry in the new table. Moved
+ * tables stay allocated until the map is destroyed, since a reader may still
+ * be inside one.
+ *
+ * Built with WF_CMAP_LOCKED_READ, a read locks its cell like a writer, the
+ * read an atomic statement gets when every statement holds its entry
+ * exclusively; it is kept for measurement beside the lock-free read.
  */
 #define _GNU_SOURCE
 #include <sched.h>
@@ -26,49 +34,51 @@
 
 #include "concurrent_map.h"
 
-#define SLOTS 3
-/* The table doubles once it holds this many keys per bucket: with three
- * slots a bucket then overflows rarely enough that a lookup's one branch is
- * almost always predicted. */
-#define KEYS_PER_BUCKET 1.5
-/* A map created without a capacity starts with 2^10 buckets, 64 KiB; one
- * created with a capacity starts with at least 2^2. */
-#define DEFAULT_BITS 10
-#define MIN_BITS 2
-#define CHUNK 64
+#define LOCKED (1ull << 63)
+#define MOVED (1ull << 62)
+#define KEY_MASK ((1ull << 62) - 1)
+#define EMPTY 0ull
+#define REMOVED KEY_MASK
+/* Cells a map created without a capacity starts with, 64 KiB. */
+#define DEFAULT_CELLS 4096ull
+#define MIN_CELLS 16ull
+/* Cells one helper moves at a time. */
+#define BLOCK 4096ull
 #define MAX_THREADS 256
-#define MOVED ((uintptr_t)1)
 
-typedef struct bucket {
-    _Atomic uint32_t served;
-    _Atomic uint32_t taken;
-    _Atomic uint64_t key[SLOTS];
-    _Atomic uint64_t value[SLOTS];
-    _Atomic uintptr_t next; /* overflow bucket, tagged MOVED on a home bucket */
-} bucket;
+typedef struct cell {
+    _Atomic uint64_t key;
+    _Atomic uint64_t value;
+} cell;
 
-_Static_assert(sizeof(bucket) == 64, "a bucket is one cache line");
+_Static_assert(sizeof(cell) == 16, "four cells share a cache line");
 
 typedef struct table {
-    bucket *buckets;
-    uint64_t count;
+    cell *cells;
+    uint64_t capacity;
+    uint64_t mask;
     unsigned shift; /* 64 minus the index bits */
     _Atomic(struct table *) next;
-    _Atomic uint64_t claimed;
-    _Atomic uint64_t moved;
-    struct table *older; /* retired tables, freed with the map */
+    _Atomic uint64_t claimed; /* blocks handed to movers */
+    _Atomic uint64_t moved;   /* blocks moved */
+    int64_t base;             /* claims counted before this table was current */
+    struct table *older;      /* moved tables, freed with the map */
 } table;
 
+/* What one thread changed: cells it claimed and keys it added less those it
+ * removed; summed only when a claim may cross the threshold. */
 typedef struct {
-    _Alignas(64) _Atomic int64_t keys;
-    _Atomic int used;
+    _Alignas(64) _Atomic int64_t used;
+    _Atomic int64_t live;
+    _Atomic int busy;
 } counter;
 
 struct wf_cmap {
     _Alignas(64) _Atomic(table *) current;
-    _Alignas(64) _Atomic int64_t folded;
+    _Alignas(64) _Atomic int64_t folded_used;
+    _Atomic int64_t folded_live;
     _Atomic(table *) retired;
-    _Atomic int counters_used; /* counters at or above this index were never used */
+    _Atomic int counters_used;
     counter counts[MAX_THREADS];
 };
 
@@ -82,288 +92,283 @@ static inline void pause_once(void) {
 #endif
 }
 
-/* One multiplication by the 64-bit golden ratio: cheap, and it spreads keys
- * over the high bits the bucket index is taken from. */
-static inline uint64_t hash_of(uint64_t key) { return key * 0x9E3779B97F4A7C15ull; }
-
-static inline bucket *home(table *t, uint64_t h) { return &t->buckets[h >> t->shift]; }
-
-static inline bucket *untag(uintptr_t link) { return (bucket *)(link & ~MOVED); }
-
-/* Bucket arrays of 2 MiB or more are aligned to and advised into huge
- * pages: a random lookup in a large table otherwise pays a page walk on
- * most accesses, which costs a third of single-thread throughput at 2^20
- * keys on the measuring host. */
-static bucket *new_buckets(uint64_t count) {
-    size_t bytes = count * sizeof(bucket);
-    size_t align = bytes >= (2u << 20) ? (2u << 20) : 64;
-    bytes = (bytes + align - 1) / align * align;
-    bucket *b = aligned_alloc(align, bytes);
-    if (b == NULL)
-        return NULL;
-#ifdef MADV_HUGEPAGE
-    if (align > 64)
-        madvise(b, bytes, MADV_HUGEPAGE);
-#endif
-    memset(b, 0, bytes);
-    return b;
+/* Waits a little longer each round, then yields the processor. */
+static inline void back_off(unsigned *round) {
+    unsigned spins = *round < 6 ? 1u << *round : 64u;
+    for (unsigned i = 0; i < spins; i++)
+        pause_once();
+    if (++*round > 64) {
+        sched_yield();
+        *round = 6;
+    }
 }
 
-static table *new_table(unsigned bits) {
+/* One multiplication by the 64-bit golden ratio: cheap, and it spreads keys
+ * over the high bits the starting cell is taken from. */
+static inline uint64_t start_of(const table *t, uint64_t key) { return (key * 0x9E3779B97F4A7C15ull) >> t->shift; }
+
+static void bad_key(void) { abort(); }
+
+static inline void check_key(uint64_t key) {
+    if (__builtin_expect(key == EMPTY || key >= REMOVED, 0))
+        bad_key();
+}
+
+#define HUGE_BYTES ((size_t)2 << 20)
+
+/* Cell arrays of 2 MiB or more are mapped, so that their pages arrive zeroed
+ * when first touched, by whichever mover touches them, instead of being
+ * cleared up front by one thread. They are aligned to and advised into huge
+ * pages, since a random probe in a large table otherwise pays a page walk on
+ * most accesses. */
+static cell *new_cells(uint64_t count) {
+    size_t bytes = count * sizeof(cell);
+    if (bytes < HUGE_BYTES) {
+        cell *c = aligned_alloc(64, bytes);
+        if (c != NULL)
+            memset(c, 0, bytes);
+        return c;
+    }
+    char *raw = mmap(NULL, bytes + HUGE_BYTES, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (raw == MAP_FAILED)
+        return NULL;
+    char *start = (char *)(((uintptr_t)raw + HUGE_BYTES - 1) & ~(uintptr_t)(HUGE_BYTES - 1));
+    if (start > raw)
+        munmap(raw, (size_t)(start - raw));
+    munmap(start + bytes, (size_t)(raw + HUGE_BYTES - start));
+#ifdef MADV_HUGEPAGE
+    madvise(start, bytes, MADV_HUGEPAGE);
+#endif
+    return (cell *)start;
+}
+
+static void free_cells(cell *c, uint64_t count) {
+    size_t bytes = count * sizeof(cell);
+    if (bytes < HUGE_BYTES)
+        free(c);
+    else
+        munmap(c, bytes);
+}
+
+static table *new_table(uint64_t capacity) {
     table *t = calloc(1, sizeof *t);
     if (t == NULL)
         return NULL;
-    t->count = 1ull << bits;
+    unsigned bits = 0;
+    while ((1ull << bits) < capacity)
+        bits++;
+    t->capacity = 1ull << bits;
+    t->mask = t->capacity - 1;
     t->shift = 64 - bits;
-    t->buckets = new_buckets(t->count);
-    if (t->buckets == NULL) {
+    t->cells = new_cells(t->capacity);
+    if (t->cells == NULL) {
         free(t);
         return NULL;
     }
     return t;
 }
 
-#ifdef WF_CMAP_SHARED_READ
-/* Built with WF_CMAP_SHARED_READ, the state is a reader-writer ticket lock
- * (Mellor-Crummey and Scott): taken counts writers in its high half and
- * readers in its low half, served counts those that have left. A writer
- * waits for every writer and reader that came before it; a reader waits
- * only for the writers before it, so readers of one bucket hold it together
- * and arrival order is kept between readers and writers. Halves count
- * modulo 2^16 and a reader changes its half without carrying into the
- * writers'. */
-static inline uint32_t lock(bucket *b) {
-    uint32_t t = atomic_fetch_add_explicit(&b->taken, 1u << 16, memory_order_relaxed);
-    for (;;) {
-        uint32_t served = atomic_load_explicit(&b->served, memory_order_acquire);
-        if ((served >> 16) == (t >> 16) && (served & 0xFFFFu) == (t & 0xFFFFu))
-            return t;
-        pause_once();
-    }
+static void free_table(table *t) {
+    free_cells(t->cells, t->capacity);
+    free(t);
 }
 
-static inline void unlock(bucket *b, uint32_t ticket) {
-    (void)ticket;
-    atomic_fetch_add_explicit(&b->served, 1u << 16, memory_order_release);
-}
-
-static inline uint32_t low_increment(uint32_t word) { return (word & 0xFFFF0000u) | ((word + 1) & 0xFFFFu); }
-
-static inline void lock_shared(bucket *b) {
-    uint32_t old = atomic_load_explicit(&b->taken, memory_order_relaxed);
-    while (!atomic_compare_exchange_weak_explicit(&b->taken, &old, low_increment(old), memory_order_relaxed,
-                                                  memory_order_relaxed)) {
-    }
-    while ((atomic_load_explicit(&b->served, memory_order_acquire) >> 16) != (old >> 16))
-        pause_once();
-}
-
-static inline void unlock_shared(bucket *b) {
-    uint32_t old = atomic_load_explicit(&b->served, memory_order_relaxed);
-    while (!atomic_compare_exchange_weak_explicit(&b->served, &old, low_increment(old), memory_order_release,
-                                                  memory_order_relaxed)) {
-    }
-}
-#else
-/* Takes the bucket's ticket and waits to be served. */
-static inline uint32_t lock(bucket *b) {
-    uint32_t ticket = atomic_fetch_add_explicit(&b->taken, 1, memory_order_relaxed);
-    unsigned rounds = 0;
-    for (;;) {
-        uint32_t served = atomic_load_explicit(&b->served, memory_order_acquire);
-        if (served == ticket)
-            break;
-        /* The next in line checks at once; the others wait in proportion to
-         * the holders ahead of them, so the line is not passed among
-         * waiters that cannot take it yet. */
-        uint32_t ahead = ticket - served;
-        for (uint32_t k = 0; k < (ahead - 1) * 32; k++)
-            pause_once();
-        pause_once();
-        if (++rounds > 4096) {
-            sched_yield();
-            rounds = 0;
-        }
-    }
-    /* The ticket is ordered before every store under it, so a reader that
-     * sees one of those stores also sees the ticket and starts over. */
-    atomic_thread_fence(memory_order_release);
-    return ticket;
-}
-
-static inline void unlock(bucket *b, uint32_t ticket) {
-    atomic_store_explicit(&b->served, ticket + 1, memory_order_release);
-}
-#endif
-
-static void count_keys(wf_cmap *map, int64_t delta) {
+static void count(wf_cmap *map, int64_t used, int64_t live) {
     counter *c = my_count;
-    if (c)
-        atomic_store_explicit(&c->keys, atomic_load_explicit(&c->keys, memory_order_relaxed) + delta,
+    if (c) {
+        atomic_store_explicit(&c->used, atomic_load_explicit(&c->used, memory_order_relaxed) + used,
                               memory_order_relaxed);
-    else
-        atomic_fetch_add_explicit(&map->folded, delta, memory_order_relaxed);
-}
-
-static int64_t keys_now(wf_cmap *map) {
-    int64_t sum = atomic_load_explicit(&map->folded, memory_order_relaxed);
-    int used = atomic_load_explicit(&map->counters_used, memory_order_acquire);
-    for (int i = 0; i < used; i++)
-        sum += atomic_load_explicit(&map->counts[i].keys, memory_order_relaxed);
-    return sum;
-}
-
-/* The index of the slot of c holding key, or SLOTS when none does, chosen
- * by conditional moves rather than branches: which slot holds a key is
- * random, so a branch on it would mispredict and discard the following
- * operations' loads. */
-static inline int match(bucket *c, uint64_t key) {
-    uint64_t k0 = atomic_load_explicit(&c->key[0], memory_order_relaxed);
-    uint64_t k1 = atomic_load_explicit(&c->key[1], memory_order_relaxed);
-    uint64_t k2 = atomic_load_explicit(&c->key[2], memory_order_relaxed);
-    int i = k2 == key ? 2 : SLOTS;
-    i = k1 == key ? 1 : i;
-    return k0 == key ? 0 : i;
-}
-
-/* Appends a pair to a chain known not to hold its key; the caller holds the
- * chain's home ticket or owns the chain outright. Returns 1 when it had to
- * allocate an overflow bucket. */
-static int append(bucket *b, uint64_t key, uint64_t value) {
-    for (;;) {
-        int i = match(b, 0);
-        if (i < SLOTS) {
-            atomic_store_explicit(&b->value[i], value, memory_order_relaxed);
-            atomic_store_explicit(&b->key[i], key, memory_order_relaxed);
-            return 0;
-        }
-        bucket *next = untag(atomic_load_explicit(&b->next, memory_order_relaxed));
-        if (next == NULL) {
-            bucket *fresh = new_buckets(1);
-            if (fresh == NULL)
-                abort();
-            atomic_store_explicit(&fresh->value[0], value, memory_order_relaxed);
-            atomic_store_explicit(&fresh->key[0], key, memory_order_relaxed);
-            uintptr_t tag = atomic_load_explicit(&b->next, memory_order_relaxed) & MOVED;
-            atomic_store_explicit(&b->next, (uintptr_t)fresh | tag, memory_order_release);
-            return 1;
-        }
-        b = next;
+        atomic_store_explicit(&c->live, atomic_load_explicit(&c->live, memory_order_relaxed) + live,
+                              memory_order_relaxed);
+    } else {
+        atomic_fetch_add_explicit(&map->folded_used, used, memory_order_relaxed);
+        atomic_fetch_add_explicit(&map->folded_live, live, memory_order_relaxed);
     }
 }
 
-/* Moves one home bucket of t into the two buckets of t's successor it
- * splits into, and marks it moved. */
-static void move_bucket(table *t, table *nt, uint64_t index) {
-    bucket *b = &t->buckets[index];
-    uint32_t ticket = lock(b);
-    for (bucket *c = b; c; c = untag(atomic_load_explicit(&c->next, memory_order_relaxed))) {
-        for (int i = 0; i < SLOTS; i++) {
-            uint64_t key = atomic_load_explicit(&c->key[i], memory_order_relaxed);
-            if (key)
-                append(home(nt, hash_of(key)), key, atomic_load_explicit(&c->value[i], memory_order_relaxed));
-        }
+static void totals(wf_cmap *map, int64_t *used, int64_t *live) {
+    int64_t u = atomic_load_explicit(&map->folded_used, memory_order_relaxed);
+    int64_t l = atomic_load_explicit(&map->folded_live, memory_order_relaxed);
+    int n = atomic_load_explicit(&map->counters_used, memory_order_acquire);
+    for (int i = 0; i < n; i++) {
+        u += atomic_load_explicit(&map->counts[i].used, memory_order_relaxed);
+        l += atomic_load_explicit(&map->counts[i].live, memory_order_relaxed);
     }
-    uintptr_t link = atomic_load_explicit(&b->next, memory_order_relaxed);
-    atomic_store_explicit(&b->next, link | MOVED, memory_order_release);
-    unlock(b, ticket);
+    *used = u;
+    *live = l;
 }
 
-/* Moves runs of buckets of t until none is left to claim; the mover of the
- * last run makes the successor current. */
+/* Places a key moved from an older table. Only movers write a table that is
+ * not yet current and no two move the same key, but two may reach one empty
+ * cell, so a mover claims the cell before it writes the value. */
+static void place(table *t, uint64_t key, uint64_t value) {
+    for (uint64_t i = start_of(t, key);; i = (i + 1) & t->mask) {
+        uint64_t expected = EMPTY;
+        if (atomic_compare_exchange_strong_explicit(&t->cells[i].key, &expected, key | LOCKED,
+                                                    memory_order_relaxed, memory_order_relaxed)) {
+            atomic_store_explicit(&t->cells[i].value, value, memory_order_relaxed);
+            atomic_store_explicit(&t->cells[i].key, key, memory_order_relaxed);
+            return;
+        }
+    }
+}
+
+/* Freezes one block of t's cells, waiting out the writers that hold them,
+ * and copies their keys into t's successor. */
+static void move_block(table *t, table *nt, uint64_t block) {
+    uint64_t end = (block + 1) * BLOCK < t->capacity ? (block + 1) * BLOCK : t->capacity;
+    for (uint64_t i = block * BLOCK; i < end; i++) {
+        cell *c = &t->cells[i];
+        uint64_t k = atomic_load_explicit(&c->key, memory_order_acquire);
+        unsigned round = 0;
+        for (;;) {
+            if (k & LOCKED) {
+                back_off(&round);
+                k = atomic_load_explicit(&c->key, memory_order_acquire);
+                continue;
+            }
+            if (atomic_compare_exchange_weak_explicit(&c->key, &k, k | MOVED, memory_order_acq_rel,
+                                                      memory_order_acquire))
+                break;
+        }
+        if (k != EMPTY && k != REMOVED)
+            place(nt, k, atomic_load_explicit(&c->value, memory_order_relaxed));
+    }
+}
+
+/* Moves blocks of t until none is left to claim; the mover of the last makes
+ * the successor current. */
 static void help(wf_cmap *map, table *t) {
     table *nt = atomic_load_explicit(&t->next, memory_order_acquire);
+    uint64_t blocks = (t->capacity + BLOCK - 1) / BLOCK;
     for (;;) {
-        uint64_t start = atomic_fetch_add_explicit(&t->claimed, CHUNK, memory_order_relaxed);
-        if (start >= t->count)
+        uint64_t block = atomic_fetch_add_explicit(&t->claimed, 1, memory_order_relaxed);
+        if (block >= blocks)
             return;
-        uint64_t end = start + CHUNK < t->count ? start + CHUNK : t->count;
-        for (uint64_t i = start; i < end; i++)
-            move_bucket(t, nt, i);
-        uint64_t done = atomic_fetch_add_explicit(&t->moved, end - start, memory_order_acq_rel) + (end - start);
-        if (done == t->count) {
+        move_block(t, nt, block);
+        if (atomic_fetch_add_explicit(&t->moved, 1, memory_order_acq_rel) + 1 == blocks) {
+            /* Writers wait for the move, so the counts are settled: the new
+             * table's used cells are its live keys. */
+            int64_t used, live;
+            totals(map, &used, &live);
+            nt->base = used - live;
             atomic_store_explicit(&map->current, nt, memory_order_release);
-            /* Retire t: it stays allocated until the map is destroyed, since
-             * readers may still be inside it. */
             table *old = atomic_load_explicit(&map->retired, memory_order_relaxed);
             do {
                 t->older = old;
             } while (!atomic_compare_exchange_weak_explicit(&map->retired, &old, t, memory_order_acq_rel,
                                                             memory_order_relaxed));
-            return;
         }
     }
 }
 
-/* Starts doubling t if no move has started, then helps whichever move is
- * under way. */
-static void grow(wf_cmap *map, table *t) {
-    if (atomic_load_explicit(&t->next, memory_order_acquire) == NULL) {
-        table *nt = new_table(64 - t->shift + 1);
-        if (nt == NULL)
-            abort();
-        table *expected = NULL;
-        if (!atomic_compare_exchange_strong_explicit(&t->next, &expected, nt, memory_order_acq_rel,
-                                                     memory_order_acquire)) {
-            free(nt->buckets);
-            free(nt);
-        }
-    }
+/* Helps the move out of t and waits until its successor is current. */
+static table *finish_move(wf_cmap *map, table *t) {
     help(map, t);
+    unsigned round = 0;
+    table *now;
+    while ((now = atomic_load_explicit(&map->current, memory_order_acquire)) == t)
+        back_off(&round);
+    return now;
 }
 
-/* The table a writer starts in: the current one, after helping any move
- * from it. */
+/* Starts moving t, if no move has started, to a table that holds the live
+ * keys at a quarter of its cells. */
+static void start_move(wf_cmap *map, table *t) {
+    if (atomic_load_explicit(&t->next, memory_order_acquire) != NULL)
+        return;
+    int64_t used, live;
+    totals(map, &used, &live);
+    uint64_t capacity = MIN_CELLS;
+    while (capacity < 4 * (uint64_t)(live > 0 ? live : 0))
+        capacity <<= 1;
+    if (capacity < t->capacity / 2)
+        capacity = t->capacity / 2 > MIN_CELLS ? t->capacity / 2 : MIN_CELLS;
+    table *nt = new_table(capacity);
+    if (nt == NULL)
+        abort();
+    table *expected = NULL;
+    if (!atomic_compare_exchange_strong_explicit(&t->next, &expected, nt, memory_order_acq_rel,
+                                                 memory_order_acquire))
+        free_table(nt);
+}
+
+/* The table a writer starts in: the current one, once no move out of it is
+ * under way. */
 static table *writer_table(wf_cmap *map) {
     table *t = atomic_load_explicit(&map->current, memory_order_acquire);
-    if (atomic_load_explicit(&t->next, memory_order_acquire) != NULL) {
-        help(map, t);
-        t = atomic_load_explicit(&map->current, memory_order_acquire);
-    }
+    while (atomic_load_explicit(&t->next, memory_order_acquire) != NULL)
+        t = finish_move(map, t);
     return t;
 }
 
-/* Locks the home bucket of h, following moved buckets to later tables. */
-static bucket *lock_home(wf_cmap *map, uint64_t h, uint32_t *ticket) {
-    table *t = writer_table(map);
+enum { FOUND, CLAIMED, ABSENT, RETRY };
+
+/* Locks key's cell in t, or with claim set locks an empty cell for it;
+ * RETRY when the probe met a moved cell. */
+static int acquire(table *t, uint64_t key, int claim, cell **out) {
+    uint64_t i = start_of(t, key);
+    unsigned round = 0;
     for (;;) {
-        bucket *b = home(t, h);
-        *ticket = lock(b);
-        if (!(atomic_load_explicit(&b->next, memory_order_relaxed) & MOVED))
-            return b;
-        unlock(b, *ticket);
-        t = atomic_load_explicit(&t->next, memory_order_acquire);
+        cell *c = &t->cells[i];
+        uint64_t k = atomic_load_explicit(&c->key, memory_order_acquire);
+        if (k & MOVED)
+            return RETRY;
+        uint64_t bare = k & ~LOCKED;
+        if (bare == key) {
+            if (k & LOCKED) {
+                back_off(&round);
+                continue;
+            }
+            if (atomic_compare_exchange_weak_explicit(&c->key, &k, k | LOCKED, memory_order_acquire,
+                                                      memory_order_relaxed)) {
+                *out = c;
+                return FOUND;
+            }
+            continue;
+        }
+        if (bare == EMPTY) {
+            if (!claim)
+                return ABSENT;
+            if (atomic_compare_exchange_weak_explicit(&c->key, &k, key | LOCKED, memory_order_acquire,
+                                                      memory_order_relaxed)) {
+                *out = c;
+                return CLAIMED;
+            }
+            continue;
+        }
+        i = (i + 1) & t->mask;
     }
 }
 
+/* Locks key's cell in the current table, helping any move it meets. */
+static int lock_key(wf_cmap *map, uint64_t key, int claim, cell **out, table **in) {
+    table *t = writer_table(map);
+    for (;;) {
+        int r = acquire(t, key, claim, out);
+        if (r != RETRY) {
+            *in = t;
+            return r;
+        }
+        t = finish_move(map, t);
+    }
+}
+
+static inline void unlock(cell *c, uint64_t key) { atomic_store_explicit(&c->key, key, memory_order_release); }
+
 wf_cmap *wf_cmap_create(uint64_t capacity) {
-    unsigned bits = capacity ? MIN_BITS : DEFAULT_BITS;
-    while (bits < 40 && (double)(1ull << bits) * KEYS_PER_BUCKET < (double)capacity)
-        bits++;
     wf_cmap *map = aligned_alloc(64, sizeof(wf_cmap));
     if (map == NULL)
         return NULL;
     memset(map, 0, sizeof *map);
-    table *t = new_table(bits);
+    uint64_t cells = capacity ? 2 * capacity : DEFAULT_CELLS;
+    table *t = new_table(cells > MIN_CELLS ? cells : MIN_CELLS);
     if (t == NULL) {
         free(map);
         return NULL;
     }
     atomic_store(&map->current, t);
     return map;
-}
-
-static void free_table(table *t) {
-    for (uint64_t i = 0; i < t->count; i++) {
-        bucket *c = untag(atomic_load_explicit(&t->buckets[i].next, memory_order_relaxed));
-        while (c) {
-            bucket *next = untag(atomic_load_explicit(&c->next, memory_order_relaxed));
-            free(c);
-            c = next;
-        }
-    }
-    free(t->buckets);
-    free(t);
 }
 
 void wf_cmap_destroy(wf_cmap *map) {
@@ -382,11 +387,11 @@ void wf_cmap_destroy(wf_cmap *map) {
 
 void wf_cmap_enter(wf_cmap *map) {
     for (int i = 0; i < MAX_THREADS; i++) {
-        int free_slot = 0;
-        if (atomic_compare_exchange_strong(&map->counts[i].used, &free_slot, 1)) {
+        int idle = 0;
+        if (atomic_compare_exchange_strong(&map->counts[i].busy, &idle, 1)) {
             my_count = &map->counts[i];
-            int used = atomic_load(&map->counters_used);
-            while (used < i + 1 && !atomic_compare_exchange_weak(&map->counters_used, &used, i + 1)) {
+            int n = atomic_load(&map->counters_used);
+            while (n < i + 1 && !atomic_compare_exchange_weak(&map->counters_used, &n, i + 1)) {
             }
             return;
         }
@@ -398,166 +403,94 @@ void wf_cmap_leave(wf_cmap *map) {
     counter *c = my_count;
     if (c == NULL)
         return;
-    atomic_fetch_add_explicit(&map->folded, atomic_load_explicit(&c->keys, memory_order_relaxed),
+    atomic_fetch_add_explicit(&map->folded_used, atomic_load_explicit(&c->used, memory_order_relaxed),
                               memory_order_relaxed);
-    atomic_store_explicit(&c->keys, 0, memory_order_relaxed);
-    atomic_store(&c->used, 0);
+    atomic_fetch_add_explicit(&map->folded_live, atomic_load_explicit(&c->live, memory_order_relaxed),
+                              memory_order_relaxed);
+    atomic_store_explicit(&c->used, 0, memory_order_relaxed);
+    atomic_store_explicit(&c->live, 0, memory_order_relaxed);
+    atomic_store(&c->busy, 0);
     my_count = NULL;
 }
 
-static _Atomic uint64_t *slot_of(bucket *b, uint64_t key, _Atomic uint64_t **value);
-static bucket *lock_home(wf_cmap *map, uint64_t h, uint32_t *ticket);
-static __attribute__((noinline)) int get_slow(wf_cmap *map, uint64_t h, uint64_t key, uint64_t *value);
-
 int wf_cmap_get(wf_cmap *map, uint64_t key, uint64_t *value) {
 #ifdef WF_CMAP_LOCKED_READ
-    uint32_t ticket;
-    bucket *held = lock_home(map, hash_of(key), &ticket);
-    _Atomic uint64_t *v;
-    int present = slot_of(held, key, &v) != NULL;
-    if (present)
-        *value = atomic_load_explicit(v, memory_order_relaxed);
-    unlock(held, ticket);
-    return present;
-#elif defined(WF_CMAP_SHARED_READ)
-    uint64_t hashed = hash_of(key);
-    table *tab = atomic_load_explicit(&map->current, memory_order_acquire);
-    bucket *held;
-    for (;;) {
-        held = home(tab, hashed);
-        lock_shared(held);
-        if (!(atomic_load_explicit(&held->next, memory_order_relaxed) & MOVED))
-            break;
-        unlock_shared(held);
-        tab = atomic_load_explicit(&tab->next, memory_order_acquire);
-    }
-    _Atomic uint64_t *v;
-    int present = slot_of(held, key, &v) != NULL;
-    if (present)
-        *value = atomic_load_explicit(v, memory_order_relaxed);
-    unlock_shared(held);
-    return present;
-#endif
-    uint64_t h = hash_of(key);
+    cell *c;
+    table *t;
+    if (lock_key(map, key, 0, &c, &t) == ABSENT)
+        return 0;
+    *value = atomic_load_explicit(&c->value, memory_order_relaxed);
+    unlock(c, key);
+    return 1;
+#else
     table *t = atomic_load_explicit(&map->current, memory_order_acquire);
-    bucket *b = home(t, h);
-    uint32_t served = atomic_load_explicit(&b->served, memory_order_acquire);
-    uint32_t taken = atomic_load_explicit(&b->taken, memory_order_acquire);
-    uintptr_t link = atomic_load_explicit(&b->next, memory_order_acquire);
-    uint64_t m0 = -(uint64_t)(atomic_load_explicit(&b->key[0], memory_order_relaxed) == key);
-    uint64_t m1 = -(uint64_t)(atomic_load_explicit(&b->key[1], memory_order_relaxed) == key);
-    uint64_t m2 = -(uint64_t)(atomic_load_explicit(&b->key[2], memory_order_relaxed) == key);
-    uint64_t seen = (atomic_load_explicit(&b->value[0], memory_order_relaxed) & m0) |
-                    (atomic_load_explicit(&b->value[1], memory_order_relaxed) & m1) |
-                    (atomic_load_explicit(&b->value[2], memory_order_relaxed) & m2);
-    uint64_t hit = (m0 | m1 | m2) & 1;
-    /* One rarely taken branch: a writer holds the bucket, the bucket has
-     * moved, or the key is not in the home slots and an overflow bucket
-     * exists. */
-    if (__builtin_expect((taken != served) | ((link & MOVED) != 0) | ((hit == 0) & (link != 0)), 0))
-        return get_slow(map, h, key, value);
-    atomic_thread_fence(memory_order_acquire);
-    if (__builtin_expect(atomic_load_explicit(&b->taken, memory_order_relaxed) != taken, 0))
-        return get_slow(map, h, key, value);
-    *value = seen;
-    return (int)hit;
-}
-
-/* The copy-out read's general path: waits out writers, follows moves and
- * overflow buckets. */
-static int get_slow(wf_cmap *map, uint64_t h, uint64_t key, uint64_t *value) {
-    table *t = atomic_load_explicit(&map->current, memory_order_acquire);
-    bucket *b = home(t, h);
+    uint64_t i = start_of(t, key);
     for (;;) {
-        uint32_t served = atomic_load_explicit(&b->served, memory_order_acquire);
-        uint32_t taken = atomic_load_explicit(&b->taken, memory_order_acquire);
-        if (taken != served) {
-            pause_once();
-            continue;
-        }
-        uintptr_t link = atomic_load_explicit(&b->next, memory_order_acquire);
-        if (link & MOVED) {
-            t = atomic_load_explicit(&t->next, memory_order_acquire);
-            b = home(t, h);
-            continue;
-        }
-        int found = 0;
-        uint64_t seen = 0;
-        for (bucket *c = b; c && !found;) {
-            for (int i = 0; i < SLOTS; i++) {
-                if (atomic_load_explicit(&c->key[i], memory_order_relaxed) == key) {
-                    seen = atomic_load_explicit(&c->value[i], memory_order_relaxed);
-                    found = 1;
-                    break;
-                }
+        cell *c = &t->cells[i];
+        uint64_t k = atomic_load_explicit(&c->key, memory_order_acquire);
+        uint64_t bare = k & ~(LOCKED | MOVED);
+        if (__builtin_expect(bare == key, 1)) {
+            if (__builtin_expect(k & LOCKED, 0)) {
+                pause_once();
+                continue;
             }
-            c = untag(atomic_load_explicit(&c->next, memory_order_relaxed));
+            uint64_t v = atomic_load_explicit(&c->value, memory_order_relaxed);
+            atomic_thread_fence(memory_order_acquire);
+            if (__builtin_expect(atomic_load_explicit(&c->key, memory_order_relaxed) != k, 0))
+                continue;
+            *value = v;
+            return 1;
         }
-        atomic_thread_fence(memory_order_acquire);
-        if (atomic_load_explicit(&b->taken, memory_order_relaxed) != taken)
-            continue;
-        if (found)
-            *value = seen;
-        return found;
+        if (bare == EMPTY)
+            return 0;
+        i = (i + 1) & t->mask;
     }
-}
-
-/* The slot of key in a locked chain, or NULL. */
-static _Atomic uint64_t *slot_of(bucket *b, uint64_t key, _Atomic uint64_t **value) {
-    for (bucket *c = b; c; c = untag(atomic_load_explicit(&c->next, memory_order_relaxed))) {
-        int i = match(c, key);
-        if (i < SLOTS) {
-            *value = &c->value[i];
-            return &c->key[i];
-        }
-    }
-    return NULL;
+#endif
 }
 
 int wf_cmap_insert(wf_cmap *map, uint64_t key, uint64_t value) {
-    uint64_t h = hash_of(key);
-    uint32_t ticket;
-    bucket *b = lock_home(map, h, &ticket);
-    _Atomic uint64_t *v;
-    if (slot_of(b, key, &v)) {
-        atomic_store_explicit(v, value, memory_order_relaxed);
-        unlock(b, ticket);
+    check_key(key);
+    cell *c;
+    table *t;
+    int r = lock_key(map, key, 1, &c, &t);
+    atomic_store_explicit(&c->value, value, memory_order_relaxed);
+    unlock(c, key);
+    if (r == FOUND)
         return 0;
-    }
-    int overflowed = append(b, key, value);
-    unlock(b, ticket);
-    count_keys(map, 1);
-    if (overflowed) {
-        table *t = atomic_load_explicit(&map->current, memory_order_acquire);
-        if ((double)keys_now(map) > (double)t->count * KEYS_PER_BUCKET)
-            grow(map, t);
+    count(map, 1, 1);
+    /* A claim may cross the threshold: half the cells used. Small tables
+     * check every claim, so that racing claims never fill one. */
+    counter *mine = my_count;
+    int64_t local = mine ? atomic_load_explicit(&mine->used, memory_order_relaxed) : 0;
+    if (t->capacity <= (1ull << 16) || (local & 31) == 0) {
+        int64_t used, live;
+        totals(map, &used, &live);
+        if (used - t->base > (int64_t)(t->capacity / 2)) {
+            start_move(map, t);
+            finish_move(map, t);
+        }
     }
     return 1;
 }
 
 int wf_cmap_remove(wf_cmap *map, uint64_t key) {
-    uint32_t ticket;
-    bucket *b = lock_home(map, hash_of(key), &ticket);
-    _Atomic uint64_t *v;
-    _Atomic uint64_t *k = slot_of(b, key, &v);
-    if (k)
-        atomic_store_explicit(k, 0, memory_order_relaxed);
-    unlock(b, ticket);
-    if (k)
-        count_keys(map, -1);
-    return k != NULL;
+    cell *c;
+    table *t;
+    if (lock_key(map, key, 0, &c, &t) == ABSENT)
+        return 0;
+    unlock(c, REMOVED);
+    count(map, 0, -1);
+    return 1;
 }
 
 int wf_cmap_update(wf_cmap *map, uint64_t key, void (*edit)(uint64_t *value, void *env), void *env) {
-    uint32_t ticket;
-    bucket *b = lock_home(map, hash_of(key), &ticket);
-    _Atomic uint64_t *v;
-    _Atomic uint64_t *k = slot_of(b, key, &v);
-    if (k) {
-        uint64_t value = atomic_load_explicit(v, memory_order_relaxed);
-        edit(&value, env);
-        atomic_store_explicit(v, value, memory_order_relaxed);
-    }
-    unlock(b, ticket);
-    return k != NULL;
+    cell *c;
+    table *t;
+    if (lock_key(map, key, 0, &c, &t) == ABSENT)
+        return 0;
+    uint64_t value = atomic_load_explicit(&c->value, memory_order_relaxed);
+    edit(&value, env);
+    atomic_store_explicit(&c->value, value, memory_order_relaxed);
+    unlock(c, key);
+    return 1;
 }
