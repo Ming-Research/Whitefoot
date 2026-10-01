@@ -11,6 +11,10 @@
 #   sh redis-bench.sh verify      only the correctness pass
 #   sh redis-bench.sh suite       the correctness pass and the firn criteria:
 #                                 redis-benchmark's default suite on every line
+#   sh redis-bench.sh scale       the suite's lines on each server CPU count in
+#                                 SCALE (default 2 4 8 16), the client on the
+#                                 host's other CPUs, for SCALE_TESTS at each
+#                                 depth in SCALE_PIPELINES (default 16)
 #
 # BASELINE_ROOT, when set, is a worktree of the revision before expiry with its
 # compiler built; its subset is measured as the baseline lines of Experiment 8.
@@ -312,7 +316,9 @@ measure() {
     stop
 }
 
-SUITE_TESTS="ping_inline ping_mbulk set get incr lpush rpush lpop rpop sadd hset spop zadd zpopmin lrange_100 lrange_300 lrange_500 lrange_600 mset"
+SUITE_TESTS=${SUITE_TESTS:-"ping_inline ping_mbulk set get incr lpush rpush lpop rpop sadd hset spop zadd zpopmin lrange_100 lrange_300 lrange_500 lrange_600 mset"}
+# The depths the suite and its pilot run each test at.
+PIPELINES=${PIPELINES:-"1 16"}
 
 # One test's rate on the running server at one depth after a given number of
 # requests, the list refill of an LRANGE test left out.
@@ -334,7 +340,7 @@ pilot() {
     rm -f "$OUT/pilot.csv"
     for line in reference "firn-$(cpu_count "$SERVER_CPUS")"; do
         start "$line"
-        for pipeline in 1 16; do
+        for pipeline in $PIPELINES; do
             for test in $SUITE_TESTS; do
                 first=$(pilot_rate "$test" "$pipeline" 100000)
                 requests=$(awk -v rate="$first" 'BEGIN {
@@ -356,7 +362,7 @@ requests_for() {
 
 suite_run() {
     start "$1"
-    for pipeline in 1 16; do
+    for pipeline in $PIPELINES; do
         for test in $SUITE_TESTS; do
             requests=$(requests_for "$test" "$pipeline")
             taskset -c "$CLIENT_CPUS" redis-benchmark -p "$PORT" \
@@ -368,6 +374,44 @@ suite_run() {
     done
     stop
 }
+
+# The scaling run: on each server CPU count n in SCALE, the servers on CPUs 0
+# to n - 1 and the client on the rest, with one client thread per client CPU
+# up to 16; every line is checked on n CPUs, a pilot sizes the runs for n,
+# and then PASSES passes measure the lines interleaved.
+if [ "$MODE" = scale ]; then
+    total=$(nproc)
+    SUITE_TESTS=${SCALE_TESTS:-"set get incr lpush rpop sadd hset zadd lrange_100 mset"}
+    PIPELINES=${SCALE_PIPELINES:-16}
+    for n in ${SCALE:-2 4 8 16}; do
+        if [ "$n" -ge "$total" ]; then
+            echo "skip,scale $n,the host has $total CPUs"
+            continue
+        fi
+        SERVER_CPUS=$(seq -s, 0 $((n - 1)))
+        CLIENT_CPUS=$(seq -s, "$n" $((total - 1)))
+        CLIENT_THREADS=$((total - n < 16 ? total - n : 16))
+        lines="reference valkey-io dragonfly-$n garnet-$n firn-$n firn-base-$n"
+        for line in $lines; do
+            if available "$line"; then
+                verify_suite "$line"
+            else
+                echo "skip,$line,no executable"
+            fi
+        done
+        pilot
+        pass=1
+        while [ "$pass" -le "$PASSES" ]; do
+            for line in $lines; do
+                if available "$line"; then
+                    suite_run "$line" "pass $pass" "$n server CPUs"
+                fi
+            done
+            pass=$((pass + 1))
+        done
+    done
+    exit 0
+fi
 
 if [ "$MODE" = suite ]; then
     two="reference valkey valkey-io dragonfly-2 garnet-2 firn-2 firn-base-2"
