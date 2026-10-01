@@ -3314,6 +3314,20 @@ condition under which it is taken up.
   measured contribution; copy counts alone do not establish that contribution.
   Dense storage remains faster for wide growth but adds reserved metadata and
   dependent lookup, while a fresh sparse rehash retains two complete backings.
+  The ordinary index-chain prototype cannot replace the current public map
+  unchanged: [its interface](../lib/std/collections/hash_map/module.wfm)
+  exposes `cells: Box<Slots<HashMapSlot<K, V>>>` and `vacated`, while the
+  [prototype](../research/experiments/container-representation/map-library/RESULTS.md#full-operation-index-chain-correctness-discriminator)
+  stores separate heads and dense entries.
+  Its seven vacated-count mismatches and one capacity mismatch follow from
+  dropping physical tombstones and the filled-plus-vacated pressure rule;
+  merely adding a counter would not identify which tombstone an insertion
+  reuses. Its wide replacement also loses to the current flat candidate, and
+  its growth still expands the dense entry backing when capacity rises beyond
+  that backing's reserve. Reopen a chain replacement only with a separately
+  chosen public-shape change or a compatible occupancy representation, then
+  check all public fields, policy stages, owner cleanup, wide mutation and
+  reserve together.
   Reopen for a workload dominated by these costs, preserving full backing and
   peak bytes, hash/load policy, retained helpers and exact cleanup. Defer a
   second maintained representation until that consumer supplies its grounds;
@@ -3374,14 +3388,14 @@ condition under which it is taken up.
   with complete-content and ownership checks. This result neither attributes
   the loss to cache/allocation state nor rules out every inactive-byte strategy.
 
-  Ordinary-source owner migration gives a narrower lead: self-tail scanning
+  Ordinary-source owner migration retains a narrower performance limit: self-tail scanning
   removes inactive destination capture and Inserted-result clearing, reducing
   simultaneous wide frames from 752 to 336 bytes, but retains 256-byte argument
   staging. Small aligned wide reserve gains pass the supplemental paired gates;
   large raw gains fail the unchanged C++ cohort-stability limit, and both sizes
-  remain behind both peers. No source policy is selected. Reopen for a distinct
-  removal of reached migration work with maintained generic ownership/hostile
-  callback checks and complete paired qualification. Avoid replacing it with
+  remain behind both peers. Establish complete paired qualification for the
+  parameter-held owner protocol and measure any further removal of reached
+  work with generic ownership and hostile callback checks. Avoid replacing it with
   the rejected backing-slot swap's three full 272-byte transfers.
 
   Combining that source shape with a scratch fresh-Vacant initialization floor
@@ -3398,6 +3412,16 @@ condition under which it is taken up.
   snapshot behavior unchanged; reopen general forwarding only with qualified
   performance evidence and established lifetime, alias and intervening-write
   conditions, rather than the native copy count alone.
+
+  A distinct zero-preserving [padding discriminator](../research/experiments/container-representation/map-library/RESULTS.md#zero-preserving-padding-discriminator-native-fusion-succeeds)
+  changes four fresh slot constructions to zero their complete allocated size.
+  Ordinary LLVM then fuses allocation and initialization into `calloc` for both
+  widths; existing tag/key/value zeros, argument staging and copy sites remain.
+  Generalize only after checking construction destinations, target layout and
+  zero-size cases, and observing allocation failure/cleanup through emergent
+  `calloc`. Measure the complete operation panel: the native result supplies
+  a mechanism, not a runtime benefit. Standalone extend loops and whole-module
+  inlining collateral remain part of that comparison.
 
 - **Ordered insertion replacement costs need attribution.** Both the
   [aggregate-result candidate](../research/experiments/container-representation/ordered-library/RESULTS.md#single-descent-insertion-candidate)

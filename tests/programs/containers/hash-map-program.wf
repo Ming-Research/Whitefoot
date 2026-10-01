@@ -802,6 +802,145 @@ fn hash_map_test_owned() -> result: u64 pure {
   return ledger.failures;
 }
 
+struct HashMapMigrationEnv {
+  home: u64;
+  equal: Bool;
+}
+
+fn hash_map_test_migration_hash(env: &HashMapMigrationEnv, key: &HashMapOwnedNode) -> result: u64 reads(env) {
+  return env^.home;
+}
+
+fn hash_map_test_migration_equal(env: &HashMapMigrationEnv, left: &HashMapOwnedNode, right: &HashMapOwnedNode) -> result: Bool reads(env) {
+  return env^.equal;
+}
+
+binding HashMapMigrationKey : HashMapKey<HashMapOwnedNode, HashMapMigrationEnv> {
+  hash = hash_map_test_migration_hash;
+  equal = hash_map_test_migration_equal;
+}
+
+fn hash_map_test_migration_visit(env: &HashMapOwnerLedger, key: &HashMapOwnedNode, value: &HashMapOwnedNode) -> result: unit reads(key), reads(value), writes(env) {
+  let key_serial = key^.child.inner.serial;
+  let value_serial = value^.child.inner.serial;
+  if key^.child.inner.id != 7_u64 {
+    hash_map_test_owned_fail(ledger: env);
+  }
+  if value^.child.inner.id != 70_u64 {
+    hash_map_test_owned_fail(ledger: env);
+  }
+  let paired_serial = key_serial +wrap 10_u64;
+  if value_serial != paired_serial {
+    hash_map_test_owned_fail(ledger: env);
+  }
+  for (index in 0_u64..31_u64) {
+    let key_base = key_serial *wrap 257_u64;
+    let expected_key = key_base +wrap index;
+    if key^.words[index] != expected_key {
+      hash_map_test_owned_fail(ledger: env);
+    }
+    let value_base = value_serial *wrap 257_u64;
+    let expected_value = value_base +wrap index;
+    if value^.words[index] != expected_value {
+      hash_map_test_owned_fail(ledger: env);
+    }
+  }
+  if key_serial < env^.releases.len {
+    set env^.releases[key_serial] = env^.releases[key_serial] +wrap 1_u64;
+  } else {
+    hash_map_test_owned_fail(ledger: env);
+  }
+  if value_serial < env^.releases.len {
+    set env^.releases[value_serial] = env^.releases[value_serial] +wrap 1_u64;
+  } else {
+    hash_map_test_owned_fail(ledger: env);
+  }
+  return unit;
+}
+
+fn hash_map_test_owned_migration() -> result: u64 pure {
+  doc "Three complete wide nodrop pairs wrap from the final bucket, migrate through a full same-capacity rebuild and then grow to another non-power-of-two capacity. Equality changes from never equal to always equal before migration, so re-insertion through equality would merge owners. A separate borrowed-visit ledger observes every serial and inline word after each rebuild; final consumption checks the complete owners again and releases each serial once.";
+  let releases = array_filled::<u64, 32>(value: 0_u64);
+  let visits = array_filled::<u64, 32>(value: 0_u64);
+  let ledger = HashMapOwnerLedger(releases: releases, failures: 0_u64, visits: 0_u64);
+  let observed = HashMapOwnerLedger(releases: visits, failures: 0_u64, visits: 0_u64);
+  let unequal = False();
+  let env = HashMapMigrationEnv(home: 2_u64, equal: unequal);
+  let map = hash_map_new::<HashMapOwnedNode, HashMapOwnedNode, 5>(capacity: 3_u64);
+  for (serial in 1_u64..4_u64) {
+    let key = hash_map_test_owned_make(id: 7_u64, serial: serial);
+    let value_serial = serial +wrap 10_u64;
+    let value = hash_map_test_owned_make(id: 70_u64, serial: value_serial);
+    let inserted = hash_map_try_put::<HashMapMigrationKey, HashMapOwnedNode, 5>(map: &map, key: move key, value: move value, env: &env);
+    match move inserted {
+      HashMapInserted() => {
+      }
+      HashMapReturned(reason: return_reason, pair: returned_pair) => {
+        hash_map_test_owned_fail(ledger: &ledger);
+        hash_map_pair_consume::<HashMapOwnedConsume>(pair: move returned_pair, env: &ledger);
+      }
+    }
+  }
+  set env.equal = True();
+  let rebuilt = hash_map_rehash::<HashMapMigrationKey, HashMapOwnedNode, 5>(map: &map, env: &env);
+  match rebuilt {
+    Ok(value: complete) => {
+    }
+    Err(error: refused) => {
+      hash_map_test_owned_fail(ledger: &ledger);
+    }
+  }
+  let rebuilt_length = hash_map_len::<HashMapOwnedNode, HashMapOwnedNode, 5>(map: &map);
+  if rebuilt_length != 3_u64 {
+    hash_map_test_owned_fail(ledger: &ledger);
+  }
+  let rebuilt_capacity = hash_map_capacity::<HashMapOwnedNode, HashMapOwnedNode, 5>(map: &map);
+  if rebuilt_capacity != 3_u64 {
+    hash_map_test_owned_fail(ledger: &ledger);
+  }
+  hash_map_each::<HashMapOwnedNode, HashMapOwnedNode, HashMapOwnerLedger, fn hash_map_test_migration_visit, 5>(map: &map, env: &observed);
+  set env.home = 4_u64;
+  let grown = hash_map_reserve::<HashMapMigrationKey, HashMapOwnedNode, 5>(map: &map, capacity: 5_u64, env: &env);
+  match grown {
+    Ok(value: complete) => {
+    }
+    Err(error: refused) => {
+      hash_map_test_owned_fail(ledger: &ledger);
+    }
+  }
+  let grown_length = hash_map_len::<HashMapOwnedNode, HashMapOwnedNode, 5>(map: &map);
+  if grown_length != 3_u64 {
+    hash_map_test_owned_fail(ledger: &ledger);
+  }
+  let grown_capacity = hash_map_capacity::<HashMapOwnedNode, HashMapOwnedNode, 5>(map: &map);
+  if grown_capacity != 5_u64 {
+    hash_map_test_owned_fail(ledger: &ledger);
+  }
+  hash_map_each::<HashMapOwnedNode, HashMapOwnedNode, HashMapOwnerLedger, fn hash_map_test_migration_visit, 5>(map: &map, env: &observed);
+  hash_map_free::<HashMapOwnedConsume, 5>(map: move map, env: &ledger);
+  for (serial in 0_u64..32_u64) {
+    let expected = 0_u64;
+    if serial >= 1_u64 {
+      if serial <= 3_u64 {
+        set expected = 1_u64;
+      }
+    }
+    if serial >= 11_u64 {
+      if serial <= 13_u64 {
+        set expected = 1_u64;
+      }
+    }
+    if ledger.releases[serial] != expected {
+      hash_map_test_owned_fail(ledger: &ledger);
+    }
+    let expected_visits = expected *wrap 2_u64;
+    if observed.releases[serial] != expected_visits {
+      hash_map_test_owned_fail(ledger: &ledger);
+    }
+  }
+  return ledger.failures +wrap observed.failures;
+}
+
 fn hash_map_test_scalar_outcome(outcome: HashMapPut<u64, u64>, expected: u64, key: u64, value: u64, seen: &HashMapTestSeen) -> result: unit writes(seen) {
   match outcome {
     HashMapInserted() => {
@@ -1136,6 +1275,7 @@ fn main() -> status: ExitStatus pure {
   let growth_failures = hash_map_test_growth();
   let edit_failures = hash_map_test_edit();
   let owned_failures = hash_map_test_owned();
+  let migration_failures = hash_map_test_owned_migration();
   let unit_failures = hash_map_test_units();
   if scalar_failures != 0_u64 {
     return exit_status(code: 1_u8);
@@ -1154,6 +1294,9 @@ fn main() -> status: ExitStatus pure {
   }
   if owned_failures != 0_u64 {
     return exit_status(code: 1_u8);
+  }
+  if migration_failures != 0_u64 {
+    return exit_status(code: 6_u8);
   }
   if unit_failures != 0_u64 {
     return exit_status(code: 1_u8);

@@ -1,8 +1,8 @@
 {
   "purpose": "Isolated ordinary public reserve with verified future entry headroom; single production baseline panel, not an optimization/adoption result",
   "archive": "reserve-api-evidence.tar.gz",
-  "archive_sha256": "6cff0d66dc2ee69f3419b495754a6fcfacd2ce04cb43e48c7f135c2f098cb9d2",
-  "archive_members": 472,
+  "archive_sha256": "eec7f5bb5f51f0da4f83a592dbcdfcff4e940191078b2c98ed67132ce71e3329",
+  "archive_members": 671,
   "base_revision": "89571a60381a685cfbe760248ceb6178d9f9ac05",
   "production_cli_sha256": "c12b2b2a6c9694fd2bc1b7be0004d582ae9628951422def849f4cf6a3ac02f77",
   "timed_image_sha256": "f1ebf18d7a94c79250bb3cbd74a0b379a2a30c6e5e4eda48396ec77d8bbdbf3f",
@@ -3616,5 +3616,182 @@
     "reduction": "owner-argument-floor/timing/reduction.json",
     "historical_state": "Native/check records precede timing; stage no-timing flags are superseded by the retained timing statuses/outcome only.",
     "preservation": "All408 prior entry byte sequences retained; outer index versioned and extended, other407 unchanged"
+  },
+  "paired_image_aa_prior_index": {
+    "prior_archive_sha256": "6cff0d66dc2ee69f3419b495754a6fcfacd2ce04cb43e48c7f135c2f098cb9d2",
+    "prior_members": 472,
+    "unchanged_names_and_bytes": 471,
+    "renamed_member": {
+      "from": "component-index.json",
+      "to": "component-index-before-paired-image-aa.json",
+      "sha256": "7383ddaf76e871298eca5b33b780320eb7d4e2239b02e9fe6af0160e29496185"
+    },
+    "all_prior_member_bytes_preserved": true
+  },
+  "paired_image_aa": {
+    "prefix": "paired-image-aa/",
+    "payload_count": 151,
+    "manifest": "paired-image-aa/manifest.json",
+    "purpose": "Retained failed A/A instrument qualification; no A/B or adoption.",
+    "replay_boundary": "Historical commands require omitted compiler/build objects, scratch hierarchy and resolved tools; not standalone or a verified published-package replay.",
+    "base_revision": "52a8fe82dcda99c234ecffa4a6501af5c9d0fa4c",
+    "qualified": false,
+    "disposition": "Retired for A/B qualification after all-cell peer-stability failure; retained as adverse evidence.",
+    "raw_rows": 299520,
+    "aa_full_range_overlaps": 32,
+    "aa_full_range_comparisons": 32,
+    "issues": [
+      {
+        "cell": [
+          256,
+          "native-default",
+          64,
+          "grow"
+        ],
+        "participant": "rust-hash-map",
+        "issue": "cohort median spread exceeds 10 percent",
+        "spread": 0.1086990358731652
+      },
+      {
+        "cell": [
+          256,
+          "aligned-hash",
+          4096,
+          "grow"
+        ],
+        "participant": "cpp-unordered-map",
+        "issue": "cohort median spread exceeds 10 percent",
+        "spread": 0.6286446358266145
+      }
+    ],
+    "clocks": [
+      {
+        "cohort": 0,
+        "quantum_ns": 41,
+        "maximum_empty_ns": 42
+      },
+      {
+        "cohort": 1,
+        "quantum_ns": 41,
+        "maximum_empty_ns": 42
+      }
+    ],
+    "timing_runs": [
+      {
+        "cohort": 0,
+        "exit": 0,
+        "wall_seconds": 64.65167237538844,
+        "hashes_unchanged": true
+      },
+      {
+        "cohort": 1,
+        "exit": 0,
+        "wall_seconds": 65.74196358304471,
+        "hashes_unchanged": true
+      }
+    ],
+    "reduction_exit": 1,
+    "retries": 0,
+    "guard_observation": "paired-image-aa/guard-observation.json",
+    "reduction": "paired-image-aa/timing-summary.json",
+    "historical_state": "Pre-timing flags remain historical; timing-status.json supplies later terminal status."
+  },
+  "matched_c_native_prior_index": {
+    "prior_archive_sha256": "396b7de655151cf473ee122616009ea4889ff93da641772c8016ceed82cd5476",
+    "prior_members": 624,
+    "unchanged_names_and_bytes": 623,
+    "renamed_member": {
+      "from": "component-index.json",
+      "to": "component-index-before-matched-c-native.json",
+      "sha256": "a34639c318cec2f47d379b94d3fa02d0b1f67ff3e421f78368d8013312b03563"
+    },
+    "all_prior_member_bytes_preserved": true
+  },
+  "matched_c_native": {
+    "prefix": "matched-c-native/",
+    "payload_count": 29,
+    "manifest": "matched-c-native/manifest.json",
+    "purpose": "Matched C reserve source/native/correctness attribution only; no timing or performance qualification.",
+    "replay_boundary": "Historical commands require omitted compiler/build objects and paired-image inputs, scratch hierarchy and resolved tool paths; not standalone or verified replay.",
+    "base_revision": "52a8fe82dcda99c234ecffa4a6501af5c9d0fa4c",
+    "timing_run": false,
+    "performance_qualified": false,
+    "check_commands": 41,
+    "positive_commands": 5,
+    "diagnostic_specific_negative_commands": 36,
+    "reserve_cases_each_image": 384,
+    "ledger_rows": 128,
+    "projected_production_rows": 96,
+    "source_policy_fault_injections": 0,
+    "native_result": "matched-c-native/native-result.txt",
+    "finding": "Timed C fuses full-byte zero initialization with allocation as calloc; WF leaves four padding bytes. C wide retains 256-byte staging. Static evidence does not establish an isolated cause or performance gain."
+  },
+  "zero_fusion_native_prior_index": {
+    "prior_archive_sha256": "6635407d858bc0982291b641178c9c84256114ec885b36944ed57fc027f11690",
+    "prior_members": 654,
+    "unchanged_names_and_bytes": 653,
+    "renamed_member": {
+      "from": "component-index.json",
+      "to": "component-index-before-zero-fusion-native.json",
+      "sha256": "3809dc66d399d249f4ff04ad08a2e555dbc589f65d73b2846e1006d6e00d386f"
+    },
+    "all_prior_member_bytes_preserved": true
+  },
+  "zero_fusion_native": {
+    "prefix": "zero-fusion-native/",
+    "payload_count": 14,
+    "manifest": "zero-fusion-native/manifest.json",
+    "purpose": "Four-site zero-preserving padding discriminator; native-only causal evidence, no runtime/performance or compiler adoption.",
+    "replay_boundary": "Historical compile commands need reconstructed toolchain/scratch paths and omitted modules/objects; no published-package replay.",
+    "raw_sites": 4,
+    "native_gate": "pass: all four fresh rebuilds fuse to calloc without added payload copies",
+    "runtime_execution": false,
+    "allocation_observer_run": false,
+    "timing_run": false,
+    "production_adoption": false,
+    "whole_object_call_relocations": {
+      "malloc": [
+        26,
+        12
+      ],
+      "calloc": [
+        0,
+        18
+      ],
+      "memcpy": [
+        20,
+        20
+      ]
+    },
+    "native_result": "zero-fusion-native/native-result.txt",
+    "limitation": "Standalone extend loops remain; whole-module collateral prevents isolated runtime-cost attribution. Future execution must correctly observe emergent calloc."
+  },
+  "selftail_integration_checks": {
+    "path": "selftail-integration-checks.json",
+    "payload_count": 1,
+    "sha256": "f70d9dd49c0318fb4ffacf1b856e9461a5585a28e867a3da725ae0d9e744902d",
+    "purpose": "Tracked self-tail source integration correctness/fault evidence; no timing.",
+    "statuses": 40,
+    "admissions": 8,
+    "native_builds": 16,
+    "executions": 16,
+    "tracked_final_file_sha256": {
+      "lib/std/collections/hash_map/hash-map.wf": "9805a2515877f5c1243a008268a3ae8a3b2a4a50e5d9843397aeabbddac27074",
+      "tests/programs/containers/hash-map-program.wf": "6e5e0d399c2f6f4446440031be5ff14f8a507cd853b3595d3b1375c2987a5ce4",
+      "compiler/tests/programs/containers.rs": "2e89637966145bf5944ca278b11c342b8b7f852ea37f37b7ba95491d2c112a11",
+      "tests/programs/containers/container-allocation-observer.c": "196c79bc6473ea7a729b2a57fe858ccd21fb6eb27fee8565d1dca921eced5a79"
+    },
+    "source_reconstruction": "Tracked valid fixture plus exact diffs; compiler/runtime/generated artifacts omitted."
+  },
+  "selftail_integration_prior_index": {
+    "prior_archive_sha256": "c031df1845a057795117ba64b7d915aa82cc51c1dfbb34b9c283f57989115683",
+    "prior_members": 669,
+    "unchanged_names_and_bytes": 668,
+    "renamed_member": {
+      "from": "component-index.json",
+      "to": "component-index-before-selftail-integration-checks.json",
+      "sha256": "df96995a7737343c1c05fd8e4fd4465b0fd82aca4029f5572bccaf3bbc49e645"
+    },
+    "all_prior_member_bytes_preserved": true
   }
 }

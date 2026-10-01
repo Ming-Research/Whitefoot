@@ -278,7 +278,9 @@ fn hash_map_operations_preserve_owned_pairs_in_both_lowering_modes() {
     // and its same-capacity rebuild, a map of three buckets and its doubled
     // rebuild, two maps of sixteen buckets, one doubled and one rebuilt at the
     // same capacity, and a map at its ceiling that is not rebuilt.
-    execute_container_program("hash-map", &sources, 36, false);
+    // The wide migration case adds three backings (initial three, rehash three,
+    // reserve five) and six child Boxes, preserving each complete owner.
+    execute_container_program("hash-map", &sources, 45, false);
 }
 
 #[test]

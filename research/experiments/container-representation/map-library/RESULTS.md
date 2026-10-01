@@ -4948,6 +4948,19 @@ justify relaxing that boundary: a general forwarding change would need both
 qualified performance evidence and explicit lifetime/alias conditions beyond
 the frozen instance audit.
 
+The remaining capture is specifically a consumed `take_back` enum's Filled
+payload projection, not an ordinary source load: `ProjectVariant` obtains the
+field address and `load_place_result` copies it into a separate 256-byte slot
+([emitter](../../../../compiler/src/backend/emitter/places.rs)). The storage
+plan's incoming-backing selection covers eligible owned function parameters,
+while its ordinary projection/load rule keeps this local field as a snapshot
+([storage plan](../../../../compiler/src/backend/storage.rs)); the existing
+projection snapshot and incoming-backing tests cover those current boundaries.
+Reopen a generic consumed-projection forwarding rule only with discriminating
+performance evidence and a proof that the source backing remains live and
+unchanged until a synchronous callee captures the field, including negative
+cases for exposure, overlapping writes and deferred reads.
+
 `owner-argument-floor/` in the existing archive retains the bounded address audit,
 patch, original/changed function excerpts, whole-trace collateral, 64 checks and
 all raw panels. Its manifest distinguishes original and retained normalized
@@ -4956,3 +4969,153 @@ module/object and tool/path dependencies; no standalone or verified published
 replay is claimed. All prior 408 byte sequences remain: the former outer index
 is at `component-index-before-owner-argument-floor.json`, and the other 407 keep
 their original names. Only the outer index is extended.
+
+
+### Same-image reserve A/A: peer stability blocks qualification
+
+This instrument links two symbol-renamed copies of the same frozen production
+WF object with one Rust and one C++ peer. It balances four participant orders
+within each sample and reverses them in the second cohort, with four times the
+previous aggregate work. WF code addresses remain distinct; duplicated code,
+allocator history and sequential cleanup remain possible influences. This is
+an instrument check, not a before/after source optimization comparison.
+
+The object audit preserves sections and relocations after name reversal. The
+native audit compares 142 defined functions and verifies 414 direct branch
+targets; linked PAGE21/PAGEOFF12 immediate targets still trust ordinary linker
+semantics. Both timed/account images pass 384 reserve cases each. All 39 check
+stages match expectations, including 36 deliberate negative controls, and both
+WF ledger projections plus unchanged peer rows equal the production ledger.
+Failed authoring attempts and corrected checks remain in the record.
+
+The fixed panel retains all 299,520 rows. Both cohort processes return 0 after
+64.65/65.74 s with unchanged input pins; the reducer returns 1. The outer guard
+returns 1 after 133.41 s, recorded as a direct session observation because its
+stdout was not saved. All 32 WF A/A full-range comparisons overlap. WF cohort
+stability, B/A ratio stability, aggregate duration and batch overhead pass;
+both cohorts report a 41 ns clock quantum and 42 ns maximum empty interval.
+
+Two unchanged-peer cohort median spreads exceed the preregistered 10% limit:
+Rust wide/default S64 growth reaches 10.87%, and C++ wide/aligned S4096 growth
+reaches 62.86%. The all-cell criterion therefore fails despite the limited A/A
+successes. This instrument is retired from A/B qualification; no retry,
+candidate timing, compiler/library change or performance adoption follows.
+Both peers, every cell and all adverse observations remain in the reduction.
+
+`paired-image-aa/` in the existing reserve archive retains the criterion,
+source/patch, historical commands, compact audits/checks, complete CSVs and
+terminal statuses. Its manifest distinguishes original and normalized hashes;
+replay requires omitted compiler/build artifacts, tool/path reconstruction and
+the original scratch hierarchy. No standalone or verified published replay is
+claimed. All 472 prior member byte sequences remain: the old outer index is
+at `component-index-before-paired-image-aa.json`, and the other 471 retain their
+names. The extended archive has 624 members, including 151 in this component.
+
+
+### Matched C reserve: native and correctness evidence only
+
+The C attribution control keeps the ordinary reserve contract, flat layout,
+hash/probe policy, aggregate-zero Vacant source initialization and complete
+owner handling. Both timed/accounted images pass 384 reserve cases; all 41
+check commands match their expectations (five positive, 36 diagnostic-specific
+rejections). Its 128-row ledger projects exactly to the 96-row production
+ledger with either WF or C, preserving both native peers. Separate positive
+source-policy witnesses cover both widths' refusal, tombstone and pressure
+paths; those witnesses have no injected policy faults.
+
+Ordinary C optimization fuses fresh backing allocation and initialization to
+`calloc`; the indirect symbol table resolves the actual call target. Accounted
+C instead calls its allocation wrapper then `bzero`. C's O0 aggregate-zero IR
+initializes all 24/272 cell bytes, whereas WF typed initialization writes
+20/268 bytes, leaving four padding bytes. This supports a bounded padding and
+allocation-fusion hypothesis; it does not isolate the cause. The C wide rebuild
+still stages 256 bytes through the stack. All observed normal-hash rebuild paths
+hoist division outside the collision scan, so repeated division is not an
+observed C advantage.
+
+Static scalar/wide rebuild instruction counts and frames are 87/133 and
+48/336 bytes for C, versus 133/205 and 96/688 bytes for the original WF control.
+These counts include different cold paths and are not runtime measurements.
+The retained native report also compares self-tail v2 and preserves its wide
+staging limit. No C performance timing ran: the failed paired A/A instrument
+remains unqualified, and these findings establish no reserve speedup or peer
+target result.
+
+`matched-c-native/` in the existing archive retains source, commands and checks,
+compact native excerpts, padding IR and indirect-symbol evidence. Small check
+streams are consolidated with individual original/normalized hashes. Omitted
+compiler/build artifacts and tool/path reconstruction remain replay dependencies;
+no published-package replay is claimed. All 624 previous member byte sequences
+remain, with only the old outer index renamed to
+`component-index-before-matched-c-native.json`. The extended archive has 654
+members, including 29 in this component.
+
+
+### Zero-preserving padding discriminator: native fusion succeeds
+
+A four-site raw-IR diagnostic preserves every zero tag/key/value byte and
+additionally zeros the four padding bytes in each fresh Vacant cell. Ordinary
+O3 then changes all four fresh rebuilds from allocation plus per-slot stores
+to `calloc(1, capacity * stride)`, for both 24-byte scalar and 272-byte wide
+cells. No malloc-to-calloc edit, owner/alias change or new ABI attribute was
+made. This bounded comparison identifies the incomplete all-byte zero
+representation as a blocker to fusion in these control rebuilds.
+
+Standalone extend functions still retain per-slot initialization loops. Wide
+staging, scalar/wide frames (96/688 bytes) and payload-copy sites remain
+unchanged. Inlined construction and whole-trace code also change: whole-object
+malloc/calloc relocations move 26/0 → 12/18, while memcpy stays at 20. Thus
+native success does not isolate a whole-program runtime cost. No execution,
+allocation observer or timing ran, and no production compiler change is
+selected. Any later runtime check must correctly observe emergent `calloc` and
+disclose whether accounting changes the optimization.
+
+`zero-fusion-native/` retains the criterion, exact patch, compile commands and
+statuses, compact bodies for all four rebuilds and extends per side, pins and
+whole-module collateral. Raw whole modules, objects and full disassembly are
+omitted; historical commands need tool/path reconstruction and have no verified
+published replay. All 654 previous member byte sequences remain, with the old
+outer index at `component-index-before-zero-fusion-native.json`. The extended
+archive has 669 members, including 14 in this component.
+
+### Ordinary-source owner migration: partial integration
+
+The library now uses the previously measured self-tail v2 source shape alone:
+private owning key/value parameters hold the pending pair, with complete owners
+transferred on every retry. The public API, enum buckets, allocation policy,
+probe order, fresh initialization and reverse old-slot consumption are unchanged.
+Applying the retained v2 patch to the prior library gives identical executable
+source after excluding explanatory `doc` lines. The new explanation also keeps
+the zero-capacity, callback-return and postcondition limits of the old one.
+
+This selection is partial progress toward the peer target. The earlier
+small aligned-wide reserve gain of about 16–17 percent is qualified; the large
+aligned-wide raw gain remains unqualified, and both primary sizes remain behind
+both peers. The earlier strict native criterion also failed because argument
+staging remains. The same-image A/A failure above is not reclassified as a pass,
+and no new timing claim follows from this integration. The rejected exchange-only
+control remains rejected: this candidate changes pending-owner representation
+and control flow together, so its benefit is not attributed to exchange
+inlining alone. Raw argument forwarding and padding fusion are not included.
+
+The maintained HashMap program adds three complete wide must-consume pairs,
+colliding from the final bucket of a capacity-three map, a full same-capacity
+rehash, and growth to five. Equality changes from never equal to always equal
+before migration. Borrowed enumeration checks each serial and all inline words
+after both migrations; final consumption checks each owner and its single
+release. This combines wide ownership with collision/wrap and hostile equality,
+which the earlier fixture covered separately. The allocation observer's exact
+expectation rises from 36 to 45 for three new backings and six child owners.
+The focused corpus test passes ordinary and parallel lowering, with their
+accounted executions; final peer qualification and full-PR validation remain
+outstanding.
+
+Scratch perturbations of that maintained fixture each remain admitted: omitting
+one stored owner, duplicating its serial, or corrupting its last inline word.
+Each yields ordinary status 6 and the observer's fixture-failure status 1 in
+both lowering modes, while the valid fixture yields zero with 45 allocations.
+All 40 command outcomes match their expectations (eight admissions, sixteen
+builds and sixteen executions). The retained integration check record includes
+exact mutations and input hashes; these controls test the new observation and
+do not alter any maintained verdict. Initial command/fixture authoring failures
+are retained separately from the successful final stages.

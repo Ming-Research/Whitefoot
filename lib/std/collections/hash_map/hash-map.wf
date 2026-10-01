@@ -281,8 +281,34 @@ fn hash_map_is_available<K, V>(slot: &HashMapSlot<K, V>) -> result: Bool reads(s
   }
 }
 
+fn hash_map_migrate_owner<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>, key: K, value: V, env: &E) -> result: unit reads(env), writes(map) {
+  let hash = HashMapKey::hash(env: env, key: &key);
+  let count = map^.cells.inner.len;
+  for @vacancy (step in 0_u64..count) {
+    let home = hash % count;
+    let index = hash_map_probe(home: home, step: step, count: count);
+    let available = hash_map_is_available::<K, V>(slot: &map^.cells.inner[index]);
+    if available {
+      let offered = HashMapSlot<K, V>::HashMapFilled(key: move key, value: move value);
+      swap(first: &map^.cells.inner[index], second: &offered);
+      match move offered {
+        HashMapVacant() => {
+          return unit;
+        }
+        HashMapDeleted() => {
+          return unit;
+        }
+        HashMapFilled(key: returned_key, value: returned_value) => {
+          return musttail hash_map_migrate_owner::<HashMapKey<K, E>, V, ceiling>(map: map, key: move returned_key, value: move returned_value, env: env);
+        }
+      }
+    }
+  }
+  return musttail hash_map_migrate_owner::<HashMapKey<K, E>, V, ceiling>(map: map, key: move key, value: move value, env: env);
+}
+
 fn hash_map_rebuild<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>, capacity: u64, env: &E) -> result: Result<unit, unit> reads(env), writes(map) {
-  doc "Direct migration keeps the original enum buckets and uses one temporary inline one-slot window for a pending pair. Refusal precedes owner mutation. Every exchange result has useful behavior: Inserted empties the staging window; Replaced and Full restore their complete returned owner for retry. Each attempt hashes the current staged key and probes only occupancy, never equality. With at most the old bucket count of owners and at least that many fresh destinations, each retained owner reaches a vacant bucket in one capacity-bounded scan. No global occupancy fact authorizes a discard or a partial operation. A zero-capacity rebuild is allocation-free. The backing swap does not publish an extent relation under the current proof rules, so this function promises no monotone extent postcondition; subsequent operations read their current bounds.";
+  doc "Direct migration retains each pending pair in a private helper's owning parameters. Capacity refusal precedes owner mutation. Each attempt hashes the current owner and probes only occupancy, never equality. An available bucket is exchanged with a local Filled owner; Vacant and Deleted complete migration, while Filled transfers its complete owner into a guaranteed self-tail retry. A full scan also transfers its unchanged owner into a guaranteed self-tail retry. With at most the old bucket count of owners and at least that many fresh destinations, each retained owner reaches a vacant bucket in one capacity-bounded scan, provided its hash callback returns. No global occupancy fact authorizes a discard or a partial operation. Fresh backing initialization and reverse old-cell consumption remain ordinary storage operations. A zero-capacity rebuild is allocation-free. The backing swap does not publish an extent relation under the current proof rules, so this function promises no monotone extent postcondition; subsequent operations read their current bounds.";
   if capacity > ceiling {
     return Err<unit, unit>(error: unit);
   }
@@ -307,35 +333,7 @@ fn hash_map_rebuild<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &Has
       HashMapDeleted() => {
       }
       HashMapFilled(key: saved_key, value: saved_value) => {
-        let pending = slots_new::<HashMapPair<K, V>, 1>();
-        let initial = HashMapPair<K, V>(key: move saved_key, value: move saved_value);
-        place_back(window: &pending, value: move initial);
-        loop @owner {
-          if pending.len == 0_u64 {
-            break @owner;
-          }
-          let hash = HashMapKey::hash(env: env, key: &pending[0_u64].key);
-          let count = map^.cells.inner.len;
-          for @vacancy (step in 0_u64..count) {
-            let home = hash % count;
-            let index = hash_map_probe(home: home, step: step, count: count);
-            let available = hash_map_is_available::<K, V>(slot: &map^.cells.inner[index]);
-            if available {
-              let offered = take_back(window: &pending);
-              let HashMapPair(key: offered_key, value: offered_value) = move offered;
-              let exchanged = hash_map_exchange::<K, V>(cells: &map^.cells, index: index, key: move offered_key, value: move offered_value);
-              match move exchanged {
-                HashMapInserted() => {
-                }
-                HashMapReturned(reason: returned_reason, pair: returned_pair) => {
-                  place_back(window: &pending, value: move returned_pair);
-                }
-              }
-              break @vacancy;
-            }
-          }
-        }
-        free_empty(window: move pending);
+        hash_map_migrate_owner::<HashMapKey<K, E>, V, ceiling>(map: map, key: move saved_key, value: move saved_value, env: env);
       }
     }
   }
