@@ -994,7 +994,15 @@ rarely insert at the same place.
     and have a put look there before inserting.
   - The window also costs one empty allocation per map (seven in
     `hash-map-program.wf`); an `Option` holding the window would avoid it but
-    needs the variant a swap moves to be a fact.
+    needs the variant a swap moves to be a fact. The owner asked for the
+    allocation on the failure path only (termination rulings, Q32); tried
+    on the `Option` field, `set map^.stale = Some(...)` inside the `None`
+    arm of a `match map^.stale` is refused as a linear assignment target
+    [WIN-3], since the rule reads the place's type and not its known
+    variant, and a `swap` leaves a `Some` arm that has no owner to hand the
+    old window to. It needs either a rule that lets a write replace a place
+    whose variant is known to hold no linear payload, or a rebuild that
+    returns the unplaced owners to its caller; both are decisions.
   - Validate with a probe whose `hash_map_probe` skips one bucket: the rebuild
     must fail, every pair must stay reachable, and no key may be stored twice.
   - Reopen when a map operation changes or a consumer can observe the
