@@ -246,8 +246,9 @@ At compiler revision 9ea2818b (`make -C compiler build`), on a
   within the run-to-run spread of the front end: 108.3 s and 106.2 s with
   the judgment skipped by a temporary switch, against 108.5 s and 109.2 s
   with it, two builds each; at 450fea25 the same comparison gave 102.9 s and 102.7 s
-  against 105.4 s and 105.1 s. Making the derivation incremental is
-  recorded in `docs/todo.md`.
+  against 105.4 s and 105.1 s. What makes the derivation costly, and the
+  change that would cut it, is recorded in `docs/todo.md`, "The range
+  judgment splits every open read pair".
 
 The proof-cost figures come from these commands. The check time is
 `/usr/bin/time whitefootc --check` on the case; the instruction shares are
@@ -309,7 +310,7 @@ order, `inherited_pass` in `renderer/style/inherited.wf`, 26 percent of its
 four-worker stage on ecma262 (Snowghost's
 `research/investigations/style/DESIGN.md`, criterion 2). As a level loop in
 D's shape it needs three things D's cascade does not. At this branch's
-compiler as of 9ea2818b:
+compiler as of 9208728e:
 
 - **A read at an ancestor chosen before the loop.** An element that
   declares no custom properties shares its nearest declaring ancestor's
@@ -331,19 +332,20 @@ compiler as of 9ea2818b:
   `set sets^[element] = move made` is a certified element, and
   `entry_count(list: &sets^[source])` a read the certificate places.
 - **Several roots.** The test certifies writes to two roots, `sets` and
-  `sizes`; a probe of the same level over integer arrays, with eight arrays
-  each written at the element and read at the parent beside the set read
-  at the parent's owner, was permitted too and not kept.
+  `sizes`, under one empty certificate; each root's accesses are separated
+  pair by pair, so eight roots add pairs to judge, not a rule.
 - **Establishing `owned` is the cost.**
   [`owner_loop.wf`](owner_loop.wf) derives the owners after the depth walk,
-  with `owned` as the invariant of its own loop. Its check takes 12.7 s,
-  against 0.86 s without that invariant; 11.3 s of it is one backedge
-  problem the derivation refutes in 5,463 branches, splitting pair after
-  pair of reads the contradiction does not use (`docs/todo.md`, "The range
-  judgment splits every open read pair"). Computing the owners in the
-  depth walk instead, its root and depth arms writing `owners^[at]` and
-  `owned` beside `up` in its header, takes 392.6 s: two of its problems
-  open 66,463 and 76,111 branches.
+  with `owned` as the invariant of its own loop. Its check takes 12.5 s,
+  against 0.84 s without that invariant. A measurement patch, never
+  committed, that counted each problem's search nodes and eliminations at
+  9ea2818b found 11.3 s of it in one backedge problem the derivation
+  refutes in 5,463 branches, splitting pair after pair of reads the
+  contradiction does not use (`docs/todo.md`, "The range judgment splits
+  every open read pair"). Computing the owners in the depth walk instead,
+  its root and depth arms writing `owners^[at]` and `owned` beside `up` in
+  its header, took 392.6 s at 9ea2818b, two of its problems opening 66,463
+  and 76,111 branches.
 
 ## Criteria and result
 
@@ -389,6 +391,17 @@ criteria before the paper derivation:
 - **Bound variables.** At most two; distinctness within each segment of a
   `Segments` is stated as a left inverse instead of a three-variable
   `nodup`.
+- **Postconditions.** A range postcondition names the result ordinals,
+  integer parameters at entry and the storage of reference parameters as
+  the return leaves it, never a parameter the call consumes. A function
+  that states a range clause cannot be a function-kind actual, since a
+  `fn_sig` contract states none (RANGE-1). A function that returns a
+  callee's routed result unchanged cannot promise the callee's routed
+  postcondition again: the walk holds that fact only in a `match` arm, so
+  the function matches and returns a new construction. In a generic
+  function a clause over a type parameter's values is dropped whole at a
+  non-integer instance, so a fact that mixes such values with integers is
+  better written as two clauses.
 - **Proof cost.** The derivation explores every open pair of reads, so a
   fact with a nested read such as `owned` costs seconds per loop
   ([above](#snowghosts-inherited-pass)); the level cascade's figures are in

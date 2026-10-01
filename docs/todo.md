@@ -560,12 +560,12 @@ rarely insert at the same place.
   per guard. A pair the contradiction does not need still doubles the tree
   below it. `research/investigations/unique-keys/owner_loop.wf`, the fact
   Snowghost's inherited pass needs to read a custom-property set at the
-  parent's owner, checks in 12.7 s against 0.86 s without its `owned`
-  invariant; 11.3 s of it is that invariant's backedge, one problem of 30
+  parent's owner, checks in 12.5 s against 0.84 s without its `owned`
+  invariant at 9208728e. At 9ea2818b a measurement patch never committed
+  counted 11.3 s of it in that invariant's backedge, one problem of 30
   atoms, 21 of them element reads, refuted in 5,463 nodes and 160,140
-  eliminations, counted at 9ea2818b by a measurement patch never
-  committed; with the owners computed in the depth walk instead it took
-  392.6 s there
+  eliminations, and with the owners computed in the depth walk instead the
+  check took 392.6 s
   (`research/investigations/unique-keys/POINTWISE.md#snowghosts-inherited-pass`).
   The level cascade's check spends 91% of its 0.9 s in the judgment
   (`research/investigations/unique-keys/POINTWISE.md#observations`). A
