@@ -512,6 +512,17 @@ the sample bear on feasibility.
   state machines, fields through references) bounded by a runtime counter
   over a bound the data gives, each marked for replacement; recursion,
   Forest and field atoms follow as separate work.
+- **Park.** After the waiting-kind split, the owner superseded the cut
+  point: the loop rule does not land now. PR #199 stays a draft as it
+  stands, termination proof continues as research in parallel, and
+  Snowghost and the Redis work continue on `main`'s language. The grounds
+  were the scale the work had reached against the uncertainty that it can
+  be carried to the end, and the risk of uncertain changes while Redis runs
+  its benchmarks; the measurements that followed the cut point bear them
+  out: the join carry fails its cost criterion on the I/O programs
+  ([run](runs/join-carry-cost.md)), the Redis parse rewrite stops at a
+  proof-transport gap, and the failure-path stale window needs a [WIN-3]
+  decision (both in `docs/todo.md`).
 
 These rulings select the direction; [ARENA.md](ARENA.md) designs the forms
 they call for. The design-tree nodes and the
