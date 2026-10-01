@@ -9,8 +9,9 @@
 #   make stress    the linearizability mode on wf-index and its two read
 #                  variants, with Boost's map and the mutex control as
 #                  known-good implementations
-#   make quick     the quick profile, for iteration (a few minutes)
-#   make full      the whole matrix, on request
+#   make quick     the quick profile over every implementation (minutes)
+#   make duel      the index against the fastest comparators (minutes)
+#   make full      the whole matrix, hours; only when unavoidable
 #
 # Generated trees, binaries and results stay in the scratch root. Nothing is
 # written inside the repository.
@@ -39,7 +40,7 @@ MANAGED := $(BUILD)/java/Bench.class $(BUILD)/bench-go $(BUILD)/dotnet/Bench.dll
 # builds a different profile; `cargo build --profile gate` builds this one).
 WFC := $(ROOT)/compiler/target/gate/whitefootc
 
-.PHONY: deps build verify stress quick full
+.PHONY: deps build verify stress quick duel full
 deps:
 	sh deps.sh fetch
 	OUT=$(DEPS) sh deps.sh build
@@ -147,6 +148,9 @@ verify: build
 
 quick: build
 	sh run.sh quick $(BUILD) $(RESULTS)
+
+duel: build
+	sh run.sh duel $(BUILD) $(RESULTS)
 
 full: build
 	sh run.sh full $(BUILD) $(RESULTS)

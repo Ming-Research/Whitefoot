@@ -16,11 +16,19 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 
 #include "cmap.h"
 
 #define SLOTS 3
-#define MIN_BITS 4
+/* The table doubles once it holds this many keys per bucket: with three
+ * slots a bucket then overflows rarely enough that a lookup's one branch is
+ * almost always predicted. */
+#define KEYS_PER_BUCKET 1.5
+/* A map created without a capacity starts with 2^10 buckets, 64 KiB; one
+ * created with a capacity starts with at least 2^2. */
+#define DEFAULT_BITS 10
+#define MIN_BITS 2
 #define CHUNK 64
 #define MAX_THREADS 256
 #define MOVED ((uintptr_t)1)
@@ -74,10 +82,20 @@ static inline bucket *home(table *t, uint64_t h) { return &t->buckets[h >> t->sh
 
 static inline bucket *untag(uintptr_t link) { return (bucket *)(link & ~MOVED); }
 
+/* Bucket arrays of 2 MiB or more are aligned to and advised into huge
+ * pages: a random lookup in a large table otherwise pays a page walk on
+ * most accesses, which costs a third of single-thread throughput at 2^20
+ * keys on the measuring host. */
 static bucket *new_buckets(uint64_t count) {
-    bucket *b = aligned_alloc(64, count * sizeof(bucket));
-    if (b)
-        memset(b, 0, count * sizeof(bucket));
+    size_t bytes = count * sizeof(bucket);
+    size_t align = bytes >= (2u << 20) ? (2u << 20) : 64;
+    bytes = (bytes + align - 1) / align * align;
+    bucket *b = aligned_alloc(align, bytes);
+    if (b == NULL)
+        return NULL;
+    if (align > 64)
+        madvise(b, bytes, MADV_HUGEPAGE);
+    memset(b, 0, bytes);
     return b;
 }
 
@@ -185,17 +203,29 @@ static int64_t keys_now(cm_map *map) {
     return sum;
 }
 
+/* The index of the slot of c holding key, or SLOTS when none does, chosen
+ * by conditional moves rather than branches: which slot holds a key is
+ * random, so a branch on it would mispredict and discard the following
+ * operations' loads. */
+static inline int match(bucket *c, uint64_t key) {
+    uint64_t k0 = atomic_load_explicit(&c->key[0], memory_order_relaxed);
+    uint64_t k1 = atomic_load_explicit(&c->key[1], memory_order_relaxed);
+    uint64_t k2 = atomic_load_explicit(&c->key[2], memory_order_relaxed);
+    int i = k2 == key ? 2 : SLOTS;
+    i = k1 == key ? 1 : i;
+    return k0 == key ? 0 : i;
+}
+
 /* Appends a pair to a chain known not to hold its key; the caller holds the
  * chain's home ticket or owns the chain outright. Returns 1 when it had to
  * allocate an overflow bucket. */
 static int append(bucket *b, uint64_t key, uint64_t value) {
     for (;;) {
-        for (int i = 0; i < SLOTS; i++) {
-            if (atomic_load_explicit(&b->key[i], memory_order_relaxed) == 0) {
-                atomic_store_explicit(&b->value[i], value, memory_order_relaxed);
-                atomic_store_explicit(&b->key[i], key, memory_order_relaxed);
-                return 0;
-            }
+        int i = match(b, 0);
+        if (i < SLOTS) {
+            atomic_store_explicit(&b->value[i], value, memory_order_relaxed);
+            atomic_store_explicit(&b->key[i], key, memory_order_relaxed);
+            return 0;
         }
         bucket *next = untag(atomic_load_explicit(&b->next, memory_order_relaxed));
         if (next == NULL) {
@@ -311,8 +341,8 @@ const char *CM(name)(void) { return "wf-index"; }
 int CM(flags)(void) { return 0; }
 
 cm_map *CM(create)(uint64_t capacity) {
-    unsigned bits = MIN_BITS;
-    while (bits < 40 && (double)(1ull << bits) * 2.25 < (double)capacity)
+    unsigned bits = capacity ? MIN_BITS : DEFAULT_BITS;
+    while (bits < 40 && (double)(1ull << bits) * KEYS_PER_BUCKET < (double)capacity)
         bits++;
     cm_map *map = aligned_alloc(64, sizeof(cm_map));
     if (map == NULL)
@@ -381,6 +411,7 @@ void CM(leave)(cm_map *map) {
 
 static _Atomic uint64_t *slot_of(bucket *b, uint64_t key, _Atomic uint64_t **value);
 static bucket *lock_home(cm_map *map, uint64_t h, uint32_t *ticket);
+static __attribute__((noinline)) int get_slow(cm_map *map, uint64_t h, uint64_t key, uint64_t *value);
 
 int CM(get)(cm_map *map, uint64_t key, uint64_t *value) {
 #ifdef WF_INDEX_LOCKED_READ
@@ -412,6 +443,33 @@ int CM(get)(cm_map *map, uint64_t key, uint64_t *value) {
     return present;
 #endif
     uint64_t h = hash_of(key);
+    table *t = atomic_load_explicit(&map->current, memory_order_acquire);
+    bucket *b = home(t, h);
+    uint32_t served = atomic_load_explicit(&b->served, memory_order_acquire);
+    uint32_t taken = atomic_load_explicit(&b->taken, memory_order_acquire);
+    uintptr_t link = atomic_load_explicit(&b->next, memory_order_acquire);
+    uint64_t m0 = -(uint64_t)(atomic_load_explicit(&b->key[0], memory_order_relaxed) == key);
+    uint64_t m1 = -(uint64_t)(atomic_load_explicit(&b->key[1], memory_order_relaxed) == key);
+    uint64_t m2 = -(uint64_t)(atomic_load_explicit(&b->key[2], memory_order_relaxed) == key);
+    uint64_t seen = (atomic_load_explicit(&b->value[0], memory_order_relaxed) & m0) |
+                    (atomic_load_explicit(&b->value[1], memory_order_relaxed) & m1) |
+                    (atomic_load_explicit(&b->value[2], memory_order_relaxed) & m2);
+    uint64_t hit = (m0 | m1 | m2) & 1;
+    /* One rarely taken branch: a writer holds the bucket, the bucket has
+     * moved, or the key is not in the home slots and an overflow bucket
+     * exists. */
+    if (__builtin_expect((taken != served) | ((link & MOVED) != 0) | ((hit == 0) & (link != 0)), 0))
+        return get_slow(map, h, key, value);
+    atomic_thread_fence(memory_order_acquire);
+    if (__builtin_expect(atomic_load_explicit(&b->taken, memory_order_relaxed) != taken, 0))
+        return get_slow(map, h, key, value);
+    *value = seen;
+    return (int)hit;
+}
+
+/* The copy-out read's general path: waits out writers, follows moves and
+ * overflow buckets. */
+static int get_slow(cm_map *map, uint64_t h, uint64_t key, uint64_t *value) {
     table *t = atomic_load_explicit(&map->current, memory_order_acquire);
     bucket *b = home(t, h);
     for (;;) {
@@ -451,11 +509,10 @@ int CM(get)(cm_map *map, uint64_t key, uint64_t *value) {
 /* The slot of key in a locked chain, or NULL. */
 static _Atomic uint64_t *slot_of(bucket *b, uint64_t key, _Atomic uint64_t **value) {
     for (bucket *c = b; c; c = untag(atomic_load_explicit(&c->next, memory_order_relaxed))) {
-        for (int i = 0; i < SLOTS; i++) {
-            if (atomic_load_explicit(&c->key[i], memory_order_relaxed) == key) {
-                *value = &c->value[i];
-                return &c->key[i];
-            }
+        int i = match(c, key);
+        if (i < SLOTS) {
+            *value = &c->value[i];
+            return &c->key[i];
         }
     }
     return NULL;
@@ -476,7 +533,7 @@ int CM(insert)(cm_map *map, uint64_t key, uint64_t value) {
     count_keys(map, 1);
     if (overflowed) {
         table *t = atomic_load_explicit(&map->current, memory_order_acquire);
-        if ((double)keys_now(map) > (double)t->count * 2.25)
+        if ((double)keys_now(map) > (double)t->count * KEYS_PER_BUCKET)
             grow(map, t);
     }
     return 1;

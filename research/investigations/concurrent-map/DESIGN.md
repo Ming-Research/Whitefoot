@@ -230,6 +230,29 @@ counts against the strongest designs for integer keys; the baseline was
 restarted with them so that every comparator is measured in the same
 interleaved run.
 
+## The baseline, and how the index is compared
+
+The full profile ran for both of the comparator sets: the first, without
+growt and parallel_flat_hash_map, was stopped to add them, and the second
+was stopped on 2026-10-01 after its 2^10 and 2^20 sizes, three repetitions
+each, when the owner ruled that the full matrix runs only when unavoidable:
+it takes hours on this host. Its rows are kept with the bundle's results.
+
+Among the comparators, growt is the fastest in nearly every cell of both
+sizes, often by a wide margin over the next: at 2^20 keys, uniform
+`mostly-read` on four threads, 94 million operations a second against
+Boost's 46 in the quick profile. The exceptions are `update` on one key at
+four threads (DashMap), `churn` (DashMap at one thread, scc at two and
+four) and `grow` at one thread at 2^20 (DashMap).
+
+So the index is compared, per the owner's ruling, in the `duel` profile:
+N = 2^20, uniform `read`, `mostly-read`, `balanced`, `update`, `churn` and
+`grow`, Zipf `mostly-read` and `balanced`, and one-key `update`, at one
+thread and at every CPU, three interleaved repetitions, against growt,
+DashMap and scc, the fastest comparators of the baseline, with `mutex-flat`
+for the single-thread criterion. The criteria above apply to the cells it
+runs.
+
 ## The index: a first design, stated before measuring
 
 The first candidate follows the cache-line hash table of David, Guerraoui
@@ -254,7 +277,7 @@ matches this one: one cache line touched per operation.
   Whitefoot statement that only reads can use only if its block may run
   again without effect, which is stage (b)'s question.
 - **Growth is cooperative and incremental:** a writer that finds the table
-  three quarters full allocates one twice as large, and every writer that
+  holding one and a half keys per bucket allocates one twice as large, and every writer that
   arrives during the move first moves a run of buckets, locking each,
   copying it into the two buckets it splits into and marking it moved;
   readers and writers that meet a moved bucket go on to the new table, so
@@ -264,6 +287,16 @@ matches this one: one cache line touched per operation.
 - **The count of keys is kept per thread** and summed only when an
   insertion needs an overflow bucket, so no insertion contends on a shared
   counter.
+
+Changed after the first duel: a lookup compares the three slots and picks
+the value with conditional moves and leaves the bucket by one rarely taken
+branch, since a branch on which slot holds a key mispredicted on most
+lookups and discarded the following lookups' loads (single-thread reads at
+2^10 keys rose from about 47 to about 101 million a second); the table
+doubles at one and a half keys per bucket instead of two and a quarter, so
+that an overflow bucket is rarely needed; a map created without a capacity
+starts with 2^10 buckets; and bucket arrays of 2 MiB or more are advised
+into huge pages.
 
 What would refute it: a lead lost at one thread to the single-thread floors
 would show the version check costing more than it saves; a lead lost on

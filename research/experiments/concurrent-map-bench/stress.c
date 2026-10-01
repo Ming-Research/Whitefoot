@@ -290,10 +290,10 @@ int main(int argc, char **argv) {
         return 2;
     for (unsigned round = 0; round < rounds; round++) {
         /* Alternate few keys on a map sized for them, where operations
-         * contend, with many keys on a map grown from empty, where they
+         * contend, with many keys on a map created for one, where they
          * cross table moves. */
         round_keys = round % 2 ? nkeys : 64 * nkeys;
-        map = CM(create)(round % 2 ? nkeys : 0);
+        map = CM(create)(round % 2 ? nkeys : 1);
         pthread_t t[64];
         log_t logs[64];
         atomic_store(&go, 0);

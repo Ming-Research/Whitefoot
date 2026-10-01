@@ -3,7 +3,11 @@
 # implementation and writes rows.csv, one row per cell and per check, with
 # the repetition in the first column.
 #
-#   sh run.sh verify|quick|full BUILD_DIR OUT_DIR
+#   sh run.sh verify|quick|duel|full BUILD_DIR OUT_DIR
+#
+# duel compares the index with the fastest comparators of the baseline in a
+# few minutes; full runs the whole matrix and takes hours, so it runs only
+# when unavoidable (DESIGN.md, "The baseline").
 #
 # CMAP_IMPLS overrides the implementations (driver prefixes) and CMAP_CPUS
 # the placement list, the CPUs threads are pinned to in order.
@@ -20,6 +24,11 @@ verify) sizes=1024 reps=1 warm=20 dur=50 threads="1,$ncpu" plan=$all ;;
 quick)
     sizes=1048576 reps=3 warm=200 dur=500 threads="1,$ncpu"
     plan="uniform:mostly-read,balanced zipf:mostly-read,balanced one:update"
+    ;;
+duel)
+    sizes=1048576 reps=3 warm=200 dur=500 threads="1,$ncpu"
+    plan="uniform:read,mostly-read,balanced,update,churn,grow zipf:mostly-read,balanced one:update"
+    impls=${CMAP_IMPLS:-"wf_index growt dashmap scc mutex_flat"}
     ;;
 full)
     sizes="1024 1048576 16777216" reps=3 warm=200 dur=1000 plan=$all
