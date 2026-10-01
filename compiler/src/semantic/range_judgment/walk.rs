@@ -108,6 +108,21 @@ pub(super) fn integer_range(ty: IntegerType) -> (i128, i128) {
     }
 }
 
+/// Whether reading `expression` hands its storage over rather than copying
+/// it: a consuming read of a binding or a place.
+const fn consumes(expression: &CheckedExpression) -> bool {
+    matches!(
+        expression,
+        CheckedExpression::Binding {
+            consume_root: true,
+            ..
+        } | CheckedExpression::Project {
+            consume_root: true,
+            ..
+        }
+    )
+}
+
 const fn integer_type(ty: CheckedType) -> Option<IntegerType> {
     match ty {
         CheckedType::Integer(integer) => Some(integer),
@@ -429,13 +444,19 @@ impl<'program> Walker<'program> {
             } => {
                 self.cite = node_path.clone();
                 let evaluated = self.eval(&mut state, value);
+                let consumed = consumes(value);
                 for (binding, ty, ordinal) in bindings {
                     let field = match &evaluated {
-                        Value::Owned(location) => self.read_location(
+                        Value::Owned(location) => match self.read_location(
                             &mut state,
                             &location.child(Step::Field(*ordinal)),
                             *ty,
-                        ),
+                        ) {
+                            // A field of storage that is not handed over is
+                            // a copy.
+                            Value::Owned(_) if !consumed => self.copied(),
+                            other => other,
+                        },
                         Value::Struct(fields) => fields
                             .get(*ordinal as usize)
                             .cloned()
@@ -599,6 +620,9 @@ impl<'program> Walker<'program> {
         arms: &[CheckedMatchArm],
     ) -> Vec<State> {
         let value = self.eval(state, scrutinee);
+        // A by-value binder of a scrutinee the match does not consume is a
+        // copy of the payload, as a `let` of it would be.
+        let consumed = consumes(scrutinee);
         let mut live = Vec::new();
         match enum_type {
             CheckedEnumType::Bool => {
@@ -659,7 +683,10 @@ impl<'program> Walker<'program> {
                                 if binder.mode.is_reference() {
                                     Value::Ref(View::Place(forked.resolve(&payload)))
                                 } else {
-                                    self.read_location(&mut forked, &payload, binder.ty)
+                                    match self.read_location(&mut forked, &payload, binder.ty) {
+                                        Value::Owned(_) if !consumed => self.copied(),
+                                        other => other,
+                                    }
                                 }
                             }
                             (None, None) => Value::Unknown,
@@ -1152,16 +1179,7 @@ impl<'program> Walker<'program> {
     /// source.
     fn stored_value(&mut self, state: &mut State, expression: &CheckedExpression) -> Value {
         let value = self.eval(state, expression);
-        let consumed = matches!(
-            expression,
-            CheckedExpression::Binding {
-                consume_root: true,
-                ..
-            } | CheckedExpression::Project {
-                consume_root: true,
-                ..
-            }
-        );
+        let consumed = consumes(expression);
         let reads_storage = matches!(
             expression,
             CheckedExpression::Binding { .. }
@@ -1175,11 +1193,14 @@ impl<'program> Walker<'program> {
                 | CheckedExpression::DerefAddressed { .. }
         );
         match value {
-            Value::Owned(_) if reads_storage && !consumed => {
-                Value::Owned(Location::root(Origin::Constructed(self.world.new_origin())))
-            }
+            Value::Owned(_) if reads_storage && !consumed => self.copied(),
             other => other,
         }
+    }
+
+    /// A copy of an aggregate: new storage whose contents are unknown.
+    fn copied(&mut self) -> Value {
+        Value::Owned(Location::root(Origin::Constructed(self.world.new_origin())))
     }
 
     pub(super) fn eval(&mut self, state: &mut State, expression: &CheckedExpression) -> Value {
@@ -1881,6 +1902,7 @@ impl<'program> Walker<'program> {
         let saved_recording = self.recording.take();
         let saved_breaks = std::mem::take(&mut self.breaks);
         let mark = self.world.origin_mark();
+        let looped = self.cite.clone();
         let mut total = Modified::default();
         let mut start = state.clone();
         let mut settled = false;
@@ -1906,7 +1928,7 @@ impl<'program> Walker<'program> {
             start = self.header(state, &total);
         }
         if !settled {
-            self.imprecise.get_or_insert_with(|| self.cite.clone());
+            self.imprecise.get_or_insert(looped);
             total.everything = true;
         }
         self.world.log = saved_log;
@@ -1951,6 +1973,8 @@ impl<'program> Walker<'program> {
         deciding
     }
 
+    /// The header state: `entry` with everything the body writes forgotten,
+    /// and the variants of every written enum.
     fn header(&mut self, entry: &State, modified: &Modified) -> State {
         let mut header = entry.clone();
         if modified.everything {

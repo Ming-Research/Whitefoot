@@ -2168,10 +2168,11 @@ rarely insert at the same place.
   and aliasing for the range walk beside `compiler/src/semantic/places.rs`,
   which resolves places for ownership and permission. The two can disagree:
   the walk first treated a by-value copy of an array as an alias of its
-  source, which `places.rs` never does (fixed; conformance case
-  `range2-neg-copy-is-not-its-source`), and `certified_coverage` in
-  `compiler/src/semantic/loop_permission.rs` exists to catch a disagreement
-  about which accesses a certificate saw. Deriving the walk's locations from
+  source, which `places.rs` never does (fixed; conformance cases
+  `range2-neg-copy-is-not-its-source` and `range2-neg-match-binder-copy`),
+  and `certified_coverage` in `compiler/src/semantic/loop_permission.rs`
+  denies a loop whose certificate's walk skipped an access the permission
+  survey sees. Deriving the walk's locations from
   `places.rs`'s resolved places, or sharing one access model, would leave
   one definition of what a statement touches. Validate by identical
   verdicts on the `range*` cases and by the permission tests. Reopen with

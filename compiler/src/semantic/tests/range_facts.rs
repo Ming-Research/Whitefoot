@@ -232,9 +232,7 @@ fn a_certificate_places_an_affine_write_beside_a_scattered_one() {
     // The certificate holds: writes at k are apart from each other, and the
     // writes at order^[k] lie at or above order^.len, above every k, and
     // apart by the left inverse. It places both writes, so both are
-    // certified elements and the loop is permitted [PAR-2]; an affine write
-    // the certificate did not place cannot arise, since it records every
-    // write of storage that exists before the body.
+    // certified elements and the loop is permitted [PAR-2].
     let source = b"fn split(order: &[u64], pos: &[u64], out: &[u64]) -> result: unit reads(order), writes(out) contract {
   requires pos^.len == out^.len;
   requires order^.len <= out^.len;
@@ -345,6 +343,201 @@ fn a_loop_nest_deeper_than_the_checker_follows_is_unsupported_not_rejected() {
         assert_eq!(
             unsupported.feature(),
             crate::UnsupportedSemanticFeature::RangeLoopNesting
+        );
+    });
+}
+
+/// One counted loop writing `out^[k]` under an empty certificate, with
+/// `extra` before the write and `callee` beside `fill`.
+fn certified_fill(callee: &str, extra: &str) -> Vec<u8> {
+    format!(
+        "{callee}fn fill(out: &[u64]) -> result: unit writes(out) {{
+  let n = out^.len;
+  let off = False();
+  for (
+    k in 0_u64..n,
+    apart(i, j) {{
+    }}
+  ) {{
+{extra}    set out^[k] = 1_u64;
+  }}
+  return unit;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+    )
+    .into_bytes()
+}
+
+fn fill_verdict(source: &[u8]) -> LoopVerdict {
+    with_semantics(source, |outcome| {
+        let SemanticOutcome::Complete(program) = outcome else {
+            panic!("the fill must check: {outcome:?}");
+        };
+        let table = program
+            .data
+            .permission
+            .named("fill")
+            .expect("fill's permissions");
+        table.loops[0].verdict.clone()
+    })
+}
+
+#[test]
+fn a_read_the_certificate_skipped_keeps_the_loop_sequential() {
+    // The read of out^[0_u64] sits in an arm the entry state excludes, so
+    // the certificate's walk never records it while the permission survey
+    // sees it: PAR-2 admits only reads the certificate placed.
+    let dead = "    if off {\n      let x = out^[0_u64];\n      let y = x +wrap 1_u64;\n    }\n";
+    let LoopVerdict::Denied(denial) = fill_verdict(&certified_fill("", dead)) else {
+        panic!("an unplaced read of the certified root must deny");
+    };
+    assert!(
+        matches!(denial, LoopDenial::SharedWrite { .. }),
+        "{denial:?}"
+    );
+    assert_eq!(
+        fill_verdict(&certified_fill("", "")),
+        LoopVerdict::PermittedEligible
+    );
+}
+
+#[test]
+fn a_reference_argument_the_callee_never_touches_is_no_access() {
+    // [RANGE-5] only an argument the callee's row reads or writes is an
+    // access; here the run of every written element is passed to a callee
+    // whose row is pure, and the certificate still holds.
+    let callee = "fn ignore(r: &[u64], v: u64) -> result: u64 pure {\n  return v;\n}\n\n";
+    let call = "    let y = ignore(r: &out^[0_u64..n], v: k);\n";
+    assert_eq!(
+        fill_verdict(&certified_fill(callee, call)),
+        LoopVerdict::PermittedEligible
+    );
+}
+
+#[test]
+fn a_derivation_past_the_checkers_arithmetic_is_unsupported_not_rejected() {
+    // Coefficients near 2^64 make each elimination step's products pass
+    // i128; the specified arithmetic is exact, so the verdict is the
+    // checker's capability [RANGE-3].
+    let source = b"fn scaled(cells: &[u64]) -> result: unit reads(cells) contract {
+  requires forall big(a in 0_u64..cells^.len, b in 0_u64..cells^.len): 18446744073709551615_u64 * cells^[a] <= 18446744073709551614_u64 * cells^[b];
+} {
+  if 0_u64 < cells^.len {
+    let first = cells^[0_u64];
+  }
+  return unit;
+}
+
+fn pass(cells: &[u64]) -> result: unit reads(cells) contract {
+  requires forall small(a in 0_u64..cells^.len, b in 0_u64..cells^.len): 18446744073709551613_u64 * cells^[a] <= 18446744073709551612_u64 * cells^[b];
+} {
+  scaled(cells: cells);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+";
+    with_semantics(source, |outcome| {
+        let SemanticOutcome::Unsupported { unsupported, .. } = outcome else {
+            panic!("expected an unsupported capability, got {outcome:?}");
+        };
+        assert_eq!(
+            unsupported.feature(),
+            crate::UnsupportedSemanticFeature::RangeArithmetic
+        );
+    });
+}
+
+/// A loop whose write to `cells` waits behind a chain of `flags` flags,
+/// each set an iteration after the one before, so each dry walk of the
+/// header reaches one more of them.
+fn flag_chain(flags: usize) -> Vec<u8> {
+    let mut lets = String::new();
+    let mut steps = format!(
+        "    if f{flags} {{
+      set cells.inner[0_u64] = 5_u64;
+    }}
+"
+    );
+    for flag in 1..=flags {
+        lets.push_str(&format!(
+            "  let f{flag} = False();
+"
+        ));
+    }
+    for flag in (1..flags).rev() {
+        let next = flag + 1;
+        steps.push_str(&format!(
+            "    if f{flag} {{
+      set f{next} = True();
+    }}
+"
+        ));
+    }
+    steps.push_str(
+        "    set f1 = True();
+",
+    );
+    format!(
+        "fn zeros(cells: &[u64]) -> result: u64 reads(cells) contract {{
+  requires forall zero(k in 0_u64..cells^.len): cells^[k] == 0_u64;
+}} {{
+  if 0_u64 < cells^.len {{
+    let first = cells^[0_u64];
+    return first;
+  }}
+  return 0_u64;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  let cells = box_array_filled::<u64>(count: 4_u64, value: 0_u64);
+{lets}  let seen = 0_u64;
+  for (i in 0_u64..16_u64) {{
+    let got = zeros(cells: &cells.inner[0_u64..4_u64]);
+    set seen = got;
+{steps}  }}
+  if seen != 0_u64 {{
+    return std::process::exit_status(code: 1_u8);
+  }}
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+    )
+    .into_bytes()
+}
+
+#[test]
+fn a_header_that_does_not_settle_is_unsupported_at_its_loop() {
+    // Six flags settle within the walks a header takes, and the write they
+    // guard refutes the requirement; twelve do not, the header forgets
+    // everything, and the verdict is the checker's capability, cited at
+    // the loop.
+    with_semantics(&flag_chain(6), |outcome| {
+        let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+            panic!("expected a RANGE-3 rejection, got {outcome:?}");
+        };
+        assert_eq!(issue.rule(), SemanticRule::Range3);
+    });
+    let source = flag_chain(12);
+    with_semantics(&source, |outcome| {
+        let SemanticOutcome::Unsupported { unsupported, .. } = outcome else {
+            panic!("expected an unsupported capability, got {outcome:?}");
+        };
+        assert_eq!(
+            unsupported.feature(),
+            crate::UnsupportedSemanticFeature::RangeLoopNesting
+        );
+        let crate::SemanticLocation::SourceNode(_, coordinate) = &unsupported.node;
+        let start = usize::try_from(coordinate.start().value()).expect("offset fits");
+        assert!(
+            source[start..].starts_with(b"for (i in"),
+            "cited at the loop"
         );
     });
 }

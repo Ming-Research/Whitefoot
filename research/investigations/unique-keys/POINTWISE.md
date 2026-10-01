@@ -227,9 +227,10 @@ At compiler revision b787fe51 (`make -C compiler build`), on the
   missing depth requirement, a call handing the whole written run to a
   writer, a grouping that writes 0 instead of the element, a chained
   instance with no written `use`, the state after a break, a write to a copy
-  taken for a write to its source, and a header that forgot neither a write
-  only later iterations reach nor the variant of a written enum. The last
-  four were accepted by earlier builds of this branch.
+  taken for a write to its source, through a `let` or a match binder, and a
+  header that forgot neither a write only later iterations reach nor the
+  variant of a written enum. Earlier builds of this branch accepted the last
+  five.
 - **Proof cost.** Checking the level cascade takes 1.14 s; callgrind
   attributes 91% of its 10.1 billion instructions to the range judgment,
   90% to solving owed facts (`Walker::require`), with repeated

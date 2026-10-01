@@ -353,6 +353,14 @@ pub(super) fn judge(
                 match_trigger(view, trigger, *version, indices, &mut candidates);
             }
         }
+        // [RANGE-3] the ceiling counts the instances the fact forms: the
+        // product over its binders, which is zero when one has no value.
+        let formed = candidates
+            .iter()
+            .try_fold(1_usize, |product, values| product.checked_mul(values.len()));
+        if formed.is_none_or(|formed| formed > MAX_INSTANCES) {
+            return Err(Capacity::Instances);
+        }
         let mut tuples: Vec<Vec<Linear>> = vec![Vec::new()];
         for values in &candidates {
             let mut next = Vec::new();
@@ -364,9 +372,6 @@ pub(super) fn judge(
                 }
             }
             tuples = next;
-            if tuples.len() > MAX_INSTANCES {
-                return Err(Capacity::Instances);
-            }
         }
         for tuple in tuples {
             if tuple.len() == fact.clause.binders.len() {

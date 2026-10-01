@@ -19,15 +19,15 @@ fn positive(cells: &[u64]) -> result: u64 reads(cells) contract {
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  doc "A loop writes a field whose variant is known before it.";
+  doc "The field holds Fast where the loop begins, and the loop writes it: a later iteration takes the Slow arm, whose call the zero-filled cells do not satisfy.";
   let cells = box_array_filled::<u64>(count: 4_u64, value: 0_u64);
   let initial = Mode::Fast();
   let h = Holder(mode: initial);
+  set h.mode = Mode::Fast();
   for (i in 0_u64..4_u64) {
     match h.mode {
       Fast() => {
-        let next = Mode::Slow();
-        set h.mode = next;
+        set h.mode = Mode::Slow();
       }
       Slow() => {
         let got = positive(cells: &cells.inner[0_u64..4_u64]);
