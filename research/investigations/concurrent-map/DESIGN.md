@@ -205,3 +205,44 @@ Managed, through their own drivers: Java 21 `ConcurrentHashMap`, .NET 8
 
 Garnet's Tsavorite index is not separated from Garnet; firn meets it again in
 stage (c).
+
+## The index: a first design, stated before measuring
+
+The first candidate follows the cache-line hash table of David, Guerraoui
+and Trigonakis ("Asynchronized concurrency", ASPLOS 2015), whose aim
+matches this one: one cache line touched per operation.
+
+- **A bucket is one 64-byte line:** a state word, three key and value
+  slots and a pointer to an overflow bucket. A lookup touches the home
+  line, and an overflow line only when the bucket holds more than three
+  keys.
+- **The state word is a ticket lock and a version at once:** its high half
+  counts tickets taken, its low half counts tickets served, and the bucket
+  is free when the two are equal. A writer takes a ticket and runs once,
+  with the bucket to itself; tickets serve writers in arrival order, which
+  bounds overtaking as the shared-object design requires of every begun
+  statement.
+- **A read takes no lock and writes nothing:** it reads the state, the
+  slots and the state again, and starts over if a writer came between. So
+  readers of a hot key do not pass its line between cores, which is where
+  a reader-writer lock on the line (Boost's group lock, TBB's accessor)
+  pays. This is a copy-out read: the comparators' `get`, and the form a
+  Whitefoot statement that only reads can use only if its block may run
+  again without effect, which is stage (b)'s question.
+- **Growth is cooperative and incremental:** a writer that finds the table
+  three quarters full allocates one twice as large, and every writer that
+  arrives during the move first moves a run of buckets, locking each,
+  copying it into the two buckets it splits into and marking it moved;
+  readers and writers that meet a moved bucket go on to the new table, so
+  no operation waits for the whole table to move. Old tables are kept until
+  the map is destroyed, which bounds their memory by the live table's and
+  needs no reclamation; deferred reclamation is a later step.
+- **The count of keys is kept per thread** and summed only when an
+  insertion needs an overflow bucket, so no insertion contends on a shared
+  counter.
+
+What would refute it: a lead lost at one thread to the single-thread floors
+would show the version check costing more than it saves; a lead lost on
+`update` with one key would show the ticket lock's handoff costing more
+than a test-and-set's; a lead lost in `grow` would show the cooperative
+move slower than the comparators' rebuilds.

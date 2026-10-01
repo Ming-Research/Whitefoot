@@ -1925,6 +1925,20 @@ rarely insert at the same place.
   when a program needs a third level or two edits nested, or when the
   library's container interfaces are next revised.
 
+- **The standard library has no decimal conversion of integers.** Three
+  programs now write their own: firn's `read_number` and `put_decimal`
+  (`apps/firn/protocol/protocol.wf`), `parse_port` in
+  `tests/programs/deadlines.wf`, and `parse_number` and `put_number` in the
+  concurrent-map bench's `wf/current.wf`, each with its own handling of
+  digits, length and room. A program that reads a numeric argument or prints
+  a count repeats this, and each copy can differ at the edges (overflow past
+  19 digits, an empty field, no room left). The change: a `std::text` entry
+  that parses a decimal `u64` from a byte range with a result naming a
+  malformed or overlong field, and one that appends a `u64` in decimal into a
+  byte window it reports room for; then the three copies move to them.
+  Reopen when the library's text interfaces are next revised or a fourth
+  program needs one.
+
 - **Complete the vector boundary witness when comparing independent fields.**
   The maintained GrowVector program checks the shipped vector and behavior
   drains, but does not establish LANGUAGE.md's combined public `tag`, external

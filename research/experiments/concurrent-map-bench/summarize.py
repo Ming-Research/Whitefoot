@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """Serves concurrent-map-bench: turns run.sh rows into tables.
 
-    python3 summarize.py ROWS.csv [ROWS.csv ...] [--ours NAME]
+    python3 summarize.py ROWS.csv [ROWS.csv ...] [--ours NAME] [--leaders]
 
 For every size, key choice and mix it prints one table: an implementation
 per row, a thread count per column, the median rate over repetitions in
 millions of operations per second, the fastest native comparator per column,
 and, with --ours, that implementation's ratio to it. Failed checks are listed
-first; a failed implementation's rates are marked.
+first; a failed implementation's rates are marked. With --leaders it prints
+instead one line per cell: the fastest comparator, native or managed, at each
+thread count, and wf-current beside it.
 """
 import csv
 import statistics
@@ -22,12 +24,16 @@ DIST_ORDER = ["uniform", "zipf", "one"]
 
 def main(argv):
     ours = None
+    leaders = False
     paths = []
     i = 0
     while i < len(argv):
         if argv[i] == "--ours":
             ours = argv[i + 1]
             i += 2
+        elif argv[i] == "--leaders":
+            leaders = True
+            i += 1
         else:
             paths.append(argv[i])
             i += 1
@@ -60,6 +66,29 @@ def main(argv):
         return (int(size), DIST_ORDER.index(dist) if dist in DIST_ORDER else 9,
                 MIX_ORDER.index(mix) if mix in MIX_ORDER else 9)
 
+    if leaders:
+        print("| size | key choice | mix | " + " | ".join(f"{t} thr fastest" for t in sorted(
+            {t for c in cells.values() for per in c.values() for t in per})) + " | wf-current |")
+        counts_all = sorted({t for c in cells.values() for per in c.values() for t in per})
+        print("|---|---|---|" + "---|" * len(counts_all) + "---|")
+        for key in sorted(cells, key=order):
+            size, dist, mix = key
+            if mix == "prefill":
+                continue
+            table = cells[key]
+            cols = []
+            for t in counts_all:
+                candidates = [(per[t], i) for i, per in table.items() if t in per and i not in CONTROLS
+                              and i != ours and "one-thread" not in flags.get(i, "")]
+                if candidates:
+                    v, who = max(candidates)
+                    cols.append(f"{v:.2f} {who}")
+                else:
+                    cols.append("")
+            current = table.get("wf-current", {})
+            cur = ", ".join(f"{current[t]:.2f}" for t in counts_all if t in current)
+            print(f"| {size} | {dist} | {mix} | " + " | ".join(cols) + f" | {cur} |")
+        return
     for key in sorted(cells, key=order):
         size, dist, mix = key
         table = cells[key]

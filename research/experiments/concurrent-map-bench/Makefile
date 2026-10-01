@@ -6,6 +6,8 @@
 #   make build     the Zipf generator and one driver binary per implementation
 #   make verify    every implementation at a small size, every mix, short
 #                  cells; fails on any failed check
+#   make stress    the linearizability mode on wf-index, with Boost's map and
+#                  the mutex control as known-good implementations
 #   make quick     the quick profile, for iteration (a few minutes)
 #   make full      the whole matrix, on request
 #
@@ -29,14 +31,14 @@ CFLAGS   := -O3 $(MARCH) -g0 -std=c11 -Wall -Wextra -I$(HERE) -isystem $(DEPS)/i
 CXXFLAGS := -O3 $(MARCH) -g0 -std=c++20 -Wall -Wextra -I$(HERE) -isystem $(DEPS)/include -pthread
 RUSTLIB  := $(DEPS)/cmaps-target/release/libcmaps.a
 
-NATIVE := empty mutex_flat flat boost_cfm tbb_chm libcuckoo urcu_lfht papaya dashmap scc stdmap
+NATIVE := wf_index empty mutex_flat flat boost_cfm tbb_chm libcuckoo urcu_lfht papaya dashmap scc stdmap
 BINS   := $(addprefix $(BUILD)/bench-,$(NATIVE))
 MANAGED := $(BUILD)/java/Bench.class $(BUILD)/bench-go $(BUILD)/dotnet/Bench.dll
 # The wf-current control needs the gate compiler (`make -C compiler build`
 # builds a different profile; `cargo build --profile gate` builds this one).
 WFC := $(ROOT)/compiler/target/gate/whitefootc
 
-.PHONY: deps build verify quick full
+.PHONY: deps build verify stress quick full
 deps:
 	sh deps.sh fetch
 	OUT=$(DEPS) sh deps.sh build
@@ -49,6 +51,8 @@ $(BUILD)/zipfgen: zipfgen.c workload.h | $(BUILD)
 $(BUILD)/driver-%.o: driver.c cmap.h workload.h | $(BUILD)
 	$(CC) $(CFLAGS) -DCM_PREFIX=$* -c -o $@ driver.c
 
+$(BUILD)/impl-wf_index.o: native/wf_index.c cmap.h | $(BUILD)
+	$(CC) $(CFLAGS) -DCM_PREFIX=wf_index -c -o $@ $<
 $(BUILD)/impl-empty.o: native/empty.c cmap.h | $(BUILD)
 	$(CC) $(CFLAGS) -DCM_PREFIX=empty -c -o $@ $<
 $(BUILD)/impl-mutex_flat.o: native/flat.cpp cmap.h | $(BUILD)
@@ -66,6 +70,8 @@ $(BUILD)/impl-urcu_lfht.o: native/urcu_lfht.c cmap.h | $(BUILD)
 
 LINK_C   = $(CC) $(CFLAGS) -o $@ $^
 LINK_CXX = $(CXX) $(CXXFLAGS) -o $@ $^
+$(BUILD)/bench-wf_index: $(BUILD)/driver-wf_index.o $(BUILD)/impl-wf_index.o
+	$(LINK_C)
 $(BUILD)/bench-empty: $(BUILD)/driver-empty.o $(BUILD)/impl-empty.o
 	$(LINK_C)
 $(BUILD)/bench-mutex_flat: $(BUILD)/driver-mutex_flat.o $(BUILD)/impl-mutex_flat.o
@@ -95,6 +101,19 @@ $(BUILD)/dotnet/Bench.dll: dotnet/Program.cs dotnet/Bench.csproj | $(BUILD)
 	rm -rf $(BUILD)/dotnet-src && mkdir -p $(BUILD)/dotnet-src
 	cp dotnet/Program.cs dotnet/Bench.csproj $(BUILD)/dotnet-src/
 	dotnet build $(BUILD)/dotnet-src/Bench.csproj -c Release -o $(BUILD)/dotnet --nologo -v q
+
+STRESS := $(addprefix $(BUILD)/stress-,wf_index boost_cfm mutex_flat)
+$(BUILD)/stress-%.o: stress.c cmap.h workload.h | $(BUILD)
+	$(CC) $(CFLAGS) -DCM_PREFIX=$* -c -o $@ stress.c
+$(BUILD)/stress-wf_index: $(BUILD)/stress-wf_index.o $(BUILD)/impl-wf_index.o
+	$(LINK_C)
+$(BUILD)/stress-boost_cfm: $(BUILD)/stress-boost_cfm.o $(BUILD)/impl-boost_cfm.o
+	$(LINK_CXX)
+$(BUILD)/stress-mutex_flat: $(BUILD)/stress-mutex_flat.o $(BUILD)/impl-mutex_flat.o
+	$(LINK_CXX)
+
+stress: $(STRESS)
+	for s in $(STRESS); do $$s || exit 1; done
 
 $(BUILD)/wf-current: wf/current.wf $(WFC) | $(BUILD)
 	$(WFC) -o $@ wf/current.wf
