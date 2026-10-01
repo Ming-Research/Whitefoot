@@ -16,10 +16,9 @@ typedef struct wf_cmap wf_cmap;
 typedef struct wf_cmap_user wf_cmap_user;
 
 /* Users a map can have at once. */
-#define WF_CMAP_MAX_USERS 256
+#define WF_CMAP_MAX_USERS 64
 
-/* A map sized for capacity keys, or a small default when capacity is zero;
- * NULL when memory is short. */
+/* A map sized for capacity keys, or a small default when capacity is zero. */
 wf_cmap *wf_cmap_create(uint64_t capacity);
 /* Frees the map; it has no users left. */
 void wf_cmap_destroy(wf_cmap *map);
@@ -36,5 +35,38 @@ int wf_cmap_remove(wf_cmap_user *user, uint64_t key);
 /* Runs edit once on key's value with its entry held exclusively; 1 when key
  * was present, 0 without running edit otherwise. */
 int wf_cmap_update(wf_cmap_user *user, uint64_t key, void (*edit)(uint64_t *value, void *env), void *env);
+
+/* A map of entries: byte-string keys of any length, each with a slot of
+ * slot_size bytes aligned to slot_align, at most 16, that the caller fills.
+ * A keyed statement locks one entry; a statement over the whole map holds
+ * every entry. */
+wf_cmap *wf_cmap_create_entries(uint64_t slot_size, uint64_t slot_align);
+/* The user numbered index, below WF_CMAP_MAX_USERS, which one thread holds
+ * at a time; a runtime numbers its threads and never leaves. */
+wf_cmap_user *wf_cmap_user_at(wf_cmap *map, unsigned index);
+
+/* What a locked entry's unlock needs. */
+typedef struct {
+    void *cell;
+    void *table;
+    uint32_t fresh;
+} wf_cmap_entry;
+
+/* Locks key's entry, creating it when absent, and returns its slot's address;
+ * entry->fresh is 1 when the entry was created, its slot unfilled. With held
+ * set, the caller holds the whole map. */
+void *wf_cmap_lock_entry(wf_cmap_user *user, const unsigned char *key, uint64_t length, int held,
+                         wf_cmap_entry *entry);
+/* Unlocks the entry: kept when present, else removed with its slot, which
+ * then holds nothing to release. */
+void wf_cmap_unlock_entry(wf_cmap_user *user, wf_cmap_entry *entry, int held, int present);
+/* Holds every entry of the map, waiting out keyed statements under way. */
+void wf_cmap_hold(wf_cmap_user *user);
+void wf_cmap_unhold(wf_cmap_user *user);
+/* The number of entries, exact while the map is held or has no users. */
+uint64_t wf_cmap_count(wf_cmap *map);
+/* With no users left: the slot of an entry not yet drained, whose value the
+ * caller releases before calling again, or NULL once every entry has been. */
+void *wf_cmap_drain(wf_cmap *map);
 
 #endif

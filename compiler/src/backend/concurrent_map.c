@@ -33,14 +33,27 @@
  * Built with WF_CMAP_LOCKED_READ, a read locks its cell like a writer, the
  * read an atomic statement gets when every statement holds its entry
  * exclusively; it is kept for measurement beside the lock-free read.
+ *
+ * The file that includes this one supplies the host: WF_CMAP_TAKE(bytes) and
+ * WF_CMAP_GIVE(block, bytes) for small blocks aligned to 16 bytes, which the
+ * runtime takes from its own pool and never from the program's allocator
+ * [STOR-8]; WF_CMAP_YIELD() to give up the processor; and
+ * WF_CMAP_EXHAUSTED() when memory is short. Cell arrays of 2 MiB or more and
+ * the chunks entries are carved from are mapped from the host here.
  */
-#define _GNU_SOURCE
-#include <sched.h>
+#if !defined(WF_CMAP_TAKE) || !defined(WF_CMAP_GIVE) || !defined(WF_CMAP_YIELD) || !defined(WF_CMAP_EXHAUSTED)
+#error "the includer supplies WF_CMAP_TAKE, WF_CMAP_GIVE, WF_CMAP_YIELD and WF_CMAP_EXHAUSTED"
+#endif
+
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(_WIN32)
+#include <windows.h>
+#else
 #include <sys/mman.h>
+#endif
 
 #include "concurrent_map.h"
 
@@ -75,15 +88,37 @@ typedef struct table {
     struct table *older;      /* moved tables not yet freed, under the map's lock */
 } table;
 
-/* One thread's use of the map: the table it is in, and the cells it claimed
- * and keys it added less those it removed, summed only when a claim may
- * cross the threshold. */
+/* Entries are carved in multiples of ENTRY_GRAIN bytes from chunks of
+ * ENTRY_CHUNK each user maps from the host, and reused through the user's
+ * free lists; an entry larger than ENTRY_LARGEST comes from the pool. */
+#define ENTRY_GRAIN 16u
+#define ENTRY_CLASSES 32u
+#define ENTRY_LARGEST (ENTRY_GRAIN * ENTRY_CLASSES)
+#define ENTRY_CHUNK ((size_t)1 << 20)
+
+typedef struct free_entry {
+    struct free_entry *next;
+} free_entry;
+
+typedef struct chunk {
+    struct chunk *older;
+} chunk;
+
+/* One thread's use of the map: the table it is in; the cells it claimed and
+ * the keys it added less those it removed, summed only when a claim may cross
+ * the threshold; whether it is inside a keyed statement, which a statement
+ * over the whole map waits out; and its entries' free memory. */
 struct wf_cmap_user {
     _Alignas(64) _Atomic(table *) in;
     _Atomic int64_t used;
     _Atomic int64_t live;
+    _Atomic int active;
     wf_cmap *map;
     _Atomic int busy;
+    free_entry *free[ENTRY_CLASSES];
+    char *cursor;
+    size_t room;
+    chunk *chunks;
 };
 
 struct wf_cmap {
@@ -95,6 +130,20 @@ struct wf_cmap {
     _Atomic(table *) retired;      /* moved tables, newest first */
     cell *spare;                   /* cells of the last table freed, or NULL */
     uint64_t spare_capacity;
+    /* A map of entries: the size and alignment of an entry's slot, zero for
+     * a map of words. */
+    uint64_t slot_size;
+    uint64_t slot_align;
+    /* Set while one statement holds the whole map, and how many keyed
+     * statements found it set and wait to begin. */
+    _Alignas(64) _Atomic int gate;
+    _Atomic int waiting;
+    /* Where wf_cmap_drain has reached, and a large node it handed out last,
+     * given back to the pool on the next call. */
+    uint64_t drained;
+    void *pending;
+    uint64_t pending_bytes;
+    void *raw;
     wf_cmap_user users[WF_CMAP_MAX_USERS];
 };
 
@@ -112,7 +161,7 @@ static inline void back_off(unsigned *round) {
     for (unsigned i = 0; i < spins; i++)
         pause_once();
     if (++*round > 64) {
-        sched_yield();
+        WF_CMAP_YIELD();
         *round = 6;
     }
 }
@@ -142,18 +191,16 @@ static inline void check_key(uint64_t key) {
         bad_key();
 }
 
-/* Cell arrays of 2 MiB or more are mapped, so that their pages arrive zeroed
- * when first touched, by whichever mover touches them, instead of being
- * cleared up front by one thread. They are aligned to and advised into huge
- * pages, since a random probe in a large table otherwise pays a page walk on
- * most accesses. */
-static cell *new_cells(uint64_t count) {
-    size_t bytes = count * sizeof(cell);
+/* Host memory, zeroed, in a run of whole pages: aligned to and advised into
+ * huge pages when it is 2 MiB or more, since a random probe in a large table
+ * otherwise pays a page walk on most accesses. */
+static void *host_map(size_t bytes) {
+#if defined(_WIN32)
+    return VirtualAlloc(NULL, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
     if (bytes < HUGE_BYTES) {
-        cell *c = aligned_alloc(64, bytes);
-        if (c != NULL)
-            memset(c, 0, bytes);
-        return c;
+        void *p = mmap(NULL, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        return p == MAP_FAILED ? NULL : p;
     }
     char *raw = mmap(NULL, bytes + HUGE_BYTES, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (raw == MAP_FAILED)
@@ -165,15 +212,48 @@ static cell *new_cells(uint64_t count) {
 #if defined(MADV_HUGEPAGE) && !defined(WF_CMAP_NO_HUGE)
     madvise(start, bytes, MADV_HUGEPAGE);
 #endif
-    return (cell *)start;
+    return start;
+#endif
+}
+
+static void host_unmap(void *p, size_t bytes) {
+#if defined(_WIN32)
+    (void)bytes;
+    VirtualFree(p, 0, MEM_RELEASE);
+#else
+    munmap(p, bytes);
+#endif
+}
+
+static void *take(size_t bytes) {
+    void *p = WF_CMAP_TAKE(bytes);
+    if (p == NULL)
+        WF_CMAP_EXHAUSTED();
+    return p;
+}
+
+/* Cell arrays of 2 MiB or more come from the host, so that their pages
+ * arrive zeroed when first touched, by whichever mover touches them, instead
+ * of being cleared up front by one thread; smaller ones from the pool. */
+static cell *new_cells(uint64_t count) {
+    size_t bytes = count * sizeof(cell);
+    if (bytes < HUGE_BYTES) {
+        cell *c = take(bytes);
+        memset(c, 0, bytes);
+        return c;
+    }
+    cell *c = host_map(bytes);
+    if (c == NULL)
+        WF_CMAP_EXHAUSTED();
+    return c;
 }
 
 static void free_cells(cell *c, uint64_t count) {
     size_t bytes = count * sizeof(cell);
     if (bytes < HUGE_BYTES)
-        free(c);
+        WF_CMAP_GIVE(c, bytes);
     else
-        munmap(c, bytes);
+        host_unmap(c, bytes);
 }
 
 static void lock_map(wf_cmap *map) {
@@ -187,9 +267,8 @@ static void unlock_map(wf_cmap *map) { atomic_store_explicit(&map->lock, 0, memo
 /* A table of at least capacity cells, a power of two, on the map's spare
  * cells when they are that size. */
 static table *new_table(wf_cmap *map, uint64_t capacity) {
-    table *t = calloc(1, sizeof *t);
-    if (t == NULL)
-        return NULL;
+    table *t = take(sizeof *t);
+    memset(t, 0, sizeof *t);
     unsigned bits = 0;
     while ((1ull << bits) < capacity)
         bits++;
@@ -211,16 +290,12 @@ static table *new_table(wf_cmap *map, uint64_t capacity) {
     } else {
         t->cells = new_cells(t->capacity);
     }
-    if (t->cells == NULL) {
-        free(t);
-        return NULL;
-    }
     return t;
 }
 
 static void free_table(table *t) {
     free_cells(t->cells, t->capacity);
-    free(t);
+    WF_CMAP_GIVE(t, sizeof *t);
 }
 
 static void count(wf_cmap_user *u, int64_t used, int64_t live) {
@@ -269,7 +344,7 @@ static void reclaim(wf_cmap *map) {
                 free_cells(map->spare, map->spare_capacity);
             map->spare = r->cells;
             map->spare_capacity = r->capacity;
-            free(r);
+            WF_CMAP_GIVE(r, sizeof *r);
             spared = 1;
         }
     }
@@ -391,8 +466,6 @@ static void start_move(wf_cmap *map, table *t) {
     if (capacity < t->capacity / 2)
         capacity = t->capacity / 2 > MIN_CELLS ? t->capacity / 2 : MIN_CELLS;
     table *nt = new_table(map, capacity);
-    if (nt == NULL)
-        abort();
     atomic_store_explicit(&t->next, nt, memory_order_seq_cst);
 }
 
@@ -475,20 +548,329 @@ static int lock_key(wf_cmap_user *u, uint64_t key, int claim, cell **out, table 
 
 static inline void unlock(cell *c, uint64_t key) { atomic_store_explicit(&c->key, key, memory_order_release); }
 
+/* Entries: a map created by wf_cmap_create_entries keeps byte-string keys in
+ * nodes, each the key's length and bytes and then a slot of the map's slot
+ * size, its address stored in the value word of the key's cell. A cell's key
+ * word holds the key's hash in place of the key, and a probe compares a key's
+ * bytes only once it has locked a cell of the same hash, so a node is freed
+ * under its cell's lock and no probe reads a freed node. Every operation on
+ * an entry locks its cell, reading or writing. */
+
+typedef struct node {
+    uint64_t length;
+    unsigned char bytes[];
+} node;
+
+static uint64_t slot_offset(const wf_cmap *map, uint64_t length) {
+    uint64_t at = sizeof(node) + length;
+    return (at + map->slot_align - 1) / map->slot_align * map->slot_align;
+}
+
+static uint64_t node_bytes(const wf_cmap *map, uint64_t length) {
+    uint64_t bytes = slot_offset(map, length) + map->slot_size;
+    return (bytes + ENTRY_GRAIN - 1) / ENTRY_GRAIN * ENTRY_GRAIN;
+}
+
+static void *slot_of(const wf_cmap *map, node *n) { return (char *)n + slot_offset(map, n->length); }
+
+static node *new_node(wf_cmap_user *u, uint64_t bytes) {
+    if (bytes > ENTRY_LARGEST)
+        return take(bytes);
+    unsigned k = (unsigned)(bytes / ENTRY_GRAIN) - 1;
+    free_entry *f = u->free[k];
+    if (f != NULL) {
+        u->free[k] = f->next;
+        return (node *)(void *)f;
+    }
+    if (u->room < bytes) {
+        chunk *c = host_map(ENTRY_CHUNK);
+        if (c == NULL)
+            WF_CMAP_EXHAUSTED();
+        c->older = u->chunks;
+        u->chunks = c;
+        u->cursor = (char *)c + ENTRY_GRAIN;
+        u->room = ENTRY_CHUNK - ENTRY_GRAIN;
+    }
+    node *n = (node *)(void *)u->cursor;
+    u->cursor += bytes;
+    u->room -= bytes;
+    return n;
+}
+
+static void free_node(wf_cmap_user *u, node *n, uint64_t bytes) {
+    if (bytes > ENTRY_LARGEST) {
+        WF_CMAP_GIVE(n, bytes);
+        return;
+    }
+    unsigned k = (unsigned)(bytes / ENTRY_GRAIN) - 1;
+    free_entry *f = (free_entry *)(void *)n;
+    f->next = u->free[k];
+    u->free[k] = f;
+}
+
+/* A key's hash: eight bytes at a time, each mixed in by a multiplication,
+ * then a finalizing mix, seeded with the length. */
+static uint64_t hash_bytes(const unsigned char *p, uint64_t n) {
+    uint64_t h = 0x243F6A8885A308D3ull ^ (n * 0x9E3779B97F4A7C15ull);
+    while (n >= 8) {
+        uint64_t w;
+        memcpy(&w, p, 8);
+        h = (h ^ w) * 0xBF58476D1CE4E5B9ull;
+        h ^= h >> 31;
+        p += 8;
+        n -= 8;
+    }
+    if (n != 0) {
+        uint64_t w = 0;
+        memcpy(&w, p, (size_t)n);
+        h = (h ^ w) * 0x94D049BB133111EBull;
+        h ^= h >> 29;
+    }
+    h ^= h >> 32;
+    h *= 0xD6E8FEB86659FD93ull;
+    h ^= h >> 32;
+    return h;
+}
+
+/* The hash a key's cell holds: within the key range, so never empty or
+ * removed. A test narrows it with WF_CMAP_TAG_MASK so that keys share
+ * hashes and only their bytes tell them apart. */
+#ifndef WF_CMAP_TAG_MASK
+#define WF_CMAP_TAG_MASK KEY_MASK
+#endif
+static uint64_t tag_of(const unsigned char *key, uint64_t length) {
+    uint64_t tag = hash_bytes(key, length) & KEY_MASK & WF_CMAP_TAG_MASK;
+    if (tag == EMPTY)
+        return 1;
+    if (tag == REMOVED)
+        return REMOVED - 1;
+    return tag;
+}
+
+/* Locks the cell of key, whose hash is tag, in t, or claims an empty one for
+ * it; FULL when no empty cell is left in the whole table. */
+static int acquire_entry(table *t, uint64_t tag, const unsigned char *key, uint64_t length, cell **out) {
+    uint64_t i = start_of(t, tag);
+    uint64_t left = t->capacity;
+    unsigned round = 0;
+    for (;;) {
+        cell *c = &t->cells[i];
+        uint64_t k = atomic_load_explicit(&c->key, memory_order_acquire);
+        uint64_t bare = k & ~LOCKED;
+        if (bare == tag) {
+            if (k & LOCKED) {
+                wait_for_cell(&round);
+                continue;
+            }
+            if (!atomic_compare_exchange_weak_explicit(&c->key, &k, k | LOCKED, memory_order_seq_cst,
+                                                       memory_order_relaxed))
+                continue;
+            node *n = (node *)(uintptr_t)atomic_load_explicit(&c->value, memory_order_relaxed);
+            if (n->length == length && memcmp(n->bytes, key, (size_t)length) == 0) {
+                *out = c;
+                return FOUND;
+            }
+            unlock(c, k);
+            round = 0;
+        } else if (bare == EMPTY) {
+            if (atomic_compare_exchange_weak_explicit(&c->key, &k, tag | LOCKED, memory_order_seq_cst,
+                                                      memory_order_relaxed)) {
+                *out = c;
+                return CLAIMED;
+            }
+            continue;
+        }
+        if (--left == 0)
+            return FULL;
+        i = (i + 1) & t->mask;
+    }
+}
+
+/* Locks key's cell in the current table, or claims one, helping any move it
+ * meets, as lock_key does for a word's key. */
+static int lock_entry(wf_cmap_user *u, uint64_t tag, const unsigned char *key, uint64_t length, cell **out,
+                      table **in) {
+    for (;;) {
+        table *t = use_current(u);
+        if (atomic_load_explicit(&t->next, memory_order_acquire) == NULL) {
+            int r = acquire_entry(t, tag, key, length, out);
+            if (r == FOUND || r == CLAIMED) {
+                if (keep_cell(t, *out, r, tag)) {
+                    *in = t;
+                    return r;
+                }
+            } else {
+                start_move(u->map, t);
+                unsigned round = 0;
+                while (atomic_load_explicit(&t->next, memory_order_acquire) == NULL)
+                    back_off(&round);
+            }
+        }
+        finish_move(u->map, t);
+    }
+}
+
+/* Marks u inside a keyed statement, once no statement holds the whole map.
+ * The mark and the hold's gate are each written and then the other read,
+ * all sequentially consistent: either the hold sees the mark and waits for
+ * the statement, or the statement sees the gate and waits for the hold. A
+ * statement that waits is counted, and the next hold waits until every
+ * counted statement has begun, so that holds one after another do not keep
+ * keyed statements out. */
+static void enter_keyed(wf_cmap_user *u) {
+    wf_cmap *map = u->map;
+    atomic_store_explicit(&u->active, 1, memory_order_seq_cst);
+    if (atomic_load_explicit(&map->gate, memory_order_seq_cst) == 0)
+        return;
+    atomic_store_explicit(&u->active, 0, memory_order_release);
+    atomic_fetch_add_explicit(&map->waiting, 1, memory_order_seq_cst);
+    for (;;) {
+        unsigned round = 0;
+        while (atomic_load_explicit(&map->gate, memory_order_acquire) != 0)
+            back_off(&round);
+        atomic_store_explicit(&u->active, 1, memory_order_seq_cst);
+        if (atomic_load_explicit(&map->gate, memory_order_seq_cst) == 0)
+            break;
+        atomic_store_explicit(&u->active, 0, memory_order_release);
+    }
+    atomic_fetch_sub_explicit(&map->waiting, 1, memory_order_release);
+}
+
+wf_cmap *wf_cmap_create_entries(uint64_t slot_size, uint64_t slot_align) {
+    if (slot_align == 0 || slot_align > ENTRY_GRAIN || (slot_align & (slot_align - 1)) != 0)
+        abort();
+    wf_cmap *map = wf_cmap_create(0);
+    map->slot_size = slot_size;
+    map->slot_align = slot_align;
+    return map;
+}
+
+wf_cmap_user *wf_cmap_user_at(wf_cmap *map, unsigned index) {
+    wf_cmap_user *u = &map->users[index];
+    if (atomic_load_explicit(&u->busy, memory_order_relaxed) == 0) {
+        atomic_store(&u->busy, 1);
+        int n = atomic_load(&map->users_seen);
+        while (n < (int)index + 1 && !atomic_compare_exchange_weak(&map->users_seen, &n, (int)index + 1)) {
+        }
+    }
+    return u;
+}
+
+void *wf_cmap_lock_entry(wf_cmap_user *u, const unsigned char *key, uint64_t length, int held,
+                         wf_cmap_entry *entry) {
+    if (!held)
+        enter_keyed(u);
+    wf_cmap *map = u->map;
+    uint64_t tag = tag_of(key, length);
+    cell *c;
+    table *t;
+    int r = lock_entry(u, tag, key, length, &c, &t);
+    node *n;
+    if (r == CLAIMED) {
+        n = new_node(u, node_bytes(map, length));
+        n->length = length;
+        memcpy(n->bytes, key, (size_t)length);
+        atomic_store_explicit(&c->value, (uint64_t)(uintptr_t)n, memory_order_relaxed);
+        count(u, 1, 0);
+    } else {
+        n = (node *)(uintptr_t)atomic_load_explicit(&c->value, memory_order_relaxed);
+    }
+    entry->cell = c;
+    entry->table = t;
+    entry->fresh = r == CLAIMED;
+    return slot_of(map, n);
+}
+
+void wf_cmap_unlock_entry(wf_cmap_user *u, wf_cmap_entry *entry, int held, int present) {
+    wf_cmap *map = u->map;
+    cell *c = entry->cell;
+    table *t = entry->table;
+    if (present) {
+        unlock(c, atomic_load_explicit(&c->key, memory_order_relaxed) & ~LOCKED);
+    } else {
+        node *n = (node *)(uintptr_t)atomic_load_explicit(&c->value, memory_order_relaxed);
+        free_node(u, n, node_bytes(map, n->length));
+        unlock(c, REMOVED);
+    }
+    count(u, 0, (int64_t)(present != 0) - (int64_t)(entry->fresh == 0));
+    if (!held)
+        atomic_store_explicit(&u->active, 0, memory_order_release);
+    /* A claim may cross the threshold, as an insert's may. */
+    if (entry->fresh &&
+        (t->capacity <= (1ull << 16) || (atomic_load_explicit(&u->used, memory_order_relaxed) & 31) == 0)) {
+        int64_t used, live;
+        totals(map, &used, &live);
+        if (used - t->base > (int64_t)(t->capacity / 2)) {
+            start_move(map, t);
+            if (atomic_load_explicit(&t->next, memory_order_acquire) != NULL)
+                finish_move(map, t);
+        }
+    }
+}
+
+void wf_cmap_hold(wf_cmap_user *u) {
+    wf_cmap *map = u->map;
+    unsigned round = 0;
+    for (;;) {
+        while (atomic_load_explicit(&map->waiting, memory_order_acquire) != 0)
+            back_off(&round);
+        int idle = 0;
+        if (atomic_compare_exchange_weak_explicit(&map->gate, &idle, 1, memory_order_seq_cst,
+                                                  memory_order_relaxed))
+            break;
+        back_off(&round);
+    }
+    int n = atomic_load_explicit(&map->users_seen, memory_order_seq_cst);
+    for (int i = 0; i < n; i++) {
+        round = 0;
+        while (atomic_load_explicit(&map->users[i].active, memory_order_seq_cst) != 0)
+            back_off(&round);
+    }
+}
+
+void wf_cmap_unhold(wf_cmap_user *u) { atomic_store_explicit(&u->map->gate, 0, memory_order_release); }
+
+uint64_t wf_cmap_count(wf_cmap *map) {
+    int64_t used, live;
+    totals(map, &used, &live);
+    return live > 0 ? (uint64_t)live : 0;
+}
+
+void *wf_cmap_drain(wf_cmap *map) {
+    if (map->pending != NULL) {
+        WF_CMAP_GIVE(map->pending, map->pending_bytes);
+        map->pending = NULL;
+    }
+    table *t = atomic_load_explicit(&map->current, memory_order_acquire);
+    while (map->drained < t->capacity) {
+        cell *c = &t->cells[map->drained++];
+        uint64_t k = atomic_load_explicit(&c->key, memory_order_relaxed);
+        if (k == EMPTY || k == REMOVED)
+            continue;
+        node *n = (node *)(uintptr_t)atomic_load_explicit(&c->value, memory_order_relaxed);
+        atomic_store_explicit(&c->key, REMOVED, memory_order_relaxed);
+        /* A large node goes back to the pool once its value is released;
+         * the rest leave with their chunks when the map is destroyed. */
+        uint64_t bytes = node_bytes(map, n->length);
+        if (bytes > ENTRY_LARGEST) {
+            map->pending = n;
+            map->pending_bytes = bytes;
+        }
+        return slot_of(map, n);
+    }
+    return NULL;
+}
+
 wf_cmap *wf_cmap_create(uint64_t capacity) {
-    wf_cmap *map = aligned_alloc(64, sizeof(wf_cmap));
-    if (map == NULL)
-        return NULL;
+    char *raw = take(sizeof(wf_cmap) + 64);
+    wf_cmap *map = (wf_cmap *)(((uintptr_t)raw + 63) & ~(uintptr_t)63);
     memset(map, 0, sizeof *map);
+    map->raw = raw;
     for (int i = 0; i < WF_CMAP_MAX_USERS; i++)
         map->users[i].map = map;
     /* Half full when it holds capacity keys, as dense as a table gets
      * before it moves, since reads cost less in a smaller table. */
     table *t = new_table(NULL, capacity ? cells_for(capacity, 1, 2) : DEFAULT_CELLS);
-    if (t == NULL) {
-        free(map);
-        return NULL;
-    }
     atomic_store(&map->current, t);
     return map;
 }
@@ -506,7 +888,13 @@ void wf_cmap_destroy(wf_cmap *map) {
     }
     if (map->spare)
         free_cells(map->spare, map->spare_capacity);
-    free(map);
+    for (int i = 0; i < WF_CMAP_MAX_USERS; i++)
+        for (chunk *c = map->users[i].chunks; c;) {
+            chunk *older = c->older;
+            host_unmap(c, ENTRY_CHUNK);
+            c = older;
+        }
+    WF_CMAP_GIVE(map->raw, sizeof(wf_cmap) + 64);
 }
 
 wf_cmap_user *wf_cmap_enter(wf_cmap *map) {

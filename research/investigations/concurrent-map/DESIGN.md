@@ -102,6 +102,72 @@ a concurrent index.
 3. **(c) firn on the new keyspace,** against the suite's criteria, then on the
    14900K.
 
+## Stage (b): the language surface, stated before building
+
+On 2026-10-01 the owner directed the work to continue through the language
+and firn to a new run of the benchmark, ruling on the open questions (Q34
+on the statement form, Q35 on statements over several keys, Q37 on
+statements that only read) and on the choices below when the work is
+handed back. Each choice is a proposal until then.
+
+- **`SharedMap<V>`, a shared map from byte strings to values of type `V`,**
+  whose keys the runtime hashes and compares. The runtime calls Whitefoot
+  code today only to start a context; a key of any type would make it call
+  the writer's hash and equality under a cell's lock in the middle of a
+  probe, and the index's linearizability would then rest on a protocol that
+  the standard `HashMap`'s own documentation says no source admission
+  checks. Byte strings are what Redis keys are, and firn can name a key as a
+  range of its input without building one. Rejected: a key of any type with
+  a `HashMapKey` binding, for that reason; integer keys only, since firn's
+  keys are bytes.
+- **A keyed statement, `atomic e = &m[key] { ... }`,** whose binding is a
+  `&Option<V>` naming the key's entry: the block reads it, replaces the
+  value, inserts one by writing `Some` or removes the key by writing `None`,
+  with exclusive access to that entry, and takes effect at one point.
+  Statements on one key take effect in one order, and statements on
+  different keys do not wait for each other. It counts as a waiting call,
+  and its block contains no waiting call, as an atomic statement's does.
+  One form serves every single-key command, with no library function and no
+  callback.
+- **A whole-map statement, `atomic s = &m { ... }`,** whose binding is a
+  `&Keyed<V>` naming the whole map, with exclusive access to every entry,
+  for commands over several keys (`MSET`, `DEL` and `EXISTS` of several)
+  and for an exact count (`DBSIZE`). Inside its block, or in a function
+  passed the binding, `atomic e = &s^[key] { ... }` reaches one entry and
+  waits for nothing. To exclude it, every keyed statement publishes itself
+  with one sequentially consistent store on its own thread's cache line, the
+  price paid by every keyed statement and measured with firn. A statement
+  over a list of keys, taken in one order the runtime fixes (Q35), would let
+  `MSET` run beside statements on other keys; it is deferred, since it
+  needs a type for a list of keys and a binding over several entries, and
+  the whole-map statement gives the same meaning.
+- **Every keyed statement holds its entry exclusively, reading or
+  writing.** A Whitefoot block runs once and cannot be run again after a
+  torn read of a value larger than a word, so the index's lock-free read
+  serves no statement yet; statements that only read running at the same
+  time (Q37, the four `LRANGE` tests) stay open.
+- **A statement that finds its entry or its map held waits in the runtime
+  without parking,** since a holder's block contains no waiting call and so
+  runs to its end without yielding its driver; parking, with the key word's
+  second bit marking waiters, comes with bounded overtaking.
+- **A keyed or whole-map statement's block may contain an atomic statement
+  on a `Shared` object, whose own block contains none,** so that an
+  append-only file's record of a change is made in the same step as the
+  change. Entries and maps are always taken before objects and an object's
+  holder takes nothing, so no cycle of waits can form; the inner statement
+  waits without parking for the same reason as above.
+- **Entries live in nodes the runtime allocates from its own pool:** the
+  key's bytes and a slot for the `Option<V>`. A cell holds the key's hash in
+  its key word and the node's address in its value word; a probe compares
+  hashes, and the full key only after it has locked the cell, so a node is
+  freed under its cell's lock and no probe reads a freed node. A move copies
+  the addresses, so an entry stays where its statement's binding names it.
+- **The last handle's release drops every value** and frees the map.
+
+Stage (b)'s own measurement, the same workloads through Whitefoot code
+against the C index, is deferred: firn's suite measures the surface end to
+end first, at the owner's direction.
+
 ## The measurement
 
 The bundle is `research/experiments/concurrent-map-bench/`. These rules are

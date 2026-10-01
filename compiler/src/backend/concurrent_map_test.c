@@ -10,7 +10,12 @@
  *   memoization as Porcupine implements it; the checker is first shown to
  *   refuse a history that is not linearizable and to accept one that is;
  * - interleavings too rare for threads to meet, driven step by step through
- *   the map's own functions, which is why the test includes its source.
+ *   the map's own functions, which is why the test includes its source;
+ * - a map of entries: one thread's random operations on byte-string keys of
+ *   many lengths against a plain reference, through moves; threads counting
+ *   on shared keys while another holds the whole map and finds every
+ *   entry's sum equal to a total each statement adds to with its entry
+ *   locked; and a drain that hands out every present entry once.
  *
  * Prints the first failure and exits 1, or exits 0.
  */
@@ -23,6 +28,13 @@
 #include <string.h>
 #include <time.h>
 
+#include <sched.h>
+
+/* The host the runtime supplies the map, here from the C library. */
+#define WF_CMAP_TAKE(bytes) aligned_alloc(16, ((size_t)(bytes) + 15) / 16 * 16)
+#define WF_CMAP_GIVE(block, bytes) free(block)
+#define WF_CMAP_YIELD() sched_yield()
+#define WF_CMAP_EXHAUSTED() abort()
 #include "concurrent_map.c"
 
 #define THREADS 4
@@ -496,9 +508,152 @@ static void claim_given_back(void) {
     wf_cmap_destroy(map);
 }
 
+/* Entries. */
+
+enum { ENTRY_KEYS = 3000, ENTRY_KEY_BYTES = 600 };
+
+/* Key k's bytes: k's own eight bytes, so that keys differ, then up to 55
+ * bytes drawn from k, or for every 97th key about 500, so that its node is
+ * larger than the chunks' largest grain. */
+static uint64_t entry_key(uint64_t k, unsigned char *bytes) {
+    uint64_t length = 8 + mix64(k * 7 + 1) % 56;
+    if (k % 97 == 0)
+        length = 500 + k % 100;
+    memcpy(bytes, &k, 8);
+    for (uint64_t i = 8; i < length; i++)
+        bytes[i] = (unsigned char)(mix64(k ^ (i << 32)) >> 56);
+    return length;
+}
+
+static void entries_sequential(void) {
+    enum { OPS = 400000 };
+    static uint8_t present[ENTRY_KEYS];
+    static uint64_t value[ENTRY_KEYS];
+    unsigned char bytes[ENTRY_KEY_BYTES];
+    wf_cmap *map = wf_cmap_create_entries(16, 8);
+    wf_cmap_user *user = wf_cmap_user_at(map, 0);
+    uint64_t state = 11, live = 0;
+    for (unsigned i = 0; i < OPS; i++) {
+        uint64_t r = next(&state);
+        unsigned k = (unsigned)((r >> 8) % ENTRY_KEYS);
+        uint64_t length = entry_key(k, bytes);
+        wf_cmap_entry entry;
+        uint64_t *slot = wf_cmap_lock_entry(user, bytes, length, 0, &entry);
+        if (entry.fresh != !present[k])
+            fail("an entry's freshness disagrees with the reference", k, entry.fresh);
+        if (present[k] && slot[0] != value[k])
+            fail("an entry's value disagrees with the reference", k, slot[0]);
+        int keep = (r & 3) != 0;
+        if (keep) {
+            slot[0] = r;
+            value[k] = r;
+        }
+        live += (uint64_t)keep - (uint64_t)present[k];
+        present[k] = (uint8_t)keep;
+        wf_cmap_unlock_entry(user, &entry, 0, keep);
+    }
+    if (wf_cmap_count(map) != live)
+        fail("the count of entries disagrees with the reference", wf_cmap_count(map), live);
+    uint64_t drained = 0;
+    for (uint64_t *slot; (slot = wf_cmap_drain(map)) != NULL;)
+        drained++;
+    if (drained != live)
+        fail("the drain did not hand out every entry once", drained, live);
+    wf_cmap_destroy(map);
+}
+
+enum { COUNTED_KEYS = 64, COUNTING = 100000 };
+
+typedef struct {
+    wf_cmap *map;
+    unsigned index;
+    _Atomic uint64_t *total;
+    _Atomic int *stop;
+    uint64_t holds;
+} counter_t;
+
+static uint64_t counted_key(uint64_t k, unsigned char *bytes) {
+    memcpy(bytes, "key:", 4);
+    for (int i = 0; i < 8; i++)
+        bytes[4 + i] = (unsigned char)('0' + (k >> (3 * i)) % 8);
+    return 12;
+}
+
+static void *count_entries(void *arg) {
+    counter_t *c = arg;
+    wf_cmap_user *user = wf_cmap_user_at(c->map, c->index);
+    unsigned char bytes[16];
+    uint64_t state = mix64(c->index + 99);
+    for (unsigned i = 0; i < COUNTING; i++) {
+        uint64_t k = next(&state) % COUNTED_KEYS;
+        uint64_t length = counted_key(k, bytes);
+        wf_cmap_entry entry;
+        uint64_t *slot = wf_cmap_lock_entry(user, bytes, length, 0, &entry);
+        if (entry.fresh)
+            slot[0] = 0;
+        /* The total moves first, the entry a little later, both inside the
+         * statement. */
+        atomic_fetch_add(c->total, 1);
+        for (volatile int spin = 0; spin < 20; spin++) {
+        }
+        slot[0] += 1;
+        wf_cmap_unlock_entry(user, &entry, 0, 1);
+    }
+    return NULL;
+}
+
+static void *hold_entries(void *arg) {
+    counter_t *c = arg;
+    wf_cmap_user *user = wf_cmap_user_at(c->map, c->index);
+    unsigned char bytes[16];
+    while (!atomic_load(c->stop)) {
+        wf_cmap_hold(user);
+        uint64_t sum = 0, total = atomic_load(c->total);
+        for (uint64_t k = 0; k < COUNTED_KEYS; k++) {
+            uint64_t length = counted_key(k, bytes);
+            wf_cmap_entry entry;
+            uint64_t *slot = wf_cmap_lock_entry(user, bytes, length, 1, &entry);
+            if (!entry.fresh)
+                sum += slot[0];
+            wf_cmap_unlock_entry(user, &entry, 1, !entry.fresh);
+        }
+        if (sum != total || wf_cmap_count(c->map) > COUNTED_KEYS)
+            fail("a hold saw a keyed statement half done (sum, total)", sum, total);
+        wf_cmap_unhold(user);
+        c->holds++;
+    }
+    return NULL;
+}
+
+static void entries_held(void) {
+    wf_cmap *map = wf_cmap_create_entries(8, 8);
+    _Atomic uint64_t total = 0;
+    _Atomic int stop = 0;
+    pthread_t t[THREADS + 1];
+    counter_t c[THREADS + 1];
+    for (unsigned i = 0; i <= THREADS; i++) {
+        c[i] = (counter_t){map, i, &total, &stop, 0};
+        pthread_create(&t[i], NULL, i == THREADS ? hold_entries : count_entries, &c[i]);
+    }
+    for (unsigned i = 0; i < THREADS; i++)
+        pthread_join(t[i], NULL);
+    atomic_store(&stop, 1);
+    pthread_join(t[THREADS], NULL);
+    if (c[THREADS].holds == 0)
+        fail("the holder never held the map", 0, 0);
+    uint64_t sum = 0;
+    for (uint64_t *slot; (slot = wf_cmap_drain(map)) != NULL;)
+        sum += slot[0];
+    if (sum != (uint64_t)THREADS * COUNTING)
+        fail("a keyed statement's count was lost", sum, (uint64_t)THREADS * COUNTING);
+    wf_cmap_destroy(map);
+}
+
 int main(void) {
     checker_self_test();
     claim_given_back();
+    entries_sequential();
+    entries_held();
     sequential();
     concurrent(0);
     concurrent(1);

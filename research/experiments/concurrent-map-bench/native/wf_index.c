@@ -4,6 +4,15 @@
  * runtime's own code with one call per operation, as the comparators get.
  * Built with WF_CMAP_LOCKED_READ it measures the locked read the runtime
  * keeps for measurement. */
+#define _GNU_SOURCE
+#include <sched.h>
+#include <stdlib.h>
+
+/* The host the runtime supplies the map, here from the C library. */
+#define WF_CMAP_TAKE(bytes) aligned_alloc(16, ((size_t)(bytes) + 15) / 16 * 16)
+#define WF_CMAP_GIVE(block, bytes) free(block)
+#define WF_CMAP_YIELD() sched_yield()
+#define WF_CMAP_EXHAUSTED() abort()
 #include "concurrent_map.c"
 
 #include "cmap.h"
