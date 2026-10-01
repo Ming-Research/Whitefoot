@@ -376,6 +376,9 @@ impl<'program> Walker<'program> {
                 relation,
                 capacity: None,
             }),
+            Err(Capacity::Arithmetic) => self
+                .issues
+                .push(RangeIssue::Arithmetic { node: node.clone() }),
             Err(capacity) => self.issues.push(RangeIssue::Undischarged {
                 node: node.clone(),
                 fact: clause.name.clone(),
@@ -2090,6 +2093,7 @@ impl<'program> Walker<'program> {
             .iter()
             .any(|access| access.container.is_none() && access.write);
         let mut failure: Option<ApartFailure> = None;
+        let mut beyond_arithmetic = false;
         // An access the certificate cannot place, against a written container.
         for access in left.unplaced.iter().chain(right.unplaced.iter()) {
             let reaches = match access.container {
@@ -2183,6 +2187,10 @@ impl<'program> Walker<'program> {
                             });
                             break 'pairs;
                         }
+                        Err(Capacity::Arithmetic) => {
+                            beyond_arithmetic = true;
+                            break 'pairs;
+                        }
                         Err(capacity) => {
                             failure = Some(ApartFailure::Capacity {
                                 write: write.node.clone(),
@@ -2205,6 +2213,12 @@ impl<'program> Walker<'program> {
                     certified_reads.push(access.node.clone());
                 }
             }
+        }
+        if beyond_arithmetic {
+            self.issues.push(RangeIssue::Arithmetic {
+                node: apart.node.clone(),
+            });
+            return;
         }
         match failure {
             Some(failure) => self.issues.push(RangeIssue::Apart {

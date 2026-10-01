@@ -38,6 +38,10 @@ pub(crate) enum RangeIssue {
         node: NodePath,
         failure: ApartFailure,
     },
+    /// The derivation at `node` left this checker's `i128` arithmetic. The
+    /// specified arithmetic is exact [RANGE-3], so this is an unsupported
+    /// capability and never a rejection.
+    Arithmetic { node: NodePath },
 }
 
 /// Why a certificate does not hold.

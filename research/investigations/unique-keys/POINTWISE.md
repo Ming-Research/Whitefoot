@@ -171,7 +171,15 @@ the negated conclusion. The derivation then:
    `<` or `>`;
 4. judges each branch's literals by solving unit equalities, identifying
    reads of one version at one solved index tuple (read congruence), and
-   Fourier-Motzkin elimination tightened over the integers.
+   asking whether the inequalities, each tightened over the integers, have
+   a rational solution, by Fourier-Motzkin elimination.
+
+Only the problem's size is bounded, by 4096 atoms and 256 formed instances
+of one fact; every branch runs to completion. A first implementation also
+capped the branches and one elimination's inequalities and tightened what
+elimination derives, but those depend on the order of splits and
+eliminations, which the specification leaves open, so two checkers could
+have disagreed at a cap or on a verdict.
 
 The frontier case of a backedge (`e == at` after `for (at ...)`) is step 3's
 read pair: `parents^[e]` and `parents^[at]` are either one element, where the

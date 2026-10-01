@@ -1433,6 +1433,10 @@ pub enum UnsupportedSemanticFeature {
     DuplicateMatchArm,
     /// An OP-1 family outside the implemented scalar and nominal-tag families.
     OperationFamily,
+    /// A range derivation whose exact arithmetic [RANGE-3] leaves the
+    /// checker's 128-bit integers. It names no rule: the specified
+    /// arithmetic has no bound, so reaching here is a checker gap.
+    RangeArithmetic,
 }
 
 /// Exact source node at which an unimplemented compiler family was required.

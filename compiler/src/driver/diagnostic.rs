@@ -719,6 +719,7 @@ variant_names! {
     UnsupportedSemanticFeature {
         Generics, PreludeNominalValues, ReferenceFormation, CompositeValues,
         RecursiveNominalLayout, OwnershipJoin, DuplicateMatchArm, OperationFamily,
+        RangeArithmetic,
     }
 }
 

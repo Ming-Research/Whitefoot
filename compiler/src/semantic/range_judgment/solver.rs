@@ -10,8 +10,9 @@
 //!    every element read is identified with every other read of the same
 //!    place at the same solved indices (read congruence), a solved
 //!    disequality is `0 != 0`, a solved constant comparison is false, or
-//!    Fourier-Motzkin elimination of the remaining inequalities, each
-//!    tightened over the integers, derives a false constant.
+//!    the remaining inequalities, each tightened over the integers as it is
+//!    formed, have no rational solution, which Fourier-Motzkin elimination
+//!    decides in any order since it tightens nothing it derives.
 //! 2. **Saturation.** A choice none of whose other alternatives is
 //!    consistent with the units asserts its one consistent alternative, and a
 //!    rule whose every guard the units entail asserts its conclusions. A
@@ -23,8 +24,9 @@
 //!
 //! Nothing here searches for an instance or a lemma: every rule and choice
 //! comes with the problem, and the only branching is over the problem's own
-//! finite alternatives. Two structural ceilings bound one problem; a problem
-//! that reaches either is reported as reaching it, never as unproved.
+//! finite alternatives, run to completion. The two structural ceilings are
+//! the caller's, on the problem's atoms and instances; the only stop here is
+//! this checker's `i128` arithmetic, a capability limit of the checker.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -182,7 +184,8 @@ impl Inequality {
     }
 
     /// Divides by the coefficients' common divisor and floors the bound,
-    /// which is exact over the integers.
+    /// which is exact over the integers: the tightening [RANGE-3] applies to
+    /// each inequality a literal forms.
     fn normalized(self) -> Self {
         let divisor = self
             .0
@@ -208,6 +211,31 @@ impl Inequality {
         })
     }
 
+    /// Divides by the common divisor of the coefficients and the constant,
+    /// which keeps the rational solutions: elimination combines without
+    /// tightening, so its verdict is the same in every elimination order.
+    fn reduced(self) -> Self {
+        let divisor = self
+            .0
+            .terms
+            .iter()
+            .fold(self.0.constant.abs(), |gcd, (_, value)| {
+                greatest_divisor(gcd, value.abs())
+            });
+        if divisor <= 1 {
+            return self;
+        }
+        Self(Linear {
+            terms: self
+                .0
+                .terms
+                .iter()
+                .map(|(atom, value)| (*atom, value / divisor))
+                .collect(),
+            constant: self.0.constant / divisor,
+        })
+    }
+
     fn contradictory(&self) -> bool {
         self.0.terms.is_empty() && self.0.constant > 0
     }
@@ -225,24 +253,17 @@ fn greatest_divisor(left: i128, right: i128) -> i128 {
     left
 }
 
-/// The largest inequality set one elimination may hold.
-pub(crate) const MAX_INEQUALITIES: usize = 4096;
-/// The largest number of branches one problem may open.
-pub(crate) const MAX_BRANCHES: usize = 4096;
-
-/// The structural ceiling one problem reached, which stops its judgment
-/// short of an answer about the problem itself [RANGE-3].
+/// What stops a problem's judgment short of an answer about the problem.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Capacity {
-    /// More atoms than one problem holds.
+    /// More atoms than one problem holds, a structural ceiling [RANGE-3].
     Atoms,
-    /// More instances of one fact than one problem holds.
+    /// More instances of one fact than one problem holds, a structural
+    /// ceiling [RANGE-3].
     Instances,
-    /// More inequalities than one elimination holds.
-    Inequalities,
-    /// More branches than one derivation opens.
-    Branches,
-    /// A coefficient or constant outside the checked `i128` domain.
+    /// A coefficient or constant outside this checker's `i128` arithmetic.
+    /// The derivation's arithmetic is exact [RANGE-3], so this is a compiler
+    /// capability and never a source verdict.
     Arithmetic,
 }
 
@@ -252,9 +273,7 @@ impl Capacity {
         match self {
             Self::Atoms => "the 4096 atoms one problem holds",
             Self::Instances => "the 256 instances of one fact one problem holds",
-            Self::Inequalities => "the 4096 inequalities one elimination holds",
-            Self::Branches => "the 4096 branches one derivation opens",
-            Self::Arithmetic => "the checked i128 arithmetic of one derivation",
+            Self::Arithmetic => "the checker's i128 arithmetic",
         }
     }
 }
@@ -299,11 +318,10 @@ pub(crate) enum Verdict {
 impl Problem {
     /// Whether the problem has no model.
     pub(crate) fn judge(&self) -> Result<Verdict, Capacity> {
-        let mut branches = 0_usize;
         let units = self.units.clone();
         let decided = vec![false; self.choices.len()];
         let fired = vec![false; self.rules.len()];
-        self.search(units, decided, fired, &mut branches)
+        self.search(units, decided, fired)
     }
 
     fn search(
@@ -311,12 +329,7 @@ impl Problem {
         mut units: Vec<Literal>,
         mut decided: Vec<bool>,
         mut fired: Vec<bool>,
-        branches: &mut usize,
     ) -> Result<Verdict, Capacity> {
-        *branches += 1;
-        if *branches > MAX_BRANCHES {
-            return Err(Capacity::Branches);
-        }
         // Saturation: decide what the units force, fire what they entail.
         loop {
             if self.contradictory(&units)? {
@@ -375,7 +388,7 @@ impl Problem {
                 if self.contradictory(&with)? {
                     continue;
                 }
-                match self.search(with, decided.clone(), fired.clone(), branches)? {
+                match self.search(with, decided.clone(), fired.clone())? {
                     Verdict::Refuted => {}
                     Verdict::Open => return Ok(Verdict::Open),
                 }
@@ -390,19 +403,19 @@ impl Problem {
             ReadPair::Derived(derived) => {
                 let mut with = units.clone();
                 with.extend(derived);
-                return self.search(with, decided, fired, branches);
+                return self.search(with, decided, fired);
             }
             ReadPair::Split { equal, apart } => {
                 let mut with = units.clone();
                 with.extend(equal);
-                match self.search(with, decided.clone(), fired.clone(), branches)? {
+                match self.search(with, decided.clone(), fired.clone())? {
                     Verdict::Refuted => {}
                     Verdict::Open => return Ok(Verdict::Open),
                 }
                 for literal in apart {
                     let mut with = units.clone();
                     with.push(literal);
-                    match self.search(with, decided.clone(), fired.clone(), branches)? {
+                    match self.search(with, decided.clone(), fired.clone())? {
                         Verdict::Refuted => {}
                         Verdict::Open => return Ok(Verdict::Open),
                     }
@@ -430,7 +443,7 @@ impl Problem {
                 let mut with = units.clone();
                 with[position] =
                     Literal::new(literal.left.clone(), relation, literal.right.clone());
-                match self.search(with, decided.clone(), fired.clone(), branches)? {
+                match self.search(with, decided.clone(), fired.clone())? {
                     Verdict::Refuted => {}
                     Verdict::Open => return Ok(Verdict::Open),
                 }
@@ -724,8 +737,8 @@ impl Solved {
     }
 }
 
-/// Fourier-Motzkin elimination of every atom: whether the inequalities have
-/// no integer solution by the real relaxation tightened at each step.
+/// Fourier-Motzkin elimination of every atom: whether the inequalities,
+/// each already tightened over the integers, have no rational solution.
 fn eliminate(inequalities: Vec<Inequality>) -> Result<bool, Capacity> {
     let mut current: BTreeSet<Inequality> = BTreeSet::new();
     for inequality in inequalities {
@@ -773,16 +786,12 @@ fn eliminate(inequalities: Vec<Inequality>) -> Result<bool, Capacity> {
             for (low_weight, low) in &lower {
                 let left = up.0.scaled(*low_weight).ok_or(Capacity::Arithmetic)?;
                 let right = low.0.scaled(*up_weight).ok_or(Capacity::Arithmetic)?;
-                let combined =
-                    Inequality(left.plus(&right).ok_or(Capacity::Arithmetic)?).normalized();
+                let combined = Inequality(left.plus(&right).ok_or(Capacity::Arithmetic)?).reduced();
                 if combined.contradictory() {
                     return Ok(true);
                 }
                 if !combined.trivial() {
                     next.insert(combined);
-                }
-                if next.len() > MAX_INEQUALITIES {
-                    return Err(Capacity::Inequalities);
                 }
             }
         }
@@ -1020,10 +1029,10 @@ mod tests {
     }
 
     #[test]
-    fn a_derivation_past_the_branch_ceiling_names_it() {
+    fn a_derivation_runs_every_branch_to_completion() {
         // Thirteen independent two-way choices and a contradiction that only
-        // the leaves' disequality splits find: 2^13 leaves exceed the 4096
-        // branches, where an unbounded search would answer Refuted.
+        // the leaves' disequality splits find: all 2^13 leaves are judged,
+        // with no branch budget to stop short of the answer.
         let mut problem = Problem::default();
         let x = plain(&mut problem);
         unit(
@@ -1046,13 +1055,57 @@ mod tests {
                 vec![Literal::new(y, Relation::Equal, Linear::constant(1))],
             ]);
         }
-        assert_eq!(problem.judge(), Err(Capacity::Branches));
-        problem.choices.truncate(3);
         assert_eq!(problem.judge(), Ok(Verdict::Refuted));
     }
 
     #[test]
-    fn an_elimination_past_i128_names_the_arithmetic_ceiling() {
+    fn elimination_does_not_tighten_what_it_derives() {
+        // a + b <= 1, a - b <= 0, 2a >= 1 + e and e >= 0 have no integer
+        // solution: the first two give 2a <= 1. Tightening that derived
+        // inequality to a <= 0 refutes the set when b is eliminated first,
+        // but eliminating a first derives 2e <= 0 and nothing false, so
+        // tightening what elimination derives makes the verdict depend on
+        // the order. Only the literals are tightened, each of which here
+        // already has coprime coefficients, and the rational solution
+        // a = b = 1/2, e = 0 leaves the set open in every order.
+        let mut problem = Problem::default();
+        let (a, b, e) = (
+            plain(&mut problem),
+            plain(&mut problem),
+            plain(&mut problem),
+        );
+        let zero = Linear::constant(0);
+        unit(
+            &mut problem,
+            &a.plus(&b).unwrap(),
+            Relation::LessEqual,
+            &Linear::constant(1),
+        );
+        unit(&mut problem, &a, Relation::LessEqual, &b);
+        unit(
+            &mut problem,
+            &a.scaled(2).unwrap(),
+            Relation::GreaterEqual,
+            &e.plus_constant(1).unwrap(),
+        );
+        unit(&mut problem, &e, Relation::GreaterEqual, &zero);
+        assert_eq!(problem.judge(), Ok(Verdict::Open));
+        // A literal is tightened: 2a - 2b <= 1 is a - b <= 0.
+        let mut tightened = Problem::default();
+        let (a, b) = (plain(&mut tightened), plain(&mut tightened));
+        let twice = a.scaled(2).unwrap().minus(&b.scaled(2).unwrap()).unwrap();
+        unit(
+            &mut tightened,
+            &twice,
+            Relation::LessEqual,
+            &Linear::constant(1),
+        );
+        unit(&mut tightened, &a, Relation::Greater, &b);
+        assert_eq!(tightened.judge(), Ok(Verdict::Refuted));
+    }
+
+    #[test]
+    fn an_elimination_past_i128_is_the_arithmetic_capacity() {
         // p*a >= q*b and q*a < p*b with p = 2^120 and q = p + 1, which are
         // coprime: eliminating either atom multiplies p by q, about 2^240.
         let mut problem = Problem::default();
