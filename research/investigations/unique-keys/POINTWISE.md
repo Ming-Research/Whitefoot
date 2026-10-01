@@ -208,8 +208,8 @@ of the written storage is a measure or one of the certificate's reads.
 
 ## Observations
 
-At compiler revision 145f6e9e (`make -C compiler build`), on the
-4-processor Linux host the timings below name:
+At compiler revision 9ea2818b (`make -C compiler build`), on a
+4-processor Linux host:
 
 - **The witnesses.** `whitefootc --check` accepts the level cascade and the
   children array; both exit 0 built sequentially and with `--par`.
@@ -231,14 +231,17 @@ At compiler revision 145f6e9e (`make -C compiler build`), on the
   instance with no written `use`, the state after a break, a write to a copy
   taken for a write to its source, through a `let` or a match binder, and a
   header that forgot neither a write only later iterations reach nor the
-  variant of a written enum. Earlier builds of this branch accepted the last
-  five, and 60b4b3b9 rejected
+  variant of a written enum; a range postcondition left unproved is
+  rejected at the exit that owes it, a return, a routed return or a
+  propagated error exit, and at a generic function's integer instance.
+  Earlier builds of this branch accepted the five before the
+  postconditions, and 60b4b3b9 rejected
   `range2-pos-fill-segments-direct-match.wf`, whose match binder takes the
   storage a call made rather than copying stored storage.
-- **Proof cost.** Checking the level cascade takes 1.12 to 1.13 s; callgrind
-  attributes 91% of its 10.1 billion instructions to the range judgment,
-  90% to solving owed facts (`Walker::require`), with repeated
-  Fourier-Motzkin elimination the largest part. The children array checks in
+- **Proof cost.** Checking the level cascade takes 0.87 to 0.96 s in three
+  runs; callgrind attributes 91% of its 10.2 billion instructions to the
+  range judgment, 90% to solving owed facts (`Walker::require`), with
+  repeated Fourier-Motzkin elimination the largest part. The children array checks in
   0.07 s. Over Snowghost's whole renderer, at b787fe51, the judgment is
   within the run-to-run spread of the front end: 108.3 s and 106.2 s with
   the judgment skipped by a temporary switch, against 108.5 s and 109.2 s
@@ -299,6 +302,49 @@ cascade", holds the tables and runs 22 to 25.
 - **Compile time.** The range judgment stays within the run-to-run spread
   of the renderer's front end ([Observations](#observations)).
 
+## Snowghost's inherited pass
+
+Snowghost's style stage (mbbill/Snowghost#24) keeps one pass in document
+order, `inherited_pass` in `renderer/style/inherited.wf`, 26 percent of its
+four-worker stage on ecma262 (Snowghost's
+`research/investigations/style/DESIGN.md`, criterion 2). As a level loop in
+D's shape it needs three things D's cascade does not. At this branch's
+compiler as of 9ea2818b:
+
+- **A read at an ancestor chosen before the loop.** An element that
+  declares no custom properties shares its nearest declaring ancestor's
+  set, so iteration k reads `sets^[owners^[parent]]` and writes
+  `sets^[element]` only where the element owns its set. With
+
+  ```wf
+  requires forall owned(e in 0_u64..owners^.len) when owners^[e] < owners^.len: depths^[owners^[e]] <= depths^[e];
+  ```
+
+  beside `listed` and `up`, the empty certificate separates them: the
+  parent's owner lies at depth level - 1 or above, every write at depth
+  level. Reading `owners^[element]` instead, whose depth may be level, is
+  rejected naming the write and that read. The compiler test
+  `a_certificate_places_owned_elements_of_two_roots_and_an_ancestor_read`
+  in `compiler/src/semantic/tests/range_facts.rs` holds both programs.
+- **An owned element and a reference to one element.** In the same test
+  `sets` holds a `nocopy` struct owning a `Box<Slots<u64>>`:
+  `set sets^[element] = move made` is a certified element, and
+  `entry_count(list: &sets^[source])` a read the certificate places.
+- **Several roots.** The test certifies writes to two roots, `sets` and
+  `sizes`; a probe of the same level over integer arrays, with eight arrays
+  each written at the element and read at the parent beside the set read
+  at the parent's owner, was permitted too and not kept.
+- **Establishing `owned` is the cost.**
+  [`owner_loop.wf`](owner_loop.wf) derives the owners after the depth walk,
+  with `owned` as the invariant of its own loop. Its check takes 12.7 s,
+  against 0.86 s without that invariant; 11.3 s of it is one backedge
+  problem the derivation refutes in 5,463 branches, splitting pair after
+  pair of reads the contradiction does not use (`docs/todo.md`, "The range
+  judgment splits every open read pair"). Computing the owners in the
+  depth walk instead, its root and depth arms writing `owners^[at]` and
+  `owned` beside `up` in its header, takes 392.6 s: two of its problems
+  open 66,463 and 76,111 branches.
+
 ## Criteria and result
 
 Candidate N's entry under [Candidates](DESIGN.md#candidates) recorded four
@@ -336,9 +382,6 @@ criteria before the paper derivation:
 
 ## Limits
 
-- **One result.** A range postcondition names its function's single result,
-  through an `Ok` or `Some` route where it is routed, and its reference
-  parameters' storage; a function that returns a result list states none.
 - **The live DOM.** Nothing is stated about the linked arena itself: not
   acyclicity, not facts that survive a mutation. Incremental restyling that
   keeps a numbering across edits would need order keys with gaps, or the
@@ -346,8 +389,10 @@ criteria before the paper derivation:
 - **Bound variables.** At most two; distinctness within each segment of a
   `Segments` is stated as a left inverse instead of a three-variable
   `nodup`.
-- **Proof cost.** The judgment re-solves each problem from scratch; its
-  time is in [Observations](#observations).
+- **Proof cost.** The derivation explores every open pair of reads, so a
+  fact with a nested read such as `owned` costs seconds per loop
+  ([above](#snowghosts-inherited-pass)); the level cascade's figures are in
+  [Observations](#observations).
 
 ## Comparison with the library Forest route
 

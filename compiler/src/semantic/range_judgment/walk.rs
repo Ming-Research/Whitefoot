@@ -1781,25 +1781,27 @@ impl<'program> Walker<'program> {
             .map(|parameter| parameter.binding)
             .collect();
         for post in &callee.range_facts.postconditions {
-            let (result, routed) = match (post.route, result) {
-                (None, _) => (result.clone(), None),
-                (Some(tag), Value::Owned(location)) => {
-                    let at = state.resolve(location);
-                    let payload = at.child(Step::Payload {
-                        variant: tag,
-                        field: 0,
-                    });
-                    let value = self.read_location(state, &payload, post.result_type);
-                    (value, Some((at, tag)))
-                }
-                (Some(_), _) => continue,
-            };
+            let mut results = self.result_values(state, Some(result), &post.results);
+            let mut routed = None;
+            if let Some(route) = post.route {
+                let index = route.ordinal as usize;
+                let Some(Some(Value::Owned(location))) = results.get(index).cloned() else {
+                    continue;
+                };
+                let at = state.resolve(&location);
+                let payload = at.child(Step::Payload {
+                    variant: route.tag,
+                    field: 0,
+                });
+                results[index] = Some(self.read_location(state, &payload, route.payload));
+                routed = Some((at, route.tag));
+            }
             let roots = |root: CheckedRangeRoot| match root {
                 CheckedRangeRoot::Binding(binding) => parameters
                     .iter()
                     .position(|parameter| *parameter == binding)
                     .and_then(|position| arguments.get(position).cloned()),
-                CheckedRangeRoot::Result => Some(result.clone()),
+                CheckedRangeRoot::Result(ordinal) => results.get(ordinal as usize).cloned()?,
             };
             let frame = self.frame(state, &post.clause, &roots);
             let id = self.add_fact(post.clause.clone(), frame);
@@ -1808,6 +1810,36 @@ impl<'program> Walker<'program> {
                 Some((at, tag)) => state.routed.push((at, tag, id)),
             }
         }
+    }
+
+    /// [CALL-4] each result ordinal a postcondition may name in `value`: the
+    /// fields of a result-list value, in ordinal order, or `value` itself
+    /// for a single result; `None` where there is no value.
+    fn result_values(
+        &mut self,
+        state: &mut State,
+        value: Option<&Value>,
+        results: &[CheckedType],
+    ) -> Vec<Option<Value>> {
+        if results.is_empty() {
+            return vec![value.cloned()];
+        }
+        let mut out = Vec::with_capacity(results.len());
+        for (ordinal, ty) in (0_u32..).zip(results) {
+            out.push(value.map(|value| {
+                match value {
+                    Value::Owned(location) => {
+                        self.read_location(state, &location.child(Step::Field(ordinal)), *ty)
+                    }
+                    Value::Struct(fields) => fields
+                        .get(ordinal as usize)
+                        .cloned()
+                        .unwrap_or(Value::Unknown),
+                    _ => Value::Unknown,
+                }
+            }));
+        }
+        out
     }
 
     /// [RANGE-3] the function's range postconditions an exit selects
@@ -1830,32 +1862,44 @@ impl<'program> Walker<'program> {
             .iter()
             .filter(|post| post.owed)
         {
-            let result = match (post.route, returned) {
-                (None, returned) => returned.cloned(),
-                (Some(_), None) => continue,
-                (Some(tag), Some(Value::Variant { variant, fields })) => {
-                    if *variant != tag {
-                        continue;
+            if post.route.is_some() && returned.is_none() {
+                continue;
+            }
+            let mut results = self.result_values(state, returned, &post.results);
+            if let Some(route) = post.route {
+                let index = route.ordinal as usize;
+                let payload = match results.get(index).cloned().flatten() {
+                    Some(Value::Variant { variant, fields }) => {
+                        if variant != route.tag {
+                            continue;
+                        }
+                        fields.first().cloned()
                     }
-                    fields.first().cloned()
-                }
-                (Some(tag), Some(Value::Owned(location))) => {
-                    let at = state.resolve(location);
-                    if state.variants.get(&at).is_some_and(|known| *known != tag) {
-                        continue;
+                    Some(Value::Owned(location)) => {
+                        let at = state.resolve(&location);
+                        if state
+                            .variants
+                            .get(&at)
+                            .is_some_and(|known| *known != route.tag)
+                        {
+                            continue;
+                        }
+                        let payload = at.child(Step::Payload {
+                            variant: route.tag,
+                            field: 0,
+                        });
+                        Some(self.read_location(state, &payload, route.payload))
                     }
-                    let payload = at.child(Step::Payload {
-                        variant: tag,
-                        field: 0,
-                    });
-                    Some(self.read_location(state, &payload, post.result_type))
+                    _ => None,
+                };
+                if let Some(slot) = results.get_mut(index) {
+                    *slot = payload;
                 }
-                (Some(_), Some(_)) => None,
-            };
+            }
             let entry = self.entry.clone();
             let roots = |root: CheckedRangeRoot| match root {
                 CheckedRangeRoot::Binding(binding) => entry.get(&binding).cloned(),
-                CheckedRangeRoot::Result => result.clone(),
+                CheckedRangeRoot::Result(ordinal) => results.get(ordinal as usize).cloned()?,
             };
             let frame = self.frame(state, &post.clause, &roots);
             self.require(state, &post.clause, &frame, node, site);

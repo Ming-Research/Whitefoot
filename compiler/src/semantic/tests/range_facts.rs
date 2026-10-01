@@ -279,6 +279,130 @@ fn main() -> status: std::process::ExitStatus pure {
     });
 }
 
+/// One tree level of an inherited pass, as Snowghost's real style stage
+/// would write it: each listed element writes its own `sizes` entry and,
+/// when it owns a custom set, replaces its `sets` entry, an owned entry
+/// list, while it reads its parent's size and, through a reference to that
+/// one element, the set of the owner of `source`, the binding `parent` or
+/// `element`. `owned` places an owner at or above its element's depth.
+fn owned_entries(source: &str) -> Vec<u8> {
+    format!(
+        "nocopy struct Custom {{
+  entries: Box<Slots<u64>>;
+}}
+
+fn entry_count(list: &Custom) -> result: u64 reads(list) {{
+  let count = list^.entries.inner.len;
+  return count;
+}}
+
+fn own_set(inherited: u64, element: u64) -> result: Custom pure {{
+  let entries = box_slots_new::<u64>(capacity: 1_u64);
+  let first = element +wrap inherited;
+  place_back(window: &entries.inner, value: first);
+  return Custom(entries: move entries);
+}}
+
+fn inherit_level(slots: &[u64], positions: &[u64], depths: &[u64], parents: &[u64], owners: &[u64], sets: &[Custom], sizes: &[u64], level: u64) -> result: unit reads(slots), reads(parents), reads(owners), writes(sets), writes(sizes) contract {{
+  requires parents^.len == sets^.len;
+  requires positions^.len == sets^.len;
+  requires depths^.len == sets^.len;
+  requires owners^.len == sets^.len;
+  requires sizes^.len == sets^.len;
+  requires forall listed(k in 0_u64..slots^.len) when slots^[k] < sets^.len: positions^[slots^[k]] == k, depths^[slots^[k]] == level;
+  requires forall up(e in 0_u64..parents^.len) when parents^[e] < parents^.len: depths^[parents^[e]] + 1_u64 == depths^[e];
+  requires forall owned(e in 0_u64..owners^.len) when owners^[e] < owners^.len: depths^[owners^[e]] <= depths^[e];
+}} {{
+  let count = slots^.len;
+  let total = sets^.len;
+  for (
+    k in 0_u64..count,
+    apart(i, j) {{
+    }}
+  ) {{
+    let element = slots^[k];
+    if element < total {{
+      let parent = parents^[element];
+      let inherited = if parent < total {{
+        let source = owners^[{source}];
+        if source < total {{
+          give entry_count(list: &sets^[source]);
+        }} else {{
+          give 0_u64;
+        }}
+      }} else {{
+        give 0_u64;
+      }}
+      let above = if parent < total {{
+        give sizes^[parent];
+      }} else {{
+        give 16_u64;
+      }}
+      let own = owners^[element];
+      if own == element {{
+        let made = own_set(inherited: inherited, element: element);
+        set sets^[element] = move made;
+      }}
+      set sizes^[element] = above +wrap 1_u64;
+    }}
+  }}
+  return unit;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+    )
+    .into_bytes()
+}
+
+#[test]
+fn a_certificate_places_owned_elements_of_two_roots_and_an_ancestor_read() {
+    // Two roots, an owned entry list replaced by `move` and an element
+    // reference handed to a reading helper: the parent's owner lies at most
+    // at depth level - 1, so `owned`, `up` and `listed` separate its read
+    // from every write at depth level, and both writes are certified [PAR-2].
+    with_semantics(&owned_entries("parent"), |outcome| {
+        let SemanticOutcome::Complete(program) = outcome else {
+            panic!("the owned level must check: {outcome:?}");
+        };
+        let function = program
+            .data
+            .executable_functions()
+            .find(|function| function.name == "inherit_level")
+            .expect("inherit_level is checked");
+        let certified = &function.range_facts.certified;
+        assert_eq!(certified.len(), 1);
+        assert_eq!(certified[0].writes.len(), 2, "{certified:?}");
+        let table = program
+            .data
+            .permission
+            .named("inherit_level")
+            .expect("inherit_level's permissions");
+        assert_eq!(table.loops[0].verdict, LoopVerdict::PermittedEligible);
+    });
+    // The element's own owner may lie at depth level, another iteration's
+    // element: the reference read and that write stay unseparated.
+    with_semantics(&owned_entries("element"), |outcome| {
+        let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+            panic!("expected a RANGE-5 rejection, got {outcome:?}");
+        };
+        assert_eq!(issue.rule(), SemanticRule::Range5);
+        let SemanticIssueKind::UndischargedApart { pair, .. } = issue.kind() else {
+            panic!(
+                "expected an undischarged certificate, got {:?}",
+                issue.kind()
+            );
+        };
+        assert!(pair.contains("`set sets^[element] = move made;`"), "{pair}");
+        assert!(
+            pair.contains("`entry_count(list: &sets^[source])`"),
+            "{pair}"
+        );
+    });
+}
+
 /// `depth` counted loops nested around one call owing `positive`, which
 /// the zero fill does not meet.
 fn nest(depth: usize) -> Vec<u8> {

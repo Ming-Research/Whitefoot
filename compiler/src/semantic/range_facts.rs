@@ -19,9 +19,10 @@ use super::model::{BindingId, CheckedLoopId, CheckedMeasure, CheckedType, Intege
 pub(crate) enum CheckedRangeRoot {
     /// A parameter or a binding live where the clause is written.
     Binding(BindingId),
-    /// The function's result, in a postcondition: the whole result, or the
-    /// payload of the variant the clause is routed through [RANGE-1].
-    Result,
+    /// One result ordinal of the function, in a postcondition, zero for a
+    /// single result; for the ordinal a route `when V(value: r)` names, the
+    /// payload r denotes [RANGE-1, FN-9].
+    Result(u32),
 }
 
 /// One storage place a range term reads: a root and the field, `Box`
@@ -168,18 +169,30 @@ pub(crate) struct CheckedCertifiedLoop {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CheckedRangePostcondition {
     pub(crate) clause: CheckedRangeClause,
-    /// The tag of the success variant `when V(value: r)` routes the clause
-    /// through, whose payload [`CheckedRangeRoot::Result`] then names; `None`
-    /// for an unrouted clause [FN-9].
-    pub(crate) route: Option<u32>,
-    /// The type of what [`CheckedRangeRoot::Result`] names: the result's, or
-    /// the routed payload's.
-    pub(crate) result_type: CheckedType,
+    /// The route `when V(value: r)` the clause is taken through; `None` for
+    /// an unrouted clause [FN-9].
+    pub(crate) route: Option<CheckedRangeRoute>,
+    /// Each result ordinal's type in a function that writes an ordered
+    /// result list, whose one value holds them as its fields [CALL-4]; empty
+    /// for a single result.
+    pub(crate) results: Vec<CheckedType>,
     /// Whether the range judgment owes it at the function's exits: a range
     /// postcondition is owed [RANGE-3], while an [FN-9] relation whose sides
     /// are range terms, a clause without bound variables, is ordinary
     /// entailment's to prove and only taken here.
     pub(crate) owed: bool,
+}
+
+/// The route of a range postcondition [FN-9].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct CheckedRangeRoute {
+    /// The result ordinal the route names.
+    pub(crate) ordinal: u32,
+    /// The tag of its success variant V.
+    pub(crate) tag: u32,
+    /// The type of V's payload, which [`CheckedRangeRoot::Result`] of that
+    /// ordinal names.
+    pub(crate) payload: CheckedType,
 }
 
 /// Every range clause of one function, and the certificates the range

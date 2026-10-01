@@ -25,8 +25,8 @@ use super::super::model::{
 use super::super::postcondition::CheckedPostconditionSelector;
 use super::super::range_facts::{
     CheckedApart, CheckedRangeBinder, CheckedRangeClause, CheckedRangePlace,
-    CheckedRangePostcondition, CheckedRangeRelation, CheckedRangeRoot, CheckedRangeShape,
-    CheckedRangeStep, CheckedRangeTerm, CheckedRangeUse, RangeComparison,
+    CheckedRangePostcondition, CheckedRangeRelation, CheckedRangeRoot, CheckedRangeRoute,
+    CheckedRangeShape, CheckedRangeStep, CheckedRangeTerm, CheckedRangeUse, RangeComparison,
 };
 use super::{CheckContext, CheckStop, Checker, FunctionContext, LocalBinding};
 
@@ -211,32 +211,40 @@ impl Checker<'_, '_> {
                 check_context,
                 function,
             };
+            // [CALL-4] a result list hands back one value whose fields are
+            // its ordinals.
+            let results: Vec<CheckedType> = if function.results.len() > 1 {
+                function
+                    .results
+                    .iter()
+                    .map(|declared| declared.ty)
+                    .collect()
+            } else {
+                Vec::new()
+            };
             // [FN-9] the success variant a route names, by its tag.
-            let route = match selector.variant {
+            let tag = match selector.variant {
                 None => None,
                 Some(crate::BuiltinPreludeId::SOME) => Some(1),
                 Some(crate::BuiltinPreludeId::OK) => Some(0),
                 Some(_) => return Err(SemanticCompilerFailure::InvalidResolution.into()),
             };
+            let route = tag.map(|tag| CheckedRangeRoute {
+                ordinal: selector.ordinal,
+                tag,
+                payload: selector.result_type,
+            });
             if let Some(range) = self
                 .types
                 .declarations
                 .tree
                 .first_child_with(clause, Production::RangeClause)?
             {
-                if function.results.len() > 1 {
-                    return self.invalid_range(
-                        SemanticRule::Range1,
-                        range,
-                        "a range postcondition belongs to a function that returns a result list",
-                        "return one result, a struct holding the values, and state the fact over its fields",
-                    );
-                }
                 if let Some(clause) = self.check_range_clause(context, range, bindings)? {
                     out.push(CheckedRangePostcondition {
                         clause,
                         route,
-                        result_type: selector.result_type,
+                        results: results.clone(),
                         owed: true,
                     });
                 }
@@ -250,7 +258,7 @@ impl Checker<'_, '_> {
                 out.push(CheckedRangePostcondition {
                     clause,
                     route,
-                    result_type: selector.result_type,
+                    results,
                     owed: false,
                 });
             }
@@ -822,7 +830,7 @@ impl Checker<'_, '_> {
             .children_with(place, Production::Psuffix)?;
         // [RANGE-1] a postcondition names the result through its selector
         // spelling, which resolves to no declaration [FN-9].
-        if let Some((_, ty)) = self
+        if let Some((ordinal, ty)) = self
             .types
             .declarations
             .postcondition_selector_place_base(check_context, place)?
@@ -831,7 +839,7 @@ impl Checker<'_, '_> {
                 context,
                 place,
                 &suffixes,
-                CheckedRangeRoot::Result,
+                CheckedRangeRoot::Result(ordinal),
                 Selected::Value(ty),
                 bindings,
                 names,
