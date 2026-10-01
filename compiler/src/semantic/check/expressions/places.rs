@@ -24,9 +24,9 @@ use super::super::super::places::{
 };
 use super::super::references::{OWN1_ROOTED_CONSUME, WIN3_NO_TAKE};
 
-/// [TYPE-9] runtime-capacity content has no owned value outside its Box.
+/// [TYPE-9] a borrowed or slot-selected runtime content has no Box to move.
 const TYPE9_KEEP_CONTENT_BOXED: &str =
-    "borrow the runtime-capacity content, or move the complete Box instead";
+    "borrow the runtime-capacity content, or read its elements and measures in place";
 use super::super::{CheckStop, Checker, EffectSet, LocalBinding, PlaceAccess, TypedExpression};
 use super::{PlaceUseContext, PlaceUseOptions, ResolvedPlaceSet};
 
@@ -232,12 +232,51 @@ impl<'unit> Checker<'_, 'unit> {
                 | CheckedType::Segments { .. }
                 | CheckedType::Window { capacity: None, .. }
         ) {
+            let mut mechanical_fix = TYPE9_KEEP_CONTENT_BOXED.to_owned();
+            // A source reference or an element does not own the Box it
+            // reaches. Offer owner moves/releases only for an owned field
+            // path whose final content step has an actual Box parent.
+            if !self.types.declarations.tree.place_has_dereference(node)?
+                && bindings
+                    .get(&place.declaration)
+                    .is_some_and(|local| local.mode == CheckedMode::Own)
+                && place
+                    .resolved
+                    .identity
+                    .path
+                    .iter()
+                    .all(|step| matches!(step, PlaceStep::Field(_) | PlaceStep::Deref))
+                && matches!(place.resolved.identity.path.last(), Some(PlaceStep::Deref))
+            {
+                let mut cell = place.resolved.identity.clone();
+                cell.path.pop();
+                if let Some(CheckedType::Nominal(id)) =
+                    self.types.resolved_place_type(&cell, bindings)?
+                    && let CheckedNominalKind::Box { referent, .. } = self.types.nominal(id)?.kind
+                    && referent == place.ty
+                {
+                    let cell = self.types.render_resolved_place(&cell, bindings)?;
+                    mechanical_fix = if options.explicit_move {
+                        super::super::repairs::runtime_content_move(
+                            &cell,
+                            matches!(place.ty, CheckedType::Window { .. }),
+                            self.types
+                                .linear_release_obligation(check_context, place.ty)?
+                                .is_none(),
+                        )
+                    } else {
+                        format!(
+                            "borrow the runtime-capacity content, or move the complete Box `{cell}` instead"
+                        )
+                    };
+                }
+            }
             return self.types.declarations.issue_node(
                 SemanticRule::Type9,
                 node,
                 SemanticIssueKind::InlineRuntimeCapacityShape {
                     spelling: self.types.checked_type_name(place.ty)?,
-                    mechanical_fix: TYPE9_KEEP_CONTENT_BOXED,
+                    mechanical_fix,
                 },
             );
         }

@@ -1139,8 +1139,8 @@ pub(super) fn range_formation(case: &GoalCase<'_>) -> String {
 }
 
 /// [OP-14] `free_empty`'s requirement that the window is empty. Skipping the
-/// release is no repair: a window left alive is released at its scope exit,
-/// which owes the same empty proof [PROV-6].
+/// consume does not discharge a linear window: it must be emptied and
+/// consumed, not abandoned at scope exit [PROV-6].
 pub(super) fn empty_run_release(case: &GoalCase<'_>) -> String {
     const EMPTY: &str = "take every element out and consume it before this call, so that its zero length is established here";
     match (case.disposition, case.terms) {
@@ -1345,6 +1345,26 @@ pub(super) fn cell_taken_apart(
         ),
         (None, _) | (_, None) => format!("{INNER}: remove this statement"),
     }
+}
+
+/// [TYPE-9] runtime-capacity content stays in its Box. Only windows have
+/// the empty-storage consume [OP-14], and only content with drop can be
+/// released at scope exit [PROV-6]. The caller supplies the typed Box path.
+pub(super) fn runtime_content_move(cell: &str, window: bool, droppable: bool) -> String {
+    let mut repair = format!(
+        "replace `move {cell}.inner` with `move {cell}` and keep the receiving value boxed, accessing its content through `.inner`"
+    );
+    if droppable {
+        repair.push_str(&format!(
+            "; if the move was intended only to release the content, remove it and let `{cell}` release at scope exit"
+        ));
+    }
+    if window {
+        repair.push_str(&format!(
+            "; to release the window explicitly instead, take every element out and consume it, establish `{cell}.inner.len == 0_u64`, and call `free_empty(window: move {cell})` [OP-14]"
+        ));
+    }
+    repair
 }
 
 /// [TYPE-2, TYPE-9] a destructuring statement naming a storage shape reads

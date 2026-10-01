@@ -761,7 +761,7 @@ pub enum SemanticIssueKind {
         /// The exact written shape.
         spelling: String,
         /// Exact restructuring required by TYPE-9.
-        mechanical_fix: &'static str,
+        mechanical_fix: String,
     },
     /// [OP-11] `swap` was written over a copy place. `swap` exists because no
     /// source body can write it without a hole [WIN-3]; a copy place has no

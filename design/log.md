@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-09-30 Correct storage operation spellings and scope-end release wording
+
+Nodes: language/data-model/storage-shapes
+
+Owner-approved: 2026-09-30, the owner confirmed the PR #197 handoff's storage-shapes wording corrections ("confirmed", written in Chinese): use named operation arguments and qualify ordinary scope-end release by the content's drop capability. This ruling authorizes no merge.
+
+Summary: Correct the place_back and free_empty examples to name their arguments and write the zero length as a typed literal. State that ordinary scope-end release requires drop, while a window can be drained by taking out and consuming its elements and then consuming the proved-empty cell. These wording corrections match the existing OP-14 and PROV-6 rules; they introduce no new language or compiler decision.
+
 ## 2026-09-30 Retain runtime hashing and retire the module-product import prototype
 
 Nodes: compiler, compiler/diagnostic-rendering, compiler/incremental-compilation

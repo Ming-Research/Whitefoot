@@ -13,6 +13,7 @@ use super::{CompilationFailureKind, CompilerLimits, compile};
 use crate::SourceInput;
 
 mod call_separations;
+mod content_moves;
 mod selector_scope;
 mod storage_destructuring;
 
@@ -3653,6 +3654,7 @@ fn each_pinned_repair_is_carried_out_by_its_programs() {
     for pair in REPAIRS
         .iter()
         .chain(call_separations::CALL_SEPARATIONS)
+        .chain(content_moves::CONTENT_MOVES)
         .chain(storage_destructuring::STORAGE_DESTRUCTURING)
         .chain(selector_scope::SELECTOR_SCOPE)
     {
