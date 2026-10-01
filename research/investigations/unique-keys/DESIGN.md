@@ -2,8 +2,10 @@
 
 Status: language-gap investigation, with a worked library-forest model below.
 The required direction is a user-defined structure with checked, erased
-proofs. The proof language, invariant boundary and simultaneous assignment
-remain proposals; no specification or compiler change is selected here.
+proofs. The proof language remains a proposal; no specification or compiler
+change is selected here. The current derivation uses boundary contracts.
+Stronger lifetime validity and its surface spelling are deferred questions,
+not prerequisites for proving the Forest.
 
 ## Question
 
@@ -16,7 +18,7 @@ loop is denied. How can a program carry the fact that a set of indices is
 distinct from where it was produced to where it is used, so that the loop is
 proved independent, with no check at run time?
 
-The owner set three requirements for an answer (Snowghost's vocabulary
+The owner initially set three requirements for an answer (Snowghost's vocabulary
 handoff, ruling on Q41, 2026-10-01):
 
 - **R1. Any container.** The indices may live in an array, a hash map, an
@@ -30,12 +32,12 @@ handoff, ruling on Q41, 2026-10-01):
   for another application. A compiler-owned Forest is not the requested
   endpoint. This is the direction clarified during the investigation;
   the earlier candidates below remain comparisons, not selected mechanisms.
-- **R5. No invalid struct values.** The owner requires every live value of
-  a struct type to satisfy that type's invariant, including in its defining
-  module and during an update. A constructor check alone does not meet this
-  requirement. A candidate scope cannot simply retain an invalid value of
-  the same type with its invariant disabled. This is a requirement for the
-  proposed design, not a claim about current TYPE-11.
+- **R5. Deferred lifetime-strengthening question.** Earlier discussion asked
+  for validity of every live struct value, including during mutation. After
+  distinguishing boundary proof obligations from continuous validity, the
+  owner deferred that question and returned to the Forest proof. The stronger
+  alternative is retained below, but does not gate this derivation. Neither
+  a stronger rule nor an invariant-check exemption has been selected.
 
 R2 preserves the ordinary operation vocabulary, not a false proposition:
 duplicating an index cannot preserve a no-duplicates proof. An operation
@@ -210,7 +212,147 @@ not accepted WF syntax, apart from the explicitly runnable Pair probes.
 The model is one way to expose the obligations, not a selected representation
 for either runtime data or proof terms.
 
-### What "the invariant always holds" would require
+### A concrete proof from storage to independent work
+
+Use the existing boundary discipline as the working assumption: a mutation
+function receives a proved property, invalidates facts about current contents
+as it writes, and proves its promised property on every exit. This does not
+require a tuple assignment or a `change` scope. An internal helper taking the
+whole Forest would still owe its type invariant at the call; a helper taking
+raw fields instead needs explicit contracts for the partial state it accepts
+and produces. A reference never makes an invalidated fact usable again.
+Extending TYPE-11 to the logical predicates below is still a language change;
+the current difference-bound invariant cannot express this property.
+
+Consider ordinary node storage with parent, first/last-child and previous/
+next-sibling indices. For example:
+
+```text
+actual storage indices: 0  1  2  3  4  5  6
+logical tree:           0
+                       / \
+                      1   2
+                     / \ / \
+                    3  4 5  6
+```
+
+The intended recursive jobs rooted at 1 and 2 write payloads at `{1,3,4}`
+and `{2,5,6}`. Those sets are not contiguous array ranges. Distinct roots
+alone would not suffice: the jobs rooted at 1 and 3 overlap at 3.
+
+Define a finite logical tree `Node(index, children)` and a forest as a finite
+sequence of these trees. In this example its witness is
+`[Node(0, [Node(1, [Node(3, []), Node(4, [])]),
+           Node(2, [Node(5, []), Node(6, [])])])]`.
+The witness is erased; it is not another allocated tree. The relation
+`Rep(S, M)` ties a captured storage state S to that model M:
+
+1. The flattened model labels have no duplicates and cover exactly
+   `0 .. S.nodes.len`.
+2. Every stored topology link equals the link induced by M, including empty
+   links and both directions of each nonempty link.
+3. Payload contents are unconstrained by Rep.
+
+A finite model with unique labels and matching links excludes cycles in
+the stored graph and gives each index one occurrence. Both matter:
+`1 -> 2 -> 1` has unique parents but a cycle;
+`children(0) = [1,1]` gives node 1 only one parent but visits it twice.
+Array slots having distinct addresses proves neither property of the stored
+indices. Coverage can later be replaced by a relation to live slots if the
+library adds deletion; that changes the library predicate, not a Forest
+primitive in the compiler.
+
+Here is a finite library proof, rather than an assumed `disjoint` oracle.
+Define `NoDup([]) = true` and
+`NoDup(x :: xs) = (x not in xs) and NoDup(xs)`. Prove the sequence lemma
+`NoDup(A ++ B) -> disjoint(labels(A), labels(B))` by structural induction on A:
+
+- For `A = []`, the left set is empty.
+- For `A = x :: rest`, unfolding NoDup gives `x not in rest ++ B`
+  and `NoDup(rest ++ B)`. Membership in concatenation gives `x not in B`.
+  The induction hypothesis, used only on the strictly smaller `rest`, gives
+  `disjoint(labels(rest), labels(B))`. These two facts prove the conclusion.
+
+Membership in concatenation and preservation of NoDup by taking a contiguous
+subsequence also have structural sequence proofs. Flattening siblings puts
+their subtree sequences in separate blocks of the parent's flattening.
+For arbitrary distinct child positions i and j, split on `i < j`, decompose
+the flattening around those two blocks, and apply these sequence lemmas.
+Thus every label in child subtree i differs from every label in child
+subtree j. Rep transfers those logical labels to actual storage indices.
+These proofs inspect symbolic constructors, not every runtime node during
+compilation; a recursive proof body must pass the smaller-argument check.
+
+Construction must establish the premise rather than declare it. For example,
+start with the valid leaf `M = [Node(0, [])]` and append a fresh leaf as 0's
+child. The general proof uses old length N and parent p:
+
+```text
+before: Rep(S, M), p occurs in M, N = S.nodes.len
+runtime: append node N; set its parent and the affected child/sibling links
+model:  insert Node(N, []) at the selected child position of p in M
+after:  Rep(S', M')
+```
+
+All old labels are below N, so N occurs nowhere in M. Inserting that one
+label preserves no duplication and changes coverage to `0 .. N+1`.
+The append contract preserves old elements and describes the new element;
+each link write supplies a read-after-write equation. To prove the link
+clause for an arbitrary node, split into the changed nodes and all others.
+The former use those equations; the latter use preserved contents and the
+old model relation. Failure routes must return a state satisfying the
+advertised contract too. This proof requires storage-content contracts;
+a postcondition about length alone is insufficient.
+
+Ordinary sequential writes can implement that runtime update. Rep(S, M)
+remains a theorem about the old captured state, while Rep of the partially
+updated current state is unavailable. The exit proof constructs Rep(S', M').
+A mutable reference parameter changes where these writes land, not these
+proof obligations. All aliasing writes must participate in the same support
+and effect rules; a hidden reference mutation cannot preserve a false fact.
+
+To consume the proof, distinguish two interfaces:
+
+- **Counted scatter.** Given actual captured index contents A, prove bounds
+  and `forall i,j in 0..A.len: i != j -> A[i] != A[j]`. Instantiating at two
+  arbitrary iterations establishes their target-index inequality. The
+  compiler must check every conflicting read/write pair using that evidence,
+  not just the two output writes. An accessor or list-building operation
+  owes the relation between A and the relevant model labels; a Forest does
+  not certify any arbitrary list derived from it.
+- **Recursive subtree work.** A helper's proposed effect contract bounds
+  its writes by payloads at `labels(subtree(M, root))`. Its body must prove
+  that bound: write the root's payload, recursively use each child's bound,
+  and prove their union stays in the parent's set. Reads may share immutable
+  topology; any parent payload read must refer to data ready before the
+  sibling jobs start. Other reads must also avoid another job's writes.
+  The sibling theorem then establishes the common overlap judgment's
+  separation premise. An unrestricted `writes(results)` does not express
+  this footprint, and a function contract alone does not grant permission
+  for overlapping recursive invocations or assume its own truth: recursive
+  contract checking needs a sound rule, such as induction on the proper
+  model subtree. That rule is not present in this derivation's baseline.
+
+Keeping topology unchanged during these jobs preserves the supporting model.
+Linked sibling discovery still reads one link before discovering the next;
+the proof authorizes independent work on discovered subtrees but creates no
+index buffer or scheduling strategy. Runtime progress and proof termination
+also differ. Descending a proper finite subtree gives a mathematical rank;
+using it to justify runtime recursion needs its own language judgment.
+
+This gives a concrete dependency order for a prototype: checked logical
+definitions and sequence induction; storage-content transitions and contract
+transport; the fresh-node construction proof; a no-duplicates scatter proof
+consumed by the shared separation rule and PAR-2. Detach/attach and recursive
+footprints then exercise preservation and generality. No step may be
+replaced by an unchecked user axiom or a runtime validation scan. This is a
+paper derivation; no proposed proof syntax or checker is implemented here.
+
+### Deferred alternative: validity at every source commit
+
+The following comparison addresses the stronger R5 alternative, not a
+prerequisite of the boundary-contract derivation above. Its executable probes
+remain evidence about the distinction between the two guarantees.
 
 [TYPE-11](../../../spec/kernel-spec.md) currently checks direct construction,
 direct struct parameters/results, written-reference exits and shared-object
@@ -551,12 +693,15 @@ must establish its contract; naming it in an interface establishes nothing.
 ### Detach, attach and reparent
 
 First detach a middle child x between a and b of p. In this case a, b and x
-are distinct by the old model. The runtime update is:
+are distinct by the old model. With boundary contracts the runtime update
+can use ordinary sequential writes, shown in mathematical path notation:
 
 ```text
-set (nodes[a].next, nodes[b].previous,
-     nodes[x].parent, nodes[x].previous, nodes[x].next)
-  = (Some(b), Some(a), None, None, None);
+set nodes[a].next = Some(b);
+set nodes[b].previous = Some(a);
+set nodes[x].parent = None;
+set nodes[x].previous = None;
+set nodes[x].next = None;
 ```
 
 The model update removes the whole subtree rooted at x from p's child
@@ -567,16 +712,17 @@ payloads remain unchanged. The library proves:
 - the five written fields match the new model;
 - every other link field is unchanged and still matches it.
 
-For a first child, last child or only child, the statement also updates p's
+For a first child, last child or only child, the body also updates p's
 corresponding endpoints and omits a nonexistent neighbor. These are finite
-source branches. They need separate checked target lists, not a tuple with
-conditionally invalid targets. Source tuple arity is finite and static.
+source branches; each target must exist and be in bounds. The body proves
+the new Rep before returning. A tuple could group the same writes if added,
+but that syntax is not needed for this boundary proof.
 
 Attaching a detached root x before child y of p removes x's subtree from
 the model roots and inserts it in p's child sequence. Require p to be outside
 x's subtree, with x itself included in that subtree. Unique labels and this
 condition make the model edit well founded and preserve the forest. The
-runtime commit writes the new neighboring links, x's parent and p's affected
+runtime update writes the new neighboring links, x's parent and p's affected
 endpoints, with the same changed-field/unchanged-field proof as detach.
 
 For a fresh leaf N, the condition follows from old labels being below N.
@@ -588,13 +734,14 @@ This uses the program's existing validation, not a new scan inserted to
 satisfy the proof system. Whether all existing guard results can be
 transported at equal runtime cost is still unverified.
 
-Reparenting can validate first, detach in one invariant-preserving commit,
-then attach in another. The detached state is itself a valid forest, so no
-broken Forest need cross that boundary. Same-parent relocation and insertion
+Reparenting can validate first, call a proved detach, then a proved attach.
+The detached state is itself a valid forest, so the attach call's boundary
+requirement can hold. Same-parent relocation and insertion
 before oneself need their own ordinary cases: a blanket increment of the
 new parent's child count is false when the old and new parent are equal.
-Aliases among old/new neighbors must be resolved or proved apart before
-forming a tuple's target list. Every failure exit must satisfy the advertised
+Aliases among old/new neighbors must be resolved or proved apart when
+establishing the writes' content transitions and call separation. Every
+failure exit must satisfy the advertised
 invariant; whether failure leaves the original tree unchanged is a separate
 API promise that must also be proved if made.
 
@@ -602,8 +749,8 @@ For `move_all_children(from, to)`, each successful iteration detaches and
 attaches one subtree. Its ghost rank, length of from's model child sequence,
 decreases only when `from != to`. With equal parents a nonempty sequence can
 be rotated forever. This is a falsifier, not a condition that the forest
-invariant alone could prove. A finite tuple handles each link edit; it does
-not replace this data-dependent loop.
+invariant alone could prove. Proving each link edit preserves the forest
+does not prove this data-dependent loop terminates.
 
 ### The finite proof operations these steps actually use
 
@@ -698,23 +845,26 @@ of proof checking; PR #199 has not landed that judgment.
 
 | Capability absent or incomplete today | Where the worked derivation stops without it | Required negative case |
 |---|---|---|
-| Generic and recursively contained struct invariants, with a complete mutation/observation boundary | `Forest<T>`, stored invariant-bearing values, an interior-reference write, and cached ancestor counts needing a runtime-sized update | `restore(&pair.left)` cannot count as preserving the invariant at every internal commit merely from its exit contract; an incomplete unpacked update cannot escape as a valid Forest |
-| Simultaneous multi-place assignment and its invariant/ownership judgment | A bidirectional detach changes several links together | Repeated/overlapping targets and an omitted reverse link cannot pass the proposed final-state proof |
+| Logical predicates in explicit contracts or type invariants, including generic instantiation | State the Forest relation at construction, call and return boundaries; automatic attachment through containers is a further question | A caller cannot pass a partially repaired Forest to a function requiring its full predicate; omitting a reverse link fails the exit proof |
 | User-defined logical predicates, finite models and checked structural lemmas | Defining Rep, proving no duplication and deriving non-ancestry | A cyclic raw graph cannot acquire height by assuming its own well-foundedness; a circular lemma cannot prove itself |
 | Relational content contracts, result/entry snapshots and generic-library transport | First push/grow, next-sibling accessor, cycle-walk success, and a returned index array | Correct lengths with a duplicated or changed old element must not satisfy the content contract |
 | Proof-state support, framing and move/store transport | Keep topology facts across payload changes; replace them after reparent | Reuse an old sibling or document proof after changing its supporting links |
 | Shared separation facts and a cross-iteration proof consumer | Counted scatter with a proved injective index sequence | Distinct writes beside a cross-iteration conflicting read must deny permission |
-| Noncontiguous effect footprints and their body checks | Parallel recursive subtree helpers | Two distinct roots where one is a descendant must not count as disjoint subtrees |
+| Noncontiguous effect footprints, body checks and recursive contract checking | Parallel recursive subtree helpers | Two distinct roots where one is a descendant must not count as disjoint subtrees; a recursive contract cannot establish itself without a sound recursive rule |
 
-The first six reach the counted child-index witness; the seventh is needed
-for recursive subtree calls. New runtime rank consumers and a linked-walk
-scheduling strategy are additional consumers, not prerequisites for a checked
+The first five reach the counted child-index witness; the sixth is needed
+for recursive subtree calls. A local explicit contract can carry the Forest
+predicate without first generalizing every struct-invariant boundary.
+Simultaneous assignment, a `change` scope and continuous lifetime validity
+are not prerequisites for this route. New runtime rank consumers and a
+linked-walk scheduling strategy are additional consumers, not prerequisites for a checked
 Forest value. A permutation mapping (W2) should reuse the same sequence
 proofs and content contracts without any forest-specific checker rule.
 
-Still unverified: an exact proof grammar and checking calculus, modular
-interior-write preservation and any unpack/repack protocol, all mutation/error paths of the actual SG
-Forest library, proof-checking cost, and generated-code equality under R3.
+Still unverified: an exact proof grammar and checking calculus, content and
+effect transport through interior references, all mutation/error paths of
+the actual SG Forest library, proof-checking cost, and generated-code equality
+under R3.
 The finite-model witness is a constructive paper route, not evidence that
 this whole capability set has already been implemented or minimized.
 
@@ -739,6 +889,18 @@ Each probe uses that build with `--check`; each scatter uses
   `UndischargedTypeInvariant`. Replacing `set left = 1_u64;` with
   `set left = pair.left;` rejects with OWN-1 `UseAfterMove`.
   This is existing language behavior, not a prototype of `change`.
+- Reference replacement exposes a separate result-publication defect. Using
+  the same Pair type, a `make() -> result: Pair pure` function returns
+  `Pair(left: 1_u64, right: 1_u64)`. A helper with signature
+  `update(pair: &Pair) -> result: unit writes(pair)` and body
+  `set pair^ = make(); return unit;` rejects at the return with FN-9
+  `UndischargedPostcondition`. Changing that body to
+  `let next = make(); set pair^ = move next; return unit;` passes; directly
+  constructing `Pair(left: 1_u64, right: 1_u64)` into `pair^` passes too.
+  The rejection loses a verified result-only relation specified by FN-9 and
+  CALL-4 for direct ordinary-set destinations. It is conservative rejection,
+  not a counterexample to invariant safety; its implementation cause remains
+  untraced and is recorded in the TODO.
 - A boxed representation variant also exposes the content-transport limit:
   for `Parts { left: u64; right: u64; }`, binding `Parts(0, 0)` and passing
   it to `box_new::<Parts>` does not by itself establish the field equality
@@ -778,18 +940,22 @@ it meets every one:
    witnesses and on one further container from R1 (indices held as hash map
    values), across construction, mutation and use. R4 additionally requires
    a second user-defined property or representation without a new kernel
-   container or a trusted user axiom. R5 requires negative witnesses for
-   invalid construction, direct mutation, projected-reference mutation and
-   nested storage; a scoped update cannot keep a live invalid struct value.
+   container or a trusted user axiom. The active boundary-contract route
+   requires invalid construction/call/exit and stale-fact negative cases.
+   If R5's stronger alternative is reopened, it additionally requires
+   direct-mutation, projected-reference and nested-storage witnesses; a
+   scoped update cannot keep a live invalid struct value under that rule.
 
 ## Plan
 
-1. Settle the invariant observation/mutation boundary, including writable
-   interior references; simultaneous assignment alone does not settle it.
-2. Specify the finite proof operations needed by the worked derivation and
-   write explicit certificates for empty/create/detach/attach and one
-   traversal. Keep source identity for K as a comparison, not a prerequisite.
-3. Connect the resulting separation theorem to one counted scatter and the
-   permutation witness, then address subtree effects separately.
+1. Use explicit boundary contracts for the Forest derivation, with support
+   invalidation on all overlapping writes including interior references.
+   Keep the stronger lifetime rule and its spelling deferred.
+2. Specify the finite proof operations and storage-content contracts needed
+   for empty/create and no duplication; write those certificates explicitly.
+   Keep source identity for K as a comparison, not a prerequisite.
+3. Connect that theorem to one counted scatter and the permutation witness,
+   then exercise detach/attach and traversal. Address subtree effects and
+   recursive contracts separately.
 4. Bring concrete specification sketches and their limitations to the owner
    before any compiler change. Record a selected mechanism in the design tree.

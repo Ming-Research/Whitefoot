@@ -77,6 +77,22 @@ rarely insert at the same place.
 
 ## Checker precision and proof cost
 
+- **A direct call result loses its struct invariant at a reference target.**
+  For a `nocopy Pair` with private `left` and `right` fields and invariant
+  `left == right`, let `make() -> Pair` return `Pair(1, 1)`. A helper
+  `update(pair: &Pair)` with `writes(pair)` that executes
+  `set pair^ = make(); return unit;` fails FN-9 at its return. Replacing that
+  assignment by `let next = make(); set pair^ = move next;` passes, as does
+  direct construction into `pair^`. These paired observations are recorded
+  in the [Forest investigation](../research/investigations/unique-keys/DESIGN.md#observations-with-the-current-compiler).
+  FN-9 and CALL-4 specify publication of result-field relations onto direct
+  ordinary-set destinations after target kills. Trace and repair that
+  publication for reference destinations; the exact implementation cause is
+  not established. This is conservative rejection, not permission to use a
+  false invariant. Reopen before borrowed Forest replacement relies on the
+  route. Validate direct-set and let-then-set positives, false callee results,
+  alias writes and stale destination facts under the existing rules.
+
 - **A length guard on a match binder is not a fact inside a loop that
   writes through it.** Minimal witness: a function matches `held^` as
   `List(items: list)` and, in a `for` loop, pops from `list` under
@@ -2155,20 +2171,22 @@ each is resolved by a discussion and a tree change.
   relation at most twice. Reopen generic invariants when a generic type has
   a relation every value keeps that several functions restate.
   The [library-Forest derivation](../research/investigations/unique-keys/DESIGN.md#worked-derivation-a-library-forest)
-  supplies that consumer and a writable-interior-reference probe: an exit
-  postcondition can restore a field while its enclosing invariant was false
-  inside the callee. Settle the invariant's observation boundary before
-  granting facts at every read. Validate nested storage, generic mutation,
-  interior-reference calls and propagation, with a failing case for each
-  route that would expose a value without establishing its invariant.
-  Cached subtree counts also expose a runtime-sized update that a finite
-  tuple cannot commit at once; any checked unpack/repack route must exclude
+  supplies a generic predicate consumer. Its active route uses explicit
+  boundary contracts with checked logical predicates and storage-content
+  transport. Validate support invalidation through aliases and interior
+  references, generic contract transport, and every promised exit including
+  propagation; a partially repaired Forest cannot cross a call requiring
+  its full predicate. Continuous validity and simultaneous assignment are
+  not prerequisites for that work.
+  A stronger lifetime guarantee is separately deferred. The investigation's
+  direct-field and reference-helper Pair probes distinguish it from current
+  TYPE-11: a legal write can leave unequal fields, and a helper can restore
+  equality only on exit. If the stronger rule is reopened, settle its
+  observation boundary and test every creation/mutation route, including
+  nested storage and intermediate states inside reference calls. Cached
+  subtree counts require a runtime-sized update beyond a fixed tuple;
+  any unpack/repack alternative for that stronger rule must exclude
   intermediate observations and prove the invariant before republishing.
-  The same investigation now includes an accepted, executed direct-field
-  write that leaves a live Pair with unequal fields despite its equality
-  invariant. Current TYPE-11 specifies this weaker boundary; the owner's
-  stronger requirement that every live struct value satisfy its invariant
-  needs a language amendment covering all creation and mutation routes.
 - **A standard collection restates at every operation that its capacity is
   unchanged.** `ensures queue^.storage.inner.cap == entry(queue)^.storage.inner.cap`
   appears 15 times across the priority queue's interface and body
@@ -2382,12 +2400,10 @@ condition under which it is taken up.
   checking cost as well as the runtime check or source work saved. The Slab
   and Deque [source limits](../research/investigations/containers-and-resources/X1-LIBRARY.md#exact-unavailable-source-forms)
   remain examples, not an amendment or a claim that runtime state is lost.
-- **Reference exit fields and custom outcome contracts remain restricted.**
-  FN-9 gives exit-state denotation to a written reference parameter's storage
-  measures, not its ordinary mutable integer fields. An owning sparse map
-  cannot publish `map^.length == entry(map)^.length` for its own
-  scalar occupancy counter; the caller can still read that counter normally.
-  FN-9 routes only the integer success payload of the prelude Result, so a
+- **Custom outcome contracts remain restricted.**
+  FN-9 admits exit-state fragment-integer fields of written references, and
+  CALL-4 admits selected fields and measures of success payloads. Routing is
+  still limited to the success variants of the prelude Result and Option: a
   custom `Inserted / Replaced / Full` outcome cannot directly publish a
   different length relation for each variant. An unconditional insertion
   interval alone does not prove that a failed first attempt leaves length
