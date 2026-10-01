@@ -3807,5 +3807,32 @@ each released once. Changing only word 30 from `base +wrap 30` to
 5.55 seconds and the independent tail-fault check 1.66 seconds, including
 emission, native compilation, linking and execution. The source hash, commands,
 phase observations and logs are retained in `mutation-api-evidence.json` under
-`wide_owner_fixed_constructor`. Linux CI on this source change remains pending;
-no timeout, assertion or runtime overlap policy was weakened.
+`wide_owner_fixed_constructor`. Exact-head CI at
+`5a6c371142079585c9e0971c91846dc54170c61e` passed all selected Linux and macOS
+correctness groups, Linux and Windows native checks, and compute regression;
+design readiness stayed skipped for the Draft PR. No timeout, assertion or
+runtime overlap policy was weakened.
+
+#### Adjacent aggregate Load-to-Store trial
+
+The bounded compiler trial forwards a same-block, adjacent, single-use aggregate
+load into its store while retaining snapshots when its eligibility conditions
+fail. Native comparison covers 243 functions: only three standalone `swap`
+bodies change, so the whole object is different. The reached wide `try_put`,
+exchange and mutation batch retain identical instructions and relocations
+(126, 87 and 381 instructions respectively). The intended mutation code
+improvement is absent. The patch, preregistered criterion, compiler and image
+hashes, commands and native comparison are retained in
+`mutation-api-evidence.json` under `adjacent_load_store_trial`; all four compiler
+trial files were restored.
+
+The separate phase `rejected-adjacent-load-store-discriminator` retains all
+1152 samples in `mutation-api-samples.csv`. None of the 16 matched flat-map
+cohort cells has a range-separated gain or loss; unchanged reached code gives
+no basis to attribute a mutation benefit to this trial. Both arms pass their
+96 owner traces in timed and accounted images, all ten fault controls per arm
+fail with their specific diagnostics, and their 32-row ledgers are identical.
+The eligibility check passes (0.03 seconds after a reported 1m 12s test build;
+73.20 seconds guarded total), and all 30 owning-place regressions pass
+(16.56 seconds execution, 16.66 seconds guarded total). The trial is rejected;
+these timings select no compiler, library or representation change.
