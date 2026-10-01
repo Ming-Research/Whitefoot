@@ -409,3 +409,46 @@ ecosystem-occupancy-measure: ecosystem-build
 	  cat $(ECO_BUILD)/occupancy-cohort-0.csv > '$(ECO_OCCUPANCY_SAMPLES)'; \
 	  awk 'NR > 1' $(ECO_BUILD)/occupancy-cohort-1.csv >> '$(ECO_OCCUPANCY_SAMPLES)'; \
 	  echo 'Map occupancy raw samples: $(ECO_OCCUPANCY_SAMPLES)'
+
+# Reserve-only API consumes the same adapters and independent complete-owner
+# oracle. No timing is implicit in either qualification target.
+.PHONY: ecosystem-reserve-check ecosystem-reserve-account
+ecosystem-reserve-check: ecosystem-build
+	$(ECO_BUILD)/map-timed$(EXE) reserve-clock-check
+	$(ECO_BUILD)/map-timed$(EXE) reserve-check
+	$(ECO_BUILD)/map-account$(EXE) reserve-check
+	@set -eu; \
+	  for peer in 0 1 2; do \
+	    for fault in omitted payload population capacity; do \
+	      status=0; $(ECO_BUILD)/map-timed$(EXE) negative-reserve-api $$fault $$peer > $(ECO_BUILD)/reserve-negative-$$peer-$$fault.stdout 2> $(ECO_BUILD)/reserve-negative-$$peer-$$fault.stderr || status=$$?; \
+	      echo "reserve fault $$fault peer $$peer exit $$status"; test "$$status" = 1; test ! -s $(ECO_BUILD)/reserve-negative-$$peer-$$fault.stdout; \
+	      case $$fault in omitted|capacity) expected='map ecosystem: reserve application entry floor';; payload) expected='map ecosystem: reserve independent complete-owner oracle';; population) expected='map ecosystem: reserve prepared population';; esac; \
+	      test "$$(cat $(ECO_BUILD)/reserve-negative-$$peer-$$fault.stderr)" = "$$expected"; \
+	    done; \
+	    for fault in leak allocation; do \
+	      status=0; $(ECO_BUILD)/map-account$(EXE) negative-reserve-api $$fault $$peer > $(ECO_BUILD)/reserve-negative-$$peer-$$fault.stdout 2> $(ECO_BUILD)/reserve-negative-$$peer-$$fault.stderr || status=$$?; \
+	      echo "reserve fault $$fault peer $$peer exit $$status"; test "$$status" = 1; test ! -s $(ECO_BUILD)/reserve-negative-$$peer-$$fault.stdout; \
+	      case $$fault in leak) expected='map ecosystem: every allocation is reclaimed';; allocation) expected='map ecosystem: reserve noop has no allocation';; esac; \
+	      test "$$(cat $(ECO_BUILD)/reserve-negative-$$peer-$$fault.stderr)" = "$$expected"; \
+	    done; \
+	  done; \
+	  status=0; $(ECO_BUILD)/map-timed$(EXE) negative-reserve-api raw-slots 0 > $(ECO_BUILD)/reserve-negative-raw-slots.stdout 2> $(ECO_BUILD)/reserve-negative-raw-slots.stderr || status=$$?; \
+	  test "$$status" = 1; test ! -s $(ECO_BUILD)/reserve-negative-raw-slots.stdout; \
+	  test "$$(sed -n '1p' $(ECO_BUILD)/reserve-negative-raw-slots.stderr)" = 'reserve headroom first growth at insertion 97 of 128'; \
+	  test "$$(sed -n '2p' $(ECO_BUILD)/reserve-negative-raw-slots.stderr)" = 'map ecosystem: reserve future puts retain backing capacity'; \
+	  test "$$(wc -l < $(ECO_BUILD)/reserve-negative-raw-slots.stderr | tr -d ' ')" = 2; \
+	  for fault in quantized backwards; do \
+	    status=0; $(ECO_BUILD)/map-timed$(EXE) negative-reserve-clock $$fault > $(ECO_BUILD)/reserve-clock-$$fault.stdout 2> $(ECO_BUILD)/reserve-clock-$$fault.stderr || status=$$?; \
+	    echo "reserve clock fault $$fault exit $$status"; test "$$status" = 1; test ! -s $(ECO_BUILD)/reserve-clock-$$fault.stdout; \
+	    case $$fault in quantized) expected='map ecosystem: reserve clock quantum at most 100 ns';; backwards) expected='map ecosystem: reserve clock nondecreasing';; esac; \
+	    test "$$(tail -1 $(ECO_BUILD)/reserve-clock-$$fault.stderr)" = "$$expected"; \
+	  done; \
+	  echo 'Map reserve: twenty-one independent fault controls rejected'
+ecosystem-reserve-account: ecosystem-build
+	$(ECO_BUILD)/map-account$(EXE) reserve-account > $(ECO_BUILD)/reserve-accounting.csv
+
+# One fixed cohort per explicit call; the caller serializes the two cohorts.
+ECO_RESERVE_COHORT ?= 0
+.PHONY: ecosystem-reserve-measure
+ecosystem-reserve-measure: ecosystem-build
+	$(ECO_BUILD)/map-timed$(EXE) reserve-measure $(ECO_RESERVE_COHORT) > $(ECO_BUILD)/reserve-cohort-$(ECO_RESERVE_COHORT).csv

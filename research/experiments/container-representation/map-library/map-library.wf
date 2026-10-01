@@ -36,6 +36,7 @@ interface MapCostElement<T: drop> {
   fn content(key: u64, value: T) -> result: u64 pure;
   fn observe(env: &MapCostDigest, key: &u64, value: &T) -> result: u64 reads(key), reads(value), writes(env);
   fn edit(env: &MapCostDigest, key: &u64, value: &T) -> result: u64 reads(key), writes(env), writes(value);
+  fn damage(value: &T) -> result: unit writes(value);
   fn consume(env: &MapCostDigest, key: u64, value: T) -> result: unit writes(env);
 }
 
@@ -156,6 +157,7 @@ binding MapCostWord : MapCostElement<u64> {
   content = map_cost_word_content;
   observe = map_cost_word_observe;
   edit = map_cost_word_edit;
+  damage = map_cost_word_damage;
   consume = map_cost_word_consume;
 }
 
@@ -164,6 +166,7 @@ binding MapCostWide : MapCostElement<MapCostRecord> {
   content = map_cost_record_content;
   observe = map_cost_record_observe;
   edit = map_cost_record_edit;
+  damage = map_cost_record_damage;
   consume = map_cost_record_consume;
 }
 
@@ -597,6 +600,118 @@ fn map_cost_lookup_word_finish(owner: MapLookupOwner<u64>) -> result: u64 pure {
 
 fn map_cost_lookup_record_finish(owner: MapLookupOwner<MapCostRecord>) -> result: u64 pure {
   return map_cost_lookup_finish::<MapCostWide>(owner: move owner);
+}
+
+fn map_cost_reserve_slots(total: u64) -> result: u64 pure contract {
+  ensures result <= 16384_u64;
+} {
+  if total == 0_u64 {
+    return 0_u64;
+  }
+  if total > 8192_u64 {
+    return 0_u64;
+  }
+  let previous = total - 1_u64;
+  let scaled = previous * 4_u64;
+  let quotient = scaled / 3_u64;
+  let capacity = quotient + 1_u64;
+  return capacity;
+}
+
+fn map_cost_word_damage(value: &u64) -> result: unit writes(value) {
+  set value^ = value^ +wrap 1_u64;
+  return unit;
+}
+
+fn map_cost_record_damage(value: &MapCostRecord) -> result: unit writes(value) {
+  set value^.words[31_u64] = value^.words[31_u64] +wrap 1_u64;
+  return unit;
+}
+
+fn map_cost_reserve_prepare<interface MapCostElement<T>>(total: u64, count: u64, seed: u64) -> result: MapLookupOwner<T> pure {
+  let capacity = map_cost_reserve_slots(total: total);
+  let salt = ixor(seed, 11400714819323198485_u64);
+  let collide = 0_u64 != 0_u64;
+  let env = MapCostEnv(salt: salt, collide: collide);
+  let map = hash_map_new::<u64, T, 16384>(capacity: capacity);
+  let setup = MapCostDigest(ordered: seed, sum: 0_u64, parity: 0_u64, count: 0_u64);
+  for (index in 0_u64..count) {
+    let key = map_cost_key(index: index);
+    let next = seed +wrap index;
+    let value = MapCostElement::make(seed: next);
+    let outcome = hash_map_put::<MapCostLibraryKey, T, 16384>(map: &map, key: key, value: move value, env: &env);
+    map_cost_library_policy_result::<MapCostElement<T>>(outcome: move outcome, digest: &setup);
+  }
+  return MapLookupOwner<T>(map: move map, env: env, seed: seed, count: count);
+}
+
+fn map_cost_reserve_raw<T: drop>(owner: &MapLookupOwner<T>, capacity: u64) -> result: u64 writes(owner) {
+  let outcome = hash_map_reserve::<MapCostLibraryKey, T, 16384>(map: &owner^.map, capacity: capacity, env: &owner^.env);
+  match outcome {
+    Ok(value: success) => {
+      return 1_u64;
+    }
+    Err(error: refused) => {
+      return 0_u64;
+    }
+  }
+}
+
+fn map_cost_reserve_step<T: drop>(owner: &MapLookupOwner<T>, total: u64) -> result: u64 writes(owner) {
+  let capacity = map_cost_reserve_slots(total: total);
+  return map_cost_reserve_raw::<T>(owner: owner, capacity: capacity);
+}
+
+fn map_cost_reserve_insert<interface MapCostElement<T>>(owner: &MapLookupOwner<T>, index: u64, corrupt: u64) -> result: u64 writes(owner) {
+  let key = map_cost_key(index: index);
+  let next = owner^.seed +wrap index;
+  let value = MapCostElement::make(seed: next);
+  if corrupt != 0_u64 {
+    MapCostElement::damage(value: &value);
+  }
+  let outcome = hash_map_put::<MapCostLibraryKey, T, 16384>(map: &owner^.map, key: key, value: move value, env: &owner^.env);
+  match move outcome {
+    HashMapInserted() => {
+      return 1_u64;
+    }
+    HashMapReturned(reason: returned_reason, pair: returned_pair) => {
+      let HashMapPair(key: old_key, value: old_value) = move returned_pair;
+      let content = MapCostElement::content(key: old_key, value: move old_value);
+      return 0_u64;
+    }
+  }
+}
+
+fn map_cost_reserve_word_prepare(total: u64, count: u64, seed: u64) -> result: MapLookupOwner<u64> pure {
+  return map_cost_reserve_prepare::<MapCostWord>(total: total, count: count, seed: seed);
+}
+
+fn map_cost_reserve_word_step(owner: &MapLookupOwner<u64>, total: u64) -> result: u64 writes(owner) {
+  return map_cost_reserve_step::<u64>(owner: owner, total: total);
+}
+
+fn map_cost_reserve_word_raw(owner: &MapLookupOwner<u64>, total: u64) -> result: u64 writes(owner) {
+  return map_cost_reserve_raw::<u64>(owner: owner, capacity: total);
+}
+
+fn map_cost_reserve_word_insert(owner: &MapLookupOwner<u64>, index: u64, corrupt: u64) -> result: u64 writes(owner) {
+  return map_cost_reserve_insert::<MapCostWord>(owner: owner, index: index, corrupt: corrupt);
+}
+
+fn map_cost_reserve_record_prepare(total: u64, count: u64, seed: u64) -> result: MapLookupOwner<MapCostRecord> pure {
+  return map_cost_reserve_prepare::<MapCostWide>(total: total, count: count, seed: seed);
+}
+
+fn map_cost_reserve_record_step(owner: &MapLookupOwner<MapCostRecord>, total: u64) -> result: u64 writes(owner) {
+  return map_cost_reserve_step::<MapCostRecord>(owner: owner, total: total);
+}
+
+fn map_cost_reserve_record_raw(owner: &MapLookupOwner<MapCostRecord>, total: u64) -> result: u64 writes(owner) {
+  return map_cost_reserve_raw::<MapCostRecord>(owner: owner, capacity: total);
+}
+
+fn map_cost_reserve_record_insert(owner: &MapLookupOwner<MapCostRecord>, index: u64, corrupt: u64) -> result: u64 writes(owner) {
+  return map_cost_reserve_insert::<MapCostWide>(owner: owner, index: index, corrupt: corrupt);
 }
 
 fn main() -> status: ExitStatus pure {

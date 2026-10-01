@@ -1,6 +1,9 @@
 /* Practical HashMap comparison. The historical driver shares its independent
  * key-ID oracle through map-oracle.h. Retire this driver with the explicit
  * ecosystem targets; it is not a compiler or conformance dependency. */
+#if defined(__APPLE__)
+#define _DARWIN_C_SOURCE
+#endif
 #if !defined(_WIN32)
 #define _POSIX_C_SOURCE 200809L
 #endif
@@ -379,6 +382,407 @@ static void lookup_negative(const char *failure) {
     lookup_check_one(&lookup_apis[0], 64, 17, false, 2, fault);
     require(false, "lookup negative control was not refused");
 }
+
+
+/* Isolated reserve: logical entry headroom, ordinary library growth policies. */
+typedef uint64_t (*ReserveStep)(void *, uint64_t);
+typedef uint64_t (*ReserveInsert)(void *, uint64_t, uint64_t);
+typedef double (*ReserveLoad)(const void *);
+typedef struct {
+    const char *name;
+    unsigned peer, series;
+    bool wide;
+    LookupPrepare prepare;
+    ReserveStep step;
+    LookupGeometry geometry;
+    ReserveLoad load_factor;
+    ReserveInsert insert;
+    LookupFinish finish;
+} ReserveApi;
+#define RESERVE_DECLARE(P) \
+    extern void P##_prepare(void *, uint64_t, uint64_t, uint64_t); \
+    extern uint64_t P##_step(void *, uint64_t); \
+    extern uint64_t P##_geometry(const void *); \
+    extern uint64_t P##_insert(void *, uint64_t, uint64_t); \
+    extern uint64_t P##_finish(void *)
+#define RESERVE_WF(W) \
+    extern void wf_map_cost_reserve_##W##_prepare(void *, uint64_t, uint64_t, uint64_t); \
+    extern uint64_t wf_map_cost_reserve_##W##_step(void *, uint64_t); \
+    extern uint64_t wf_map_cost_reserve_##W##_raw(void *, uint64_t); \
+    extern uint64_t wf_map_cost_reserve_##W##_insert(void *, uint64_t, uint64_t)
+RESERVE_WF(word); RESERVE_WF(record);
+#define RESERVE_PEERS(W,S) \
+    RESERVE_DECLARE(eco_rust_map_reserve_##W##_##S); \
+    RESERVE_DECLARE(eco_cpp_map_reserve_##W##_##S); \
+    extern double eco_cpp_map_reserve_##W##_##S##_load_factor(const void *)
+RESERVE_PEERS(word,default); RESERVE_PEERS(word,aligned);
+RESERVE_PEERS(record,default); RESERVE_PEERS(record,aligned);
+#undef RESERVE_PEERS
+#undef RESERVE_WF
+#undef RESERVE_DECLARE
+#define RESERVE_WF_ENTRY(W,B,S) {"whitefoot-hash-map",0,S,B,wf_map_cost_reserve_##W##_prepare,wf_map_cost_reserve_##W##_step,wf_map_cost_lookup_##W##_geometry,NULL,wf_map_cost_reserve_##W##_insert,wf_map_cost_lookup_##W##_finish}
+#define RESERVE_PEER_ENTRY(N,P,W,B,S,H,L) {N,P,S,B,H##_prepare,H##_step,H##_geometry,L,H##_insert,H##_finish}
+#define RESERVE_ENTRIES(W,B,S,H) \
+    RESERVE_WF_ENTRY(W,B,S), \
+    RESERVE_PEER_ENTRY("rust-hash-map",1,W,B,S,eco_rust_map_reserve_##W##_##H,NULL), \
+    RESERVE_PEER_ENTRY("cpp-unordered-map",2,W,B,S,eco_cpp_map_reserve_##W##_##H,eco_cpp_map_reserve_##W##_##H##_load_factor)
+static const ReserveApi reserve_apis[] = {
+    RESERVE_ENTRIES(word,false,0,default), RESERVE_ENTRIES(word,false,1,aligned),
+    RESERVE_ENTRIES(record,true,0,default), RESERVE_ENTRIES(record,true,1,aligned)
+};
+#undef RESERVE_ENTRIES
+#undef RESERVE_PEER_ENTRY
+#undef RESERVE_WF_ENTRY
+static uint64_t reserve_slots(uint64_t total) { return 4 * (total - 1) / 3 + 1; }
+static uint64_t reserve_usable(const ReserveApi *api, const void *storage, uint64_t cap) {
+    if (api->peer == 0) return cap - cap / 4;
+    if (api->peer == 1) return cap;
+    return (uint64_t)((double)cap * api->load_factor(storage));
+}
+#ifdef ACCOUNT_ONLY
+static uint64_t reserve_backing_bytes(const ReserveApi *api, uint64_t cap) {
+    if (api->peer == 0) return cap * (api->wide ? 272 : 24);
+    if (api->peer == 2) return cap * sizeof(void *);
+    require(cap % 7 == 0, "reserve Rust usable-to-slot geometry");
+    uint64_t slots = cap / 7 * 8;
+    /* Pinned rustc 1.98.1 / hashbrown 0.17.1 group selection. Its aarch64 NEON
+     * group is uint8x8_t; x86 SSE2 uses 16. Refuse unsupported accounting targets
+     * rather than infer this independent byte expectation from the ledger. */
+#if defined(__aarch64__)
+    const uint64_t group_width = 8;
+#elif (defined(__x86_64__) || defined(__i386__)) && defined(__SSE2__)
+    const uint64_t group_width = 16;
+#else
+    require(false, "reserve Rust layout needs target qualification");
+    const uint64_t group_width = 0;
+#endif
+    return slots * ((api->wide ? 264 : 16) + 1) + group_width;
+}
+#endif
+/* Faults mutate observations except payload corruption, which changes the actual
+ * last word of an inserted record. Raw-slot reserve deliberately uses the public
+ * WF API with the wrong application adaptation to expose the headroom gap. */
+enum { RESERVE_OK, RESERVE_OMIT, RESERVE_RAW, RESERVE_PAYLOAD, RESERVE_LENGTH,
+       RESERVE_CAPACITY, RESERVE_LEAK, RESERVE_ALLOCATION };
+static void reserve_case(const ReserveApi *api, uint64_t initial, uint64_t seed,
+                         bool grow, bool fill, unsigned fault, bool print) {
+    uint64_t count = initial / 2, target = grow ? initial * 2 : initial;
+    LookupStorage owner = {0};
+    reset_ledger();
+    api->prepare(owner.bytes, initial, count, seed);
+    uint64_t before = api->geometry(owner.bytes), oldcap = before >> 32;
+    if (fault == RESERVE_LENGTH) before ^= 1;
+    require((uint32_t)before == count, "reserve prepared population");
+    if (api->peer == 0) require(oldcap == reserve_slots(initial), "reserve WF exact initial physical request");
+    require(reserve_usable(api, owner.bytes, oldcap) >= initial, "reserve initial entry floor");
+    if (grow) require(reserve_usable(api, owner.bytes, oldcap) < target,
+                      "reserve growth is required before call");
+#ifdef ACCOUNT_ONLY
+    Ledger prepared = ledger;
+    require(prepared.releases == 0 && prepared.requests == (api->peer == 2 ? count + 1 : 1),
+            "reserve preparation request ledger");
+    require(prepared.live == prepared.bytes, "reserve preparation live bytes");
+    uint64_t oldbacking = reserve_backing_bytes(api, oldcap);
+    uint64_t nodebytes = 0;
+    if (api->peer == 2) {
+        require(prepared.live >= oldbacking && (prepared.live - oldbacking) % count == 0,
+                "reserve node allocation geometry");
+        nodebytes = (prepared.live - oldbacking) / count;
+        require(nodebytes >= (api->wide ? 264 : 16), "reserve node contains complete pair");
+#if defined(__APPLE__) && defined(__aarch64__)
+        /* Current libc++ __hash_node: next pointer, size_t hash, complete pair.
+         * This source-grounded arm64 layout is separate from the observed delta. */
+        require(nodebytes == (api->wide ? 280 : 32), "reserve libc++ node layout");
+#endif
+    } else require(prepared.live == oldbacking, "reserve prepared backing bytes");
+#endif
+    uint64_t receipt = 1;
+    if (fault == RESERVE_RAW) {
+        receipt = api->wide ? wf_map_cost_reserve_record_raw(owner.bytes, target)
+                            : wf_map_cost_reserve_word_raw(owner.bytes, target);
+    } else if (fault != RESERVE_OMIT) receipt = api->step(owner.bytes, target);
+    require(receipt == 1, "reserve public success result");
+    uint64_t after = api->geometry(owner.bytes), newcap = after >> 32;
+    require((uint32_t)after == count, "reserve preserves population");
+    if (fault == RESERVE_CAPACITY) newcap = 0;
+    /* The raw-slot negative proceeds beyond the insufficient logical floor so
+     * the stronger future-put observation, not this numeric check, rejects it. */
+    if (fault != RESERVE_RAW)
+        require(reserve_usable(api, owner.bytes, newcap) >= target, "reserve application entry floor");
+    else require(newcap >= target, "reserve raw physical floor");
+    if (api->peer == 0 && fault != RESERVE_RAW)
+        require(newcap == reserve_slots(target), "reserve WF exact final physical request");
+    if (!grow) require(newcap == oldcap, "reserve noop geometry");
+#ifdef ACCOUNT_ONLY
+    if (fault == RESERVE_ALLOCATION) wf_ecosystem_note_alloc(8);
+    Ledger reserved = ledger;
+    uint64_t newbacking = reserve_backing_bytes(api, newcap);
+    if (grow) {
+        require(reserved.requests == prepared.requests + 1 && reserved.releases == 1,
+                "reserve growth request/release ledger");
+        require(reserved.bytes == prepared.bytes + newbacking &&
+                reserved.live == prepared.live - oldbacking + newbacking &&
+                reserved.peak == prepared.live + newbacking,
+                "reserve growth exact backing bytes");
+    } else require(memcmp(&reserved, &prepared, sizeof reserved) == 0,
+                   "reserve noop has no allocation");
+#endif
+    uint64_t final_count = count;
+    if (fill) {
+        for (uint64_t i = count; i < target; ++i) {
+            require(api->insert(owner.bytes, i, fault == RESERVE_PAYLOAD && i + 1 == target) == 1,
+                    "reserve future put inserts fresh owner");
+            uint64_t current = api->geometry(owner.bytes);
+            if ((current >> 32) != (after >> 32)) {
+                fprintf(stderr, "reserve headroom first growth at insertion %" PRIu64 " of %" PRIu64 "\n", i + 1, target);
+                require(false, "reserve future puts retain backing capacity");
+            }
+            require((uint32_t)current == i + 1, "reserve future put population");
+        }
+        final_count = target;
+    }
+#ifdef ACCOUNT_ONLY
+    Ledger filled = ledger;
+    uint64_t added = final_count - count;
+    require(filled.releases == reserved.releases &&
+            filled.requests == reserved.requests + (api->peer == 2 ? added : 0) &&
+            filled.bytes == reserved.bytes + nodebytes * added &&
+            filled.live == reserved.live + nodebytes * added,
+            "reserve future puts allocate only C++ nodes");
+#endif
+    double maximum_load = api->load_factor ? api->load_factor(owner.bytes) : 0.0;
+    uint64_t cleanup = api->finish(owner.bytes);
+    require(cleanup == lookup_cleanup_oracle(api->wide, final_count, seed),
+            "reserve independent complete-owner oracle");
+#ifdef ACCOUNT_ONLY
+    if (fault == RESERVE_LEAK) wf_ecosystem_note_alloc(8);
+    clean_ledger();
+    require(ledger.releases == ledger.requests, "reserve complete release ledger");
+    if (print) printf("isolated-reserve,%u,%s,%s,%s,%.17g,%s,%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%u,%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 "\n",
+        api->wide ? 256 : 8, api->series ? "aligned-hash" : "native-default", api->name,
+        api->peer == 0 ? "physical-slots" : api->peer == 1 ? "usable-entries" : "chaining-buckets",
+        maximum_load, grow ? "grow" : "noop", initial, count, target, oldcap, after >> 32, final_count, fill,
+        prepared.requests, prepared.bytes, prepared.live,
+        reserved.requests - prepared.requests, reserved.releases - prepared.releases,
+        reserved.bytes - prepared.bytes, reserved.live, reserved.peak,
+        filled.requests - reserved.requests, filled.bytes - reserved.bytes,
+        ledger.requests, ledger.releases, ledger.live, cleanup);
+#else
+    (void)print; (void)maximum_load;
+#endif
+    observed ^= cleanup;
+}
+#ifdef ACCOUNT_ONLY
+static void reserve_batch_bound(const ReserveApi *api, uint64_t initial, bool grow) {
+    LookupStorage owners[256];
+    uint64_t contexts = initial == 64 ? 256 : 8, count = initial / 2;
+    reset_ledger();
+    for (uint64_t i = 0; i < contexts; ++i) api->prepare(owners[i].bytes, initial, count, 101 + i);
+    for (uint64_t i = 0; i < contexts; ++i)
+        require(api->step(owners[i].bytes, grow ? initial * 2 : initial) == 1, "reserve batch success");
+    for (uint64_t i = 0; i < contexts; ++i)
+        require(api->finish(owners[i].bytes) == lookup_cleanup_oracle(api->wide, count, 101 + i),
+                "reserve batch complete-owner oracle");
+    clean_ledger();
+    require(ledger.peak <= UINT64_C(67108864), "reserve fixed batch memory ceiling");
+}
+#endif
+static void reserve_check(bool print) {
+    const uint64_t sizes[] = {64,4096}, seeds[] = {17,101,UINT64_MAX};
+    size_t checks = 0;
+    if (print) puts("contract,element_bytes,series,variant,capacity_kind,max_load_factor,path,initial_floor,initial_count,target_floor,old_capacity,new_capacity,final_count,headroom_fill,prepare_requests,prepare_bytes,prepare_live,reserve_requests,reserve_releases,reserve_bytes,reserve_live,reserve_peak,fill_requests,fill_bytes,total_requests,total_releases,final_live,cleanup_checksum");
+    for (size_t a = 0; a < ELEMENTS(reserve_apis); ++a)
+        for (size_t n = 0; n < ELEMENTS(sizes); ++n)
+            for (unsigned grow = 0; grow < 2; ++grow) {
+                for (unsigned fill = 0; fill < 2; ++fill)
+                    for (size_t s = 0; s < (print ? 1 : ELEMENTS(seeds)); ++s) {
+                        reserve_case(&reserve_apis[a], sizes[n], seeds[s], grow != 0, fill != 0, RESERVE_OK, print);
+                        ++checks;
+                    }
+#ifdef ACCOUNT_ONLY
+                reserve_batch_bound(&reserve_apis[a], sizes[n], grow != 0);
+#endif
+            }
+    if (!print) printf("map reserve: %zu ordinary reserve/owner/headroom cases passed\n", checks);
+}
+static void reserve_negative(const char *fault, unsigned peer) {
+    require(peer < 3, "reserve negative peer 0..2");
+    unsigned kind = RESERVE_OK;
+    bool grow = true;
+    if (!strcmp(fault,"omitted")) kind = RESERVE_OMIT;
+    else if (!strcmp(fault,"raw-slots")) { require(peer == 0, "raw-slots is WF only"); kind = RESERVE_RAW; }
+    else if (!strcmp(fault,"payload")) kind = RESERVE_PAYLOAD;
+    else if (!strcmp(fault,"population")) kind = RESERVE_LENGTH;
+    else if (!strcmp(fault,"capacity")) kind = RESERVE_CAPACITY;
+#ifdef ACCOUNT_ONLY
+    else if (!strcmp(fault,"leak")) kind = RESERVE_LEAK;
+    else if (!strcmp(fault,"allocation")) { kind = RESERVE_ALLOCATION; grow = false; }
+#endif
+    else require(false, "unknown reserve fault");
+    reserve_case(&reserve_apis[6 + peer],64,17,grow,true,kind,false);
+    require(false,"reserve negative unexpectedly returned");
+}
+
+
+#ifndef ACCOUNT_ONLY
+static uint64_t reserve_now(void) {
+#if defined(__APPLE__)
+    struct timespec t;
+    require(clock_gettime(CLOCK_MONOTONIC_RAW, &t) == 0, "reserve RAW clock read");
+    return (uint64_t)t.tv_sec * UINT64_C(1000000000) + (uint64_t)t.tv_nsec;
+#elif defined(_WIN32)
+    LARGE_INTEGER count, frequency;
+    QueryPerformanceCounter(&count); QueryPerformanceFrequency(&frequency);
+    return (uint64_t)((long double)count.QuadPart * 1000000000.0L / frequency.QuadPart);
+#else
+    struct timespec t;
+    require(clock_gettime(CLOCK_MONOTONIC, &t) == 0, "reserve monotonic clock read");
+    return (uint64_t)t.tv_sec * UINT64_C(1000000000) + (uint64_t)t.tv_nsec;
+#endif
+}
+static uint64_t reserve_clock_check(unsigned fault, bool intervals) {
+    uint64_t previous = reserve_now(), minimum = UINT64_MAX, maximum_empty = 0;
+    if (fault == 1) previous -= previous % 1000;
+    for (unsigned i = 0; i < 200000; ++i) {
+        uint64_t current = reserve_now();
+        if (fault == 1) current -= current % 1000;
+        if (fault == 2 && i == 10) current = previous - 1;
+        require(current >= previous, "reserve clock nondecreasing");
+        if (current > previous && current - previous < minimum) minimum = current - previous;
+        previous = current;
+    }
+    fprintf(stderr,"reserve clock: minimum_nonzero_ns=%" PRIu64 " fault=%u\n",minimum,fault);
+    require(minimum <= 100, "reserve clock quantum at most 100 ns");
+    uint64_t empty[1024];
+    for (unsigned i = 0; i < 1024; ++i) {
+        uint64_t start = reserve_now(), end = reserve_now();
+        require(end >= start, "reserve clock nondecreasing");
+        empty[i] = end - start;
+        if (empty[i] > maximum_empty) maximum_empty = empty[i];
+    }
+    if (intervals) {
+        fputs("reserve clock-only: index,elapsed_ns\n",stderr);
+        for (unsigned i = 0; i < 1024; ++i) fprintf(stderr,"%u,%" PRIu64 "\n",i,empty[i]);
+    }
+    fprintf(stderr,"reserve clock: maximum_empty_ns=%" PRIu64 "\n",maximum_empty);
+    return maximum_empty;
+}
+static uint64_t reserve_loop(const ReserveApi *api, LookupStorage *owners,
+                             uint64_t contexts, uint64_t repeats, uint64_t target, bool control) {
+    uint64_t receipt = 0;
+    if (control) {
+        for (uint64_t r = 0; r < repeats; ++r)
+            for (uint64_t i = 0; i < contexts; ++i) receipt += api->geometry(owners[i].bytes);
+    } else {
+        for (uint64_t r = 0; r < repeats; ++r)
+            for (uint64_t i = 0; i < contexts; ++i) receipt += api->step(owners[i].bytes,target);
+    }
+    return receipt;
+}
+typedef struct { uint64_t elapsed[2], receipt[2], cleanup, oldcap, newcap; bool overhead_ok; } ReserveInterval;
+static void reserve_row(const ReserveApi *api, unsigned cohort, uint64_t initial, bool grow,
+                        unsigned sample, unsigned control, const char *kind, uint64_t batch,
+                        uint64_t contexts, uint64_t calls, uint64_t elapsed, uint64_t receipt,
+                        uint64_t cleanup, uint64_t oldcap, uint64_t newcap, bool valid) {
+    printf("isolated-reserve,%u,%u,%s,%s,%s,%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%u,%u,%s,%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%u\n",
+           cohort,api->wide ? 256 : 8,api->series ? "aligned-hash" : "native-default",api->name,
+           grow ? "grow" : "noop",initial,initial/2,grow ? 2*initial : initial,sample,control,
+           kind,batch,contexts,calls,elapsed,receipt,cleanup,oldcap,newcap,valid);
+}
+static bool reserve_sample(const ReserveApi *api, unsigned cohort, uint64_t initial, bool grow,
+                           unsigned sample, uint64_t clock_cost) {
+    uint64_t contexts = initial == 64 ? 256 : 8;
+    uint64_t calls = grow ? (initial == 64 ? 16384 : 256) : UINT64_C(1048576);
+    uint64_t batches = grow ? calls / contexts : 1, repeats = grow ? 1 : calls / contexts;
+    uint64_t target = grow ? initial * 2 : initial, count = initial / 2;
+    LookupStorage owners[256];
+    ReserveInterval records[64] = {0};
+    uint64_t elapsed[2] = {0}, receipts[2] = {0}, cleanup = 0;
+    bool valid = true;
+    for (uint64_t batch = 0; batch < batches; ++batch) {
+        ReserveInterval *record = &records[batch];
+        uint64_t first_seed = 101 + sample + batch * contexts;
+        for (uint64_t i = 0; i < contexts; ++i) {
+            api->prepare(owners[i].bytes,initial,count,first_seed+i);
+            uint64_t geometry = api->geometry(owners[i].bytes);
+            require((uint32_t)geometry == count, "reserve timed prepared population");
+            require(reserve_usable(api,owners[i].bytes,geometry>>32) >= initial,
+                    "reserve timed initial floor");
+            if (grow) require(reserve_usable(api,owners[i].bytes,geometry>>32) < target,
+                              "reserve timed call requires growth");
+            if (i == 0) record->oldcap = geometry >> 32;
+            else require(record->oldcap == geometry >> 32,"reserve batch initial geometry");
+        }
+        uint64_t start = reserve_now();
+        record->receipt[0] = reserve_loop(api,owners,contexts,repeats,target,false);
+        uint64_t end = reserve_now();
+        require(end >= start,"reserve clock nondecreasing");
+        record->elapsed[0] = end-start;
+        require(record->receipt[0] == contexts*repeats,"reserve timed success receipts");
+        uint64_t expected_control = 0;
+        for (uint64_t i = 0; i < contexts; ++i) {
+            uint64_t geometry = api->geometry(owners[i].bytes);
+            require((uint32_t)geometry == count,"reserve timed preserved population");
+            require(reserve_usable(api,owners[i].bytes,geometry>>32) >= target,
+                    "reserve timed application floor");
+            if (i == 0) record->newcap = geometry >> 32;
+            else require(record->newcap == geometry >> 32,"reserve batch final geometry");
+            if (!grow) require(record->newcap == record->oldcap,"reserve timed noop geometry");
+            expected_control += geometry*repeats;
+        }
+        /* This post-reserve snapshot loop is an unsubtracted dispatch control.
+         * It does not prime the real interval or replace its public operation. */
+        start = reserve_now();
+        record->receipt[1] = reserve_loop(api,owners,contexts,repeats,target,true);
+        end = reserve_now();
+        require(end >= start,"reserve clock nondecreasing");
+        record->elapsed[1] = end-start;
+        require(record->receipt[1] == expected_control,"reserve snapshot control receipts");
+        for (uint64_t i = 0; i < contexts; ++i) {
+            uint64_t result = api->finish(owners[i].bytes);
+            require(result == lookup_cleanup_oracle(api->wide,count,first_seed+i),
+                    "reserve timed complete-owner oracle");
+            record->cleanup ^= result;
+        }
+        record->overhead_ok = record->elapsed[0]/100 >= clock_cost;
+        valid = valid && record->overhead_ok;
+        for (unsigned c = 0; c < 2; ++c) { elapsed[c] += record->elapsed[c]; receipts[c] += record->receipt[c]; }
+        cleanup ^= record->cleanup;
+    }
+    valid = valid && elapsed[0] >= UINT64_C(1000000);
+    /* No output during preparation/reserve/inspection batches. Keep all rows,
+     * including instrument failures; only the final process verdict can fail. */
+    for (uint64_t b = 0; b < batches; ++b)
+        for (unsigned c = 0; c < 2; ++c)
+            reserve_row(api,cohort,initial,grow,sample,c,"batch",b,contexts,contexts*repeats,
+                        records[b].elapsed[c],records[b].receipt[c],records[b].cleanup,
+                        records[b].oldcap,records[b].newcap,records[b].overhead_ok);
+    for (unsigned c = 0; c < 2; ++c)
+        reserve_row(api,cohort,initial,grow,sample,c,"sample",batches,contexts,calls,
+                    elapsed[c],receipts[c],cleanup,records[0].oldcap,records[0].newcap,valid);
+    observed ^= cleanup ^ receipts[0] ^ receipts[1];
+    return valid;
+}
+static void reserve_measure(unsigned cohort) {
+    uint64_t clock_cost = reserve_clock_check(0,true);
+    bool valid = true;
+    puts("contract,cohort,element_bytes,series,variant,path,initial_floor,initial_count,target_floor,sample,control,row_kind,batch_or_batches,contexts,calls,elapsed_ns,receipt,cleanup_checksum,old_capacity,new_capacity,instrument_valid");
+    for (unsigned wide = 0; wide < 2; ++wide)
+        for (unsigned series = 0; series < 2; ++series)
+            for (unsigned size = 0; size < 2; ++size)
+                for (unsigned op = 0; op < 2; ++op)
+                    for (unsigned sample = 0; sample < 9; ++sample)
+                        for (unsigned offset = 0; offset < 3; ++offset) {
+                            unsigned peer = (sample+offset)%3;
+                            if (cohort) peer = 2-peer;
+                            uint64_t initial = (size ^ cohort) ? 4096 : 64;
+                            bool passed = reserve_sample(&reserve_apis[wide*6+series*3+peer],
+                                                         cohort,initial,op != 0,sample,clock_cost);
+                            valid = valid && passed;
+                        }
+    require(valid,"reserve fixed-panel instrument qualification");
+}
+#endif
 
 static void occupancy_check(void) {
     const uint64_t rounds[] = {0, 1, 3}, seeds[] = {17, 101, UINT64_MAX};
@@ -767,6 +1171,11 @@ int main(int argc, char **argv) {
         require(argc == 2, "check takes no arguments"); check();
     } else if (strcmp(argv[1], "occupancy-check") == 0) {
         require(argc == 2, "occupancy-check takes no arguments"); occupancy_check();
+    } else if (strcmp(argv[1], "reserve-check") == 0) {
+        require(argc == 2, "reserve-check takes no arguments"); reserve_check(false);
+    } else if (strcmp(argv[1], "negative-reserve-api") == 0) {
+        require(argc == 4 && strlen(argv[3]) == 1 && argv[3][0] >= '0' && argv[3][0] <= '2', "reserve negative fault peer");
+        reserve_negative(argv[2], (unsigned)(argv[3][0] - '0'));
     } else if (strcmp(argv[1], "lookup-check") == 0) {
         require(argc == 2, "lookup-check takes no arguments"); lookup_check();
     } else if (strcmp(argv[1], "negative-lookup") == 0) {
@@ -787,7 +1196,9 @@ int main(int argc, char **argv) {
         require(actual == reserve_oracle(variant->wide, 2, 17), "reserve capacity floor");
     }
 #ifdef ACCOUNT_ONLY
-    else if (strcmp(argv[1], "negative-leak") == 0) {
+    else if (strcmp(argv[1], "reserve-account") == 0) {
+        require(argc == 2, "reserve-account takes no arguments"); reserve_check(true);
+    } else if (strcmp(argv[1], "negative-leak") == 0) {
         require(argc == 2, "negative-leak takes no arguments");
         checked_trace(&variants[0], 1, (Shape){3, 2}, 1, 17, HIT, false);
         wf_ecosystem_note_alloc(8); clean_ledger();
@@ -807,7 +1218,16 @@ int main(int argc, char **argv) {
         require(argc == 3, "negative-geometry requires a failure kind"); negative_geometry(argv[2]);
     }
 #else
-    else if (strcmp(argv[1], "measure") == 0 || strcmp(argv[1], "occupancy-measure") == 0) {
+    else if (strcmp(argv[1], "reserve-clock-check") == 0) {
+        require(argc == 2, "reserve-clock-check takes no arguments"); (void)reserve_clock_check(0,false);
+    } else if (strcmp(argv[1], "negative-reserve-clock") == 0) {
+        require(argc == 3 && (strcmp(argv[2],"quantized") == 0 || strcmp(argv[2],"backwards") == 0), "reserve clock fault");
+        (void)reserve_clock_check(strcmp(argv[2],"quantized") == 0 ? 1 : 2,false);
+        require(false,"reserve clock negative unexpectedly returned");
+    } else if (strcmp(argv[1], "reserve-measure") == 0) {
+        require(argc == 3 && (strcmp(argv[2],"0") == 0 || strcmp(argv[2],"1") == 0), "reserve-measure requires cohort 0 or 1");
+        reserve_measure((unsigned)(argv[2][0]-'0'));
+    } else if (strcmp(argv[1], "measure") == 0 || strcmp(argv[1], "occupancy-measure") == 0) {
         require(argc == 4 && (strcmp(argv[2], "0") == 0 || strcmp(argv[2], "1") == 0),
                 "measure requires cohort 0 or 1 and a work count");
         measure((unsigned)(argv[2][0] - '0'), parse_work(argv[3]), strcmp(argv[1], "occupancy-measure") == 0);

@@ -80,8 +80,10 @@ trait Payload {
     fn identity(&self) -> u64;
     fn content(self, key: u64) -> u64;
     fn increment(&mut self) -> u64;
+    fn damage(&mut self);
 }
 impl Payload for u64 {
+    fn damage(&mut self) { *self = self.wrapping_add(1); }
     fn make(seed: u64) -> Self {
         seed
     }
@@ -100,6 +102,7 @@ struct Record {
     words: [u64; 32],
 }
 impl Payload for Record {
+    fn damage(&mut self) { self.words[31] = self.words[31].wrapping_add(1); }
     fn make(seed: u64) -> Self {
         Self {
             words: std::array::from_fn(|index| seed.wrapping_add(index as u64)),
@@ -480,3 +483,47 @@ lookup_exports!(
     eco_rust_map_lookup_record_geometry,
     eco_rust_map_lookup_record_finish
 );
+
+// Reserve-only state uses ordinary default or aligned hashing, outside setup timing.
+struct ReserveState<V, H> { map: HashMap<u64,V,H>, seed: u64 }
+unsafe fn reserve_prepare<V: Payload, H: BuildHasher>(p: *mut std::ffi::c_void, total: u64, count: u64, seed: u64, hash: H) {
+    assert!(std::mem::size_of::<ReserveState<V,H>>() <= 128);
+    assert!(std::mem::align_of::<ReserveState<V,H>>() <= 16);
+    let mut map = HashMap::with_capacity_and_hasher(total as usize, hash);
+    for i in 0..count { map.insert(key_at(i), V::make(seed.wrapping_add(i))); }
+    unsafe { p.cast::<ReserveState<V,H>>().write(ReserveState{map,seed}) };
+}
+unsafe fn reserve_step<V, H: BuildHasher>(p: *mut std::ffi::c_void, total: u64) -> u64 {
+    let state = unsafe { &mut *p.cast::<ReserveState<V,H>>() };
+    state.map.reserve((total as usize).saturating_sub(state.map.len()));
+    1
+}
+unsafe fn reserve_geometry<V,H>(p: *const std::ffi::c_void) -> u64 {
+    let state = unsafe { &*p.cast::<ReserveState<V,H>>() };
+    ((state.map.capacity() as u64) << 32) | state.map.len() as u64
+}
+unsafe fn reserve_insert<V: Payload, H: BuildHasher>(p: *mut std::ffi::c_void, i: u64, corrupt: u64) -> u64 {
+    let state = unsafe { &mut *p.cast::<ReserveState<V,H>>() };
+    let mut value = V::make(state.seed.wrapping_add(i));
+    if corrupt != 0 { value.damage(); }
+    u64::from(state.map.insert(key_at(i),value).is_none())
+}
+unsafe fn reserve_finish<V: Payload,H>(p: *mut std::ffi::c_void) -> u64 {
+    let ReserveState{map,seed} = unsafe { p.cast::<ReserveState<V,H>>().read() };
+    let mut digest = Digest::new(seed);
+    for (key,value) in map { digest.consume(value.content(key)); }
+    digest.finish()
+}
+macro_rules! reserve_exports {
+    ($v:ty, $h:ty, $hash:expr, $prepare:ident,$step:ident,$geometry:ident,$insert:ident,$finish:ident) => {
+        #[unsafe(no_mangle)] pub unsafe extern "C" fn $prepare(p:*mut std::ffi::c_void,n:u64,c:u64,s:u64) { unsafe { reserve_prepare::<$v,$h>(p,n,c,s,($hash)(s)) } }
+        #[unsafe(no_mangle)] pub unsafe extern "C" fn $step(p:*mut std::ffi::c_void,n:u64)->u64 { unsafe { reserve_step::<$v,$h>(p,n) } }
+        #[unsafe(no_mangle)] pub unsafe extern "C" fn $geometry(p:*const std::ffi::c_void)->u64 { unsafe { reserve_geometry::<$v,$h>(p) } }
+        #[unsafe(no_mangle)] pub unsafe extern "C" fn $insert(p:*mut std::ffi::c_void,i:u64,b:u64)->u64 { unsafe { reserve_insert::<$v,$h>(p,i,b) } }
+        #[unsafe(no_mangle)] pub unsafe extern "C" fn $finish(p:*mut std::ffi::c_void)->u64 { unsafe { reserve_finish::<$v,$h>(p) } }
+    };
+}
+reserve_exports!(u64,RandomState,|_s| RandomState::new(),eco_rust_map_reserve_word_default_prepare,eco_rust_map_reserve_word_default_step,eco_rust_map_reserve_word_default_geometry,eco_rust_map_reserve_word_default_insert,eco_rust_map_reserve_word_default_finish);
+reserve_exports!(u64,AlignedBuild,|s| AlignedBuild{salt:s ^ 0x9e37_79b9_7f4a_7c15,collide:false},eco_rust_map_reserve_word_aligned_prepare,eco_rust_map_reserve_word_aligned_step,eco_rust_map_reserve_word_aligned_geometry,eco_rust_map_reserve_word_aligned_insert,eco_rust_map_reserve_word_aligned_finish);
+reserve_exports!(Record,RandomState,|_s| RandomState::new(),eco_rust_map_reserve_record_default_prepare,eco_rust_map_reserve_record_default_step,eco_rust_map_reserve_record_default_geometry,eco_rust_map_reserve_record_default_insert,eco_rust_map_reserve_record_default_finish);
+reserve_exports!(Record,AlignedBuild,|s| AlignedBuild{salt:s ^ 0x9e37_79b9_7f4a_7c15,collide:false},eco_rust_map_reserve_record_aligned_prepare,eco_rust_map_reserve_record_aligned_step,eco_rust_map_reserve_record_aligned_geometry,eco_rust_map_reserve_record_aligned_insert,eco_rust_map_reserve_record_aligned_finish);

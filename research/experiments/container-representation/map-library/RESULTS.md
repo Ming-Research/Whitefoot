@@ -4632,3 +4632,107 @@ archive. `mutation-api-evidence.json` under `ordinary_incoming_backing` pins the
 images, archive, final source and benchmark identity boundary. Native commands
 use the symbolic `LLVM_OBJDUMP` instrument (LLVM22.1.8); the archive labels
 normalized text and preserves the original executed byte hashes separately.
+
+## Isolated public reserve: entry headroom baseline
+
+This ordinary-source baseline times reserve separately from preparation, complete
+owner inspection and cleanup. It uses frozen production CLI
+`c12b2b2a6c9694fd2bc1b7be0004d582ae9628951422def849f4cf6a3ac02f77`,
+Apple Clang 21 O3 and Rust 1.98.1 opt-level 3, separate translation units without
+LTO. Neither the unselected byte-memory compiler nor a hand-edited IR body is used.
+The historical reserve trace remains valid as defined: it includes setup, queries
+and cleanup, with one reserve per trace. Its timings do not isolate this API.
+
+Each fresh owner starts with application entry floor S=64 or 4096 and S/2 live
+entries. Growth requests T=2S; noop requests T=S. WF accepts physical slots, so
+its wrapper computes B(T)=floor(4(T−1)/3)+1; Rust receives additional T−len and
+C++ receives total T. The conversion is inside the timer. Untimed checks insert
+through the Tth ordinary put without further backing growth and consume every
+key and all 32 words of each wide value. Passing raw T slots to WF fails this
+stronger check at insertion 97 of 128, despite meeting the raw capacity floor.
+This is a matched application guarantee, not identical physical reserve semantics.
+
+Observed growth geometry is WF 85→170 / 5461→10922 physical slots, Rust
+112→224 / 7168→14336 usable entries (128→256 / 8192→16384 backing slots), and
+C++ 64→128 / 4096→8192 buckets with max_load_factor 1. Each grow requests one
+new backing and releases one old backing; noop does neither. New backing bytes
+for S=64 / 4096 are WF scalar 4,080 / 262,128 and wide 46,240 / 2,970,784;
+Rust scalar 4,360 / 278,536 and wide 67,848 / 4,341,768; C++ bucket arrays
+1,024 / 65,536 for either width. C++ separately retains 32/280-byte scalar/wide
+nodes. These exact byte checks are grounded in the current arm64 hashbrown NEON
+8-byte control group and libc++ node layout, not portable layout promises.
+The 96 phase-ledger rows finish at zero live bytes; fixed batch peaks pass 64 MiB.
+
+The timed and account correctness images each pass 288 reserve cases; together
+they pass 21 independent fault controls. Existing lookup and whole-trace checks also pass in both images.
+Build attempts 1–9 retain formation, binder and proof failures, including an accidental edit
+to old WF binders that was restored. Build 10 succeeds. The first accounted
+check fails an incorrect Rust +16 control-byte expectation; the pinned aarch64
+implementation requires +8, and the corrected exact assertion passes. Measured
+source is frozen; the only subsequent adapter edit removes Makefile trailing
+whitespace from a diagnostic echo.
+
+The preregistered two cohorts each retain 22,032 rows: 432 real samples, their
+snapshot controls and every short batch. Nine samples balance each peer position
+three times. S=64 uses 256 contexts and 16,384 fresh grow calls per sample;
+S=4096 uses 8 contexts and 256 grow calls. Noop uses 1,048,576 calls. Setup and
+cleanup stay outside each interval; raw batch intervals are summed without
+subtracting the snapshot control. Minimum real batch durations are 22.542/23.041
+µs, not millisecond batches. RAW quantum is 41 ns, and all batch overhead checks
+pass against the 1,024 retained empty-clock intervals per cohort.
+
+Both processes return **1 after collecting all rows**, because 19/22 real
+aggregate samples fall below the fixed 1 ms minimum (minimum 0.841/0.842 ms).
+They affect native-default Rust small scalar/wide noops and C++ large scalar
+growth. Large default wide growth also fails peer stability: C++ cohort medians
+differ by 23.06%. The two planned cohorts were retained without retry.
+
+Medians below are ns/call, cohort 0 / cohort 1. The linked JSON retains every
+peer's complete ranges and minimum duration. “Pass” means WF's full range lies
+below the slower peer's full range in both cohorts, with duration and ≤10%
+cohort-median spread satisfied; it does not mean faster than both peers.
+
+| Hash series | Value B | S | Operation | WF | Rust | C++ | Qualified target |
+|---|---:|---:|---|---:|---:|---:|---|
+| Aligned | 8 | 64 | grow | 243.513 / 238.161 | 205.467 / 196.444 | 124.825 / 127.418 | WF slower than both |
+| Aligned | 8 | 64 | noop | 1.258 / 1.261 | 0.959 / 0.987 | 2.807 / 2.863 | Pass |
+| Aligned | 8 | 4096 | grow | 18866.867 / 18502.758 | 9637.043 / 9644.211 | 4899.574 / 4861.340 | WF slower than both |
+| Aligned | 8 | 4096 | noop | 1.358 / 1.319 | 1.038 / 1.009 | 2.980 / 2.871 | Pass |
+| Aligned | 256 | 64 | grow | 2017.390 / 2023.981 | 866.696 / 877.838 | 230.642 / 236.417 | WF slower than both |
+| Aligned | 256 | 64 | noop | 1.258 / 1.258 | 0.959 / 0.959 | 2.811 / 2.813 | Pass |
+| Aligned | 256 | 4096 | grow | 121665.691 / 121511.695 | 64215.008 / 62519.852 | 12677.734 / 12746.586 | WF slower than both |
+| Aligned | 256 | 4096 | noop | 1.319 / 1.319 | 1.009 / 1.009 | 2.868 / 2.880 | Pass |
+| Default | 8 | 64 | grow | 240.583 / 237.600 | 366.027 / 364.199 | 98.071 / 94.394 | Pass |
+| Default | 8 | 64 | noop | 1.289 / 1.258 | 0.948 / 0.948 | 2.270 / 2.187 | Duration unresolved |
+| Default | 8 | 4096 | grow | 19773.117 / 19497.230 | 20193.191 / 20154.949 | 3307.125 / 3317.879 | Duration unresolved |
+| Default | 8 | 4096 | noop | 1.319 / 1.319 | 1.010 / 1.007 | 2.249 / 2.253 | Pass |
+| Default | 256 | 64 | grow | 2022.474 / 2029.617 | 947.029 / 939.847 | 200.246 / 206.604 | WF slower than both |
+| Default | 256 | 64 | noop | 1.260 / 1.255 | 0.954 / 0.951 | 2.813 / 2.807 | Duration unresolved |
+| Default | 256 | 4096 | grow | 121688.797 / 121689.953 | 83107.273 / 83939.129 | 15307.945 / 12439.297 | Spread unresolved |
+| Default | 256 | 4096 | noop | 1.319 / 1.319 | 1.010 / 1.009 | 2.869 / 2.873 | Pass |
+
+Seven of 16 cells meet that target: six noops and default small scalar growth.
+All aligned growth cells are separated slower than both peers. Aligned large
+wide growth costs 121.666/121.512 µs versus Rust 64.215/62.520 and C++
+12.678/12.747 µs. Noop is consistently slower than Rust and faster than C++;
+default small scalar growth is faster than Rust but slower than C++. Default
+large scalar growth overlaps Rust and is slower than C++, with its duration
+failure retained. This single baseline panel does not qualify the entire API,
+select an optimization or establish repeated performance.
+
+A separately retained source-only rebuild running-index candidate builds and
+emits these concrete adapters, but the maintained generic program fails INV-1
+at the new loop backedge. Normal-hash probe work falls 10→8 instructions;
+forced-collision work rises scalar 6→8 and wide 7→8. Scalar/wide frames remain
+96/688 bytes. Parallel admission, runtime checks and timing were not run;
+production library bytes were restored. Neither this rejected candidate nor the
+separate pending initialization diagnostic contributes to the baseline table.
+
+[`reserve-api-evidence.json`](reserve-api-evidence.json) pins sources, image,
+archive and per-peer reductions. [`reserve-api-evidence.tar.gz`](reserve-api-evidence.tar.gz)
+contains all 44,064 raw rows, both direct process/guard results, clock intervals,
+pre-build criterion, exact ledgers, fault logs, source snapshots/patch, portable
+replay commands and compact allocator/rebuild native evidence. It contains no
+compiler binaries or full disassembly dumps. Original versus path-normalized
+record hashes are distinguished. These files serve this baseline's reader and
+are replaced or retired with the experiment; research remains outside the gate.

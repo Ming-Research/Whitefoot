@@ -3351,6 +3351,22 @@ condition under which it is taken up.
   separate discriminators preserve complete returned owners, cleanup, timing
   and memory outcomes without relying on those unstable cells.
 
+
+  The [isolated reserve baseline](../research/experiments/container-representation/map-library/RESULTS.md#isolated-public-reserve-entry-headroom-baseline)
+  now verifies future ordinary-put headroom rather than equating raw reserve
+  arguments. WF's physical-slot request needs B(T)=floor(4(T−1)/3)+1 to match
+  the peers' application entry floor. Aligned large wide growth costs
+  121.666/121.512 µs versus Rust 64.215/62.520 and C++ 12.678/12.747 µs, with
+  complete owners and exact backing ledgers retained. Only seven of 16 cells
+  meet the registered target; three cells have short aggregate intervals and
+  one has unstable peer medians. Reopen reserve optimization at its reached
+  rebuild initialization, migration and probing work, preserving arbitrary
+  capacities, all returned owners and future-put headroom. Require maintained
+  generic admission and both normal/collision native paths before timing: the
+  source running-index rebuild trial failed the former and traded normal-probe
+  savings for more collision work. This does not close scalar replacement or
+  select the previously rejected inactive-payload initialization policy.
+
 - **Ordered insertion replacement costs need attribution.** Both the
   [aggregate-result candidate](../research/experiments/container-representation/ordered-library/RESULTS.md#single-descent-insertion-candidate)
   and [borrowed-promotion follow-up](../research/experiments/container-representation/ordered-library/RESULTS.md#borrowed-promotion-follow-up)

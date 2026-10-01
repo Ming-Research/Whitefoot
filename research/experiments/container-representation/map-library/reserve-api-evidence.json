@@ -1,0 +1,1590 @@
+{
+  "purpose": "Isolated ordinary public reserve with verified future entry headroom; single production baseline panel, not an optimization/adoption result",
+  "archive": "reserve-api-evidence.tar.gz",
+  "archive_sha256": "61e8f845760bf206915f89df06b86dad268804a296987bfb647c4b4162a178db",
+  "archive_members": 145,
+  "base_revision": "89571a60381a685cfbe760248ceb6178d9f9ac05",
+  "production_cli_sha256": "c12b2b2a6c9694fd2bc1b7be0004d582ae9628951422def849f4cf6a3ac02f77",
+  "timed_image_sha256": "f1ebf18d7a94c79250bb3cbd74a0b379a2a30c6e5e4eda48396ec77d8bbdbf3f",
+  "account_image_sha256": "d0c10fbbed6e39541e16fa1aece9116daaa67f2f629d9bfb50b8a623beddd532",
+  "criterion_sha256": "2341caaff3724c255edb55e362057681bc461dee3aa912492cf431127d8227fb",
+  "source_pins": {
+    "map-library.wf": "fb0622ac97ee2b3f0287f71831182f50cc797cbf3ee8b495d73f08f6edd02bd1",
+    "map-ecosystem.c": "daa92d8ff8ec339a7836268d12e39f230475815c01c530fcc140acadf664fbf7",
+    "map-ecosystem.rs": "d706a2739eaf561f401f143e5515dc5fbfc5aebffc51d5510ee85b3341294af3",
+    "Makefile": "f09b683b178546cb3a28481b9a49785be0cbca91ad011ea2b0d3dd59974ab096",
+    "map-costs.c": "d7098a06a870ce94d1d6bb2d98abc687e667327d097d428293430f5d3ea741b4",
+    "map-ecosystem.cpp": "e63833b0a6938e0903b183ab4e737fa0c0bb224c8f4b82a32db19cd55afb2847",
+    "map-oracle.h": "1629ad9e36f812af3a387db7f0f899ab517b0ecaba085e303538011a69493262",
+    "ecosystem-allocator.hpp": "254f00c7ee49cee8552abf4b718297495e30e568e0967448de9170ba0d85bfb6"
+  },
+  "live_makefile_sha256": "4c7b84b2c39d30a3288dc8cd39751e6c62125ca45b0c51b4586dc47a535dab05",
+  "post_measurement_change": "Trailing whitespace only on Makefile 21-fault diagnostic echo; measured original retained; no rebuild",
+  "qualification_stages": [
+    {
+      "argv": [
+        "perl",
+        ".github/run-check.pl",
+        "map-reserve-check-3",
+        "make",
+        "-C",
+        "<repository-root>/research/experiments/container-representation/map-library",
+        "-j2",
+        "BUILD=.build/reserve-api/build",
+        "WHITEFOOTC=<production-cli-home>/whitefootc",
+        "ABSEIL_PREFIX=<abseil-prefix>",
+        "ecosystem-reserve-check"
+      ],
+      "exit": 0,
+      "wall_s": 2.63264516601339,
+      "log": "<scratch-root>/check-3.log"
+    },
+    {
+      "argv": [
+        "perl",
+        ".github/run-check.pl",
+        "map-reserve-account-2",
+        "make",
+        "-C",
+        "<repository-root>/research/experiments/container-representation/map-library",
+        "-j2",
+        "BUILD=.build/reserve-api/build",
+        "WHITEFOOTC=<production-cli-home>/whitefootc",
+        "ABSEIL_PREFIX=<abseil-prefix>",
+        "ecosystem-reserve-account"
+      ],
+      "exit": 0,
+      "wall_s": 0.23746724985539913,
+      "log": "<scratch-root>/account-2.log"
+    },
+    {
+      "argv": [
+        "perl",
+        ".github/run-check.pl",
+        "map-reserve-timed-lookup-check",
+        "<scratch-root>/build/ecosystem/map-timed",
+        "lookup-check"
+      ],
+      "exit": 0,
+      "wall_s": 0.13045387482270598,
+      "log": "<scratch-root>/timed-lookup-check.log"
+    },
+    {
+      "argv": [
+        "perl",
+        ".github/run-check.pl",
+        "map-reserve-timed-check",
+        "<scratch-root>/build/ecosystem/map-timed",
+        "check"
+      ],
+      "exit": 0,
+      "wall_s": 0.45629979111254215,
+      "log": "<scratch-root>/timed-check.log"
+    },
+    {
+      "argv": [
+        "perl",
+        ".github/run-check.pl",
+        "map-reserve-account-lookup-check",
+        "<scratch-root>/build/ecosystem/map-account",
+        "lookup-check"
+      ],
+      "exit": 0,
+      "wall_s": 0.13420354202389717,
+      "log": "<scratch-root>/account-lookup-check.log"
+    },
+    {
+      "argv": [
+        "perl",
+        ".github/run-check.pl",
+        "map-reserve-account-check",
+        "<scratch-root>/build/ecosystem/map-account",
+        "check"
+      ],
+      "exit": 0,
+      "wall_s": 0.4661362092010677,
+      "log": "<scratch-root>/account-check.log"
+    }
+  ],
+  "timing_runs": [
+    {
+      "cohort": 0,
+      "guard_pid": 69166,
+      "guard_exit": 1,
+      "wall_s": 7.816549791954458,
+      "image_sha256": "f1ebf18d7a94c79250bb3cbd74a0b379a2a30c6e5e4eda48396ec77d8bbdbf3f"
+    },
+    {
+      "cohort": 1,
+      "guard_pid": 69455,
+      "guard_exit": 1,
+      "wall_s": 7.913717082701623,
+      "image_sha256": "f1ebf18d7a94c79250bb3cbd74a0b379a2a30c6e5e4eda48396ec77d8bbdbf3f"
+    }
+  ],
+  "raw_rows": 44064,
+  "qualified_cells": 7,
+  "application_cells": 16,
+  "instrument_failed_cells": 3,
+  "spread_failed_cells": 1,
+  "all_before_after_pins_equal": true,
+  "reduction": {
+    "rows": 44064,
+    "sample_rows": 1728,
+    "real_sample_rows": 864,
+    "cells": [
+      {
+        "series": "aligned-hash",
+        "element_bytes": 8,
+        "initial_floor": 64,
+        "path": "grow",
+        "cohorts": [
+          {
+            "cohort": 0,
+            "peers": {
+              "whitefoot-hash-map": {
+                "median_ns": 243.5128173828125,
+                "min_ns": 238.01922607421875,
+                "max_ns": 251.47271728515625,
+                "minimum_sample_ns": 3899707,
+                "instrument_pass": true
+              },
+              "rust-hash-map": {
+                "median_ns": 205.46722412109375,
+                "min_ns": 200.02239990234375,
+                "max_ns": 210.97772216796875,
+                "minimum_sample_ns": 3277167,
+                "instrument_pass": true
+              },
+              "cpp-unordered-map": {
+                "median_ns": 124.82489013671875,
+                "min_ns": 123.9598388671875,
+                "max_ns": 130.63299560546875,
+                "minimum_sample_ns": 2030958,
+                "instrument_pass": true
+              }
+            },
+            "selected_slower_peer": "rust-hash-map",
+            "directions": {
+              "rust-hash-map": "WF slower",
+              "cpp-unordered-map": "WF slower"
+            },
+            "raw_target_pass": false,
+            "instrument_pass": true
+          },
+          {
+            "cohort": 1,
+            "peers": {
+              "whitefoot-hash-map": {
+                "median_ns": 238.1614990234375,
+                "min_ns": 237.22344970703125,
+                "max_ns": 238.7340087890625,
+                "minimum_sample_ns": 3886669,
+                "instrument_pass": true
+              },
+              "rust-hash-map": {
+                "median_ns": 196.4443359375,
+                "min_ns": 195.13958740234375,
+                "max_ns": 197.3138427734375,
+                "minimum_sample_ns": 3197167,
+                "instrument_pass": true
+              },
+              "cpp-unordered-map": {
+                "median_ns": 127.4180908203125,
+                "min_ns": 127.00677490234375,
+                "max_ns": 128.26824951171875,
+                "minimum_sample_ns": 2080879,
+                "instrument_pass": true
+              }
+            },
+            "selected_slower_peer": "rust-hash-map",
+            "directions": {
+              "rust-hash-map": "WF slower",
+              "cpp-unordered-map": "WF slower"
+            },
+            "raw_target_pass": false,
+            "instrument_pass": true
+          }
+        ],
+        "spread": {
+          "whitefoot-hash-map": 0.022469283999797085,
+          "rust-hash-map": 0.045931017255007145,
+          "cpp-unordered-map": 0.020774708319418078
+        },
+        "stable": true,
+        "qualified_target_pass": false
+      },
+      {
+        "series": "aligned-hash",
+        "element_bytes": 8,
+        "initial_floor": 64,
+        "path": "noop",
+        "cohorts": [
+          {
+            "cohort": 0,
+            "peers": {
+              "whitefoot-hash-map": {
+                "median_ns": 1.257777214050293,
+                "min_ns": 1.2551546096801758,
+                "max_ns": 1.2816190719604492,
+                "minimum_sample_ns": 1316125,
+                "instrument_pass": true
+              },
+              "rust-hash-map": {
+                "median_ns": 0.9586811065673828,
+                "min_ns": 0.9560585021972656,
+                "max_ns": 0.9611454010009766,
+                "minimum_sample_ns": 1002500,
+                "instrument_pass": true
+              },
+              "cpp-unordered-map": {
+                "median_ns": 2.806504249572754,
+                "min_ns": 2.806425094604492,
+                "max_ns": 2.92034912109375,
+                "minimum_sample_ns": 2942750,
+                "instrument_pass": true
+              }
+            },
+            "selected_slower_peer": "cpp-unordered-map",
+            "directions": {
+              "rust-hash-map": "WF slower",
+              "cpp-unordered-map": "WF faster"
+            },
+            "raw_target_pass": true,
+            "instrument_pass": true
+          },
+          {
+            "cohort": 1,
+            "peers": {
+              "whitefoot-hash-map": {
+                "median_ns": 1.2611150741577148,
+                "min_ns": 1.2551937103271484,
+                "max_ns": 1.3176202774047852,
+                "minimum_sample_ns": 1316166,
+                "instrument_pass": true
+              },
+              "rust-hash-map": {
+                "median_ns": 0.9866952896118164,
+                "min_ns": 0.9561376571655273,
+                "max_ns": 1.0232534408569336,
+                "minimum_sample_ns": 1002583,
+                "instrument_pass": true
+              },
+              "cpp-unordered-map": {
+                "median_ns": 2.8629302978515625,
+                "min_ns": 2.806584358215332,
+                "max_ns": 2.939065933227539,
+                "minimum_sample_ns": 2942917,
+                "instrument_pass": true
+              }
+            },
+            "selected_slower_peer": "cpp-unordered-map",
+            "directions": {
+              "rust-hash-map": "WF slower",
+              "cpp-unordered-map": "WF faster"
+            },
+            "raw_target_pass": true,
+            "instrument_pass": true
+          }
+        ],
+        "spread": {
+          "whitefoot-hash-map": 0.0026537768931855776,
+          "rust-hash-map": 0.029221586669982536,
+          "cpp-unordered-map": 0.020105456204956296
+        },
+        "stable": true,
+        "qualified_target_pass": true
+      },
+      {
+        "series": "aligned-hash",
+        "element_bytes": 8,
+        "initial_floor": 4096,
+        "path": "grow",
+        "cohorts": [
+          {
+            "cohort": 0,
+            "peers": {
+              "whitefoot-hash-map": {
+                "median_ns": 18866.8671875,
+                "min_ns": 17437.0234375,
+                "max_ns": 19946.12109375,
+                "minimum_sample_ns": 4463878,
+                "instrument_pass": true
+              },
+              "rust-hash-map": {
+                "median_ns": 9637.04296875,
+                "min_ns": 9606.12109375,
+                "max_ns": 9786.46875,
+                "minimum_sample_ns": 2459167,
+                "instrument_pass": true
+              },
+              "cpp-unordered-map": {
+                "median_ns": 4899.57421875,
+                "min_ns": 4862.1640625,
+                "max_ns": 4970.0390625,
+                "minimum_sample_ns": 1244714,
+                "instrument_pass": true
+              }
+            },
+            "selected_slower_peer": "rust-hash-map",
+            "directions": {
+              "rust-hash-map": "WF slower",
+              "cpp-unordered-map": "WF slower"
+            },
+            "raw_target_pass": false,
+            "instrument_pass": true
+          },
+          {
+            "cohort": 1,
+            "peers": {
+              "whitefoot-hash-map": {
+                "median_ns": 18502.7578125,
+                "min_ns": 18118.984375,
+                "max_ns": 20268.23046875,
+                "minimum_sample_ns": 4638460,
+                "instrument_pass": true
+              },
+              "rust-hash-map": {
+                "median_ns": 9644.2109375,
+                "min_ns": 9593.5859375,
+                "max_ns": 10281.078125,
+                "minimum_sample_ns": 2455958,
+                "instrument_pass": true
+              },
+              "cpp-unordered-map": {
+                "median_ns": 4861.33984375,
+                "min_ns": 4824.390625,
+                "max_ns": 5201.83203125,
+                "minimum_sample_ns": 1235044,
+                "instrument_pass": true
+              }
+            },
+            "selected_slower_peer": "rust-hash-map",
+            "directions": {
+              "rust-hash-map": "WF slower",
+              "cpp-unordered-map": "WF slower"
+            },
+            "raw_target_pass": false,
+            "instrument_pass": true
+          }
+        ],
+        "spread": {
+          "whitefoot-hash-map": 0.019678654322223155,
+          "rust-hash-map": 0.000743793378658042,
+          "cpp-unordered-map": 0.00786498706712635
+        },
+        "stable": true,
+        "qualified_target_pass": false
+      },
+      {
+        "series": "aligned-hash",
+        "element_bytes": 8,
+        "initial_floor": 4096,
+        "path": "noop",
+        "cohorts": [
+          {
+            "cohort": 0,
+            "peers": {
+              "whitefoot-hash-map": {
+                "median_ns": 1.3581905364990234,
+                "min_ns": 1.317103385925293,
+                "max_ns": 1.4008283615112305,
+                "minimum_sample_ns": 1381083,
+                "instrument_pass": true
+              },
+              "rust-hash-map": {
+                "median_ns": 1.0383529663085938,
+                "min_ns": 1.0073184967041016,
+                "max_ns": 1.0715723037719727,
+                "minimum_sample_ns": 1056250,
+                "instrument_pass": true
+              },
+              "cpp-unordered-map": {
+                "median_ns": 2.9802322387695312,
+                "min_ns": 2.86678409576416,
+                "max_ns": 3.0143661499023438,
+                "minimum_sample_ns": 3006041,
+                "instrument_pass": true
+              }
+            },
+            "selected_slower_peer": "cpp-unordered-map",
+            "directions": {
+              "rust-hash-map": "WF slower",
+              "cpp-unordered-map": "WF faster"
+            },
+            "raw_target_pass": true,
+            "instrument_pass": true
+          },
+          {
+            "cohort": 1,
+            "peers": {
+              "whitefoot-hash-map": {
+                "median_ns": 1.3193283081054688,
+                "min_ns": 1.316666603088379,
+                "max_ns": 1.3407468795776367,
+                "minimum_sample_ns": 1380625,
+                "instrument_pass": true
+              },
+              "rust-hash-map": {
+                "median_ns": 1.0094642639160156,
+                "min_ns": 1.0068025588989258,
+                "max_ns": 1.1376142501831055,
+                "minimum_sample_ns": 1055709,
+                "instrument_pass": true
+              },
+              "cpp-unordered-map": {
+                "median_ns": 2.8705596923828125,
+                "min_ns": 2.868175506591797,
+                "max_ns": 2.9560327529907227,
+                "minimum_sample_ns": 3007500,
+                "instrument_pass": true
+              }
+            },
+            "selected_slower_peer": "cpp-unordered-map",
+            "directions": {
+              "rust-hash-map": "WF slower",
+              "cpp-unordered-map": "WF faster"
+            },
+            "raw_target_pass": true,
+            "instrument_pass": true
+          }
+        ],
+        "spread": {
+          "whitefoot-hash-map": 0.029456071058886035,
+          "rust-hash-map": 0.02861785545583362,
+          "cpp-unordered-map": 0.038205980066445155
+        },
+        "stable": true,
+        "qualified_target_pass": true
+      },
+      {
+        "series": "aligned-hash",
+        "element_bytes": 256,
+        "initial_floor": 64,
+        "path": "grow",
+        "cohorts": [
+          {
+            "cohort": 0,
+            "peers": {
+              "whitefoot-hash-map": {
+                "median_ns": 2017.3898315429688,
+                "min_ns": 2006.5309448242188,
+                "max_ns": 2046.758056640625,
+                "minimum_sample_ns": 32875003,
+                "instrument_pass": true
+              },
+              "rust-hash-map": {
+                "median_ns": 866.6964721679688,
+                "min_ns": 852.4783935546875,
+                "max_ns": 891.99560546875,
+                "minimum_sample_ns": 13967006,
+                "instrument_pass": true
+              },
+              "cpp-unordered-map": {
+                "median_ns": 230.6416015625,
+                "min_ns": 228.9019775390625,
+                "max_ns": 234.8302001953125,
+                "minimum_sample_ns": 3750330,
+                "instrument_pass": true
+              }
+            },
+            "selected_slower_peer": "rust-hash-map",
+            "directions": {
+              "rust-hash-map": "WF slower",
+              "cpp-unordered-map": "WF slower"
+            },
+            "raw_target_pass": false,
+            "instrument_pass": true
+          },
+          {
+            "cohort": 1,
+            "peers": {
+              "whitefoot-hash-map": {
+                "median_ns": 2023.9814453125,
+                "min_ns": 2014.3991088867188,
+                "max_ns": 2046.3003540039062,
+                "minimum_sample_ns": 33003915,
+                "instrument_pass": true
+              },
+              "rust-hash-map": {
+                "median_ns": 877.838134765625,
+                "min_ns": 848.7952880859375,
+                "max_ns": 1010.1725463867188,
+                "minimum_sample_ns": 13906662,
+                "instrument_pass": true
+              },
+              "cpp-unordered-map": {
+                "median_ns": 236.41693115234375,
+                "min_ns": 235.13250732421875,
+                "max_ns": 284.93792724609375,
+                "minimum_sample_ns": 3852411,
+                "instrument_pass": true
+              }
+            },
+            "selected_slower_peer": "rust-hash-map",
+            "directions": {
+              "rust-hash-map": "WF slower",
+              "cpp-unordered-map": "WF slower"
+            },
+            "raw_target_pass": false,
+            "instrument_pass": true
+          }
+        ],
+        "spread": {
+          "whitefoot-hash-map": 0.0032673971418255565,
+          "rust-hash-map": 0.012855322428838578,
+          "cpp-unordered-map": 0.02504027699564304
+        },
+        "stable": true,
+        "qualified_target_pass": false
+      },
+      {
+        "series": "aligned-hash",
+        "element_bytes": 256,
+        "initial_floor": 64,
+        "path": "noop",
+        "cohorts": [
+          {
+            "cohort": 0,
+            "peers": {
+              "whitefoot-hash-map": {
+                "median_ns": 1.2576971054077148,
+                "min_ns": 1.2549552917480469,
+                "max_ns": 1.2771291732788086,
+                "minimum_sample_ns": 1315916,
+                "instrument_pass": true
+              },
+              "rust-hash-map": {
+                "median_ns": 0.9586410522460938,
+                "min_ns": 0.9560985565185547,
+                "max_ns": 0.9635686874389648,
+                "minimum_sample_ns": 1002542,
+                "instrument_pass": true
+              },
+              "cpp-unordered-map": {
+                "median_ns": 2.810914993286133,
+                "min_ns": 2.804279327392578,
+                "max_ns": 2.8465185165405273,
+                "minimum_sample_ns": 2940500,
+                "instrument_pass": true
+              }
+            },
+            "selected_slower_peer": "cpp-unordered-map",
+            "directions": {
+              "rust-hash-map": "WF slower",
+              "cpp-unordered-map": "WF faster"
+            },
+            "raw_target_pass": true,
+            "instrument_pass": true
+          },
+          {
+            "cohort": 1,
+            "peers": {
+              "whitefoot-hash-map": {
+                "median_ns": 1.2576580047607422,
+                "min_ns": 1.2553529739379883,
+                "max_ns": 1.264134407043457,
+                "minimum_sample_ns": 1316333,
+                "instrument_pass": true
+              },
+              "rust-hash-map": {
+                "median_ns": 0.9586811065673828,
+                "min_ns": 0.9560585021972656,
+                "max_ns": 1.0034637451171875,
+                "minimum_sample_ns": 1002500,
+                "instrument_pass": true
+              },
+              "cpp-unordered-map": {
+                "median_ns": 2.812504768371582,
+                "min_ns": 2.8040809631347656,
+                "max_ns": 2.9317140579223633,
+                "minimum_sample_ns": 2940292,
+                "instrument_pass": true
+              }
+            },
+            "selected_slower_peer": "cpp-unordered-map",
+            "directions": {
+              "rust-hash-map": "WF slower",
+              "cpp-unordered-map": "WF faster"
+            },
+            "raw_target_pass": true,
+            "instrument_pass": true
+          }
+        ],
+        "spread": {
+          "whitefoot-hash-map": 3.1090047393433906e-05,
+          "rust-hash-map": 4.178239727492539e-05,
+          "cpp-unordered-map": 0.0005655720963624322
+        },
+        "stable": true,
+        "qualified_target_pass": true
+      },
+      {
+        "series": "aligned-hash",
+        "element_bytes": 256,
+        "initial_floor": 4096,
+        "path": "grow",
+        "cohorts": [
+          {
+            "cohort": 0,
+            "peers": {
+              "whitefoot-hash-map": {
+                "median_ns": 121665.69140625,
+                "min_ns": 121240.2265625,
+                "max_ns": 128742.359375,
+                "minimum_sample_ns": 31037498,
+                "instrument_pass": true
+              },
+              "rust-hash-map": {
+                "median_ns": 64215.0078125,
+                "min_ns": 62565.2734375,
+                "max_ns": 74828.453125,
+                "minimum_sample_ns": 16016710,
+                "instrument_pass": true
+              },
+              "cpp-unordered-map": {
+                "median_ns": 12677.734375,
+                "min_ns": 12525.0703125,
+                "max_ns": 15900.875,
+                "minimum_sample_ns": 3206418,
+                "instrument_pass": true
+              }
+            },
+            "selected_slower_peer": "rust-hash-map",
+            "directions": {
+              "rust-hash-map": "WF slower",
+              "cpp-unordered-map": "WF slower"
+            },
+            "raw_target_pass": false,
+            "instrument_pass": true
+          },
+          {
+            "cohort": 1,
+            "peers": {
+              "whitefoot-hash-map": {
+                "median_ns": 121511.6953125,
+                "min_ns": 120929.859375,
+                "max_ns": 127328.44921875,
+                "minimum_sample_ns": 30958044,
+                "instrument_pass": true
+              },
+              "rust-hash-map": {
+                "median_ns": 62519.8515625,
+                "min_ns": 61214.85546875,
+                "max_ns": 84065.921875,
+                "minimum_sample_ns": 15671003,
+                "instrument_pass": true
+              },
+              "cpp-unordered-map": {
+                "median_ns": 12746.5859375,
+                "min_ns": 12588.20703125,
+                "max_ns": 16268.70703125,
+                "minimum_sample_ns": 3222581,
+                "instrument_pass": true
+              }
+            },
+            "selected_slower_peer": "rust-hash-map",
+            "directions": {
+              "rust-hash-map": "WF slower",
+              "cpp-unordered-map": "WF slower"
+            },
+            "raw_target_pass": false,
+            "instrument_pass": true
+          }
+        ],
+        "spread": {
+          "whitefoot-hash-map": 0.0012673355709009737,
+          "rust-hash-map": 0.02711388795133951,
+          "cpp-unordered-map": 0.005430904329071007
+        },
+        "stable": true,
+        "qualified_target_pass": false
+      },
+      {
+        "series": "aligned-hash",
+        "element_bytes": 256,
+        "initial_floor": 4096,
+        "path": "noop",
+        "cohorts": [
+          {
+            "cohort": 0,
+            "peers": {
+              "whitefoot-hash-map": {
+                "median_ns": 1.319289207458496,
+                "min_ns": 1.3167858123779297,
+                "max_ns": 1.3354215621948242,
+                "minimum_sample_ns": 1380750,
+                "instrument_pass": true
+              },
+              "rust-hash-map": {
+                "median_ns": 1.0094242095947266,
+                "min_ns": 1.0068416595458984,
+                "max_ns": 1.046299934387207,
+                "minimum_sample_ns": 1055750,
+                "instrument_pass": true
+              },
+              "cpp-unordered-map": {
+                "median_ns": 2.868175506591797,
+                "min_ns": 2.865751266479492,
+                "max_ns": 2.876797676086426,
+                "minimum_sample_ns": 3004958,
+                "instrument_pass": true
+              }
+            },
+            "selected_slower_peer": "cpp-unordered-map",
+            "directions": {
+              "rust-hash-map": "WF slower",
+              "cpp-unordered-map": "WF faster"
+            },
+            "raw_target_pass": true,
+            "instrument_pass": true
+          },
+          {
+            "cohort": 1,
+            "peers": {
+              "whitefoot-hash-map": {
+                "median_ns": 1.319249153137207,
+                "min_ns": 1.316666603088379,
+                "max_ns": 1.369913101196289,
+                "minimum_sample_ns": 1380625,
+                "instrument_pass": true
+              },
+              "rust-hash-map": {
+                "median_ns": 1.0093841552734375,
+                "min_ns": 1.0069208145141602,
+                "max_ns": 1.0438766479492188,
+                "minimum_sample_ns": 1055833,
+                "instrument_pass": true
+              },
+              "cpp-unordered-map": {
+                "median_ns": 2.879619598388672,
+                "min_ns": 2.8656320571899414,
+                "max_ns": 3.030538558959961,
+                "minimum_sample_ns": 3004833,
+                "instrument_pass": true
+              }
+            },
+            "selected_slower_peer": "cpp-unordered-map",
+            "directions": {
+              "rust-hash-map": "WF slower",
+              "cpp-unordered-map": "WF faster"
+            },
+            "raw_target_pass": true,
+            "instrument_pass": true
+          }
+        ],
+        "spread": {
+          "whitefoot-hash-map": 3.0361453099203572e-05,
+          "rust-hash-map": 3.968193980430357e-05,
+          "cpp-unordered-map": 0.003990024937655878
+        },
+        "stable": true,
+        "qualified_target_pass": true
+      },
+      {
+        "series": "native-default",
+        "element_bytes": 8,
+        "initial_floor": 64,
+        "path": "grow",
+        "cohorts": [
+          {
+            "cohort": 0,
+            "peers": {
+              "whitefoot-hash-map": {
+                "median_ns": 240.58258056640625,
+                "min_ns": 237.897216796875,
+                "max_ns": 254.9312744140625,
+                "minimum_sample_ns": 3897708,
+                "instrument_pass": true
+              },
+              "rust-hash-map": {
+                "median_ns": 366.02734375,
+                "min_ns": 362.38641357421875,
+                "max_ns": 377.23809814453125,
+                "minimum_sample_ns": 5937339,
+                "instrument_pass": true
+              },
+              "cpp-unordered-map": {
+                "median_ns": 98.071044921875,
+                "min_ns": 96.79925537109375,
+                "max_ns": 99.7572021484375,
+                "minimum_sample_ns": 1585959,
+                "instrument_pass": true
+              }
+            },
+            "selected_slower_peer": "rust-hash-map",
+            "directions": {
+              "rust-hash-map": "WF faster",
+              "cpp-unordered-map": "WF slower"
+            },
+            "raw_target_pass": true,
+            "instrument_pass": true
+          },
+          {
+            "cohort": 1,
+            "peers": {
+              "whitefoot-hash-map": {
+                "median_ns": 237.59979248046875,
+                "min_ns": 237.0325927734375,
+                "max_ns": 243.5174560546875,
+                "minimum_sample_ns": 3883542,
+                "instrument_pass": true
+              },
+              "rust-hash-map": {
+                "median_ns": 364.19903564453125,
+                "min_ns": 362.18780517578125,
+                "max_ns": 374.85992431640625,
+                "minimum_sample_ns": 5934085,
+                "instrument_pass": true
+              },
+              "cpp-unordered-map": {
+                "median_ns": 94.3935546875,
+                "min_ns": 94.108642578125,
+                "max_ns": 95.50726318359375,
+                "minimum_sample_ns": 1541876,
+                "instrument_pass": true
+              }
+            },
+            "selected_slower_peer": "rust-hash-map",
+            "directions": {
+              "rust-hash-map": "WF faster",
+              "cpp-unordered-map": "WF slower"
+            },
+            "raw_target_pass": true,
+            "instrument_pass": true
+          }
+        ],
+        "spread": {
+          "whitefoot-hash-map": 0.012553832875012771,
+          "rust-hash-map": 0.005020079479983064,
+          "cpp-unordered-map": 0.038959124344344565
+        },
+        "stable": true,
+        "qualified_target_pass": true
+      },
+      {
+        "series": "native-default",
+        "element_bytes": 8,
+        "initial_floor": 64,
+        "path": "noop",
+        "cohorts": [
+          {
+            "cohort": 0,
+            "peers": {
+              "whitefoot-hash-map": {
+                "median_ns": 1.288930892944336,
+                "min_ns": 1.2551145553588867,
+                "max_ns": 1.3519525527954102,
+                "minimum_sample_ns": 1316083,
+                "instrument_pass": true
+              },
+              "rust-hash-map": {
+                "median_ns": 0.94775390625,
+                "min_ns": 0.9451303482055664,
+                "max_ns": 1.025557518005371,
+                "minimum_sample_ns": 991041,
+                "instrument_pass": false
+              },
+              "cpp-unordered-map": {
+                "median_ns": 2.2695064544677734,
+                "min_ns": 2.184589385986328,
+                "max_ns": 2.344925880432129,
+                "minimum_sample_ns": 2290708,
+                "instrument_pass": true
+              }
+            },
+            "selected_slower_peer": "cpp-unordered-map",
+            "directions": {
+              "rust-hash-map": "WF slower",
+              "cpp-unordered-map": "WF faster"
+            },
+            "raw_target_pass": true,
+            "instrument_pass": false
+          },
+          {
+            "cohort": 1,
+            "peers": {
+              "whitefoot-hash-map": {
+                "median_ns": 1.257737159729004,
+                "min_ns": 1.2551937103271484,
+                "max_ns": 1.2950897216796875,
+                "minimum_sample_ns": 1316166,
+                "instrument_pass": true
+              },
+              "rust-hash-map": {
+                "median_ns": 0.94775390625,
+                "min_ns": 0.9451704025268555,
+                "max_ns": 0.9548664093017578,
+                "minimum_sample_ns": 991083,
+                "instrument_pass": false
+              },
+              "cpp-unordered-map": {
+                "median_ns": 2.1871728897094727,
+                "min_ns": 2.1843910217285156,
+                "max_ns": 2.2509889602661133,
+                "minimum_sample_ns": 2290500,
+                "instrument_pass": true
+              }
+            },
+            "selected_slower_peer": "cpp-unordered-map",
+            "directions": {
+              "rust-hash-map": "WF slower",
+              "cpp-unordered-map": "WF faster"
+            },
+            "raw_target_pass": true,
+            "instrument_pass": false
+          }
+        ],
+        "spread": {
+          "whitefoot-hash-map": 0.02480147221065887,
+          "rust-hash-map": 0.0,
+          "cpp-unordered-map": 0.03764383014515027
+        },
+        "stable": true,
+        "qualified_target_pass": false
+      },
+      {
+        "series": "native-default",
+        "element_bytes": 8,
+        "initial_floor": 4096,
+        "path": "grow",
+        "cohorts": [
+          {
+            "cohort": 0,
+            "peers": {
+              "whitefoot-hash-map": {
+                "median_ns": 19773.1171875,
+                "min_ns": 17582.67578125,
+                "max_ns": 20781.265625,
+                "minimum_sample_ns": 4501165,
+                "instrument_pass": true
+              },
+              "rust-hash-map": {
+                "median_ns": 20193.19140625,
+                "min_ns": 20130.37890625,
+                "max_ns": 20958.33203125,
+                "minimum_sample_ns": 5153377,
+                "instrument_pass": true
+              },
+              "cpp-unordered-map": {
+                "median_ns": 3307.125,
+                "min_ns": 3284.49609375,
+                "max_ns": 3355.80078125,
+                "minimum_sample_ns": 840831,
+                "instrument_pass": false
+              }
+            },
+            "selected_slower_peer": "rust-hash-map",
+            "directions": {
+              "rust-hash-map": "overlap",
+              "cpp-unordered-map": "WF slower"
+            },
+            "raw_target_pass": false,
+            "instrument_pass": false
+          },
+          {
+            "cohort": 1,
+            "peers": {
+              "whitefoot-hash-map": {
+                "median_ns": 19497.23046875,
+                "min_ns": 17981.11328125,
+                "max_ns": 21787.93359375,
+                "minimum_sample_ns": 4603165,
+                "instrument_pass": true
+              },
+              "rust-hash-map": {
+                "median_ns": 20154.94921875,
+                "min_ns": 20108.07421875,
+                "max_ns": 21032.0703125,
+                "minimum_sample_ns": 5147667,
+                "instrument_pass": true
+              },
+              "cpp-unordered-map": {
+                "median_ns": 3317.87890625,
+                "min_ns": 3289.0625,
+                "max_ns": 3540.6796875,
+                "minimum_sample_ns": 842000,
+                "instrument_pass": false
+              }
+            },
+            "selected_slower_peer": "rust-hash-map",
+            "directions": {
+              "rust-hash-map": "overlap",
+              "cpp-unordered-map": "WF slower"
+            },
+            "raw_target_pass": false,
+            "instrument_pass": false
+          }
+        ],
+        "spread": {
+          "whitefoot-hash-map": 0.014150046551082651,
+          "rust-hash-map": 0.001897409270792183,
+          "cpp-unordered-map": 0.0032517386702952678
+        },
+        "stable": true,
+        "qualified_target_pass": false
+      },
+      {
+        "series": "native-default",
+        "element_bytes": 8,
+        "initial_floor": 4096,
+        "path": "noop",
+        "cohorts": [
+          {
+            "cohort": 0,
+            "peers": {
+              "whitefoot-hash-map": {
+                "median_ns": 1.319249153137207,
+                "min_ns": 1.3166275024414062,
+                "max_ns": 1.3835039138793945,
+                "minimum_sample_ns": 1380584,
+                "instrument_pass": true
+              },
+              "rust-hash-map": {
+                "median_ns": 1.0095033645629883,
+                "min_ns": 1.0069608688354492,
+                "max_ns": 1.0187225341796875,
+                "minimum_sample_ns": 1055875,
+                "instrument_pass": true
+              },
+              "cpp-unordered-map": {
+                "median_ns": 2.2489233016967773,
+                "min_ns": 2.2460622787475586,
+                "max_ns": 2.282938003540039,
+                "minimum_sample_ns": 2355167,
+                "instrument_pass": true
+              }
+            },
+            "selected_slower_peer": "cpp-unordered-map",
+            "directions": {
+              "rust-hash-map": "WF slower",
+              "cpp-unordered-map": "WF faster"
+            },
+            "raw_target_pass": true,
+            "instrument_pass": true
+          },
+          {
+            "cohort": 1,
+            "peers": {
+              "whitefoot-hash-map": {
+                "median_ns": 1.3192501068115234,
+                "min_ns": 1.316666603088379,
+                "max_ns": 1.3502836227416992,
+                "minimum_sample_ns": 1380625,
+                "instrument_pass": true
+              },
+              "rust-hash-map": {
+                "median_ns": 1.007080078125,
+                "min_ns": 1.0068416595458984,
+                "max_ns": 1.0111722946166992,
+                "minimum_sample_ns": 1055750,
+                "instrument_pass": true
+              },
+              "cpp-unordered-map": {
+                "median_ns": 2.2530946731567383,
+                "min_ns": 2.247452735900879,
+                "max_ns": 2.331575393676758,
+                "minimum_sample_ns": 2356625,
+                "instrument_pass": true
+              }
+            },
+            "selected_slower_peer": "cpp-unordered-map",
+            "directions": {
+              "rust-hash-map": "WF slower",
+              "cpp-unordered-map": "WF faster"
+            },
+            "raw_target_pass": true,
+            "instrument_pass": true
+          }
+        ],
+        "spread": {
+          "whitefoot-hash-map": 7.228917404678015e-07,
+          "rust-hash-map": 0.002406249999999943,
+          "cpp-unordered-map": 0.0018548304679015803
+        },
+        "stable": true,
+        "qualified_target_pass": true
+      },
+      {
+        "series": "native-default",
+        "element_bytes": 256,
+        "initial_floor": 64,
+        "path": "grow",
+        "cohorts": [
+          {
+            "cohort": 0,
+            "peers": {
+              "whitefoot-hash-map": {
+                "median_ns": 2022.4737548828125,
+                "min_ns": 2012.9722900390625,
+                "max_ns": 2151.209716796875,
+                "minimum_sample_ns": 32980538,
+                "instrument_pass": true
+              },
+              "rust-hash-map": {
+                "median_ns": 947.0289306640625,
+                "min_ns": 932.1521606445312,
+                "max_ns": 1024.566650390625,
+                "minimum_sample_ns": 15272381,
+                "instrument_pass": true
+              },
+              "cpp-unordered-map": {
+                "median_ns": 200.24591064453125,
+                "min_ns": 194.17559814453125,
+                "max_ns": 209.25885009765625,
+                "minimum_sample_ns": 3181373,
+                "instrument_pass": true
+              }
+            },
+            "selected_slower_peer": "rust-hash-map",
+            "directions": {
+              "rust-hash-map": "WF slower",
+              "cpp-unordered-map": "WF slower"
+            },
+            "raw_target_pass": false,
+            "instrument_pass": true
+          },
+          {
+            "cohort": 1,
+            "peers": {
+              "whitefoot-hash-map": {
+                "median_ns": 2029.6171264648438,
+                "min_ns": 2023.22412109375,
+                "max_ns": 2087.359130859375,
+                "minimum_sample_ns": 33148504,
+                "instrument_pass": true
+              },
+              "rust-hash-map": {
+                "median_ns": 939.847412109375,
+                "min_ns": 929.021240234375,
+                "max_ns": 1129.4122314453125,
+                "minimum_sample_ns": 15221084,
+                "instrument_pass": true
+              },
+              "cpp-unordered-map": {
+                "median_ns": 206.6038818359375,
+                "min_ns": 204.51611328125,
+                "max_ns": 214.03253173828125,
+                "minimum_sample_ns": 3350792,
+                "instrument_pass": true
+              }
+            },
+            "selected_slower_peer": "rust-hash-map",
+            "directions": {
+              "rust-hash-map": "WF slower",
+              "cpp-unordered-map": "WF slower"
+            },
+            "raw_target_pass": false,
+            "instrument_pass": true
+          }
+        ],
+        "spread": {
+          "whitefoot-hash-map": 0.003531997171674073,
+          "rust-hash-map": 0.007641153725762129,
+          "cpp-unordered-map": 0.03175081663811197
+        },
+        "stable": true,
+        "qualified_target_pass": false
+      },
+      {
+        "series": "native-default",
+        "element_bytes": 256,
+        "initial_floor": 64,
+        "path": "noop",
+        "cohorts": [
+          {
+            "cohort": 0,
+            "peers": {
+              "whitefoot-hash-map": {
+                "median_ns": 1.2602806091308594,
+                "min_ns": 1.2552738189697266,
+                "max_ns": 1.317103385925293,
+                "minimum_sample_ns": 1316250,
+                "instrument_pass": true
+              },
+              "rust-hash-map": {
+                "median_ns": 0.9535951614379883,
+                "min_ns": 0.9477930068969727,
+                "max_ns": 0.9916229248046875,
+                "minimum_sample_ns": 993833,
+                "instrument_pass": false
+              },
+              "cpp-unordered-map": {
+                "median_ns": 2.8126630783081055,
+                "min_ns": 2.8040409088134766,
+                "max_ns": 2.833446502685547,
+                "minimum_sample_ns": 2940250,
+                "instrument_pass": true
+              }
+            },
+            "selected_slower_peer": "cpp-unordered-map",
+            "directions": {
+              "rust-hash-map": "WF slower",
+              "cpp-unordered-map": "WF faster"
+            },
+            "raw_target_pass": true,
+            "instrument_pass": false
+          },
+          {
+            "cohort": 1,
+            "peers": {
+              "whitefoot-hash-map": {
+                "median_ns": 1.2551145553588867,
+                "min_ns": 1.2548761367797852,
+                "max_ns": 1.2642545700073242,
+                "minimum_sample_ns": 1315833,
+                "instrument_pass": true
+              },
+              "rust-hash-map": {
+                "median_ns": 0.9506540298461914,
+                "min_ns": 0.9451704025268555,
+                "max_ns": 0.9696874618530273,
+                "minimum_sample_ns": 991083,
+                "instrument_pass": false
+              },
+              "cpp-unordered-map": {
+                "median_ns": 2.806584358215332,
+                "min_ns": 2.804080009460449,
+                "max_ns": 2.861499786376953,
+                "minimum_sample_ns": 2940291,
+                "instrument_pass": true
+              }
+            },
+            "selected_slower_peer": "cpp-unordered-map",
+            "directions": {
+              "rust-hash-map": "WF slower",
+              "cpp-unordered-map": "WF faster"
+            },
+            "raw_target_pass": true,
+            "instrument_pass": false
+          }
+        ],
+        "spread": {
+          "whitefoot-hash-map": 0.004116001802317859,
+          "rust-hash-map": 0.0030937980584511138,
+          "cpp-unordered-map": 0.0021658782765534568
+        },
+        "stable": true,
+        "qualified_target_pass": false
+      },
+      {
+        "series": "native-default",
+        "element_bytes": 256,
+        "initial_floor": 4096,
+        "path": "grow",
+        "cohorts": [
+          {
+            "cohort": 0,
+            "peers": {
+              "whitefoot-hash-map": {
+                "median_ns": 121688.796875,
+                "min_ns": 121038.2421875,
+                "max_ns": 131361.328125,
+                "minimum_sample_ns": 30985790,
+                "instrument_pass": true
+              },
+              "rust-hash-map": {
+                "median_ns": 83107.2734375,
+                "min_ns": 82146.4921875,
+                "max_ns": 100529.953125,
+                "minimum_sample_ns": 21029502,
+                "instrument_pass": true
+              },
+              "cpp-unordered-map": {
+                "median_ns": 15307.9453125,
+                "min_ns": 15186.1953125,
+                "max_ns": 15368.015625,
+                "minimum_sample_ns": 3887666,
+                "instrument_pass": true
+              }
+            },
+            "selected_slower_peer": "rust-hash-map",
+            "directions": {
+              "rust-hash-map": "WF slower",
+              "cpp-unordered-map": "WF slower"
+            },
+            "raw_target_pass": false,
+            "instrument_pass": true
+          },
+          {
+            "cohort": 1,
+            "peers": {
+              "whitefoot-hash-map": {
+                "median_ns": 121689.953125,
+                "min_ns": 120937.828125,
+                "max_ns": 124339.1796875,
+                "minimum_sample_ns": 30960084,
+                "instrument_pass": true
+              },
+              "rust-hash-map": {
+                "median_ns": 83939.12890625,
+                "min_ns": 81874.01171875,
+                "max_ns": 97637.86328125,
+                "minimum_sample_ns": 20959747,
+                "instrument_pass": true
+              },
+              "cpp-unordered-map": {
+                "median_ns": 12439.296875,
+                "min_ns": 12134.28515625,
+                "max_ns": 13934.08984375,
+                "minimum_sample_ns": 3106377,
+                "instrument_pass": true
+              }
+            },
+            "selected_slower_peer": "rust-hash-map",
+            "directions": {
+              "rust-hash-map": "WF slower",
+              "cpp-unordered-map": "WF slower"
+            },
+            "raw_target_pass": false,
+            "instrument_pass": true
+          }
+        ],
+        "spread": {
+          "whitefoot-hash-map": 9.501696373703794e-06,
+          "rust-hash-map": 0.010009418361866862,
+          "cpp-unordered-map": 0.2306117834734931
+        },
+        "stable": false,
+        "qualified_target_pass": false
+      },
+      {
+        "series": "native-default",
+        "element_bytes": 256,
+        "initial_floor": 4096,
+        "path": "noop",
+        "cohorts": [
+          {
+            "cohort": 0,
+            "peers": {
+              "whitefoot-hash-map": {
+                "median_ns": 1.319249153137207,
+                "min_ns": 1.3166265487670898,
+                "max_ns": 1.3266010284423828,
+                "minimum_sample_ns": 1380583,
+                "instrument_pass": true
+              },
+              "rust-hash-map": {
+                "median_ns": 1.0097427368164062,
+                "min_ns": 1.0068416595458984,
+                "max_ns": 1.0151071548461914,
+                "minimum_sample_ns": 1055750,
+                "instrument_pass": true
+              },
+              "cpp-unordered-map": {
+                "median_ns": 2.86881160736084,
+                "min_ns": 2.8656721115112305,
+                "max_ns": 2.8774337768554688,
+                "minimum_sample_ns": 3004875,
+                "instrument_pass": true
+              }
+            },
+            "selected_slower_peer": "cpp-unordered-map",
+            "directions": {
+              "rust-hash-map": "WF slower",
+              "cpp-unordered-map": "WF faster"
+            },
+            "raw_target_pass": true,
+            "instrument_pass": true
+          },
+          {
+            "cohort": 1,
+            "peers": {
+              "whitefoot-hash-map": {
+                "median_ns": 1.3194875717163086,
+                "min_ns": 1.3168258666992188,
+                "max_ns": 1.3831062316894531,
+                "minimum_sample_ns": 1380792,
+                "instrument_pass": true
+              },
+              "rust-hash-map": {
+                "median_ns": 1.0094642639160156,
+                "min_ns": 1.0067625045776367,
+                "max_ns": 1.022139549255371,
+                "minimum_sample_ns": 1055667,
+                "instrument_pass": true
+              },
+              "cpp-unordered-map": {
+                "median_ns": 2.873499870300293,
+                "min_ns": 2.8682146072387695,
+                "max_ns": 2.931992530822754,
+                "minimum_sample_ns": 3007541,
+                "instrument_pass": true
+              }
+            },
+            "selected_slower_peer": "cpp-unordered-map",
+            "directions": {
+              "rust-hash-map": "WF slower",
+              "cpp-unordered-map": "WF faster"
+            },
+            "raw_target_pass": true,
+            "instrument_pass": true
+          }
+        ],
+        "spread": {
+          "whitefoot-hash-map": 0.0001807229351140638,
+          "rust-hash-map": 0.0002758620689655711,
+          "cpp-unordered-map": 0.0016342177811272673
+        },
+        "stable": true,
+        "qualified_target_pass": true
+      }
+    ],
+    "qualified_target_cells": 7,
+    "instrument_failed_cells": 3,
+    "spread_failed_cells": 1
+  },
+  "geometry": [
+    {
+      "element_bytes": "8",
+      "variant": "whitefoot-hash-map",
+      "initial_floor": "64",
+      "initial_count": "32",
+      "old_capacity": "85",
+      "new_capacity": "170",
+      "prepare_bytes": "2040",
+      "reserve_bytes": "4080",
+      "reserve_live": "4080",
+      "reserve_peak": "6120"
+    },
+    {
+      "element_bytes": "8",
+      "variant": "whitefoot-hash-map",
+      "initial_floor": "4096",
+      "initial_count": "2048",
+      "old_capacity": "5461",
+      "new_capacity": "10922",
+      "prepare_bytes": "131064",
+      "reserve_bytes": "262128",
+      "reserve_live": "262128",
+      "reserve_peak": "393192"
+    },
+    {
+      "element_bytes": "8",
+      "variant": "rust-hash-map",
+      "initial_floor": "64",
+      "initial_count": "32",
+      "old_capacity": "112",
+      "new_capacity": "224",
+      "prepare_bytes": "2184",
+      "reserve_bytes": "4360",
+      "reserve_live": "4360",
+      "reserve_peak": "6544"
+    },
+    {
+      "element_bytes": "8",
+      "variant": "rust-hash-map",
+      "initial_floor": "4096",
+      "initial_count": "2048",
+      "old_capacity": "7168",
+      "new_capacity": "14336",
+      "prepare_bytes": "139272",
+      "reserve_bytes": "278536",
+      "reserve_live": "278536",
+      "reserve_peak": "417808"
+    },
+    {
+      "element_bytes": "8",
+      "variant": "cpp-unordered-map",
+      "initial_floor": "64",
+      "initial_count": "32",
+      "old_capacity": "64",
+      "new_capacity": "128",
+      "prepare_bytes": "1536",
+      "reserve_bytes": "1024",
+      "reserve_live": "2048",
+      "reserve_peak": "2560"
+    },
+    {
+      "element_bytes": "8",
+      "variant": "cpp-unordered-map",
+      "initial_floor": "4096",
+      "initial_count": "2048",
+      "old_capacity": "4096",
+      "new_capacity": "8192",
+      "prepare_bytes": "98304",
+      "reserve_bytes": "65536",
+      "reserve_live": "131072",
+      "reserve_peak": "163840"
+    },
+    {
+      "element_bytes": "256",
+      "variant": "whitefoot-hash-map",
+      "initial_floor": "64",
+      "initial_count": "32",
+      "old_capacity": "85",
+      "new_capacity": "170",
+      "prepare_bytes": "23120",
+      "reserve_bytes": "46240",
+      "reserve_live": "46240",
+      "reserve_peak": "69360"
+    },
+    {
+      "element_bytes": "256",
+      "variant": "whitefoot-hash-map",
+      "initial_floor": "4096",
+      "initial_count": "2048",
+      "old_capacity": "5461",
+      "new_capacity": "10922",
+      "prepare_bytes": "1485392",
+      "reserve_bytes": "2970784",
+      "reserve_live": "2970784",
+      "reserve_peak": "4456176"
+    },
+    {
+      "element_bytes": "256",
+      "variant": "rust-hash-map",
+      "initial_floor": "64",
+      "initial_count": "32",
+      "old_capacity": "112",
+      "new_capacity": "224",
+      "prepare_bytes": "33928",
+      "reserve_bytes": "67848",
+      "reserve_live": "67848",
+      "reserve_peak": "101776"
+    },
+    {
+      "element_bytes": "256",
+      "variant": "rust-hash-map",
+      "initial_floor": "4096",
+      "initial_count": "2048",
+      "old_capacity": "7168",
+      "new_capacity": "14336",
+      "prepare_bytes": "2170888",
+      "reserve_bytes": "4341768",
+      "reserve_live": "4341768",
+      "reserve_peak": "6512656"
+    },
+    {
+      "element_bytes": "256",
+      "variant": "cpp-unordered-map",
+      "initial_floor": "64",
+      "initial_count": "32",
+      "old_capacity": "64",
+      "new_capacity": "128",
+      "prepare_bytes": "9472",
+      "reserve_bytes": "1024",
+      "reserve_live": "9984",
+      "reserve_peak": "10496"
+    },
+    {
+      "element_bytes": "256",
+      "variant": "cpp-unordered-map",
+      "initial_floor": "4096",
+      "initial_count": "2048",
+      "old_capacity": "4096",
+      "new_capacity": "8192",
+      "prepare_bytes": "606208",
+      "reserve_bytes": "65536",
+      "reserve_live": "638976",
+      "reserve_peak": "671744"
+    }
+  ],
+  "limits": [
+    "Both timed processes exited 1 after all samples due to minimum aggregate duration failures.",
+    "Single two-cohort baseline panel; no repeated qualification, optimized candidate or full HashMap completion.",
+    "Native-default hash policies differ and physical capacity policies differ; aligned hashing is separate.",
+    "Running-index source trial failed maintained admission and was not timed.",
+    "No malloc-NULL or generic ABI qualification is added by this baseline."
+  ]
+}

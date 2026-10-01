@@ -8,6 +8,7 @@
 #include <new>
 #include <unordered_map>
 #include <utility>
+#include <type_traits>
 
 #ifdef ACCOUNT_ONLY
 #include "../ecosystem-allocator.hpp"
@@ -231,6 +232,52 @@ Word lookup_finish(void* storage) {
     std::destroy_at(owner);
     return result;
 }
+
+// Reserve-only owners preserve the ordinary default/aligned library policies.
+template<class V, class H> struct ReserveOwner {
+    StdMap<V, H> map;
+    Word seed;
+    ReserveOwner(Word seed, H hash) : map(0, hash), seed(seed) {}
+};
+template<class V, class H>
+void reserve_prepare(void* storage, Word total, Word count, Word seed, H hash) {
+    static_assert(sizeof(ReserveOwner<V, H>) <= 128);
+    static_assert(alignof(ReserveOwner<V, H>) <= 16);
+    auto* owner = new (storage) ReserveOwner<V, H>(seed, hash);
+    owner->map.reserve(total);
+    for (Word i = 0; i < count; ++i)
+        owner->map.try_emplace(key_at(i), Payload<V>::make(seed + i));
+}
+template<class V, class H> Word reserve_step(void* storage, Word total) {
+    static_cast<ReserveOwner<V, H>*>(storage)->map.reserve(total);
+    return 1;
+}
+template<class V, class H> Word reserve_geometry(const void* storage) {
+    const auto& map = static_cast<const ReserveOwner<V, H>*>(storage)->map;
+    return (Word(map.bucket_count()) << 32) | Word(map.size());
+}
+template<class V, class H> double reserve_load_factor(const void* storage) {
+    return static_cast<const ReserveOwner<V, H>*>(storage)->map.max_load_factor();
+}
+template<class V, class H> Word reserve_insert(void* storage, Word index, Word corrupt) {
+    auto& owner = *static_cast<ReserveOwner<V, H>*>(storage);
+    auto value = Payload<V>::make(owner.seed + index);
+    if (corrupt) {
+        if constexpr (std::is_same_v<V, Word>) ++value;
+        else ++value.words[31];
+    }
+    return owner.map.try_emplace(key_at(index), std::move(value)).second;
+}
+template<class V, class H> Word reserve_finish(void* storage) {
+    auto* owner = static_cast<ReserveOwner<V, H>*>(storage);
+    Digest digest(owner->seed);
+    for (auto& [key, value] : owner->map)
+        digest.consume(Payload<V>::content(key, std::move(value)));
+    Word result = digest.finish();
+    std::destroy_at(owner);
+    return result;
+}
+
 } // namespace
 
 #define DEFAULT_ENTRY(NAME, MAP, VALUE, HASH)                             \
@@ -293,3 +340,16 @@ extern "C" const char* eco_absl_map_library_identity() {
     return "abseil-" ECO_STRING(ABSL_LTS_RELEASE_VERSION) "." ECO_STRING(ABSL_LTS_RELEASE_PATCH_LEVEL);
 }
 #endif
+
+#define RESERVE_EXPORTS(WIDTH, VALUE, SERIES, HASH, HASH_VALUE) \
+extern "C" void eco_cpp_map_reserve_##WIDTH##_##SERIES##_prepare(void* p, Word n, Word c, Word s) { reserve_prepare<VALUE,HASH>(p,n,c,s,HASH_VALUE); } \
+extern "C" Word eco_cpp_map_reserve_##WIDTH##_##SERIES##_step(void* p, Word n) { return reserve_step<VALUE,HASH>(p,n); } \
+extern "C" Word eco_cpp_map_reserve_##WIDTH##_##SERIES##_geometry(const void* p) { return reserve_geometry<VALUE,HASH>(p); } \
+extern "C" double eco_cpp_map_reserve_##WIDTH##_##SERIES##_load_factor(const void* p) { return reserve_load_factor<VALUE,HASH>(p); } \
+extern "C" Word eco_cpp_map_reserve_##WIDTH##_##SERIES##_insert(void* p, Word n, Word bad) { return reserve_insert<VALUE,HASH>(p,n,bad); } \
+extern "C" Word eco_cpp_map_reserve_##WIDTH##_##SERIES##_finish(void* p) { return reserve_finish<VALUE,HASH>(p); }
+RESERVE_EXPORTS(word, Word, default, std::hash<Word>, std::hash<Word>{})
+RESERVE_EXPORTS(record, Record, default, std::hash<Word>, std::hash<Word>{})
+RESERVE_EXPORTS(word, Word, aligned, AlignedHash, (AlignedHash{s ^ UINT64_C(0x9e3779b97f4a7c15), false}))
+RESERVE_EXPORTS(record, Record, aligned, AlignedHash, (AlignedHash{s ^ UINT64_C(0x9e3779b97f4a7c15), false}))
+#undef RESERVE_EXPORTS
