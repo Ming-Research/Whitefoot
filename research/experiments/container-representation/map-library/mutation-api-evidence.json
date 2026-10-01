@@ -3334,11 +3334,94 @@
       }
     ],
     "archive": {
-      "bytes": 1466763,
+      "bytes": 1552780,
       "path": "research/experiments/container-representation/map-library/entry-forward-evidence.tar.gz",
-      "sha256": "a1f4eec87e254c06282bc58189d79368f603331d8612ab980d65211fd9cf11ad"
+      "sha256": "ffe7b0cc20f19dc2c80500a175c45fd381742c6421b62740db579363bd9e6dc2"
     },
     "archive_purpose": "Raw auditable API and whole-Map/long-hit replay for this RESULTS section; retire or replace when superseded. No binaries.",
+    "atomic_slot_admission_stop": {
+      "criterion": {
+        "archive_member": "atomic-slot-admission-stop/criterion.txt",
+        "bytes": 3940,
+        "sha256": "a34b8e4a016af980787bdc8e3339e966b9ba89ef8ad35d0f256ebcc061e2d58b"
+      },
+      "criterion_note": "The prepared eligible-target premise was disproved by admission; retain the proposal separately from current normative behavior.",
+      "diagnostic": {
+        "archive_member": "atomic-slot-admission-stop/logs/candidate-emit.stderr",
+        "bytes": 392,
+        "sha256": "2c902a99e3beebe9a9c9fb7c6c0055a8b21d8317f0d8c5aa509fd5920f693901"
+      },
+      "input_pins": {
+        "archive_member": "atomic-slot-admission-stop/pins.json",
+        "bytes": 56387,
+        "sha256": "257db8ebd6798c6f047fb661c0f57a4f235a018c26ab8b73dae58465cc426fb2"
+      },
+      "minimal_rejected_snippet": {
+        "archive_member": "atomic-slot-admission-stop/rejected-snippet.wf",
+        "bytes": 198,
+        "sha256": "78725e1ea2dffbedffeb9bd1bc951778f1985516b20db6451a789e1ecc623d4c"
+      },
+      "normalization": {
+        "archive_member": "atomic-slot-admission-stop/text-normalization.json",
+        "bytes": 660,
+        "sha256": "a66a13ea54775190bd0246b7c5196e70093830b6bd5249b6dce20ce1052b6e35"
+      },
+      "outcome": {
+        "archive_member": "atomic-slot-admission-stop/outcome.json",
+        "bytes": 1548,
+        "sha256": "520c304f943465da5afad6ac3dc896a425e4ba35a4d77860fd74af582e6baca0"
+      },
+      "patch": {
+        "archive_member": "atomic-slot-admission-stop/source.patch",
+        "bytes": 2814,
+        "sha256": "e01333f3cd2ddcd3198cc73c1ea7d0e17e9f75be4a06360df220423fa06a5627"
+      },
+      "recipe": {
+        "archive_member": "atomic-slot-admission-stop/run.py",
+        "bytes": 9189,
+        "sha256": "02ea2d4e89e0b83a221c25cd03c313133feba2eb416c7429c5edd0331456d3a9"
+      },
+      "restoration": {
+        "archive_member": "atomic-slot-admission-stop/restoration.json",
+        "bytes": 207,
+        "sha256": "aef29f6dd6c2eecff8f8069e1c14796cd9ebca78ee162b867f850d5a0b191ba7"
+      },
+      "restoration_byte_verified": true,
+      "restored_library_sha256": "bd482f345505ab2c1a30b323f5d0667839febbb6c57c06f82e3675b628e20a89",
+      "rule_ground": "OP-12 admits atomic updates for affine/copy places; FN-2 grants no capability for an absent bound, and the symbolic generic is linear under PROV-6; WIN-3 rejects assignment over that linear owned target. A fixed result sink does not change its class.",
+      "rules": [
+        "OP-12",
+        "FN-2",
+        "PROV-6",
+        "WIN-3"
+      ],
+      "scope": "Generic hash_map_exchange_slot consumes the old slot through an attempted OP-12 update and writes one complete result into initially empty fixed Slots<HashMapPut<K,V>,1>; the target HashMapSlot<K,V> has unbounded K/V.",
+      "source_compiler_pins": {
+        "archive_member": "atomic-slot-admission-stop/compiler-identity.json",
+        "bytes": 349,
+        "sha256": "2bd5481d031180fa0cc995f93c8546ed8912f4f4bef47d772af8efe66755f3d9"
+      },
+      "spec_path": "spec/kernel-spec.md",
+      "stages": {
+        "candidate_capacity3_emit": "NOT REACHED",
+        "candidate_cli_build": 0,
+        "candidate_cli_build_seconds": 9.414107915945351,
+        "candidate_full_witness_emit": 1,
+        "checks": "NOT RUN",
+        "control_capacity3_emit": 0,
+        "control_full_witness_emit": 0,
+        "guard_exit": 1,
+        "guard_seconds": 11.71,
+        "native": "NOT RUN",
+        "statuses": {
+          "archive_member": "atomic-slot-admission-stop/build-statuses.json",
+          "bytes": 1509,
+          "sha256": "58cedb0aff392ab489fadbe3dd07e98ed9c60128b95dda28e2d7f624118442dd"
+        },
+        "timing": "NOT RUN"
+      },
+      "status": "Source-admission stop under existing specified capability boundary; no compiler defect or native-performance failure. No adoption, drop-bound narrowing, spec/compiler change or gain claim."
+    },
     "construction": [
       {
         "command": [
@@ -5450,6 +5533,161 @@
         "scope": "Recorded native commands are normalized displays using <LLVM_OBJDUMP>; see archive text-normalization.json for original measured versus normalized hashes. No measurement or expectation changed."
       },
       "timing": "NOT RUN for the earlier failed transfer-elimination hypothesis; see separate inline_partial_cost_diagnostic."
+    },
+    "replacement_continuation_diagnostic": {
+      "causal_control": "Both arms from same extracted optimized input, then identical ordinary clang-O3 native pass. Matched control594instructions/frame448/172stack accesses; earlier one-pass570/448/168 iscontext only. No pass-disabling invocation ran.",
+      "construction": {
+        "all_direct_exits": 0,
+        "native_guard_seconds": 2.18,
+        "native_stages": 6,
+        "optimized_extract_exit": 0,
+        "statuses_member": "replacement-continuation/build-statuses.json"
+      },
+      "controls_and_replay_pins": "replacement-continuation/{build-inputs,build-outputs,replay-verification}.json; exactmember hashes inMANIFEST. Patch reconstructs candidate bytes exactly.",
+      "correctness": {
+        "account_construction_seconds": 1.701897042337805,
+        "account_construction_stages": 4,
+        "controls_guard_seconds": 3.35,
+        "exact_negative_controls": 20,
+        "execution_seconds": 1.45831712288782,
+        "expected_outcomes": 26,
+        "full_owner_cases_per_image": 96,
+        "ledger_equal_to_each_other_and_prior": true,
+        "ledger_rows": 32,
+        "summary": {
+          "archive_member": "replacement-continuation/account-check-summary.json",
+          "bytes": 950,
+          "sha256": "f9c098199a5d458269eb63e77cd27cc67cc3618118cc82aa8e7deed320af96b4"
+        }
+      },
+      "criteria": [
+        {
+          "archive_member": "replacement-continuation/criterion.txt",
+          "bytes": 5396,
+          "sha256": "259ac9b7f7cf91a6f8888564058c4b834af331e4ff7e23991543bb0a7c724a21"
+        },
+        {
+          "archive_member": "replacement-continuation/timing-criterion.txt",
+          "bytes": 2314,
+          "sha256": "d8321319fc0075cff4fdebef49b9ece9d9834169c0aaaf3136bedc4daf6db246"
+        }
+      ],
+      "implementation_limit": "Transformation applied afterfirstO3, not ordinary pre-O3 source/compiler emission. It shows CFG placement cost under this frozen pipeline, not a proven general production transform or a remedy for all mutation paths.",
+      "native": {
+        "calls": [
+          0,
+          0
+        ],
+        "distinct_old_words": [
+          22,
+          10
+        ],
+        "frame_bytes": [
+          448,
+          448
+        ],
+        "full_horner_digest": "All32oldwords/key/reasonretained; candidate old0..9spillonce andold10..31stayGPRs, no postcommitoldreshuffle.",
+        "full_trace": {
+          "archive_member": "replacement-continuation/native-summary.json",
+          "bytes": 8153,
+          "sha256": "dfaf8c79e57d8896d971c4556fbbf830f91decb59494b04a12e36d0d33ad7615"
+        },
+        "initial_stage_note": "native-summary was captured before laterauthorizedcontrols/panel; its pendingrunflags describe that earlier stage.",
+        "instructions_control_candidate": [
+          594,
+          579
+        ],
+        "offered_store_traffic_bytes": [
+          128,
+          120
+        ],
+        "old_store_events": [
+          27,
+          10
+        ],
+        "replacement_old_store_traffic_bytes": [
+          216,
+          80
+        ],
+        "stack_access_instructions": [
+          172,
+          148
+        ]
+      },
+      "normalization": {
+        "archive_member": "replacement-continuation/text-normalization.json",
+        "bytes": 1562,
+        "sha256": "63c1f2313f511e0ac6016f63a943fa797f58aa940a17254889bdef5dc8bc7816"
+      },
+      "optimized_extract_and_source_pin": {
+        "archive_member": "replacement-continuation/extract-status.json",
+        "bytes": 433,
+        "sha256": "8d9d54243eb4ae05cffc62ee35da15b8aa33e4c51883a842a7536bb27d47ec2f"
+      },
+      "patch": {
+        "archive_member": "replacement-continuation/continuation.patch",
+        "bytes": 18144,
+        "sha256": "a0171e2fde0d97c7504a95f7017a3b0d9f25d240af1e238f57beab8305baebf9"
+      },
+      "recipe_namespace": "replacement-continuation/prepare.py,build.py,account-check.py,measure.py; recipes and commands pinned in MANIFEST.json.",
+      "scope": "Duplicate existing complete Returned/digest continuation onto successful replacement predecessor, preserving oldkey/reason/all32words/131recurrence/ordering;73PHI substitutions,69renameddefs,7successor live-outs. No source/compiler/ABI/pipeline change.",
+      "status": "Post-O3 diagnostic rejected by full matched panel: wide replacement gains coexist with separated wide churn losses, plus scalar ratio-spread failure. No adoption or rerun.",
+      "summary": {
+        "failed_spread_cell": "word8/4096/churn",
+        "flat_cohort_cells": 16,
+        "full_reduction": "replacement-continuation/timing-summary.json; exactbytes/sha256 inMANIFEST.",
+        "gain_cells": [
+          [
+            "wide256",
+            64,
+            "replace"
+          ],
+          [
+            "wide256",
+            4096,
+            "replace"
+          ]
+        ],
+        "loss_cells": [
+          [
+            "wide256",
+            64,
+            "churn"
+          ],
+          [
+            "wide256",
+            4096,
+            "churn"
+          ]
+        ],
+        "maximum_native_peer_drift_percent": 6.362248709038365,
+        "maximum_paired_ratio_spread_percent": 13.954081703137188,
+        "maximum_unchanged_peer_drift_percent": 8.064225148836378,
+        "minimum_interval_ns": 2327000,
+        "overlaps": 8,
+        "separated_gains": 4,
+        "separated_losses": 4
+      },
+      "timing": {
+        "all_direct_exits": 0,
+        "guard_seconds": 54.31,
+        "images_before_after_equal": true,
+        "metadata": {
+          "archive_member": "replacement-continuation/timing/metadata.json",
+          "bytes": 1866,
+          "sha256": "ea3d171d7ac5a6b38797dc7dfe504c1656482eae7de487e6cd4f2e7c0425becd"
+        },
+        "processes": 4,
+        "raw_namespace": "replacement-continuation/timing/;4CSVbytepins in MANIFEST.json.",
+        "rows": 1152,
+        "samples": 9,
+        "work": 1048576
+      },
+      "transformation": {
+        "archive_member": "replacement-continuation/transform.json",
+        "bytes": 22930,
+        "sha256": "8a8260610b83cf816b3a93045ec5bca17ad9b8e6d65f144cd25534928cba5007"
+      }
     },
     "result_only_disjoint_diagnostic": {
       "build": {

@@ -4174,6 +4174,79 @@ full payload. The native criterion fails, so correctness and timing are not run.
 policy follows from these trials. The minimal recipe, criteria, patch, callgraph,
 pins, direct statuses and reached excerpts remain under `input-disjoint-inline`.
 
+#### Replacement continuation placement: gains and churn losses
+
+A post-O3 LLVM floor duplicates the existing complete Returned-value continuation
+onto the successful-replacement predecessor, substituting 73 PHI inputs,
+renaming 69 definitions and adding seven successor live-outs. Old key, reason,
+all 32 payload words, the 131-based Horner digest, mutation ordering and other
+predecessors remain. Both arms start at the same optimized stage and receive
+identical ordinary extra-O3 native compilation. The causal control is therefore
+594 instructions / 448-byte frame / 172 stack accesses, not the earlier one-pass
+570 / 448 / 168 image. Candidate becomes 579 / 448 / 148 with no calls. Replacement
+old-word stack-store traffic falls from 27 events across 22 words (216 bytes) to
+ten events across ten words (80 bytes), without the post-commit reshuffle;
+offered traffic changes from 128 to 120 bytes. All six native stages pass in
+2.18 seconds guarded. This is an optimized-IR cost floor, not ordinary pre-O3
+compiler emission; neither the compiler pipeline nor source workload changes.
+The proposed pass-disabling alternative was not run.
+
+The account construction and unchanged full controls pass in 3.35 seconds guarded
+(1.702 seconds account construction, 1.458 execution): four timed/accounted
+96-owner positives, 20 exact negatives and two byte-identical 32-row ledgers,
+also equal to the prior ledger. The single fixed panel exits zero in 54.31 seconds,
+retaining all 1152 rows with stable image hashes. Wide replacement improves at
+both capacities in both cohorts, while wide churn loses at both capacities in
+both cohorts. Median ns per complete operation, cohort zero / one, with native
+peers from candidate images, are:
+
+| Width | Buckets | Operation | Matching extra-O3 control | Continuation floor | Rust | C++ |
+|---|---:|---|---:|---:|---:|---:|
+| wide256 | 64 | replace | 23.932/23.810 | 21.630/21.641 | 22.141/22.112 | 18.862/18.853 |
+| wide256 | 4096 | replace | 26.412/26.342 | 25.180/25.163 | 27.042/27.058 | 22.904/23.445 |
+| wide256 | 64 | churn | 33.968/33.073 | 41.457/41.572 | 27.040/27.123 | 49.386/49.384 |
+| wide256 | 4096 | churn | 42.170/43.513 | 49.383/48.777 | 31.305/31.274 | 59.456/59.487 |
+
+The four wide gains and four wide losses are separated; all eight scalar cohort
+cells overlap. Scalar 4096-bucket replacement medians worsen by 10.168 / 4.261
+percent, and those overlapping adverse observations remain. Scalar 4096-bucket
+churn's paired-ratio spread is 13.954 percent, exceeding the registered 10-percent
+limit. Minimum interval is 2.327 ms; maximum unchanged-peer drift is 8.064 percent
+(Rust/C++ 6.362 percent), within its separate limit. The complete matched panel
+fails its criterion and the floor is rejected without adoption or rerun. The
+churn-loss cause is not settled by this record. Criteria, exact optimized
+controls/source pins, patch/replay verification, full PHI/live-out inventory,
+compact native traces, controls, ledgers and all raw/peer/adverse outcomes are
+retained under `replacement-continuation` in the same archive. A general production
+mechanism would still need qualification through ordinary pre-O3 emission;
+this diagnostic selects none.
+
+#### Generic atomic slot update: admission stop
+
+A separate ordinary-source attempt routes the complete exchange outcome into
+an initially empty fixed `Slots<HashMapPut<K, V>, 1>` while updating the old slot
+through OP-12. Its minimal rejected call is:
+
+```wf
+  let output = slots_new::<HashMapPut<K, V>, 1>();
+  set cells^.inner[index] = hash_map_exchange_slot::<K, V>(previous: move cells^.inner[index], key: move key, value: move value, output: &output);
+```
+
+The candidate witness rejects at `hash-map.wf:204:7` with
+`WIN-3 LinearAssignmentTarget`. The [active specification](../../../../spec/kernel-spec.md)
+limits OP-12 to affine/copy targets; unbounded `K`/`V` provide no capability at
+the FN-2 symbolic instance, so the slot is linear under PROV-6 and WIN-3 refuses
+assignment over it. The fixed result sink does not alter that target class.
+This is an existing specified capability limit, not a compiler defect or a
+native-performance failure. The prepared criterion's generic eligibility premise
+was invalidated at admission; no drop bound was added and no rule was changed.
+The candidate CLI builds successfully in 9.414 seconds; the guarded trial exits
+one in 11.71 seconds at candidate witness emission. Candidate capacity-three
+emission, native construction, correctness and timing are not reached. Original
+library bytes are restored and verified. The complete diagnostic, source patch,
+criterion, compiler/source pins, statuses and restoration hash remain under
+`atomic-slot-admission-stop` in the same archive; no gain is inferred.
+
 [`entry-forward-evidence.tar.gz`](entry-forward-evidence.tar.gz) serves this
 section's reader with scripts, criteria, raw API/whole-Map/long-hit records,
 commands, metadata, statuses, source patch and native excerpts, without binaries.

@@ -395,6 +395,13 @@ rarely insert at the same place.
   single-source pair cannot hold, so pinning it needs a module-form pair;
   and FN-9's propagated-exit repair is pinned for a refuted relation only,
   its unproved sentence still unpinned.
+  The generic HashMap atomic-update attempt also reaches
+  `LinearAssignmentTarget` with "take the linear value out and consume it
+  before writing this place" (`semantic/check/expressions.rs`), although
+  WIN-3 forbids taking an element out of a window slot. Offer a valid
+  whole-value exchange with `swap` where applicable, rather than a hole;
+  pin a linear-slot rejection and its accepted repaired program when this
+  repair is revisited.
   Pin each with a program per
   alternative, rewording those that fail, and move the sentences into
   `check/repairs.rs`; validate by the pair test. Found in the review of the
@@ -1247,7 +1254,14 @@ rarely insert at the same place.
   wrapper. Forwarding needs complete liveness, interference and result/input
   alias analysis: the incoming content pointer is not writable private storage,
   and refusal must preserve its bytes before an overlapping result is written.
-  This requires a general argument, not a HashMap-specific bypass. The
+  This requires a general argument, not a HashMap-specific bypass.
+  The [fixed-sink atomic slot attempt](../research/experiments/container-representation/map-library/RESULTS.md#generic-atomic-slot-update-admission-stop)
+  stops at WIN-3: OP-12 covers affine/copy targets, while unbounded `K`/`V`
+  leave the generic slot linear under FN-2/PROV-6. This is a specified capability
+  boundary; a fixed result sink does not admit that update, and a `drop` bound
+  would narrow the supported owner domain. Keep generic replacement work within
+  the current rules; reopen the limitation only with ownership-rule work.
+  The
   [isolated mutation comparison](../research/experiments/container-representation/map-library/RESULTS.md#mutation-running-index-outcome)
   now supplies a measured consumer: 256-byte duplicate replacement still
   trails both Rust and C++ at matched half load. The direct-field swap control
@@ -1270,6 +1284,12 @@ rarely insert at the same place.
   Full inline composition reproduces the earlier equivalent payload spills.
   Keep both unselected: ordinary input/result overlap remains supported, and
   any alias variant needs a general interference proof plus qualified timing.
+  The [replacement-continuation floor](../research/experiments/container-representation/map-library/RESULTS.md#replacement-continuation-placement-gains-and-churn-losses)
+  reduces old-word store traffic after O3, but paired replacement gains coexist
+  with separated churn losses; the full panel fails. Keep it rejected and the
+  churn attribution unresolved. Reopen continuation placement only with a
+  general pre-O3 mechanism, complete ownership/result controls and benefit
+  across the matched mutation panel, preserving all adverse observations.
   Repeated syntactic-candidate/callee and
   per-parameter liveness walks are an unprofiled analysis-cost opportunity:
   profile representative compilation before sharing or caching those facts.
