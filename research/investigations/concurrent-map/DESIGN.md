@@ -218,7 +218,11 @@ claimed a cell and left it removed, so each miss walked one more removed cell
 than the last: five rounds of 40,000 `SPOP`s on an emptied key answered
 53,191, 19,714, 12,296, 9,401 and 7,990 a second. A claim now reuses the first
 removed cell its probe passed; the same five rounds answered 159,363 to
-160,000.
+160,000. A round of 40,000 lasts about a quarter of a second, and
+redis-benchmark's threaded mode measures a round's time in steps of about
+250 ms, so those rates only bound it; rounds of 400,000 answered 159,680 to
+177,699 a second with the pending claim below and 132,188 to 177,699 with
+the first reuse, two interleaved runs of five rounds each on two server CPUs.
 
 **Reuse and a key's second cell.** The first reuse looked on from its claim to
 the next empty cell for a cell of the same key another writer claimed
