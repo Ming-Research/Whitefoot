@@ -555,16 +555,16 @@ rarely insert at the same place.
   undecided alternative with a full Fourier-Motzkin elimination on every
   saturation round and branch, and the walk solves one problem per
   obligation and per certificate pair without sharing work between them. In
-  `research/investigations/unique-keys/level_cascade.wf` it is 91% of the
+  `tests/conformance/cases/range5-pos-level-cascade.wf` it is 91% of the
   checker's instructions, about 1.1 s of a 1.2 s check, almost all in
   solving owed facts (`Walker::require`); in Snowghost's whole renderer it is
-  about 2.5 s of a 105 s front end
-  (`research/investigations/unique-keys/POINTWISE.md#observations`). An
+  within the run-to-run spread of a front end near 107 s, a few seconds at
+  most (`research/investigations/unique-keys/POINTWISE.md#observations`). An
   incremental elimination that extends a solved set by one literal, or a
   memo of contradictory literal sets within one problem, would keep every
   verdict and cut the repeated eliminations. Validate by identical verdicts
   on the `range*` conformance cases and the witnesses, and by the
-  instruction count of `level_cascade.wf`'s check. Reopen when a program's
+  instruction count of that case's check. Reopen when a program's
   check time is dominated by the range judgment or a clause the writer
   believes holds reaches a ceiling.
 
@@ -2163,6 +2163,21 @@ rarely insert at the same place.
   storage as a blocker; reopen when a larger program's backend profile shows
   material retained text or rendering cost.
 
+- **The range judgment keeps its own model of places and aliases.**
+  `compiler/src/semantic/range_judgment/world.rs` models locations, moves
+  and aliasing for the range walk beside `compiler/src/semantic/places.rs`,
+  which resolves places for ownership and permission. The two can disagree:
+  the walk first treated a by-value copy of an array as an alias of its
+  source, which `places.rs` never does (fixed; conformance case
+  `range2-neg-copy-is-not-its-source`), and `certified_coverage` in
+  `compiler/src/semantic/loop_permission.rs` exists to catch a disagreement
+  about which accesses a certificate saw. Deriving the walk's locations from
+  `places.rs`'s resolved places, or sharing one access model, would leave
+  one definition of what a statement touches. Validate by identical
+  verdicts on the `range*` cases and by the permission tests. Reopen with
+  the next change to how either resolves a place, or when a range verdict
+  differs from what the ownership judgment says the code touches.
+
 ## Open language questions
 
 Questions the owner has left open on purpose. None of them is a decision;
@@ -2393,7 +2408,7 @@ each is resolved by a discussion and a tree change.
 - **Parameters a contract names but the body does not use are passed at
   run time.** A range requirement can only name what the callee receives,
   so `cascade_level` in
-  `research/investigations/unique-keys/level_cascade.wf` takes `positions`,
+  `tests/conformance/cases/range5-pos-level-cascade.wf` takes `positions`,
   `depths` and `level` only so that its `listed` and `up` requirements can
   state the facts its certificate uses; the caller passes them on every
   call. Each costs a pointer and a length or one integer per call, which the

@@ -4,9 +4,10 @@
 //! function's ordinary entailment has succeeded, because a range proof
 //! consumes what that judgment established and no ordinary obligation
 //! consumes a range fact. One forward walk per function carries the facts
-//! a function's requirements, loop invariants and callees' guarantees
-//! establish, discharges every range fact owed at a call, a loop header or a
-//! return, and checks each counted loop's cross-iteration certificate. A
+//! a function's requirements, its loops' invariants and the fill
+//! constructors' contents establish, discharges every range fact owed at a
+//! call, a loop's entry or a back edge, and checks each counted loop's
+//! cross-iteration certificate. A
 //! certificate that holds is retained for the counted permission judgment
 //! [PAR-2]; it grants nothing by itself.
 
@@ -38,10 +39,16 @@ pub(crate) enum RangeIssue {
         node: NodePath,
         failure: ApartFailure,
     },
-    /// The derivation at `node` left this checker's `i128` arithmetic. The
-    /// specified arithmetic is exact [RANGE-3], so this is an unsupported
-    /// capability and never a rejection.
-    Arithmetic { node: NodePath },
+    /// The judgment at `node` needs what this checker does not implement,
+    /// so the function's verdict is an unsupported capability, never a
+    /// rejection: the derivation left the checker's `i128` arithmetic,
+    /// where the specified arithmetic is exact [RANGE-3], or a loop nest was
+    /// deeper, or a header's written set took more walks to settle, than the
+    /// checker follows, where RANGE-2 forgets only what the body can write.
+    Unsupported {
+        node: NodePath,
+        feature: super::UnsupportedSemanticFeature,
+    },
 }
 
 /// Why a certificate does not hold.
@@ -177,8 +184,17 @@ pub(crate) fn judge_program(
             }
             let mut walker = walk::Walker::new(functions, function);
             walker.run();
+            // A walk that forgot more than RANGE-2 does cannot reject: what
+            // it left unproved may hold.
+            let issues = match (&walker.issues[..], walker.imprecise.take()) {
+                ([], _) | (_, None) => walker.issues,
+                (_, Some(node)) => vec![RangeIssue::Unsupported {
+                    node,
+                    feature: super::UnsupportedSemanticFeature::RangeLoopNesting,
+                }],
+            };
             RangeJudgment {
-                issues: walker.issues,
+                issues,
                 certified: walker.certified,
             }
         })

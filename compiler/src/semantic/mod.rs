@@ -221,7 +221,7 @@ pub enum SemanticRule {
     /// Range clause formation [RANGE-1].
     Range1,
     /// A range fact owed and not established: at a loop entry or back edge,
-    /// at a call, or at a normal return [RANGE-3].
+    /// or at a call [RANGE-3].
     Range3,
     /// A `use` step that instantiates no range fact [RANGE-4].
     Range4,
@@ -1437,6 +1437,11 @@ pub enum UnsupportedSemanticFeature {
     /// checker's 128-bit integers. It names no rule: the specified
     /// arithmetic has no bound, so reaching here is a checker gap.
     RangeArithmetic,
+    /// A range judgment that left a fact unproved after a loop header forgot
+    /// everything, because the loop nest was deeper, or the header's
+    /// written set took more walks to settle, than the checker follows;
+    /// RANGE-2 forgets only what the body can write.
+    RangeLoopNesting,
 }
 
 /// Exact source node at which an unimplemented compiler family was required.

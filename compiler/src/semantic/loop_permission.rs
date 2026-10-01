@@ -1541,7 +1541,10 @@ impl<'check> Survey<'check, '_> {
 
     /// [RANGE-5] every read reaching a certified root is a measure or one of
     /// the element reads the certificate separated, and no other family
-    /// writes there: the certificate compared exactly those accesses.
+    /// writes there: the certificate compared exactly those accesses. A
+    /// holding certificate records every access of storage that exists
+    /// before the body, so an accepted program never fails this; it checks
+    /// that this survey and the range walk saw the same accesses.
     fn certified_coverage(&self) -> Option<LoopDenial> {
         let certificate = self.certificate?;
         let oracle = UnprovedSeparations;

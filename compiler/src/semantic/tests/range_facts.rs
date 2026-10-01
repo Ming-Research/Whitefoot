@@ -226,3 +226,125 @@ fn main() -> status: std::process::ExitStatus pure {{
         assert_eq!(*site, "a call");
     });
 }
+
+#[test]
+fn a_certificate_places_an_affine_write_beside_a_scattered_one() {
+    // The certificate holds: writes at k are apart from each other, and the
+    // writes at order^[k] lie at or above order^.len, above every k, and
+    // apart by the left inverse. It places both writes, so both are
+    // certified elements and the loop is permitted [PAR-2]; an affine write
+    // the certificate did not place cannot arise, since it records every
+    // write of storage that exists before the body.
+    let source = b"fn split(order: &[u64], pos: &[u64], out: &[u64]) -> result: unit reads(order), writes(out) contract {
+  requires pos^.len == out^.len;
+  requires order^.len <= out^.len;
+  requires forall inv(k in 0_u64..order^.len) when order^[k] < out^.len: pos^[order^[k]] == k;
+  requires forall high(k in 0_u64..order^.len) when order^[k] < out^.len: order^[k] >= order^.len;
+} {
+  let count = order^.len;
+  for (
+    k in 0_u64..count,
+    apart(i, j) {
+    }
+  ) {
+    set out^[k] = 0_u64;
+    let e = order^[k];
+    if e < out^.len {
+      set out^[e] = k;
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+";
+    with_semantics(source, |outcome| {
+        let SemanticOutcome::Complete(program) = outcome else {
+            panic!("the mixed scatter must check: {outcome:?}");
+        };
+        let function = program
+            .data
+            .executable_functions()
+            .find(|function| function.name == "split")
+            .expect("split is checked");
+        let certified = &function.range_facts.certified;
+        assert_eq!(certified.len(), 1);
+        assert_eq!(certified[0].writes.len(), 2, "{certified:?}");
+        let table = program
+            .data
+            .permission
+            .named("split")
+            .expect("split's permissions");
+        assert_eq!(table.loops[0].verdict, LoopVerdict::PermittedEligible);
+    });
+}
+
+/// `depth` counted loops nested around one call owing `positive`, which
+/// the zero fill does not meet.
+fn nest(depth: usize) -> Vec<u8> {
+    let mut body =
+        String::from("let got = positive(cells: &cells.inner[0_u64..4_u64]);\nset seen = got;\n");
+    for level in (0..depth).rev() {
+        body = format!("for (k{level} in 0_u64..2_u64) {{\n{body}}}\n");
+    }
+    let indented: String = body
+        .lines()
+        .scan(1_usize, |depth, line| {
+            if line.starts_with('}') {
+                *depth -= 1;
+            }
+            let rendered = format!("{}{line}\n", "  ".repeat(*depth));
+            if line.ends_with('{') {
+                *depth += 1;
+            }
+            Some(rendered)
+        })
+        .collect();
+    format!(
+        "fn positive(cells: &[u64]) -> result: u64 reads(cells) contract {{
+  requires forall pos(k in 0_u64..cells^.len): cells^[k] > 0_u64;
+}} {{
+  if 0_u64 < cells^.len {{
+    let first = cells^[0_u64];
+    return first;
+  }}
+  return 0_u64;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  let cells = box_array_filled::<u64>(count: 4_u64, value: 0_u64);
+  let seen = 0_u64;
+{indented}  if seen != 0_u64 {{
+    return std::process::exit_status(code: 1_u8);
+  }}
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+    )
+    .into_bytes()
+}
+
+#[test]
+fn a_loop_nest_deeper_than_the_checker_follows_is_unsupported_not_rejected() {
+    // Within the depth the walk follows, the zero fill refutes the
+    // requirement; beyond it the outer header forgets everything, and what
+    // it then leaves unproved might hold by RANGE-2, so the verdict is the
+    // checker's capability.
+    with_semantics(&nest(3), |outcome| {
+        let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+            panic!("expected a RANGE-3 rejection, got {outcome:?}");
+        };
+        assert_eq!(issue.rule(), SemanticRule::Range3);
+    });
+    with_semantics(&nest(10), |outcome| {
+        let SemanticOutcome::Unsupported { unsupported, .. } = outcome else {
+            panic!("expected an unsupported capability, got {outcome:?}");
+        };
+        assert_eq!(
+            unsupported.feature(),
+            crate::UnsupportedSemanticFeature::RangeLoopNesting
+        );
+    });
+}

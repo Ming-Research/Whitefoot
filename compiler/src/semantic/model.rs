@@ -2827,6 +2827,8 @@ pub(crate) struct CheckedFunction {
     pub(crate) result: CheckedType,
     /// Formal state paths named by `writes(...)`.
     pub(crate) declared_state_writes: Vec<CheckedStatePath>,
+    /// Formal state paths named by `reads(...)`.
+    pub(crate) declared_state_reads: Vec<CheckedStatePath>,
     /// Callable-boundary predicates in `requires_clause` source order.
     pub(crate) requirements: Vec<super::goal::CheckedRequirement>,
     /// [ENT-2, FN-8] the clause (b) places each requirement forms, index-
@@ -2839,9 +2841,9 @@ pub(crate) struct CheckedFunction {
     /// constructs this metadata; the shared entailment flow proves every
     /// clause at every selected exit.
     pub(crate) postconditions: Vec<super::postcondition::CheckedPostcondition>,
-    /// [RANGE-1] every range clause of the function: its range `requires`
-    /// and `ensures`, and each counted loop's range invariants and
-    /// cross-iteration certificate.
+    /// [RANGE-1] every range clause of the function: its range `requires`,
+    /// each loop's range invariants, each counted loop's cross-iteration
+    /// certificate, and the certificates the range judgment found to hold.
     pub(crate) range_facts: super::range_facts::CheckedRangeFacts,
     pub(crate) body: Option<Vec<CheckedStatement>>,
     /// Function-wide union of the resolved paths each reference holder names

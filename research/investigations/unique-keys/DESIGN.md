@@ -4,7 +4,11 @@ Status: language-gap investigation. The owner selected candidate N,
 pointwise facts over a derived numbering, which is implemented as range facts
 and certified elements; [POINTWISE.md](POINTWISE.md) holds its derivation,
 programs and measurements. Selecting it reopened, in restricted form, the
-refusal of quantified storage-element facts that criterion 3 below records.
+refusal of quantified storage-element facts that the first constraint and
+criterion 3 below record, and departed from the second constraint: a counted
+loop's certificate proves two iterations' element accesses distinct for the
+parallel permission alone, a question no other consumer of the overlap
+relation asks.
 The worked library-forest model below remains the comparison and the route
 for facts about live storage across edits, which range facts do not cover;
 its proof language is a proposal, and no specification or compiler change

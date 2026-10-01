@@ -13,6 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::NodePath;
 
+use super::super::UnsupportedSemanticFeature;
 use super::super::model::{
     BindingId, CheckedAffineExpression, CheckedAffineExpressionKind, CheckedAffineRelation,
     CheckedArrayRoot, CheckedBooleanOperation, CheckedConversionMode, CheckedEnumType,
@@ -69,6 +70,10 @@ pub(super) struct Walker<'program> {
     pub(super) world: World,
     pub(super) facts: Vec<Fact>,
     pub(super) issues: Vec<RangeIssue>,
+    /// The first loop whose header forgot everything because its nest was
+    /// deeper, or its written set took more walks to settle, than this
+    /// checker follows.
+    pub(super) imprecise: Option<NodePath>,
     pub(super) certified: Vec<CertifiedLoop>,
     /// Nonzero while a loop body is walked only to learn what it writes.
     dry: usize,
@@ -86,6 +91,9 @@ pub(super) struct Walker<'program> {
 /// The largest number of nested loop dry walks; a deeper nest forgets
 /// everything its body could write.
 const MAX_DRY_DEPTH: usize = 8;
+/// The most dry walks one header takes to settle what its body writes;
+/// one that does not settle forgets everything.
+const MAX_HEADER_ROUNDS: usize = 8;
 
 pub(super) fn integer_range(ty: IntegerType) -> (i128, i128) {
     match ty {
@@ -122,6 +130,7 @@ impl<'program> Walker<'program> {
             world: World::default(),
             facts: Vec::new(),
             issues: Vec::new(),
+            imprecise: None,
             certified: Vec::new(),
             dry: 0,
             recording: None,
@@ -376,9 +385,10 @@ impl<'program> Walker<'program> {
                 relation,
                 capacity: None,
             }),
-            Err(Capacity::Arithmetic) => self
-                .issues
-                .push(RangeIssue::Arithmetic { node: node.clone() }),
+            Err(Capacity::Arithmetic) => self.issues.push(RangeIssue::Unsupported {
+                node: node.clone(),
+                feature: UnsupportedSemanticFeature::RangeArithmetic,
+            }),
             Err(capacity) => self.issues.push(RangeIssue::Undischarged {
                 node: node.clone(),
                 fact: clause.name.clone(),
@@ -407,7 +417,7 @@ impl<'program> Walker<'program> {
                 value,
             } => {
                 self.cite = node_path.clone();
-                let evaluated = self.eval(&mut state, value);
+                let evaluated = self.stored_value(&mut state, value);
                 self.bind(&mut state, *binding, value.ty(), evaluated);
                 Some(state)
             }
@@ -455,7 +465,7 @@ impl<'program> Walker<'program> {
                 ..
             } => {
                 self.cite = node_path.clone();
-                let evaluated = self.eval(&mut state, value);
+                let evaluated = self.stored_value(&mut state, value);
                 self.set(&mut state, target, evaluated, node_path);
                 Some(state)
             }
@@ -476,7 +486,7 @@ impl<'program> Walker<'program> {
             CheckedStatement::Return {
                 node_path, value, ..
             } => {
-                // No range fact is owed at a return [RANGE-1]: the returned
+                // No range fact is owed at a return [RANGE-3]: the returned
                 // value is evaluated only for the obligations it contains.
                 self.cite = node_path.clone();
                 self.eval(&mut state, value);
@@ -525,7 +535,7 @@ impl<'program> Walker<'program> {
                 node_path, value, ..
             } => {
                 self.cite = node_path.clone();
-                let given = self.eval(&mut state, value);
+                let given = self.stored_value(&mut state, value);
                 if let Some(sink) = self.gives.last_mut() {
                     sink.push((state, given));
                 }
@@ -1134,6 +1144,44 @@ impl<'program> Walker<'program> {
         }
     }
 
+    /// A value about to be stored in a binding, a place or a field. Reading
+    /// an aggregate that already lives in storage yields that storage's
+    /// location; only a consuming read hands the storage itself over, and
+    /// any other read is a copy, whose contents this walk then forgets, so
+    /// that a write to the copy can never be taken for a write to its
+    /// source.
+    fn stored_value(&mut self, state: &mut State, expression: &CheckedExpression) -> Value {
+        let value = self.eval(state, expression);
+        let consumed = matches!(
+            expression,
+            CheckedExpression::Binding {
+                consume_root: true,
+                ..
+            } | CheckedExpression::Project {
+                consume_root: true,
+                ..
+            }
+        );
+        let reads_storage = matches!(
+            expression,
+            CheckedExpression::Binding { .. }
+                | CheckedExpression::Project { .. }
+                | CheckedExpression::ProjectValue { .. }
+                | CheckedExpression::ArrayIndex { .. }
+                | CheckedExpression::RangeIndex { .. }
+                | CheckedExpression::BufferIndex { .. }
+                | CheckedExpression::ReadStorage { .. }
+                | CheckedExpression::BoxDeref { .. }
+                | CheckedExpression::DerefAddressed { .. }
+        );
+        match value {
+            Value::Owned(_) if reads_storage && !consumed => {
+                Value::Owned(Location::root(Origin::Constructed(self.world.new_origin())))
+            }
+            other => other,
+        }
+    }
+
     pub(super) fn eval(&mut self, state: &mut State, expression: &CheckedExpression) -> Value {
         match expression {
             CheckedExpression::Constant(value) | CheckedExpression::NamedConstant { value, .. } => {
@@ -1175,7 +1223,7 @@ impl<'program> Walker<'program> {
                 let converted = self.eval(state, value);
                 match (mode, source, destination, converted) {
                     (
-                        CheckedConversionMode::Exact | CheckedConversionMode::Defined,
+                        CheckedConversionMode::Exact,
                         CheckedNumericType::Integer(_),
                         CheckedNumericType::Integer(_),
                         Value::Int(value),
@@ -1489,7 +1537,7 @@ impl<'program> Walker<'program> {
             CheckedExpression::ConstructStruct { fields, .. } => {
                 let mut values = Vec::with_capacity(fields.len());
                 for field in fields {
-                    values.push(self.eval(state, field));
+                    values.push(self.stored_value(state, field));
                 }
                 Value::Struct(values)
             }
@@ -1498,7 +1546,7 @@ impl<'program> Walker<'program> {
             } => {
                 let mut values = Vec::with_capacity(fields.len());
                 for field in fields {
-                    values.push(self.eval(state, field));
+                    values.push(self.stored_value(state, field));
                 }
                 Value::Variant {
                     variant: *variant,
@@ -1555,35 +1603,30 @@ impl<'program> Walker<'program> {
             CheckedIntegerOperation::LessEqual => comparison(Relation::LessEqual),
             CheckedIntegerOperation::Greater => comparison(Relation::Greater),
             CheckedIntegerOperation::GreaterEqual => comparison(Relation::GreaterEqual),
-            // An exact or defined operation's result is its mathematical
-            // value: the operation's own obligation proved it in range.
-            CheckedIntegerOperation::AddExact | CheckedIntegerOperation::AddDefined => {
-                match values.as_slice() {
-                    [left, right] => left
-                        .plus(right)
-                        .map_or_else(|| self.opaque_of(result), Value::Int),
-                    _ => self.opaque_of(result),
-                }
-            }
-            CheckedIntegerOperation::SubtractExact | CheckedIntegerOperation::SubtractDefined => {
-                match values.as_slice() {
-                    [left, right] => left
-                        .minus(right)
-                        .map_or_else(|| self.opaque_of(result), Value::Int),
-                    _ => self.opaque_of(result),
-                }
-            }
-            CheckedIntegerOperation::MultiplyExact | CheckedIntegerOperation::MultiplyDefined => {
-                match values.as_slice() {
-                    [left, right] if left.is_constant() => right
-                        .scaled(left.constant)
-                        .map_or_else(|| self.opaque_of(result), Value::Int),
-                    [left, right] if right.is_constant() => left
-                        .scaled(right.constant)
-                        .map_or_else(|| self.opaque_of(result), Value::Int),
-                    _ => self.opaque_of(result),
-                }
-            }
+            // An exact operation's result is its mathematical value: the
+            // operation's own obligation proved it in range. A `.defined`
+            // spelling is a Bool domain query [OP-7], an unknown here.
+            CheckedIntegerOperation::AddExact => match values.as_slice() {
+                [left, right] => left
+                    .plus(right)
+                    .map_or_else(|| self.opaque_of(result), Value::Int),
+                _ => self.opaque_of(result),
+            },
+            CheckedIntegerOperation::SubtractExact => match values.as_slice() {
+                [left, right] => left
+                    .minus(right)
+                    .map_or_else(|| self.opaque_of(result), Value::Int),
+                _ => self.opaque_of(result),
+            },
+            CheckedIntegerOperation::MultiplyExact => match values.as_slice() {
+                [left, right] if left.is_constant() => right
+                    .scaled(left.constant)
+                    .map_or_else(|| self.opaque_of(result), Value::Int),
+                [left, right] if right.is_constant() => left
+                    .scaled(right.constant)
+                    .map_or_else(|| self.opaque_of(result), Value::Int),
+                _ => self.opaque_of(result),
+            },
             _ => self.opaque_of(result),
         }
     }
@@ -1630,13 +1673,23 @@ impl<'program> Walker<'program> {
             }
         }
         // Reads and writes through reference arguments [EFF-5].
-        let writes: Vec<crate::DeclarationId> = match formal {
-            Some(effects) => effects.writes.iter().map(|path| path.root).collect(),
-            None => callee
-                .declared_state_writes
-                .iter()
-                .map(|path| path.root)
-                .collect(),
+        let (writes, reads): (Vec<crate::DeclarationId>, Vec<crate::DeclarationId>) = match formal {
+            Some(effects) => (
+                effects.writes.iter().map(|path| path.root).collect(),
+                effects.reads.iter().map(|path| path.root).collect(),
+            ),
+            None => (
+                callee
+                    .declared_state_writes
+                    .iter()
+                    .map(|path| path.root)
+                    .collect(),
+                callee
+                    .declared_state_reads
+                    .iter()
+                    .map(|path| path.root)
+                    .collect(),
+            ),
         };
         for (position, parameter) in callee.parameters.iter().enumerate() {
             if !parameter.mode.is_reference() {
@@ -1649,7 +1702,11 @@ impl<'program> Walker<'program> {
                 continue;
             };
             let written = writes.contains(&parameter.declaration);
-            self.unplaced_view(&view, written, call, state);
+            // [RANGE-5] an argument the callee's row neither reads nor writes
+            // is no access.
+            if written || reads.contains(&parameter.declaration) {
+                self.unplaced_view(&view, written, call, state);
+            }
             if !written {
                 continue;
             }
@@ -1671,7 +1728,9 @@ impl<'program> Walker<'program> {
             _ => Value::Owned(Location::root(Origin::CallResult(self.world.new_origin()))),
         };
         if callee.body.is_none() {
-            self.content_law(state, callee, &values, &value);
+            // The fill value's type is the element type of both rows.
+            let element = arguments.get(1).and_then(|fill| integer_type(fill.ty()));
+            self.content_law(state, callee, &values, &value, element);
         }
         value
     }
@@ -1683,6 +1742,7 @@ impl<'program> Walker<'program> {
         callee: &CheckedFunction,
         arguments: &[Value],
         result: &Value,
+        element: Option<IntegerType>,
     ) {
         let Value::Owned(location) = result else {
             return;
@@ -1702,7 +1762,7 @@ impl<'program> Walker<'program> {
                 state
                     .conds
                     .push(literal(length.clone(), Relation::Equal, count.clone()));
-                let clause = law_clause(element_of(arguments.get(1)), CheckedRangeShape::Run);
+                let clause = law_clause(element, CheckedRangeShape::Run);
                 let mut frame = Frame::default();
                 let version = state.version(&mut self.world, container);
                 frame.places.insert(
@@ -1775,8 +1835,10 @@ impl<'program> Walker<'program> {
                 );
                 frame.values.insert(CheckedRangeRoot::Argument(1), fill);
                 let frame_rows = frame.clone();
-                let filled =
-                    self.add_fact(law_clause(None, CheckedRangeShape::Segments), frame.clone());
+                let filled = self.add_fact(
+                    law_clause(element, CheckedRangeShape::Segments),
+                    frame.clone(),
+                );
                 let sized = self.add_fact(segment_lengths_clause(), frame);
                 let at = state.resolve(location);
                 state.routed.push((at.clone(), 1, filled));
@@ -1793,7 +1855,15 @@ impl<'program> Walker<'program> {
 
     // ----- loops -----
 
-    /// What a body writes, from a dry walk that records instead of judging.
+    /// What a body writes, from dry walks that record instead of judging.
+    ///
+    /// The first walk starts from `state`; a branch it skips because of
+    /// something `state` knows, or a reference it resolves through a
+    /// binding, may differ in a later iteration once the body has changed
+    /// what decided it. So while a walk records a binding or a slot of
+    /// storage that `state` already holds, which is what can change control
+    /// or a write's target, the body is walked again from the header that
+    /// forgets everything recorded so far, until nothing new is recorded.
     fn modified(
         &mut self,
         state: &State,
@@ -1801,6 +1871,7 @@ impl<'program> Walker<'program> {
         binder: Option<BindingId>,
     ) -> Modified {
         if self.dry >= MAX_DRY_DEPTH {
+            self.imprecise.get_or_insert_with(|| self.cite.clone());
             return Modified {
                 everything: true,
                 ..Modified::default()
@@ -1809,32 +1880,77 @@ impl<'program> Walker<'program> {
         let saved_log = self.world.log.take();
         let saved_recording = self.recording.take();
         let saved_breaks = std::mem::take(&mut self.breaks);
-        self.world.log = Some(Modified::default());
-        self.dry += 1;
-        let mut dry = state.clone();
-        if let Some(binder) = binder {
-            let value = self.world.opaque(None);
-            dry.values.insert(binder, Value::Int(value));
+        let mark = self.world.origin_mark();
+        let mut total = Modified::default();
+        let mut start = state.clone();
+        let mut settled = false;
+        for _ in 0..MAX_HEADER_ROUNDS {
+            self.world.log = Some(Modified::default());
+            self.dry += 1;
+            let mut dry = start;
+            if let Some(binder) = binder {
+                let value = self.world.opaque(None);
+                dry.values.insert(binder, Value::Int(value));
+            }
+            self.gives.push(Vec::new());
+            let _ = self.block(dry, body);
+            self.gives.pop();
+            self.breaks.clear();
+            self.dry -= 1;
+            let log = self.world.log.take().unwrap_or_default();
+            let deciding = self.absorb(&mut total, log, state, mark);
+            if !deciding {
+                settled = true;
+                break;
+            }
+            start = self.header(state, &total);
         }
-        self.gives.push(Vec::new());
-        let _ = self.block(dry, body);
-        self.gives.pop();
-        self.dry -= 1;
-        let log = self.world.log.take().unwrap_or_default();
+        if !settled {
+            self.imprecise.get_or_insert_with(|| self.cite.clone());
+            total.everything = true;
+        }
         self.world.log = saved_log;
         if let Some(outer) = &mut self.world.log {
-            outer.containers.extend(log.containers.iter().copied());
-            outer.descriptors.extend(log.descriptors.iter().copied());
-            outer.bindings.extend(log.bindings.iter().copied());
-            outer.slots.extend(log.slots.iter().cloned());
-            outer.everything |= log.everything;
+            outer.containers.extend(total.containers.iter().copied());
+            outer.descriptors.extend(total.descriptors.iter().copied());
+            outer.bindings.extend(total.bindings.iter().copied());
+            outer.slots.extend(total.slots.iter().cloned());
+            outer.everything |= total.everything;
         }
         self.recording = saved_recording;
         self.breaks = saved_breaks;
-        log
+        total
     }
 
-    /// The header state: `entry` with everything the body writes forgotten.
+    /// Adds one dry walk's record to `total`; whether it newly records
+    /// something of `entry`'s that can decide control or a write's target: a
+    /// binding, a slot of storage that existed before the loop, or a write
+    /// the walk could not place.
+    fn absorb(&self, total: &mut Modified, log: Modified, entry: &State, mark: u32) -> bool {
+        let existed = |location: &Location| match location.origin {
+            Origin::Parameter(_) => true,
+            Origin::Binding(_, origin)
+            | Origin::CallResult(origin)
+            | Origin::Constructed(origin) => origin <= mark,
+        };
+        let mut deciding = log.everything && !total.everything;
+        total.everything |= log.everything;
+        total.containers.extend(log.containers);
+        total.descriptors.extend(log.descriptors);
+        for binding in log.bindings {
+            if total.bindings.insert(binding) && entry.values.contains_key(&binding) {
+                deciding = true;
+            }
+        }
+        for slot in log.slots {
+            let old = existed(&slot);
+            if total.slots.insert(slot) && old {
+                deciding = true;
+            }
+        }
+        deciding
+    }
+
     fn header(&mut self, entry: &State, modified: &Modified) -> State {
         let mut header = entry.clone();
         if modified.everything {
@@ -1858,10 +1974,17 @@ impl<'program> Walker<'program> {
                 header.values.insert(*binding, fresh);
             }
         }
+        for binding in &modified.bindings {
+            if let Some(Value::Owned(location)) = entry.values.get(binding) {
+                let location = entry.resolve(location);
+                header.forget_variants(&location);
+            }
+        }
         for slot in &modified.slots {
             header.slots.retain(|location, held| {
                 !(location.starts_with(slot) && !matches!(held, Slot::Alias(_)))
             });
+            header.forget_variants(slot);
         }
         header
     }
@@ -2215,8 +2338,9 @@ impl<'program> Walker<'program> {
             }
         }
         if beyond_arithmetic {
-            self.issues.push(RangeIssue::Arithmetic {
+            self.issues.push(RangeIssue::Unsupported {
                 node: apart.node.clone(),
+                feature: UnsupportedSemanticFeature::RangeArithmetic,
             });
             return;
         }
@@ -2507,11 +2631,6 @@ fn law_lengths() -> CheckedRangePlace {
         root: CheckedRangeRoot::Argument(0),
         path: vec![CheckedRangeStep::Referent],
     }
-}
-
-fn element_of(value: Option<&Value>) -> Option<IntegerType> {
-    let _ = value;
-    None
 }
 
 /// `forall filled(k...): content[k...] == fill`.

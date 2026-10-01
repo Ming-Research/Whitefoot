@@ -1914,6 +1914,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             result_mode: signature.result_mode,
             result: signature.result,
             declared_state_writes: signature.declared_effects.writes.clone(),
+            declared_state_reads: signature.declared_effects.reads.clone(),
             // [EFF-3] the boundary's allocation fact is what the body
             // exhibits, not what the declaration wrote: no declaration can
             // write it [EFF-1, STOR-8], and for a body-less row the exhibited

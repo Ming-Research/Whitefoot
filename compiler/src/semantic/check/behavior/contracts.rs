@@ -613,6 +613,7 @@ impl<'unit> DeclarationInventory<'unit> {
             result_mode: signature.result_mode,
             result: signature.result,
             declared_state_writes: Vec::new(),
+            declared_state_reads: Vec::new(),
             requirements,
             requirement_places,
             postconditions: Vec::new(),

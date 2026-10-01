@@ -805,6 +805,7 @@ mod tests {
             result_mode: CheckedMode::Own,
             result: CheckedType::Unit,
             declared_state_writes: Vec::new(),
+            declared_state_reads: Vec::new(),
             requirements: Vec::new(),
             requirement_places: Vec::new(),
             postconditions: Vec::new(),

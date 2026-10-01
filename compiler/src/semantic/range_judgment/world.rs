@@ -542,11 +542,18 @@ impl State {
                 log.slots.insert(slot);
             }
         }
-        self.variants
-            .retain(|known, _| !known.starts_with(&location));
+        self.forget_variants(&location);
         if let Some(log) = &mut world.log {
             log.slots.insert(location);
         }
+    }
+
+    /// Forgets which variant every enum at or below `location` holds, and
+    /// the facts a match on one of them would enable.
+    pub(super) fn forget_variants(&mut self, location: &Location) {
+        self.variants
+            .retain(|known, _| !known.starts_with(location));
+        self.routed.retain(|(at, _, _)| !at.starts_with(location));
     }
 
     /// Forgets every container's contents: a write the judgment cannot place.
@@ -556,6 +563,7 @@ impl State {
         }
         self.slots.retain(|_, slot| matches!(slot, Slot::Alias(_)));
         self.variants.clear();
+        self.routed.clear();
         if let Some(log) = &mut world.log {
             log.everything = true;
         }

@@ -476,6 +476,7 @@ fn analyzed_rendering(function: &CheckedFunction) -> String {
         result_mode,
         result,
         declared_state_writes,
+        declared_state_reads,
         requirements,
         requirement_places,
         postconditions,
@@ -493,7 +494,8 @@ fn analyzed_rendering(function: &CheckedFunction) -> String {
     format!(
         "{formal_hypothesis:?}\n{id:?}\n{declaration:?}\n{module:?}\n{name:?}\n{symbol:?}\n\
          {function_actuals:?}\n{region_parameters:?}\n{parameters:?}\n{result_mode:?}\n\
-         {result:?}\n{declared_state_writes:?}\n{requirements:?}\n{requirement_places:?}\n\
+         {result:?}\n{declared_state_writes:?}\n{declared_state_reads:?}\n{requirements:?}\n\
+         {requirement_places:?}\n\
          {postconditions:?}\n{range_facts:?}\n{body:?}\n{reference_origins:?}\n\
          {body_disposition:?}\n{call_separations:?}\n{permission_separation_queries:?}\n\
          {waiting:?}"
@@ -520,7 +522,7 @@ fn claims_rendering(function: &CheckedFunction) -> String {
         })
         .collect::<Vec<_>>();
     format!(
-        "{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{postconditions:?}\n{:?}\n{:?}",
+        "{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{postconditions:?}\n{:?}\n{:?}",
         function.formal_hypothesis,
         function.symbol,
         function.module,
@@ -528,6 +530,7 @@ fn claims_rendering(function: &CheckedFunction) -> String {
         function.result_mode,
         function.result,
         function.declared_state_writes,
+        function.declared_state_reads,
         function.requirements,
         function.function_actuals,
         function.range_facts.requirements,

@@ -299,11 +299,11 @@ impl Checker<'_, '_> {
                     },
                 },
             ),
-            // A checker gap, not a verdict [RANGE-3]: the arithmetic is exact.
-            RangeIssue::Arithmetic { node } => {
+            // A checker gap, not a verdict.
+            RangeIssue::Unsupported { node, feature } => {
                 return match self.types.declarations.node_location(node) {
                     Ok(location) => CheckStop::Unsupported(crate::semantic::SemanticUnsupported {
-                        feature: crate::semantic::UnsupportedSemanticFeature::RangeArithmetic,
+                        feature: *feature,
                         node: location,
                     }),
                     Err(stop) => stop,

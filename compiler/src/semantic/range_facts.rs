@@ -4,8 +4,9 @@
 //!
 //! This module holds the checked forms only. The resolver gives a clause its
 //! name, its bound variables and its relation names; the semantic checker
-//! forms the terms below from that syntax; the entailment flow carries the
-//! resulting facts and judges every obligation they create.
+//! forms the terms below from that syntax; the range judgment carries the
+//! resulting facts and judges every obligation they create, after the
+//! entailment flow.
 
 use std::collections::BTreeMap;
 
