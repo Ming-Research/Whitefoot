@@ -212,6 +212,263 @@ not accepted WF syntax, apart from the explicitly runnable Pair probes.
 The model is one way to expose the obligations, not a selected representation
 for either runtime data or proof terms.
 
+### Candidate source form: an erased field tied to storage by an invariant
+
+The mathematical model below was not a WF language form. This section makes
+one possible source design explicit: an erased `ghost` field holds a finite
+tree value, ordinary library logical functions define its correspondence to
+runtime fields, and a generalized struct invariant states that relation at
+the existing boundaries. There is no `model` keyword, implicit field-name
+matching, or compiler-owned Forest predicate. This is an unselected syntax
+proposal, not accepted source or an implemented proof checker.
+Besides quantified facts, this candidate reopens the current restriction on
+logical functions in contracts and invariants. It must distinguish total
+logical calls from ordinary runtime calls; the Forest's representation and
+algorithmic contracts are the concrete consumer the earlier abstraction
+refusal left as a reopening condition.
+
+The spellings in this section have these proposed meanings:
+
+- `ghost` on a type, function, field or local makes it proof-only. Logical
+  functions are total, effect-free definitions over immutable logical values.
+  A runtime value may be observed by proof code; a ghost value cannot choose
+  a runtime branch, index, return value, allocation or write.
+- `Seq<T>`, `Nat`, sequence literals, `nat(u64)`, bounded `forall`/`exists`, Boolean
+  combinations and logical function calls belong to the proposed proof
+  expressions. `Nat` is mathematical natural arithmetic. `nat` embeds a
+  runtime unsigned value without changing it. Indexing a Seq requires a
+  proved natural index below its length; guards delimit where an indexed
+  expression is formed.
+- `contents(place)` captures the current logical element sequence of storage,
+  without a runtime copy. In this example Node has only integer and Option
+  fields, so its logical image has those same values. This is proposed
+  storage semantics, not a user-defined snapshot function whose name supplies
+  a contract. Each primitive write/append must have specified content laws.
+- A `lemma` has logical parameters, requirements, an ensured proposition and
+  a checked proof body. `use unfold f(args)` expands that one total definition
+  at the stated arguments; `use lemma(args)` applies a previously checked
+  lemma after proving its requirements. Logical elimination, substitution
+  and induction need specified rules. These are proposed extensions to
+  `use`, not meanings of today's weighted-affine PRF-1.
+
+All example declarations are in one module, so no private representation is
+exposed through an annotation-only visibility exception. Separate modules
+would need visible abstract predicates and verified public lemma contracts.
+The fixed capacity only keeps the example small; generic invariant support
+is a separate part of the desired library interface.
+
+```text
+struct Node {
+    parent: Option<u64>;
+    first_child: Option<u64>;
+    last_child: Option<u64>;
+    previous: Option<u64>;
+    next: Option<u64>;
+    payload: u64;
+}
+
+ghost struct Tree {
+    id: u64;
+    children: Seq<Tree>;
+}
+
+struct Forest {
+    nodes: Slots<Node, 64>;
+    ghost shape: Seq<Tree>;
+    invariant valid(f): rep(contents(f.nodes), f.shape);
+}
+```
+
+`shape` is the previously unnamed model witness. It exists in the checking
+state and is carried by logical constructors, moves and function contracts;
+it contributes no bytes or argument to runtime layout/ABI. A constructor must
+supply it and prove `rep`, rather than asking the checker to invent a tree.
+The proposed invariant is still one proposition at TYPE-11-like boundaries,
+but allowing its logical call and ghost field is a new rule. Current TYPE-11
+admits neither this predicate nor this field kind.
+
+Here is the actual field correspondence. List literals, expression-returning
+`if`, omitted type arguments on Option constructors and positional logical
+arguments are notation of this candidate, not a claim about current grammar.
+
+```text
+ghost fn first_id(ts: Seq<Tree>) -> Option<u64> =
+    if ts.len == 0 { None } else { Some(ts[0].id) };
+
+ghost fn last_id(ts: Seq<Tree>) -> Option<u64> =
+    if ts.len == 0 { None } else { Some(ts[ts.len - 1].id) };
+
+ghost fn tree_matches(ns: Seq<Node>, t: Tree,
+                      parent: Option<u64>, previous: Option<u64>,
+                      next: Option<u64>) -> Bool =
+    if nat(t.id) >= ns.len { false } else {
+        ns[nat(t.id)].parent      == parent &&
+        ns[nat(t.id)].previous    == previous &&
+        ns[nat(t.id)].next        == next &&
+        ns[nat(t.id)].first_child == first_id(t.children) &&
+        ns[nat(t.id)].last_child  == last_id(t.children) &&
+        forall k: Nat where k < t.children.len {
+            tree_matches(ns, t.children[k], Some(t.id),
+                if k == 0 { None }
+                    else { Some(t.children[k - 1].id) },
+                if k + 1 == t.children.len { None }
+                    else { Some(t.children[k + 1].id) })
+        }
+    };
+
+ghost fn ids(t: Tree) -> Seq<u64> =
+    [t.id] ++ all_ids(t.children);
+
+ghost fn all_ids(ts: Seq<Tree>) -> Seq<u64> =
+    match ts {
+        [] => [],
+        [head, ..tail] => ids(head) ++ all_ids(tail)
+    };
+
+ghost fn no_dup(xs: Seq<u64>) -> Bool =
+    forall i, j: Nat where i < xs.len && j < xs.len {
+        i != j implies xs[i] != xs[j]
+    };
+
+ghost fn rep(ns: Seq<Node>, roots: Seq<Tree>) -> Bool =
+    no_dup(all_ids(roots)) &&
+    (forall slot: Nat where slot < ns.len {
+        exists k: Nat where k < all_ids(roots).len {
+            nat(all_ids(roots)[k]) == slot
+        }
+    }) &&
+    (forall k: Nat where k < roots.len {
+        tree_matches(ns, roots[k], None, None, None)
+    });
+```
+
+Concatenation and Seq constructor/index laws are general sequence
+definitions/laws, not forest axioms. The bounded existential explicitly
+requires a model occurrence for every natural-numbered storage slot, even
+when rep is considered over an arbitrary logical sequence. All concrete nodes must be covered,
+and every model node is bounded by tree_matches. Roots have no parent or
+sibling links; their sequence order is ghost only. Payload is not constrained
+by any of these definitions. The Tree/Seq types must denote finite inductive
+values, with checked admissibility of their recursive occurrences. The
+recursive calls descend into proper finite Tree/Seq subvalues; admission
+must check this joint structural ordering,
+including the mutual ids/all_ids calls. A user cannot define a nonterminating
+logical function and use its alleged return value as evidence.
+
+For `shape = [Tree(0, [Tree(2, []), Tree(1, [])])]`, unfolding these library
+definitions produces, among other equalities:
+
+```text
+nodes[0].first_child == Some(2)    nodes[0].last_child == Some(1)
+nodes[2].parent      == Some(0)    nodes[1].parent     == Some(0)
+nodes[2].previous    == None       nodes[2].next       == Some(1)
+nodes[1].previous    == Some(2)    nodes[1].next       == None
+```
+
+Changing the member names in Node requires changing this function's field
+selections. Nothing associates a mathematical parent with a member merely
+because both are called `parent`.
+
+A small lemma shows how a relation yields a usable field fact. Let
+`t = Tree(id: p, children: cs)` be ordinary notation for a logical constructor:
+
+```text
+lemma root_first(ns: Seq<Node>, p: u64, cs: Seq<Tree>)
+    requires rep(ns, [Tree(id: p, children: cs)]);
+    ensures if nat(p) < ns.len {
+        ns[nat(p)].first_child == first_id(cs)
+    } else { false };
+{
+    use unfold rep(ns, [Tree(id: p, children: cs)])
+        as [unique, coverage, root_match];
+    use instantiate root_match at 0 as matched;
+    use unfold tree_matches(ns, Tree(id: p, children: cs),
+                            None, None, None) in matched;
+}
+```
+
+For this illustrative proof body, `as [...]` names the three conjuncts
+produced by the first unfold; `instantiate ... at 0` specializes its bounded
+universal, whose singleton bound is proved. The ensured proposition is guarded
+so its subscript is formed only where the bound holds. Unfolding the guarded
+definition gives that bound and its first_child conjunct.
+Naming projected premises and guarded goals are part of this
+candidate proof notation and still need a grammar/judgment; an unchecked
+lemma signature is never usable.
+
+An ordinary function can load `let actual = f^.nodes[p].first_child;` after
+establishing its bounds. The proposed content-read law connects that load to
+`contents(f^.nodes)[nat(p)].first_child`. Applying root_first and substituting
+the load equality proves `actual == first_id(cs)` when its singleton-root
+premise holds. Arbitrary model nodes need a separately proved lookup lemma;
+the singleton example does not implicitly supply that general theorem.
+
+Mutation must update both descriptions and prove their agreement. This small
+case links two previously detached leaves, showing the exact places changed:
+
+```text
+fn link_two(f: &Forest) -> result: unit writes(f) contract {
+    requires f^.nodes.len == 2_u64;
+    requires f^.shape == [Tree(0, []), Tree(1, [])];
+    ensures f^.shape == [Tree(0, [Tree(1, [])])];
+} {
+    ghost let before = contents(f^.nodes);
+    set f^.nodes[0_u64].first_child = Some(1_u64);
+    set f^.nodes[0_u64].last_child = Some(1_u64);
+    set f^.nodes[1_u64].parent = Some(0_u64);
+    set f^.shape = [Tree(0, [Tree(1, [])])];
+    // The implicit exit obligation is rep(contents(f^.nodes), f^.shape).
+    return unit;
+}
+```
+
+This body identifies the runtime/ghost statements, not a finished source
+certificate. The exit derivation is finite and concrete: the entry rep says
+both leaves' five links are None; content-write laws set exactly the three
+listed fields and preserve all other fields and the extent; the new shape
+has labels `[0,1]`, its root endpoints both equal 1, its child parent equals
+0 and all its other links are None. These are precisely the final field
+values. A source certificate must express those unfoldings, content equations
+and substitutions; its complete command syntax is still unspecified here.
+Omitting either root endpoint or the child parent fails this derivation.
+Changing only shape supplies no fact about the runtime fields. Changing only
+runtime fields fails against the old shape. Proof-only assignment is not a
+trusted operation that restores rep by itself.
+
+The ghost field is part of the logical owner across calls and moves, not an
+untracked external witness keyed only by node numbers. Writes through any
+alias invalidate dependent current-state facts. A before snapshot keeps its
+old meaning; its rep cannot be reused as rep of current contents. Ordinary
+effects still constrain actual writes, and logical updates must also appear
+in the verified logical contract. These phase/transport rules are additional
+work, not consequences already provided by erasing a field.
+
+At a use site, the eventual separation certificate would have this form:
+
+```text
+invariant distinct: a != b {
+    use sibling_indices_distinct(contents(f.nodes), f.shape, p, i, j, a, b);
+}
+```
+
+That library lemma must require evidence that a and b were obtained from
+positions i and j of p's model child sequence, that both positions exist,
+and that i differs from j; it must prove the sequence
+and actual-load correspondence, and then use no_dup. No lemma with only
+`rep` and two arbitrary node arguments could conclude a != b. For a counted
+loop the checker additionally needs a source interface supplying that proof
+for two arbitrary distinct iterations, plus all conflicting read/write pairs.
+This section specifies the model/field connection, not that still-open
+cross-iteration certificate interface. It does not claim that a local
+inequality alone extends current PAR-2.
+
+An existential alternative could put `exists shape. rep(contents(f.nodes),
+shape)` directly in the invariant and avoid a named ghost field. It would
+instead require explicit witness introduction and elimination at construction,
+mutation and use. The earlier mathematical prose did not choose between these
+forms; this section spells out the ghost-field candidate so that its added
+syntax and obligations can be assessed. Neither has been selected.
+
 ### A concrete proof from storage to independent work
 
 Use the existing boundary discipline as the working assumption: a mutation
