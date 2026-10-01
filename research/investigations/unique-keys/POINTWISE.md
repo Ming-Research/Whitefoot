@@ -207,16 +207,17 @@ of the written storage is a measure or one of the certificate's reads.
 
 ## Observations
 
-At compiler revision 60b4b3b9 (`make -C compiler build`), on the
+At compiler revision 145f6e9e (`make -C compiler build`), on the
 4-processor Linux host the timings below name:
 
 - **The witnesses.** `whitefootc --check` accepts the level cascade and the
   children array; both exit 0 built sequentially and with `--par`.
   `--par-ledger` permits `cascade_level`'s level loop (line 27) and
   `mark_children`'s loop (line 13), each "eligible; no accumulator". The
-  other loops stay denied, rightly: each depends on what earlier iterations
-  wrote (a depth read at the parent, a per-parent or per-level counter, a
-  running offset) or hands the whole result run to a callee.
+  passes' other loops stay denied, rightly: each depends on what earlier
+  iterations wrote (a depth read at the parent, a per-parent or per-level
+  counter, a running offset) or hands the whole result run to a callee;
+  `main`'s fill and checksum loops are permitted.
 - **No runtime trace.** The scatter case
   `tests/conformance/cases/range5-pos-scatter-through-left-inverse.wf`
   emits byte-identical LLVM sequentially with and without its `apart`
@@ -230,12 +231,14 @@ At compiler revision 60b4b3b9 (`make -C compiler build`), on the
   taken for a write to its source, through a `let` or a match binder, and a
   header that forgot neither a write only later iterations reach nor the
   variant of a written enum. Earlier builds of this branch accepted the last
-  five.
-- **Proof cost.** Checking the level cascade takes 1.08 to 1.15 s; callgrind
+  five, and 60b4b3b9 rejected
+  `range2-pos-fill-segments-direct-match.wf`, whose match binder takes the
+  storage a call made rather than copying stored storage.
+- **Proof cost.** Checking the level cascade takes 1.12 to 1.13 s; callgrind
   attributes 91% of its 10.1 billion instructions to the range judgment,
   90% to solving owed facts (`Walker::require`), with repeated
   Fourier-Motzkin elimination the largest part. The children array checks in
-  0.08 s. Over Snowghost's whole renderer, at b787fe51, the judgment is
+  0.07 s. Over Snowghost's whole renderer, at b787fe51, the judgment is
   within the run-to-run spread of the front end: 108.3 s and 106.2 s with
   the judgment skipped by a temporary switch, against 108.5 s and 109.2 s
   with it, two builds each; at 450fea25 the same comparison gave 102.9 s and 102.7 s
@@ -255,38 +258,43 @@ variable `WF_SKIP_RANGE` was set.
 ## Snowghost shape D
 
 Snowghost's style prototype gained shape D on its branch
-`proved-level-cascade`, commits 7358347 (code) and 8684f92 (record), built
-and timed with this branch's compiler at 450fea25 and checked again at
-b787fe51 and 60b4b3b9, whose later changes are to range checking alone,
-with the same checksums and ledger lines: C's flat match, then
-`cascade_levels`, the level cascade's program over the prototype's
-traversal, with `cascade_level`'s loop writing each element's computed
-values at its preorder index under an empty certificate. The Snowghost
-record, `research/investigations/concurrency/DESIGN.md`, "Shape D: a
-proved level cascade", holds the tables and runs 22 to 24.
+`proved-level-cascade`: C's flat match, then `cascade_levels`, the level
+cascade's program over the prototype's traversal, with `cascade_level`'s
+loop writing each element's computed values at its preorder index under an
+empty certificate. It was written at Snowghost 7358347 against this
+branch's compiler at 450fea25, and checked, timed and its ledger read again
+at Snowghost 414cd5e and a6d65c8, with the `whitefoot/` pin at this
+branch's 145f6e9e. The Snowghost record,
+`research/investigations/concurrency/DESIGN.md`, "Shape D: a proved level
+cascade", holds the tables and runs 22 to 25.
 
 - **Accepted as written.** The facts and the empty certificate checked on
   the first build; the only rewrite was for the permission judgment, not
   the proof: the loop body's call of `cascade_element`, which returns two
   values, moved into `cascade_into`, since [PAR-2] refuses a body binding an
   ordered result list (`docs/todo.md`).
-- **Same results.** `proto_style check` agrees on the six pages present
-  on the host, `--par` and sequential, with the checksums Snowghost
-  recorded before the port, at both revisions.
+- **Same results.** `proto_style check` agrees on the six pages present on
+  the host, `--par` and sequential, with the checksums Snowghost recorded
+  before the port, and on a page whose deepest element lies at the
+  traversal's depth ceiling. A review of the port found that D first
+  refused that page by one level, a bound in Snowghost's code, not in the
+  proof; a D that leaves one level uncascaded fails the check.
 - **Permitted and split.** `--par-ledger` permits the level loop, one
   accumulator under `band`, and splits it; the depth walk, the grouping and
   the loop over levels stay sequential, as they must.
 - **Speed.** At four workers the cascade alone, over one match, takes
-  0.0350 s against 0.0425 s for shape C's preorder cascade, which is
-  sequential in every build, on ecma262 (1.21 times faster), 0.0062 s against 0.0168 s on html5 (2.71
-  times), and 1.6 and 1.5 times faster on the flat and unbalanced synthetic
-  pages. The cascade is 2.5 to 5 percent of the real pages' style stage,
-  which matching dominates, so the whole stage changes by about the
-  cascade's gain. D's sequential cascade adds the validating walk and the
-  grouping: 0.0517 s against C's 0.0415 s, both in the sequential build, on
-  ecma262, though 0.0128 s against 0.0168 s on html5, a difference not
-  attributed further. Snowghost's `run.sh style` with `SHAPES="C D
-  cascade-c cascade-d"` and `RUNS=5` produced these figures.
+  0.0347 s against 0.0417 s for shape C's preorder cascade, which is
+  sequential in every build, on ecma262 (1.20 times faster), 0.0062 s
+  against 0.0177 s on html5 (2.85 times), and 1.6 and 1.5 times faster on
+  the flat and unbalanced synthetic pages. The cascade is 2.6 to 5 percent
+  of the real pages' style stage, which matching dominates, and on both
+  real pages the whole stage at four workers takes the same time in C and
+  D, the cascade's gain not separated from the match's variation. D's
+  sequential cascade adds the validating walk and the grouping: 0.0520 s
+  against C's 0.0417 s on ecma262, though 0.0127 s against 0.0178 s on
+  html5, a difference not attributed further. Snowghost's `run.sh style`
+  with `SHAPES="C D cascade-c cascade-d"` and `RUNS=5` produced these
+  figures.
 - **Compile time.** The range judgment stays within the run-to-run spread
   of the renderer's front end ([Observations](#observations)).
 

@@ -557,3 +557,98 @@ fn a_header_that_does_not_settle_is_unsupported_at_its_loop() {
         });
     }
 }
+
+/// A call owing `zero` after `reads` guards, each on its own cell of
+/// `cells`, with the caller's own requirement `known` active; every guarded
+/// read selects one value of `known`'s first binder. Unpaired, `zero` is
+/// owed over `cells`, and `known`'s instance at the owed read proves it.
+/// Paired, `zero` is owed over `other`, which the requirement `held` proves,
+/// and `known` has a second binder over `spare`, whose one read no condition
+/// names, so no read in the problem selects a value for it.
+fn guarded_reads(reads: u64, paired: bool) -> Vec<u8> {
+    let (parameters, known, unnamed, owed) = if paired {
+        (
+            ", other: &[u64], spare: &[u64]) -> result: u64 reads(cells), reads(other), reads(spare)",
+            "requires forall known(k in 0_u64..cells^.len, j in 0_u64..spare^.len): cells^[k] == spare^[j];
+  requires forall held(k in 0_u64..other^.len): other^[k] == 0_u64;",
+            "  if 0_u64 < spare^.len {
+    let seen = spare^[0_u64];
+  }
+",
+            "other",
+        )
+    } else {
+        (
+            ") -> result: u64 reads(cells)",
+            "requires forall known(k in 0_u64..cells^.len): cells^[k] == 0_u64;",
+            "",
+            "cells",
+        )
+    };
+    let mut guards = String::new();
+    for cell in 0..reads {
+        guards.push_str(&format!(
+            "  if cells^[{cell}_u64] > 5_u64 {{
+    return 1_u64;
+  }}
+"
+        ));
+    }
+    format!(
+        "fn zeros(cells: &[u64]) -> result: u64 reads(cells) contract {{
+  requires forall zero(k in 0_u64..cells^.len): cells^[k] == 0_u64;
+}} {{
+  if 0_u64 < cells^.len {{
+    let first = cells^[0_u64];
+    return first;
+  }}
+  return 0_u64;
+}}
+
+fn probe(cells: &[u64]{parameters} contract {{
+  requires cells^.len == 400_u64;
+  {known}
+}} {{
+{guards}{unnamed}  let got = zeros(cells: {owed});
+  return got;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+    )
+    .into_bytes()
+}
+
+/// The conclusion a RANGE-3 rejection of `source` names, or `None` when
+/// the program is accepted.
+fn undischarged(source: &[u8]) -> Option<String> {
+    with_semantics(source, |outcome| {
+        let issue = match outcome {
+            SemanticOutcome::Complete(_) => return None,
+            SemanticOutcome::SourceIssue { issue, .. } => issue,
+            other => panic!("expected acceptance or a RANGE-3 rejection, got {other:?}"),
+        };
+        assert_eq!(issue.rule(), SemanticRule::Range3);
+        let SemanticIssueKind::UndischargedRangeFact { fact, missing, .. } = issue.kind() else {
+            panic!("expected an undischarged range fact, got {:?}", issue.kind());
+        };
+        assert_eq!(fact, "zero");
+        Some(missing.clone())
+    })
+}
+
+#[test]
+fn the_instance_ceiling_counts_the_instances_a_fact_forms() {
+    // 200 guarded cells and the owed read select 201 values of `known`'s
+    // binder, within the 256 instances one fact may form, and its instance
+    // at the owed read proves `zero`; 300 select 301, past the ceiling.
+    assert_eq!(undischarged(&guarded_reads(200, false)), None);
+    let past = undischarged(&guarded_reads(300, false)).expect("a RANGE-3 rejection");
+    assert!(past.contains("256 instances"), "the ceiling is named: {past}");
+    // With a second binder no read selects, `known` forms no instance at
+    // all, however many values its first binder has, so it reaches no
+    // ceiling, and `held` proves `zero` over `other`.
+    assert_eq!(undischarged(&guarded_reads(300, true)), None);
+}

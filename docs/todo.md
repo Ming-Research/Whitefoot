@@ -556,7 +556,7 @@ rarely insert at the same place.
   saturation round and branch, and the walk solves one problem per
   obligation and per certificate pair without sharing work between them. In
   `tests/conformance/cases/range5-pos-level-cascade.wf` it is 91% of the
-  checker's instructions, about 1.1 s of a 1.2 s check, almost all in
+  instructions of a check taking about 1.1 s, almost all in
   solving owed facts (`Walker::require`); in Snowghost's whole renderer it is
   within the run-to-run spread of a front end near 107 s, a few seconds at
   most (`research/investigations/unique-keys/POINTWISE.md#observations`). An
