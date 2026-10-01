@@ -1,8 +1,8 @@
 {
   "purpose": "Isolated ordinary public reserve with verified future entry headroom; single production baseline panel, not an optimization/adoption result",
   "archive": "reserve-api-evidence.tar.gz",
-  "archive_sha256": "ef6db3c96ee2ec7e3fc7e73d4e0ce13cfa34d79eff318d83fd29793ed5203435",
-  "archive_members": 408,
+  "archive_sha256": "6cff0d66dc2ee69f3419b495754a6fcfacd2ce04cb43e48c7f135c2f098cb9d2",
+  "archive_members": 472,
   "base_revision": "89571a60381a685cfbe760248ceb6178d9f9ac05",
   "production_cli_sha256": "c12b2b2a6c9694fd2bc1b7be0004d582ae9628951422def849f4cf6a3ac02f77",
   "timed_image_sha256": "f1ebf18d7a94c79250bb3cbd74a0b379a2a30c6e5e4eda48396ec77d8bbdbf3f",
@@ -2670,6 +2670,14 @@
         }
       },
       "replay_boundary": "Historical command records, dependent on preceding self-tail source/control and omitted generated artifacts; no published replay or generic initialization safety claim."
+    },
+    "owner_argument_floor": {
+      "prefix": "owner-argument-floor/",
+      "source_archive_sha256": "20ff1865fc78f96b55659a65a42f9f72fccadf5745d87c93a948a0698a946307",
+      "payload_count": 63,
+      "manifest": "owner-argument-floor/manifest.json",
+      "retention": "All incoming payload bytes unchanged; manifest distinguishes original and retained normalized hashes.",
+      "replay_boundary": "Historical commands require pinned source/toolchain and omitted generated IR, objects and binaries; not standalone or a verified published-package replay."
     }
   },
   "vacant_init_floor": {
@@ -3337,5 +3345,276 @@
     "reduction": "selftail-init-interaction/timing/reduction.json",
     "historical_state": "check-summary/native-result predate timing; their no-timing statements are historical stage state, superseded only by retained timing statuses/outcome",
     "preservation": "All337 prior entry byte sequences retained; outer index versioned and extended, other336 unchanged"
+  },
+  "owner_argument_prior_index": {
+    "path": "component-index-before-owner-argument-floor.json",
+    "sha256": "7ef9401bbff28fa8177bf7f7901fedfbedebc406bc0e0f40098c925abc65b7de",
+    "archive_sha256": "ef6db3c96ee2ec7e3fc7e73d4e0ce13cfa34d79eff318d83fd29793ed5203435",
+    "exception": "Outer index extended; prior bytes versioned. All407 other previous entries remain byte-identical at original names."
+  },
+  "owner_argument_floor": {
+    "outcome": "Native snapshot removal succeeds, no qualified runtime benefit: both primary complete ranges overlap in both cohorts and fail stability; no implementation/adoption/retry",
+    "raw_rows": 88128,
+    "all_sample_batch_sums_verified": true,
+    "primary": [
+      {
+        "initial_floor": 64,
+        "runs": {
+          "control0": {
+            "whitefoot-hash-map": {
+              "median_ns": 1754.2443237304688,
+              "min_ns": 1739.6239624023438,
+              "max_ns": 1796.4859619140625,
+              "minimum_sample_ns": 28501999
+            },
+            "rust-hash-map": {
+              "median_ns": 1011.0244140625,
+              "min_ns": 993.6345825195312,
+              "max_ns": 1187.6654052734375,
+              "minimum_sample_ns": 16279709
+            },
+            "cpp-unordered-map": {
+              "median_ns": 237.43719482421875,
+              "min_ns": 230.6519775390625,
+              "max_ns": 246.77557373046875,
+              "minimum_sample_ns": 3779002
+            }
+          },
+          "candidate0": {
+            "whitefoot-hash-map": {
+              "median_ns": 1781.2525024414062,
+              "min_ns": 1606.4095458984375,
+              "max_ns": 1917.597412109375,
+              "minimum_sample_ns": 26319414
+            },
+            "rust-hash-map": {
+              "median_ns": 1091.9088134765625,
+              "min_ns": 970.8607177734375,
+              "max_ns": 1408.8595581054688,
+              "minimum_sample_ns": 15906582
+            },
+            "cpp-unordered-map": {
+              "median_ns": 238.387939453125,
+              "min_ns": 231.7452392578125,
+              "max_ns": 257.372802734375,
+              "minimum_sample_ns": 3796914
+            }
+          },
+          "candidate1": {
+            "whitefoot-hash-map": {
+              "median_ns": 1821.7237548828125,
+              "min_ns": 1660.8631591796875,
+              "max_ns": 1892.0314331054688,
+              "minimum_sample_ns": 27211582
+            },
+            "rust-hash-map": {
+              "median_ns": 1127.700927734375,
+              "min_ns": 984.0090942382812,
+              "max_ns": 1351.9110107421875,
+              "minimum_sample_ns": 16122005
+            },
+            "cpp-unordered-map": {
+              "median_ns": 261.23565673828125,
+              "min_ns": 240.35675048828125,
+              "max_ns": 291.6763916015625,
+              "minimum_sample_ns": 3938005
+            }
+          },
+          "control1": {
+            "whitefoot-hash-map": {
+              "median_ns": 1737.419189453125,
+              "min_ns": 1728.63037109375,
+              "max_ns": 1869.3767700195312,
+              "minimum_sample_ns": 28321880
+            },
+            "rust-hash-map": {
+              "median_ns": 1032.1122436523438,
+              "min_ns": 1012.275634765625,
+              "max_ns": 1233.5789184570312,
+              "minimum_sample_ns": 16585124
+            },
+            "cpp-unordered-map": {
+              "median_ns": 236.46807861328125,
+              "min_ns": 235.2169189453125,
+              "max_ns": 239.99285888671875,
+              "minimum_sample_ns": 3853794
+            }
+          }
+        },
+        "raw_directions": [
+          "overlap",
+          "overlap"
+        ],
+        "paired_peer_drift": {
+          "rust-hash-map": [
+            0.08000241961423327,
+            0.09261462081272365
+          ],
+          "cpp-unordered-map": [
+            0.004004194160102559,
+            0.10473962604273868
+          ]
+        }
+      },
+      {
+        "initial_floor": 4096,
+        "runs": {
+          "control0": {
+            "whitefoot-hash-map": {
+              "median_ns": 102684.7265625,
+              "min_ns": 102328.44921875,
+              "max_ns": 106737.48046875,
+              "minimum_sample_ns": 26196083
+            },
+            "rust-hash-map": {
+              "median_ns": 80421.05078125,
+              "min_ns": 79022.9453125,
+              "max_ns": 92465.97265625,
+              "minimum_sample_ns": 20229874
+            },
+            "cpp-unordered-map": {
+              "median_ns": 12702.4765625,
+              "min_ns": 12568.69921875,
+              "max_ns": 13997.234375,
+              "minimum_sample_ns": 3217587
+            }
+          },
+          "candidate0": {
+            "whitefoot-hash-map": {
+              "median_ns": 95017.734375,
+              "min_ns": 93186.703125,
+              "max_ns": 116339.359375,
+              "minimum_sample_ns": 23855796
+            },
+            "rust-hash-map": {
+              "median_ns": 80717.953125,
+              "min_ns": 74669.76171875,
+              "max_ns": 116359.546875,
+              "minimum_sample_ns": 19115459
+            },
+            "cpp-unordered-map": {
+              "median_ns": 14143.08203125,
+              "min_ns": 12556.484375,
+              "max_ns": 20376.79296875,
+              "minimum_sample_ns": 3214460
+            }
+          },
+          "candidate1": {
+            "whitefoot-hash-map": {
+              "median_ns": 102889.15234375,
+              "min_ns": 97597.6640625,
+              "max_ns": 116810.890625,
+              "minimum_sample_ns": 24985002
+            },
+            "rust-hash-map": {
+              "median_ns": 96408.19140625,
+              "min_ns": 83993.49609375,
+              "max_ns": 110116.05859375,
+              "minimum_sample_ns": 21502335
+            },
+            "cpp-unordered-map": {
+              "median_ns": 25542.96875,
+              "min_ns": 14133.79296875,
+              "max_ns": 29324.375,
+              "minimum_sample_ns": 3618251
+            }
+          },
+          "control1": {
+            "whitefoot-hash-map": {
+              "median_ns": 112186.03125,
+              "min_ns": 102975.91796875,
+              "max_ns": 122058.76171875,
+              "minimum_sample_ns": 26361835
+            },
+            "rust-hash-map": {
+              "median_ns": 91249.34765625,
+              "min_ns": 81614.75,
+              "max_ns": 107022.4609375,
+              "minimum_sample_ns": 20893376
+            },
+            "cpp-unordered-map": {
+              "median_ns": 20550.60546875,
+              "min_ns": 12946.28515625,
+              "max_ns": 25260.91015625,
+              "minimum_sample_ns": 3314249
+            }
+          }
+        },
+        "raw_directions": [
+          "overlap",
+          "overlap"
+        ],
+        "paired_peer_drift": {
+          "rust-hash-map": [
+            0.003691848600158032,
+            0.05653567814461691
+          ],
+          "cpp-unordered-map": [
+            0.11341138569803988,
+            0.24293022844711665
+          ]
+        }
+      }
+    ],
+    "checks": {
+      "stages": 64,
+      "all_expected": true,
+      "reserve_cases_each_image": 288,
+      "negative_controls_per_arm": 21,
+      "lookup_cases_each_image": 96,
+      "whole_traces_each_image": 18390,
+      "ledger_rows": 96,
+      "ledger_sha256": "14f25e56f83278826b834e3dc81982da8d2df8ccbdcda8a6c5ad41a93499921d",
+      "timing_run": false
+    },
+    "timing_statuses": [
+      {
+        "label": "control0",
+        "argv": [
+          "<repository-root>/research/experiments/container-representation/map-library/.build/reserve-api/owner-argument-floor/control-timed",
+          "reserve-measure",
+          "0"
+        ],
+        "pid": 21627,
+        "exit": 1,
+        "wall_s": 7.877992582973093
+      },
+      {
+        "label": "candidate0",
+        "argv": [
+          "<repository-root>/research/experiments/container-representation/map-library/.build/reserve-api/owner-argument-floor/candidate-timed",
+          "reserve-measure",
+          "0"
+        ],
+        "pid": 21934,
+        "exit": 1,
+        "wall_s": 8.083105416968465
+      },
+      {
+        "label": "candidate1",
+        "argv": [
+          "<repository-root>/research/experiments/container-representation/map-library/.build/reserve-api/owner-argument-floor/candidate-timed",
+          "reserve-measure",
+          "1"
+        ],
+        "pid": 22206,
+        "exit": 1,
+        "wall_s": 8.571485416963696
+      },
+      {
+        "label": "control1",
+        "argv": [
+          "<repository-root>/research/experiments/container-representation/map-library/.build/reserve-api/owner-argument-floor/control-timed",
+          "reserve-measure",
+          "1"
+        ],
+        "pid": 22509,
+        "exit": 1,
+        "wall_s": 8.300884750206023
+      }
+    ],
+    "reduction": "owner-argument-floor/timing/reduction.json",
+    "historical_state": "Native/check records precede timing; stage no-timing flags are superseded by the retained timing statuses/outcome only.",
+    "preservation": "All408 prior entry byte sequences retained; outer index versioned and extended, other407 unchanged"
   }
 }

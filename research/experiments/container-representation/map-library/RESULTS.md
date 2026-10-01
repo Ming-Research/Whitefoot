@@ -4898,3 +4898,61 @@ replayed. All prior 337 entry byte sequences remain, with the former outer index
 at `component-index-before-selftail-init-interaction.json` and the other 336 at
 unchanged names. Only the outer index is extended; original/normalized hashes are
 separate. No compiler, library or specification change is selected.
+
+### Old-backing owner argument floor: no qualified timing benefit
+
+This raw LLVM floor starts from self-tail v2 with ordinary Vacant initialization,
+not the initialization interaction. It changes only the wide ceiling-16384
+rebuild: the already selected old-last payload address supplies the unchanged
+migration call instead of a private 256-byte argument copy. The exact instance
+has a live old backing, a separate fresh destination, a read-only scalar hash
+callback and eager callee capture before destination writes. The retained
+address audit establishes that bounded premise; it is not a generic lifetime,
+alias or owning-payload proof, and adds no ABI attributes or source permissions.
+
+Native removal succeeds: eight caller LDP/STP pairs disappear, the frame falls
+336→64 bytes and stack accesses 18→8, without a substitute copy or added call.
+All four migration-helper bodies stay identical. One wide whole-trace body also
+changes address/register scheduling (2529→2536 instructions), while its 7424-byte
+frame, call and stack-access counts remain unchanged; that collateral is retained,
+not mistaken for the isolated reserve path. No compiler implementation follows
+from this native observation alone.
+
+All 64 build/check stages match expectations: each of four images passes 288
+reserve cases; each arm passes 21 faults across its timed/account pair; existing
+lookup/whole-trace checks pass and both 96-row ledgers equal the baseline. The
+fixed paired panel preserves 88,128 rows, with every aggregate equal to batch
+elapsed-time/call-count sums and unchanged input pins. All four processes return
+1 after collecting their complete panels because known fast-cell instrument
+failures remain; the outer guard returns 1 after 32.99 s. No retry follows.
+
+Aligned wide growth, WF median [minimum, maximum] µs per reserve, cohort 0 /
+cohort 1:
+
+| Initial entry floor | Self-tail control | Owner argument floor | Verdict |
+|---:|---|---|---|
+| 64 | 1.754 [1.740, 1.796] / 1.737 [1.729, 1.869] | 1.781 [1.606, 1.918] / 1.822 [1.661, 1.892] | Overlap both; stability unresolved |
+| 4096 | 102.685 [102.328, 106.737] / 112.186 [102.976, 122.059] | 95.018 [93.187, 116.339] / 102.889 [97.598, 116.811] | Overlap both; stability unresolved |
+
+Neither primary cell demonstrates a timing benefit. Both fail stability: C++
+paired drift is 10.47% at S64 cohort 1 and 11.34/24.29% at S4096. Small-wide WF
+remains separated slower than both peers; large-wide WF overlaps Rust and is
+separated slower than C++ in both cohorts. Overlap does not establish parity.
+All 16 cells and both peers remain in the reduction: there is no qualified gain
+or loss, and the other adverse samples, duration failures and maximum 39.89%
+paired peer drift are retained. Fewer transfers and lower large-wide medians do
+not meet the preregistered criterion. No generic implementation or adoption is
+selected. The current [storage plan](../../../../compiler/src/backend/storage.rs)
+keeps source loads and ordinary projections as snapshots. This result does not
+justify relaxing that boundary: a general forwarding change would need both
+qualified performance evidence and explicit lifetime/alias conditions beyond
+the frozen instance audit.
+
+`owner-argument-floor/` in the existing archive retains the bounded address audit,
+patch, original/changed function excerpts, whole-trace collateral, 64 checks and
+all raw panels. Its manifest distinguishes original and retained normalized
+hashes. Scripts remain historical command records requiring omitted compiler,
+module/object and tool/path dependencies; no standalone or verified published
+replay is claimed. All prior 408 byte sequences remain: the former outer index
+is at `component-index-before-owner-argument-floor.json`, and the other 407 keep
+their original names. Only the outer index is extended.

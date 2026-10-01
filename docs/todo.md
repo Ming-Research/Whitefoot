@@ -3391,6 +3391,14 @@ condition under which it is taken up.
   with complete ownership checks and qualified large-cell evidence; fewer stores
   alone neither prove the elapsed cause nor authorize generic inactive bytes.
 
+  The old-backing owner-argument floor removes the remaining 256-byte caller
+  snapshot and reduces its frame from 336 to 64 bytes, but neither primary
+  complete range separates in both cohorts and peer stability fails. It does
+  not demonstrate a qualified runtime contribution. Keep source-load/projection
+  snapshot behavior unchanged; reopen general forwarding only with qualified
+  performance evidence and established lifetime, alias and intervening-write
+  conditions, rather than the native copy count alone.
+
 - **Ordered insertion replacement costs need attribution.** Both the
   [aggregate-result candidate](../research/experiments/container-representation/ordered-library/RESULTS.md#single-descent-insertion-candidate)
   and [borrowed-promotion follow-up](../research/experiments/container-representation/ordered-library/RESULTS.md#borrowed-promotion-follow-up)
