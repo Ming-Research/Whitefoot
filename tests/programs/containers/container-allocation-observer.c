@@ -40,6 +40,7 @@ static Allocation allocations[MAX_ALLOCATIONS];
 static size_t allocation_count;
 static size_t request_count;
 static size_t release_count;
+static bool refuse_next_reallocation;
 static atomic_flag ledger_lock = ATOMIC_FLAG_INIT;
 
 // Parallel lowering may allocate and consume independent owners on different
@@ -93,6 +94,68 @@ void wf_observe_release(void *pointer) {
     require(false, "release did not return an allocated address");
 }
 
+void *wf_observe_reallocate(void *pointer, uint64_t bytes) {
+    if (pointer == NULL) return wf_observe_allocate(bytes);
+    lock_ledger();
+    size_t old_bytes = 0;
+    bool found = false;
+    for (size_t index = 0; index < allocation_count; ++index) {
+        const Allocation *allocation = &allocations[index];
+        if (allocation->pointer != pointer) continue;
+        require(!allocation->released, "reallocation of a released allocation");
+        old_bytes = allocation->bytes == 0 ? 1 : (size_t)allocation->bytes;
+        found = true;
+        break;
+    }
+    require(found, "reallocation did not use an allocated address");
+    if (refuse_next_reallocation) {
+        refuse_next_reallocation = false;
+        ++request_count;
+        unlock_ledger();
+        return NULL;
+    }
+    unlock_ledger();
+    // This functional observer forces a move and quarantines the old block.
+    // Calling real realloc would release storage the final ledger still owns.
+    // Real in-place/moving/NULL growth is covered by backend exhaustion tests.
+    void *replacement = wf_observe_allocate(bytes);
+    size_t new_bytes = bytes == 0 ? 1 : (size_t)bytes;
+    memcpy(replacement, pointer, old_bytes < new_bytes ? old_bytes : new_bytes);
+    wf_observe_release(pointer);
+    return replacement;
+}
+
+// Observer controls, not source allocation-refusal programs. Refuse each of
+// three successive requests in turn and prove the old identity, byte extent,
+// contents and eventual release survive; successful moves preserve the prefix.
+static void exercise_reallocation(int refused_position) {
+    size_t bytes = 8;
+    unsigned char *pointer = wf_observe_allocate(bytes);
+    memset(pointer, 0x37, bytes);
+    for (int position = 0; position < 3; ++position) {
+        refuse_next_reallocation = position == refused_position;
+        unsigned char *replacement = wf_observe_reallocate(pointer, bytes + 8);
+        require((replacement == NULL) == (position == refused_position),
+                "reallocation result did not match its control");
+        if (replacement == NULL) {
+            lock_ledger();
+            const Allocation *owner = &allocations[allocation_count - 1];
+            require(owner->pointer == pointer && owner->bytes == bytes &&
+                    !owner->released, "failed reallocation changed its owner");
+            unlock_ledger();
+        }
+        unsigned char *retained = replacement == NULL ? pointer : replacement;
+        for (size_t index = 0; index < bytes; ++index)
+            require(retained[index] == 0x37, "reallocation lost retained contents");
+        if (replacement != NULL) {
+            pointer = replacement;
+            bytes += 8;
+            memset(pointer, 0x37, bytes);
+        }
+    }
+    wf_observe_release(pointer);
+}
+
 enum { OBSERVER_WORKERS = 4, REQUESTS_PER_WORKER = 8 };
 static wf_prim_thread observer_threads[OBSERVER_WORKERS];
 static size_t worker_numbers[OBSERVER_WORKERS];
@@ -131,6 +194,18 @@ static void exercise_concurrent_observation(void) {
 int main(int argc, char **argv) {
     if (argc == 2 && strcmp(argv[1], "concurrent") == 0) {
         exercise_concurrent_observation();
+    } else if (argc == 2 && strcmp(argv[1], "reallocate") == 0) {
+        exercise_reallocation(-1);
+    } else if (argc == 2 && strcmp(argv[1], "reallocate-null") == 0) {
+        for (int position = 0; position < 3; ++position)
+            exercise_reallocation(position);
+    } else if (argc == 2 && strcmp(argv[1], "released-reallocation") == 0) {
+        void *pointer = wf_observe_allocate(8);
+        wf_observe_release(pointer);
+        (void)wf_observe_reallocate(pointer, 16);
+    } else if (argc == 2 && strcmp(argv[1], "foreign-reallocation") == 0) {
+        unsigned char *pointer = wf_observe_allocate(8);
+        (void)wf_observe_reallocate(pointer + 1, 16);
     } else if (argc == 2 && strcmp(argv[1], "double-release") == 0) {
         void *pointer = wf_observe_allocate(8);
         wf_observe_release(pointer);

@@ -3786,8 +3786,8 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
 /// target admits, and its fix is carried out by the programs below it: the
 /// same program with the count guarded in the allocating function, and with
 /// the count required there and guarded by its caller. Every supported
-/// target allocates at most `i64::MAX` bytes, and a `Slots<u8>` block spends
-/// two header words, so `i64::MAX - 16` elements fit.
+/// target allocates at most `i64::MAX` bytes. Runtime Slots keeps its
+/// descriptor inline, so its byte payload admits exactly `i64::MAX` elements.
 #[test]
 fn an_allocation_count_the_target_cannot_hold_is_located_with_its_bounds() {
     super::check(
@@ -3811,8 +3811,8 @@ fn an_allocation_count_the_target_cannot_hold_is_located_with_its_bounds() {
         "unbounded.wf:8:14: target layout failure in TargetLayout: AllocationCountExceedsTarget\n",
         "\n  count: \"count\"\n",
         "\n  proved_count_bound: 18446744073709551615\n",
-        "\n  target_count_limit: 9223372036854775791\n",
-        "\n  mechanical_fix: with N the largest count the program needs, at most 9223372036854775791, bound `count` by N before this call: add `requires count <= N;` to the `contract` of the function whose parameter it is, which each caller then establishes; state the bound in the `ensures` of the function whose result it is; or guard the allocation with `if count <= N` where refusing a larger count is the intended behavior",
+        "\n  target_count_limit: 9223372036854775807\n",
+        "\n  mechanical_fix: with N the largest count the program needs, at most 9223372036854775807, bound `count` by N before this call: add `requires count <= N;` to the `contract` of the function whose parameter it is, which each caller then establishes; state the bound in the `ensures` of the function whose result it is; or guard the allocation with `if count <= N` where refusing a larger count is the intended behavior",
     ] {
         assert!(
             rendered.contains(sentence),
@@ -3897,14 +3897,14 @@ fn the_printed_target_count_limit_is_the_exact_threshold() {
             "fn make(count: u64) -> made: Box<Slots<u8>> pure contract {{\n  requires count <= {limit}_u64;\n}} {{\n  let cell = box_slots_new::<u8>(capacity: count);\n  return move cell;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  let cell = make(count: 4_u64);\n  return std::process::exit_status(code: 0_u8);\n}}\n"
         )
     };
-    let at_limit = bounded("9223372036854775791");
+    let at_limit = bounded("9223372036854775807");
     if let Err(failure) = compile(
         &[SourceInput::new("at-limit.wf", at_limit.as_bytes())],
         CompilerLimits::default(),
     ) {
         panic!("a count at the printed limit does not build:\n{failure}");
     }
-    let above = bounded("9223372036854775792");
+    let above = bounded("9223372036854775808");
     let failure = compile(
         &[SourceInput::new("above-limit.wf", above.as_bytes())],
         CompilerLimits::default(),
@@ -3914,7 +3914,7 @@ fn the_printed_target_count_limit_is_the_exact_threshold() {
         failure
             .detail()
             .lines()
-            .any(|line| line == "target_count_limit: 9223372036854775791"),
+            .any(|line| line == "target_count_limit: 9223372036854775807"),
         "{failure}"
     );
 }

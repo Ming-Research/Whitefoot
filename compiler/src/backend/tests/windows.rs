@@ -2165,8 +2165,8 @@ extern uint8_t wf_remove_zero(void *, uint64_t);
 extern int wf__floor_run(int, char **);
 int wf__main_body(int argc, char **argv) {{
     (void)argc; (void)argv;
-    struct {{ uint64_t len, cap; void *payload; }} owner = {{UINT64_MAX - 1, UINT64_MAX, malloc(1)}};
-    if (!owner.payload) return 10;
+    static _Alignas(16) unsigned char anchor[16];
+    struct {{ uint64_t len, cap; void *payload; }} owner = {{UINT64_MAX - 1, UINT64_MAX, anchor}};
     void *storage = {storage};
     (void)wf_insert_zero(storage, 0);
     if (owner.len != UINT64_MAX) return 1;
@@ -2176,7 +2176,8 @@ int wf__main_body(int argc, char **argv) {{
     if (owner.len != UINT64_MAX) return 3;
     (void)wf_remove_zero(storage, 0);
     if (owner.len != UINT64_MAX - 1) return 4;
-    free(owner.payload);
+    if (owner.cap != UINT64_MAX || owner.payload != anchor) return 5;
+    for (unsigned i = 0; i < sizeof(anchor); ++i) if (anchor[i] != 0) return 6;
     return 0;
 }}
 int main(int argc, char **argv) {{ return wf__floor_run(argc, argv); }}

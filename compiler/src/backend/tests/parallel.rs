@@ -1725,6 +1725,80 @@ fn main() -> status: std::process::ExitStatus pure {
     run_owned_lane_cases(source, &module, 0, 3, 4, 0, 1);
 }
 
+/// Two zero-capacity owners keep separate descriptors while their nonowning
+/// payload anchors cross real, deferred and refused worker lanes. The source
+/// allocator ledger remains exactly empty; any attempted anchor free fails.
+#[test]
+fn empty_runtime_slots_owners_survive_worker_transport_without_allocation() {
+    let source = br#"fn handoff(owner: Box<Slots<u64>>) -> result: Box<Slots<u64>> pure {
+  return move owner;
+}
+
+fn consume(owner: Box<Slots<u64>>) -> result: u64 pure {
+  if owner.inner.cap != 0_u64 {
+    return 1_u64;
+  }
+  if owner.inner.len != 0_u64 {
+    return 2_u64;
+  }
+  let range = &owner.inner[0_u64..0_u64];
+  let resliced = &range^[0_u64..0_u64];
+  return resliced^.len;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let left = box_slots_new::<u64>(capacity: 0_u64);
+  let right = box_slots_new::<u64>(capacity: 0_u64);
+  let first = handoff(owner: move left);
+  let second = handoff(owner: move right);
+  let first_value = consume(owner: move first);
+  let second_value = consume(owner: move second);
+  if first_value != 0_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if second_value != 0_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let mut module = emit_with_overlap(source);
+    assert!(module.contains("call void @wf__par_publish(ptr "));
+    // Observe the public owned-argument ABI without replacing the source body.
+    // The volatile byte read witnesses an aligned, live anchor on the worker;
+    // neither owner may write it or send it to the allocator's release hook.
+    let body = function_body(&module, "@wf_handoff").to_owned();
+    let renamed = body.replacen("@wf_handoff(", "@wf_handoff.source(", 1);
+    module = module.replace(&body, &renamed);
+    module.push_str(
+        r#"
+define { i64, i64, ptr } @wf_handoff(ptr %owner) {
+entry:
+  %payload.field = getelementptr i8, ptr %owner, i64 16
+  %payload = load ptr, ptr %payload.field
+  %nonnull = icmp ne ptr %payload, null
+  %address = ptrtoint ptr %payload to i64
+  %low = and i64 %address, 7
+  %aligned = icmp eq i64 %low, 0
+  %valid = and i1 %nonnull, %aligned
+  br i1 %valid, label %read, label %bad
+read:
+  %byte = load volatile i8, ptr %payload
+  %untouched = icmp eq i8 %byte, 0
+  br i1 %untouched, label %forward, label %bad
+forward:
+  %result = call { i64, i64, ptr } @wf_handoff.source(ptr %owner)
+  ret { i64, i64, ptr } %result
+bad:
+  call void @abort()
+  unreachable
+}
+"#,
+    );
+    // Construction, owned handoff and consumption each form one sibling pair.
+    run_owned_lane_cases(source, &module, 0, 3, 0, 0, 1);
+}
+
 /// Both Empty and a partial window of Box owners cross argument and result
 /// boundaries. Each granted frame keeps its dirty inactive storage until join;
 /// refusal executes the same calls and must release the same four cells.

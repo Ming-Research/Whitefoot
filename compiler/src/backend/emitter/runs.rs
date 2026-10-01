@@ -851,8 +851,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         ))
     }
 
-    /// Allocate the runtime Slots payload, retaining a nonnull one-byte
-    /// allocation for zero extent. Target qualification has checked the
+    /// Allocate a positive runtime Slots payload or use the static anchor at
+    /// zero physical extent. Target qualification has checked the
     /// stride, allocation domain and alignment before this multiplication.
     fn allocate_window_payload(
         &mut self,
@@ -862,15 +862,24 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     ) -> Result<String, BackendFailure> {
         let extent = self.next_temporary()?;
         let zero = self.next_temporary()?;
-        let bytes = self.next_temporary()?;
+        let selected = self.next_temporary()?;
         let payload = self.next_temporary()?;
         let nonnull = self.next_temporary()?;
+        let empty = format!("window.payload.empty.v{}", result.ordinal());
+        let allocate = format!("window.payload.allocate.v{}", result.ordinal());
         let ready = window_block_ready_label(result);
         let oom = window_block_oom_label(result);
+        self.output.symbol(EMPTY_SLOTS_ANCHOR);
+        writeln!(self.output,
+            "  %{extent} = mul nuw i64 {}, {element_size}\n  %{zero} = icmp eq i64 %{extent}, 0\n  br i1 %{zero}, label %{empty}, label %{allocate}",
+            self.value_name(capacity)
+        ).map_err(|_| BackendFailure::TextEmission)?;
+        self.output.open_block(empty.clone());
+        writeln!(self.output, "  br label %{ready}")?;
+        self.output.open_block(allocate.clone());
         self.output.symbol("malloc");
         writeln!(self.output,
-            "  %{extent} = mul nuw i64 {}, {element_size}\n  %{zero} = icmp eq i64 %{extent}, 0\n  %{bytes} = select i1 %{zero}, i64 1, i64 %{extent}\n  %{payload} = call ptr @malloc(i64 %{bytes})\n  %{nonnull} = icmp ne ptr %{payload}, null\n  br i1 %{nonnull}, label %{ready}, label %{oom}",
-            self.value_name(capacity)
+            "  %{payload} = call ptr @malloc(i64 %{extent})\n  %{nonnull} = icmp ne ptr %{payload}, null\n  br i1 %{nonnull}, label %{ready}, label %{oom}"
         ).map_err(|_| BackendFailure::TextEmission)?;
         self.output.open_block(oom.to_string());
         self.output.symbol("wf_resource_abort");
@@ -880,7 +889,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         )
         .map_err(|_| BackendFailure::TextEmission)?;
         self.output.open_block(ready.to_string());
-        Ok(format!("%{payload}"))
+        writeln!(
+            self.output,
+            "  %{selected} = phi ptr [ @{EMPTY_SLOTS_ANCHOR}, %{empty} ], [ %{payload}, %{allocate} ]"
+        )?;
+        Ok(format!("%{selected}"))
     }
 
     /// Copies one element between two physical slots of two windows.
@@ -1298,10 +1311,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     /// [OP-10] `grow`: the cell's content is remade whole at the new
     /// capacity.
     ///
-    /// A full positive payload may reallocate; other payloads allocate and
-    /// copy their initialized prefix before freeing the old storage. [STOR-7] makes
-    /// the copying route legal at every value, because no judgment depends
-    /// on the block's address.
+    /// A full positive payload may reallocate; a partial positive payload
+    /// allocates and copies its initialized prefix before freeing the old
+    /// storage. Zero extents keep static backing until a positive allocation
+    /// succeeds. [STOR-7] permits relocation independently of the old address.
     pub(super) fn emit_window_grow(
         &mut self,
         result: IrValueId,
@@ -1329,8 +1342,22 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         }
         let element_size = self.window_element_size(shape)?;
         let descriptor = self.value_name(cell);
-        let length_field = self.aggregate_field_pointer(block_type, &descriptor, 0)?;
         let capacity_field = self.aggregate_field_pointer(block_type, &descriptor, 1)?;
+        if crate::target::element_has_zero_stride(
+            self.target,
+            self.program,
+            shape.element_type(self.program)?,
+        )
+        .map_err(BackendFailure::TargetLayout)?
+        {
+            writeln!(
+                self.output,
+                "  store i64 {}, ptr {capacity_field}",
+                self.value_name(capacity)
+            )?;
+            return self.emit_constant(result, ty, IrConstant::Unit);
+        }
+        let length_field = self.aggregate_field_pointer(block_type, &descriptor, 0)?;
         let payload_field = self.aggregate_field_pointer(block_type, &descriptor, 2)?;
         let length = self.next_temporary()?;
         let old_capacity = self.next_temporary()?;
@@ -1343,7 +1370,6 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let resized = self.next_temporary()?;
         let resized_nonnull = self.next_temporary()?;
         let zero = self.next_temporary()?;
-        let allocated = self.next_temporary()?;
         let fresh = self.next_temporary()?;
         let fresh_nonnull = self.next_temporary()?;
         let moved = self.next_temporary()?;
@@ -1351,12 +1377,23 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let reallocate = format!("window.grow.reallocate.v{}", result.ordinal());
         let copy = format!("window.grow.copy.v{}", result.ordinal());
         let copy_ready = format!("window.grow.copy.ready.v{}", result.ordinal());
+        let unchanged = format!("window.grow.empty.v{}", result.ordinal());
+        let positive_new = format!("window.grow.positive.v{}", result.ordinal());
+        let copy_old = format!("window.grow.copy.old.v{}", result.ordinal());
+        let copy_empty = format!("window.grow.copy.empty.v{}", result.ordinal());
         let ready = window_block_ready_label(result);
         let oom = window_block_oom_label(result);
         writeln!(self.output,
-            "  %{length} = load i64, ptr {length_field}\n  %{old_capacity} = load i64, ptr {capacity_field}\n  %{old_payload} = load ptr, ptr {payload_field}\n  %{old_bytes} = mul nuw i64 %{old_capacity}, {element_size}\n  %{bytes} = mul nuw i64 {}, {element_size}\n  %{full} = icmp eq i64 %{length}, %{old_capacity}\n  %{positive} = icmp ne i64 %{old_bytes}, 0\n  %{reuse} = and i1 %{full}, %{positive}\n  br i1 %{reuse}, label %{reallocate}, label %{copy}",
+            "  %{length} = load i64, ptr {length_field}\n  %{old_capacity} = load i64, ptr {capacity_field}\n  %{old_payload} = load ptr, ptr {payload_field}\n  %{old_bytes} = mul nuw i64 %{old_capacity}, {element_size}\n  %{bytes} = mul nuw i64 {}, {element_size}\n  %{zero} = icmp eq i64 %{bytes}, 0\n  br i1 %{zero}, label %{unchanged}, label %{positive_new}",
             self.value_name(capacity)
         ).map_err(|_| BackendFailure::TextEmission)?;
+        self.output.open_block(unchanged.clone());
+        writeln!(self.output, "  br label %{ready}")?;
+        self.output.open_block(positive_new);
+        writeln!(
+            self.output,
+            "  %{full} = icmp eq i64 %{length}, %{old_capacity}\n  %{positive} = icmp ne i64 %{old_bytes}, 0\n  %{reuse} = and i1 %{full}, %{positive}\n  br i1 %{reuse}, label %{reallocate}, label %{copy}"
+        )?;
         // A full positive payload contains only initialized elements.
         // realloc may retain or move it; failure leaves the original live.
         self.output.open_block(reallocate.clone());
@@ -1367,12 +1404,18 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         self.output.open_block(copy.clone());
         self.output.symbol("malloc");
         writeln!(self.output,
-            "  %{zero} = icmp eq i64 %{bytes}, 0\n  %{allocated} = select i1 %{zero}, i64 1, i64 %{bytes}\n  %{fresh} = call ptr @malloc(i64 %{allocated})\n  %{fresh_nonnull} = icmp ne ptr %{fresh}, null\n  br i1 %{fresh_nonnull}, label %{copy_ready}, label %{oom}"
+            "  %{fresh} = call ptr @malloc(i64 %{bytes})\n  %{fresh_nonnull} = icmp ne ptr %{fresh}, null\n  br i1 %{fresh_nonnull}, label %{copy_ready}, label %{oom}"
         ).map_err(|_| BackendFailure::TextEmission)?;
         self.output.open_block(copy_ready.clone());
-        // A partial payload copies only initialized elements. Successful
-        // malloc provides disjoint storage; zero extents still allocate one
-        // byte and preserve their logical length and capacity independently.
+        writeln!(
+            self.output,
+            "  br i1 %{positive}, label %{copy_old}, label %{copy_empty}"
+        )?;
+        self.output.open_block(copy_empty.clone());
+        writeln!(self.output, "  br label %{ready}")?;
+        self.output.open_block(copy_old.clone());
+        // A partial positive payload copies only initialized elements. Fresh
+        // malloc storage is disjoint; an old static anchor is never released.
         self.intrinsics.insert(IntrinsicDeclaration::MemoryCopy);
         self.output.symbol("llvm.memcpy.p0.p0.i64");
         self.output.symbol("free");
@@ -1389,7 +1432,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         // Keep the established exit label for successor phi predecessors.
         self.output.open_block(ready);
         writeln!(self.output,
-            "  %{selected} = phi ptr [ %{resized}, %{reallocate} ], [ %{fresh}, %{copy_ready} ]\n  store ptr %{selected}, ptr {payload_field}\n  store i64 {}, ptr {capacity_field}",
+            "  %{selected} = phi ptr [ %{resized}, %{reallocate} ], [ %{fresh}, %{copy_old} ], [ %{fresh}, %{copy_empty} ], [ %{old_payload}, %{unchanged} ]\n  store ptr %{selected}, ptr {payload_field}\n  store i64 {}, ptr {capacity_field}",
             self.value_name(capacity)
         ).map_err(|_| BackendFailure::TextEmission)?;
         self.emit_constant(result, ty, IrConstant::Unit)
@@ -1412,14 +1455,22 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         if crate::target::inline_slots_descriptor(*referent) {
             let block_type = *referent;
             let value = self.value_place(value)?;
+            let capacity_field = self.aggregate_field_pointer(block_type, &value, 1)?;
             let payload_field = self.aggregate_field_pointer(block_type, &value, 2)?;
+            let capacity = self.next_temporary()?;
             let payload = self.next_temporary()?;
-            self.output.symbol("free");
             writeln!(
                 self.output,
-                "  %{payload} = load ptr, ptr {payload_field}\n  call void @free(ptr %{payload})"
-            )
-            .map_err(|_| BackendFailure::TextEmission)?;
+                "  %{capacity} = load i64, ptr {capacity_field}\n  %{payload} = load ptr, ptr {payload_field}"
+            )?;
+            cleanup::emit_slots_payload_release(
+                self.program,
+                &mut self.output,
+                &mut self.temporary,
+                block_type,
+                &format!("%{capacity}"),
+                &format!("%{payload}"),
+            )?;
             return self.emit_constant(result, ty, IrConstant::Unit);
         }
         {

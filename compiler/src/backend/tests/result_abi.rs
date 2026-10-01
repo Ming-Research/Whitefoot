@@ -528,6 +528,24 @@ fn tagged(owner: Box<Slots<u64>>) -> result: Tagged pure {
 }
 
 fn main() -> status: std::process::ExitStatus pure {
+  let cleanup_outer = box_slots_new::<Box<Slots<u64>>>(capacity: 2_u64);
+  let zero_child = box_slots_new::<u64>(capacity: 0_u64);
+  let positive_child = box_slots_new::<u64>(capacity: 1_u64);
+  place_back(window: &positive_child.inner, value: 41_u64);
+  place_back(window: &cleanup_outer.inner, value: move zero_child);
+  place_back(window: &cleanup_outer.inner, value: move positive_child);
+  if cleanup_outer.inner.len != 2_u64 {
+    return std::process::exit_status(code: 9_u8);
+  }
+  if cleanup_outer.inner[0_u64].inner.cap != 0_u64 {
+    return std::process::exit_status(code: 10_u8);
+  }
+  if cleanup_outer.inner[1_u64].inner.len != 1_u64 {
+    return std::process::exit_status(code: 11_u8);
+  }
+  if cleanup_outer.inner[1_u64].inner[0_u64] != 41_u64 {
+    return std::process::exit_status(code: 12_u8);
+  }
   let empty = box_slots_new::<u64>(capacity: 0_u64);
   let owner = handoff(owner: move empty);
   if owner.inner.len != 0_u64 {

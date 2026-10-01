@@ -35,7 +35,9 @@ const EMPTY_SWAP: &[u8] = br#"fn main() -> status: std::process::ExitStatus pure
 
 #[test]
 fn runtime_content_swap_moves_the_complete_zero_capacity_value() {
-    let host = allocation_observer(2, 0).replace(
+    // The capacity-one owner contributes one allocation; exchanging its
+    // descriptor with the nonowning empty anchor preserves that one release.
+    let host = allocation_observer(1, 0).replace(
         "void *allocation = malloc(size);",
         "void *allocation = malloc(size + 64);\n    if (allocation != NULL) memset(allocation, 0xa5, size + 64);",
     );
@@ -49,7 +51,7 @@ fn runtime_content_swap_moves_the_complete_zero_capacity_value() {
         let text = std::str::from_utf8(&output.stdout).unwrap();
         let mut records = text.split_terminator(';').collect::<Vec<_>>();
         records.sort_unstable();
-        assert_eq!(records, ["A1", "A2", "F1", "F2"], "{output:?}");
+        assert_eq!(records, ["A1", "F1"], "{output:?}");
     }
 }
 
@@ -156,16 +158,17 @@ const SCALAR_OBSERVER: &str = r#"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-typedef struct { uint64_t len, cap, words[8]; } Slots;
+typedef struct { uint64_t len, cap; uint64_t *words; } Slots;
+_Static_assert(sizeof(Slots) == 24, "inline Slots owner ABI");
 typedef struct { uint64_t len, cap, head, words[8]; } Ring;
 typedef struct { uint64_t len, words[8]; } Array;
-typedef struct { Slots *cells[3]; } Shelf;
+typedef struct { Slots cells[3]; } Shelf;
 extern uint64_t wf_generic_array(Array **, Array **);
-extern uint64_t wf_slots_exchange(Slots **, Slots **, uint8_t);
+extern uint64_t wf_slots_exchange(Slots *, Slots *, uint8_t);
 extern uint64_t wf_ring_exchange(Ring **, Ring **, uint8_t);
 extern uint64_t wf_nested_exchange(Shelf *, uint64_t, uint64_t, uint8_t);
-extern uint64_t wf_captured_pair(Slots **, Slots **, Slots **, Slots **);
-extern uint64_t wf_blocked_pair(Slots **, Slots **);
+extern uint64_t wf_captured_pair(Slots *, Slots *, Slots *, Slots *);
+extern uint64_t wf_blocked_pair(Slots *, Slots *);
 static void fail(const char *reason) { fprintf(stderr, "%s\n", reason); exit(93); }
 static uint64_t expected(uint64_t cap, uint64_t len, uint64_t head, uint64_t base, int ring) {
   uint64_t hash = cap * 257 + len;
@@ -173,8 +176,8 @@ static uint64_t expected(uint64_t cap, uint64_t len, uint64_t head, uint64_t bas
   for (uint64_t i = 0; i < len; ++i) hash = hash * 257 + base + i;
   return hash;
 }
-static void initialize_slots(Slots *p, uint64_t cap, uint64_t len, uint64_t base) {
-  memset(p, 0xa5, sizeof(*p)); p->cap = cap; p->len = len;
+static void initialize_slots(Slots *p, uint64_t *words, uint64_t cap, uint64_t len, uint64_t base) {
+  memset(words, 0xa5, 8 * sizeof(*words)); p->cap = cap; p->len = len; p->words = words;
   for (uint64_t i = 0; i < len; ++i) p->words[i] = base + i;
 }
 static void initialize_ring(Ring *p, uint64_t cap, uint64_t len, uint64_t head, uint64_t base) {
@@ -187,16 +190,16 @@ int main(int argc, char **argv) {
   unsigned count = 0;
   for (unsigned row = 0; row < 3; ++row) for (uint8_t choice = 0; choice < 2; ++choice) {
     const uint64_t *c = cases[row];
-    Slots a, b, untouched; initialize_slots(&a,c[0],c[1],11); initialize_slots(&b,c[3],c[4],71);
-    Slots *left = &a, *right = &b;
+    Slots a, b, untouched; uint64_t aw[8], bw[8], uw[8];
+    initialize_slots(&a,aw,c[0],c[1],11); initialize_slots(&b,bw,c[3],c[4],71);
     uint64_t wanted = expected(c[3],c[4],0,71,0);
     if (fault == 1) ++wanted;
-    if (wf_slots_exchange(&left,&right,choice) != wanted) fail("complete content or whole alias");
-    if (wf_slots_exchange(&left,&right,choice) != expected(c[0],c[1],0,11,0)) fail("exchange round trip");
-    initialize_slots(&untouched,2,1,151);
-    Shelf shelf = {{left,&untouched,right}};
+    if (wf_slots_exchange(&a,&b,choice) != wanted) fail("complete content or whole alias");
+    if (wf_slots_exchange(&a,&b,choice) != expected(c[0],c[1],0,11,0)) fail("exchange round trip");
+    initialize_slots(&untouched,uw,2,1,151);
+    Shelf shelf = {{a,untouched,b}};
     if (wf_nested_exchange(&shelf,0,2,choice) != expected(c[3],c[4],0,71,0)
-        || shelf.cells[1]->cap != 2 || shelf.cells[1]->len != 1 || shelf.cells[1]->words[0] != 151)
+        || shelf.cells[1].cap != 2 || shelf.cells[1].len != 1 || shelf.cells[1].words[0] != 151)
       fail("selected nested owner or sibling");
     Ring x,y; initialize_ring(&x,c[0],c[1],c[2],31); initialize_ring(&y,c[3],c[4],c[5],101);
     Ring *front = &x, *back = &y;
@@ -209,12 +212,12 @@ int main(int argc, char **argv) {
     if (wf_generic_array(&au,&av) != expected(0,c[4],0,71,0)) fail("generic copy instance contents");
     ++count;
   }
-  Slots a,b,c,d; initialize_slots(&a,1,1,11); initialize_slots(&b,3,2,71);
-  initialize_slots(&c,0,0,31); initialize_slots(&d,4,3,101);
-  Slots *p=&a,*q=&b,*r=&c,*s=&d;
-  if (wf_captured_pair(&p,&q,&r,&s) != expected(3,2,0,71,0)*257+expected(4,3,0,101,0))
+  Slots a,b,c,d; uint64_t aw[8],bw[8],cw[8],dw[8];
+  initialize_slots(&a,aw,1,1,11); initialize_slots(&b,bw,3,2,71);
+  initialize_slots(&c,cw,0,0,31); initialize_slots(&d,dw,4,3,101);
+  if (wf_captured_pair(&a,&b,&c,&d) != expected(3,2,0,71,0)*257+expected(4,3,0,101,0))
     fail("captured owner references");
-  if (wf_blocked_pair(&p,&q) != expected(1,1,0,11,0)*257+258)
+  if (wf_blocked_pair(&a,&b) != expected(1,1,0,11,0)*257+258)
     fail("whole-root sequencing");
   printf("runtime content: %u alias, nested and wrapped cases\n",count);
   return 0;
@@ -367,9 +370,12 @@ const OWNER_OBSERVER: &str = r#"
 #include <stdlib.h>
 #include <string.h>
 #include <stdatomic.h>
+typedef struct { uint64_t len, cap; void **items; } SlotsOwner;
+_Static_assert(sizeof(SlotsOwner) == 24, "inline Slots owner ABI");
 extern uint64_t wf_array_own(void *, void *);
 extern uint64_t wf_slots_own(void *, void *);
 extern uint64_t wf_ring_own(void *, void *);
+static _Alignas(16) unsigned char slots_anchor[16];
 static void *held[16];
 static uint64_t ids[16], expected[16];
 static unsigned live[16], allocated, released, expected_count;
@@ -394,15 +400,24 @@ void wf_release_observed(void *p) {
   atomic_flag_clear_explicit(&observer_lock, memory_order_release);
   free(p);
 }
-static void *make(unsigned shape, uint64_t cap, uint64_t len, uint64_t head, uint64_t base, uint64_t id) {
-  uint64_t *block = allocate(128, id); block[0] = len;
-  unsigned header = shape == 0 ? 1 : shape == 1 ? 2 : 3;
-  if (shape != 0) block[1] = cap;
-  if (shape == 2) block[2] = head;
+static void *make(unsigned shape, SlotsOwner *owner, uint64_t cap, uint64_t len, uint64_t head, uint64_t base, uint64_t id) {
+  if (shape == 1 && cap == 0) {
+    if (len != 0) abort();
+    owner->len = 0; owner->cap = 0; owner->items = (void **)slots_anchor;
+    return owner;
+  }
+  uint64_t *block = allocate(128, id);
+  unsigned header = shape == 0 ? 1 : shape == 1 ? 0 : 3;
+  if (shape != 1) block[0] = len;
+  if (shape == 2) { block[1] = cap; block[2] = head; }
   void **items = (void **)(block + header);
   for (uint64_t i = 0; i < len; ++i) {
     uint64_t *value = allocate(sizeof(*value), base + i); *value = base + i;
     items[shape == 2 ? (head + i) % cap : i] = value;
+  }
+  if (shape == 1) {
+    owner->len = len; owner->cap = cap; owner->items = items;
+    return owner;
   }
   return block;
 }
@@ -421,9 +436,11 @@ int main(int argc, char **argv) {
   for (unsigned shape = 0; shape != 3; ++shape) for (unsigned empty = 0; empty != 2; ++empty) {
     allocated = released = expected_count = 0; memset(live, 0, sizeof(live));
     uint64_t left_len = empty ? 0 : 2, right_len = 3;
-    void *left = make(shape,empty ? 0 : 2,left_len,empty ? 0 : 1,11,101);
-    void *right = make(shape,4,right_len,3,71,201);
-    expect(right_len,71,201,shape != 0); expect(left_len,11,101,shape != 0);
+    SlotsOwner left_owner, right_owner;
+    void *left = make(shape,&left_owner,empty ? 0 : 2,left_len,empty ? 0 : 1,11,101);
+    void *right = make(shape,&right_owner,4,right_len,3,71,201);
+    expect(right_len,71,201,shape != 0);
+    if (!(shape == 1 && empty)) expect(left_len,11,101,shape != 0);
     if (fault == 3) ++expected[0];
     uint64_t want = shape == 0 ? sequence(right_len,71,0) * 258
       : sequence(right_len,71,1) * 257 + sequence(left_len,11,1);
@@ -432,6 +449,8 @@ int main(int argc, char **argv) {
       : shape == 1 ? wf_slots_own(left,right) : wf_ring_own(left,right);
     if (actual != want) fail("owned content value or order");
     if (released != expected_count) fail("owner release count");
+    for (unsigned i = 0; i < sizeof(slots_anchor); ++i)
+      if (slots_anchor[i] != 0) fail("empty Slots anchor modified");
     for (unsigned i = 0; i < allocated; ++i) if (live[i]) fail("unreleased owner");
     ++count;
   }

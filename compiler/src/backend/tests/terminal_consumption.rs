@@ -157,11 +157,12 @@ const OBSERVER: &str = r#"
 typedef struct { uint64_t count, sequence; } Ledger;
 typedef struct { uint64_t len; void *items[8]; } Slots;
 typedef struct { uint64_t len, head; void *items[8]; } Ring;
-typedef struct { uint64_t len, cap; void *items[8]; } Runtime;
+typedef struct { uint64_t len, cap; void **items; } Runtime;
+_Static_assert(sizeof(Runtime) == 24, "inline Slots owner ABI");
 typedef struct { uint64_t len, cap, head; } Zero;
 extern uint8_t wf_retire_slots(Slots *, uint64_t, Ledger *);
 extern uint8_t wf_retire_ring(Ring *, uint64_t, Ledger *);
-extern uint8_t wf_retire_runtime(Runtime **, uint64_t, Ledger *);
+extern uint8_t wf_retire_runtime(Runtime *, uint64_t, Ledger *);
 extern uint8_t wf_retire_zero(Zero **, uint64_t, Ledger *);
 extern uint8_t wf_retire_observed(Slots *, uint64_t, Ledger *);
 static void *owners[8];
@@ -190,7 +191,8 @@ int main(int argc, char **argv) {
   for (unsigned shape = 0; shape != 4; ++shape) {
     for (uint64_t n = 0; n <= 8; ++n) for (uint64_t keep = 0; keep <= n; ++keep) {
       for (uint64_t head = 0; head != (shape == 1 ? 8 : 1); ++head) {
-        Slots slots = {0}; Ring ring = {0}; Runtime runtime = {0}; Runtime *boxed = &runtime;
+        Slots slots = {0}; Ring ring = {0}; void *runtime_items[8] = {0};
+        Runtime runtime = {0, 8, runtime_items};
         slots.len = ring.len = runtime.len = n; ring.head = head; runtime.cap = 8;
         memset(live, 0, sizeof(live)); released = 0; expected_count = n - keep;
         uint64_t hash = 0;
@@ -211,7 +213,7 @@ int main(int argc, char **argv) {
         current_log = &log;
         if (shape == 0) wf_retire_slots(&slots, keep, &log);
         else if (shape == 1) wf_retire_ring(&ring, keep, &log);
-        else if (shape == 2) wf_retire_runtime(&boxed, keep, &log);
+        else if (shape == 2) wf_retire_runtime(&runtime, keep, &log);
         else wf_retire_observed(&slots, keep, &log);
         if (released != expected_count) fail("owner release count");
         if (log.count != n - keep || log.sequence != hash) fail("callback count or order");

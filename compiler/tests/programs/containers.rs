@@ -137,6 +137,7 @@ fn execute_container_program(
         assert_eq!(llvm.matches("define i32 @main(").count(), 1, "{context}");
         let observed = llvm
             .replace("@malloc(", "@wf_observe_allocate(")
+            .replace("@realloc(", "@wf_observe_reallocate(")
             .replace("@free(", "@wf_observe_release(")
             .replace("@main(", "@wf_fixture_main(");
         let observer =
@@ -166,8 +167,8 @@ fn execute_container_program(
 
         if check_observer_controls && mode == "parallel" {
             // Reuse this native image for observer controls: simultaneous
-            // registration and cross-worker release, then three independent
-            // wrong ledgers. No extra WF compilation or C build is needed.
+            // registration and cross-worker release, realloc prefix/NULL
+            // preservation, then independent wrong ledgers. No extra WF compilation or C build is needed.
             let concurrent =
                 observed_program.run_with_workers_and_arguments(None, &[b"concurrent"]);
             assert_eq!(concurrent.status.code(), Some(0), "{concurrent:?}");
@@ -176,8 +177,30 @@ fn execute_container_program(
                 concurrent.stdout,
                 b"container allocation observer: 32 allocations, each released exactly once\n"
             );
+            for (argument, allocations) in [("reallocate", 4), ("reallocate-null", 9)] {
+                let output =
+                    observed_program.run_with_workers_and_arguments(None, &[argument.as_bytes()]);
+                assert_eq!(output.status.code(), Some(0), "{argument}: {output:?}");
+                assert!(output.stderr.is_empty(), "{argument}: {output:?}");
+                assert_eq!(
+                    output.stdout,
+                    format!(
+                        "container allocation observer: {allocations} allocations, each released exactly once\n"
+                    )
+                    .as_bytes(),
+                    "{argument}: {output:?}"
+                );
+            }
             for (argument, message) in [
                 ("double-release", "allocation released twice"),
+                (
+                    "released-reallocation",
+                    "reallocation of a released allocation",
+                ),
+                (
+                    "foreign-reallocation",
+                    "reallocation did not use an allocated address",
+                ),
                 (
                     "foreign-release",
                     "release did not return an allocated address",

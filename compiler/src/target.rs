@@ -844,6 +844,27 @@ pub(super) fn validate_static_storage(
     })
 }
 
+/// Static backing for empty Slots payloads, aligned for every concrete element
+/// the module can address. Its lifetime covers owners transferred to workers or
+/// ordinary linked calls; no byte is accessed for a zero physical extent.
+pub(super) fn empty_slots_anchor_layout(
+    target: TargetLayout,
+    program: &IrProgram,
+) -> Result<TargetAggregateLayout, TargetLayoutFailure> {
+    let mut layouts = LayoutComputer::new(target, program.nominals(), program.elements());
+    let mut align = 1;
+    for nominal in program.nominals() {
+        if let IrNominalKind::Box { referent, .. } = nominal.kind()
+            && inline_slots_descriptor(*referent)
+            && let IrType::Window { element, .. } = referent
+        {
+            align = align.max(layouts.element(*element)?.align);
+        }
+    }
+    let size = align_up(target, 1, align, TargetObject::Static)?;
+    Ok(TargetAggregateLayout { size, align })
+}
+
 /// The selected-target layout of one fully assembled backend aggregate.
 ///
 /// A consumer retains the part of the result its emitted form needs: an
@@ -1181,19 +1202,14 @@ struct RuntimeCapacityAllocationLayout {
 
 /// Computes the exact terms used for the heap allocation. Runtime Slots
 /// allocate only their payload; other shapes include the padded header. A
-/// zero payload receives a one-byte allocation, within every admitted target's
-/// nonzero allocation domain, while its inline descriptor is checked separately.
+/// zero Slots payload uses a separately qualified static anchor; its inline
+/// descriptor is checked independently of the payload extent.
 fn runtime_capacity_allocation_layout(
     layouts: &mut LayoutComputer<'_>,
     content: IrType,
     ceiling: IrLayoutCeiling,
 ) -> Result<RuntimeCapacityAllocationLayout, TargetLayoutFailure> {
     let (actual, allocation) = runtime_capacity_layout(layouts, content)?;
-    if layouts.target.runtime_allocation_max() == 0 {
-        return Err(TargetLayoutFailure::Unrepresentable(
-            TargetObject::RuntimeSizedAllocation,
-        ));
-    }
     if !ceiling.size.permits(actual.size)
         || actual.align > ceiling.align
         || !ceiling.stride.permits(allocation.stride)

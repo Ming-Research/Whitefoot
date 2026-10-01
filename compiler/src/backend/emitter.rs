@@ -60,6 +60,8 @@ use parallel::{
     sequential_clone_symbol,
 };
 
+const EMPTY_SLOTS_ANCHOR: &str = ".wf.empty.slots.payload";
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BackendFailure {
     TargetLayout(TargetLayoutFailure),
@@ -350,6 +352,21 @@ pub(super) fn emit_llvm_with_window_address_facts(
     text.text("\n");
     emit_nominal_declarations(&mut text, program, target)?;
     emit_global_constants(&mut text, program)?;
+    if program.nominals().iter().any(|nominal| {
+        matches!(nominal.kind(), IrNominalKind::Box { referent, .. }
+            if crate::target::inline_slots_descriptor(*referent))
+    }) {
+        let anchor = crate::target::empty_slots_anchor_layout(target, program)
+            .map_err(BackendFailure::TargetLayout)?;
+        text.global(
+            EMPTY_SLOTS_ANCHOR.to_owned(),
+            "global",
+            format!("[{} x i8]", anchor.size()),
+            "zeroinitializer".to_owned(),
+            Some(anchor.align()),
+            References::default(),
+        );
+    }
     // An allocation this host refuses is the heap twin of an exhausted stack,
     // and it gets the same treatment: one record naming the resource class,
     // written once, before a defined abort. The bytes carry no `rule_id`, no

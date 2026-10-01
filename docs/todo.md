@@ -684,6 +684,13 @@ rarely insert at the same place.
   performance checks. Terminal traversal's separate costs remain open.
 
 - **Empty-Slots allocation removal needs complete ownership and ABI coverage.**
+  The inline-owner zero-extent representation now under evaluation differs
+  from these shared-header prototypes: metadata remains per owner, and
+  positive capacity times qualified stride is the uniform allocation
+  boundary, including ordinary linked bodies. Its required closure evidence
+  is explicit, implicit, nested and worker cleanup, empty owner transport,
+  growth from zero and cleared positive owners, followed by matched API
+  timings. Do not infer that evidence from an earlier prototype.
   The unselected [zero-capacity candidate](../research/experiments/container-representation/vector-library/RESULTS.md#zero-capacity-slots-sentinel-complete-samples-selection-unresolved)
   changes explicit growth and empty release, but its patch does not change
   derived Box cleanup's ordinary `FreePointer` path. A shared header must
@@ -1241,9 +1248,9 @@ rarely insert at the same place.
   factors for lookup/traversal after these refused shift trials.
 
 - **Box/window representation costs remain unqualified.** Runtime Slots uses
-  an inline length/capacity/payload owner with one element allocation; runtime
+  an inline length/capacity/payload owner with an element allocation for positive physical extent; runtime
   Array, Ring and Segments retain thin owners and header-first allocations.
-  `grow` now trials full positive-extent reallocation and retains a disjoint initialized-prefix copy for partial or zero-extent windows; the small-growth tradeoff remains to be measured. Owner width, measure loads, allocation
+  `grow` trials full positive-extent reallocation, retains a disjoint initialized-prefix copy for partial windows, and changes zero-extent metadata without allocating. The small-growth tradeoff remains open. Owner width, measure loads, allocation
   count, copying and linked layout remain distinct costs: direct measure reads
   widen transport and capture storage, and no representation is established as
   generally faster. Separate these costs in representative single-thread and
@@ -1265,8 +1272,9 @@ rarely insert at the same place.
   peers, but only the same two of six matched growth cells pass. Native call
   placement also changes without an inline directive, so that unpaired screen
   does not isolate allocator-route timing or establish a gain against B.
-  Empty/zero-stride and post-lowering linked transport checks pass; this is
-  still a nonconforming research layout. Reopen with a discriminating
+  That screen passed empty/zero-stride and post-lowering linked transport
+  checks before the current representation amendment; it does not qualify
+  the current compiler. Reopen with a discriminating
   hypothesis for remaining positive-capacity append costs, including
   allocator/setup-state attribution before another layout change, and a
   complete representation/lifetime qualification. The

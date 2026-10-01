@@ -114,32 +114,31 @@ fn main() -> status: std::process::ExitStatus pure {
     assert!(!consume.contains(&format!("call void @{cleanup}")));
     assert_eq!(consume.matches("call void @free").count(), 2);
 
-    // A linked implementation of the same ordinary signature sets only the
-    // active tag and returns deliberately dirty bits for the inactive Box
-    // representations, which must never enter cleanup. `Owner` has three
-    // scalar leaves, a tag and two pointers, so it returns in registers
-    // (compiler/src/backend/abi.rs), and that implementation is written in
-    // LLVM because C returns a small struct differently on each target.
-    //
-    // The previous C wrapper passed a deliberately dirty destination to the
-    // WF constructor. That observation retired with the destination for
-    // this result: a register-returned constructor never sees its caller's
-    // storage, and the caller stores every field of the returned value.
+    // The two inline Slots owners make this result exceed the register-return
+    // ceiling. A linked implementation dirties the complete destination before
+    // setting only the Empty tag; inactive owner bytes must never enter cleanup.
     let make_empty = emitted_function(&llvm, "make_empty");
-    let (result, _) = make_empty
-        .strip_prefix("define ")
-        .and_then(|header| header.split_once(" @wf_make_empty()"))
-        .expect("make_empty takes no argument");
-    assert!(result.starts_with("%wf.t"), "Owner returns in registers");
+    assert!(
+        make_empty.starts_with("define void @wf_make_empty(ptr %wf.result)"),
+        "Owner returns through its destination: {make_empty}"
+    );
     let renamed = llvm.replacen(
-        &format!("define {result} @wf_make_empty("),
-        &format!("define {result} @wf_test_empty_body("),
+        "define void @wf_make_empty(",
+        "define void @wf_test_empty_body(",
         1,
     );
     assert_ne!(renamed, llvm);
-    let dirty = "ptr inttoptr (i64 -6510615555426900571 to ptr)";
+    // Eight bytes for the tag and alignment, then two 24-byte Slots owners.
+    let dirty_stores = (0..7)
+        .map(|word| {
+            format!(
+                "  %dirty.{word} = getelementptr i8, ptr %wf.result, i64 {}\n  store i64 -6510615555426900571, ptr %dirty.{word}, align 8\n",
+                word * 8
+            )
+        })
+        .collect::<String>();
     let linked_constructor = format!(
-        "{renamed}\ndefine {result} @wf_make_empty() {{\n  %tag = insertvalue {result} poison, i32 0, 0\n  %left = insertvalue {result} %tag, {dirty}, 1, 0\n  %right = insertvalue {result} %left, {dirty}, 1, 1\n  ret {result} %right\n}}\n"
+        "{renamed}\ndefine void @wf_make_empty(ptr %wf.result) {{\n{dirty_stores}  store i32 0, ptr %wf.result, align 4\n  ret void\n}}\n"
     );
     for module in [&llvm, &linked_constructor] {
         let observed = super::owned_places::retain_calls(module)

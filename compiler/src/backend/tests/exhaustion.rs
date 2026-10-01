@@ -410,7 +410,8 @@ fn main() -> status: std::process::ExitStatus pure {
 /// trusted base with the one record naming the resource class.
 ///
 /// One [OP-13] construction is one interposed allocation for each form.
-/// Runtime Slots keep their descriptor inline and allocate only the payload;
+/// These positive-capacity runtime Slots keep their descriptor inline and
+/// allocate only the payload;
 /// the other forms retain their heap-resident content. In either placement
 /// each owner releases exactly its one allocation [STOR-1, STOR-3]. The
 /// four-form image therefore retains four allocations and four frees.
@@ -461,8 +462,9 @@ fn each_generated_allocation_form_reaches_its_refusal_record() {
 /// complete old allocation intact until the ordinary heap-resource abort.
 /// Full positive-extent runs force both in-place and moving reallocations;
 /// partial runs distinguish initialized-prefix movement from copying spare
-/// bytes. Zero capacity and full zero-stride runs retain their allocated
-/// one-byte payloads and use fresh allocation rather than reallocation.
+/// bytes. Zero extent uses a nonowning aligned anchor: the first positive
+/// allocation can fail without changing it, and zero-stride growth only
+/// changes logical capacity. Anchor addresses never select ownership.
 #[test]
 fn failed_slots_grow_preserves_the_inline_owner_and_payload() {
     let source =
@@ -488,7 +490,39 @@ fn release_zero_stride(values: Box<Slots<Array<u64, 0>>>) -> result: unit pure {
   return unit;
 }
 
+fn identity(value: Box<Slots<u64>>) -> result: Box<Slots<u64>> pure {
+  return move value;
+}
+
+fn transport<fn carry(value: Box<Slots<u64>>) -> result: Box<Slots<u64>> pure>(value: Box<Slots<u64>>) -> result: Box<Slots<u64>> pure {
+  return carry(value: move value);
+}
+
+fn inspect_empty(value: &Box<Slots<u64>>) -> result: u64 reads(value) {
+  if value^.inner.len != 0_u64 {
+    return 3_u64;
+  }
+  if value^.inner.cap != 0_u64 {
+    return 4_u64;
+  }
+  let range = &value^.inner[0_u64..0_u64];
+  let resliced = &range^[0_u64..0_u64];
+  return resliced^.len;
+}
+
 fn empty_allocations() -> result: u64 pure {
+  let first = box_slots_new::<u64>(capacity: 0_u64);
+  let second = box_slots_new::<u64>(capacity: 0_u64);
+  let moved_first = transport::<fn identity>(value: move first);
+  let moved_second = transport::<fn identity>(value: move second);
+  let first_check = inspect_empty(value: &moved_first);
+  let second_check = inspect_empty(value: &moved_second);
+  if first_check != 0_u64 {
+    return first_check;
+  }
+  if second_check != 0_u64 {
+    return second_check;
+  }
   let empty = box_slots_new::<u64>(capacity: 0_u64);
   let zero_stride = box_slots_new::<Array<u64, 0>>(capacity: 3_u64);
   if empty.inner.len != 0_u64 {
@@ -516,10 +550,23 @@ static struct owner value, original;
 static unsigned char *held[2], saved[32];
 static size_t extents[2], old_extent, new_extent, initialized;
 static unsigned attempts, copies, releases, live[2], refusing, constructing;
-static unsigned reallocations, realloc_route, moving, cleanup_started;
+static unsigned reallocations, realloc_route, moving, cleanup_started, zero_owner;
+static _Alignas(16) unsigned char anchor[32];
+static unsigned inspected;
+
 
 static void require(int okay, int code) { if (!okay) _Exit(code); }
+void wf_test_inspect_empty(const struct owner *owner) {
+    require(owner->len == 0 && owner->cap == 0 && owner->payload != NULL, 96);
+    require((uintptr_t)owner->payload % _Alignof(uint64_t) == 0, 96);
+    require(owner->payload[0] == 0, 97);
+    ++inspected;
+}
 static void unchanged_payload(void) {
+    if (zero_owner) {
+        require(memcmp(anchor, saved, sizeof(anchor)) == 0, 92);
+        return;
+    }
     require(live[0], 90);
     require(memcmp(held[0], saved, old_extent) == 0, 92);
 }
@@ -528,12 +575,23 @@ static void unchanged_owner(void) {
             && value.payload == original.payload, 91);
 }
 static void refused_state(void) {
-    require(refusing && attempts == 2 && copies == 0 && releases == 0
-            && live[0] && held[1] == NULL && reallocations == realloc_route, 90);
+    require(refusing && attempts == (zero_owner ? 1u : 2u) && copies == 0 && releases == 0
+            && (zero_owner ? !live[0] : live[0]) && held[1] == NULL
+            && reallocations == realloc_route, 90);
     unchanged_owner();
     unchanged_payload();
 }
 void *wf_test_allocate(uint64_t bytes) {
+    require(!constructing, 80);
+    if (zero_owner) {
+        require(attempts == 0 && bytes == new_extent && new_extent > 0, 81);
+        ++attempts;
+        if (refusing) return NULL;
+        held[1] = malloc((size_t)bytes); require(held[1] != NULL, 82);
+        extents[1] = (size_t)bytes; live[1] = 1;
+        memset(held[1], 0xa6, (size_t)bytes);
+        return held[1];
+    }
     require(attempts < 2 && (constructing || attempts == 0 || !realloc_route), 80);
     size_t expected = constructing ? 1 : attempts == 0 ? old_extent : new_extent;
     require(bytes == expected, 81);
@@ -565,6 +623,7 @@ void *wf_test_reallocate(void *pointer, uint64_t bytes) {
     return held[0];
 }
 void wf_test_copy(void *destination, const void *source, uint64_t bytes, _Bool is_volatile) {
+    require(source != anchor, 83);
     if (source == held[0] && !constructing) {
         require(!refusing && !realloc_route && attempts == 2 && copies == 0 && releases == 0
                 && live[0] && live[1] && destination == held[1]
@@ -577,7 +636,11 @@ void wf_test_copy(void *destination, const void *source, uint64_t bytes, _Bool i
 void wf_test_release(void *pointer) {
     unsigned at = pointer == held[0] ? 0 : pointer == held[1] ? 1 : 2;
     require(!refusing && at < 2 && live[at], 84);
-    if (!constructing && realloc_route) {
+    if (zero_owner) {
+        require(cleanup_started && at == 1 && attempts == 1 && copies == 0
+                && releases == 0 && reallocations == 0, 85);
+        unchanged_payload();
+    } else if (!constructing && realloc_route) {
         require(cleanup_started && reallocations == 1 && copies == 0 && releases == 0
                 && at == (moving ? 1u : 0u), 85);
     } else if (!constructing && at == 0) {
@@ -600,10 +663,36 @@ int wf__main_body(int argc, char **argv) {
     require(argc >= 2, 70);
     constructing = strcmp(argv[1], "construct") == 0;
     if (constructing) {
-        require(wf_empty_allocations() == 0 && attempts == 2 && releases == 2
+        require(wf_empty_allocations() == 0 && inspected == 2 && attempts == 0 && releases == 0
                 && copies == 0 && reallocations == 0 && !live[0] && !live[1], 71);
     } else {
         unsigned zero_stride = strcmp(argv[1], "zst") == 0;
+        zero_owner = zero_stride || strcmp(argv[1], "empty") == 0
+            || strncmp(argv[1], "anchor-", 7) == 0;
+        if (zero_owner) {
+            memset(anchor, 0x5c, sizeof(anchor)); memcpy(saved, anchor, sizeof(anchor));
+            value = (struct owner){zero_stride ? 2u : 0u, zero_stride ? 2u : 0u, anchor};
+            original = value; new_extent = zero_stride ? 0 : 64;
+            if (strcmp(argv[1], "anchor-release") == 0) { wf_test_release(anchor); return 72; }
+            if (strcmp(argv[1], "anchor-realloc") == 0) { (void)wf_test_reallocate(anchor, 64); return 72; }
+            refusing = argc == 3 && strcmp(argv[2], "refuse") == 0;
+            if (zero_stride) (void)wf_grow_zero_stride(&value);
+            else (void)wf_grow_values(&value);
+            require(!refusing && value.len == original.len && value.cap == 8
+                    && value.payload == (zero_stride ? anchor : held[1]), 88);
+            require(attempts == (zero_stride ? 0u : 1u) && copies == 0
+                    && releases == 0 && reallocations == 0, 88);
+            unchanged_payload();
+            if (!zero_stride) {
+                for (size_t i = 0; i < new_extent; ++i) require(held[1][i] == 0xa6, 87);
+            }
+            cleanup_started = 1;
+            if (zero_stride) (void)wf_release_zero_stride(&value);
+            else (void)wf_release_values(&value);
+            require(releases == (zero_stride ? 0u : 1u) && !live[0] && !live[1], 89);
+            unchanged_payload();
+            free(held[1]); return 0;
+        }
         uint64_t capacity = strcmp(argv[1], "empty") == 0 ? 0
             : strcmp(argv[1], "partial") == 0 ? 4 : 2;
         uint64_t length = capacity == 0 ? 0 : capacity == 4 ? 1 : 2;
@@ -679,11 +768,26 @@ int main(int argc, char **argv) { return wf__floor_run(argc, argv); }
             .replace(&format!("@llvm.{intrinsic}.p0.p0.i64("), "@wf_test_copy(");
     }
     module.push_str("\ndeclare void @wf_test_copy(ptr, ptr, i64, i1)\n");
+    // Keep the source body and ordinary public reference ABI; observe its
+    // incoming descriptor before executing its independent source assertions.
+    let body = super::parallel::function_body(&module, "@wf_inspect_empty").to_owned();
+    let renamed = body.replacen("@wf_inspect_empty(", "@wf_inspect_empty.source(", 1);
+    module = module.replace(&body, &renamed);
+    module.push_str(
+        "\ndeclare void @wf_test_inspect_empty(ptr)\n\
+         define i64 @wf_inspect_empty(ptr %owner) {\n\
+         entry:\n\
+           call void @wf_test_inspect_empty(ptr %owner)\n\
+           %result = call i64 @wf_inspect_empty.source(ptr %owner)\n\
+           ret i64 %result\n}\n",
+    );
     let directory = test_directory();
     let executable = build_linked_executable(&module, Some(host), &[], &directory);
     for kind in ["full", "partial", "empty", "zst"] {
         let outcomes: &[&str] = if kind == "full" {
             &["in-place", "moving", "refuse"]
+        } else if kind == "zst" {
+            &["success"]
         } else {
             &["success", "refuse"]
         };
@@ -708,6 +812,8 @@ int main(int argc, char **argv) { return wf__floor_run(argc, argv); }
     }
     for (mode, expected) in [
         ("construct", 0),
+        ("anchor-release", 84),
+        ("anchor-realloc", 95),
         ("observer-owner", 91),
         ("observer-payload", 92),
         ("observer-retired", 90),
@@ -1592,13 +1698,13 @@ fn definition_body<'a>(module: &'a str, signature: &str) -> &'a str {
 }
 
 /// [STOR-3] fixes a window's release as each element's release in ascending
-/// logical index order. Its enclosing `Box` then performs the one heap free,
+/// logical index order. This positive-extent owner then performs one heap free,
 /// and a window inside a cycle follows the same walk as any other.
 ///
 /// The run action walks the live elements but frees no separate backing:
-/// [TYPE-9] places a runtime-capacity `Slots` only inside its `Box`, and
-/// [STOR-1] gives that pair exactly one heap object. The enclosing owner action
-/// therefore calls the run action and then frees the cell [STOR-3].
+/// [TYPE-9] places a runtime-capacity `Slots` only inside its `Box`. Its
+/// descriptor is inline and this fixture has one positive-extent payload. The
+/// enclosing owner calls the run action and then frees that payload [STOR-3].
 ///
 /// The order is pinned where it is chosen because nothing downstream can see
 /// it: [STOR-3] gives memory reclamation the empty effect row. Walking the
@@ -1621,7 +1727,7 @@ fn a_buffer_in_a_cleanup_cycle_is_walked_in_the_order_the_rule_fixes() {
     };
     let buffer_drop = definition_body(&module, run_definition.trim_end_matches(" #0 {"));
     assert!(
-        buffer_drop.contains("%index = phi i64 [ 0, %entry ], [ %next, %body ]")
+        buffer_drop.contains("%index = phi i64 [ 0, %entry ], [ %next, %advance ]")
             && buffer_drop.contains("%next = add i64 %index, 1"),
         "the elements must be released from index zero upward: {buffer_drop}"
     );
@@ -1683,10 +1789,10 @@ fn a_buffer_in_a_cleanup_cycle_is_walked_in_the_order_the_rule_fixes() {
 /// order and releases the placeholder the exchange left behind, and the final
 /// walk still descends left before right.
 ///
-/// Each `box_slots_new` is one interposed allocation: [TYPE-9] makes the
-/// runtime-capacity shape the content of its `Box`, and [STOR-1] stores the
-/// pair in exactly one heap object. The nested and wide fixtures each create
-/// one root cell and four child cells.
+/// Each `box_slots_new` here has positive physical extent and therefore one
+/// interposed payload allocation; the owner descriptor stays inline. The
+/// nested and wide fixtures each create one root payload and four child
+/// payloads, so their exact five-allocation ledgers remain unchanged.
 #[test]
 fn branching_and_nested_release_walks_reclaim_each_instance_in_order() {
     let mut boxed_trace = String::from("A1;");
