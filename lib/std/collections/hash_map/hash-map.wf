@@ -100,9 +100,14 @@ fn hash_map_find<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMa
 fn hash_map_lookup<interface HashMapKey<K, E>, V, F, R, fn observe(env: &F, key: &K, value: &V) -> result: R reads(key), reads(value), writes(env), const ceiling: u64>(map: &HashMap<K, V, ceiling>, key: &K, key_env: &E, visit_env: &F) -> result: Result<R, unit> reads(map), reads(key), reads(key_env), writes(visit_env) {
   let hash = HashMapKey::hash(env: key_env, key: key);
   let count = map^.cells.inner.len;
-  for (step in 0_u64..count) {
-    let home = hash % count;
-    let index = hash_map_probe(home: home, step: step, count: count);
+  if count == 0_u64 {
+    return Err<R, unit>(error: unit);
+  }
+  let index = hash % count;
+  for @lookup (
+    step in 0_u64..count,
+    invariant bucket: index < count
+  ) {
     let slot = &map^.cells.inner[index];
     match slot^ {
       HashMapFilled(key: saved_key, value: saved_value) => {
@@ -117,6 +122,12 @@ fn hash_map_lookup<interface HashMapKey<K, E>, V, F, R, fn observe(env: &F, key:
       }
       HashMapDeleted() => {
       }
+    }
+    let next = index + 1_u64;
+    if next < count {
+      set index = next;
+    } else {
+      set index = 0_u64;
     }
   }
   return Err<R, unit>(error: unit);
