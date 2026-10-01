@@ -3334,9 +3334,9 @@
       }
     ],
     "archive": {
-      "bytes": 1695089,
+      "bytes": 1940712,
       "path": "research/experiments/container-representation/map-library/entry-forward-evidence.tar.gz",
-      "sha256": "9f5a447c0636a4d0e1e692f4cd16f579d461ff39fdbdc0d0d2193df00ba843f3"
+      "sha256": "fbd1fbeb0c8b6225631d3072fce9a262c5dd6d2b04a2704b77a69c48dd64690a"
     },
     "archive_purpose": "Raw auditable API and whole-Map/long-hit replay for this RESULTS section; retire or replace when superseded. No binaries.",
     "atomic_slot_admission_stop": {
@@ -4444,6 +4444,99 @@
       "scope": "Exactly two alwaysinline clone-header attributes; reverse those edits recovers control raw bytes. Existing input/result facts, instructions, original helpers and one batch reroute unchanged.",
       "status": "Native criterion FAIL; no correctness or timing run."
     },
+    "late_pair_fields_native_stop": {
+      "criterion": {
+        "archive_member": "late-pair-fields/criterion.txt",
+        "bytes": 3468,
+        "sha256": "549eaadc734c162e35d4d3f54b5f89a6990613a9479b0f00724a2870aa65ef73"
+      },
+      "criterion_spelling_history": {
+        "archive_member": "late-pair-fields/criterion-history.json",
+        "bytes": 591,
+        "sha256": "404661994a47075f9903f104ae3f985a5b5d1f8b3b0673423c6169638122725e"
+      },
+      "distinction": "Earlier ordering-fields floor wrote result before commit under result-only noalias; this trial preserves original commit-before-result with no new alias premise.",
+      "inputs": {
+        "archive_member": "late-pair-fields/native-inputs.json",
+        "bytes": 2785,
+        "sha256": "45ee466e95f9ca2a0434b368ba06d53fc56838dfb447d7ddce06f9ba7e6df8db"
+      },
+      "later_criterion_spelling": {
+        "archive_member": "late-pair-fields/criterion.txt",
+        "bytes": 3468,
+        "sha256": "549eaadc734c162e35d4d3f54b5f89a6990613a9479b0f00724a2870aa65ef73"
+      },
+      "native": {
+        "all_direct_exits": 0,
+        "all_direct_stages": 6,
+        "disassembly": "All190302 lines identical except filename header line2; executable hashes differ, non-code cause uninvestigated.",
+        "excerpts_namespace": "late-pair-fields/native/",
+        "gate": "FAIL",
+        "guard_exit": 0,
+        "guard_seconds": 2.57,
+        "object_bytes": 105800,
+        "object_bytes_equal": true,
+        "object_sha256": "75df3fc9e5a678d8c3b8e4dcf81db2c5f2b18287c863cd492a630637429f9157",
+        "old_transfer": "Sixteen LDUR/STUR q accesses at offsets8,24,...,248 plus one LDR/STR at264 remain; no paired-field native change.",
+        "scalar_batch_instructions": 197,
+        "statuses": {
+          "archive_member": "late-pair-fields/build-statuses.json",
+          "bytes": 5103,
+          "sha256": "6800c0d74956ed1145132e39863e9912e98cb7752287be540f2ec9a97fdb1192"
+        },
+        "summary": {
+          "archive_member": "late-pair-fields/native-summary.json",
+          "bytes": 2392,
+          "sha256": "8811fa21a1950ad0ef5836657fad4c47ca1d2312bdb9223b8d68a7144bba4f06"
+        },
+        "wide_batch_instructions": 381,
+        "wide_exchange_frame_bytes": 64,
+        "wide_exchange_instructions": 87,
+        "wide_try_put_instructions": 95
+      },
+      "normalization": {
+        "archive_member": "late-pair-fields/text-normalization.json",
+        "bytes": 2421,
+        "sha256": "fed012699389bf1ef0339784986124d09d6ed2108e714bc3af93d7195cde6c67"
+      },
+      "outputs": {
+        "archive_member": "late-pair-fields/native-outputs.json",
+        "bytes": 745,
+        "sha256": "8e83069684ba9ce30a651b0c2b1f0327d25af8f3ddaec56d112b15c7a0b9c5de"
+      },
+      "patch": {
+        "archive_member": "late-pair-fields/modules.patch",
+        "bytes": 825,
+        "sha256": "0697757be47bdc2610ee084ad099a36272635d24d081804fd993b0a5a211a835"
+      },
+      "raw_candidate": {
+        "archive_member": "late-pair-fields/candidate.raw.ll",
+        "bytes": 866269,
+        "sha256": "b12033acda90f60ed00bcb5dc6da134e3058ad83a9a98fe1f8c6a41a55e0e048"
+      },
+      "raw_control": {
+        "archive_member": "api/entry-forward.raw.ll",
+        "bytes": 866040,
+        "sha256": "09cb4c4ea979d9dedb46dbc2bcb267d984d472777f0a69f4af86df68ede57b41"
+      },
+      "recipe": {
+        "archive_member": "late-pair-fields/build.py",
+        "bytes": 2104,
+        "sha256": "168d796cc07547d16dd12720818ee85de3830706ba87305d7730c4d7a66ba0df"
+      },
+      "scope": "Only final Filled Pair264 memmove becomes key i64 store plus Record256 copy from existing private captures, AFTER unchanged swap/commit and all intermediate/final initializers. Original offered/old snapshots and ordinary alias contract remain. No clone, noalias/inline attribute, mask, extra O3 or source change.",
+      "status": "Native criterion FAIL: entire WF object bytes identical. No runtime correctness, timing, rescue or production selection.",
+      "unrun": [
+        "runtime correctness",
+        "allocation ledger",
+        "timing"
+      ],
+      "verification": {
+        "archive_member": "late-pair-fields/verification.json",
+        "bytes": 744,
+        "sha256": "07f0ff3d545b2382494464e2d9299a98de5f6548a895ab0b4da7a5a80b46f741"
+      }
+    },
     "long_hit_discriminator": {
       "all_expected_statuses": true,
       "archive_directory": "long-hit",
@@ -4623,6 +4716,150 @@
         "8": 18254000
       },
       "rows": 880
+    },
+    "mask_fallthrough_source_native_stop": {
+      "admission": {
+        "all_direct_exits": 0,
+        "candidate_compiler_seconds": 9.285253874957561,
+        "direct_stages": 15,
+        "full_witness": "both emitted exit0",
+        "guard_exit": 0,
+        "guard_seconds": 17.36,
+        "maintained_capacity3": "both emitted exit0; no native execution",
+        "statuses": {
+          "archive_member": "mask-fallthrough-source/build-statuses.json",
+          "bytes": 11475,
+          "sha256": "3230cffd11ea07ab34a61c3f365be55727b58f538fe87c0643d70c008410ad0e"
+        }
+      },
+      "baseline_cli_sha256": "4765eede8358bb9e3361984691501d51e4cd768abc7ead8d3efad22ffcd7e9d8",
+      "candidate_cli_sha256": "50cca056bc15cbfb066719d3343f35f5bdf562eb648f3c196124c5f9a41d359c",
+      "candidate_raw": {
+        "archive_member": "mask-fallthrough-source/candidate.raw.ll",
+        "bytes": 880426,
+        "sha256": "efc114e37852a693144844d289a32cded6c01e0f1255913ba144103ebb75e51e"
+      },
+      "causal_control": "Existing source-mask trial, not ordinary production09cb; two home-block spellings only.",
+      "control_raw": {
+        "archive_member": "mask-fallthrough-source/control.raw.ll",
+        "bytes": 880034,
+        "sha256": "b832507bec43eab58d0a218f794bb7667a56b413e1f02bc9825ce2230d6eccce"
+      },
+      "criterion": {
+        "archive_member": "mask-fallthrough-source/criterion.txt",
+        "bytes": 2924,
+        "sha256": "df1a8b9248ca2d1f02504654740c90bc8deab8b2fac9beb28371017fb5559e1e"
+      },
+      "native": {
+        "excerpts_namespace": "mask-fallthrough-source/native/",
+        "failure": "SUB; AND; UDIV; MSUB; TST; CSEL replaces conditional division bypass. Executed scalar batch division at a3d20/a3dc0, wide churn a48c8, wide find ab42c; no new hot call or spill, but native fast-path requirement fails.",
+        "frames_unchanged": {
+          "scalar_batch": [
+            112,
+            112
+          ],
+          "wide_batch": [
+            1024,
+            1024
+          ],
+          "wide_exchange": [
+            64,
+            64
+          ],
+          "wide_find": [
+            0,
+            0
+          ],
+          "wide_remove": [
+            0,
+            0
+          ],
+          "wide_try_put": [
+            0,
+            0
+          ]
+        },
+        "gate": "FAIL",
+        "object_text_bytes": [
+          65348,
+          65300
+        ],
+        "reached_instructions_control_candidate": {
+          "scalar_batch": [
+            205,
+            205
+          ],
+          "wide_batch": [
+            386,
+            385
+          ],
+          "wide_exchange": [
+            87,
+            87
+          ],
+          "wide_find": [
+            64,
+            63
+          ],
+          "wide_remove": [
+            107,
+            106
+          ],
+          "wide_try_put": [
+            99,
+            99
+          ]
+        },
+        "summary": {
+          "archive_member": "mask-fallthrough-source/native-summary.json",
+          "bytes": 13736,
+          "sha256": "cf4a25870b44f568537e397d8f5055e4b7ee9c35ec6528533702ab5fb18e2315"
+        }
+      },
+      "normalization": {
+        "archive_member": "mask-fallthrough-source/text-normalization.json",
+        "bytes": 3190,
+        "sha256": "841be7dc7fd4b369ec433fc45d69fe9ce3beffdb8ac25a0eaae9f05851802943"
+      },
+      "pins": {
+        "archive_member": "mask-fallthrough-source/pins.json",
+        "bytes": 45407,
+        "sha256": "bbda4c494aff8fce5e8f8381fa11eb4c25dbe0dc02ba28dd7833101381aecca2"
+      },
+      "recipe": {
+        "archive_member": "mask-fallthrough-source/run.py",
+        "bytes": 9128,
+        "sha256": "a273cefa0e3e49f4bb4073696b6489c25f5c46b1b0383db64b02586f99008a92"
+      },
+      "restoration": {
+        "archive_member": "mask-fallthrough-source/restoration.json",
+        "bytes": 207,
+        "sha256": "b9faa0fc493a3c9dd583efd276c23dc894ebc092e0b48c3915ab598c198e4d1b"
+      },
+      "restored_production_sha256": "bd482f345505ab2c1a30b323f5d0667839febbb6c57c06f82e3675b628e20a89",
+      "scope": "Initialize index0 then if non_power==0 set index=hash&mask else hash%count in find/try_put. No exchange, callback/probe order, API, policy, ABI, helper, hint or compiler change.",
+      "source_compiler_identity": {
+        "archive_member": "mask-fallthrough-source/compiler-identity.json",
+        "bytes": 349,
+        "sha256": "5d2e926bbe0786ed8a6a0507f01e1143aef872bcd0676a6288012234ded927f8"
+      },
+      "source_patch": {
+        "archive_member": "mask-fallthrough-source/source.patch",
+        "bytes": 799,
+        "sha256": "5dc9075b9a1e804897113f22ef5895663b443901702bfd7faa96975dd546a95d"
+      },
+      "status": "Ordinary source admitted; native criterion FAIL because branchless selection executes UDIV even for power-of-two capacities. No correctness, timing, adoption or rescue. Production source restored.",
+      "unrun": [
+        "runtime correctness",
+        "maintained capacity3 native execution",
+        "allocation ledgers",
+        "timing"
+      ],
+      "verification": {
+        "archive_member": "mask-fallthrough-source/verification.json",
+        "bytes": 957,
+        "sha256": "96c63c6c63a18b3d78ea1c304a4be3e4215e502ce79473a7ea86d0b41973ae74"
+      }
     },
     "measured_revision_boundary": {
       "base_revision": "4c94b40bcea4be27abf93b60ac8600ee1f0a6220",

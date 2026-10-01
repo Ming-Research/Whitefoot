@@ -1298,6 +1298,9 @@ rarely insert at the same place.
   is admitted but fails its native frame/spill criterion. Keep both unselected;
   reopen only with general typed capture/overlap proof and qualified full-panel
   benefit, preserving active old values and all adverse observations.
+  The [late Pair-field transfer floor](../research/experiments/container-representation/map-library/RESULTS.md#late-pair-field-result-construction-native-stop)
+  preserves commit-before-result ordering but compiles to identical object bytes;
+  changing that final copy alone supplies no native-cost mechanism or timing gain.
   Repeated syntactic-candidate/callee and
   per-parameter liveness walks are an unprofiled analysis-cost opportunity:
   profile representative compilation before sharing or caching those facts.
@@ -3439,6 +3442,10 @@ condition under which it is taken up.
   the complete native-peer goal nor adoption, and does not supersede the
   earlier short-panel verdict. Preserve both questions and all peer ranges
   when reopening bucket-index selection.
+  The [explicit fast-arm spelling](../research/experiments/container-representation/map-library/RESULTS.md#explicit-mask-fast-arm-native-stop)
+  is admitted but LLVM selects between eagerly computed mask and modulo results,
+  restoring division on the power-of-two path. That native-only trial stops
+  without timing; another spelling needs a distinct code-generation ground.
 - **Packing a byte-comparison mask loses the vector form.** Three ordinary
   `Array<u8, 8>` source forms generate vector comparisons, but packing their
   0x80/0 results into a word becomes lane widening and an AND/OR reduction.

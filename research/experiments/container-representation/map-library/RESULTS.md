@@ -4115,6 +4115,32 @@ peer/adverse reduction remain under `mask-peer-qualification` in the same archiv
 source/native/controls remain under `mutation-home-mask`. The complete goal
 remains unmet.
 
+#### Explicit mask fast arm: native stop
+
+One ordinary-source spelling trial uses the existing source-mask candidate as
+its causal control. In the two positive-count home blocks, it initializes the
+index to zero, then explicitly assigns the mask result for a power of two and
+the modulo result otherwise. Hash/equality order, probing, arbitrary capacities,
+exchange, owners and public outcomes remain unchanged. The full mutation witness
+and maintained capacity-three program emit successfully in both arms. All 15
+construction/emission/native stages exit zero in 17.36 seconds guarded, including
+a 9.285-second candidate CLI build; production library bytes are restored exactly.
+
+The requested native fallthrough does not result. LLVM evaluates both `AND` and
+`UDIV/MSUB`, then selects with `TST/CSEL`, so power-of-two capacities execute the
+division again. This occurs in both scalar batch home calculations, wide churn
+and the retained wide `find`/`try_put` paths. Scalar batch stays 205 instructions;
+wide batch changes 386 to 385, `try_put` stays 99, `find` changes 64 to 63 and
+`remove` 107 to 106. Exchange remains 87 instructions. Frames, stack-access
+counts and hot calls do not grow, and object code shrinks by 48 bytes, but these
+counts do not satisfy the registered division-bypass mechanism. The native gate
+fails; runtime correctness, capacity-three native execution, allocator ledgers
+and timing are not run. No rescue spelling or selection follows. The criterion,
+two-block source patch, exact raw pair, compiler/source/restoration pins, direct
+statuses and compact reached native excerpts are retained under
+`mask-fallthrough-source` in the same archive. The earlier source-mask timing
+verdicts remain unchanged.
+
 #### Descriptor and payload alias metadata
 
 A fact-only LLVM diagnostic gives the reached scalar mutation batch one fresh
@@ -4352,6 +4378,32 @@ Correctness and timing are not run. Original source is restored byte-exact;
 source patch, accepted emissions/statuses, compiler/source pins, restoration hash
 and compact native excerpts remain under `borrowed-tag-source`. No source-only
 policy or performance gain is selected.
+
+#### Late Pair-field result construction: native stop
+
+A separate native-only floor changes just the final Filled result transfer in
+original production raw LLVM: replace the private 264-byte Pair copy with an
+old-key store and a 256-byte Record copy from existing private snapshots. All
+eager captures, swap, cell commit and intermediate/final initializers remain;
+result writes still follow commit with the ordinary overlap contract. This is
+not the earlier result-before-commit/noalias ordering floor. No source, compiler,
+attribute, mask or extra optimization pass changes.
+
+All six construction/link/disassembly stages exit zero in 2.57 seconds guarded.
+The complete WF object bytes are identical in both arms; the linked disassemblies
+differ only in their filename header. Scalar/wide batch remain 197/381
+instructions, wide `try_put` 95 and exchange 87 with a 64-byte frame. Exchange
+still uses sixteen unscaled vector loads/stores across the old Pair plus one
+scalar access, so the requested paired-field transfer never appears. Executable
+hashes differ for an unattributed non-code reason; object equality is not an
+executable-byte identity claim. The native criterion fails, and runtime
+correctness, allocator checks and timing are not run. The pre-build criterion hash,
+its identified post-build spelling text, the one-transfer patch, raw
+replay inputs, direct statuses and reached excerpts remain under
+`late-pair-fields` in the same archive. Exact pre-build criterion bytes were not
+available at retention; current text is not claimed byte-identical to that
+preregistration. Object identity independently establishes this negative result.
+No production mechanism is selected.
 
 [`entry-forward-evidence.tar.gz`](entry-forward-evidence.tar.gz) serves this
 section's reader with scripts, criteria, raw API/whole-Map/long-hit records,
