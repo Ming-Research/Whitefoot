@@ -1,8 +1,8 @@
 {
   "purpose": "Isolated ordinary public reserve with verified future entry headroom; single production baseline panel, not an optimization/adoption result",
   "archive": "reserve-api-evidence.tar.gz",
-  "archive_sha256": "372a449b2f89402bd431c984b8890deecf04cecf4f09ae204210498e51058b25",
-  "archive_members": 698,
+  "archive_sha256": "3f7d0b242b028712a4b7f7d8ac3b84d0212b3d2f39caa218081e87629570db64",
+  "archive_members": 712,
   "base_revision": "89571a60381a685cfbe760248ceb6178d9f9ac05",
   "production_cli_sha256": "c12b2b2a6c9694fd2bc1b7be0004d582ae9628951422def849f4cf6a3ac02f77",
   "timed_image_sha256": "f1ebf18d7a94c79250bb3cbd74a0b379a2a30c6e5e4eda48396ec77d8bbdbf3f",
@@ -3874,6 +3874,45 @@
       "from": "component-index.json",
       "to": "component-index-before-combined-zero-nsw.json",
       "sha256": "af88ea79da9b4a0624d2f789e3e1c5347886f7554f05c549d4f25bed6607462f"
+    },
+    "all_prior_member_bytes_preserved": true
+  },
+  "fresh_tag_runtime": {
+    "prefix": "fresh-tag-runtime/",
+    "payload_count": 13,
+    "manifest": "fresh-tag-runtime/manifest.json",
+    "status": "Raw-LLVM diagnostic; primary wide criterion failed, no compiler/API/library/initialization-policy adoption.",
+    "patch_sha256": "9bfd3b58f99d31235d48ffd992ac5ed6249e9026d341a57674cfe2735a4dfa9e",
+    "modified_sites": 4,
+    "native_stages_pass": 6,
+    "equal_pass_control_object_byte_identical": true,
+    "raw_rows": 336960,
+    "hierarchy_checks": 3456,
+    "prerequisite_stages": 96,
+    "positive_stages": 42,
+    "expected_negative_stages": 54,
+    "all_prerequisites_pass": true,
+    "all_cell_instrument_pass": true,
+    "primary_both_qualified_gain": false,
+    "reducer_comparison_discrepancies": [],
+    "growth_results": {
+      "small_scalar_and_wide_gains": 4,
+      "large_scalar_losses": 2,
+      "large_wide_unqualified": 2
+    },
+    "noop_overlap_cells": 8,
+    "records": "fresh-tag-runtime/records.json",
+    "frozen_producer_manifest_sha256": "b879f3b62ca65b6b16aae3ea3695b8960caab0aae24e4cefa4d2f6caa82e9d07",
+    "replay_boundary": "Pinned raw patch and historical records require omitted generated inputs/toolchain/scratch reconstruction; no standalone or verified published replay."
+  },
+  "fresh_tag_runtime_prior_index": {
+    "prior_archive_sha256": "372a449b2f89402bd431c984b8890deecf04cecf4f09ae204210498e51058b25",
+    "prior_members": 698,
+    "unchanged_names_and_bytes": 697,
+    "renamed_member": {
+      "from": "component-index.json",
+      "to": "component-index-before-fresh-tag-runtime.json",
+      "sha256": "98249cbe0237d8fbb53daff709130713e2c944062b897fc9a72048c60b381826"
     },
     "all_prior_member_bytes_preserved": true
   }

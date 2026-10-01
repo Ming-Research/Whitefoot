@@ -5321,3 +5321,66 @@ member byte sequences are preserved; the archive now has 698 members. Compiler
 binaries, whole LLVM modules and native objects remain omitted with their
 identities and reconstruction limits recorded. This is retained experimental
 evidence, not a standalone published replay or an adopted compiler change.
+
+### Fresh tag initialization after bounded append: small-wide gain only
+
+The next diagnostic changes exactly four fresh Vacant constructor sites in the
+combined candidate's raw module: remove their complete-object memset calls,
+retaining the tag-zero stores and all 31 assumption mentions. Other constructors
+are unchanged. The sites belong to ordinary HashMap extension, including its
+inlined rebuilds; this is not a production compiler or a benchmark-selected
+lowering rule. The changed optimizer context justifies this discriminator:
+unlike the earlier rejected fresh-Vacant and self-tail floors, the combined
+module has bounded append increments and already inlines wide migration without
+payload staging. Earlier rejected results remain in force.
+
+An equal-pipeline native control reproduces the combined candidate object byte
+for byte. The modified arm replaces calloc with malloc plus strided tag-zero
+loops in all four rebuilds. Wide frames remain 64 bytes, with direct 256-byte
+payload transfers and no stack staging. Hash mixing, one division per live
+entry, scalar strided old-tag scanning, linear probing and capacities remain
+unchanged. The reached wide body grows from 142 to 173 instructions as tag
+initialization reappears. Thus the experiment changes allocation choice,
+initialization and instruction shape together; it cannot assign a pure
+payload-zero cost or supply Rust's compact metadata layout.
+
+All 96 prerequisite outcomes pass, including 54 diagnostic-specific negatives.
+Both timed and accounted arms pass all 288 reserve cases, lookup and whole-trace
+checks. Four 96-row ledgers equal the original baseline byte for byte. The
+post-O3 observer sees 3,216 calloc requests / 181,246,720 payload bytes in the
+combined control and zero in the fresh-tag arm; reversed observation expectations
+reject. The final objects also byte-match the preceding native-only artifacts.
+These observations establish this diagnostic's tested outcomes, not a general
+proof that arbitrary undefined inactive LLVM fields can be transported safely.
+
+The preregistered fixed four-process campaign exits zero in 119.21 seconds;
+every process exits zero. All 336,960 rows are retained, and independent reducers
+agree on all 3,456 aggregate hierarchies and all sixteen cell verdicts. Interval
+validity passes everywhere. Small scalar and wide growth give four qualified
+gains; large scalar growth gives two qualified losses of about 12–14 percent.
+Both large-wide cells fail control-WF cohort and paired-ratio stability. All
+eight no-op comparisons overlap. No retry, row filtering or criterion change
+follows. The primary two-size wide criterion fails.
+
+Aligned-hash wide growth medians, microseconds per call, cohort0 / cohort1:
+
+| Initial floor | Combined control WF | Fresh-tag WF | Same-image Rust | Same-image C++ | Qualification |
+|---|---:|---:|---:|---:|---|
+| 64 | 1.742 / 1.737 | 1.021 / 1.013 | 0.861 / 0.855 | 0.230 / 0.235 | Gain of 41.4 / 41.7 percent; still slower than both peers |
+| 4096 | 75.514 / 86.646 | 69.852 / 70.576 | 63.260 / 62.090 | 12.574 / 12.598 | Raw gains 7.5 / 18.5 percent; unqualified |
+
+Only the two native-default scalar growth cells qualify against Rust, their
+slower peer; no growth cell qualifies against C++. All eight no-op cells qualify
+against C++, none against Rust. No wide target is met. This keeps generic
+inactive-payload omission unselected, including the independently observed
+large-scalar loss. A future source or compiler candidate needs a general
+lowering argument, complete-operation evidence and the existing active-value,
+ownership, alias and transport controls; this four-site diagnostic is not that
+implementation. The remaining compact-metadata/scan question stays distinct
+from allocation extent and from the already removed payload staging.
+
+The existing archive's `fresh-tag-runtime/` component retains the four raw CSVs,
+both reducers, exact four-site patch, criteria and 262 compact native/runtime
+records. All 698 prior member byte sequences are preserved; there are now 712
+members. Omitted whole modules, native objects and compiler images are identified
+with their reconstruction dependencies. No standalone replay is claimed.

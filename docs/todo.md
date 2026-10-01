@@ -3446,6 +3446,11 @@ condition under which it is taken up.
   medians and large-wide candidate/ratio drift leave its wide criterion unmet.
   Keep this implementation experimental; its combined result does not isolate
   the loop's elapsed contribution or select constructor lowering.
+  The subsequent [fresh-tag diagnostic](../research/experiments/container-representation/map-library/RESULTS.md#fresh-tag-initialization-after-bounded-append-small-wide-gain-only)
+  retains the small frame/direct payload transfer and obtains a qualified
+  small-wide gain, but loses 12–14 percent on large scalar growth and leaves
+  large-wide improvement unqualified. It is not a general omission policy;
+  keep the adverse cells, complete transport obligations and peer target open.
 
   The same ledger/native audit separates the peers' remaining representation
   costs. Rust relocates the same wide payload bytes while initializing compact
