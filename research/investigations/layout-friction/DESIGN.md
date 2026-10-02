@@ -683,3 +683,11 @@ alias, is still refused, now with a repair that offers renaming either
 declaration; and `len-whole-row`, `len-window-row` and `len-loop-header` name
 the call whose row removed the length fact, while `stored-position`, whose
 bound no removed fact supplies, keeps the ordinary repair.
+
+The allocation change that follows it on a stacked branch amends v0.85 with
+3D. Under it the five `alloc-*` probes check, build and exit 0. The clamp
+census, rerun with that compiler on the layout source at `d046160` with two
+spellings updated for later versions (a local named `apart`, now a keyword,
+and the retired `mustpar for`), finds each of the twelve clamps in the first
+three rows of the table removable alone, `pkg::layout` accepted with all
+twelve removed together, and the two OP-2 clamps still needed.
