@@ -72,6 +72,49 @@ void wf_cmap_unread_entry(wf_cmap_user *user, wf_cmap_entry *entry, int held);
  * statements over the whole map hold it in the order they asked. */
 void wf_cmap_hold(wf_cmap_user *user);
 void wf_cmap_unhold(wf_cmap_user *user);
+
+/* One key of a set of entries a statement holds together: its bytes, which
+ * stay as they are until the set is released; its hash; its locked cell and
+ * slot; whether the entry was created for the set; and whether its slot
+ * holds a value, which the caller keeps current and the release reads. */
+typedef struct {
+    const unsigned char *key;
+    uint64_t length;
+    uint64_t tag;
+    void *cell;
+    void *slot;
+    uint32_t fresh;
+    uint32_t present;
+} wf_cmap_held;
+
+/* The keys a statement over a map reaches, collected before it begins, and
+ * how it holds them: each key's entry, or the whole map. */
+typedef struct {
+    wf_cmap_held *entries;
+    uint64_t count;
+    uint64_t room;
+    void *table;
+    uint32_t whole;
+} wf_cmap_set;
+
+/* Empties a set, keeping its storage. */
+void wf_cmap_set_clear(wf_cmap_set *set);
+/* Adds a key; a key may be added more than once. */
+void wf_cmap_set_add(wf_cmap_set *set, const unsigned char *key, uint64_t length);
+/* Holds the entries of the set's keys together, creating the absent ones,
+ * for a statement that reaches no other entry of the map: the keys are
+ * locked in one order every such statement uses, so two of them never wait
+ * for each other in a cycle. When it would wait past its patience, meets
+ * two of its keys with one hash, or cannot keep what it holds through a
+ * move, it gives everything back and holds the whole map instead, setting
+ * set->whole, as wf_cmap_hold does. */
+void wf_cmap_hold_set(wf_cmap_user *user, wf_cmap_set *set);
+/* The held entry of key in a set whose entries are held, or NULL when the
+ * key is not one of the set's. */
+wf_cmap_held *wf_cmap_set_find(wf_cmap_set *set, const unsigned char *key, uint64_t length);
+/* Releases what wf_cmap_hold_set holds: each entry kept when present, else
+ * removed with its slot, or the whole map. */
+void wf_cmap_release_set(wf_cmap_user *user, wf_cmap_set *set);
 /* The number of entries, exact while the map is held or has no users. */
 uint64_t wf_cmap_count(wf_cmap *map);
 /* With no users left: the slot of an entry not yet drained, whose value the
