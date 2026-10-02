@@ -5252,5 +5252,46 @@
       "sha256": "254b8cf73021c05b081e2a54ad9ef68408df839924d8c18a92696b37e4424693"
     },
     "all_prior_member_bytes_preserved": true
+  },
+  "fresh_insert_matched_c": {
+    "archive": {
+      "path": "fresh-insert-matched-c-evidence.tar.gz",
+      "bytes": 3062454,
+      "sha256": "c8f368b6ee4351d8da9a631741dfd30f7aeb41a6c98d5c725a4d11b778579592",
+      "members": 19
+    },
+    "prefix": "fresh-insert-matched-c/",
+    "manifest": "fresh-insert-matched-c/manifest.json",
+    "manifest_sha256": "8d509783272220e42372374a37aa334096984d3a92d14c263ad4bddec9992ba6",
+    "retained_records": 500,
+    "timing_rows": 297984,
+    "raw_row_counts": {
+      "campaign-0/candidate-cohort-0.csv": 74496,
+      "campaign-0/candidate-cohort-1.csv": 74496,
+      "campaign-0/control-cohort-0.csv": 74496,
+      "campaign-0/control-cohort-1.csv": 74496
+    },
+    "check_outcomes": {
+      "checks-original": 92,
+      "checks-c-final": 72,
+      "checks-contract": 52
+    },
+    "admitted_cells": 6,
+    "scalar_wf_before_after_gains": 4,
+    "scalar_c_strictly_slower_than_inline_wf": 4,
+    "scalar_peer_targets": 2,
+    "admitted_peer_targets_all_cells": 3,
+    "density_model": {
+      "original_manifest_sha256": "51c7d72f4b61c51ca36c3f56b2a2bc45064a6fd05b5d0096a7928bc4de1464c5",
+      "retained_files": 35,
+      "disposition": "intermediate probe-count sensitivity; no container timing or capacity selection"
+    },
+    "production_adoption": false,
+    "predecessor_archive": {
+      "path": "reserve-api-evidence.tar.gz",
+      "sha256": "150e92ee1abe107735e091f66d1c7849e36a2bb45f9aa7596ee3ecc483dae5a3",
+      "members": 1259,
+      "unchanged": true
+    }
   }
 }

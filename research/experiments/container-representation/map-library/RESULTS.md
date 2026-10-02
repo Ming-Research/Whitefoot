@@ -56,6 +56,9 @@ qualifies three scalar gains but only two peer targets; its required wide-contro
 screen fails. These partial gains select no production inlining policy.
 The [matched reciprocal-loop follow-up](#exact-reciprocal-in-the-exposed-loop-mechanism-passes-timing-unqualified)
 removes per-item division but qualifies no additional scalar gain.
+The [matched-C campaign](#matched-c-fresh-insertion-wf-gains-and-c-attribution-remain-distinct)
+separately qualifies all four scalar WF inline gains, while C is slower and
+only two scalar aligned peer targets pass; both default wide cells are invalid.
 The [EDIT-only two-span follow-up](#edit-only-two-span-probing-rejected)
 reduces native body instructions but has no qualified miss gain, three qualified
 two-cohort hit losses and zero candidate peer targets; its source stays rejected.
@@ -7246,3 +7249,76 @@ binaries and generated Python bytecode are omitted with original identities.
 Standalone arithmetic inputs can exercise the exact formula with compatible
 tools; reconstructing the map requires its pinned historical dependencies.
 Prior cached-source, constant-divisor and O2 failures remain unchanged.
+
+### Matched C fresh insertion: WF gains and C attribution remain distinct
+
+A new fixed campaign links the original WF arm A and forced-inline arm B with
+the same additional C sparse-map implementation and Rust/C++ peers. All 216
+expected checks pass: 92 original cases, 72 C cases and 52 direct-result
+contracts/faults, including complete returned wide owners. Four processes exit
+zero with 49 unchanged input pins and 297,984 retained rows. Six of eight cells
+are admitted. The supplemental classifier separates WF A/B range gain, C/WF
+comparison and the ordinary slower-Rust/C++ target; the original reducer's
+combined target flag is not a standalone WF gain.
+
+Medians are ns/insertion, cohort 0 / 1; peer columns use the B panel. Full ranges,
+both panels and admission checks are retained in the
+[fresh-insert matched-C component](fresh-insert-matched-c-evidence.tar.gz),
+linked by the existing [evidence index](reserve-api-evidence.json).
+
+| Series | Bytes / S | WF A | WF B | C | Rust | C++ | Admitted; WF gain; peer target |
+|---|---:|---:|---:|---:|---:|---:|---|
+| default | 8 / 64 | 16.425 / 16.576 | 15.092 / 15.068 | 18.306 / 18.219 | 9.849 / 9.894 | 12.338 / 12.329 | yes; gain; fail |
+| default | 8 / 4096 | 16.121 / 16.157 | 14.325 / 14.267 | 17.320 / 17.582 | 9.353 / 9.341 | 11.064 / 11.095 | yes; gain; fail |
+| aligned | 8 / 64 | 16.296 / 16.444 | 15.064 / 15.056 | 18.224 / 18.183 | 7.237 / 7.250 | 21.151 / 21.106 | yes; gain; pass |
+| aligned | 8 / 4096 | 16.109 / 16.074 | 14.222 / 14.176 | 17.514 / 17.293 | 4.442 / 4.328 | 22.159 / 21.720 | yes; gain; pass |
+| default | 256 / 64 | 30.528 / 29.897 | 31.925 / 30.484 | 54.422 / 51.447 | 32.735 / 25.936 | 26.899 / 26.161 | invalid; unqualified |
+| default | 256 / 4096 | 35.953 / 35.192 | 37.287 / 33.387 | 71.771 / 58.788 | 36.440 / 32.709 | 25.719 / 25.104 | invalid; unqualified |
+| aligned | 256 / 64 | 30.440 / 30.463 | 31.006 / 30.185 | 52.412 / 50.713 | 26.056 / 26.212 | 36.900 / 36.583 | yes; overlap; pass |
+| aligned | 256 / 4096 | 35.618 / 34.410 | 36.348 / 36.150 | 66.055 / 64.564 | 32.120 / 31.906 | 38.481 / 37.982 | yes; overlap; fail |
+
+All four scalar cells show separated WF A→B gains in both cohorts. C is
+strictly slower than WF B in all four, so it supplies no faster scalar C floor.
+Only the two aligned scalar cells clear the slower peer; default scalar WF
+still trails both peers. Aligned small-wide supplies the third admitted peer
+target, without a WF A/B gain. Default wide cells are invalid: S64 candidate
+Rust drifts 26.214%; S4096 candidate WF/Rust/C drift 11.680/11.406/22.084%.
+These invalid cells are not evidence of regression absence or target success.
+
+Equal entry floors are not equal physical tables. WF/C use 85/5,461 cells for
+usable floors 64/4,096. Rust reports usable 112/7,168; its physical 128/8,192
+buckets are inferred from backing bytes and adapter layout. C++ reports
+64/4,096 buckets. C also has a 16-byte backing header, a compact returned-pair
+ABI and a pointer/count descriptor without WF's vacated field. Its slower
+result does not isolate a compiler cause or establish an optimal codegen floor.
+
+The recovered original compile transcript retains the initial undeclared-helper
+failure and four successful object compilations, without rebuilding. Final
+commands use clang -O3 and the recorded timed/account definitions, without
+RETAIN_HELPERS; resolved clang path/version was not separately captured. The
+M-C1 pre-repair source/report is unavailable; final direct-result witness
+source, rejecting faults and logs establish the repaired checks. Exact sources,
+comparative patches, link construction, native excerpts, raw data and reducers
+are retained. Executable replay also needs the pinned historical compiler and
+native dependencies. Control CSV calls count insertion work, not geometry C
+ABI invocations (32,768/512 per sample); intervals remain unsubtracted.
+The earlier 51.42 MiB archive remains byte-identical. No representation, ABI,
+production inlining policy or completed application target is selected.
+
+A separate untimed density model in this component repeats the exact WF fresh
+key/seed populations and first-vacant probes, including the terminal vacant
+probe. Expanding physical cells 85→128 and 5,461→8,192 reduces mean probes
+1.882814→1.452265 (22.867%) and 1.912109→1.459961 (23.647%). This falls between
+the preregistered 10% and 25% prioritization thresholds: intermediate evidence,
+not an automatic timing go-ahead. Each geometry contains 3,145,728 window
+insertions; repeated widths/cohorts are the same populations, not independent
+replications. Six expected stages pass, including three rejecting probe faults;
+the initial unused-function compile failure and repair remain retained.
+Larger tables add about 50% cells and change modulo placement as well as density.
+WF raw backing bytes are scalar 2,040→3,072 / 131,064→196,608 and wide
+23,120→34,816 / 1,485,392→2,228,224 for the two sizes. The frozen model
+report adds the C-only 16-byte header; that is not WF allocation overhead.
+The model excludes fixed hashing, call, division, write and receipt costs and
+supplies neither nanosecond savings nor a Rust group-probing comparison. Any
+explicit-capacity sensitivity needs its own criterion, allocation accounting
+and unchanged outcomes; the original entry-floor target is unchanged.

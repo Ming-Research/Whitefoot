@@ -2978,6 +2978,19 @@ rarely insert at the same place.
   that every existing decision/evidence link still resolves. Do not relocate
   load-bearing paths or treat frozen timings as current capabilities.
 
+  The Map evidence bundle also reached 51.42 MiB at f63496c4d, triggering
+  GitHub's recommended 50 MiB file-size warning. Each append rewrites a large
+  compressed Git blob, increasing repository transfer and retention costs.
+  Reopen before further bundle growth: investigate lossless raw-data compression
+  and deduplication of repeated source/log payloads behind a reconstruction
+  index. Require reconstruction of every original member name and byte hash,
+  including failed trials, adverse samples, source pins and replay limits,
+  before replacing any representation. Preserve current evidence and links;
+  The next matched-C record uses a small ordinary archive linked by the existing
+  JSON index, leaving this historical blob frozen; no compaction or evidence
+  removal is performed. Keep new evidence bounded in the same experiment home,
+  with its existing removal/maintenance owner.
+
 - **Five parallel substitution walkers over a type invariant.**
   `compiler/src/semantic/check/type_invariants.rs` rewrites the invariant's
   parameter zero with `substitute_goal`, `construct_goal`, `binder_goal`,
@@ -3031,6 +3044,11 @@ rarely insert at the same place.
   but qualifies no scalar gain despite lower medians; its frame grows 16 bytes.
   Keep setup, live-state/transport and arbitrary-capacity costs visible when
   reopening insertion work against the unchanged range/peer criterion.
+  The [matched-C panel](../research/experiments/container-representation/map-library/RESULTS.md#matched-c-fresh-insertion-wf-gains-and-c-attribution-remain-distinct)
+  separates four scalar WF inline gains from two aligned scalar peer targets;
+  C is slower in every scalar cell, with different descriptors/ABI and table
+  geometries still limiting causal attribution. Default peer gaps and invalid
+  wide controls remain open; do not treat this C implementation as a codegen floor.
   This does not select a production O2 reciprocal policy. Keep callable-result
   classification distinct from enum
   representation and preserve shared caller/callee ABI and body/wrapper order
