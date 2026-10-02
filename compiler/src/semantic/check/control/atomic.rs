@@ -284,16 +284,14 @@ impl Checker<'_, '_> {
         );
         self.body.atomic_holds.pop();
         self.body.atomic_depth -= 1;
-        let (guard, mut checked) = checked?;
-        if let Some(guard) = &guard {
-            effects = effects.union(guard.1.clone());
-        }
+        let (mut guard, mut checked) = checked?;
         // [SHARE-3] a statement on an entry whose guard and block write no
         // path rooted at the binder only reads what it holds, so its reads
         // take effect at one point whichever other such statements on the
         // key run beside it. Every write through the binder, a place a
         // match binds inside the entry or a call's written parameter, is a
         // path rooted at the binder's declaration.
+        let held_root = declaration.id();
         let checked_form = match checked_form {
             CheckedAtomicForm::Entry { held, .. } => CheckedAtomicForm::Entry {
                 held,
@@ -302,10 +300,19 @@ impl Checker<'_, '_> {
                     .writes
                     .iter()
                     .chain(guard.iter().flat_map(|guard| guard.1.writes.iter()))
-                    .any(|path| path.root == declaration.id()),
+                    .any(|path| path.root == held_root),
             },
             other => other,
         };
+        // What the statement holds belongs to no binding and no caller
+        // [SHARE-1], so no row names a path rooted at the binder.
+        for set in std::iter::once(&mut checked.effects).chain(guard.iter_mut().map(|guard| &mut guard.1)) {
+            set.reads.retain(|path| path.root != held_root);
+            set.writes.retain(|path| path.root != held_root);
+        }
+        if let Some(guard) = &guard {
+            effects = effects.union(guard.1.clone());
+        }
         effects = effects.union(checked.effects);
 
         // [REF-2] the binder's root leaves scope when the block ends by any

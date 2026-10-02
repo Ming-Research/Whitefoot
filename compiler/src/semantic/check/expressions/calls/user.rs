@@ -906,7 +906,9 @@ impl<'unit> Checker<'_, 'unit> {
 
     /// [EFF-2] the caller's own row: each projected entry rooted in a current
     /// formal contributes that formal's corresponding path, and an entry
-    /// rooted only in local storage contributes none.
+    /// rooted only in local storage contributes none. An entry rooted at an
+    /// atomic statement's binder contributes its path for that statement,
+    /// which removes it [SHARE-3].
     fn project_call_effects(
         &self,
         node: NodeId,
@@ -921,6 +923,7 @@ impl<'unit> Checker<'_, 'unit> {
                     .parameters
                     .iter()
                     .any(|parameter| parameter.declaration == path.path.root)
+                    && !self.is_atomic_binder(path.path.root)
                 {
                     continue;
                 }
