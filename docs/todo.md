@@ -1042,9 +1042,13 @@ rarely insert at the same place.
   copies the member twice, descends the order twice to remove and put it,
   and hashes it again to store the score, inside the one key's statement.
   The change: reuse the removed rank's member, store the score through the
-  first lookup, and profile what remains. Validate by `ZADD` at depth 16
-  against Dragonfly at 2 and 16 server CPUs. Reopen with firn's next
-  performance work.
+  first lookup, and profile what remains. The same session's rerun of the
+  branch with bounded waits (`9d1d5dfcd`, reported in PR #202's comments)
+  answered `ZADD` about 10% lower at 4 and 8 server CPUs (1,011,000 against
+  1,127,000 at 4, two of its three passes lower), so the profile should
+  also say what a waiting statement's patience counting costs on one hot
+  key. Validate by `ZADD` at depth 16 against Dragonfly at 2 and 16 server
+  CPUs. Reopen with firn's next performance work.
 
 - **A whole-map statement costs more as drivers are added.** firn's `MSET`
   fell from 1,243,000 a second at 4 server CPUs to 1,103,000 at 8 and
