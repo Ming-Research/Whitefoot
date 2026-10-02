@@ -171,12 +171,14 @@ and joins, and the negated conclusion. The derivation then:
 2. fires an instance whose premises the hypotheses entail;
 3. decides a write's read, the written element or the old one, when only
    one case is consistent, and otherwise tries both; likewise a join's arm,
-   two reads of one version that may be one element, and a disequality as
-   `<` or `>`;
-4. judges each branch's literals by solving unit equalities, identifying
-   reads of one version at one solved index tuple (read congruence), and
-   asking whether the inequalities, each tightened over the integers, have
-   a rational solution, by Fourier-Motzkin elimination.
+   two reads of one version that may be one element, equal or apart at one
+   position where their indices differ, and a disequality as `<` or `>`;
+4. judges each branch's literals by solving the equalities over the
+   integers, identifying reads of one version at one solved index tuple
+   (read congruence), and asking whether the inequalities, each tightened
+   over the integers, have a rational solution, by Fourier-Motzkin
+   elimination; a branch refuted without its split's case closes the
+   split's other branches ([backjumping](#conflict-directed-backjumping)).
 
 Only the problem's size is bounded, by 4096 atoms and 256 formed instances
 of one fact; every branch runs to completion. A first implementation also
@@ -246,9 +248,9 @@ At compiler revision 9ea2818b (`make -C compiler build`), on a
   within the run-to-run spread of the front end: 108.3 s and 106.2 s with
   the judgment skipped by a temporary switch, against 108.5 s and 109.2 s
   with it, two builds each; at 450fea25 the same comparison gave 102.9 s and 102.7 s
-  against 105.4 s and 105.1 s. What makes the derivation costly, and the
-  change that would cut it, is recorded in `docs/todo.md`, "The range
-  judgment splits every open read pair".
+  against 105.4 s and 105.1 s. What made the derivation costly, and the
+  change that cut it, is under
+  [Conflict-directed backjumping](#conflict-directed-backjumping).
 
 The proof-cost figures come from these commands. The check time is
 `/usr/bin/time whitefootc --check` on the case; the instruction shares are
@@ -334,18 +336,126 @@ compiler as of 9208728e:
 - **Several roots.** The test certifies writes to two roots, `sets` and
   `sizes`, under one empty certificate; each root's accesses are separated
   pair by pair, so eight roots add pairs to judge, not a rule.
-- **Establishing `owned` is the cost.**
+- **Establishing `owned` was the cost.**
   [`owner_loop.wf`](owner_loop.wf) derives the owners after the depth walk,
-  with `owned` as the invariant of its own loop. Its check takes 12.5 s,
+  with `owned` as the invariant of its own loop. Its check took 12.5 s,
   against 0.84 s without that invariant. A measurement patch, never
   committed, that counted each problem's search nodes and eliminations at
   9ea2818b found 11.3 s of it in one backedge problem the derivation
   refutes in 5,463 branches, splitting pair after pair of reads the
-  contradiction does not use (`docs/todo.md`, "The range judgment splits
-  every open read pair"). Computing the owners in the depth walk instead,
-  its root and depth arms writing `owners^[at]` and `owned` beside `up` in
-  its header, took 392.6 s at 9ea2818b, two of its problems opening 66,463
-  and 76,111 branches.
+  contradiction does not use. Computing the owners in the depth walk
+  instead, [`owner_walk.wf`](owner_walk.wf), its root and depth arms
+  writing `owners^[at]` and `owned` beside `up` in its header, took 392.6 s
+  at 9ea2818b, two of its problems opening 66,463 and 76,111 branches.
+  Conflict-directed backjumping removes most of both costs
+  ([below](#result)).
+
+## Conflict-directed backjumping
+
+The derivation's verdict is fixed by [RANGE-3]: a problem is refuted when
+every branch of its case analysis is contradictory. The search may skip a
+branch whose refutation is already known, and conflict-directed backjumping
+knows it: when a branch below a split is refuted by literals none of which
+came from that split, the split's other branches hold the same literals
+and are refuted too. Without it the search explored one tree, splitting on
+the first undecided choice, then the first open pair of reads, then a
+disequality, and re-ran saturation, with a full Fourier-Motzkin elimination
+per alternative and per guard, at every node, so a pair of reads the
+contradiction does not use still doubled the tree below it
+([Snowghost's inherited pass](#snowghosts-inherited-pass)).
+
+Criterion, recorded before the change was written: it is kept when every
+`range*` and `fn9-neg-range*` case and `owner_loop.wf` give byte-identical
+`whitefootc --check` output, verdict and diagnostic alike, the library tests
+pass unchanged, and `owner_loop.wf` checks in 2.5 s or less, a fifth of its
+time before, while `range5-pos-level-cascade.wf` checks no slower than
+before; otherwise the change is refused here with its figures, and the next
+candidate is splitting first on the read pairs the open conclusion's atoms
+reach. Before the change, at d868d5b6 on the host the observations name,
+the level cascade checks in 0.96 to 1.02 s over three runs and
+`owner_loop.wf` in 12.4 s.
+
+### An order-free derivation
+
+The argument above needs the full case analysis to refute a split's other
+branches whenever one branch is refuted without its own case, which holds
+when the theory's verdict depends only on the set of literals, a
+contradictory set stays contradictory as literals are added, and every split
+covers all of its item's cases. Writing it
+showed three places where the derivation at 0d7f3501 did not:
+
+- **The theory depended on the order of solving.** Only an equality with a
+  unit coefficient was solved; one without stayed a pair of rational
+  inequalities, and which equalities had a unit coefficient depended on
+  which were solved first. `x == 3z, x == -2y, x == 3` was refuted when
+  `x == -2y` came first, since `-2y == 3` then tightens to an empty range,
+  and open when `x == 3z` came first, since `3z + 2y == 0` then keeps the
+  rational solution `z = 1, y = -3/2`; so adding `x == 3z` ahead of the
+  refuted `x == -2y, x == 3` made it open. That order was the problem's
+  literal order, which [RANGE-3] does not state. The theory now solves every
+  equality over the integers: one without a unit coefficient renames its
+  least-coefficient atom by an integer change of variables until one has,
+  so the free atoms parametrize the integer solutions one to one. A
+  tightened inequality is then the same in every parametrization, since a
+  change of integer variables keeps its coefficients' greatest common
+  divisor, and a finer set of solutions only tightens it further, so the
+  verdict depends on the set of literals alone and a contradiction stays
+  one as literals are added.
+- **A read pair at strided indices was split without end.** Reads `p[2i]`
+  and `p[3j]` tried equal kept `2i == 3j` unsolved, so the pair still might
+  be one element and was split again until the checker's stack overflowed.
+  Solved over the integers, the equal case makes their tuples one.
+- **A pair kept apart at two positions was left unsplit.** A pair the
+  literals keep from being one element yielded, at its one differing
+  position, that position's disequality, which a later split orients; at
+  two positions it yielded nothing, so a refutation needing an orientation
+  was found for a one-index place and not for a two-index one. Such a pair
+  is now split over its differing positions, and a pair
+  is settled only when, at a position where it differs, the difference of
+  its indices is constant or equals, up to sign, that of a disequality or
+  strict comparison the branch holds, both over the solutions.
+
+[RANGE-3]'s decision step now states its verdict for any split order, and
+backjumping skips only branches that this order independence shows refuted.
+The solver tests `the_theory_does_not_depend_on_the_order_of_its_equalities`,
+`an_equality_without_a_unit_coefficient_is_solved_over_the_integers`,
+`reads_at_strided_indices_settle` and
+`a_pair_forced_apart_at_two_positions_is_split_over_them` in
+`compiler/src/semantic/range_judgment/solver.rs` each fail on 0d7f3501's
+solver, the third by overflowing the stack and the others with an open
+verdict. Two conformance cases carry the last two to programs: d868d5b6's
+checker runs `range3-neg-strided-reads` out of memory, 3.1 GB in 14 s under
+a 4 GB limit, where this change rejects it naming the fact, and rejects
+`range3-pos-reads-apart-at-two-positions`, which this change accepts and
+which with one of its four bounds removed it rejects.
+
+### Result
+
+At this change, with `whitefootc` built by Cargo's `gate` profile on the
+observations' 4-processor host, three runs each: `range5-pos-level-cascade.wf`
+checks in 0.41 to 0.44 s, against 0.95 to 1.01 s for d868d5b6 built the same
+way and run in the same session, and `owner_loop.wf` in 0.96 to 1.03 s,
+against 12.3 to 12.7 s. Every `range*` and `fn9-neg-range*` case of
+d868d5b6 and `owner_loop.wf` give byte-identical `whitefootc --check` output
+and exit status, and the library tests pass, so the criterion is met.
+`owner_walk.wf` checks in 1.58 to 1.77 s, against 394.2 s in one run at
+d868d5b6. A memo of refuted literal sets
+within one problem, tried before, took 27 s and 2.4 GB on a program holding
+`owner_loop.wf`'s loop against 13.8 s without it, and was dropped.
+
+The first version of this change dropped the splits that excluded a read
+pair's equal case when it split the pair over two or more positions, so a
+branch refuted through that exclusion closed siblings where the pair may be
+one element; the review found it with a randomized comparison against the
+full case analysis, and `range3-neg-reads-apart-in-one-arm` is a program it
+accepted. The equal case now stays a branch of the split, refuted at once
+with the splits its exclusion rests on. The solver test
+`backjumping_keeps_the_full_case_analysis_verdict` compares the two searches
+on 4,000 generated problems and found that defect at its 2,878th. Each way
+the recorded splits could be lost fails a solver test: dropping those a
+substituted solution, a combined inequality, a congruence's indices, an
+equality without an integer solution, an equality solved after renaming or
+an excluded equal case rests on, or the backjump itself.
 
 ## Criteria and result
 

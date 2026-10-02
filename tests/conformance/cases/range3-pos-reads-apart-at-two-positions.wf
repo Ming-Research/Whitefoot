@@ -1,0 +1,61 @@
+fn need(a: &[u64]) -> result: unit pure contract {
+  requires forall small(e in 0_u64..a^.len): a^[e] < 10_u64;
+} {
+  doc "Requires every element below 10.";
+  return unit;
+}
+
+fn probe(src: &[u64], d1: u64, k1: u64, d2: u64, k2: u64) -> result: u64 reads(src) {
+  doc "Reads two elements of a Segments whose contents the loop leaves unknown, at (d1, k1) and (d2, k2). Where their values differ the reads are not one element, so their tuples differ at a position; with d1 and d2, and k1 and k2, each bounding the other, neither position can, so the call owing a false fact is unreachable.";
+  let sizes = box_array_filled::<u64>(count: 2_u64, value: 3_u64);
+  let made = box_segments_filled::<u64>(lengths: &sizes.inner[0_u64..2_u64], value: 0_u64);
+  match move made {
+    None() => {
+      return 1_u64;
+    }
+    Some(value: slots) => {
+      let big = box_array_filled::<u64>(count: 4_u64, value: 20_u64);
+      for (q in 0_u64..slots.inner.len) {
+        let segment = &slots.inner[q];
+        if q < src^.len {
+          if 0_u64 < segment^.len {
+            set segment^[0_u64] = src^[q];
+          }
+        }
+      }
+      if d1 < slots.inner.len {
+        if d2 < slots.inner.len {
+          let first = &slots.inner[d1];
+          let second = &slots.inner[d2];
+          if k1 < first^.len {
+            if k2 < second^.len {
+              let x = first^[k1];
+              let y = second^[k2];
+              if x != y {
+                if d1 <= d2 {
+                  if d2 <= d1 {
+                    if k1 <= k2 {
+                      if k2 <= k1 {
+                        need(a: &big.inner[0_u64..4_u64]);
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      return 0_u64;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let src = box_array_filled::<u64>(count: 2_u64, value: 5_u64);
+  let got = probe(src: &src.inner[0_u64..2_u64], d1: 1_u64, k1: 2_u64, d2: 1_u64, k2: 2_u64);
+  if got != 0_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

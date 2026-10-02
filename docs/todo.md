@@ -550,37 +550,6 @@ rarely insert at the same place.
   inventory is next edited; the storage-destructuring repair uses its actual
   identities and needs no inventory change.
 
-- **The range judgment splits every open read pair.** The derivation of
-  [RANGE-3] and [RANGE-5] refutes a problem only when every branch is
-  contradictory, and `Problem::search` in
-  `compiler/src/semantic/range_judgment/solver.rs` explores them as one
-  tree: it splits on the first undecided choice, then on the first open
-  pair of reads in atom order, then on a disequality, and at every node
-  re-runs saturation, a full Fourier-Motzkin elimination per alternative and
-  per guard. A pair the contradiction does not need still doubles the tree
-  below it. `research/investigations/unique-keys/owner_loop.wf`, the fact
-  Snowghost's inherited pass needs to read a custom-property set at the
-  parent's owner, checks in 12.5 s against 0.84 s without its `owned`
-  invariant at 9208728e. At 9ea2818b a measurement patch never committed
-  counted 11.3 s of it in that invariant's backedge, one problem of 30
-  atoms, 21 of them element reads, refuted in 5,463 nodes and 160,140
-  eliminations, and with the owners computed in the depth walk instead the
-  check took 392.6 s
-  (`research/investigations/unique-keys/POINTWISE.md#snowghosts-inherited-pass`).
-  The level cascade's check spends 91% of its 0.9 s in the judgment
-  (`research/investigations/unique-keys/POINTWISE.md#observations`). A
-  memo of identical literal sets within one problem does not help: on a
-  program holding the same loop it took 27 s and 2.4 GB against 13.8 s, so
-  the cost is the tree's size, not repeated eliminations. Conflict-directed
-  backjumping would keep every verdict, since the verdict does not depend on
-  the order of the splits: let elimination record which literals a
-  contradiction used, and when every leaf below a split was refuted without
-  the split's own literal, refute its other side without exploring it.
-  Validate by identical verdicts on the `range*` conformance cases, the
-  witnesses and `owner_loop.wf`, and by its node count and check time.
-  Reopen before Snowghost rewrites its inherited pass as a level loop,
-  which needs that fact.
-
 ## Containers and storage lowering
 
 - **A hash map offers no sample or bounded visit.**
