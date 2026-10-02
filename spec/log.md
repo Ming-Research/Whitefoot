@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-02 v0.86 amended: box_segments_filled returns its cell
+
+Rules: changed OP-9, OP-13, STOR-6, STOR-8, PRE-1
+
+Owner-approved: 2026-10-02, in the session, written in Chinese: Q34 A ("for Q25 option A I need to see what the code actually looks like; the others agreed"); after the handoff of PR #211, which showed every rule change with its before and after behavior, the changes as shown ("agreed")
+
+Summary: Before v0.86 is released, OP-13's `box_segments_filled` no longer returns `None` when `stride_ceiling(T) * t + 8 * r^.len` exceeds `2^62`: its block holds `r^.len + 1` boundaries and the sum of the lengths in elements, and OP-9 sizes it from that sum and their number with the checked arithmetic STOR-6 fixes, a size the target cannot allocate, a wrapping sum among them, being heap exhaustion [STOR-8]. STOR-6 qualifies a `Segments` with the runtime-capacity shapes, its descriptor counting the `len` word and the first boundary there, drops the requirement that the predicate's largest block be allocatable, and states why the descriptor's arithmetic cannot wrap; STOR-8 states the sum computed as OP-9 states; the PRE-1 record returns `Box<Segments<T>>` with unrouted postconditions. Selected by the owner's ruling Q34 A.
+
 ## 2026-10-02 v0.86 amended: an allocation's size computed at run time
 
 Rules: changed SCOPE-3, STOR-6, STOR-8, OP-9, OP-10, OP-13, ERR-4, DIAG-1, DIAG-2, ENT-1, ENT-2, MSR-4

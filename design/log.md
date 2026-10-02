@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-02 Make box_segments_filled heap exhaustion instead of a refusal past 2^62
+
+Nodes: language/checks-and-proofs/obligation-discharge, language/checks-and-proofs/range-facts, language/data-model/storage-shapes, compiler/storage-representation
+
+Owner-approved: 2026-10-02, in the session, written in Chinese: Q34 A ("for Q25 option A I need to see what the code actually looks like; the others agreed"); after the handoff of PR #211, which showed every rule change with its before and after behavior and these tree edits, the change as shown ("agreed")
+
+Summary: `box_segments_filled` returns its cell, summing its lengths and sizing its block at run time with the checked arithmetic of every other runtime allocation, so a total that wraps or a size the target cannot allocate is heap exhaustion, because its `None` covered only sizes above `2^62` bytes, which no supported heap can supply, while a smaller size the heap cannot supply already ended the program. Refused: keeping the target-independent predicate's `None`, and a `None` sized by the selected target, which would make a result depend on the target. The storage-representation, storage-shapes and range-facts nodes drop the predicate and the `Some` route from their wording.
+
 ## 2026-10-02 Compute an allocation's size at run time, and make a size the target cannot allocate heap exhaustion
 
 Nodes: language/checks-and-proofs/obligation-discharge, language/data-model, compiler/diagnostic-repairs, compiler/prelude-records
