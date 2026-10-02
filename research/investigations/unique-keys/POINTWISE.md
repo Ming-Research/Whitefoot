@@ -433,19 +433,29 @@ which with one of its four bounds removed it rejects.
 
 At this change, with `whitefootc` built by Cargo's `gate` profile on the
 observations' 4-processor host, three runs each: `range5-pos-level-cascade.wf`
-checks in 0.43 to 0.46 s, against 0.95 to 1.01 s for d868d5b6 built the same
-way and run in the same session, and `owner_loop.wf` in 0.97 to 1.06 s,
-against 12.3 to 12.7 s. Every `range*` and
-`fn9-neg-range*` case and `owner_loop.wf` give byte-identical
-`whitefootc --check` output and exit status, and the library tests pass, so
-the criterion is met. `owner_walk.wf` checks in 1.54 to 1.55 s over two
-runs, against 394.2 s in one run at d868d5b6. A memo of refuted literal sets
+checks in 0.41 to 0.44 s, against 0.95 to 1.01 s for d868d5b6 built the same
+way and run in the same session, and `owner_loop.wf` in 0.96 to 1.03 s,
+against 12.3 to 12.7 s. Every `range*` and `fn9-neg-range*` case of
+d868d5b6 and `owner_loop.wf` give byte-identical `whitefootc --check` output
+and exit status, and the library tests pass, so the criterion is met.
+`owner_walk.wf` checks in 1.58 to 1.77 s, against 394.2 s in one run at
+d868d5b6. A memo of refuted literal sets
 within one problem, tried before, took 27 s and 2.4 GB on a program holding
-`owner_loop.wf`'s loop against 13.8 s without it, and was dropped. Each way
+`owner_loop.wf`'s loop against 13.8 s without it, and was dropped.
+
+The first version of this change dropped the splits that excluded a read
+pair's equal case when it split the pair over two or more positions, so a
+branch refuted through that exclusion closed siblings where the pair may be
+one element; the review found it with a randomized comparison against the
+full case analysis, and `range3-neg-reads-apart-in-one-arm` is a program it
+accepted. The equal case now stays a branch of the split, refuted at once
+with the splits its exclusion rests on. The solver test
+`backjumping_keeps_the_full_case_analysis_verdict` compares the two searches
+on 4,000 generated problems and found that defect at its 2,878th. Each way
 the recorded splits could be lost fails a solver test: dropping those a
 substituted solution, a combined inequality, a congruence's indices, an
-equality without an integer solution or an equality solved after renaming
-rests on, or the backjump itself.
+equality without an integer solution, an equality solved after renaming or
+an excluded equal case rests on, or the backjump itself.
 
 ## Criteria and result
 

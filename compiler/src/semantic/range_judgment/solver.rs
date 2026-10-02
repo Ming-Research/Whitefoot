@@ -331,11 +331,11 @@ pub(crate) enum Verdict {
 impl Problem {
     /// Whether the problem has no model.
     pub(crate) fn judge(&self) -> Result<Verdict, Capacity> {
-        self.judge_counting(&Cell::new(0))
+        self.judge_in(&Run::backjumping())
     }
 
-    /// [`Self::judge`], counting in `nodes` the branches it saturates.
-    fn judge_counting(&self, nodes: &Cell<usize>) -> Result<Verdict, Capacity> {
+    /// [`Self::judge`] within `run`.
+    fn judge_in(&self, run: &Run) -> Result<Verdict, Capacity> {
         let units = self
             .units
             .iter()
@@ -343,7 +343,7 @@ impl Problem {
             .collect();
         let decided = vec![false; self.choices.len()];
         let fired = vec![false; self.rules.len()];
-        Ok(match self.search(units, decided, fired, 0, nodes)? {
+        Ok(match self.search(units, decided, fired, 0, run)? {
             Outcome::Refuted(_) => Verdict::Refuted,
             Outcome::Open => Verdict::Open,
         })
@@ -359,9 +359,9 @@ impl Problem {
         mut decided: Vec<bool>,
         mut fired: Vec<bool>,
         depth: usize,
-        nodes: &Cell<usize>,
+        run: &Run,
     ) -> Result<Outcome, Capacity> {
-        nodes.set(nodes.get() + 1);
+        run.nodes.set(run.nodes.get() + 1);
         // Saturation: decide what the units force, fire what they entail.
         loop {
             if let Some(core) = self.contradiction(&units)? {
@@ -418,7 +418,7 @@ impl Problem {
                     with
                 })
                 .collect();
-            return self.split(branches, &decided, &fired, depth, nodes);
+            return self.split(branches, &decided, &fired, depth, run);
         }
         // Then on the first two reads of one place whose index tuples the
         // units neither identify nor separate: read congruence asks exactly
@@ -427,21 +427,19 @@ impl Problem {
         match self.open_read_pair(&units, &solved, depth)? {
             ReadPair::Derived(derived) => {
                 units.extend(derived);
-                return self.search(units, decided, fired, depth, nodes);
+                return self.search(units, decided, fired, depth, run);
             }
             ReadPair::Split { equal, apart } => {
                 let mut branches = Vec::with_capacity(apart.len() + 1);
-                if let Some(equal) = equal {
-                    let mut with = units.clone();
-                    with.extend(Unit::resting_on(&equal, &Tags::single(depth)));
-                    branches.push(with);
-                }
+                let mut with = units.clone();
+                with.extend(Unit::resting_on(&equal, &Tags::single(depth)));
+                branches.push(with);
                 for literal in apart {
                     let mut with = units.clone();
                     with.extend(Unit::resting_on(&[literal], &Tags::single(depth)));
                     branches.push(with);
                 }
-                return self.split(branches, &decided, &fired, depth, nodes);
+                return self.split(branches, &decided, &fired, depth, run);
             }
             ReadPair::Settled => {}
         }
@@ -478,7 +476,7 @@ impl Problem {
                     with
                 })
                 .collect();
-            return self.split(branches, &decided, &fired, depth, nodes);
+            return self.split(branches, &decided, &fired, depth, run);
         }
         Ok(Outcome::Open)
     }
@@ -495,20 +493,20 @@ impl Problem {
         decided: &[bool],
         fired: &[bool],
         depth: usize,
-        nodes: &Cell<usize>,
+        run: &Run,
     ) -> Result<Outcome, Capacity> {
         let mut core = Tags::default();
         for with in branches {
             let refuted = match self.contradiction(&with)? {
                 Some(why) => why,
                 None => {
-                    match self.search(with, decided.to_vec(), fired.to_vec(), depth + 1, nodes)? {
+                    match self.search(with, decided.to_vec(), fired.to_vec(), depth + 1, run)? {
                         Outcome::Refuted(why) => why,
                         Outcome::Open => return Ok(Outcome::Open),
                     }
                 }
             };
-            if !refuted.contains(depth) {
+            if run.backjump && !refuted.contains(depth) {
                 return Ok(Outcome::Refuted(refuted));
             }
             core.union(&refuted.without(depth));
@@ -548,8 +546,8 @@ impl Problem {
     /// is constant or a unit's disequality or strict comparison states it
     /// apart. Of the unsettled pairs, each the units force apart at its only
     /// differing position yields that disequality as a unit; failing those,
-    /// the first pair in atom order is split into its cases: equal, when the
-    /// units allow it, and apart at each differing position. Literals are
+    /// the first pair in atom order is split into its cases: equal, and
+    /// apart at each differing position. Literals are
     /// written with the index expressions of each class's first read, so
     /// they name only the problem's atoms.
     fn open_read_pair(
@@ -640,12 +638,12 @@ impl Problem {
                             literal: single.clone(),
                             tags: core.without(depth),
                         }),
-                        (forced, _) => {
+                        // The equal case stays a branch even when the units
+                        // exclude it, so the splits its exclusion rests on
+                        // join the split's refutation.
+                        _ => {
                             if split.is_none() {
-                                split = Some(ReadPair::Split {
-                                    equal: forced.is_none().then_some(equal),
-                                    apart,
-                                });
+                                split = Some(ReadPair::Split { equal, apart });
                             }
                         }
                     }
@@ -840,6 +838,24 @@ impl Unit {
     }
 }
 
+/// One judgment's search: how many branches it has saturated, and whether
+/// a branch refuted without its split's case closes the split's other
+/// branches. Without backjumping the search is the full case analysis,
+/// against which tests compare it.
+struct Run {
+    nodes: Cell<usize>,
+    backjump: bool,
+}
+
+impl Run {
+    fn backjumping() -> Self {
+        Self {
+            nodes: Cell::new(0),
+            backjump: true,
+        }
+    }
+}
+
 /// A branch's answer: refuted, with the splits its refutation rests on, or
 /// open.
 enum Outcome {
@@ -863,10 +879,10 @@ type ReadClass<'a> = (Vec<Linear>, &'a [Linear]);
 enum ReadPair {
     /// Disequalities the units force, not yet among them.
     Derived(Vec<Unit>),
-    /// Two reads that may be one element: equal, when the units allow it,
-    /// or apart at one differing position.
+    /// Two reads that may be one element: equal, or apart at one differing
+    /// position.
     Split {
-        equal: Option<Vec<Literal>>,
+        equal: Vec<Literal>,
         apart: Vec<Literal>,
     },
     /// Every pair is identical or settled apart.
@@ -1431,9 +1447,9 @@ mod tests {
         // split alone, so no other alternative of any choice is tried: one
         // branch per depth, not one per combination of the choices.
         let problem = independent_choices(12);
-        let nodes = Cell::new(0);
-        assert_eq!(problem.judge_counting(&nodes), Ok(Verdict::Refuted));
-        assert_eq!(nodes.get(), 13);
+        let run = Run::backjumping();
+        assert_eq!(problem.judge_in(&run), Ok(Verdict::Refuted));
+        assert_eq!(run.nodes.get(), 13);
     }
 
     /// One two-way choice whose first alternative is refuted only below a
@@ -1715,5 +1731,146 @@ mod tests {
             ));
         }
         assert!(core(&problem, &units).expect("contradictory").contains(2));
+    }
+
+    #[test]
+    fn a_split_without_the_equal_case_keeps_why_it_was_excluded() {
+        // p[a, b] and p[c, d] with a <= c <= a and b <= d <= b. Where the
+        // choice takes p[a, b] != p[c, d], the pair cannot be one element
+        // and is split over its positions, both refuted; the refutation
+        // rests on that choice through the excluded equal case, so the
+        // choice's other alternative, where a == c, b == d is a model, must
+        // still be tried.
+        let mut problem = Problem::default();
+        let (a, b, c, d) = (
+            plain(&mut problem),
+            plain(&mut problem),
+            plain(&mut problem),
+            plain(&mut problem),
+        );
+        let left = two_index_read(&mut problem, &a, &b);
+        let right = two_index_read(&mut problem, &c, &d);
+        for (one, other) in [(&a, &c), (&b, &d)] {
+            unit(&mut problem, one, Relation::LessEqual, other);
+            unit(&mut problem, one, Relation::GreaterEqual, other);
+        }
+        problem.choices.push(vec![
+            vec![Literal::new(
+                left.clone(),
+                Relation::NotEqual,
+                right.clone(),
+            )],
+            vec![Literal::new(left, Relation::Equal, right)],
+        ]);
+        assert_eq!(problem.judge(), Ok(Verdict::Open));
+    }
+
+    fn two_index_read(problem: &mut Problem, first: &Linear, second: &Linear) -> Linear {
+        atoms(
+            problem,
+            AtomKind::Read {
+                place: 0,
+                indices: vec![first.clone(), second.clone()],
+            },
+        )
+    }
+
+    /// A deterministic stream of small numbers.
+    struct Draw(u64);
+
+    impl Draw {
+        fn below(&mut self, bound: usize) -> usize {
+            // xorshift64
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            (self.0 % bound as u64) as usize
+        }
+
+        fn literal(&mut self, terms: &[Linear]) -> Literal {
+            let relations = [
+                Relation::Equal,
+                Relation::NotEqual,
+                Relation::Less,
+                Relation::LessEqual,
+                Relation::Greater,
+                Relation::GreaterEqual,
+            ];
+            let left = terms[self.below(terms.len())].clone();
+            let right = if self.below(3) == 0 {
+                Linear::constant(self.below(4) as i128 - 1)
+            } else {
+                terms[self.below(terms.len())]
+                    .plus_constant(self.below(3) as i128 - 1)
+                    .unwrap()
+            };
+            Literal::new(left, relations[self.below(6)], right)
+        }
+    }
+
+    /// A small problem: four plain atoms, reads of a two-index place and of
+    /// a one-index place at them, units with some index positions pinned by
+    /// `<=` both ways, two-way choices and a rule.
+    fn drawn_problem(draw: &mut Draw) -> Problem {
+        let mut problem = Problem::default();
+        let plains: Vec<Linear> = (0..4).map(|_| plain(&mut problem)).collect();
+        let mut terms = plains.clone();
+        for _ in 0..2 + draw.below(2) {
+            let (first, second) = (plains[draw.below(4)].clone(), plains[draw.below(4)].clone());
+            terms.push(two_index_read(&mut problem, &first, &second));
+        }
+        for _ in 0..draw.below(2) {
+            let index = plains[draw.below(4)]
+                .plus_constant(draw.below(2) as i128)
+                .unwrap();
+            terms.push(read(&mut problem, 1, &index));
+        }
+        for _ in 0..draw.below(3) {
+            let (one, other) = (draw.below(4), draw.below(4));
+            unit(
+                &mut problem,
+                &plains[one],
+                Relation::LessEqual,
+                &plains[other],
+            );
+            unit(
+                &mut problem,
+                &plains[one],
+                Relation::GreaterEqual,
+                &plains[other],
+            );
+        }
+        for _ in 0..1 + draw.below(4) {
+            let literal = draw.literal(&terms);
+            problem.units.push(literal);
+        }
+        for _ in 0..draw.below(3) {
+            let alternatives = vec![vec![draw.literal(&terms)], vec![draw.literal(&terms)]];
+            problem.choices.push(alternatives);
+        }
+        if draw.below(2) == 0 {
+            problem.rules.push(Rule {
+                guards: vec![draw.literal(&terms)],
+                conclusions: vec![draw.literal(&terms)],
+            });
+        }
+        problem
+    }
+
+    #[test]
+    fn backjumping_keeps_the_full_case_analysis_verdict() {
+        let mut draw = Draw(0x9e37_79b9_7f4a_7c15);
+        for index in 0..4000 {
+            let problem = drawn_problem(&mut draw);
+            let full = Run {
+                nodes: Cell::new(0),
+                backjump: false,
+            };
+            assert_eq!(
+                problem.judge(),
+                problem.judge_in(&full),
+                "problem {index}: {problem:?}"
+            );
+        }
     }
 }
