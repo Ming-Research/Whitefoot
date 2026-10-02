@@ -1190,22 +1190,20 @@ fn build_postcondition_candidate(
         {
             continue;
         }
-        // A result datum is a value, so only values compete with it; a
-        // function of its spelling answers only a call [TYPE-6].
-        if !meta.entries.iter().any(|class| {
-            matches!(
-                class,
-                DeclarationClass::NamedConst
-                    | DeclarationClass::ConstGeneric
-                    | DeclarationClass::Value
+        // A result datum is a value, so it meets every live declaration it
+        // competes with, a module alias among them, and no callable [TYPE-6].
+        if !meta
+            .entries
+            .iter()
+            .any(|class| inventory::competes(DeclarationClass::Value, *class))
+            || !is_visible(
+                scopes,
+                meta,
+                role.scope,
+                role.origin.coordinate.source().ordinal(),
+                role.origin.coordinate.start().value(),
             )
-        }) || !is_visible(
-            scopes,
-            meta,
-            role.scope,
-            role.origin.coordinate.source().ordinal(),
-            role.origin.coordinate.start().value(),
-        ) {
+        {
             continue;
         }
         live_conflicts.push(declarations[meta.record_index].origin.clone());

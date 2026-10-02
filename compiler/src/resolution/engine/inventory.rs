@@ -558,7 +558,7 @@ fn competes_in(left: DeclarationClass, right: DeclarationClass, inventory: bool)
 
 /// [`competes_in`] for two declarations that do not both enter one module's
 /// inventory.
-fn competes(left: DeclarationClass, right: DeclarationClass) -> bool {
+pub(super) fn competes(left: DeclarationClass, right: DeclarationClass) -> bool {
     let callable = |class| {
         matches!(
             class,

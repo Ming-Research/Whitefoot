@@ -1033,17 +1033,17 @@ pub(super) struct KillingCall {
     pub(super) callee: String,
     pub(super) line: u64,
     pub(super) written: String,
-    /// Whether the callee's row, narrowed to the paths its body writes,
-    /// would leave the measure alone [EFF-2].
-    pub(super) narrowable: bool,
+    /// The row the callee's body exhibits, as a writer declares it [EFF-2],
+    /// where that row would leave the measure alone; `None` where it would
+    /// not, so that no narrowing is offered.
+    pub(super) exhibited_row: Option<String>,
 }
 
 /// [OP-4] a subscript's bound that the facts some calls' rows removed would
 /// prove: the calls are named, and where each leaves the length unchanged, a
-/// postcondition stating so keeps those facts, and so does a row entry
-/// narrowed to the paths the body writes where that narrower row no longer
-/// covers the length; the guard stays the alternative where the length may
-/// change [DIAG-1].
+/// postcondition stating so keeps those facts, and so does declaring the row
+/// its body exhibits where that row no longer reaches the length; the guard
+/// stays the alternative where the length may change [DIAG-1].
 pub(super) fn bounds_after_kill(
     case: &GoalCase<'_>,
     measure: &str,
@@ -1054,21 +1054,24 @@ pub(super) fn bounds_after_kill(
         .map(|call| format!("to `{}` at line {}", call.callee, call.line))
         .collect::<Vec<_>>()
         .join(" and ");
-    let mut written = calls
-        .iter()
-        .map(|call| format!("`{}`", call.written))
-        .collect::<Vec<_>>();
-    written.dedup();
+    let mut written: Vec<String> = Vec::new();
+    for call in calls {
+        let place = format!("`{}`", call.written);
+        if !written.contains(&place) {
+            written.push(place);
+        }
+    }
     let written = written.join(" and ");
-    let mut callees = calls
-        .iter()
-        .map(|call| call.callee.as_str())
-        .collect::<Vec<_>>();
-    callees.sort_unstable();
-    callees.dedup();
+    // Each callee once, with its exhibited row, in first-call order.
+    let mut callees: Vec<(&str, Option<&str>)> = Vec::new();
+    for call in calls {
+        if !callees.iter().any(|(callee, _)| *callee == call.callee) {
+            callees.push((&call.callee, call.exhibited_row.as_deref()));
+        }
+    }
     let who = callees
         .iter()
-        .map(|callee| format!("`{callee}`"))
+        .map(|(callee, _)| format!("`{callee}`"))
         .collect::<Vec<_>>()
         .join(" and ");
     let (call, rows) = if calls.len() == 1 {
@@ -1076,18 +1079,37 @@ pub(super) fn bounds_after_kill(
     } else {
         ("calls", "their rows, which write")
     };
-    let (leaves, its) = if callees.len() == 1 {
-        ("leaves", "its")
-    } else {
-        ("leave", "each one's")
-    };
-    let narrowing = if calls.iter().all(|call| call.narrowable) {
-        format!(
-            "narrow the entry of {its} row that covers it to the paths {} body writes, or ",
-            if callees.len() == 1 { "its" } else { "that" }
-        )
-    } else {
-        String::new()
+    let rows_exhibited: Option<Vec<(&str, &str)>> = calls
+        .iter()
+        .all(|call| call.exhibited_row.is_some())
+        .then(|| {
+            callees
+                .iter()
+                .filter_map(|(callee, row)| row.map(|row| (*callee, row)))
+                .collect()
+        });
+    let (leaves, narrowing, its) = match (callees.len(), rows_exhibited) {
+        (1, Some(rows)) => (
+            "leaves",
+            format!(
+                "declare its row as `{}`, the paths its body accesses, or ",
+                rows.first().map_or("", |(_, row)| row)
+            ),
+            "its",
+        ),
+        (1, None) => ("leaves", String::new(), "its"),
+        (_, Some(rows)) => (
+            "leave",
+            format!(
+                "declare each one's row as the paths its body accesses ({}), or ",
+                rows.iter()
+                    .map(|(callee, row)| format!("`{callee}`: `{row}`"))
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            ),
+            "each one's",
+        ),
+        (_, None) => ("leave", String::new(), "each one's"),
     };
     format!(
         "`{}` is not proved here, but facts about `{measure}` that held before the {call} {sites} would prove it, and {rows} {written}, removed them: where {who} {leaves} `{measure}` unchanged, {narrowing}state `{measure}` unchanged in {its} `ensures`; or {}",

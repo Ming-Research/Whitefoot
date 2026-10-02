@@ -1431,6 +1431,86 @@ fn main() -> status: std::process::ExitStatus pure {
             "\n  mechanical_fix: `at < context^.blocks.inner.len` is not proved here: when facts that reach the access imply it",
         ],
     },
+    // -------------------------------------------------------------------
+    // [OP-4, DIAG-1] two callees, one of which writes the window holding the
+    // length: no row it may declare leaves the length alone, so the repair
+    // offers no row for either and names each callee's `ensures`.
+    // -------------------------------------------------------------------
+    Probe {
+        name: "bounds-after-two-callees.wf",
+        source: br#"struct Ctx {
+  blocks: Box<Slots<u64>>;
+  width: u64;
+}
+
+fn bump(context: &Ctx) -> result: unit writes(context) {
+  set context^.width = context^.width +sat 1_u64;
+  return unit;
+}
+
+fn clear_all(context: &Ctx) -> result: unit writes(context.blocks.inner) {
+  let count = context^.blocks.inner.len;
+  for (k in 0_u64..count) {
+    set context^.blocks.inner[k] = 0_u64;
+  }
+  return unit;
+}
+
+fn after_calls(context: &Ctx, at: u64) -> result: u64 writes(context) {
+  if at < context^.blocks.inner.len {
+    bump(context: context);
+    clear_all(context: context);
+    bump(context: context);
+    let found = context^.blocks.inner[at];
+    return found;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "OP-4",
+        sentences: &[
+            "would prove it, and their rows, which write `context^` and `context^.blocks.inner`, removed them: where `bump` and `clear_all` leave `context^.blocks.inner.len` unchanged, state `context^.blocks.inner.len` unchanged in each one's `ensures`; or guard",
+        ],
+    },
+    // -------------------------------------------------------------------
+    // [OP-4, DIAG-1] one callee called twice, whose exhibited row leaves the
+    // length alone: the row is offered once for both calls.
+    // -------------------------------------------------------------------
+    Probe {
+        name: "bounds-after-a-repeated-call.wf",
+        source: br#"struct Ctx {
+  blocks: Box<Slots<u64>>;
+  width: u64;
+}
+
+fn bump(context: &Ctx) -> result: unit writes(context) {
+  set context^.width = context^.width +sat 1_u64;
+  return unit;
+}
+
+fn after_calls(context: &Ctx, at: u64) -> result: u64 writes(context) {
+  if at < context^.blocks.inner.len {
+    bump(context: context);
+    bump(context: context);
+    let found = context^.blocks.inner[at];
+    return found;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "OP-4",
+        sentences: &[
+            "held before the calls to `bump` at line 13 and to `bump` at line 14 would prove it, and their rows, which write `context^`, removed them: where `bump` leaves `context^.blocks.inner.len` unchanged, declare its row as `writes(context.width)`, the paths its body accesses, or state `context^.blocks.inner.len` unchanged in its `ensures`; or guard",
+        ],
+    },
 ];
 
 /// Every sentence in the corpus is rendered by a program that reaches it.

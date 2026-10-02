@@ -581,6 +581,9 @@ struct TypeContext<'unit> {
     /// narrow a row reads them to know what the narrowed row still covers
     /// [DIAG-1]. A body-less row has none and is not offered narrowing.
     exhibited_writes: HashMap<FunctionId, Vec<super::model::CheckedStatePath>>,
+    /// [EFF-2] the row each checked body exhibits, rendered as a writer
+    /// declares it, which such a repair offers word for word.
+    exhibited_rows: HashMap<FunctionId, String>,
 }
 
 /// Scratch of one structural body attempt. Only finite loop summaries survive
@@ -1839,6 +1842,10 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             self.types
                 .exhibited_writes
                 .insert(signature.id, exhibited.writes.clone());
+            let row = self
+                .types
+                .render_effect_row(&Checker::suggested_effect_row(&exhibited), signature)?;
+            self.types.exhibited_rows.insert(signature.id, row);
         }
         self.types.validate_release_graphs(&checked.statements)?;
         // [EFF-1] the row has exactly two categories, and [STOR-8] gives
@@ -3940,6 +3947,7 @@ impl<'unit> TypeContext<'unit> {
             behavior: Default::default(),
             type_invariants: Default::default(),
             exhibited_writes: Default::default(),
+            exhibited_rows: Default::default(),
             functions_by_declaration: Default::default(),
             nominals_by_declaration: Default::default(),
             signatures: Default::default(),

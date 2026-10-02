@@ -144,7 +144,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "OP-4",
         sentences: &[
-            "\n  mechanical_fix: `at < context^.blocks.inner.len` is not proved here, but facts about `context^.blocks.inner.len` that held before the call to `bump` at line 18 would prove it, and its row, which writes `context^`, removed them: where `bump` leaves `context^.blocks.inner.len` unchanged, narrow the entry of its row that covers it to the paths its body writes, or state `context^.blocks.inner.len` unchanged in its `ensures`; or guard the access with `if at < context^.blocks.inner.len` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare\n",
+            "\n  mechanical_fix: `at < context^.blocks.inner.len` is not proved here, but facts about `context^.blocks.inner.len` that held before the call to `bump` at line 18 would prove it, and its row, which writes `context^`, removed them: where `bump` leaves `context^.blocks.inner.len` unchanged, declare its row as `writes(context.width)`, the paths its body accesses, or state `context^.blocks.inner.len` unchanged in its `ensures`; or guard the access with `if at < context^.blocks.inner.len` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare\n",
         ],
         repaired: &[
             br#"struct Block {
@@ -256,6 +256,116 @@ fn main() -> status: std::process::ExitStatus pure {
   if y != 5_i32 {
     return std::process::exit_status(code: 1_u8);
   }
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        ],
+    },
+    // -------------------------------------------------------------------
+    // [OP-4, EFF-2] the same, where the callee also reads a path it does not
+    // write: the row its body exhibits carries that read too, so declaring
+    // it as printed is admitted [EFF-2].
+    // -------------------------------------------------------------------
+    RepairPair {
+        name: "bounds-after-a-call-that-reads-more.wf",
+        rejected: br#"struct Ctx {
+  blocks: Box<Slots<u64>>;
+  width: u64;
+}
+
+fn note(context: &Ctx) -> result: unit writes(context) {
+  set context^.width = context^.blocks.inner.cap;
+  return unit;
+}
+
+fn after_a_call(context: &Ctx, at: u64) -> result: u64 writes(context) {
+  if at < context^.blocks.inner.len {
+    note(context: context);
+    let found = context^.blocks.inner[at];
+    return found;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "OP-4",
+        sentences: &[
+            "\n  mechanical_fix: `at < context^.blocks.inner.len` is not proved here, but facts about `context^.blocks.inner.len` that held before the call to `note` at line 13 would prove it, and its row, which writes `context^`, removed them: where `note` leaves `context^.blocks.inner.len` unchanged, declare its row as `reads(context.blocks.inner.cap), writes(context.width)`, the paths its body accesses, or state `context^.blocks.inner.len` unchanged in its `ensures`; or guard the access with `if at < context^.blocks.inner.len` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare\n",
+        ],
+        repaired: &[
+            br#"struct Ctx {
+  blocks: Box<Slots<u64>>;
+  width: u64;
+}
+
+fn note(context: &Ctx) -> result: unit reads(context.blocks.inner.cap), writes(context.width) {
+  set context^.width = context^.blocks.inner.cap;
+  return unit;
+}
+
+fn after_a_call(context: &Ctx, at: u64) -> result: u64 writes(context) {
+  if at < context^.blocks.inner.len {
+    note(context: context);
+    let found = context^.blocks.inner[at];
+    return found;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+            br#"struct Ctx {
+  blocks: Box<Slots<u64>>;
+  width: u64;
+}
+
+fn note(context: &Ctx) -> result: unit writes(context) contract {
+  ensures context^.blocks.inner.len == entry(context)^.blocks.inner.len;
+} {
+  set context^.width = context^.blocks.inner.cap;
+  return unit;
+}
+
+fn after_a_call(context: &Ctx, at: u64) -> result: u64 writes(context) {
+  if at < context^.blocks.inner.len {
+    note(context: context);
+    let found = context^.blocks.inner[at];
+    return found;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+            br#"struct Ctx {
+  blocks: Box<Slots<u64>>;
+  width: u64;
+}
+
+fn note(context: &Ctx) -> result: unit writes(context) {
+  set context^.width = context^.blocks.inner.cap;
+  return unit;
+}
+
+fn after_a_call(context: &Ctx, at: u64) -> result: u64 writes(context) {
+  if at < context^.blocks.inner.len {
+    note(context: context);
+    if at < context^.blocks.inner.len {
+      let found = context^.blocks.inner[at];
+      return found;
+    }
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#,
