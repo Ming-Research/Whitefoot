@@ -6816,3 +6816,72 @@ sources and prior native provenance, source/fault bindings, all raw rows,
 complete peer/C ranges, reducers and normalized/original pins. Earlier
 native-stage no-execution statements describe chronology; this later measured
 failure neither reclassifies those gates nor changes the production library.
+
+### Robin Hood probe model and tombstone boundary
+
+A source-derived model of the existing half-full odd-key/even-miss workload
+(seeds 101–112) meets its prospective probe-count discriminator: mean failed
+probes fall at least 25% at both capacities without increasing mean successful
+probes. These are algorithmic counts, with no native or runtime qualification.
+
+| Capacity | Linear / Robin Hood mean failed probes | Reduction | Unchanged mean successful probes |
+|---:|---:|---:|---:|
+| 64 | 2.5729 / 1.8411 | 28.44% | 1.3281 |
+| 4096 | 2.4486 / 1.7559 | 28.29% | 1.4585 |
+
+The model counts 27/3,307 logical insertion swaps over 384/24,576 insertions;
+independent single-key deletion trials shift 0.500/0.865 slots on average.
+These do not measure bytes moved or elapsed cost. The modeled tuples store
+displacement: without new metadata, each resident-distance early-stop check
+would require another resident hash. Placement alone preserves the occupied/
+vacant pattern; the absent-query benefit depends on that early termination.
+
+The retained abstract tombstone trace starts with capacity 4 and A/B/C, all
+home 0. Removing B then reusing its Deleted cell with Y (home 1) yields
+`[A,Y,C,Vacant]`, with `vacated=0`. Independent linear lookup still finds C;
+naive Robin Hood distance stopping incorrectly reports absence at Y. This
+is an invariant counterexample, not a Whitefoot execution or language limit.
+[HashMap's public interface](../../../../lib/std/collections/hash_map/module.wfm)
+exposes `HashMapSlot`, `cells` and `vacated`, and the
+[maintained removal/reuse witness](../../../../tests/programs/containers/hash-map-program.wf)
+checks `vacated=1` after removal and `0` after reuse. Eliminating Deleted or
+changing those observations would require a separate API choice. A compatible
+algorithm needs invariant-preserving reuse/restoration, owned-operation checks
+and measured resident-hash/relocation costs before selection. No adoption follows.
+
+The compact `robin-hood-model/` archive component retains the model/result and
+executable abstract trace with its saved output. It omits unrecorded cluster
+estimates and supplies no new native or performance claim.
+
+### Insertion saved-vacancy state: bounded native/check result
+
+An ordinary-source `hash_map_try_put` candidate remembers whether the first
+available bucket was Deleted, then uses that flag at commit instead of
+reloading and classifying the bucket. Later available buckets do not overwrite
+the saved state; replacement/refusal ignore it. Hash/equality/probe order and
+count stay unchanged. The intervening callbacks only read and no bucket write
+occurs before commit, so this records the observed physical variant without
+adding consistent-key-law assumptions.
+
+Both arms use frozen compiler `569badd5…`; these results are not repinned to
+the later compiler rebuilt after main integration. Scalar/wide helpers shrink
+99→98/95→94 instructions with no frame/call growth or payload-transfer change.
+For `d` Deleted visits, successful insertion changes executed helper work by
+`2*d−4` instructions; replacement/refusal changes it by `2*d+1`. Fresh insertion
+saves four, two Deleted visits break even, and denser tombstones can lose.
+Caller register/stack streams and placement change, so this is not a claim
+of globally unchanged stack traffic or complete-API speed.
+
+All 22 ordinary full-check and 12 capacity-one/C5 normal/parallel stages exit
+zero. The C5 witness exercises two tombstones, duplicate replacement beyond
+them, reuse, full capacity and owned refusal; cleanup observes nine owners,
+key sum 39 and value sum 660. A source fault forcing the saved flag false
+emits and links successfully, then fails the dedicated witness with exit 9.
+The 32 EDIT/96 reserve ledger rows remain byte-identical across arms. No fresh
+insertion timing window or performance qualification was run; no adoption follows.
+
+The `insertion-vacancy-state/` archive component retains both criteria, exact
+source/witness/fault patches, all ordinary results, native collateral and
+original/normalized pins. Historical scripts require omitted frozen compiler,
+carrier, runtime and native-peer/toolchain objects; they are not a standalone
+replay bundle. The load-removal observation does not qualify unrelated paths.

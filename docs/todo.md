@@ -3880,6 +3880,17 @@ condition under which it is taken up.
   gain, three qualified two-cohort hit losses and only one peer target. Preserve
   the original vacant-only failure; any further work needs new reached-cost
   evidence rather than an instruction-count prediction alone.
+  The [Robin Hood probe model](../research/experiments/container-representation/map-library/RESULTS.md#robin-hood-probe-model-and-tombstone-boundary)
+  reduces modeled failed probes, but naive distance stopping fails after ordinary
+  tombstone reuse. Reopen in this Map phase with invariant-preserving reuse or
+  local restoration, retaining public cells/Deleted/vacated and owned refusal/
+  replacement behavior. Screen resident-hash and relocation cost before whole-API
+  correctness and the fixed peer criterion; the model selects no algorithm.
+  The [saved-vacancy insertion candidate](../research/experiments/container-representation/map-library/RESULTS.md#insertion-saved-vacancy-state-bounded-nativecheck-result)
+  removes commit-time reclassification but adds per-Deleted flag work and has
+  caller collateral. Retain its bounded ordinary witnesses; reopen through the
+  missing fresh-insertion window before claiming a whole-API benefit, including
+  replacement/refusal and dense-tombstone costs. No source adoption is selected.
 
   The [actual integrated-candidate comparison](../research/experiments/container-representation/map-library/RESULTS.md#integrated-candidate-with-the-maintained-caller)
   has no qualified before/after gain in 40 maintained-caller cells; all four

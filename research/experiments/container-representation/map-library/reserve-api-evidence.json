@@ -1,8 +1,8 @@
 {
   "purpose": "Isolated ordinary public reserve with verified future entry headroom; single production baseline panel, not an optimization/adoption result",
   "archive": "reserve-api-evidence.tar.gz",
-  "archive_sha256": "810682b951307b83631d7996d44b9e1b80265d648355a57fd9e8a68cb532631a",
-  "archive_members": 1140,
+  "archive_sha256": "b3e0a9586da07ee5f2d42f16c0ab043a84b810a7f309bc432b8e9801a62d3b9c",
+  "archive_members": 1161,
   "base_revision": "89571a60381a685cfbe760248ceb6178d9f9ac05",
   "production_cli_sha256": "c12b2b2a6c9694fd2bc1b7be0004d582ae9628951422def849f4cf6a3ac02f77",
   "timed_image_sha256": "f1ebf18d7a94c79250bb3cbd74a0b379a2a30c6e5e4eda48396ec77d8bbdbf3f",
@@ -4942,5 +4942,86 @@
     "prior_unpublished_payloads_preserved": 1120,
     "current_unpublished_index_replaced": true,
     "published_index_preservation": "component-index-before-tag-order.json remains byte-identical; tag-order and filled-first-ir payloads unchanged"
+  },
+  "robin_hood_model": {
+    "prefix": "robin-hood-model/",
+    "manifest": "robin-hood-model/manifest.json",
+    "manifest_sha256": "50b599892e60f5cf52dce5ec38fa766136ccfbeab267d9021e24bf1b866c9198",
+    "payload_count": 5,
+    "producer_files_verified": 4,
+    "current_owner_pins": {
+      "lib/std/collections/hash_map/module.wfm": "b727b28d13908d8a295c0dd10c121fcf1958010b696862ccb22cb45bc96a4765",
+      "lib/std/collections/hash_map/hash-map.wf": "accb04f49cf5c431c36692e91c6b80b014ec66a2b13af8ae69f12fdfdc3238cd",
+      "tests/programs/containers/hash-map-program.wf": "28c295a138100fecd002c423a5001eb0c9aab028fe3b81eed9d5ba9cbc5af9ee",
+      "research/experiments/container-representation/map-library/map-library.wf": "cf6ec533fdabbc55c9353fc59327ee9b27ddcdd220f636a937b01c9206c6b4f5",
+      "research/experiments/container-representation/map-library/map-ecosystem.c": "33a2fb93cdc6c92f0ec9735ad009bdb6ab0968cc8e588222c79ac17beaa45f37",
+      "research/experiments/container-representation/map-library/map-costs.c": "dbf2cbc56d3cb9ee2d8e185b4656d1b4af2130243cecdc5c92d3e007cd31aa01"
+    },
+    "model_scope": "Half-full odd-key/even-miss workload; seeds101..112; capacities64/4096. Probe/relocation counts only. No native timing or implementation validation.",
+    "criterion": "At least25% mean failed-probe reduction at both sizes and no increase in successful mean. No adoption criterion.",
+    "failed_probe_reductions": [
+      0.284412955465587,
+      0.28289408089334966
+    ],
+    "public_api_constraint": "Public HashMapSlot/cells/vacated and maintained Deleted removal/reuse observations preserved. Tombstone trace falsifies naive resident-distance early stop after ordinary first-Deleted reuse. New metadata or invariant restoration requires separate evaluation; no language impossibility claim.",
+    "cost_limit": "Model stores resident displacement in tuples; a metadata-free check needs resident hashing. Counts do not include actual hash/byte traffic/native/time cost. Unrecorded cluster statistics omitted.",
+    "replay": "Python3 model.py reproduces result.json; Python3 tombstone-trace.py is the abstract independent-oracle counterexample and produces the retained stdout. No compiler or runtime binary needed; packaging does not claim new execution.",
+    "production_adoption": false
+  },
+  "insertion_vacancy_state": {
+    "prefix": "insertion-vacancy-state/",
+    "manifest": "insertion-vacancy-state/manifest.json",
+    "manifest_sha256": "10adbcc8f516f45074052672a5d137063a7c3d3f7e3b3579da448dd52a1a832d",
+    "payload_count": 15,
+    "records": "insertion-vacancy-state/records.json",
+    "retained_records": 722,
+    "producer_files_verified": 725,
+    "producer_inventory_sha256": "3bac9b0080878003962a6fb27b35b3505df6c680a2a619be66a9dcaeb064989f",
+    "row_counts": {
+      "candidate-build/edit-accounting.csv": 32,
+      "candidate-build/reserve-accounting.csv": 96,
+      "control-build/edit-accounting.csv": 32,
+      "control-build/reserve-accounting.csv": 96
+    },
+    "ordinary_check_stages_zero": [
+      22,
+      12
+    ],
+    "source_fault_exits": [
+      0,
+      0,
+      9
+    ],
+    "native_helper_instructions": {
+      "scalar": [
+        99,
+        98
+      ],
+      "wide": [
+        95,
+        94
+      ]
+    },
+    "dynamic_instruction_delta": {
+      "successful_insertion": "2*d-4",
+      "replacement_or_refusal": "2*d+1",
+      "d": "Deleted visits"
+    },
+    "compiler_sha256": "569badd51b703cee60c006c06ca22ba35f4ebde180cbd8f4545a207ad201c9ca",
+    "compiler_repinning": false,
+    "timing_run": false,
+    "production_adoption": false,
+    "status": "Bounded ordinary native/check result only. Flag removes insertion reclassification, with extra Deleted flag work and caller collateral retained; no global unchanged-stack or runtime gain claim."
+  },
+  "model_insertion_prior_index": {
+    "prior_archive_sha256": "810682b951307b83631d7996d44b9e1b80265d648355a57fd9e8a68cb532631a",
+    "prior_members": 1140,
+    "unchanged_names_and_bytes": 1139,
+    "renamed_member": {
+      "from": "component-index.json",
+      "to": "component-index-before-model-insertion.json",
+      "sha256": "365a44240eb1c6190dbe877f34e6e14b37daebf44e5269264beea85689f2bce0"
+    },
+    "all_prior_member_bytes_preserved": true
   }
 }
