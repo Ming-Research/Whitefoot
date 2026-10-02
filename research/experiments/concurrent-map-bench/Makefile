@@ -9,6 +9,8 @@
 #   make quick     the quick profile over every implementation (minutes)
 #   make duel      the index against the fastest comparators (minutes)
 #   make full      the whole matrix, hours; only when unavoidable
+#   make entry-reads  one key of a map of entries read exclusively against
+#                  shared, for keyed statements that only read (seconds)
 #
 # Generated trees, binaries and results stay in the scratch root. Nothing is
 # written inside the repository.
@@ -36,12 +38,20 @@ MANAGED := $(BUILD)/java/Bench.class $(BUILD)/bench-go $(BUILD)/dotnet/Bench.dll
 # The runtime's concurrent map, compiled into its driver adapter.
 RUNTIME_BACKEND := $(ROOT)/compiler/src/backend
 
-.PHONY: deps build verify quick duel full
+.PHONY: deps build verify quick duel full entry-reads
 deps:
 	sh deps.sh fetch
 	OUT=$(DEPS) sh deps.sh build
 
 build: $(BUILD)/zipfgen $(BINS) $(MANAGED)
+
+$(BUILD)/entry-reads: entry_reads.c $(RUNTIME_BACKEND)/concurrent_map.c $(RUNTIME_BACKEND)/concurrent_map.h | $(BUILD)
+	$(CC) $(CFLAGS) -I$(RUNTIME_BACKEND) -o $@ entry_reads.c
+
+# The holds of DESIGN.md's shared reads: an empty block and replies of 100
+# and 400 elements, with no work, 100 and 300 rounds between reads.
+entry-reads: $(BUILD)/entry-reads
+	@set -e; for elements in 0 100 400; do for outside in 0 100 300; do $(BUILD)/entry-reads $$elements $$outside; done; done
 
 $(BUILD)/zipfgen: zipfgen.c workload.h | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ zipfgen.c -lm

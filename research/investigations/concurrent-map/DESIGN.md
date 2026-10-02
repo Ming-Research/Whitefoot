@@ -551,6 +551,118 @@ What the table shows:
   2,509,000, 605,000) where firn holds (6,321,000, 6,597,000, 6,597,000):
   its keyspace was one `Shared` object.
 
+### Shared reads of one key
+
+The shared-maps decision held every keyed statement's entry exclusively
+until a workload whose readers of one key contend (Q37). The many-core run
+is that workload: every `LRANGE` request reads the one list, and firn
+answered `LRANGE_100` at 0.44 to 0.61 of Garnet with 4 to 16 server CPUs.
+
+**The design.** A keyed statement whose guard and block write nothing
+through its binder reads its entry beside the other such statements on its
+key; the source marks nothing.
+
+- *Which statements read.* The checker forms effect paths rooted at an
+  atomic binder, as it does at a reference parameter: for a write through
+  the binder, through a place a match binds inside the entry, and through
+  a call that writes such a place. A statement on an entry none of whose
+  written paths is rooted at its binder reads; the statement then removes
+  the binder's paths before its effects reach the row. Seven writing
+  shapes (a replacement, a payload write, a field write, a write on one
+  branch and in a loop, and calls that write the payload or the entry) and
+  three reading ones are pinned in the checker's tests; forming no paths at
+  the binder classes all seven as readers, and dropping the call's paths
+  classes the two calls as readers. A statement inside a whole-map
+  statement's block holds its entry alone, as that statement holds the map.
+- *The runtime.* A cell's value word keeps, above the node's 48-bit
+  address, how many reads of its entry are under way. A reader adds one
+  and reads the key word again, leaving if the cell was locked; a writer
+  locks the key word and then waits for the count to fall to zero; all
+  four steps are sequentially consistent, so either the reader sees the
+  lock or the writer waits for it. A reader that finds the cell locked
+  waits as a writer does, and its waits count against the same patience
+  (bounded waits above); a writer's wait for readers counts against none,
+  since a reader's block waits for nothing and no reader begins once the
+  cell is locked. A move waits for a cell's readers before it copies it,
+  and a reader that found its entry in a table a move has begun leaves
+  and reads it in the next table. A read of an absent key gets a slot of
+  zeros, `None`, that the map keeps and no statement writes, instead of a
+  claimed cell and a node. The map test pins a reader beside its writer,
+  a torn or falling value, a read across a move and a move that waits for
+  a read.
+- *firn.* `GET`, `LRANGE`, `LLEN`, `HGET`, `SCARD`, `ZCARD` and `ZSCORE`
+  removed an expired key in the statement that read it. Each now removes
+  it in a second statement on the key, which checks the expiry again, so a
+  key set again in between keeps its value. The emitted program calls the
+  read in those seven statements and the exclusive lock at its 21 other
+  keyed sites.
+
+**One key read from every thread**
+([`make entry-reads`](../../experiments/concurrent-map-bench/Makefile)):
+every thread reads one entry of 100 words, holding it exclusively or beside
+the other reads, writes a reply of 0, 100 or 400 three-byte RESP bulk
+strings from it inside the hold, and runs 0, 100 or 300 rounds of a
+multiply-add chain between reads, on this four-CPU container. Shared reads
+against exclusive holds, medians of five interleaved 0.4 s runs:
+
+| Reply in the hold | Work between | 1 thread | 2 threads | 4 threads |
+|---|---:|---:|---:|---:|
+| none | 0 | 0.80 | 0.60 | 0.52 |
+| none | 100 | 0.93 | 0.85 | 0.81 |
+| none | 300 | 0.98 | 1.16 | 1.16 |
+| 100 elements | 0 | 0.96 | 0.85 | 0.87 |
+| 100 elements | 100 | 0.97 | 0.94 | 1.62 |
+| 100 elements | 300 | 1.00 | 0.97 | 2.01 |
+| 400 elements | 0 | 0.96 | 1.64 | 2.89 |
+| 400 elements | 100 | 1.00 | 1.83 | 2.70 |
+| 400 elements | 300 | 0.99 | 1.62 | 2.72 |
+
+A 100-element reply took about 130 ns here (7.70 million exclusive reads a
+second on one thread) and a 400-element one about 400 ns (2.48 million).
+The gain grows with the hold: shared reads won 1.6 to 2.9 times with the
+400 ns hold, and with the 130 ns hold won only at four threads with work
+between reads. A shared read costs a second locked read-modify-write of the
+cell's line, which an empty hold shows (0.80 on one thread) and which every
+reading thread then contends for. An earlier build of the same loop with
+GCC at `-O2`, whose 100-element reply took about 400 ns, gave 2.65 to 3.14
+at four threads, as the 400-element row does here. How long firn's
+`LRANGE_100` holds its list is not measured; its rate on the 14900K bounds
+a hold and hand-off at about 650 ns (1,548,000 a second on one key).
+
+**Criteria, stated before firn is measured with shared reads:**
+
+1. On this container at depth 16, firn's server CPU per `LRANGE_600`
+   reply on two drivers is within 1.15 times its CPU per reply on one
+   (exclusive holds: 15.9 µs against 8.6 µs, stage (c)), and its rate is
+   not below the exclusive build's by more than one 250 ms clock step.
+2. On this container, `SET`, `GET`, `INCR` and `LPUSH` at depth 16 on one
+   and two drivers stay within one clock step of the exclusive build:
+   `GET` now pays the reader's second read-modify-write.
+3. On the 14900K at four server CPUs, `LRANGE_100` reaches Garnet's
+   2,690,000 a second, 1.74 times firn's exclusive 1,548,000, with no other
+   test more than 3% below the same build's exclusive medians.
+
+If the 14900K misses criterion 3 while criterion 1 holds, the readers'
+shared count is the suspect, and marks a reader sets on its own driver's
+line, which a writer scans, are the next design to measure.
+
+**Refused alternatives.**
+
+- *A read form the writer marks* (`atomic e = &m[key] reads { ... }`):
+  the outcome is the same either way [SHARE-3], so a mark would ask the
+  writer to choose for a difference no program observes, and the checker
+  already knows the block's writes.
+- *Reads that take no lock and check a version afterwards:* a block runs
+  once, and after a torn read of a value larger than a word it may follow a
+  freed node or prove a false fact; it cannot be run again.
+- *Copying the value out under the hold and writing the reply after it:*
+  the copy of a list's elements is itself held exclusively, so readers
+  still take turns, and the program, not the runtime, would carry the
+  copy.
+- *Per-driver reader marks a writer scans* (a reader-biased lock): every
+  writer of every key would scan every driver's mark; it stays the next
+  design if criterion 3 fails.
+
 ## The measurement
 
 The bundle is `research/experiments/concurrent-map-bench/`. These rules are
