@@ -1,0 +1,29 @@
+fn need(a: &[u64]) -> result: unit pure contract {
+  requires forall small(e in 0_u64..a^.len): a^[e] < 10_u64;
+} {
+  doc "Requires every element below 10.";
+  return unit;
+}
+
+fn bump(a: &[u64], k: u64, m: u64) -> result: unit writes(a) contract {
+  requires k < 1000_u64;
+  requires m < 1000_u64;
+  requires a^.len == 6000_u64;
+  requires forall small(e in 0_u64..a^.len): a^[e] < 10_u64;
+} {
+  doc "Copies the element at 3m, plus one, to 2k where it is below 10, so where it was 9 the copy is 10 and need's fact fails. Owing it, the derivation tries the reads at 2k and 3m as one element, and 2k == 3m, solved over the integers, makes them one.";
+  let s = k * 2_u64;
+  let t = m * 3_u64;
+  let v = a^[t];
+  if v < 10_u64 {
+    set a^[s] = v + 1_u64;
+  }
+  need(a: a);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let a = box_array_filled::<u64>(count: 6000_u64, value: 9_u64);
+  bump(a: &a.inner[0_u64..6000_u64], k: 3_u64, m: 2_u64);
+  return std::process::exit_status(code: 0_u8);
+}
