@@ -1,0 +1,5 @@
+fn grid_width(width: u32) -> result: u32 pure {
+  doc "Names the narrower track width narrow, as the grid author wrote it.";
+  let narrow = width / 2_u32;
+  return narrow;
+}
