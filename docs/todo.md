@@ -2299,6 +2299,18 @@ rarely insert at the same place.
 Questions the owner has left open on purpose. None of them is a decision;
 each is resolved by a discussion and a tree change.
 
+- **SHARE-2 names one runtime container in the language.** Its table of
+  atomic targets lists `SharedMap<V>` and the forms `m[k]` and `s^[k]`, so
+  the rule for holding state by key is written for the one concurrent hash
+  index the runtime keeps, and a second keyed container, or the same one
+  built another way, would need its own rows. The owner's principle of
+  2026-10-02 is that the language states what an atomic statement means for
+  every target alike and a container only decides how narrowly it can hold.
+  The change to consider: SHARE-2 defines a target that is held by key as an
+  abstraction, `SharedMap` being one prelude type that provides it, with the
+  container's forms out of the rule. Reopen when a second container held by
+  key is proposed, or with the next change to SHARE-2's table.
+
 - **A proof counter has no type without an overflow obligation.** Minimal
   witness: a monitor invariant `produced - consumed == count` over a bounded
   buffer, whose `produced` and `consumed` exist only for the proof and grow
