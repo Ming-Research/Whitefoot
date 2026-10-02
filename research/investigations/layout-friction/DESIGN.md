@@ -664,5 +664,15 @@ cites. Item 1 as reported holds two causes. Of the 228 length guards
 examined, the mechanism reported, a call whose coarse row kills a length
 fact, makes 9 necessary; 68 are not needed today; and 151 protect an index
 no fact bounded, 90 of them a position stored in another window. The
-compiler changes that need no ruling are 1B and 2A, recorded in
-`docs/todo.md` with 3C, which was there already.
+compiler changes are 1B and 2A, recorded in `docs/todo.md` with 3C, which
+was there already; 2A restores what [DIAG-1] requires of a repair.
+
+## Ruling
+
+On 2026-10-02 the owner selected 1A with 1B, keeping the language for killed
+length facts; A for stored positions, keeping their guards; 2B, separating
+callables from values in the shadowing check; and 3D, making an
+unrepresentable allocation size heap exhaustion
+([design log](../../../design/log.md)). Item 4 stays open: the owner asked for
+a way to avoid the run-time cost of data only a contract reads, which a
+separate record answers.

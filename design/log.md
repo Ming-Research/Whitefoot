@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-02 Keep killed length facts and stored positions to the writer, after the layout-stage census
+
+Nodes: language/effects, language/checks-and-proofs/range-facts
+
+Owner-approved: 2026-10-02, in the session, written in Chinese, after the handoff of PR #206's cards: Q30 A and Q31 A, together with Q29 A, Q32 B and Q33 B, which their own changes record, Q25 being left for research ("apart from 25, which I think needs research, I agree to all the others")
+
+Summary: A census of Snowghost's layout stage, deleting each of its 228 length guards in turn, found that a callee row covering a window killed the caller's length fact behind 9 of them, that 68 were not needed, and that 151 bounded an index no fact had bounded, 90 of them a position read from another window ([layout friction](../research/investigations/layout-friction/DESIGN.md)). `language/effects` now records that a write at a computed index stays attributed to the window that holds it and a covering row keeps killing its callers' length facts, the writer narrowing the row, passing a range reference or stating the length unchanged; refused: attributing such writes to the window's filled slots, requiring the narrowest row, and inferring private functions' rows. `language/checks-and-proofs/range-facts` now records that no ordinary obligation consumes a range fact, so a subscript at a stored position is bounded by a guard; refused: written instances in local invariants with range terms over integer fields, and range terms over enum payloads.
+
 ## 2026-10-02 Make the range derivation order-free and refute it by conflict-directed backjumping
 
 Nodes: language/checks-and-proofs/range-facts, compiler/range-judgment, language/checks-and-proofs, language/parallelism/loop-permission, language/ownership, language/data-model/storage-shapes, compiler
