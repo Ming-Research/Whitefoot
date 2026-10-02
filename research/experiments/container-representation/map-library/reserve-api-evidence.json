@@ -1,8 +1,8 @@
 {
   "purpose": "Isolated ordinary public reserve with verified future entry headroom; single production baseline panel, not an optimization/adoption result",
   "archive": "reserve-api-evidence.tar.gz",
-  "archive_sha256": "3bdd8aa5170f5ad64c7a4ad2519e6eed2eb53ab205d5eff45d4d037bb3dbeb63",
-  "archive_members": 1231,
+  "archive_sha256": "e5ac08308c34eef5086c68419c1706ce05754383232ee3dc9e1998d9827e1e9b",
+  "archive_members": 1240,
   "base_revision": "89571a60381a685cfbe760248ceb6178d9f9ac05",
   "production_cli_sha256": "c12b2b2a6c9694fd2bc1b7be0004d582ae9628951422def849f4cf6a3ac02f77",
   "timed_image_sha256": "f1ebf18d7a94c79250bb3cbd74a0b379a2a30c6e5e4eda48396ec77d8bbdbf3f",
@@ -5192,6 +5192,29 @@
       "from": "component-index.json",
       "to": "component-index-before-inline-screens.json",
       "sha256": "aa9f3cd3f0853a1f9af7844428fda64d2a0b4d2138778c4d2c60da8a80efc7ca"
+    },
+    "all_prior_member_bytes_preserved": true
+  },
+  "fresh_insert_o2_inline": {
+    "prefix": "fresh-insert-o2-inline/",
+    "manifest": "fresh-insert-o2-inline/manifest.json",
+    "manifest_sha256": "8be488c51a9355a549789485d233fe8c06e70462170ba52e6a79d7c6ed9cd66a",
+    "payload_count": 8,
+    "retained_records": 76,
+    "native_criterion": "FAIL",
+    "runtime_checks": false,
+    "timing": false,
+    "production_adoption": false,
+    "import_budget_established": false
+  },
+  "o2_inline_prior_index": {
+    "prior_archive_sha256": "3bdd8aa5170f5ad64c7a4ad2519e6eed2eb53ab205d5eff45d4d037bb3dbeb63",
+    "prior_members": 1231,
+    "unchanged_names_and_bytes": 1230,
+    "renamed_member": {
+      "from": "component-index.json",
+      "to": "component-index-before-o2-inline.json",
+      "sha256": "5e3d06fdc834b5d5e3bca0274b0dcfcc633ae5b80b3fe52a7d5dba014e145e9c"
     },
     "all_prior_member_bytes_preserved": true
   }

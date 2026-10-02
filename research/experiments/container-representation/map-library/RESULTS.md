@@ -7150,3 +7150,42 @@ all raw rows and reductions. Earlier native notes describe their stage;
 original dependencies remain pinned by fresh-insert-api/, and full modules/
 binaries are omitted. The snapshot controls remain unsubtracted, with the
 previously recorded work-unit versus actual geometry-call distinction.
+
+### Ordinary O2 threshold: closure fails; ThinLTO import remains separate
+
+The separate ordinary O2 screen keeps WF IR byte-identical and changes only
+the monolithic candidate's inline threshold to 281. Control remarks inline
+fresh_insert into batch at cost/threshold 45/337 but refuse try_put at 280/225.
+With 281, try_put enters fresh_insert at 280/281; that enlarged caller then
+costs 285/281 and stays outlined. The per-item call remains, so the native
+criterion fails despite removal of result traffic. Scalar batch shrinks
+35→23 instructions, but wide active stack grows 608→848 bytes and map text
+grows 36,952→42,372 bytes. The unchanged records control/candidate objects are
+byte-identical, preserving the consecutive-ASCII loop. No runtime or timing
+followed; prepared timing criteria/reducer were never executed. This single
+threshold failure neither revises the earlier monolithic O3 gains nor selects
+a broader optimization policy.
+
+An actual frozen-compiler build with module fragments follows the production
+O2+ThinLTO route. A missing entry argument first produces a usage rejection;
+only that failed stage is continued with the explicit entry. Cached prelink
+summary records define scalar try_put in one fragment (118 instructions,
+not marked ineligible to import), while its fresh callers in another fragment
+have only a declaration. A diagnostic relink of the exact cached payloads
+imports outer fresh wrappers but no scalar try_put; the actual CLI image also
+keeps its out-of-line calls. This supports missing import availability, not an
+observed finite-cost refusal at the unavailable cross-fragment fresh call.
+The link backend's local put-call refusal is 330/250, a different context from
+the monolithic fresh-call 280/225. The numerical import budget is unknown.
+
+Diagnostic relinking uses cache-file order rather than original staging order:
+both images have 42 native function symbols and a 96-instruction selected
+try_put, but main changes 444→443 instructions. They are not byte-identical
+production images or performance evidence. Accepted linker remark/import flags
+and direct statuses are retained explicitly; frontend flags are not assumed
+to configure the linker. The fresh-insert-o2-inline/ archive component retains
+criteria, option/identity proof, the usage failure and continuation, selected
+bodies, full import/inline remarks and compact cache identities. Lossy decoded
+cache-key material and full generated modules/objects/images are omitted.
+No map runtime execution or timing followed. No target completion, production
+hint or driver policy is claimed.

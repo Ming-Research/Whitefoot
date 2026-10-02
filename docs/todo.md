@@ -3039,6 +3039,12 @@ rarely insert at the same place.
   Reopen generally justified call-site selection and complete regression/peer
   qualification, retaining code growth and linked-layout effects; do not
   substitute a function-name rule or revive the withdrawn uniform inline hint.
+  The [ordinary O2 threshold and actual ThinLTO inspection](../research/experiments/container-representation/map-library/RESULTS.md#ordinary-o2-threshold-closure-fails-thinlto-import-remains-separate)
+  separate two blockers: one threshold increase leaves an enlarged caller
+  outlined, while the fragmented route does not import the measured scalar
+  callee. Inspect import availability and ordinary call-site cost separately;
+  the local 330/250 remark does not price the missing cross-fragment fresh
+  call. No numerical import budget or production option is established.
 
 - **Machinery with no remaining consumer.** The checker keeps the region
   machinery STOR-8 retired, though every value it produces is empty:
@@ -4518,6 +4524,22 @@ condition under which it is taken up.
   respectively. Test execution also differs, 92.14 versus 66.31 s. This
   extends the host-variation evidence without isolating a processor cause;
   retain the failed observation and the unchanged budgets.
+
+- **Compute build-budget variance repeats maintained performance comparisons.** The
+  research/documentation-only revision 212c3a6b3 passes its actual comparison in
+  [run 36990984618, first attempt](https://github.com/mbbill/Whitefoot/actions/runs/36990984618/attempts/1),
+  but fails only the budget verdict: candidate compiler 135.1 s against 115 s
+  and candidate images 12.1 s against 10 s. Its single rerun passes.
+  The preceding
+  [cea2c2f48 run 36988911413](https://github.com/mbbill/Whitefoot/actions/runs/36988911413)
+  first exceeded only the image budget (10.1 s against 10 s), then passed its
+  single rerun. These observations do not isolate a host or source cause, but
+  repeating the full compiler/image build and comparison to resolve budget-only
+  variance adds work without a new measured change. Reopen on the next compute
+  workflow change: inspect stage/host distributions, cache behavior and actual
+  work before proposing any owner-approved budget increase. Preserve all tests,
+  comparisons, failed observations and current budgets; repeated reruns must not
+  replace investigation.
 
 - **Vector append comparisons do not fully balance variant order.** The
   [growth driver](../research/experiments/container-representation/vector-library/vector-costs.c)
