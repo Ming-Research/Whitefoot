@@ -602,6 +602,30 @@ one associative and commutative accumulator update in the admitted operation
 family. Do not add locks, scheduling calls, or runtime alias tests to seek
 permission.
 
+When iteration i writes at an index read from storage, as
+`set out^[order^[i]] = v;` does, put `apart(i, j) { }` last in the loop's
+header: it asks the checker to prove that two iterations touch no element in
+common [RANGE-5], and a certificate that holds admits those writes [PAR-2];
+the loop's other conditions, such as its accumulator and its exits, still
+decide its permission. The
+proof comes from range facts [RANGE-1]: state what keeps the stored indices
+distinct where the arrays are built, as range invariants of the loops that
+fill them, and pass them to the consumer as its range requirements. Two forms
+cover the common cases: a left inverse, `pos^[order^[k]] == k` for every k,
+and stored values that each exceed every value stored before, as preorder
+indices appended in document order do. A function that builds the arrays
+can hand the facts back as range postconditions, `ensures when Some(value:
+made): forall ...` for a builder that may refuse its input [RANGE-3], so the
+validating pass is one function its consumers call. A fact holds of the
+storage versions it was stated over and reaches a later write only through
+the derivation, and no fact outlives the pass that built its arrays: each
+pass pays for that walk.
+[A scatter through a left inverse](../tests/conformance/cases/range5-pos-scatter-through-left-inverse.wf),
+[a children array kept free of repeats by fresh values](../tests/conformance/cases/range5-pos-children-fresh-values.wf)
+and [a level-by-level cascade over a tree](../tests/conformance/cases/range5-pos-level-cascade.wf)
+show both ends. A certificate that does not hold is a compile error naming
+the two accesses it could not separate, not a sequential lowering.
+
 Maintained examples live under
 [tests/programs/compute](../tests/programs/compute) and
 [tests/programs/parallel](../tests/programs/parallel); their source contracts

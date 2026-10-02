@@ -671,9 +671,14 @@ impl<'parsed> Finalizer<'parsed> {
                     .tree_depth
                     .checked_add(1)
                     .ok_or(FinalizeCompilerFailure::CounterOverflow)?;
+                // [FORM-2] a counted loop's cross-iteration certificate is a
+                // header item, which renders one level deeper than the loop
+                // itself, so the `use` lines of its block nest below it.
+                let header_block = parent.production == Production::ForStmt
+                    && child_snapshot.production == Production::ApartClause;
                 child.format_depth = parent
                     .format_depth
-                    .checked_add(u32::from(inside_body))
+                    .checked_add(u32::from(inside_body || header_block))
                     .ok_or(FinalizeCompilerFailure::CounterOverflow)?;
                 child.top_item = if parent_id == root {
                     Some(child_id)

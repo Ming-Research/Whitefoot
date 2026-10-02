@@ -1,0 +1,49 @@
+fn scatter(order: &[u64], pos: &[u64], out: &[u64]) -> result: unit reads(order), writes(out) contract {
+  requires pos^.len == out^.len;
+  requires forall inv(k in 0_u64..order^.len) when order^[k] < out^.len: pos^[order^[k]] == k;
+} {
+  doc "Writes each iteration's index at the slot order names. inv makes pos a left inverse of order where order names a slot, so two iterations name two slots.";
+  let count = order^.len;
+  for (
+    k in 0_u64..count,
+    apart(i, j) {
+    }
+  ) {
+    let e = order^[k];
+    if e < out^.len {
+      set out^[e] = k;
+    }
+  }
+  return unit;
+}
+
+fn reversed(n: u64) -> result: u64 pure contract {
+  requires n <= 1000_u64;
+  requires n >= 1_u64;
+} {
+  doc "Builds the reversal permutation, but states vals over every slot from the loop's entry, where order is still all zero.";
+  let order = box_array_filled::<u64>(count: n, value: 0_u64);
+  let pos = box_array_filled::<u64>(count: n, value: 0_u64);
+  let out = box_array_filled::<u64>(count: n, value: 0_u64);
+  let last = n - 1_u64;
+  for (
+    k in 0_u64..n,
+    invariant forall vals(q in 0_u64..n): order.inner[q] == last - q,
+    invariant forall inv(q in 0_u64..k): pos.inner[order.inner[q]] == q
+  ) {
+    let back = last - k;
+    set order.inner[k] = back;
+    set pos.inner[back] = k;
+  }
+  scatter(order: &order.inner[0_u64..n], pos: &pos.inner[0_u64..n], out: &out.inner[0_u64..n]);
+  let first = out.inner[0_u64];
+  return first;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let got = reversed(n: 5_u64);
+  if got != 4_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

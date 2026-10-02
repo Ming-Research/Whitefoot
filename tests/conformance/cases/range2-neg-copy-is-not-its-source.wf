@@ -1,0 +1,22 @@
+fn positive(cells: &[u64]) -> result: u64 reads(cells) contract {
+  requires forall pos(k in 0_u64..cells^.len): cells^[k] > 0_u64;
+} {
+  doc "Returns the first cell.";
+  if 0_u64 < cells^.len {
+    let first = cells^[0_u64];
+    return first;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Copies an array, writes the copy, and claims the original positive.";
+  let a = array_filled::<u64, 4>(value: 0_u64);
+  let b = a;
+  set b[0_u64] = 1_u64;
+  let got = positive(cells: &a[0_u64..1_u64]);
+  if got == 0_u64 {
+    return std::process::exit_status(code: 3_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

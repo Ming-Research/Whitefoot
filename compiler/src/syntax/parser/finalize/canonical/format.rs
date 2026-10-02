@@ -169,6 +169,9 @@ fn is_block_bearing(record: &crate::syntax::parser::finalize::topology::NodeReco
                 | Production::IfStmt
                 | Production::ValueIf
                 | Production::AtomicStmt
+                // [GRAM-4, FORM-2] a counted loop's cross-iteration
+                // certificate holds its `use` steps in a block.
+                | Production::ApartClause
         )
         || (record.production == Production::InvariantStmt && record.body_open.is_some())
 }
@@ -360,7 +363,9 @@ pub(super) fn build_gap_styles(
                     .ok_or(CanonicalCompilerFailure::InvalidFinalizedTree)?;
                 match child.production {
                     Production::ForBinding => {}
-                    Production::HeaderInvariant => {
+                    // [FORM-2] a cross-iteration certificate is a header item
+                    // set apart on its own lines exactly as an invariant is.
+                    Production::HeaderInvariant | Production::ApartClause => {
                         invariants = invariants
                             .checked_add(1)
                             .ok_or(CanonicalCompilerFailure::CounterOverflow)?;
@@ -371,12 +376,15 @@ pub(super) fn build_gap_styles(
                     first_header = Some(child.first_terminal);
                 }
                 if invariants != 0 {
-                    mark_before(
-                        &mut gaps,
-                        topology,
-                        child.first_terminal,
-                        GapStyle::HeaderBreak,
-                    )?;
+                    // A certificate's own depth is already one past the loop
+                    // [FORM-2], so its ordinary break lands on the header
+                    // items' column and its block nests below it.
+                    let style = if child.production == Production::ApartClause {
+                        GapStyle::Break
+                    } else {
+                        GapStyle::HeaderBreak
+                    };
+                    mark_before(&mut gaps, topology, child.first_terminal, style)?;
                 }
             }
             if let Some(first_header) = first_header {

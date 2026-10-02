@@ -1,0 +1,21 @@
+fn never(n: u64) -> result: Option<Box<Array<u64>>> pure contract {
+  ensures when Some(value: cells): forall up(k in 0_u64..cells.inner.len): cells.inner[k] == k;
+} {
+  doc "Every return writes None, so no exit selects the postcondition routed through Some.";
+  if n > 1000_u64 {
+    return None<Box<Array<u64>>>();
+  }
+  return None<Box<Array<u64>>>();
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let made = never(n: 3_u64);
+  match move made {
+    None() => {
+      return std::process::exit_status(code: 0_u8);
+    }
+    Some(..) => {
+      return std::process::exit_status(code: 1_u8);
+    }
+  }
+}

@@ -1,0 +1,33 @@
+fn cascade_one(parent: u64, own: u64) -> result: u64 pure {
+  doc "Stands in for an element's cascade: its value from its parent's and its own matched rules.";
+  let mixed = parent +wrap own;
+  return mixed;
+}
+
+fn cascade_children(children: &[u64], matched: &[u64], parent: u64, results: &[u64]) -> result: unit reads(children), reads(matched), writes(results) {
+  doc "Writes each child's result at the child's own index. The caller below supplies distinct indices, but this function has no contract that carries that fact to writes through values read from storage.";
+  let count = children^.len;
+  for (k in 0_u64..count) {
+    let child = children^[k];
+    let inside_matched = child < matched^.len;
+    let inside_results = child < results^.len;
+    let inside = band(inside_matched, inside_results);
+    if inside {
+      let own = matched^[child];
+      set results^[child] = cascade_one(parent: parent, own: own);
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let children = box_array_filled::<u64>(count: 4_u64, value: 0_u64);
+  set children.inner[0_u64] = 3_u64;
+  set children.inner[1_u64] = 1_u64;
+  set children.inner[2_u64] = 6_u64;
+  set children.inner[3_u64] = 2_u64;
+  let matched = box_array_filled::<u64>(count: 8_u64, value: 1_u64);
+  let results = box_array_filled::<u64>(count: 8_u64, value: 0_u64);
+  cascade_children(children: &children.inner[0_u64..4_u64], matched: &matched.inner[0_u64..8_u64], parent: 7_u64, results: &results.inner[0_u64..8_u64]);
+  return std::process::exit_status(code: 0_u8);
+}

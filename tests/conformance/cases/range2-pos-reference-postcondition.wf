@@ -1,0 +1,35 @@
+fn clear(out: &[u64]) -> result: unit writes(out) contract {
+  ensures forall cleared(k in 0_u64..out^.len): out^[k] == 0_u64;
+} {
+  doc "Writes zero into every element of the run.";
+  let n = out^.len;
+  for (
+    k in 0_u64..n,
+    invariant forall done(q in 0_u64..k): out^[q] == 0_u64
+  ) {
+    set out^[k] = 0_u64;
+  }
+  return unit;
+}
+
+fn first_zero(cells: &[u64]) -> result: u64 reads(cells) contract {
+  requires forall zero(k in 0_u64..cells^.len): cells^[k] == 0_u64;
+} {
+  doc "Returns the first element, which the requirement makes zero.";
+  if 0_u64 < cells^.len {
+    let first = cells^[0_u64];
+    return first;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "The cells are filled with 9; the requirement at the second call holds only through clear's postcondition over the storage it wrote.";
+  let cells = box_array_filled::<u64>(count: 4_u64, value: 9_u64);
+  let cleared = clear(out: &cells.inner[0_u64..4_u64]);
+  let got = first_zero(cells: &cells.inner[0_u64..4_u64]);
+  if got != 0_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

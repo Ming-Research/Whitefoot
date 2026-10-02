@@ -1,0 +1,33 @@
+enum StepError {
+  Negative();
+}
+
+fn step(x: i32) -> result: Result<i32, StepError> pure {
+  doc "Reports a negative input as an error value.";
+  if x < 0_i32 {
+    let negative = StepError::Negative();
+    return Err<i32, StepError>(error: negative);
+  }
+  return Ok<i32, StepError>(value: x);
+}
+
+fn clear_after(x: i32, out: &[u64]) -> result: Result<i32, StepError> writes(out) contract {
+  ensures forall cleared(k in 0_u64..out^.len): out^[k] == 0_u64;
+} {
+  doc "Clears the run after the step; an error from the step leaves it as it was, which the unrouted postcondition does not allow.";
+  let y = propagate step(x: x);
+  let n = out^.len;
+  for (
+    k in 0_u64..n,
+    invariant forall done(q in 0_u64..k): out^[q] == 0_u64
+  ) {
+    set out^[k] = 0_u64;
+  }
+  return Ok<i32, StepError>(value: y);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let cells = box_array_filled::<u64>(count: 4_u64, value: 9_u64);
+  let outcome = clear_after(x: 1_i32, out: &cells.inner[0_u64..4_u64]);
+  return std::process::exit_status(code: 0_u8);
+}

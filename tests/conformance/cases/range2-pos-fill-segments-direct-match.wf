@@ -1,0 +1,30 @@
+fn all_absent(cells: &[u64]) -> result: u64 reads(cells) contract {
+  requires forall zero(k in 0_u64..cells^.len): cells^[k] == 7_u64;
+} {
+  doc "Returns the first cell.";
+  if 0_u64 < cells^.len {
+    let first = cells^[0_u64];
+    return first;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "A match on the fill constructor's own call reaches the payload storage the call made, so the Some arm knows every element is 7.";
+  let sizes = box_array_filled::<u64>(count: 2_u64, value: 3_u64);
+  match box_segments_filled::<u64>(lengths: &sizes.inner[0_u64..2_u64], value: 7_u64) {
+    None() => {
+      return std::process::exit_status(code: 6_u8);
+    }
+    Some(value: slots) => {
+      if 0_u64 < slots.inner.len {
+        let seg = &slots.inner[0_u64];
+        let got = all_absent(cells: seg);
+        if got != 7_u64 {
+          return std::process::exit_status(code: 1_u8);
+        }
+      }
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}

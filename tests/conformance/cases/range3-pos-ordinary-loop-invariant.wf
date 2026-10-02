@@ -1,0 +1,46 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn all_marked(cells: &[u64], mark: u64) -> result: u64 reads(cells) contract {
+  requires forall marked(k in 0_u64..cells^.len): cells^[k] == mark;
+} {
+  doc "Returns the first cell, which its requirement makes mark, or mark when there is none.";
+  if 0_u64 < cells^.len {
+    let first = cells^[0_u64];
+    return first;
+  }
+  return mark;
+}
+
+fn mark_all(n: u64) -> result: u64 pure contract {
+  requires n <= 1000_u64;
+} {
+  doc "Marks the cells with an ordinary loop whose range invariant states that every cell before the cursor holds the mark; at the break the cursor is n, so the call's requirement follows.";
+  let cells = box_array_filled::<u64>(count: n, value: 0_u64);
+  let at = 0_u64;
+  loop (
+    invariant bounded: at <= n,
+    invariant forall done(k in 0_u64..at): cells.inner[k] == 9_u64
+  ) {
+    let remaining = at < n;
+    if remaining {
+      set cells.inner[at] = 9_u64;
+      set at = at + 1_u64;
+    } else {
+      break;
+    }
+  }
+  if at == n {
+    let got = all_marked(cells: &cells.inner[0_u64..n], mark: 9_u64);
+    return got;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: ExitStatus pure {
+  let got = mark_all(n: 6_u64);
+  if got != 9_u64 {
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 0_u8);
+}

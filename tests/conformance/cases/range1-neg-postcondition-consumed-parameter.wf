@@ -1,0 +1,10 @@
+fn keep(cells: Box<Array<u64>>) -> result: Box<Array<u64>> pure contract {
+  ensures forall same(k in 0_u64..result.inner.len): result.inner[k] == cells.inner[k];
+} {
+  doc "The postcondition reads storage of a parameter the call consumes, which no caller holds after the call.";
+  return move cells;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

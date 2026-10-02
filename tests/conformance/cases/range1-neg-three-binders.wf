@@ -1,0 +1,10 @@
+fn cube(cells: &[u64]) -> result: unit reads(cells) contract {
+  requires forall all(a in 0_u64..cells^.len, b in 0_u64..cells^.len, c in 0_u64..cells^.len): cells^[a] + cells^[b] >= cells^[c];
+} {
+  doc "A range clause binds at most two variables.";
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

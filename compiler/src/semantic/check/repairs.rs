@@ -935,6 +935,9 @@ pub(super) fn propagated_postcondition(disposition: Disposition) -> &'static str
 /// [FN-9] a clause whose route no normal return selects.
 pub(super) const NO_SELECTED_EXIT: &str = "no `return` of this function delivers a value this clause's route selects: return such a value on some path, or delete the clause";
 
+/// [RANGE-3] a range postcondition no exit the range walk reaches selects.
+pub(super) const NO_SELECTED_RANGE_EXIT: &str = "no `return` the range judgment reaches delivers a value this clause's route selects: return such a value on a path the walk reaches, or delete the clause";
+
 /// [OP-2] an exact integer operation's `.defined` domain.
 pub(super) fn integer_domain(case: &GoalCase<'_>, forms: Option<&str>) -> String {
     let total = forms.map_or_else(String::new, |forms| format!("; or write the {forms} form"));

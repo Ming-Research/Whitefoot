@@ -1,0 +1,17 @@
+fn twice(value: u64) -> result: u64 pure contract {
+  requires value <= 1000_u64;
+} {
+  let doubled = value * 2_u64;
+  return doubled;
+}
+
+fn cells_small(cells: &[u64]) -> result: unit reads(cells) contract {
+  requires forall small(k in 0_u64..cells^.len): cells^[k] < twice(value: k);
+} {
+  doc "A range term calls no function.";
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
