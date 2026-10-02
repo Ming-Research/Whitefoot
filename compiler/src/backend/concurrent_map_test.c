@@ -73,6 +73,9 @@ static void hold_seen(struct wf_cmap_user *u, int closed);
 #else
 #define WORD_TESTS 1
 #endif
+/* Whether this build narrows entries' hashes, so that most keys share one;
+ * the map's source defines the mask itself when the build does not. */
+#define SHARED_HASHES (!WORD_TESTS)
 #ifdef WF_CMAP_LOCKED_READ
 #define ENTRY_TESTS 0
 #else
@@ -1622,10 +1625,11 @@ static void sets_sequential(void) {
         }
         wf_cmap_release_set(user, &set);
     }
-#ifndef WF_CMAP_TAG_MASK
-    if (whole != 0)
+    if (!SHARED_HASHES && whole != 0)
         fail("a set of keys with different hashes held the whole map", whole, 0);
-#endif
+    /* With hashes narrowed, most sets of several keys share one. */
+    if (SHARED_HASHES && whole == 0)
+        fail("no set of keys sharing a hash held the whole map", whole, 0);
     if (wf_cmap_count(map) != live)
         fail("the count of entries disagrees with the reference after sets", wf_cmap_count(map), live);
     check_cells(map, "sets miscounted the cells they took (counted, taken)");
@@ -1980,14 +1984,12 @@ static void sets_move_amounts(uint64_t capacity, uint64_t patient) {
     pthread_join(t[MOVERS + COUNTERS], NULL);
     if (m[MOVERS + COUNTERS].checks < 2)
         fail("the audit never held the accounts both ways", m[MOVERS + COUNTERS].checks, 0);
-#ifndef WF_CMAP_TAG_MASK
     /* Keys with different hashes and ordinary patience: a set holds the map
-     * only after a wait no cycle causes, so nearly every set holds its
-     * entries. */
-    if (patient == PATIENCE && atomic_load(&set_wholes) * 20 > atomic_load(&set_holds))
+     * only after a wait no cycle causes or when the table is full, so nearly
+     * every set holds its entries. */
+    if (!SHARED_HASHES && patient == PATIENCE && atomic_load(&set_wholes) * 20 > atomic_load(&set_holds))
         fail("sets held the whole map more than once in twenty (whole, sets)", atomic_load(&set_wholes),
              atomic_load(&set_holds));
-#endif
     check_cells(map, "sets and keyed statements miscounted the cells they took (counted, taken)");
     uint64_t sum = 0;
     for (uint64_t *slot; (slot = wf_cmap_drain(map)) != NULL;)
