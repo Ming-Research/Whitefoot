@@ -183,6 +183,7 @@ pub(crate) fn lower_checked_from(
             };
             lower_function(
                 function,
+                &checked.data.functions,
                 index,
                 &symbols[index],
                 context,
@@ -424,6 +425,7 @@ fn lower_nominals(
 
 fn lower_function<'program>(
     function: &crate::semantic::CheckedFunction,
+    functions: &[crate::semantic::CheckedFunction],
     physical_index: usize,
     symbol: &'program str,
     context: LoweringContext<'program>,
@@ -461,6 +463,10 @@ fn lower_function<'program>(
         overlap,
         symbol,
     )?;
+    if !uninhabited && function.body.is_some() {
+        builder.key_twins =
+            crate::semantic::key_twins(function, functions, &builder.addressed_bindings);
+    }
     builder
         .context_starts
         .clone_from(&function.waiting.context_starts);
@@ -709,6 +715,14 @@ struct IrBuilder<'program> {
     /// [SHARE-2] the atomic statements whose blocks enclose the statement
     /// being lowered, innermost last.
     atomics: Vec<atomic::AtomicRegion>,
+    /// [SHARE-3] for each statement holding a map's state that can hold its
+    /// keys' entries instead, the statements that compute those keys
+    /// (`semantic::key_twins`). Empty in every synthesized function.
+    key_twins: HashMap<NodePath, Vec<CheckedStatement>>,
+    /// The map whose keys the statements being lowered collect, while such
+    /// a twin is lowered: a statement on an entry then adds its key and runs
+    /// no block.
+    collecting: Option<IrValueId>,
 }
 
 #[derive(Clone)]
@@ -769,6 +783,8 @@ impl<'program> IrBuilder<'program> {
             context_awaits: Vec::new(),
             pending_contexts: Vec::new(),
             atomics: Vec::new(),
+            key_twins: HashMap::new(),
+            collecting: None,
         };
         let (entry, parameters) = builder.new_block(&[])?;
         if !parameters.is_empty() {
@@ -1290,6 +1306,7 @@ impl<'program> IrBuilder<'program> {
                     })?;
                 }
                 CheckedStatement::Atomic {
+                    node_path,
                     target,
                     form,
                     borrowed,
@@ -1301,6 +1318,7 @@ impl<'program> IrBuilder<'program> {
                     fallthrough_drops,
                     ..
                 } => self.lower_atomic(
+                    node_path,
                     target,
                     *form,
                     *borrowed,

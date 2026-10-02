@@ -9,6 +9,7 @@ mod check;
 mod entailment;
 mod entry;
 mod goal;
+mod held_keys;
 mod loop_permission;
 mod model;
 mod obligations;
@@ -36,6 +37,10 @@ pub(crate) use check::{
     target_allocation_count,
 };
 pub(crate) use entry::{EntryRejection, EntryRequest};
+
+/// [SHARE-3] the statements that compute a whole-map statement's keys
+/// before its block runs, which lowering runs first when one exists.
+pub(crate) use held_keys::key_twins;
 
 /// The permission table the overlap lowering reads. It is the same table the
 /// ledger renders; nothing derives a second judgment from it.

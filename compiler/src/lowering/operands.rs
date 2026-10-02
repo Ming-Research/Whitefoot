@@ -128,9 +128,15 @@ macro_rules! operation_operands {
             | IrOperation::SharedMapState { object: value, .. }
             | IrOperation::SharedMapHold { object: value }
             | IrOperation::SharedMapUnhold { object: value }
+            | IrOperation::SharedMapKeys { object: value }
+            | IrOperation::SharedMapHoldKeys { object: value }
+            | IrOperation::SharedMapReleaseKeys { object: value }
             | IrOperation::SharedMapCount { state: value } => vec![$value(value)],
-            IrOperation::SharedMapLock { object, key, .. } => vec![$value(object), $value(key)],
-            IrOperation::SharedMapUnlock { object, entry, .. } => {
+            IrOperation::SharedMapLock { object, key, .. }
+            | IrOperation::SharedMapKey { object, key }
+            | IrOperation::SharedMapHeld { object, key, .. } => vec![$value(object), $value(key)],
+            IrOperation::SharedMapUnlock { object, entry, .. }
+            | IrOperation::SharedMapLeaveHeld { object, entry } => {
                 vec![$value(object), $value(entry)]
             }
             IrOperation::ArrayIndex { root, offset, .. } => match root {

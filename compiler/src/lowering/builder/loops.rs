@@ -114,15 +114,18 @@ impl IrBuilder<'_> {
         if self.value_type(lower_capture)? != U64 || self.value_type(upper_capture)? != U64 {
             return Err(LoweringFailure::InvalidCheckedProgram);
         }
-        if self.split_counted_range(
-            id,
-            node_path,
-            binder,
-            body,
-            backedge_drops,
-            lower_capture,
-            upper_capture,
-        )? {
+        // A twin's loop only collects keys and is never split.
+        if self.collecting.is_none()
+            && self.split_counted_range(
+                id,
+                node_path,
+                binder,
+                body,
+                backedge_drops,
+                lower_capture,
+                upper_capture,
+            )?
+        {
             return Ok(());
         }
         self.counted_range_graph(

@@ -1203,6 +1203,46 @@ pub enum IrOperation {
         held: bool,
         reads: bool,
     },
+    /// [SHARE-3] begins collecting the keys a statement holding the state of
+    /// the map `object` names will reach, for a statement whose keys are
+    /// computed before its block runs. Defines `Unit`.
+    SharedMapKeys {
+        object: IrValueId,
+    },
+    /// One key such a statement will reach, the bytes the range `key`
+    /// names, which stay as they are until the release. Defines `Unit`.
+    SharedMapKey {
+        object: IrValueId,
+        key: IrValueId,
+    },
+    /// [SHARE-2, SHARE-3] waits until this context holds the entries under
+    /// the collected keys together, or the whole map when the runtime cannot
+    /// hold them so; statements on the map's other keys go on beside it,
+    /// which no program observes. Defines `Unit`.
+    SharedMapHoldKeys {
+        object: IrValueId,
+    },
+    /// [SHARE-3] gives up what [`Self::SharedMapHoldKeys`] holds, each entry
+    /// kept when it holds `Some` and removed when it holds `None`. Defines
+    /// `Unit`.
+    SharedMapReleaseKeys {
+        object: IrValueId,
+    },
+    /// [SHARE-2] the entry under the bytes the range `key` names, one of the
+    /// keys collected for the statement that holds the state `object`
+    /// addresses. Defines the address of the entry, an `Option<V>`.
+    SharedMapHeld {
+        nominal: IrNominalId,
+        object: IrValueId,
+        key: IrValueId,
+    },
+    /// Ends the block on the entry `entry` names, the address
+    /// [`Self::SharedMapHeld`] defined, which stays held until the release.
+    /// Defines `Unit`.
+    SharedMapLeaveHeld {
+        object: IrValueId,
+        entry: IrValueId,
+    },
     /// [SHARE-1] how many entries of the state `state` addresses hold `Some`.
     /// Defines `u64`.
     SharedMapCount {
