@@ -56,6 +56,9 @@ The [fixed-hash sensitivity](#fixed-hash-sensitivity-supplemental-rejection)
 likewise supplies no qualified miss gain and does not replace the original
 consumer's qualification. [Byte packing](#byte-pack-load-native-only-result)
 passes only a native-load screen, with no runtime or map-performance claim.
+The subsequent [mirrored-byte sequence](#mirrored-byte-sequence-bounded-checks-rejected-timing)
+passes bounded source checks but supplies no qualified miss gain or peer target;
+its early native failures and final qualified losses keep the representation unselected.
 
 ## Current Rust and C++ ecosystem comparison
 
@@ -6477,3 +6480,56 @@ change or representation selection follows. Both components are in
 [reserve-api-evidence.tar.gz](reserve-api-evidence.tar.gz), with normalized/original
 hashes and explicit omitted-build replay limits; no unfinished map prototype
 is included.
+
+### Mirrored-byte sequence: bounded checks, rejected timing
+
+Four source stages retain a fused metadata load while changing first-probe,
+home-group, empty-stop and progress-loop handling. Native bodies count
+380→288→312→300 instructions, all with 112-byte frames and zero calls, versus
+flat control's 248 instructions/16-byte frame. The first two strict native
+gates fail. Empty-stop removes the vacant enum read; progress loops remove
+redundant counters while preserving actual guards. The later prospective
+frequency-based diagnostic is separate, not a retroactive pass: frame cost
+is per batch, a saved round limit reloads once per round, and per-key hash
+constant rematerialization remains. Static reductions do not measure those costs.
+
+The final ordinary checks have 23 full-check, 12 boundary and 6 early-empty/
+refusal stages, all zero. A source fault omitting mirrored-suffix writes emits
+and links successfully, then exits 32 as expected. These witnesses cover
+selected ownership, callback, wrap, tombstone and growth cases, not generic
+correctness. Metadata adds a `C+7`-byte allocation at supported positive
+capacity; map/consumer-owner sizes grow 40→64/72→96 bytes. The 32 EDIT and
+96 reserve ledger rows match the independent allocation formulas; non-WF
+rows remain identical.
+
+The fixed four-process campaign retains all 1,536 rows. Medians are ns/edit,
+cohort 0 / cohort 1; Rust/C++ columns come from the mirrored panels. Complete
+ranges, drift gates and all original observations are retained in the archive.
+
+| Payload / physical target / path | Flat WF | Mirrored WF | Rust | C++ | Raw before/after ranges, cohorts 0 / 1 |
+|---|---:|---:|---:|---:|---|
+| 8 B / 64 / hit | 1.870950 / 1.856168 | 5.160684 / 5.354052 | 2.270525 / 2.297078 | 2.132341 / 2.162233 | loss / loss (invalid) |
+| 8 B / 64 / miss | 2.489383 / 2.474442 | 3.338123 / 3.353010 | 2.207701 / 2.210170 | 1.720970 / 1.728063 | loss / loss |
+| 8 B / 4096 / hit | 2.194608 / 2.173598 | 4.970774 / 4.944796 | 2.411430 / 2.414013 | 3.080924 / 3.076409 | loss / loss |
+| 8 B / 4096 / miss | 3.205106 / 2.995297 | 3.740370 / 3.725355 | 2.648458 / 2.582863 | 1.742030 / 1.674707 | overlap / overlap (invalid) |
+| 256 B / 64 / hit | 1.879046 / 1.869609 | 5.233988 / 5.187407 | 2.567276 / 2.540116 | 2.163058 / 2.136002 | loss / loss |
+| 256 B / 64 / miss | 2.501791 / 2.498334 | 3.405486 / 3.364960 | 2.414977 / 2.300585 | 1.755908 / 1.735201 | loss / loss |
+| 256 B / 4096 / hit | 2.390251 / 2.417028 | 5.408322 / 5.295197 | 2.896592 / 2.835100 | 3.857305 / 3.767138 | loss / loss |
+| 256 B / 4096 / miss | 3.536309 / 3.166124 | 3.723482 / 3.718148 | 2.614945 / 2.591809 | 2.045631 / 2.049997 | overlap / overlap (invalid) |
+
+There are zero qualified miss gains and zero of eight peer targets. All four
+hit cells and both small misses have raw separated losses in both cohorts;
+scalar-small hit is invalid from C cohort/interarm drift, leaving three
+qualified hit losses and two qualified small-miss losses. Both large misses
+overlap and are invalid: scalar has C cohort drift; wide has flat-WF cohort
+and paired-WF ratio drift. No retry, adoption or application-level conclusion
+follows.
+
+The `mirrored-byte-sequence/` component in
+[reserve-api-evidence.tar.gz](reserve-api-evidence.tar.gz) preserves sources,
+criteria, authoring failures, checks, compact native excerpts, raw rows,
+reducers and original/normalized pins. It also retains the initial criterion's
+Deleted=255 versus actual source=254 discrepancy and corrects the first
+native report's `+0x40` field attribution to environment salt, not metadata.
+Replay requires the pinned omitted compiler/runtime/toolchain dependencies;
+no binaries, full IR or unfinished follow-up are included.

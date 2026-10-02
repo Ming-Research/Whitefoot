@@ -3605,11 +3605,16 @@ condition under which it is taken up.
   Keep the peeled source rejected and both large-miss drift failures visible.
 
   The [byte-pack native screen](../research/experiments/container-representation/map-library/RESULTS.md#byte-pack-load-native-only-result)
-  removes one lowering uncertainty: packing byte inputs before scalar comparison
-  reaches one payload load in its bounded native consumer. Map metadata updates,
-  ownership/callback behavior, first-hit register pressure and allocation cost
-  remain unqualified. Reopen those concrete obligations before a representation
-  choice or any performance claim; native instruction counts alone close none.
+  reaches one payload load in its bounded consumer. The subsequent
+  [mirrored-byte sequence](../research/experiments/container-representation/map-library/RESULTS.md#mirrored-byte-sequence-bounded-checks-rejected-timing)
+  checks selected metadata/ownership boundaries and predicted allocation costs,
+  but has no qualified miss gain or peer target, three qualified two-cohort hit
+  losses and two small-miss losses. Its larger frame, per-key hash constants and
+  extra metadata allocation remain costs; the early strict native failures are
+  not overturned by the later diagnostic. Keep this representation unselected.
+  Reopen only a concrete discriminator in the authorized Map phase, preserving
+  first-hit pressure, ownership/callback witnesses and full timing/drift gates;
+  fewer instructions alone do not qualify performance or generic correctness.
 
   The [actual integrated-candidate comparison](../research/experiments/container-representation/map-library/RESULTS.md#integrated-candidate-with-the-maintained-caller)
   has no qualified before/after gain in 40 maintained-caller cells; all four

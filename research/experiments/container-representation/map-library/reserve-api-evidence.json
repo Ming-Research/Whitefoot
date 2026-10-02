@@ -1,8 +1,8 @@
 {
   "purpose": "Isolated ordinary public reserve with verified future entry headroom; single production baseline panel, not an optimization/adoption result",
   "archive": "reserve-api-evidence.tar.gz",
-  "archive_sha256": "b45c0651eabef219344566b5607eab516c1f930de5d75b0e1f60abc141175470",
-  "archive_members": 1010,
+  "archive_sha256": "7457b62f39e172643dc04f57a9cd9394ee65c7888399390943342c46f569caff",
+  "archive_members": 1030,
   "base_revision": "89571a60381a685cfbe760248ceb6178d9f9ac05",
   "production_cli_sha256": "c12b2b2a6c9694fd2bc1b7be0004d582ae9628951422def849f4cf6a3ac02f77",
   "timed_image_sha256": "f1ebf18d7a94c79250bb3cbd74a0b379a2a30c6e5e4eda48396ec77d8bbdbf3f",
@@ -4520,6 +4520,92 @@
       "from": "component-index.json",
       "to": "component-index-before-fixed-hash-byte-pack.json",
       "sha256": "9f82b72e74c071ae53072f0f00303a335e568ca95c64a3ed4b61ae21953f1936"
+    },
+    "all_prior_member_bytes_preserved": true
+  },
+  "mirrored_byte_sequence": {
+    "prefix": "mirrored-byte-sequence/",
+    "manifest": "mirrored-byte-sequence/manifest.json",
+    "manifest_sha256": "49d9b8b34bc5aad1cfe9899374ce1e58c801563b8078c6460b7788687850d18c",
+    "payload_count": 19,
+    "records": "mirrored-byte-sequence/records.json",
+    "retained_records": 922,
+    "producer_files_verified": 926,
+    "producer_inventories": {
+      "mirrored-byte-controls": {
+        "inventory": "frozen.json",
+        "original_sha256": "d86908ce938c865bb61ad1e8a2c35310000af31ab766b1ff7fa6efac82ab68d5",
+        "files": 38
+      },
+      "mirrored-byte-home": {
+        "inventory": "frozen.json",
+        "original_sha256": "3e3f84ce037b62e964ac58eeb87db71ce802ecc721b25bf351a9defa645bfbba",
+        "files": 39
+      },
+      "mirrored-byte-empty-stop": {
+        "inventory": "frozen.json",
+        "original_sha256": "8adabe526c4de7e3566c1cae835994a5e7df0b1f032b2d87be0f60e9b9193e84",
+        "files": 39
+      },
+      "mirrored-byte-progress-loops": {
+        "inventory": "retention-inventory.json",
+        "original_sha256": "a352fab9a2a56fc1114bdafd7ff865c1ea1d852e296ef13fa57a89a2c8c393c8",
+        "files": 810
+      }
+    },
+    "timing_rows": 1536,
+    "row_counts": {
+      "mirrored-byte-progress-loops/qualification/candidate-build/edit-accounting.csv": 32,
+      "mirrored-byte-progress-loops/qualification/candidate-build/reserve-accounting.csv": 96,
+      "mirrored-byte-progress-loops/qualification/candidate-runtime/build/ecosystem/edit-cohort-0.csv": 384,
+      "mirrored-byte-progress-loops/qualification/candidate-runtime/build/ecosystem/edit-cohort-1.csv": 384,
+      "mirrored-byte-progress-loops/qualification/control-build/edit-accounting.csv": 32,
+      "mirrored-byte-progress-loops/qualification/control-build/reserve-accounting.csv": 96,
+      "mirrored-byte-progress-loops/qualification/control-runtime/build/ecosystem/edit-cohort-0.csv": 384,
+      "mirrored-byte-progress-loops/qualification/control-runtime/build/ecosystem/edit-cohort-1.csv": 384
+    },
+    "native_body_sequence": [
+      380,
+      288,
+      312,
+      300
+    ],
+    "candidate_frame_bytes": 112,
+    "qualified_miss_gains": 0,
+    "raw_two_cohort_hit_losses": 4,
+    "qualified_two_cohort_hit_losses": 3,
+    "qualified_two_cohort_small_miss_losses": 2,
+    "large_miss_ranges": "overlap and invalid",
+    "candidate_peer_targets": 0,
+    "ordinary_check_stages_zero": [
+      23,
+      12,
+      6
+    ],
+    "mirror_suffix_fault_exits": [
+      0,
+      0,
+      32
+    ],
+    "map_bytes": [
+      40,
+      64
+    ],
+    "owner_bytes": [
+      72,
+      96
+    ],
+    "production_adoption": false,
+    "status": "Rejected final mirrored-byte screen with zero miss gains/targets; early strict native failures remain failed. Later cost-frequency diagnostic is separate, not retroactive qualification."
+  },
+  "mirrored_byte_sequence_prior_index": {
+    "prior_archive_sha256": "b45c0651eabef219344566b5607eab516c1f930de5d75b0e1f60abc141175470",
+    "prior_members": 1010,
+    "unchanged_names_and_bytes": 1009,
+    "renamed_member": {
+      "from": "component-index.json",
+      "to": "component-index-before-mirrored-byte-sequence.json",
+      "sha256": "30e345280810bffd6de1524aeb74ce8f543c7e027e58bbb4049dd13bf6b058bb"
     },
     "all_prior_member_bytes_preserved": true
   }
