@@ -256,6 +256,7 @@ ECO_FAMILY := map
 ECO_ABSL_PACKAGES := absl_flat_hash_map
 ECO_WORK ?= 262144
 ECO_LOOKUP_WORK ?= 2097152
+ECO_EDIT_WORK ?= 4194304
 include ../ecosystem.mk
 ECO_OCCUPANCY_WORK ?= 1048576
 ECO_GEOMETRY_FILE ?= $(ECO_BUILD)/geometry.csv
@@ -265,6 +266,7 @@ ECO_OCCUPANCY_SAMPLES ?= $(ECO_BUILD)/occupancy-measurements.csv
 
 .PHONY: ecosystem-build ecosystem-check ecosystem-account ecosystem-measure \
         ecosystem-lookup-check ecosystem-lookup-account ecosystem-lookup-measure \
+        ecosystem-edit-check ecosystem-edit-account ecosystem-edit-measure \
         ecosystem-occupancy-check ecosystem-geometry ecosystem-occupancy-account ecosystem-occupancy-measure
 
 $(ECO_BUILD)/map.raw.ll: map-library.wf $(WHITEFOOTC) $(ECO_CONFIG) Makefile | $(ECO_BUILD)
@@ -452,3 +454,47 @@ ECO_RESERVE_COHORT ?= 0
 .PHONY: ecosystem-reserve-measure
 ecosystem-reserve-measure: ecosystem-build
 	$(ECO_BUILD)/map-timed$(EXE) reserve-measure $(ECO_RESERVE_COHORT) > $(ECO_BUILD)/reserve-cohort-$(ECO_RESERVE_COHORT).csv
+
+# Isolated public EDIT batches reuse lookup owners; old traces remain separate.
+ecosystem-edit-check: ecosystem-build
+	$(ECO_BUILD)/map-timed$(EXE) edit-check
+	$(ECO_BUILD)/map-account$(EXE) edit-check
+	@set -eu; \
+	  for peer in 0 1 2 3 4 5 6 7; do \
+	    for fault in population capacity result callback cleanup repeat tail filled-allocation allocation leak; do \
+	      image=timed; \
+	      case $$fault in \
+	        population) expected='edit filled population' ;; \
+	        capacity) expected='edit filled backing geometry' ;; \
+	        result) expected='edit independent result oracle' ;; \
+	        callback) expected='edit exact callback updates' ;; \
+	        cleanup|repeat) expected='edit independent full-content cleanup oracle' ;; \
+	        tail) if test $$peer -lt 4; then continue; fi; expected='edit independent full-content cleanup oracle' ;; \
+	        filled-allocation) image=account; expected='edit filled allocation' ;; \
+	        allocation) image=account; expected='edit batch has no allocation' ;; \
+	        leak) image=account; expected='every allocation is reclaimed' ;; \
+	      esac; \
+	      stem=$(ECO_BUILD)/edit-negative-$$peer-$$fault; status=0; \
+	      $(ECO_BUILD)/map-$$image$(EXE) negative-edit $$fault $$peer > $$stem.stdout 2> $$stem.stderr || status=$$?; \
+	      printf '%s\n' $$status > $$stem.status; \
+	      test "$$status" = 1; test ! -s $$stem.stdout; \
+	      test "$$(cat $$stem.stderr)" = "map ecosystem: $$expected"; \
+	    done; \
+	  done
+	@set -eu; for fault in quantized backwards; do \
+	  case $$fault in quantized) expected='reserve clock quantum at most 100 ns' ;; backwards) expected='reserve clock nondecreasing' ;; esac; \
+	  stem=$(ECO_BUILD)/edit-clock-$$fault; status=0; \
+	  $(ECO_BUILD)/map-timed$(EXE) negative-reserve-clock $$fault > $$stem.stdout 2> $$stem.stderr || status=$$?; \
+	  printf '%s\n' $$status > $$stem.status; test "$$status" = 1; test ! -s $$stem.stdout; \
+	  test "$$(tail -n 1 $$stem.stderr)" = "map ecosystem: $$expected"; \
+	done
+
+ecosystem-edit-account: ecosystem-build
+	$(ECO_BUILD)/map-account$(EXE) edit-account $(ECO_EDIT_WORK) > $(ECO_BUILD)/edit-accounting.csv
+
+ecosystem-edit-measure: ecosystem-build
+	@set -eu; failed=0; for cohort in 0 1; do \
+	  status=0; $(ECO_BUILD)/map-timed$(EXE) edit-measure $$cohort $(ECO_EDIT_WORK) > $(ECO_BUILD)/edit-cohort-$$cohort.csv 2> $(ECO_BUILD)/edit-cohort-$$cohort.stderr || status=$$?; \
+	  printf '%s\n' $$status > $(ECO_BUILD)/edit-cohort-$$cohort.status; \
+	  if test $$status -ne 0; then failed=1; fi; \
+	done; exit $$failed

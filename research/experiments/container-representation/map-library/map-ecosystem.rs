@@ -417,6 +417,44 @@ unsafe fn lookup_query<V: Payload>(
     digest.finish()
 }
 
+unsafe fn edit_batch<V: Payload>(storage: *mut std::ffi::c_void, rounds: u64, miss: u64) -> u64 {
+    let state = unsafe { &mut *storage.cast::<LookupState<V>>() };
+    let mut digest = Digest::new(state.seed);
+    let first_key = if miss != 0 { 2 } else { 1 };
+    for _ in 0..rounds {
+        for index in 0..state.count {
+            let key = index.wrapping_mul(2).wrapping_add(first_key);
+            let found = state.map.get_mut(&key);
+            digest.ordered(u64::from(found.is_some()));
+            if let Some(value) = found {
+                digest.ordered(value.increment());
+            }
+        }
+    }
+    digest.finish()
+}
+
+unsafe fn edit_damage<V: Payload>(storage: *mut std::ffi::c_void) {
+    let state = unsafe { &mut *storage.cast::<LookupState<V>>() };
+    if let Some(value) = state.map.get_mut(&1) { value.damage(); }
+}
+
+macro_rules! edit_exports {
+    ($value:ty, $batch:ident, $damage:ident) => {
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn $batch(storage: *mut std::ffi::c_void, rounds: u64, miss: u64) -> u64 {
+            unsafe { edit_batch::<$value>(storage, rounds, miss) }
+        }
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn $damage(storage: *mut std::ffi::c_void) -> u8 {
+            unsafe { edit_damage::<$value>(storage) };
+            0
+        }
+    };
+}
+edit_exports!(u64, eco_rust_map_edit_word_batch, eco_rust_map_edit_word_damage);
+edit_exports!(Record, eco_rust_map_edit_record_batch, eco_rust_map_edit_record_damage);
+
 unsafe fn lookup_geometry<V>(storage: *const std::ffi::c_void) -> u64 {
     let state = unsafe { &*storage.cast::<LookupState<V>>() };
     // This reports usable capacity, not physical buckets. Physical capacity

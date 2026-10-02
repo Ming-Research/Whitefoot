@@ -550,6 +550,54 @@ fn map_cost_lookup_query<interface MapCostElement<T>>(owner: &MapLookupOwner<T>,
   return map_cost_finish(digest: digest);
 }
 
+fn map_cost_edit_batch<interface MapCostElement<T>>(owner: &MapLookupOwner<T>, rounds: u64, miss: u64) -> result: u64 writes(owner) {
+  let digest = MapCostDigest(ordered: owner^.seed, sum: 0_u64, parity: 0_u64, count: 0_u64);
+  let first_key = if miss != 0_u64 {
+    give 2_u64;
+  } else {
+    give 1_u64;
+  }
+  for (round in 0_u64..rounds) {
+    for (index in 0_u64..owner^.count) {
+      let doubled = index *wrap 2_u64;
+      let key = doubled +wrap first_key;
+      let edited = hash_map_edit::<MapCostLibraryKey, T, MapCostDigest, u64, fn MapCostElement::edit, 16384>(map: &owner^.map, key: &key, key_env: &owner^.env, edit_env: &digest);
+      map_cost_lookup_result(found: edited, digest: &digest);
+    }
+  }
+  return map_cost_finish(digest: digest);
+}
+
+fn map_cost_edit_word_batch(owner: &MapLookupOwner<u64>, rounds: u64, miss: u64) -> result: u64 writes(owner) {
+  return map_cost_edit_batch::<MapCostWord>(owner: owner, rounds: rounds, miss: miss);
+}
+
+fn map_cost_edit_record_batch(owner: &MapLookupOwner<MapCostRecord>, rounds: u64, miss: u64) -> result: u64 writes(owner) {
+  return map_cost_edit_batch::<MapCostWide>(owner: owner, rounds: rounds, miss: miss);
+}
+
+fn map_cost_edit_word_damage_value(env: &unit, key: &u64, value: &u64) -> result: unit writes(value) {
+  return map_cost_word_damage(value: value);
+}
+
+fn map_cost_edit_word_damage(owner: &MapLookupOwner<u64>) -> result: unit writes(owner) {
+  let key = 1_u64;
+  let env = unit;
+  let damaged = hash_map_edit::<MapCostLibraryKey, u64, unit, unit, fn map_cost_edit_word_damage_value, 16384>(map: &owner^.map, key: &key, key_env: &owner^.env, edit_env: &env);
+  return unit;
+}
+
+fn map_cost_edit_record_damage_value(env: &unit, key: &u64, value: &MapCostRecord) -> result: unit writes(value) {
+  return map_cost_record_damage(value: value);
+}
+
+fn map_cost_edit_record_damage(owner: &MapLookupOwner<MapCostRecord>) -> result: unit writes(owner) {
+  let key = 1_u64;
+  let env = unit;
+  let damaged = hash_map_edit::<MapCostLibraryKey, MapCostRecord, unit, unit, fn map_cost_edit_record_damage_value, 16384>(map: &owner^.map, key: &key, key_env: &owner^.env, edit_env: &env);
+  return unit;
+}
+
 fn map_cost_lookup_finish<interface MapCostElement<T>>(owner: MapLookupOwner<T>) -> result: u64 pure {
   let MapLookupOwner(map: map, env: env, seed: seed, count: count) = move owner;
   let digest = MapCostDigest(ordered: seed, sum: 0_u64, parity: 0_u64, count: 0_u64);

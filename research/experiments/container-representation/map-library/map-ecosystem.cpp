@@ -215,6 +215,35 @@ Word lookup_query(const void* storage, Word rounds, Word miss) {
 }
 
 template<class V>
+Word edit_batch(void* storage, Word rounds, Word miss) {
+    auto& owner = *static_cast<LookupOwner<V>*>(storage);
+    Digest digest(owner.seed);
+    const Word first_key = miss ? 2 : 1;
+    for (Word round = 0; round < rounds; ++round)
+        for (Word index = 0; index < owner.count; ++index) {
+            auto found = owner.map.find(index * 2 + first_key);
+            digest.ordered(found != owner.map.end());
+            if (found != owner.map.end())
+                digest.ordered(Payload<V>::increment(found->second));
+        }
+    return digest.finish();
+}
+
+template<class V>
+void edit_damage(void* storage) {
+    auto& owner = *static_cast<LookupOwner<V>*>(storage);
+    auto found = owner.map.find(1);
+    if (found == owner.map.end()) return;
+    if constexpr (std::is_same_v<V, Word>) ++found->second;
+    else ++found->second.words[31];
+}
+
+extern "C" Word eco_cpp_map_edit_word_batch(void* storage, Word rounds, Word miss) { return edit_batch<Word>(storage, rounds, miss); }
+extern "C" Word eco_cpp_map_edit_record_batch(void* storage, Word rounds, Word miss) { return edit_batch<Record>(storage, rounds, miss); }
+extern "C" std::uint8_t eco_cpp_map_edit_word_damage(void* storage) { edit_damage<Word>(storage); return 0; }
+extern "C" std::uint8_t eco_cpp_map_edit_record_damage(void* storage) { edit_damage<Record>(storage); return 0; }
+
+template<class V>
 Word lookup_geometry(const void* storage) {
     const auto& owner = *static_cast<const LookupOwner<V>*>(storage);
     // Return the implementation's actual bucket count, never the reservation

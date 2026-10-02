@@ -3552,12 +3552,23 @@ condition under which it is taken up.
   beyond its cap and adds wide hot-loop reload work, so branch hoisting alone
   does not justify that global compiler option.
 
-  Existing lookup, replace, paired churn, reserve and whole EDIT traces do not
-  separately measure public find, fresh insert, remove or isolated EDIT.
-  Treating churn or a complete trace as per-API completion would conceal those
-  gaps. Reopen immediately in the Map API phase with ordinary public wrappers,
-  complete outcomes, an independent oracle and qualified individual clock
-  windows, using the same Rust/C++ peers and existing target calculation.
+  Public `hash_map_lookup` already has isolated hit/miss measurement;
+  `hash_map_find` is a private helper. Lookup's miss performance gap remains
+  open. Fresh insertion and owned removal still lack separate API windows;
+  paired churn and whole traces do not complete those measurements. The
+  [isolated public EDIT consumer](../research/experiments/container-representation/map-library/RESULTS.md#isolated-public-edit-hit-targets-pass-misses-remain-open)
+  now measures integer-fixture hit/miss batches with ordinary public calls,
+  complete independent outcomes, off-clock full cleanup and qualified clocks.
+  Four hit cells pass the selected-peer target in one fixed campaign; four
+  misses fail, including two large misses invalidated by C-attribution drift.
+  Reopen absent-key probe work and those invalid cells without dropping that
+  control or weakening the registered criterion. Keep the group-metadata and
+  occupancy questions open: half-load EDIT does not settle them. The instrument
+  does not establish repeatability, generic owning costs or application parity.
+  Complete the remaining API gaps in the Map phase with ordinary wrappers,
+  independent oracles, qualified windows and the same Rust/C++ target. Do not
+  relabel churn or whole traces as per-API completion, or compare the new API
+  window with complete-trace ns/edit as a before/after improvement.
 
   The [actual integrated-candidate comparison](../research/experiments/container-representation/map-library/RESULTS.md#integrated-candidate-with-the-maintained-caller)
   has no qualified before/after gain in 40 maintained-caller cells; all four

@@ -1455,6 +1455,35 @@ uint64_t eco_c_map_lookup_##WIDTH##_finish(void *storage) {               \
 ECO_LOOKUP(word, word_sparse, word)
 ECO_LOOKUP(record, record_sparse, record)
 #undef ECO_LOOKUP
+
+/* EDIT shares only setup/storage/cleanup with lookup; its batch mutates owners. */
+static void word_edit_damage(uint64_t *value) { ++*value; }
+static void record_edit_damage(Record *value) { ++value->words[31]; }
+#define ECO_EDIT(WIDTH, P, B)                                             \
+uint64_t eco_c_map_edit_##WIDTH##_batch(void *storage, uint64_t rounds, uint64_t miss) { \
+    WIDTH##_LookupOwner *owner = storage;                                \
+    Digest digest = {owner->seed, 0, 0, 0};                              \
+    const uint64_t first_key = miss ? 2 : 1;                             \
+    for (uint64_t round = 0; round < rounds; ++round)                     \
+        for (uint64_t index = 0; index < owner->map.count; ++index) {     \
+            uint64_t key = index * 2 + first_key;                        \
+            Lookup edited = P##_edit(&owner->map, &owner->env, &key, &digest); \
+            ordered(&digest, edited.found);                              \
+            if (edited.found) ordered(&digest, edited.identity);          \
+        }                                                               \
+    return finish(digest);                                              \
+}                                                                       \
+uint8_t eco_c_map_edit_##WIDTH##_damage(void *storage) {                     \
+    WIDTH##_LookupOwner *owner = storage;                                \
+    uint64_t key = 1;                                                    \
+    Probe found = P##_probe(&owner->map, &owner->env, &key);                \
+    if (found.found) B##_edit_damage(&owner->map.slots->cells[found.index].pair.value); \
+    return 0;                                                           \
+}
+ECO_EDIT(word, word_sparse, word)
+ECO_EDIT(record, record_sparse, record)
+#undef ECO_EDIT
+
 #if defined(ACCOUNT_ONLY)
 /* A separate filled-map witness keeps geometry reads out of the timed trace.
  * The low/high halves encode count/capacity, combined with the setup digest. */

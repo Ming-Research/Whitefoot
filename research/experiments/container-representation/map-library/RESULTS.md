@@ -38,6 +38,15 @@ The [cleanup-boundary discriminator](#late-cleanup-exposure-native-success-witho
 removes the wide ordered-digest memory pair but does not qualify a timing gain.
 Earlier failures and the provisional status of the compiler choice are unchanged.
 
+The new [isolated public EDIT campaign](#isolated-public-edit-hit-targets-pass-misses-remain-open)
+qualifies the four hit cells against the selected Rust/C++ peer in one fixed
+two-cohort campaign. All four miss cells fail; both large misses also retain
+C-attribution drift invalidation. This API window neither supplies a before/after
+optimization gain nor replaces the unchanged whole-application performance goal.
+Public `hash_map_lookup` already has isolated hit/miss measurement, with its
+miss gap still open; `hash_map_find` is private. Separate fresh-insertion and
+owned-removal API windows remain missing.
+
 ## Current Rust and C++ ecosystem comparison
 
 The explicit `ecosystem-*` targets implement the separate
@@ -6132,3 +6141,100 @@ that timing/checks had not yet run describe that prerequisite stage; the
 separate terminal outcomes record the subsequent fixed campaign. The native
 result supplies a concrete late-address-exposure mechanism to investigate,
 not a general solution or performance qualification.
+
+### Isolated public EDIT: hit targets pass, misses remain open
+
+The explicit research consumer calls ordinary public `hash_map_edit`, Rust
+`get_mut`, C++ find/update and the existing sparse C attribution control. Each
+sample has one exported mutable batch, a fresh owner and a local ordered digest
+returned by value. Setup, capacity checks, complete 32-word cleanup and exact
+release checks are outside timing. Hits increment the payload's first word
+once and observe the updated value; misses observe absence. The library,
+compiler and public API are unchanged. This integer-fixture instrument does
+not establish generic owning behavior or replace the application workload.
+
+The single fixed campaign uses salted mix64 hashing, physical targets 64/4096,
+counts 32/2048, 12 seeds, two warmups, 4,194,304 edits per sample and two reversed
+cohorts with balanced participant positions. It retains 768 raw rows. All four
+hit cells qualify under the registered per-cohort median-slower Rust/C++ target;
+small hits select Rust, large hits select C++. This does not mean every WF range
+beats both peers: scalar-small hit overlaps C++ in cohort 0, and large hit
+ranges can overlap Rust. All four miss cells fail. No samples were filtered,
+retried or adapted, and this one campaign does not establish repeatability.
+
+Observed min / median / max ns per edit, rounded to six decimals; every adverse
+sample remains, including the large-wide C++ hit maximum of 10.355274 ns:
+
+| Payload / physical target / path | Cohort | WF min / median / max | Rust min / median / max | C++ min / median / max |
+|---|---:|---:|---:|---:|
+| 8 B / 64 / hit | 0 | 1.822501 / 1.891116 / 2.188504 | 2.235125 / 2.308697 / 2.456407 | 2.104670 / 2.151325 / 2.309154 |
+| 8 B / 64 / hit | 1 | 1.780679 / 1.858403 / 1.921932 | 2.205094 / 2.260864 / 2.316952 | 2.075533 / 2.135898 / 2.211988 |
+| 8 B / 64 / miss | 0 | 2.209206 / 2.632161 / 3.089617 | 1.967838 / 2.273867 / 2.770612 | 1.701226 / 1.785646 / 1.983931 |
+| 8 B / 64 / miss | 1 | 2.131462 / 2.442638 / 3.086597 | 1.957486 / 2.232109 / 2.472639 | 1.642744 / 1.704097 / 1.766791 |
+| 8 B / 4096 / hit | 0 | 2.145419 / 2.209018 / 2.351075 | 2.382249 / 2.403990 / 2.604753 | 2.793700 / 3.020356 / 3.119737 |
+| 8 B / 4096 / hit | 1 | 2.160708 / 2.287085 / 2.527813 | 2.379010 / 2.464881 / 2.635350 | 2.917588 / 3.155544 / 3.486802 |
+| 8 B / 4096 / miss | 0 | 2.526194 / 3.213833 / 5.443404 | 2.530942 / 2.600883 / 2.965907 | 1.565655 / 1.654416 / 1.980215 |
+| 8 B / 4096 / miss | 1 | 2.536635 / 3.298178 / 4.650603 | 2.516508 / 2.591610 / 2.664536 | 1.595527 / 1.687765 / 1.883914 |
+| 256 B / 64 / hit | 0 | 1.787255 / 1.862407 / 1.922170 | 2.499630 / 2.540544 / 2.612015 | 2.086788 / 2.142732 / 2.249837 |
+| 256 B / 64 / hit | 1 | 1.785765 / 1.834154 / 1.932770 | 2.496322 / 2.528608 / 2.568543 | 2.063314 / 2.135088 / 2.196848 |
+| 256 B / 64 / miss | 0 | 2.143592 / 2.437890 / 3.014873 | 1.979083 / 2.235840 / 2.462725 | 1.638700 / 1.719733 / 1.760274 |
+| 256 B / 64 / miss | 1 | 2.158264 / 2.452915 / 2.991498 | 1.971404 / 2.213349 / 2.451877 | 1.648903 / 1.712963 / 1.796613 |
+| 256 B / 4096 / hit | 0 | 2.288997 / 2.454296 / 2.790550 | 2.767771 / 2.849941 / 3.114253 | 3.614495 / 3.938322 / 10.355274 |
+| 256 B / 4096 / hit | 1 | 2.284209 / 2.372752 / 2.505590 | 2.741933 / 2.778471 / 2.914747 | 3.535668 / 3.689140 / 3.891061 |
+| 256 B / 4096 / miss | 0 | 2.659808 / 3.491720 / 6.074230 | 2.519240 / 2.582337 / 2.721896 | 1.968702 / 2.136628 / 2.536386 |
+| 256 B / 4096 / miss | 1 | 2.524137 / 3.339122 / 5.743593 | 2.495816 / 2.580548 / 2.716362 | 1.971424 / 2.017046 / 2.160579 |
+
+The unchanged all-participant cohort-stability gate remains part of
+qualification. C is outside the Rust/C++ target denominator but inside this
+gate; the large miss cells are invalid solely because C drifts above ten
+percent. Their peer comparisons are already adverse, so dropping C would not
+turn the miss ranges into passes. Cohort median drift and target verdicts:
+
+| Payload / physical target / path | WF drift | Rust drift | C++ drift | C attribution drift | Target |
+|---|---:|---:|---:|---:|---|
+| 8 B / 64 / hit | 1.760% | 2.116% | 0.722% | 5.971% | pass |
+| 8 B / 64 / miss | 7.759% | 1.871% | 4.785% | 7.052% | fail |
+| 8 B / 4096 / hit | 3.534% | 2.533% | 4.476% | 1.651% | pass |
+| 8 B / 4096 / miss | 2.624% | 0.358% | 2.016% | 10.838% | fail; drift-invalid |
+| 256 B / 64 / hit | 1.540% | 0.472% | 0.358% | 0.734% | pass |
+| 256 B / 64 / miss | 0.616% | 1.016% | 0.395% | 5.148% | fail |
+| 256 B / 4096 / hit | 3.437% | 2.572% | 6.754% | 5.284% | pass |
+| 256 B / 4096 / miss | 4.570% | 0.069% | 5.929% | 11.184% | fail; drift-invalid |
+
+Both timing processes exit zero. Clock quantum is 41 ns, maximum empty
+intervals are 84/83 ns, and the shortest real interval is 6.566833 ms; every
+row passes duration and clock-overhead checks without subtraction. All 275
+prerequisite pins remain unchanged. For all 96 width/capacity/path/seed groups,
+receipt and complete cleanup agree across the four participants and both
+cohorts. The 32 accounting rows balance requests/releases and finish at zero
+live bytes; the entire allocation ledger is unchanged during each EDIT batch.
+The real allocate/free falsifier checks request/release counts, so unchanged
+net live bytes alone cannot conceal an allocation.
+
+Prerequisites retain 288 persistent two-batch EDIT cases per image, the
+existing lookup/reserve/whole-trace checks, and all 78 new semantic/clock
+refusals. Three failed build-authoring attempts and the successful repair are
+recorded; pre-repair source snapshots were not saved. The first reducer used
+the wrong historical C participant label and failed before producing a result;
+using the actual CSV label repaired it without rerunning data or changing a
+threshold. Exact final sources, patch, criterion, raw/account rows, reducer,
+logs, pin identities and compact native functions are in `isolated-edit/` in
+[reserve-api-evidence.tar.gz](reserve-api-evidence.tar.gz). Original and
+path-normalized hashes distinguish retained bytes; omitted toolchain/build
+inputs and replay limits are explicit.
+
+Reached WF hit loops update one word and carry the digest in registers, with
+no per-key foreign call, Result materialization, digest reload/store, operation
+dispatch, full-value copy, allocation or cleanup. Both complete batch bodies
+have 248 instructions and 16-byte callee-save frames; these counts include
+collision/empty paths, not just measured hit work. Power-of-two selection
+remains inside the key loop, with arbitrary-capacity division fallback.
+WF/C physical cells, Rust usable capacities and C++ buckets/nodes are checked
+separately rather than claimed equal layouts.
+
+Miss probing is now an exposed performance gap in this API consumer; it is
+not evidence that a particular probe representation is selected. The roughly
+1.9-ns hit API observation cannot be compared with the earlier roughly 3-ns
+complete trace as an optimization: the timing boundaries and workloads differ.
+No library/source optimization follows from this instrument, no historical
+failure is reclassified, and the overall application target remains open.

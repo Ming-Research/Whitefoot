@@ -385,6 +385,185 @@ static void lookup_negative(const char *failure) {
 
 
 /* Isolated reserve: logical entry headroom, ordinary library growth policies. */
+
+/* Isolated public EDIT: lookup owners and their complete cleanup are reused,
+ * but the mutable batch has its own local receipt and never owns cleanup state. */
+typedef uint64_t (*EditBatch)(void *, uint64_t, uint64_t);
+typedef uint8_t (*EditDamage)(void *);
+#define EDIT_DECLARE(PREFIX, WIDTH) \
+    extern uint64_t PREFIX##_edit_##WIDTH##_batch(void *, uint64_t, uint64_t); \
+    extern uint8_t PREFIX##_edit_##WIDTH##_damage(void *)
+EDIT_DECLARE(wf_map_cost, word);
+EDIT_DECLARE(wf_map_cost, record);
+EDIT_DECLARE(eco_rust_map, word);
+EDIT_DECLARE(eco_rust_map, record);
+EDIT_DECLARE(eco_cpp_map, word);
+EDIT_DECLARE(eco_cpp_map, record);
+EDIT_DECLARE(eco_c_map, word);
+EDIT_DECLARE(eco_c_map, record);
+#undef EDIT_DECLARE
+typedef struct { EditBatch batch; EditDamage damage; } EditApi;
+#define EDIT_ENTRY(PREFIX, WIDTH) {PREFIX##_edit_##WIDTH##_batch, PREFIX##_edit_##WIDTH##_damage}
+static const EditApi edit_apis[] = {
+    EDIT_ENTRY(wf_map_cost, word), EDIT_ENTRY(eco_rust_map, word),
+    EDIT_ENTRY(eco_cpp_map, word), EDIT_ENTRY(eco_c_map, word),
+    EDIT_ENTRY(wf_map_cost, record), EDIT_ENTRY(eco_rust_map, record),
+    EDIT_ENTRY(eco_cpp_map, record), EDIT_ENTRY(eco_c_map, record),
+};
+#undef EDIT_ENTRY
+_Static_assert(ELEMENTS(edit_apis) == ELEMENTS(lookup_apis), "EDIT shares lookup owner order");
+
+static uint64_t edit_batch_oracle(uint64_t count, uint64_t rounds, uint64_t seed,
+                                  bool miss, uint64_t prior) {
+    Digest digest = {seed, 0, 0, 0};
+    for (uint64_t round = 0; round < rounds; ++round)
+        for (uint64_t index = 0; index < count; ++index) {
+            ordered(&digest, !miss);
+            if (!miss) ordered(&digest, seed + index + prior + round + 1);
+        }
+    return finish(digest);
+}
+
+static uint64_t edit_cleanup_oracle(bool wide, uint64_t count, uint64_t seed,
+                                    uint64_t increments) {
+    Digest digest = {seed, 0, 0, 0};
+    for (uint64_t index = 0; index < count; ++index) {
+        uint64_t key = key_at(index), initial = seed + index;
+        uint64_t content = key * 131 + initial + increments;
+        if (wide) {
+            content = key;
+            for (unsigned word = 0; word < WORDS; ++word)
+                content = content * 131 + initial + (word == 0 ? increments : word);
+        }
+        final_value(&digest, content);
+    }
+    return finish(digest);
+}
+
+typedef enum {
+    EDIT_FAULT_NONE, EDIT_FAULT_POPULATION, EDIT_FAULT_CAPACITY,
+    EDIT_FAULT_RESULT, EDIT_FAULT_CALLBACK, EDIT_FAULT_CLEANUP,
+    EDIT_FAULT_TAIL, EDIT_FAULT_REPEAT, EDIT_FAULT_ALLOCATION, EDIT_FAULT_LEAK,
+    EDIT_FAULT_FILLED_ALLOCATION
+} EditFault;
+
+#ifndef ACCOUNT_ONLY
+static uint64_t reserve_now(void);
+#endif
+#ifdef ACCOUNT_ONLY
+static void *volatile edit_fault_allocation;
+#endif
+typedef struct {
+    uint64_t elapsed, receipt, cleanup, geometry;
+#ifdef ACCOUNT_ONLY
+    Ledger filled, final;
+#endif
+} EditObservation;
+static EditObservation edit_one(size_t variant, uint64_t slots, uint64_t count,
+                                 uint64_t seed, bool miss, uint64_t rounds,
+                                 unsigned batches, EditFault fault, bool timed) {
+    const LookupApi *owner = &lookup_apis[variant];
+    const EditApi *edit = &edit_apis[variant];
+    LookupStorage storage = {0};
+    EditObservation result = {0};
+    reset_ledger();
+    owner->prepare(storage.bytes, slots, count, seed);
+    result.geometry = owner->geometry(storage.bytes);
+    if (fault == EDIT_FAULT_POPULATION) result.geometry ^= 1;
+    if (fault == EDIT_FAULT_CAPACITY) result.geometry ^= UINT64_C(1) << 32;
+    require((uint32_t)result.geometry == count, "edit filled population");
+    require(result.geometry >> 32 == lookup_expected_geometry(owner, slots), "edit filled backing geometry");
+#ifdef ACCOUNT_ONLY
+    result.filled = ledger;
+    if (fault == EDIT_FAULT_FILLED_ALLOCATION) result.filled.live = 0;
+    require(result.filled.live > 0, "edit filled allocation");
+#endif
+    uint64_t increments = 0;
+    for (unsigned batch = 0; batch < batches; ++batch) {
+        uint64_t start = 0, end = 0;
+#ifndef ACCOUNT_ONLY
+        if (timed) start = reserve_now();
+#else
+        (void)timed;
+#endif
+        result.receipt = edit->batch(storage.bytes, fault == EDIT_FAULT_CALLBACK ? 0 : rounds, miss);
+#ifdef ACCOUNT_ONLY
+        if (fault == EDIT_FAULT_ALLOCATION) {
+            /* A real allocate/free pair leaves live bytes unchanged but must
+             * still fail the request/release-count observation. */
+            edit_fault_allocation = wf_cost_allocate(8);
+            *(volatile unsigned char *)edit_fault_allocation = 1;
+            wf_cost_release(edit_fault_allocation);
+            edit_fault_allocation = NULL;
+        }
+#endif
+#ifndef ACCOUNT_ONLY
+        if (timed) end = reserve_now();
+#endif
+        require(end >= start, "edit clock nondecreasing");
+        result.elapsed += end - start;
+        if (fault == EDIT_FAULT_RESULT) result.receipt ^= 1;
+        uint64_t expected = edit_batch_oracle(count, rounds, seed, miss, increments);
+        require(result.receipt == expected, fault == EDIT_FAULT_CALLBACK
+                ? "edit exact callback updates" : "edit independent result oracle");
+        if (!miss) increments += rounds;
+    }
+#ifdef ACCOUNT_ONLY
+    require(memcmp(&ledger, &result.filled, sizeof ledger) == 0, "edit batch has no allocation");
+#endif
+    require(owner->geometry(storage.bytes) == result.geometry, "edit preserves geometry");
+    if (fault == EDIT_FAULT_TAIL) edit->damage(storage.bytes);
+    if (fault == EDIT_FAULT_REPEAT) (void)edit->batch(storage.bytes, 1, 0);
+    result.cleanup = owner->finish(storage.bytes);
+    if (fault == EDIT_FAULT_CLEANUP) result.cleanup ^= 1;
+    require(result.cleanup == edit_cleanup_oracle(owner->wide, count, seed, increments),
+            "edit independent full-content cleanup oracle");
+#ifdef ACCOUNT_ONLY
+    if (fault == EDIT_FAULT_LEAK) wf_ecosystem_note_alloc(8);
+#endif
+    clean_ledger();
+#ifdef ACCOUNT_ONLY
+    result.final = ledger;
+#endif
+    observed ^= result.receipt ^ result.cleanup;
+    return result;
+}
+
+static void edit_check(void) {
+    const uint64_t slots[] = {64, 4096}, seeds[] = {17, 101, UINT64_MAX}, rounds[] = {0, 1, 3};
+    size_t checked = 0;
+    for (size_t v = 0; v < ELEMENTS(edit_apis); ++v)
+        for (size_t s = 0; s < ELEMENTS(slots); ++s)
+            for (size_t n = 0; n < ELEMENTS(seeds); ++n)
+                for (size_t r = 0; r < ELEMENTS(rounds); ++r)
+                    for (unsigned miss = 0; miss < 2; ++miss) {
+                        (void)edit_one(v, slots[s], slots[s]/2, seeds[n], miss != 0,
+                                       rounds[r], 2, EDIT_FAULT_NONE, false);
+                        ++checked;
+                    }
+    printf("map edit: %zu isolated owner/two-batch/full-cleanup cases passed\n", checked);
+}
+
+static void edit_negative(const char *name, size_t variant) {
+    require(variant < ELEMENTS(edit_apis), "edit negative variant");
+    EditFault fault = EDIT_FAULT_NONE;
+    if (!strcmp(name,"population")) fault = EDIT_FAULT_POPULATION;
+    else if (!strcmp(name,"capacity")) fault = EDIT_FAULT_CAPACITY;
+    else if (!strcmp(name,"result")) fault = EDIT_FAULT_RESULT;
+    else if (!strcmp(name,"callback")) fault = EDIT_FAULT_CALLBACK;
+    else if (!strcmp(name,"cleanup")) fault = EDIT_FAULT_CLEANUP;
+    else if (!strcmp(name,"tail")) { require(lookup_apis[variant].wide,"edit tail fault requires wide"); fault = EDIT_FAULT_TAIL; }
+    else if (!strcmp(name,"repeat")) fault = EDIT_FAULT_REPEAT;
+#ifdef ACCOUNT_ONLY
+    else if (!strcmp(name,"allocation")) fault = EDIT_FAULT_ALLOCATION;
+    else if (!strcmp(name,"leak")) fault = EDIT_FAULT_LEAK;
+    else if (!strcmp(name,"filled-allocation")) fault = EDIT_FAULT_FILLED_ALLOCATION;
+#endif
+    else require(false,"unknown edit negative control");
+    (void)edit_one(variant,64,32,17,false,2,1,fault,false);
+    require(false,"edit negative control was not refused");
+}
+
 typedef uint64_t (*ReserveStep)(void *, uint64_t);
 typedef uint64_t (*ReserveInsert)(void *, uint64_t, uint64_t);
 typedef double (*ReserveLoad)(const void *);
@@ -874,6 +1053,44 @@ static void lookup_measure(unsigned cohort, uint64_t work) {
                     }
             }
 }
+static bool edit_measure(unsigned cohort, uint64_t work) {
+    enum { EDIT_SAMPLES = 12 };
+    const uint64_t slots[] = {64, 4096};
+    uint64_t clock_cost = reserve_clock_check(0, true);
+    bool valid = true;
+    puts("contract,cohort,element_bytes,path,physical_backing_target,count,hash,variant,reported_capacity_kind,reported_capacity,sample,rounds,edits,elapsed_ns,receipt,cleanup_checksum,instrument_valid");
+    for (unsigned wide = 0; wide < 2; ++wide)
+        for (size_t s = 0; s < ELEMENTS(slots); ++s)
+            for (unsigned miss = 0; miss < 2; ++miss) {
+                uint64_t target = slots[cohort ? ELEMENTS(slots)-1-s : s];
+                uint64_t count = target/2, rounds = lookup_rounds(count, work);
+                for (unsigned warmup = 0; warmup < 2; ++warmup)
+                    for (unsigned offset = 0; offset < LOOKUP_IMPLEMENTATIONS; ++offset) {
+                        unsigned peer = cohort ? LOOKUP_IMPLEMENTATIONS-1-offset : offset;
+                        (void)edit_one(wide*LOOKUP_IMPLEMENTATIONS+peer,target,count,
+                                       71+warmup,miss != 0,rounds,1,EDIT_FAULT_NONE,false);
+                    }
+                for (unsigned sample = 0; sample < EDIT_SAMPLES; ++sample)
+                    for (unsigned offset = 0; offset < LOOKUP_IMPLEMENTATIONS; ++offset) {
+                        unsigned peer = (sample+offset)%LOOKUP_IMPLEMENTATIONS;
+                        if (cohort) peer = LOOKUP_IMPLEMENTATIONS-1-peer;
+                        size_t variant = wide*LOOKUP_IMPLEMENTATIONS+peer;
+                        const LookupApi *api = &lookup_apis[variant];
+                        EditObservation r = edit_one(variant,target,count,101+sample,
+                                                    miss != 0,rounds,1,EDIT_FAULT_NONE,true);
+                        bool qualified = r.elapsed >= UINT64_C(1000000) && r.elapsed/100 >= clock_cost;
+                        valid &= qualified;
+                        printf("isolated-edit,%u,%u,%s,%" PRIu64 ",%" PRIu64
+                               ",salted-mix64,%s,%s,%" PRIu64 ",%u,%" PRIu64
+                               ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%u\n",
+                               cohort,wide ? 256 : 8,miss ? "miss" : "hit",target,count,
+                               api->name,api->capacity_kind,r.geometry>>32,sample,rounds,
+                               rounds*count,r.elapsed,r.receipt,r.cleanup,qualified);
+                    }
+            }
+    return valid;
+}
+
 static uint64_t batch_oracle(bool wide, Shape shape, unsigned path, uint64_t rounds,
                              uint64_t traces, uint64_t seed) {
     uint64_t checksum = 0;
@@ -991,6 +1208,25 @@ static void lookup_account(uint64_t work) {
                        api->name, api->capacity_kind, encoded >> 32, rounds, rounds * count,
                        filled.live, ledger.requests, ledger.releases, ledger.bytes, ledger.peak,
                        ledger.live, checksum, cleanup);
+            }
+}
+
+static void edit_account(uint64_t work) {
+    const uint64_t slots[] = {64, 4096};
+    puts("contract,element_bytes,path,physical_backing_target,count,variant,reported_capacity_kind,reported_capacity,rounds,edits,filled_live_bytes,requests,releases,requested_bytes,peak_bytes,final_live_bytes,receipt,cleanup_checksum");
+    for (size_t v = 0; v < ELEMENTS(edit_apis); ++v)
+        for (size_t s = 0; s < ELEMENTS(slots); ++s)
+            for (unsigned miss = 0; miss < 2; ++miss) {
+                uint64_t target=slots[s],count=target/2,rounds=lookup_rounds(count,work);
+                const LookupApi *api=&lookup_apis[v];
+                EditObservation r=edit_one(v,target,count,101,miss != 0,rounds,1,EDIT_FAULT_NONE,false);
+                printf("isolated-edit-account,%u,%s,%" PRIu64 ",%" PRIu64 ",%s,%s,%" PRIu64
+                       ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64
+                       ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 "\n",
+                       api->wide ? 256 : 8,miss ? "miss" : "hit",target,count,api->name,
+                       api->capacity_kind,r.geometry>>32,rounds,rounds*count,r.filled.live,
+                       r.final.requests,r.final.releases,r.final.bytes,r.final.peak,r.final.live,
+                       r.receipt,r.cleanup);
             }
 }
 
@@ -1217,7 +1453,7 @@ static uint64_t parse_work(const char *text) {
 }
 
 int main(int argc, char **argv) {
-    require(argc >= 2, "usage: check | occupancy-check | lookup-check | lookup-account work | lookup-measure 0|1 work | geometry | geometry-check | geometry-identities | negative-geometry kind | negative-checksum | negative-leak | negative-reserve variant | account work | occupancy-account work | measure 0|1 work | occupancy-measure 0|1 work");
+    require(argc >= 2, "usage: check | occupancy-check | edit-check | negative-edit fault variant | edit-account work | edit-measure 0|1 work | lookup-check | lookup-account work | lookup-measure 0|1 work | geometry | geometry-check | geometry-identities | negative-geometry kind | negative-checksum | negative-leak | negative-reserve variant | account work | occupancy-account work | measure 0|1 work | occupancy-measure 0|1 work");
     if (strcmp(argv[1], "check") == 0) {
         require(argc == 2, "check takes no arguments"); check();
     } else if (strcmp(argv[1], "occupancy-check") == 0) {
@@ -1227,6 +1463,11 @@ int main(int argc, char **argv) {
     } else if (strcmp(argv[1], "negative-reserve-api") == 0) {
         require(argc == 4 && strlen(argv[3]) == 1 && argv[3][0] >= '0' && argv[3][0] <= '2', "reserve negative fault peer");
         reserve_negative(argv[2], (unsigned)(argv[3][0] - '0'));
+    } else if (strcmp(argv[1], "edit-check") == 0) {
+        require(argc == 2, "edit-check takes no arguments"); edit_check();
+    } else if (strcmp(argv[1], "negative-edit") == 0) {
+        require(argc == 4 && strlen(argv[3]) == 1 && argv[3][0] >= '0' && argv[3][0] <= '7', "negative-edit requires fault and variant0..7");
+        edit_negative(argv[2], (size_t)(argv[3][0]-'0'));
     } else if (strcmp(argv[1], "lookup-check") == 0) {
         require(argc == 2, "lookup-check takes no arguments"); lookup_check();
     } else if (strcmp(argv[1], "negative-lookup") == 0) {
@@ -1257,6 +1498,8 @@ int main(int argc, char **argv) {
         require(argc == 3, "account requires a work count"); account(parse_work(argv[2]), false);
     } else if (strcmp(argv[1], "occupancy-account") == 0) {
         require(argc == 3, "occupancy-account requires a work count"); account(parse_work(argv[2]), true);
+    } else if (strcmp(argv[1], "edit-account") == 0) {
+        require(argc == 3, "edit-account requires work"); edit_account(parse_work(argv[2]));
     } else if (strcmp(argv[1], "lookup-account") == 0) {
         require(argc == 3, "lookup-account requires a work count"); lookup_account(parse_work(argv[2]));
     } else if (strcmp(argv[1], "geometry") == 0 || strcmp(argv[1], "geometry-check") == 0) {
@@ -1282,6 +1525,9 @@ int main(int argc, char **argv) {
         require(argc == 4 && (strcmp(argv[2], "0") == 0 || strcmp(argv[2], "1") == 0),
                 "measure requires cohort 0 or 1 and a work count");
         measure((unsigned)(argv[2][0] - '0'), parse_work(argv[3]), strcmp(argv[1], "occupancy-measure") == 0);
+    } else if (strcmp(argv[1], "edit-measure") == 0) {
+        require(argc == 4 && (strcmp(argv[2],"0") == 0 || strcmp(argv[2],"1") == 0), "edit-measure requires cohort0|1 and work");
+        if (!edit_measure((unsigned)(argv[2][0]-'0'),parse_work(argv[3]))) return 1;
     } else if (strcmp(argv[1], "lookup-measure") == 0) {
         require(argc == 4 && (strcmp(argv[2], "0") == 0 || strcmp(argv[2], "1") == 0),
                 "lookup-measure requires cohort 0 or 1 and a work count");

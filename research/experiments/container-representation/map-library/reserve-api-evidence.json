@@ -1,8 +1,8 @@
 {
   "purpose": "Isolated ordinary public reserve with verified future entry headroom; single production baseline panel, not an optimization/adoption result",
   "archive": "reserve-api-evidence.tar.gz",
-  "archive_sha256": "0420f4b96cc25cf5f794cafeccd19b7a6a246a7b64eda966af8ff844b13747c8",
-  "archive_members": 918,
+  "archive_sha256": "037fbde58994129c2687a682ff24f6a3df6eaca02685dcfb0a0d5565a9dbee95",
+  "archive_members": 932,
   "base_revision": "89571a60381a685cfbe760248ceb6178d9f9ac05",
   "production_cli_sha256": "c12b2b2a6c9694fd2bc1b7be0004d582ae9628951422def849f4cf6a3ac02f77",
   "timed_image_sha256": "f1ebf18d7a94c79250bb3cbd74a0b379a2a30c6e5e4eda48396ec77d8bbdbf3f",
@@ -4276,6 +4276,43 @@
       "from": "component-index.json",
       "to": "component-index-before-matched-production-cleanup.json",
       "sha256": "b7191f6cd390192e34a652037b5ec362df4a3ae15bdb6b6da70fa34914a2c781"
+    },
+    "all_prior_member_bytes_preserved": true
+  },
+  "isolated_edit": {
+    "prefix": "isolated-edit/",
+    "manifest": "isolated-edit/manifest.json",
+    "manifest_sha256": "ae53e798521a11ddaa61f17da53734a63e188e31bbbe7d6ccced471182e5abb4",
+    "payload_count": 13,
+    "records": "isolated-edit/records.json",
+    "retained_records": 278,
+    "producer_inventory_sha256": "ee199901b9e7d9bb38d62b4edccccd10ce78e49d89eba3e53a6ba10db0b561b3",
+    "producer_files_verified": 280,
+    "timing_rows": 768,
+    "accounting_rows": 32,
+    "row_counts": {
+      "edit-accounting.csv": 32,
+      "edit-cohort-0.csv": 384,
+      "edit-cohort-1.csv": 384
+    },
+    "qualified_hit_cells": 4,
+    "qualified_miss_cells": 0,
+    "drift_invalid_large_miss_cells": 2,
+    "minimum_interval_ns": 6566833,
+    "all_participant_drift_gate_preserved": true,
+    "new_negative_statuses": 78,
+    "application_target_requalified": false,
+    "new_source_optimization_adopted": false,
+    "status": "Isolated public EDIT instrument: four hit peer targets pass; all four miss targets fail, with both large misses additionally C-attribution drift-invalid. Not a before/after gain or application target completion."
+  },
+  "isolated_edit_prior_index": {
+    "prior_archive_sha256": "0420f4b96cc25cf5f794cafeccd19b7a6a246a7b64eda966af8ff844b13747c8",
+    "prior_members": 918,
+    "unchanged_names_and_bytes": 917,
+    "renamed_member": {
+      "from": "component-index.json",
+      "to": "component-index-before-isolated-edit.json",
+      "sha256": "6f9955e505991beb51cbef4a449e855f642507fb6fb63e8cade083317e05c727"
     },
     "all_prior_member_bytes_preserved": true
   }
