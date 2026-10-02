@@ -1,0 +1,4 @@
+fn narrow(width: u32) -> result: u32 pure {
+  doc "The table's narrower column width.";
+  return width / 2_u32;
+}

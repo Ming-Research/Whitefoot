@@ -1,0 +1,24 @@
+struct Block {
+  y: i32;
+  height: i32;
+}
+
+struct Ctx {
+  blocks: Box<Slots<Block>>;
+  width: i32;
+}
+
+fn lift_run(context: &Ctx, lo: u64, hi: u64) -> result: unit writes(context.blocks.inner[lo..hi]) contract {
+  requires lo <= hi;
+  requires hi <= context^.blocks.inner.len;
+} {
+  doc "Raises the elements of one run and declares that run.";
+  for (k in lo..hi) {
+    set context^.blocks.inner[k].y = context^.blocks.inner[k].y +sat 1_i32;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

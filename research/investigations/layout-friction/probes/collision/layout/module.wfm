@@ -1,0 +1,1 @@
+public fn grid_width(width: u32) -> result: u32 pure doc "A grid's track width.";

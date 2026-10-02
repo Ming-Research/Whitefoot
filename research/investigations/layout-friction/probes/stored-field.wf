@@ -1,0 +1,18 @@
+struct Split {
+  open: u32;
+  close: u32;
+}
+
+fn close_of(splits: &[Split], blocks: &[u64], k: u64) -> result: u64 reads(splits), reads(blocks) contract {
+  requires k < splits^.len;
+  requires forall bounded(j in 0_u64..splits^.len): splits^[j].close < blocks^.len;
+} {
+  doc "Reads the block a split closes, its position bounded by a range fact over a field of each split.";
+  let at = cvt::<u32, u64>(splits^[k].close);
+  let found = blocks^[at];
+  return found;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

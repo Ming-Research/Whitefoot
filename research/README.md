@@ -95,6 +95,11 @@ the work-branch and merge boundary.
   specification prescribes against the compiler's printed text, refuted and
   unproved probes of each, and whether the words belong to the specification
   or the compiler.
+- [Layout friction](investigations/layout-friction/DESIGN.md): four costs the
+  writers of Snowghost's layout stage met (length guards, from facts coarse
+  rows kill and from positions stored in other windows; module names closed
+  to every local; allocation clamps; parameters only a contract reads), each
+  with its witness, rule, census of the layout code and directions.
 
 Open research questions and evidence links are in [ideas](../docs/ideas.md);
 known compiler defects and implementation costs are in [todo](../docs/todo.md).

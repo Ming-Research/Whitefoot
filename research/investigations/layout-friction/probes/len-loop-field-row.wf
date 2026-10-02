@@ -1,0 +1,32 @@
+struct Split {
+  owner: u32;
+}
+
+struct Ctx {
+  splits: Box<Slots<Split>>;
+  fragments: Box<Slots<u64>>;
+}
+
+fn add_fragment(context: &Ctx, value: u64) -> result: unit writes(context.fragments) {
+  doc "Appends a fragment when there is room, declaring the field it writes.";
+  if context^.fragments.inner.len < context^.fragments.inner.cap {
+    place_back(window: &context^.fragments.inner, value: value);
+  }
+  return unit;
+}
+
+fn fragments_per_split(context: &Ctx) -> result: u64 writes(context) {
+  doc "Reads splits[k] below a count taken from the splits' length while the loop calls the helper, whose row leaves the splits alone.";
+  let count = context^.splits.inner.len;
+  let total = 0_u64;
+  for (k in 0_u64..count) {
+    let owner = context^.splits.inner[k].owner;
+    add_fragment(context: context, value: k);
+    set total = total +wrap 1_u64;
+  }
+  return total;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
