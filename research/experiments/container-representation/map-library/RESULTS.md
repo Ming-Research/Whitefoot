@@ -49,6 +49,8 @@ owned-removal API windows remain missing.
 The [EDIT-only two-span follow-up](#edit-only-two-span-probing-rejected)
 reduces native body instructions but has no qualified miss gain, three qualified
 two-cohort hit losses and zero candidate peer targets; its source stays rejected.
+A later [first-probe controls discriminator](#first-probe-controls-rejected-at-the-native-gate)
+admits source but fails its native spill gate; no execution or timing followed.
 
 ## Current Rust and C++ ecosystem comparison
 
@@ -6305,3 +6307,48 @@ criteria, exact both-arm sources and patch, failed carrier attempts, normal/
 parallel checks, compact native/linked evidence, allocator parity, all raw rows,
 reducers and pin identities. Replay needs the pinned integrated compiler and
 baseline driver/peer/runtime dependencies; full binaries/IR are omitted.
+
+### First-probe controls: rejected at the native gate
+
+This native-only discriminator preserves the direct first enum-slot probe before
+reading compact fingerprint controls. It replaces optional control ownership
+with an inline `Box<Slots<u64>>` descriptor and tail word, and carries one checked
+extent into continuation. The final source admits under the unchanged compiler;
+all six emission/native-inspection stages exit zero. Earlier formatting,
+direct-return postcondition and private-constructor allocation-bound failures
+remain recorded. The direct-return limitation already has an existing TODO;
+this trial changes no compiler or public capacity/refusal rule.
+
+Continuation achieves one complete-group extent check followed by direct word
+loads, without optional-owner/header indirection or repeated storage-length
+fallback. Tail classification and actual enum validation before payload access
+remain. The first-hit payload/digest path stays register-only and reads no
+metadata. Nevertheless the candidate newly stores the round count and reloads
+it each outer round (`5a7c`/`5a88` scalar, `62f4`/`6300` wide), violating the
+prospective no-new-spill gate. This is not a per-key digest spill. Both hash mix
+constants also move from outside the loops into every normal-hash key path.
+An unchanged first-probe source shape therefore does not establish unchanged
+first-hit native cost.
+
+| Complete EDIT body, either width | Control | Candidate |
+|---|---:|---:|
+| Decoded instructions | 248 | 542 |
+| Frame bytes | 16 | 112 |
+| Calls | 0 | 0 |
+
+The experimental descriptor grows from 40 to 72 bytes. Control backing adds
+`8 * floor(capacity / 8)` heap bytes and one allocation whenever capacity is at
+least eight, including capacity eight; setup initializes full words and the
+tail. Whole-object decoded instruction bytes grow from 45,220 to 54,832;
+these are not linked-image sizes. Fingerprint filtering also skips some equality
+callbacks under the consistent-key protocol. Ownership, callback, full-capacity
+and hostile-protocol execution witnesses have not run for this representation.
+
+The native failure stops the trial: no linked correctness qualification,
+timing, measured slowdown, rescue variant or representation adoption follows.
+The `first-probe-controls/` component of
+[reserve-api-evidence.tar.gz](reserve-api-evidence.tar.gz) retains both source
+graphs and patch, prospective criterion, all failed attempts, direct statuses,
+compact object functions, counts and original/normalized pins. Full modules and
+binaries are omitted with explicit historical replay limits. The achieved extent
+simplification is retained as evidence; it does not override the failed gate.

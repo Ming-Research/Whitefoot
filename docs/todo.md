@@ -3580,6 +3580,15 @@ condition under which it is taken up.
   that preserves complete outcomes and all drift/peer gates, not an instruction
   count alone. Original API/application failures remain open.
 
+  The [first-probe controls native trial](../research/experiments/container-representation/map-library/RESULTS.md#first-probe-controls-rejected-at-the-native-gate)
+  removes optional-owner/header and repeated extent fallback from continuation,
+  but adds a repeated-round count spill and per-key hash-constant materialization.
+  Its native gate fails before execution or timing; keep the representation
+  unselected. Reopen only with a discriminator that preserves first-hit native
+  work and complete callback/ownership behavior, including the extra 32-byte
+  descriptor and allocation already at capacity eight. No measured performance
+  conclusion or generic correctness follows from source admission.
+
   The [actual integrated-candidate comparison](../research/experiments/container-representation/map-library/RESULTS.md#integrated-candidate-with-the-maintained-caller)
   has no qualified before/after gain in 40 maintained-caller cells; all four
   overall screens remain unqualified. Its reserve maximum empty interval of

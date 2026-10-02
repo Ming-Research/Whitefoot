@@ -1,8 +1,8 @@
 {
   "purpose": "Isolated ordinary public reserve with verified future entry headroom; single production baseline panel, not an optimization/adoption result",
   "archive": "reserve-api-evidence.tar.gz",
-  "archive_sha256": "780f49d73f41733f9f8fb1a91c971a1863b2926fc34033eaa308b84daa932ae2",
-  "archive_members": 953,
+  "archive_sha256": "d8dae1a0cb23967b2a9caa6bea4e99f3cb62dda4d6ba35610b4ad4658f972baa",
+  "archive_members": 962,
   "base_revision": "89571a60381a685cfbe760248ceb6178d9f9ac05",
   "production_cli_sha256": "c12b2b2a6c9694fd2bc1b7be0004d582ae9628951422def849f4cf6a3ac02f77",
   "timed_image_sha256": "f1ebf18d7a94c79250bb3cbd74a0b379a2a30c6e5e4eda48396ec77d8bbdbf3f",
@@ -4358,6 +4358,40 @@
       "from": "component-index.json",
       "to": "component-index-before-isolated-edit-two-span.json",
       "sha256": "19b25c3a0ab393d4bf001304b5dad62788f11c5f3713634ccab2d5d2f4c7a4f5"
+    },
+    "all_prior_member_bytes_preserved": true
+  },
+  "first_probe_controls": {
+    "prefix": "first-probe-controls/",
+    "manifest": "first-probe-controls/manifest.json",
+    "manifest_sha256": "74afa00ccff9c4005afd7a483b8a7b27e81f59e9af834962f30d00cb43886eae",
+    "payload_count": 8,
+    "records": "first-probe-controls/records.json",
+    "retained_records": 67,
+    "producer_inventory_sha256": "7a9af8dfbd3107ff0e5cc127c1817a370b2d46bda1d1c48fa25eae0ebef3a700",
+    "producer_files_verified": 66,
+    "native_stages_zero": 6,
+    "source_admitted": true,
+    "native_gate_passed": false,
+    "correctness_execution": false,
+    "timing_run": false,
+    "production_adoption": false,
+    "body_instructions_before": 248,
+    "body_instructions_after": 542,
+    "frame_bytes_before": 16,
+    "frame_bytes_after": 112,
+    "descriptor_bytes_added": 32,
+    "new_allocation_minimum_capacity": 8,
+    "status": "Rejected first-probe compact-controls native screen: continuation extent simplification achieved, new repeated-round spill violates gate; per-key hash constants and representation costs retained. No correctness/performance claim."
+  },
+  "first_probe_controls_prior_index": {
+    "prior_archive_sha256": "780f49d73f41733f9f8fb1a91c971a1863b2926fc34033eaa308b84daa932ae2",
+    "prior_members": 953,
+    "unchanged_names_and_bytes": 952,
+    "renamed_member": {
+      "from": "component-index.json",
+      "to": "component-index-before-first-probe-controls.json",
+      "sha256": "a3ce3a2d6288d24e764ede4b71e4656b7697605f434a3dd7d86800de6a687ff3"
     },
     "all_prior_member_bytes_preserved": true
   }
