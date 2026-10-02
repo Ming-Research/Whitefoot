@@ -71,11 +71,13 @@
 #define WF_CMAP_HOLD_CLOSED(u) ((void)0)
 #endif
 
-/* The pauses a keyed statement waits for cells, over every probe and table
- * it tries, before it holds the whole map instead (wf_cmap_lock_entry):
- * about a millisecond on the measuring host, far past a statement's usual
- * wait, so that the hold is a bound and not a path the map takes under
- * ordinary contention. The map's test sets it per user. */
+/* The pauses a keyed statement waits for cells, with each retry it makes
+ * counted as one, over every probe and table it tries, past which it holds
+ * the whole map instead (wf_cmap_lock_entry): 0.77 ms on the measuring
+ * host, far past a statement's usual wait, so that the hold is a bound and
+ * not a path the map takes under ordinary contention. A waiting keyed
+ * statement does not park, so it counts pauses where a parked object
+ * statement counts its vain wakes. The map's test sets it per user. */
 #define PATIENCE (1ull << 16)
 #ifndef WF_CMAP_PATIENCE
 #define WF_CMAP_PATIENCE(u) PATIENCE
@@ -685,6 +687,13 @@ static uint64_t tag_of(const unsigned char *key, uint64_t length) {
     return tag;
 }
 
+/* Counts pauses waited, or a retry as one pause, against u's patience: 1
+ * once the statement has waited past it. */
+static inline int impatient(wf_cmap_user *u, uint64_t pauses) {
+    u->waited += pauses;
+    return u->waited > u->patience;
+}
+
 /* Locks c when it holds key, whose hash is tag: 1 and the cell locked when
  * it does, 0 with the cell as it was when it holds another key of that hash,
  * and -1 when its key word changed or it waited, counted against u's
@@ -696,8 +705,10 @@ static int try_entry(wf_cmap_user *u, cell *c, uint64_t k, const unsigned char *
         return -1;
     }
     if (!atomic_compare_exchange_weak_explicit(&c->key, &k, k | LOCKED, memory_order_seq_cst,
-                                               memory_order_relaxed))
+                                               memory_order_relaxed)) {
+        u->waited += 1;
         return -1;
+    }
     node *n = (node *)(uintptr_t)atomic_load_explicit(&c->value, memory_order_relaxed);
     if (n->length == length && memcmp(n->bytes, key, (size_t)length) == 0)
         return 1;
@@ -758,7 +769,7 @@ static int settle_claim(wf_cmap_user *u, table *t, uint64_t start, uint64_t at, 
                     }
                 }
                 if (r < 0) {
-                    if (u->waited >= u->patience) {
+                    if (impatient(u, 0)) {
                         atomic_store_explicit(&claimed->key, REMOVED, memory_order_release);
                         return IMPATIENT;
                     }
@@ -779,8 +790,9 @@ static int settle_claim(wf_cmap_user *u, table *t, uint64_t start, uint64_t at, 
  * again keeps reusing one cell instead of leaving a removed cell each time in
  * front of the next probe, or else the empty cell that ended the probe; FULL
  * when the whole table holds neither, and IMPATIENT, holding no cell, when
- * a wait exhausts u's patience. A claimed empty cell given back as removed is
- * counted as used, since it stays taken until the table moves. */
+ * its waits and retries exhaust u's patience. A claimed empty cell given back
+ * as removed is counted as used, since it stays taken until the table
+ * moves. */
 static int acquire_entry(wf_cmap_user *u, table *t, uint64_t tag, const unsigned char *key, uint64_t length,
                          cell **out) {
     uint64_t start = start_of(t, tag);
@@ -799,7 +811,7 @@ static int acquire_entry(wf_cmap_user *u, table *t, uint64_t tag, const unsigned
             if (bare == tag) {
                 int r = try_entry(u, c, k, key, length, &round);
                 if (r < 0) {
-                    if (u->waited >= u->patience)
+                    if (impatient(u, 0))
                         return IMPATIENT;
                     continue;
                 }
@@ -810,8 +822,11 @@ static int acquire_entry(wf_cmap_user *u, table *t, uint64_t tag, const unsigned
             } else if (bare == EMPTY && !spared) {
                 WF_CMAP_BEFORE_CLAIM(t, i);
                 if (!atomic_compare_exchange_weak_explicit(&c->key, &k, tag | LOCKED | PENDING,
-                                                           memory_order_seq_cst, memory_order_relaxed))
+                                                           memory_order_seq_cst, memory_order_relaxed)) {
+                    if (impatient(u, 1))
+                        return IMPATIENT;
                     continue;
+                }
                 at = i;
                 claimed = 1;
                 from_empty = 1;
@@ -833,15 +848,18 @@ static int acquire_entry(wf_cmap_user *u, table *t, uint64_t tag, const unsigned
                 break;
             claimed = 1;
         }
-        if (!claimed)
-            continue;
-        int r = settle_claim(u, t, start, at, tag, key, length, out);
-        if (r == SETTLED)
-            return from_empty ? CLAIMED : REUSED;
-        if (from_empty)
-            count(u, 1, 0);
-        if (r == FOUND || r == IMPATIENT)
-            return r;
+        if (claimed) {
+            int r = settle_claim(u, t, start, at, tag, key, length, out);
+            if (r == SETTLED)
+                return from_empty ? CLAIMED : REUSED;
+            if (from_empty)
+                count(u, 1, 0);
+            if (r == FOUND || r == IMPATIENT)
+                return r;
+        }
+        /* A lost claim or one that gave way: the probe starts again. */
+        if (impatient(u, 1))
+            return IMPATIENT;
     }
 }
 
@@ -869,6 +887,8 @@ static int lock_entry(wf_cmap_user *u, uint64_t tag, const unsigned char *key, u
             }
         }
         finish_move(u->map, t);
+        if (impatient(u, 1))
+            return IMPATIENT;
     }
 }
 
@@ -922,14 +942,16 @@ wf_cmap_user *wf_cmap_user_at(wf_cmap *map, unsigned index) {
 }
 
 /* A keyed statement waits for its entry while other statements hold it. Once
- * it has waited its patience, it gives back what it claimed, leaves the
- * statements under way and holds the whole map, as a statement over the map
- * does, and then locks its entry, which nothing else holds by then. Its hold
- * waits for the holds before it in line, one for each other user at most,
- * and after it closes the gate, for the keyed statements already under way,
- * one for each other user at most, so the statement takes effect after a
- * bounded number of others [WAIT-2]. A held statement waits for nothing,
- * since its map's holder excludes every other statement. */
+ * it has waited and retried past its patience, it gives back what it
+ * claimed, leaves the statements under way and holds the whole map, as a
+ * statement over the map does, and then locks its entry, which nothing else
+ * holds by then. Its hold waits for the holds before it in line, one for
+ * each other user at most, and, after it closes the gate, for the keyed
+ * statements already under way, one for each other user at most; keyed
+ * statements that begin between two earlier holds are bounded by those
+ * holds' own steps. So the statement takes effect [WAIT-2]. A held
+ * statement waits for nothing, since its map's holder excludes every other
+ * statement. */
 void *wf_cmap_lock_entry(wf_cmap_user *u, const unsigned char *key, uint64_t length, int held,
                          wf_cmap_entry *entry) {
     if (!held)
@@ -999,9 +1021,8 @@ void wf_cmap_unlock_entry(wf_cmap_user *u, wf_cmap_entry *entry, int held, int p
 /* Statements over the whole map take turns by ticket, so that one that
  * holds the map again and again does not keep another out [WAIT-2]. On its
  * turn a statement waits for the keyed statements a hold before it kept
- * waiting, then closes the gate and waits out the keyed statements under
- * way. Only the statement whose turn it is writes the gate, and it opens the
- * gate before it passes the turn on. */
+ * waiting, then closes the gate, once the hold before it has opened it, and
+ * waits out the keyed statements under way. */
 void wf_cmap_hold(wf_cmap_user *u) {
     wf_cmap *map = u->map;
     uint64_t ticket = atomic_fetch_add_explicit(&map->hold_next, 1, memory_order_relaxed);
@@ -1012,7 +1033,10 @@ void wf_cmap_hold(wf_cmap_user *u) {
     round = 0;
     while (atomic_load_explicit(&map->waiting, memory_order_acquire) != 0)
         back_off(&round);
-    atomic_store_explicit(&map->gate, 1, memory_order_seq_cst);
+    for (int open = 0; !atomic_compare_exchange_weak_explicit(&map->gate, &open, 1, memory_order_seq_cst,
+                                                              memory_order_relaxed);
+         open = 0)
+        back_off(&round);
     WF_CMAP_HOLD_CLOSED(u);
     int n = atomic_load_explicit(&map->users_seen, memory_order_seq_cst);
     for (int i = 0; i < n; i++) {

@@ -944,10 +944,12 @@ rarely insert at the same place.
   12 microseconds on the 4-CPU measuring host, where a pause took about
   12 ns; pause latency differs several times over between x86 cores, so
   the same counts wait longer elsewhere and the batching that won one-key
-  `update` may cost latency instead. The change: bound the wait by elapsed time,
-  read from the cycle counter, or let stage (b)'s parking replace it.
-  Reopen when the 14900K measures one-key `update`, or when waiting writers
-  park.
+  `update` may cost latency instead. A keyed statement's patience, 2^16
+  pauses before it holds the whole map, is a count of pauses too, 0.77 ms
+  on that host. The change: bound the waits by elapsed time, read from the
+  cycle counter, or let keyed statements park. Reopen when the 14900K
+  measures one-key `update`, when waiting writers park, or when holds show
+  in a workload's profile or tail latency.
 
 - **A keyed statement on an absent key allocates a node it then frees.**
   `wf_cmap_lock_entry` (`compiler/src/backend/concurrent_map.c`) claims a
@@ -1571,17 +1573,19 @@ rarely insert at the same place.
   ordinary allocator, would fix it. Reopen when a program creates many small
   objects.
 
-- **No test forces a shared object's handoff.** The unlock after two vain
-  wakes hands a parked statement the object (`completion/bridge.c`,
-  `WF_SHARED_HANDOFF`), and only contention on several drivers reaches that
-  branch: `shared_objects.wf` checks its sums, not that a handoff happened,
-  and the counts in `research/investigations/io-model/SHARED.md` came from a
-  hand-made counting build. A broken handoff would fail at random at best. A
-  runtime test that parks a statement, wakes it twice while another context
-  takes the object first, and checks that the third unlock grants it would
-  pin the branch; it needs a way to run the bridge's shared-object entries
-  on hand-made contexts. Reopen when the lock changes again or a handoff
-  defect is suspected.
+- **No test pins how many vain wakes come before a shared object's
+  hand-off.** The unlock after two vain wakes hands a parked statement the
+  object (`completion/bridge.c`, `WF_SHARED_HANDOFF`).
+  `completion/shared_object_test.c` runs the bridge's shared-object entries
+  on contexts with hand-written frames and checks that a hand-off happens,
+  at most once a statement, and that a resumed statement is overtaken by at
+  most one borrower; it does not check the count of two, so a count of three
+  would pass, and no test has a context watching for a write that a
+  borrower makes and gives back. A test that parks a statement, wakes it
+  twice while another context takes the object first and checks that the
+  third unlock grants it would pin the count; one with a watching context
+  would pin the borrower's wake. Reopen when the lock changes again or a
+  hand-off defect is suspected.
 
 - **A bound spawn is joined before the whole statement that uses it.**
   [WAIT-3] joins a bound spawn at the beginning of the first later statement

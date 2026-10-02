@@ -23,7 +23,8 @@
  *   instead: from inside a claim it gives back, after a bounded number of
  *   statements on a key others keep locking, and with every statement doing
  *   so while the map moves, holds count and claims race; and statements over
- *   the whole map that hold it in the order they asked.
+ *   the whole map that hold it in the order they asked, each after the
+ *   keyed statements the hold before it kept waiting.
  *
  * Prints the first failure and exits 1, or exits 0.
  */
@@ -91,11 +92,14 @@ static void set_patience(uint64_t first, uint64_t rest) {
  * it closed the gate. */
 static _Atomic uint64_t *hold_clock;
 static uint64_t queued_at[WF_CMAP_MAX_USERS], closed_at[WF_CMAP_MAX_USERS];
+static _Atomic int closed_seen[WF_CMAP_MAX_USERS];
 
 static void hold_seen(wf_cmap_user *u, int closed) {
     _Atomic uint64_t *clock = hold_clock;
     if (clock != NULL)
         (closed ? closed_at : queued_at)[u - u->map->users] = atomic_load(clock);
+    if (closed)
+        atomic_store(&closed_seen[u - u->map->users], 1);
 }
 
 static uint64_t mix64(uint64_t z) {
@@ -1114,7 +1118,9 @@ static void entries_churn(int crowded, uint64_t patient) {
 /* Statements on one key from every thread at once, where only the first
  * thread's run out of patience: each of those that holds the map is
  * overtaken, once it has closed the gate, by at most the one statement of
- * each other thread already under way. */
+ * each other thread already under way. Another user holds the key until the
+ * first thread's first statement has closed its gate, so at least that one
+ * holds the map whatever the host runs in parallel. */
 enum { HOT_OPS = 2000 };
 static _Atomic uint64_t hot_clock;
 static _Atomic int hot_done;
@@ -1152,14 +1158,25 @@ static void entries_bounded(void) {
     hot_length = counted_key(1, hot_key);
     atomic_store(&hot_clock, 0);
     atomic_store(&hot_done, 0);
+    atomic_store(&closed_seen[0], 0);
     set_patience(0, UINT64_MAX);
     hold_clock = &hot_clock;
+    wf_cmap_user *first = wf_cmap_user_at(map, THREADS);
+    wf_cmap_entry held;
+    wf_cmap_lock_entry(first, hot_key, hot_length, 0, &held);
     pthread_t threads[THREADS];
     counter_t c[THREADS];
     for (unsigned i = 0; i < THREADS; i++) {
         c[i] = (counter_t){map, i, NULL, NULL, 0};
         pthread_create(&threads[i], NULL, hot_statements, &c[i]);
     }
+    struct timespec pause = {0, 1000000};
+    for (unsigned waited = 0; !atomic_load(&closed_seen[0]); waited++) {
+        if (waited == 10000)
+            fail("a statement out of patience never held the map", 0, 0);
+        nanosleep(&pause, NULL);
+    }
+    wf_cmap_unlock_entry(first, &held, 0, 1);
     for (unsigned i = 0; i < THREADS; i++)
         pthread_join(threads[i], NULL);
     hold_clock = NULL;
@@ -1172,6 +1189,38 @@ static void entries_bounded(void) {
     uint64_t *slot = wf_cmap_drain(map);
     if (slot == NULL || slot[0] != atomic_load(&hot_clock))
         fail("a statement on the one key was lost (count, statements)", slot ? slot[0] : 0, atomic_load(&hot_clock));
+    wf_cmap_destroy(map);
+}
+
+/* A statement over the whole map whose turn has come waits for the keyed
+ * statements the hold before it kept waiting to begin: with one counted and
+ * none beginning, it does not close the gate until the count drops. */
+static _Atomic int held_once;
+
+static void *hold_once(void *arg) {
+    wf_cmap_user *user = arg;
+    wf_cmap_hold(user);
+    atomic_store(&held_once, 1);
+    wf_cmap_unhold(user);
+    return NULL;
+}
+
+static void holds_wait_for_counted(void) {
+    wf_cmap *map = wf_cmap_create_entries(8, 8, 0);
+    atomic_store(&held_once, 0);
+    atomic_fetch_add(&map->waiting, 1);
+    pthread_t thread;
+    pthread_create(&thread, NULL, hold_once, wf_cmap_user_at(map, 0));
+    struct timespec pause = {0, 5000000};
+    nanosleep(&pause, NULL);
+    if (atomic_load(&held_once) || atomic_load(&map->gate))
+        fail("a hold closed the gate before a counted keyed statement began (held, gate)",
+             (uint64_t)atomic_load(&held_once), (uint64_t)atomic_load(&map->gate));
+    atomic_fetch_sub(&map->waiting, 1);
+    pthread_join(thread, NULL);
+    if (!atomic_load(&held_once) || atomic_load(&map->gate))
+        fail("a hold did not follow the counted statement (held, gate)", (uint64_t)atomic_load(&held_once),
+             (uint64_t)atomic_load(&map->gate));
     wf_cmap_destroy(map);
 }
 
@@ -1264,6 +1313,7 @@ int main(void) {
     }
     if (ENTRY_TESTS && WORD_TESTS) {
         entries_bounded();
+        holds_wait_for_counted();
         holds_in_turn();
     }
     if (WORD_TESTS) {

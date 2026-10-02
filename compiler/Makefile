@@ -414,9 +414,11 @@ $(COMPLETION_TMP)/concurrent-map-test-collide: $(CONCURRENT_MAP_SOURCES) src/bac
 # The shared-object runtime's waits, with contexts whose frames the test
 # writes and the moments the runtime lets it observe (shared_object_test.c).
 # It links the runtime objects the default-route probe builds with the same
-# flags, so the runtime is not compiled again for it. Only Linux runs
-# contexts on several drivers, and on one driver no context ever finds an
-# object held, so other hosts have nothing to run.
+# flags, so the runtime is not compiled again for it. Only Linux with a
+# kernel ring runs contexts on several drivers, and contexts on one driver,
+# or on one processor, practically never find an object held, so other hosts
+# have nothing to run and the test itself reports a Linux host that checks
+# no hand-off.
 SHARED_OBJECT_TEST_OBJECTS := \
 	$(patsubst src/backend/%.c,$(COMPLETION_TMP)/objects/bridge-default-probe/%.o,$(COMPLETION_RUNTIME_SOURCES)) \
 	$(COMPLETION_TMP)/objects/bridge-default-probe/completion/shared_object_test.o

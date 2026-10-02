@@ -379,15 +379,20 @@ begun statement whose guard stays true takes effect:
   hold an unlock had handed a parked context, which then waited again from
   its queue's head and could lose the object at every hand-off.
 
-**A keyed statement's patience.** The fix first proposed marked a waiter
+**A keyed statement's patience.** The fix the owner first approved marked a waiter
 beside its cell and had the unlocker hand the cell to a marked waiter, in
 turn. A waiter's place then names a cell of one table: a move, which other
 users' claims can start between any two of the waiter's steps, gives the
 cell back and sends the waiter to compete for the key's cell in the next
 table, so the place does not survive the moves [WAIT-2] allows. Instead a
-keyed statement counts the pauses it waits for cells over every probe and
-table it tries (`wf_cmap_lock_entry`), so a move does not reset the count.
-Past 2^16 pauses, 0.77 ms on this host at 11.7 ns a pause, it gives back
+keyed statement counts the pauses it waits for cells, and each retry after a
+lost compare-and-swap, a claim that gave way or a move as one more, over
+every probe and table it tries (`wf_cmap_lock_entry`), so a move does not
+reset the count and no sequence of retries escapes it. It counts pauses
+where an object statement counts vain wakes because it never parks and so
+is never woken; the count is provisional, since a pause lasts several times
+longer on some cores than others. Past 2^16 pauses, 0.77 ms on this host at
+11.7 ns a pause, it gives back
 any claim, leaves the statements under way, holds the whole map through the
 gate a whole-map statement uses, and then locks its entry, which no
 statement holds by then. Whole-map statements take turns by ticket. After
@@ -398,11 +403,16 @@ begin between two holds are bounded by the holds' own steps, not by a
 count.
 
 The map's test checks the bound with four threads on one key, the first
-out of patience at its first wait and the others never: in each of three
-runs the statements that held the map (424 to 844 of 2,000) were overtaken
-after closing the gate by at most three others, the bound. Mutants: never
-holding the map fails the test because no statement held it; a hold that
-leaves the gate open was overtaken 31,666 to 80,142 times; holds that race
+out of patience at its first wait and the others never, while a fifth user
+holds the key until the first thread's first statement has closed its gate,
+so that at least that statement holds the map on any host: in each of three
+runs on four CPUs the statements that held the map (786 to 982 of 2,000)
+were overtaken after closing the gate by at most three others, the bound,
+and on one CPU the one forced statement held it. Mutants: never holding the
+map fails the test because no statement held it; a hold that leaves the
+gate open was overtaken 18,338 to 209,257 times; a hold that does not wait
+for the keyed statements a hold before it kept waiting closes the gate over
+one counted by hand; holds that race
 for the gate instead of taking tickets let one thread hold the map 110 to
 191 times in a row while the other waited, where tickets allow one; a
 statement that gives up without giving back its claim, or without counting
@@ -414,8 +424,9 @@ quarter as many statements as their ordinary runs, which held it 27,124 to
 46,225 times in the churn and 602 to 1,286 in the counting test that moves
 its map, over two runs of the default and the narrowed-hash builds; with
 the default patience the ordinary runs held it 0 to 15 times, waits past
-0.77 ms on this four-CPU container. The map test's three builds took 4.3 s against
-4.5 s before the change.
+0.77 ms on this four-CPU container. A hold takes the gate by
+compare-and-swap once the hold before it has opened it, so the order of an
+unhold's two stores does not matter.
 
 **The patience on the suite's hot keys.** Criterion, stated before
 measuring: on two server CPUs at depth 16, firn's keyed statements hold the
@@ -437,9 +448,10 @@ resolution these runs have.
 unlock has handed a parked context now borrows that hold, alone, and gives
 it back when it ends (`wf__shared_take`); the context keeps the object, and
 when it resumes it claims the hold, which ends the borrowing, and waits
-only for the borrower under way. A context owed the object after a
-take-back, which reserves the object when it next runs, was considered and
-refused: ordinary statements could still take the object before the owed
+only for the borrower under way. The fix the owner first approved, a
+context owed the object after a take-back, which reserves the object when
+it next runs, was refused once built out: ordinary statements could still
+take the object before the owed
 context ran, and every hand-off had to stop while any context was owed, or
 a context handed the object later became owed and reserved first.
 
@@ -452,9 +464,12 @@ once and, once resumed, overtaken by at most the one borrower under way.
 Mutants: the take-back handed one statement the object 3 to 12 times; a
 borrow that ignores the claim overtook a resumed statement 10 to 40 times;
 and a statement that waits instead of borrowing never ends, which the
-test's alarm fails. The test links the runtime objects the default-route
-probe builds, and the runtime group took 19.0 s from an empty build
-directory against 19.7 s before it.
+test's alarm fails. On one processor, or with contexts that all ran on one
+driver as on a host without a kernel ring, contexts practically never find
+the object held long enough to park, and the test reports that it checked no
+hand-off; on two CPUs it took 8 to 16 s, waiting for hand-offs. The test
+links the runtime objects the default-route probe builds, and the runtime
+group took 19.0 s from an empty build directory against 19.7 s before it.
 
 ## The measurement
 

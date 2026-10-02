@@ -16,27 +16,31 @@
  * before P does [WAIT-2]. The counter under the object equals the
  * statements run.
  *
+ * Contexts that all ran on one driver, or on drivers that one processor
+ * runs in turn, practically never find the object held long enough to park,
+ * so the test reports that it checked no hand-off when the process may run
+ * on one processor or its contexts ran on one driver; a host without a
+ * kernel ring runs one driver whatever WF_DRIVERS asks.
+ *
  * Prints the first failure and exits 1, or exits 0.
  */
-#if !defined(_POSIX_C_SOURCE)
-#define _POSIX_C_SOURCE 200809L
-#endif
-#if defined(__APPLE__) && !defined(_DARWIN_C_SOURCE)
-#define _DARWIN_C_SOURCE 1
-#endif
+/* Linux only (compiler/Makefile), for sched_getaffinity. */
+#define _GNU_SOURCE
 
 #include "bridge.h"
 
+#include <sched.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 #include <unistd.h>
 
 /* P asks until it has been handed the object HANDED_ENOUGH times and its
- * hold has been borrowed LENT_ENOUGH times, which takes a few thousand
- * statements, and fails if that has not happened within P_LIMIT. */
-enum { HANDED_ENOUGH = 50, LENT_ENOUGH = 20, P_LIMIT = 2000000, TAKERS = 4 };
+ * hold has been borrowed LENT_ENOUGH times, which takes well under a second
+ * on an idle host, and stops after LIMIT_SECONDS. */
+enum { HANDED_ENOUGH = 50, LENT_ENOUGH = 20, LIMIT_SECONDS = 30, TAKERS = 4 };
 
 /* A frame: the step its resumption runs, which returns when the frame
  * suspends or is done. */
@@ -58,6 +62,14 @@ static _Atomic int stop;
 static _Atomic uint64_t handed, lent, handed_total;
 static _Atomic int resumed;
 static uint64_t resumed_at, worst_after_resume, worst_handed, p_statements;
+static _Atomic unsigned drivers_seen;
+static struct timespec started;
+
+static int past_limit(void) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return now.tv_sec - started.tv_sec >= LIMIT_SECONDS;
+}
 
 void wf__shared_seen(unsigned moment) {
     if (moment == WF_SHARED_HANDED) {
@@ -88,8 +100,9 @@ static void turn(void) {
 
 static void p_step(test_frame *f) {
     for (;;) {
+        atomic_fetch_or(&drivers_seen, 1u << (wf__driver_index() % 32u));
         if ((atomic_load(&handed_total) >= HANDED_ENOUGH && atomic_load(&lent) >= LENT_ENOUGH)
-            || f->statements == P_LIMIT) {
+            || (f->statements % 1024 == 0 && past_limit())) {
             p_statements = f->statements;
             atomic_store(&stop, 1);
             f->done = 1;
@@ -117,6 +130,7 @@ static void p_step(test_frame *f) {
 
 static void take_step(test_frame *f) {
     while (!atomic_load(&stop)) {
+        atomic_fetch_or(&drivers_seen, 1u << (wf__driver_index() % 32u));
         wf__shared_take(object, 1);
         turn();
         wf__shared_unlock(object, 1);
@@ -159,6 +173,12 @@ static void root_step(test_frame *f) {
                (unsigned long long)atomic_load(&lent));
     if (*counter() != statements)
         fail("a statement's turn under the object was lost (counted, statements)", *counter(), statements);
+    unsigned drivers = (unsigned)__builtin_popcount(atomic_load(&drivers_seen));
+    if (drivers < 2) {
+        printf("shared-object-test: every context ran on one driver, so none waited for the object and no "
+               "hand-off was checked\n");
+        exit(0);
+    }
     if (atomic_load(&handed_total) < HANDED_ENOUGH || atomic_load(&lent) < LENT_ENOUGH)
         fail("too few statements were handed the object or borrowed it (handed, lent)", atomic_load(&handed_total),
              atomic_load(&lent));
@@ -176,8 +196,14 @@ int main(void) {
      * others often enough to park, and a statement that borrows runs beside
      * the one it borrows from and, at times, on the driver whose queue holds
      * it; statements that wait on each other in a cycle fail the test here. */
+    cpu_set_t cpus;
+    if (sched_getaffinity(0, sizeof cpus, &cpus) == 0 && CPU_COUNT(&cpus) < 2) {
+        printf("shared-object-test: the process may run on one processor, so no hand-off is checked\n");
+        return 0;
+    }
     setenv("WF_DRIVERS", "3", 1);
     alarm(120);
+    clock_gettime(CLOCK_MONOTONIC, &started);
     static test_frame root = {root_step, 0, 0, 0, {0, 0}};
     wf__context_root_begin();
     wf__context_root_run(&root);
