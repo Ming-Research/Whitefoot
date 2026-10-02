@@ -491,6 +491,64 @@ before the context on the driver could. The test links the runtime objects
 the default-route probe builds, so it adds no compilation to the runtime
 group.
 
+### Many cores
+
+The owner ran `redis-bench.sh scale` on an Intel Core i9-14900K under WSL2,
+with 2, 4, 8 and 16 server CPUs, three interleaved passes at depth 16
+([raw lines](../../experiments/io-completion-bench/scale-14900k-samples.csv)).
+Its firn was built at `c5cdcfc9f`, before the bounded waits above. Every
+line passed the default suite first. firn's median against the fastest of
+Redis, Valkey with I/O threads, Dragonfly and Garnet:
+
+| Test | n = 2 | n = 4 | n = 8 | n = 16 |
+|---|---:|---:|---:|---:|
+| `SET` | 1.42 | 1.46 | 1.61 | 1.13 |
+| `GET` | 1.54 | 1.65 | 1.61 | 1.09 |
+| `INCR` | 1.32 | 1.21 | 1.02 | 1.18 |
+| `LPUSH` | 1.61 | 1.90 | 1.97 | 2.02 |
+| `RPOP` | 1.77 | 1.98 | 2.26 | 2.25 |
+| `SADD` | 1.58 | 1.47 | 1.53 | 1.57 |
+| `HSET` | 1.55 | 1.35 | 1.60 | 1.72 |
+| `ZADD` | 0.88 | 1.23 | 1.13 | 0.95 |
+| `LRANGE_100` | 0.95 | 0.58 | 0.61 | 0.44 |
+| `MSET` | 1.54 | 1.20 | 1.13 | 0.76 |
+
+The same session then measured two questions on the same host and reported
+them in PR #202's comments:
+
+- **The client limits n = 8 and 16.** At n = 8, two `redis-benchmark`
+  processes of 8 threads on disjoint halves of the client CPUs answered
+  `SET` at 10.7 to 11.6 million a second against firn, 1.55 to 1.71 times
+  the 6.8 to 6.9 million of one process of 16 threads in the same round,
+  and 1.65 to 2.24 times one process's rate against Garnet. `SET` and `GET` barely grow from n = 4 to
+  n = 8 for every line, so the last two columns bound the servers from
+  below.
+- **firn and firn before the shared map spend their CPUs alike at n = 4.**
+  On `SADD`, `HSET`, `ZADD` and `LRANGE_100` firn answered 0.85 to 0.96 of
+  firn at `e92a54ed7`, both keeping all four server CPUs busy, with a few
+  hundred voluntary context switches in runs of 13 to 55 million requests,
+  so firn spends 6 to 20% more CPU per request there, and 13 to 23% less on
+  `LPUSH` and `RPOP`. Whether that CPU goes to spinning on the held entry or to work
+  needs a profile, which the host's WSL2 kernel had no `perf` for.
+
+What the table shows:
+
+- **`LRANGE_100` does not scale.** firn answered 1,370,000, 1,548,000,
+  1,408,000 and 1,241,000 a second at n = 2, 4, 8 and 16, while Garnet grew
+  from 1,448,000 to 2,690,000 at n = 4, so at n = 4 the same client reads
+  far more replies than firn sends. Every request reads the one list, and every keyed statement holds
+  its entry exclusively, so the replies are written one at a time (Q37).
+- **`ZADD` stays near a million a second** at every n (996,000 to
+  1,127,000), the rate of one key's critical section; firn answered 0.95 to
+  1.05 of firn before the shared map at n = 2 to 8.
+- **`MSET` falls past n = 4**, from 1,243,000 to 1,103,000 and 802,000: a
+  whole-map statement waits for a keyed statement of each other driver, so
+  its cost grows with the drivers. Whether the client also limits it at
+  n = 16 was not measured.
+- **firn before the shared map collapses past n = 4** (`SET` 4,215,000,
+  2,509,000, 605,000) where firn holds (6,321,000, 6,597,000, 6,597,000):
+  its keyspace was one `Shared` object.
+
 ## The measurement
 
 The bundle is `research/experiments/concurrent-map-bench/`. These rules are

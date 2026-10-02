@@ -1020,6 +1020,52 @@ rarely insert at the same place.
   rates on few cores become a goal, or with the next change to the
   completion wait.
 
+- **Readers of one key take its entry one at a time.** Every keyed
+  statement holds its entry exclusively, so the `LRANGE` tests, which all
+  read one list, write their replies one at a time: on the 14900K firn
+  answered `LRANGE_100` at 0.58, 0.61 and 0.44 of Garnet with 4, 8 and 16
+  server CPUs, flat between 1.24 and 1.55 million a second
+  ([many cores](../research/investigations/concurrent-map/DESIGN.md#many-cores)).
+  The change: let a keyed statement whose block writes nothing through its
+  binding read its entry beside other such statements, counting its readers
+  in the entry's cell, which the shared-maps decision deferred to this
+  workload (Q37); firn's `LRANGE` also removes an expired list in the same
+  statement and would do that in a second one. Validate by `LRANGE_100`
+  against Garnet at 4 server CPUs with no other test slower. Reopen as the
+  next work after PR #202.
+
+- **`ZADD` is held near a million a second by one key's critical section.**
+  firn answered 996,000 to 1,127,000 a second at every server CPU count on
+  the 14900K, 0.88 of Dragonfly at 2 and 0.95 at 16
+  ([many cores](../research/investigations/concurrent-map/DESIGN.md#many-cores)).
+  For a member already held, `add_ranked` (`apps/firn/commands/sorted.wf`)
+  copies the member twice, descends the order twice to remove and put it,
+  and hashes it again to store the score, inside the one key's statement.
+  The change: reuse the removed rank's member, store the score through the
+  first lookup, and profile what remains. Validate by `ZADD` at depth 16
+  against Dragonfly at 2 and 16 server CPUs. Reopen with firn's next
+  performance work.
+
+- **A whole-map statement costs more as drivers are added.** firn's `MSET`
+  fell from 1,243,000 a second at 4 server CPUs to 1,103,000 at 8 and
+  802,000 at 16, 0.76 of Garnet there
+  ([many cores](../research/investigations/concurrent-map/DESIGN.md#many-cores)):
+  each whole-map statement waits for a keyed statement of every other
+  driver. Whether the client also limits it at 16 was not measured. The
+  change: first measure `MSET` at 16 with two client processes; if the
+  server limits it, a statement over a list of keys taken in an order the
+  runtime fixes (Q35, deferred by the shared-maps decision) holds only its
+  keys. Reopen with firn's next performance work.
+
+- **firn spends more CPU per `SADD` and `HSET` than before the shared map
+  on four drivers.** On the 14900K with 4 server CPUs both firn and firn at
+  `e92a54ed7` kept every CPU busy, and firn answered 0.96 and 0.94 of the
+  earlier firn, 6% more CPU per request, while it answered more of `LPUSH`
+  and `RPOP` on the same single keys
+  ([many cores](../research/investigations/concurrent-map/DESIGN.md#many-cores)).
+  The cause is unattributed: the host had no `perf`. Validate by a profile
+  of both on four drivers. Reopen with firn's next performance work.
+
 - **Validate reuse of selected-target element layouts during emission.**
   [Zero-stride addressing](../compiler/src/target.rs) currently queries
   the ordinary layout calculator afresh for each element-address step. Repeated

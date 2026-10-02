@@ -368,9 +368,10 @@ at the depths in `SCALE_PIPELINES`, for a host with many more CPUs than the
 four the suite assumes.
 `redis-samples.csv` holds the raw output of Experiment 7's runs, including its
 attribution runs, `redis-persistence-samples.csv` that of Experiment 8,
-`firn-samples.csv` that of the firn investigation, and `keyspace-samples.csv`
-the suite of the concurrent-map investigation's stage (c). They are removed
-with the experiments' records.
+`firn-samples.csv` that of the firn investigation, `keyspace-samples.csv`
+the suite of the concurrent-map investigation's stage (c), and
+`scale-14900k-samples.csv` its many-core run. They are removed with the
+experiments' records.
 
 ## Reproducing
 
