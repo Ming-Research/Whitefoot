@@ -793,7 +793,7 @@ impl Twin<'_> {
                         self.expression(scrutinee)?;
                         twin.push(CheckedStatement::Match {
                             scrutinee: scrutinee.clone(),
-                            enum_type: enum_type.clone(),
+                            enum_type: *enum_type,
                             arms: arms
                                 .iter()
                                 .zip(bodies)
@@ -817,17 +817,17 @@ impl Twin<'_> {
                     self.kept.insert(*binding);
                     twin.push(statement.clone());
                 }
-                CheckedStatement::Loop { body, .. } => {
-                    if reaches_entry(body) || (self.calls && reaches_object(body)) {
-                        return None;
-                    }
+                CheckedStatement::Loop { body, .. }
+                    if reaches_entry(body) || (self.calls && reaches_object(body)) =>
+                {
+                    return None;
                 }
-                CheckedStatement::ValueMatchLet { arms, .. } => {
+                CheckedStatement::ValueMatchLet { arms, .. }
                     if arms.iter().any(|arm| {
                         reaches_entry(&arm.body) || (self.calls && reaches_object(&arm.body))
-                    }) {
-                        return None;
-                    }
+                    }) =>
+                {
+                    return None;
                 }
                 _ => {}
             }
