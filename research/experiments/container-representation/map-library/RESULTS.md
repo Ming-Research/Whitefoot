@@ -48,6 +48,9 @@ miss gap still open; `hash_map_find` is private. The [fresh-insertion window](#i
 now measures ordinary per-owner batches: no qualified before/after gain in eight
 cells, with three aligned peer targets. Owned removal still needs an isolated
 API window; neither instrument replaces the whole-application goal.
+The later [scalar register-result counterfactual](#fresh-insertion-register-result-native-success-without-timing-gain)
+removes result memory traffic but qualifies no scalar gain; all wide negative
+controls fail cohort-drift admission. No callable ABI change is selected.
 The [EDIT-only two-span follow-up](#edit-only-two-span-probing-rejected)
 reduces native body instructions but has no qualified miss gain, three qualified
 two-cohort hit losses and zero candidate peer targets; its source stays rejected.
@@ -6978,3 +6981,59 @@ a measured gain. The native criterion fails. The 1.55 s guard exits zero, but
 no correctness execution or timing was run for this IR candidate. The compact
 `fresh-insert-linkage/` archive component retains the exact patch, external
 reference audit, selected bodies and pins. No visibility or ABI policy is selected.
+
+### Fresh insertion register result: native success without timing gain
+
+A fixed-layout AArch64 IR counterfactual returns the two scalar try_put
+instances' four result leaves in ordinary registers. The retained patch and
+transformation proof establish unchanged destination bodies and exact inverse
+restoration; source, probe behavior, external driver ABI and compiler fb197276…
+stay fixed. The scalar caller loses
+its result destination/tag reload and shrinks from a 96- to 64-byte frame, with
+the same per-item call. Result stores disappear; final output-selection lowering
+also folds a branch, so this is not an isolated instruction-latency comparison.
+Reached wide instruction bytes and relative relocations match the control.
+
+All 92 fresh expected outcomes and four 18,390-trace complete-map panels pass,
+with four exact-diagnostic checksum faults. The initial wrapper expected the
+wrong diagnostic and failed in 4.05 s after the fault correctly exited 1.
+The 1.25 s continuation revalidated that saved observation and ran only the
+remaining checks; no passing suite was retried. The fixed timing campaign exits
+zero in 59.06 s, retaining all 223,488 rows; reduction exits zero in 13.06 s and
+five falsifiers reject. The original geometry and unsubtracted snapshot controls
+are unchanged.
+
+Medians are ns/insertion, cohort 0 / 1; Rust/C++ are from the candidate panel.
+The four scalar cells are primary; the four wide cells are negative controls.
+Full ranges, outliers, both panels and qualification flags remain in the archive.
+
+| Series | Bytes / S | WF control | WF candidate | Rust | C++ | Admission / peer target |
+|---|---:|---:|---:|---:|---:|---|
+| default | 8 / 64 | 16.704 / 16.487 | 17.010 / 16.637 | 10.323 / 10.022 | 12.715 / 12.394 | valid / fail |
+| default | 8 / 4096 | 16.457 / 15.898 | 16.738 / 16.198 | 9.493 / 9.371 | 11.346 / 11.114 | valid / fail |
+| aligned | 8 / 64 | 16.768 / 16.331 | 16.964 / 16.528 | 7.783 / 7.300 | 21.801 / 21.170 | valid / pass |
+| aligned | 8 / 4096 | 16.268 / 15.722 | 16.530 / 16.070 | 4.427 / 4.331 | 22.701 / 21.832 | valid / pass |
+| default | 256 / 64 | 34.106 / 30.174 | 33.157 / 29.952 | 34.208 / 25.288 | 27.559 / 26.026 | drift-invalid |
+| default | 256 / 4096 | 43.131 / 35.289 | 42.184 / 36.970 | 41.390 / 35.276 | 28.125 / 25.661 | drift-invalid |
+| aligned | 256 / 64 | 32.532 / 30.752 | 33.454 / 31.051 | 32.878 / 24.459 | 38.801 / 36.235 | drift-invalid |
+| aligned | 256 / 4096 | 43.210 / 35.163 | 38.143 / 35.519 | 33.013 / 32.227 | 39.749 / 38.199 | drift-invalid |
+
+All four scalar cells are admitted, but none has a qualified gain or regression;
+candidate medians are about 0.9–2.2% slower. Only the two aligned scalar cells
+clear the selected-peer range target; neither default scalar cell does.
+Every wide cell fails across-cohort drift admission despite zero invalid
+per-sample flags. Unchanged reached wide code therefore does not establish
+qualified negative controls or nonregression. Global scalar success and the
+required wide-control screen both fail; no retry or adoption follows.
+
+The fresh-insert-register-result/ component in the
+[existing archive](reserve-api-evidence.tar.gz) retains criteria, the exact IR
+patch/body proof, selected native excerpts, checks, raw rows, reducer and pins.
+Earlier native-only wording records its stage, not the final execution status.
+Source and native dependencies are pinned to the prior fresh-insert-api/
+component; full modules and executable dependencies remain omitted. Removing
+result transport is not a demonstrated accelerator in this consumer. The
+existing return-register decision stays unchanged: raising a shared budget
+would also affect enum representation and would not reproduce this fixed-layout
+trial. A same-geometry division cost floor remains an unselected next question,
+not a measured benefit or a reason to change the callable ABI.

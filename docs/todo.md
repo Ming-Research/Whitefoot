@@ -3011,9 +3011,14 @@ rarely insert at the same place.
   The [fresh-insertion linkage screen](../research/experiments/container-representation/map-library/RESULTS.md#fresh-insertion-linkage-result-memory-boundary-remains)
   internalizes four closed-witness instances but leaves scalar result storage
   and its caller tag load, with a new wide per-item call. No runtime benefit
-  follows. The measured four-leaf scalar result is a concrete reopener for a
-  separate target-aware register-result discriminator; preserve shared caller/
-  callee ABI and body/wrapper optimization order before selecting any policy.
+  follows. The [four-leaf register-result discriminator](../research/experiments/container-representation/map-library/RESULTS.md#fresh-insertion-register-result-native-success-without-timing-gain)
+  now removes scalar result transport but qualifies no gain; all wide controls
+  fail drift admission. Do not select an ABI change from native load/store
+  removal. A same-geometry division cost floor remains unselected; preserve
+  ordinary source behavior and the fixed peer/clock criteria before reopening
+  insertion costs. Keep callable-result classification distinct from enum
+  representation and preserve shared caller/callee ABI and body/wrapper order
+  if future evidence reopens the existing return-register decision.
 
 - **Machinery with no remaining consumer.** The checker keeps the region
   machinery STOR-8 retired, though every value it produces is empty:

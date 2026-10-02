@@ -1,8 +1,8 @@
 {
   "purpose": "Isolated ordinary public reserve with verified future entry headroom; single production baseline panel, not an optimization/adoption result",
   "archive": "reserve-api-evidence.tar.gz",
-  "archive_sha256": "f7993e3b2234dbf60751a0caa5c3d31f9e345b11bc259b5581f1d27797f4b537",
-  "archive_members": 1182,
+  "archive_sha256": "96305397c2fb39a09a0a87aa81bb64dd720714c3015dcf6c26446ac249f71264",
+  "archive_members": 1200,
   "base_revision": "89571a60381a685cfbe760248ceb6178d9f9ac05",
   "production_cli_sha256": "c12b2b2a6c9694fd2bc1b7be0004d582ae9628951422def849f4cf6a3ac02f77",
   "timed_image_sha256": "f1ebf18d7a94c79250bb3cbd74a0b379a2a30c6e5e4eda48396ec77d8bbdbf3f",
@@ -5076,6 +5076,40 @@
       "from": "component-index.json",
       "to": "component-index-before-fresh-insert.json",
       "sha256": "5a96b21c119b90fd42cece2514456d41143df92617e17eba460a2015c4ca5e4f"
+    },
+    "all_prior_member_bytes_preserved": true
+  },
+  "fresh_insert_register_result": {
+    "prefix": "fresh-insert-register-result/",
+    "manifest": "fresh-insert-register-result/manifest.json",
+    "manifest_sha256": "84af65feff7e36ea50a68c4d6f946a6a9e1eff21e56df0af5f9f803502c5c55c",
+    "payload_count": 17,
+    "retained_records": 261,
+    "timing_rows": 223488,
+    "raw_row_counts": {
+      "analysis/campaign/candidate-cohort-0.csv": 55872,
+      "analysis/campaign/candidate-cohort-1.csv": 55872,
+      "analysis/campaign/control-cohort-0.csv": 55872,
+      "analysis/campaign/control-cohort-1.csv": 55872
+    },
+    "check_outcomes": 92,
+    "accounting_rows": 48,
+    "scalar_cells_admitted": 4,
+    "scalar_qualified_gains": 0,
+    "scalar_qualified_regressions": 0,
+    "scalar_peer_targets": 2,
+    "wide_cells_drift_invalid": 4,
+    "wide_negative_controls_pass": false,
+    "production_adoption": false
+  },
+  "register_result_prior_index": {
+    "prior_archive_sha256": "f7993e3b2234dbf60751a0caa5c3d31f9e345b11bc259b5581f1d27797f4b537",
+    "prior_members": 1182,
+    "unchanged_names_and_bytes": 1181,
+    "renamed_member": {
+      "from": "component-index.json",
+      "to": "component-index-before-register-result.json",
+      "sha256": "e64df666bc3fb24d16619fa7992b889c270baa7486903fe774f1d14270ea2298"
     },
     "all_prior_member_bytes_preserved": true
   }
