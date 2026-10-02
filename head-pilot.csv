@@ -1,0 +1,14 @@
+reference,16,set,1055404.25
+reference,16,lpush,1059595.75
+reference,16,rpop,1054002.62
+reference,16,sadd,1055404.25
+reference,16,hset,1059595.75
+reference,16,zadd,635926.56
+reference,16,lrange_100,317462.94
+firn-8,16,set,3162008.25
+firn-8,16,lpush,3174566.00
+firn-8,16,rpop,3174566.00
+firn-8,16,sadd,3161968.25
+firn-8,16,hset,3162008.25
+firn-8,16,zadd,1059595.75
+firn-8,16,lrange_100,1061006.62
