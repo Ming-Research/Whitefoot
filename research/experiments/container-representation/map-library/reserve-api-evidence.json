@@ -1,8 +1,8 @@
 {
   "purpose": "Isolated ordinary public reserve with verified future entry headroom; single production baseline panel, not an optimization/adoption result",
   "archive": "reserve-api-evidence.tar.gz",
-  "archive_sha256": "7457b62f39e172643dc04f57a9cd9394ee65c7888399390943342c46f569caff",
-  "archive_members": 1030,
+  "archive_sha256": "f6f54388160c6f47e8bdf6311bacac4222a9efa9d279cb50d0e581557331f07e",
+  "archive_members": 1052,
   "base_revision": "89571a60381a685cfbe760248ceb6178d9f9ac05",
   "production_cli_sha256": "c12b2b2a6c9694fd2bc1b7be0004d582ae9628951422def849f4cf6a3ac02f77",
   "timed_image_sha256": "f1ebf18d7a94c79250bb3cbd74a0b379a2a30c6e5e4eda48396ec77d8bbdbf3f",
@@ -4606,6 +4606,69 @@
       "from": "component-index.json",
       "to": "component-index-before-mirrored-byte-sequence.json",
       "sha256": "30e345280810bffd6de1524aeb74ce8f543c7e027e58bbb4049dd13bf6b058bb"
+    },
+    "all_prior_member_bytes_preserved": true
+  },
+  "mirrored_byte_matches_first": {
+    "prefix": "mirrored-byte-matches-first/",
+    "manifest": "mirrored-byte-matches-first/manifest.json",
+    "manifest_sha256": "5196a65e8c122959d031053b9b7de57c68ef414d96f32c855450102a7f0cdfe9",
+    "payload_count": 21,
+    "records": "mirrored-byte-matches-first/records.json",
+    "retained_records": 762,
+    "producer_files_verified": 769,
+    "producer_inventories": {
+      "mirrored-byte-matches-first": {
+        "inventory": "retention-inventory.json",
+        "original_sha256": "70c9b9b582f1f09f7e928901377221bf86e2d48528aae339ab34d969522fa7a8",
+        "files": 769
+      }
+    },
+    "timing_rows": 1536,
+    "row_counts": {
+      "mirrored-byte-matches-first/qualification/candidate-build/edit-accounting.csv": 32,
+      "mirrored-byte-matches-first/qualification/candidate-build/reserve-accounting.csv": 96,
+      "mirrored-byte-matches-first/qualification/candidate-runtime/build/ecosystem/edit-cohort-0.csv": 384,
+      "mirrored-byte-matches-first/qualification/candidate-runtime/build/ecosystem/edit-cohort-1.csv": 384,
+      "mirrored-byte-matches-first/qualification/control-build/edit-accounting.csv": 32,
+      "mirrored-byte-matches-first/qualification/control-build/reserve-accounting.csv": 96,
+      "mirrored-byte-matches-first/qualification/control-runtime/build/ecosystem/edit-cohort-0.csv": 384,
+      "mirrored-byte-matches-first/qualification/control-runtime/build/ecosystem/edit-cohort-1.csv": 384
+    },
+    "native_body_instructions": [
+      300,
+      297
+    ],
+    "candidate_frame_bytes": 112,
+    "qualified_miss_gains": 0,
+    "qualified_two_cohort_hit_losses": 3,
+    "large_miss_ranges": "overlap and invalid",
+    "candidate_peer_targets": 0,
+    "ordinary_check_stages_zero": [
+      12,
+      6,
+      3
+    ],
+    "hostile_and_source_fault_stages": 9,
+    "map_bytes": [
+      40,
+      64
+    ],
+    "owner_bytes": [
+      72,
+      96
+    ],
+    "production_adoption": false,
+    "status": "Rejected: zero qualified miss gains or peer targets. Conditional dictionary-law results only; inconsistent-key witness differs safely. Native order discriminator is not timed order-only attribution."
+  },
+  "mirrored_byte_matches_first_prior_index": {
+    "prior_archive_sha256": "7457b62f39e172643dc04f57a9cd9394ee65c7888399390943342c46f569caff",
+    "prior_members": 1030,
+    "unchanged_names_and_bytes": 1029,
+    "renamed_member": {
+      "from": "component-index.json",
+      "to": "component-index-before-mirrored-byte-matches-first.json",
+      "sha256": "4a94140c14d1b37d6d04351870aa98ceaa64db468d998f4d4c76dfcf112fab75"
     },
     "all_prior_member_bytes_preserved": true
   }

@@ -59,6 +59,9 @@ passes only a native-load screen, with no runtime or map-performance claim.
 The subsequent [mirrored-byte sequence](#mirrored-byte-sequence-bounded-checks-rejected-timing)
 passes bounded source checks but supplies no qualified miss gain or peer target;
 its early native failures and final qualified losses keep the representation unselected.
+The [matches-first follow-up](#matches-first-order-native-improvement-timing-rejection)
+also fails timing qualification and exposes the conditional hash/equality-law
+boundary; it supplies no adoption ground.
 
 ## Current Rust and C++ ecosystem comparison
 
@@ -6533,3 +6536,44 @@ Deleted=255 versus actual source=254 discrepancy and corrects the first
 native report's `+0x40` field attribution to environment salt, not metadata.
 Replay requires the pinned omitted compiler/runtime/toolchain dependencies;
 no binaries, full IR or unfinished follow-up are included.
+
+### Matches-first order: native improvement, timing rejection
+
+Moving candidate matches before the empty test passes the prospective native
+order criterion against the previous mirrored progress-loop source. Ready-hash
+first-hit work falls 52→40 instructions and no-match first-empty work 31→28;
+an earlier empty followed by one false fingerprint grows 40→53. Bodies fall
+300→297 instructions, retaining 112-byte frames, zero calls and per-key hash
+constant materialization. These are source-order effects, not a generic
+compiler speculation rule. The timed baseline is original flat probing, so
+the campaign does not isolate the runtime contribution of empty-check order.
+
+Ordinary dictionary results require stable, consistent hash/equality laws and
+returning callbacks. A retained ordinary counterexample stores key 2/hash 2/
+value 20, then queries key 0/hash 0 with always-true equality: flat returns
+`Err` with final value 20; matches-first returns `Ok` with final value 21.
+Both safely consume the stored key once. Extra equality calls may allocate
+or diverge; no universal callback-order or termination equivalence is claimed.
+
+The candidate has 12 full-check, 6 boundary and 3 lawful early-empty stages,
+all zero, plus 9 expected hostile/fault stages including mirror-write omission
+exit 32. Original-flat images/checks are reused byte-identically. The 32 EDIT
+and 96 reserve accounting rows match the predicted extra metadata allocation;
+non-WF rows remain identical. These are bounded witnesses, not general proof.
+
+All four fixed timing processes exit zero; 1,536 rows, complete same-seed
+outcomes and 696 unchanged input pins are retained. There are zero qualified
+miss gains and zero of eight raw or qualified Rust/C++ peer targets. Scalar
+64/4096 and wide 4096 hits have qualified separated losses in both cohorts;
+wide 64 hit overlaps/loses, and scalar 64 miss loses/overlaps. Remaining
+miss ranges overlap. Both large misses are invalid from control-WF and C
+cohort/interarm drift and paired-WF ratio drift; they establish no improvement.
+No filtering, retry, adoption or production change follows.
+
+The `mirrored-byte-matches-first/` component in
+[reserve-api-evidence.tar.gz](reserve-api-evidence.tar.gz) retains exact sources,
+criteria, native paths, ordinary counterexample/fault outcomes, all raw rows,
+complete WF/Rust/C++/C ranges, reducers and original/normalized dependency pins.
+Native-stage no-execution statements precede the later authorized checks and
+timing. Pinned compiler/runtime/toolchain binaries and full generated modules
+remain omitted; this is not a standalone replay bundle.

@@ -3615,6 +3615,11 @@ condition under which it is taken up.
   Reopen only a concrete discriminator in the authorized Map phase, preserving
   first-hit pressure, ownership/callback witnesses and full timing/drift gates;
   fewer instructions alone do not qualify performance or generic correctness.
+  The [matches-first follow-up](../research/experiments/container-representation/map-library/RESULTS.md#matches-first-order-native-improvement-timing-rejection)
+  also has zero miss gains/peer targets and retains hit losses. Its ordinary
+  inconsistent-key witness changes the answer safely; any future order choice
+  must state conditional hash/equality laws and extra callback behavior, without
+  claiming universal callback-order or termination equivalence.
 
   The [actual integrated-candidate comparison](../research/experiments/container-representation/map-library/RESULTS.md#integrated-candidate-with-the-maintained-caller)
   has no qualified before/after gain in 40 maintained-caller cells; all four
