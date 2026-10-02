@@ -218,8 +218,56 @@ are unchanged in text; the three proof arguments disappear from the call.
   `proof` is accepted, its outputs are unchanged, and `level_index` makes
   three allocations instead of four.
 
+## Ruling
+
+The owner refused A after reading the witnesses written under it: with a
+`proof` marking a writer must keep two kinds of every name apart, and the
+flow between them, one way with seven refused positions and no user call in
+a proof statement, is hard to hold while writing. The data stays ordinary,
+and removing its cost is the compiler's work if a measurement shows the cost
+worth a pass (`design/language/checks-and-proofs.md`).
+
+## Finding the data in the compiler
+
+Proofs are erased before lowering, so the data is what no executable
+statement reads once they are gone; the checker already knows every read.
+LLVM cannot remove it because the emitted functions are visible outside
+their module, so dead-argument elimination does not change their
+signatures, and an array passed to a call that is not inlined escapes. A
+whole-program pass in the Whitefoot compiler sees every call and needs:
+
+- **A fixed point across calls and fields.** In the program witness a
+  parameter `cascade_level` never reads makes its argument dead, the field
+  read only for that argument dead, the field's construction and the stores
+  to `positions` dead, and then the allocation.
+- **No removed non-termination.** Removing a computation is sound only where
+  it cannot trap, which the language guarantees, and terminates, which it
+  does not: stores, allocations, borrows and pure arithmetic go, a counted
+  loop goes only when its body is left empty, and a call or an uncounted
+  loop stays, losing only its dead arguments.
+- **Fixed boundaries.** The entry function, functions the runtime calls back
+  and any layout the host reads keep their shape; a caller's compiled form
+  depends on whether its callees read their parameters, which incremental
+  and parallel lowering must account for.
+- **A pinned result.** It is an optimization, not a rule, so compiler tests
+  pin both witnesses' emitted code free of the data.
+
+## Measurement
+
+The criterion, recorded before measuring: the pass is worth designing only
+if removing the data saves more than the run-to-run spread of both builds
+and at least 1% of the style stage's time on at least one of the two
+measured pages, ecma262 and html5.
+
+The measured pair is Snowghost's style stage at `8b4f332`, sequential build,
+against a variant whose source is what the pass would produce: no
+`positions`, no `depths` field and no `level` parameter, and no apart
+certificate in `cascade_level`, which only they served. The sequential
+build runs the levels' loops in order either way, so the two builds differ
+only in the removed data.
+
 ## Limitations
 
-The run-time cost was located, not timed. The admission rule is stated, not
-implemented, so an interaction with a rule not listed here would first show
-in the implementation; PAR-2 is the one already known to need a decision.
+The admission rule of A was stated, never implemented. The pass is
+sketched, not designed; its interaction with incremental and parallel
+lowering is the first question a design would answer.

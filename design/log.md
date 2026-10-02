@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-02 Keep data only proofs read ordinary, and leave its cost to the compiler
+
+Nodes: language/checks-and-proofs
+
+Owner-approved: 2026-10-02, in the session, written in Chinese, after the handoff of PR #210's card and the witnesses written under its option A: Q25 A-prime, no proof declarations and the cost measured first ("Q25 choose A-prime, measure the cost first")
+
+Summary: Data that only proofs read stays ordinary data under no declaration of its own, and removing its run-time cost is the compiler's work once a measurement shows it worth a pass, because a proof marking splits every name into two kinds with a one-way flow between them that a reader must keep straight, for a saving located but not timed, while the compiler, which erases proofs before lowering and sees every call, finds the same data unaided ([proof-only data](../research/investigations/proof-only-data/DESIGN.md)). Proof declarations, proof-only parameters and a logical model are refused.
+
 ## 2026-10-02 Keep killed length facts and stored positions to the writer, after the layout-stage census
 
 Nodes: language/effects, language/checks-and-proofs/range-facts
