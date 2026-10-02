@@ -2474,10 +2474,11 @@ each is resolved by a discussion and a tree change.
   now computes a value only to pass it; the
   [layout-friction investigation](../research/investigations/layout-friction/DESIGN.md#4-parameters-only-a-contract-reads)
   compares an order fact that needs no witness (available for one run, not
-  per segment), proof-only parameters and proof-only state. The owner left
-  the choice open until a program needs it, which this now is; validate a
-  chosen form by the cascade without the stored `positions` and by measuring
-  the call cost in a cascade with small levels.
+  per segment), proof-only parameters and proof-only state, and
+  [proof-only data](../research/investigations/proof-only-data/DESIGN.md)
+  measures what the optimizer removes today and states a `proof` declaration
+  rule. The choice is the owner's; validate a chosen form by the cascade
+  without the stored `positions` and by the allocations its binary makes.
 
 ## Ownership redesign (candidate x1) follow-ups
 

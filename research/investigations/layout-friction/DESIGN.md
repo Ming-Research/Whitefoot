@@ -674,5 +674,5 @@ length facts; A for stored positions, keeping their guards; 2B, separating
 callables from values in the shadowing check; and 3D, making an
 unrepresentable allocation size heap exhaustion
 ([design log](../../../design/log.md)). Item 4 stays open: the owner asked for
-a way to avoid the run-time cost of data only a contract reads, which a
-separate record answers.
+a way to avoid the run-time cost of data only a contract reads, which
+[proof-only data](../proof-only-data/DESIGN.md) answers.
