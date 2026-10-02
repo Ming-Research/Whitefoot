@@ -21,7 +21,10 @@
 #                                 two minutes: QUICK_TESTS (default all ten)
 #                                 for QUICK_RUNS runs of QUICK_SECONDS each,
 #                                 printing a table and marking each test below
-#                                 QUICK_TARGET times the best other server
+#                                 QUICK_TARGET times the best other server;
+#                                 QUICK_CLIENTS client processes (default one
+#                                 per client CPU up to 16), each count with
+#                                 its own kept reference
 #
 # BASELINE_ROOT, when set, is a worktree of the revision before expiry with its
 # compiler built; its subset is measured as the baseline lines of Experiment 8.
@@ -448,10 +451,10 @@ if [ "$MODE" = quick ]; then
     n=${QUICK_CPUS:-4}
     total=$(nproc)
     all="set get incr lpush rpop sadd hset zadd lrange_100 mset"
-    CLIENT_THREADS=$((total - n < 16 ? total - n : 16))
+    CLIENT_THREADS=${QUICK_CLIENTS:-$((total - n < 16 ? total - n : 16))}
     SERVER_CPUS=$(seq -s, 0 $((n - 1)))
     CLIENT_CPUS=$(seq -s, "$n" $((n + CLIENT_THREADS - 1)))
-    reference="$OUT/quick-ref-$n.csv"
+    reference="$OUT/quick-ref-$n-$CLIENT_THREADS.csv"
     if [ -n "$QUICK_REFRESH" ] || [ ! -s "$reference" ]; then
         : >"$reference.new"
         for line in "garnet-$n" "dragonfly-$n"; do
