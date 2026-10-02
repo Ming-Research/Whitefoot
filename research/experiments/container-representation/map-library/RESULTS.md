@@ -20,6 +20,14 @@ consumer for the [same-source compiler comparison](#same-source-inactive-storage
 Keep this experiment while it owns these comparisons; remove it when a
 maintained successor preserves the same contracts and evidence.
 
+Current follow-ups remain experimental. The [running-index interaction](#running-index-in-the-combined-experimental-context)
+meets both small aligned peer targets, with about 19 percent marginal gain in
+its combined caller/compiler/mask context. Both large aligned comparisons are
+drift-invalid. The [conditional API screen](#conditional-api-screen-no-separated-loss-incomplete-qualification)
+also remains unqualified because three lookup cells and one mutation cell fail
+drift checks. No new compiler or library change is adopted; earlier failed
+comparisons retain their original verdicts.
+
 ## Current Rust and C++ ecosystem comparison
 
 The explicit `ecosystem-*` targets implement the separate
@@ -5790,3 +5798,130 @@ both criteria, exact patches/source provenance, the direct-match failure,
 compact native excerpts, attribution notes, complete correctness records, raw
 rows and reducers. All 789 previously published member byte sequences remain
 preserved; omitted generated artifacts and reconstruction limits are explicit.
+
+### Conditional API screen: no separated loss, incomplete qualification
+
+The independent-alignment compiler's conditional non-EDIT screen keeps the
+published library and required complete outcomes unchanged. All 28 preparation
+and correctness stages have their expected exits. Mutation images check three
+successive batches and full cleanup, with wrong-batch, stale-generation,
+corrupt-last-word and cleanup controls. Reserve images check ordinary reserve
+and the clock controls. All twelve fixed timing processes exit zero; there is
+no repeat campaign. The 339,264 retained rows give:
+
+| Family | Rows | Valid cells | Invalid cells | Before/after result |
+|---|---:|---:|---:|---|
+| Lookup | 1,152 | 5 | 3 | All eight ranges overlap |
+| Mutation | 1,152 | 7 | 1 | All eight ranges overlap |
+| Reserve | 336,960 | 16 | 0 | Two large-scalar growth gains; fourteen overlaps |
+
+Lookup invalidates scalar/4096 miss, wide/4096 hit and wide/4096 miss through
+WF and/or C-direct cohort drift; mutation invalidates scalar/4096 churn through
+candidate WF drift. The overall screen is therefore **unqualified**. No
+separated loss is detected, which is not proof of nonregression. Reserve passes
+its complete interval/clock/cohort checks, but all four aligned growth cells
+still fail the strict slower-peer target. Full WF, Rust and C++ statistics
+remain in the family reductions. Minimum real intervals are 3.023 ms lookup,
+2.328 ms mutation and 3.383212 ms reserve; every reserve instrumentation flag
+passes. Independent raw-data audit reproduces the reductions and all 3,456
+reserve sample hierarchies with no discrepancy.
+
+A read-only lookup note finds 196 instructions in each word/wide query body,
+identical after normalizing absolute addresses in existing object disassembly.
+The inlined query already uses a register digest without the EDIT Result-store
+pattern. This does not establish linked-image equality, equal runtime cost or
+the cause of drift, and cannot qualify the invalid cells. The
+`alignment-regression/` component of
+[reserve-api-evidence.tar.gz](reserve-api-evidence.tar.gz) retains that limitation,
+criteria, source/drivers, fault results, pins, all raw rows and the reducer.
+
+### Marginal home mask with the alignment compiler
+
+This separate source comparison holds the outer-dispatch caller and frozen
+alignment compiler fixed. Only EDIT home selection changes to a power-of-two
+mask with modulo fallback. Native code still tests power-of-two capacity per
+key; it does not hoist that test. Hashing, bounded probing, callback and register
+digest remain, without private Result stores or a digest memory pair. The wide
+whole-trace frame grows by 16 bytes. These collateral changes prevent assigning
+the measured difference solely to division latency. The native and correctness
+screens pass their expected outcomes before one four-process campaign; all
+1,760 rows are retained, all exits are zero, and the minimum interval is 3.819 ms.
+
+Aligned-hash medians are complete-trace nanoseconds amortized per edit,
+including setup and cleanup; pairs are cohort zero / cohort one. Both peers
+come from candidate-image panels.
+
+| Payload / initial capacity | Control WF | Candidate WF | Rust | C++ |
+|---|---:|---:|---:|---:|
+| 8 B / 64 | 2.693 / 2.677 | 2.351 / 2.354 | 2.377 / 2.378 | 2.404 / 2.390 |
+| 8 B / 4096 | 3.082 / 3.080 | 3.013 / 3.005 | 2.476 / 2.488 | 5.186 / 5.069 |
+| 256 B / 64 | 2.671 / 2.681 | 2.367 / 2.359 | 2.807 / 2.812 | 2.377 / 2.380 |
+| 256 B / 4096 | 3.338 / 3.275 | 3.342 / 3.351 | 3.181 / 3.203 | 5.986 / 7.012 |
+
+All four small-map cells, across both payloads and hash series, qualify gains.
+All four large-map ranges overlap. Aligned large-wide is additionally invalid:
+candidate C++ cohort drift is 17.1394 percent and cross-arm drift is 16.0758
+percent, with adverse raw WF median changes retained. No cell separates a loss.
+The aligned strict peer target fails for small scalar, passes for small wide
+and large scalar, and is invalid for large wide. Lower medians alone do not
+meet the range target. Native-default passes its separate peer comparisons,
+under different hash protocols; full panels remain in the reduction.
+
+Independent checks reproduce 480 statistical fields, eight cell verdicts,
+1,672 same-input checksum comparisons and 103 input pins. This is a marginal
+source/code-generation gain in the characterized experimental caller/compiler
+context. It selects no adoption, does not revise the earlier original-context
+mask failure, and does not cure the unqualified API regression screen. The
+`alignment-home-mask/` component retains the exact source patch, native and
+correctness evidence, raw rows, criteria and reducers. All 808 previously
+published member byte sequences remain preserved; full generated modules,
+binaries and disassembly are omitted with pins and replay limits.
+
+### Running index in the combined experimental context
+
+The next marginal source comparison keeps the outer-dispatch caller,
+independent-alignment compiler and EDIT home mask fixed. A bounded running
+index replaces EDIT's repeated home-plus-step reconstruction. The first hit
+skips the wrap continuation; later probes preserve the same bounded order.
+Native code removes the first-probe compare/select/add sequence without adding
+repeated calls, stack accesses, payload copies or Result storage. Frames and
+whole-trace call counts stay unchanged. Native and complete correctness checks
+pass their expected outcomes before one fixed four-process campaign, with
+1,760 retained rows, zero exits and a 3.796 ms minimum interval.
+
+Aligned-hash complete-trace median nanoseconds per edit include setup and
+cleanup; pairs are cohort zero / cohort one. Both peers are from candidate
+panels.
+
+| Payload / initial capacity | Control WF | Candidate WF | Rust | C++ |
+|---|---:|---:|---:|---:|
+| 8 B / 64 | 2.361 / 2.356 | 1.896 / 1.911 | 2.355 / 2.350 | 2.383 / 2.390 |
+| 8 B / 4096 | 3.826 / 2.998 | 3.031 / 2.899 | 2.492 / 2.455 | 5.194 / 5.069 |
+| 256 B / 64 | 2.355 / 2.360 | 1.900 / 1.903 | 2.790 / 2.796 | 2.405 / 2.370 |
+| 256 B / 4096 | 3.296 / 3.321 | 3.604 / 3.003 | 3.184 / 3.178 | 6.008 / 5.912 |
+
+Both small aligned cells qualify marginal gains of about 19 percent and pass
+the unchanged strict slower-peer range target. Small default scalar also
+qualifies; small default wide separates a gain only in one cohort and remains
+unqualified. All large-map before/after ranges overlap. Both large aligned
+cells are invalid: scalar control WF cohort drift is 27.6169 percent and its
+ratio spread is 22.0544 percent, with additional C-direct drift; wide candidate
+WF cohort drift is 20.0095 percent and ratio spread is 20.9300 percent. The wide
+raw ratio reverses from an adverse 1.0936 to 0.9044 between cohorts. Raw peer
+ranges do not override those invalidations. Default peer targets pass separately
+under different hash protocols. No cell separates a loss in both cohorts.
+
+A separate native-only `unswitch-threshold=1000` counterfactual is rejected:
+it hoists the capacity test, but scalar/wide trace growth exceeds the registered
+25-percent cap and the wide hot loop gains salt reload/hash-constant work.
+It runs no correctness or timing campaign, and the source comparison above uses
+ordinary O3 without that override. Independent reduction reproduces 480
+statistical fields, all eight verdicts, 1,672 same-input checksum comparisons
+and 103 runtime pins. Neither this context-specific gain nor the rejected
+threshold trial assigns elapsed cost to individual instructions. No adoption
+follows; both large aligned cells and the conditional API screen remain
+unqualified, and the earlier original-context running-index failure is unchanged.
+The `alignment-running-index/` component of
+[reserve-api-evidence.tar.gz](reserve-api-evidence.tar.gz) retains exact source,
+criteria, compact native/fault evidence, all raw rows and reducers, plus the
+threshold rejection and explicit replay limits.

@@ -3517,6 +3517,27 @@ condition under which it is taken up.
   extent/snapshot/alias obligations and remaining API regressions; do not infer
   per-store cost or a general library gain from this caller-context result.
 
+  The [conditional API screen](../research/experiments/container-representation/map-library/RESULTS.md#conditional-api-screen-no-separated-loss-incomplete-qualification)
+  detects no separated loss but remains unqualified: three lookup and one
+  mutation cell fail drift checks. Identical address-normalized lookup object
+  bodies do not explain that drift or establish linked/runtime equivalence.
+  Preserve the invalid cells; reopen their attribution with a fixed-input,
+  prospective discriminator before any compiler adoption claim. The
+  [new-context EDIT mask](../research/experiments/container-representation/map-library/RESULTS.md#marginal-home-mask-with-the-alignment-compiler)
+  qualifies four small-map gains, but small aligned scalar still misses the
+  peer-range target and large wide is drift-invalid. Its per-key capacity test
+  and wide-frame growth remain native costs to attribute; prior mask failure
+  and the incomplete regression qualification remain unchanged.
+
+  The [running-index interaction](../research/experiments/container-representation/map-library/RESULTS.md#running-index-in-the-combined-experimental-context)
+  meets both small aligned peer targets in the combined experimental context,
+  but both large aligned cells remain drift-invalid and the conditional API
+  screen remains unqualified. Preserve those gaps before any adoption claim;
+  reopen large-map variability and required API regressions with prospective
+  criteria. The separately rejected unswitch threshold grows whole bodies
+  beyond its cap and adds wide hot-loop reload work, so branch hoisting alone
+  does not justify that global compiler option.
+
 - **Ordered insertion replacement costs need attribution.** Both the
   [aggregate-result candidate](../research/experiments/container-representation/ordered-library/RESULTS.md#single-descent-insertion-candidate)
   and [borrowed-promotion follow-up](../research/experiments/container-representation/ordered-library/RESULTS.md#borrowed-promotion-follow-up)

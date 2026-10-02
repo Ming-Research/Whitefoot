@@ -1,8 +1,8 @@
 {
   "purpose": "Isolated ordinary public reserve with verified future entry headroom; single production baseline panel, not an optimization/adoption result",
   "archive": "reserve-api-evidence.tar.gz",
-  "archive_sha256": "8939a80971d0bc080543efaba0352faf9752af957ae1e9343959f42608f2917a",
-  "archive_members": 808,
+  "archive_sha256": "cefb905cd4fcadea2c73d42d08cf3c96621a63af7afcaeee3444193a16578f9d",
+  "archive_members": 857,
   "base_revision": "89571a60381a685cfbe760248ceb6178d9f9ac05",
   "production_cli_sha256": "c12b2b2a6c9694fd2bc1b7be0004d582ae9628951422def849f4cf6a3ac02f77",
   "timed_image_sha256": "f1ebf18d7a94c79250bb3cbd74a0b379a2a30c6e5e4eda48396ec77d8bbdbf3f",
@@ -4072,5 +4072,85 @@
       "sha256": "3b4c14ee25941b74495f8fc7c62a4a54e8b6cccb0fc6810ecf2ab83445a15bfb"
     },
     "all_prior_member_bytes_preserved": true
+  },
+  "alignment_regression": {
+    "status": "Conditional regression screen unqualified: three lookup and one mutation drift-invalid cells. No separated loss does not establish nonregression; no adoption.",
+    "raw_rows": 339264,
+    "row_counts": {
+      "lookup-candidate0.csv": 288,
+      "lookup-candidate1.csv": 288,
+      "lookup-control0.csv": 288,
+      "lookup-control1.csv": 288,
+      "mutation-candidate0.csv": 288,
+      "mutation-candidate1.csv": 288,
+      "mutation-control0.csv": 288,
+      "mutation-control1.csv": 288,
+      "reserve-candidate0.csv": 84240,
+      "reserve-candidate1.csv": 84240,
+      "reserve-control0.csv": 84240,
+      "reserve-control1.csv": 84240
+    },
+    "overall_qualified": false,
+    "lookup_invalid_cells": 3,
+    "mutation_invalid_cells": 1,
+    "reserve_valid_cells": 16,
+    "reserve_qualified_gains": 2,
+    "source_manifest_sha256": "13b0c1fc83a0adaf2eb9be31b3693fec7243d31b11b3702f3ce51dc7022a9eba",
+    "replay_boundary": "Pinned source/drivers, commands, reducers and raw rows retained; generated modules/binaries/objects omitted with identity manifest. Reconstruct scratch/toolchain/dependencies; not standalone or verified published replay. Native lookup note compares object text, not linked identity or performance.",
+    "prefix": "alignment-regression/",
+    "payload_count": 16,
+    "manifest": "alignment-regression/manifest.json",
+    "manifest_sha256": "56e52f8ee559f8b1cfe0f98a645fa9f69005f43ed6f9dc86e574bd930ff5bb93",
+    "records": "alignment-regression/records.json",
+    "retained_records": 70,
+    "production_adoption": false
+  },
+  "alignment_home_mask": {
+    "status": "Four qualified small-map gains in the changed context; all large-map ranges overlap, aligned large-wide drift invalid, small aligned scalar strict peer target fails. No adoption or old-mask-verdict revision.",
+    "raw_rows": 1760,
+    "numerical_gain_predicate": true,
+    "qualified_gain_cells": 4,
+    "overall_peer_target_met": false,
+    "aligned_large_wide_valid": false,
+    "source_manifest_sha256": "bb3442af86d80809d7e9a8530efc1c653c0d77cad643334ea5892d79a38e3f2b",
+    "native_manifest_sha256": "45e9d23b5edb1bb32854559047cbe511794c6b84974caa76a27fbf91f4c16164",
+    "prefix": "alignment-home-mask/",
+    "payload_count": 16,
+    "manifest": "alignment-home-mask/manifest.json",
+    "manifest_sha256": "b770051f2105071a9ca767fc030ff5478aa36ac06dec6f73f2e6e8d79ffbe80a",
+    "records": "alignment-home-mask/records.json",
+    "retained_records": 176,
+    "production_adoption": false
+  },
+  "regression_mask_prior_index": {
+    "prior_archive_sha256": "8939a80971d0bc080543efaba0352faf9752af957ae1e9343959f42608f2917a",
+    "prior_members": 808,
+    "unchanged_names_and_bytes": 807,
+    "renamed_member": {
+      "from": "component-index.json",
+      "to": "component-index-before-regression-mask.json",
+      "sha256": "4ab077a93438a29a5999348246e275b5950dd82882d58d9c44f35dec750c9e52"
+    },
+    "all_prior_member_bytes_preserved": true
+  },
+  "alignment_running_index": {
+    "status": "Three marginal gain cells; both small aligned strict peer targets pass, both large aligned comparisons invalid. No adoption or earlier-running-index-verdict revision.",
+    "raw_rows": 1760,
+    "numerical_gain_predicate": true,
+    "qualified_gain_cells": 3,
+    "overall_peer_target_met": false,
+    "invalid_large_aligned_cells": 2,
+    "small_aligned_strict_peer_pass": true,
+    "threshold_native_qualified": false,
+    "threshold_runtime_run": false,
+    "source_manifest_sha256": "d818eae8ef7c0a619d9f62f0ca99517f0bf48ea502eae302b83b53f829b306c4",
+    "native_manifest_sha256": "6714842e2bffedfe6b44b4de72eac8193a6a6ec7875fd6d3ccd73460256c2734",
+    "prefix": "alignment-running-index/",
+    "payload_count": 16,
+    "manifest": "alignment-running-index/manifest.json",
+    "manifest_sha256": "937d3710fa9fa7e5a96dadaaa5e37d9f77f3d01e346dda967e7b30f49c11987c",
+    "records": "alignment-running-index/records.json",
+    "retained_records": 187,
+    "production_adoption": false
   }
 }
