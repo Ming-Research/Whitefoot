@@ -561,8 +561,8 @@ rarely insert at the same place.
   fields, stores and allocations that keeps calls and uncounted loops and
   the entry, callback, host and module-public boundaries. Validate with
   compiler tests pinning both witnesses' emitted code free of the data, and
-  by timing the program that reopened the item. Reopen with a program whose profile puts
-  such data on its critical path.
+  by timing the program that reopened the item. Reopen with a program whose
+  profile puts such data on its critical path.
 
 ## Containers and storage lowering
 
