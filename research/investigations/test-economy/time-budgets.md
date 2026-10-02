@@ -334,6 +334,16 @@ judgment reads as runner variance is expected. Slowest runs, in seconds:
 Every other stage's slowest run was under 6.6 s, so its budget is the 10-s
 floor.
 
+**`check/runtime` on macOS, raised to 20 s.** The concurrent map's test
+(`compiler/src/backend/concurrent_map_test.c`, three builds) took the stage
+to 15.3 s at `2adfc64c0`; once its locked-read and narrowed-hash builds ran
+only the tests their change reaches, it took 13.2 s at `ec0bb2e99` and
+12.4 s at `c5cdcfc9f`. 1.25 times 13.2 s, rounded up to 5 s, is 20 s, which
+the owner approved. On ubuntu the stage took 21.1 s at `2adfc64c0`, which
+changed no runtime code, and 20.3 s at `ec0bb2e99`, passed at `cbee9f341`
+and `c5cdcfc9f`, and took 16.4 s locally, so its budget stays at 20 s and
+the two overruns read as runner variance.
+
 **Judging an overrun.** A stage over its budget fails the job's verdict
 step, and the author then reads the change against the stage: added cases,
 fixtures or work on the stage's path, and the job's ranking of slowest cases

@@ -39,7 +39,7 @@ compiler/test-build-corpus      95     135    -
 compiler/test-corpus            110    125    -
 
 # gate.yml, runtime group
-check/runtime                   20     10     -
+check/runtime                   20     20     -
 
 # io-hosts.yml, completion-linux
 linux-runtime                   50     -      -
