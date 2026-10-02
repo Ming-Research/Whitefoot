@@ -1,0 +1,12 @@
+const key: Array<u8, 1> =[107_u8];
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let map = shared_map_new::<u8>(capacity: 0_u64);
+  let flag = shared_new::<u8>(value: 1_u8);
+  atomic slot = &map[&key[0_u64..1_u64]] {
+    atomic seen = &flag when seen^ != 0_u8 {
+      set slot^ = Some<u8>(value: seen^);
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}

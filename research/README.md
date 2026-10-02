@@ -87,6 +87,10 @@ the work-branch and merge boundary.
   rules. A [complete source demo](investigations/modular-compilation/demo/README.md)
   follows a queue through shared libraries, a no-heap entry and a heap-using
   tool.
+- [Concurrent hash index](investigations/concurrent-map/DESIGN.md): a
+  keyed concurrent index in the trusted runtime under atomic statements on one
+  key, its standalone measurement against other languages' concurrent maps,
+  and the criteria fixed before measuring.
 - [Repair wording](investigations/repair-wording/DESIGN.md): every repair the
   specification prescribes against the compiler's printed text, refuted and
   unproved probes of each, and whether the words belong to the specification

@@ -956,23 +956,133 @@ rarely insert at the same place.
 
 ## Parallel lowering and runtime
 
-- **Every atomic statement counts a handle of its own, on the lock's cache
-  line.** The lowering retains the shared object before it acquires and
-  releases it after it unlocks (`compiler/src/lowering/builder/atomic.rs`), so
-  that the object outlives a block that moves or replaces the handle it was
-  reached through; `wf__shared_share` and `wf__shared_release` are two atomic
-  updates of the handle count, which shares the header's cache line with the
-  lock word and the holder count. Under firn's `SET` on two drivers they took
-  4% of the server's time, and each also moves the line the other driver is
-  spinning on ([firn](../research/investigations/firn/DESIGN.md#short-strings-inside-the-keyspace-results)).
-  A statement whose function cannot write the place it reaches the object
-  through, as in every firn command, which reads its `&Shared<Store>`, cannot
-  lose the handle during its block, so the pair could be omitted there; or
-  the count could move to a cache line of its own. Either revises the
-  `compiler/waiting-contexts` decision that a statement counts a handle of
-  its own. Measure firn's `SET` and `MSET` on two drivers with the pair
-  omitted for such statements before proposing it; reopen when the atomic
-  statement's lowering or the shared-object header next changes.
+- **The concurrent map's writers wait a count of pauses, not a time.** A
+  writer that finds its key locked waits 16 to 1,024 pauses
+  (`compiler/src/backend/concurrent_map.c`, `wait_for_cell`), about 0.2 to
+  12 microseconds on the 4-CPU measuring host, where a pause took about
+  12 ns; pause latency differs several times over between x86 cores, so
+  the same counts wait longer elsewhere and the batching that won one-key
+  `update` may cost latency instead. A keyed statement's patience, 2^16
+  pauses before it holds the whole map, is a count of pauses too, 0.77 ms
+  on that host. The change: bound the waits by elapsed time, read from the
+  cycle counter, or let keyed statements park. Reopen when the 14900K
+  measures one-key `update`, when waiting writers park, or when holds show
+  in a workload's profile or tail latency.
+
+- **A keyed statement on an absent key allocates a node it then frees.**
+  `wf_cmap_lock_entry` (`compiler/src/backend/concurrent_map.c`) claims a
+  cell for an absent key, reusing the first removed cell its probe passed,
+  and allocates the key's node so the block can write `Some`; a block that
+  leaves the entry `None`, a `GET` that misses, frees the node again. Misses
+  no longer grow the table or lengthen the next probe (one key missed in
+  rounds of 400,000 answered `SPOP` at 159,680 to 177,699 a second), but each
+  costs an allocation and a free from the user's free lists. The change:
+  claim without a node and allocate it when the block first writes the slot,
+  which needs the lowering to call the runtime there, or keep a freed node on
+  the user for the next claim of the same size. Reopen when a profile of a
+  miss-heavy workload shows the allocation.
+
+- **A keyed statement that waits for its entry spins and does not park.**
+  Its wait is bounded, since one out of patience holds the whole map
+  ([bounded waits](../research/investigations/concurrent-map/DESIGN.md#bounded-waits)),
+  but the driver it runs on spins instead of running its other contexts:
+  firn spent 15.9 µs of server CPU per `LRANGE mylist 0 599` reply on two
+  drivers against 8.6 µs on one, every statement on the one list holding
+  its entry. The change: let a keyed statement that has not yet locked
+  anything suspend like an object statement, with a mark for waiters (a bit
+  of the hash or a word beside the cell, since the key word's second bit
+  marks a pending claim) that the entry's unlock reads to wake it. Validate
+  by the `LRANGE` reply's server CPU on two drivers against one. Reopen when
+  a workload on one key is limited by the server's CPU rather than its
+  client, or with shared reads of one entry (Q37).
+
+- **`SharedMap<unit>` and maps of other payload-free values do not lower.**
+  The unlock reads the entry's `Option` tag as an `i32`
+  (`emit_shared_map_unlock` in `compiler/src/backend/emitter/shared.rs`) and
+  refuses a tag-only enum, which `Option<unit>` may lower to, so a byte-keyed
+  set fails with `InvalidIr` instead of compiling. The change: read the tag
+  at the width the enum's layout gives. Reopen when a program needs a set of
+  byte strings shared between contexts.
+
+- **Entry nodes over 512 bytes come from the pool under its one lock.**
+  `new_node` takes a large key's node from the context pool, whose free
+  lists sit behind one spin lock (`wf_pool_take` in
+  `compiler/src/backend/completion/bridge.c`), while smaller nodes come from
+  per-user chunks. A workload of long keys from many drivers would contend
+  on it. Reopen when a measured workload's keys exceed 512 bytes.
+
+- **A keyed statement takes two dependent cache misses where firn's old
+  keyspace took one.** `wf_cmap_lock_entry`
+  (`compiler/src/backend/concurrent_map.c`) loads the probed cell's key word
+  and then the node it points to, both missing the cache under the suite's
+  100,000 keys: under `INCR` at depth 16 on one server CPU it took 28.1% of
+  firn's samples, 43% of them on the cell's load and 41% on the node's,
+  while the old keyspace's bucket held the key and a short value together
+  (`hash_map_edit`, 19.0%). On one server CPU firn answered `SET`, `GET` and
+  `INCR` 8 to 12% below firn at `e92a54ed7`; on two the map's parallelism
+  outweighs the miss. The change: keep a short entry's key bytes and slot in
+  the cell's cache line, or start the probes of a pipeline's later requests
+  before running the first. Reopen when a single-driver workload matters or
+  the many-core run shows the misses limiting it
+  (`research/investigations/concurrent-map/DESIGN.md`, the suite).
+
+- **Drivers park more often per request than Dragonfly's threads without
+  pipelining.** At depth 1 on two server CPUs `redis-benchmark` is the limit
+  (1.91 of its two CPUs, firn at 1.57 of its two); firn's threads slept 0.077
+  times per `GET` against Dragonfly's 0.031, and the client spent 12.1% of
+  its time waking the server in its send path against 7.1%, so the same
+  client reached 2 to 7% fewer requests a second than against Dragonfly on
+  11 of the suite's 19 tests, firn before the shared map alike. The change:
+  let a driver spin for a bounded time before it parks in its completion
+  wait, and measure what the spin costs an idle server. Reopen when depth-1
+  rates on few cores become a goal, or with the next change to the
+  completion wait.
+
+- **Readers of one key take its entry one at a time.** Every keyed
+  statement holds its entry exclusively, so the `LRANGE` tests, which all
+  read one list, write their replies one at a time: on the 14900K firn
+  answered `LRANGE_100` at 0.58, 0.61 and 0.44 of Garnet with 4, 8 and 16
+  server CPUs, flat between 1.24 and 1.55 million a second
+  ([many cores](../research/investigations/concurrent-map/DESIGN.md#many-cores)).
+  The change: let a keyed statement whose block writes nothing through its
+  binding read its entry beside other such statements, counting its readers
+  in the entry's cell, which the shared-maps decision deferred to this
+  workload (Q37); firn's `LRANGE` also removes an expired list in the same
+  statement and would do that in a second one. Validate by `LRANGE_100`
+  against Garnet at 4 server CPUs with no other test slower. Reopen as the
+  next work after PR #202.
+
+- **`ZADD` is held near a million a second by one key's critical section.**
+  firn answered 907,000 to 1,127,000 a second at every server CPU count on
+  the 14900K, 0.88 of Dragonfly at 2 and 0.95 at 16
+  ([many cores](../research/investigations/concurrent-map/DESIGN.md#many-cores)).
+  For a member already held, `add_ranked` (`apps/firn/commands/sorted.wf`)
+  copies the member twice, descends the order twice to remove and put it,
+  and hashes it again to store the score, inside the one key's statement.
+  The change: reuse the removed rank's member, store the score through the
+  first lookup, and profile what remains. Validate by `ZADD` at depth 16
+  against Dragonfly at 2 and 16 server CPUs. Reopen with firn's next
+  performance work.
+
+- **A whole-map statement costs more as drivers are added.** firn's `MSET`
+  fell from 1,243,000 a second at 4 server CPUs to 1,103,000 at 8 and
+  802,000 at 16, 0.76 of Garnet there
+  ([many cores](../research/investigations/concurrent-map/DESIGN.md#many-cores)):
+  each whole-map statement waits for a keyed statement of every other
+  driver. Whether the client also limits it at 16 was not measured. The
+  change: first measure `MSET` at 16 with two client processes; if the
+  server limits it, a statement over a list of keys taken in an order the
+  runtime fixes (Q35, deferred by the shared-maps decision) holds only its
+  keys. Reopen with firn's next performance work.
+
+- **firn spends more CPU per `SADD` and `HSET` than before the shared map
+  on four drivers.** On the 14900K with 4 server CPUs both firn and firn at
+  `e92a54ed7` kept every CPU busy, and firn answered 0.96 and 0.94 of the
+  earlier firn, 6% more CPU per request, while it answered more of `LPUSH`
+  and `RPOP` on the same single keys
+  ([many cores](../research/investigations/concurrent-map/DESIGN.md#many-cores)).
+  The cause is unattributed: the host had no `perf`. Validate by a profile
+  of both on four drivers. Reopen with firn's next performance work.
 
 - **Validate reuse of selected-target element layouts during emission.**
   [Zero-stride addressing](../compiler/src/target.rs) currently queries
@@ -1527,17 +1637,16 @@ rarely insert at the same place.
   ordinary allocator, would fix it. Reopen when a program creates many small
   objects.
 
-- **No test forces a shared object's handoff.** The unlock after two vain
-  wakes hands a parked statement the object (`completion/bridge.c`,
-  `WF_SHARED_HANDOFF`), and only contention on several drivers reaches that
-  branch: `shared_objects.wf` checks its sums, not that a handoff happened,
-  and the counts in `research/investigations/io-model/SHARED.md` came from a
-  hand-made counting build. A broken handoff would fail at random at best. A
-  runtime test that parks a statement, wakes it twice while another context
-  takes the object first, and checks that the third unlock grants it would
-  pin the branch; it needs a way to run the bridge's shared-object entries
-  on hand-made contexts. Reopen when the lock changes again or a handoff
-  defect is suspected.
+- **No test watches for a write a borrower gives back.** A statement in a
+  map's block that borrows a hold handed to a parked context and writes the
+  object wakes the contexts watching for a write when it gives the hold back
+  (`completion/bridge.c`, `wf_shared_give_back_locked`).
+  `completion/shared_object_test.c` steps contexts with hand-written frames
+  through every hand-off and borrow, but none of its contexts waits on a
+  false guard, so a give-back that left the watchers asleep would pass. The
+  change: a context whose guard reads a value only a borrower writes, which
+  the test checks wakes after the borrower's give-back. Reopen when the
+  lock changes again or a lost watcher wake is suspected.
 
 - **A bound spawn is joined before the whole statement that uses it.**
   [WAIT-3] joins a bound spawn at the beginning of the first later statement
@@ -1981,6 +2090,19 @@ rarely insert at the same place.
   changed arguments come from a finite set written in the program. Reopen
   when a program needs a third level or two edits nested, or when the
   library's container interfaces are next revised.
+
+- **The standard library has no decimal conversion of integers.** Two
+  programs now write their own, firn's `read_number` and `put_decimal`
+  (`apps/firn/protocol/protocol.wf`) and `parse_port` in
+  `tests/programs/deadlines.wf`, each with its own handling of digits,
+  length and room. A program that reads a numeric argument or prints
+  a count repeats this, and each copy can differ at the edges (overflow past
+  19 digits, an empty field, no room left). The change: a `std::text` entry
+  that parses a decimal `u64` from a byte range with a result naming a
+  malformed or overlong field, and one that appends a `u64` in decimal into a
+  byte window it reports room for; then the two copies move to them.
+  Reopen when the library's text interfaces are next revised or a third
+  program needs one.
 
 - **Complete the vector boundary witness when comparing independent fields.**
   The maintained GrowVector program checks the shipped vector and behavior
@@ -2904,6 +3026,45 @@ condition under which it is taken up.
   Found while fixing the completion review of PR #145.
 
 ## Verification tooling
+
+- **The trusted runtime is large and growing.** Every program links about
+  20,000 lines of C and LLVM IR in `compiler/src/backend` that no checker
+  reads (the scheduler, the completion bridge at 3,871 lines, the hosts' I/O
+  adapters, the concurrent map at 1,130), and each language feature has
+  added to it: the shared map's first claim protocol let one key hold two
+  cells until a review found it
+  (`research/investigations/concurrent-map/DESIGN.md`, reuse and a key's
+  second cell). The change: keep in C only a few primitives Whitefoot
+  cannot state (atomic loads, stores and compare-and-swap with their
+  orderings, parking and waking a thread, the host's system calls and
+  memory mapping) and write the rest, the map's probing and moves, the
+  shared objects' queues and hand-off, the I/O adapters' bookkeeping, in
+  Whitefoot over them, so the checker proves their memory safety and
+  bounds. It needs the language to express atomics and their orderings,
+  which it does not today. Measure each move against the C it replaces on
+  the duel and the suite. Reopen when the language gains atomics, or before
+  the runtime's next large addition.
+
+- **Nothing checks the runtime's concurrent protocols.** The map's claim,
+  settle, move, hold and patience protocols, the shared objects' park,
+  hand-off and borrowed holds, the scheduler's queues and the completion
+  bridge's wakes are
+  argued in comments and exercised by stress tests and mutants
+  (`compiler/src/backend/concurrent_map_test.c`,
+  `compiler/src/backend/completion/shared_object_test.c`), which find an
+  interleaving only when it happens to occur; no model of their states and
+  memory orderings is checked, so a protocol can be wrong in an order no
+  test reaches, as the map's first claim protocol was. The change: model
+  each protocol in TLA+ and check its safety (one holder per key and per
+  object, no lost update, no cycle of waits) and liveness (every begun
+  statement takes effect [WAIT-2]) with TLC over small configurations;
+  check the C itself under the C11 memory model with a stateless model
+  checker such as GenMC, which explores the weak-memory orders a model
+  abstracts; and where a protocol is small enough, prove it, for example
+  in Iris. Start with the map's claim and the objects' hand-off, the two
+  the last review found wanting. Reopen with the next change to a runtime
+  protocol, or with the move of the runtime into Whitefoot above, whose
+  primitives such models would specify.
 
 - **No command renders a program in canonical form.** [FORM-2] refuses a
   program that is not in canonical form, and the compiler has the renderer

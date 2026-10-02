@@ -76,11 +76,15 @@ fn collect_statements(statements: &[CheckedStatement], bindings: &mut HashSet<Bi
             }
             CheckedStatement::Atomic {
                 target,
+                key,
                 guard,
                 body,
                 ..
             } => {
                 collect_expression(target, bindings);
+                if let Some(key) = key {
+                    collect_expression(key, bindings);
+                }
                 if let Some(guard) = guard {
                     collect_expression(guard, bindings);
                 }
