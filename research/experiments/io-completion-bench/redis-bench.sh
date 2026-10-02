@@ -26,6 +26,9 @@
 #                                 per client CPU up to 16), each count with
 #                                 its own kept reference
 #
+# firn is built with the options FIRN_LINK names, --full-lto when it is unset;
+# the records before the quick mode built it with none.
+#
 # BASELINE_ROOT, when set, is a worktree of the revision before expiry with its
 # compiler built; its subset is measured as the baseline lines of Experiment 8.
 # DRAGONFLY and GARNET name those servers' executables; the suite skips a line
@@ -61,7 +64,9 @@ PORT=${PORT:-$((10000 + $$ % 400 * 50))}
 MODE=${1:-bench}
 
 mkdir -p "$OUT"
-"$WHITEFOOTC" --graph "$ROOT/apps/firn/modules.wfg" --entry firn -o "$OUT/firn"
+# firn is linked as a server would be, its module and the runtime's units
+# optimized together; FIRN_LINK names other link options, or none.
+"$WHITEFOOTC" ${FIRN_LINK---full-lto} --graph "$ROOT/apps/firn/modules.wfg" --entry firn -o "$OUT/firn"
 baselines=
 if [ -n "$BASELINE_ROOT" ]; then
     "$BASELINE_ROOT/compiler/target/gate/whitefootc" -o "$OUT/redis_baseline" \

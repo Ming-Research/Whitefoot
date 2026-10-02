@@ -557,19 +557,58 @@ fn reply_array(client: &Client, count: u64) -> result: unit writes(client) {
   return unit;
 }
 
+fn put_at(client: &Client, position: u64, value: u8) -> result: unit writes(client) {
+  doc "Writes one byte at a position inside the window, leaving at where it is.";
+  if position < client^.bytes.inner.len {
+    set client^.bytes.inner[position] = value;
+  }
+  return unit;
+}
+
 fn reply_bulk(client: &Client, stored: &Box<Slots<u8>>) -> result: unit reads(stored), writes(client) {
-  doc "Writes a stored string as a RESP bulk string.";
+  doc "Writes a stored string as a RESP bulk string. One of fewer than ten bytes, whose length is one digit, is written from one position read once, since a list's elements are mostly such and a range reply writes a hundred of them.";
   let length = stored^.inner.len;
   let needed = length +wrap 26_u64;
   reply_room(client: client, needed: needed);
+  if length < 10_u64 {
+    let start = client^.at;
+    let narrow = cvt.wrap::<u64, u8>(length);
+    let digit = narrow +wrap 48_u8;
+    put_at(client: client, position: start, value: 36_u8);
+    let second = start +wrap 1_u64;
+    put_at(client: client, position: second, value: digit);
+    let third = start +wrap 2_u64;
+    put_at(client: client, position: third, value: 13_u8);
+    let fourth = start +wrap 3_u64;
+    put_at(client: client, position: fourth, value: 10_u8);
+    let body = start +wrap 4_u64;
+    for @short (index in 0_u64..length) {
+      let byte = stored^.inner[index];
+      let position = body +wrap index;
+      put_at(client: client, position: position, value: byte);
+    }
+    let tail = body +wrap length;
+    put_at(client: client, position: tail, value: 13_u8);
+    let end = tail +wrap 1_u64;
+    put_at(client: client, position: end, value: 10_u8);
+    let after = end +wrap 1_u64;
+    set client^.at = imin(after, client^.bytes.inner.len);
+    return unit;
+  }
   put(client: client, value: 36_u8);
   put_decimal(client: client, value: length);
   put(client: client, value: 13_u8);
   put(client: client, value: 10_u8);
+  let first = client^.at;
   for @bytes (index in 0_u64..length) {
     let byte = stored^.inner[index];
-    put(client: client, value: byte);
+    let position = first +wrap index;
+    if position < client^.bytes.inner.len {
+      set client^.bytes.inner[position] = byte;
+    }
   }
+  let last = first +wrap length;
+  set client^.at = imin(last, client^.bytes.inner.len);
   put(client: client, value: 13_u8);
   put(client: client, value: 10_u8);
   return unit;

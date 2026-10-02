@@ -899,7 +899,39 @@ Dragonfly measured the same way; firn at `b3a18510a`,
   measurement of the reference.
 - **Not measured with the `scale` mode,** whose threaded client is the
   limit on 8 and 16 CPUs; the quick mode verifies nothing, and firn's ten
-  corpus tests and its suite verification ran at the same revision.
+  corpus tests ran at the same revision.
+
+**The link and the reply** (four server CPUs, `redis-bench.sh quick`,
+thousands of requests a second). firn's module and the runtime's units were
+compiled apart at `-O2`, so each keyed statement called into the runtime:
+
+| Build | `SET` | `GET` | `LPUSH` | `ZADD` | `LRANGE_100` | `MSET` |
+|---|---:|---:|---:|---:|---:|---:|
+| `-O2`, units apart (firn at `da2f198aa`) | 6,504 | 6,493 | 5,008 | 1,114 | 3,192 | 574 |
+| `-O2`, `--full-lto` | 6,720 | 6,733 | 5,437 | 1,079 | 3,276 | 590 |
+| `-O3`, `--full-lto` | 6,720 | 6,759 | 5,483 | 1,098 | 3,284 | 581 |
+| `-O3`, `--full-lto`, `-march=native` | 6,774 | 6,854 | 5,152 | 1,058 | 3,233 | 576 |
+
+- Linking the units together gives about 3% on `SET`, `GET` and
+  `LRANGE_100` and 4% to 8% on `LPUSH`; `-O3` and `-march=native` give
+  nothing two runs can tell from none. `redis-bench.sh` now builds firn
+  with `--full-lto`; the compiler's level stays `-O2`.
+- `reply_bulk` wrote each byte of an element through `put`, which read and
+  stored the reply's position for every byte. Written from one position
+  read once, `LRANGE_100` went from 3,196,000 to 3,384,000 on four CPUs;
+  with the link above, 3,427,000, 1.36 of Garnet, with `SET` at 1.42 and
+  `INCR` at 1.35.
+- **What is left under the aim.** `SET` and `INCR` spend half their server
+  CPU in the kernel's socket calls on four CPUs, so the next gain there is
+  in how the completion runtime batches them. `LRANGE_100` spends a quarter
+  in `reply_bulk`, reading a hundred separately boxed elements, and 6% in
+  the readers' shared count. `ZADD` runs on one key, 60% of its server CPU
+  waiting for it; its block's own work decides its rate. None of the three
+  is measured further here.
+- **`LRANGE_100` on 8 and 16 CPUs is limited by the client:** on eight,
+  24 client processes drew 4,426,000 a second from firn where 16 drew
+  3,421,000. The quick table's `LRANGE_100` ratios at 8 and 16 are
+  therefore not the servers'.
 
 ## The measurement
 
