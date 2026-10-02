@@ -29,7 +29,7 @@
 //!   below keeps the empty-action contrast.
 //!
 //! - `affine_invariant_ceiling_controls_the_exact_selected_target_boundary`
-//!   retired with v0.86's [OP-9]: its subject was that a count bound proved
+//!   retired with v0.87's [OP-9]: its subject was that a count bound proved
 //!   by an affine invariant, multiplied by the actual stride and added to the
 //!   header, stopped target compilation one byte short. A count carries no
 //!   static bound now, and the same exact-byte boundary is observed at run
@@ -708,7 +708,7 @@ fn assert_runs_to_heap_exhaustion(source: &[u8]) {
 /// [OP-9] a count whose size wraps `u64` is accepted, and the construction
 /// ends the run as heap exhaustion: the size is checked as it is computed,
 /// so the allocator never receives the wrapped byte count. This program was
-/// the static OP-9 rejection before v0.86.
+/// the static OP-9 rejection before v0.87.
 #[test]
 fn an_array_count_whose_size_wraps_is_heap_exhaustion() {
     assert_runs_to_heap_exhaustion(

@@ -1481,7 +1481,7 @@ fn stored_layout_ceilings_agree_across_lowering() {
 
 // Retired: buffer_allocations_lower_the_source_proved_length_ceiling_into_target_obligations.
 // Its subject, each allocation site's proved [OP-9] count bound carried on
-// its own call into target qualification, retired with v0.86's [OP-9]: a
+// its own call into target qualification, retired with v0.87's [OP-9]: a
 // count carries no static bound, and the emitted operation checks the size it
 // computes, which the backend exhaustion tests observe at run time.
 

@@ -1546,7 +1546,7 @@ fn main() -> status: std::process::ExitStatus pure {
 
 // Retired: exhaustion_fact_proves_filled_and_vacant_allocation_fit. Its
 // subject, the AllocationFit occurrence each runtime-capacity construction
-// carried and the proof routes that discharged it, retired with v0.86's
+// carried and the proof routes that discharged it, retired with v0.87's
 // [OP-9]: a count carries no static obligation, so no occurrence exists for
 // an exhaustion fact to prove.
 

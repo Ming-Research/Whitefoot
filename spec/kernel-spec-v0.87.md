@@ -1,4 +1,4 @@
-# Kernel Specification v0.88
+# Kernel Specification v0.87
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -819,7 +819,7 @@ No judgment of this specification depends on a value's address being stable, and
 [STOR-8] There is one heap, provided by the trusted base and internally synchronized.
 Allocation is total in the source: heap exhaustion never returns a failure and never traps, and no allocating operation carries a `Result`.
 Exhaustion of the heap terminates the program from the trusted base, outside the language [SCOPE-3], so no payload is ever handed back and no program point holds a value whose owner has vanished.
-The arithmetic that computes an allocation size never wraps: a count's size and a sum of lengths are computed as [OP-9] states.
+The arithmetic that computes an allocation size never wraps: a count's size is computed as [OP-9] states, and a sum of lengths is bounded by `box_segments_filled`'s size predicate [OP-13].
 Addresses are not observable, so allocator concurrency does not affect program determinism.
 Allocation and release carry no effect entry [EFF-1] and never prevent two statements from overlapping [PAR-1].
 A source bundle that carries the no-heap declaration [GRAM-2, PROG-3] cannot name `Box`, the runtime-capacity shapes, or `Segments` [TYPE-9] and cannot call an allocating prelude row — `box_new`, `box_array_filled`, `box_segments_filled`, `box_slots_new`, `box_ring_new`, and `grow` [OP-13, OP-10]; naming such a type is a hard error citing STOR-8 at the complete `type`, and calling such a row is a hard error citing STOR-8 at the complete `call`, each with a repair [DIAG-1].
@@ -875,9 +875,10 @@ It must not wrap, truncate, underallocate, reduce alignment, change [STOR-1] sto
 This stop is a target-layout failure under [DIAG-1], not a source-language rejection, and cites no language rule.
 
 For a runtime-sized allocation, the concrete descriptor and element layout are checked statically as above.
-For every runtime-capacity shape materialized by a construction function [OP-13] or resized by `grow` [OP-10], and every `Segments<T>` that `box_segments_filled` materializes [OP-13], target qualification additionally verifies the actual size, alignment, and element stride against [OP-9]'s language ceilings, and the shape's padded descriptor against the selected target's runtime-allocation byte maximum, before lowering the operation; a `Segments` descriptor counts here its `len` word and its first boundary, the others following at a runtime count.
-The lowered operation computes the complete allocation size, the shape's descriptor, its padding before the elements and the count multiplied by the actual target stride, with checked arithmetic, and compares it with the selected target's runtime-allocation byte maximum before any allocator call; for a `Segments` the descriptor holds every boundary, whose number is the length of an allocated run of lengths and so keeps the descriptor's arithmetic from wrapping, and the count is the element total, itself summed with checked arithmetic. A sum or size that wraps or a size that exceeds that maximum is one the target cannot allocate [OP-9], so every size an allocator receives fits both the allocator-parameter and address-index domains.
-Every materialized runtime-capacity shape and `Segments` therefore satisfies the successful-allocation representation invariant: its padded descriptor and the elements its count sizes, at the actual stride, fit the selected target's runtime-allocation byte maximum.
+For every runtime-capacity shape materialized by a construction function [OP-13] or resized by `grow` [OP-10], target qualification additionally verifies the actual size, alignment, and element stride against [OP-9]'s language ceilings, and the shape's padded descriptor against the selected target's runtime-allocation byte maximum, before lowering the operation.
+The lowered operation computes the complete allocation size, the shape's descriptor, its padding before the elements and the count multiplied by the actual target stride, with checked arithmetic, and compares it with the selected target's runtime-allocation byte maximum before any allocator call; a size that wraps or exceeds that maximum is one the target cannot allocate [OP-9], so every size an allocator receives fits both the allocator-parameter and address-index domains.
+Every materialized runtime-capacity shape therefore satisfies the successful-allocation representation invariant: its padded descriptor and its capacity's elements at the actual stride fit the selected target's runtime-allocation byte maximum.
+For every `Segments<T>` that `box_segments_filled` materializes [OP-13], target qualification verifies the element's actual size, alignment, and stride against [OP-9]'s language ceilings, and requires the largest block its predicate admits, `2^62` bytes of elements and boundaries together with the shape's own descriptor and its padding before the elements, to fit both the allocator-parameter and address-index domains, before lowering the operation.
 The emitted size check and this target qualification establish that every byte count an allocator receives has one exact value-preserving target representation, and the allocator receives exactly that value.
 Every emitted target address computation must likewise be proved valid for every runtime value that reaches it: the compiler establishes before emission that each runtime index and each mathematically scaled byte offset actually used by the computation has an exact value-preserving representation in the applicable target address-index domain, and that scaling and offset addition do not wrap.
 An [OP-4] bounds judgment together with an established complete-object-layout or successful-allocation invariant may discharge these obligations; a backend's implicit narrowing does not.
@@ -1132,8 +1133,8 @@ They are pure and total: after normal operand evaluation, the primitive does not
 Payload-carrying enums, enum ordering, and enum/integer conversion remain outside the operation table.
 
 [OP-9] An allocation's size is computed at run time, and a size the target cannot allocate is heap exhaustion; a stored type has fixed language layout ceilings.
-A runtime-capacity construction [OP-13] and `grow` [OP-10] compute the byte size of their storage from their own count `n`, and `box_segments_filled` [OP-13] from the sum of its lengths and their number, with the checked arithmetic [STOR-6] fixes, and a size the selected target cannot allocate, including one whose sum of lengths wraps, is a request the heap cannot serve, which is heap exhaustion [STOR-8].
-No count or length carries a static obligation, and every value of its `u64` type is admitted.
+A runtime-capacity construction [OP-13] and `grow` [OP-10] compute the byte size of their storage from their own count `n` with the checked arithmetic [STOR-6] fixes, and a size the selected target cannot allocate is a request the heap cannot serve, which is heap exhaustion [STOR-8].
+No count carries a static obligation, and every value of its `u64` type is admitted.
 
 All layout-ceiling arithmetic is over unbounded mathematical integers.
 Let `round_up(x,a) = ceil(x/a) * a`.
@@ -1199,7 +1200,7 @@ Allocation is total [STOR-8], so no construction has a failure arm for exhausted
 A window built by `slots_new`, `ring_new`, `box_slots_new`, or `box_ring_new` starts empty.
 An `Array` built by `array_filled` or `box_array_filled` has every slot holding the supplied value and requires a copy element type [OWN-1].
 `box_segments_filled(lengths: r, value: v)` builds a `Segments<T>` of `r^.len` segments whose segment k holds `r^[k]` elements, every element holding the supplied value, and requires a copy element type [OWN-1].
-Its element total, the sum of the lengths, is a runtime sum that no term states; the run's block holds `r^.len + 1` boundaries and that total of elements, its size is computed as [OP-9] states, and its result is the cell itself.
+Its element total t, the sum of the lengths, is a runtime sum that no term states; its result is `Some` of the cell exactly when the pure, total, target-independent predicate `stride_ceiling(T) * t + 8 * r^.len <= 2^62` over unbounded integers holds, with [OP-9]'s `stride_ceiling`, and `None` otherwise.
 `slots_from_array` consumes a full array into a full window, and `slots_into_array` consumes a window whose `len` equals its `cap`.
 A pool is a `Slots` plus indices used as handles, and a bump allocator is the same storage used with `place_back` [OP-10] as allocation and a library reset.
 A stale index that is still in bounds names the current occupant of that slot, which is a logic error and not a memory error, and a program that must detect it keeps a generation number as data.
@@ -2314,10 +2315,10 @@ fn box_array_filled<T: copy>(count: u64, value: T) -> result: Box<Array<T>> pure
   ensures result.inner.len == count;
   ensures forall filled(k in 0_u64..result.inner.len): result.inner[k] == value;
 };
-fn box_segments_filled<T: copy>(lengths: &[u64], value: T) -> result: Box<Segments<T>> reads(lengths) contract {
-  ensures result.inner.len == lengths^.len;
-  ensures forall sized(d in 0_u64..result.inner.len): result.inner[d].len == lengths^[d];
-  ensures forall filled(d in 0_u64..result.inner.len, k in 0_u64..result.inner[d].len): result.inner[d][k] == value;
+fn box_segments_filled<T: copy>(lengths: &[u64], value: T) -> result: Option<Box<Segments<T>>> reads(lengths) contract {
+  ensures when Some(value: made): made.inner.len == lengths^.len;
+  ensures when Some(value: made): forall sized(d in 0_u64..made.inner.len): made.inner[d].len == lengths^[d];
+  ensures when Some(value: made): forall filled(d in 0_u64..made.inner.len, k in 0_u64..made.inner[d].len): made.inner[d][k] == value;
 };
 fn box_slots_new<T>(capacity: u64) -> result: Box<Slots<T>> pure contract {
   ensures result.inner.len == 0_u64;

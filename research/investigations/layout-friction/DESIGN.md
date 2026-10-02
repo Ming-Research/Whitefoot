@@ -684,7 +684,7 @@ declaration; and `len-whole-row`, `len-window-row` and `len-loop-header` name
 the call whose row removed the length fact, while `stored-position`, whose
 bound no removed fact supplies, keeps the ordinary repair.
 
-The allocation change that follows it on a stacked branch amends v0.86 with
+Specification v0.87, the allocation change that follows it, implements
 3D, checking the multiplication and the header's addition for overflow and
 comparing the size with the target's maximum rather than saturating, which
 ends the same way. Under it, with the compiler at `77de43b53`, the five

@@ -3598,7 +3598,7 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
 /// bound, and a size the target cannot allocate is heap exhaustion at run
 /// time rather than a target-layout stop. The OP-9 repair pairs, the
 /// target's count-limit stop and the tests that carried both out retired
-/// with v0.86's [OP-9]; the run-time check is observed by the backend
+/// with v0.87's [OP-9]; the run-time check is observed by the backend
 /// exhaustion tests.
 #[test]
 fn an_allocation_count_bounded_only_by_its_type_builds() {

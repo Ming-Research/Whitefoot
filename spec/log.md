@@ -11,21 +11,21 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
-## 2026-10-02 v0.86 amended: box_segments_filled returns its cell
+## 2026-10-02 v0.88: box_segments_filled returns its cell
 
 Rules: changed OP-9, OP-13, STOR-6, STOR-8, PRE-1
 
 Owner-approved: 2026-10-02, in the session, written in Chinese: Q34 A ("for Q25 option A I need to see what the code actually looks like; the others agreed"); after the handoff of PR #211, which showed every rule change with its before and after behavior, the changes as shown ("agreed")
 
-Summary: Before v0.86 is released, OP-13's `box_segments_filled` no longer returns `None` when `stride_ceiling(T) * t + 8 * r^.len` exceeds `2^62`: its block holds `r^.len + 1` boundaries and the sum of the lengths in elements, and OP-9 sizes it from that sum and their number with the checked arithmetic STOR-6 fixes, a size the target cannot allocate, a wrapping sum among them, being heap exhaustion [STOR-8]. STOR-6 qualifies a `Segments` with the runtime-capacity shapes, its descriptor counting the `len` word and the first boundary there, drops the requirement that the predicate's largest block be allocatable, and states why the descriptor's arithmetic cannot wrap; STOR-8 states the sum computed as OP-9 states; the PRE-1 record returns `Box<Segments<T>>` with unrouted postconditions. Selected by the owner's ruling Q34 A.
+Summary: OP-13's `box_segments_filled` no longer returns `None` when `stride_ceiling(T) * t + 8 * r^.len` exceeds `2^62`: its block holds `r^.len + 1` boundaries and the sum of the lengths in elements, and OP-9 sizes it from that sum and their number with the checked arithmetic STOR-6 fixes, a size the target cannot allocate, a wrapping sum among them, being heap exhaustion [STOR-8]. STOR-6 qualifies a `Segments` with the runtime-capacity shapes, its descriptor counting the `len` word and the first boundary there, drops the requirement that the predicate's largest block be allocatable, and states why the descriptor's arithmetic cannot wrap; STOR-8 states the sum computed as OP-9 states; the PRE-1 record returns `Box<Segments<T>>` with unrouted postconditions. Selected by the owner's ruling Q34 A. The branch amended v0.86 before main released it; main released v0.86 and then v0.87, whose text is archived, and the same rule changes stand over it as v0.88.
 
-## 2026-10-02 v0.86 amended: an allocation's size computed at run time
+## 2026-10-02 v0.87: an allocation's size computed at run time
 
 Rules: changed SCOPE-3, STOR-6, STOR-8, OP-9, OP-10, OP-13, ERR-4, DIAG-1, DIAG-2, ENT-1, ENT-2, MSR-4
 
 Owner-approved: 2026-10-02, in the session, written in Chinese: after the handoff of PR #206's cards, Q33 B ("apart from 25, which I think needs research, I agree to all the others"); after the handoff of PR #209, which showed every rule change with its before and after behavior, the changes as shown ("for Q25 option A I need to see what the code actually looks like; the others agreed")
 
-Summary: Before v0.86 is released, OP-9 computes a runtime-capacity construction's and `grow`'s byte size at run time with the checked arithmetic STOR-6 fixes, and a size the selected target cannot allocate is heap exhaustion [STOR-8]; no count carries a static obligation and every `u64` count is admitted, while the layout ceilings stay. STOR-6 holds a runtime-capacity shape's padded descriptor to the runtime-allocation maximum and states the run-time size check before any allocator call; STOR-8, OP-10 and OP-13 compute sizes as OP-9 states; SCOPE-3 drops the allocation-ceiling proof; the allocation-size family leaves ERR-4's classification, the DIAG-1 selection list, DIAG-2's retention list and lowering sentence, the ENT-1 schema and fragment lists, ENT-2's goal universe and MSR-4. Selected by the owner's ruling on direction 3D of the layout-friction investigation.
+Summary: OP-9 computes a runtime-capacity construction's and `grow`'s byte size at run time with the checked arithmetic STOR-6 fixes, and a size the selected target cannot allocate is heap exhaustion [STOR-8]; no count carries a static obligation and every `u64` count is admitted, while the layout ceilings stay. STOR-6 holds a runtime-capacity shape's padded descriptor to the runtime-allocation maximum and states the run-time size check before any allocator call; STOR-8, OP-10 and OP-13 compute sizes as OP-9 states; SCOPE-3 drops the allocation-ceiling proof; the allocation-size family leaves ERR-4's classification, the DIAG-1 selection list, DIAG-2's retention list and lowering sentence, the ENT-1 schema and fragment lists, ENT-2's goal universe and MSR-4. Selected by the owner's ruling on direction 3D of the layout-friction investigation. The branch amended v0.86 before main released it; main's v0.86 is archived, and the same rule changes stand over it as v0.87.
 
 ## 2026-10-02 v0.86: callables and values in separate use classes
 
