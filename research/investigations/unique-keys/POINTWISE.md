@@ -347,6 +347,27 @@ compiler as of 9208728e:
   its header, took 392.6 s at 9ea2818b, two of its problems opening 66,463
   and 76,111 branches.
 
+## Conflict-directed backjumping
+
+The derivation's verdict is fixed by [RANGE-3]: a problem is refuted when
+every branch of its case analysis is contradictory. The search may skip a
+branch whose refutation is already known, and conflict-directed backjumping
+knows it: when a branch below a split is refuted by literals none of which
+came from that split, the split's other branches hold the same literals
+and are refuted too. `docs/todo.md`, "The range judgment splits every open
+read pair", records why the search is slow without it.
+
+Criterion, recorded before the change was written: it is kept when every
+`range*` and `fn9-neg-range*` case and `owner_loop.wf` give byte-identical
+`whitefootc --check` output, verdict and diagnostic alike, the library tests
+pass unchanged, and `owner_loop.wf` checks in 2.5 s or less, a fifth of its
+time before, while `range5-pos-level-cascade.wf` checks no slower than
+before; otherwise the change is refused here with its figures, and the next
+candidate is splitting first on the read pairs the open conclusion's atoms
+reach. Before the change, at d868d5b6 on the host the observations name,
+the level cascade checks in 0.96 to 1.02 s over three runs and
+`owner_loop.wf` in 12.4 s.
+
 ## Criteria and result
 
 Candidate N's entry under [Candidates](DESIGN.md#candidates) recorded four
