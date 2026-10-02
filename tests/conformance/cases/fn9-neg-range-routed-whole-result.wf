@@ -1,0 +1,18 @@
+fn ramp(n: u64) -> result: Option<Box<Array<u64>>> pure contract {
+  ensures when Some(value: cells): forall up(k in 0_u64..result.inner.len): cells.inner[k] == k;
+} {
+  doc "The clause routed through Some names the routed result's whole value, which supplies no datum in that clause.";
+  let cells = box_array_filled::<u64>(count: n, value: 0_u64);
+  for (
+    k in 0_u64..n,
+    invariant forall built(q in 0_u64..k): cells.inner[q] == q
+  ) {
+    set cells.inner[k] = k;
+  }
+  let some = Some<Box<Array<u64>>>(value: move cells);
+  return move some;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

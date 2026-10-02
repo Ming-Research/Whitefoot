@@ -100,6 +100,15 @@ impl<'unit> SyntaxView<'unit> {
         self.topology().root
     }
 
+    /// The source-order position of a node's first terminal, comparable with
+    /// the positions [`Self::direct_token_indices`] returns.
+    pub(crate) fn first_terminal_position(&self, node: NodeId) -> Result<u64, SyntaxViewFailure> {
+        self.topology()
+            .node(node)
+            .map(|record| record.first_terminal)
+            .ok_or(SyntaxViewFailure::InvalidCanonicalTree)
+    }
+
     pub(crate) fn production(&self, node: NodeId) -> Result<Production, SyntaxViewFailure> {
         self.topology()
             .node(node)

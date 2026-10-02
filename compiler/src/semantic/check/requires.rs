@@ -24,6 +24,8 @@ use super::{CheckStop, Checker, ControlCounters, ControlScope, LocalBinding};
 
 pub(super) struct CheckedRequires {
     pub(super) requirements: Vec<CheckedRequirement>,
+    /// [RANGE-1] the range clauses among the requirements, in source order.
+    pub(super) range: Vec<super::super::range_facts::CheckedRangeClause>,
     /// The [ENT-2] clause (b) places each requirement forms, index-aligned
     /// with `requirements` [`super::super::model::CheckedFunction::requirement_places`].
     pub(super) places: Vec<Vec<CheckedExpression>>,
@@ -444,12 +446,22 @@ impl<'unit> Checker<'_, 'unit> {
         let mut expanded_definitions = HashSet::new();
         let mut requirement_places = Vec::new();
         let mut requirements = Vec::new();
+        let mut range = Vec::new();
         for clause in self
             .types
             .declarations
             .tree
             .children_with(block, Production::RequiresClause)?
         {
+            if let Some(range_clause) = self
+                .types
+                .declarations
+                .tree
+                .first_child_with(clause, Production::RangeClause)?
+            {
+                range.extend(self.check_range_clause(context, range_clause, bindings)?);
+                continue;
+            }
             let expression = self
                 .types
                 .declarations
@@ -522,6 +534,7 @@ impl<'unit> Checker<'_, 'unit> {
         }
         Ok(CheckedRequires {
             requirements,
+            range,
             places: requirement_places,
         })
     }

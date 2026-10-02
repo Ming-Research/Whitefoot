@@ -134,6 +134,7 @@ use super::permission::{
     field_steps, set_target_place, visit_read_bindings,
 };
 use super::places::{PlaceMap, PlaceRoot, PlaceStep, ResolvedPlace, UnprovedSeparations};
+use super::range_facts::CheckedCertifiedLoop;
 use crate::NodePath;
 
 /// The judgment's outcome for one counted loop, and the advice that outlives
@@ -291,6 +292,7 @@ pub(crate) fn judge_loops<'check>(
         places,
         &function.entailment.obligations,
         &function.waiting.calls,
+        &function.range_facts.certified,
         function.body.as_deref().unwrap_or_default(),
         &mut judged,
     );
@@ -310,6 +312,7 @@ fn collect<'check>(
     places: &PlaceMap,
     obligations: &'check [ObligationOutcome],
     waiting: &'check [NodePath],
+    certified: &'check [CheckedCertifiedLoop],
     statements: &'check [CheckedStatement],
     judged: &mut Vec<LoopPermission>,
 ) {
@@ -326,6 +329,7 @@ fn collect<'check>(
                 program,
                 places,
                 obligations,
+                certified.iter().find(|certificate| certificate.id == *id),
                 node_path.clone(),
                 *id,
                 *binder,
@@ -344,7 +348,15 @@ fn collect<'check>(
             judged.push(loop_permission);
         }
         for nested in nested_bodies(statement) {
-            collect(program, places, obligations, waiting, nested, judged);
+            collect(
+                program,
+                places,
+                obligations,
+                waiting,
+                certified,
+                nested,
+                judged,
+            );
         }
     }
 }
@@ -356,10 +368,12 @@ fn encloses(outer: &NodePath, inner: &NodePath) -> bool {
     inner.len() > outer.len() && inner.starts_with(outer)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn judge<'check>(
     program: &Program<'check>,
     places: &PlaceMap,
     obligations: &'check [ObligationOutcome],
+    certificate: Option<&'check CheckedCertifiedLoop>,
     statement: NodePath,
     id: CheckedLoopId,
     binder: BindingId,
@@ -369,6 +383,8 @@ fn judge<'check>(
         program,
         places,
         obligations,
+        certificate,
+        certified_writes: Vec::new(),
         outer_loop: id,
         cite: statement.clone(),
         introduced: vec![binder],
@@ -435,6 +451,14 @@ struct ProvenRangeReference {
     written: bool,
 }
 
+/// One element write a holding certificate separates from every access of
+/// every other iteration [RANGE-5]: the root is the resolved place above the
+/// element's first index or range step.
+struct CertifiedElementWrite {
+    root: ResolvedPlace,
+    statement: NodePath,
+}
+
 /// One source read occurrence and the places reached by that spelling.
 ///
 /// The binding remains condition 1's accumulator identity. The resolved
@@ -444,6 +468,11 @@ struct ProvenRangeReference {
 struct ReadOccurrence {
     binding: BindingId,
     places: Vec<ResolvedPlace>,
+    /// The expression or call that reads, where it reads elements.
+    carrier: Option<NodePath>,
+    /// Whether the occurrence reads only a measure, which element writes
+    /// leave unchanged [MSR-1].
+    measure: bool,
 }
 
 /// One accepted accumulate statement: `set a = a (+) e` with `(+)` admitted.
@@ -456,6 +485,11 @@ struct Accumulate {
 struct Survey<'check, 'run> {
     program: &'run Program<'check>,
     places: &'run PlaceMap,
+    /// The loop's certificate, when the range judgment found one to hold
+    /// [RANGE-5].
+    certificate: Option<&'check CheckedCertifiedLoop>,
+    /// Element writes the certificate separates across iterations.
+    certified_writes: Vec<CertifiedElementWrite>,
     /// Successful source obligations already computed by [ENT]. Permission
     /// consumes their disposition by source-node identity and never reruns
     /// the underlying proof.
@@ -537,12 +571,18 @@ impl<'check> Survey<'check, '_> {
                 self.moved_places(value, node_path);
                 self.expression(value);
             }
-            // [CALL-4] a binder list writes more than one place in one
-            // statement. The iteration footprint below describes one written
-            // target per statement, so this form is refused rather than given
-            // a footprint that does not describe it.
-            CheckedStatement::DestructuringLet { .. } => {
-                self.refuse_form("a statement that binds an ordered result list");
+            // [GRAM-4] a binder list over a call's ordered result list
+            // [CALL-4], or a destructuring consume of `move place`: each
+            // binder is a new binding of this iteration, as a `let`'s is,
+            // which `introduced` already states, and the statement's
+            // footprint is its right-hand side's: the call's projected row
+            // and operand reads, and the places it consumes, whose fields a
+            // final `..` releases with them.
+            CheckedStatement::DestructuringLet {
+                node_path, value, ..
+            } => {
+                self.moved_places(value, node_path);
+                self.expression(value);
             }
             CheckedStatement::Set {
                 node_path,
@@ -641,6 +681,9 @@ impl<'check> Survey<'check, '_> {
         let affine_map = self.proven_affine_map(target);
         for write in &footprint.writes {
             if self.is_iteration_own(&write.place) {
+                continue;
+            }
+            if self.record_certified_write(&write.place, node) {
                 continue;
             }
             if self.record_range_write(&write.place) {
@@ -866,6 +909,42 @@ impl<'check> Survey<'check, '_> {
         true
     }
 
+    /// One element write the loop's certificate separates [RANGE-5]: a
+    /// write by a `set` statement or a call the certificate names, of a
+    /// place with an index step. Its root is the place above the first
+    /// index or range step, which coverage then holds every read of to the
+    /// certificate's reads.
+    fn record_certified_write(&mut self, place: &ResolvedPlace, node: &NodePath) -> bool {
+        let Some(certificate) = self.certificate else {
+            return false;
+        };
+        if !certificate.writes.contains(node) {
+            return false;
+        }
+        let Some(first) = place
+            .path
+            .iter()
+            .position(|step| matches!(step, PlaceStep::Index(_) | PlaceStep::Range(_)))
+        else {
+            return false;
+        };
+        if !matches!(place.path[first], PlaceStep::Index(_))
+            && !place.path[first..]
+                .iter()
+                .any(|step| matches!(step, PlaceStep::Index(_)))
+        {
+            return false;
+        }
+        self.certified_writes.push(CertifiedElementWrite {
+            root: ResolvedPlace {
+                root: place.root,
+                path: place.path[..first].to_vec(),
+            },
+            statement: node.clone(),
+        });
+        true
+    }
+
     /// One write into storage that outlives the iteration.
     ///
     /// An accumulator is a whole binding of an enclosing scope, named
@@ -942,6 +1021,8 @@ impl<'check> Survey<'check, '_> {
                     self.reads.push(ReadOccurrence {
                         binding,
                         places: Vec::new(),
+                        carrier: None,
+                        measure: false,
                     });
                 }
                 None
@@ -950,6 +1031,8 @@ impl<'check> Survey<'check, '_> {
                 self.reads.push(ReadOccurrence {
                     binding: place.root.binding,
                     places: Vec::new(),
+                    carrier: None,
+                    measure: false,
                 });
                 None
             }
@@ -1074,11 +1157,30 @@ impl<'check> Survey<'check, '_> {
                 None
             }
         };
+        // The carrier is what a certificate names an element read by; a
+        // measure read selects descriptor storage no element write changes.
+        let (carrier, measure) = match expression {
+            CheckedExpression::ReadStorage { carrier, .. }
+            | CheckedExpression::RangeIndex { carrier, .. }
+            | CheckedExpression::RangeElementMeasure { carrier, .. }
+            | CheckedExpression::ArrayIndex { carrier, .. }
+            | CheckedExpression::BufferIndex { carrier, .. }
+            | CheckedExpression::DerefAddressed { carrier, .. } => (Some(carrier.clone()), false),
+            CheckedExpression::ContainerMeasure { .. }
+            | CheckedExpression::RangeMeasure { .. }
+            | CheckedExpression::ArrayMeasure { .. } => (None, true),
+            _ => (None, false),
+        };
         if let Some((binding, places)) = occurrence {
             if places.is_empty() {
                 self.unresolved.get_or_insert(self.cite.clone());
             } else {
-                self.reads.push(ReadOccurrence { binding, places });
+                self.reads.push(ReadOccurrence {
+                    binding,
+                    places,
+                    carrier,
+                    measure,
+                });
             }
         }
         for child in expression_children(expression) {
@@ -1153,7 +1255,7 @@ impl<'check> Survey<'check, '_> {
     fn moved_places(&mut self, value: &CheckedExpression, node: &NodePath) {
         let mut footprint = Footprint::default();
         collect_consumed_places(self.places, value, node, &mut footprint);
-        self.record_writes(&footprint, &[]);
+        self.record_writes(&footprint, &[], None);
     }
 
     /// One expression tree: every read it performs, and every call it makes.
@@ -1176,7 +1278,7 @@ impl<'check> Survey<'check, '_> {
             self.record_range_arguments(projection.arguments);
             let elements = self.element_arguments(projection.arguments);
             let footprint = self.program.footprint(self.places, &projection);
-            self.record_writes(&footprint, &elements);
+            self.record_writes(&footprint, &elements, Some(projection.call));
         }
         for child in expression_children(expression) {
             self.calls(child);
@@ -1189,7 +1291,12 @@ impl<'check> Survey<'check, '_> {
     /// helper's declared row counts as an access on its actual range", so a
     /// read reaching a mapped root or a proved origin is judged exactly as a
     /// source read occurrence is.
-    fn record_writes(&mut self, footprint: &Footprint, elements: &[ProvenElementReference]) {
+    fn record_writes(
+        &mut self,
+        footprint: &Footprint,
+        elements: &[ProvenElementReference],
+        call: Option<&NodePath>,
+    ) {
         if let Some(argument) = &footprint.unresolved {
             self.unresolved.get_or_insert(argument.clone());
         }
@@ -1214,10 +1321,17 @@ impl<'check> Survey<'check, '_> {
                     PlaceRoot::Constant(_) => continue,
                 },
                 places: vec![read.place.clone()],
+                carrier: call.cloned(),
+                measure: false,
             });
         }
         for write in &footprint.writes {
             if self.is_iteration_own(&write.place) {
+                continue;
+            }
+            if let Some(call) = call
+                && self.record_certified_write(&write.place, call)
+            {
                 continue;
             }
             if self.record_range_write(&write.place) {
@@ -1311,6 +1425,7 @@ impl<'check> Survey<'check, '_> {
                 combine: accumulate.combine,
             })
         } else if self.element_writes.is_empty()
+            && self.certified_writes.is_empty()
             && !self.range_references.iter().any(|range| range.written)
         {
             None
@@ -1346,6 +1461,9 @@ impl<'check> Survey<'check, '_> {
             return Some(denial);
         }
         if let Some(denial) = self.element_map_coverage() {
+            return Some(denial);
+        }
+        if let Some(denial) = self.certified_coverage() {
             return Some(denial);
         }
         if let Some(argument) = &self.unresolved {
@@ -1425,6 +1543,43 @@ impl<'check> Survey<'check, '_> {
             .map(|written| LoopDenial::SharedWrite {
                 argument: written.statement.clone(),
             })
+    }
+
+    /// [RANGE-5] every read reaching a certified root is a measure or one of
+    /// the element reads the certificate separated, and no other family
+    /// writes there: the certificate compared exactly those accesses. The
+    /// certificate's walk records every access it reaches, but it skips an
+    /// arm its entry state excludes, such as the body of `if off` where
+    /// `off` is a constant false, while this survey still sees that arm's
+    /// accesses; such a loop stays sequential.
+    fn certified_coverage(&self) -> Option<LoopDenial> {
+        let certificate = self.certificate?;
+        let oracle = UnprovedSeparations;
+        for written in &self.certified_writes {
+            let uncovered = self.reads.iter().any(|read| {
+                !read.measure
+                    && read
+                        .places
+                        .iter()
+                        .any(|place| self.places.overlaps(&oracle, place, &written.root))
+                    && !read.carrier.as_ref().is_some_and(|carrier| {
+                        certificate.reads.contains(carrier) || certificate.writes.contains(carrier)
+                    })
+            });
+            let mixed = self
+                .element_writes
+                .iter()
+                .any(|other| self.places.overlaps(&oracle, &other.root, &written.root))
+                || self.range_references.iter().any(|range| {
+                    range.written && self.places.overlaps(&oracle, &range.origin, &written.root)
+                });
+            if uncovered || mixed {
+                return Some(LoopDenial::SharedWrite {
+                    argument: written.statement.clone(),
+                });
+            }
+        }
+        None
     }
 
     /// Condition 1: the body carries at most one value across iterations, and
@@ -1655,6 +1810,9 @@ fn collect_introduced(statements: &[CheckedStatement], out: &mut Vec<BindingId>)
             CheckedStatement::Let { binding, .. }
             | CheckedStatement::PropagateLet { binding, .. }
             | CheckedStatement::ValueMatchLet { binding, .. } => out.push(*binding),
+            CheckedStatement::DestructuringLet { bindings, .. } => {
+                out.extend(bindings.iter().map(|(binding, _, _)| *binding));
+            }
             CheckedStatement::CountedRange { binder, .. } => out.push(*binder),
             CheckedStatement::Atomic { binding, .. } => out.push(*binding),
             _ => {}

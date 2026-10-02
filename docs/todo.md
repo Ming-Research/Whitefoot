@@ -77,6 +77,22 @@ rarely insert at the same place.
 
 ## Checker precision and proof cost
 
+- **A direct call result loses its struct invariant at a reference target.**
+  For a `nocopy Pair` with private `left` and `right` fields and invariant
+  `left == right`, let `make() -> Pair` return `Pair(1, 1)`. A helper
+  `update(pair: &Pair)` with `writes(pair)` that executes
+  `set pair^ = make(); return unit;` fails FN-9 at its return. Replacing that
+  assignment by `let next = make(); set pair^ = move next;` passes, as does
+  direct construction into `pair^`. These paired observations are recorded
+  in the [Forest investigation](../research/investigations/unique-keys/DESIGN.md#observations-with-the-current-compiler).
+  FN-9 and CALL-4 specify publication of result-field relations onto direct
+  ordinary-set destinations after target kills. Trace and repair that
+  publication for reference destinations; the exact implementation cause is
+  not established. This is conservative rejection, not permission to use a
+  false invariant. Reopen before borrowed Forest replacement relies on the
+  route. Validate direct-set and let-then-set positives, false callee results,
+  alias writes and stale destination facts under the existing rules.
+
 - **A length guard on a match binder is not a fact inside a loop that
   writes through it.** Minimal witness: a function matches `held^` as
   `List(items: list)` and, in a `for` loop, pops from `list` under
@@ -2361,6 +2377,29 @@ rarely insert at the same place.
   components a budget-carrying frame variant. Reopen when such a program
   appears.
 
+- **The multi-result-list decision names a set target list the grammar
+  lacks.** `design/language/surface-form/multi-result-list.md` says a result
+  list is "bound only by a destructuring let or a set target list", but
+  [GRAM-4]'s `set_stmt` is `"set" place "=" expr ";"` and the
+  specification has no target list. A reader looking for that form finds
+  none. Change: drop the set target list from the decision, or add the form
+  if a program needs to assign a result list to existing places. Reopen
+  with the next edit of that node.
+
+- **A statement that binds an ordered result list never overlaps its
+  siblings.** [PAR-1] lets two adjacent statements overlap when their paths
+  are disjoint, but the pair judgment in
+  `compiler/src/semantic/permission.rs` describes one definition per
+  statement and refuses `let (a, b) = f(...);` [CALL-4] as a form, so two
+  independent calls that return result lists never run as a pair. The
+  counted-loop survey in `compiler/src/semantic/loop_permission.rs` gives
+  such a statement its right-hand side's footprint and each binder the
+  iteration's own binding; the pair judgment would give each binder its own
+  definition path the same way. Validate with two adjacent binder-list
+  calls on disjoint storage: permitted as a pair and splitting, with the
+  sequential build's output. Reopen when a program's pair of such calls
+  costs measurable time.
+
 ## Platforms and host interfaces
 
 - **Upstream LLVM on Darwin does not yet support the selected stack-probe
@@ -2925,6 +2964,22 @@ rarely insert at the same place.
   storage as a blocker; reopen when a larger program's backend profile shows
   material retained text or rendering cost.
 
+- **The range judgment keeps its own model of places and aliases.**
+  `compiler/src/semantic/range_judgment/world.rs` models locations, moves
+  and aliasing for the range walk beside `compiler/src/semantic/places.rs`,
+  which resolves places for ownership and permission. The two can disagree:
+  the walk first treated a by-value copy of an array as an alias of its
+  source, which `places.rs` never does (fixed; conformance cases
+  `range2-neg-copy-is-not-its-source` and `range2-neg-match-binder-copy`),
+  and `certified_coverage` in `compiler/src/semantic/loop_permission.rs`
+  denies a loop whose certificate's walk skipped an access the permission
+  survey sees. Deriving the walk's locations from
+  `places.rs`'s resolved places, or sharing one access model, would leave
+  one definition of what a statement touches. Validate by identical
+  verdicts on the `range*` cases and by the permission tests. Reopen with
+  the next change to how either resolves a place, or when a range verdict
+  differs from what the ownership judgment says the code touches.
+
 ## Open language questions
 
 Questions the owner has left open on purpose. None of them is a decision;
@@ -2966,6 +3021,23 @@ each is resolved by a discussion and a tree change.
   (`len == entry(len) + 1`), and the maintained programs repeat a field
   relation at most twice. Reopen generic invariants when a generic type has
   a relation every value keeps that several functions restate.
+  The [library-Forest derivation](../research/investigations/unique-keys/DESIGN.md#worked-derivation-a-library-forest)
+  supplies a generic predicate consumer. Its active route uses explicit
+  boundary contracts with checked logical predicates and storage-content
+  transport. Validate support invalidation through aliases and interior
+  references, generic contract transport, and every promised exit including
+  propagation; a partially repaired Forest cannot cross a call requiring
+  its full predicate. Continuous validity and simultaneous assignment are
+  not prerequisites for that work.
+  A stronger lifetime guarantee is separately deferred. The investigation's
+  direct-field and reference-helper Pair probes distinguish it from current
+  TYPE-11: a legal write can leave unequal fields, and a helper can restore
+  equality only on exit. If the stronger rule is reopened, settle its
+  observation boundary and test every creation/mutation route, including
+  nested storage and intermediate states inside reference calls. Cached
+  subtree counts require a runtime-sized update beyond a fixed tuple;
+  any unpack/repack alternative for that stronger rule must exclude
+  intermediate observations and prove the invariant before republishing.
 - **A standard collection restates at every operation that its capacity is
   unchanged.** `ensures queue^.storage.inner.cap == entry(queue)^.storage.inner.cap`
   appears 15 times across the priority queue's interface and body
@@ -3135,6 +3207,48 @@ each is resolved by a discussion and a tree change.
   object's change and a time, or when the polling writer's cost shows in a
   profile.
 
+- **A function that states a range clause cannot be a function-kind
+  actual.** RANGE-1 refuses a range clause in a `fn_sig` contract, so no
+  function-kind formal can declare one, and a `fn_decl` whose requirements
+  or postconditions include a range clause is refused as the actual of
+  such a formal, as `whitefootc` reports "a function signature's contract
+  states a range clause". Impact: generic code that takes a function cannot
+  take a producer that hands back range facts, or a consumer that requires
+  them; no program has needed one yet. Change: admit range clauses in a
+  `fn_sig` contract, matched clause by clause against the actual's, with
+  the formal's clauses owed and taken at the call as a direct call's are.
+  Validate by a generic driver that takes `ramp` of
+  `tests/conformance/cases/range3-pos-postcondition-producer.wf` through a
+  function parameter. Reopen when a program passes such a function.
+
+- **A function cannot pass on a callee's routed range postcondition.** A
+  function that returns a callee's `Option` or `Result` unchanged, `return
+  move made;` after `let made = ramp(n: n);`, cannot promise the callee's
+  routed range postcondition again: the range walk holds a routed fact only
+  in a `match` arm that takes its variant [RANGE-2], so the return owes the
+  payload fact unproved. The writer matches and returns a new construction
+  of the payload, which costs a match and a move per forwarding layer.
+  Change: let a routed fact over a location stay attached to it, so a
+  return of that location selects and discharges the same route. Validate
+  by a forwarding wrapper accepted unchanged and a wrapper that forwards
+  the other variant still refused. Reopen when a program forwards a
+  producer's result through a wrapper.
+
+- **Parameters a contract names but the body does not use are passed at
+  run time.** A range requirement can only name what the callee receives,
+  so `cascade_level` in
+  `tests/conformance/cases/range5-pos-level-cascade.wf` takes `positions`,
+  `depths` and `level` only so that its `listed` and `up` requirements can
+  state the facts its certificate uses; the caller passes them on every
+  call. Each costs a pointer and a length or one integer per call, which the
+  measured cascade does not show, but a writer must keep proof-only data
+  alive and in scope to call such a function. A proof-only parameter that
+  lowering erases would need its own rule for what such a parameter may
+  flow into. Validate by measuring the call cost in a cascade with small
+  levels and by counting the functions in Snowghost whose parameters only
+  their contract reads. Reopen when that cost shows in a profile or a
+  writer must compute a value only to pass it.
+
 ## Ownership redesign (candidate x1) follow-ups
 
 Items the owner asked to be kept on this list during the redesign recorded in
@@ -3179,12 +3293,10 @@ condition under which it is taken up.
   checking cost as well as the runtime check or source work saved. The Slab
   and Deque [source limits](../research/investigations/containers-and-resources/X1-LIBRARY.md#exact-unavailable-source-forms)
   remain examples, not an amendment or a claim that runtime state is lost.
-- **Reference exit fields and custom outcome contracts remain restricted.**
-  FN-9 gives exit-state denotation to a written reference parameter's storage
-  measures, not its ordinary mutable integer fields. An owning sparse map
-  cannot publish `map^.length == entry(map)^.length` for its own
-  scalar occupancy counter; the caller can still read that counter normally.
-  FN-9 routes only the integer success payload of the prelude Result, so a
+- **Custom outcome contracts remain restricted.**
+  FN-9 admits exit-state fragment-integer fields of written references, and
+  CALL-4 admits selected fields and measures of success payloads. Routing is
+  still limited to the success variants of the prelude Result and Option: a
   custom `Inserted / Replaced / Full` outcome cannot directly publish a
   different length relation for each variant. An unconditional insertion
   interval alone does not prove that a failed first attempt leaves length

@@ -1,0 +1,18 @@
+fn fill(out: &[u64]) -> result: unit writes(out) {
+  doc "A certificate names this loop's own range invariant, which holds at its headers and not where the loop begins.";
+  let count = out^.len;
+  for (
+    k in 0_u64..count,
+    invariant forall done(q in 0_u64..k): out^[q] == q,
+    apart(i, j) {
+      use done(i);
+    }
+  ) {
+    set out^[k] = k;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

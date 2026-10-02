@@ -291,6 +291,24 @@ impl<'unit> Checker<'_, 'unit> {
             &mut bindings.clone(),
             &mut counters,
         )?;
+        // [RANGE-1] a range clause is a requirement of a declared function
+        // only; a signature's contract names none.
+        if let Some(clause) = checked.range.first() {
+            let node = self
+                .types
+                .declarations
+                .tree
+                .node_with_path(&clause.node)
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+            return self.types.declarations.issue_node(
+                crate::SemanticRule::Range1,
+                node,
+                crate::SemanticIssueKind::InvalidRangeClause {
+                    reason: "a function signature's contract states a range clause",
+                    mechanical_fix: "state the range requirement on the function that implements the signature, or pass the storage to a function that requires it",
+                },
+            );
+        }
         let requires = checked
             .requirements
             .into_iter()
@@ -304,6 +322,35 @@ impl<'unit> Checker<'_, 'unit> {
             .collect();
         let mut ensures = Vec::new();
         let selectors = self.types.postcondition_selectors_from_source(signature)?;
+        // [RANGE-1] a signature's contract states no range clause.
+        for selector in &selectors {
+            if self
+                .types
+                .declarations
+                .is_range_postcondition(&selector.block)?
+            {
+                let clause = self
+                    .types
+                    .declarations
+                    .tree
+                    .node_with_path(&selector.block)
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                let node = self
+                    .types
+                    .declarations
+                    .tree
+                    .first_child_with(clause, Production::RangeClause)?
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                return self.types.declarations.issue_node(
+                    crate::SemanticRule::Range1,
+                    node,
+                    crate::SemanticIssueKind::InvalidRangeClause {
+                        reason: "a function signature's contract states a range clause",
+                        mechanical_fix: "state the range postcondition on the function that implements the signature",
+                    },
+                );
+            }
+        }
         let mut relations = Vec::with_capacity(selectors.len());
         for (relation_ordinal, selector) in selectors.iter().enumerate() {
             let relation = self.check_postcondition_clause(
@@ -595,9 +642,11 @@ impl<'unit> DeclarationInventory<'unit> {
             result_mode: signature.result_mode,
             result: signature.result,
             declared_state_writes: Vec::new(),
+            declared_state_reads: Vec::new(),
             requirements,
             requirement_places,
             postconditions: Vec::new(),
+            range_facts: Default::default(),
             body: None,
             reference_origins: Vec::new(),
             body_disposition: Default::default(),

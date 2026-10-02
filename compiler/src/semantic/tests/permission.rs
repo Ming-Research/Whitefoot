@@ -2366,7 +2366,7 @@ fn rebound(v: &[u8], p: u64) -> result: u64 writes(v) contract {
 /// field-read spelling and `twice` writes one range twice, each through two
 /// adjacent calls; the empty range formed before those calls captures only
 /// its own endpoints, so it separates neither pair and both are denied.
-/// `apart` meets at one measure, `w^.len`, so the state before its
+/// `disjoint` meets at one measure, `w^.len`, so the state before its
 /// first call proves the first range ends where the second starts, and that
 /// retained ordering permits the pair although no endpoint is a literal or a
 /// binding.
@@ -2404,7 +2404,7 @@ fn twice(v: &[u8], b: Bounds) -> result: u64 writes(v) contract {
   return x +wrap y;
 }
 
-fn apart(v: &[u8], u: &[u8], w: &[u8]) -> result: u64 reads(u), reads(w), writes(v) contract {
+fn disjoint(v: &[u8], u: &[u8], w: &[u8]) -> result: u64 reads(u), reads(w), writes(v) contract {
   requires u^.len <= w^.len;
   requires w^.len <= v^.len;
 } {
@@ -2417,7 +2417,7 @@ fn apart(v: &[u8], u: &[u8], w: &[u8]) -> result: u64 reads(u), reads(w), writes
 "#;
     let table = permission_of_with_discharged_query(
         source,
-        &[("apart", RangeSeparationOrdering::LeftBeforeRight)],
+        &[("disjoint", RangeSeparationOrdering::LeftBeforeRight)],
     );
     for function in ["collide", "twice"] {
         let pair = pair_of(&table, function, "mark", "mark");
@@ -2430,7 +2430,7 @@ fn apart(v: &[u8], u: &[u8], w: &[u8]) -> result: u64 reads(u), reads(w), writes
         assert_eq!(kind.halves(), ("write", "write"), "{function}");
     }
     assert_eq!(
-        pair_of(&table, "apart", "mark", "mark").verdict,
+        pair_of(&table, "disjoint", "mark", "mark").verdict,
         PermissionVerdict::PermittedEligible
     );
 }
