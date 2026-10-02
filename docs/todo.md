@@ -3743,6 +3743,21 @@ condition under which it is taken up.
   criterion fails: small misses overlap and both large misses remain invalid.
   Keep it unselected; reopen miss performance with the same full drift/oracle
   gates and account for its worse unmeasured constant-collision native paths.
+  The [physical tag-order trial](../research/experiments/container-representation/map-library/RESULTS.md#tag-order-native-miss-dispatch-failure)
+  leaves vacant dispatch unchanged while losing all-zero Vacant and increasing
+  native initialization/rebuild counts. Do not reopen declaration order as an
+  established miss improvement; any new discriminator must address that failed
+  path and the module-wide tag ABI. Its frozen status collector is malformed;
+  use the retained corrected collector before replay, without inventing lost timings.
+  The separate [original-tag Filled-first IR trial](../research/experiments/container-representation/map-library/RESULTS.md#filled-first-ir-identical-native-objects)
+  produces byte-identical objects after ordinary optimization. Branch-chain
+  spelling alone therefore supplies no dispatch improvement on this pipeline;
+  reopen only with a discriminator that changes the reached native policy.
+  The separately preregistered [frequency-weighted tag follow-up](../research/experiments/container-representation/map-library/RESULTS.md#tag-order-frequency-weighted-follow-up-rejected)
+  also fails despite source-derived Filled-visit savings: no qualified miss
+  gain, three qualified two-cohort hit losses and only one peer target. Preserve
+  the original vacant-only failure; any further work needs new reached-cost
+  evidence rather than an instruction-count prediction alone.
 
   The [actual integrated-candidate comparison](../research/experiments/container-representation/map-library/RESULTS.md#integrated-candidate-with-the-maintained-caller)
   has no qualified before/after gain in 40 maintained-caller cells; all four

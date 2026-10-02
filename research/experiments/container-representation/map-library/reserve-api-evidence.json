@@ -1,8 +1,8 @@
 {
   "purpose": "Isolated ordinary public reserve with verified future entry headroom; single production baseline panel, not an optimization/adoption result",
   "archive": "reserve-api-evidence.tar.gz",
-  "archive_sha256": "d7d2da1ab9be574702ae838ad22dc0a25e65e3ae532057981b14fd8a0797c7ec",
-  "archive_members": 1100,
+  "archive_sha256": "810682b951307b83631d7996d44b9e1b80265d648355a57fd9e8a68cb532631a",
+  "archive_members": 1140,
   "base_revision": "89571a60381a685cfbe760248ceb6178d9f9ac05",
   "production_cli_sha256": "c12b2b2a6c9694fd2bc1b7be0004d582ae9628951422def849f4cf6a3ac02f77",
   "timed_image_sha256": "f1ebf18d7a94c79250bb3cbd74a0b379a2a30c6e5e4eda48396ec77d8bbdbf3f",
@@ -4795,5 +4795,152 @@
       "sha256": "10338dc9b6fa3a5bd08729b5b3d03073962b49c2ac5d00f07be15cff58e9fffe"
     },
     "all_prior_member_bytes_preserved": true
+  },
+  "tag_order": {
+    "prefix": "tag-order/",
+    "manifest": "tag-order/manifest.json",
+    "manifest_sha256": "91fa3f229a5b1ba75a1ef432ed914f2d544319075926a9a196d2bd4051e002dc",
+    "payload_count": 12,
+    "records": "tag-order/records.json",
+    "retained_records": 50,
+    "producer_files_verified": 46,
+    "supplement_files_verified": {
+      "status-recovery.json": "96abb2cfd75868667607d8e70e28670fcff6db63d1a0232eac230b3cbcd8d3ef",
+      "status-recovery-note.txt": "c26fd36b8f8986f080463b0dc2d075de7198376801d41b4ed7d0de7c7492d88a",
+      "native-status-fixed.py": "49d24c93e3c4985e1ce65c3c2df8cc912faa9e7b9ed84aee31b39d9bfa0049c5"
+    },
+    "producer_inventories": {
+      "tag-order": {
+        "inventory": "retention-inventory.json",
+        "original_sha256": "f524f139dbb1e107480a90132b96dd9c0d92cf00a13653f77096ab1e8ea63ef3",
+        "files": 46
+      }
+    },
+    "native_stages_zero": 6,
+    "status_evidence": "native-attempt1.log direct stage exits; malformed statuses.json retained, not treated as six structured records",
+    "vacant_dispatch_instructions": [
+      4,
+      4
+    ],
+    "required_candidate_vacant_dispatch_instructions": 2,
+    "native_body_instructions": [
+      248,
+      248
+    ],
+    "frame_bytes": [
+      16,
+      16
+    ],
+    "physical_tags": {
+      "control": {
+        "Vacant": 0,
+        "Deleted": 1,
+        "Filled": 2
+      },
+      "candidate": {
+        "Filled": 0,
+        "Vacant": 1,
+        "Deleted": 2
+      }
+    },
+    "all_zero_vacant_preserved": false,
+    "runtime_checks_run": false,
+    "timing_run": false,
+    "production_adoption": false,
+    "status": "Native criterion FAIL: vacant dispatch remains4, despite first-hit reduction. New compiler paired arms reproduce historical control bodies, not old timing identity. Consistent paired-module tag ABI only; initialization/rebuild costs retained."
+  },
+  "tag_order_prior_index": {
+    "prior_archive_sha256": "d7d2da1ab9be574702ae838ad22dc0a25e65e3ae532057981b14fd8a0797c7ec",
+    "prior_members": 1100,
+    "unchanged_names_and_bytes": 1099,
+    "renamed_member": {
+      "from": "component-index.json",
+      "to": "component-index-before-tag-order.json",
+      "sha256": "86c3daeae41c7018c5c32ca2e80ec6cbefcf6b3837e449189c333b6f2777da5b"
+    },
+    "all_prior_member_bytes_preserved": true
+  },
+  "filled_first_ir": {
+    "prefix": "filled-first-ir/",
+    "manifest": "filled-first-ir/manifest.json",
+    "manifest_sha256": "9db2205f2575706e3d4ee4b8a4f292acb83df51d557797e655ce8bbb128afb95",
+    "payload_count": 8,
+    "records": "filled-first-ir/records.json",
+    "retained_records": 28,
+    "producer_files_verified": 27,
+    "producer_inventories": {
+      "filled-first-ir": {
+        "inventory": "retention-inventory.json",
+        "original_sha256": "e2836ef64cd1732250b06cf4d9ebe34cbe4c32373d9cad113d663ed22b9f3129",
+        "files": 27
+      }
+    },
+    "native_stages_zero": 6,
+    "complete_objects_identical": true,
+    "object_sha256": "d2a009583954f473b99e0bda7dbc3126a858b5046d651f77dd3477c82f7cf53f",
+    "native_body_instructions": [
+      248,
+      248
+    ],
+    "frame_bytes": [
+      16,
+      16
+    ],
+    "runtime_checks_run": false,
+    "timing_run": false,
+    "production_adoption": false,
+    "status": "Native gate FAIL: ordinary O3 canonicalizes four exact Filled-first branch chains back to original switches; complete objects identical. No hints, retries, execution or adoption."
+  },
+  "filled_first_ir_prior_index": {
+    "prior_unpublished_archive_sha256": "4b6100eff83a01982ca0ef6b5b8f85d07a3c90fe36545a8b1d0bfa847ff077fa",
+    "prior_published_members": 1100,
+    "prior_unpublished_payloads_preserved": 1112,
+    "current_unpublished_index_replaced": true,
+    "published_index_preservation": "component-index-before-tag-order.json remains byte-identical; tag-order payloads unchanged"
+  },
+  "tag_order_weighted": {
+    "prefix": "tag-order-weighted/",
+    "manifest": "tag-order-weighted/manifest.json",
+    "manifest_sha256": "327464f8b7bf05441a088c4eeeabb8337e0e62e8e2ef3172f9192b0235706dc9",
+    "payload_count": 19,
+    "records": "tag-order-weighted/records.json",
+    "retained_records": 712,
+    "producer_files_verified": 719,
+    "producer_inventories": {
+      "tag-order-weighted": {
+        "inventory": "retention-inventory.json",
+        "original_sha256": "b11d043e0d0b90a64428e1b5df6bdef5b37efcb89eece0bb28e5fadad4de2341",
+        "files": 719
+      }
+    },
+    "timing_rows": 1536,
+    "row_counts": {
+      "tag-order-weighted/candidate-build/edit-accounting.csv": 32,
+      "tag-order-weighted/candidate-build/reserve-accounting.csv": 96,
+      "tag-order-weighted/candidate-runtime/build/ecosystem/edit-cohort-0.csv": 384,
+      "tag-order-weighted/candidate-runtime/build/ecosystem/edit-cohort-1.csv": 384,
+      "tag-order-weighted/control-build/edit-accounting.csv": 32,
+      "tag-order-weighted/control-build/reserve-accounting.csv": 96,
+      "tag-order-weighted/control-runtime/build/ecosystem/edit-cohort-0.csv": 384,
+      "tag-order-weighted/control-runtime/build/ecosystem/edit-cohort-1.csv": 384
+    },
+    "ordinary_check_stages_zero": [
+      22,
+      12
+    ],
+    "qualified_miss_gains": 0,
+    "qualified_two_cohort_hit_losses": 3,
+    "candidate_peer_targets": 1,
+    "instrument_valid_cells": 4,
+    "original_vacant_only_native_gate": "FAIL unchanged",
+    "production_adoption": false,
+    "status": "Separate frequency-weighted follow-up of identical tag-order sources FAILS fixed miss-gain criterion; fewer decoded Filled dispatch instructions did not qualify faster complete API execution. No adoption or retry."
+  },
+  "tag_order_weighted_prior_index": {
+    "prior_unpublished_archive_sha256": "9e6ff8cad741b75cbb33dbb4a58975ae72de493ed9408fbe818c1d26e8f80578",
+    "prior_published_members": 1100,
+    "prior_unpublished_payloads_preserved": 1120,
+    "current_unpublished_index_replaced": true,
+    "published_index_preservation": "component-index-before-tag-order.json remains byte-identical; tag-order and filled-first-ir payloads unchanged"
   }
 }

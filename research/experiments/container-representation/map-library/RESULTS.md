@@ -68,6 +68,12 @@ retains zero qualified miss gains, four qualified hit losses and no peer target.
 The ordinary-source [masked continuation](#masked-continuation-large-hit-gains-miss-criterion-fails)
 qualifies two large-hit gains and all four hit peer targets, but no miss gain;
 both large misses remain invalid, so its preregistered selection criterion fails.
+A later [physical tag-order trial](#tag-order-native-miss-dispatch-failure)
+fails its native miss-dispatch criterion. Its separately preregistered
+[frequency-weighted follow-up](#tag-order-frequency-weighted-follow-up-rejected)
+also fails: no qualified miss gain and three qualified two-cohort hit losses.
+The [original-tag Filled-first IR trial](#filled-first-ir-identical-native-objects)
+likewise stops at native inspection: the complete objects are byte-identical.
 
 ## Current Rust and C++ ecosystem comparison
 
@@ -6684,6 +6690,25 @@ cohort-1 gain cannot qualify. The preregistered miss-gain criterion therefore
 fails; no retry or adoption follows, and absence of separated loss does not
 establish nonregression in invalid cells.
 
+The retained `masked-continuation/` raw cohort CSVs in
+[reserve-api-evidence.tar.gz](reserve-api-evidence.tar.gz) also permit a descriptive
+same-seed comparison. At 64 slots, candidate WF beats control for all 12
+miss seeds in each cohort at both payload widths: paired median ratios are
+0.9283 / 0.9231 (8 B) and 0.9085 / 0.9297 (256 B). Candidate beats Rust for
+6 of 12 matched seeds per cohort and C++ for none. Seed changes the salted
+hash placement and initial values, while the key sequence and edit count stay
+fixed ([WF preparation and edit batch](map-library.wf);
+[C harness `edit_measure`](map-ecosystem.c)). Different seeds supply the control
+minima and candidate maxima, so these paired observations do not pass the
+registered complete-range criterion or the unchanged peer target.
+
+The large-miss variability is not explained by seeded placement alone: with
+the same 8 B/4096 seed 112, control WF measures 6.888 then 2.727 ns/edit
+across cohorts; candidate seed 103 measures 5.488 then 2.265. Cohort order
+and preceding process work differ, and these rows do not isolate their effect
+from host or allocator state. The failed instrument qualifications and miss
+verdict remain unchanged.
+
 The `masked-continuation/` component in
 [reserve-api-evidence.tar.gz](reserve-api-evidence.tar.gz) preserves source
 and capacity-one patches, criteria, native collateral, ordinary/fault results,
@@ -6691,3 +6716,103 @@ all raw rows, reducers and original/normalized pins. Native-stage no-execution
 statements precede later checks/timing. Exact omitted integrated compiler,
 carrier, runtime/native peers and toolchain are needed for reconstruction;
 no production source change or other pending experiment is included.
+
+### Tag order: native miss-dispatch failure
+
+Reordering `HashMapSlot` declarations changes physical tags from
+Vacant=0/Deleted=1/Filled=2 to Filled=0/Vacant=1/Deleted=2 across the complete
+paired module. Both arms use newly integrated-main compiler `569badd5…`, not
+the historical masked-continuation compiler `4f58957e…`. Its control reproduces
+the historical 248-instruction EDIT bodies; that observation does not repin
+old timing evidence to the new compiler.
+
+The registered vacant-dispatch criterion requires four instructions to become
+two. It remains four: LLVM prioritizes Filled=0, and ready-hash first-empty
+stays 11 instructions. First-hit improves 14→11, but this does not satisfy the
+criterion. Bodies remain 248 instructions, frame 16 bytes, zero calls and no
+hot spills. Cell sizes 24/272 and map/owner sizes 40/72 bytes remain unchanged.
+The tag ABI nevertheless changes and cannot mix old/new modules. All-zero
+Vacant is lost: initialization retains its heap-write count but materializes
+tag 1. Scalar/wide extend grows 51→52/61→62 instructions; rebuild grows
+116→119/92→94. These are native counts, not measured initialization costs.
+
+Six direct command exits and the 3.94-second guard are zero. The frozen
+`statuses.json` is malformed because the script reused its collector variable
+for decoded instructions; the direct log establishes exits. The archive
+preserves that defect plus an explicit recovery transcript and corrected
+replay script, which was not executed. Missing detailed control-stage metadata
+is not reconstructed. At this native stage no runtime correctness, accounting
+or timing was performed. The later separately registered frequency-weighted
+follow-up below does not change this failed native criterion or select adoption.
+
+The `tag-order/` component in
+[reserve-api-evidence.tar.gz](reserve-api-evidence.tar.gz) retains the criterion,
+exact source patch/graphs, compiler identities, complete focused EDIT and
+initialization excerpts, collateral counts and original/normalized pins.
+Reconstruction needs the omitted pinned compiler/toolchain; historical timing
+and all earlier failed criteria remain unchanged.
+
+### Filled-first IR: identical native objects
+
+A separate native-only trial preserves the original tags and changes four
+EDIT switches into nested Filled=2, Vacant=0, Deleted=1 tests. The exact-edge
+audit preserves the original unreachable default, rejects successor PHIs and
+leaves all other instructions and assumptions unchanged. Ordinary `-O3`
+canonicalizes the branch chains back to switches: control and candidate
+complete objects are byte-identical (`d2a00958…`). Both EDIT bodies remain
+248 instructions, frame 16 bytes and zero calls; ready-hash hit/empty paths
+remain 14/11 instructions. Thus any before/after weighted instruction delta
+is zero without assuming probe frequencies.
+
+All six native/optimization/disassembly stages and the 1.97-second guard
+exit zero, but the native selection criterion fails. At this stage no runtime
+correctness, timing, hint, flag rescue or adoption follows. This rejects branch structure
+alone under this pipeline, not every possible dispatch policy. The
+`filled-first-ir/` archive component retains the exact patch, successor audit,
+compiler/input identities, command statuses and focused body excerpts; full
+modules and objects remain omitted. The tag-order failure is unchanged.
+
+### Tag order: frequency-weighted follow-up rejected
+
+A new criterion was recorded before execution using the exact frozen tag-order
+sources and `569badd5…` compiler. Source-derived miss geometry has no Deleted,
+one terminating Vacant, and mean probe counts 2.5729/2.4486 at 64/4096 slots:
+about 61%/59% of visited cells are Filled. Three fewer dispatch instructions
+per Filled visit predicts 4.71875/4.34595 fewer instructions per miss, not
+nanoseconds. This justified a separate frequency-weighted test; the original
+four-to-two vacant-dispatch criterion remains failed. Deleted dispatch and
+initialization/rebuild costs remain adverse. No source variant or flag changed.
+
+All 22 ordinary and 12 capacity-one normal/parallel stages exit zero. Typed
+fault adapters need no tag-dependent expectation changes; exact candidate
+source bindings, complete outcomes and 32 EDIT/96 reserve ledgers agree.
+The fixed campaign has four zero process exits, 1,536 retained rows, 96 matched
+complete outcome groups and 82 unchanged pins. Medians are ns/edit, cohort
+0 / cohort 1; Rust/C++ columns are candidate-panel observations.
+
+| Payload / slots / path | Original tags WF | Reordered tags WF | Rust | C++ | Raw ranges, cohorts 0 / 1 |
+|---|---:|---:|---:|---:|---|
+| 8 B / 64 / hit | 1.860 / 1.844 | 1.986 / 2.323 | 2.255 / 2.469 | 2.120 / 2.285 | overlap / overlap (invalid) |
+| 8 B / 64 / miss | 2.469 / 2.438 | 2.264 / 2.511 | 2.178 / 2.337 | 1.870 / 1.773 | overlap / overlap (invalid) |
+| 8 B / 4096 / hit | 2.169 / 2.197 | 2.712 / 2.745 | 2.387 / 2.410 | 2.991 / 3.009 | loss / loss |
+| 8 B / 4096 / miss | 2.827 / 3.232 | 3.369 / 2.940 | 2.564 / 2.616 | 1.654 / 1.643 | overlap / overlap (invalid) |
+| 256 B / 64 / hit | 1.832 / 1.880 | 2.019 / 2.037 | 2.511 / 2.574 | 2.125 / 2.183 | loss / loss |
+| 256 B / 64 / miss | 2.432 / 2.484 | 2.254 / 2.285 | 2.201 / 2.234 | 1.706 / 1.730 | overlap / overlap |
+| 256 B / 4096 / hit | 2.381 / 2.402 | 3.363 / 3.346 | 2.817 / 2.890 | 3.762 / 3.800 | loss / loss |
+| 256 B / 4096 / miss | 3.973 / 3.850 | 4.413 / 3.257 | 2.562 / 2.625 | 2.001 / 2.172 | overlap / overlap (invalid) |
+
+There are zero qualified miss gains. All miss ranges overlap in both cohorts;
+only wide-small miss has valid instrument gates. Scalar-large, wide-small
+and wide-large hits have qualified two-cohort losses, approximately 25%,
+8–10% and 39–41%. Only one of eight raw/qualified peer targets passes
+(wide-small hit). Scalar-small hit/miss and both large misses are invalid;
+all drift/ratio failures and outliers remain, including control scalar-small
+hit 20.785411 ns and candidate Rust wide-large hit 18.635054 ns. Fewer decoded
+dispatch instructions did not establish faster complete API execution; no
+microarchitectural cause, adoption or retry is inferred.
+
+The `tag-order-weighted/` archive component retains both criteria, exact
+sources and prior native provenance, source/fault bindings, all raw rows,
+complete peer/C ranges, reducers and normalized/original pins. Earlier
+native-stage no-execution statements describe chronology; this later measured
+failure neither reclassifies those gates nor changes the production library.
