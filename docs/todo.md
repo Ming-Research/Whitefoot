@@ -2934,6 +2934,21 @@ condition under which it is taken up.
 
 ## Verification tooling
 
+- **The runtime group compiles its C one file at a time.** `make check`'s
+  runtime group runs `make -C compiler completion-test` without `-j`, so
+  the runtime objects of every probe variant and the concurrent map test's
+  three builds compile one after another on a four-CPU runner. On a
+  four-CPU container the stage took 21.6 s from an empty build directory
+  and 7.5 s with its binaries built, so about two thirds of it is
+  compilation; on the hosted Linux runner it took 19.6 s at `f7793a493`
+  against main's 11.5 s at `5fc912d94`, close to its 20 s budget once the
+  shared map's tests joined it. The change: build the
+  group's binaries with `-j` and then run its tests one at a time, since
+  several tests measure contention and must not share the processors. The
+  gain is unmeasured; measure the stage from an empty build directory
+  before and after. Reopen when the runtime group nears its budget again
+  or gains another multi-build test.
+
 - **The trusted runtime is large and growing.** Every program links about
   20,000 lines of C and LLVM IR in `compiler/src/backend` that no checker
   reads (the scheduler, the completion bridge at 3,871 lines, the hosts' I/O
