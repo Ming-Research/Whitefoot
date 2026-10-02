@@ -5734,3 +5734,59 @@ The `edit-batch-caller/` component of
 packages and patch, the failed attempt, native excerpts, complete correctness
 records, criteria, raw rows, reducers and replay limits. All 740 previously
 published member byte sequences remain preserved.
+
+### Result materialization and alignment in the outer EDIT caller
+
+A native-only counterfactual replaces the dedicated caller's Result helper with
+its identical ordinary match. All ten build/admission stages pass, but the
+required mechanism fails: the three private Result stores and digest load/store
+remain in both payload cases. Raw lowering still materializes the returned
+aggregate before matching. Avoiding the helper alone is insufficient. No new
+correctness or timing campaign follows that negative native gate, and no generic
+lowering change is selected from it.
+
+A separate interaction comparison keeps the outer-dispatch caller, original
+Result helper and published library byte-identical in both arms. Only the
+frozen independent-alignment compiler differs. The reached successful EDIT path
+loses the three Result stores and the digest load/store pair; key stack storage
+also disappears and wide hash constants remain in registers. Hashing, division,
+probe order and callback observations remain. Whole enclosing scalar/wide
+frames shrink from 768/7,296 to 224/2,240 bytes; these include other operation
+arms, setup and cleanup. Ten native/admission stages pass. Both arms pass
+18,390 complete traces, 96 lookup cases and 288 reserve cases; the thirty
+correctness stages comprise twenty-four zero exits and six intended fault exits
+of seven. No direct-match or home-mask source is composed.
+
+One fixed four-process campaign retains all 1,760 rows with zero exits and a
+3.782 ms shortest interval. Aligned-hash complete-trace medians, amortized per
+edit including setup and cleanup, are cohort zero / cohort one. Rust and C++
+columns come from candidate-image panels.
+
+| Payload / initial capacity | Control WF | Candidate WF | Rust | C++ |
+|---|---:|---:|---:|---:|
+| 8 B / 64 | 3.047 / 3.042 | 2.675 / 2.668 | 2.371 / 2.352 | 2.397 / 2.372 |
+| 8 B / 4096 | 3.307 / 3.332 | 3.066 / 3.036 | 2.466 / 2.481 | 5.443 / 5.423 |
+| 256 B / 64 | 3.044 / 3.108 | 2.671 / 2.676 | 2.784 / 2.785 | 2.381 / 2.393 |
+| 256 B / 4096 | 3.662 / 3.666 | 3.309 / 3.256 | 3.168 / 3.218 | 5.818 / 5.895 |
+
+Five cells qualify under the registered marginal-gain criterion, with no
+separated loss: both small aligned cells, wide large aligned, and both small
+default-hash cells. Small aligned medians improve about 12–14 percent, but both
+still fail the strict peer-range target. Aligned scalar/4096 separates WF gain
+ranges yet is invalid because candidate C-direct cohort drift is 11.1495 percent.
+That failure is retained. Only aligned wide/4096 passes the full strict peer
+target. Both large default-hash cells overlap; default peer targets pass
+separately under their different hash protocol and do not replace aligned
+qualification. The complete default panel remains in the retained reduction.
+
+Independent checks reproduce 480 statistics, all eight cell verdicts, 1,672
+same-input checksum comparisons and 107 input pins. This supports a compiler
+benefit in the changed caller context, not a per-store elapsed cost or a
+retroactive factorial comparison. The earlier multipath alignment campaign
+remains failed and the caller-only result remains separate. No compiler/library
+adoption or broader performance target is selected. The `alignment-interaction/`
+component of [reserve-api-evidence.tar.gz](reserve-api-evidence.tar.gz) retains
+both criteria, exact patches/source provenance, the direct-match failure,
+compact native excerpts, attribution notes, complete correctness records, raw
+rows and reducers. All 789 previously published member byte sequences remain
+preserved; omitted generated artifacts and reconstruction limits are explicit.

@@ -1,8 +1,8 @@
 {
   "purpose": "Isolated ordinary public reserve with verified future entry headroom; single production baseline panel, not an optimization/adoption result",
   "archive": "reserve-api-evidence.tar.gz",
-  "archive_sha256": "7dde0322c335901e026f530bf9f64eea3eb1a09b29d8b20d721ba63ebd940819",
-  "archive_members": 789,
+  "archive_sha256": "8939a80971d0bc080543efaba0352faf9752af957ae1e9343959f42608f2917a",
+  "archive_members": 808,
   "base_revision": "89571a60381a685cfbe760248ceb6178d9f9ac05",
   "production_cli_sha256": "c12b2b2a6c9694fd2bc1b7be0004d582ae9628951422def849f4cf6a3ac02f77",
   "timed_image_sha256": "f1ebf18d7a94c79250bb3cbd74a0b379a2a30c6e5e4eda48396ec77d8bbdbf3f",
@@ -4042,5 +4042,35 @@
     "overlap_small_cells": 4,
     "all_drift_checks_pass": true,
     "scope": "Caller form only; identical library/compiler, no adoption or original multipath verdict reclassification."
+  },
+  "alignment_interaction": {
+    "prefix": "alignment-interaction/",
+    "payload_count": 18,
+    "manifest": "alignment-interaction/manifest.json",
+    "raw_rows": 1760,
+    "primary_qualified": true,
+    "production_adoption": false,
+    "records": "alignment-interaction/records.json",
+    "retained_records": 234,
+    "manifest_sha256": "fb64c36c9d0d1d91ffd33f6bc25be9d946ebc2c77daf7ff82cd0b7e960f0a5ed",
+    "replay_boundary": "Direct-result-match is a negative native-only discriminator: three Result stores remain, no correctness/runtime campaign followed that failed gate. The separate interaction uses byte-identical outer-dispatch source graphs and published Map library, with the previously frozen isolated alignment compiler candidate. Five cells qualify, aligned scalar4096 is invalid due to C-direct drift, default large cells overlap; only aligned wide4096 meets the strict peer target. No adoption, original multipath reclassification, factorial claim or per-store time attribution. Earlier source/native-stage no-timing statements precede the distinct runtime record. Notes are recorded attribution/recommendation, not selected compiler design. Both patches, source records and original hashes are retained. Generated compiler/images/modules/objects/full assembly are omitted. Historical normalized scripts require pinned dependencies, compiler source/build/toolchain and scratch reconstruction, and are not standalone or verified published replay. Shared driver source is in edit-home-mask/records.json runtime/deps/edit-driver.c.",
+    "qualified_gain_cells": 5,
+    "separated_loss_cells": 0,
+    "aligned_scalar4096_qualified": false,
+    "aligned_scalar4096_candidate_c_direct_drift": 0.11149547631718981,
+    "strict_aligned_peer_cells": 1,
+    "direct_match_native_qualified": false,
+    "direct_match_runtime_run": false
+  },
+  "alignment_interaction_prior_index": {
+    "prior_archive_sha256": "7dde0322c335901e026f530bf9f64eea3eb1a09b29d8b20d721ba63ebd940819",
+    "prior_members": 789,
+    "unchanged_names_and_bytes": 788,
+    "renamed_member": {
+      "from": "component-index.json",
+      "to": "component-index-before-alignment-interaction.json",
+      "sha256": "3b4c14ee25941b74495f8fc7c62a4a54e8b6cccb0fc6810ecf2ab83445a15bfb"
+    },
+    "all_prior_member_bytes_preserved": true
   }
 }

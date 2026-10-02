@@ -3508,6 +3508,15 @@ condition under which it is taken up.
   outcomes and both peers; any new caller benchmark needs an explicit scope
   rather than replacing adverse results.
 
+  The [Result-materialization interaction](../research/experiments/container-representation/map-library/RESULTS.md#result-materialization-and-alignment-in-the-outer-edit-caller)
+  falsifies the helper-spelling remedy: a direct match retains the private stores.
+  Independent local allocation in the outer-dispatch caller qualifies five
+  gain cells, but small aligned peer targets still fail and scalar-large aligned
+  qualification is invalidated by C-direct drift. Keep the earlier multipath
+  failure separate. Reopen compiler eligibility only against its complete-root
+  extent/snapshot/alias obligations and remaining API regressions; do not infer
+  per-store cost or a general library gain from this caller-context result.
+
 - **Ordered insertion replacement costs need attribution.** Both the
   [aggregate-result candidate](../research/experiments/container-representation/ordered-library/RESULTS.md#single-descent-insertion-candidate)
   and [borrowed-promotion follow-up](../research/experiments/container-representation/ordered-library/RESULTS.md#borrowed-promotion-follow-up)
