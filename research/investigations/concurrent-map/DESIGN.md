@@ -388,7 +388,11 @@ table, so the place does not survive the moves [WAIT-2] allows. Instead a
 keyed statement counts the pauses it waits for cells, and each retry after a
 lost compare-and-swap, a claim that gave way or a move as one more, over
 every probe and table it tries (`wf_cmap_lock_entry`), so a move does not
-reset the count and no sequence of retries escapes it. It counts pauses
+reset the count. The map's test runs a statement with no patience out of it
+by a lost claim of an empty cell alone and by a claim a move gave back
+alone; a lost compare-and-swap on a cell of its hash, a lost claim of a
+removed cell and a claim that gave way are counted the same way and not
+tested alone. It counts pauses
 where an object statement counts vain wakes because it never parks and so
 is never woken; the count is provisional, since a pause lasts several times
 longer on some cores than others. Past 2^16 pauses, 0.77 ms on this host at
@@ -415,6 +419,8 @@ for the keyed statements a hold before it kept waiting closes the gate over
 one counted by hand; holds that race
 for the gate instead of taking tickets let one thread hold the map 110 to
 191 times in a row while the other waited, where tickets allow one; a
+statement that does not count a lost claim, or a move, as a retry fails
+the test of that retry; a
 statement that gives up without giving back its claim, or without counting
 the cell it gave back, fails the white-box test of a claim given up inside
 its settling; and one that holds the map without first leaving the
@@ -450,26 +456,31 @@ it back when it ends (`wf__shared_take`); the context keeps the object, and
 when it resumes it claims the hold, which ends the borrowing, and waits
 only for the borrower under way. The fix the owner first approved, a
 context owed the object after a take-back, which reserves the object when
-it next runs, was refused once built out: ordinary statements could still
-take the object before the owed
-context ran, and every hand-off had to stop while any context was owed, or
-a context handed the object later became owed and reserved first.
+it next runs, was built and then replaced by the borrowed hold with the
+owner's approval: ordinary statements could still take the object before
+the owed context ran, and every hand-off had to stop while any context was
+owed, or a context handed the object later became owed and reserved first.
 
 `compiler/src/backend/completion/shared_object_test.c` runs contexts whose
-frames it writes on three drivers: one parks when it finds the object held,
-and four stand for statements in map blocks, so that an unlock hands the
-first the object while a borrower runs on the driver whose queue holds it.
-In eight runs of 0.1 to 0.8 s each statement was handed the object at most
-once and, once resumed, overtaken by at most the one borrower under way.
-Mutants: the take-back handed one statement the object 3 to 12 times; a
-borrow that ignores the claim overtook a resumed statement 10 to 40 times;
-and a statement that waits instead of borrowing never ends, which the
-test's alarm fails. On one processor, or with contexts that all ran on one
-driver as on a host without a kernel ring, contexts practically never find
-the object held long enough to park, and the test reports that it checked no
-hand-off; on two CPUs it took 8 to 16 s, waiting for hand-offs. The test
-links the runtime objects the default-route probe builds, and the runtime
-group took 19.0 s from an empty build directory against 19.7 s before it.
+frames it writes on one driver beside two threads that hold the object
+again and again, as statements in map blocks on other drivers would. One
+context parks when it finds the object held, and the threads' unlocks hand
+it the object; the other, on the same driver, takes the object as a
+statement in a map block does, so it meets the object handed to the first
+while the first waits in that driver's queue, and must borrow. The test
+runs until statements have been handed the object 50 times and the hold
+borrowed 20 times, and fails at once when one statement is handed the
+object twice. In five runs on four CPUs (0.03 to 2.3 s) and five on two
+(0.95 to 2.6 s), each statement was handed the object once at most and,
+once resumed, overtaken by at most the one borrower under way. Mutants,
+three runs each: the take-back handed a statement the object a second
+time in every run; a borrow that ignores the claim overtook a resumed
+statement 14 to 27 times; and a statement that waits instead of borrowing
+never ends, which the test's alarm fails. On one processor the threads
+never run beside the driver, and the test reports that it checked no
+hand-off. It links the runtime objects the default-route probe builds, so
+it adds no compilation to the runtime group, which runs its built tests in
+7.0 s on this container.
 
 ## The measurement
 

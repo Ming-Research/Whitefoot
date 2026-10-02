@@ -412,25 +412,18 @@ $(COMPLETION_TMP)/concurrent-map-test-collide: $(CONCURRENT_MAP_SOURCES) src/bac
 	$(CC) $(COMPLETION_BASE_CFLAGS) -DWF_CMAP_TAG_MASK=15 src/backend/concurrent_map_test.c -o "$@"
 
 # The shared-object runtime's waits, with contexts whose frames the test
-# writes and the moments the runtime lets it observe (shared_object_test.c).
-# It links the runtime objects the default-route probe builds with the same
-# flags, so the runtime is not compiled again for it. Only Linux with a
-# kernel ring runs contexts on several drivers, and contexts on one driver,
-# or on one processor, practically never find an object held, so other hosts
-# have nothing to run and the test itself reports a Linux host that checks
-# no hand-off.
+# writes and the moments the runtime lets it observe (shared_object_test.c),
+# on one driver beside threads that hold the object. It links the runtime
+# objects the default-route probe builds with the same flags, so the runtime
+# is not compiled again for it. On one processor the threads never run
+# beside the driver, and the test reports that it checked no hand-off.
 SHARED_OBJECT_TEST_OBJECTS := \
 	$(patsubst src/backend/%.c,$(COMPLETION_TMP)/objects/bridge-default-probe/%.o,$(COMPLETION_RUNTIME_SOURCES)) \
 	$(COMPLETION_TMP)/objects/bridge-default-probe/completion/shared_object_test.o
 $(COMPLETION_TMP)/shared-object-test: $(SHARED_OBJECT_TEST_OBJECTS)
 	$(CC) $(COMPLETION_BASE_CFLAGS) $^ -o "$@"
-ifeq ($(shell uname -s),Linux)
 shared-object-test: $(COMPLETION_TMP)/shared-object-test
 	$(NO_CORE_DUMPS) "$(COMPLETION_TMP)/shared-object-test"
-else
-shared-object-test:
-	@echo "shared objects: one driver on this host, so no context waits for an object"
-endif
 
 # Manual calibration, never a correctness or automatic performance input.
 sched-wake-measure: $(COMPLETION_TMP)/sched-policy
