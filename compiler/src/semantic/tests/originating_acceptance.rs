@@ -134,7 +134,7 @@ fn main() -> status: std::process::ExitStatus pure {
 
 // Retired: an_unproved_allocation_ceiling_rejects_under_op9. Its subject,
 // the static allocation-size obligation an unbounded count left unproved,
-// retired with v0.86's [OP-9]: the count carries no obligation, and the
+// retired with v0.87's [OP-9]: the count carries no obligation, and the
 // conformance case v033-neg-allocation-fit-unproved pins the acceptance.
 
 #[test]

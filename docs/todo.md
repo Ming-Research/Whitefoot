@@ -209,7 +209,7 @@ rarely insert at the same place.
   (INV-1 at `room` after `priority_queue_make_room<ProbeDue, ceiling>`) and
   a GrowVector wrapper generic only over `ceiling` (FN-9 at its own
   postcondition), turned on an [OP-9] allocation-size obligation of `grow`,
-  which v0.86 retired, so they must be re-run before they witness the gap
+  which v0.87 retired, so they must be re-run before they witness the gap
   again; the conformance case `mod6-pos-grow-vector-boundary` still wraps
   with a wrapper generic over the element type as well. Change: name the
   failed callee obligation and the unavailable summary without changing
@@ -851,7 +851,7 @@ rarely insert at the same place.
   `whitefootc --check` stops before lowering, so a program whose concrete
   layout the selected target cannot represent, such as a fixed-capacity
   array larger than the target's address domain [STOR-6], passes checking
-  and stops only when built. Until v0.86 the common case was an allocation
+  and stops only when built. Until v0.87 the common case was an allocation
   count bound the target could not hold, which cost the Snowghost PNG
   decoder's writer a round; [OP-9] now makes such a size heap exhaustion at
   run time, and no writer has met a remaining case. [STOR-6] permits a check
@@ -2033,7 +2033,7 @@ rarely insert at the same place.
   `GrowVector<T, const ceiling: u64>` in `lib/std/collections/vector`, the
   deque and slab constructors' ceilings, and `tests/programs/wfgrep.wf`'s
   line, collection and word ceilings were chosen to discharge [OP-9]'s
-  allocation-size obligation, which v0.86 retired; each now only sets a
+  allocation-size obligation, which v0.87 retired; each now only sets a
   saturation or refusal policy that its callers carry as a const parameter
   or a failure path. Impact: every user of these containers chooses and
   threads a ceiling no rule needs, as Snowghost's layout code does with its
