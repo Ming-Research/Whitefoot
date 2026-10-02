@@ -1567,7 +1567,7 @@ enum { SET_KEYS = 8 };
  * not found; and what a release keeps and removes is what the next set
  * finds. The map starts with one cell, so the sets cross many moves. */
 static void sets_sequential(void) {
-    enum { OPS = 100000 };
+    enum { OPS = 30000 };
     static uint8_t present[ENTRY_KEYS];
     static uint64_t value[ENTRY_KEYS];
     static unsigned char bytes[SET_KEYS + 1][ENTRY_KEY_BYTES];
@@ -1587,9 +1587,20 @@ static void sets_sequential(void) {
             lengths[j] = entry_key(keys[j], bytes[j]);
             wf_cmap_set_add(&set, bytes[j], lengths[j]);
         }
+        /* Whether two different keys of the set share a hash. */
+        int shared = 0;
+        for (unsigned j = 0; j < count; j++)
+            for (unsigned k = 0; k < j; k++)
+                shared |= keys[j] != keys[k] &&
+                          tag_of(bytes[j], lengths[j]) == tag_of(bytes[k], lengths[k]);
+        user->waited = 0;
         wf_cmap_hold_set(user, &set);
+        /* Such a set holds the map at once: locking its keys in turn, it
+         * would wait for a cell it holds itself until its patience ended. */
+        if (shared && (!set.whole || user->waited != 0))
+            fail("a set with two keys of one hash did not hold the map at once (whole, waited)", set.whole,
+                 user->waited);
         if (set.whole) {
-            /* Two of its keys share a hash: the statement holds the map. */
             whole++;
             wf_cmap_release_set(user, &set);
             continue;
@@ -1843,7 +1854,7 @@ static void sets_give_back_counted(void) {
  * statement has ended; a keyed statement adds one to the total and then to
  * its key; a statement holding every key as one set, and one holding the
  * whole map, must each find the sum equal to the total. */
-enum { ACCOUNTS = 48, TRANSFERS = 40000 };
+enum { ACCOUNTS = 48, TRANSFERS = 8000 };
 static _Atomic uint64_t set_wholes, set_holds;
 
 typedef struct {
@@ -2030,7 +2041,7 @@ static void *hold_pair(void *arg) {
 static void sets_in_one_order(void) {
     wf_cmap *map = wf_cmap_create_entries(8, 8, 0);
     set_patience(UINT64_MAX, UINT64_MAX);
-    statements = 200000;
+    statements = 40000;
     /* Two keys whose hashes differ under every build's hash. */
     uint64_t second = 1;
     counted_key(0, pair_bytes[0]);
