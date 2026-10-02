@@ -180,6 +180,9 @@ struct wf_cmap {
      * a map of words. */
     uint64_t slot_size;
     uint64_t slot_align;
+    /* A slot of zeros, `None`, that a statement reading an absent key reads
+     * and none writes. */
+    void *none;
     /* Set while one statement holds the whole map, how many keyed
      * statements found it set and wait to begin, and the tickets that order
      * statements over the whole map: the next one to take and the one whose
@@ -968,6 +971,12 @@ static void enter_keyed(wf_cmap_user *u) {
     atomic_fetch_sub_explicit(&map->waiting, 1, memory_order_release);
 }
 
+/* The bytes of a map's `None` slot, whole grains, so the block the pool
+ * gives is aligned for any slot the map admits. */
+static uint64_t none_bytes(uint64_t slot_size) {
+    return slot_size == 0 ? ENTRY_GRAIN : (slot_size + ENTRY_GRAIN - 1) / ENTRY_GRAIN * ENTRY_GRAIN;
+}
+
 wf_cmap *wf_cmap_create_entries(uint64_t slot_size, uint64_t slot_align, uint64_t capacity) {
     /* The target refuses a program whose map's slot needs more alignment
      * before emission, so this stops only a caller that breaks the
@@ -977,6 +986,8 @@ wf_cmap *wf_cmap_create_entries(uint64_t slot_size, uint64_t slot_align, uint64_
     wf_cmap *map = wf_cmap_create(capacity);
     map->slot_size = slot_size;
     map->slot_align = slot_align;
+    map->none = take(none_bytes(slot_size));
+    memset(map->none, 0, (size_t)none_bytes(slot_size));
     return map;
 }
 
@@ -1161,7 +1172,7 @@ const void *wf_cmap_read_entry(wf_cmap_user *u, const unsigned char *key, uint64
     entry->cell = r == FOUND ? c : NULL;
     entry->table = t;
     entry->fresh = 0;
-    return r == FOUND ? slot_of(u->map, node_at(c)) : NULL;
+    return r == FOUND ? slot_of(u->map, node_at(c)) : u->map->none;
 }
 
 void wf_cmap_unread_entry(wf_cmap_user *u, wf_cmap_entry *entry, int held) {
@@ -1275,6 +1286,8 @@ void wf_cmap_destroy(wf_cmap *map) {
             host_unmap(c, ENTRY_CHUNK);
             c = older;
         }
+    if (map->none)
+        WF_CMAP_GIVE(map->none, none_bytes(map->slot_size));
     WF_CMAP_GIVE(map->raw, sizeof(wf_cmap) + 64);
 }
 

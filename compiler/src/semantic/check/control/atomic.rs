@@ -220,6 +220,7 @@ impl Checker<'_, '_> {
                     entry,
                     CheckedAtomicForm::Entry {
                         held: holder.is_some(),
+                        reads: false,
                     },
                     Some(Box::new(key.expression)),
                     AtomicHold::Entry,
@@ -287,6 +288,24 @@ impl Checker<'_, '_> {
         if let Some(guard) = &guard {
             effects = effects.union(guard.1.clone());
         }
+        // [SHARE-3] a statement on an entry whose guard and block write no
+        // path rooted at the binder only reads what it holds, so its reads
+        // take effect at one point whichever other such statements on the
+        // key run beside it. Every write through the binder, a place a
+        // match binds inside the entry or a call's written parameter, is a
+        // path rooted at the binder's declaration.
+        let checked_form = match checked_form {
+            CheckedAtomicForm::Entry { held, .. } => CheckedAtomicForm::Entry {
+                held,
+                reads: !checked
+                    .effects
+                    .writes
+                    .iter()
+                    .chain(guard.iter().flat_map(|guard| guard.1.writes.iter()))
+                    .any(|path| path.root == declaration.id()),
+            },
+            other => other,
+        };
         effects = effects.union(checked.effects);
 
         // [REF-2] the binder's root leaves scope when the block ends by any

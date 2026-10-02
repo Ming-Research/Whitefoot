@@ -117,13 +117,15 @@ impl FunctionEmitter<'_, '_> {
         self.emit_constant(result, IrType::Unit, IrConstant::Unit)
     }
 
-    /// Locks the entry under the key's bytes and defines its slot's address.
+    /// Locks the entry under the key's bytes and defines its slot's address;
+    /// with `reads`, holds it beside the other statements that only read it.
     pub(super) fn emit_shared_map_lock(
         &mut self,
         result: IrValueId,
         object: IrValueId,
         key: IrValueId,
         held: bool,
+        reads: bool,
     ) -> Result<(), BackendFailure> {
         if !self.names_map(object)? {
             return Err(BackendFailure::InvalidIr);
@@ -134,30 +136,61 @@ impl FunctionEmitter<'_, '_> {
         )?;
         let name = self.value_name(result);
         let bare = name.trim_start_matches('%');
-        self.names(&["wf__shared_map_lock"]);
+        let key_name = self.value_name(key);
+        let object_name = self.value_name(object);
         writeln!(
             self.output,
-            "  %{bare}.key = extractvalue {key_type} {key}, 0\n  %{bare}.length = extractvalue {key_type} {key}, 1\n  {name} = call ptr @wf__shared_map_lock(ptr {object}, ptr %{bare}.key, i64 %{bare}.length, i32 {held})",
-            key = self.value_name(key),
-            object = self.value_name(object),
-            held = u32::from(held),
+            "  %{bare}.key = extractvalue {key_type} {key_name}, 0\n  %{bare}.length = extractvalue {key_type} {key_name}, 1",
         )
+        .map_err(|_| BackendFailure::TextEmission)?;
+        if reads {
+            if held {
+                return Err(BackendFailure::InvalidIr);
+            }
+            self.names(&["wf__shared_map_read"]);
+            writeln!(
+                self.output,
+                "  {name} = call ptr @wf__shared_map_read(ptr {object_name}, ptr %{bare}.key, i64 %{bare}.length)",
+            )
+        } else {
+            self.names(&["wf__shared_map_lock"]);
+            writeln!(
+                self.output,
+                "  {name} = call ptr @wf__shared_map_lock(ptr {object_name}, ptr %{bare}.key, i64 %{bare}.length, i32 {held})",
+                held = u32::from(held),
+            )
+        }
         .map_err(|_| BackendFailure::TextEmission)
     }
 
     /// Unlocks the entry whose slot `entry` addresses, telling the runtime
     /// whether the slot holds `Some`: its tag, the first `i32` of every enum
     /// with a payload, differs from `None`'s, which is 0, the tag of a slot
-    /// the runtime filled with zeros.
+    /// the runtime filled with zeros. With `reads`, ends the statement's read
+    /// of the entry, which it left as it was.
     pub(super) fn emit_shared_map_unlock(
         &mut self,
         result: IrValueId,
         object: IrValueId,
         entry: IrValueId,
         held: bool,
+        reads: bool,
     ) -> Result<(), BackendFailure> {
         if !self.names_map(object)? {
             return Err(BackendFailure::InvalidIr);
+        }
+        if reads {
+            if held {
+                return Err(BackendFailure::InvalidIr);
+            }
+            self.names(&["wf__shared_map_unread"]);
+            writeln!(
+                self.output,
+                "  call void @wf__shared_map_unread(ptr {object})",
+                object = self.value_name(object),
+            )
+            .map_err(|_| BackendFailure::TextEmission)?;
+            return self.emit_constant(result, IrType::Unit, IrConstant::Unit);
         }
         let Some(IrType::Address(IrAddressed::Nominal(option))) = self.value_type(entry) else {
             return Err(BackendFailure::InvalidIr);

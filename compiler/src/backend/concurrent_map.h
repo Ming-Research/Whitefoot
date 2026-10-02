@@ -62,8 +62,9 @@ void *wf_cmap_lock_entry(wf_cmap_user *user, const unsigned char *key, uint64_t 
  * then holds nothing to release. */
 void wf_cmap_unlock_entry(wf_cmap_user *user, wf_cmap_entry *entry, int held, int present);
 /* For a keyed statement whose block only reads its entry: the slot of key's
- * entry, read beside other such statements and no writer, or NULL when the
- * key is absent; wf_cmap_unread_entry ends the read. */
+ * entry, read beside other such statements and no writer, or a slot of
+ * zeros no statement writes when the key is absent; wf_cmap_unread_entry
+ * ends the read. */
 const void *wf_cmap_read_entry(wf_cmap_user *user, const unsigned char *key, uint64_t length, int held,
                                wf_cmap_entry *entry);
 void wf_cmap_unread_entry(wf_cmap_user *user, wf_cmap_entry *entry, int held);

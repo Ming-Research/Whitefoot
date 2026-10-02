@@ -965,8 +965,10 @@ pub(crate) enum CheckedAtomicForm {
     /// A map's state, through a `SharedMap<V>` handle.
     Map,
     /// One entry of a map: through a `SharedMap<V>` handle, or, `held`,
-    /// through the state an enclosing statement holds.
-    Entry { held: bool },
+    /// through the state an enclosing statement holds. `reads` when the
+    /// guard and block write no path rooted at the binder, so the statement
+    /// may read the entry beside others that only read it [SHARE-3].
+    Entry { held: bool, reads: bool },
 }
 
 /// [SHARE-1] which shared nominal a `Shared` kind is.

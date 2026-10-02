@@ -1349,8 +1349,12 @@ static void *read_shared(void *arg) {
         last = first;
         atomic_fetch_sub(&read_readers, 1);
         wf_cmap_unread_entry(user, &entry, 0);
-        if (wf_cmap_read_entry(user, absent, absent_length, 0, &entry) != NULL)
-            fail("a reader found a key never written", 999, 0);
+        const uint64_t *none = wf_cmap_read_entry(user, absent, absent_length, 0, &entry);
+        if (none == NULL || entry.cell != NULL)
+            fail("a reader found a key never written (slot, cell)", none != NULL, entry.cell != NULL);
+        for (int w = 0; w < READ_WORDS; w++)
+            if (none[w] != 0)
+                fail("an absent key's slot did not read None (word, value)", (uint64_t)w, none[w]);
         wf_cmap_unread_entry(user, &entry, 0);
         c->holds++;
     }

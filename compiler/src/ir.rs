@@ -1182,20 +1182,26 @@ pub enum IrOperation {
     /// bytes the range `key` names of the map `object` names, a handle or,
     /// with `held`, the address of a state this context holds; an absent key
     /// gets an entry holding `None`. Defines the address of the entry, an
-    /// `Option<V>`; one context holds one entry at a time.
+    /// `Option<V>`; one context holds one entry at a time. With `reads`, for
+    /// a statement that writes nothing through its binder, other such
+    /// statements hold the entry beside it, and an absent key's address is
+    /// a `None` no statement writes.
     SharedMapLock {
         nominal: IrNominalId,
         object: IrValueId,
         key: IrValueId,
         held: bool,
+        reads: bool,
     },
     /// [SHARE-3] gives up the entry `entry` names, the address
     /// [`Self::SharedMapLock`] defined: kept when it holds `Some`, removed
-    /// when it holds `None`. Defines `Unit`.
+    /// when it holds `None`, or, with `reads`, left as it was. Defines
+    /// `Unit`.
     SharedMapUnlock {
         object: IrValueId,
         entry: IrValueId,
         held: bool,
+        reads: bool,
     },
     /// [SHARE-1] how many entries of the state `state` addresses hold `Some`.
     /// Defines `u64`.

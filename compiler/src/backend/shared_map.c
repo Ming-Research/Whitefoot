@@ -98,6 +98,25 @@ void wf__shared_map_unlock(void *object, int32_t held, int32_t present) {
     );
 }
 
+/* For a statement that writes nothing through its binder: the slot of the
+ * entry under the `length` bytes at `key`, read beside the other statements
+ * that only read it, or a slot holding `None`, which no statement writes,
+ * when the key is absent. */
+const void *wf__shared_map_read(void *object, const unsigned char *key, uint64_t length) {
+    return wf_cmap_read_entry(
+        wf_shared_map_user((wf_shared_map *)object),
+        key,
+        length,
+        0,
+        &wf_shared_map_locked
+    );
+}
+
+/* Ends this thread's read of an entry. */
+void wf__shared_map_unread(void *object) {
+    wf_cmap_unread_entry(wf_shared_map_user((wf_shared_map *)object), &wf_shared_map_locked, 0);
+}
+
 uint64_t wf__shared_map_count(void *object) {
     return wf_cmap_count(((wf_shared_map *)object)->map);
 }

@@ -41,10 +41,12 @@ enum Hold {
     Object,
     Map,
     /// An entry, at the address `entry`; `held` when the map's state is held
-    /// by an enclosing statement, so no handle of its own is released.
+    /// by an enclosing statement, so no handle of its own is released;
+    /// `reads` when the statement only reads it beside others that do.
     Entry {
         entry: IrValueId,
         held: bool,
+        reads: bool,
     },
 }
 
@@ -65,7 +67,7 @@ impl IrBuilder<'_> {
     ) -> Result<(), LoweringFailure> {
         let state_type = lower_type(self.erasure, state)?;
         let referent = IrAddressed::of(state_type).ok_or(LoweringFailure::InvalidCheckedProgram)?;
-        let held = matches!(form, CheckedAtomicForm::Entry { held: true });
+        let held = matches!(form, CheckedAtomicForm::Entry { held: true, .. });
         let target_value = self.expression(target)?;
         let IrType::Address(IrAddressed::Nominal(nominal)) = self.value_type(target_value)? else {
             return Err(LoweringFailure::InvalidCheckedProgram);
@@ -81,8 +83,8 @@ impl IrBuilder<'_> {
         let expected = match (form, shape) {
             (CheckedAtomicForm::Object, Some((state, IrShared::Object))) => state == state_type,
             (CheckedAtomicForm::Map, Some((_, IrShared::Map { .. }))) => true,
-            (CheckedAtomicForm::Entry { held: false }, Some((_, IrShared::Map { entry })))
-            | (CheckedAtomicForm::Entry { held: true }, Some((_, IrShared::State { entry }))) => {
+            (CheckedAtomicForm::Entry { held: false, .. }, Some((_, IrShared::Map { entry })))
+            | (CheckedAtomicForm::Entry { held: true, .. }, Some((_, IrShared::State { entry }))) => {
                 entry == state_type
             }
             _ => false,
@@ -139,7 +141,10 @@ impl IrBuilder<'_> {
                 self.bind_atomic(binding, address)?;
                 Hold::Map
             }
-            CheckedAtomicForm::Entry { held } => {
+            CheckedAtomicForm::Entry { held, reads } => {
+                // A statement inside a whole-map statement's block holds its
+                // entry as that statement holds the map, alone.
+                let reads = reads && !held;
                 let key = key.ok_or(LoweringFailure::InvalidCheckedProgram)?;
                 let key = self.expression(key)?;
                 if !matches!(self.value_type(key)?, IrType::Range { .. }) {
@@ -152,10 +157,11 @@ impl IrBuilder<'_> {
                         object,
                         key,
                         held,
+                        reads,
                     },
                 )?;
                 self.bind_atomic(binding, entry)?;
-                Hold::Entry { entry, held }
+                Hold::Entry { entry, held, reads }
             }
         };
         let region = AtomicRegion {
@@ -273,12 +279,13 @@ impl IrBuilder<'_> {
         match region.hold {
             Hold::Object => self.define(IrType::Unit, IrOperation::SharedUnlock { object })?,
             Hold::Map => self.define(IrType::Unit, IrOperation::SharedMapUnhold { object })?,
-            Hold::Entry { entry, held } => self.define(
+            Hold::Entry { entry, held, reads } => self.define(
                 IrType::Unit,
                 IrOperation::SharedMapUnlock {
                     object,
                     entry,
                     held,
+                    reads,
                 },
             )?,
         };

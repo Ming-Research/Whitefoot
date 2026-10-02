@@ -2421,13 +2421,18 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 self.emit_shared_map_call(result, *object, "wf__shared_map_unhold")
             }
             IrOperation::SharedMapLock {
-                object, key, held, ..
-            } => self.emit_shared_map_lock(result, *object, *key, *held),
+                object,
+                key,
+                held,
+                reads,
+                ..
+            } => self.emit_shared_map_lock(result, *object, *key, *held, *reads),
             IrOperation::SharedMapUnlock {
                 object,
                 entry,
                 held,
-            } => self.emit_shared_map_unlock(result, *object, *entry, *held),
+                reads,
+            } => self.emit_shared_map_unlock(result, *object, *entry, *held, *reads),
             IrOperation::SharedMapCount { state } => self.emit_shared_map_count(result, *state),
             IrOperation::BoxTake { nominal, value } => {
                 self.emit_box_take(result, ty, *nominal, *value)
