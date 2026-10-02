@@ -568,6 +568,24 @@ rarely insert at the same place.
   fact unchanged. Reopen with the next change to OP-4's diagnostics or a
   writer trial that measures repairs followed.
 
+- **Data only proofs read is computed, stored and passed at run time.** A
+  range requirement can only name what the callee receives, so
+  `cascade_level` in
+  `tests/conformance/cases/range5-pos-level-cascade.wf` takes `positions`,
+  `depths` and `level` only for its requirements, and its caller computes
+  `positions`, one `u64` per element, only to pass it; Snowghost's style
+  stage at `8b4f332` does the same. Impact: an allocation, a store per
+  element and five machine arguments per level, bounded below 1% of
+  Snowghost's sequential style stage on two pages
+  ([proof-only data](../research/investigations/proof-only-data/DESIGN.md#measurement)).
+  Change: a whole-program pass that removes what no executable statement
+  reads once proofs are erased, a least fixed point over dead parameters,
+  fields, stores and allocations that keeps calls and uncounted loops and
+  the entry, callback, host and module-public boundaries. Validate with
+  compiler tests pinning both witnesses' emitted code free of the data, and
+  by timing the program that reopened the item. Reopen with a program whose profile puts
+  such data on its critical path.
+
 ## Containers and storage lowering
 
 - **A hash map offers no sample or bounded visit.**
@@ -2579,24 +2597,6 @@ each is resolved by a discussion and a tree change.
   by a forwarding wrapper accepted unchanged and a wrapper that forwards
   the other variant still refused. Reopen when a program forwards a
   producer's result through a wrapper.
-
-- **Data only proofs read is computed, stored and passed at run time.** A
-  range requirement can only name what the callee receives, so
-  `cascade_level` in
-  `tests/conformance/cases/range5-pos-level-cascade.wf` takes `positions`,
-  `depths` and `level` only for its requirements, and its caller computes
-  `positions`, one `u64` per element, only to pass it; Snowghost's style
-  stage at `8b4f332` does the same. Impact: an allocation, a store per
-  element and five machine arguments per level, under 1% of Snowghost's
-  style stage when measured
-  ([proof-only data](../research/investigations/proof-only-data/DESIGN.md#measurement)).
-  Change: a whole-program pass that removes what no executable statement
-  reads once proofs are erased, a least fixed point over dead parameters,
-  fields, stores and allocations that keeps calls and uncounted loops and
-  the entry, callback and host boundaries. Validate with compiler tests
-  pinning both witnesses' emitted code free of the data, and by timing the
-  program that reopened the item. Reopen with a program whose profile puts
-  such data on its critical path.
 
 ## Ownership redesign (candidate x1) follow-ups
 

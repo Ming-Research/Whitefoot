@@ -236,12 +236,13 @@ ruling's reason weighs on that question without deciding it.
 
 Proofs are erased before lowering, so the data is what no executable
 statement reads once they are gone; the checker already knows every read.
-In the builds measured here LLVM cannot remove it: the emitted functions keep
-external linkage (`cascade_level` is a global symbol of both builds), so
+LLVM removes it only where inlining makes every use visible, as in the
+cascade witness of the table above. Where the call stays out of line, as in
+the Snowghost builds timed below, it cannot: the emitted functions keep
+external linkage (`cascade_level` is a global symbol of both), so
 dead-argument elimination does not change their signatures, and LLVM
-removes an allocation only when no call uses the pointer, so an array handed
-to a call that is not inlined survives. A full-LTO or ThinLTO link could
-internalize the functions; that was not tried. A whole-program pass in the
+removes an allocation only when no call uses the pointer. A full-LTO or
+ThinLTO link could internalize the functions; that was not tried. A whole-program pass in the
 Whitefoot compiler sees every call and needs:
 
 - **A fixed point across calls and fields.** In the program witness a
@@ -257,15 +258,18 @@ Whitefoot compiler sees every call and needs:
   loop stays, losing only its dead arguments. Removing an allocation removes
   only a possible heap exhaustion, which lies outside the source outcome
   model [SCOPE-3, STOR-8].
-- **Fixed boundaries.** The entry function, functions the runtime calls back
-  and any layout the host reads keep their shape; a caller's compiled form
+- **Fixed boundaries.** The entry function, functions the runtime calls back,
+  any layout the host reads, and every function and struct a module
+  publishes, which other modules compile against, keep their shape; a caller's compiled form
   depends on whether its callees read their parameters, which incremental
   and parallel lowering must account for.
 - **A pinned result.** It is an optimization, not a rule, so compiler tests
   pin both witnesses' emitted code free of the data.
 
 This is candidate E as an optimization rather than a rule. Criterion 4
-still holds, since the boundaries keep their shape; criterion 1 weakens from
+still holds, since the boundaries include every published signature and
+layout, and both witnesses' functions and Snowghost's `LevelIndex` are
+private to their modules; criterion 1 weakens from
 a rule to the pinned tests, which catch an executable read added later only
 in the two witnesses, where elsewhere such a read keeps the data without a
 word, a cost and never a change of meaning.
@@ -294,7 +298,10 @@ which holds all of the removed work; and `C`, matching and the flat cascade,
 which calls neither changed function. A trial's figure is the least of three
 runs at REPS repetitions less the least of three at none, divided by REPS,
 the method of Snowghost's concurrency harness, on a 4-processor Linux x86_64
-host under the check lock. Seconds per repetition; a paired difference is
+host under the check lock. The pages and sheets are those Snowghost's
+concurrency harness fetches (`research/investigations/concurrency/run.sh
+fetch`), so the timing reruns from the diff, the pinned compiler and this
+method. Seconds per repetition; a paired difference is
 the baseline's figure less the variant's in one trial, so a positive one is
 a saving.
 
@@ -309,20 +316,25 @@ in each. Median and range:
 | html5 | cascade-d | 0.0118 (0.0107–0.0142) | 0.0118 (0.0113–0.0138) | −0.0018 −0.0007 +0.0000 +0.0023 −0.0005 |
 
 Applied as written to the style stage, `D`, the criterion is not met on
-either page: the medians differ by less than either build's range. Review
-showed that this application could not have come out otherwise. The whole
+either page: the medians differ by less than either build's range. Seen
+after the data, this application could not have come out otherwise. The whole
 level cascade, which bounds what the data can cost, takes 0.047 s on
 ecma262 and 0.012 s on html5, less than `D`'s ranges, so `D` cannot resolve
 it; only `cascade-d` can. The criterion also fixed neither the shape nor
 the number of trials, and html5's `D` difference, positive in all five
 trials, could be an order effect, since the baseline always ran first.
 
-**Second timing** ([timing-2.txt](timing-2.txt)), taken after that review
-and so not covered by the criterion recorded before measuring: fifteen
-trials per page and shape, the baseline first in even trials and the
-variant first in odd ones, with `C` as the control. The median paired
-difference and its 96% interval, the fourth and twelfth of the fifteen
-ordered differences:
+**Second timing** ([timing-2.txt](timing-2.txt)), designed after the first
+timing's data were seen, so exploratory evidence beside the criterion, not
+a test of it. Its shapes, fifteen trials and alternating order were fixed
+before it ran and its 1% threshold is the criterion's; the rule applied to
+it was chosen while analysing it: a saving is excluded when the 96%
+distribution-free interval of the median paired difference, the fourth to
+the twelfth of the fifteen ordered differences, lies below 1% of the stage.
+It timed four page and shape pairs, the level
+cascade on both pages and the stage with the control `C` on html5;
+ecma262's stage and control were not retimed. The baseline ran first in
+even trials and the variant in odd ones:
 
 | Page | Shape | Median paired difference | 96% interval |
 |---|---|---|---|
@@ -331,12 +343,16 @@ ordered differences:
 | html5 | D | +0.0133 | −0.0200 to +0.0233 |
 | html5 | C | −0.0033 | −0.0333 to +0.0233 |
 
-The level cascade saves at most 0.0043 s per repetition on ecma262, 0.64%
-of the style stage's 0.663 s, and nothing on html5, where the variant is
-slightly slower. A saving of 1% of the stage is excluded on both pages.
-html5's `D` difference has the width of the control `C`, whose functions
-neither build changes, so the first timing's consistent sign there was
-variation, not the removed work. No pass is designed now.
+On ecma262 the level cascade's median saving is at most 0.00425 s per
+repetition at 96% confidence, 0.64% of the stage's 0.6633 s from the first
+timing, since the second did not retime ecma262's stage; on html5 the whole
+interval is negative, the variant slightly slower. By the rule above a
+saving of 1% of the sequential stage is excluded on both pages. The stage
+itself, `D`, cannot separate html5's difference from variation, whose width
+the control `C` shows; the level cascade, which holds the removed work,
+shows none, which bounds what that work contributes unless removing it
+changed the cache or allocator behaviour of the matching around it, which
+`D` cannot resolve. No pass is designed now.
 
 ## Limitations
 
@@ -349,5 +365,8 @@ run in parallel; only the pass itself could be timed there. Snowghost's
 concurrency record puts `cascade-d` at 0.0340 of `D`'s 0.2367 s on ecma262
 at four workers, against 0.0565 of 0.7033 s sequentially, so in a parallel
 run the level cascade's share, and with it the sequential `level_index`
-fill, is about twice as large. Reopen with a program whose profile puts
+fill, is about twice as large. Those figures come from that record's run 28
+at Snowghost `5a01982`, the best of five runs, not from this record's
+method; its sequential `cascade-d` is about a quarter above this record's,
+so the ratio is indicative only. Reopen with a program whose profile puts
 data only proofs read on its critical path.

@@ -2,8 +2,8 @@
 # columns: page shape build trial reps T(0) T(REPS) per-repetition seconds, T the least of 3 runs
 # machine: Linux 6.18.44-fc-v51 x86_64, 4 processors; trials 15; even trials run the baseline first
 # compiler: Snowghost's pinned Whitefoot 5fc912d9
-# base: ef48ce3f8b195074
-# erased: e213d4cd26d21846
+# base, sha256 prefix of the built binary: ef48ce3f8b195074
+# erased, sha256 prefix of the built binary: e213d4cd26d21846
 # checksum base ecma262 D: fae8a9b77c6b818a
 # checksum base ecma262 cascade-d: fae8a9b77c6b818a
 # checksum base ecma262 C: fae8a9b77c6b818a
