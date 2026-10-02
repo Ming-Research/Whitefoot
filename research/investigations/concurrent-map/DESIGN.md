@@ -682,6 +682,47 @@ Medians, shared against exclusive:
   1.23 µs of server CPU. How much of `GET`'s 3.6% the change causes is not
   settled by these runs.
 
+**Criterion 3 on the 14900K**
+([raw lines](../../experiments/io-completion-bench/shared-reads-14900k-samples.csv)):
+the same two builds at `e2b774708` as `firn` and `firn-base` of the `scale`
+mode, three interleaved passes at depth 16. Medians in thousands of requests
+a second:
+
+| Server CPUs | Test | Garnet | Shared | Exclusive | Shared / Garnet | Shared / exclusive |
+|---|---|---:|---:|---:|---:|---:|
+| 4 | `SET` | 4,215 | 5,835 | 6,069 | 1.38 | 0.96 |
+| 4 | `GET` | 4,231 | 6,093 | 6,093 | 1.44 | 1.00 |
+| 4 | `INCR` | 4,352 | 5,859 | 5,859 | 1.35 | 1.00 |
+| 4 | `LPUSH` | 2,626 | 4,761 | 4,913 | 1.81 | 0.97 |
+| 4 | `RPOP` | 3,174 | 5,859 | 5,859 | 1.85 | 1.00 |
+| 4 | `SADD` | 2,781 | 4,025 | 4,024 | 1.45 | 1.00 |
+| 4 | `HSET` | 2,672 | 3,627 | 3,626 | 1.36 | 1.00 |
+| 4 | `ZADD` | 523 | 1,079 | 1,079 | 2.06 | 1.00 |
+| 4 | `LRANGE_100` | 2,538 | 3,109 | 1,507 | 1.22 | 2.06 |
+| 4 | `MSET` | 1,057 | 576 | 564 | 0.55 | 1.02 |
+| 8 | `GET` | 4,352 | 6,622 | 6,623 | 1.52 | 1.00 |
+| 8 | `LRANGE_100` | 2,720 | 3,311 | 1,347 | 1.22 | 2.46 |
+| 16 | `GET` | 5,640 | 6,347 | 6,348 | 1.13 | 1.00 |
+| 16 | `LRANGE_100` | 2,720 | 3,109 | 1,208 | 1.14 | 2.57 |
+
+- **`LRANGE_100` reaches Garnet** at four server CPUs, 3,109,000 a second
+  against 2,538,000, and stays above it at 8 and 16; each of its three
+  passes at four CPUs was above each of Garnet's.
+- **Seven of the nine other tests are within 1% of the exclusive build;
+  `SET` and `LPUSH` are 3.9% and 3.1% below, past the 3% bound.** Neither
+  statement reads, and the two builds lower both alike. `SET`'s passes were
+  5,835,000 twice and 6,069,000 once against 6,069,000 three times, two
+  neighbouring steps of `redis-benchmark`'s clock, so three passes resolve
+  no difference smaller than that step. The `quick` mode, whose rates do
+  not move in steps, is the measurement that settles these two.
+- **Neither firn nor Garnet answers more `LRANGE_100` past four CPUs.** One
+  threaded `redis-benchmark` was the limit for `SET` at eight CPUs (two
+  processes together answered 1.6 to 2.0 times one), so these runs do not
+  say whether the readers' shared count limits `LRANGE` on many cores.
+- **`MSET` is at half its rate of the many-core run** (576,000 against
+  1,243,000 at `c5cdcfc9f`) in both builds, so shared reads do not cause
+  it.
+
 **Refused alternatives.**
 
 - *A read form the writer marks* (`atomic e = &m[key] reads { ... }`):
