@@ -1348,7 +1348,7 @@ impl Analyzer<'_, '_> {
                 id,
                 invariants,
                 body,
-                backedge_drops: _,
+                ..
             } => {
                 for invariant in invariants {
                     self.judge_affine_relation_subscripts(&invariant.relation, state);

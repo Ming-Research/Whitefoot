@@ -13,6 +13,7 @@ mod nominal_instances;
 mod nominals;
 mod obligations;
 pub(crate) mod publication;
+mod range_clauses;
 mod receipts;
 mod references;
 mod repairs;
@@ -621,6 +622,12 @@ struct BodyChecker {
     /// [SHARE-2] what each enclosing atomic statement holds, innermost last,
     /// which decides the atomic statements its block may contain.
     atomic_holds: Vec<AtomicHold>,
+    /// [RANGE-1] the range clauses of the function being checked, published
+    /// with its finished body. Every retry starts empty.
+    range_facts: super::range_facts::CheckedRangeFacts,
+    /// [RANGE-1, RANGE-4] the range facts that state nothing at this
+    /// concrete instance, which a certificate's `use` of them skips.
+    unformed_range_facts: HashSet<DeclarationId>,
 }
 
 /// [SHARE-2] what an enclosing atomic statement holds.
@@ -1307,6 +1314,19 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         // program. The affine-map rule consumes a successful OP-4 disposition
         // and exact value image retained on that program; no permission rule
         // repeats a local invariant or changes source acceptance.
+        // [RANGE-3, RANGE-5] range facts are judged over the completed
+        // program: every callee's range clauses are formed, and no ordinary
+        // obligation consumes a range fact. A certificate that holds is
+        // retained for the counted permission judgment below.
+        let ranges = super::range_judgment::judge_program(&functions, &ordinary);
+        for id in &executable_functions {
+            if let Some(issue) = ranges[id.0 as usize].issues.first() {
+                return Err(self.range_issue(issue));
+            }
+        }
+        for (function, judged) in functions.iter_mut().zip(ranges) {
+            function.range_facts.certified = judged.certified;
+        }
         let permission = analyze_permission(&functions, &permission_signatures, &ordinary);
         // [WAIT-2] each started waiting `let` is joined where the table found
         // its binding's first use; lowering reads the plan from the function.
@@ -1725,6 +1745,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 &mut requires_bindings,
                 &mut counters,
             )?;
+            self.body.range_facts.requirements = checked.range;
             (checked.requirements, checked.places)
         } else {
             (Vec::new(), Vec::new())
@@ -1734,11 +1755,25 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             requirement_places.push(Vec::new());
         }
 
-        let postcondition_selectors = if unsupplied_window_row {
+        let mut postcondition_selectors = if unsupplied_window_row {
             Vec::new()
         } else {
             self.postcondition_selectors_for_signature(signature)?
         };
+        // [RANGE-1, FN-9] a range postcondition is formed as a range clause
+        // and judged by the range judgment, not as a relation.
+        self.body.range_facts.postconditions = self.check_range_postconditions(
+            FunctionContext {
+                check_context,
+                function: signature,
+            },
+            &postcondition_selectors,
+            &parameter_bindings,
+        )?;
+        postcondition_selectors = self
+            .types
+            .declarations
+            .relation_postcondition_selectors(postcondition_selectors)?;
         let mut postcondition_relations = Vec::with_capacity(postcondition_selectors.len());
         for selector in &postcondition_selectors {
             let mut postcondition_bindings = parameter_bindings.clone();
@@ -1909,6 +1944,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             result_mode: signature.result_mode,
             result: signature.result,
             declared_state_writes: signature.declared_effects.writes.clone(),
+            declared_state_reads: signature.declared_effects.reads.clone(),
             // [EFF-3] the boundary's allocation fact is what the body
             // exhibits, not what the declaration wrote: no declaration can
             // write it [EFF-1, STOR-8], and for a body-less row the exhibited
@@ -1918,6 +1954,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             requirements,
             requirement_places,
             postconditions,
+            range_facts: std::mem::take(&mut self.body.range_facts),
             body: (!declaration_only).then_some(checked.statements),
             reference_origins: std::mem::take(&mut self.body.reference_origins),
             body_disposition: super::model::CheckedBodyDisposition::Inhabited,

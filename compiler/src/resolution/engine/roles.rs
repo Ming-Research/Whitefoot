@@ -298,6 +298,41 @@ fn classify_node(
                 )?;
             }
         }
+        // [RANGE-1] a range clause names itself with its one direct IDENT;
+        // its bound variables are the direct IDENTs of its binders.
+        Production::RangeClause => add_single(
+            classified,
+            owner,
+            &names,
+            RawRoleKind::Declaration(DeclarationRole::RangeFact),
+            roles,
+            complete_counts,
+        )?,
+        Production::RangeBinder => add_single(
+            classified,
+            owner,
+            &names,
+            RawRoleKind::Declaration(DeclarationRole::RangeBinder),
+            roles,
+            complete_counts,
+        )?,
+        // [RANGE-5] a cross-iteration certificate's two direct IDENTs name
+        // its two iterations.
+        Production::ApartClause => {
+            if names.len() != 2 {
+                return Err(ResolutionCompilerFailure::InvalidRoleShape);
+            }
+            add_all(
+                classified,
+                owner,
+                &names,
+                RawRoleKind::Declaration(DeclarationRole::ApartBinder),
+                roles,
+                complete_counts,
+            )?;
+        }
+        // A range-form header invariant is named by its range clause.
+        Production::HeaderInvariant if names.is_empty() => {}
         Production::InvariantStmt | Production::HeaderInvariant => {
             // The relation is a `compare_op` terminal between two affine
             // expressions, not a name; the only direct IDENT is the
@@ -1338,7 +1373,9 @@ fn affine_atom_role(topology: &FinalizedTopology, pbase: NodeId) -> LexicalUseRo
                 .node(parent)
                 .is_some_and(|record| record.production == Production::AffineFactor)
         });
-    if !direct {
+    // [RANGE-1] a range clause's terms are places, element reads among
+    // them, wherever the clause stands.
+    if !direct || ancestor_with_production(topology, pbase, Production::RangeClause).is_some() {
         return LexicalUseRole::PlaceBase;
     }
     if ancestor_with_production(topology, pbase, Production::ProofUse).is_some() {

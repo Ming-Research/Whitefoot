@@ -123,6 +123,24 @@ impl<'unit> Checker<'_, 'unit> {
                     AffineProofOwner::ProofUse,
                 )?)
             } else {
+                // [RANGE-4] an instance of a range fact is a certificate step
+                // of `apart`, never a premise of a local invariant.
+                if self
+                    .types
+                    .declarations
+                    .tree
+                    .first_child_with(premise, Production::AtomList)?
+                    .is_some()
+                {
+                    return self.types.declarations.issue_node(
+                        SemanticRule::Range4,
+                        premise,
+                        SemanticIssueKind::InvalidRangeClause {
+                            reason: "a local invariant's proof instantiates a range fact",
+                            mechanical_fix: "instantiate range facts only in a counted loop's `apart` certificate; prove a local invariant from affine premises",
+                        },
+                    );
+                }
                 let usage = self.types.declarations.use_at(
                     check_context,
                     premise,
@@ -135,6 +153,16 @@ impl<'unit> Checker<'_, 'unit> {
                 else {
                     return Err(SemanticCompilerFailure::InvalidResolution.into());
                 };
+                if self.body.range_facts.declares(declaration) {
+                    return self.types.declarations.issue_node(
+                        SemanticRule::Range4,
+                        premise,
+                        SemanticIssueKind::InvalidRangeClause {
+                            reason: "a local invariant's proof names a range fact",
+                            mechanical_fix: "name an affine invariant; a range fact enters a proof only as an instance in a counted loop's `apart` certificate",
+                        },
+                    );
+                }
                 CheckedProofUseSource::Named(declaration)
             };
             uses.push(CheckedProofUse {

@@ -1,0 +1,25 @@
+fn all_zero(cells: &[u64]) -> result: u64 reads(cells) contract {
+  requires forall zero(k in 0_u64..cells^.len): cells^[k] == 0_u64;
+} {
+  doc "Returns the first cell, which its requirement makes zero.";
+  if 0_u64 < cells^.len {
+    let first = cells^[0_u64];
+    return first;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "A box_array_filled result holds its fill value in every element, which discharges the requirement at the call; after one element is written the fact holds everywhere else.";
+  let cells = box_array_filled::<u64>(count: 8_u64, value: 0_u64);
+  let first = all_zero(cells: &cells.inner[0_u64..8_u64]);
+  set cells.inner[3_u64] = 0_u64;
+  let again = all_zero(cells: &cells.inner[0_u64..8_u64]);
+  if first != 0_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if again != 0_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

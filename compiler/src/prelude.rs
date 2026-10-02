@@ -142,6 +142,7 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
         PreludeSource::Function,
         r#"fn box_array_filled<T: copy>(count: u64, value: T) -> result: Box<Array<T>> pure contract {
   ensures result.inner.len == count;
+  ensures forall filled(k in 0_u64..result.inner.len): result.inner[k] == value;
 };
 "#,
     ),
@@ -150,6 +151,8 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
         PreludeSource::Function,
         r#"fn box_segments_filled<T: copy>(lengths: &[u64], value: T) -> result: Option<Box<Segments<T>>> reads(lengths) contract {
   ensures when Some(value: made): made.inner.len == lengths^.len;
+  ensures when Some(value: made): forall sized(d in 0_u64..made.inner.len): made.inner[d].len == lengths^[d];
+  ensures when Some(value: made): forall filled(d in 0_u64..made.inner.len, k in 0_u64..made.inner[d].len): made.inner[d][k] == value;
 };
 "#,
     ),

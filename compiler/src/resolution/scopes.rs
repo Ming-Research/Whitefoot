@@ -222,6 +222,43 @@ impl ScopeBuild {
                     build.declaration_scopes[node_id.index()] = Some(scope);
                     child_scopes.fill(scope);
                 }
+                // [RANGE-1] a range clause's bound variables live in a scope
+                // of their own, while its name is declared where the body it
+                // governs can cite it: a contract clause's name in the
+                // function's signature scope, the parent of both the contract
+                // block and the body, and a loop header's in the counted
+                // range scope.
+                Production::RangeClause => {
+                    let clause = build.push_scope(
+                        Some(current_scope),
+                        ScopeKind::RangeClause,
+                        path.clone(),
+                    )?;
+                    let current = build
+                        .records
+                        .get(current_scope.index())
+                        .ok_or(ResolutionCompilerFailure::InvalidScopeTree)?;
+                    let named = if current.kind == ScopeKind::ContractBlock {
+                        current
+                            .parent
+                            .ok_or(ResolutionCompilerFailure::InvalidScopeTree)?
+                    } else {
+                        current_scope
+                    };
+                    build.declaration_scopes[node_id.index()] = Some(named);
+                    child_scopes.fill(clause);
+                }
+                // [RANGE-5] the two certificate iterations are visible only to
+                // the certificate's own `use` steps.
+                Production::ApartClause => {
+                    let apart = build.push_scope(
+                        Some(current_scope),
+                        ScopeKind::ApartClause,
+                        path.clone(),
+                    )?;
+                    build.declaration_scopes[node_id.index()] = Some(apart);
+                    child_scopes.fill(apart);
+                }
                 Production::AtomicStmt => {
                     let binding = build.push_scope(
                         Some(current_scope),
@@ -472,7 +509,7 @@ fn assign_counted_range_scopes(
                     .ok_or(ResolutionCompilerFailure::CounterOverflow)?;
                 range
             }
-            Production::HeaderInvariant => range,
+            Production::HeaderInvariant | Production::ApartClause => range,
             Production::Stmt => body,
             _ => return Err(ResolutionCompilerFailure::InvalidCanonicalTree),
         };

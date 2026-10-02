@@ -664,6 +664,7 @@ define pre = 0_i32 +wrap 1_i32;
 define post = 0_i32 +wrap 1_i32;
 requires pre;
 requires pre /defined post;
+requires forall ordered(k in 0_u64..2_u64, m in k..4_u64) when k < m, run[k] != 0_i32: run[k] <= run[m], 0_u64 <= k;
 ensures when Some(value: routed): routed;
 ensures 2_i32 * routed + 1_i32 <= post - 1_i32;
 }
@@ -694,7 +695,12 @@ loop @again { break @again; }
 atomic state = &shared when compared { set state^ = 1_i32; }
 for @range (
 index in 0_u64..1_u64,
-invariant limit: index + 1_u64 * (1_u64) <= 2_u64
+invariant limit: index + 1_u64 * (1_u64) <= 2_u64,
+invariant forall prefix(q in 0_u64..index): run[q] == 0_i32,
+apart(first, second) {
+use ordered(first, second);
+use limit;
+}
 ) {
 break @range;
 }
@@ -761,7 +767,7 @@ fn main() -> result: unit pure {}
             });
         assert!(present, "fixture omitted {production:?}");
     }
-    assert_eq!(productions().len(), 94);
+    assert_eq!(productions().len(), 98);
     assert_eq!(
         parsed
             .tree

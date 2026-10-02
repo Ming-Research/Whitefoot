@@ -100,8 +100,11 @@ impl<'unit> Checker<'_, 'unit> {
             }
             target.ty
         };
+        let selectors = self.postcondition_selectors_for_signature(signature)?;
         let routed = self
-            .postcondition_selectors_for_signature(signature)?
+            .types
+            .declarations
+            .relation_postcondition_selectors(selectors)?
             .iter()
             .any(|selector| selector.variant.is_some());
         let targets = &mut self.body.commit_read_outs;

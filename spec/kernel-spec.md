@@ -1,4 +1,4 @@
-# Kernel Specification v0.84
+# Kernel Specification v0.85
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -75,8 +75,9 @@ A `for_stmt` renders `for`, its optional label, exactly one space, and `(`; this
 A `proof_use` whose `use_premise` is a delimited relation renders exactly one space before that premise's `(`, `use (a <= b);` and `use 3 times (a <= b);`; this stated space likewise overrides the generic right attachment of `(`, exactly as the `for_stmt` space above does, while the relation's own affine parentheses keep the generic attachment.
 A `fn_decl` result list renders exactly one space between `->` and its `(`, and a destructuring `let_stmt` exactly one space between `let` and its `(`; each of these two stated spaces overrides the generic right attachment of `(` exactly as the `for` header's does, so the canonical spellings are `-> (kept: u64, spare: u64)` and `let (kept, spare) = split(taken: move run);` [GRAM-2, GRAM-4].
 A destructuring consume's rest marker renders exactly one space between its preceding `,` and `..`, overriding the generic right attachment of `..` exactly as the `for` header's stated space overrides that of `(`, so the canonical spellings are `let Conn(f: fh, ..) = move c;` and, with no bound field, `let Conn(..) = move c;` [GRAM-4].
-A `for_stmt` with no `header_invariant` renders its whole header, from `for` through `) {`, on one line; a counted loop with no invariant therefore has the one-line header `for (i in 0_u64..count) {`.
-A `for_stmt` with at least one `header_invariant` breaks after `(` instead: its `for_binding` and every `header_invariant` each render on a separate following line at depth plus one, with a comma after every item except the last; and `) {` renders on one line at the original depth.
+A `for_stmt` with no `header_invariant` and no `apart_clause` renders its whole header, from `for` through `) {`, on one line; a counted loop with no invariant therefore has the one-line header `for (i in 0_u64..count) {`.
+A `for_stmt` with at least one `header_invariant` or an `apart_clause` breaks after `(` instead: its `for_binding`, every `header_invariant` and its `apart_clause` each render on a separate following line at depth plus one, with a comma after every item except the last; and `) {` renders on one line at the original depth.
+An `apart_clause` renders `apart(i, j) {` on its line, each `proof_use` on a following line at depth plus two, and `}` on its own line at depth plus one, also when it holds no `proof_use`.
 An ordinary `loop_stmt` without a parenthesized invariant header keeps the one-line introducer `loop` plus optional label through `{`.
 With a header it instead renders `loop`, its optional label, exactly one space, and `(` on one line, again overriding generic right attachment; every `header_invariant` renders on a separate following line at depth plus one, with a comma after every item except the last; and `) {` renders on one line at the original depth.
 In either loop form, body children and the final closing brace retain the ordinary block-bearing rendering.
@@ -197,8 +198,8 @@ fn_decl      := "fn" IDENT generics? "(" param_list? ")"
 result_binding:= IDENT ":" rtype
 contract_block:= "contract" "{" contract_define* requires_clause* ensures_clause* "}"
 contract_define:= "define" IDENT "=" expr ";"
-requires_clause:= "requires" clause_expr ";"
-ensures_clause:= "ensures" ("when" result_route ":")? clause_expr ";"
+requires_clause:= "requires" (clause_expr | range_clause) ";"
+ensures_clause:= "ensures" ("when" result_route ":")? (clause_expr | range_clause) ";"
 result_route:= (IDENT "is")? TYPEID "(" fieldbind ")"
 interface_decl  := "interface" TYPEID generics? "{" doc? (fn_sig ";")* "}"
 binding_decl  := "binding" TYPEID ":" (pack_use | type_path targs?) "{" doc? fn_bind* "}"
@@ -260,15 +261,15 @@ expr_stmt   := call ";"
 return_stmt := "return" expr ("," expr)* ";"
 loop_stmt   := "loop" LABEL? ("(" header_invariant ("," header_invariant)* ")")?
                "{" stmt* "}"
-for_stmt    := "for" LABEL? "(" for_binding ("," header_invariant)* ")"
+for_stmt    := "for" LABEL? "(" for_binding ("," header_invariant)* ("," apart_clause)? ")"
                "{" stmt* "}"
 for_binding := IDENT "in" atom ".." atom
-header_invariant := "invariant" IDENT ":" affine_expr compare_op affine_expr
+header_invariant := "invariant" (IDENT ":" affine_expr compare_op affine_expr | range_clause)
 invariant_stmt := "invariant" IDENT ":" affine_expr compare_op affine_expr
                   (";" | "{" proof_use+ "}")
 type_invariant := "invariant" IDENT "(" IDENT ")" ":" clause_expr ";"
 proof_use   := "use" (("[0-9]+" | IDENT) "times")? use_premise ";"
-use_premise := IDENT | "(" affine_expr compare_op affine_expr ")"
+use_premise := IDENT ("(" atom_list ")")? | "(" affine_expr compare_op affine_expr ")"
 affine_expr := affine_term (affine_add_op affine_term)*
 affine_term := affine_factor ("*" affine_factor)?
 affine_factor := atom | call | "(" affine_expr ")"
@@ -281,6 +282,7 @@ value_match := "match" expr "{" arm+ "}"
 arm            := TYPEID "(" ( fieldbind_list ("," "..")? | ".." )? ")" "=>" "{" stmt* "}"
 fieldbind_list := fieldbind ("," fieldbind)*
 fieldbind      := IDENT ":" IDENT
+apart_clause   := "apart" "(" IDENT "," IDENT ")" "{" proof_use* "}"
 ```
 
 [GRAM-5] Expressions and places:
@@ -310,6 +312,10 @@ place          := pbase psuffix*
 pbase          := IDENT | "entry" "(" IDENT ")"
 psuffix        := "." IDENT | "." TYPEID "." IDENT | "[" atom range_tail? "]" | "^"
 range_tail     := ".." atom
+range_clause   := "forall" IDENT "(" range_binder ("," range_binder)* ")"
+                  ("when" range_relation ("," range_relation)*)? ":" range_relation ("," range_relation)*
+range_binder   := IDENT "in" atom ".." atom
+range_relation := affine_expr compare_op affine_expr
 ```
 
 The enum payload step is `"." TYPEID "." IDENT` — the variant name and then that variant's declared field name, `n.left.Some.value` — and it is the one spelling for reaching a payload, the kernel having no positional fields [GRAM-8].
@@ -1386,7 +1392,7 @@ An uninhabited instance publishes no postcondition summary.
 Lowering must preserve its ordinary ABI and symbol but emit exactly one empty entry block terminated by `unreachable`, without traversing or lowering any source statement.
 A source call must still prove every contradictory requirement, which no reachable non-contradictory caller state can do.
 
-[FN-9] Each `ensures_clause` in a FN-8 `contract_block` declares one independent normal-return relation.
+[FN-9] Each `ensures_clause` in a FN-8 `contract_block` declares one independent normal-return relation: one whose body is a `clause_expr` is the relation this rule forms and proves, and one whose body is a `range_clause` is a range postcondition, which takes this rule's route admission and which [RANGE-1] forms and [RANGE-3] selects and proves.
 A source declaration is not a trusted assertion: its body proves the relation by the selected-return judgment below. A PRE-1 or PRE-2 signature supplies its declared relation under SCOPE-3 and has no source returns to check. Formation and caller instantiation are the same ordinary judgments in both cases.
 No contract definition or clause contributes an effect, executable epilogue, runtime operation, storage slot, or runtime report.
 
@@ -2125,7 +2131,7 @@ The counted permission [PAR-2] forms every statement's read and write paths exac
 Permission holds for a `for_stmt` L exactly when all of the following hold, writing B for L's body and forming every written, read, and operand-read footprint of a statement of B exactly as [PAR-1] forms one.
 Among whole-place writes of B, at most one place is rooted in a binding declared outside L; that binding is L's accumulator, and every occurrence of it in B is one operand of one `set` statement whose target is that whole binding and whose right-hand side is one operation applied to that operand and to a second operand reaching the accumulator nowhere.
 That operation is one operation fixed for the accumulator across the whole of B, and is exactly one of `+wrap`, `*wrap`, `iand`, `ior`, `ixor`, `imin`, `imax`, `band`, `bor`, and `bxor` [OP-1].
-Every place a footprint of B writes is iteration-own storage, the accumulator's whole place, a place in one proved single-binder affine element, or a place in one proved range reference.
+Every place a footprint of B writes is iteration-own storage, the accumulator's whole place, a place in one proved single-binder affine element, a place in one proved range reference, or a place in one certified element.
 A proved single-binder affine element is one subscript whose base is an `Array`, a `Slots`, the run a range reference names [OP-4], or a `Segments` [TYPE-9], rooted in an own binding declared outside L or reached through `^` of a reference parameter whose row declares the write [EFF-5], whose exact [OP-4] bounds obligation at that subscript is discharged in the current ProofContext and retains the offset's canonical exact value `a*i + b`: i is L's compiler-owned binder, a and b are mathematical integer constants, a is nonzero, and no other symbolic term occurs. The place that subscript selects from is the element's mapped root.
 A place is in that element when its resolved path [REF-1] is the element's path or continues it by any further field, payload, `Box` content, index, or range steps, and it is in the element of the outermost such subscript of its path. Every aggregate holds only owned values [TYPE-8] and a `Box` has one owner [TYPE-9], so nothing in one element of a root is reachable from another element of it.
 A footprint reaches a place in an element through a `set_stmt` target, an operand read, and a reference argument, whose callee row is projected onto the argument's actual path exactly as [EFF-5] projects it.
@@ -2140,6 +2146,7 @@ A proved range reference is a range reference `&r[s*i+b..s*i+b+s]` [REF-4] passe
 The automatic image family is finite and fixed. At L's preheader after continuing kills, the immutable numeric value atoms still available to surviving scalar bindings and measures are fixed. Canonical checked affine sums and scalar multiples preserve exact value images. A recorded admitted exact multiplication may be expanded through its two operand value images, including the checked transparent images behind copied-value handles. A product of two fixed operands is fixed. Otherwise exactly one operand may depend on i, and multiplying its coefficient and constant part by the fixed operand must leave both parts affine: each such multiplication has a mathematical constant on at least one side. This rule recursively traverses the finite checked value graph, rejects a cyclic or unknown image, and introduces no arbitrary-degree polynomial or injectivity search. Normalized constants and coefficients use [ENT-6]'s checked mathematical integer domain. Each active counted binder is considered once, endpoint coefficients must agree, and the ending constant part must equal the starting constant part plus s. Both sign goals are submitted to the existing ProofContext and their successful derivations are retained with the formation's bounds result. Permission consumes those checked images and proofs; it neither reinterprets source spelling nor reruns arithmetic proof.
 For distinct counted indices i < j, integer discreteness gives i+1 <= j; nonnegative s gives `s*i+b+s <= s*j+b`. Their half-open ranges therefore do not overlap under [OWN-7], including s=0's empty ranges. This argument is independent of runtime stride, iteration count, and worker count. Checked endpoint domains and selected-target layout qualification remain required separately.
 Among proved range references through which B writes, all whose resolved origins overlap must name the same origin place and carry identical s and b images. Every element access overlapping such a written origin must descend from a proved range reference with that same origin and those identical images; the [EFF-2] projection of a helper's declared row counts as an access on its actual range. A whole-origin access, a differently mapped access, an unresolved origin, or mixing an element map with an overlapping written range origin denies. Read-only accesses whose origins overlap no written origin need no iteration partition and may overlap one another across iterations. Same-iteration sibling separation alone cannot establish cross-iteration independence between two different range references when either writes. Forming a range reference reads its endpoints, reads no element content, and authorizes no change to the origin's storage.
+A certified element is the element one `set_stmt`, or one call through a reference argument naming one element, writes in B when L carries an `apart_clause` whose certificate holds [RANGE-5] and that certificate's judgment placed this write at one element of storage declared outside B. Its root is the resolved place above the first index or range step of the written path [REF-1]. Every read of B overlapping a certified root must be a measure read [MSR-1] or an element read the same certificate placed; a whole-root read, any other access overlapping the root, or a proved affine element or written proved range reference overlapping it denies. The certificate's two-iteration judgment is what separates the elements of two iterations; this rule adds no proof of its own.
 A footprint element whose caller place the implementation does not resolve overlaps every place, so an unresolved element denies permission rather than granting it.
 Effects and path overlap decide interference between iterations exactly as they do between [PAR-1] statements. An implementation retains each iteration's live storage for that complete extent.
 Every normal continuation of every statement of B reaches L's compiler-owned binder update, so no statement of B is a `return_stmt`, a `give_stmt`, a `break_stmt` resolved to L or a loop enclosing L, or a `let_stmt` selecting `propagate_let_rhs` [FN-1, GIVE-1, ERR-3].
@@ -2312,9 +2319,12 @@ fn ring_new<T, const n: u64>() -> result: Ring<T, n> pure contract {
 };
 fn box_array_filled<T: copy>(count: u64, value: T) -> result: Box<Array<T>> pure contract {
   ensures result.inner.len == count;
+  ensures forall filled(k in 0_u64..result.inner.len): result.inner[k] == value;
 };
 fn box_segments_filled<T: copy>(lengths: &[u64], value: T) -> result: Option<Box<Segments<T>>> reads(lengths) contract {
   ensures when Some(value: made): made.inner.len == lengths^.len;
+  ensures when Some(value: made): forall sized(d in 0_u64..made.inner.len): made.inner[d].len == lengths^[d];
+  ensures when Some(value: made): forall filled(d in 0_u64..made.inner.len, k in 0_u64..made.inner[d].len): made.inner[d][k] == value;
 };
 fn box_slots_new<T>(capacity: u64) -> result: Box<Slots<T>> pure contract {
   ensures result.inner.len == 0_u64;
@@ -2393,8 +2403,8 @@ fn free_empty<W>(window: W) -> result: unit pure contract {
 ```
 
 Each record is an ordinary callable boundary usable by a direct call or a function-kind binding under FN-2 through FN-5. Its definition is supplied by the build and must satisfy the declared boundary [SCOPE-3]; calls neither inspect nor classify that definition. There is one ordinary callable ABI for definitions written in Whitefoot and definitions supplied by linking. A reference passed to either lasts through that call's return and is not retained beyond it [REF-3]. A missing definition or incompatible physical representation is a build/link failure, not a source-language rejection.
-PRE-1 requirement templates are discharged by FN-8 and declared postconditions are instantiated only by CALL-6 and FN-9's ordinary selected-result rules. The supplied definition is responsible for those propositions under SCOPE-3; its declaration has no Whitefoot body for FN-9 to verify. No compiler-owned operation fact or alternative acceptance judgment exists.
-The declaration preorder is each opaque struct above in written order with its refused constructor and its fields in declaration order, then each enum above in written order with its variants and their fields in declaration order, then `Int`, `Float`, then each construction function above in written order, then each window operation above in written order, then `swap`, `shared_new`, `shared_share`, `shared_map_new`, `shared_map_share`, `shared_map_count` and `free_empty`, each with its type, const and value parameters in declared order. Owner-local fields and parameters do not enter compilation-root name lookup. This preorder fixes each PRE-1 diagnostic ordinal [DIAG-1].
+PRE-1 requirement templates are discharged by FN-8, declared postconditions are instantiated only by CALL-6 and FN-9's ordinary selected-result rules, and range postconditions are taken after a call by [RANGE-2]. The supplied definition is responsible for those propositions under SCOPE-3; its declaration has no Whitefoot body for FN-9 to verify. No compiler-owned operation fact or alternative acceptance judgment exists.
+The declaration preorder is each opaque struct above in written order with its refused constructor and its fields in declaration order, then each enum above in written order with its variants and their fields in declaration order, then `Int`, `Float`, then each construction function above in written order, then each window operation above in written order, then `swap`, `shared_new`, `shared_share`, `shared_map_new`, `shared_map_share`, `shared_map_count` and `free_empty`, each with its type, const and value parameters in declared order and then each name and bound variable its range postconditions declare, in written order [RANGE-1]. Owner-local fields and parameters do not enter compilation-root name lookup. This preorder fixes each PRE-1 diagnostic ordinal [DIAG-1].
 
 [PRE-2] The host modules are the six standard library modules [MOD-10] `std::time`, `std::io`, `std::text`, `std::fs`, `std::net` and `std::process`, registered by these rows of the standard library's graph:
 
@@ -3516,7 +3526,8 @@ A requirement occurrence is `(concrete function instance, requires_clause NodePa
 These identities do not participate in Goal equality [FN-8].
 The checked program retains the accepted Goal, its deterministic derivation root, and its erased disposition for diagnostics and proof consumers.
 Internal derivation metadata is only the diagnostic explanation of that acceptance decision and establishes nothing independently.
-[INV-1] A `header_invariant` and an `invariant_stmt` are two placements of the same proof-only declaration: the writer states that one ordered affine relation holds at that exact source point, and the checker must prove it before the relation gains authority.
+[INV-1] An affine `header_invariant`, whose body is `IDENT ":"` and a relation, and an `invariant_stmt` are two placements of the same proof-only declaration: the writer states that one ordered affine relation holds at that exact source point, and the checker must prove it before the relation gains authority; this rule's header batches are those of the affine `header_invariant`s.
+A `header_invariant` whose body is a `range_clause` is a range invariant, which [RANGE-1] forms and [RANGE-3] proves.
 A loop-header placement additionally creates induction obligations because control may enter that point from the preheader and from a backedge; a body placement creates only the one ordinary program-point obligation in its entering ProofContext.
 The spelling `invariant` therefore describes the writer-visible meaning in both positions, while the control-flow owner determines how many incoming-edge obligations exist.
 
@@ -3546,7 +3557,7 @@ Parentheses alter grouping but never turn a composite expression into a direct l
 Formation and normalization use checked `i128` arithmetic and the fixed structural ceilings of 4096 scheduled expression nodes, 4096 input terms, and 4096 normalized result terms.
 Overflow or a structural-ceiling excess rejects at the owning invariant; there is no cumulative work or elapsed-time ceiling.
 
-A `for_stmt` header is the complete parenthesized list fixed by [GRAM-4]: its first and only `for_binding` is followed by zero or more comma-separated `header_invariant` clauses, with no trailing comma.
+A `for_stmt` header is the complete parenthesized list fixed by [GRAM-4]: its first and only `for_binding` is followed by zero or more comma-separated `header_invariant` clauses and at most one final `apart_clause` [RANGE-5], with no trailing comma.
 A `loop_stmt` either has no header parentheses or has one nonempty parenthesized comma-separated list containing only `header_invariant` clauses, with no trailing comma.
 A header invariant has no proof block and no `proof_use`; a complex base is stated by a preceding `invariant_stmt`, and a complex backedge is stated by an `invariant_stmt` on the reaching body path where its local premises are live.
 All invariant names in one header are distinct and enter scope simultaneously only after the complete header [INV-1].
@@ -3654,6 +3665,55 @@ Only the owning invariant target is published after a successful certificate.
 The `proof_use` list and all of its intermediate arithmetic are erased with the invariant and have no runtime semantics.
 An unresolved invariant name is the ordinary INV-1 lexical-scope failure and forms no certificate source.
 A resolved but unavailable named source, undischarged or malformed relation source, invalid multiplicity, duplicate source, arithmetic or structural overflow, unfolded nonlinear monomial in S, failed final `DIRECT` residual, or redundant block cites PRF-1 at the smallest owning source node and publishes no target.
+
+[RANGE-1] A range clause states one bounded quantified fact over storage contents: `forall NAME(x in a..b, ...) when g1, ...: c1, ...` holds when, for every tuple of mathematical integers each within its half-open range, every conclusion `c` holds wherever every guard `g` holds [GRAM-5].
+A range clause is admitted as the body of a `requires_clause` or an `ensures_clause` of a `fn_decl` and as a `header_invariant` of a `for_stmt` or a `loop_stmt`; in the `contract_block` of a `fn_sig` it is a hard error citing RANGE-1 at the `range_clause` node.
+Its IDENT declares the fact's name: a requirement's or a postcondition's in the function's signature scope and a header invariant's in the loop's header scope, alongside the names [INV-1] declares there.
+Its bound variables are declared in order, each in scope in the ranges after its own, in the guards and in the conclusions; a range endpoint is a range term written as an `atom`.
+A clause has one to two bound variables, the guards are optional, and there is at least one conclusion.
+A `range_relation` compares two range terms with any of the six `compare_op` spellings; it is a proof-domain relation over mathematical integers and performs no [OP-1] operation.
+
+A range term is formed from `affine_expr` syntax over these atoms: an integer literal or an integer-typed named const, read as its mathematical value; a bound variable of the clause, or in a certificate one of its two iteration names [RANGE-5]; a live own-mode integer binding, read as its value where the clause is formed; a measure `p.len` or `p.cap` of a place p; the length `s[d].len` of one segment of a `Segments` place s; and one element read, `p[i]` of a place whose selected value is an `Array`, a `Slots` or the run a range reference names, or `s[d][k]` of a `Segments`, whose element type is an integer type [TYPE-1].
+A place in a range term is a live binding followed by `^`, field and `Box` `inner` steps [GRAM-5, TYPE-7, TYPE-9]; its subscripts are range terms; it reads no entry image, forms no range step, and selects nothing below an element.
+In a range postcondition a term may also name a result ordinal of the function [FN-1] as the root of a place, through its `result_binding` spelling or, for the ordinal a route `when V(value: r)` names [FN-9], through r, which denotes V's payload; the routed ordinal's whole-value binder is unavailable in its clause, as [FN-9] states, and such a root forms range terms by this rule, not only through [CALL-4]'s data. There a parameter that holds an integer denotes its value at entry and a place reached through a reference parameter denotes that storage as the return leaves it; a place rooted at another `own` parameter, whose storage the call consumes, is a hard error citing RANGE-1 at the place.
+In a generic function a range clause is formed at its symbolic instance, with each value and element whose type is a type parameter taken as an integer, and again at each concrete instance; at a concrete instance where such a type is not an integer type the clause states nothing there, being neither a fact nor owed, and a `use` of it instantiates nothing.
+`+` and `-` combine terms and `*` scales one by an integer literal or named const; a call, a moved value, a borrow and every other form is a hard error citing RANGE-1 at the smallest offending node.
+A read in a range term executes nothing and owes no [OP-4] obligation where it is written: an instance of a clause claims its conclusions only where every read the instance forms selects an existing element [RANGE-3].
+
+[RANGE-2] The range judgment runs after every function's ordinary entailment [ENT-1] has succeeded, over one forward walk of each function body that states a range clause or calls a function with a range requirement; no ordinary obligation consumes a range fact.
+The walk carries a symbolic state: each binding's value, each storage location's contents as one version, the variant each location of an enum type is known to hold, the path conditions of the branches taken, the facts that hold, and the joins the walk passed. A location's variant is known where a construction of that variant was stored there or a `match` arm that takes it was entered, until a write to the location or a forgetting below; a `match` arm whose variant the state excludes is not entered, and a join keeps a location's variant only where every arm knows that location to hold it, so a binding the arms bind to different storage holds, after the join, storage whose variant is not known.
+A fact is a range clause with what each of its places and values denotes where it became active: a place denotes one version of one storage location, so a fact never changes meaning. A write makes a new version defined by the old one, with the written value at the written index tuple and the old version's element at every other; a question about the new version reaches the old version's facts only through that definition [RANGE-3].
+Facts become active from three sources and no other: a function's range requirements at entry; a counted or ordinary loop's range invariants at its header; and a callee's postconditions after each call: its range postconditions and each of its [FN-9] relations whose two sides are range terms a range postcondition admits [RANGE-1], as a clause without bound variables, every other relation being left to ordinary entailment, with each parameter denoting its argument, a reference parameter's storage as the call leaves it, and each result ordinal the value the call hands back at it [CALL-4]. An unrouted one holds at once; one under `when V(value: r)` holds in the arm of a `match` on that ordinal's value that takes V, with r denoting that arm's payload.
+The walk evaluates integer expressions it can name exactly — literals, consts, bindings, the measures and element reads above, exact `+` and `-`, exact `*` by a constant, and exact integer `cvt` [OP-1, OP-7] — and an integer comparison as a path condition; every other expression is a fresh unknown of its type.
+A `let`, a `set`, a `give`, a construction field and a by-value `match` binder that take an aggregate from storage without consuming it copy it [OWN-1], and the copy is new storage whose contents are unknown; a consuming read hands the storage itself over, and an aggregate a call or a construction yields is new storage of its own.
+An `if` and a `match` fork the state; at the join each binding, version and value the arms disagree on becomes one defined by the arm taken, and the join records that one of its arms' conditions held.
+A loop header forgets every location and binding its body can write in any iteration, and which variant every enum stored in a written place holds, and assumes its affine invariants [INV-1], its range invariants and, for a counted loop, its binder's range.
+The state after a loop is the join, as at an `if`, of the states that leave it: the state at each `break` to it and, for a counted loop, its header state with the binder at least the upper endpoint, and equal to it where the lower endpoint is no greater.
+A call forgets every location the callee's row writes through a reference argument [EFF-5], one element where the argument names one element; an `atomic_stmt` and every write the walk cannot place forget every location.
+An affine requirement of the function and every published [INV-1] target are path conditions where they hold.
+
+[RANGE-3] A range fact is owed at four sites, and the range judgment proves it at each: a callee's range requirement at every call, with each parameter denoting its argument; a range invariant at its loop's entry, with a counted loop's binder at the lower endpoint; a range invariant on every normal backedge, with a counted loop's binder at its next value; and a range postcondition at every exit that selects it, with each result ordinal denoting the value the return hands back at it. An unrouted range postcondition is selected by every explicit return and every propagated error exit [ERR-3]. One routed through `when V(value: r)` is selected by every explicit return whose value at the routed ordinal is not a construction of another variant and is not known by the walk's state to hold another variant, and r denotes the payload of variant V in that value. A return the walk does not reach, such as one in a `match` arm the state excludes, selects nothing. For an inhabited instance [FN-8], a range postcondition that no exit selects is a hard error citing RANGE-3 at its `range_clause` node.
+An owed clause holds when, for fresh bound variables within their ranges whose guards hold and whose reads select existing elements, every conclusion follows by this fixed derivation, together with the state's path conditions and joins and each typed value's range:
+
+1. Instances. Every active fact is instantiated once at each tuple whose every bound variable takes a value that an element read already in the problem selects through one of the fact's own element reads whose index is that bare bound variable, after every definition below has been added; an instance's own reads form no further instance. An instance asserts its conclusions where its ranges, its guards and its reads' existence hold.
+2. Definitions. A read of a written version is the written value at the written index tuple and the previous version's element at every other; a value or a read the walk joined is the one of the arm taken, under that arm's conditions.
+3. Theory. The equalities of a set of literals are solved over the integers, their integer solutions written one to one over free integer parameters, and two reads of one version whose index tuples agree at every solution are one value, an equality solved with the others. The set is contradictory when the equalities have no integer solution, the two sides of a disequality agree at every solution, or the inequalities have no rational solution once each is written over the parameters and tightened over the integers, its coefficients divided by their greatest common divisor and its bound rounded down. No choice of parameters or order of solving changes this, Fourier-Motzkin elimination decides the last condition in any order, and what it derives is not tightened again.
+4. Decision. An instance whose premises the literals entail asserts its conclusions, a premise being entailed when the literals with each of its negations are contradictory. An open item is a definition without a case among the literals; a disequality whose two sides differ by an amount the solutions do not fix; or two reads of one version whose index tuples do not agree at every solution and are not held apart at a position where they differ, where a position is held apart when the difference of its two indices is constant over the solutions, or agrees at every solution, up to sign, with the difference of the two sides of a disequality or strict comparison among the literals. Each branch is split on an open item into one branch per case, a definition's cases, the disequality as `<` and as `>` in its place, and the two reads at equal index tuples or apart at one position where they differ, until a branch is contradictory or has no open item. The clause holds when every branch is contradictory. A set stays contradictory when literals are added to it, and each split covers its item's cases, so the order in which items are split does not change this.
+
+Nothing is searched beyond these fixed steps, and the derivation runs to completion over exact integer and rational arithmetic. One problem holds at most 4096 atoms, counted after step 2 adds every definition, and step 1 forms at most 256 instances of one fact. These are structural ceilings of the problem, not of the derivation's work: a site whose problem exceeds one is a hard error citing RANGE-3, or RANGE-5 for a certificate, that names the ceiling, never an unproved verdict.
+A clause that does not hold is a hard error citing RANGE-3 at the call, at the loop, at its backedge's loop, or at the exit, naming the fact, the site and the first conclusion not established, with a repair [DIAG-1].
+
+[RANGE-4] A `proof_use` whose `use_premise` is `NAME(atom, ...)` instantiates the range fact NAME at the written terms: one range term per bound variable, in order, formed by [RANGE-1] in the certificate's scope.
+It is admitted only in an `apart_clause`, where NAME is a range requirement of the function or a range invariant of a loop enclosing the certificate's loop; such a use anywhere else, a named `use_premise` of an `invariant_stmt` naming a range fact, a `times` multiplicity, a name that is no such fact, and a term count other than the fact's bound variables are each a hard error citing RANGE-4 at the smallest offending node.
+A written instance joins the instances [RANGE-3] forms for each of the certificate's problems.
+
+[RANGE-5] An `apart_clause` `apart(i, j) { ... }` on a counted loop L declares two distinct iteration names and asks the range judgment to prove that two iterations of L touch no element of shared storage in common.
+In L's entry state, after its endpoints are evaluated, the walk executes L's body once with its binder at i and once at j, each within L's range, and records every element read and write each makes of storage that exists before L's body runs.
+The certificate holds when, for every write of the i-execution and every access of the j-execution to the same location, the two index tuples are proved different by [RANGE-3]'s derivation under both executions' path conditions and `i != j`, with the entry state's facts and the written instances [RANGE-4] active; because i and j are any two distinct iterations, this covers both orders.
+An access to storage some iteration writes that is not one element — a write of a whole place, a call through a reference argument naming a run or a place that the callee's row reads or writes [EFF-5], an `atomic_stmt` or a write the walk cannot place — leaves the certificate unproved, as does a written instance whose fact is not active at L's entry.
+Writes of bindings declared outside L, which [PAR-2] judges as an accumulator, are no part of the certificate.
+A certificate that does not hold is a hard error citing RANGE-5 at the `apart_clause`, naming the first pair of accesses left overlapping, with a repair [DIAG-1].
+A holding certificate is retained for [PAR-2]'s certified elements and grants nothing by itself; like every proof form it is erased before lowering and evaluates, reads, writes and calls nothing.
 
 ## 16. Worked example (normative bytes)
 

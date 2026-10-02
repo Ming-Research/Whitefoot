@@ -1,0 +1,14 @@
+fn bounded(order: &[u64], limit: u64) -> result: u64 reads(order) contract {
+  requires forall small(k in 0_u64..order^.len): order^[k] < limit;
+} {
+  doc "A local invariant's proof cannot instantiate a range fact.";
+  let count = order^.len;
+  invariant fits: count <= count {
+    use small(count);
+  }
+  return count;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

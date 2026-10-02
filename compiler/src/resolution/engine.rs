@@ -1444,11 +1444,15 @@ fn declaration_classes(role: DeclarationRole) -> Vec<DeclarationClass> {
         | DeclarationRole::MatchBinder
         | DeclarationRole::CountedBinder
         | DeclarationRole::AtomicBinder
-        | DeclarationRole::InvariantBinder => {
+        | DeclarationRole::InvariantBinder
+        | DeclarationRole::RangeBinder
+        | DeclarationRole::ApartBinder => {
             vec![DeclarationClass::Value]
         }
         DeclarationRole::LoopLabel => vec![DeclarationClass::Label],
-        DeclarationRole::Invariant | DeclarationRole::TypeInvariantName => {
+        DeclarationRole::Invariant
+        | DeclarationRole::TypeInvariantName
+        | DeclarationRole::RangeFact => {
             vec![DeclarationClass::Invariant]
         }
     }
@@ -1469,7 +1473,9 @@ fn declaration_scope(
         DeclarationRole::LoopLabel
         | DeclarationRole::AtomicBinder
         | DeclarationRole::TypeInvariantName
-        | DeclarationRole::InvariantBinder => scopes.declaration_scope(role.owner),
+        | DeclarationRole::InvariantBinder
+        | DeclarationRole::RangeFact
+        | DeclarationRole::ApartBinder => scopes.declaration_scope(role.owner),
         _ => Ok(role.scope),
     }
 }
@@ -1489,7 +1495,9 @@ fn declaration_visibility(
         | DeclarationRole::FunctionParameter
         | DeclarationRole::Parameter
         | DeclarationRole::CountedBinder
-        | DeclarationRole::Invariant => node_end(topology, role.owner)?.value(),
+        | DeclarationRole::Invariant
+        | DeclarationRole::RangeFact
+        | DeclarationRole::RangeBinder => node_end(topology, role.owner)?.value(),
         // [PROV-6, GRAM-4] a destructuring consume's binder is owned by its
         // `fieldbind`, and the whole statement is where it becomes visible,
         // exactly as an ordinary `let` binder's own statement is. A `set`

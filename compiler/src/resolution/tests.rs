@@ -2735,27 +2735,30 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     // operations [OP-10], then `swap` [OP-11], `shared_new`, `shared_share`,
     // `shared_map_new`, `shared_map_share` and `shared_map_count` [SHARE-1] and
     // `free_empty` [OP-14], each with its type, const and value parameters in
-    // declared order.
+    // declared order and then its range postconditions' names and bound
+    // variables [RANGE-1].
     assert_eq!(first[35].1, "Bool");
     assert_eq!(first[57].1, "Int");
     assert_eq!(first[58].1, "Float");
     assert_eq!(first[59].1, "box_new");
-    assert_eq!(first[76].1, "box_segments_filled");
-    assert_eq!(first[94].1, "place_back");
-    assert_eq!(first[138].1, "swap");
-    assert_eq!(first[142].1, "shared_new");
-    assert_eq!(first[145].1, "shared_share");
-    assert_eq!(first[148].1, "shared_map_new");
-    assert_eq!(first[151].1, "shared_map_share");
-    assert_eq!(first[154].1, "shared_map_count");
-    assert_eq!(first[157].1, "free_empty");
+    assert_eq!(first[78].1, "box_segments_filled");
+    assert_eq!(first[101].1, "place_back");
+    assert_eq!(first[145].1, "swap");
+    assert_eq!(first[149].1, "shared_new");
+    assert_eq!(first[152].1, "shared_share");
+    assert_eq!(first[155].1, "shared_map_new");
+    assert_eq!(first[158].1, "shared_map_share");
+    assert_eq!(first[161].1, "shared_map_count");
+    assert_eq!(first[164].1, "free_empty");
     // The opaque phase holds the four storage shapes, the cell, the
     // shared-object handle and the shared map's handle and state, 35 records:
     // `Array` contributes five, `Slots` six, `Ring` seven, `Segments` four,
     // `Box` four and `Shared`, `SharedMap` and `SharedMapState` three each. The host
     // declarations left PRE-1 for the standard library [PRE-2], so the
-    // inventory holds 160 records where it held 397.
-    assert_eq!(first.len(), 160);
+    // inventory holds 167 records where it held 397: v0.84's range
+    // postconditions of `box_array_filled` and `box_segments_filled` add
+    // their fact names and bound variables, seven records [RANGE-1].
+    assert_eq!(first.len(), 167);
     // `free_empty`'s own value parameter is the last record of the preorder.
     assert_eq!(first.last().map(|record| record.1.as_str()), Some("window"));
     assert!(
@@ -2769,7 +2772,7 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
 /// While the host declarations were PRE-1's the inventory held 397 records,
 /// and this test showed that a late collision kept an ordinal above `u8`. The
 /// host declarations are the standard library's now [PRE-2] and the
-/// inventory holds 160, so no prelude ordinal exceeds `u8`; what remains to
+/// inventory holds 167, so no prelude ordinal exceeds `u8`; what remains to
 /// show is that the last function's collision names its own preorder ordinal.
 #[test]
 fn a_late_prelude_function_collision_names_its_preorder_ordinal() {
@@ -2786,7 +2789,7 @@ fn a_late_prelude_function_collision_names_its_preorder_ordinal() {
             };
             assert_eq!(conflicts.len(), 1);
             assert!(
-                matches!(conflicts[0].origin(), DeclarationOrigin::Prelude(id) if id.ordinal() == 157)
+                matches!(conflicts[0].origin(), DeclarationOrigin::Prelude(id) if id.ordinal() == 164)
             );
         },
     );

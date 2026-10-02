@@ -1,0 +1,164 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+const top: u64 = 18446744073709551615_u64;
+
+const absent: u64 = 18446744073709551615_u64;
+
+const depth_ceiling: u64 = 4096_u64;
+
+fn cascade_one(parent: u64, own: u64) -> result: u64 pure {
+  doc "Stands in for an element's cascade: its value from its parent's and its own matched rules.";
+  let mixed = parent +wrap own;
+  return mixed;
+}
+
+fn cascade_level(slots: &[u64], positions: &[u64], depths: &[u64], parents: &[u64], matched: &[u64], results: &[u64], level: u64, base: u64) -> result: unit reads(slots), reads(parents), reads(matched), writes(results) contract {
+  requires parents^.len == results^.len;
+  requires matched^.len == results^.len;
+  requires positions^.len == results^.len;
+  requires depths^.len == results^.len;
+  requires forall listed(k in 0_u64..slots^.len) when slots^[k] < results^.len: positions^[slots^[k]] == k, depths^[slots^[k]] == level;
+  requires forall up(e in 0_u64..parents^.len) when parents^[e] < parents^.len: depths^[parents^[e]] + 1_u64 == depths^[e];
+} {
+  doc "Cascades one level: each listed element's result, written at its own preorder index, from its parent's result, read at the parent's index, or from base for a top-level element. listed states that the level's elements are distinct, positions^ naming each one's own iteration, and up that a parent lies one level above its element, so the certificate separates the writes of two iterations and a write of one from the parent read of the other.";
+  let count = slots^.len;
+  let total = results^.len;
+  for (
+    k in 0_u64..count,
+    apart(i, j) {
+    }
+  ) {
+    let element = slots^[k];
+    if element < total {
+      let own = matched^[element];
+      let parent = parents^[element];
+      let inherited = if parent < total {
+        give results^[parent];
+      } else {
+        give base;
+      }
+      set results^[element] = cascade_one(parent: inherited, own: own);
+    }
+  }
+  return unit;
+}
+
+fn cascade(parents: &[u64], matched: &[u64], results: &[u64]) -> result: u64 reads(parents), reads(matched), writes(results) contract {
+  requires matched^.len == parents^.len;
+  requires results^.len == parents^.len;
+  requires parents^.len <= 4294967294_u64;
+} {
+  doc "Stands in for a style pass: a validating walk derives each element's depth, refusing a parent that does not precede its element as Snowghost's walk does, the elements are grouped by depth in preorder with each one's position in its group, and the levels are cascaded one after another. The two loops' invariants state what cascade_level requires. Returns 0, or the step that refused.";
+  let n = parents^.len;
+  let depths = box_array_filled::<u64>(count: n, value: 0_u64);
+  let deepest = 0_u64;
+  for (
+    at in 0_u64..n,
+    invariant forall up(e in 0_u64..at) when parents^[e] < n: parents^[e] < e, depths.inner[parents^[e]] + 1_u64 == depths.inner[e]
+  ) {
+    let parent = parents^[at];
+    if parent == top {
+      set depths.inner[at] = 0_u64;
+    } else if parent < at {
+      let above = depths.inner[parent];
+      if above < depth_ceiling {
+        let depth = above + 1_u64;
+        set depths.inner[at] = depth;
+        set deepest = imax(deepest, depth);
+      } else {
+        return 1_u64;
+      }
+    } else {
+      return 2_u64;
+    }
+  }
+  if deepest >= depth_ceiling {
+    return 3_u64;
+  }
+  let levels = deepest + 1_u64;
+  let sizes = box_array_filled::<u64>(count: levels, value: 0_u64);
+  for (at in 0_u64..n) {
+    let depth = depths.inner[at];
+    if depth < levels {
+      let seen = sizes.inner[depth];
+      if seen < n {
+        set sizes.inner[depth] = seen + 1_u64;
+      } else {
+        return 4_u64;
+      }
+    } else {
+      return 5_u64;
+    }
+  }
+  let made = box_segments_filled::<u64>(lengths: &sizes.inner[0_u64..levels], value: absent);
+  match move made {
+    None() => {
+      return 6_u64;
+    }
+    Some(value: slots) => {
+      let fill = box_array_filled::<u64>(count: levels, value: 0_u64);
+      let positions = box_array_filled::<u64>(count: n, value: 0_u64);
+      let rows = slots.inner.len;
+      for (
+        at in 0_u64..n,
+        invariant forall fresh(d in 0_u64..rows, k in 0_u64..slots.inner[d].len) when slots.inner[d][k] != absent: slots.inner[d][k] < at,
+        invariant forall listed(d in 0_u64..rows, k in 0_u64..slots.inner[d].len) when slots.inner[d][k] != absent: positions.inner[slots.inner[d][k]] == k, depths.inner[slots.inner[d][k]] == d
+      ) {
+        let depth = depths.inner[at];
+        let listed = depth < rows;
+        let counted = depth < levels;
+        let known = band(listed, counted);
+        if known {
+          let offset = fill.inner[depth];
+          let segment = &slots.inner[depth];
+          if offset < segment^.len {
+            set segment^[offset] = at;
+            set positions.inner[at] = offset;
+            set fill.inner[depth] = offset + 1_u64;
+          } else {
+            return 7_u64;
+          }
+        } else {
+          return 8_u64;
+        }
+      }
+      for (level in 0_u64..rows) {
+        cascade_level(slots: &slots.inner[level], positions: &positions.inner[0_u64..n], depths: &depths.inner[0_u64..n], parents: &parents^[0_u64..n], matched: &matched^[0_u64..n], results: &results^[0_u64..n], level: level, base: 100_u64);
+      }
+      return 0_u64;
+    }
+  }
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The tree div(section(span, img), article(p, a)) in preorder. Level 2 lists elements 2, 3, 5 and 6, scattered through the preorder results.";
+  let parents = box_array_filled::<u64>(count: 7_u64, value: top);
+  set parents.inner[1_u64] = 0_u64;
+  set parents.inner[2_u64] = 1_u64;
+  set parents.inner[3_u64] = 1_u64;
+  set parents.inner[4_u64] = 0_u64;
+  set parents.inner[5_u64] = 4_u64;
+  set parents.inner[6_u64] = 4_u64;
+  let matched = box_array_filled::<u64>(count: 7_u64, value: 0_u64);
+  for (at in 0_u64..7_u64) {
+    set matched.inner[at] = at + 1_u64;
+  }
+  let results = box_array_filled::<u64>(count: 7_u64, value: 0_u64);
+  let status = cascade(parents: &parents.inner[0_u64..7_u64], matched: &matched.inner[0_u64..7_u64], results: &results.inner[0_u64..7_u64]);
+  if status != 0_u64 {
+    return exit_status(code: 1_u8);
+  }
+  let sum = 0_u64;
+  for (at in 0_u64..7_u64) {
+    set sum = sum +wrap results.inner[at];
+  }
+  if sum != 748_u64 {
+    return exit_status(code: 3_u8);
+  }
+  let last = results.inner[6_u64];
+  if last != 113_u64 {
+    return exit_status(code: 4_u8);
+  }
+  return exit_status(code: 0_u8);
+}

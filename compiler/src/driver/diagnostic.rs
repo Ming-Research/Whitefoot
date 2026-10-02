@@ -719,6 +719,7 @@ variant_names! {
     UnsupportedSemanticFeature {
         Generics, PreludeNominalValues, ReferenceFormation, CompositeValues,
         RecursiveNominalLayout, OwnershipJoin, DuplicateMatchArm, OperationFamily,
+        RangeArithmetic, RangeLoopNesting,
     }
 }
 
@@ -880,6 +881,9 @@ impl Report for SemanticIssueKind {
             UndischargedCallRequirement[detail];
             InvalidCountedEndpoint { mechanical_fix };
             BreakOutsideLoop { mechanical_fix };
+            InvalidRangeClause { reason, mechanical_fix };
+            UndischargedRangeFact { fact, site, missing, mechanical_fix };
+            UndischargedApart { pair, mechanical_fix };
             InvalidInvariant { reason, mechanical_fix };
             InvalidTypeInvariant { reason, mechanical_fix };
             TypeInvariantWritableField { field, mechanical_fix };

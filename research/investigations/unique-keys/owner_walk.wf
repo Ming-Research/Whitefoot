@@ -1,0 +1,73 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+const top: u64 = 18446744073709551615_u64;
+
+const absent: u64 = 18446744073709551615_u64;
+
+const depth_ceiling: u64 = 4096_u64;
+
+fn owners_of(parents: &[u64], declares: &[u64], depths: &[u64], owners: &[u64]) -> result: u64 reads(parents), reads(declares), writes(depths), writes(owners) contract {
+  requires declares^.len == parents^.len;
+  requires depths^.len == parents^.len;
+  requires owners^.len == parents^.len;
+} {
+  doc "owner_loop.wf with the owners computed in the depth walk: each element's owner, itself when it declares and its parent's owner otherwise, is written beside its depth, with the invariant owned beside up in the walk's header. Returns 0, or the step that refused.";
+  let n = parents^.len;
+  for (
+    at in 0_u64..n,
+    invariant forall up(e in 0_u64..at) when parents^[e] < n: parents^[e] < e, depths^[parents^[e]] + 1_u64 == depths^[e],
+    invariant forall owned(e in 0_u64..at) when owners^[e] < n: owners^[e] <= e, depths^[owners^[e]] <= depths^[e]
+  ) {
+    let parent = parents^[at];
+    if parent == top {
+      set depths^[at] = 0_u64;
+      set owners^[at] = at;
+    } else if parent < at {
+      let above = depths^[parent];
+      if above < depth_ceiling {
+        set depths^[at] = above + 1_u64;
+        let mine = declares^[at];
+        if mine != 0_u64 {
+          set owners^[at] = at;
+        } else {
+          set owners^[at] = owners^[parent];
+        }
+      } else {
+        return 1_u64;
+      }
+    } else {
+      return 2_u64;
+    }
+  }
+  return 0_u64;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "div(section(span, img), article(p, a)); div and article declare, so span and img take div as owner and p and a take article.";
+  let parents = box_array_filled::<u64>(count: 7_u64, value: top);
+  set parents.inner[1_u64] = 0_u64;
+  set parents.inner[2_u64] = 1_u64;
+  set parents.inner[3_u64] = 1_u64;
+  set parents.inner[4_u64] = 0_u64;
+  set parents.inner[5_u64] = 4_u64;
+  set parents.inner[6_u64] = 4_u64;
+  let declares = box_array_filled::<u64>(count: 7_u64, value: 0_u64);
+  set declares.inner[0_u64] = 1_u64;
+  set declares.inner[4_u64] = 1_u64;
+  let depths = box_array_filled::<u64>(count: 7_u64, value: 0_u64);
+  let owners = box_array_filled::<u64>(count: 7_u64, value: absent);
+  let status = owners_of(parents: &parents.inner[0_u64..7_u64], declares: &declares.inner[0_u64..7_u64], depths: &depths.inner[0_u64..7_u64], owners: &owners.inner[0_u64..7_u64]);
+  if status != 0_u64 {
+    return exit_status(code: 1_u8);
+  }
+  let span = owners.inner[2_u64];
+  let a = owners.inner[6_u64];
+  if span != 0_u64 {
+    return exit_status(code: 2_u8);
+  }
+  if a != 4_u64 {
+    return exit_status(code: 3_u8);
+  }
+  return exit_status(code: 0_u8);
+}

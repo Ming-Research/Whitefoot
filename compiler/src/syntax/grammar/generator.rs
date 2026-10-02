@@ -115,6 +115,12 @@ const ENUM_ORDER: &[&str] = &[
     "atomic_stmt",
     // v0.82 [GRAM-2, GRAM-4, TYPE-11]: a struct's type invariants.
     "type_invariant",
+    // v0.84 [GRAM-4, GRAM-5, RANGE-1, RANGE-5]: range facts and the
+    // cross-iteration certificate of a counted loop.
+    "apart_clause",
+    "range_clause",
+    "range_binder",
+    "range_relation",
 ];
 
 /// v0.33 deliberately replaces the old pseudo-statement contract grammar.
