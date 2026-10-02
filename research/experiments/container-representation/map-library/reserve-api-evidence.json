@@ -1,8 +1,8 @@
 {
   "purpose": "Isolated ordinary public reserve with verified future entry headroom; single production baseline panel, not an optimization/adoption result",
   "archive": "reserve-api-evidence.tar.gz",
-  "archive_sha256": "b3e0a9586da07ee5f2d42f16c0ab043a84b810a7f309bc432b8e9801a62d3b9c",
-  "archive_members": 1161,
+  "archive_sha256": "f7993e3b2234dbf60751a0caa5c3d31f9e345b11bc259b5581f1d27797f4b537",
+  "archive_members": 1182,
   "base_revision": "89571a60381a685cfbe760248ceb6178d9f9ac05",
   "production_cli_sha256": "c12b2b2a6c9694fd2bc1b7be0004d582ae9628951422def849f4cf6a3ac02f77",
   "timed_image_sha256": "f1ebf18d7a94c79250bb3cbd74a0b379a2a30c6e5e4eda48396ec77d8bbdbf3f",
@@ -5021,6 +5021,61 @@
       "from": "component-index.json",
       "to": "component-index-before-model-insertion.json",
       "sha256": "365a44240eb1c6190dbe877f34e6e14b37daebf44e5269264beea85689f2bce0"
+    },
+    "all_prior_member_bytes_preserved": true
+  },
+  "fresh_insert_api": {
+    "prefix": "fresh-insert-api/",
+    "manifest": "fresh-insert-api/manifest.json",
+    "manifest_sha256": "918296f554e0c25bd84beda97f2e1c025225bd4e10ef1f3e3eb7e63d1de84b50",
+    "payload_count": 13,
+    "records": "fresh-insert-api/records.json",
+    "retained_records": 258,
+    "selected_source_files": 262,
+    "timing_rows": 223488,
+    "timing_row_counts": {
+      "campaign/candidate-cohort-0.csv": 55872,
+      "campaign/candidate-cohort-1.csv": 55872,
+      "campaign/control-cohort-0.csv": 55872,
+      "campaign/control-cohort-1.csv": 55872
+    },
+    "check_outcomes": 92,
+    "accounting_rows": 48,
+    "campaign_inputs_equal": true,
+    "compiler_sha256": "fb19727639fd2b5301b164f58c299754b884b970f447610ac7dcd6ea7e1ccea0",
+    "control_normalization": "CSV calls counts insertion work units; actual geometry-wrapper C ABI calls per sample are32768(S64)/512(S4096), one per owner. No subtraction.",
+    "production_adoption": false,
+    "qualified_before_after_gains": 0,
+    "qualified_peer_targets": 3,
+    "all_cells_instrument_valid": true,
+    "reducer_falsifiers": 5
+  },
+  "wide_remove_caller": {
+    "prefix": "wide-remove-caller/",
+    "manifest": "wide-remove-caller/manifest.json",
+    "manifest_sha256": "e7493dc1eb436d44e87938697acfdc88a4c9c56e1405f2c27cadfff87cd8168c",
+    "payload_count": 2,
+    "status": "Existing wide CHURN caller already folds full Option/payload return transfer;104B partial scalar spills and inactive slot clearing remain. Frozen569b native observation only, not isolated remove timing or compiler-adoption claim."
+  },
+  "fresh_insert_linkage": {
+    "prefix": "fresh-insert-linkage/",
+    "manifest": "fresh-insert-linkage/manifest.json",
+    "manifest_sha256": "105bfc1f22e65fb1a4d0f56702321d79beb9909f6a05863236d568153f6d3b78",
+    "payload_count": 5,
+    "retained_records": 25,
+    "native_criterion": "FAIL",
+    "runtime_checks": false,
+    "timing": false,
+    "production_adoption": false
+  },
+  "fresh_insert_prior_index": {
+    "prior_archive_sha256": "b3e0a9586da07ee5f2d42f16c0ab043a84b810a7f309bc432b8e9801a62d3b9c",
+    "prior_members": 1161,
+    "unchanged_names_and_bytes": 1160,
+    "renamed_member": {
+      "from": "component-index.json",
+      "to": "component-index-before-fresh-insert.json",
+      "sha256": "5a96b21c119b90fd42cece2514456d41143df92617e17eba460a2015c4ca5e4f"
     },
     "all_prior_member_bytes_preserved": true
   }

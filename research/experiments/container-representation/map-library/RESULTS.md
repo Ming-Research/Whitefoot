@@ -44,8 +44,10 @@ two-cohort campaign. All four miss cells fail; both large misses also retain
 C-attribution drift invalidation. This API window neither supplies a before/after
 optimization gain nor replaces the unchanged whole-application performance goal.
 Public `hash_map_lookup` already has isolated hit/miss measurement, with its
-miss gap still open; `hash_map_find` is private. Separate fresh-insertion and
-owned-removal API windows remain missing.
+miss gap still open; `hash_map_find` is private. The [fresh-insertion window](#isolated-fresh-insertion-no-qualified-candidate-gain)
+now measures ordinary per-owner batches: no qualified before/after gain in eight
+cells, with three aligned peer targets. Owned removal still needs an isolated
+API window; neither instrument replaces the whole-application goal.
 The [EDIT-only two-span follow-up](#edit-only-two-span-probing-rejected)
 reduces native body instructions but has no qualified miss gain, three qualified
 two-cohort hit losses and zero candidate peer targets; its source stays rejected.
@@ -6877,11 +6879,102 @@ zero. The C5 witness exercises two tombstones, duplicate replacement beyond
 them, reuse, full capacity and owned refusal; cleanup observes nine owners,
 key sum 39 and value sum 660. A source fault forcing the saved flag false
 emits and links successfully, then fails the dedicated witness with exit 9.
-The 32 EDIT/96 reserve ledger rows remain byte-identical across arms. No fresh
-insertion timing window or performance qualification was run; no adoption follows.
+The 32 EDIT/96 reserve ledger rows remain byte-identical across arms. At this
+stage no fresh-insertion timing window had run. The later
+[fresh-insertion campaign](#isolated-fresh-insertion-no-qualified-candidate-gain)
+uses a newly pinned compiler and does not qualify a candidate gain; no adoption follows.
 
 The `insertion-vacancy-state/` archive component retains both criteria, exact
 source/witness/fault patches, all ordinary results, native collateral and
 original/normalized pins. Historical scripts require omitted frozen compiler,
 carrier, runtime and native-peer/toolchain objects; they are not a standalone
 replay bundle. The load-removal observation does not qualify unrelated paths.
+
+### Wide remove caller: full return transfer already eliminated
+
+In the frozen `insertion-vacancy-state` control, the wide CHURN trace's successful
+remove arm already avoids materializing the 272-byte `Option` return or copying
+the full 256-byte returned payload. Object instructions `0x4c60–0x4dc0` and
+linked instructions `0x1000c035c–0x1000c04bc` agree: bucket loads feed the
+[32-word content digest](map-library.wf), with six paired stores and one scalar
+store spilling 104 bytes. These partial scalar spills remain; this is not a
+register-only path. Deleted tagging and inactive key/payload clearing remain.
+The observation belongs to frozen compiler `569badd5…`, object `d2a00958…`
+and checked timed image `69c42427…`; it supplies no new execution or timing.
+
+A standalone remove helper's aggregate return copy therefore does not by itself
+establish a reached-caller compiler defect. This observation does not reopen the
+[owner-rejected inactive-payload omission](../../../../design/log.md#2026-09-23-decline-inactive-payload-destination-initialization)
+or conflate it with the separate
+[complete-constructor memset experiment](#complete-constructor-zeroing-implementation-comparison-does-not-qualify).
+An isolated owned-remove hit/miss batch remains the next discriminator, with
+complete returned-owner/cleanup outcomes, linked caller inspection, clock checks
+and Rust/C++ peers. CHURN includes other work and does not qualify that API window.
+
+### Isolated fresh insertion: no qualified candidate gain
+
+The saved-vacancy candidate and unchanged control use the same frozen compiler
+`fb197276…` in an ordinary public fresh-insertion window. Each owner starts with
+S/2 entries and inserts S/8 fresh entries, for entry floors S=64/4096 and
+8-/256-byte payloads. Common entry headroom is at least S; physical capacities
+differ and must remain unchanged. Key/value construction, argument transfer
+and insertion are timed; setup and complete cleanup are outside the interval.
+The final pre-timing contract uses 2^18 insertions per sample with one native
+batch wrapper per owner, replacing preparatory 2^20/per-key C-ABI forms before
+any timing. It is not a probe-only or isolated instruction-cost measurement.
+
+All 92 expected check outcomes pass, including four 144-case panels and the
+rejecting freshness, payload, growth, cleanup and allocation controls. The 48
+accounting rows show no insertion allocation for WF/Rust, one C++ node per
+fresh entry, unchanged capacity and complete release. The one fixed A0/B0/B1/A1
+campaign exits zero in all four processes (guard 55.86 s), retains 223,488 raw
+rows and preserves all 67 before/after input pins. All eight cells pass the
+instrument gates; clock quantum is 41 ns, maximum empty intervals are 42–83 ns,
+and maximum participant cohort drift is 5.21%.
+
+Medians below are ns/insertion, cohort 0 / 1. Rust/C++ values are from the
+candidate panel; the retained reduction includes both panels' full ranges.
+Native-default and aligned-hash contracts remain separate.
+
+| Series | Bytes / S | WF control | WF candidate | Rust | C++ | Peer range target |
+|---|---:|---:|---:|---:|---:|---|
+| default | 8 / 64 | 16.277 / 16.242 | 16.264 / 16.296 | 9.874 / 9.921 | 12.453 / 12.318 | fail |
+| default | 8 / 4096 | 16.046 / 15.996 | 15.665 / 15.626 | 9.293 / 9.304 | 11.043 / 11.130 | fail |
+| aligned | 8 / 64 | 16.294 / 16.284 | 16.304 / 16.320 | 7.312 / 7.315 | 21.276 / 21.258 | pass |
+| aligned | 8 / 4096 | 15.995 / 15.875 | 15.439 / 15.455 | 4.322 / 4.366 | 22.052 / 21.842 | pass |
+| default | 256 / 64 | 30.073 / 30.154 | 30.670 / 30.417 | 27.806 / 27.248 | 26.646 / 26.120 | fail |
+| default | 256 / 4096 | 35.766 / 35.454 | 35.519 / 33.760 | 36.148 / 36.016 | 25.632 / 25.217 | fail |
+| aligned | 256 / 64 | 30.149 / 30.084 | 29.814 / 30.070 | 24.623 / 24.457 | 36.338 / 35.858 | pass |
+| aligned | 256 / 4096 | 35.669 / 36.180 | 35.310 / 34.536 | 32.130 / 32.475 | 37.878 / 37.832 | fail |
+
+No cell has the required before/after range separation in both cohorts: **0/8
+qualified candidate gains**. Only aligned scalar 64/4096 and wide 64 pass the
+selected slower-peer range target (3/8); no default cell passes. Median shifts
+and the partial peer result do not qualify the global criterion or select the
+source candidate. This instrument does not establish application parity.
+
+Snapshot-control CSV `calls` counts insertion work units, not actual C-ABI
+calls: geometry runs once per owner, 32,768 times per sample at S64 and 512 at
+S4096. Controls remain unsubtracted. The `fresh-insert-api/` component in the
+[existing evidence archive](reserve-api-evidence.tar.gz) retains exact sources,
+criteria, checks, raw rows, peer ranges, native excerpts and pins. Initial pin
+sets preserve preparation history; earlier tool-only baseline checks and
+export/link/build repairs have no archived logs or reconstructed durations.
+The initial reducer's `min(a)` TypeError and `min(a,b)` repair remain visible;
+final reduction exits zero in 13.21 s and five lightweight falsifiers reject.
+Compiler/runtime/peer binaries and full modules are omitted, so rebuilding
+requires those pinned dependencies; the bundle is not a standalone replay.
+
+### Fresh insertion linkage: result-memory boundary remains
+
+A native-only counterfactual internalizes four `try_put` instances after
+checking their complete direct-reference owners and exact non-WF link inputs.
+The control object reproduces the timed control byte-for-byte. Scalar public
+batch instructions change 35→36 with the same 96-byte frame, destination and
+result-tag load; the callee still writes the 24-byte result. Environment
+argument promotion occurs, but return promotion does not. Wide lowering adds a
+per-item helper call while reducing active caller frames; that tradeoff is not
+a measured gain. The native criterion fails. The 1.55 s guard exits zero, but
+no correctness execution or timing was run for this IR candidate. The compact
+`fresh-insert-linkage/` archive component retains the exact patch, external
+reference audit, selected bodies and pins. No visibility or ABI policy is selected.

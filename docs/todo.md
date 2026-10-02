@@ -3008,6 +3008,12 @@ rarely insert at the same place.
   invalidation, linked text and same-source runtime on admitted targets.
   No policy is selected. Defer beyond the code-only pilot; reopen when
   evaluating a concrete inlining/footprint tradeoff or native export boundary.
+  The [fresh-insertion linkage screen](../research/experiments/container-representation/map-library/RESULTS.md#fresh-insertion-linkage-result-memory-boundary-remains)
+  internalizes four closed-witness instances but leaves scalar result storage
+  and its caller tag load, with a new wide per-item call. No runtime benefit
+  follows. The measured four-leaf scalar result is a concrete reopener for a
+  separate target-aware register-result discriminator; preserve shared caller/
+  callee ABI and body/wrapper optimization order before selecting any policy.
 
 - **Machinery with no remaining consumer.** The checker keeps the region
   machinery STOR-8 retired, though every value it produces is empty:
@@ -3788,8 +3794,16 @@ condition under which it is taken up.
 
   Public `hash_map_lookup` already has isolated hit/miss measurement;
   `hash_map_find` is a private helper. Lookup's miss performance gap remains
-  open. Fresh insertion and owned removal still lack separate API windows;
-  paired churn and whole traces do not complete those measurements. The
+  open. [Fresh insertion now has an ordinary batch window](../research/experiments/container-representation/map-library/RESULTS.md#isolated-fresh-insertion-no-qualified-candidate-gain),
+  with no qualified candidate gain and only three aligned peer targets. Owned
+  removal still lacks a separate API window; paired churn and whole traces do
+  not complete that measurement. The
+  [reached wide CHURN remove caller](../research/experiments/container-representation/map-library/RESULTS.md#wide-remove-caller-full-return-transfer-already-eliminated)
+  already eliminates the full aggregate return transfer, retaining 104 bytes
+  of partial scalar spills and slot clearing. Inspect an isolated owned-remove
+  hit/miss batch before attributing a cost to standalone helper copies; retain
+  complete owning outcomes, clocks and both peers. This neither selects a
+  compiler change nor reopens rejected inactive-payload omission. The
   [isolated public EDIT consumer](../research/experiments/container-representation/map-library/RESULTS.md#isolated-public-edit-hit-targets-pass-misses-remain-open)
   now measures integer-fixture hit/miss batches with ordinary public calls,
   complete independent outcomes, off-clock full cleanup and qualified clocks.
@@ -3888,9 +3902,12 @@ condition under which it is taken up.
   correctness and the fixed peer criterion; the model selects no algorithm.
   The [saved-vacancy insertion candidate](../research/experiments/container-representation/map-library/RESULTS.md#insertion-saved-vacancy-state-bounded-nativecheck-result)
   removes commit-time reclassification but adds per-Deleted flag work and has
-  caller collateral. Retain its bounded ordinary witnesses; reopen through the
-  missing fresh-insertion window before claiming a whole-API benefit, including
-  replacement/refusal and dense-tombstone costs. No source adoption is selected.
+  caller collateral. Its [ordinary fresh-insertion campaign](../research/experiments/container-representation/map-library/RESULTS.md#isolated-fresh-insertion-no-qualified-candidate-gain)
+  now supplies no qualified before/after gain in eight valid cells; default
+  peer targets all fail. Reopen reached insertion costs against that unchanged
+  criterion, retaining replacement/refusal and dense-tombstone costs. Do not
+  subtract snapshot controls or equate their work-unit count with C-ABI calls.
+  No source adoption is selected.
 
   The [actual integrated-candidate comparison](../research/experiments/container-representation/map-library/RESULTS.md#integrated-candidate-with-the-maintained-caller)
   has no qualified before/after gain in 40 maintained-caller cells; all four
