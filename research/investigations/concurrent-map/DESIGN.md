@@ -469,18 +469,21 @@ it the object; the other, on the same driver, takes the object as a
 statement in a map block does, so it meets the object handed to the first
 while the first waits in that driver's queue, and must borrow. The test
 runs until statements have been handed the object 50 times and the hold
-borrowed 20 times, and fails at once when one statement is handed the
-object twice. In five runs on four CPUs (0.03 to 2.3 s) and five on two
-(0.95 to 2.6 s), each statement was handed the object once at most and,
-once resumed, overtaken by at most the one borrower under way. Mutants,
-three runs each: the take-back handed a statement the object a second
-time in every run; a borrow that ignores the claim overtook a resumed
-statement 14 to 27 times; and a statement that waits instead of borrowing
-never ends, which the test's alarm fails. On one processor the threads
-never run beside the driver, and the test reports that it checked no
-hand-off. It links the runtime objects the default-route probe builds, so
-it adds no compilation to the runtime group, which runs its built tests in
-7.0 s on this container.
+borrowed 20 times, or for 30 s, and fails at once when one statement is
+handed the object twice or overtaken after it resumed. In six runs on four
+CPUs (0.16 to 1.6 s) and six on two (1.9 to 4.0 s), each statement was
+handed the object once at most and, once resumed, overtaken by at most the
+one borrower under way. Mutants, eight runs each: the take-back handed a
+statement the object a second time at the second hand-off; a borrow that
+ignores the claim let a resumed statement be overtaken 2 to 40 times by
+the third; and a statement that waits instead of borrowing never ends,
+which the test's alarm fails. Since every mutant failed by the third
+hand-off, 50 leave a wide margin. On one processor the threads never run
+beside the driver, and the test reports that it checked no hand-off. It
+links the runtime objects the default-route probe builds, so it adds no
+compilation to the runtime group; on the hosted Linux runner it ran in
+0.28 s, and the group took 19.6 s against 25.3 s with the previous test,
+which waited for hand-offs on several drivers.
 
 ## The measurement
 

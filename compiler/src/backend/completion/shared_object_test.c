@@ -43,8 +43,8 @@
 #include <unistd.h>
 
 /* P asks until it has been handed the object HANDED_ENOUGH times and its
- * hold has been borrowed LENT_ENOUGH times, which takes well under a second
- * on an idle host, and stops after LIMIT_SECONDS. */
+ * hold has been borrowed LENT_ENOUGH times, which took up to 2.6 s on an
+ * idle host, and stops after LIMIT_SECONDS. */
 enum { HANDED_ENOUGH = 50, LENT_ENOUGH = 20, LIMIT_SECONDS = 30, THREADS = 2 };
 
 /* A frame: the step its resumption runs, which returns when the frame
@@ -106,12 +106,11 @@ static void turn(int spins) {
 
 /* P stops only between statements, so that a statement that never ends
  * fails the test rather than ending it, and fails as soon as one statement
- * has been handed the object twice. */
+ * has been handed the object twice or overtaken after it resumed. */
 static void p_step(test_frame *f) {
     for (;;) {
         if (!f->begun) {
-            if ((atomic_load(&handed_total) >= HANDED_ENOUGH && atomic_load(&lent) >= LENT_ENOUGH)
-                || (f->statements % 1024 == 0 && past_limit())) {
+            if ((atomic_load(&handed_total) >= HANDED_ENOUGH && atomic_load(&lent) >= LENT_ENOUGH) || past_limit()) {
                 p_statements = f->statements;
                 atomic_store(&stop, 1);
                 f->done = 1;
@@ -131,6 +130,8 @@ static void p_step(test_frame *f) {
             worst_handed = atomic_load(&handed);
         if (atomic_load(&resumed) && now - resumed_at > worst_after_resume)
             worst_after_resume = now - resumed_at;
+        if (worst_after_resume > 1)
+            fail("a statement resumed holding the object was overtaken (overtaken, bound)", worst_after_resume, 1);
         turn(100);
         wf__shared_unlock(object, 1);
         f->begun = 0;
