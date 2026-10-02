@@ -2,13 +2,15 @@
 //! under keys that are known before their block runs, and the statements
 //! that compute those keys.
 //!
-//! A statement holding a map's state takes effect at one point, and whether
-//! it excludes a statement on an entry its block never reaches is not
-//! observable. So when the block reaches the map only through
-//! `atomic e = &s^[key] { ... }` and every such key can be computed first,
-//! lowering collects the keys, and the runtime holds those entries and no
-//! others (`wf_cmap_hold_set`). The block then runs once, as written, on
-//! entries it already holds.
+//! A statement holding a map's state takes effect at one point, and an
+//! implementation may hold less than the statement holds wherever the
+//! program's outcomes are those it has under the whole hold [SHARE-3]. So
+//! when the block reaches the map only through
+//! `atomic e = &s^[key] { ... }`, every such key can be computed first, and
+//! no block of the program is a section others could see inside
+//! ([`runs_object_sections`]), lowering collects the keys, and the runtime
+//! holds those entries and no others (`wf_cmap_hold_set`). The block then
+//! runs once, as written, on entries it already holds.
 //!
 //! The keys are computed by a *twin* of the block: its counted loops and
 //! matches that contain such a statement, the `let`s their keys, bounds and

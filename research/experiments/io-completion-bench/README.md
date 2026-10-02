@@ -382,7 +382,9 @@ attribution runs, `redis-persistence-samples.csv` that of Experiment 8,
 the suite of the concurrent-map investigation's stage (c), and
 `scale-14900k-samples.csv` its many-core run, and `shared-reads-samples.csv`
 its shared reads against exclusive holds, with
-`shared-reads-14900k-samples.csv` the same comparison on the many-core host.
+`shared-reads-14900k-samples.csv` the same comparison on the many-core host,
+and `held-keys-14900k-samples.csv` the sweep of the longest wait and the
+quick comparisons of statements that hold only their keys' entries.
 They are removed with the
 experiments' records.
 

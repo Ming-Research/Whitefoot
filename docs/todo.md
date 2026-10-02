@@ -949,7 +949,33 @@ rarely insert at the same place.
   on that host. The change: bound the waits by elapsed time, read from the
   cycle counter, or let keyed statements park. Reopen when the 14900K
   measures one-key `update`, when waiting writers park, or when holds show
-  in a workload's profile or tail latency.
+  in a workload's profile or tail latency. The 14900K has measured it
+  ([the longest wait](../research/investigations/concurrent-map/DESIGN.md#the-longest-wait-for-a-held-cell)):
+  no one count is best. One-key `update` with a block of a few nanoseconds
+  rises with the count to 4,096 pauses and loses 12% to 43% at 64, while
+  firn's `ZADD`, whose block takes about 0.8 µs, gains 10% at 64 pauses or
+  fewer on four server CPUs. The change that follows from it: wait in
+  proportion to how long the holder has held, which the holder would have
+  to publish. Reopen when a workload's rate on one hot key is within that
+  10% of its criterion.
+
+- **The map's test has no gate run that checks memory.** A statement that
+  locked a cell in a table a move had left read the cell's node after a
+  statement in the next table had freed it; the result was always
+  discarded, so no test's outcome differed, and only a build with
+  `-fsanitize=address` saw it. `make -C compiler concurrent-map-test-sanitized`
+  is that build, 7 s on the 14900K, and fails under the mutant that keeps
+  the lock; it is not part of `completion-test`, whose runtime stage has
+  run over its budget on macOS. The decision for the owner: raise the
+  runtime budget and run it in the gate, or run it in a workflow of its
+  own. Reopen with the next change to `concurrent_map.c`.
+
+- **A driver thread's set of collected keys is never given back.**
+  `wf_shared_map_keyed` (`compiler/src/backend/shared_map.c`) grows by
+  doubling to the largest set of keys a statement on the thread has
+  collected and keeps that block until the process ends, since drivers
+  never leave. Reopen when drivers can be stopped, or when a program
+  collects a set large enough to matter once.
 
 - **A keyed statement on an absent key allocates a node it then frees.**
   `wf_cmap_lock_entry` (`compiler/src/backend/concurrent_map.c`) claims a
@@ -1050,16 +1076,44 @@ rarely insert at the same place.
   key. Validate by `ZADD` at depth 16 against Dragonfly at 2 and 16 server
   CPUs. Reopen with firn's next performance work.
 
-- **A whole-map statement costs more as drivers are added.** firn's `MSET`
-  fell from 1,243,000 a second at 4 server CPUs to 1,103,000 at 8 and
-  802,000 at 16, 0.76 of Garnet there
-  ([many cores](../research/investigations/concurrent-map/DESIGN.md#many-cores)):
-  each whole-map statement waits for a keyed statement of every other
-  driver. Whether the client also limits it at 16 was not measured. The
-  change: first measure `MSET` at 16 with two client processes; if the
-  server limits it, a statement over a list of keys taken in an order the
-  runtime fixes (Q35, deferred by the shared-maps decision) holds only its
-  keys. Reopen with firn's next performance work.
+- **A statement that holds a whole map takes turns by ticket.** A block
+  that counts the map, names its state other than as an entry's target, or
+  whose keys cannot be computed first holds the whole map, and such
+  statements wait in line: firn's `MSET` answered 1,366,000 a second on
+  four server CPUs before the ticketed holds and 587,000 after
+  ([holding only the entries](../research/investigations/concurrent-map/DESIGN.md#holding-only-the-entries-a-statement-reaches)).
+  firn's `MSET`, `DEL` and `EXISTS` now hold their keys' entries, so no
+  measured workload waits there. The change, if one does: let the next in
+  line wait without backing off. Reopen with a workload whose whole-map
+  statements cannot hold their keys.
+
+- **Nothing shows which statements hold their keys' entries.** A statement
+  holding a map's state holds only its keys' entries when a twin of its
+  block can compute them (`compiler/src/semantic/held_keys.rs`) and the
+  program runs no block of two object statements; a change to the block, or
+  one such block anywhere in the program, makes it hold the whole map with
+  no diagnostic, and `MSET` then answers a fifth as much. The change: a
+  ledger beside `--par-ledger` that lists each statement holding a map's
+  state with how it is held and the condition that refused a twin, and a
+  firn test that reads it. Reopen with the next statement whose hold
+  matters to a measurement.
+
+- **A statement that holds its keys' entries locks each one exclusively.**
+  A block that only reads its entries, firn's `EXISTS` of several keys,
+  holds them alone, where a statement on one entry that only reads shares
+  it. The change: lock a set's entries as readers when no entry statement
+  in the block writes through its binder. Reopen when a workload's readers
+  of several keys contend.
+
+- **An object statement that only reads holds its object alone.** The
+  checker classes a statement on an entry that writes nothing through its
+  binder as a reader, and classes no statement on a `Shared<T>` object: the
+  object runtime holds exclusively whatever the block does, so the class
+  would decide nothing. The owner's principle of 2026-10-02 is that the
+  language treats every atomic statement alike; the rule in the
+  specification now does, and the checker's class and the object runtime's
+  shared hold are the change. Reopen with a workload whose readers of one
+  object contend.
 
 - **firn spends more CPU per `SADD` and `HSET` than before the shared map
   on four drivers.** On the 14900K with 4 server CPUs both firn and firn at

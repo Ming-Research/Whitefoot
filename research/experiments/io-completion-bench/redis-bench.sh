@@ -445,7 +445,8 @@ quick_measure() {
 # The quick comparison, for the loop of changing firn and measuring again:
 # firn on QUICK_CPUS server CPUs against the fastest of Garnet and Dragonfly,
 # which led every test of the scaling run. Those two are measured once per
-# CPU count and kept in quick-ref-<n>.csv until QUICK_REFRESH is set; nothing
+# CPU count and client count and kept in quick-ref-<n>-<clients>.csv until
+# QUICK_REFRESH is set; nothing
 # is verified. Its rates are its own: its client is not the suite's.
 if [ "$MODE" = quick ]; then
     n=${QUICK_CPUS:-4}

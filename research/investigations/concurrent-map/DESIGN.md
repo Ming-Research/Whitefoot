@@ -740,6 +740,167 @@ a second:
   writer of every key would scan every driver's mark; it stays the next
   design if criterion 3 fails.
 
+### The longest wait for a held cell
+
+A writer that finds its key's cell locked waits 16 pauses and then twice as
+long each time up to 1,024 (`wait_for_cell`). firn's `ZADD` spent 60% of its
+server CPU in that wait on four server CPUs, so the longest wait was swept
+from 1 to 4,096 pauses on the 14900K
+([raw lines](../../experiments/io-completion-bench/held-keys-14900k-samples.csv)),
+over the map's own one-key benchmark, whose block takes a few nanoseconds,
+and firn's tests of one key through `redis-bench.sh quick`. Thousands a
+second:
+
+| Workload | 1 | 4 | 16 | 64 | 256 | 1,024 | 4,096 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| one key `update`, 4 threads | 26,177 | 39,818 | 93,514 | 121,785 | 126,173 | 137,586 | 137,872 |
+| one key `update`, 16 threads | 7,943 | 7,120 | 12,277 | 26,916 | 38,433 | 47,384 | 52,284 |
+| uniform `update`, 16 threads | 561,363 | 566,281 | 528,561 | 545,236 | 548,918 | 550,119 | 538,343 |
+| firn `ZADD`, 4 CPUs | 1,220 | 1,222 | 1,220 | 1,202 | 1,094 | 1,101 | 1,072 |
+| firn `HSET`, 4 CPUs | 3,852 | 3,861 | 4,063 | 4,081 | 3,953 | 3,919 | 3,761 |
+| firn `LPUSH`, 16 CPUs | 2,977 | 3,182 | 4,149 | 4,851 | 3,699 | 5,123 | 5,129 |
+| firn `RPOP`, 16 CPUs | 2,340 | 2,896 | 3,658 | 4,719 | 5,391 | 5,658 | 5,488 |
+| firn `INCR`, 4 CPUs (100,000 keys) | 6,245 | 6,271 | 6,212 | 6,357 | 6,275 | 6,393 | 6,313 |
+
+- **No one count is best.** A block of a few nanoseconds wants the longest
+  wait, since its holder then makes many changes in a row: one-key `update`
+  loses 12% at four threads and 43% at 16 when the longest wait is 64
+  pauses. A block of about 0.8 µs wants a short one: `ZADD` on four CPUs
+  gains 10% at 64 pauses or fewer.
+- **firn's own tests disagree across CPU counts:** 64 pauses is 3% to 5%
+  better on four CPUs for `HSET` and `SADD`, and 1,024 is 6% to 20% better
+  on 16 for `LPUSH` and `RPOP`.
+- **The count stays at 1,024.** The one-key benchmark is the cell of the
+  fourth duel the count was chosen on, and no other count improves firn at
+  every CPU count. A wait in proportion to how long the holder has held is
+  the change this points to; it is recorded in `docs/todo.md`.
+- **The control moved by one measurement:** `INCR` at 16 CPUs read 10,373
+  at 64 pauses against about 14,100 at every other count, while other
+  commands ran on the host; the uniform `update` moved by 6% across counts.
+
+### Holding only the entries a statement reaches
+
+**The gap.** With one client process per client CPU (`redis-bench.sh quick`,
+which the scaling run's one threaded client hid), firn's `MSET` answered
+574,000, 545,000 and 489,000 a second on 4, 8 and 16 server CPUs, 0.35,
+0.20 and 0.10 of Garnet. Its statement holds the whole map, 74% of the
+server's CPU was in `wf_cmap_hold`, and on one CPU it answered 592,000 to
+729,000, more than Garnet's rate per CPU. Half of it came with the ticketed
+holds of the bounded waits: firn at `c54962d33` answered 1,366,000 on four
+CPUs and at `4fbad0e1c` 587,000.
+
+**The owner's direction** (2026-10-02). The source does not change: `atomic
+s = &m { ... atomic e = &s^[key] { ... } ... }` already says that the block
+takes effect at one point and which entries it reaches. The language states
+what an atomic statement means for every target alike; how narrowly a
+statement holds is for the compiler to compute and for the container to
+provide. A key-list type, an indexed form `&m[i in a..b => key]` and a
+`for` clause on the statement were each shown to the owner and set aside
+for this.
+
+**The design.**
+
+- *The twin.* For a statement holding a map's state, the compiler forms a
+  twin of its block: the counted loops and matches that contain a statement
+  on an entry, the `let`s their keys, bounds and scrutinees read, and each
+  such statement with an empty block (`semantic::key_twins`). Lowering runs
+  the twin first, where each entry statement adds its key, then holds the
+  keys' entries, then runs the block, in which each entry statement reaches
+  an entry already held. A statement without a twin holds the whole map as
+  before.
+- *The runtime.* `wf_cmap_hold_set` sorts the keys by hash and then bytes,
+  drops repeats and locks their cells in that order in the current table,
+  creating the absent ones, so statements holding sets never wait for each
+  other in a cycle; a keyed statement holds one cell and waits for none. A
+  probe locks every cell of its key's hash to compare bytes, so two keys of
+  one hash are the one way a cycle forms: a set that has two holds the
+  whole map instead, and a wait behind another statement's key of the same
+  hash ends with the set's patience, which holds the whole map too. A set
+  that meets a move gives its cells back, helps the move and locks again in
+  the next table, since a mover waits for every locked cell; one that finds
+  the table full holds the whole map, whose statements grow the table. The
+  release keeps or removes each entry as the block left it.
+- *When a twin is answered.* The block names the held state only as an
+  entry's target; no `return`, `break`, `give` or propagating `let` leaves
+  it; no general loop contains an entry statement; every kept expression
+  is a constant, a binding read, a field, an integer operation or
+  conversion that answers for every operand, a float or boolean operation,
+  a range's measure, a range over a range or a constant, or a call with no
+  `requires` to a function that answers the same when called again; and
+  nothing a kept expression reads is written, released, consumed or
+  addressed in the block or written by the function's row. The module's
+  header states each condition.
+
+**Four probes.** Four separate agents were set to break it, each with the
+sources and a compiler but not the reasoning: one the twin's conditions,
+one the runtime's sets under stress and the sanitizers, one the lowering
+and the emitted LLVM, one the claim that holding less is not observable.
+They wrote 100 or so programs and tests. What they found, and what each
+became:
+
+| Found | Witness | Now |
+|---|---|---|
+| A block that runs two object statements, a read and then a write, lost additions when two such blocks on different keys ran together | 0 of 40 runs right on four drivers | A statement holds its keys only when its block runs at most one object statement on any path |
+| A statement that only read its entry and ran two object statements lost them the same way under shared reads | 0 of 40 | Such a statement holds its entry alone |
+| A statement on one entry that raises and lowers a flag in two object statements was seen half done by a whole-map statement on another key | flag read raised on four drivers | No statement holds less than its map in a program where a block holding an entry or a map can run two object statements |
+| A key formed after a guard that leaves by `give`, or never returns, was formed by the twin out of bounds; a division ran by zero | SIGSEGV, SIGFPE | A kept expression owes nothing: total operations, no `requires`, and a range narrowed to its source's bounds in the twin |
+| A key under a call that read the wall clock differed between the twin and the block | abort at the runtime's check | Kept calls reach no body-less function with a `reads` row |
+| That judgment was cached wrongly through mutual recursion | abort | A function met again while judged is taken not to repeat |
+| A twin's match copied `continues: false` | lowering failure | A twin's match continues |
+| A set with more new keys than the table had cells moved to a table as small, again and again, until its patience ended | 16 ms a statement; a hang with unbounded patience | A full table holds the whole map |
+| A statement read a node freed through the next table after it locked a cell of a table a move had left | heap-use-after-free under ASAN; in the single statement's path since stage (b) | The node is read only once no move has begun |
+| Counts were stored after the unlock, where a mover could miss them | cells counted off by one, with a hook | Stored before the unlock |
+| A key of no bytes and no address reached `memcmp` | UBSAN | Guarded |
+
+The runtime probe ran 875 million operations and 470 million set holds in
+its default matrix and found no cycle of waits with unbounded patience, no
+statement seen half done and no race under TSAN other than the full table.
+The lowering probe walked the CFG of every narrowed statement in firn and
+its tests: on each path one hold, each entry reached and left, one release,
+and no suspension between the first key and the release.
+
+**What holding less rests on.** A block that runs at most one object
+statement takes effect as if at that statement's point: what it holds is
+unchanged by others until it ends. When every block of the program that
+holds an entry or a map is such a block, every outcome is one some order of
+whole statements gives, and so one the whole map's exclusion gives. The
+condition is the program's because the block that makes the difference may
+be another statement's.
+
+**Measured** (`redis-bench.sh quick`, medians of three runs of three
+seconds, thousands of requests a second, against the faster of Garnet and
+Dragonfly measured the same way; firn at `b3a18510a`,
+[raw lines](../../experiments/io-completion-bench/held-keys-14900k-samples.csv)):
+
+| Test | 4 CPUs | best other | ratio | 8 CPUs | best other | ratio | 16 CPUs | best other | ratio |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `SET` | 6,701 | 4,890 | 1.37 | 13,211 | 7,177 | 1.84 | 14,600 | 9,830 | 1.49 |
+| `GET` | 6,927 | 4,502 | 1.54 | 13,401 | 7,333 | 1.83 | 14,745 | 8,763 | 1.68 |
+| `INCR` | 6,322 | 4,810 | 1.31 | 12,653 | 6,225 | 2.03 | 14,580 | 10,361 | 1.41 |
+| `LPUSH` | 5,358 | 2,670 | 2.01 | 5,844 | 3,015 | 1.94 | 5,275 | 2,475 | 2.13 |
+| `RPOP` | 6,029 | 3,125 | 1.93 | 6,524 | 3,153 | 2.07 | 5,477 | 2,488 | 2.20 |
+| `SADD` | 4,211 | 2,781 | 1.51 | 4,422 | 3,271 | 1.35 | 3,975 | 2,404 | 1.65 |
+| `HSET` | 3,890 | 2,690 | 1.45 | 3,907 | 2,631 | 1.49 | 3,506 | 2,226 | 1.58 |
+| `ZADD` | 1,104 | 979 | 1.13 | 1,021 | 980 | 1.04 | 841 | 907 | 0.93 |
+| `LRANGE_100` | 3,196 | 2,512 | 1.27 | 3,435 | 2,987 | 1.15 | 3,278 | 2,947 | 1.11 |
+| `MSET` | 2,721 | 1,640 | 1.66 | 5,169 | 2,830 | 1.83 | 7,398 | 4,504 | 1.64 |
+
+- **`MSET` went from 574,000, 545,000 and 489,000 a second to 2,721,000,
+  5,169,000 and 7,398,000**, with no change to firn's source: its `MSET`
+  and its `DEL` and `EXISTS` of several keys are the three statements with
+  a twin, and its count of keys holds the map.
+- **The owner's aim, 1.4 times the best other server on every test, is
+  missed by `ZADD` and `LRANGE_100` at every CPU count, by `SET` and `INCR`
+  at four, and by `SADD` at eight.** `ZADD` and `LRANGE_100` each run on
+  one key; neither waits for the map.
+- **The other servers' rates moved between two measurements of them**:
+  Garnet's `SET` on 16 CPUs read 7,626,000 and then 9,830,000. The table
+  uses the later, higher ones; a ratio near 1.4 is not settled by one
+  measurement of the reference.
+- **Not measured with the `scale` mode,** whose threaded client is the
+  limit on 8 and 16 CPUs; the quick mode verifies nothing, and firn's ten
+  corpus tests and its suite verification ran at the same revision.
+
 ## The measurement
 
 The bundle is `research/experiments/concurrent-map-bench/`. These rules are
