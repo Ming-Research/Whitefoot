@@ -1008,7 +1008,7 @@ fn runtime_capacity_layout(
             1_u64,
         ),
         // The `len` word and the first bound; the other bounds follow at a
-        // runtime count, which the fit's own limit accounts for.
+        // runtime count, which the run-time size check accounts for.
         IrType::Segments { element } => (
             layouts
                 .elements
@@ -1064,11 +1064,6 @@ fn runtime_capacity_layout(
     }
     Ok((actual, stride))
 }
-
-/// The largest `Segments` block [OP-13]'s fit admits: `2^62` bytes of
-/// elements and bounds, the `len` word, the last bound and at most 15 bytes of
-/// alignment padding.
-const SEGMENTS_BLOCK_MAX: u64 = (1 << 62) + 31;
 
 fn validate_target_obligation(
     layouts: &mut LayoutComputer<'_>,
@@ -1159,17 +1154,15 @@ fn validate_target_obligation(
                 ));
             }
         }
-        // [OP-13] `box_segments_filled`: its fit is judged with [OP-9]'s
-        // language ceilings, so the element's actual layout must lie within
-        // them, and the largest block the fit admits, `2^62` bytes of
-        // elements and bounds with the `len` word, the last bound and at
-        // most 15 bytes of alignment padding, must be allocatable.
-        IrOperation::SegmentsFits {
+        // [STOR-6] `box_segments_filled`: the element's actual layout must
+        // lie within [OP-9]'s language ceilings and the shape's fixed
+        // descriptor must be allocatable; its size is checked when it runs.
+        IrOperation::SegmentsFill {
             nominal,
             layout_ceiling,
             ..
         } => {
-            if result_type != IrType::Bool {
+            if result_type != IrType::Nominal(*nominal) {
                 return Err(TargetLayoutFailure::InvalidIr);
             }
             let IrNominalKind::Box { referent, .. } = program
@@ -1183,11 +1176,6 @@ fn validate_target_obligation(
                 return Err(TargetLayoutFailure::InvalidIr);
             }
             runtime_capacity_allocation_layout(layouts, *referent, *layout_ceiling)?;
-            if layouts.target.runtime_allocation_max() < SEGMENTS_BLOCK_MAX {
-                return Err(TargetLayoutFailure::Unrepresentable(
-                    TargetObject::RuntimeSizedAllocation,
-                ));
-            }
         }
         IrOperation::ArrayFill { target_domain, .. }
             if *target_domain == IrTargetDomainObligation::ElementAddress => {}

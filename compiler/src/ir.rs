@@ -873,31 +873,18 @@ pub enum IrOperation {
         layout_ceiling: IrLayoutCeiling,
         target_domains: IrRuntimeTargetObligations,
     },
-    /// [OP-13] the element total of `box_segments_filled`: the sum of
-    /// `lengths`, or `2^63` where the sum is larger, which no block admits.
-    SegmentsTotal {
-        lengths: IrValueId,
-    },
-    /// [OP-13] whether `box_segments_filled` returns a block: the total and
-    /// the count of `lengths` fit the size predicate its record states,
-    /// judged with the element type's layout ceiling so that the answer is
-    /// the same on every qualified target.
-    SegmentsFits {
-        /// The cell a block would be built for.
-        nominal: IrNominalId,
-        lengths: IrValueId,
-        total: IrValueId,
-        layout_ceiling: IrLayoutCeiling,
-    },
-    /// [OP-13] `box_segments_filled` after [`Self::SegmentsFits`] held: one
-    /// `Segments<T>` block whose bounds are the running sums of `lengths` and
-    /// whose every element holds `value`, and the cell that owns it, which is
-    /// the same pointer.
+    /// [OP-13] `box_segments_filled`: one `Segments<T>` block whose bounds
+    /// are the running sums of `lengths` and whose every element holds
+    /// `value`, and the cell that owns it, which is the same pointer. The
+    /// element total and the block's size are computed with checked
+    /// arithmetic, and a size the target cannot allocate is heap exhaustion
+    /// [OP-9]; target qualification holds the element's layout to its
+    /// language ceiling.
     SegmentsFill {
         nominal: IrNominalId,
         lengths: IrValueId,
-        total: IrValueId,
         value: IrValueId,
+        layout_ceiling: IrLayoutCeiling,
     },
     /// [MSR-1] a `Segments` block's one measure, its segment count.
     SegmentsMeasure {

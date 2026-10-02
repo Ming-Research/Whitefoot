@@ -151,17 +151,10 @@ alias exit_status = std::process::exit_status;
 
 fn main() -> status: ExitStatus pure {
   let lengths = box_array_filled::<u64>(count: 2_u64, value: 1_u64);
-  let made = box_segments_filled::<u64>(lengths: &lengths.inner[0_u64..2_u64], value: 0_u64);
-  match move made {
-    None() => {
-      return exit_status(code: 1_u8);
-    }
-    Some(value: cell) => {
-      let taken = move cell;
-      let length = taken.inner.len;
-      return exit_status(code: 0_u8);
-    }
-  }
+  let cell = box_segments_filled::<u64>(lengths: &lengths.inner[0_u64..2_u64], value: 0_u64);
+  let taken = move cell;
+  let length = taken.inner.len;
+  return exit_status(code: 0_u8);
 }
 "#,
             br#"alias ExitStatus = std::process::ExitStatus;
@@ -169,15 +162,8 @@ alias exit_status = std::process::exit_status;
 
 fn main() -> status: ExitStatus pure {
   let lengths = box_array_filled::<u64>(count: 2_u64, value: 1_u64);
-  let made = box_segments_filled::<u64>(lengths: &lengths.inner[0_u64..2_u64], value: 0_u64);
-  match move made {
-    None() => {
-      return exit_status(code: 1_u8);
-    }
-    Some(value: cell) => {
-      return exit_status(code: 0_u8);
-    }
-  }
+  let cell = box_segments_filled::<u64>(lengths: &lengths.inner[0_u64..2_u64], value: 0_u64);
+  return exit_status(code: 0_u8);
 }
 "#,
         ],

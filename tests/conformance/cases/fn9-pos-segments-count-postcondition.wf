@@ -11,12 +11,12 @@ fn fill(item: u64, window: &[u64]) -> result: unit writes(window) {
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "The postcondition fixes the segment count at three, so segment 3 is refuted by OP-4 at its subscript.";
+  doc "box_segments_filled's postcondition equates the segment count of the built run with the count of its lengths, so segment 2 of a run built from three lengths is in bounds with no written guard.";
   let lengths = box_array_filled::<u64>(count: 3_u64, value: 2_u64);
   let run = &lengths.inner[0_u64..3_u64];
   let segments = box_segments_filled::<u64>(lengths: run, value: 0_u64);
-  fill(item: 5_u64, window: &segments.inner[3_u64]);
-  let last = &segments.inner[3_u64];
+  fill(item: 5_u64, window: &segments.inner[2_u64]);
+  let last = &segments.inner[2_u64];
   let size = last^.len;
   if size != 2_u64 {
     return exit_status(code: 2_u8);

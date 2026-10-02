@@ -672,6 +672,14 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure w
 /// same way: an empty window takes its first allocation, `grow` to 1000
 /// takes the second and releases the first, and a refused count ends the run
 /// after the first allocation alone.
+///
+/// `box_segments_filled` [OP-13] sums its lengths before it sizes its block,
+/// so its run has two lengths of `n` one-byte elements behind a 32-byte
+/// descriptor, and its lengths array is the first allocation: 1000 and 1000
+/// fill the maximum, 1001 and 1001 exceed it, two lengths of `2^63` sum past
+/// `u64`, which only the sum's own check refuses since the wrapped total is
+/// zero, and two of `2^63 - 1` leave a total the descriptor's addition
+/// carries.
 #[test]
 fn an_allocation_size_the_target_cannot_serve_is_heap_exhaustion_before_the_allocator() {
     let host = crate::target::TargetLayout::host().expect("supported test target");
@@ -702,6 +710,13 @@ fn an_allocation_size_the_target_cannot_serve_is_heap_exhaustion_before_the_allo
             "let values = box_slots_new::<u16>(capacity: 0_u64);\n  grow(cell: &values, capacity: n);",
             16_u64,
             "A1;A2;F1;F2;",
+            "A1;",
+        ),
+        (
+            "Segments",
+            "let lengths = box_array_filled::<u64>(count: 2_u64, value: n);\n  let values = box_segments_filled::<u8>(lengths: &lengths.inner[0_u64..2_u64], value: 0_u8);",
+            32_u64,
+            "A1;A2;F2;F1;",
             "A1;",
         ),
     ] {
