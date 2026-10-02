@@ -3589,6 +3589,15 @@ condition under which it is taken up.
   descriptor and allocation already at capacity eight. No measured performance
   conclusion or generic correctness follows from source admission.
 
+  The [EDIT-only first-probe peel](../research/experiments/container-representation/map-library/RESULTS.md#first-probe-peel-native-pass-timing-rejection)
+  passes its narrow native screen but has no qualified miss gain and a qualified
+  large-scalar hit loss; large-wide raw losses are ratio-invalid. Keep it rejected
+  despite lower large-wide miss medians. Its ordinary capacity-one supplement
+  covers a previously missing boundary; promote that sequence into maintained
+  tests before any future adoption of this source form. Discarded equality-counter
+  IR instrumentation is not qualification. Reopen only with a discriminating
+  mechanism that also preserves hit cost and unchanged stability/peer gates.
+
   The [actual integrated-candidate comparison](../research/experiments/container-representation/map-library/RESULTS.md#integrated-candidate-with-the-maintained-caller)
   has no qualified before/after gain in 40 maintained-caller cells; all four
   overall screens remain unqualified. Its reserve maximum empty interval of

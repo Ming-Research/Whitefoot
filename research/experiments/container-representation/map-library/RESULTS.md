@@ -49,8 +49,9 @@ owned-removal API windows remain missing.
 The [EDIT-only two-span follow-up](#edit-only-two-span-probing-rejected)
 reduces native body instructions but has no qualified miss gain, three qualified
 two-cohort hit losses and zero candidate peer targets; its source stays rejected.
-A later [first-probe controls discriminator](#first-probe-controls-rejected-at-the-native-gate)
-admits source but fails its native spill gate; no execution or timing followed.
+The later [first-probe peel](#first-probe-peel-native-pass-timing-rejection)
+passes its narrow native criterion but records no qualified miss gain and a
+qualified large-scalar hit loss; its source also remains rejected.
 
 ## Current Rust and C++ ecosystem comparison
 
@@ -6352,3 +6353,56 @@ graphs and patch, prospective criterion, all failed attempts, direct statuses,
 compact object functions, counts and original/normalized pins. Full modules and
 binaries are omitted with explicit historical replay limits. The achieved extent
 simplification is retained as evidence; it does not override the failed gate.
+
+### First-probe peel: native pass, timing rejection
+
+This EDIT-only source trial isolates first-empty enum dispatch, without the
+rejected controls representation. Both baseline native bodies reproduce the
+unchanged carrier. Peeling the first probe removes two tag compares and one
+conditional branch, adds an unconditional branch, and preserves bounded
+`count - 1` continuation. The narrow native gate passes, but complete bodies
+grow 248→276 instructions and frames 16→32 bytes; hash-mode testing moves into
+each key iteration and first-hit address calculation is repeated. These effects
+are disclosed, not assigned elapsed shares.
+
+Ordinary qualification is 22 full-check stages plus 12 capacity-one normal/
+parallel stages, all zero; raw LLVM is compiled unchanged. The supplement fills
+a capacity-one coverage gap with vacant/unequal/tombstone misses, hit/update,
+removal, exact update-callback count and complete consumed values. Exactly-one
+equality on the unequal case is structural source/native evidence, not a runtime
+counter claim. Earlier modified-IR equality instrumentation is retained as
+discarded and supplies no ordinary qualification. The 32 EDIT and 96 reserve
+accounting rows remain identical between arms.
+
+One fixed four-process campaign retains 1,536 rows, unchanged pins and matching
+complete outcomes. Medians are ns/edit, cohort 0 / cohort 1; Rust/C++ are the
+candidate-panel observations. Complete ranges and stability calculations are
+retained in `first-probe-peel/` in
+[reserve-api-evidence.tar.gz](reserve-api-evidence.tar.gz).
+
+| Payload / physical target / path | Control WF | Candidate WF | Rust | C++ | Before/after ranges, cohorts 0 / 1 |
+|---|---:|---:|---:|---:|---|
+| 8 B / 64 / hit | 1.858617 / 1.866803 | 2.054622 / 2.052069 | 2.302527 / 2.276346 | 2.162193 / 2.143507 | overlap / overlap |
+| 8 B / 64 / miss | 2.468020 / 2.526497 | 2.506296 / 2.616430 | 2.292285 / 2.199074 | 1.732340 / 1.729056 | overlap / overlap |
+| 8 B / 4096 / hit | 2.202834 / 2.197762 | 2.880832 / 2.923906 | 2.431884 / 2.424563 | 3.006160 / 3.081366 | loss / loss |
+| 8 B / 4096 / miss | 3.283158 / 3.285800 | 3.867725 / 3.548553 | 2.612496 / 2.725090 | 1.655718 / 1.768226 | overlap / overlap (invalid) |
+| 256 B / 64 / hit | 1.839027 / 1.928712 | 2.072886 / 2.247085 | 2.562627 / 2.559801 | 2.146607 / 2.168268 | loss / overlap |
+| 256 B / 64 / miss | 2.495895 / 2.636229 | 2.489597 / 2.458453 | 2.295112 / 2.229060 | 1.728431 / 1.726573 | overlap / overlap (invalid) |
+| 256 B / 4096 / hit | 2.396683 / 2.472326 | 2.902965 / 2.712195 | 2.829711 / 2.799630 | 3.900697 / 3.801907 | loss / loss (invalid) |
+| 256 B / 4096 / miss | 3.576716 / 3.352419 | 2.909541 / 2.566030 | 2.662808 / 2.577449 | 2.213289 / 2.052550 | overlap / overlap (invalid) |
+
+Every miss range overlaps in both cohorts: zero qualified miss gains. Only
+scalar-large hit has an instrument-qualified two-cohort loss. Wide-large hit
+also loses both raw ranges but is invalid at 10.412 percent paired-WF ratio
+spread; wide-small hit loses only cohort 0, while scalar-small hit overlaps.
+Candidate raw peer targets pass 1/8 cells, but paired-qualified targets pass
+0/8. Large scalar miss and both wide misses retain drift failures, including
+C attribution. Wide-large miss median reductions of 18.653/23.457 percent do
+not overcome overlapping ranges and invalidity. The 17.930945-ns Rust
+scalar-large miss outlier remains. All clock/duration gates pass (minimum
+6.583625 ms); those checks do not repair stability failures.
+
+The fixed criterion rejects the source, with no retry, rescue or adoption.
+Exact graphs/patches, the ordinary capacity-one supplement, discarded-instrument
+history, native excerpts, statuses, ledgers, raw rows and reducers are retained
+with original/normalized pins and omitted-build replay limits.

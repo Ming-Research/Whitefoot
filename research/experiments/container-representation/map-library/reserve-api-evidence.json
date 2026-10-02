@@ -1,8 +1,8 @@
 {
   "purpose": "Isolated ordinary public reserve with verified future entry headroom; single production baseline panel, not an optimization/adoption result",
   "archive": "reserve-api-evidence.tar.gz",
-  "archive_sha256": "d8dae1a0cb23967b2a9caa6bea4e99f3cb62dda4d6ba35610b4ad4658f972baa",
-  "archive_members": 962,
+  "archive_sha256": "382b7faeee170dbab9db8d3a819278563c254938728766c73e684c29065e872b",
+  "archive_members": 983,
   "base_revision": "89571a60381a685cfbe760248ceb6178d9f9ac05",
   "production_cli_sha256": "c12b2b2a6c9694fd2bc1b7be0004d582ae9628951422def849f4cf6a3ac02f77",
   "timed_image_sha256": "f1ebf18d7a94c79250bb3cbd74a0b379a2a30c6e5e4eda48396ec77d8bbdbf3f",
@@ -4392,6 +4392,55 @@
       "from": "component-index.json",
       "to": "component-index-before-first-probe-controls.json",
       "sha256": "a3ce3a2d6288d24e764ede4b71e4656b7697605f434a3dd7d86800de6a687ff3"
+    },
+    "all_prior_member_bytes_preserved": true
+  },
+  "first_probe_peel": {
+    "prefix": "first-probe-peel/",
+    "manifest": "first-probe-peel/manifest.json",
+    "manifest_sha256": "eedf9b350c8bc7b50942e8f77739b93d3261d969ff60a9de8c9df35eec207c3b",
+    "payload_count": 20,
+    "records": "first-probe-peel/records.json",
+    "retained_records": 764,
+    "producer_inventory_sha256": "77108191346bc54cb6d39ded00e788ff4d5eebc225d0f64c23a338bf90b3abb0",
+    "producer_files_verified": 771,
+    "timing_rows": 1536,
+    "accounting_rows_per_arm": {
+      "edit": 32,
+      "reserve": 96
+    },
+    "row_counts": {
+      "candidate-build/edit-accounting.csv": 32,
+      "candidate-build/reserve-accounting.csv": 96,
+      "candidate-runtime/build/ecosystem/edit-cohort-0.csv": 384,
+      "candidate-runtime/build/ecosystem/edit-cohort-1.csv": 384,
+      "control-build/edit-accounting.csv": 32,
+      "control-build/reserve-accounting.csv": 96,
+      "control-runtime/build/ecosystem/edit-cohort-0.csv": 384,
+      "control-runtime/build/ecosystem/edit-cohort-1.csv": 384
+    },
+    "qualified_miss_gains": 0,
+    "raw_hit_losses_both_cohorts": 2,
+    "instrument_qualified_hit_losses_both_cohorts": 1,
+    "raw_hit_losses_at_least_one_cohort": 3,
+    "candidate_raw_peer_targets": 1,
+    "candidate_paired_qualified_peer_targets": 0,
+    "instrument_invalid_cells": 4,
+    "ordinary_check_stages_zero": 22,
+    "ordinary_capacity_one_stages_zero": 12,
+    "discarded_equality_instrumentation_qualifies": false,
+    "native_gate_passed": true,
+    "production_adoption": false,
+    "status": "Rejected fixed first-probe-peel campaign despite narrow native gate pass: no qualified miss gains, scalar-large qualified hit loss, wide-large raw loss drift-invalid, zero paired-qualified candidate targets."
+  },
+  "first_probe_peel_prior_index": {
+    "prior_archive_sha256": "d8dae1a0cb23967b2a9caa6bea4e99f3cb62dda4d6ba35610b4ad4658f972baa",
+    "prior_members": 962,
+    "unchanged_names_and_bytes": 961,
+    "renamed_member": {
+      "from": "component-index.json",
+      "to": "component-index-before-first-probe-peel.json",
+      "sha256": "baae10e31841ed391957bace2bfb66ec0c4758ee1cebcfffc0b09e2da8a4a1c0"
     },
     "all_prior_member_bytes_preserved": true
   }
