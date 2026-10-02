@@ -418,26 +418,18 @@ impl IrBuilder<'_> {
     }
 
     /// The target-domain record one runtime-capacity allocation carries
-    /// [OP-9, STOR-6].
-    ///
-    /// [OP-9]'s own predicate is the retained bound: an accepted site proved
-    /// `n <= floor((2^64 - 1) / stride_ceiling(T))`, and target
-    /// qualification separately requires the actual stride to be no larger
-    /// than that ceiling, so the product of this bound and the actual stride
-    /// is representable.
+    /// [OP-9, STOR-6]: the stored type's language ceilings, which target
+    /// qualification holds its actual layout to. The count carries no bound;
+    /// the emitted operation checks the size it computes [OP-9].
     fn runtime_obligations(
         &self,
         element: IrType,
     ) -> Result<crate::IrAllocationObligations, LoweringFailure> {
         let ceiling = layout_ceiling(self.nominals, self.elements, element)
             .ok_or(LoweringFailure::InvalidCheckedProgram)?;
-        let maximum_count = match ceiling.stride {
-            crate::IrLayoutMagnitude::Finite(stride) => u64::MAX / stride.max(1),
-            crate::IrLayoutMagnitude::AboveU64 => 0,
-        };
         Ok(crate::IrAllocationObligations {
             layout_ceiling: ceiling,
-            target_domains: IrRuntimeTargetObligations::from_language_ceiling(maximum_count),
+            target_domains: IrRuntimeTargetObligations::runtime_sized(),
         })
     }
 

@@ -26,8 +26,8 @@ and the compiler checks them.
 ## Safe: no undefined behavior, no panics, no failing checks
 
 Every operation that could go wrong at run time, such as an index, an integer
-operation, a narrowing conversion, a division or an allocation size, must be
-proved in range before the program is accepted. The language has no
+operation, a narrowing conversion or a division, must be proved in range
+before the program is accepted. The language has no
 `unsafe`, no panic, no exceptions and no unwinding; an expected failure is a
 value (`Result`, `Option`) the caller handles. When the trusted base is
 correct, an accepted program cannot:

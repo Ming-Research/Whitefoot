@@ -1,7 +1,7 @@
 use crate::semantic::check::CheckContext;
 use crate::semantic::check::FunctionContext;
 use crate::semantic::check::{DeclarationInventory, TypeContext};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::syntax::NodeId;
 use crate::syntax::terminal::FixedTerminal;
@@ -12,10 +12,9 @@ use crate::{
 
 use super::super::super::model::{
     CheckedArrayRoot, CheckedBufferRoot, CheckedConst, CheckedContainerRoot, CheckedExpression,
-    CheckedLayoutCeiling, CheckedLayoutMagnitude, CheckedMeasure, CheckedMode, CheckedNominalKind,
-    CheckedPlaceStep, CheckedPlaceSubscript, CheckedRangeElementPlace, CheckedRangeRoot,
-    CheckedSetTarget, CheckedTargetDomainObligation, CheckedType, IntegerType, MeasureCell,
-    MeasuredKind, NominalId, SubscriptedTerm,
+    CheckedMeasure, CheckedMode, CheckedPlaceStep, CheckedPlaceSubscript, CheckedRangeElementPlace,
+    CheckedRangeRoot, CheckedSetTarget, CheckedTargetDomainObligation, CheckedType, IntegerType,
+    MeasureCell, MeasuredKind, SubscriptedTerm,
 };
 use super::super::super::places::{
     CaptureId, CapturedTerm, CapturedValue, PlaceRoot, PlaceStep, ResolvedPlace,
@@ -98,47 +97,6 @@ pub(in crate::semantic::check) struct CheckedContainerPlace {
 pub(in crate::semantic::check) struct CarriedOperands {
     pub(in crate::semantic::check) effects: EffectSet,
     pub(in crate::semantic::check) accesses: Vec<PlaceAccess>,
-}
-
-fn add_layout_magnitude(
-    left: CheckedLayoutMagnitude,
-    right: CheckedLayoutMagnitude,
-) -> CheckedLayoutMagnitude {
-    match (left, right) {
-        (CheckedLayoutMagnitude::Finite(left), CheckedLayoutMagnitude::Finite(right)) => {
-            left.checked_add(right).map_or(
-                CheckedLayoutMagnitude::AboveU64,
-                CheckedLayoutMagnitude::Finite,
-            )
-        }
-        _ => CheckedLayoutMagnitude::AboveU64,
-    }
-}
-
-fn multiply_layout_magnitude(value: CheckedLayoutMagnitude, count: u64) -> CheckedLayoutMagnitude {
-    if count == 0 {
-        return CheckedLayoutMagnitude::Finite(0);
-    }
-    match value {
-        CheckedLayoutMagnitude::Finite(value) => value.checked_mul(count).map_or(
-            CheckedLayoutMagnitude::AboveU64,
-            CheckedLayoutMagnitude::Finite,
-        ),
-        CheckedLayoutMagnitude::AboveU64 => CheckedLayoutMagnitude::AboveU64,
-    }
-}
-
-fn round_up_layout_magnitude(value: CheckedLayoutMagnitude, align: u64) -> CheckedLayoutMagnitude {
-    match value {
-        CheckedLayoutMagnitude::Finite(value) => value
-            .checked_add(align - 1)
-            .map(|sum| sum / align * align)
-            .map_or(
-                CheckedLayoutMagnitude::AboveU64,
-                CheckedLayoutMagnitude::Finite,
-            ),
-        CheckedLayoutMagnitude::AboveU64 => CheckedLayoutMagnitude::AboveU64,
-    }
 }
 
 impl CheckedIndexedPlace {
@@ -1957,171 +1915,6 @@ pub(in crate::semantic::check) const fn measured_kind_of(
 }
 
 impl<'unit> TypeContext<'unit> {
-    /// Recomputes the OP-9 ceiling after a generic GoalTemplate's element
-    /// type has been instantiated. Keeping this calculation at the type
-    /// authority prevents an unresolved schema layout from becoming the
-    /// identity of a concrete call requirement. None is unresolved; AboveU64
-    /// is a known mathematical result whose allocation limit is zero.
-    pub(in crate::semantic::check) fn instantiated_layout_ceiling(
-        &self,
-        ty: CheckedType,
-    ) -> Option<CheckedLayoutCeiling> {
-        self.layout_ceiling_inner(ty, &mut HashSet::new())
-    }
-    fn layout_ceiling_inner(
-        &self,
-        ty: CheckedType,
-        visiting: &mut HashSet<NominalId>,
-    ) -> Option<CheckedLayoutCeiling> {
-        fn finish(size: CheckedLayoutMagnitude, align: u64) -> Option<CheckedLayoutCeiling> {
-            if align == 0 {
-                return None;
-            }
-            let stride = match round_up_layout_magnitude(size, align) {
-                CheckedLayoutMagnitude::Finite(0) => CheckedLayoutMagnitude::Finite(1),
-                stride => stride,
-            };
-            Some(CheckedLayoutCeiling {
-                size,
-                align,
-                stride,
-            })
-        }
-        let primitive = |bytes| finish(CheckedLayoutMagnitude::Finite(bytes), bytes.max(1));
-        match ty {
-            CheckedType::Unit | CheckedType::Bool => primitive(1),
-            CheckedType::Integer(integer) => primitive(u64::from(integer.width() / 8)),
-            CheckedType::Float(float) => primitive(u64::from(float.width() / 8)),
-            CheckedType::Array { element, length } => {
-                let length = length.value()?;
-                if length == 0 {
-                    return finish(CheckedLayoutMagnitude::Finite(0), 1);
-                }
-                let element =
-                    self.layout_ceiling_inner(self.element_type(element).ok()?, visiting)?;
-                finish(
-                    multiply_layout_magnitude(element.size, length),
-                    element.align,
-                )
-            }
-            // [OP-9] a runtime-capacity `Array<T>` is `(16,8)`: a pointer and
-            // a length.
-            CheckedType::Buffer { .. } => finish(CheckedLayoutMagnitude::Finite(16), 8),
-            // A `Segments<T>` is reached only as `Box` content, whose cell is
-            // one pointer; this row sizes the content as a runtime array is.
-            CheckedType::Segments { .. } => finish(CheckedLayoutMagnitude::Finite(16), 8),
-            // [OP-9] a constant-capacity `Slots<T, N>` repeats T's pair N
-            // times and then applies the sequence rule to that block followed
-            // by one `(8,8)` word, its length; a `Ring<T, N>` follows it with
-            // two such words, its length and its window origin.
-            CheckedType::Window {
-                shape,
-                element,
-                capacity: Some(length),
-            } => {
-                let length = length.value()?;
-                let words = match shape {
-                    super::super::super::model::WindowShape::Slots => 1,
-                    super::super::super::model::WindowShape::Ring => 2,
-                };
-                if length == 0 {
-                    return finish(CheckedLayoutMagnitude::Finite(8 * words), 8);
-                }
-                let element =
-                    self.layout_ceiling_inner(self.element_type(element).ok()?, visiting)?;
-                let mut size = multiply_layout_magnitude(element.size, length);
-                let mut align = element.align.max(1);
-                for _ in 0..words {
-                    size = round_up_layout_magnitude(size, 8);
-                    size = add_layout_magnitude(size, CheckedLayoutMagnitude::Finite(8));
-                    align = align.max(8);
-                }
-                finish(round_up_layout_magnitude(size, align), align)
-            }
-            // [OP-9] a runtime-capacity `Slots<T>` is `(24,8)`, a pointer, a
-            // capacity and a length; a `Ring<T>` is `(32,8)`, those three and
-            // a window origin. The block's own elements live in the heap
-            // object and enter no sequence [TYPE-9].
-            CheckedType::Window {
-                shape,
-                capacity: None,
-                ..
-            } => finish(
-                CheckedLayoutMagnitude::Finite(match shape {
-                    super::super::super::model::WindowShape::Slots => 24,
-                    super::super::super::model::WindowShape::Ring => 32,
-                }),
-                8,
-            ),
-            CheckedType::Nominal(id) => {
-                if !visiting.insert(id) {
-                    return None;
-                }
-                let nominal = self.nominal(id).ok()?;
-                let result = match &nominal.kind {
-                    // [OP-9] `Box<T>` is `(8,8)`, one pointer; its `inner`
-                    // field lives in the heap object and enters no sequence.
-                    CheckedNominalKind::Box { .. } => finish(CheckedLayoutMagnitude::Finite(8), 8),
-                    // A handle is one pointer to its shared object [SHARE-1].
-                    CheckedNominalKind::Shared { .. } => {
-                        finish(CheckedLayoutMagnitude::Finite(8), 8)
-                    }
-                    CheckedNominalKind::Opaque => finish(CheckedLayoutMagnitude::Finite(32), 16),
-                    CheckedNominalKind::Struct { fields } => {
-                        self.aggregate_layout_ceiling(fields.iter().map(|field| field.ty), visiting)
-                    }
-                    CheckedNominalKind::Enum { variants }
-                        if variants.iter().all(|variant| variant.fields.is_empty()) =>
-                    {
-                        primitive(if variants.len() <= 2 { 1 } else { 4 })
-                    }
-                    CheckedNominalKind::Enum { variants } => self.aggregate_layout_ceiling(
-                        std::iter::once(CheckedType::Integer(IntegerType::U32)).chain(
-                            variants
-                                .iter()
-                                .flat_map(|variant| variant.fields.iter().map(|field| field.ty)),
-                        ),
-                        visiting,
-                    ),
-                };
-                visiting.remove(&id);
-                result
-            }
-            // Symbolic generic bodies are validated but never lowered. A
-            // bound-wide ceiling lets that structural pass retain the same
-            // expression shape; every concrete instance is checked again and
-            // receives its exact ceiling. Int and Float are at most 64 bits.
-            CheckedType::GenericInt(_) | CheckedType::GenericFloat(_) => primitive(8),
-            // An opaque parameter has no known pair. Propagate that absence
-            // through by-value aggregates; Box and runtime shape shells
-            // already stop expansion above. It is not mathematical overflow.
-            CheckedType::Generic(_) => None,
-        }
-    }
-    fn aggregate_layout_ceiling(
-        &self,
-        fields: impl IntoIterator<Item = CheckedType>,
-        visiting: &mut HashSet<NominalId>,
-    ) -> Option<CheckedLayoutCeiling> {
-        let mut size = CheckedLayoutMagnitude::Finite(0);
-        let mut align = 1_u64;
-        for ty in fields {
-            let field = self.layout_ceiling_inner(ty, visiting)?;
-            size = round_up_layout_magnitude(size, field.align);
-            size = add_layout_magnitude(size, field.size);
-            align = align.max(field.align);
-        }
-        size = round_up_layout_magnitude(size, align);
-        let stride = match size {
-            CheckedLayoutMagnitude::Finite(0) => CheckedLayoutMagnitude::Finite(1),
-            size => size,
-        };
-        Some(CheckedLayoutCeiling {
-            size,
-            align,
-            stride,
-        })
-    }
     /// The [MSR-1] measure read over one already-resolved indexed place.
     ///
     /// [OP-15] makes a measure a place form and no reader row, so its one
@@ -2243,35 +2036,9 @@ impl<'unit> DeclarationInventory<'unit> {
     }
 }
 
-#[cfg(test)]
-mod layout_magnitude_tests {
-    use super::{
-        CheckedLayoutMagnitude, add_layout_magnitude, multiply_layout_magnitude,
-        round_up_layout_magnitude,
-    };
-
-    #[test]
-    fn finite_or_above_u64_preserves_every_layout_ceiling_observation() {
-        let finite = CheckedLayoutMagnitude::Finite;
-        assert_eq!(multiply_layout_magnitude(finite(8), 3), finite(24));
-        assert_eq!(multiply_layout_magnitude(finite(8), 0), finite(0));
-        assert_eq!(
-            multiply_layout_magnitude(finite(8), u64::MAX),
-            CheckedLayoutMagnitude::AboveU64
-        );
-        assert_eq!(
-            multiply_layout_magnitude(CheckedLayoutMagnitude::AboveU64, 0),
-            finite(0)
-        );
-        assert_eq!(round_up_layout_magnitude(finite(9), 8), finite(16));
-        assert_eq!(
-            round_up_layout_magnitude(finite(u64::MAX), 8),
-            CheckedLayoutMagnitude::AboveU64
-        );
-        assert_eq!(
-            add_layout_magnitude(finite(u64::MAX), finite(1)),
-            CheckedLayoutMagnitude::AboveU64
-        );
-        assert_eq!(CheckedLayoutMagnitude::AboveU64.allocation_limit(), 0);
-    }
-}
+// Retired: layout_magnitude_tests::finite_or_above_u64_preserves_every_layout_ceiling_observation.
+// It tested the checker's own layout-ceiling arithmetic, which only [OP-9]'s
+// static allocation-size obligation read and which retired with it at v0.87.
+// Lowering keeps the one layout-ceiling computation target qualification
+// reads; lowering::tests::stored_layout_ceilings_agree_across_lowering keeps
+// its observations.

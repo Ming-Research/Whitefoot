@@ -186,7 +186,7 @@ fn record_store_new<T, const ceiling: u64, const generation_limit: u64>(store_id
   requires heap_capacity <= ceiling;
   requires heap_capacity <= 576460752303423487_u64;
 } {
-  doc "One application store owns each payload in a stable Slab slot. Its ID map and expiry heap hold copyable handles. Initial capacities may differ; later index growth uses the shared ceiling. RecordDue has four u64 fields, so OP-9 fixes its allocation-count limit at floor(u64::MAX / 32); allocation headers and pointer extents remain separate STOR-6 target checks. Caller-chosen store IDs distinguish cooperating instances without claiming authentication or global uniqueness.";
+  doc "One application store owns each payload in a stable Slab slot. Its ID map and expiry heap hold copyable handles. Initial capacities may differ; later index growth uses the shared ceiling. Caller-chosen store IDs distinguish cooperating instances without claiming authentication or global uniqueness.";
   let objects = slab_new::<Record<T>, ceiling, generation_limit>(capacity: record_capacity);
   let by_id = hash_map_new::<u64, SlabHandle, ceiling>(capacity: index_capacity);
   let storage = box_slots_new::<RecordDue>(capacity: heap_capacity);

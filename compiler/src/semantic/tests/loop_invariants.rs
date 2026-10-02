@@ -1544,112 +1544,11 @@ fn main() -> status: std::process::ExitStatus pure {
     });
 }
 
-/// [OP-13] each runtime-capacity construction carries [OP-9]'s static
-/// allocation-size obligation over its own stored type and count, so the
-/// filled and the empty construction each own one AllocationFit occurrence.
-/// The retiring `buffer_new` and `buffer_vacant` are spelled `box_array_filled`
-/// and `box_slots_new`, whose counts are the same loop-exhausted `length`.
-#[test]
-fn exhaustion_fact_proves_filled_and_vacant_allocation_fit() {
-    let source = br#"fn allocate_prefix(count: u64) -> result: unit pure contract {
-  requires count <= 1000_u64;
-} {
-  let length = 0_u64;
-  for (
-    i in 0_u64..count,
-    invariant produced: length <= i
-  ) {
-    set length = length + 1_u64;
-  }
-  let filled = box_array_filled::<u16>(count: length, value: 0_u16);
-  let vacant = box_slots_new::<u8>(capacity: length);
-  return unit;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  return std::process::exit_status(code: 0_u8);
-}
-"#;
-    with_semantics(source, |outcome| {
-        let SemanticOutcome::Complete(checked) = outcome else {
-            panic!("the exhaustion fact must prove both allocation fits: {outcome:?}");
-        };
-        let function = checked
-            .data
-            .functions
-            .iter()
-            .find(|function| function.name == "allocate_prefix")
-            .expect("allocate_prefix function exists");
-        super::entailment::validate_derivations(&function.entailment);
-        let allocations = function
-            .entailment
-            .obligations
-            .iter()
-            .filter(|outcome| outcome.family == ObligationFamily::AllocationFit)
-            .collect::<Vec<_>>();
-        let [filled, vacant] = allocations.as_slice() else {
-            panic!("both allocation forms retain OP-9");
-        };
-        let proof_routes = |allocation: &&super::super::entailment::ObligationOutcome| {
-            assert!(allocation.discharged);
-
-            let root = allocation
-                .derivation
-                .expect("the accepted OP-9 retains a derivation root");
-            assert!(matches!(
-                function.entailment.derivations.nodes[root.0 as usize],
-                DerivationNode::GoalNormalization {
-                    sign: super::super::entailment::GoalSign::Positive,
-                    ..
-                }
-            ));
-            let mut seen = vec![false; function.entailment.derivations.nodes.len()];
-            let mut stack = vec![root];
-            let mut used_exhaustion = false;
-            let mut used_direct_interval = false;
-            while let Some(node) = stack.pop() {
-                let position = node.0 as usize;
-                if seen[position] {
-                    continue;
-                }
-                seen[position] = true;
-                let retained = &function.entailment.derivations.nodes[position];
-                used_exhaustion |= matches!(
-                    retained,
-                    DerivationNode::AffineConsequence {
-                        premises,
-                        ..
-                    } if !premises.is_empty()
-                );
-                // OP-9 for u8 is exactly count <= u64::MAX. Its direct
-                // L0 derivation retains the type maximum itself; an empty
-                // affine-premise wrapper is not required by DIAG-2 and is
-                // not the evidence that establishes this bound.
-                used_direct_interval |= matches!(
-                    retained,
-                    DerivationNode::ImplicitBound {
-                        kind: super::super::entailment::ImplicitBoundKind::TypeMaximum,
-                        bound,
-                        ..
-                    } if *bound == i128::from(u64::MAX)
-                );
-                stack.extend(retained.parent_ids());
-            }
-            (used_exhaustion, used_direct_interval)
-        };
-        let (filled_exhaustion, _) = proof_routes(filled);
-        assert!(
-            filled_exhaustion,
-            "u16 allocation fit must descend from the exported source invariant"
-        );
-        let (vacant_exhaustion, vacant_direct) = proof_routes(vacant);
-        assert!(
-            !vacant_exhaustion && vacant_direct,
-            "u8 allocation fit is direct from the u64 count's type interval: exhaustion={vacant_exhaustion}, direct={vacant_direct}, derivations={:?}",
-            function.entailment.derivations.nodes
-        );
-    });
-}
+// Retired: exhaustion_fact_proves_filled_and_vacant_allocation_fit. Its
+// subject, the AllocationFit occurrence each runtime-capacity construction
+// carried and the proof routes that discharged it, retired with v0.87's
+// [OP-9]: a count carries no static obligation, so no occurrence exists for
+// an exhaustion fact to prove.
 
 #[test]
 fn exhaustion_facts_prove_both_ordinary_range_requirements() {

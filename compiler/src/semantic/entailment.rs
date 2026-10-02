@@ -303,8 +303,6 @@ pub(crate) enum ObligationFamily {
     IntegerDomain,
     /// One exact numeric conversion's `cvt.defined` domain [OP-6].
     ConversionDomain,
-    /// A runtime-sized buffer allocation's canonical fit predicate [OP-9].
-    AllocationFit,
     /// One range-reference formation goal `lo <= hi` or `hi <= x.len`,
     /// submitted under [MSR-4] exactly as every other consumer's obligation
     /// is [REF-4].
@@ -361,7 +359,7 @@ pub(crate) struct ObligationOutcome {
     /// Requirement ordinal within a kernel row; zero for single-goal families.
     pub(crate) conjunct: u8,
     /// The canonical total Bool domain predicate. Bounds obligations alone
-    /// carry `None`; OP-2, OP-9, and ordinary call requirements retain one exact identity,
+    /// carry `None`; OP-2, OP-6, and ordinary call requirements retain one exact identity,
     /// using an occurrence-local evaluated-value leaf only when no stable
     /// structural operand identity exists.
     pub(crate) canonical_goal: Option<GoalExpression>,
@@ -385,15 +383,6 @@ pub(crate) struct ObligationOutcome {
     /// Exact ENT-4 derivation for an accepted obligation. Failed judgments
     /// deliberately carry no positive root.
     pub(crate) derivation: Option<DerivationId>,
-    /// For a discharged AllocationFit occurrence, the source-proved numeric
-    /// ceiling on its element count. Other obligation families retain None.
-    /// Target qualification combines this value with the selected target's
-    /// actual stride before any allocation is emitted.
-    pub(crate) allocation_length_upper_bound: Option<u64>,
-    /// Derivation of the exact numeric ceiling retained above. This may be
-    /// tighter than the OP-9 admission derivation when ordinary or affine
-    /// facts in the same proof context establish a smaller target ceiling.
-    pub(crate) allocation_length_upper_bound_derivation: Option<DerivationId>,
     /// Exact injective index images available to the active counted loops at a
     /// discharged Bounds occurrence. Every other family, and every unproved
     /// bounds occurrence, retains an empty list.

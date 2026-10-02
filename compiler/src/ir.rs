@@ -642,18 +642,6 @@ pub enum IrTargetDomainObligation {
 pub struct IrRuntimeTargetObligations {
     allocation: IrTargetDomainObligation,
     element_address: IrTargetDomainObligation,
-    source_length_upper_bound: u64,
-    /// Whether `source_length_upper_bound` is the numeric bound the
-    /// allocation site's own [OP-9] discharge established, or [OP-9]'s
-    /// ceiling standing in for a bound the checked program does not retain.
-    ///
-    /// A compiler-owned [PRE-1] construction row is one body per instance,
-    /// reached from every call of that row, so no single call's proved bound
-    /// belongs to it (compiler/prelude-records). Each caller carries and is
-    /// qualified with its own bound in [`IrSourceCall`]; this flag keeps the
-    /// shared body's representation record from reusing the language maximum
-    /// as though it were one caller's target-domain bound.
-    call_site_bound: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -673,7 +661,8 @@ impl IrLayoutMagnitude {
 
 /// The complete [OP-9] and [STOR-6] record one runtime-capacity allocation
 /// carries: the language layout ceiling its stored type must stay under, and
-/// the target-domain obligations with the retained source bound.
+/// its target-domain obligations. Its count carries no bound: the emitted
+/// operation checks the size it computes [OP-9].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct IrAllocationObligations {
     pub layout_ceiling: IrLayoutCeiling,
@@ -698,30 +687,11 @@ impl IrRuntimeTargetObligations {
         )
     }
 
-    pub(crate) const fn source_length_upper_bound(self) -> u64 {
-        self.source_length_upper_bound
-    }
-
-    /// Whether the retained bound came from the allocation site's own
-    /// [OP-9] discharge.
-    pub(crate) const fn has_call_site_bound(self) -> bool {
-        self.call_site_bound
-    }
-
-    /// The record one compiler-owned [PRE-1] allocation carries [OP-9].
-    ///
-    /// A construction row's body is built once per monomorphized instance.
-    /// This record retains [OP-9]'s language maximum for the body-level
-    /// representation check; each accepted caller separately retains its
-    /// tighter proved bound in [`IrSourceAllocation`] for target byte-domain
-    /// qualification. The language maximum is deliberately not used as a
-    /// selected-target allocation bound here.
-    pub(crate) const fn from_language_ceiling(source_length_upper_bound: u64) -> Self {
+    /// The record one runtime-capacity allocation carries [STOR-6].
+    pub(crate) const fn runtime_sized() -> Self {
         Self {
             allocation: IrTargetDomainObligation::RuntimeSizedAllocation,
             element_address: IrTargetDomainObligation::ElementAddress,
-            source_length_upper_bound,
-            call_site_bound: false,
         }
     }
 }
@@ -1565,51 +1535,6 @@ pub enum IrSourceArgument {
     Value,
 }
 
-/// The accepted source-level allocation judgment attached to one ordinary
-/// call of a compiler-owned construction or growth row [OP-9, STOR-6].
-///
-/// The row body remains one out-of-line monomorphized function. Target
-/// qualification reads this per-call record to qualify the exact proved
-/// count bound against the selected target's element stride and block header.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct IrSourceAllocation {
-    pub(crate) cell: IrNominalId,
-    pub(crate) count_argument: usize,
-    pub(crate) layout_ceiling: IrLayoutCeiling,
-    pub(crate) source_length_upper_bound: u64,
-    /// Where the call and its count argument are written, which a target
-    /// that cannot hold the bound names [STOR-6]. Presentation only: no
-    /// qualification reads them.
-    pub(crate) site: crate::SyntaxCoordinate,
-    pub(crate) count_site: crate::SyntaxCoordinate,
-}
-
-impl IrSourceAllocation {
-    pub(crate) const fn cell(self) -> IrNominalId {
-        self.cell
-    }
-
-    pub(crate) const fn count_argument(self) -> usize {
-        self.count_argument
-    }
-
-    pub(crate) const fn layout_ceiling(self) -> IrLayoutCeiling {
-        self.layout_ceiling
-    }
-
-    pub(crate) const fn source_length_upper_bound(self) -> u64 {
-        self.source_length_upper_bound
-    }
-
-    pub(crate) const fn site(self) -> crate::SyntaxCoordinate {
-        self.site
-    }
-
-    pub(crate) const fn count_site(self) -> crate::SyntaxCoordinate {
-        self.count_site
-    }
-}
-
 /// Source-call use and direct borrow-result relations tied to one IR call.
 ///
 /// The actual arguments and their typed address/projection operations remain
@@ -1623,9 +1548,6 @@ pub struct IrSourceCall {
     /// A direct borrow result's checked candidate. Absence says nothing about
     /// loans carried inside owned view results or other aggregates.
     pub(crate) returned_borrow_argument: Option<usize>,
-    /// The call's accepted allocation bound, only for the runtime-capacity
-    /// construction and growth rows that carry OP-9.
-    pub(crate) allocation: Option<IrSourceAllocation>,
 }
 
 impl IrSourceCall {
@@ -1635,10 +1557,6 @@ impl IrSourceCall {
 
     pub(crate) fn arguments(&self) -> &[IrSourceArgument] {
         &self.arguments
-    }
-
-    pub(crate) const fn allocation(&self) -> Option<IrSourceAllocation> {
-        self.allocation
     }
 }
 
