@@ -46,6 +46,9 @@ optimization gain nor replaces the unchanged whole-application performance goal.
 Public `hash_map_lookup` already has isolated hit/miss measurement, with its
 miss gap still open; `hash_map_find` is private. Separate fresh-insertion and
 owned-removal API windows remain missing.
+The [EDIT-only two-span follow-up](#edit-only-two-span-probing-rejected)
+reduces native body instructions but has no qualified miss gain, three qualified
+two-cohort hit losses and zero candidate peer targets; its source stays rejected.
 
 ## Current Rust and C++ ecosystem comparison
 
@@ -6238,3 +6241,67 @@ not evidence that a particular probe representation is selected. The roughly
 complete trace as an optimization: the timing boundaries and workloads differ.
 No library/source optimization follows from this instrument, no historical
 failure is reclassified, and the overall application target remains open.
+
+### EDIT-only two-span probing: rejected
+
+The isolated miss gap supplied a new, narrow discriminator after the
+[historical five-function two-span trial](#prospective-two-span-cyclic-probing):
+change only EDIT's cyclic continuation to `[home, count)` then `[0, home)` under
+the integrated compiler and isolated API consumer. Hash-before-empty, arbitrary
+capacity, equality order, tombstones, first update and complete callback/absence
+outcomes stay unchanged. This does not reinterpret the earlier rejection.
+
+The first source carrier was rejected for duplicate nominal declarations;
+the next failed exact raw-module identity because graph qualification and
+reachability differed. The retained carrier qualification then established
+identical normalized reached EDIT bodies and callable boundaries for the
+unchanged control, not whole-module identity. Both final control bodies match
+the frozen 248-instruction baseline, and linked arm bodies match their object
+streams. All 22 final check stages pass, including the maintained normal and
+parallel HashMap witness against each exact local candidate module. The 32 EDIT
+and 96 reserve allocator rows are byte-identical between arms.
+
+Candidate bodies shrink from 248 to 182 instructions, while their frames grow
+from 16 to 32 bytes. Wrap selection and the independent probe budget disappear;
+no new inner calls, stack traffic or payload/digest copies appear. The collision
+mode test re-enters each key iteration, and successful probes branch to a shared
+update tail that recomputes the payload address. Eleven of 150 emitted functions
+change; total decoded instructions rise from 11,305 to 11,373. These are observed
+countervailing code-generation effects, not isolated causes of elapsed losses.
+
+The fixed control-0/candidate-0/candidate-1/control-1 campaign retains all 1,536
+rows, four direct zero exits, unchanged pins and matching complete outcomes.
+Medians are ns/edit, cohort 0 / cohort 1; Rust/C++ columns are the candidate
+panel. Complete min/max ranges and all C attribution observations remain in the
+retained reduction:
+
+| Payload / physical target / path | Control WF | Candidate WF | Rust | C++ | Before/after ranges, cohorts 0 / 1 |
+|---|---:|---:|---:|---:|---|
+| 8 B / 64 / hit | 1.851931 / 1.856759 | 2.323995 / 2.351547 | 2.268235 / 2.282987 | 2.136851 / 2.142057 | loss / loss |
+| 8 B / 64 / miss | 2.470046 / 2.466152 | 2.772406 / 2.720555 | 2.215793 / 2.197405 | 1.717001 / 1.727243 | overlap / overlap |
+| 8 B / 4096 / hit | 2.184664 / 2.147540 | 3.267194 / 3.441970 | 2.414862 / 2.511924 | 2.993912 / 3.135418 | loss / loss |
+| 8 B / 4096 / miss | 3.283674 / 2.846251 | 4.249821 / 4.774173 | 2.627869 / 2.599438 | 1.738687 / 1.717508 | overlap / overlap (drift-invalid) |
+| 256 B / 64 / hit | 1.884803 / 1.915574 | 2.362609 / 2.449150 | 2.539406 / 2.522697 | 2.206033 / 2.143184 | overlap / loss |
+| 256 B / 64 / miss | 2.475326 / 2.662743 | 2.761414 / 2.788703 | 2.222304 / 2.218256 | 1.727412 / 1.715566 | overlap / overlap (drift-invalid) |
+| 256 B / 4096 / hit | 2.402787 / 2.361283 | 3.405248 / 3.270944 | 2.952451 / 2.769147 | 3.860300 / 3.739009 | loss / loss |
+| 256 B / 4096 / miss | 3.567537 / 3.639589 | 5.927468 / 5.563766 | 2.755125 / 2.565811 | 2.160837 / 2.065013 | overlap / overlap (drift-invalid) |
+
+There are zero qualified miss gains: all eight miss-cohort ranges overlap and
+all candidate miss medians are worse. Three hit cells have separated losses
+in both cohorts and pass the instrument/stability conditions. Wide-small hit
+has only a cohort-1 separated loss; cohort 0 overlaps. Thus four hit cells lose
+in at least one cohort, not four qualified two-cohort losses. Candidate raw and
+qualified selected-peer targets both fail all eight cells. Scalar-large miss,
+wide-small miss and wide-large miss also retain drift/stability invalidation;
+C remains inside the registered gates. The 18.916557-ns candidate scalar-large
+hit and 14.573614-ns Rust wide-large miss outliers remain unfiltered.
+
+The candidate is rejected, with no source adoption, retry or relaxed threshold.
+Fewer continuation instructions did not qualify a gain in this consumer; no
+broader conclusion about all two-span designs follows. The
+`isolated-edit-two-span/` component of
+[reserve-api-evidence.tar.gz](reserve-api-evidence.tar.gz) retains prospective
+criteria, exact both-arm sources and patch, failed carrier attempts, normal/
+parallel checks, compact native/linked evidence, allocator parity, all raw rows,
+reducers and pin identities. Replay needs the pinned integrated compiler and
+baseline driver/peer/runtime dependencies; full binaries/IR are omitted.

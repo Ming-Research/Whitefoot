@@ -3570,6 +3570,16 @@ condition under which it is taken up.
   relabel churn or whole traces as per-API completion, or compare the new API
   window with complete-trace ns/edit as a before/after improvement.
 
+  The [EDIT-only two-span trial](../research/experiments/container-representation/map-library/RESULTS.md#edit-only-two-span-probing-rejected)
+  addresses the new isolated miss gap separately from the older five-function
+  trial, but supplies zero qualified miss gains and three qualified two-cohort
+  hit losses; wide-small hit also loses in cohort 1. Keep its source rejected.
+  Smaller bodies add a 16-byte frame increment, per-key collision-mode testing
+  and a shared hit tail with address recomputation; their elapsed contributions
+  are not isolated. Reopen only with a discriminator for reached miss/hit work
+  that preserves complete outcomes and all drift/peer gates, not an instruction
+  count alone. Original API/application failures remain open.
+
   The [actual integrated-candidate comparison](../research/experiments/container-representation/map-library/RESULTS.md#integrated-candidate-with-the-maintained-caller)
   has no qualified before/after gain in 40 maintained-caller cells; all four
   overall screens remain unqualified. Its reserve maximum empty interval of
