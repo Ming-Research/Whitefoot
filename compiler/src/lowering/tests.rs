@@ -58,6 +58,8 @@ const CANONICAL_LIMITS: CanonicalLimits = CanonicalLimits {
     max_path_components: 8_192,
 };
 
+mod held_keys;
+
 /// An ordinary function selected by executable fixtures.
 const PLAIN_ENTRY: &str = "fn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n";
 

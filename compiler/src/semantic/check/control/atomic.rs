@@ -290,7 +290,10 @@ impl Checker<'_, '_> {
         // take effect at one point whichever other such statements on the
         // key run beside it. Every write through the binder, a place a
         // match binds inside the entry or a call's written parameter, is a
-        // path rooted at the binder's declaration.
+        // path rooted at the binder's declaration. A block that runs two
+        // statements on shared objects is a section the entry's exclusive
+        // hold keeps other statements on the key out of, so such a
+        // statement holds its entry alone whatever it writes.
         let held_root = declaration.id();
         let checked_form = match checked_form {
             CheckedAtomicForm::Entry { held, .. } => CheckedAtomicForm::Entry {
@@ -300,7 +303,8 @@ impl Checker<'_, '_> {
                     .writes
                     .iter()
                     .chain(guard.iter().flat_map(|guard| guard.1.writes.iter()))
-                    .any(|path| path.root == held_root),
+                    .any(|path| path.root == held_root)
+                    && crate::semantic::held_keys::one_object_statement(&checked.statements),
             },
             other => other,
         };

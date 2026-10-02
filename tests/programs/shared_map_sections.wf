@@ -1,0 +1,100 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+const names: Array<u8, 8> =[97_u8, 98_u8, 99_u8, 100_u8, 101_u8, 102_u8, 103_u8, 104_u8];
+
+fn bump(map: &SharedMap<u64>, total: &Shared<u64>, key: &[u8]) -> result: unit reads(map), reads(total), reads(key) waits {
+  for @round (index in 0_u64..5000_u64) {
+    let seen = 0_u64;
+    atomic state = &map^ {
+      atomic slot = &state^[key] {
+        set slot^ = Some<u64>(value: index);
+      }
+      atomic sum = &total^ {
+        set seen = sum^;
+      }
+      atomic sum = &total^ {
+        set sum^ = seen +wrap 1_u64;
+      }
+    }
+  }
+  return unit;
+}
+
+fn bumper_1(map: SharedMap<u64>, total: Shared<u64>) -> result: unit pure waits {
+  bump(map: &map, total: &total, key: &names[0_u64..1_u64]);
+  return unit;
+}
+
+fn bumper_2(map: SharedMap<u64>, total: Shared<u64>) -> result: unit pure waits {
+  bump(map: &map, total: &total, key: &names[0_u64..2_u64]);
+  return unit;
+}
+
+fn bumper_3(map: SharedMap<u64>, total: Shared<u64>) -> result: unit pure waits {
+  bump(map: &map, total: &total, key: &names[0_u64..3_u64]);
+  return unit;
+}
+
+fn bumper_4(map: SharedMap<u64>, total: Shared<u64>) -> result: unit pure waits {
+  bump(map: &map, total: &total, key: &names[0_u64..4_u64]);
+  return unit;
+}
+
+fn reader(map: SharedMap<u64>, tally: Shared<u64>) -> result: unit pure waits {
+  for @round (index in 0_u64..5000_u64) {
+    let seen = 0_u64;
+    atomic slot = &map[&names[0_u64..8_u64]] {
+      atomic sum = &tally {
+        set seen = sum^;
+      }
+      atomic sum = &tally {
+        set sum^ = seen +wrap 1_u64;
+      }
+    }
+  }
+  return unit;
+}
+
+fn run(map: &SharedMap<u64>, total: &Shared<u64>, tally: &Shared<u64>) -> result: unit reads(map), reads(total), reads(tally) waits {
+  let handle_1 = shared_map_share::<u64>(shared: map);
+  let summed_1 = shared_share::<u64>(shared: total);
+  spawn bumper_1(map: move handle_1, total: move summed_1);
+  let handle_2 = shared_map_share::<u64>(shared: map);
+  let summed_2 = shared_share::<u64>(shared: total);
+  spawn bumper_2(map: move handle_2, total: move summed_2);
+  let handle_3 = shared_map_share::<u64>(shared: map);
+  let summed_3 = shared_share::<u64>(shared: total);
+  spawn bumper_3(map: move handle_3, total: move summed_3);
+  let handle_4 = shared_map_share::<u64>(shared: map);
+  let summed_4 = shared_share::<u64>(shared: total);
+  spawn bumper_4(map: move handle_4, total: move summed_4);
+  for @start (index in 0_u64..4_u64) {
+    let handle = shared_map_share::<u64>(shared: map);
+    let counted = shared_share::<u64>(shared: tally);
+    spawn reader(map: move handle, tally: move counted);
+  }
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure waits {
+  let map = shared_map_new::<u64>(capacity: 0_u64);
+  let total = shared_new::<u64>(value: 0_u64);
+  let tally = shared_new::<u64>(value: 0_u64);
+  run(map: &map, total: &total, tally: &tally);
+  let sum = 0_u64;
+  atomic seen = &total {
+    set sum = seen^;
+  }
+  if sum != 20000_u64 {
+    return exit_status(code: 1_u8);
+  }
+  let read = 0_u64;
+  atomic seen = &tally {
+    set read = seen^;
+  }
+  if read != 20000_u64 {
+    return exit_status(code: 2_u8);
+  }
+  return exit_status(code: 0_u8);
+}

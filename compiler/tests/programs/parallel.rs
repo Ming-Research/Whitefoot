@@ -421,6 +421,52 @@ fn shared_objects_keep_every_update_on_one_driver_and_on_four() {
     }
 }
 
+/// [SHARE-3] statements holding a map's state whose keys are computed before
+/// their blocks run hold those keys' entries and no others, so three of
+/// them on one key each run beside each other and beside two that read five
+/// keys, on one driver and on four. Each adds to its entry and, in its one
+/// object statement, to a total; a reader that saw another's statement half
+/// done finds the entries' sum and the total disagree (status 5), and a lost
+/// addition leaves the total short (status 4).
+#[test]
+fn statements_holding_their_keys_keep_every_update_on_one_driver_and_on_four() {
+    let program = build_program(&compile_program("shared_map_keys.wf"));
+    for drivers in ["1", "4"] {
+        for round in 0..3 {
+            let output = program.run_with_settings(None, &[("WF_DRIVERS", drivers)]);
+            assert_eq!(
+                output.status.code(),
+                Some(0),
+                "drivers {drivers}, round {round}: {output:?}"
+            );
+        }
+    }
+}
+
+/// [SHARE-3] a block that runs two statements on one shared object, a read
+/// and then a write of what it read, is a section no other statement
+/// holding the same map's state, or the same entry, enters: four contexts
+/// whose whole-map blocks reach one key each, and four whose blocks read
+/// one entry and write nothing through it, add to their totals without a
+/// lost addition, on one driver and on four. Whole-map statements that held
+/// only their keys' entries would lose additions of the first total (status
+/// 1), and statements that shared the entry they only read would lose
+/// additions of the second (status 2).
+#[test]
+fn a_block_of_two_object_statements_stays_a_section_on_one_driver_and_on_four() {
+    let program = build_program(&compile_program("shared_map_sections.wf"));
+    for drivers in ["1", "4"] {
+        for round in 0..3 {
+            let output = program.run_with_settings(None, &[("WF_DRIVERS", drivers)]);
+            assert_eq!(
+                output.status.code(),
+                Some(0),
+                "drivers {drivers}, round {round}: {output:?}"
+            );
+        }
+    }
+}
+
 /// [SHARE-1, SHARE-2, SHARE-3] eight contexts adding to the entries under
 /// eight keys of one map, and to a shared object inside each keyed
 /// statement, while two others hold the whole map and compare the entries'

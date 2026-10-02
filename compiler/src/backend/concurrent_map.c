@@ -1327,7 +1327,8 @@ static void give_back(wf_cmap_user *u, wf_cmap_set *set, uint64_t held, int coun
 
 /* Locks every key of an ordered set in the current table: 1 with all of
  * them locked, their nodes named and their slots set, or 0, holding no
- * cell, once the waits and retries exhaust u's patience. A move met on the
+ * cell, once the waits and retries exhaust u's patience or the table has no
+ * cell left for one of them. A move met on the
  * way cannot be helped while cells are held, since a mover waits for every
  * locked cell, so the cells go back first and the set is locked again in
  * the next table. */
@@ -1346,12 +1347,12 @@ static int lock_set(wf_cmap_user *u, wf_cmap_set *set) {
                     return 0;
                 }
                 if (r == FULL) {
-                    give_back(u, set, i, 0);
-                    start_move(map, t);
-                    unsigned round = 0;
-                    while (atomic_load_explicit(&t->next, memory_order_acquire) == NULL)
-                        back_off(&round);
-                    break;
+                    /* A move sizes the next table for the live keys, which
+                     * may be no more room than this one had for the set's
+                     * new keys; held one at a time under the whole map, they
+                     * grow the table as keyed statements do. */
+                    give_back(u, set, i, 1);
+                    return 0;
                 }
                 if (!keep_cell(t, c, r, e->tag)) {
                     give_back(u, set, i, 0);

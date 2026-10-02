@@ -23,10 +23,18 @@
 //!   in the twin, which follows the same matches;
 //! - no general loop contains such a statement, since a twin without the
 //!   loop's exits would not end;
+//! - the block runs at most one statement on a shared object
+//!   ([`one_object_statement`]), since a block that runs two is a section no
+//!   other statement on the map enters only while the whole map is held;
 //! - every kept expression is a constant, a binding read, a field of one, an
 //!   integer, float, boolean or conversion operation, a range's measure, a
-//!   range over a range, or a call to a function that waits for nothing,
-//!   writes nothing, allocates nothing and returns an owned value;
+//!   range over a range or over a constant, or a call to a function that
+//!   waits for nothing, writes nothing, allocates nothing, returns an owned
+//!   value and reaches no function without a body other than a pure one, so
+//!   that it answers the same in the twin and in the block;
+//! - no kept call follows the block's object statement in source order, so
+//!   that a call that never returns stops the twin no earlier than it would
+//!   stop the block after that statement's effect;
 //! - nothing the kept expressions read is written between the twin and the
 //!   block's end: a binding they read is never the root of a `set` in the
 //!   block, never released or consumed there, has no address taken in the
@@ -41,7 +49,8 @@ use std::collections::{HashMap, HashSet};
 
 use super::model::{
     BindingId, CheckedAtomicForm, CheckedDrop, CheckedExpression, CheckedFunction, CheckedMatchArm,
-    CheckedMode, CheckedRangeSource, CheckedSetTarget, CheckedStatement, expression_children,
+    CheckedMode, CheckedRangeSource, CheckedSetTarget, CheckedStatement, FunctionId,
+    expression_children,
 };
 use super::places::PlaceRoot;
 use crate::NodePath;
@@ -56,7 +65,15 @@ pub(crate) fn key_twins(
 ) -> HashMap<NodePath, Vec<CheckedStatement>> {
     let mut twins = HashMap::new();
     if let Some(body) = &function.body {
-        find(function, functions, addressed, body, &mut twins);
+        let mut repeatable = HashMap::new();
+        find(
+            function,
+            functions,
+            addressed,
+            body,
+            &mut repeatable,
+            &mut twins,
+        );
     }
     twins
 }
@@ -66,6 +83,7 @@ fn find(
     functions: &[CheckedFunction],
     addressed: &HashSet<BindingId>,
     statements: &[CheckedStatement],
+    repeatable: &mut HashMap<FunctionId, bool>,
     twins: &mut HashMap<NodePath, Vec<CheckedStatement>>,
 ) {
     for statement in statements {
@@ -81,9 +99,11 @@ fn find(
                     function,
                     functions,
                     addressed,
+                    repeatable: &mut *repeatable,
                     state: *binding,
                     read: HashSet::new(),
                     kept: HashSet::new(),
+                    calls: false,
                 };
                 if let Some(twin) = twin.of(body) {
                     twins.insert(node_path.clone(), twin);
@@ -91,17 +111,61 @@ fn find(
             }
             CheckedStatement::Match { arms, .. } | CheckedStatement::ValueMatchLet { arms, .. } => {
                 for arm in arms {
-                    find(function, functions, addressed, &arm.body, twins);
+                    find(function, functions, addressed, &arm.body, repeatable, twins);
                 }
             }
             CheckedStatement::Loop { body, .. } | CheckedStatement::CountedRange { body, .. } => {
-                find(function, functions, addressed, body, twins);
+                find(function, functions, addressed, body, repeatable, twins);
             }
             // [SHARE-2] no other atomic statement's block contains a
             // statement holding a map's state.
             _ => {}
         }
     }
+}
+
+/// [SHARE-3] whether a block runs at most one statement holding a shared
+/// object's state: `statements` contain at most one, at any depth, and none
+/// inside a loop.
+///
+/// A block that runs two such statements reads or writes objects twice, and
+/// what it holds exclusively is all that keeps another statement's object
+/// statements from falling between the two. So a statement that shares what
+/// it holds with statements that only read it, or holds less than the map
+/// its source names, does so only when its block runs at most one: the
+/// block then takes effect as if at that one statement's point, since what
+/// it holds changes for no other statement before it ends.
+pub(crate) fn one_object_statement(statements: &[CheckedStatement]) -> bool {
+    let mut count = 0_usize;
+    count_objects(statements, false, &mut count) && count <= 1
+}
+
+/// Counts the object statements of `statements`; false when one lies in a
+/// loop.
+fn count_objects(statements: &[CheckedStatement], looped: bool, count: &mut usize) -> bool {
+    statements.iter().all(|statement| match statement {
+        CheckedStatement::Atomic {
+            form: CheckedAtomicForm::Object,
+            ..
+        } => {
+            *count += 1;
+            !looped
+        }
+        CheckedStatement::Atomic { body, .. } => count_objects(body, looped, count),
+        CheckedStatement::Loop { body, .. } | CheckedStatement::CountedRange { body, .. } => {
+            count_objects(body, true, count)
+        }
+        CheckedStatement::Match { arms, .. } | CheckedStatement::ValueMatchLet { arms, .. } => arms
+            .iter()
+            .all(|arm| count_objects(&arm.body, looped, count)),
+        _ => true,
+    })
+}
+
+/// Whether a statement holding a shared object's state lies in `statements`.
+fn reaches_object(statements: &[CheckedStatement]) -> bool {
+    let mut count = 0_usize;
+    !count_objects(statements, false, &mut count) || count > 0
 }
 
 /// Whether `expression` names `binding` anywhere, including in a place root
@@ -127,6 +191,79 @@ fn reaches_entry(statements: &[CheckedStatement]) -> bool {
         }
         _ => false,
     })
+}
+
+/// Every call an expression makes, at any depth.
+fn calls_of(expression: &CheckedExpression, calls: &mut Vec<(FunctionId, bool)>) {
+    if let CheckedExpression::UserCall {
+        function,
+        formal_effects,
+        formal_contract,
+        ..
+    } = expression
+    {
+        calls.push((
+            *function,
+            formal_effects.is_some() || formal_contract.is_some(),
+        ));
+    }
+    for child in expression_children(expression) {
+        calls_of(child, calls);
+    }
+}
+
+/// Every call the statements make, at any depth; `None` when a statement
+/// holds shared state, whose value another context may change.
+fn calls_in(statements: &[CheckedStatement], calls: &mut Vec<(FunctionId, bool)>) -> Option<()> {
+    for statement in statements {
+        match statement {
+            CheckedStatement::Let { value, .. }
+            | CheckedStatement::DestructuringLet { value, .. }
+            | CheckedStatement::Evaluate { value, .. }
+            | CheckedStatement::DropExpression { value, .. }
+            | CheckedStatement::Return { value, .. }
+            | CheckedStatement::Give { value, .. } => calls_of(value, calls),
+            CheckedStatement::PropagateLet { scrutinee, .. } => calls_of(scrutinee, calls),
+            CheckedStatement::Set { target, value, .. } => {
+                match target {
+                    CheckedSetTarget::Place(_) => {}
+                    CheckedSetTarget::RangeIndex(place) => {
+                        for offset in place.offsets() {
+                            calls_of(offset, calls);
+                        }
+                    }
+                    CheckedSetTarget::Storage(root) => {
+                        for offset in root.offsets() {
+                            calls_of(offset, calls);
+                        }
+                    }
+                }
+                calls_of(value, calls);
+            }
+            CheckedStatement::Proof(_) | CheckedStatement::Break { .. } => {}
+            CheckedStatement::Match {
+                scrutinee, arms, ..
+            }
+            | CheckedStatement::ValueMatchLet {
+                scrutinee, arms, ..
+            } => {
+                calls_of(scrutinee, calls);
+                for arm in arms {
+                    calls_in(&arm.body, calls)?;
+                }
+            }
+            CheckedStatement::Loop { body, .. } => calls_in(body, calls)?,
+            CheckedStatement::CountedRange {
+                lower, upper, body, ..
+            } => {
+                calls_of(lower, calls);
+                calls_of(upper, calls);
+                calls_in(body, calls)?;
+            }
+            CheckedStatement::Atomic { .. } => return None,
+        }
+    }
+    Some(())
 }
 
 /// What a block's statements, at any depth, do to bindings.
@@ -309,16 +446,25 @@ struct Twin<'a> {
     function: &'a CheckedFunction,
     functions: &'a [CheckedFunction],
     addressed: &'a HashSet<BindingId>,
+    /// Whether each function met so far answers the same when called again
+    /// with the same arguments over the same storage.
+    repeatable: &'a mut HashMap<FunctionId, bool>,
     /// The binder of the statement holding the map's state.
     state: BindingId,
     /// Bindings the twin's expressions read.
     read: HashSet<BindingId>,
     /// Bindings the twin's own statements define.
     kept: HashSet<BindingId>,
+    /// Whether an expression kept so far, which lies later in the block
+    /// than the statement now examined, makes a call.
+    calls: bool,
 }
 
 impl Twin<'_> {
     fn of(mut self, body: &[CheckedStatement]) -> Option<Vec<CheckedStatement>> {
+        if !one_object_statement(body) {
+            return None;
+        }
         let mut facts = Facts::default();
         facts.statements(body, self.state)?;
         let (twin, reaches) = self.block(body)?;
@@ -399,6 +545,42 @@ impl Twin<'_> {
         })
     }
 
+    /// Whether a call of `function` answers the same when made again with
+    /// the same arguments over storage nothing has written: it waits for
+    /// nothing, writes nothing, allocates nothing, calls through no formal
+    /// function, holds no shared state, and every function it reaches that
+    /// has no body, a host's or the compiler's own, has a pure row. A host
+    /// function with a `reads` row may answer from state the host changes,
+    /// as the clock's readers do.
+    fn repeats(&mut self, function: FunctionId) -> bool {
+        if let Some(&known) = self.repeatable.get(&function) {
+            return known;
+        }
+        // A function met again while it is being judged adds nothing.
+        self.repeatable.insert(function, true);
+        let repeats = self.judge(function).is_some();
+        self.repeatable.insert(function, repeats);
+        repeats
+    }
+
+    fn judge(&mut self, function: FunctionId) -> Option<()> {
+        let callee = self.functions.get(function.0 as usize)?;
+        if callee.waiting.waits || callee.allocates || !callee.declared_state_writes.is_empty() {
+            return None;
+        }
+        let Some(body) = &callee.body else {
+            return callee.declared_state_reads.is_empty().then_some(());
+        };
+        let mut calls = Vec::new();
+        calls_in(body, &mut calls)?;
+        for (called, formal) in calls {
+            if formal || !self.repeats(called) {
+                return None;
+            }
+        }
+        Some(())
+    }
+
     /// The twin of `statements`, and whether it reaches an entry. Statements
     /// are taken last first, so that a `let` is met after every expression
     /// that reads its binding.
@@ -415,8 +597,14 @@ impl Twin<'_> {
                     key: Some(key),
                     binding,
                     state,
+                    body,
                     ..
                 } => {
+                    // The entry's block runs after its key is computed and
+                    // before every expression kept so far.
+                    if self.calls && reaches_object(body) {
+                        return None;
+                    }
                     self.expression(key)?;
                     twin.push(CheckedStatement::Atomic {
                         node_path: node_path.clone(),
@@ -433,6 +621,13 @@ impl Twin<'_> {
                         invariants: Vec::new(),
                     });
                     reaches = true;
+                }
+                CheckedStatement::Atomic { .. } => {
+                    // A statement on a shared object, which takes effect
+                    // before every expression kept so far is evaluated.
+                    if self.calls {
+                        return None;
+                    }
                 }
                 CheckedStatement::CountedRange {
                     id,
@@ -506,12 +701,14 @@ impl Twin<'_> {
                     twin.push(statement.clone());
                 }
                 CheckedStatement::Loop { body, .. } => {
-                    if reaches_entry(body) {
+                    if reaches_entry(body) || (self.calls && reaches_object(body)) {
                         return None;
                     }
                 }
                 CheckedStatement::ValueMatchLet { arms, .. } => {
-                    if arms.iter().any(|arm| reaches_entry(&arm.body)) {
+                    if arms.iter().any(|arm| {
+                        reaches_entry(&arm.body) || (self.calls && reaches_object(&arm.body))
+                    }) {
                         return None;
                     }
                 }
@@ -566,6 +763,19 @@ impl Twin<'_> {
                 self.expression(start)?;
                 self.expression(end)?;
             }
+            // A range over a constant, which nothing writes.
+            CheckedExpression::RangeOf {
+                source: CheckedRangeSource::Storage(root),
+                start,
+                end,
+                ..
+            } if root.binding().is_none() => {
+                for offset in root.offsets() {
+                    self.expression(offset)?;
+                }
+                self.expression(start)?;
+                self.expression(end)?;
+            }
             CheckedExpression::UserCall {
                 function,
                 tail_transfer: false,
@@ -577,13 +787,10 @@ impl Twin<'_> {
                 ..
             } => {
                 let callee = self.functions.get(function.0 as usize)?;
-                if callee.waiting.waits
-                    || callee.allocates
-                    || !callee.declared_state_writes.is_empty()
-                    || callee.result_mode != CheckedMode::Own
-                {
+                if callee.result_mode != CheckedMode::Own || !self.repeats(*function) {
                     return None;
                 }
+                self.calls = true;
                 for argument in arguments {
                     self.expression(argument)?;
                 }

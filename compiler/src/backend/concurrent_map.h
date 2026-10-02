@@ -105,9 +105,9 @@ void wf_cmap_set_add(wf_cmap_set *set, const unsigned char *key, uint64_t length
  * for a statement that reaches no other entry of the map: the keys are
  * locked in one order every such statement uses, so two of them never wait
  * for each other in a cycle. When it would wait past its patience, meets
- * two of its keys with one hash, or cannot keep what it holds through a
- * move, it gives everything back and holds the whole map instead, setting
- * set->whole, as wf_cmap_hold does. */
+ * two of its keys with one hash, or finds the table full, it gives
+ * everything back and holds the whole map instead, setting set->whole, as
+ * wf_cmap_hold does. */
 void wf_cmap_hold_set(wf_cmap_user *user, wf_cmap_set *set);
 /* The held entry of key in a set whose entries are held, or NULL when the
  * key is not one of the set's. */
