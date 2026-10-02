@@ -187,9 +187,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     /// lengths can overflow, and a total that leaves `u64` is a size the
     /// target cannot allocate, as is one whose checked size does not fit
     /// [OP-9]; both take the heap-exhaustion edge before the allocator. The
-    /// lengths are a run of existing `u64` storage, so the header's bound
-    /// words cannot wrap, and below the check no running sum, product or
-    /// offset can.
+    /// lengths are a run of allocated `u64` storage, which the successful-
+    /// allocation and complete-object-layout invariants keep within the
+    /// address-index domain [STOR-6], so the header's bound words cannot
+    /// wrap, and below the check no running sum, product or offset can.
     pub(super) fn emit_segments_fill(
         &mut self,
         result: IrValueId,

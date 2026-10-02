@@ -220,9 +220,10 @@ consume(commands: &out.inner.all);
 order, which hands the joined output to a consumer without a copy. Two
 segments with distinct offsets are distinct storage, so the fill loop is an
 ordinary element map [PAR-2]. The elements are copy values, and a total too
-large to allocate is heap exhaustion, as for any allocation [OP-9]. When the counts are known only
-by producing the outputs, and producing them twice costs too much, keep a
-per-item buffer instead: its allocations cost more, which
+large to allocate is heap exhaustion, as for any allocation [OP-9]. When the
+counts are known only by producing the outputs, and producing them twice
+costs too much, keep a per-item buffer instead: its allocations cost more,
+which
 [the scatter measurement](../research/investigations/segmented-storage/DESIGN.md#measurement-where-the-outputs-go)
 shows.
 
