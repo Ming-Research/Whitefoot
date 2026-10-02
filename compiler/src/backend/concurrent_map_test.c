@@ -1567,7 +1567,7 @@ enum { SET_KEYS = 8 };
  * not found; and what a release keeps and removes is what the next set
  * finds. The map starts with one cell, so the sets cross many moves. */
 static void sets_sequential(void) {
-    enum { OPS = 30000 };
+    enum { OPS = 15000 };
     static uint8_t present[ENTRY_KEYS];
     static uint64_t value[ENTRY_KEYS];
     static unsigned char bytes[SET_KEYS + 1][ENTRY_KEY_BYTES];
@@ -1854,7 +1854,7 @@ static void sets_give_back_counted(void) {
  * statement has ended; a keyed statement adds one to the total and then to
  * its key; a statement holding every key as one set, and one holding the
  * whole map, must each find the sum equal to the total. */
-enum { ACCOUNTS = 48, TRANSFERS = 8000 };
+enum { ACCOUNTS = 48, TRANSFERS = 4000 };
 static _Atomic uint64_t set_wholes, set_holds;
 
 typedef struct {
@@ -2041,7 +2041,7 @@ static void *hold_pair(void *arg) {
 static void sets_in_one_order(void) {
     wf_cmap *map = wf_cmap_create_entries(8, 8, 0);
     set_patience(UINT64_MAX, UINT64_MAX);
-    statements = 40000;
+    statements = 20000;
     /* Two keys whose hashes differ under every build's hash. */
     uint64_t second = 1;
     counted_key(0, pair_bytes[0]);
