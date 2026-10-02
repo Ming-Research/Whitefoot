@@ -7035,5 +7035,49 @@ component; full modules and executable dependencies remain omitted. Removing
 result transport is not a demonstrated accelerator in this consumer. The
 existing return-register decision stays unchanged: raising a shared budget
 would also affect enum representation and would not reproduce this fixed-layout
-trial. A same-geometry division cost floor remains an unselected next question,
-not a measured benefit or a reason to change the callable ABI.
+trial. The following same-geometry division screens test another possible
+cost; neither supplies a measured benefit or a reason to change the callable ABI.
+
+### Guarded constant-divisor IR: dynamic division remains
+
+A same-geometry IR screen guarded the measured 85/5,461-bucket home remainder
+with constant divisors, retaining the original fallback. The copied control
+object reproduces the original; all six native stages pass (guard 1.55 s).
+The native criterion fails: ordinary optimization emits a common UDIV/MSUB
+pair, reached by the normal salted-hash path, with no surviving constant-divisor
+multiply-high sequence. Scalar try_put remains 99 instructions with no frame
+or calls; the measured scalar/wide caller streams and relative relocations
+match control. This does not prove division is free or a reciprocal cannot
+help. No correctness execution or timing followed; no optimizer pass was
+individually traced and no compiler policy is selected.
+
+### Cached reciprocal source: admitted repair, eager fallback division
+
+The separate generic source candidate adds one private reciprocal word,
+initializes/refreshes it with backing changes, and routes all five home-index
+sites through total multiply-high/correction plus a bounded exact fallback.
+The first source rejects direct arithmetic return under the specified FN-9
+returned-datum rule (guard 2.07 s). Naming the remainder in a local then
+returning that place is the sole repair; unchanged contracts admit, and the
+candidate-only native continuation passes in 1.88 s. The original rejected
+source, diagnostic and exact repair remain retained.
+
+Native code still evaluates the fallback UDIV before selecting the result,
+including at scalar try_put address 0x9ae8. It adds reciprocal work without
+removing per-insertion division, failing the prospective native criterion.
+Scalar/wide helpers grow 99→107/95→103 instructions with no own frame or new
+call; the ordinary scalar batch remains 35 instructions with a 96-byte frame.
+The map descriptor grows 40→48 bytes and both benchmark owners 72→80 bytes.
+A private field can also require an external consuming pattern to add an
+ellipsis; unchanged operation signatures do not imply unchanged representation
+or source-pattern compatibility. No arithmetic oracle, owning-runtime check,
+ledger or timing qualification was run. Cache consistency and all update paths
+therefore remain unqualified; no production representation is selected.
+
+The constant-divisor and reciprocal components in the
+[existing archive](reserve-api-evidence.tar.gz) retain criteria, exact patches,
+source rejection/repair, selected native bodies, logs and original/normalized
+pins. The arithmetic proposal note is historical preparation, not an executed
+correctness proof or a selected design; later emitted-source/native outcomes
+are explicitly separate. Full modules and executable dependencies are omitted.
+Both failures leave the original fresh-insertion timing verdict unchanged.

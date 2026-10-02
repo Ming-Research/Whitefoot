@@ -563,19 +563,28 @@ rarely insert at the same place.
   inventory is next edited; the storage-destructuring repair uses its actual
   identities and needs no inventory change.
 
-- **Measured direct-call returns require an intermediate result binding.**
+- **Direct returns can require an intermediate result binding.**
   The growth-append comparison wrapper's `return grow_vector_append::<T,
   8193>(values: values, value: move value);` cannot discharge an ensures
   relating its returned length to the mutated vector under the current FN-9
   return-datum boundary; naming the call result and returning that name works
   with identical contracts. The paired direct/bound-return tests in
   `compiler/src/semantic/tests/postconditions.rs` already cover this boundary.
-  Impact: ordinary forwarding wrappers require an extra source binding, though
-  the optimized append code retains no extra work. Reopen with return-contract
-  ergonomics, compare direct and bound forms including refuted and recursive
-  contracts, and decide whether a broader return datum is warranted. Any
-  expansion of accepted source needs a specification decision; do not change
-  that boundary as part of the container timing experiment.
+  The cached-reciprocal HashMap trial exposes the arithmetic form: a function
+  `remainder(hash: u64, count: u64) -> index: u64` with `requires count > 0_u64`
+  and `ensures index < count` rejects `return hash % count;` with
+  `FN-9 InvalidPostconditionReturn`. FN-9 requires the selected returned datum
+  to denote an ENT-2 term or constant; the arithmetic expression is neither.
+  `let exact = hash % count; return exact;` instead supplies a tracked place,
+  with the unsigned remainder bound established at its binding by ENT-3.S7.
+  This is the specified return-datum boundary, not a demonstrated compiler bug.
+  Impact: ordinary forwarding wrappers and direct arithmetic returns require
+  an extra source binding; the optimized append example retains no extra work.
+  Reopen with return-contract ergonomics, compare direct and bound call and
+  arithmetic forms including refuted and recursive contracts, and decide
+  whether a broader return datum is warranted. Any expansion of accepted source
+  needs a specification decision; do not change that boundary as part of the
+  container timing experiment.
 
 ## Containers and storage lowering
 
@@ -3014,9 +3023,13 @@ rarely insert at the same place.
   follows. The [four-leaf register-result discriminator](../research/experiments/container-representation/map-library/RESULTS.md#fresh-insertion-register-result-native-success-without-timing-gain)
   now removes scalar result transport but qualifies no gain; all wide controls
   fail drift admission. Do not select an ABI change from native load/store
-  removal. A same-geometry division cost floor remains unselected; preserve
-  ordinary source behavior and the fixed peer/clock criteria before reopening
-  insertion costs. Keep callable-result classification distinct from enum
+  removal. The [guarded constant-divisor and cached-reciprocal screens](../research/experiments/container-representation/map-library/RESULTS.md#guarded-constant-divisor-ir-dynamic-division-remains)
+  both retain reached dynamic division; the source candidate also grows its
+  descriptor and computes the fallback eagerly. Neither supplies runtime
+  evidence. Reopen only with a native discriminator that removes the reached
+  quotient cost while recording setup, cache, transport and arbitrary-capacity
+  obligations, then independent arithmetic/owner checks and the fixed timing
+  criterion. Keep callable-result classification distinct from enum
   representation and preserve shared caller/callee ABI and body/wrapper order
   if future evidence reopens the existing return-register decision.
 

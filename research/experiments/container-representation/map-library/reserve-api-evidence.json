@@ -1,8 +1,8 @@
 {
   "purpose": "Isolated ordinary public reserve with verified future entry headroom; single production baseline panel, not an optimization/adoption result",
   "archive": "reserve-api-evidence.tar.gz",
-  "archive_sha256": "96305397c2fb39a09a0a87aa81bb64dd720714c3015dcf6c26446ac249f71264",
-  "archive_members": 1200,
+  "archive_sha256": "7a43e6152bc034e1624e4b997738450f5e71c393c65da5ff49387259d41a54b5",
+  "archive_members": 1211,
   "base_revision": "89571a60381a685cfbe760248ceb6178d9f9ac05",
   "production_cli_sha256": "c12b2b2a6c9694fd2bc1b7be0004d582ae9628951422def849f4cf6a3ac02f77",
   "timed_image_sha256": "f1ebf18d7a94c79250bb3cbd74a0b379a2a30c6e5e4eda48396ec77d8bbdbf3f",
@@ -5110,6 +5110,41 @@
       "from": "component-index.json",
       "to": "component-index-before-register-result.json",
       "sha256": "e64df666bc3fb24d16619fa7992b889c270baa7486903fe774f1d14270ea2298"
+    },
+    "all_prior_member_bytes_preserved": true
+  },
+  "fresh_insert_division_screens": [
+    {
+      "prefix": "fresh-insert-constant-divisor/",
+      "manifest": "fresh-insert-constant-divisor/manifest.json",
+      "manifest_sha256": "992ed58a4fb271cdfc09d781be01b0a14189ef3a7e5951c1d1bd3db23aa61b93",
+      "payload_count": 5,
+      "retained_records": 23,
+      "native_criterion": "FAIL",
+      "runtime_checks": false,
+      "timing": false,
+      "production_adoption": false
+    },
+    {
+      "prefix": "fresh-insert-reciprocal/",
+      "manifest": "fresh-insert-reciprocal/manifest.json",
+      "manifest_sha256": "94d365f91b4082a334a00a24927177a9c266dd1ed8117033d402a41c651a72db",
+      "payload_count": 5,
+      "retained_records": 45,
+      "native_criterion": "FAIL",
+      "runtime_checks": false,
+      "timing": false,
+      "production_adoption": false
+    }
+  ],
+  "division_screens_prior_index": {
+    "prior_archive_sha256": "96305397c2fb39a09a0a87aa81bb64dd720714c3015dcf6c26446ac249f71264",
+    "prior_members": 1200,
+    "unchanged_names_and_bytes": 1199,
+    "renamed_member": {
+      "from": "component-index.json",
+      "to": "component-index-before-division-screens.json",
+      "sha256": "c74d7f51e399371b7653388ad4346429c4f8b8deeb7d49bf5c8bea207246e5d1"
     },
     "all_prior_member_bytes_preserved": true
   }
