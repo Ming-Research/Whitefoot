@@ -2035,3 +2035,10 @@ impl<'unit> DeclarationInventory<'unit> {
         }
     }
 }
+
+// Retired: layout_magnitude_tests::finite_or_above_u64_preserves_every_layout_ceiling_observation.
+// It tested the checker's own layout-ceiling arithmetic, which only [OP-9]'s
+// static allocation-size obligation read and which retired with it at v0.85.
+// Lowering keeps the one layout-ceiling computation target qualification
+// reads; lowering::tests::stored_layout_ceilings_agree_across_lowering keeps
+// its observations.

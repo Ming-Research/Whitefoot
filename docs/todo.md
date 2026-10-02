@@ -860,8 +860,11 @@ rarely insert at the same place.
   whose materialization set could be qualified, and qualifying requires
   lowering, whose cost on a check is unmeasured. The options are qualifying
   the host in `--check` when an entry is selected or a separate
-  target-check option; this is a compiler decision for the owner. Reopen
-  when a writer meets a build-only target stop.
+  target-check option; this is a compiler decision for the owner. Validate a
+  chosen form with an entry that keeps a local `Array<u8, 9223372036854775808>`
+  stopping at check time as a `TargetLayout` stop with no rule, and with the
+  check time of the corpus programs before and after. Reopen when a writer
+  meets a build-only target stop.
 
 - **Union-laid-out enums: deferred refinements.**
   [compiler/payload-enum-layout](../design/compiler/payload-enum-layout.md)

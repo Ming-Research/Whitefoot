@@ -27,10 +27,7 @@
 //! Stops that are not source rejections -- resource ceilings, invocation
 //! envelopes, internal invariants, target layout, backend -- carry
 //! compiler-facing payloads with no writer repair. They keep their stage
-//! value's `Debug` text as one `payload` field. The one exception is a
-//! target-layout stop at a written allocation whose proved count the
-//! selected target cannot hold [STOR-6]: the writer fixes it by bounding the
-//! count, so it is located at the call and lists its fields.
+//! value's `Debug` text as one `payload` field.
 
 use core::fmt::{self, Write as _};
 

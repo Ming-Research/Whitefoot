@@ -17,7 +17,7 @@ No written conclusion, origin annotation, trusted-value mark, runtime observatio
 [SCOPE-3] Accepted programs have no undefined behavior, conditional on the declared trusted computing base: compiler, checker, linked function definitions, runtime, allocator, and OS.
 Every linked definition must implement its ordinary declaration with the same value, ownership, effect, contract, and call-lifetime meaning as a Whitefoot body. Its implementation language and build binding do not alter source acceptance or permissions.
 The source outcome model leaves resource availability outside it: heap exhaustion, stack exhaustion, operating-system quotas, and runtime-start resources may stop execution without a Whitefoot value, status, or cleanup guarantee.
-That placement does not defer static layout, stride, allocation-ceiling, address, target-domain, or parallel-independence proof; each obligation still succeeds before the governed operation is emitted.
+That placement does not defer static layout, stride, address, target-domain, or parallel-independence proof; each obligation still succeeds before the governed operation is emitted.
 Resource failure establishes no source fact, grants no fallback path, and cannot turn an unproved operation into an accepted one.
 
 ## 2. Canonical form
@@ -818,7 +818,7 @@ No judgment of this specification depends on a value's address being stable, and
 [STOR-8] There is one heap, provided by the trusted base and internally synchronized.
 Allocation is total in the source: heap exhaustion never returns a failure and never traps, and no allocating operation carries a `Result`.
 Exhaustion of the heap terminates the program from the trusted base, outside the language [SCOPE-3], so no payload is ever handed back and no program point holds a value whose owner has vanished.
-The arithmetic that computes an allocation size never wraps: a count's size is checked as it is computed, and one the selected target cannot allocate is exhaustion [OP-9], while a sum of lengths is bounded by `box_segments_filled`'s size predicate [OP-13].
+The arithmetic that computes an allocation size never wraps: a count's size is computed as [OP-9] states, and a sum of lengths is bounded by `box_segments_filled`'s size predicate [OP-13].
 Addresses are not observable, so allocator concurrency does not affect program determinism.
 Allocation and release carry no effect entry [EFF-1] and never prevent two statements from overlapping [PAR-1].
 A source bundle that carries the no-heap declaration [GRAM-2, PROG-3] cannot name `Box`, the runtime-capacity shapes, or `Segments` [TYPE-9] and cannot call an allocating prelude row — `box_new`, `box_array_filled`, `box_segments_filled`, `box_slots_new`, `box_ring_new`, and `grow` [OP-13, OP-10]; naming such a type is a hard error citing STOR-8 at the complete `type`, and calling such a row is a hard error citing STOR-8 at the complete `call`, each with a repair [DIAG-1].
@@ -875,14 +875,14 @@ This stop is a target-layout failure under [DIAG-1], not a source-language rejec
 
 For a runtime-sized allocation, the concrete descriptor and element layout are checked statically as above.
 For every runtime-capacity shape materialized by a construction function [OP-13] or resized by `grow` [OP-10], target qualification additionally verifies the actual size, alignment, and element stride against [OP-9]'s language ceilings, and the shape's padded descriptor against the selected target's runtime-allocation byte maximum, before lowering the operation.
-Its count carries no static bound [OP-9]: the lowered operation computes the complete allocation size, the shape's descriptor, its padding before the elements and the count multiplied by the actual target stride, with checked arithmetic, and a size that wraps or exceeds the selected target's runtime-allocation byte maximum is heap exhaustion [STOR-8] before any allocator call, so every size an allocator receives fits both the allocator-parameter and address-index domains.
+The lowered operation computes the complete allocation size, the shape's descriptor, its padding before the elements and the count multiplied by the actual target stride, with checked arithmetic, and compares it with the selected target's runtime-allocation byte maximum before any allocator call; a size that wraps or exceeds that maximum is one the target cannot allocate [OP-9], so every size an allocator receives fits both the allocator-parameter and address-index domains.
 Every materialized runtime-capacity shape therefore satisfies the successful-allocation representation invariant: its padded descriptor and its capacity's elements at the actual stride fit the selected target's runtime-allocation byte maximum.
 For every `Segments<T>` that `box_segments_filled` materializes [OP-13], target qualification verifies the element's actual size, alignment, and stride against [OP-9]'s language ceilings, and requires the largest block its predicate admits, `2^62` bytes of elements and boundaries together with the shape's own descriptor and its padding before the elements, to fit both the allocator-parameter and address-index domains, before lowering the operation.
 The emitted size check and this target qualification establish that every byte count an allocator receives has one exact value-preserving target representation, and the allocator receives exactly that value.
 Every emitted target address computation must likewise be proved valid for every runtime value that reaches it: the compiler establishes before emission that each runtime index and each mathematically scaled byte offset actually used by the computation has an exact value-preserving representation in the applicable target address-index domain, and that scaling and offset addition do not wrap.
 An [OP-4] bounds judgment together with an established complete-object-layout or successful-allocation invariant may discharge these obligations; a backend's implicit narrowing does not.
 If target qualification cannot establish one of these facts, target compilation stops before emitting the governed allocation or address operation.
-This stop is a target-layout failure, not a source rejection, [OP-4] bounds failure, runtime proof outcome, or resource-availability failure; no target-domain runtime guard is emitted.
+This stop is a target-layout failure, not a source rejection, [OP-4] bounds failure, runtime proof outcome, or resource-availability failure, and no runtime guard takes its place.
 
 Complete generated frames remain subject to the mandatory checked-representability judgment above.
 That judgment does not predict available stack capacity: available capacity depends on dynamic call depth, recursion, the caller, and the execution environment.
@@ -1133,7 +1133,7 @@ Payload-carrying enums, enum ordering, and enum/integer conversion remain outsid
 
 [OP-9] An allocation's size is computed at run time, and a size the target cannot allocate is heap exhaustion; a stored type has fixed language layout ceilings.
 A runtime-capacity construction [OP-13] and `grow` [OP-10] compute the byte size of their storage from their own count `n` with the checked arithmetic [STOR-6] fixes, and a size the selected target cannot allocate is a request the heap cannot serve, which is heap exhaustion [STOR-8].
-No count carries a static obligation, and every value of its `u64` type is admitted: a count whose size the target can represent still exhausts a heap that lacks the bytes, so a static bound would only tell an unrepresentable size from an unavailable one, and both end the program from the trusted base [SCOPE-3].
+No count carries a static obligation, and every value of its `u64` type is admitted.
 
 All layout-ceiling arithmetic is over unbounded mathematical integers.
 Let `round_up(x,a) = ceil(x/a) * a`.
@@ -1194,7 +1194,7 @@ An atomic update is not a [PAR-2] accumulator form: that rule's accumulator comb
 
 [OP-13] Construction.
 The construction functions are the [PRE-1] records `box_new`, `slots_new`, `ring_new`, `array_filled`, `box_array_filled`, `box_segments_filled`, `box_slots_new`, `box_ring_new`, `slots_from_array`, and `slots_into_array`; there is no `Type::name` spelling and no element-list literal in expression position [FORM-5].
-Each runtime-capacity construction and `grow` [OP-10] computes its size from its own count as [OP-9] states, and no count carries an obligation.
+Each runtime-capacity construction and `grow` [OP-10] computes its size from its own count as [OP-9] states.
 Allocation is total [STOR-8], so no construction has a failure arm for exhausted storage.
 A window built by `slots_new`, `ring_new`, `box_slots_new`, or `box_ring_new` starts empty.
 An `Array` built by `array_filled` or `box_array_filled` has every slot holding the supplied value and requires a copy element type [OWN-1].
@@ -2021,7 +2021,7 @@ It retains every [FN-8] GoalTemplate, its requirement occurrence `(concrete call
 It retains every proof-required integer-domain, subscript-bounds, layout, address, and target-domain obligation occurrence together with the exact derivation authorizing its accepted source node.
 It separately retains each successful PAR-1 and PAR-2 permission derivation that authorizes an optional nonsequential lowering; absence retains no permission and changes no source verdict.
 It also retains every proved loop-invariant base and arbitrary-backedge judgment, each permitted exhaustion export, and every PRF-1 premise-admission, factor, scaled-sum, and final-DIRECT-residual judgment.
-Target lowering must discharge each target-domain obligation from the selected target plus already-checked layout, allocation, and bounds facts before emitting the governed allocation or address operation; it may not replace a missing proof with a runtime guard, and an allocation's size check is no such guard but the computation [OP-9] defines.
+Target lowering must discharge each target-domain obligation from the selected target plus already-checked layout, allocation, and bounds facts before emitting the governed allocation or address operation; it may not replace a missing proof with a runtime guard.
 No accepted proof-required operation carries an implicit runtime check or elimination disposition: a subscript, exact integer operation, or function range requirement is `discharged` at its owning source node, and the checked program retains its exact [ENT-4] or [ENT-6] derivation there.
 A concrete terminal-root identity uses the owning function instance plus the operation NodePath/family/conjunct, the call NodePath/callee/requirement NodePath, or the complete-postcondition block/relation ordinal; display symbols are never identity.
 A `requires_clause` is represented only by its GoalTemplate, call-site derivations, and proved body-entry fact; an `ensures_clause` only by its verified RelationTemplate, selected-exit judgments, and derivations.

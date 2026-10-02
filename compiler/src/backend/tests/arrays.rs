@@ -1620,8 +1620,13 @@ fn main() -> status: std::process::ExitStatus pure {
     );
 }
 
+/// A runtime-capacity block's padded header must fit the selected target's
+/// runtime-allocation maximum whatever the element's stride [STOR-6], and a
+/// count past every target's domain does not stop qualification [OP-9].
+/// Only the zero-stride element also forms address operands for that count,
+/// which must stay inside a narrowed address domain.
 #[test]
-fn zero_stride_allocation_still_qualifies_headers_and_nonzero_controls() {
+fn runtime_allocation_headers_qualify_for_zero_and_nonzero_strides() {
     let host = TargetLayout::host().expect("supported target");
     for (element, value, header) in [("Empty", "Empty()", 8_u64), ("u8", "0_u8", 8_u64)] {
         let source = format!(

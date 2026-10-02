@@ -23,7 +23,7 @@ fn bs_reserve(s: &Box<Slots<u8>>, total: u64) -> result: unit writes(s) contract
   ensures s^.inner.cap == total;
   ensures s^.inner.len == entry(s)^.inner.len;
 } {
-  doc "Grows the backing window to total slots, preserving element order. The native fixture's total bound leaves 16 descriptor bytes in the signed 64-bit allocation/address domain [STOR-6]. grow is defined on Box<Slots<T>> alone, remakes the cell's content whole, may reallocate in place, and computes its new size as OP-9 states, so there is no superseded run to release and no refusal arm [OP-10, STOR-8].";
+  doc "Grows the backing window to total slots, preserving element order. The native fixture's total bound leaves 16 descriptor bytes in the signed 64-bit allocation/address domain [STOR-6]. grow is defined on Box<Slots<T>> alone, remakes the cell's content whole, may reallocate in place, and computes its new size as [OP-9] states, so there is no superseded run to release and no refusal arm [OP-10, STOR-8].";
   grow(cell: s, capacity: total);
   return unit;
 }
