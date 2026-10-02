@@ -546,6 +546,24 @@ rarely insert at the same place.
   inventory is next edited; the storage-destructuring repair uses its actual
   identities and needs no inventory change.
 
+- **Data only proofs read is computed, stored and passed at run time.** A
+  range requirement can only name what the callee receives, so
+  `cascade_level` in
+  `tests/conformance/cases/range5-pos-level-cascade.wf` takes `positions`,
+  `depths` and `level` only for its requirements, and its caller computes
+  `positions`, one `u64` per element, only to pass it; Snowghost's style
+  stage at `8b4f332` does the same. Impact: an allocation, a store per
+  element and five machine arguments per level, bounded below 1% of
+  Snowghost's sequential style stage on two pages
+  ([proof-only data](../research/investigations/proof-only-data/DESIGN.md#measurement)).
+  Change: a whole-program pass that removes what no executable statement
+  reads once proofs are erased, a least fixed point over dead parameters,
+  fields, stores and allocations that keeps calls and uncounted loops and
+  the entry, callback, host and module-public boundaries. Validate with
+  compiler tests pinning both witnesses' emitted code free of the data, and
+  by timing the program that reopened the item. Reopen with a program whose
+  profile puts such data on its critical path.
+
 ## Containers and storage lowering
 
 - **A hash map offers no sample or bounded visit.**
@@ -2527,27 +2545,6 @@ each is resolved by a discussion and a tree change.
   by a forwarding wrapper accepted unchanged and a wrapper that forwards
   the other variant still refused. Reopen when a program forwards a
   producer's result through a wrapper.
-
-- **Parameters a contract names but the body does not use are passed at
-  run time.** A range requirement can only name what the callee receives,
-  so `cascade_level` in
-  `tests/conformance/cases/range5-pos-level-cascade.wf` takes `positions`,
-  `depths` and `level` only so that its `listed` and `up` requirements can
-  state the facts its certificate uses; the caller passes them on every
-  call. Each costs a pointer and a length or one integer per call, which the
-  measured cascade does not show, but a writer must keep proof-only data
-  alive and in scope to call such a function. A proof-only parameter that
-  lowering erases would need its own rule for what such a parameter may
-  flow into. In Snowghost at `8b4f332` three parameters of 2,316 functions
-  are read only by a contract, all `cascade_level`'s, and `level_index`
-  computes `positions`, one `u64` per element, only to pass it, so a writer
-  now computes a value only to pass it; the
-  [layout-friction investigation](../research/investigations/layout-friction/DESIGN.md#4-parameters-only-a-contract-reads)
-  compares an order fact that needs no witness (available for one run, not
-  per segment), proof-only parameters and proof-only state. The owner left
-  the choice open until a program needs it, which this now is; validate a
-  chosen form by the cascade without the stored `positions` and by measuring
-  the call cost in a cascade with small levels.
 
 ## Ownership redesign (candidate x1) follow-ups
 

@@ -100,6 +100,11 @@ the work-branch and merge boundary.
   rows kill and from positions stored in other windows; module names closed
   to every local; allocation clamps; parameters only a contract reads), each
   with its witness, rule, census of the layout code and directions.
+- [Proof-only data](investigations/proof-only-data/DESIGN.md): what removing
+  data only proofs read would take, what the optimizer removes today in the
+  scatter, cascade and Snowghost witnesses, a `proof` declaration rule
+  compared with five alternatives and refused, what a compiler pass would
+  need instead, and a timing of Snowghost's style stage without the data.
 
 Open research questions and evidence links are in [ideas](../docs/ideas.md);
 known compiler defects and implementation costs are in [todo](../docs/todo.md).
