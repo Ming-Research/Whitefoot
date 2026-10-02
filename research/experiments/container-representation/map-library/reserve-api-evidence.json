@@ -5256,9 +5256,9 @@
   "fresh_insert_matched_c": {
     "archive": {
       "path": "fresh-insert-matched-c-evidence.tar.gz",
-      "bytes": 3062454,
-      "sha256": "c8f368b6ee4351d8da9a631741dfd30f7aeb41a6c98d5c725a4d11b778579592",
-      "members": 19
+      "bytes": 3144598,
+      "sha256": "5f4e7eb4bccd61343b27c923f468c1cc831ff74feea73abf3941d016d13e86a4",
+      "members": 26
     },
     "prefix": "fresh-insert-matched-c/",
     "manifest": "fresh-insert-matched-c/manifest.json",
@@ -5292,6 +5292,28 @@
       "sha256": "150e92ee1abe107735e091f66d1c7849e36a2bb45f9aa7596ee3ecc483dae5a3",
       "members": 1259,
       "unchanged": true
+    }
+  },
+  "direct_put_union": {
+    "archive": {
+      "path": "fresh-insert-matched-c-evidence.tar.gz",
+      "bytes": 3144598,
+      "sha256": "5f4e7eb4bccd61343b27c923f468c1cc831ff74feea73abf3941d016d13e86a4",
+      "members": 26
+    },
+    "prefix": "direct-put-union/",
+    "manifest": "direct-put-union/manifest.json",
+    "manifest_sha256": "22099ccfd2d5806537c062850ec0474a960e6bce0e8e84e1bfac33fa8753bbf8",
+    "retained_records": 95,
+    "producer_manifest_sha256": "0facab98c95775f3e9e593caddce3d75957cf0f6f49d7d6a8a77f788f5dfb92b",
+    "native_criterion": "FAIL: reached wide payload spills",
+    "runtime_checks": "not run",
+    "timing": "not run",
+    "production_adoption": false,
+    "previous_small_archive": {
+      "sha256": "c8f368b6ee4351d8da9a631741dfd30f7aeb41a6c98d5c725a4d11b778579592",
+      "members": 19,
+      "member_names_and_bytes_preserved": true
     }
   }
 }

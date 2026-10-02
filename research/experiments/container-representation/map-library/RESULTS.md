@@ -7322,3 +7322,35 @@ The model excludes fixed hashing, call, division, write and receipt costs and
 supplies neither nanosecond savings nor a Rust group-probing comparison. Any
 explicit-capacity sensitivity needs its own criterion, allocation accounting
 and unchanged outcomes; the original entry-floor target is unchanged.
+
+### Direct Put variants under union lowering: native criterion fails
+
+Existing memory-only union lowering changes the earlier duplicate-payload
+premise: direct Inserted/Replaced(pair)/Full(pair) variants now occupy the
+same 24/272 bytes as the compact scalar/wide result, with destination returns.
+Both arms use frozen compiler fb197 and ordinary O3. Separate layout witnesses
+show unit/unit is 8 bytes (unit is not zero-sized); true zero-sized pairs
+shrink 8→4 bytes, while u64/zero-sized grows 16→24 bytes. Those last two forms
+remain register-returned products, not unions. No universal compact ABI follows.
+
+The reached wide policy-result consumer fails the registered no-new-spills
+criterion: 82→134 static instructions, frame 0→160 bytes, seven payload spills
+(56 bytes) plus an 8-byte incoming-digest spill. Its returned paths execute
+77→90/89 instructions for Replaced/Full. The optimized candidate captures all
+payload fields before the outcome split; the control streams them into one
+digest. Selected raw/optimized IR, native excerpts and actual caller relocations
+preserve this source/lowering interaction. It is not a language-required eager
+schedule, but the observation alone proves neither a general fix nor a compiler
+correctness defect; alias/snapshot obligations remain relevant.
+
+All try_put bodies improve 95→94 instructions and exchange instruction words
+remain identical. These local reductions do not satisfy the consumer criterion:
+wide whole-trace instructions grow 1,801→2,079 and static stack accesses
+433→568, at the same 1,984-byte frame. Whole-function counts are not per-operation
+costs. Eight native preparation stages and the final two layout emissions pass;
+MOD-7 documentation and OWN-1 copy/move authoring failures remain retained.
+No runtime correctness execution or timing follows, and the source API candidate
+is not adopted. The direct-put-union/ component in the
+[small evidence archive](fresh-insert-matched-c-evidence.tar.gz) retains exact
+sources, patch, layout qualifications, statuses and compact primary excerpts;
+prior archive payloads and the earlier compact-result selection are unchanged.

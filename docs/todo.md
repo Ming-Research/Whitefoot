@@ -3053,6 +3053,13 @@ rarely insert at the same place.
   classification distinct from enum
   representation and preserve shared caller/callee ABI and body/wrapper order
   if future evidence reopens the existing return-register decision.
+  The [direct-Put union screen](../research/experiments/container-representation/map-library/RESULTS.md#direct-put-variants-under-union-lowering-native-criterion-fails)
+  has no scalar/wide size penalty under current union lowering, but its reached
+  wide consumer adds eager capture, seven payload spills and a 160-byte frame.
+  Reopen a general consumer scheduling/form improvement only with independent
+  alias/snapshot obligations, no new payload copies and a complete-operation
+  gain. The exact source/O3 interaction is observed; no compiler defect or
+  universally avoidable cost is established, and runtime remains untested.
   The [separate two-definition inline experiment](../research/experiments/container-representation/map-library/RESULTS.md#two-definition-inline-chain-three-scalar-gains-incomplete-qualification)
   qualifies three scalar insertion gains after removing the per-item boundary
   and hoisting state, but only two aligned peer targets pass and two wide controls
@@ -4561,6 +4568,14 @@ condition under which it is taken up.
   work before proposing any owner-approved budget increase. Preserve all tests,
   comparisons, failed observations and current budgets; repeated reruns must not
   replace investigation.
+  At research-only revision 711a8716a,
+  [gate attempt 1](https://github.com/mbbill/Whitefoot/actions/runs/37002452057/attempts/1)
+  also exceeds Linux lint 46.6/40 s and static 70.1/65 s, and macOS unit
+  104.0/100 s and its group 284.6/280 s. The matching
+  [compute attempt 1](https://github.com/mbbill/Whitefoot/actions/runs/37002456996/attempts/1)
+  records candidate compilation 116.3/115 s. These are budget observations,
+  not an isolated source cause. One failed-job rerun of each workflow passes;
+  retain the failed attempts and unchanged test budgets and gates.
 
 - **Vector append comparisons do not fully balance variant order.** The
   [growth driver](../research/experiments/container-representation/vector-library/vector-costs.c)
