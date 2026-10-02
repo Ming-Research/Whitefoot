@@ -3032,6 +3032,13 @@ rarely insert at the same place.
   criterion. Keep callable-result classification distinct from enum
   representation and preserve shared caller/callee ABI and body/wrapper order
   if future evidence reopens the existing return-register decision.
+  The [separate two-definition inline experiment](../research/experiments/container-representation/map-library/RESULTS.md#two-definition-inline-chain-three-scalar-gains-incomplete-qualification)
+  qualifies three scalar insertion gains after removing the per-item boundary
+  and hoisting state, but only two aligned peer targets pass and two wide controls
+  are drift-invalid. The one-definition screen remains a native failure.
+  Reopen generally justified call-site selection and complete regression/peer
+  qualification, retaining code growth and linked-layout effects; do not
+  substitute a function-name rule or revive the withdrawn uniform inline hint.
 
 - **Machinery with no remaining consumer.** The checker keeps the region
   machinery STOR-8 retired, though every value it produces is empty:

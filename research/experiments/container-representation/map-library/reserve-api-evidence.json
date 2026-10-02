@@ -1,8 +1,8 @@
 {
   "purpose": "Isolated ordinary public reserve with verified future entry headroom; single production baseline panel, not an optimization/adoption result",
   "archive": "reserve-api-evidence.tar.gz",
-  "archive_sha256": "7a43e6152bc034e1624e4b997738450f5e71c393c65da5ff49387259d41a54b5",
-  "archive_members": 1211,
+  "archive_sha256": "3bdd8aa5170f5ad64c7a4ad2519e6eed2eb53ab205d5eff45d4d037bb3dbeb63",
+  "archive_members": 1231,
   "base_revision": "89571a60381a685cfbe760248ceb6178d9f9ac05",
   "production_cli_sha256": "c12b2b2a6c9694fd2bc1b7be0004d582ae9628951422def849f4cf6a3ac02f77",
   "timed_image_sha256": "f1ebf18d7a94c79250bb3cbd74a0b379a2a30c6e5e4eda48396ec77d8bbdbf3f",
@@ -5145,6 +5145,53 @@
       "from": "component-index.json",
       "to": "component-index-before-division-screens.json",
       "sha256": "c74d7f51e399371b7653388ad4346429c4f8b8deeb7d49bf5c8bea207246e5d1"
+    },
+    "all_prior_member_bytes_preserved": true
+  },
+  "fresh_insert_inline_screens": [
+    {
+      "prefix": "fresh-insert-inline-call/",
+      "manifest": "fresh-insert-inline-call/manifest.json",
+      "manifest_sha256": "d07b787c7e0d862ad04330653ee6f21b7b31cb7803c8db0be229366f25a2a2ba",
+      "payload_count": 5,
+      "retained_records": 22,
+      "raw_row_counts": {},
+      "production_adoption": false,
+      "native_criterion": "FAIL",
+      "runtime_checks": false,
+      "timing": false
+    },
+    {
+      "prefix": "fresh-insert-inline-chain/",
+      "manifest": "fresh-insert-inline-chain/manifest.json",
+      "manifest_sha256": "e09550cd1b1f41c13f6d4bd25c7d9715ceeb1dd8fda744fca264ae9823b21414",
+      "payload_count": 14,
+      "retained_records": 256,
+      "raw_row_counts": {
+        "analysis/timing/candidate-cohort-0.csv": 55872,
+        "analysis/timing/candidate-cohort-1.csv": 55872,
+        "analysis/timing/control-cohort-0.csv": 55872,
+        "analysis/timing/control-cohort-1.csv": 55872
+      },
+      "production_adoption": false,
+      "native_criterion": "PASS",
+      "timing_rows": 223488,
+      "check_outcomes": 92,
+      "scalar_qualified_gains": 3,
+      "scalar_peer_targets": 2,
+      "wide_cells_drift_invalid": 2,
+      "global_scalar_success": false,
+      "wide_negative_controls_pass": false
+    }
+  ],
+  "inline_screens_prior_index": {
+    "prior_archive_sha256": "7a43e6152bc034e1624e4b997738450f5e71c393c65da5ff49387259d41a54b5",
+    "prior_members": 1211,
+    "unchanged_names_and_bytes": 1210,
+    "renamed_member": {
+      "from": "component-index.json",
+      "to": "component-index-before-inline-screens.json",
+      "sha256": "aa9f3cd3f0853a1f9af7844428fda64d2a0b4d2138778c4d2c60da8a80efc7ca"
     },
     "all_prior_member_bytes_preserved": true
   }

@@ -51,6 +51,9 @@ API window; neither instrument replaces the whole-application goal.
 The later [scalar register-result counterfactual](#fresh-insertion-register-result-native-success-without-timing-gain)
 removes result memory traffic but qualifies no scalar gain; all wide negative
 controls fail cohort-drift admission. No callable ABI change is selected.
+A separate [two-definition inline experiment](#two-definition-inline-chain-three-scalar-gains-incomplete-qualification)
+qualifies three scalar gains but only two peer targets; its required wide-control
+screen fails. These partial gains select no production inlining policy.
 The [EDIT-only two-span follow-up](#edit-only-two-span-probing-rejected)
 reduces native body instructions but has no qualified miss gain, three qualified
 two-cohort hit losses and zero candidate peer targets; its source stays rejected.
@@ -7081,3 +7084,69 @@ pins. The arithmetic proposal note is historical preparation, not an executed
 correctness proof or a selected design; later emitted-source/native outcomes
 are explicitly separate. Full modules and executable dependencies are omitted.
 Both failures leave the original fresh-insertion timing verdict unchanged.
+
+### One-definition inline screen: per-item call relocated
+
+Adding one alwaysinline definition attribute to the original scalar try_put
+removes its result traffic, but the public batch now calls an outlined
+fresh_insert on every item. The active frame falls 96→48 bytes; hash constants,
+environment and capacity loads remain inside that helper. All six native stages
+pass (guard 1.36 s), but the preregistered no-per-item-call criterion fails.
+The original body/ABI and wide native streams remain unchanged. No runtime
+checks or timing followed, and this failure is not reclassified by the separate
+two-definition trial.
+
+### Two-definition inline chain: three scalar gains, incomplete qualification
+
+A separately registered IR counterfactual adds exactly two definition
+attributes. It removes the actual scalar per-item call/result destination and
+hoists invariant state and hash constants before the key loop. The generic
+batch grows 35→94 instructions (140→376 bytes), with active frame 96→48 bytes.
+The per-key collision test, hash multiplication and home UDIV/MSUB remain.
+Reached wide instruction bytes and relative relocations match control; absolute
+addresses change. This combines boundary elimination, hoisting and code layout,
+not an isolated call-latency estimate or a source-selected inline rule.
+
+Native screening passes in 1.35 s. Runtime checks pass in 5.01 s: all 92 fresh
+expected outcomes, four 18,390-trace complete-map panels and four checksum faults.
+The prior diagnostic-expectation repair is reused before execution; this trial
+has no new wrapper failure or retry. The fixed campaign exits zero in 55.87 s,
+retains all 223,488 rows and preserves all 25 input pins; reduction exits zero
+in 12.62 s. Ordinary source, geometry, driver, peers and compiler fb197276… are
+unchanged; the candidate is only the two-definition IR rewrite. Both arms use
+the retained monolithic Clang O3 harness. Production O2 and fragmented ThinLTO
+are not measured by this trial.
+
+Medians below are ns/insertion, cohort 0 / 1, with Rust/C++ from the candidate
+panel. Both panels' complete ranges, raw outliers and flags remain retained.
+
+| Series | Bytes / S | WF control | WF candidate | Rust | C++ | Qualified gain / peer target |
+|---|---:|---:|---:|---:|---:|---|
+| default | 8 / 64 | 16.263 / 16.292 | 14.882 / 14.987 | 9.907 / 9.973 | 12.375 / 12.367 | yes / fail |
+| default | 8 / 4096 | 15.812 / 16.797 | 14.277 / 14.174 | 9.341 / 9.272 | 11.233 / 11.048 | no / fail |
+| aligned | 8 / 64 | 16.255 / 16.273 | 14.961 / 14.936 | 7.612 / 7.597 | 21.217 / 21.117 | yes / pass |
+| aligned | 8 / 4096 | 16.165 / 15.649 | 14.262 / 14.119 | 4.317 / 4.316 | 21.844 / 21.965 | yes / pass |
+| default | 256 / 64 | 30.393 / 29.738 | 29.938 / 30.123 | 26.152 / 25.290 | 26.131 / 26.194 | no / fail |
+| default | 256 / 4096 | 34.755 / 33.728 | 38.217 / 35.844 | 36.683 / 32.144 | 26.567 / 25.266 | drift-invalid |
+| aligned | 256 / 64 | 30.165 / 29.683 | 32.689 / 29.886 | 28.736 / 23.609 | 37.942 / 35.730 | drift-invalid |
+| aligned | 256 / 4096 | 35.307 / 34.090 | 36.954 / 36.172 | 31.167 / 30.346 | 38.330 / 37.501 | no / fail |
+
+Three of four admitted scalar cells qualify gains in both cohorts: small default
+8.49%/8.01%, small aligned 7.96%/8.21%, and large aligned 11.77%/9.78%.
+Large default medians improve but cohort 0 ranges overlap, so that cell does
+not qualify. Only the two aligned scalar cells pass the slower-peer target;
+neither default scalar cell passes. No qualified regression is detected.
+Two wide controls fail candidate Rust cohort-drift admission: default S4096
+14.121% and aligned S64 21.715%. The other two wide cells are valid overlaps.
+Unchanged reached wide code does not repair these invalid observations.
+
+Global scalar success and the required wide-control screen therefore fail,
+despite the three measured scalar gains. No production compiler policy, uniform
+inline hint or function-name rule is selected. The fresh-insert-inline-call/
+and fresh-insert-inline-chain/ components in the
+[existing archive](reserve-api-evidence.tar.gz) retain original criteria, exact
+attribute patches/inverse proofs, selected native bodies, direct checks,
+all raw rows and reductions. Earlier native notes describe their stage;
+original dependencies remain pinned by fresh-insert-api/, and full modules/
+binaries are omitted. The snapshot controls remain unsubtracted, with the
+previously recorded work-unit versus actual geometry-call distinction.
