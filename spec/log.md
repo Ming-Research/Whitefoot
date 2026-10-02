@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-02 v0.84 amended: an order-free range derivation
+
+Rules: changed RANGE-3
+
+Owner-approved: 2026-10-02, in the session, written in Chinese, after the handoff of PR #204: Q22 and Q23 as recommended ("22-24 approved")
+
+Summary: Before v0.84 is released, RANGE-3's theory solves a set's equalities over the integers, their integer solutions written one to one over free integer parameters, and is contradictory when the equalities have no integer solution, a disequality's sides agree at every solution, or the inequalities written over the parameters and tightened have no rational solution; solving only equalities with a unit coefficient let the verdict depend on the order of solving. Its decision splits a branch on any open item, a definition without a case, a disequality the solutions do not fix, or two reads of one version neither at one index tuple nor held apart at a differing position, into all of the item's cases, so the verdict is the same in every split order; the fixed order left a pair kept apart at two positions without the orientation a one-position pair got, and never settled a pair at strided indices. Selection ground: deduction from the witnesses in `research/investigations/unique-keys/POINTWISE.md`, "An order-free derivation", and the cases `range3-neg-strided-reads`, `range3-pos-reads-apart-at-two-positions` and `range3-neg-reads-apart-in-one-arm`.
+
 ## 2026-10-02 v0.84: range facts, range postconditions and the apart certificate
 
 Rules: added RANGE-1, RANGE-2, RANGE-3, RANGE-4, RANGE-5; changed FORM-2, GRAM-2, GRAM-4, GRAM-5, FN-9, INV-1, PAR-2, PRE-1

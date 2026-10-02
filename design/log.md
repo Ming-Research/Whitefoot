@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-02 Make the range derivation order-free and refute it by conflict-directed backjumping
+
+Nodes: language/checks-and-proofs/range-facts, compiler/range-judgment, language/checks-and-proofs, language/parallelism/loop-permission, language/ownership, language/data-model/storage-shapes, compiler
+
+Owner-approved: 2026-10-02, in the session, written in Chinese, after the handoff of PR #204: Q22, Q23 and Q24 as recommended ("22-24 approved")
+
+Summary: The range judgment's theory solves a set's equalities over the integers, renaming an atom by an integer change of variables until an equality has a unit coefficient, and tightens each inequality over the free atoms, so its verdict depends only on the set of literals and a contradiction stays one as literals are added; solving only equalities that already had a unit coefficient made `x == 3z, x == -2y, x == 3` refuted in one order and open in the other. Refused: an order of solving stated in the specification, and rational solving with literals tightened in the problem's own atoms. A branch is split on any open item into all of its cases, two reads kept from being one element split over their differing positions, so the clause's verdict is the same in every split order; a pair kept apart at two positions was left unsplit, and a pair at strided indices was split without end. Refused: a split order stated in the specification. The solver records the splits each literal and contradiction rests on and closes a split's other branches when a branch is refuted without its case, conflict-directed backjumping, which keeps every verdict and takes `owner_loop.wf` from about 12.5 s to about 1 s. Refused: the full case analysis, a memo of refuted literal sets, and splitting first on the read pairs the open conclusion reaches. Evidence: [the order-free derivation and the result](../research/investigations/unique-keys/POINTWISE.md#an-order-free-derivation). The last five nodes named here are unchanged by this entry and carry the ruling of the entry below; they are listed because this change, made on that one's branch before it reached main, reaches main with it.
+
 ## 2026-10-02 Prove range facts over derived index arrays, hand them back as postconditions, and certify scattered writes
 
 Nodes: language/checks-and-proofs, language/checks-and-proofs/range-facts, language/parallelism/loop-permission, language/ownership, language/data-model/storage-shapes, compiler, compiler/range-judgment
