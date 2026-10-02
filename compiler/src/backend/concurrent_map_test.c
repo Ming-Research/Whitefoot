@@ -257,6 +257,7 @@ enum { GET, INSERT, REMOVE, UPDATE };
 typedef struct {
     uint64_t call, ret, arg, out;
     int kind, key, result;
+    unsigned thread;
 } op_t;
 
 typedef struct {
@@ -266,11 +267,13 @@ typedef struct {
     _Atomic int *go;
 } history_t;
 
-static uint64_t now_ns(void) {
-    struct timespec t;
-    clock_gettime(CLOCK_MONOTONIC, &t);
-    return (uint64_t)t.tv_sec * 1000000000ull + (uint64_t)t.tv_nsec;
-}
+/* What stamps an operation's call and return: one counter, sequentially
+ * consistent, so that a return stamped before a call means the first
+ * operation happens before the second, the order linearizability asks the
+ * map to respect. A clock read is not ordered with the operation's own
+ * memory accesses, and two processors' clocks need not agree to within an
+ * operation's length, so clocks could order two operations that overlap. */
+static _Atomic uint64_t history_clock;
 
 static void *record(void *arg) {
     history_t *h = arg;
@@ -287,7 +290,8 @@ static void *record(void *arg) {
          * look like another. */
         o->arg = ((uint64_t)(h->thread + 1) << 40) | ((uint64_t)i << 12);
         uint64_t key = key_of((uint64_t)o->key), v = 0;
-        o->call = now_ns();
+        o->thread = h->thread;
+        o->call = atomic_fetch_add(&history_clock, 1);
         switch (o->kind) {
         case GET:
             o->result = wf_cmap_get(user, key, &v);
@@ -303,7 +307,7 @@ static void *record(void *arg) {
             o->result = wf_cmap_update(user, key, add_one, NULL);
             break;
         }
-        o->ret = now_ns();
+        o->ret = atomic_fetch_add(&history_clock, 1);
     }
     wf_cmap_leave(user);
     return NULL;
@@ -519,8 +523,15 @@ static void histories(unsigned rounds) {
                 for (unsigned j = 0; j < OPS; j++)
                     if (h[i].ops[j].key == (int)k)
                         per_key[n++] = &h[i].ops[j];
-            if (!linearizable(per_key, n))
+            if (!linearizable(per_key, n)) {
+                /* The history, so that a failure can be read. */
+                for (unsigned i = 0; i < n; i++)
+                    printf("thread %u kind %d arg %llx result %d out %llx call %llu ret %llu\n", per_key[i]->thread,
+                           per_key[i]->kind, (unsigned long long)per_key[i]->arg, per_key[i]->result,
+                           (unsigned long long)per_key[i]->out, (unsigned long long)per_key[i]->call,
+                           (unsigned long long)per_key[i]->ret);
                 fail("a key's history is not linearizable (round, key)", round, k);
+            }
         }
         free(per_key);
         for (unsigned i = 0; i < THREADS; i++)
