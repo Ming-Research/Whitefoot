@@ -1035,7 +1035,7 @@ rarely insert at the same place.
   next work after PR #202.
 
 - **`ZADD` is held near a million a second by one key's critical section.**
-  firn answered 996,000 to 1,127,000 a second at every server CPU count on
+  firn answered 907,000 to 1,127,000 a second at every server CPU count on
   the 14900K, 0.88 of Dragonfly at 2 and 0.95 at 16
   ([many cores](../research/investigations/concurrent-map/DESIGN.md#many-cores)).
   For a member already held, `add_ranked` (`apps/firn/commands/sorted.wf`)
