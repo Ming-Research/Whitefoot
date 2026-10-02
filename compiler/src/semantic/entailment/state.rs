@@ -948,10 +948,6 @@ pub(crate) struct DerivationMetrics {
 pub(crate) enum DerivationRootKind {
     BodyEntryContradiction,
     BoundsObligation(u32),
-    /// A tighter numeric ceiling projected for one discharged OP-9
-    /// obligation. Present only when its derivation differs from the
-    /// obligation's admission root.
-    AllocationUpperBound(u32),
     RangePartition {
         obligation: u32,
         partition: u32,
@@ -2625,6 +2621,18 @@ struct ClosedViewKey {
     ledger: usize,
 }
 
+/// One bound cell `left - right <= bound` an [ENT-5] kill removed, with its
+/// proof and which of its two terms the kill reached.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct KilledCell {
+    pub(crate) left: TermId,
+    pub(crate) right: TermId,
+    pub(crate) bound: i128,
+    pub(crate) proof: DerivationId,
+    pub(crate) left_killed: bool,
+    pub(crate) right_killed: bool,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct FactState {
     /// What part of the bound matrix is already closed. Only a state closed
@@ -3099,9 +3107,9 @@ impl FactState {
     /// whole rows and columns keeps the surviving cells closed among
     /// themselves, so a closed state keeps that core and marks the killed
     /// terms fresh for the next closure to rebuild.
-    pub(crate) fn kill(&mut self, mut predicate: impl FnMut(TermId) -> bool) {
+    pub(crate) fn kill(&mut self, mut predicate: impl FnMut(TermId) -> bool) -> Vec<KilledCell> {
         if self.all_derivable {
-            return;
+            return Vec::new();
         }
         self.closed_view.take();
         // The predicate depends only on the term, and matrix-sized key scans
@@ -3114,12 +3122,23 @@ impl FactState {
             }
             *verdicts[index].get_or_insert_with(|| predicate(term))
         };
-        let dead: Vec<(TermId, TermId)> = self
-            .bounds
-            .cells()
-            .filter(|(left, right, _, _)| killed(*left) || killed(*right))
-            .map(|(left, right, _, _)| (left, right))
-            .collect();
+        let mut removed = Vec::new();
+        for (left, right, bound, proof) in self.bounds.cells() {
+            let left_killed = killed(left);
+            let right_killed = killed(right);
+            if left_killed || right_killed {
+                removed.push(KilledCell {
+                    left,
+                    right,
+                    bound,
+                    proof,
+                    left_killed,
+                    right_killed,
+                });
+            }
+        }
+        let dead: Vec<(TermId, TermId)> =
+            removed.iter().map(|cell| (cell.left, cell.right)).collect();
         let mut dead_terms = dead
             .iter()
             .flat_map(|(left, right)| [*left, *right])
@@ -3160,6 +3179,17 @@ impl FactState {
             let [left, right] = relation.terms();
             !killed(left) && !killed(right)
         });
+        removed
+    }
+
+    /// [DIAG-1] puts back bound cells a kill removed, each with the proof it
+    /// had, so a failed judgment can ask whether those cells alone would
+    /// have discharged it. Only a diagnostic copy of a state is restored; no
+    /// judgment that decides acceptance reads one.
+    pub(crate) fn restore_killed(&mut self, cells: &[KilledCell], ledger: &DerivationLedger) {
+        for cell in cells {
+            self.add_bound(cell.left, cell.right, cell.bound, cell.proof, ledger);
+        }
     }
 
     /// Removes only proof candidates invalidated by an S12-private holder

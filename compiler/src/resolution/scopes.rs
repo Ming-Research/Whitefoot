@@ -388,6 +388,16 @@ impl ScopeBuild {
         })
     }
 
+    /// Whether a scope is a module's declaration inventory [MOD-3]. Every
+    /// writer's top-level declaration enters one, the synthetic root module's
+    /// included [MOD-9]; the PRE-1 environment and a file's alias header are
+    /// other scopes.
+    pub(crate) fn is_inventory_scope(&self, scope: ScopeId) -> bool {
+        self.records
+            .get(scope.index())
+            .is_some_and(|record| record.kind == ScopeKind::Module)
+    }
+
     /// The ordinary outer environment supplied by PRE-1, when the bundle
     /// carries the prelude records.
     pub(crate) fn is_prelude_scope(&self, scope: ScopeId) -> bool {

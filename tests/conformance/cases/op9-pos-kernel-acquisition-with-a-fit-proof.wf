@@ -4,13 +4,13 @@ alias exit_status = std::process::exit_status;
 fn make(n: u64) -> made: Box<Slots<i32>> pure contract {
   requires n <= 1024_u64;
 } {
-  doc "The same acquisition is admitted once the construction's own allocation-size obligation is discharged from a written requirement [OP-9, MSR-4].";
+  doc "The same acquisition under a written requirement on its count is admitted as the unconstrained one is [OP-9].";
   let taken = box_slots_new::<i32>(capacity: n);
   return move taken;
 }
 
 fn make_literal() -> made: Box<Slots<i32>> pure {
-  doc "A literal count closes the same obligation without a written requirement.";
+  doc "A literal count is admitted the same way.";
   let taken = box_slots_new::<i32>(capacity: 64_u64);
   return move taken;
 }

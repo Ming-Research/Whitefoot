@@ -194,11 +194,10 @@ impl Judging<'_, '_, '_> {
             residual,
             overlap_targets: None,
             derivation: outcome.derivation,
-            allocation_length_upper_bound: None,
-            allocation_length_upper_bound_derivation: None,
             affine_index_maps: Vec::new(),
             range_partitions: Vec::new(),
             written_before: state.written_before(discharged),
+            killed_by: Vec::new(),
         });
     }
 }
@@ -228,7 +227,6 @@ impl Reasoning<'_, '_, '_> {
             },
             route: derivation.map(|_| ProofRoute::Affine),
             derivation,
-            numeric_upper_bound: None,
             product_interval: None,
         }
     }

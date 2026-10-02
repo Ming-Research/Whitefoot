@@ -279,7 +279,7 @@ fn key_create<K>(count: u64) -> result: Box<Slots<Slot<K>>> pure contract {
   requires count <= 2097152_u64;
   ensures result.inner.len == count;
 } {
-  doc "Allocation is total, so the table is created without a refusal arm and the static allocation-size obligation is discharged from the written bound.";
+  doc "Allocation is total, so the table is created without a refusal arm [STOR-8].";
   let spare = box_slots_new::<Slot<K>>(capacity: count);
   key_fill::<K>(slots: &spare, count: count);
   return move spare;

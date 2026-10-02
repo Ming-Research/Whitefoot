@@ -13,6 +13,22 @@ Owner-approved: 2026-10-02, in the session, written in Chinese, after the handof
 
 Summary: Data that only proofs read stays ordinary data under no declaration of its own, and removing its run-time cost is the compiler's work once a measurement shows it worth a pass, because a proof marking splits every name into two kinds with a one-way flow between them that a reader must keep straight, for a saving bounded below 1% of Snowghost's sequential style stage on two pages, while the compiler, which erases proofs before lowering and sees every call, finds the same data unaided ([proof-only data](../research/investigations/proof-only-data/DESIGN.md)). Proof declarations, proof-only parameters and a logical model are refused.
 
+## 2026-10-02 Compute an allocation's size at run time, and make a size the target cannot allocate heap exhaustion
+
+Nodes: language/checks-and-proofs/obligation-discharge, language/data-model, compiler/diagnostic-repairs, compiler/prelude-records
+
+Owner-approved: 2026-10-02, in the session, written in Chinese: after the handoff of PR #206's cards, Q33 B ("apart from 25, which I think needs research, I agree to all the others"); after the handoff of PR #209, which showed every rule change with its before and after behavior, the change as shown ("for Q25 option A I need to see what the code actually looks like; the others agreed")
+
+Summary: An allocation's byte size is computed at run time with checked arithmetic, and a size that wraps `u64` or exceeds the selected target's runtime-allocation maximum is heap exhaustion before the allocator is asked, so no allocation count carries a static obligation, because a size the target cannot represent and a size the heap cannot supply both end the program from the trusted base, while proving the bound made writers clamp counts to ceilings no program needed ([layout friction](../research/investigations/layout-friction/DESIGN.md)). The static obligation and standing length bounds are refused; the OP-9 repair, the target-stop report and the per-site count bound retire with the obligation, and the opaque-struct decision keeps a uniform layout ceiling without the allocation-size proof.
+
+## 2026-10-02 Separate callables from values in name competition, and name the call behind a lost bound
+
+Nodes: language/name-resolution, compiler/diagnostic-repairs
+
+Owner-approved: 2026-10-02, in the session, written in Chinese: after the handoff of PR #206's cards, Q29 A and Q32 B ("apart from 25, which I think needs research, I agree to all the others"); after the handoff of PR #207, which showed every rule change with its before and after behavior, Q35 A and the change as shown ("for Q25 option A I need to see what the code actually looks like; the others agreed")
+
+Summary: The lexical identifier domain splits into callables and values, a module alias being both, and two declarations compete only within a class, except that two declarations of one module's inventory compete whatever their class, because no use admits both a callable and a value while an alias binds by path alone; a local value beside a function of its spelling is therefore neither a redeclaration nor a shadow, which the layout census found cost every merge of separately written records renames ([layout friction](../research/investigations/layout-friction/DESIGN.md)). An unproved subscript bound whose length facts a call's row removed is asked again on a copy of its state with those cells put back, and when that discharges it the repair names the call and offers the callee's `ensures` and, where it would help, the row the callee's body exhibits, beside the guard; acceptance never reads the copy, and receipt keys leave out what bodies exhibit.
+
 ## 2026-10-02 Keep killed length facts and stored positions to the writer, after the layout-stage census
 
 Nodes: language/effects, language/checks-and-proofs/range-facts

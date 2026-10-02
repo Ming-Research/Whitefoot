@@ -1,0 +1,22 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn count(limit: u64) -> result: u64 pure {
+  return limit;
+}
+
+fn capped(limit: u64) -> count: u64 pure contract {
+  ensures count <= limit;
+} {
+  doc "The result datum takes the spelling of a top-level function: a value and a callable share no use class, so the candidate is fresh [FN-9, TYPE-6].";
+  return limit;
+}
+
+fn main() -> status: ExitStatus pure {
+  let got = capped(limit: 3_u64);
+  let same = count(limit: got);
+  if same != 3_u64 {
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 0_u8);
+}

@@ -14,14 +14,14 @@ public fn grow_vector_reserve<T, const ceiling: u64>(values: &GrowVector<T, ceil
   ensures capacity >= total;
   ensures values^.storage.inner.cap >= entry(values)^.storage.inner.cap;
   ensures values^.storage.inner.len == entry(values)^.storage.inner.len;
-} doc "Raises capacity to at least total within this vector's caller-selected ceiling, preserving the window. The concrete ceiling gives every monomorphized grow site its OP-9 bound, while target qualification still checks the complete selected layout under STOR-6. grow remakes the cell's content whole and may reallocate in place [OP-10], so there is no superseded backing to release here.";
+} doc "Raises capacity to at least total within this vector's caller-selected ceiling, preserving the window. The concrete ceiling bounds every monomorphized grow site's capacity, while target qualification checks the complete selected layout under STOR-6. grow remakes the cell's content whole and may reallocate in place [OP-10], so there is no superseded backing to release here.";
 
 public fn grow_vector_append<T, const ceiling: u64>(values: &GrowVector<T, ceiling>, value: T) -> length: u64 writes(values.storage) contract {
   requires values^.storage.inner.len < ceiling;
   ensures length == values^.storage.inner.len;
   ensures values^.storage.inner.len == entry(values)^.storage.inner.len + 1_u64;
   ensures values^.storage.inner.cap >= entry(values)^.storage.inner.cap;
-} doc "Appends one value, doubling full nonempty backing while that total stays within the caller-selected ceiling, saturating at the ceiling otherwise, and taking one slot when the backing is empty. The written length bound and the concrete ceiling discharge each allocation-size obligation [OP-9].";
+} doc "Appends one value, doubling full nonempty backing while that total stays within the caller-selected ceiling, saturating at the ceiling otherwise, and taking one slot when the backing is empty.";
 
 public fn grow_vector_insert<T, const ceiling: u64>(values: &GrowVector<T, ceiling>, index: u64, value: T) -> length: u64 writes(values.storage) contract {
   requires index <= values^.storage.inner.len;

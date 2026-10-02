@@ -155,11 +155,11 @@ Each section below covers one mechanism: what the writer states, what the checke
 
 Take the objection the last sentence invites. Whitefoot does not answer it by
 sprinkling implicit runtime checks through the program. An index, exact integer
-operation, allocation-size multiplication, or system buffer range carries a
-deterministic proof obligation. If the checker cannot discharge it, the source
-is rejected. Total and checked operations return ordinary values, and expected
-external failures return typed outcomes. There is no writer-visible runtime
-proof backstop, `unsafe`, unchecked assumption, or freely callable trap.
+operation or system buffer range carries a deterministic proof obligation. If
+the checker cannot discharge it, the source is rejected. Total and checked
+operations return ordinary values, and expected external failures return typed
+outcomes. There is no writer-visible runtime proof backstop, `unsafe`,
+unchecked assumption, or freely callable trap.
 
 The interprocedural mechanism is a static contract. A non-entry function may
 carry one `contract` block with erased `define` abbreviations and independent

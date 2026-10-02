@@ -201,25 +201,20 @@ rarely insert at the same place.
   this consumer change to the joined-reference work above; reopen when that
   work establishes point-current target authority or a real proof needs it.
 
-- **Expose a failed callee proof behind an unavailable summary.** The
+- **Expose a failed callee proof behind an unavailable summary.** A caller
+  whose generic callee instance fails an obligation sees only the callee's
+  unavailable summary, reported at its own postcondition or invariant, not
+  the failed obligation. Both recorded witnesses, the
   [partially concrete reserve probe](../research/investigations/containers-and-resources/X1-LIBRARY.md#partially-concrete-reserve-diagnostic)
-  reports INV-1 at `room` after `priority_queue_make_room<ProbeDue, ceiling>`.
-  Adding the 32-byte allocation bound only to the caller still fails; literal
-  `8192` admits. Read-only diagnosis identifies reserve's missing local OP-9
-  bound under ENT-2, not a demonstrated publication defect. First validate
-  the bound in both reserve and caller, propagated through intervening helpers,
-  then require the intended OP-9 rejection one element above it. Improve the
-  diagnostic to identify the failed callee obligation and unavailable summary
-  without changing acceptance. The GrowVector module witness met the same
-  report: a wrapper generic only over `ceiling` that returns
-  `grow_vector_append::<u64, ceiling>`'s length is refused at its own
-  postcondition (FN-9, identically by main's compiler), while the reserve
-  instance it reaches carries the same unbounded OP-9 `grow` obligation; the
-  conformance case `mod6-pos-grow-vector-boundary` therefore wraps with a
-  wrapper generic over the element type as well. Its benefit and exact
-  attribution remain unverified; defer this diagnostic work while the
-  admitted generic standalone control serves the experiment, and reopen when
-  improving call-proof reports.
+  (INV-1 at `room` after `priority_queue_make_room<ProbeDue, ceiling>`) and
+  a GrowVector wrapper generic only over `ceiling` (FN-9 at its own
+  postcondition), turned on an [OP-9] allocation-size obligation of `grow`,
+  which v0.87 retired, so they must be re-run before they witness the gap
+  again; the conformance case `mod6-pos-grow-vector-boundary` still wraps
+  with a wrapper generic over the element type as well. Change: name the
+  failed callee obligation and the unavailable summary without changing
+  acceptance. Benefit and attribution are unverified; reopen with a current
+  witness when improving call-proof reports.
 
 - **Descendant references retain precision opportunities.** A write through a
   widened range can discard its previously established length facts, and
@@ -362,8 +357,9 @@ rarely insert at the same place.
   recognizes the OP-10, OP-11 and OP-14 rows by their prelude spelling, and
   an OP-14 record takes its rule from it; the backend recognizes OP-11's row
   by symbol spelling (`compiler/src/backend/emitter.rs`). Both hold only
-  because TYPE-6 rejects a source declaration that collides with the
-  prelude. CALL-6's consistency check keeps its own closure
+  because TYPE-6 refuses a source callable that collides with a prelude
+  function; a source value may share a prelude function's spelling since
+  v0.86, and no value is a callee. CALL-6's consistency check keeps its own closure
   (`compiler/src/semantic/check/publication.rs`) beside the ENT-4 closure the
   specification names, and INV-1 affine formation and call-goal images are
   each formed in both the checker and the flow.
@@ -549,24 +545,6 @@ rarely insert at the same place.
   reader adding a consumer. Update those descriptions when the nominal
   inventory is next edited; the storage-destructuring repair uses its actual
   identities and needs no inventory change.
-
-- **An OP-4 repair after a call that killed the fact offers only a guard.**
-  When a subscript's relation held before a call and the callee's row
-  killed it, as `writes(context)` kills `at < context^.blocks.inner.len`
-  although the callee writes only `context.width` [EFF-2, MSR-2], OP-4's
-  repair offers an invariant, a callee `ensures` or a guard, and never names
-  the call. The writers of Snowghost's layout stage took the guard: the
-  [layout-friction investigation](../research/investigations/layout-friction/DESIGN.md#1-length-facts-after-a-call-through-a-reference)
-  finds nine guards such kills make necessary and 19 unneeded ones that
-  repeat a fact that had survived, and its probe `len-whole-row.wf` is the
-  witness. Change: keep
-  the kill event for the residual's relation and name the call and the row
-  entry, offering a narrower entry where the callee's exhibited writes allow
-  one and a postcondition stating the measure unchanged, beside the guard.
-  Validate with `len-whole-row.wf` naming `bump`'s call and `writes(context)`,
-  `len-window-row.wf` offering no narrower entry, and an OP-4 with no earlier
-  fact unchanged. Reopen with the next change to OP-4's diagnostics or a
-  writer trial that measures repairs followed.
 
 - **Data only proofs read is computed, stored and passed at run time.** A
   range requirement can only name what the callee receives, so
@@ -887,48 +865,25 @@ rarely insert at the same place.
   Keep the deferred general representation study separate, and close this item
   only when the relevant costs and chosen tradeoffs have discriminating evidence.
 
-- **Checking accepts a program whose build stops at target layout.** A
-  program whose [OP-9] proof retains a count bound the selected target cannot
-  hold passes `whitefootc --check` and `--check-module` and stops only when
-  built, at [STOR-6] target qualification; the stop now names the call, the
-  proved bound and the target's largest admitted count
-  (`AllocationCountExceedsTarget`), but a writer who checks before building
-  still learns of it one round late, which is what cost the Snowghost PNG
-  decoder's writer most. The specification permits a check command to
-  qualify the host target: [STOR-6] places target layout after semantic
-  publication and makes its failure no source rejection [DIAG-1], which a
-  check that also qualified the host and reported a `TargetLayout` stop
-  (never a source verdict) would respect. But `driver::check` is
-  defined as the source-verdict projection that stops before lowering, and
-  `design/compiler` records no decision on what a check command covers. Two
-  further obstacles: `--check-module` selects no entry, while target
-  qualification qualifies the lowered program an entry reaches, so a
-  module-level check has no materialization set to qualify; and qualifying
-  requires lowering, whose cost on a check has not been measured. The
-  options are qualifying the host in `--check` when an entry is selected,
-  a separate target-check option, or relying on the OP-9 repair's warning
-  that a bound near the language's limit stops at target layout. This is a
-  compiler decision for the owner; validate a chosen form with the
-  reproduction in `an_allocation_count_the_target_cannot_hold_is_located_with_its_bounds`
-  (`compiler/src/driver/pinned_repairs.rs`) stopping at check time as a
-  `TargetLayout` stop with no rule, and the check time of the corpus
-  programs before and after. Reopen when the owner rules or another writer
+- **Checking accepts a program whose build stops at target layout.**
+  `whitefootc --check` stops before lowering, so a program whose concrete
+  layout the selected target cannot represent, such as a fixed-capacity
+  array larger than the target's address domain [STOR-6], passes checking
+  and stops only when built. Until v0.87 the common case was an allocation
+  count bound the target could not hold, which cost the Snowghost PNG
+  decoder's writer a round; [OP-9] now makes such a size heap exhaustion at
+  run time, and no writer has met a remaining case. [STOR-6] permits a check
+  command to qualify the host target, since its failure is no source
+  rejection [DIAG-1], but `driver::check` is defined as the source-verdict
+  projection that stops before lowering, `--check-module` selects no entry
+  whose materialization set could be qualified, and qualifying requires
+  lowering, whose cost on a check is unmeasured. The options are qualifying
+  the host in `--check` when an entry is selected or a separate
+  target-check option; this is a compiler decision for the owner. Validate a
+  chosen form with an entry that keeps a local `Array<u8, 9223372036854775808>`
+  stopping at check time as a `TargetLayout` stop with no rule, and with the
+  check time of the corpus programs before and after. Reopen when a writer
   meets a build-only target stop.
-- **A target stop inside a generic function names only the template's call.**
-  The allocation-fit record captures the call and count coordinates once,
-  from the checked template body (`allocation_fit_of_call` in
-  `compiler/src/semantic/check/expressions/calls/user.rs`), and lowering
-  copies them into every monomorphized instance, so an
-  `AllocationCountExceedsTarget` stop inside a generic function points at
-  the template's allocation and not at the call that instantiated it, while
-  a source rejection in a concrete instance names a requesting call
-  [MOD-8]. Impact: a writer whose generic container helper is instantiated
-  from several sites must find which instance carries the unbounded count.
-  Change: carry the instantiating call's coordinate with each
-  monomorphized instance's allocation record and print it as the
-  requesting call. Validate with a generic allocating helper instantiated
-  from two callers, one bounded and one not, whose stop names the unbounded
-  caller. Deferred because no writer has met it; reopen when one does.
 
 - **Union-laid-out enums: deferred refinements.**
   [compiler/payload-enum-layout](../design/compiler/payload-enum-layout.md)
@@ -2092,6 +2047,21 @@ rarely insert at the same place.
 
 ## Modules and libraries
 
+- **Library capacity ceilings that existed for OP-9.**
+  `GrowVector<T, const ceiling: u64>` in `lib/std/collections/vector`, the
+  deque and slab constructors' ceilings, and `tests/programs/wfgrep.wf`'s
+  line, collection and word ceilings were chosen to discharge [OP-9]'s
+  allocation-size obligation, which v0.87 retired; each now only sets a
+  saturation or refusal policy that its callers carry as a const parameter
+  or a failure path. Impact: every user of these containers chooses and
+  threads a ceiling no rule needs, as Snowghost's layout code does with its
+  `imin` clamps
+  ([layout friction](../research/investigations/layout-friction/DESIGN.md#frequency-2)).
+  Change: remove each ceiling that serves no stated policy and keep
+  saturation where a program wants it. Validate with the corpus programs and
+  conformance cases that instantiate these containers. Reopen when a writer
+  next changes one of these libraries.
+
 - **A container operation that takes a callback cannot be called again
   inside its own callback with another callback.** Minimal witness: a
   generic `apply<F, fn visit>` called as `apply::<u64, fn outer>`, where
@@ -2205,24 +2175,6 @@ rarely insert at the same place.
   for a concrete privacy consumer that cannot use one module's private
   implementation files.
 
-- **The TYPE-6 repair for a collision with a module declaration cannot be
-  carried out.** A local, a parameter or an alias whose spelling a
-  module-level declaration of another record already holds is refused
-  [TYPE-6, MOD-3, MOD-4] with the repair for two nested local blocks: it
-  explains moved bindings and offers closing "the block that declares the
-  outer one", which for a module declaration is the module. A repair
-  alternative must succeed when carried out [DIAG-1]. The
-  [layout-friction investigation](../research/investigations/layout-friction/DESIGN.md#2-module-level-names-closed-to-every-local-of-the-module)
-  shows both forms, `probes/collision/` (a local against a function) and
-  `probes/collision-alias/` (an alias against a struct);
-  `compiler/src/resolution/engine/inventory.rs` chooses
-  `COLLIDES_WITH_LIVE_OUTER` for every non-prelude outer declaration. Change:
-  a repair for a module-level or record-level outer declaration that names
-  its record and offers renaming either declaration, pinned with both
-  probes. Reopen with the next diagnostics change or when the owner rules
-  on the investigation's TYPE-6 directions, which may change the rule
-  itself.
-
 ## Code structure
 
 - **Five parallel substitution walkers over a type invariant.**
@@ -2259,12 +2211,7 @@ rarely insert at the same place.
   call's `goal_regions` and a `CheckedReleaseClass` with one variant; lowering
   now asserts that the first two are empty and ignores the rest. The flow's
   `is_holder` returns `false`, so `EntryImageHolderConsume` is unreachable, and
-  `driver::check_module` has no caller. `IrRuntimeTargetObligations`'s
-  `call_site_bound` is `false` in its one constructor, so the byte checks
-  `validate_target_obligation` in `compiler/src/target.rs` keeps for a direct
-  `BufferFill`, `WindowBlockNew` or `WindowGrow` node with its own bound never
-  run; every source bound is qualified per call in
-  `validate_source_call_allocations`. Finalize checks every parsed node
+  `driver::check_module` has no caller. Finalize checks every parsed node
   against its production again, the re-verification `design/compiler.md`
   refuses. By reading, generic validation never takes its early return,
   because the prelude's generic signatures are templates in every bundle, so

@@ -121,7 +121,7 @@ source subscript always owes `index < run.len` [OP-4].
 Growth policy can be ordinary source. The maintained
 [grow-vector library](../lib/std/collections/vector/grow-vector.wf) wraps
 `Box<Slots<T>>` in `GrowVector<T, const ceiling: u64>`. The selected ceiling
-supplies each concrete growth call's OP-9 bound; the policy doubles capacity
+bounds each concrete growth call's capacity; the policy doubles capacity
 while it fits and otherwise saturates at that ceiling. A zero ceiling admits
 an empty vector but no append. Reference-parameter contracts publish each
 operation's length and capacity relationships. The constructor states no

@@ -1,0 +1,10 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+const width: u32 = 8_u32;
+
+fn main() -> status: ExitStatus pure {
+  doc "A local value beside a top-level const of its spelling: both are values, which compete, and the const is live throughout the unit, so the local shadows it [TYPE-6].";
+  let width = 4_u32;
+  return exit_status(code: 0_u8);
+}

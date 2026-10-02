@@ -4,7 +4,7 @@ alias exit_status = std::process::exit_status;
 fn scalar_overflow(count: u64) -> made: Box<Slots<u64>> pure contract {
   requires count <= 2305843009213693952_u64;
 } {
-  doc "A scalar's stride ceiling is eight. The permitted count includes floor((2^64 - 1) / 8) + 1, so the allocation obligation is unproved [OP-9].";
+  doc "A scalar's stride ceiling is eight. The permitted count includes floor((2^64 - 1) / 8) + 1, whose size wraps u64, and the construction is still admitted: that size is heap exhaustion at run time [OP-9].";
   let taken = box_slots_new::<u64>(capacity: count);
   return move taken;
 }
