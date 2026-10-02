@@ -411,6 +411,16 @@ $(COMPLETION_TMP)/concurrent-map-test-collide: $(CONCURRENT_MAP_SOURCES) src/bac
 	@mkdir -p "$(dir $@)"
 	$(CC) $(COMPLETION_BASE_CFLAGS) -DWF_CMAP_TAG_MASK=15 src/backend/concurrent_map_test.c -o "$@"
 
+# The same test built to check every read and write of memory, which is the
+# only witness of a read of a freed node: such a read's result is discarded,
+# so no outcome differs. It is not part of completion-test, whose budget it
+# would exceed; docs/todo.md asks whether it joins the gate.
+concurrent-map-test-sanitized: $(CONCURRENT_MAP_SOURCES) src/backend/concurrent_map.h Makefile
+	@mkdir -p "$(COMPLETION_TMP)"
+	$(CC) $(COMPLETION_BASE_CFLAGS) -fsanitize=address,undefined -fno-sanitize-recover=undefined \
+		src/backend/concurrent_map_test.c -o "$(COMPLETION_TMP)/concurrent-map-test-sanitized"
+	ASAN_OPTIONS=detect_leaks=0 "$(COMPLETION_TMP)/concurrent-map-test-sanitized"
+
 # The shared-object runtime's waits, with contexts whose frames the test
 # writes and the moments the runtime lets it observe (shared_object_test.c),
 # on one driver beside threads that hold the object, stepped through each

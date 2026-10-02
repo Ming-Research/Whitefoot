@@ -75,8 +75,9 @@ void wf_cmap_unhold(wf_cmap_user *user);
 
 /* One key of a set of entries a statement holds together: its bytes, which
  * stay as they are until the set is released; its hash; its locked cell and
- * slot; whether the entry was created for the set; and whether its slot
- * holds a value, which the caller keeps current and the release reads. */
+ * slot; fresh, nonzero when the entry was created for the set; and whether
+ * its slot holds a value, which the caller keeps current and the release
+ * reads. */
 typedef struct {
     const unsigned char *key;
     uint64_t length;

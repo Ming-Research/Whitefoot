@@ -1698,6 +1698,114 @@ static void sets_follow_moves(void) {
     wf_cmap_destroy(map);
 }
 
+/* As another writer that, just before the statement under test locks a cell
+ * of its key's hash, moves the whole table, so the lock is taken in a table
+ * that is no longer current. */
+static void move_at_lock(struct cell *c) {
+    (void)c;
+    wf_cmap *map = other_user->map;
+    table *t = atomic_load(&map->current);
+    start_move(map, t);
+    help(map, t);
+}
+
+/* A statement that locks its key's cell in a table a move has left reads
+ * nothing through the cell, whose node a statement in the next table may
+ * have freed, gives the cell back as it was and locks the key in the next
+ * table: a keyed statement, and a set, which holds no cell for that key
+ * while it does. */
+static void locks_follow_moves(void) {
+    wf_cmap *map = wf_cmap_create_entries(8, 8, 0);
+    wf_cmap_user *first = wf_cmap_user_at(map, 0);
+    other_user = wf_cmap_user_at(map, 1);
+    unsigned char a[16], b[16];
+    ordered_pair(a, b);
+    wf_cmap_entry entry;
+    for (unsigned i = 0; i < 2; i++) {
+        uint64_t *slot = wf_cmap_lock_entry(first, i == 0 ? a : b, 12, 0, &entry);
+        slot[0] = 3 + i;
+        wf_cmap_unlock_entry(first, &entry, 0, 1);
+    }
+    at_lock = move_at_lock;
+    uint64_t *slot = wf_cmap_lock_entry(first, a, 12, 0, &entry);
+    if (at_lock != NULL || entry.fresh || entry.upgraded || slot[0] != 3)
+        fail("a keyed statement lost its key to a move at its lock (fresh, value)", entry.fresh, slot[0]);
+    slot[0] = 7;
+    wf_cmap_unlock_entry(first, &entry, 0, 1);
+    wf_cmap_set set = {0};
+    wf_cmap_set_add(&set, a, 12);
+    wf_cmap_set_add(&set, b, 12);
+    at_lock = move_at_lock;
+    wf_cmap_hold_set(first, &set);
+    if (at_lock != NULL || set.whole)
+        fail("a set met no move at its lock, or held the whole map for one (whole)", set.whole, 0);
+    for (unsigned i = 0; i < 2; i++) {
+        wf_cmap_held *held = wf_cmap_set_find(&set, i == 0 ? a : b, 12);
+        if (held == NULL || held->fresh || *(uint64_t *)held->slot != (i == 0 ? 7u : 4u))
+            fail("a set lost a key to a move at its lock (key, fresh)", i, held == NULL ? 2 : held->fresh);
+    }
+    wf_cmap_release_set(first, &set);
+    check_cells(map, "a move at a lock miscounted the cells taken (counted, taken)");
+    wf_cmap_destroy(map);
+}
+
+/* The key a writer in the next table removes, and its length. */
+static const unsigned char *freed_key;
+static uint64_t freed_length;
+
+/* As move_at_lock, and then as a statement in the next table that removes
+ * freed_key, so that its node is freed while the old table's cell still
+ * names it. */
+static void move_and_remove_at_lock(struct cell *c) {
+    move_at_lock(c);
+    wf_cmap_entry entry;
+    wf_cmap_lock_entry(other_user, freed_key, freed_length, 0, &entry);
+    wf_cmap_unlock_entry(other_user, &entry, 0, 0);
+}
+
+/* A statement that locks its key's cell in a table a move has left, after a
+ * statement in the next table has removed the key and freed its node, reads
+ * nothing of that node: the key is long, so its node went back to the host,
+ * and a build that checks memory sees a read of it. The statement finds the
+ * key absent in the next table. */
+static void locks_read_no_freed_node(void) {
+    enum { LONG = 600 };
+    static unsigned char key[LONG];
+    for (unsigned i = 0; i < LONG; i++)
+        key[i] = (unsigned char)(i * 7 + 1);
+    for (int with_set = 0; with_set < 2; with_set++) {
+        wf_cmap *map = wf_cmap_create_entries(8, 8, 0);
+        wf_cmap_user *first = wf_cmap_user_at(map, 0);
+        other_user = wf_cmap_user_at(map, 1);
+        wf_cmap_entry entry;
+        uint64_t *slot = wf_cmap_lock_entry(first, key, LONG, 0, &entry);
+        slot[0] = 9;
+        wf_cmap_unlock_entry(first, &entry, 0, 1);
+        freed_key = key;
+        freed_length = LONG;
+        at_lock = move_and_remove_at_lock;
+        if (with_set) {
+            wf_cmap_set set = {0};
+            wf_cmap_set_add(&set, key, LONG);
+            wf_cmap_hold_set(first, &set);
+            wf_cmap_held *held = wf_cmap_set_find(&set, key, LONG);
+            if (at_lock != NULL || set.whole || held == NULL || !held->fresh)
+                fail("a set found a key removed in the next table (whole, set)", set.whole, 1);
+            wf_cmap_release_set(first, &set);
+            WF_CMAP_GIVE(set.entries, 0);
+        } else {
+            wf_cmap_lock_entry(first, key, LONG, 0, &entry);
+            if (at_lock != NULL || !entry.fresh)
+                fail("a statement found a key removed in the next table (fresh, set)", entry.fresh, 0);
+            wf_cmap_unlock_entry(first, &entry, 0, 0);
+        }
+        if (wf_cmap_count(map) != 0)
+            fail("a removed key was counted after a move at a lock (count, set)", wf_cmap_count(map),
+                 (uint64_t)with_set);
+        wf_cmap_destroy(map);
+    }
+}
+
 /* A set with no patience that has claimed a cell for its first key and then
  * loses the lock of its second gives the claim back, counted as a cell
  * taken, and holds the whole map. */
@@ -1992,6 +2100,8 @@ int main(void) {
         entries_shared_reads(1);
         sets_sequential();
         sets_follow_moves();
+        locks_follow_moves();
+        locks_read_no_freed_node();
         sets_give_back_counted();
         sets_in_one_order();
         sets_move_amounts(0, PATIENCE);
