@@ -54,6 +54,8 @@ static void before_lock(struct cell *c);
 static uint64_t counted_key(uint64_t k, unsigned char *bytes);
 #define WF_CMAP_BEFORE_CLAIM(t, index) before_claim((t), (index))
 #define WF_CMAP_BEFORE_LOCK(c) before_lock(c)
+static void read_found(struct table *t);
+#define WF_CMAP_READ_FOUND(t) read_found(t)
 struct wf_cmap_user;
 static uint64_t patience_of(struct wf_cmap_user *u);
 static void hold_seen(struct wf_cmap_user *u, int closed);
@@ -889,6 +891,85 @@ static void claim_impatient(void) {
     wf_cmap_destroy(map);
 }
 
+/* As another writer that begins a move just after a reader has found its
+ * entry and before the reader looks for one. */
+static wf_cmap *read_found_map;
+
+static void read_found(struct table *t) {
+    wf_cmap *map = read_found_map;
+    read_found_map = NULL;
+    if (map != NULL)
+        start_move(map, t);
+}
+
+/* A read that found its entry in a table a move has begun leaves it and
+ * reads the entry in the next table, where writers then work. */
+static void reads_follow_moves(void) {
+    wf_cmap *map = wf_cmap_create_entries(8, 8, 0);
+    wf_cmap_user *u = wf_cmap_user_at(map, 0);
+    unsigned char k[16];
+    uint64_t k_length = counted_key(3, k);
+    wf_cmap_entry entry;
+    uint64_t *slot = wf_cmap_lock_entry(u, k, k_length, 0, &entry);
+    slot[0] = 41;
+    wf_cmap_unlock_entry(u, &entry, 0, 1);
+    table *first = atomic_load(&map->current);
+    read_found_map = map;
+    const uint64_t *read = wf_cmap_read_entry(u, k, k_length, 0, &entry);
+    if (read_found_map != NULL || read == NULL || read[0] != 41)
+        fail("a read across a move lost its entry (found, value)", read != NULL, read != NULL ? read[0] : 0);
+    if (entry.table == first || entry.table != atomic_load(&map->current))
+        fail("a read kept its entry in a table a move had begun (moved, current)", first != atomic_load(&map->current),
+             entry.table == atomic_load(&map->current));
+    wf_cmap_unread_entry(u, &entry, 0);
+    wf_cmap_destroy(map);
+}
+
+/* A move waits for the reads under way in the table it moves: while one user
+ * reads an entry, another's move does not finish, and it finishes once the
+ * read ends. */
+static wf_cmap *move_map;
+static _Atomic int move_done;
+
+static void *move_now(void *arg) {
+    (void)arg;
+    wf_cmap_user *u = wf_cmap_user_at(move_map, 1);
+    table *t = use_current(u);
+    start_move(move_map, t);
+    finish_move(move_map, t);
+    atomic_store(&move_done, 1);
+    return NULL;
+}
+
+static void reads_block_moves(void) {
+    move_map = wf_cmap_create_entries(8, 8, 0);
+    wf_cmap_user *u = wf_cmap_user_at(move_map, 0);
+    unsigned char k[16];
+    uint64_t k_length = counted_key(5, k);
+    wf_cmap_entry entry;
+    uint64_t *slot = wf_cmap_lock_entry(u, k, k_length, 0, &entry);
+    slot[0] = 7;
+    wf_cmap_unlock_entry(u, &entry, 0, 1);
+    table *first = atomic_load(&move_map->current);
+    const uint64_t *read = wf_cmap_read_entry(u, k, k_length, 0, &entry);
+    atomic_store(&move_done, 0);
+    pthread_t mover;
+    pthread_create(&mover, NULL, move_now, NULL);
+    struct timespec pause = {0, 50000000};
+    nanosleep(&pause, NULL);
+    if (atomic_load(&move_done) || atomic_load(&move_map->current) != first)
+        fail("a move finished while a read of its table was under way (done, value)", atomic_load(&move_done), read[0]);
+    wf_cmap_unread_entry(u, &entry, 0);
+    pthread_join(mover, NULL);
+    if (atomic_load(&move_map->current) == first)
+        fail("a move did not finish once the read ended", 0, 0);
+    read = wf_cmap_read_entry(u, k, k_length, 0, &entry);
+    if (read == NULL || read[0] != 7)
+        fail("a moved entry was lost (found, value)", read != NULL, read != NULL ? read[0] : 0);
+    wf_cmap_unread_entry(u, &entry, 0);
+    wf_cmap_destroy(move_map);
+}
+
 /* The retries a keyed statement makes without waiting for a held cell. */
 enum { LOST_EMPTY_CLAIM, CLAIM_MOVED, LOST_REMOVED_CLAIM, LOST_LOCK };
 
@@ -1205,6 +1286,113 @@ static void entries_churn(int crowded, uint64_t patient) {
     wf_cmap_destroy(map);
 }
 
+/* Statements on one key whose blocks only read it beside statements that
+ * write it: two threads write all eight words of the slot to one new value
+ * and count it, two read the slot and check that its words agree and never
+ * fall, and every statement marks itself inside, so that a reader and a
+ * writer inside at once fail the test. With moves, the writers also insert
+ * keys of their own, so the map moves under the readers, and readers also
+ * read keys that are absent. */
+enum { READ_WORDS = 8, READ_OPS = 100000 };
+static unsigned char read_key[16];
+static uint64_t read_length;
+static _Atomic int read_writing, read_readers, read_most, read_done;
+static _Atomic uint64_t read_writes;
+
+static void *write_shared(void *arg) {
+    counter_t *c = arg;
+    wf_cmap_user *user = wf_cmap_user_at(c->map, c->index);
+    unsigned char bytes[16];
+    for (uint64_t i = 0; i < statements; i++) {
+        wf_cmap_entry entry;
+        uint64_t *slot = wf_cmap_lock_entry(user, read_key, read_length, 0, &entry);
+        if (atomic_exchange(&read_writing, 1) || atomic_load(&read_readers) != 0)
+            fail("a writer of a key ran beside its readers (writer, readers)", 1, atomic_load(&read_readers));
+        uint64_t next = slot[0] + 1;
+        for (int w = 0; w < READ_WORDS; w++)
+            slot[w] = next;
+        atomic_store(&read_writing, 0);
+        atomic_fetch_add(&read_writes, 1);
+        wf_cmap_unlock_entry(user, &entry, 0, 1);
+        if (c->total != NULL && i % 8 == 0) {
+            uint64_t length = counted_key(1000 + c->index * statements + i, bytes);
+            uint64_t *other = wf_cmap_lock_entry(user, bytes, length, 0, &entry);
+            other[0] = i;
+            wf_cmap_unlock_entry(user, &entry, 0, 1);
+        }
+    }
+    return NULL;
+}
+
+static void *read_shared(void *arg) {
+    counter_t *c = arg;
+    wf_cmap_user *user = wf_cmap_user_at(c->map, c->index);
+    unsigned char absent[16];
+    uint64_t absent_length = counted_key(999, absent), last = 0;
+    while (!atomic_load(&read_done)) {
+        wf_cmap_entry entry;
+        const uint64_t *slot = wf_cmap_read_entry(user, read_key, read_length, 0, &entry);
+        int inside = atomic_fetch_add(&read_readers, 1) + 1;
+        if (atomic_load(&read_writing))
+            fail("a reader of a key ran beside its writer (readers, writing)", (uint64_t)inside, 1);
+        int most = atomic_load(&read_most);
+        while (inside > most && !atomic_compare_exchange_weak(&read_most, &most, inside)) {
+        }
+        uint64_t first = slot[0];
+        for (volatile int spin = 0; spin < 50; spin++) {
+        }
+        for (int w = 1; w < READ_WORDS; w++)
+            if (slot[w] != first)
+                fail("a reader saw a torn value (first, word)", first, slot[w]);
+        if (first < last)
+            fail("a reader saw a key's value fall (last, now)", last, first);
+        last = first;
+        atomic_fetch_sub(&read_readers, 1);
+        wf_cmap_unread_entry(user, &entry, 0);
+        if (wf_cmap_read_entry(user, absent, absent_length, 0, &entry) != NULL)
+            fail("a reader found a key never written", 999, 0);
+        wf_cmap_unread_entry(user, &entry, 0);
+        c->holds++;
+    }
+    return NULL;
+}
+
+static void entries_shared_reads(int moves) {
+    wf_cmap *map = wf_cmap_create_entries(READ_WORDS * 8, 8, moves ? 1 : 0);
+    read_length = counted_key(7, read_key);
+    statements = READ_OPS;
+    atomic_store(&read_writes, 0);
+    atomic_store(&read_most, 0);
+    atomic_store(&read_done, 0);
+    wf_cmap_entry entry;
+    uint64_t *slot = wf_cmap_lock_entry(wf_cmap_user_at(map, 0), read_key, read_length, 0, &entry);
+    for (int w = 0; w < READ_WORDS; w++)
+        slot[w] = 0;
+    wf_cmap_unlock_entry(wf_cmap_user_at(map, 0), &entry, 0, 1);
+    _Atomic uint64_t marker = 0;
+    pthread_t t[THREADS];
+    counter_t c[THREADS];
+    for (unsigned i = 0; i < THREADS; i++) {
+        c[i] = (counter_t){map, i, moves ? &marker : NULL, NULL, 0};
+        pthread_create(&t[i], NULL, i < 2 ? write_shared : read_shared, &c[i]);
+    }
+    for (unsigned i = 0; i < 2; i++)
+        pthread_join(t[i], NULL);
+    atomic_store(&read_done, 1);
+    for (unsigned i = 2; i < THREADS; i++)
+        pthread_join(t[i], NULL);
+    slot = wf_cmap_lock_entry(wf_cmap_user_at(map, 0), read_key, read_length, 0, &entry);
+    if (slot[0] != atomic_load(&read_writes))
+        fail("a write to a read key was lost (value, writes)", slot[0], atomic_load(&read_writes));
+    wf_cmap_unlock_entry(wf_cmap_user_at(map, 0), &entry, 0, 1);
+    if (c[2].holds + c[3].holds == 0)
+        fail("no reader read the key", moves, 0);
+    if (getenv("CMAP_SHARED_VERBOSE"))
+        printf("shared reads (moves %d): %llu reads, at most %d readers at once\n", moves,
+               (unsigned long long)(c[2].holds + c[3].holds), atomic_load(&read_most));
+    wf_cmap_destroy(map);
+}
+
 /* Statements on one key from every thread at once, where only the first
  * thread's run out of patience: each of those that holds the map is
  * overtaken, once it has closed the gate, by at most the one statement of
@@ -1404,6 +1592,10 @@ int main(void) {
         entries_churn(1, 0);
         entries_held(0, PATIENCE);
         entries_held(1, 0);
+        reads_follow_moves();
+        reads_block_moves();
+        entries_shared_reads(0);
+        entries_shared_reads(1);
     }
     if (ENTRY_TESTS && WORD_TESTS) {
         entries_bounded();

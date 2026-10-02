@@ -66,6 +66,10 @@
 #ifndef WF_CMAP_BEFORE_LOCK
 #define WF_CMAP_BEFORE_LOCK(c) ((void)0)
 #endif
+/* And a reader that has found its entry, before it looks for a move. */
+#ifndef WF_CMAP_READ_FOUND
+#define WF_CMAP_READ_FOUND(t) ((void)0)
+#endif
 /* And a statement over the whole map that has taken its place in line, and
  * one that has closed the gate to keyed statements. */
 #ifndef WF_CMAP_HOLD_QUEUED
@@ -92,6 +96,12 @@
 #define KEY_MASK ((1ull << 62) - 1)
 #define EMPTY 0ull
 #define REMOVED KEY_MASK
+/* A map of entries keeps, in the top bits of a cell's value word above the
+ * node's address, how many keyed statements that only read the entry are
+ * under way (wf_cmap_read_entry). */
+#define READER_SHIFT 48
+#define READER_ONE (1ull << READER_SHIFT)
+#define ADDRESS_MASK (READER_ONE - 1)
 /* Cells a map created without a capacity starts with, 64 KiB. */
 #define DEFAULT_CELLS 4096ull
 /* The most keys a map's first table is sized for: 2^27 cells of 16 bytes. */
@@ -436,7 +446,7 @@ static void place(table *t, uint64_t key, uint64_t value) {
 /* Copies one block of t's keys into t's successor, waiting out the writers
  * that hold a cell; a writer that locks a cell after this read sees the
  * move and leaves the cell as it was. */
-static void move_block(table *t, table *nt, uint64_t block) {
+static void move_block(wf_cmap *map, table *t, table *nt, uint64_t block) {
     uint64_t end = (block + 1) * BLOCK < t->capacity ? (block + 1) * BLOCK : t->capacity;
     for (uint64_t i = block * BLOCK; i < end; i++) {
         cell *c = &t->cells[i];
@@ -446,8 +456,19 @@ static void move_block(table *t, table *nt, uint64_t block) {
             back_off(&round);
             k = atomic_load_explicit(&c->key, memory_order_seq_cst);
         }
-        if (k != EMPTY && k != REMOVED)
-            place(nt, k, atomic_load_explicit(&c->value, memory_order_relaxed));
+        if (k == EMPTY || k == REMOVED)
+            continue;
+        uint64_t value = atomic_load_explicit(&c->value, memory_order_seq_cst);
+        if (map->slot_size != 0) {
+            /* A reader that counted itself before this read finds the move
+             * and leaves; one under way reads until it ends. */
+            round = 0;
+            while (value >> READER_SHIFT) {
+                back_off(&round);
+                value = atomic_load_explicit(&c->value, memory_order_seq_cst);
+            }
+        }
+        place(nt, k, value);
     }
 }
 
@@ -460,7 +481,7 @@ static void help(wf_cmap *map, table *t) {
         uint64_t block = atomic_fetch_add_explicit(&t->claimed, 1, memory_order_relaxed);
         if (block >= blocks)
             return;
-        move_block(t, nt, block);
+        move_block(map, t, nt, block);
         if (atomic_fetch_add_explicit(&t->moved, 1, memory_order_acq_rel) + 1 == blocks) {
             /* Writers wait for the move, so the counts are settled: the new
              * table's used cells are its live keys. */
@@ -617,6 +638,27 @@ static uint64_t node_bytes(const wf_cmap *map, uint64_t length) {
 
 static void *slot_of(const wf_cmap *map, node *n) { return (char *)n + slot_offset(map, n->length); }
 
+/* The node a cell of entries names, its readers' count left out. */
+static inline node *node_at(cell *c) {
+    return (node *)(uintptr_t)(atomic_load_explicit(&c->value, memory_order_relaxed) & ADDRESS_MASK);
+}
+
+/* Names n in a locked cell, keeping the count of readers, which one that
+ * counted itself before seeing the lock takes back. */
+static inline void name_node(cell *c, node *n) {
+    atomic_fetch_and_explicit(&c->value, ~ADDRESS_MASK, memory_order_relaxed);
+    atomic_fetch_or_explicit(&c->value, (uint64_t)(uintptr_t)n, memory_order_relaxed);
+}
+
+/* Waits until no reader of a cell its caller has locked is under way: none
+ * begins once the lock is set, and one under way runs a block that waits for
+ * nothing. */
+static void wait_for_readers(cell *c) {
+    unsigned round = 0;
+    while (atomic_load_explicit(&c->value, memory_order_seq_cst) >> READER_SHIFT)
+        back_off(&round);
+}
+
 static node *new_node(wf_cmap_user *u, uint64_t bytes) {
     if (bytes > ENTRY_LARGEST)
         return take(bytes);
@@ -638,6 +680,8 @@ static node *new_node(wf_cmap_user *u, uint64_t bytes) {
     node *n = (node *)(void *)u->cursor;
     u->cursor += bytes;
     u->room -= bytes;
+    if ((uint64_t)(uintptr_t)n >> READER_SHIFT)
+        abort();
     return n;
 }
 
@@ -714,7 +758,8 @@ static int try_entry(wf_cmap_user *u, cell *c, uint64_t k, const unsigned char *
         u->waited += 1;
         return -1;
     }
-    node *n = (node *)(uintptr_t)atomic_load_explicit(&c->value, memory_order_relaxed);
+    wait_for_readers(c);
+    node *n = node_at(c);
     if (n->length == length && memcmp(n->bytes, key, (size_t)length) == 0)
         return 1;
     unlock(c, k);
@@ -977,13 +1022,13 @@ void *wf_cmap_lock_entry(wf_cmap_user *u, const unsigned char *key, uint64_t len
     }
     node *n;
     if (r == FOUND) {
-        n = (node *)(uintptr_t)atomic_load_explicit(&c->value, memory_order_relaxed);
+        n = node_at(c);
     } else {
         n = new_node(u, node_bytes(map, length));
         n->length = length;
         memcpy(n->bytes, key, (size_t)length);
         memset(slot_of(map, n), 0, (size_t)map->slot_size);
-        atomic_store_explicit(&c->value, (uint64_t)(uintptr_t)n, memory_order_relaxed);
+        name_node(c, n);
         /* A reused removed cell was counted when it was first claimed. */
         if (r == CLAIMED)
             count(u, 1, 0);
@@ -1001,7 +1046,7 @@ void wf_cmap_unlock_entry(wf_cmap_user *u, wf_cmap_entry *entry, int held, int p
     if (present) {
         unlock(c, atomic_load_explicit(&c->key, memory_order_relaxed) & ~LOCKED);
     } else {
-        node *n = (node *)(uintptr_t)atomic_load_explicit(&c->value, memory_order_relaxed);
+        node *n = node_at(c);
         free_node(u, n, node_bytes(map, n->length));
         unlock(c, REMOVED);
     }
@@ -1021,6 +1066,111 @@ void wf_cmap_unlock_entry(wf_cmap_user *u, wf_cmap_entry *entry, int held, int p
                 finish_move(map, t);
         }
     }
+}
+
+/* Finds key, whose hash is tag, in t for a statement that only reads its
+ * entry: FOUND with the reader counted on the entry's cell in *out, ABSENT,
+ * or IMPATIENT once its waits and retries exhaust u's patience. A reader
+ * counts itself and then reads the key word again, and a writer locks the
+ * key word and then waits for the count to fall to zero, all sequentially
+ * consistent, so either the reader sees the lock and leaves or the writer
+ * waits for it. A pending claim of the same hash is passed over: its writer
+ * has not begun, and a cell of the key it would find lies further on. */
+static int read_in(wf_cmap_user *u, table *t, uint64_t tag, const unsigned char *key, uint64_t length,
+                   cell **out) {
+    uint64_t i = start_of(t, tag);
+    uint64_t left = t->capacity;
+    unsigned round = 0;
+    while (left > 0) {
+        cell *c = &t->cells[i];
+        uint64_t k = atomic_load_explicit(&c->key, memory_order_seq_cst);
+        uint64_t bare = k & ~(LOCKED | PENDING);
+        if (bare == EMPTY)
+            return ABSENT;
+        if (bare == tag && (k & PENDING) == 0) {
+            if (k & LOCKED) {
+                u->waited += wait_for_cell(&round);
+                if (impatient(u, 0))
+                    return IMPATIENT;
+                continue;
+            }
+            atomic_fetch_add_explicit(&c->value, READER_ONE, memory_order_seq_cst);
+            if (atomic_load_explicit(&c->key, memory_order_seq_cst) != k) {
+                atomic_fetch_sub_explicit(&c->value, READER_ONE, memory_order_release);
+                if (impatient(u, 1))
+                    return IMPATIENT;
+                continue;
+            }
+            node *n = node_at(c);
+            if (n->length == length && memcmp(n->bytes, key, (size_t)length) == 0) {
+                *out = c;
+                return FOUND;
+            }
+            atomic_fetch_sub_explicit(&c->value, READER_ONE, memory_order_release);
+            round = 0;
+        }
+        left--;
+        i = (i + 1) & t->mask;
+    }
+    return ABSENT;
+}
+
+/* Reads key's entry in the current table, helping any move it meets: an
+ * answer stands only if no move began before it was given, since a writer
+ * may change the key in the next table once a move has begun. */
+static int read_entry(wf_cmap_user *u, uint64_t tag, const unsigned char *key, uint64_t length, cell **out,
+                      table **in) {
+    for (;;) {
+        table *t = use_current(u);
+        if (atomic_load_explicit(&t->next, memory_order_acquire) == NULL) {
+            int r = read_in(u, t, tag, key, length, out);
+            if (r == IMPATIENT)
+                return r;
+            if (r == FOUND)
+                WF_CMAP_READ_FOUND(t);
+            if (atomic_load_explicit(&t->next, memory_order_seq_cst) == NULL) {
+                *in = t;
+                return r;
+            }
+            if (r == FOUND)
+                atomic_fetch_sub_explicit(&(*out)->value, READER_ONE, memory_order_release);
+        }
+        finish_move(u->map, t);
+        if (impatient(u, 1))
+            return IMPATIENT;
+    }
+}
+
+const void *wf_cmap_read_entry(wf_cmap_user *u, const unsigned char *key, uint64_t length, int held,
+                               wf_cmap_entry *entry) {
+    if (!held)
+        enter_keyed(u);
+    uint64_t tag = tag_of(key, length);
+    cell *c = NULL;
+    table *t;
+    u->waited = 0;
+    u->patience = held ? UINT64_MAX : WF_CMAP_PATIENCE(u);
+    int r = read_entry(u, tag, key, length, &c, &t);
+    entry->upgraded = r == IMPATIENT;
+    if (r == IMPATIENT) {
+        atomic_store_explicit(&u->active, 0, memory_order_release);
+        wf_cmap_hold(u);
+        u->patience = UINT64_MAX;
+        r = read_entry(u, tag, key, length, &c, &t);
+    }
+    entry->cell = r == FOUND ? c : NULL;
+    entry->table = t;
+    entry->fresh = 0;
+    return r == FOUND ? slot_of(u->map, node_at(c)) : NULL;
+}
+
+void wf_cmap_unread_entry(wf_cmap_user *u, wf_cmap_entry *entry, int held) {
+    if (entry->cell != NULL)
+        atomic_fetch_sub_explicit(&((cell *)entry->cell)->value, READER_ONE, memory_order_release);
+    if (entry->upgraded)
+        wf_cmap_unhold(u);
+    else if (!held)
+        atomic_store_explicit(&u->active, 0, memory_order_release);
 }
 
 /* Statements over the whole map take turns by ticket, so that one that
@@ -1073,7 +1223,7 @@ void *wf_cmap_drain(wf_cmap *map) {
         uint64_t k = atomic_load_explicit(&c->key, memory_order_relaxed);
         if (k == EMPTY || k == REMOVED)
             continue;
-        node *n = (node *)(uintptr_t)atomic_load_explicit(&c->value, memory_order_relaxed);
+        node *n = node_at(c);
         atomic_store_explicit(&c->key, REMOVED, memory_order_relaxed);
         /* A large node goes back to the pool once its value is released;
          * the rest leave with their chunks when the map is destroyed. */
