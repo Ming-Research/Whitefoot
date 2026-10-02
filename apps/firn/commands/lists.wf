@@ -20,6 +20,7 @@ alias deque_push_front = std::collections::deque::deque_push_front;
 alias deque_rebase = std::collections::deque::deque_rebase;
 alias deque_visit_at = std::collections::deque::deque_visit_at;
 alias expired = pkg::store::expired;
+alias remove_expired = pkg::store::remove_expired;
 alias hash_map_edit = std::collections::hash_map::hash_map_edit;
 alias hash_map_lookup = std::collections::hash_map::hash_map_lookup;
 alias hash_map_remove = std::collections::hash_map::hash_map_remove;
@@ -412,9 +413,9 @@ fn run_lrange(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
       None() => {
       }
     }
-    if client^.state == state_expired {
-      set slot^ = None<Entry>();
-    }
+  }
+  if client^.state == state_expired {
+    remove_expired(store: store, key: key, now: client^.now);
   }
   if client^.state == state_done {
     return unit;
@@ -474,10 +475,10 @@ fn run_llen(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
       None() => {
       }
     }
-    if client^.state == state_expired {
-      set slot^ = None<Entry>();
-      set client^.number = 0_u64;
-    }
+  }
+  if client^.state == state_expired {
+    remove_expired(store: store, key: key, now: client^.now);
+    set client^.number = 0_u64;
   }
   if client^.state == state_wrong {
     reply_wrong_type(client: client);

@@ -12,6 +12,7 @@ alias ceiling = pkg::store::ceiling;
 alias clear_items = pkg::protocol::clear_items;
 alias copy_key = pkg::bytes::copy_key;
 alias expired = pkg::store::expired;
+alias remove_expired = pkg::store::remove_expired;
 alias hash_map_edit = std::collections::hash_map::hash_map_edit;
 alias hash_map_lookup = std::collections::hash_map::hash_map_lookup;
 alias hash_map_new = std::collections::hash_map::hash_map_new;
@@ -192,9 +193,9 @@ fn run_hget(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
       None() => {
       }
     }
-    if client^.state == state_expired {
-      set slot^ = None<Entry>();
-    }
+  }
+  if client^.state == state_expired {
+    remove_expired(store: store, key: key, now: client^.now);
   }
   clear_items(client: client);
   if client^.state == state_done {

@@ -123,6 +123,24 @@ fn expire_key(store: &Keyspace, key: &[u8], at: u64) -> result: unit reads(store
   return unit;
 }
 
+fn remove_expired(store: &Keyspace, key: &[u8], now: u64) -> result: unit reads(store), reads(key) waits {
+  doc "Removes the key when its expiry has been reached at now, for a command that found it expired in a statement that only read it; a key set again since keeps its value.";
+  atomic slot = &store^.map[key] {
+    let lapsed = False();
+    match slot^ {
+      Some(value: held) => {
+        set lapsed = expired(expires: held^.expires, now: now);
+      }
+      None() => {
+      }
+    }
+    if lapsed {
+      set slot^ = None<Entry>();
+    }
+  }
+  return unit;
+}
+
 fn expire_batch(store: &Keyspace, now: u64, env: &KeyEnv, batch: &Box<Slots<Due>>) -> more: Bool reads(store), reads(env), writes(batch) waits {
   doc "Takes up to 256 queued expiries that have been reached, the earliest first, in one atomic statement, then removes each key whose expiry is still the one queued in a statement on that key, and returns whether more may be due. A queued expiry that no longer matches its key's, because the key was set, given another expiry or removed since, is dropped.";
   let more = False();

@@ -8,6 +8,7 @@ alias Time = pkg::store::Time;
 alias Value = pkg::store::Value;
 alias arg = pkg::protocol::arg;
 alias expired = pkg::store::expired;
+alias remove_expired = pkg::store::remove_expired;
 alias log_command = pkg::store::log_command;
 alias log_count = pkg::store::log_count;
 alias log_input = pkg::store::log_input;
@@ -136,9 +137,9 @@ fn run_get(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
       None() => {
       }
     }
-    if client^.state == state_expired {
-      set slot^ = None<Entry>();
-    }
+  }
+  if client^.state == state_expired {
+    remove_expired(store: store, key: key, now: client^.now);
   }
   if client^.state == state_done {
     return unit;

@@ -13,6 +13,7 @@ alias ceiling = pkg::store::ceiling;
 alias copy_key = pkg::bytes::copy_key;
 alias clear_items = pkg::protocol::clear_items;
 alias expired = pkg::store::expired;
+alias remove_expired = pkg::store::remove_expired;
 alias hash_map_edit = std::collections::hash_map::hash_map_edit;
 alias hash_map_len = std::collections::hash_map::hash_map_len;
 alias hash_map_lookup = std::collections::hash_map::hash_map_lookup;
@@ -452,10 +453,10 @@ fn run_scard(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &C
       None() => {
       }
     }
-    if client^.state == state_expired {
-      set slot^ = None<Entry>();
-      set client^.number = 0_u64;
-    }
+  }
+  if client^.state == state_expired {
+    remove_expired(store: store, key: key, now: client^.now);
+    set client^.number = 0_u64;
   }
   if client^.state == state_wrong {
     reply_wrong_type(client: client);
