@@ -515,7 +515,7 @@ fn run_dbsize(store: &Keyspace, client: &Client) -> result: unit reads(store), w
   doc "DBSIZE: answers how many keys the keyspace holds, counting an expired key not yet removed, as Redis does, in one statement over the whole keyspace.";
   let size = 0_u64;
   atomic state = &store^.map {
-    set size = keyed_count::<Entry>(state: state);
+    set size = shared_map_count::<Entry>(state: state);
   }
   let answer = cvt.wrap::<u64, i64>(size);
   reply_integer(client: client, value: answer);

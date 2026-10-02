@@ -98,9 +98,9 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 "#,
     ),
     (
-        "prelude/Keyed.wf",
+        "prelude/SharedMapState.wf",
         PreludeSource::Opaque,
-        r#"opaque nocopy struct Keyed<V: drop> {
+        r#"opaque nocopy struct SharedMapState<V: drop> {
 }
 "#,
     ),
@@ -314,9 +314,9 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 "#,
     ),
     (
-        "prelude/keyed_count.wf",
+        "prelude/shared_map_count.wf",
         PreludeSource::Function,
-        r#"fn keyed_count<V: drop>(state: &Keyed<V>) -> count: u64 reads(state);
+        r#"fn shared_map_count<V: drop>(state: &SharedMapState<V>) -> count: u64 reads(state);
 "#,
     ),
     (

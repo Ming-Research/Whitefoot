@@ -78,7 +78,7 @@ fn main() -> status: ExitStatus pure waits {
   let counted = 0_u64;
   let wrong = 0_u64;
   atomic state = &map {
-    set counted = keyed_count::<u64>(state: state);
+    set counted = shared_map_count::<u64>(state: state);
     for @check (at in 1_u64..9_u64) {
       atomic slot = &state^[&names[0_u64..at]] {
         match slot^ {
@@ -105,7 +105,7 @@ fn main() -> status: ExitStatus pure waits {
   }
   let left = 0_u64;
   atomic state = &map {
-    set left = keyed_count::<u64>(state: state);
+    set left = shared_map_count::<u64>(state: state);
   }
   if left != 7_u64 {
     return exit_status(code: 3_u8);

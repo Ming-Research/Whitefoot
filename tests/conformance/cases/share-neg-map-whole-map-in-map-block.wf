@@ -3,7 +3,7 @@ fn main() -> status: std::process::ExitStatus pure waits {
   let second = shared_map_new::<u8>(capacity: 0_u64);
   atomic outer = &first {
     atomic inner = &second {
-      let counted = keyed_count::<u8>(state: inner);
+      let counted = shared_map_count::<u8>(state: inner);
     }
   }
   return std::process::exit_status(code: 0_u8);

@@ -2727,13 +2727,13 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     assert_eq!(first[30].1, "SharedMap");
     assert_eq!(first[30].2, Some(DeclarationClass::StructConstructor));
     assert_eq!(first[31].1, "V");
-    assert_eq!(first[32].1, "Keyed");
+    assert_eq!(first[32].1, "SharedMapState");
     assert_eq!(first[32].2, Some(DeclarationClass::NominalType));
     assert_eq!(first[34].1, "V");
     // Then each enum with its variants and their fields, then `Int` and
     // `Float`, then the construction functions [OP-13], then the window
     // operations [OP-10], then `swap` [OP-11], `shared_new`, `shared_share`,
-    // `shared_map_new`, `shared_map_share` and `keyed_count` [SHARE-1] and
+    // `shared_map_new`, `shared_map_share` and `shared_map_count` [SHARE-1] and
     // `free_empty` [OP-14], each with its type, const and value parameters in
     // declared order.
     assert_eq!(first[35].1, "Bool");
@@ -2747,12 +2747,12 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     assert_eq!(first[145].1, "shared_share");
     assert_eq!(first[148].1, "shared_map_new");
     assert_eq!(first[151].1, "shared_map_share");
-    assert_eq!(first[154].1, "keyed_count");
+    assert_eq!(first[154].1, "shared_map_count");
     assert_eq!(first[157].1, "free_empty");
     // The opaque phase holds the four storage shapes, the cell, the
     // shared-object handle and the shared map's handle and state, 35 records:
     // `Array` contributes five, `Slots` six, `Ring` seven, `Segments` four,
-    // `Box` four and `Shared`, `SharedMap` and `Keyed` three each. The host
+    // `Box` four and `Shared`, `SharedMap` and `SharedMapState` three each. The host
     // declarations left PRE-1 for the standard library [PRE-2], so the
     // inventory holds 160 records where it held 397.
     assert_eq!(first.len(), 160);

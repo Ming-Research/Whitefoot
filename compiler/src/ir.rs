@@ -409,7 +409,7 @@ pub enum IrShared {
     /// `SharedMap<V>`: every entry is an `entry`, the `Option<V>` the runtime
     /// keeps a slot of in each of the map's nodes.
     Map { entry: IrType },
-    /// `Keyed<V>`: the map's state, whose address is the map itself.
+    /// `SharedMapState<V>`: the map's state, whose address is the map itself.
     State { entry: IrType },
 }
 
@@ -1163,7 +1163,7 @@ pub enum IrOperation {
         capacity: IrValueId,
     },
     /// [SHARE-2] the address of the state of the map `object` names, which is
-    /// the map itself. Defines an address of `state`, a `Keyed` nominal.
+    /// the map itself. Defines an address of `state`, a `SharedMapState` nominal.
     SharedMapState {
         state: IrNominalId,
         object: IrValueId,

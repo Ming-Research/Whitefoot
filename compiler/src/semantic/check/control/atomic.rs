@@ -46,7 +46,7 @@ pub(in crate::semantic::check) const SHARE2_READ_ONLY_GUARD: &str = "make the gu
 enum AtomicTarget {
     /// `&h`, `h` a `Shared<T>`: the state, of type `T`.
     Object { state: CheckedType },
-    /// `&h`, `h` a `SharedMap<V>`: the map's state, a `Keyed<V>`.
+    /// `&h`, `h` a `SharedMap<V>`: the map's state, a `SharedMapState<V>`.
     Map { state: CheckedType },
     /// `&m[k]` or `&s^[k]`: the entry, an `Option<V>`; `holder` is the
     /// binder of the enclosing statement holding the map's state, when the

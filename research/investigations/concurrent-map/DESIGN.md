@@ -130,7 +130,7 @@ handed back. Each choice is a proposal until then.
   One form serves every single-key command, with no library function and no
   callback.
 - **A whole-map statement, `atomic s = &m { ... }`,** whose binding is a
-  `&Keyed<V>` naming the whole map, with exclusive access to every entry,
+  `&SharedMapState<V>` naming the whole map, with exclusive access to every entry,
   for commands over several keys (`MSET`, `DEL` and `EXISTS` of several)
   and for an exact count (`DBSIZE`). Inside its block, and only there,
   `atomic e = &s^[key] { ... }` reaches one entry and waits for nothing. To exclude it, every keyed statement publishes itself

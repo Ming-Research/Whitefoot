@@ -608,7 +608,7 @@ impl<'unit> Checker<'_, 'unit> {
         Ok(())
     }
 
-    /// [SHARE-2] the prelude's `Keyed<V>`, the state of a map whose values
+    /// [SHARE-2] the prelude's `SharedMapState<V>`, the state of a map whose values
     /// have type `value`.
     pub(super) fn keyed_state(
         &mut self,
@@ -617,7 +617,7 @@ impl<'unit> Checker<'_, 'unit> {
     ) -> Result<NominalId, CheckStop> {
         let mut found = None;
         for (index, template) in self.types.nominal_templates.iter().enumerate() {
-            if template.name == "Keyed"
+            if template.name == "SharedMapState"
                 && self
                     .types
                     .declarations
@@ -786,11 +786,13 @@ impl<'unit> Checker<'_, 'unit> {
         let kind = (|| {
             Ok(match template.role {
                 DeclarationRole::Struct
-                    if matches!(template.name.as_str(), "Shared" | "SharedMap" | "Keyed")
-                        && self
-                            .types
-                            .declarations
-                            .is_prelude_opaque_declaration(template.node)? =>
+                    if matches!(
+                        template.name.as_str(),
+                        "Shared" | "SharedMap" | "SharedMapState"
+                    ) && self
+                        .types
+                        .declarations
+                        .is_prelude_opaque_declaration(template.node)? =>
                 {
                     let state = substitution
                         .first_type_argument()

@@ -61,7 +61,7 @@ impl IrBuilder<'_> {
             "shared_new" => self.row_shared_new(),
             "shared_share" | "shared_map_share" => self.row_shared_share(),
             "shared_map_new" => self.row_shared_map_new(),
-            "keyed_count" => self.row_keyed_count(),
+            "shared_map_count" => self.row_shared_map_count(),
             _ => Err(LoweringFailure::UnimplementedPreludeRow(
                 crate::lowering::COMPILER_OWNED_PRELUDE_ROWS
                     .iter()
@@ -164,9 +164,9 @@ impl IrBuilder<'_> {
         self.return_value(object)
     }
 
-    /// `keyed_count<V>(state: &Keyed<V>) -> u64`: how many entries of the
+    /// `shared_map_count<V>(state: &SharedMapState<V>) -> u64`: how many entries of the
     /// state the argument names hold `Some` [SHARE-1].
-    fn row_keyed_count(&mut self) -> Result<(), LoweringFailure> {
+    fn row_shared_map_count(&mut self) -> Result<(), LoweringFailure> {
         let [state] = self.row_parameters()?;
         let count = self.define(self.result, IrOperation::SharedMapCount { state })?;
         self.return_value(count)

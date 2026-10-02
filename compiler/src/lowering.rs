@@ -370,7 +370,7 @@ impl From<crate::target::TargetLayoutFailure> for LoweringFailure {
 /// The [PRE-1] records whose bodies the compiler itself emits: the ten
 /// construction functions [OP-13], the nine window operations [OP-10],
 /// `swap` [OP-11], `free_empty` [OP-14], `shared_new` and `shared_share`, and
-/// `shared_map_new`, `shared_map_share` and `keyed_count` [SHARE-1].
+/// `shared_map_new`, `shared_map_share` and `shared_map_count` [SHARE-1].
 ///
 /// The host functions [PRE-2] are deliberately absent: those are body-less
 /// because the trusted base defines them, and calling one emits an ordinary
@@ -409,7 +409,7 @@ pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 26] = [
     "shared_share",
     "shared_map_new",
     "shared_map_share",
-    "keyed_count",
+    "shared_map_count",
 ];
 
 mod builder;

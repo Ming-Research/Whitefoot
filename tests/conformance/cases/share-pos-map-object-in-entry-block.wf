@@ -29,7 +29,7 @@ fn main() -> status: std::process::ExitStatus pure waits {
     set code = count^;
   }
   atomic state = &map {
-    let counted = keyed_count::<u8>(state: state);
+    let counted = shared_map_count::<u8>(state: state);
     atomic count = &seen {
       set code = code +wrap count^;
     }

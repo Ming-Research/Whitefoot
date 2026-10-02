@@ -977,7 +977,7 @@ pub(crate) enum CheckedShared {
     /// `SharedMap<V>`, a handle to a map whose every entry is an `entry`,
     /// the prelude's `Option<V>`.
     Map { entry: CheckedType },
-    /// `Keyed<V>`, a map's state, which only a statement holding it names.
+    /// `SharedMapState<V>`, a map's state, which only a statement holding it names.
     State { entry: CheckedType },
 }
 
@@ -2745,7 +2745,7 @@ pub(crate) enum CheckedStatement {
         /// The reference the target place forms: a `&Shared<T>` or a
         /// `&SharedMap<V>` whose handle the statement reads when it begins,
         /// or, for an entry of a map an enclosing statement holds, a
-        /// `&Keyed<V>` naming that state.
+        /// `&SharedMapState<V>` naming that state.
         target: Box<CheckedExpression>,
         /// What the statement holds [SHARE-2].
         form: CheckedAtomicForm,
@@ -2759,7 +2759,7 @@ pub(crate) enum CheckedStatement {
         /// The binder, a reference variable naming what the statement holds.
         binding: BindingId,
         /// The binder's referent type: the object's state `T`, the map's
-        /// state `Keyed<V>`, or an entry's `Option<V>`.
+        /// state `SharedMapState<V>`, or an entry's `Option<V>`.
         state: CheckedType,
         /// The guard, an owned `Bool` whose footprint writes no path.
         guard: Option<Box<CheckedExpression>>,

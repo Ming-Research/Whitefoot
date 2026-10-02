@@ -20,7 +20,7 @@ fn main() -> status: std::process::ExitStatus pure waits {
         }
       }
     }
-    let counted = keyed_count::<u8>(state: state);
+    let counted = shared_map_count::<u8>(state: state);
     if counted == 4_u64 {
       set total = total +wrap 4_u8;
     }

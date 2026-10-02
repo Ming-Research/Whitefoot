@@ -4,7 +4,7 @@ fn main() -> status: std::process::ExitStatus pure waits {
   let map = shared_map_new::<u8>(capacity: 0_u64);
   atomic slot = &map[&key[0_u64..1_u64]] {
     atomic state = &map {
-      let counted = keyed_count::<u8>(state: state);
+      let counted = shared_map_count::<u8>(state: state);
     }
   }
   return std::process::exit_status(code: 0_u8);

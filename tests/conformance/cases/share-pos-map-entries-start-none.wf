@@ -21,7 +21,7 @@ fn main() -> status: std::process::ExitStatus pure waits {
     set slot^ = None<u8>();
   }
   atomic state = &map {
-    let counted = keyed_count::<u8>(state: state);
+    let counted = shared_map_count::<u8>(state: state);
     if counted == 2_u64 {
       set code = code +wrap 2_u8;
     }
@@ -30,7 +30,7 @@ fn main() -> status: std::process::ExitStatus pure waits {
     set slot^ = None<u8>();
   }
   atomic state = &map {
-    let counted = keyed_count::<u8>(state: state);
+    let counted = shared_map_count::<u8>(state: state);
     if counted == 1_u64 {
       set code = code +wrap 10_u8;
     }

@@ -2190,8 +2190,8 @@ The starting context joins the started one, waiting there until it has completed
 [SHARE-1] Shared objects and shared maps.
 A value of the prelude type `Shared<T>` [PRE-1] is a handle to a shared object, which holds one value of type `T`, its state.
 `shared_new` moves its argument into a new shared object and returns a handle to it, and `shared_share` returns a further handle to the object its argument names.
-A value of the prelude type `SharedMap<V>` is a handle to a shared map, whose state, of the prelude type `Keyed<V>`, holds for each sequence of bytes, its key, an entry of type `Option<V>`: `Some` with the value the map holds under that key, or `None`.
-`shared_map_new` returns a handle to a new shared map whose every entry is `None`, sized for its argument's number of `Some` entries, `shared_map_share` returns a further handle to the map its argument names, and `keyed_count` returns how many entries of the state its argument names are `Some`.
+A value of the prelude type `SharedMap<V>` is a handle to a shared map, whose state, of the prelude type `SharedMapState<V>`, holds for each sequence of bytes, its key, an entry of type `Option<V>`: `Some` with the value the map holds under that key, or `None`.
+`shared_map_new` returns a handle to a new shared map whose every entry is `None`, sized for its argument's number of `Some` entries, `shared_map_share` returns a further handle to the map its argument names, and `shared_map_count` returns how many entries of the state its argument names are `Some`.
 Releasing a handle [OWN-1, STOR-3] releases that handle. An object's state, or a map's state with every value its entries hold, is released when its last handle has been released and no atomic statement on it is executing.
 The state of a shared object or of a shared map, and an entry of a shared map, are storage of no binding and belong to no context [WAIT-2]. Paths into each start at it [REF-1], and the binding of an atomic statement [SHARE-2] is the only form that forms one.
 
@@ -2201,7 +2201,7 @@ An `atomic_stmt` [GRAM-4] has a target, the `place` after `&`; a binding, its `I
 | target | the statement holds | binding |
 |---|---|---|
 | a place of type `Shared<T>` | the object's state | `&T`, whose path is the state |
-| a place of type `SharedMap<V>` | the map's state | `&Keyed<V>`, whose path is the state |
+| a place of type `SharedMap<V>` | the map's state | `&SharedMapState<V>`, whose path is the state |
 | `m[k]`, where `m` is a place of type `SharedMap<V>` and the index atom `k` has type `&[u8]` | the map's entry under the bytes `k` names | `&Option<V>`, whose path is the entry |
 | `s^[k]`, where the one path `s` names is the state of a map that an atomic statement whose block encloses this statement holds, and `k` has type `&[u8]` | the entry of that map under the bytes `k` names | `&Option<V>`, whose path is the entry |
 
@@ -2224,7 +2224,7 @@ How many times an implementation evaluates a guard is not observable, since the 
 
 [PRE-1] The prelude contributes ordinary nominal, constructor, numeric-bound and function declarations to every module. Their source visibility, collisions, typing, ownership and calls are the ordinary rules; an entry's prelude origin supplies only its deterministic diagnostic ordinal [TYPE-6, DIAG-1].
 
-The prelude's opaque structs [TYPE-2] are the four storage shapes and the cell `Box` [TYPE-9], built by the construction rows [OP-13], the shared-object handle `Shared`, and the shared-map handle `SharedMap` with its state `Keyed` [SHARE-1]. An opaque struct is not const-eligible [CONST-2]; its capability modifier and the ordinary ownership closure are exactly [OWN-1, PROV-6]. Their declarations are:
+The prelude's opaque structs [TYPE-2] are the four storage shapes and the cell `Box` [TYPE-9], built by the construction rows [OP-13], the shared-object handle `Shared`, and the shared-map handle `SharedMap` with its state `SharedMapState` [SHARE-1]. An opaque struct is not const-eligible [CONST-2]; its capability modifier and the ordinary ownership closure are exactly [OWN-1, PROV-6]. Their declarations are:
 
 ```
 opaque struct Array<T, const n: u64> {
@@ -2256,7 +2256,7 @@ opaque nocopy struct Shared<T: drop> {
 opaque nocopy struct SharedMap<V: drop> {
 }
 
-opaque nocopy struct Keyed<V: drop> {
+opaque nocopy struct SharedMapState<V: drop> {
 }
 ```
 
@@ -2386,7 +2386,7 @@ fn shared_new<T: drop>(value: T) -> result: Shared<T> pure;
 fn shared_share<T: drop>(shared: &Shared<T>) -> result: Shared<T> reads(shared);
 fn shared_map_new<V: drop>(capacity: u64) -> result: SharedMap<V> pure;
 fn shared_map_share<V: drop>(shared: &SharedMap<V>) -> result: SharedMap<V> reads(shared);
-fn keyed_count<V: drop>(state: &Keyed<V>) -> count: u64 reads(state);
+fn shared_map_count<V: drop>(state: &SharedMapState<V>) -> count: u64 reads(state);
 fn free_empty<W>(window: W) -> result: unit pure contract {
   requires window.len == 0_u64;
 };
@@ -2394,7 +2394,7 @@ fn free_empty<W>(window: W) -> result: unit pure contract {
 
 Each record is an ordinary callable boundary usable by a direct call or a function-kind binding under FN-2 through FN-5. Its definition is supplied by the build and must satisfy the declared boundary [SCOPE-3]; calls neither inspect nor classify that definition. There is one ordinary callable ABI for definitions written in Whitefoot and definitions supplied by linking. A reference passed to either lasts through that call's return and is not retained beyond it [REF-3]. A missing definition or incompatible physical representation is a build/link failure, not a source-language rejection.
 PRE-1 requirement templates are discharged by FN-8 and declared postconditions are instantiated only by CALL-6 and FN-9's ordinary selected-result rules. The supplied definition is responsible for those propositions under SCOPE-3; its declaration has no Whitefoot body for FN-9 to verify. No compiler-owned operation fact or alternative acceptance judgment exists.
-The declaration preorder is each opaque struct above in written order with its refused constructor and its fields in declaration order, then each enum above in written order with its variants and their fields in declaration order, then `Int`, `Float`, then each construction function above in written order, then each window operation above in written order, then `swap`, `shared_new`, `shared_share`, `shared_map_new`, `shared_map_share`, `keyed_count` and `free_empty`, each with its type, const and value parameters in declared order. Owner-local fields and parameters do not enter compilation-root name lookup. This preorder fixes each PRE-1 diagnostic ordinal [DIAG-1].
+The declaration preorder is each opaque struct above in written order with its refused constructor and its fields in declaration order, then each enum above in written order with its variants and their fields in declaration order, then `Int`, `Float`, then each construction function above in written order, then each window operation above in written order, then `swap`, `shared_new`, `shared_share`, `shared_map_new`, `shared_map_share`, `shared_map_count` and `free_empty`, each with its type, const and value parameters in declared order. Owner-local fields and parameters do not enter compilation-root name lookup. This preorder fixes each PRE-1 diagnostic ordinal [DIAG-1].
 
 [PRE-2] The host modules are the six standard library modules [MOD-10] `std::time`, `std::io`, `std::text`, `std::fs`, `std::net` and `std::process`, registered by these rows of the standard library's graph:
 
