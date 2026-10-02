@@ -306,7 +306,9 @@ impl Checker<'_, '_> {
         };
         // What the statement holds belongs to no binding and no caller
         // [SHARE-1], so no row names a path rooted at the binder.
-        for set in std::iter::once(&mut checked.effects).chain(guard.iter_mut().map(|guard| &mut guard.1)) {
+        for set in
+            std::iter::once(&mut checked.effects).chain(guard.iter_mut().map(|guard| &mut guard.1))
+        {
             set.reads.retain(|path| path.root != held_root);
             set.writes.retain(|path| path.root != held_root);
         }
