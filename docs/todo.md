@@ -1629,21 +1629,19 @@ rarely insert at the same place.
   components a budget-carrying frame variant. Reopen when such a program
   appears.
 
-- **A counted loop that binds an ordered result list is denied
-  parallelism.** [PAR-2]'s permission survey describes one written target
-  per statement, so a body containing `let (a, b) = f(...);` [CALL-4] is
-  denied as an unsupported body form (`LoopDenial::BodyForm` in
-  `compiler/src/semantic/loop_permission.rs`) whatever `f` writes. The
-  Snowghost shape D cascade hit it: its level loop's call of
-  `cascade_element`, which returns the values and a flag, moved into a
-  helper `cascade_into` that writes the values through an element reference
-  and returns the flag alone. The survey could
-  give each binder its own place, as a `let` of one value already does,
-  since every binder is a new iteration-own binding. Validate with a loop
-  whose body binds a two-result call and writes one element per iteration:
-  it should be permitted and split, with the same output as its sequential
-  build. Reopen with the next change to the permission survey or a program
-  whose wrapper costs measurable time.
+- **A statement that binds an ordered result list never overlaps its
+  siblings.** [PAR-1] lets two adjacent statements overlap when their paths
+  are disjoint, but the pair judgment in
+  `compiler/src/semantic/permission.rs` describes one definition per
+  statement and refuses `let (a, b) = f(...);` [CALL-4] as a form, so two
+  independent calls that return result lists never run as a pair. The
+  counted-loop survey in `compiler/src/semantic/loop_permission.rs` gives
+  such a statement its right-hand side's footprint and each binder the
+  iteration's own binding; the pair judgment would give each binder its own
+  definition path the same way. Validate with two adjacent binder-list
+  calls on disjoint storage: permitted as a pair and splitting, with the
+  sequential build's output. Reopen when a program's pair of such calls
+  costs measurable time.
 
 ## Platforms and host interfaces
 

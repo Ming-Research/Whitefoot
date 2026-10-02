@@ -126,6 +126,71 @@ fn descending_reference_transfers_keep_the_counted_loop_sequential() {
     assert!(matches!(refused, LoopDenial::SharedWrite { .. }));
 }
 
+/// [CALL-4] a body that binds a callee's ordered result list: each binder
+/// is this iteration's own, and the call is the statement's footprint.
+const ORDERED_RESULT_MAP: &[u8] = br#"fn halves(seed: u64) -> (high: u64, low: u64) pure {
+  let high = seed / 65536_u64;
+  let low = iand(seed, 65535_u64);
+  return high, low;
+}
+
+fn tally(counts: &[u64], seed: u64) -> (high: u64, low: u64) writes(counts) contract {
+  requires 0_u64 < counts^.len;
+} {
+  set counts^[0_u64] = seed;
+  return seed, seed;
+}
+
+fn mapped(count: u64) -> result: Box<Array<u64>> pure contract {
+  requires count <= 4096_u64;
+} {
+  let out = box_array_filled::<u64>(count: count, value: 0_u64);
+  for (i in 0_u64..count) {
+    let (high, low) = halves(seed: i);
+    set out.inner[i] = high +wrap low;
+  }
+  return move out;
+}
+
+fn shared(count: u64) -> result: Box<Array<u64>> pure contract {
+  requires count <= 4096_u64;
+} {
+  let out = box_array_filled::<u64>(count: count, value: 0_u64);
+  let counts = box_array_filled::<u64>(count: 1_u64, value: 0_u64);
+  for (i in 0_u64..count) {
+    let (high, low) = tally(counts: &counts.inner[0_u64..1_u64], seed: i);
+    set out.inner[i] = high +wrap low;
+  }
+  return move out;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let out = mapped(count: 4_u64);
+  let again = shared(count: 4_u64);
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+
+#[test]
+fn a_body_binding_an_ordered_result_list_is_an_independent_map() {
+    let judged = permitted(ORDERED_RESULT_MAP, "mapped");
+    assert_eq!(
+        judged.actualization,
+        Some(LoopActualization::IndependentMap)
+    );
+}
+
+#[test]
+fn a_binder_list_call_writing_shared_storage_is_denied() {
+    // The call's row writes the one element every iteration names, so the
+    // binder list's right-hand side is judged as a `let`'s would be.
+    let refused = denied(ORDERED_RESULT_MAP, "shared", 2);
+    assert!(
+        matches!(refused, LoopDenial::SharedWrite { .. }),
+        "{refused:?}"
+    );
+}
+
 /// The runtime-stride partition: one range reference per iteration over one
 /// runtime-capacity origin, with the endpoint proof written as an explicit
 /// local invariant. This is the shape [PAR-2]'s proved range family exists
