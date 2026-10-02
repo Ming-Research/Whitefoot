@@ -1,8 +1,8 @@
 {
   "purpose": "Isolated ordinary public reserve with verified future entry headroom; single production baseline panel, not an optimization/adoption result",
   "archive": "reserve-api-evidence.tar.gz",
-  "archive_sha256": "71518c3ea2b608472bba053df6140678feed1923095c6844881229334c0c62ed",
-  "archive_members": 740,
+  "archive_sha256": "7dde0322c335901e026f530bf9f64eea3eb1a09b29d8b20d721ba63ebd940819",
+  "archive_members": 789,
   "base_revision": "89571a60381a685cfbe760248ceb6178d9f9ac05",
   "production_cli_sha256": "c12b2b2a6c9694fd2bc1b7be0004d582ae9628951422def849f4cf6a3ac02f77",
   "timed_image_sha256": "f1ebf18d7a94c79250bb3cbd74a0b379a2a30c6e5e4eda48396ec77d8bbdbf3f",
@@ -3991,5 +3991,56 @@
       "sha256": "d0fff20f4beee78eaee17e11c878e63de4caa23451a1537c8f8b12ad1da74e52"
     },
     "all_prior_member_bytes_preserved": true
+  },
+  "independent_align": {
+    "prefix": "independent-align/",
+    "payload_count": 16,
+    "manifest": "independent-align/manifest.json",
+    "raw_rows": 1760,
+    "primary_qualified": false,
+    "production_adoption": false,
+    "records": "independent-align/records.json",
+    "retained_records": 160,
+    "manifest_sha256": "0712872ba76bd31ecf7b70125ec263bbf98107ed7abc1c073c5ffb23015e0f18",
+    "replay_boundary": "Frozen unselected experiment. Primary full-range qualification failed; no compiler/library/representation adoption. No retries or sample filtering. Historical scripts require omitted pinned compiler, runtime and peer objects, reconstructed source/build hierarchy and resolved toolchain paths; path-normalized records are not standalone executables or a verified published-package replay. Source packages and exact patch retain the causal input. Raw CSVs retain every sample. Complete EDIT trace includes setup and cleanup. Prior failed experiments remain adverse evidence."
+  },
+  "edit_home_mask": {
+    "prefix": "edit-home-mask/",
+    "payload_count": 16,
+    "manifest": "edit-home-mask/manifest.json",
+    "raw_rows": 1760,
+    "primary_qualified": false,
+    "production_adoption": false,
+    "records": "edit-home-mask/records.json",
+    "retained_records": 182,
+    "manifest_sha256": "4249b6565e788da9363e50c2fc96fa5f431f50a011c99e697d6bee1ebe73d298",
+    "replay_boundary": "Frozen unselected experiment. Primary full-range qualification failed; no compiler/library/representation adoption. No retries or sample filtering. Historical scripts require omitted pinned compiler, runtime and peer objects, reconstructed source/build hierarchy and resolved toolchain paths; path-normalized records are not standalone executables or a verified published-package replay. Source packages and exact patch retain the causal input. Raw CSVs retain every sample. Complete EDIT trace includes setup and cleanup. Prior failed experiments remain adverse evidence."
+  },
+  "independent_align_edit_home_mask_prior_index": {
+    "prior_archive_sha256": "71518c3ea2b608472bba053df6140678feed1923095c6844881229334c0c62ed",
+    "prior_members": 740,
+    "unchanged_names_and_bytes": 739,
+    "renamed_member": {
+      "from": "component-index.json",
+      "to": "component-index-before-independent-align-edit-home-mask.json",
+      "sha256": "cb134fa5b0930c15965eca360aa9ed5acc832dd8bb175e53e2bccf35f106b497"
+    },
+    "all_prior_member_bytes_preserved": true
+  },
+  "edit_batch_caller": {
+    "prefix": "edit-batch-caller/",
+    "payload_count": 16,
+    "manifest": "edit-batch-caller/manifest.json",
+    "raw_rows": 1760,
+    "primary_qualified": true,
+    "production_adoption": false,
+    "records": "edit-batch-caller/records.json",
+    "retained_records": 195,
+    "manifest_sha256": "cb92ae2f0be1cc775052812b58396d48b6373b80d50a81073f8c0fbe3e336985",
+    "replay_boundary": "Frozen caller-form attribution experiment; four large-map cells qualify under the preregistered numerical predicate, four small cells overlap. No library or compiler change/adoption and no revision of the original multipath benchmark verdict. Both ordinary source packages use identical published library and compiler. Measured gain includes all resulting hoisting, dispatch, layout and register changes; it is not a subtractable branch share. Historical normalized scripts require omitted pinned compiler/runtime/peer objects and reconstructed toolchain/source hierarchy. Driver source is retained under edit-home-mask records runtime/deps/edit-driver.c; dependency-reuse.json pins the shared inputs. No standalone or verified published-package replay. Native screen no-timing text describes its earlier stage, superseded only by the separate terminal runtime records.",
+    "qualified_large_cells": 4,
+    "overlap_small_cells": 4,
+    "all_drift_checks_pass": true,
+    "scope": "Caller form only; identical library/compiler, no adoption or original multipath verdict reclassification."
   }
 }

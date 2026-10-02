@@ -5561,3 +5561,176 @@ relaxation follows. Root independently checked 480 min/median/max fields,
 88 cross-arm/peer checksums and all eight per-series verdicts against the raw
 rows. Exact source, prospective criteria, raw rows and replay limits belong to
 the `edit-running-index/` component of [reserve-api-evidence.tar.gz](reserve-api-evidence.tar.gz).
+
+A read-only follow-up checks why the range test remains inconclusive. Each
+sample uses seed `101 + sample`; there is one observation per seed, arm and
+cohort. In all sixteen cell/cohort comparisons the candidate maximum and
+control minimum come from different seeds. Same-seed candidate values are
+lower in 167 of 176 pairs, but nine are not; aligned scalar/4096 cohort zero
+has ratios 1.1734 at seed 104 and 0.8092 at seed 110. Repeated control
+observations of the same seed also differ across cohorts. The data cannot
+partition input effects from execution/order variation. This diagnostic does
+not change the registered verdict. A future protocol investigation could
+repeat identical inputs with balanced arm order while retaining all workloads,
+peers and the strict target; it must state its criterion before measuring.
+
+### Independent local alignment: native reduction without qualified EDIT gain
+
+An isolated compiler prototype relaxes the equal-natural-alignment requirement
+for complete independent local roots when every extent is a multiple of their
+maximum natural alignment and the existing frame needs no padding. Stronger
+requested alignment, zero roots and padding cases retain the old fallback.
+The exact two-file patch and its two new extent-boundary tests are experimental;
+this result does not select broader eligibility. Both compiler arms use the published original
+Map source, not the rejected running-index source.
+
+The reached successful wide EDIT path loses three private `Result<u64,unit>`
+stores: tag, returned value and inactive unit payload. The value update remains
+a direct load/add/store and probing is unchanged. Complete enclosing trace
+bodies shrink from 1,536 to 1,354 scalar instructions and 2,529 to 1,810 wide
+instructions; frames shrink from 720 to 224 bytes and 7,424 to 1,984 bytes.
+Those whole-function reductions include setup, cleanup and other operation
+arms; they are not per-edit savings. Raw modules match after removing only the
+local allocation/frame-address recipe, with nominal types and raw assumptions
+unchanged. Ten focused target tests pass; restoring the old selector makes
+both new eligibility tests fail. All 22 correctness stages exit zero, including
+the maintained ordinary/parallel allocation observations of 45 releases each.
+The initial scratch expectation of 36 is retained as a failed authoring attempt.
+
+One fixed four-process primary campaign retains 1,760 complete EDIT rows;
+all processes exit zero and the shortest interval is 3.805 ms.
+
+Aligned-hash medians are complete-trace nanoseconds amortized per edit,
+including setup and cleanup; each pair is cohort zero / cohort one.
+Rust and C++ values come from the candidate-image panels.
+
+| Payload / initial capacity | Control WF | Candidate WF | Rust | C++ |
+|---|---:|---:|---:|---:|
+| 8 B / 64 | 3.091 / 3.250 | 3.036 / 2.962 | 2.365 / 2.354 | 2.392 / 2.381 |
+| 8 B / 4096 | 4.656 / 4.922 | 4.433 / 4.439 | 2.453 / 2.488 | 5.153 / 5.085 |
+| 256 B / 64 | 3.224 / 3.274 | 3.126 / 3.178 | 2.782 / 2.787 | 2.376 / 2.371 |
+| 256 B / 4096 | 5.699 / 5.671 | 5.116 / 5.341 | 3.166 / 3.211 | 6.708 / 6.016 |
+
+The separate native-default panel is retained in `independent-align/records.json`
+(record `runtime/edit-runtime-reduction.json`) in the linked evidence archive;
+its different hash protocol does not replace this aligned comparison.
+
+Every WF median improves, but no cell separates the full before/after ranges in both cohorts.
+The registered primary criterion fails. Additional C-direct and C++ drift
+failures remain in the record. All aligned strict peer targets fail; default
+hash results are separate. Conditional lookup, mutation and reserve regression
+images and timing were not prepared or run. No compiler change is adopted.
+
+Independent reduction checks all 480 statistical fields, eight cell verdicts,
+1,672 same-input checksum comparisons and 34 runtime pins. Same-seed WF values
+improve in 79 of 88 aligned pairs and 76 of 88 default pairs, with 19 of 88
+cell/seed directions reversing between cohorts. These sequential observations
+cannot partition input effects from execution/order variation and do not replace
+the failed criterion. The `independent-align/` component of
+[reserve-api-evidence.tar.gz](reserve-api-evidence.tar.gz) retains the exact
+patch, counterfactual failures, native excerpts, criteria, raw rows and reducers.
+
+### EDIT home mask: native division bypass without qualified timing gain
+
+A separate ordinary-source candidate changes only `hash_map_edit` home-bucket
+selection: power-of-two capacities use a mask, with modulo retained otherwise.
+It uses the same published compiler on both arms and composes neither the
+running-index nor independent-alignment prototype. Earlier find/try_put masking
+is a separate result. The reached power-of-two EDIT path bypasses division;
+non-power-of-two capacity, probing, direct payload update and private Result
+stores remain. Enclosing scalar and wide bodies each gain five static
+instructions, with frames, stack accesses and call counts unchanged. This is
+not five additional instructions on every dynamic path.
+
+All ten native stages and all thirty correctness stages have their expected
+outcomes. Both arms pass the complete trace, lookup and reserve panels and the
+capacity-three/empty/full-cycle/callback witness; wrong result, callback and
+cleanup expectations each exit seven. One four-process campaign retains all
+1,760 rows with zero exits and a 3.788 ms minimum interval.
+
+Aligned-hash medians are complete-trace nanoseconds amortized per edit,
+including setup and cleanup; each pair is cohort zero / cohort one.
+Rust and C++ values come from the candidate-image panels.
+
+| Payload / initial capacity | Control WF | Candidate WF | Rust | C++ |
+|---|---:|---:|---:|---:|
+| 8 B / 64 | 3.113 / 3.093 | 3.116 / 3.108 | 2.391 / 2.371 | 2.369 / 2.396 |
+| 8 B / 4096 | 4.632 / 4.794 | 4.548 / 4.485 | 2.517 / 2.492 | 4.973 / 4.955 |
+| 256 B / 64 | 3.260 / 3.293 | 3.375 / 3.383 | 2.786 / 2.790 | 2.393 / 2.386 |
+| 256 B / 4096 | 5.670 / 5.636 | 5.246 / 5.439 | 3.169 / 3.255 | 6.936 / 6.373 |
+
+The separate native-default panel is retained in `edit-home-mask/records.json`
+(record `runtime/edit-runtime-reduction.json`) in the linked evidence archive;
+its different hash protocol does not replace this aligned comparison.
+
+No cell has separated gain or loss ranges in both cohorts. At aligned capacity 64, scalar medians
+worsen by about 0.11/0.49 percent and wide medians by 3.51/2.74 percent. Additional
+C-direct cohort drift and C++ cross-arm drift also fail. All aligned strict
+peer targets fail; default targets pass separately. The primary criterion
+fails, with no retry or source adoption.
+
+Independent checks reproduce 480 statistics, all eight cell verdicts, 1,672
+same-input checksum comparisons and 99 input pins. The `edit-home-mask/`
+component retains sources, fault controls, small native excerpts, criteria,
+all raw samples and reductions. Both new components preserve the earlier 740
+member byte sequences, with the previous index under an explicit historical
+name. Binaries, objects and full LLVM/disassembly dumps remain omitted; recorded
+commands need the pinned dependencies and scratch/toolchain reconstruction
+specified in the retained replay limits.
+
+### Outer EDIT dispatch: qualified caller-form gains on large maps
+
+This attribution trial changes the ordinary caller, with the published compiler
+and Map source byte-identical in both arms. A single outer `path == 7` choice
+selects a dedicated EDIT round/key loop. Setup and cleanup are byte-identical;
+the other operation loop is identical modulo whitespace and removal of its
+now-unreachable EDIT arm. The dedicated loop copies the original key generation,
+edit call and result consumption in the same order and nesting. It composes
+none of the running-index, home-mask or independent-alignment candidates.
+
+The reached loop loses repeated operation dispatch and hoists environment,
+count and backing loads. Hashing and one division/remainder pair per key remain,
+as do the digest load/store and three private Result stores. No repeated call
+or payload copy is added to that loop. Whole-trace scalar instructions increase
+from 1,536 to 1,617 and its frame from 720 to 768 bytes; wide instructions decrease
+from 2,529 to 2,481 and its frame from 7,424 to 7,296 bytes. These counts include
+other operation arms, setup and cleanup. An initial mechanical brace deletion
+fails admission and is retained; the corrected candidate resumes only its
+unfinished build stages. All thirty correctness stages have their expected
+outcomes, including both full-operation panels and the six result/callback/
+cleanup fault executions.
+
+One fixed four-process campaign retains 1,760 rows with all exits zero and a
+3.769 ms shortest interval. Aligned-hash medians below are complete-trace
+nanoseconds amortized per edit, including setup and cleanup. Pairs are cohort
+zero / cohort one; both peer columns come from candidate-image panels.
+
+| Payload / initial capacity | Control WF | Candidate WF | Rust | C++ |
+|---|---:|---:|---:|---:|
+| 8 B / 64 | 3.102 / 3.151 | 3.043 / 3.084 | 2.360 / 2.368 | 2.388 / 2.389 |
+| 8 B / 4096 | 4.696 / 4.816 | 3.307 / 3.273 | 2.459 / 2.461 | 5.156 / 5.083 |
+| 256 B / 64 | 3.256 / 3.235 | 3.103 / 3.042 | 2.845 / 2.786 | 2.374 / 2.374 |
+| 256 B / 4096 | 5.802 / 5.670 | 3.610 / 3.639 | 3.167 / 3.177 | 5.815 / 6.027 |
+
+All four capacity-4096 cells, across both payloads and both hash series, separate
+gains in both cohorts under the registered caller-form criterion. Median
+improvements are about 30–38 percent. All within-arm cohort and ordinary-peer
+cross-arm drift checks pass; no cell separates a loss. The four capacity-64
+cells overlap and remain unqualified despite lower medians. Both large aligned
+cells pass the strict slower-peer target, while both small aligned cells fail.
+The candidate remains slower than Rust in both large aligned median comparisons;
+passing the slower C++ target does not mean beating both peers. Native-default
+passes its separate peer target in all four cells under different hash protocols;
+its complete panel remains in the retained reduction.
+
+Independent checks reproduce all 480 statistical fields and eight cell verdicts,
+1,672 same-input checksum comparisons and 100 runtime input pins. The gain belongs
+to the complete caller rewrite and resulting load hoisting, layout, scheduling
+and register changes; it cannot be subtracted as the elapsed share of repeated
+path tests alone. This selects no library optimization or benchmark replacement
+and does not reclassify the original multipath verdict or earlier failed trials.
+The `edit-batch-caller/` component of
+[reserve-api-evidence.tar.gz](reserve-api-evidence.tar.gz) retains exact source
+packages and patch, the failed attempt, native excerpts, complete correctness
+records, criteria, raw rows, reducers and replay limits. All 740 previously
+published member byte sequences remain preserved.

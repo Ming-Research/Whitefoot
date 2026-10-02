@@ -3483,6 +3483,30 @@ condition under which it is taken up.
   medians. Keep the source patch experimental. Reopen with a discriminator for
   remaining result staging or probe work and the same complete-outcome and
   peer criteria; instruction removal alone does not qualify an optimization.
+  The same campaign has only one observation per seed/arm/cohort, so marginal
+  ranges combine input variation and execution variation. Investigate repeated,
+  order-balanced identical inputs when that distinction blocks attribution;
+  keep every workload and peer target and preregister any future criterion.
+  The existing experiment and its failed verdict remain unchanged.
+
+  The [independent-alignment compiler prototype](../research/experiments/container-representation/map-library/RESULTS.md#independent-local-alignment-native-reduction-without-qualified-edit-gain)
+  removes three private Result stores on the reached successful EDIT path, but
+  its registered timing criterion fails; broader eligibility remains unselected. Whole-trace
+  frame/instruction reductions include other operations and do not attribute
+  elapsed EDIT cost. The separate [EDIT home-mask trial](../research/experiments/container-representation/map-library/RESULTS.md#edit-home-mask-native-division-bypass-without-qualified-timing-gain)
+  also fails, including adverse small-case medians despite division bypass.
+  Keep both patches experimental. Reopen only with a discriminating prospective
+  measurement of remaining EDIT work and the unchanged complete-outcome/peer
+  target; compiler regression timing remains conditional on primary gain.
+
+  The [outer EDIT-dispatch caller trial](../research/experiments/container-representation/map-library/RESULTS.md#outer-edit-dispatch-qualified-caller-form-gains-on-large-maps)
+  qualifies large-map gains with unchanged library/compiler bytes, but small-map
+  comparisons still overlap and miss both aligned peers. The gain includes
+  load hoisting and other caller code-generation changes, not a subtractable
+  dispatch cost or a container API improvement. Preserve the original multipath
+  verdict. Reopen remaining EDIT/result/digest work against the same complete
+  outcomes and both peers; any new caller benchmark needs an explicit scope
+  rather than replacing adverse results.
 
 - **Ordered insertion replacement costs need attribution.** Both the
   [aggregate-result candidate](../research/experiments/container-representation/ordered-library/RESULTS.md#single-descent-insertion-candidate)
