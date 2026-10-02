@@ -576,6 +576,14 @@ struct TypeContext<'unit> {
     behavior: behavior::BehaviorInventory,
     /// [TYPE-11] each struct's formed type invariants, in declaration order.
     type_invariants: HashMap<NominalId, Vec<type_invariants::TypeInvariantTemplate>>,
+    /// [EFF-2] the paths each checked body writes, by function. A row may
+    /// declare a wider path than any of these; a repair that offers to
+    /// narrow a row reads them to know what the narrowed row still covers
+    /// [DIAG-1]. A body-less row has none and is not offered narrowing.
+    exhibited_writes: HashMap<FunctionId, Vec<super::model::CheckedStatePath>>,
+    /// [EFF-2] the row each checked body exhibits, rendered as a writer
+    /// declares it, which such a repair offers word for word.
+    exhibited_rows: HashMap<FunctionId, String>,
 }
 
 /// Scratch of one structural body attempt. Only finite loop summaries survive
@@ -1843,6 +1851,15 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         let exhibited = self
             .analysis
             .written_body_effects(signature, checked.effects.clone());
+        if !declaration_only {
+            self.types
+                .exhibited_writes
+                .insert(signature.id, exhibited.writes.clone());
+            let row = self
+                .types
+                .render_effect_row(&Checker::suggested_effect_row(&exhibited), signature)?;
+            self.types.exhibited_rows.insert(signature.id, row);
+        }
         self.types.validate_release_graphs(&checked.statements)?;
         // [EFF-1] the row has exactly two categories, and [STOR-8] gives
         // allocation no entry in it, so [EFF-2]'s judgment is over `reads`
@@ -3224,6 +3241,7 @@ impl<'unit> TypeContext<'unit> {
                     .iter()
                     .map(|parameter| (parameter.declaration, parameter.mode, parameter.ty)),
                 &signature.declared_effects.writes,
+                self.exhibited_writes.get(&signature.id).map(Vec::as_slice),
             ));
         }
         Ok(callees)
@@ -3949,6 +3967,8 @@ impl<'unit> TypeContext<'unit> {
             derived_consts: Default::default(),
             behavior: Default::default(),
             type_invariants: Default::default(),
+            exhibited_writes: Default::default(),
+            exhibited_rows: Default::default(),
             functions_by_declaration: Default::default(),
             nominals_by_declaration: Default::default(),
             signatures: Default::default(),

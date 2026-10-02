@@ -1,4 +1,4 @@
-# Kernel Specification v0.86
+# Kernel Specification v0.85
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -500,7 +500,7 @@ After the route's leading constructor and field are admitted, that binder is vis
 It must differ from its paired field, every parameter, the result binder, and every live definition.
 Different ensures clauses have disjoint result-datum scopes and may reuse one route-binder spelling.
 Neither kind of result datum has runtime storage or ownership state, and neither is visible in the function body, so a body `let` may reuse a result binder's spelling without a redeclaration event.
-A match binder becomes visible in its arm body only after the complete fieldbind list and only after GRAM-10 has established that it differs from its paired field label, every earlier binder in that arm list, and every lexical-IDENT declaration live on arm entry that it competes with.
+A match binder becomes visible in its arm body only after the complete fieldbind list and only after GRAM-10 has established that it differs from its paired field label, every earlier binder in that arm list, and every lexical-IDENT declaration live on arm entry.
 A `for_binding` binder becomes visible after its complete `for_binding`, including both endpoint atoms, through the remaining `header_invariant` clauses and the counted body; it is not visible in either endpoint.
 An ordinary or counted loop label, when written, is visible only in its loop body; a counted label is not visible in the binding or invariant header.
 A loop label is an optional lexical name, never the identity of the loop: every `loop_stmt` and `for_stmt` has one distinct compiler-owned structural loop identity whether or not it writes a LABEL.
@@ -515,16 +515,12 @@ Within the invariant-name domain a new live declaration may not shadow another l
 Adding, removing, or changing a loop label cannot change any invariant binding.
 A named const is visible in its whole module like every top-level declaration; [CONST-2] judges the dependencies among constants.
 
-The lexical IDENT domain has two use classes: callables, which are top-level `fn_decl`s, raw function-kind `gparam`s and PRE-1 functions, and values, which are its other entries; a module alias is in both, and any other alias is in its target's class [MOD-4].
-Every other domain is one use class.
-Two declarations compete when they have one spelling and one domain and either share a use class or both enter one module's inventory [MOD-3].
-So `let narrow = narrow(width: w);` binds a value beside a function of the same spelling, each use selecting the declaration its role admits.
-Two competing declarations in one module's inventory, in one record's alias header, or in the same lexical scope are a redeclaration attributed to the later declaration event.
+Within one domain, two declarations in one module's inventory, in one record's alias header, or in the same lexical scope are a redeclaration attributed to the later declaration event.
 Declarations in unrelated function or declaration owners are not duplicates merely because their spellings match.
-A nested lexical declaration may not shadow a competing entry live at that declaration.
-GRAM-10 exclusively owns arm match-binder distinctness and freshness: a second IDENT of an arm `fieldbind` equal to its paired field label, an earlier binder in the same arm list, or any lexical-IDENT declaration live on arm entry that it competes with is rejected citing GRAM-10 at that later/offending binder before it becomes a declaration, rather than also being reported as TYPE-6 shadowing.
+A nested lexical declaration may not shadow an entry live at that declaration.
+GRAM-10 exclusively owns arm match-binder distinctness and freshness: a second IDENT of an arm `fieldbind` equal to its paired field label, an earlier binder in the same arm list, or any lexical-IDENT declaration live on arm entry is rejected citing GRAM-10 at that later/offending binder before it becomes a declaration, rather than also being reported as TYPE-6 shadowing.
 FN-9 exclusively owns the analogous result-datum checks described above; failure creates no TYPE-6 declaration or duplicate event.
-Because every top-level declaration and every alias is live throughout its module or record, a parameter, local, or generic in a nested scope that competes with one may not use its spelling even when that declaration's source item occurs later; the nested declaration is the offending shadow event.
+Because every top-level declaration and every alias is live throughout its module or record, any other parameter, local, or generic in a nested scope may not use such a spelling in its domain even when that declaration's source item occurs later; the nested declaration is the offending shadow event.
 Disjoint expired lexical scopes may reuse an ordinary value or label spelling.
 Within one module, logical paths and record boundaries never create a namespace or lookup key; a module and a record's alias header are the only scopes above a declaration [MOD-3, MOD-4].
 
@@ -1852,7 +1848,7 @@ Its closed carrier roles are function, named-const, parameter, contract-definiti
 A dotless-operation ordinal is the zero-based first occurrence among distinct operation-family spellings, scanning OP-1 rows top to bottom and each `op` cell left to right and skipping every later occurrence of the same spelling.
 A mode-word ordinal is the zero-based FORM-3 alternative order `wrap`, `defined`, `checked`, `sat`, `strict`, `nearest`.
 Those two reserved sets are disjoint in this version.
-For the GRAM-10 violation defined by TYPE-6, the payload is `(binder_spelling, paired_field_spelling, optional_earlier_binder_origin, ordered_arm_entry_competing_lexical_ident_origins)`.
+For the GRAM-10 violation defined by TYPE-6, the payload is `(binder_spelling, paired_field_spelling, optional_earlier_binder_origin, ordered_arm_entry_live_lexical_ident_origins)`.
 Earlier binders and arm-entry origins are ordered by declaration-event key.
 That binder does not also create a TYPE-6 duplicate or shadow candidate.
 
@@ -1988,11 +1984,11 @@ This rejection is never replaced with a runtime fallback or reported at the call
 
 An [FN-9] result-datum admission subjudgment begins only after [FN-8] contract admission, FORM-3 result reservation, the route's ordinary leading-variant lookup when present, and concrete [FN-2] signature substitution.
 Admission through freshness precedes lexical resolution or semantic checking of the owning `ensures_clause` expression; the remaining clause, selected-return, and proof judgments begin only after that expression resolves and the surrounding function's ordinary semantic judgments required by the failed premise succeed.
-For an unrouted clause, test in this fixed order: result mode/type determined by its declared `rtype` and the data [CALL-4] gives its class; header result-candidate freshness against every declaration live in the clause that it competes with [TYPE-6].
-For a routed clause, test in this fixed order: whole-result mode/type determined by its declared `rtype`, its `Result` or `Option` class, and the data [CALL-4] gives its payload type; resolved variant owner and exact success-variant identity, `Ok` for a Result and `Some` for an Option; the written field against the variant's sole declaration-order field; route-candidate freshness against that field, the header result candidate, and every declaration live in the clause that it competes with [TYPE-6].
+For an unrouted clause, test in this fixed order: result mode/type determined by its declared `rtype` and the data [CALL-4] gives its class; header result-candidate freshness against every declaration live in the clause.
+For a routed clause, test in this fixed order: whole-result mode/type determined by its declared `rtype`, its `Result` or `Option` class, and the data [CALL-4] gives its payload type; resolved variant owner and exact success-variant identity, `Ok` for a Result and `Some` for an Option; the written field against the variant's sole declaration-order field; route-candidate freshness against that field, the header result candidate, and every declaration live in the clause.
 A result, class, owner, variant, or missing-field failure uses `SourceNode` at the complete `ensures_clause` or its `result_route` when present.
 An extra, misspelled, or out-of-order field uses `SourceNode` at the complete `fieldbind`.
-A candidate equal to its paired field, another live candidate, or a live declaration it competes with uses `SourceNode` at its owning `result_binding` or `fieldbind`, with coordinate equal to the candidate IDENT token.
+A candidate equal to its paired field or another live candidate or declaration uses `SourceNode` at its owning `result_binding` or `fieldbind`, with coordinate equal to the candidate IDENT token.
 Those are FN-9 events, not GRAM-10 or TYPE-6 duplicates.
 An unresolved leading route TYPEID remains the earlier TYPE-6 lexical-use rejection and forms no FN-9 candidate.
 

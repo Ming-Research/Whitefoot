@@ -97,10 +97,10 @@ use super::state::{
     AffinePremiseUse, ClosedState, CountedRootAtom, DerivationId, DerivationInventory,
     DerivationLedger, DerivationNode, DerivationRootKind, FactState, FlowEventId, FlowEventKind,
     GoalId, GoalNormalization, GoalSign, GoalSupport, GoalTable, IndexCaptureSubstitution,
-    IndexSeparationDetail, JoinParent, PostconditionCallSubstitution, RangeSeparationDetail,
-    RangeSeparationOrdering, Relation, SourceAffineFactRef, SourceLoopInvariantRef, WordHashMap,
-    close, close_excluding_term, closure_is_seeded, contradiction_without_proofs, join_at,
-    materialize_closure_at, materialize_closure_before_kill,
+    IndexSeparationDetail, JoinParent, KilledCell, PostconditionCallSubstitution,
+    RangeSeparationDetail, RangeSeparationOrdering, Relation, SourceAffineFactRef,
+    SourceLoopInvariantRef, WordHashMap, close, close_excluding_term, closure_is_seeded,
+    contradiction_without_proofs, join_at, materialize_closure_at, materialize_closure_before_kill,
 };
 use super::term::{
     CountedCaptureSide, MeasureBound, MeasurePlacement, PlaceRoot, TermId, TermKind, TermTable,
@@ -110,11 +110,11 @@ use super::{
     BoundsRequest, CallGoalDisposition, CallGoalEvidence, CallGoalOutcome, CallTransport,
     ContractGoalOutcome, CountedDerivationSet, EntailmentContext, FunctionEntailment,
     FunctionPostconditionProof, JoinedSourceProofProvenance, LoopInvariantOutcome,
-    LoopInvariantProof, ObligationFamily, ObligationOutcome, PostconditionAggregate,
-    PostconditionDisposition, PostconditionEntryImage, PostconditionEntryImageOutcome,
-    PostconditionExit, RangeEndpointReading, RangeLengthReading, SourceProofCertificateFailure,
-    SourceProofCheck, SourceProofOutcome, VerifiedPostconditionSummaryRef, fragment_type,
-    overflow_conjuncts_for_values,
+    LoopInvariantProof, MeasureKillNote, ObligationFamily, ObligationOutcome,
+    PostconditionAggregate, PostconditionDisposition, PostconditionEntryImage,
+    PostconditionEntryImageOutcome, PostconditionExit, RangeEndpointReading, RangeLengthReading,
+    SourceProofCertificateFailure, SourceProofCheck, SourceProofOutcome,
+    VerifiedPostconditionSummaryRef, fragment_type, overflow_conjuncts_for_values,
 };
 
 /// One [ENT-5] kill event gathered from a statement or expression.
@@ -127,6 +127,10 @@ enum KillEvent {
         place: ResolvedPlace,
         element: bool,
         source: crate::NodePath,
+        /// For a callee's declared write, the places the same call would
+        /// write if the row declared only what the body writes [EFF-2];
+        /// `None` for every other write [DIAG-1].
+        narrowed: Narrowed,
     },
     /// (c) a consuming use of a binding.
     Consume {
@@ -149,8 +153,13 @@ enum KillEvent {
         place: ResolvedPlace,
         element: bool,
         source: crate::NodePath,
+        narrowed: Narrowed,
     },
 }
+
+/// What a call would write through one argument under a row narrowed to its
+/// callee's exhibited writes; see [`KillEvent::Write`].
+type Narrowed = Option<std::rc::Rc<[ResolvedPlace]>>;
 
 impl KillEvent {
     fn source(&self) -> &crate::NodePath {
@@ -313,6 +322,12 @@ struct ProofFlowState {
     /// its repair offers a `requires` only over parameters that still hold
     /// their entry values where the goal is asked.
     written: BTreeSet<BindingId>,
+    /// [DIAG-1] each write on some path to this edge that reached a measure
+    /// term, with the bound cells it removed about that term. It branches and
+    /// joins as [`Self::written`] does. A failed bounds judgment restores the
+    /// cells on a copy of its state, and when they alone discharge it, the
+    /// repair names these writes [ENT-5].
+    measure_kills: Vec<MeasureKill>,
     /// The kill events applied on this path since the innermost enclosing
     /// loop head, kept only where debug assertions are on: at the loop's back
     /// edge every one must be an event of the summary its head subtracted
@@ -320,7 +335,42 @@ struct ProofFlowState {
     continuing: Vec<KillEvent>,
 }
 
+/// [DIAG-1] one write that reached a measure term: the statement that wrote,
+/// the place it wrote, and the cells about the term it removed, empty when
+/// an earlier write had already removed them.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct MeasureKill {
+    term: TermId,
+    source: crate::NodePath,
+    written: ResolvedPlace,
+    cells: Vec<KilledCell>,
+    /// Whether the call's row, narrowed to its callee's exhibited writes,
+    /// would leave `term` alone [EFF-2, DIAG-1]; false for every write that
+    /// is not a callee's declared write.
+    narrowable: bool,
+}
+
 impl ProofFlowState {
+    /// Adds one write that reached `term`, keeping the first record of each
+    /// writing statement and appending the cells a later pass removed.
+    fn record_measure_kill(&mut self, kill: MeasureKill) {
+        match self
+            .measure_kills
+            .iter_mut()
+            .find(|known| known.term == kill.term && known.source == kill.source)
+        {
+            Some(known) => {
+                known.narrowable &= kill.narrowable;
+                for cell in kill.cells {
+                    if !known.cells.contains(&cell) {
+                        known.cells.push(cell);
+                    }
+                }
+            }
+            None => self.measure_kills.push(kill),
+        }
+    }
+
     /// Records on this edge the bindings these events root their places at.
     fn record_writes(&mut self, events: &[KillEvent]) {
         self.written
@@ -1956,6 +2006,7 @@ mod indexed_goal_kill_tests {
                         place: ResolvedPlace::binding(binding),
                         element: false,
                         source: source.clone(),
+                        narrowed: None,
                     },
                     KillEvent::Consume { binding, source },
                 ];

@@ -199,6 +199,7 @@ impl Judging<'_, '_, '_> {
             affine_index_maps: Vec::new(),
             range_partitions: Vec::new(),
             written_before: state.written_before(discharged),
+            killed_by: Vec::new(),
         });
     }
 }

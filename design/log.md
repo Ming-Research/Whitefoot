@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-02 Separate callables from values in name competition, and name the call behind a lost bound
+
+Nodes: language/name-resolution, compiler/diagnostic-repairs
+
+Owner-approved: 2026-10-02, in the session, written in Chinese: after the handoff of PR #206's cards, Q29 A and Q32 B ("apart from 25, which I think needs research, I agree to all the others"); after the handoff of PR #207, which showed every rule change with its before and after behavior, Q35 A and the change as shown ("for Q25 option A I need to see what the code actually looks like; the others agreed")
+
+Summary: The lexical identifier domain splits into callables and values, a module alias being both, and two declarations compete only within a class, except that two declarations of one module's inventory compete whatever their class, because no use admits both a callable and a value while an alias binds by path alone; a local value beside a function of its spelling is therefore neither a redeclaration nor a shadow, which the layout census found cost every merge of separately written records renames ([layout friction](../research/investigations/layout-friction/DESIGN.md)). An unproved subscript bound whose length facts a call's row removed is asked again on a copy of its state with those cells put back, and when that discharges it the repair names the call and offers the callee's `ensures` and, where it would help, the row the callee's body exhibits, beside the guard; acceptance never reads the copy, and receipt keys leave out what bodies exhibit.
+
 ## 2026-10-02 Keep killed length facts and stored positions to the writer, after the layout-stage census
 
 Nodes: language/effects, language/checks-and-proofs/range-facts

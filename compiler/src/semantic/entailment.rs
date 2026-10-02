@@ -136,6 +136,10 @@ pub(crate) struct EntailmentCallee {
     /// path and [OWN-7] compares the result, so a truncated step list would
     /// under-approximate the write.
     pub(crate) parameter_writes: Vec<Vec<Vec<super::model::CheckedEffectStep>>>,
+    /// Per parameter, the `epsuffix*` of every write the body exhibits
+    /// [EFF-2], which a row narrowed to the body's writes would declare;
+    /// `None` for a body-less row, whose declared row is all there is.
+    pub(crate) parameter_exhibited_writes: Option<Vec<Vec<Vec<super::model::CheckedEffectStep>>>>,
     pub(crate) parameter_transports: Vec<CallTransport>,
 }
 
@@ -149,9 +153,23 @@ impl EntailmentCallee {
     pub(crate) fn from_signature(
         parameters: impl Iterator<Item = (crate::DeclarationId, CheckedMode, CheckedType)>,
         writes: &[super::model::CheckedStatePath],
+        exhibited: Option<&[super::model::CheckedStatePath]>,
     ) -> Self {
         let parameters = parameters.collect::<Vec<_>>();
+        let rooted = |paths: &[super::model::CheckedStatePath]| {
+            parameters
+                .iter()
+                .map(|(declaration, _, _)| {
+                    paths
+                        .iter()
+                        .filter(|path| path.root == *declaration)
+                        .map(|path| path.steps.clone())
+                        .collect()
+                })
+                .collect()
+        };
         Self {
+            parameter_exhibited_writes: exhibited.map(rooted),
             parameter_declarations: parameters
                 .iter()
                 .map(|(declaration, _, _)| *declaration)
@@ -388,6 +406,24 @@ pub(crate) struct ObligationOutcome {
     /// node, which is what its repair reads to offer one [DIAG-1].
     /// Discharged obligations retain none.
     pub(crate) written_before: Vec<BindingId>,
+    /// For an undischarged bounds obligation, the writes on paths to its node
+    /// that removed facts about its measure which, put back, discharge it
+    /// [ENT-5]; its repair names them [DIAG-1]. Every other occurrence
+    /// retains none.
+    pub(crate) killed_by: Vec<MeasureKillNote>,
+}
+
+/// [DIAG-1] one write whose kill of a measure's facts an undischarged bounds
+/// obligation needed: the writing statement, and the place it wrote and the
+/// measure it reached, as the source spells them.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct MeasureKillNote {
+    pub(crate) source: NodePath,
+    pub(crate) written: String,
+    pub(crate) measure: String,
+    /// Whether the call's row narrowed to its callee's exhibited writes would
+    /// keep the facts [EFF-2], so that a repair may offer the narrowing.
+    pub(crate) narrowable: bool,
 }
 
 /// Exact normalized identity of one obligation query in the function-local

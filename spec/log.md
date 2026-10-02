@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-02 v0.86: callables and values in separate use classes
+
+Rules: changed TYPE-6, DIAG-1
+
+Owner-approved: 2026-10-02, in the session, written in Chinese: after the handoff of PR #206's cards, Q32 B ("apart from 25, which I think needs research, I agree to all the others"); after the handoff of PR #207, which showed every rule change with its before and after behavior, Q35 A and the changes as shown ("for Q25 option A I need to see what the code actually looks like; the others agreed")
+
+Summary: TYPE-6 gives the lexical IDENT domain two use classes, callables (top-level `fn_decl`s, raw function-kind `gparam`s and PRE-1 functions) and values (its other entries), a module alias in both and any other alias in its target's class, and every other domain one class; two declarations compete when they have one spelling and one domain and either share a use class or both enter one module's inventory, and redeclaration, shadowing and GRAM-10 binder freshness hold only among competing declarations. DIAG-1's FN-9 result-candidate freshness tests compare only with live declarations a candidate competes with, and the GRAM-10 payload names the competing arm-entry origins. Selected by the owner's rulings on direction 2B of the layout-friction investigation and on the module-inventory clause.
+
 ## 2026-10-02 v0.85: shared maps and keyed atomic statements
 
 Rules: changed PRE-1, REF-1, SET-1, SHARE-1, SHARE-2, SHARE-3, STOR-3, WAIT-2
