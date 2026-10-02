@@ -229,7 +229,7 @@ $(eval $(call completion-image,core-read-probe-sanitize,$(COMPLETION_CORE_READ_S
 $(eval $(call completion-image,harness-tsan,$(COMPLETION_SOURCES),$(COMPLETION_TSAN_FLAGS) $(COMPLETION_DEFINES) $(COMPLETION_HARNESS_DEFINES)))
 $(eval $(call completion-image,bridge-default-probe-tsan,$(COMPLETION_DEFAULT_ROUTE_SOURCES),$(COMPLETION_TSAN_FLAGS)))
 
-completion-test: $(COMPLETION_TMP)/harness completion-core-read-test completion-default-route-test sched-smoke sched-deque-test sched-policy-test floor-test concurrent-map-test completion-native-test
+completion-test: $(COMPLETION_TMP)/harness completion-core-read-test completion-default-route-test sched-smoke sched-deque-test sched-policy-test floor-test concurrent-map-test shared-object-test completion-native-test
 	@mkdir -p "$(COMPLETION_TMP)"
 	$(NO_CORE_DUMPS) $(NATIVE_REQUIREMENT) WF_IO_HELPERS=1 "$(COMPLETION_TMP)/harness" "$(COMPLETION_TMP)" all
 	$(NO_CORE_DUMPS) $(NATIVE_REQUIREMENT) WF_IO_HELPERS=0 "$(COMPLETION_TMP)/harness" "$(COMPLETION_TMP)" bridge
@@ -410,6 +410,25 @@ $(COMPLETION_TMP)/concurrent-map-test-locked: $(CONCURRENT_MAP_SOURCES) src/back
 $(COMPLETION_TMP)/concurrent-map-test-collide: $(CONCURRENT_MAP_SOURCES) src/backend/concurrent_map.h Makefile
 	@mkdir -p "$(dir $@)"
 	$(CC) $(COMPLETION_BASE_CFLAGS) -DWF_CMAP_TAG_MASK=15 src/backend/concurrent_map_test.c -o "$@"
+
+# The shared-object runtime's waits, with contexts whose frames the test
+# writes and the moments the runtime lets it observe (shared_object_test.c).
+# It links the runtime objects the default-route probe builds with the same
+# flags, so the runtime is not compiled again for it. Only Linux runs
+# contexts on several drivers, and on one driver no context ever finds an
+# object held, so other hosts have nothing to run.
+SHARED_OBJECT_TEST_OBJECTS := \
+	$(patsubst src/backend/%.c,$(COMPLETION_TMP)/objects/bridge-default-probe/%.o,$(COMPLETION_RUNTIME_SOURCES)) \
+	$(COMPLETION_TMP)/objects/bridge-default-probe/completion/shared_object_test.o
+$(COMPLETION_TMP)/shared-object-test: $(SHARED_OBJECT_TEST_OBJECTS)
+	$(CC) $(COMPLETION_BASE_CFLAGS) $^ -o "$@"
+ifeq ($(shell uname -s),Linux)
+shared-object-test: $(COMPLETION_TMP)/shared-object-test
+	$(NO_CORE_DUMPS) "$(COMPLETION_TMP)/shared-object-test"
+else
+shared-object-test:
+	@echo "shared objects: one driver on this host, so no context waits for an object"
+endif
 
 # Manual calibration, never a correctness or automatic performance input.
 sched-wake-measure: $(COMPLETION_TMP)/sched-policy
@@ -640,7 +659,7 @@ completion-windows-wine:
 # Managed-stack park-on-miss measurements are retired from this runtime.
 # Their dated evidence and reproduction revision remain in the investigation.
 .PHONY: check _check static _static build test-build test-build-unit test-build-corpus format lint test _test test-unit test-corpus \
-	docs completion-test completion-native-test concurrent-map-test \
+	docs completion-test completion-native-test concurrent-map-test shared-object-test \
 	completion-core-read-test \
 	completion-tsan \
 	completion-sanitize \
