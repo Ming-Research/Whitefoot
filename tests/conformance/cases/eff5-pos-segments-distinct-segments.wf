@@ -17,28 +17,21 @@ fn main() -> status: ExitStatus pure {
   doc "Two segments with distinct offsets are distinct storage, as two array elements are, so one call may read segment 0 and write segment 1.";
   let lengths = box_array_filled::<u64>(count: 2_u64, value: 1_u64);
   let run = &lengths.inner[0_u64..2_u64];
-  let made = box_segments_filled::<u64>(lengths: run, value: 6_u64);
-  match move made {
-    None() => {
-      return exit_status(code: 1_u8);
-    }
-    Some(value: segments) => {
-      let first = &segments.inner[0_u64];
-      let size = first^.len;
-      if size > 0_u64 {
-        set first^[0_u64] = 9_u64;
-      }
-      copy_first(from: &segments.inner[0_u64], into: &segments.inner[1_u64]);
-      let second = &segments.inner[1_u64];
-      let room = second^.len;
-      if room == 0_u64 {
-        return exit_status(code: 2_u8);
-      }
-      let seen = second^[0_u64];
-      if seen != 9_u64 {
-        return exit_status(code: 3_u8);
-      }
-      return exit_status(code: 0_u8);
-    }
+  let segments = box_segments_filled::<u64>(lengths: run, value: 6_u64);
+  let first = &segments.inner[0_u64];
+  let size = first^.len;
+  if size > 0_u64 {
+    set first^[0_u64] = 9_u64;
   }
+  copy_first(from: &segments.inner[0_u64], into: &segments.inner[1_u64]);
+  let second = &segments.inner[1_u64];
+  let room = second^.len;
+  if room == 0_u64 {
+    return exit_status(code: 2_u8);
+  }
+  let seen = second^[0_u64];
+  if seen != 9_u64 {
+    return exit_status(code: 3_u8);
+  }
+  return exit_status(code: 0_u8);
 }

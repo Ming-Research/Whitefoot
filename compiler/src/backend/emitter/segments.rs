@@ -11,25 +11,12 @@
 //!
 //! Every operand below is the block's address.
 
-use crate::{IrElement, IrLayoutCeiling, IrLayoutMagnitude};
+use crate::IrElement;
 
 use super::*;
 
-/// The bound [OP-13]'s record states: a block is built exactly when
-/// `stride_ceiling(T) * total + 8 * len <= 2^62`.
-const SEGMENTS_LIMIT: u64 = 1 << 62;
-
-/// The largest `len` whose bounds term alone stays within the limit.
-const SEGMENTS_COUNT_LIMIT: u64 = SEGMENTS_LIMIT / 8;
-
-/// The clamp of [`FunctionEmitter::emit_segments_total`]: a total at or above
-/// it fails the fit whatever the stride.
-const SEGMENTS_TOTAL_CLAMP: u64 = 1 << 63;
-
-const U64: IrType = IrType::Integer {
-    width: 64,
-    signed: false,
-};
+/// One past the largest `u64`: an element total at or above it wraps.
+const TOTAL_LIMIT: u128 = 1 << 64;
 
 /// The header type: `len` and the zero-length bounds tail.
 const HEADER_TYPE: &str = "{ i64, [0 x i64] }";
@@ -192,97 +179,27 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         Ok(format!("%{sum}"))
     }
 
-    /// [OP-13] the sum of the lengths, taken in 128 bits, which no
-    /// addressable run of lengths can overflow, and clamped to `2^63`, which
-    /// already fails the fit.
-    pub(super) fn emit_segments_total(
-        &mut self,
-        result: IrValueId,
-        ty: IrType,
-        lengths: IrValueId,
-    ) -> Result<(), BackendFailure> {
-        if ty
-            != (IrType::Integer {
-                width: 64,
-                signed: false,
-            })
-        {
-            return Err(BackendFailure::InvalidIr);
-        }
-        self.lengths_operand(lengths)?;
-        let (pointer, count) = self.range_parts(lengths)?;
-        let sum = self.emit_lengths_loop(
-            result,
-            "total",
-            &pointer,
-            &count,
-            128,
-            &mut |_, _, _| Ok(()),
-        )?;
-        let small = self.next_temporary()?;
-        let narrow = self.next_temporary()?;
-        writeln!(
-            self.output,
-            "  %{small} = icmp ult i128 {sum}, {SEGMENTS_TOTAL_CLAMP}\n  %{narrow} = trunc i128 {sum} to i64\n  {} = select i1 %{small}, i64 %{narrow}, i64 {SEGMENTS_TOTAL_CLAMP}",
-            self.value_name(result)
-        )
-        .map_err(|_| BackendFailure::TextEmission)
-    }
-
-    /// [OP-13] whether `box_segments_filled` builds a block: with t the total
-    /// and n the count of lengths, `stride_ceiling(T) * t + 8 * n <= 2^62`,
-    /// judged with the language ceiling so that every qualified target gives
-    /// the same answer.
-    pub(super) fn emit_segments_fits(
-        &mut self,
-        result: IrValueId,
-        ty: IrType,
-        lengths: IrValueId,
-        total: IrValueId,
-        ceiling: IrLayoutCeiling,
-    ) -> Result<(), BackendFailure> {
-        if ty != IrType::Bool || self.value_type(total) != Some(U64) {
-            return Err(BackendFailure::InvalidIr);
-        }
-        self.lengths_operand(lengths)?;
-        let (_, count) = self.range_parts(lengths)?;
-        // `floor(2^62 / c)` is the whole budget of a stride ceiling above
-        // u64, which is zero, or a finite one.
-        let stride = match ceiling.stride {
-            IrLayoutMagnitude::Finite(stride) => stride.max(1),
-            IrLayoutMagnitude::AboveU64 => u64::MAX,
-        };
-        let few = self.next_temporary()?;
-        let clamped = self.next_temporary()?;
-        let bounds = self.next_temporary()?;
-        let room = self.next_temporary()?;
-        let budget = self.next_temporary()?;
-        let within = self.next_temporary()?;
-        writeln!(
-            self.output,
-            "  %{few} = icmp ule i64 {count}, {SEGMENTS_COUNT_LIMIT}\n  %{clamped} = select i1 %{few}, i64 {count}, i64 {SEGMENTS_COUNT_LIMIT}\n  %{bounds} = shl nuw i64 %{clamped}, 3\n  %{room} = sub nuw i64 {SEGMENTS_LIMIT}, %{bounds}\n  %{budget} = udiv i64 %{room}, {stride}\n  %{within} = icmp ule i64 {}, %{budget}\n  {} = and i1 %{few}, %{within}",
-            self.value_name(total),
-            self.value_name(result)
-        )
-        .map_err(|_| BackendFailure::TextEmission)
-    }
-
-    /// [OP-13] `box_segments_filled` after [`Self::emit_segments_fits`] held:
-    /// the block, its `len`, its bounds as the running sums of the lengths,
-    /// and every element holding the supplied copy value.
+    /// [OP-13] `box_segments_filled`: the block, its `len`, its bounds as the
+    /// running sums of the lengths, and every element holding the supplied
+    /// copy value.
     ///
-    /// The fit bounds the total and the count, so no sum, product or offset
-    /// below wraps: the block is at most `2^62 + 31` bytes.
+    /// The element total is summed in 128 bits, which no addressable run of
+    /// lengths can overflow, and a total that leaves `u64` is a size the
+    /// target cannot allocate, as is one whose checked size does not fit
+    /// [OP-9]; both take the heap-exhaustion edge before the allocator. The
+    /// lengths are a run of allocated `u64` storage, which the successful-
+    /// allocation and complete-object-layout invariants keep within the
+    /// address-index domain [STOR-6], so the header's bound words cannot
+    /// wrap, and below the check no running sum, product or offset can.
     pub(super) fn emit_segments_fill(
         &mut self,
         result: IrValueId,
         ty: IrType,
         nominal: IrNominalId,
         lengths: IrValueId,
-        total: IrValueId,
         value: IrValueId,
     ) -> Result<(), BackendFailure> {
-        if ty != IrType::Nominal(nominal) || self.value_type(total) != Some(U64) {
+        if ty != IrType::Nominal(nominal) {
             return Err(BackendFailure::InvalidIr);
         }
         let IrNominalKind::Box { referent, .. } = self.nominal(nominal)?.kind() else {
@@ -301,19 +218,38 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         self.lengths_operand(lengths)?;
         let (_, stride, align) = self.segments_element(element)?;
         let (pointer, count) = self.range_parts(lengths)?;
-        let total = self.value_name(total);
-        let header = self.segments_header_bytes(&count, &align)?;
-        let element_bytes = self.next_temporary()?;
-        let bytes = self.next_temporary()?;
-        let nonnull = self.next_temporary()?;
         let ordinal = result.ordinal();
+        let summed = format!("segments.fill.summed.v{ordinal}");
+        let allocate = format!("segments.fill.allocate.v{ordinal}");
         let oom = format!("segments.fill.oom.v{ordinal}");
         let init = format!("segments.fill.init.v{ordinal}");
+        let sum = self.emit_lengths_loop(
+            result,
+            "total",
+            &pointer,
+            &count,
+            128,
+            &mut |_, _, _| Ok(()),
+        )?;
+        let within = self.next_temporary()?;
+        let total = self.next_temporary()?;
+        writeln!(
+            self.output,
+            "  %{within} = icmp ult i128 {sum}, {TOTAL_LIMIT}\n  br i1 %{within}, label %{summed}, label %{oom}"
+        )
+        .map_err(|_| BackendFailure::TextEmission)?;
+        self.output.open_block(summed);
+        writeln!(self.output, "  %{total} = trunc i128 {sum} to i64")
+            .map_err(|_| BackendFailure::TextEmission)?;
+        let total = format!("%{total}");
+        let header = self.segments_header_bytes(&count, &align)?;
+        let bytes = self.emit_allocation_size(&total, &stride, &header, &oom, &allocate)?;
+        let nonnull = self.next_temporary()?;
         let address = self.value_name(result);
         self.output.symbol("malloc");
         writeln!(
             self.output,
-            "  %{element_bytes} = mul nuw i64 {total}, {stride}\n  %{bytes} = add nuw i64 %{element_bytes}, {header}\n  {address} = call ptr @malloc(i64 %{bytes})\n  %{nonnull} = icmp ne ptr {address}, null\n  br i1 %{nonnull}, label %{init}, label %{oom}"
+            "  {address} = call ptr @malloc(i64 {bytes})\n  %{nonnull} = icmp ne ptr {address}, null\n  br i1 %{nonnull}, label %{init}, label %{oom}"
         )
         .map_err(|_| BackendFailure::TextEmission)?;
         self.output.open_block(oom);

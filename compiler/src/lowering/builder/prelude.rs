@@ -264,38 +264,15 @@ impl IrBuilder<'_> {
         self.return_value(cell)
     }
 
-    /// `box_segments_filled<T>(lengths, value) -> Option<Box<Segments<T>>>`:
-    /// `None` when the size predicate its record states fails, and otherwise
-    /// one heap block `[len | bounds | elements]`, filled, which is the cell
-    /// itself (compiler/storage-representation).
-    ///
-    /// The element total is a sum of runtime data that no term states, so
-    /// the predicate is judged here at runtime and its failure is the
-    /// `None` result the record declares [OP-13].
+    /// `box_segments_filled<T>(lengths, value) -> Box<Segments<T>>`: one
+    /// heap block `[len | bounds | elements]`, filled, which is the cell
+    /// itself (compiler/storage-representation). The element total is a sum
+    /// of runtime data that no term states, so the operation sums it and
+    /// sizes the block with checked arithmetic, and a size the target cannot
+    /// allocate is heap exhaustion [OP-9, OP-13].
     fn row_box_segments_filled(&mut self) -> Result<(), LoweringFailure> {
-        /// [PRE-1] declares `None` first and `Some` second.
-        const NONE: u32 = 0;
-        const SOME: u32 = 1;
         let [lengths, value] = self.row_parameters()?;
-        let IrType::Nominal(option) = self.result else {
-            return Err(LoweringFailure::InvalidCheckedProgram);
-        };
-        let IrNominalKind::Enum { variants } = &self
-            .nominals
-            .get(option.index())
-            .ok_or(LoweringFailure::InvalidCheckedProgram)?
-            .kind
-        else {
-            return Err(LoweringFailure::InvalidCheckedProgram);
-        };
-        let [none, some] = variants.as_slice() else {
-            return Err(LoweringFailure::InvalidCheckedProgram);
-        };
-        let ([], [payload]) = (none.fields(), some.fields()) else {
-            return Err(LoweringFailure::InvalidCheckedProgram);
-        };
-        let cell_type = payload.ty();
-        let IrType::Nominal(cell) = cell_type else {
+        let IrType::Nominal(cell) = self.result else {
             return Err(LoweringFailure::InvalidCheckedProgram);
         };
         let IrNominalKind::Box { referent, .. } = self
@@ -320,61 +297,16 @@ impl IrBuilder<'_> {
         let layout_ceiling = self
             .runtime_obligations(self.element_type(element)?)?
             .layout_ceiling;
-        let total = self.define(U64, IrOperation::SegmentsTotal { lengths })?;
-        let fits = self.define(
-            IrType::Bool,
-            IrOperation::SegmentsFits {
-                nominal: cell,
-                lengths,
-                total,
-                layout_ceiling,
-            },
-        )?;
-        let (filled, _) = self.new_block(&[])?;
-        let (refused, _) = self.new_block(&[])?;
-        self.terminate(IrTerminator::Match {
-            scrutinee: fits,
-            enum_type: IrEnumType::Bool,
-            targets: vec![
-                IrMatchTarget {
-                    tag: 1,
-                    block: filled,
-                },
-                IrMatchTarget {
-                    tag: 0,
-                    block: refused,
-                },
-            ],
-        })?;
-        self.current = Some(filled);
         let block = self.define(
-            cell_type,
+            self.result,
             IrOperation::SegmentsFill {
                 nominal: cell,
                 lengths,
-                total,
                 value,
+                layout_ceiling,
             },
         )?;
-        let made = self.define(
-            self.result,
-            IrOperation::ConstructEnum {
-                nominal: option,
-                variant: SOME,
-                fields: vec![block],
-            },
-        )?;
-        self.return_value(made)?;
-        self.current = Some(refused);
-        let nothing = self.define(
-            self.result,
-            IrOperation::ConstructEnum {
-                nominal: option,
-                variant: NONE,
-                fields: Vec::new(),
-            },
-        )?;
-        self.return_value(nothing)
+        self.return_value(block)
     }
 
     /// `box_slots_new<T>(capacity)` and `box_ring_new<T>(capacity)`: one

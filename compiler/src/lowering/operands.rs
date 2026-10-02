@@ -138,16 +138,9 @@ macro_rules! operation_operands {
                 IrArrayRoot::Constant(_) => vec![$value(offset)],
             },
             IrOperation::BufferFill { length, value, .. } => vec![$value(length), $value(value)],
-            IrOperation::SegmentsTotal { lengths } => vec![$value(lengths)],
-            IrOperation::SegmentsFits { lengths, total, .. } => {
-                vec![$value(lengths), $value(total)]
+            IrOperation::SegmentsFill { lengths, value, .. } => {
+                vec![$value(lengths), $value(value)]
             }
-            IrOperation::SegmentsFill {
-                lengths,
-                total,
-                value,
-                ..
-            } => vec![$value(lengths), $value(total), $value(value)],
             IrOperation::SegmentsMeasure { segments } | IrOperation::SegmentsAll { segments } => {
                 vec![$value(segments)]
             }

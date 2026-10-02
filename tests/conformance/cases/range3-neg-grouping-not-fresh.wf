@@ -88,44 +88,37 @@ fn cascade(parents: &[u64], matched: &[u64], results: &[u64]) -> result: u64 rea
       return 5_u64;
     }
   }
-  let made = box_segments_filled::<u64>(lengths: &sizes.inner[0_u64..levels], value: absent);
-  match move made {
-    None() => {
-      return 6_u64;
-    }
-    Some(value: slots) => {
-      let fill = box_array_filled::<u64>(count: levels, value: 0_u64);
-      let positions = box_array_filled::<u64>(count: n, value: 0_u64);
-      let rows = slots.inner.len;
-      for (
-        at in 0_u64..n,
-        invariant forall fresh(d in 0_u64..rows, k in 0_u64..slots.inner[d].len) when slots.inner[d][k] != absent: slots.inner[d][k] < at,
-        invariant forall listed(d in 0_u64..rows, k in 0_u64..slots.inner[d].len) when slots.inner[d][k] != absent: positions.inner[slots.inner[d][k]] == k, depths.inner[slots.inner[d][k]] == d
-      ) {
-        let depth = depths.inner[at];
-        let listed = depth < rows;
-        let counted = depth < levels;
-        let known = band(listed, counted);
-        if known {
-          let offset = fill.inner[depth];
-          let segment = &slots.inner[depth];
-          if offset < segment^.len {
-            set segment^[offset] = 0_u64;
-            set positions.inner[at] = offset;
-            set fill.inner[depth] = offset + 1_u64;
-          } else {
-            return 7_u64;
-          }
-        } else {
-          return 8_u64;
-        }
+  let slots = box_segments_filled::<u64>(lengths: &sizes.inner[0_u64..levels], value: absent);
+  let fill = box_array_filled::<u64>(count: levels, value: 0_u64);
+  let positions = box_array_filled::<u64>(count: n, value: 0_u64);
+  let rows = slots.inner.len;
+  for (
+    at in 0_u64..n,
+    invariant forall fresh(d in 0_u64..rows, k in 0_u64..slots.inner[d].len) when slots.inner[d][k] != absent: slots.inner[d][k] < at,
+    invariant forall listed(d in 0_u64..rows, k in 0_u64..slots.inner[d].len) when slots.inner[d][k] != absent: positions.inner[slots.inner[d][k]] == k, depths.inner[slots.inner[d][k]] == d
+  ) {
+    let depth = depths.inner[at];
+    let listed = depth < rows;
+    let counted = depth < levels;
+    let known = band(listed, counted);
+    if known {
+      let offset = fill.inner[depth];
+      let segment = &slots.inner[depth];
+      if offset < segment^.len {
+        set segment^[offset] = 0_u64;
+        set positions.inner[at] = offset;
+        set fill.inner[depth] = offset + 1_u64;
+      } else {
+        return 7_u64;
       }
-      for (level in 0_u64..rows) {
-        cascade_level(slots: &slots.inner[level], positions: &positions.inner[0_u64..n], depths: &depths.inner[0_u64..n], parents: &parents^[0_u64..n], matched: &matched^[0_u64..n], results: &results^[0_u64..n], level: level, base: 100_u64);
-      }
-      return 0_u64;
+    } else {
+      return 8_u64;
     }
   }
+  for (level in 0_u64..rows) {
+    cascade_level(slots: &slots.inner[level], positions: &positions.inner[0_u64..n], depths: &depths.inner[0_u64..n], parents: &parents^[0_u64..n], matched: &matched^[0_u64..n], results: &results^[0_u64..n], level: level, base: 100_u64);
+  }
+  return 0_u64;
 }
 
 fn main() -> status: ExitStatus pure {
