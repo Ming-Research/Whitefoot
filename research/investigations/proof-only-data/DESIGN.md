@@ -10,7 +10,8 @@ passes an array no executable statement reads
 The owner asked for a way to avoid that run-time cost that fits the language
 well. This record compares the ways, measures what the compiler and its
 optimizer already remove, and states one rule in enough detail to judge it.
-It changes nothing; the choice is the owner's.
+The owner's ruling on the comparison and a measurement of the cost follow
+it.
 
 ## Witnesses
 
@@ -56,8 +57,8 @@ Removal is an accident of inlining and of LLVM's allocation analysis, not a
 property a writer can rely on, and nothing removes data that leaves its
 function in a struct. The cost that survives in Snowghost is one allocation,
 a fill and one store per element, held across every level, and five machine
-arguments per level for `positions`, `depths` and `level`; it was not timed,
-because no program without it is accepted to compare against.
+arguments per level for `positions`, `depths` and `level`; it is timed
+below, against a variant written without it.
 
 ## Criteria
 
@@ -222,35 +223,52 @@ are unchanged in text; the three proof arguments disappear from the call.
 
 The owner refused A after reading the witnesses written under it: with a
 `proof` marking a writer must keep two kinds of every name apart, and the
-flow between them, one way with seven refused positions and no user call in
-a proof statement, is hard to hold while writing. The data stays ordinary,
-and removing its cost is the compiler's work if a measurement shows the cost
-worth a pass (`design/language/checks-and-proofs.md`).
+flow between them, one way, refused wherever proof data would reach an
+executable position, with no user call in a statement that writes proof
+data, is hard to hold while writing. The data stays ordinary, and removing
+its cost is the compiler's work if a measurement shows the cost worth a pass
+(`design/language/checks-and-proofs.md`). The open question of a proof
+counter (`docs/todo.md`, "A proof counter has no type without an overflow
+obligation") asks for erased state that ordinary data cannot express; this
+ruling's reason weighs on that question without deciding it.
 
 ## Finding the data in the compiler
 
 Proofs are erased before lowering, so the data is what no executable
 statement reads once they are gone; the checker already knows every read.
-LLVM cannot remove it because the emitted functions are visible outside
-their module, so dead-argument elimination does not change their
-signatures, and an array passed to a call that is not inlined escapes. A
-whole-program pass in the Whitefoot compiler sees every call and needs:
+In the builds measured here LLVM cannot remove it: the emitted functions keep
+external linkage (`cascade_level` is a global symbol of both builds), so
+dead-argument elimination does not change their signatures, and LLVM
+removes an allocation only when no call uses the pointer, so an array handed
+to a call that is not inlined survives. A full-LTO or ThinLTO link could
+internalize the functions; that was not tried. A whole-program pass in the
+Whitefoot compiler sees every call and needs:
 
 - **A fixed point across calls and fields.** In the program witness a
   parameter `cascade_level` never reads makes its argument dead, the field
   read only for that argument dead, the field's construction and the stores
-  to `positions` dead, and then the allocation.
+  to `positions` dead, and then the allocation. It is the least fixed point
+  of liveness, so a parameter passed only to its own function's recursive
+  call is dead, and it terminates, being monotone over finite sets.
 - **No removed non-termination.** Removing a computation is sound only where
   it cannot trap, which the language guarantees, and terminates, which it
   does not: stores, allocations, borrows and pure arithmetic go, a counted
   loop goes only when its body is left empty, and a call or an uncounted
-  loop stays, losing only its dead arguments.
+  loop stays, losing only its dead arguments. Removing an allocation removes
+  only a possible heap exhaustion, which lies outside the source outcome
+  model [SCOPE-3, STOR-8].
 - **Fixed boundaries.** The entry function, functions the runtime calls back
   and any layout the host reads keep their shape; a caller's compiled form
   depends on whether its callees read their parameters, which incremental
   and parallel lowering must account for.
 - **A pinned result.** It is an optimization, not a rule, so compiler tests
   pin both witnesses' emitted code free of the data.
+
+This is candidate E as an optimization rather than a rule. Criterion 4
+still holds, since the boundaries keep their shape; criterion 1 weakens from
+a rule to the pinned tests, which catch an executable read added later only
+in the two witnesses, where elsewhere such a read keeps the data without a
+word, a cost and never a change of meaning.
 
 ## Measurement
 
@@ -263,19 +281,25 @@ The measured pair is Snowghost's style stage at `8b4f332`, sequential build,
 against a variant whose source is what the pass would produce: no
 `positions`, no `depths` field and no `level` parameter, and no apart
 certificate in `cascade_level`, which only they served
-([erased-variant.diff](erased-variant.diff), against Snowghost `8b4f332`).
-The sequential build runs the levels' loops in order either way, so the two
-builds differ only in the removed data; both builds, by Snowghost's pinned
-compiler `5fc912d9`, give the same checksums on both pages and both shapes.
+([erased-variant.diff](erased-variant.diff)). The two builds differ in the
+removed data and what removing it implies: `depths` is released when
+`level_index` returns instead of with the index, and the code's layout
+shifts. Both builds, by Snowghost's pinned compiler `5fc912d9`, give the same
+checksums on both pages and on shapes C, D and `cascade-d`
+([timing-2.txt](timing-2.txt) lists them).
 
-Two shapes of the `proto_style` driver were timed: `D`, the style stage
-(matching and the level cascade), and `cascade-d`, the level cascade alone,
-which holds all of the removed work. Per page and shape the two builds ran
-alternately in five trials; a trial's figure is the least of three runs at
-REPS repetitions less the least of three at none, divided by REPS, the
-method of Snowghost's concurrency harness, on a 4-processor Linux x86_64
-host under the check lock ([timing.txt](timing.txt)). Seconds per
-repetition, median and range of the five trials:
+Three shapes of the `proto_style` driver were timed: `D`, the style stage
+(matching and the level cascade); `cascade-d`, the level cascade alone,
+which holds all of the removed work; and `C`, matching and the flat cascade,
+which calls neither changed function. A trial's figure is the least of three
+runs at REPS repetitions less the least of three at none, divided by REPS,
+the method of Snowghost's concurrency harness, on a 4-processor Linux x86_64
+host under the check lock. Seconds per repetition; a paired difference is
+the baseline's figure less the variant's in one trial, so a positive one is
+a saving.
+
+**First timing** ([timing.txt](timing.txt)): five trials, the baseline first
+in each. Median and range:
 
 | Page | Shape | Baseline | Without the data | Paired differences |
 |---|---|---|---|---|
@@ -284,21 +308,46 @@ repetition, median and range of the five trials:
 | html5 | D | 0.5233 (0.5067–0.5233) | 0.5033 (0.4867–0.5100) | +0.0367 +0.0200 +0.0200 +0.0133 +0.0033 |
 | html5 | cascade-d | 0.0118 (0.0107–0.0142) | 0.0118 (0.0113–0.0138) | −0.0018 −0.0007 +0.0000 +0.0023 −0.0005 |
 
-The criterion is not met on either page. On ecma262 the stage's medians
-differ by less than either build's range. On html5 they differ by 0.020 s,
-less than the range without the data, 0.023 s; and that difference cannot be
-the removed work, since the whole level cascade takes 0.012 s there and its
-own medians are equal: it lies in the unchanged matching, an effect of the
-changed binary's layout. The cascade alone shows no saving on either page,
-so the data costs less than the run-to-run spread of a stage that is itself
-2 to 7% of the style stage. No pass is designed now.
+Applied as written to the style stage, `D`, the criterion is not met on
+either page: the medians differ by less than either build's range. Review
+showed that this application could not have come out otherwise. The whole
+level cascade, which bounds what the data can cost, takes 0.047 s on
+ecma262 and 0.012 s on html5, less than `D`'s ranges, so `D` cannot resolve
+it; only `cascade-d` can. The criterion also fixed neither the shape nor
+the number of trials, and html5's `D` difference, positive in all five
+trials, could be an order effect, since the baseline always ran first.
+
+**Second timing** ([timing-2.txt](timing-2.txt)), taken after that review
+and so not covered by the criterion recorded before measuring: fifteen
+trials per page and shape, the baseline first in even trials and the
+variant first in odd ones, with `C` as the control. The median paired
+difference and its 96% interval, the fourth and twelfth of the fifteen
+ordered differences:
+
+| Page | Shape | Median paired difference | 96% interval |
+|---|---|---|---|
+| ecma262 | cascade-d | −0.0025 | −0.0060 to +0.0043 |
+| html5 | cascade-d | −0.0015 | −0.0023 to −0.0002 |
+| html5 | D | +0.0133 | −0.0200 to +0.0233 |
+| html5 | C | −0.0033 | −0.0333 to +0.0233 |
+
+The level cascade saves at most 0.0043 s per repetition on ecma262, 0.64%
+of the style stage's 0.663 s, and nothing on html5, where the variant is
+slightly slower. A saving of 1% of the stage is excluded on both pages.
+html5's `D` difference has the width of the control `C`, whose functions
+neither build changes, so the first timing's consistent sign there was
+variation, not the removed work. No pass is designed now.
 
 ## Limitations
 
 The admission rule of A was stated, never implemented. The pass is
 sketched, not designed; its interaction with incremental and parallel
 lowering is the first question a design would answer. Only the sequential
-build was timed, on two pages; the `--par` build hands the same arguments to
-each level's loop, and a page with a much larger share of time in the level
-cascade could change the result. Reopen with a program whose profile puts
+build was timed, on two pages. The `--par` build cannot be timed this way,
+since the variant drops the certificate that permits each level's loop to
+run in parallel; only the pass itself could be timed there. Snowghost's
+concurrency record puts `cascade-d` at 0.0340 of `D`'s 0.2367 s on ecma262
+at four workers, against 0.0565 of 0.7033 s sequentially, so in a parallel
+run the level cascade's share, and with it the sequential `level_index`
+fill, is about twice as large. Reopen with a program whose profile puts
 data only proofs read on its critical path.

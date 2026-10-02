@@ -1,4 +1,9 @@
-machine: Linux 6.18.44-fc-v51 x86_64, 4 processors; runs 3, trials 5
+# First timing, run as perl .github/run-check.pl proof-data-timing (the check lock).
+# columns: page shape build trial reps T(0) T(REPS) per-repetition seconds, T the least of 3 runs; each trial runs the baseline first
+# compiler: Snowghost's pinned Whitefoot 5fc912d9
+# base: ef48ce3f8b195074
+# erased: e213d4cd26d21846
+# machine: Linux 6.18.44-fc-v51 x86_64, 4 processors; runs 3, trials 5
 ecma262 D base 0 3 0.24 2.10 0.62000
 ecma262 D erased 0 3 0.22 2.06 0.61333
 ecma262 D base 1 3 0.22 2.03 0.60333

@@ -1,0 +1,138 @@
+# Second timing, run as perl .github/run-check.pl proof-data-timing-2 (the check lock), after review of the first.
+# columns: page shape build trial reps T(0) T(REPS) per-repetition seconds, T the least of 3 runs
+# machine: Linux 6.18.44-fc-v51 x86_64, 4 processors; trials 15; even trials run the baseline first
+# compiler: Snowghost's pinned Whitefoot 5fc912d9
+# base: ef48ce3f8b195074
+# erased: e213d4cd26d21846
+# checksum base ecma262 D: fae8a9b77c6b818a
+# checksum base ecma262 cascade-d: fae8a9b77c6b818a
+# checksum base ecma262 C: fae8a9b77c6b818a
+# checksum base html5 D: 44dea362f628ae1c
+# checksum base html5 cascade-d: 44dea362f628ae1c
+# checksum base html5 C: 44dea362f628ae1c
+# checksum erased ecma262 D: fae8a9b77c6b818a
+# checksum erased ecma262 cascade-d: fae8a9b77c6b818a
+# checksum erased ecma262 C: fae8a9b77c6b818a
+# checksum erased html5 D: 44dea362f628ae1c
+# checksum erased html5 cascade-d: 44dea362f628ae1c
+# checksum erased html5 C: 44dea362f628ae1c
+ecma262 cascade-d base 0 40 0.78 2.28 0.03750
+ecma262 cascade-d erased 0 40 0.78 2.45 0.04175
+ecma262 cascade-d erased 1 40 0.86 2.69 0.04575
+ecma262 cascade-d base 1 40 0.93 2.66 0.04325
+ecma262 cascade-d base 2 40 0.87 2.64 0.04425
+ecma262 cascade-d erased 2 40 0.81 2.68 0.04675
+ecma262 cascade-d erased 3 40 0.86 2.72 0.04650
+ecma262 cascade-d base 3 40 0.80 2.78 0.04950
+ecma262 cascade-d base 4 40 0.78 2.75 0.04925
+ecma262 cascade-d erased 4 40 0.92 2.66 0.04350
+ecma262 cascade-d erased 5 40 0.82 2.75 0.04825
+ecma262 cascade-d base 5 40 0.88 2.43 0.03875
+ecma262 cascade-d base 6 40 0.89 2.55 0.04150
+ecma262 cascade-d erased 6 40 0.88 2.80 0.04800
+ecma262 cascade-d erased 7 40 0.78 2.76 0.04950
+ecma262 cascade-d base 7 40 0.83 2.74 0.04775
+ecma262 cascade-d base 8 40 0.80 2.77 0.04925
+ecma262 cascade-d erased 8 40 0.80 2.60 0.04500
+ecma262 cascade-d erased 9 40 0.80 2.83 0.05075
+ecma262 cascade-d base 9 40 0.80 2.66 0.04650
+ecma262 cascade-d base 10 40 0.78 2.52 0.04350
+ecma262 cascade-d erased 10 40 0.80 2.78 0.04950
+ecma262 cascade-d erased 11 40 0.78 2.79 0.05025
+ecma262 cascade-d base 11 40 0.82 2.49 0.04175
+ecma262 cascade-d base 12 40 0.83 2.84 0.05025
+ecma262 cascade-d erased 12 40 0.87 2.62 0.04375
+ecma262 cascade-d erased 13 40 0.83 2.85 0.05050
+ecma262 cascade-d base 13 40 0.77 2.55 0.04450
+ecma262 cascade-d base 14 40 0.83 2.71 0.04700
+ecma262 cascade-d erased 14 40 0.85 2.52 0.04175
+html5 cascade-d base 0 60 0.65 1.38 0.01217
+html5 cascade-d erased 0 60 0.70 1.68 0.01633
+html5 cascade-d erased 1 60 0.64 1.34 0.01167
+html5 cascade-d base 1 60 0.64 1.49 0.01417
+html5 cascade-d base 2 60 0.63 1.44 0.01350
+html5 cascade-d erased 2 60 0.66 1.52 0.01433
+html5 cascade-d erased 3 60 0.76 1.46 0.01167
+html5 cascade-d base 3 60 0.66 1.57 0.01517
+html5 cascade-d base 4 60 0.69 1.44 0.01250
+html5 cascade-d erased 4 60 0.76 1.65 0.01483
+html5 cascade-d erased 5 60 0.71 1.55 0.01400
+html5 cascade-d base 5 60 0.68 1.39 0.01183
+html5 cascade-d base 6 60 0.71 1.45 0.01233
+html5 cascade-d erased 6 60 0.67 1.48 0.01350
+html5 cascade-d erased 7 60 0.65 1.56 0.01517
+html5 cascade-d base 7 60 0.72 1.50 0.01300
+html5 cascade-d base 8 60 0.65 1.50 0.01417
+html5 cascade-d erased 8 60 0.65 1.54 0.01483
+html5 cascade-d erased 9 60 0.73 1.61 0.01467
+html5 cascade-d base 9 60 0.63 1.61 0.01633
+html5 cascade-d base 10 60 0.69 1.64 0.01583
+html5 cascade-d erased 10 60 0.65 1.61 0.01600
+html5 cascade-d erased 11 60 0.77 1.64 0.01450
+html5 cascade-d base 11 60 0.66 1.42 0.01267
+html5 cascade-d base 12 60 0.70 1.45 0.01250
+html5 cascade-d erased 12 60 0.65 1.49 0.01400
+html5 cascade-d erased 13 60 0.67 1.58 0.01517
+html5 cascade-d base 13 60 0.70 1.39 0.01150
+html5 cascade-d base 14 60 0.69 1.47 0.01300
+html5 cascade-d erased 14 60 0.70 1.63 0.01550
+html5 D base 0 3 0.20 1.63 0.47667
+html5 D erased 0 3 0.19 1.85 0.55333
+html5 D erased 1 3 0.17 1.81 0.54667
+html5 D base 1 3 0.18 1.83 0.55000
+html5 D base 2 3 0.18 1.67 0.49667
+html5 D erased 2 3 0.18 1.86 0.56000
+html5 D erased 3 3 0.18 1.82 0.54667
+html5 D base 3 3 0.19 1.69 0.50000
+html5 D base 4 3 0.18 1.77 0.53000
+html5 D erased 4 3 0.21 1.74 0.51000
+html5 D erased 5 3 0.18 1.76 0.52667
+html5 D base 5 3 0.19 1.81 0.54000
+html5 D base 6 3 0.19 1.84 0.55000
+html5 D erased 6 3 0.20 1.68 0.49333
+html5 D erased 7 3 0.17 1.80 0.54333
+html5 D base 7 3 0.18 1.79 0.53667
+html5 D base 8 3 0.20 1.83 0.54333
+html5 D erased 8 3 0.19 1.76 0.52333
+html5 D erased 9 3 0.19 1.68 0.49667
+html5 D base 9 3 0.17 1.72 0.51667
+html5 D base 10 3 0.18 1.75 0.52333
+html5 D erased 10 3 0.18 1.81 0.54333
+html5 D erased 11 3 0.18 1.81 0.54333
+html5 D base 11 3 0.18 1.88 0.56667
+html5 D base 12 3 0.22 1.87 0.55000
+html5 D erased 12 3 0.19 1.75 0.52000
+html5 D erased 13 3 0.18 1.74 0.52000
+html5 D base 13 3 0.18 1.81 0.54333
+html5 D base 14 3 0.20 1.91 0.57000
+html5 D erased 14 3 0.19 1.89 0.56667
+html5 C base 0 3 0.21 1.84 0.54333
+html5 C erased 0 3 0.20 1.76 0.52000
+html5 C erased 1 3 0.20 1.81 0.53667
+html5 C base 1 3 0.17 1.71 0.51333
+html5 C base 2 3 0.19 1.59 0.46667
+html5 C erased 2 3 0.21 1.73 0.50667
+html5 C erased 3 3 0.18 1.77 0.53000
+html5 C base 3 3 0.17 1.75 0.52667
+html5 C base 4 3 0.20 1.74 0.51333
+html5 C erased 4 3 0.18 1.82 0.54667
+html5 C erased 5 3 0.18 1.75 0.52333
+html5 C base 5 3 0.20 1.86 0.55333
+html5 C base 6 3 0.18 1.81 0.54333
+html5 C erased 6 3 0.19 1.69 0.50000
+html5 C erased 7 3 0.18 1.81 0.54333
+html5 C base 7 3 0.20 1.85 0.55000
+html5 C base 8 3 0.19 1.79 0.53333
+html5 C erased 8 3 0.18 1.70 0.50667
+html5 C erased 9 3 0.19 1.82 0.54333
+html5 C base 9 3 0.19 1.87 0.56000
+html5 C base 10 3 0.19 1.72 0.51000
+html5 C erased 10 3 0.17 1.74 0.52333
+html5 C erased 11 3 0.17 1.70 0.51000
+html5 C base 11 3 0.21 1.77 0.52000
+html5 C base 12 3 0.20 1.78 0.52667
+html5 C erased 12 3 0.18 1.88 0.56667
+html5 C erased 13 3 0.19 1.83 0.54667
+html5 C base 13 3 0.20 1.65 0.48333
+html5 C base 14 3 0.18 1.73 0.51667
+html5 C erased 14 3 0.19 1.79 0.53333

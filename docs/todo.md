@@ -2580,33 +2580,23 @@ each is resolved by a discussion and a tree change.
   the other variant still refused. Reopen when a program forwards a
   producer's result through a wrapper.
 
-- **Parameters a contract names but the body does not use are passed at
-  run time.** A range requirement can only name what the callee receives,
-  so `cascade_level` in
+- **Data only proofs read is computed, stored and passed at run time.** A
+  range requirement can only name what the callee receives, so
+  `cascade_level` in
   `tests/conformance/cases/range5-pos-level-cascade.wf` takes `positions`,
-  `depths` and `level` only so that its `listed` and `up` requirements can
-  state the facts its certificate uses; the caller passes them on every
-  call. Each costs a pointer and a length or one integer per call, which the
-  measured cascade does not show, but a writer must keep proof-only data
-  alive and in scope to call such a function. A proof-only parameter that
-  lowering erases would need its own rule for what such a parameter may
-  flow into. In Snowghost at `8b4f332` three parameters of 2,316 functions
-  are read only by a contract, all `cascade_level`'s, and `level_index`
-  computes `positions`, one `u64` per element, only to pass it, so a writer
-  now computes a value only to pass it; the
-  [layout-friction investigation](../research/investigations/layout-friction/DESIGN.md#4-parameters-only-a-contract-reads)
-  compares an order fact that needs no witness (available for one run, not
-  per segment), proof-only parameters and proof-only state, and
-  [proof-only data](../research/investigations/proof-only-data/DESIGN.md)
-  records the decision: no `proof` declarations; the compiler, which sees
-  every call once proofs are erased, would remove such data in a
-  whole-program pass. Timed against a Snowghost build without the data, the
-  level cascade showed no saving beyond its run-to-run spread on ecma262 and
-  html5 (sequential build), so no pass is designed. Change to make when
-  reopened: that pass, a fixed point over dead parameters, fields, stores and
-  allocations that keeps calls and uncounted loops, pinned by compiler tests
-  on the two witnesses. Reopen with a program whose profile puts such data
-  on its critical path.
+  `depths` and `level` only for its requirements, and its caller computes
+  `positions`, one `u64` per element, only to pass it; Snowghost's style
+  stage at `8b4f332` does the same. Impact: an allocation, a store per
+  element and five machine arguments per level, under 1% of Snowghost's
+  style stage when measured
+  ([proof-only data](../research/investigations/proof-only-data/DESIGN.md#measurement)).
+  Change: a whole-program pass that removes what no executable statement
+  reads once proofs are erased, a least fixed point over dead parameters,
+  fields, stores and allocations that keeps calls and uncounted loops and
+  the entry, callback and host boundaries. Validate with compiler tests
+  pinning both witnesses' emitted code free of the data, and by timing the
+  program that reopened the item. Reopen with a program whose profile puts
+  such data on its critical path.
 
 ## Ownership redesign (candidate x1) follow-ups
 

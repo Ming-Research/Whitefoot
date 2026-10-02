@@ -645,9 +645,10 @@ to pass it.
   4A reach `Segments`. Cost: instances per fact grow with the cube of the
   reads in a problem [RANGE-3].
 
-The cost of the passing itself is three arguments per level, not per element,
-and was not measured; the computed `positions` array is one store per
-element. 4A is available now; 4B and 4C answer the open todo item.
+The cost of the passing itself is three arguments per level, not per element;
+the computed `positions` array is one store per element.
+[Proof-only data](../proof-only-data/DESIGN.md#measurement) timed both
+together. 4A is available now; 4B and 4C were refused there.
 
 ## Summary
 
@@ -673,6 +674,8 @@ On 2026-10-02 the owner selected 1A with 1B, keeping the language for killed
 length facts; A for stored positions, keeping their guards; 2B, separating
 callables from values in the shadowing check; and 3D, making an
 unrepresentable allocation size heap exhaustion
-([design log](../../../design/log.md)). Item 4 stays open: the owner asked for
-a way to avoid the run-time cost of data only a contract reads, which
-[proof-only data](../proof-only-data/DESIGN.md) answers.
+([design log](../../../design/log.md)). For item 4 the owner asked for a way
+to avoid the run-time cost of data only a contract reads, and after
+[proof-only data](../proof-only-data/DESIGN.md) refused proof declarations:
+the data stays ordinary, and removing its cost is left to the compiler,
+which a measurement did not yet justify.
