@@ -366,12 +366,24 @@ With `scale` it instead runs the suite's lines on each server CPU count in
 `SCALE`, the client on the host's other CPUs, for the tests in `SCALE_TESTS`
 at the depths in `SCALE_PIPELINES`, for a host with many more CPUs than the
 four the suite assumes.
+With `quick` it instead compares firn on `QUICK_CPUS` server CPUs with the
+fastest of Garnet and Dragonfly in under two minutes, for the loop of
+changing firn and measuring again: those two are measured once per CPU count
+and kept, each test runs `QUICK_RUNS` times for `QUICK_SECONDS` seconds, and
+a table marks each test below `QUICK_TARGET` times the best other server. Its
+client is one single-threaded `redis-benchmark` per client CPU, timed from
+outside, because a threaded one ends only on a tick of about 250 ms and is
+the limit on 8 or more server CPUs; so its rates are compared only with one
+another, it verifies nothing, and a result recorded as evidence is confirmed
+by `scale`.
 `redis-samples.csv` holds the raw output of Experiment 7's runs, including its
 attribution runs, `redis-persistence-samples.csv` that of Experiment 8,
 `firn-samples.csv` that of the firn investigation, `keyspace-samples.csv`
 the suite of the concurrent-map investigation's stage (c), and
 `scale-14900k-samples.csv` its many-core run, and `shared-reads-samples.csv`
-its shared reads against exclusive holds. They are removed with the
+its shared reads against exclusive holds, with
+`shared-reads-14900k-samples.csv` the same comparison on the many-core host.
+They are removed with the
 experiments' records.
 
 ## Reproducing
@@ -394,6 +406,7 @@ experiments' records.
     sh research/experiments/io-completion-bench/redis-bench.sh        # firn, Experiments 7 and 8
     sh research/experiments/io-completion-bench/redis-bench.sh suite  # firn, its criteria
     sh research/experiments/io-completion-bench/redis-bench.sh scale  # firn on more server CPUs
+    sh research/experiments/io-completion-bench/redis-bench.sh quick  # firn against the fastest, in two minutes
 
 The TCP targets are Linux-only, as `linux` and `linux-read` are: `epoll_echo`
 and `uring_echo` are written against Linux interfaces, and the workload's

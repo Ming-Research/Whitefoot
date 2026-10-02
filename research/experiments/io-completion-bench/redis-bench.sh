@@ -15,6 +15,13 @@
 #                                 SCALE (default 2 4 8 16), the client on the
 #                                 host's other CPUs, for SCALE_TESTS at each
 #                                 depth in SCALE_PIPELINES (default 16)
+#   sh redis-bench.sh quick       firn (or firn-base with QUICK_LINE=firn-base)
+#                                 on QUICK_CPUS server CPUs (default 4) against
+#                                 the fastest of Garnet and Dragonfly, in under
+#                                 two minutes: QUICK_TESTS (default all ten)
+#                                 for QUICK_RUNS runs of QUICK_SECONDS each,
+#                                 printing a table and marking each test below
+#                                 QUICK_TARGET times the best other server
 #
 # BASELINE_ROOT, when set, is a worktree of the revision before expiry with its
 # compiler built; its subset is measured as the baseline lines of Experiment 8.
@@ -374,6 +381,107 @@ suite_run() {
     done
     stop
 }
+
+# One run of the quick comparison: <requests> of <test> from one
+# single-threaded redis-benchmark per client CPU with 3 connections each,
+# printing the rate as the requests over the wall time read outside the
+# processes. A threaded redis-benchmark ends only on a tick of about 250 ms,
+# so its short runs resolve nothing, and one process is the limit on 8 or
+# more server CPUs. LRANGE_100 is sent as its command after 100,000 pushes
+# outside the timed span, since the RPOP runs before it may empty the list.
+quick_client() {
+    case $2 in
+        lrange_100)
+            redis-benchmark -p "$PORT" -t lpush -n 100000 -P 16 -q >/dev/null 2>&1
+            what="LRANGE mylist 0 99"
+            ;;
+        *) what="-t $2" ;;
+    esac
+    begin=$(date +%s%N)
+    pids=
+    for cpu in $(echo "$CLIENT_CPUS" | tr ',' ' '); do
+        taskset -c "$cpu" redis-benchmark -p "$PORT" -c 3 \
+            -n $(($1 / CLIENT_THREADS)) -r 100000 -P 16 -q $what >/dev/null 2>&1 &
+        pids="$pids $!"
+    done
+    wait $pids
+    end=$(date +%s%N)
+    awk -v requests=$(($1 / CLIENT_THREADS * CLIENT_THREADS)) -v ns=$((end - begin)) \
+        'BEGIN { printf "%d\n", requests / (ns / 1e9) }'
+}
+
+# Measures <line> on <tests>: a short run sizes each test to QUICK_SECONDS,
+# then QUICK_RUNS runs of every test in turn; each run goes to
+# quick-runs-<line>.csv and each test's median to <file> as line,test,rate.
+quick_measure() {
+    start "$1"
+    runs="$OUT/quick-runs-$1.csv"
+    : >"$runs"
+    : >"$OUT/quick-requests.txt"
+    for test in $3; do
+        first=$(quick_client 1600000 "$test")
+        echo "$test $((first * ${QUICK_SECONDS:-3}))" >>"$OUT/quick-requests.txt"
+    done
+    run=1
+    while [ "$run" -le "${QUICK_RUNS:-3}" ]; do
+        for test in $3; do
+            requests=$(awk -v t="$test" '$1 == t { print $2 }' "$OUT/quick-requests.txt")
+            echo "$1,$test,$run,$(quick_client "$requests" "$test")" >>"$runs"
+        done
+        run=$((run + 1))
+    done
+    stop
+    for test in $3; do
+        awk -F, -v t="$test" '$2 == t { print $4 }' "$runs" | sort -n |
+            awk -v line="$1" -v t="$test" '
+                { rate[NR] = $1 }
+                END { print line "," t "," rate[int((NR + 1) / 2)] }' >>"$2"
+    done
+}
+
+# The quick comparison, for the loop of changing firn and measuring again:
+# firn on QUICK_CPUS server CPUs against the fastest of Garnet and Dragonfly,
+# which led every test of the scaling run. Those two are measured once per
+# CPU count and kept in quick-ref-<n>.csv until QUICK_REFRESH is set; nothing
+# is verified. Its rates are its own: its client is not the suite's.
+if [ "$MODE" = quick ]; then
+    n=${QUICK_CPUS:-4}
+    total=$(nproc)
+    all="set get incr lpush rpop sadd hset zadd lrange_100 mset"
+    CLIENT_THREADS=$((total - n < 16 ? total - n : 16))
+    SERVER_CPUS=$(seq -s, 0 $((n - 1)))
+    CLIENT_CPUS=$(seq -s, "$n" $((n + CLIENT_THREADS - 1)))
+    reference="$OUT/quick-ref-$n.csv"
+    if [ -n "$QUICK_REFRESH" ] || [ ! -s "$reference" ]; then
+        : >"$reference.new"
+        for line in "garnet-$n" "dragonfly-$n"; do
+            if available "$line"; then
+                quick_measure "$line" "$reference.new" "$all"
+            else
+                echo "skip,$line,no executable"
+            fi
+        done
+        mv "$reference.new" "$reference"
+    fi
+    line=${QUICK_LINE:-firn}-$n
+    : >"$OUT/quick-$n.csv"
+    quick_measure "$line" "$OUT/quick-$n.csv" "${QUICK_TESTS:-$all}"
+    # The ratio every test is asked to reach, the owner's aim of 2026-10-02.
+    awk -F, -v target="${QUICK_TARGET:-1.4}" -v n="$n" -v line="$line" '
+        FNR == NR { if ($3 + 0 > best[$2]) { best[$2] = $3 + 0; by[$2] = $1 } next }
+        FNR == 1 {
+            printf "%-11s %9s %9s %-12s %6s\n", "n=" n, line, "best", "", "ratio"
+        }
+        {
+            ratio = $3 / best[$2]
+            if (ratio < target) below++
+            printf "%-11s %9.0f %9.0f %-12s %6.2f %s\n", $2, $3 / 1000,
+                best[$2] / 1000, by[$2], ratio, (ratio < target ? "BELOW" : "")
+        }
+        END { printf "%d of %d below %s\n", below, FNR, target }' \
+        "$reference" "$OUT/quick-$n.csv"
+    exit 0
+fi
 
 # The scaling run: on each server CPU count n in SCALE, the servers on CPUs 0
 # to n - 1 and the client on the rest, with one client thread per client CPU
