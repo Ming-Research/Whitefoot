@@ -946,22 +946,19 @@ rarely insert at the same place.
   the user for the next claim of the same size. Reopen when a profile of a
   miss-heavy workload shows the allocation.
 
-- **Statements waiting for an entry or a map spin, and can be overtaken
-  without bound.** A keyed statement that finds its entry locked, and a
-  whole-map statement that finds keyed statements under way, wait in
-  `wait_for_cell` and `back_off` without parking, and an object statement
-  inside a keyed block takes back a hand-off the bounded-overtaking rule
-  gave a parked context (`wf__shared_take` in
-  `compiler/src/backend/completion/bridge.c`), so a parked statement on an
-  object also reached from map blocks can lose it at every hand-off while
-  such statements keep arriving. [SHARE-3] promises a begun statement
-  eventually takes effect. The change: park waiting keyed statements with
-  a mark for waiters, a bit taken from the hash or a word beside the cell
-  since the key word's second bit marks a pending claim, hand the entry
-  over after a bounded number of vain wakes as objects do, and let a
-  statement that takes back a hand-off owe the next hand-off to the
-  context it took it from. Reopen with that parking, or when a workload's
-  tail latency shows a keyed or nested wait.
+- **A keyed statement that waits for its entry spins and does not park.**
+  Its wait is bounded, since one out of patience holds the whole map
+  ([bounded waits](../research/investigations/concurrent-map/DESIGN.md#bounded-waits)),
+  but the driver it runs on spins instead of running its other contexts:
+  firn spent 15.9 µs of server CPU per `LRANGE mylist 0 599` reply on two
+  drivers against 8.6 µs on one, every statement on the one list holding
+  its entry. The change: let a keyed statement that has not yet locked
+  anything suspend like an object statement, with a mark for waiters (a bit
+  of the hash or a word beside the cell, since the key word's second bit
+  marks a pending claim) that the entry's unlock reads to wake it. Validate
+  by the `LRANGE` reply's server CPU on two drivers against one. Reopen when
+  a workload on one key is limited by the server's CPU rather than its
+  client, or with shared reads of one entry (Q37).
 
 - **`SharedMap<unit>` and maps of other payload-free values do not lower.**
   The unlock reads the entry's `Option` tag as an `i32`
@@ -2847,10 +2844,12 @@ condition under which it is taken up.
   the runtime's next large addition.
 
 - **Nothing checks the runtime's concurrent protocols.** The map's claim,
-  settle, move and hold protocols, the shared objects' park, hand-off and
-  take-back, the scheduler's queues and the completion bridge's wakes are
+  settle, move, hold and patience protocols, the shared objects' park,
+  hand-off and borrowed holds, the scheduler's queues and the completion
+  bridge's wakes are
   argued in comments and exercised by stress tests and mutants
-  (`compiler/src/backend/concurrent_map_test.c`), which find an
+  (`compiler/src/backend/concurrent_map_test.c`,
+  `compiler/src/backend/completion/shared_object_test.c`), which find an
   interleaving only when it happens to occur; no model of their states and
   memory orderings is checked, so a protocol can be wrong in an order no
   test reaches, as the map's first claim protocol was. The change: model

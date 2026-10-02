@@ -147,16 +147,17 @@ handed back. Each choice is a proposal until then.
   time (Q37, the four `LRANGE` tests) stay open.
 - **A statement that finds its entry or its map held waits in the runtime
   without parking,** since a holder's block contains no waiting call and so
-  runs to its end without yielding its driver; parking, with a mark for
-  waiters that takes a bit from the hash or a word beside the cell, since
-  the key word's second bit now marks a pending claim, comes with bounded
-  overtaking.
+  runs to its end without yielding its driver; a keyed statement that has
+  waited long holds the whole map instead, so that it takes effect after a
+  bounded number of others (see bounded waits, below).
 - **A keyed or whole-map statement's block may contain an atomic statement
   on a `Shared` object, whose own block contains none,** so that an
   append-only file's record of a change is made in the same step as the
   change. Entries and maps are always taken before objects and an object's
   holder takes nothing, so no cycle of waits can form; the inner statement
-  waits without parking for the same reason as above.
+  waits without parking for the same reason as above, and borrows a hold an
+  unlock handed a parked context rather than wait for that context, which
+  may wait in its own driver's queue (see bounded waits, below).
 - **Entries live in nodes the runtime allocates from its own pool:** the
   key's bytes and a slot for the `Option<V>`. A cell holds the key's hash in
   its key word and the node's address in its value word; a probe compares
@@ -360,6 +361,100 @@ servers and the client pinned as in the suite:
   15.9 µs of server CPU per `LRANGE mylist 0 599` reply with two drivers and
   8.6 µs with one: every statement on the one list holds its entry, so the
   waiting driver spins (Q37).
+
+### Bounded waits
+
+The owner asked whether `atomic e = &map[key] { … atomic m = &meta { … } }`
+lets a program deadlock. It does not: entries and maps are always taken
+before objects, an object's block takes nothing, and no holder's block
+waits, so no cycle of waits forms. Three waits, though, let a begun
+statement be overtaken without bound, against [WAIT-2]'s promise that every
+begun statement whose guard stays true takes effect:
+
+- a keyed statement that found its entry locked waited with growing pauses
+  and retried, and other users could lock the cell first every time;
+- whole-map statements raced to set the gate, so one that held the map again
+  and again could keep another out;
+- an object statement inside a map's block, which cannot park, took back a
+  hold an unlock had handed a parked context, which then waited again from
+  its queue's head and could lose the object at every hand-off.
+
+**A keyed statement's patience.** The fix first proposed marked a waiter
+beside its cell and had the unlocker hand the cell to a marked waiter, in
+turn. A waiter's place then names a cell of one table: a move, which other
+users' claims can start between any two of the waiter's steps, gives the
+cell back and sends the waiter to compete for the key's cell in the next
+table, so the place does not survive the moves [WAIT-2] allows. Instead a
+keyed statement counts the pauses it waits for cells over every probe and
+table it tries (`wf_cmap_lock_entry`), so a move does not reset the count.
+Past 2^16 pauses, 0.77 ms on this host at 11.7 ns a pause, it gives back
+any claim, leaves the statements under way, holds the whole map through the
+gate a whole-map statement uses, and then locks its entry, which no
+statement holds by then. Whole-map statements take turns by ticket. After
+the statement's hold closes the gate it waits for at most one keyed
+statement of each other user, those already under way, and its hold waits
+for at most one hold of each other user ahead of it. Keyed statements that
+begin between two holds are bounded by the holds' own steps, not by a
+count.
+
+The map's test checks the bound with four threads on one key, the first
+out of patience at its first wait and the others never: in each of three
+runs the statements that held the map (424 to 844 of 2,000) were overtaken
+after closing the gate by at most three others, the bound. Mutants: never
+holding the map fails the test because no statement held it; a hold that
+leaves the gate open was overtaken 31,666 to 80,142 times; holds that race
+for the gate instead of taking tickets let one thread hold the map 110 to
+191 times in a row while the other waited, where tickets allow one; a
+statement that gives up without giving back its claim, or without counting
+the cell it gave back, fails the white-box test of a claim given up inside
+its settling; and one that holds the map without first leaving the
+statements under way waits for itself until the alarm. The churn and
+counting tests run again with every waiting statement holding the map, a
+quarter as many statements as their ordinary runs, which held it 27,124 to
+46,225 times in the churn and 602 to 1,286 in the counting test that moves
+its map, over two runs of the default and the narrowed-hash builds; with
+the default patience the ordinary runs held it 0 to 15 times, waits past
+0.77 ms on this four-CPU container. The map test's three builds took 4.3 s against
+4.5 s before the change.
+
+**The patience on the suite's hot keys.** Criterion, stated before
+measuring: on two server CPUs at depth 16, firn's keyed statements hold the
+map at most ten times per million requests in each run, and firn with the
+change answers within 5% of firn before it, medians of three interleaved
+runs. A build that writes a line per statement that held the map answered
+10 million `SET`s, 10 million `LPUSH`es and 2 million `LRANGE_100`s twice:
+no `SET` held it, `LPUSH` held it 13 and 8 times (1.3 and 0.8 per million)
+and `LRANGE_100`, every statement holding the one list, 15 and 13 times
+(7.5 and 6.5 per million). Those are waits past 0.77 ms that the change now
+ends. Medians of the three interleaved runs, before and after: `SET`
+1,816,860 and 1,904,037, `LPUSH` 1,904,037 and 1,817,191, `LRANGE_100`
+332,502 and 319,387 a second. A run of 10 million at these rates lasts
+about 5.3 s, so the benchmark's 250 ms clock steps are about 5% apart, and
+each of the three differences is one step; the criterion is met at the
+resolution these runs have.
+
+**A borrowed hold.** A statement in a map's block that meets an object an
+unlock has handed a parked context now borrows that hold, alone, and gives
+it back when it ends (`wf__shared_take`); the context keeps the object, and
+when it resumes it claims the hold, which ends the borrowing, and waits
+only for the borrower under way. A context owed the object after a
+take-back, which reserves the object when it next runs, was considered and
+refused: ordinary statements could still take the object before the owed
+context ran, and every hand-off had to stop while any context was owed, or
+a context handed the object later became owed and reserved first.
+
+`compiler/src/backend/completion/shared_object_test.c` runs contexts whose
+frames it writes on three drivers: one parks when it finds the object held,
+and four stand for statements in map blocks, so that an unlock hands the
+first the object while a borrower runs on the driver whose queue holds it.
+In eight runs of 0.1 to 0.8 s each statement was handed the object at most
+once and, once resumed, overtaken by at most the one borrower under way.
+Mutants: the take-back handed one statement the object 3 to 12 times; a
+borrow that ignores the claim overtook a resumed statement 10 to 40 times;
+and a statement that waits instead of borrowing never ends, which the
+test's alarm fails. The test links the runtime objects the default-route
+probe builds, and the runtime group took 19.0 s from an empty build
+directory against 19.7 s before it.
 
 ## The measurement
 
@@ -600,10 +695,9 @@ statement's block runs once with its entry held:
   instead of handing the cell's line to a waiter on each: one-key `update` at
   four threads went from about 6.5 to about 24 million a second, where
   waiting that started at one pause or yielded the processor stayed between
-  6 and 16. A waiting writer can be overtaken without bound; parking
-  waiting statements and handing the entry over after a bounded number of
-  vain wakes, as the shared-object runtime does [SHARE-3], is recorded in
-  `docs/todo.md`.
+  6 and 16. A writer of a word's key can be overtaken without bound; a
+  keyed statement on an entry holds the whole map once it has waited long
+  (see bounded waits, in stage (c)).
 - **Cell arrays of 2 MiB or more are mapped and advised into huge pages,**
   since a random probe in a large table otherwise pays a page walk on most
   accesses: uniform `read` at four threads ran at about 127 million a second
@@ -640,6 +734,6 @@ cell can tie but not lead.
 
 What would refute it: a lead lost at one thread to the single-thread floors
 would show the lock bit costing more than it saves; a lead lost on `update` with one key at four threads once waits
-park would show the batching depended on unbounded overtaking; a lead lost
+are bounded would show the batching depended on unbounded overtaking; a lead lost
 in `grow` on the 14900K would show the cooperative move slower than the
 comparators' rebuilds.
