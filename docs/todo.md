@@ -2598,9 +2598,15 @@ each is resolved by a discussion and a tree change.
   compares an order fact that needs no witness (available for one run, not
   per segment), proof-only parameters and proof-only state, and
   [proof-only data](../research/investigations/proof-only-data/DESIGN.md)
-  measures what the optimizer removes today and states a `proof` declaration
-  rule. The choice is the owner's; validate a chosen form by the cascade
-  without the stored `positions` and by the allocations its binary makes.
+  records the decision: no `proof` declarations; the compiler, which sees
+  every call once proofs are erased, would remove such data in a
+  whole-program pass. Timed against a Snowghost build without the data, the
+  level cascade showed no saving beyond its run-to-run spread on ecma262 and
+  html5 (sequential build), so no pass is designed. Change to make when
+  reopened: that pass, a fixed point over dead parameters, fields, stores and
+  allocations that keeps calls and uncounted loops, pinned by compiler tests
+  on the two witnesses. Reopen with a program whose profile puts such data
+  on its critical path.
 
 ## Ownership redesign (candidate x1) follow-ups
 

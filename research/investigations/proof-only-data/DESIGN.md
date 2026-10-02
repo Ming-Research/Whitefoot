@@ -262,12 +262,43 @@ measured pages, ecma262 and html5.
 The measured pair is Snowghost's style stage at `8b4f332`, sequential build,
 against a variant whose source is what the pass would produce: no
 `positions`, no `depths` field and no `level` parameter, and no apart
-certificate in `cascade_level`, which only they served. The sequential
-build runs the levels' loops in order either way, so the two builds differ
-only in the removed data.
+certificate in `cascade_level`, which only they served
+([erased-variant.diff](erased-variant.diff), against Snowghost `8b4f332`).
+The sequential build runs the levels' loops in order either way, so the two
+builds differ only in the removed data; both builds, by Snowghost's pinned
+compiler `5fc912d9`, give the same checksums on both pages and both shapes.
+
+Two shapes of the `proto_style` driver were timed: `D`, the style stage
+(matching and the level cascade), and `cascade-d`, the level cascade alone,
+which holds all of the removed work. Per page and shape the two builds ran
+alternately in five trials; a trial's figure is the least of three runs at
+REPS repetitions less the least of three at none, divided by REPS, the
+method of Snowghost's concurrency harness, on a 4-processor Linux x86_64
+host under the check lock ([timing.txt](timing.txt)). Seconds per
+repetition, median and range of the five trials:
+
+| Page | Shape | Baseline | Without the data | Paired differences |
+|---|---|---|---|---|
+| ecma262 | D | 0.6633 (0.6033–0.6767) | 0.6333 (0.6133–0.6700) | +0.0067 −0.0200 −0.0067 +0.0067 +0.0433 |
+| ecma262 | cascade-d | 0.0467 (0.0413–0.0505) | 0.0485 (0.0432–0.0515) | +0.0010 −0.0072 −0.0037 +0.0035 −0.0035 |
+| html5 | D | 0.5233 (0.5067–0.5233) | 0.5033 (0.4867–0.5100) | +0.0367 +0.0200 +0.0200 +0.0133 +0.0033 |
+| html5 | cascade-d | 0.0118 (0.0107–0.0142) | 0.0118 (0.0113–0.0138) | −0.0018 −0.0007 +0.0000 +0.0023 −0.0005 |
+
+The criterion is not met on either page. On ecma262 the stage's medians
+differ by less than either build's range. On html5 they differ by 0.020 s,
+less than the range without the data, 0.023 s; and that difference cannot be
+the removed work, since the whole level cascade takes 0.012 s there and its
+own medians are equal: it lies in the unchanged matching, an effect of the
+changed binary's layout. The cascade alone shows no saving on either page,
+so the data costs less than the run-to-run spread of a stage that is itself
+2 to 7% of the style stage. No pass is designed now.
 
 ## Limitations
 
 The admission rule of A was stated, never implemented. The pass is
 sketched, not designed; its interaction with incremental and parallel
-lowering is the first question a design would answer.
+lowering is the first question a design would answer. Only the sequential
+build was timed, on two pages; the `--par` build hands the same arguments to
+each level's loop, and a page with a much larger share of time in the level
+cascade could change the result. Reopen with a program whose profile puts
+data only proofs read on its critical path.

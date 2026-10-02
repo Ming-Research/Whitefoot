@@ -1,0 +1,88 @@
+diff --git a/renderer/proto/style/shapes.wf b/renderer/proto/style/shapes.wf
+index 18c0930..bff1923 100644
+--- a/renderer/proto/style/shapes.wf
++++ b/renderer/proto/style/shapes.wf
+@@ -269,12 +269,8 @@ fn cascade_elements(bits: &[u64], words: u64, parents: &[u32], out: &[Computed],
+   return consistent;
+ }
+ 
+-fn cascade_level(slots: &[u64], positions: &[u64], depths: &[u64], parents: &[u32], bits: &[u64], words: u64, out: &[Computed], store: &RuleStore, level: u64) -> consistent: Bool reads(slots), reads(parents), reads(bits), reads(store), writes(out) contract {
++fn cascade_level(slots: &[u64], parents: &[u32], bits: &[u64], words: u64, out: &[Computed], store: &RuleStore) -> consistent: Bool reads(slots), reads(parents), reads(bits), reads(store), writes(out) contract {
+   requires parents^.len == out^.len;
+-  requires positions^.len == out^.len;
+-  requires depths^.len == out^.len;
+-  requires forall listed(k in 0_u64..slots^.len) when slots^[k] < out^.len: positions^[slots^[k]] == k, depths^[slots^[k]] == level;
+-  requires forall up(e in 0_u64..parents^.len) when parents^[e] < parents^.len: depths^[parents^[e]] + 1_u64 == depths^[e];
+ } {
+   doc "Shape D, one tree level: iteration k cascades the element at preorder index slots^[k] from its own run of match bits and its parent's values, which the level before computed, and writes them at that preorder index of out. The requirements state that the level's elements are distinct, positions^ naming each one's own iteration, and that a parent is one level above its element; the certificate separates any two iterations with them. False when bits is not words words per element or a set bit names no rule.";
+   let count = slots^.len;
+@@ -293,11 +289,7 @@ fn cascade_level(slots: &[u64], positions: &[u64], depths: &[u64], parents: &[u3
+     return False();
+   }
+   let consistent = True();
+-  for (
+-    k in 0_u64..count,
+-    apart(i, j) {
+-    }
+-  ) {
++  for (k in 0_u64..count) {
+     let at = slots^[k];
+     if at < total {
+       let start = words * at;
+@@ -321,16 +313,10 @@ fn cascade_level(slots: &[u64], positions: &[u64], depths: &[u64], parents: &[u3
+ 
+ nocopy struct LevelIndex {
+   slots: Box<Segments<u64>>;
+-  positions: Box<Array<u64>>;
+-  depths: Box<Array<u64>>;
+ }
+ 
+ fn level_index(parents: &[u32]) -> index: Option<LevelIndex> reads(parents) contract {
+   requires parents^.len <= 4294967294_u64;
+-  ensures when Some(value: levels): levels.positions.inner.len == parents^.len;
+-  ensures when Some(value: levels): levels.depths.inner.len == parents^.len;
+-  ensures when Some(value: levels): forall listed(d in 0_u64..levels.slots.inner.len, k in 0_u64..levels.slots.inner[d].len) when levels.slots.inner[d][k] != no_slot: levels.positions.inner[levels.slots.inner[d][k]] == k, levels.depths.inner[levels.slots.inner[d][k]] == d;
+-  ensures when Some(value: levels): forall up(e in 0_u64..parents^.len) when parents^[e] < parents^.len: levels.depths.inner[parents^[e]] + 1_u64 == levels.depths.inner[e];
+ } {
+   doc "Shape D's index of tree levels: a validating pass derives each element's depth from its parent, which must precede it or be the document, and counts each depth; a second groups the elements by depth in preorder with each one's position in its group. The postconditions state what cascade_level requires: a level lists distinct elements, each at its own position, and a parent lies one level above its element. None when a parent neither precedes its element nor is the document or the tree is deeper than depth_ceiling.";
+   let n = parents^.len;
+@@ -379,12 +365,10 @@ fn level_index(parents: &[u32]) -> index: Option<LevelIndex> reads(parents) cont
+     }
+     Some(value: slots) => {
+       let fill = box_array_filled::<u64>(count: count, value: 0_u64);
+-      let positions = box_array_filled::<u64>(count: n, value: 0_u64);
+       let rows = slots.inner.len;
+       for (
+         at in 0_u64..n,
+-        invariant forall fresh(d in 0_u64..rows, k in 0_u64..slots.inner[d].len) when slots.inner[d][k] != no_slot: slots.inner[d][k] < at,
+-        invariant forall grouped(d in 0_u64..rows, k in 0_u64..slots.inner[d].len) when slots.inner[d][k] != no_slot: positions.inner[slots.inner[d][k]] == k, depths.inner[slots.inner[d][k]] == d
++        invariant forall fresh(d in 0_u64..rows, k in 0_u64..slots.inner[d].len) when slots.inner[d][k] != no_slot: slots.inner[d][k] < at
+       ) {
+         let depth = depths.inner[at];
+         let within_rows = depth < rows;
+@@ -395,7 +379,6 @@ fn level_index(parents: &[u32]) -> index: Option<LevelIndex> reads(parents) cont
+           let segment = &slots.inner[depth];
+           if offset < segment^.len {
+             set segment^[offset] = at;
+-            set positions.inner[at] = offset;
+             set fill.inner[depth] = offset + 1_u64;
+           } else {
+             return None<LevelIndex>();
+@@ -404,7 +387,7 @@ fn level_index(parents: &[u32]) -> index: Option<LevelIndex> reads(parents) cont
+           return None<LevelIndex>();
+         }
+       }
+-      let levels = LevelIndex(slots: move slots, positions: move positions, depths: move depths);
++      let levels = LevelIndex(slots: move slots);
+       return Some<LevelIndex>(value: move levels);
+     }
+   }
+@@ -425,7 +408,7 @@ fn cascade_levels(bits: &[u64], words: u64, parents: &[u32], out: &[Computed], s
+       let rows = levels.slots.inner.len;
+       let consistent = True();
+       for (level in 0_u64..rows) {
+-        let done = cascade_level(slots: &levels.slots.inner[level], positions: &levels.positions.inner[0_u64..n], depths: &levels.depths.inner[0_u64..n], parents: parents, bits: bits, words: words, out: out, store: store, level: level);
++        let done = cascade_level(slots: &levels.slots.inner[level], parents: parents, bits: bits, words: words, out: out, store: store);
+         set consistent = band(consistent, done);
+       }
+       return consistent;
