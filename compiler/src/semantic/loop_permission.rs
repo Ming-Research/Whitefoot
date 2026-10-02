@@ -571,10 +571,13 @@ impl<'check> Survey<'check, '_> {
                 self.moved_places(value, node_path);
                 self.expression(value);
             }
-            // [CALL-4] each binder of a binder list is a new binding of this
-            // iteration, as a `let`'s is, which `introduced` already states;
-            // the statement's footprint is its right-hand side's: the
-            // call's projected row, its operand reads and what it consumes.
+            // [GRAM-4] a binder list over a call's ordered result list
+            // [CALL-4], or a destructuring consume of `move place`: each
+            // binder is a new binding of this iteration, as a `let`'s is,
+            // which `introduced` already states, and the statement's
+            // footprint is its right-hand side's: the call's projected row
+            // and operand reads, and the places it consumes, whose fields a
+            // final `..` releases with them.
             CheckedStatement::DestructuringLet {
                 node_path, value, ..
             } => {

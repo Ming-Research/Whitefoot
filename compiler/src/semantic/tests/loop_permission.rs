@@ -141,6 +141,29 @@ fn tally(counts: &[u64], seed: u64) -> (high: u64, low: u64) writes(counts) cont
   return seed, seed;
 }
 
+struct Kept {
+  low: u64;
+  spill: Box<Array<u64>>;
+}
+
+fn kept(seed: u64) -> (value: Kept, count: u64) pure {
+  let spill = box_array_filled::<u64>(count: 2_u64, value: seed);
+  let value = Kept(low: seed, spill: move spill);
+  return move value, 2_u64;
+}
+
+fn consumed(count: u64) -> result: Box<Array<u64>> pure contract {
+  requires count <= 4096_u64;
+} {
+  let out = box_array_filled::<u64>(count: count, value: 0_u64);
+  for (i in 0_u64..count) {
+    let (value, n) = kept(seed: i);
+    let Kept(low: low, ..) = move value;
+    set out.inner[i] = low +wrap n;
+  }
+  return move out;
+}
+
 fn mapped(count: u64) -> result: Box<Array<u64>> pure contract {
   requires count <= 4096_u64;
 } {
@@ -167,6 +190,7 @@ fn shared(count: u64) -> result: Box<Array<u64>> pure contract {
 fn main() -> status: std::process::ExitStatus pure {
   let out = mapped(count: 4_u64);
   let again = shared(count: 4_u64);
+  let kept_out = consumed(count: 4_u64);
   return std::process::exit_status(code: 0_u8);
 }
 "#;
@@ -174,6 +198,18 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn a_body_binding_an_ordered_result_list_is_an_independent_map() {
     let judged = permitted(ORDERED_RESULT_MAP, "mapped");
+    assert_eq!(
+        judged.actualization,
+        Some(LoopActualization::IndependentMap)
+    );
+}
+
+#[test]
+fn a_binder_consumed_in_the_body_is_storage_of_the_iteration() {
+    // `value`, a binder of the call's list, owns a heap array; consuming it
+    // by a destructuring consume, whose rest marker releases that array,
+    // touches only this iteration's binding.
+    let judged = permitted(ORDERED_RESULT_MAP, "consumed");
     assert_eq!(
         judged.actualization,
         Some(LoopActualization::IndependentMap)

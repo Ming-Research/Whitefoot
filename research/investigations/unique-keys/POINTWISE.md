@@ -280,7 +280,7 @@ cascade", holds the tables and runs 22 to 25.
   the proof: the loop body's call of `cascade_element`, which returns two
   values, moved into `cascade_into`, since the compiler's permission survey
   then refused a body binding an ordered result list, which [PAR-2] does
-  not; the survey admits it since.
+  not; the survey has admitted it since.
 - **Same results.** `proto_style check` agrees on the six pages present on
   the host, `--par` and sequential, with the checksums Snowghost recorded
   before the port, and on a page whose deepest element lies at the

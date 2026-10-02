@@ -1629,6 +1629,15 @@ rarely insert at the same place.
   components a budget-carrying frame variant. Reopen when such a program
   appears.
 
+- **The multi-result-list decision names a set target list the grammar
+  lacks.** `design/language/surface-form/multi-result-list.md` says a result
+  list is "bound only by a destructuring let or a set target list", but
+  [GRAM-4]'s `set_stmt` is `"set" place "=" expr ";"` and the
+  specification has no target list. A reader looking for that form finds
+  none. Change: drop the set target list from the decision, or add the form
+  if a program needs to assign a result list to existing places. Reopen
+  with the next edit of that node.
+
 - **A statement that binds an ordered result list never overlaps its
   siblings.** [PAR-1] lets two adjacent statements overlap when their paths
   are disjoint, but the pair judgment in
