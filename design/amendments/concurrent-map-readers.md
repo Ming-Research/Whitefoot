@@ -1,5 +1,0 @@
-Node: compiler/waiting-contexts/concurrent-map
-
-Adds a decision.
-
-Decision: A map of entries counts the reads of an entry under way in the top 16 bits of its cell's value word, above the node's address, a reader adding one and reading the key word again and a writer locking the key word and then waiting for the count to fall to zero, all sequentially consistent, a reader that finds the cell locked waiting against the keyed statement's patience and a writer's wait for readers against none, and a read of an absent key getting a slot of zeros, `None`, that the map keeps, because either the reader sees the lock or the writer waits for it with no second word per cell, a reader's block waits for nothing and no read begins once the cell is locked, so the writer's wait ends, and an absent key's read then claims no cell and takes no node ([shared reads](../../research/investigations/concurrent-map/DESIGN.md#shared-reads-of-one-key)), instead of marks each reader sets on its own driver's line, which every writer of every key would scan, kept as the next design if the shared count limits `LRANGE` on many cores.
