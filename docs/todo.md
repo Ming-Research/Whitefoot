@@ -3559,6 +3559,23 @@ condition under which it is taken up.
   complete outcomes, an independent oracle and qualified individual clock
   windows, using the same Rust/C++ peers and existing target calculation.
 
+  The [actual integrated-candidate comparison](../research/experiments/container-representation/map-library/RESULTS.md#integrated-candidate-with-the-maintained-caller)
+  has no qualified before/after gain in 40 maintained-caller cells; all four
+  overall screens remain unqualified. Its reserve maximum empty interval of
+  9,500 ns invalidates every growth cell, while lookup, mutation and EDIT also
+  retain drift failures. Reopen clock qualification and those invalid cells
+  in the authorized API phase; preserve the failed run without treating overlap
+  or no separated loss as proof of nonregression.
+
+  Wide EDIT's ordered digest remains memory-resident because later cleanup
+  receives its complete address-exposed value. The [cleanup-boundary source discriminator](../research/experiments/container-representation/map-library/RESULTS.md#late-cleanup-exposure-native-success-without-qualified-gain)
+  removes the reached load/store pair but fails its timing criterion; it is
+  not an adopted caller change or a general compiler fix. Reopen storage-lifetime
+  splitting only with private-backing, complete-transfer, alias, final-observation
+  and target-extent evidence, then the unchanged complete-outcome/peer criteria.
+  Per-key dispatch and the unmeasured individual public API windows remain
+  distinct costs; do not assign them the elapsed gain of earlier outer callers.
+
 - **Ordered insertion replacement costs need attribution.** Both the
   [aggregate-result candidate](../research/experiments/container-representation/ordered-library/RESULTS.md#single-descent-insertion-candidate)
   and [borrowed-promotion follow-up](../research/experiments/container-representation/ordered-library/RESULTS.md#borrowed-promotion-follow-up)

@@ -27,14 +27,16 @@ this proposed implementation is not a completed HashMap performance target or
 an owner-approved compiler selection. The source forms preserve the existing
 representation, public contracts and cyclic linear-probe algorithm.
 
-The frozen [running-index interaction](#running-index-in-the-combined-experimental-context)
-meets both small aligned peer targets, with about 19 percent marginal gain in
-its combined caller/compiler/mask context. Both large aligned comparisons are
-drift-invalid. The [conditional API screen](#conditional-api-screen-no-separated-loss-incomplete-qualification)
-also remains unqualified because three lookup cells and one mutation cell fail
-drift checks. These measurements precede the integrated Draft candidate; they
-do not establish its complete performance. Earlier failed comparisons retain
-their original verdicts and remain distinct from the provisional implementation.
+The fresh [actual integrated-candidate comparison](#integrated-candidate-with-the-maintained-caller)
+uses the maintained multipath caller and has no qualified before/after gain in
+40 cells; all four overall screens remain unqualified. Reserve's recorded bad
+clock window invalidates every growth cell, and other drift-invalid cells
+remain visible. Overlapping ranges and no separated loss do not prove no
+effect or establish nonregression. The earlier outer-caller small-map gains
+remain context-specific Q206 grounds, not replicated maintained-caller gains.
+The [cleanup-boundary discriminator](#late-cleanup-exposure-native-success-without-qualified-gain)
+removes the wide ordered-digest memory pair but does not qualify a timing gain.
+Earlier failures and the provisional status of the compiler choice are unchanged.
 
 ## Current Rust and C++ ecosystem comparison
 
@@ -5985,3 +5987,148 @@ must check duration explicitly rather than treat that Boolean alone as a
 qualified target. Exact sources, corrected outputs, canonical audits and
 archive-only replay provenance are retained with original and normalized
 hashes; original frozen records remain byte-identical.
+
+### Integrated candidate with the maintained caller
+
+The actual integrated CLI and embedded library are compared with the pinned
+prior production CLI/library using byte-identical maintained multipath source.
+This is the original caller context, separate from the outer-dispatch and
+cleanup experiments. The 52 preparation/native/oracle/fault stages have their
+expected exits: 40 zero and 12 intentional semantic/clock refusals. Complete
+outcomes, ownership and cleanup checks pass; this does not qualify timing.
+
+Four fixed panels retain 341,024 rows: 1,152 lookup, 1,152 replacement/churn,
+336,960 reserve and 1,760 complete EDIT-trace rows. No cell has a qualified
+before/after gain or two-cohort separated loss. All four overall screens are
+unqualified. Lookup has six valid overlaps and two invalid cells; mutation
+has five valid overlaps and three invalid; reserve has eight valid no-op
+overlaps and eight invalid growth cells; EDIT has seven valid comparisons
+and one invalid, with no gain separated in both cohorts.
+
+Medians below are ns/operation, cohort 0 / cohort 1. Lookup measures its query
+window; replacement/churn includes the complete offered/returned ownership
+boundary; reserve measures the ordinary call; EDIT amortizes its entire
+setup/edit/cleanup trace. These windows are not interchangeable. Rust and C++
+are the candidate-panel observations. Aligned hashing:
+
+| Window / payload / capacity | Control WF | Candidate WF | Rust | C++ | Qualification |
+|---|---:|---:|---:|---:|---|
+| lookup hit / 8 B / 64 | 1.898 / 1.980 | 1.909 / 1.960 | 2.129 / 2.131 | 1.603 / 1.604 | overlap |
+| lookup miss / 8 B / 64 | 2.467 / 2.427 | 2.436 / 2.471 | 1.626 / 1.574 | 1.547 / 1.585 | overlap |
+| lookup hit / 8 B / 4096 | 2.343 / 2.145 | 2.151 / 2.161 | 2.219 / 2.223 | 1.618 / 1.627 | overlap |
+| lookup miss / 8 B / 4096 | 2.983 / 2.965 | 2.750 / 2.736 | 2.142 / 2.143 | 1.458 / 1.450 | overlap |
+| lookup hit / 256 B / 64 | 1.969 / 1.897 | 1.918 / 1.969 | 2.307 / 2.381 | 1.614 / 1.624 | overlap |
+| lookup miss / 256 B / 64 | 2.469 / 2.458 | 2.548 / 2.565 | 1.659 / 1.748 | 1.565 / 1.593 | invalid |
+| lookup hit / 256 B / 4096 | 2.317 / 2.357 | 2.343 / 2.301 | 2.467 / 2.470 | 1.961 / 2.038 | overlap |
+| lookup miss / 256 B / 4096 | 2.885 / 2.935 | 4.007 / 2.946 | 2.226 / 2.224 | 1.743 / 1.762 | invalid |
+| mutation churn / 8 B / 64 | 8.063 / 7.924 | 7.994 / 8.058 | 16.212 / 16.216 | 27.876 / 27.935 | invalid |
+| mutation replace / 8 B / 64 | 2.439 / 2.344 | 2.379 / 2.381 | 2.489 / 2.487 | 2.748 / 2.755 | overlap |
+| mutation churn / 8 B / 4096 | 16.592 / 17.103 | 16.105 / 18.554 | 10.671 / 10.309 | 30.911 / 30.031 | invalid |
+| mutation replace / 8 B / 4096 | 3.584 / 3.298 | 3.293 / 3.538 | 2.610 / 2.610 | 4.039 / 4.033 | invalid |
+| mutation churn / 256 B / 64 | 34.223 / 32.946 | 34.128 / 32.745 | 27.636 / 27.061 | 50.477 / 49.301 | overlap |
+| mutation replace / 256 B / 64 | 24.011 / 23.926 | 24.395 / 23.847 | 22.560 / 22.061 | 19.151 / 18.918 | overlap |
+| mutation churn / 256 B / 4096 | 49.444 / 49.668 | 48.467 / 47.999 | 32.047 / 31.419 | 60.181 / 59.079 | overlap |
+| mutation replace / 256 B / 4096 | 29.322 / 28.316 | 29.057 / 28.269 | 28.209 / 27.178 | 23.517 / 23.301 | overlap |
+| reserve grow / 8 B / 64 | 232.243 / 236.157 | 234.107 / 238.927 | 201.184 / 205.632 | 130.248 / 136.387 | invalid |
+| reserve noop / 8 B / 64 | 1.258 / 1.280 | 1.262 / 1.283 | 0.965 / 0.984 | 2.824 / 2.856 | overlap |
+| reserve grow / 8 B / 4096 | 14011.103 / 14306.800 | 13093.585 / 13524.578 | 9847.493 / 9961.752 | 5085.121 / 5210.245 | invalid |
+| reserve noop / 8 B / 4096 | 1.325 / 1.342 | 1.339 / 1.337 | 1.022 / 1.018 | 2.959 / 2.907 | overlap |
+| reserve grow / 256 B / 64 | 1735.534 / 1745.191 | 1879.921 / 1978.442 | 1228.175 / 1255.442 | 260.014 / 253.981 | invalid |
+| reserve noop / 256 B / 64 | 1.258 / 1.280 | 1.261 / 1.268 | 0.965 / 0.974 | 2.864 / 2.835 | overlap |
+| reserve grow / 256 B / 4096 | 104128.375 / 101664.830 | 98794.435 / 99749.633 | 67887.452 / 65902.431 | 13153.411 / 12976.481 | invalid |
+| reserve noop / 256 B / 4096 | 1.319 / 1.347 | 1.342 / 1.329 | 1.026 / 1.016 | 2.936 / 2.900 | overlap |
+| EDIT trace / 8 B / 64 | 3.213 / 3.149 | 2.965 / 2.956 | 2.379 / 2.382 | 2.380 / 2.378 | overlap |
+| EDIT trace / 8 B / 4096 | 4.783 / 4.947 | 4.228 / 4.235 | 2.518 / 2.510 | 5.166 / 5.146 | invalid |
+| EDIT trace / 256 B / 64 | 3.279 / 3.285 | 3.326 / 3.265 | 2.817 / 2.820 | 2.424 / 2.388 | overlap |
+| EDIT trace / 256 B / 4096 | 5.876 / 5.740 | 4.973 / 5.000 | 3.286 / 3.287 | 6.277 / 5.941 | overlap |
+
+Native default hashing remains separate:
+
+| Window / payload / capacity | Control WF | Candidate WF | Rust | C++ | Qualification |
+|---|---:|---:|---:|---:|---|
+| reserve grow / 8 B / 64 | 232.817 / 239.337 | 237.989 / 237.303 | 374.474 / 370.115 | 101.762 / 98.320 | invalid |
+| reserve noop / 8 B / 64 | 1.270 / 1.288 | 1.279 / 1.270 | 0.978 / 0.963 | 2.239 / 2.198 | overlap |
+| reserve grow / 8 B / 4096 | 13601.275 / 15091.069 | 13816.894 / 12733.364 | 20691.938 / 20507.605 | 3541.015 / 3371.338 | invalid |
+| reserve noop / 8 B / 4096 | 1.322 / 1.371 | 1.344 / 1.323 | 1.018 / 1.012 | 2.287 / 2.256 | overlap |
+| reserve grow / 256 B / 64 | 1708.095 / 1912.925 | 2057.418 / 1719.772 | 1230.152 / 985.715 | 227.933 / 199.353 | invalid |
+| reserve noop / 256 B / 64 | 1.299 / 1.328 | 1.276 / 1.265 | 0.973 / 0.955 | 2.875 / 2.839 | overlap |
+| reserve grow / 256 B / 4096 | 100545.495 / 108851.121 | 107546.017 / 101299.650 | 94981.444 / 91828.569 | 15661.701 / 12911.289 | invalid |
+| reserve noop / 256 B / 4096 | 1.325 / 1.345 | 1.329 / 1.328 | 1.027 / 1.024 | 2.906 / 2.954 | overlap |
+| EDIT trace / 8 B / 64 | 3.237 / 3.192 | 2.977 / 2.981 | 8.805 / 8.775 | 2.110 / 2.118 | overlap |
+| EDIT trace / 8 B / 4096 | 4.738 / 4.775 | 4.292 / 4.238 | 8.921 / 8.906 | 1.862 / 1.846 | overlap |
+| EDIT trace / 256 B / 64 | 3.319 / 3.418 | 3.363 / 3.286 | 9.349 / 9.129 | 2.135 / 2.068 | overlap |
+| EDIT trace / 256 B / 4096 | 5.693 / 5.800 | 4.830 / 4.929 | 9.851 / 9.666 | 2.414 / 2.424 | overlap |
+
+Reserve candidate 0 exits 1: its measured maximum empty interval is 9,500 ns,
+versus 42 ns in the other processes, with 41 ns clock quantum throughout.
+That maximum violates the one-percent real-batch criterion for 41,029 batches
+and invalidates all growth cells. All rows, bad instrument flags and additional
+drift failures remain; aggregate duration cannot repair them. Lookup's invalid
+cells are both wide misses; mutation's are scalar churn at both sizes and
+large scalar replacement. EDIT's large aligned scalar fails C++ A/B drift
+at 11.26495 percent. There was no retry. A prior moving-source preflight failed
+before any timing process; rebinding the control source to its already pinned
+snapshot repaired provenance without changing images or criteria.
+
+The strict peer target passes only wide-small lookup hit, wide-small churn,
+the eight reserve no-ops, large aligned wide EDIT and the four separately
+reported default EDIT cells. All other target cells remain false. Independent
+readers reproduce the frozen statistics and verdicts, including 3,456 reserve
+hierarchies. The `matched-production/` component of
+[reserve-api-evidence.tar.gz](reserve-api-evidence.tar.gz) retains every raw row,
+criterion, reduction, failure and compact native/check record, with explicit
+omitted-build replay limits.
+
+Native observations explain remaining work without assigning elapsed shares.
+Integrated EDIT removes three Result stores, uses mask/fallback home selection
+and a running index, while both widths retain per-key dispatch. Scalar digest
+is register-carried; wide digest still has an ordered-field load/store pair.
+The linked lookup bodies each have 196 instructions and match after address
+normalization; this is not equality of elapsed cost. The ordinary Rust/C++
+linked EDIT paths place operation selection outside their key loops despite
+the original source callers placing it inside. Whole-frame reductions and
+prior outer-caller gains do not establish maintained-caller performance.
+
+### Late cleanup exposure: native success without qualified gain
+
+The wide digest remains address-exposed because terminal cleanup receives the
+same complete value by reference. Its ordered-field memory operations already
+exist before register allocation; calling them register-pressure spills is
+unsupported. The single source discriminator reconstructs all four Copy integer
+digest fields immediately before the same cleanup call and observes the final
+post-call value. Timed loops, callbacks, map representation and compiler remain
+unchanged. This is a caller-level diagnostic, not a general compiler lifetime
+transform or library/API change.
+
+Native compilation removes the wide ordered-field load/store pair and retains
+one terminal materialization. The wide frame falls from 1,984 to 1,968 bytes;
+scalar frame remains 224 bytes. No new hot call, copy or spill appears, but
+wide register assignment, branch layout and dispatch promotion also change,
+so the experiment cannot isolate the elapsed cost of two instructions. Ten
+native stages exit zero; all 26 correctness stages have expected outcomes
+(23 zero and three deliberate result/callback/cleanup refusals).
+
+Aligned medians are ns/edit for the complete trace, cohort 0 / cohort 1:
+
+| Window / payload / capacity | Control WF | Candidate WF | Rust | C++ | Qualification |
+|---|---:|---:|---:|---:|---|
+| EDIT trace / 8 B / 64 | 2.972 / 2.974 | 2.939 / 2.931 | 2.368 / 2.382 | 2.394 / 2.372 | overlap |
+| EDIT trace / 8 B / 4096 | 4.148 / 4.132 | 4.213 / 4.083 | 2.474 / 2.478 | 5.094 / 5.023 | overlap |
+| EDIT trace / 256 B / 64 | 3.284 / 3.268 | 3.252 / 3.269 | 2.783 / 2.795 | 2.395 / 2.396 | overlap |
+| EDIT trace / 256 B / 4096 | 4.764 / 4.900 | 4.873 / 4.963 | 3.183 / 3.188 | 5.984 / 6.023 | invalid |
+
+All 16 before/after cohort ranges overlap, including both aligned wide cells;
+there is no qualified gain or separated loss. Large aligned wide also fails
+C++ stability (15.3773 percent control-cohort drift and 14.0675 percent
+cohort-0 A/B drift). All four processes exit zero, retaining 1,760 rows with
+minimum interval 3.776 ms. Default-series observations remain separate in the
+complete retained reduction. The failed criterion selects no source change,
+compiler transform or API optimization, and no sample was retried.
+
+The `cleanup-digest/` archive component retains the exact source pair and patch,
+pretrial rationale, native and timing criteria, compact native excerpts,
+checks/faults, raw rows, reducers and pins. Earlier native-stage statements
+that timing/checks had not yet run describe that prerequisite stage; the
+separate terminal outcomes record the subsequent fixed campaign. The native
+result supplies a concrete late-address-exposure mechanism to investigate,
+not a general solution or performance qualification.
