@@ -71,7 +71,7 @@ fn option_of_a_resource_bearing_payload_uses_variant_dependent_cleanup() {
             .data
             .nominals
             .iter()
-            .find(|nominal| nominal.name.starts_with("Option<"))
+            .find(|nominal| nominal.name == "Option<Box<u64>>")
             .expect("concrete Option instance must be interned");
         let super::super::model::CheckedStatement::Return { drops, .. } =
             &checked.data.functions[0].body.as_deref().expect("WF body")[0]

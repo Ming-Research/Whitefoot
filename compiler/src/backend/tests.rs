@@ -413,6 +413,9 @@ fn append_runtime_units_with_library_defines(
             "completion/linux_io_uring.c",
             COMPLETION_LINUX_IO_URING_SOURCE,
         ),
+        ("concurrent_map.h", crate::CONCURRENT_MAP_HEADER),
+        ("concurrent_map.c", crate::CONCURRENT_MAP_SOURCE),
+        ("shared_map.c", crate::SHARED_MAP_SOURCE),
     ];
     std::fs::create_dir_all(directory.join("completion")).expect("stage completion directory");
     std::fs::create_dir_all(directory.join("sched")).expect("stage scheduler directory");
@@ -426,7 +429,11 @@ fn append_runtime_units_with_library_defines(
         .arg("-I")
         .arg(directory.join("completion"));
     for (name, _) in units {
-        if name.ends_with(".h") || (name == "ordinary_values.c" && !library_defines.is_empty()) {
+        // `shared_map.c` compiles the concurrent map in, as its host.
+        if name.ends_with(".h")
+            || name == "concurrent_map.c"
+            || (name == "ordinary_values.c" && !library_defines.is_empty())
+        {
             continue;
         }
         command

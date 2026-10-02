@@ -24,7 +24,7 @@ use crate::semantic::CheckedSetTarget;
 use crate::semantic::{
     BindingId, CheckedArrayRoot, CheckedDrop, CheckedExpression, CheckedMatchArm, CheckedMeasure,
     CheckedMode, CheckedNominalKind, CheckedParameter, CheckedProgramData, CheckedProjectedDrop,
-    CheckedStatement, CheckedValue, FunctionPermissions, MeasureCell, MeasuredKind,
+    CheckedShared, CheckedStatement, CheckedValue, FunctionPermissions, MeasureCell, MeasuredKind,
 };
 
 use super::*;
@@ -396,8 +396,17 @@ fn lower_nominals(
                     referent: lower_type(erasure, *referent)?,
                     release: lower_release_class(*release),
                 },
-                CheckedNominalKind::Shared { state } => IrNominalKind::Shared {
+                CheckedNominalKind::Shared { state, shape } => IrNominalKind::Shared {
                     state: lower_type(erasure, *state)?,
+                    shape: match shape {
+                        CheckedShared::Object => IrShared::Object,
+                        CheckedShared::Map { entry } => IrShared::Map {
+                            entry: lower_type(erasure, *entry)?,
+                        },
+                        CheckedShared::State { entry } => IrShared::State {
+                            entry: lower_type(erasure, *entry)?,
+                        },
+                    },
                 },
                 CheckedNominalKind::Opaque => IrNominalKind::Opaque,
             };
@@ -1289,6 +1298,9 @@ impl<'program> IrBuilder<'program> {
                 }
                 CheckedStatement::Atomic {
                     target,
+                    form,
+                    borrowed,
+                    key,
                     binding,
                     state,
                     guard,
@@ -1297,6 +1309,9 @@ impl<'program> IrBuilder<'program> {
                     ..
                 } => self.lower_atomic(
                     target,
+                    *form,
+                    *borrowed,
+                    key.as_deref(),
                     *binding,
                     *state,
                     guard.as_deref(),

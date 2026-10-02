@@ -2477,10 +2477,32 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             IrOperation::SharedAcquire { object } => {
                 self.emit_shared_wait(result, *object, "wf__shared_acquire", "acquire")
             }
+            IrOperation::SharedTake { object } => self.emit_shared_take(result, *object),
             IrOperation::SharedWatch { object } => {
                 self.emit_shared_wait(result, *object, "wf__shared_watch", "watch")
             }
             IrOperation::SharedUnlock { object } => self.emit_shared_unlock(result, *object),
+            IrOperation::SharedMapNew { nominal, capacity } => {
+                self.emit_shared_map_new(result, ty, *nominal, *capacity)
+            }
+            IrOperation::SharedMapState { object, .. } => {
+                self.emit_shared_map_state(result, *object)
+            }
+            IrOperation::SharedMapHold { object } => {
+                self.emit_shared_map_call(result, *object, "wf__shared_map_hold")
+            }
+            IrOperation::SharedMapUnhold { object } => {
+                self.emit_shared_map_call(result, *object, "wf__shared_map_unhold")
+            }
+            IrOperation::SharedMapLock {
+                object, key, held, ..
+            } => self.emit_shared_map_lock(result, *object, *key, *held),
+            IrOperation::SharedMapUnlock {
+                object,
+                entry,
+                held,
+            } => self.emit_shared_map_unlock(result, *object, *entry, *held),
+            IrOperation::SharedMapCount { state } => self.emit_shared_map_count(result, *state),
             IrOperation::BoxTake { nominal, value } => {
                 self.emit_box_take(result, ty, *nominal, *value)
             }

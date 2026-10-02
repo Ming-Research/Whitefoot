@@ -8,8 +8,8 @@ use std::collections::HashSet;
 
 use super::generics::{GenericArgument, GenericSubstitution};
 use super::{
-    CheckContext, CheckStop, CheckedFunctionInventory, CheckedNominalKind, CheckedType, Checker,
-    FunctionId, FunctionSignature, NominalId, TypeContext,
+    CheckContext, CheckStop, CheckedFunctionInventory, CheckedNominalKind, CheckedShared,
+    CheckedType, Checker, FunctionId, FunctionSignature, NominalId, TypeContext,
 };
 use crate::SemanticCompilerFailure;
 
@@ -155,8 +155,14 @@ impl TypeContext<'_> {
                 .collect(),
             CheckedNominalKind::Box { referent, .. } => vec![*referent],
             // The state is released through the handle's last release, so its
-            // type is live wherever a handle's is [SHARE-1].
-            CheckedNominalKind::Shared { state } => vec![*state],
+            // type is live wherever a handle's is, and a map's entries are
+            // released as their `Option<V>` [SHARE-1].
+            CheckedNominalKind::Shared { state, shape } => match shape {
+                CheckedShared::Object => vec![*state],
+                CheckedShared::Map { entry } | CheckedShared::State { entry } => {
+                    vec![*state, *entry]
+                }
+            },
             CheckedNominalKind::Opaque => Vec::new(),
         };
         for ty in fields {

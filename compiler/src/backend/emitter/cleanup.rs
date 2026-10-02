@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use std::fmt::Write;
 
 use crate::target::TargetLayout;
-use crate::{IrReleaseClass, IrVariant, IrWindowShape};
+use crate::{IrReleaseClass, IrShared, IrVariant, IrWindowShape};
 
 use super::union_enums::{is_memory_only, variant_field_gep};
 use super::{BackendFailure, IrNominalId, IrNominalKind, IrProgram, IrType};
@@ -62,15 +62,72 @@ pub(super) fn emit_resource_drop_helpers(
             continue;
         };
         let nominal = program.nominal(id).ok_or(BackendFailure::InvalidIr)?;
-        let IrNominalKind::Shared { state } = nominal.kind() else {
-            continue;
-        };
-        emit_shared_drop_helper(program, &mut module, nominal, *state)?;
+        match nominal.kind() {
+            IrNominalKind::Shared {
+                state,
+                shape: IrShared::Object,
+            } => emit_shared_drop_helper(program, &mut module, nominal, *state)?,
+            IrNominalKind::Shared {
+                shape: IrShared::Map { entry },
+                ..
+            } => emit_shared_map_drop_helper(program, &mut module, nominal, *entry)?,
+            _ => {}
+        }
     }
     for ty in cleanup_run_types(program)? {
         emit_run_drop_helper(program, target, &mut module, ty)?;
     }
     Ok(module)
+}
+
+/// [SHARE-1] one map handle's release: the runtime counts the handle out, and
+/// with the last one hands out every entry still holding a value, each of
+/// which is released in place as its `Option<V>`, and then frees the map.
+fn emit_shared_map_drop_helper(
+    program: &IrProgram,
+    module: &mut Module,
+    nominal: &crate::IrNominal,
+    entry: IrType,
+) -> Result<(), BackendFailure> {
+    let mut output = FunctionBody::default();
+    let symbol = drop_helper_symbol(nominal);
+    let mut signature = Signature::new(symbol, "void", vec![Parameter::named("ptr", "%value")]);
+    signature.linkage = Linkage::Private;
+    output.open_block("entry".to_owned());
+    output.instructions(
+        "  %last = call i32 @wf__shared_map_release(ptr %value)\n  %is.last = icmp ne i32 %last, 0\n  br i1 %is.last, label %drain, label %done\n",
+        &["wf__shared_map_release"],
+    );
+    output.open_block("drain".to_owned());
+    output.instructions(
+        "  %slot = call ptr @wf__shared_map_drain(ptr %value)\n  %drained = icmp eq ptr %slot, null\n  br i1 %drained, label %free, label %entry.release\n",
+        &["wf__shared_map_drain"],
+    );
+    output.open_block("entry.release".to_owned());
+    if type_requires_cleanup(program, entry)? {
+        let mut temporary = 0_u32;
+        emit_cleanup_jobs(
+            program,
+            &mut output,
+            &mut temporary,
+            vec![CleanupJob::Place {
+                address: "%slot".to_owned(),
+                ty: entry,
+            }],
+        )?;
+    }
+    output.push_str("  br label %drain\n");
+    output.open_block("free".to_owned());
+    output.instructions(
+        "  call void @wf__shared_map_free(ptr %value)\n  br label %done\n",
+        &["wf__shared_map_free"],
+    );
+    output.open_block("done".to_owned());
+    output.push_str("  ret void\n");
+    signature.references = output.references.clone();
+    module.define(signature.define(output, "")?);
+    module.text("\n");
+    Ok(())
 }
 
 /// [SHARE-1] one handle's release: the runtime counts the handle out, and the
@@ -138,14 +195,25 @@ pub(super) fn program_uses_shared(program: &IrProgram) -> Result<bool, BackendFa
 /// The runtime's shared-object entries (`completion/bridge.h`).
 pub(super) fn shared_runtime_declarations() -> Module {
     let mut module = Module::default();
-    let declarations: [(&str, &str, &[&str]); 7] = [
+    let declarations: [(&str, &str, &[&str]); 18] = [
         ("wf__shared_new", "ptr", &["i64"]),
         ("wf__shared_share", "void", &["ptr"]),
         ("wf__shared_release", "i32", &["ptr"]),
         ("wf__shared_free", "void", &["ptr"]),
         ("wf__shared_acquire", "i32", &["ptr", "i32", "ptr"]),
         ("wf__shared_unlock", "void", &["ptr", "i32"]),
+        ("wf__shared_take", "void", &["ptr", "i32"]),
         ("wf__shared_watch", "i32", &["ptr", "i32", "ptr"]),
+        ("wf__shared_map_new", "ptr", &["i64", "i64", "i64"]),
+        ("wf__shared_map_share", "void", &["ptr"]),
+        ("wf__shared_map_release", "i32", &["ptr"]),
+        ("wf__shared_map_drain", "ptr", &["ptr"]),
+        ("wf__shared_map_free", "void", &["ptr"]),
+        ("wf__shared_map_hold", "void", &["ptr"]),
+        ("wf__shared_map_unhold", "void", &["ptr"]),
+        ("wf__shared_map_lock", "ptr", &["ptr", "ptr", "i64", "i32"]),
+        ("wf__shared_map_unlock", "void", &["ptr", "i32", "i32"]),
+        ("wf__shared_map_count", "i64", &["ptr"]),
     ];
     for (name, result, parameters) in declarations {
         module.declare(Signature::new(
@@ -504,7 +572,12 @@ fn reachable_types(program: &IrProgram, seeds: Vec<IrType>) -> Result<Vec<IrType
                         );
                     }
                     IrNominalKind::Box { referent, .. } => pending.push(*referent),
-                    IrNominalKind::Shared { state } => pending.push(*state),
+                    IrNominalKind::Shared { state, shape } => {
+                        pending.push(*state);
+                        if let IrShared::Map { entry } | IrShared::State { entry } = shape {
+                            pending.push(*entry);
+                        }
+                    }
                     IrNominalKind::Opaque => {}
                 }
             }
