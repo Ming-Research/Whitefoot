@@ -57,10 +57,14 @@
 
 #include "concurrent_map.h"
 
-/* The map's test drives interleavings through this point: a writer that is
- * about to claim an empty or removed cell for an entry's key. */
+/* The map's test drives interleavings through these points: a writer that
+ * is about to claim an empty or removed cell for an entry's key, and one
+ * about to lock a cell of its key's hash. */
 #ifndef WF_CMAP_BEFORE_CLAIM
 #define WF_CMAP_BEFORE_CLAIM(t, index) ((void)0)
+#endif
+#ifndef WF_CMAP_BEFORE_LOCK
+#define WF_CMAP_BEFORE_LOCK(c) ((void)0)
 #endif
 /* And a statement over the whole map that has taken its place in line, and
  * one that has closed the gate to keyed statements. */
@@ -704,6 +708,7 @@ static int try_entry(wf_cmap_user *u, cell *c, uint64_t k, const unsigned char *
         u->waited += wait_for_cell(round);
         return -1;
     }
+    WF_CMAP_BEFORE_LOCK(c);
     if (!atomic_compare_exchange_weak_explicit(&c->key, &k, k | LOCKED, memory_order_seq_cst,
                                                memory_order_relaxed)) {
         u->waited += 1;

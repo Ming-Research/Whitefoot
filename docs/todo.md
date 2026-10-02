@@ -1573,19 +1573,16 @@ rarely insert at the same place.
   ordinary allocator, would fix it. Reopen when a program creates many small
   objects.
 
-- **No test pins how many vain wakes come before a shared object's
-  hand-off.** The unlock after two vain wakes hands a parked statement the
-  object (`completion/bridge.c`, `WF_SHARED_HANDOFF`).
-  `completion/shared_object_test.c` runs the bridge's shared-object entries
-  on contexts with hand-written frames and checks that a hand-off happens,
-  at most once a statement, and that a resumed statement is overtaken by at
-  most one borrower; it does not check the count of two, so a count of three
-  would pass, and no test has a context watching for a write that a
-  borrower makes and gives back. A test that parks a statement, wakes it
-  twice while another context takes the object first and checks that the
-  third unlock grants it would pin the count; one with a watching context
-  would pin the borrower's wake. Reopen when the lock changes again or a
-  hand-off defect is suspected.
+- **No test watches for a write a borrower gives back.** A statement in a
+  map's block that borrows a hold handed to a parked context and writes the
+  object wakes the contexts watching for a write when it gives the hold back
+  (`completion/bridge.c`, `wf_shared_give_back_locked`).
+  `completion/shared_object_test.c` steps contexts with hand-written frames
+  through every hand-off and borrow, but none of its contexts waits on a
+  false guard, so a give-back that left the watchers asleep would pass. The
+  change: a context whose guard reads a value only a borrower writes, which
+  the test checks wakes after the borrower's give-back. Reopen when the
+  lock changes again or a lost watcher wake is suspected.
 
 - **A bound spawn is joined before the whole statement that uses it.**
   [WAIT-3] joins a bound spawn at the beginning of the first later statement

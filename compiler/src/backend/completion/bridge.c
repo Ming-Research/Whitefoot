@@ -2367,6 +2367,7 @@ static wf_context *wf_shared_wake_locked(wf_shared *shared) {
         atomic_store_explicit(&first->shared_granted, 1u, memory_order_relaxed);
         atomic_store_explicit(&shared->granted, first, memory_order_relaxed);
     } else {
+        wf__shared_seen(WF_SHARED_WOKEN);
         first->shared_woken += 1u;
     }
     return first;

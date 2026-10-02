@@ -413,10 +413,10 @@ $(COMPLETION_TMP)/concurrent-map-test-collide: $(CONCURRENT_MAP_SOURCES) src/bac
 
 # The shared-object runtime's waits, with contexts whose frames the test
 # writes and the moments the runtime lets it observe (shared_object_test.c),
-# on one driver beside threads that hold the object. It links the runtime
-# objects the default-route probe builds with the same flags, so the runtime
-# is not compiled again for it. On one processor the threads never run
-# beside the driver, and the test reports that it checked no hand-off.
+# on one driver beside threads that hold the object, stepped through each
+# hand-off in a fixed order so that it runs alike on every host and
+# processor count. It links the runtime objects the default-route probe
+# builds with the same flags, so the runtime is not compiled again for it.
 SHARED_OBJECT_TEST_OBJECTS := \
 	$(patsubst src/backend/%.c,$(COMPLETION_TMP)/objects/bridge-default-probe/%.o,$(COMPLETION_RUNTIME_SOURCES)) \
 	$(COMPLETION_TMP)/objects/bridge-default-probe/completion/shared_object_test.o

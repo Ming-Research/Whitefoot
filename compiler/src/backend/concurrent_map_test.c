@@ -20,12 +20,13 @@
  *   key in two statements or two cells; and a drain that hands out every
  *   present entry once;
  * - a keyed statement that waits out its patience and holds the whole map
- *   instead: from inside a claim it gives back, after a lost claim or a
- *   move it must retry, after a bounded number of statements on a key
- *   others keep locking, and with every statement doing so while the map
- *   moves, holds count and claims race; and statements over the whole map
- *   that hold it in the order they asked, each after the keyed statements
- *   the hold before it kept waiting.
+ *   instead: from inside a claim it gives back, after a lost claim of an
+ *   empty or a removed cell, a move or a lost lock it must retry, after a
+ *   bounded number of statements on a key others keep locking, and with
+ *   every statement doing so while the map moves, holds count and claims
+ *   race; and statements over the whole map that hold it in the order they
+ *   asked, each after the keyed statements the hold before it kept
+ *   waiting.
  *
  * Prints the first failure and exits 1, or exits 0.
  */
@@ -47,9 +48,12 @@
 #define WF_CMAP_YIELD() sched_yield()
 #define WF_CMAP_EXHAUSTED() abort()
 struct table;
+struct cell;
 static void before_claim(struct table *t, unsigned long long index);
+static void before_lock(struct cell *c);
 static uint64_t counted_key(uint64_t k, unsigned char *bytes);
 #define WF_CMAP_BEFORE_CLAIM(t, index) before_claim((t), (index))
+#define WF_CMAP_BEFORE_LOCK(c) before_lock(c)
 struct wf_cmap_user;
 static uint64_t patience_of(struct wf_cmap_user *u);
 static void hold_seen(struct wf_cmap_user *u, int closed);
@@ -609,6 +613,17 @@ static void before_claim(struct table *t, unsigned long long index) {
         step(t, index);
 }
 
+/* The same, when the writer under test is about to lock a cell of its key's
+ * hash. */
+static void (*at_lock)(struct cell *c);
+
+static void before_lock(struct cell *c) {
+    void (*step)(struct cell *) = at_lock;
+    at_lock = NULL;
+    if (step != NULL)
+        step(c);
+}
+
 /* The other writer and the keys the claim tests use. */
 static wf_cmap_user *other_user;
 static const unsigned char *claim_key, *gone_key;
@@ -874,6 +889,9 @@ static void claim_impatient(void) {
     wf_cmap_destroy(map);
 }
 
+/* The retries a keyed statement makes without waiting for a held cell. */
+enum { LOST_EMPTY_CLAIM, CLAIM_MOVED, LOST_REMOVED_CLAIM, LOST_LOCK };
+
 /* As another writer that, just before the writer under test claims the
  * empty cell at index, either makes that cell removed, so the claim's
  * compare-and-swap loses, or begins a move, so the claim is given back. */
@@ -886,27 +904,61 @@ static void move_under_claim(struct table *t, unsigned long long index) {
     start_move(other_user->map, t);
 }
 
+/* As the writer of gone_key that, just before the writer under test claims
+ * the removed cell at index, gone_key's own, reuses it for gone_key. */
+static void reuse_removed(struct table *t, unsigned long long index) {
+    wf_cmap *map = other_user->map;
+    node *n = new_node(other_user, node_bytes(map, gone_length));
+    n->length = gone_length;
+    memcpy(n->bytes, gone_key, (size_t)gone_length);
+    memset(slot_of(map, n), 0, (size_t)map->slot_size);
+    atomic_store(&t->cells[index].value, (uint64_t)(uintptr_t)n);
+    atomic_store(&t->cells[index].key, tag_of(gone_key, gone_length));
+}
+
+/* As another writer that removes the key in c just before the writer under
+ * test locks it, so the lock's compare-and-swap loses. */
+static void remove_under_lock(struct cell *c) { atomic_store(&c->key, REMOVED); }
+
 /* A statement with no patience that never waits for a held cell still runs
- * out of it when it must try again: after a lost claim, and after a claim
- * given back to a move. Either retry makes it hold the whole map. */
-static void retries_count(int move) {
+ * out of it when it must try again: after a lost claim of an empty or a
+ * removed cell, after a claim given back to a move, and after a lost lock of
+ * its key's cell. Each retry makes it hold the whole map. */
+static void retries_count(int how) {
     wf_cmap *map = wf_cmap_create_entries(8, 8, 0);
     wf_cmap_user *first = wf_cmap_user_at(map, 0);
+    table *t = atomic_load(&map->current);
     other_user = wf_cmap_user_at(map, 1);
-    unsigned char k[16];
-    uint64_t k_length = counted_key(0, k);
-    at_claim = move ? move_under_claim : lose_claim;
-    set_patience(0, PATIENCE);
+    unsigned char k[16], gone[16];
+    uint64_t k_length = counted_key(0, k), skip = 0;
     wf_cmap_entry entry;
-    uint64_t *slot = wf_cmap_lock_entry(first, k, k_length, 0, &entry);
+    uint64_t *slot;
+    if (how == LOST_REMOVED_CLAIM) {
+        uint64_t gone_bytes = key_beside(t, k, k_length, &skip, gone);
+        wf_cmap_lock_entry(first, gone, gone_bytes, 0, &entry);
+        wf_cmap_unlock_entry(first, &entry, 0, 0);
+        gone_key = gone;
+        gone_length = gone_bytes;
+    } else if (how == LOST_LOCK) {
+        slot = wf_cmap_lock_entry(first, k, k_length, 0, &entry);
+        slot[0] = 5;
+        wf_cmap_unlock_entry(first, &entry, 0, 1);
+    }
+    at_claim = how == LOST_EMPTY_CLAIM ? lose_claim
+               : how == CLAIM_MOVED    ? move_under_claim
+               : how == LOST_REMOVED_CLAIM ? reuse_removed
+                                           : NULL;
+    at_lock = how == LOST_LOCK ? remove_under_lock : NULL;
+    set_patience(0, PATIENCE);
+    slot = wf_cmap_lock_entry(first, k, k_length, 0, &entry);
     set_patience(PATIENCE, PATIENCE);
-    if (at_claim != NULL || !entry.upgraded || !entry.fresh)
-        fail("a retry did not count against patience (move, upgraded)", (uint64_t)move, entry.upgraded);
+    if (at_claim != NULL || at_lock != NULL || !entry.upgraded || !entry.fresh)
+        fail("a retry did not count against patience (retry, upgraded)", (uint64_t)how, entry.upgraded);
     slot[0] = 1;
     wf_cmap_unlock_entry(first, &entry, 0, 1);
     slot = wf_cmap_lock_entry(first, k, k_length, 0, &entry);
     if (entry.fresh || slot[0] != 1)
-        fail("the key was lost after the retry (move, fresh)", (uint64_t)move, entry.fresh);
+        fail("the key was lost after the retry (retry, fresh)", (uint64_t)how, entry.fresh);
     wf_cmap_unlock_entry(first, &entry, 0, 1);
     wf_cmap_destroy(map);
 }
@@ -1342,8 +1394,10 @@ int main(void) {
         settle_pending();
         claim_yields();
         claim_impatient();
-        retries_count(0);
-        retries_count(1);
+        retries_count(LOST_EMPTY_CLAIM);
+        retries_count(CLAIM_MOVED);
+        retries_count(LOST_REMOVED_CLAIM);
+        retries_count(LOST_LOCK);
         entries_misses();
         entries_churn(0, PATIENCE);
         entries_churn(1, PATIENCE);

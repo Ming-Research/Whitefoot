@@ -317,9 +317,10 @@ int wf__shared_watch(void *object, uint32_t write, void *frame);
 void wf__shared_take(void *object, uint32_t write);
 /* The moments the shared-object runtime's test observes, which it defines
  * this function to see (shared_object_test.c): an unlock hands a parked
- * context the object, a statement that cannot park borrows that hold, and
- * the context resumes holding it and has taken the object's lock. */
-enum { WF_SHARED_HANDED = 1, WF_SHARED_LENT, WF_SHARED_RESUMED };
+ * context the object, a statement that cannot park borrows that hold, the
+ * context resumes holding it and has taken the object's lock, and an unlock
+ * wakes a parked context to try again. */
+enum { WF_SHARED_HANDED = 1, WF_SHARED_LENT, WF_SHARED_RESUMED, WF_SHARED_WOKEN };
 void wf__shared_seen(unsigned moment);
 
 /* What the runtime's concurrent maps take from this runtime: the number of
