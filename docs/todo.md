@@ -2828,6 +2828,43 @@ condition under which it is taken up.
 
 ## Verification tooling
 
+- **The trusted runtime is large and growing.** Every program links about
+  20,000 lines of C and LLVM IR in `compiler/src/backend` that no checker
+  reads (the scheduler, the completion bridge at 3,871 lines, the hosts' I/O
+  adapters, the concurrent map at 1,130), and each language feature has
+  added to it: the shared map's first claim protocol let one key hold two
+  cells until a review found it
+  (`research/investigations/concurrent-map/DESIGN.md`, reuse and a key's
+  second cell). The change: keep in C only a few primitives Whitefoot
+  cannot state (atomic loads, stores and compare-and-swap with their
+  orderings, parking and waking a thread, the host's system calls and
+  memory mapping) and write the rest, the map's probing and moves, the
+  shared objects' queues and hand-off, the I/O adapters' bookkeeping, in
+  Whitefoot over them, so the checker proves their memory safety and
+  bounds. It needs the language to express atomics and their orderings,
+  which it does not today. Measure each move against the C it replaces on
+  the duel and the suite. Reopen when the language gains atomics, or before
+  the runtime's next large addition.
+
+- **Nothing checks the runtime's concurrent protocols.** The map's claim,
+  settle, move and hold protocols, the shared objects' park, hand-off and
+  take-back, the scheduler's queues and the completion bridge's wakes are
+  argued in comments and exercised by stress tests and mutants
+  (`compiler/src/backend/concurrent_map_test.c`), which find an
+  interleaving only when it happens to occur; no model of their states and
+  memory orderings is checked, so a protocol can be wrong in an order no
+  test reaches, as the map's first claim protocol was. The change: model
+  each protocol in TLA+ and check its safety (one holder per key and per
+  object, no lost update, no cycle of waits) and liveness (every begun
+  statement takes effect [WAIT-2]) with TLC over small configurations;
+  check the C itself under the C11 memory model with a stateless model
+  checker such as GenMC, which explores the weak-memory orders a model
+  abstracts; and where a protocol is small enough, prove it, for example
+  in Iris. Start with the map's claim and the objects' hand-off, the two
+  the last review found wanting. Reopen with the next change to a runtime
+  protocol, or with the move of the runtime into Whitefoot above, whose
+  primitives such models would specify.
+
 - **No command renders a program in canonical form.** [FORM-2] refuses a
   program that is not in canonical form, and the compiler has the renderer
   (`render_canonical`, which the canonical corpus test calls), but neither
