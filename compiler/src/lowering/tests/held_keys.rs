@@ -43,6 +43,55 @@ fn held(source: &str, name: &str) -> Held {
     })
 }
 
+/// How many statements of `name` hold their keys' entries and how many hold
+/// a whole map.
+fn holds(source: &str, name: &str) -> (usize, usize) {
+    with_ir(source.as_bytes(), |program| {
+        let operations = function(program, name)
+            .blocks()
+            .iter()
+            .flat_map(|block| block.instructions())
+            .filter_map(|instruction| match instruction {
+                IrInstruction::Define { operation, .. } => Some(operation),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        (
+            operations
+                .iter()
+                .filter(|operation| matches!(operation, IrOperation::SharedMapHoldKeys { .. }))
+                .count(),
+            operations
+                .iter()
+                .filter(|operation| matches!(operation, IrOperation::SharedMapHold { .. }))
+                .count(),
+        )
+    })
+}
+
+/// How many operations of `name` take the smaller of two integers.
+fn minimums(source: &str, name: &str) -> usize {
+    with_ir(source.as_bytes(), |program| {
+        function(program, name)
+            .blocks()
+            .iter()
+            .flat_map(|block| block.instructions())
+            .filter(|instruction| {
+                matches!(
+                    instruction,
+                    IrInstruction::Define {
+                        operation: IrOperation::Integer {
+                            operation: crate::IrIntegerOperation::Minimum,
+                            ..
+                        },
+                        ..
+                    }
+                )
+            })
+            .count()
+    })
+}
+
 const PRELUDE: &str = r#"const names: Array<u8, 4> =[119_u8, 120_u8, 121_u8, 122_u8];
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -406,4 +455,218 @@ fn logs_first(map: &SharedMap<u8>, total: &Shared<u64>, count: u64) -> result: u
 "#,
     );
     assert_eq!(held(&source, "logs_first"), Held::Map);
+}
+
+#[test]
+fn object_statements_in_different_arms_hold_the_entries() {
+    let source = program(
+        r#"
+fn logs_either(map: &SharedMap<u8>, total: &Shared<u64>, wide: u64) -> result: unit reads(map), reads(total) waits {
+  atomic state = &map^ {
+    atomic slot = &state^[&names[0_u64..1_u64]] {
+      set slot^ = Some<u8>(value: 2_u8);
+    }
+    if wide == 1_u64 {
+      atomic sum = &total^ {
+        set sum^ = sum^ +wrap 2_u64;
+      }
+    } else {
+      atomic sum = &total^ {
+        set sum^ = sum^ +wrap 1_u64;
+      }
+    }
+  }
+  return unit;
+}
+"#,
+    );
+    assert_eq!(held(&source, "logs_either"), Held::Entries);
+}
+
+#[test]
+fn a_section_anywhere_in_the_program_makes_every_statement_hold_its_map() {
+    let source = program(
+        r#"
+fn flips(map: &SharedMap<u8>, flag: &Shared<u64>) -> result: unit reads(map), reads(flag) waits {
+  atomic slot = &map^[&names[0_u64..2_u64]] {
+    atomic raised = &flag^ {
+      set raised^ = 1_u64;
+    }
+    atomic lowered = &flag^ {
+      set lowered^ = 0_u64;
+    }
+  }
+  return unit;
+}
+
+fn watches(map: &SharedMap<u8>, flag: &Shared<u64>) -> result: u64 reads(map), reads(flag) waits {
+  let raised = 0_u64;
+  atomic state = &map^ {
+    atomic slot = &state^[&names[0_u64..1_u64]] {
+      set slot^ = Some<u8>(value: 1_u8);
+    }
+    atomic value = &flag^ {
+      set raised = value^;
+    }
+  }
+  return raised;
+}
+"#,
+    );
+    assert_eq!(held(&source, "watches"), Held::Map);
+}
+
+#[test]
+fn a_block_a_give_leaves_holds_the_map() {
+    let source = program(
+        r#"
+fn guards(map: &SharedMap<u8>, input: &[u8], count: u64, flag: Bool) -> result: u8 reads(map), reads(input) waits {
+  let picked = if flag {
+    atomic state = &map^ {
+      if count > input^.len {
+        give 9_u8;
+      }
+      atomic slot = &state^[&input^[0_u64..count]] {
+        set slot^ = Some<u8>(value: 4_u8);
+      }
+      give 1_u8;
+    }
+  } else {
+    give 200_u8;
+  }
+  return picked;
+}
+"#,
+    );
+    assert_eq!(held(&source, "guards"), Held::Map);
+}
+
+#[test]
+fn a_twin_narrows_a_key_s_range_to_its_source() {
+    // The block forms its key after a guard that never returns, so the
+    // twin, which drops the guard, forms it where the bound may not hold.
+    let source = program(
+        r#"
+fn spins(map: &SharedMap<u8>, input: &[u8], count: u64) -> result: unit reads(map), reads(input) waits {
+  atomic state = &map^ {
+    if count > input^.len {
+      loop {
+      }
+    }
+    atomic slot = &state^[&input^[0_u64..count]] {
+      set slot^ = Some<u8>(value: 2_u8);
+    }
+  }
+  return unit;
+}
+"#,
+    );
+    assert_eq!(held(&source, "spins"), Held::Entries);
+    assert_eq!(minimums(&source, "spins"), 2);
+}
+
+#[test]
+fn a_key_under_an_operation_with_an_obligation_holds_the_map() {
+    let source = program(
+        r#"
+fn divides(map: &SharedMap<u8>, input: &[u8], parts: u64) -> result: unit reads(map), reads(input) waits {
+  atomic state = &map^ {
+    if parts == 0_u64 {
+      loop {
+      }
+    }
+    let limit = 16_u64 / parts;
+    if limit <= input^.len {
+      atomic slot = &state^[&input^[0_u64..limit]] {
+        set slot^ = Some<u8>(value: 2_u8);
+      }
+    }
+  }
+  return unit;
+}
+"#,
+    );
+    assert_eq!(held(&source, "divides"), Held::Map);
+}
+
+#[test]
+fn a_call_that_reaches_the_clock_through_a_cycle_holds_the_map() {
+    let source = program(
+        r#"
+fn first(wall: &std::time::WallClock, depth: u64) -> result: u64 reads(wall) {
+  if depth > 0_u64 {
+    let less = depth -wrap 1_u64;
+    let inner = second(wall: wall, depth: less);
+    return inner;
+  }
+  let stamp = std::time::unix_nanoseconds(clock: wall);
+  let wide = cvt.wrap::<i64, u64>(stamp);
+  let low = wide % 8_u64;
+  return low;
+}
+
+fn second(wall: &std::time::WallClock, depth: u64) -> result: u64 reads(wall) {
+  let inner = first(wall: wall, depth: depth);
+  return inner;
+}
+
+fn both(map: &SharedMap<u8>, input: &[u8], wall: &std::time::WallClock) -> result: unit reads(map), reads(input), reads(wall) waits {
+  let count = input^.len;
+  atomic state = &map^ {
+    let limit = first(wall: wall, depth: 1_u64);
+    for @fill (at in 0_u64..count) {
+      if at < limit {
+        atomic slot = &state^[&input^[0_u64..at]] {
+          set slot^ = Some<u8>(value: 2_u8);
+        }
+      }
+    }
+  }
+  atomic state = &map^ {
+    let limit = second(wall: wall, depth: 0_u64);
+    for @fill (at in 0_u64..count) {
+      if at < limit {
+        atomic slot = &state^[&input^[0_u64..at]] {
+          set slot^ = Some<u8>(value: 2_u8);
+        }
+      }
+    }
+  }
+  return unit;
+}
+"#,
+    );
+    assert_eq!(holds(&source, "both"), (0, 2));
+}
+
+#[test]
+fn a_key_under_a_call_with_a_requirement_holds_the_map() {
+    // The block reaches the call only after a guard that never returns,
+    // which is where its requirement is proved; a twin has no such guard.
+    let source = program(
+        r#"
+fn share(parts: u64) -> result: u64 pure contract {
+  requires parts > 0_u64;
+} {
+  return 16_u64 / parts;
+}
+
+fn asks(map: &SharedMap<u8>, input: &[u8], parts: u64) -> result: unit reads(map), reads(input) waits {
+  atomic state = &map^ {
+    if parts == 0_u64 {
+      loop {
+      }
+    }
+    let limit = share(parts: parts);
+    if limit <= input^.len {
+      atomic slot = &state^[&input^[0_u64..limit]] {
+        set slot^ = Some<u8>(value: 2_u8);
+      }
+    }
+  }
+  return unit;
+}
+"#,
+    );
+    assert_eq!(held(&source, "asks"), Held::Map);
 }

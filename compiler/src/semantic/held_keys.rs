@@ -18,17 +18,28 @@
 //! statement without a twin holds the whole map as before:
 //!
 //! - the block names the held state only as the target of such statements;
-//! - no `return`, `break` or propagating `let` leaves any part of the block,
-//!   so every fact a kept expression's obligations were proved under holds
-//!   in the twin, which follows the same matches;
+//! - no `return`, `break`, propagating `let` or `give` leaves any part of
+//!   the block;
+//! - a kept expression owes nothing the twin might not have: its integer
+//!   operations and conversions answer for every operand, its calls have no
+//!   `requires`, and a range it forms is narrowed to its source's bounds
+//!   when the twin is lowered. The block proved such obligations under
+//!   facts the twin, which drops the block's other statements, may lack: a
+//!   guard arm that never returns, a call that does not. Where the block
+//!   does form the range the narrowing changes nothing, so the twin still
+//!   collects the block's key;
 //! - no general loop contains such a statement, since a twin without the
 //!   loop's exits would not end;
 //! - the block runs at most one statement on a shared object
-//!   ([`one_object_statement`]), since a block that runs two is a section no
-//!   other statement on the map enters only while the whole map is held;
-//! - every kept expression is a constant, a binding read, a field of one, an
-//!   integer, float, boolean or conversion operation, a range's measure, a
-//!   range over a range or over a constant, or a call to a function that
+//!   ([`one_object_statement`]), and so does every other block of the
+//!   program that holds an entry or a map's state
+//!   ([`runs_object_sections`]): a block that runs two is a section that no
+//!   statement on the map enters, or sees the middle of, only while whole
+//!   maps are held;
+//! - every kept expression is a constant, a binding read, a field of one,
+//!   such an integer operation or conversion, a float or boolean operation,
+//!   a range's measure, a range over a range or over a constant, or a call
+//!   to a function that
 //!   waits for nothing, writes nothing, allocates nothing, returns an owned
 //!   value and reaches no function without a body other than a pure one, so
 //!   that it answers the same in the twin and in the block;
@@ -48,16 +59,57 @@
 use std::collections::{HashMap, HashSet};
 
 use super::model::{
-    BindingId, CheckedAtomicForm, CheckedDrop, CheckedExpression, CheckedFunction, CheckedMatchArm,
-    CheckedMode, CheckedRangeSource, CheckedSetTarget, CheckedStatement, FunctionId,
-    expression_children,
+    BindingId, CheckedAtomicForm, CheckedConversionMode, CheckedDrop, CheckedExpression,
+    CheckedFunction, CheckedIntegerOperation, CheckedMatchArm, CheckedMode, CheckedRangeSource,
+    CheckedSetTarget, CheckedStatement, FunctionId, expression_children,
 };
 use super::places::PlaceRoot;
 use crate::NodePath;
 
+/// [SHARE-3] whether some statement of the program that holds an entry or a
+/// map's state runs two statements on shared objects in its block.
+///
+/// Such a block is a section: while it runs, no statement holding the whole
+/// map runs, so none sees the objects between its two statements. A
+/// statement that held only its keys' entries would run beside it and could.
+/// So no statement of such a program holds less than its map. In a program
+/// without one, every statement holding an entry or a map takes effect as if
+/// at the one object statement its block runs, what it holds being
+/// unchanged by others until it ends, and every outcome is one some order of
+/// whole statements gives.
+pub(crate) fn runs_object_sections(functions: &[CheckedFunction]) -> bool {
+    functions.iter().any(|function| {
+        function
+            .body
+            .as_deref()
+            .is_some_and(|body| !sections_are_single(body))
+    })
+}
+
+/// Whether every block of `statements` that holds an entry or a map's state
+/// runs at most one object statement.
+fn sections_are_single(statements: &[CheckedStatement]) -> bool {
+    statements.iter().all(|statement| match statement {
+        CheckedStatement::Atomic {
+            form: CheckedAtomicForm::Object,
+            ..
+        } => true,
+        CheckedStatement::Atomic { body, .. } => one_object_statement(body),
+        CheckedStatement::Loop { body, .. } | CheckedStatement::CountedRange { body, .. } => {
+            sections_are_single(body)
+        }
+        CheckedStatement::Match { arms, .. } | CheckedStatement::ValueMatchLet { arms, .. } => {
+            arms.iter().all(|arm| sections_are_single(&arm.body))
+        }
+        _ => true,
+    })
+}
+
 /// The twin of each statement of `function` that holds a map's state and can
-/// hold its keys' entries instead, by the statement's node. `addressed` is
-/// the function's bindings whose storage a borrow or a storage path reaches.
+/// hold its keys' entries instead, by the statement's node, in a program no
+/// statement of which runs an object section ([`runs_object_sections`]).
+/// `addressed` is the function's bindings whose storage a borrow or a
+/// storage path reaches.
 pub(crate) fn key_twins(
     function: &CheckedFunction,
     functions: &[CheckedFunction],
@@ -93,6 +145,7 @@ fn find(
                 form: CheckedAtomicForm::Map,
                 binding,
                 body,
+                fallthrough_drops,
                 ..
             } => {
                 let twin = Twin {
@@ -105,7 +158,7 @@ fn find(
                     kept: HashSet::new(),
                     calls: false,
                 };
-                if let Some(twin) = twin.of(body) {
+                if let Some(twin) = twin.of(body, fallthrough_drops) {
                     twins.insert(node_path.clone(), twin);
                 }
             }
@@ -125,8 +178,8 @@ fn find(
 }
 
 /// [SHARE-3] whether a block runs at most one statement holding a shared
-/// object's state: `statements` contain at most one, at any depth, and none
-/// inside a loop.
+/// object's state on any path through it: a match runs one of its arms, and
+/// a loop that contains such a statement may run it twice.
 ///
 /// A block that runs two such statements reads or writes objects twice, and
 /// what it holds exclusively is all that keeps another statement's object
@@ -136,36 +189,42 @@ fn find(
 /// block then takes effect as if at that one statement's point, since what
 /// it holds changes for no other statement before it ends.
 pub(crate) fn one_object_statement(statements: &[CheckedStatement]) -> bool {
-    let mut count = 0_usize;
-    count_objects(statements, false, &mut count) && count <= 1
+    objects_run(statements) <= 1
 }
 
-/// Counts the object statements of `statements`; false when one lies in a
-/// loop.
-fn count_objects(statements: &[CheckedStatement], looped: bool, count: &mut usize) -> bool {
-    statements.iter().all(|statement| match statement {
-        CheckedStatement::Atomic {
-            form: CheckedAtomicForm::Object,
-            ..
-        } => {
-            *count += 1;
-            !looped
-        }
-        CheckedStatement::Atomic { body, .. } => count_objects(body, looped, count),
-        CheckedStatement::Loop { body, .. } | CheckedStatement::CountedRange { body, .. } => {
-            count_objects(body, true, count)
-        }
-        CheckedStatement::Match { arms, .. } | CheckedStatement::ValueMatchLet { arms, .. } => arms
-            .iter()
-            .all(|arm| count_objects(&arm.body, looped, count)),
-        _ => true,
-    })
+/// The most statements holding a shared object's state that one run of
+/// `statements` executes, counted as two once it may be more than one.
+fn objects_run(statements: &[CheckedStatement]) -> usize {
+    statements
+        .iter()
+        .map(|statement| match statement {
+            CheckedStatement::Atomic {
+                form: CheckedAtomicForm::Object,
+                ..
+            } => 1,
+            CheckedStatement::Atomic { body, .. } => objects_run(body),
+            CheckedStatement::Loop { body, .. } | CheckedStatement::CountedRange { body, .. } => {
+                if objects_run(body) == 0 {
+                    0
+                } else {
+                    2
+                }
+            }
+            CheckedStatement::Match { arms, .. } | CheckedStatement::ValueMatchLet { arms, .. } => {
+                arms.iter()
+                    .map(|arm| objects_run(&arm.body))
+                    .max()
+                    .unwrap_or(0)
+            }
+            _ => 0,
+        })
+        .fold(0, usize::saturating_add)
+        .min(2)
 }
 
 /// Whether a statement holding a shared object's state lies in `statements`.
 fn reaches_object(statements: &[CheckedStatement]) -> bool {
-    let mut count = 0_usize;
-    !count_objects(statements, false, &mut count) || count > 0
+    objects_run(statements) > 0
 }
 
 /// Whether `expression` names `binding` anywhere, including in a place root
@@ -191,6 +250,44 @@ fn reaches_entry(statements: &[CheckedStatement]) -> bool {
         }
         _ => false,
     })
+}
+
+/// Whether an integer operation answers for every operand, with no
+/// obligation the checker discharged where it stands.
+fn total(operation: CheckedIntegerOperation) -> bool {
+    use CheckedIntegerOperation as Op;
+    matches!(
+        operation,
+        Op::AddWrap
+            | Op::SubtractWrap
+            | Op::MultiplyWrap
+            | Op::AbsoluteWrap
+            | Op::NegateWrap
+            | Op::BitAnd
+            | Op::BitOr
+            | Op::BitXor
+            | Op::BitNot
+            | Op::ShiftLeftWrap
+            | Op::ShiftRightWrap
+            | Op::RotateLeft
+            | Op::RotateRight
+            | Op::PopulationCount
+            | Op::LeadingZeros
+            | Op::TrailingZeros
+            | Op::ByteSwap
+            | Op::MultiplyHigh
+            | Op::AddSaturating
+            | Op::SubtractSaturating
+            | Op::MultiplySaturating
+            | Op::Minimum
+            | Op::Maximum
+            | Op::Equal
+            | Op::NotEqual
+            | Op::Less
+            | Op::LessEqual
+            | Op::Greater
+            | Op::GreaterEqual
+    )
 }
 
 /// Every call an expression makes, at any depth.
@@ -277,6 +374,10 @@ struct Facts {
     released: HashSet<BindingId>,
     /// Bindings an expression of the block consumes.
     consumed: HashSet<BindingId>,
+    /// How many value initializers of the block enclose the statement being
+    /// examined: a `give` inside one delivers to it, and one outside every
+    /// one of them leaves the block.
+    initializers: usize,
 }
 
 impl Facts {
@@ -326,6 +427,9 @@ impl Facts {
                 | CheckedStatement::Break { .. }
                 | CheckedStatement::PropagateLet { .. } => return None,
                 CheckedStatement::Give { value, drops, .. } => {
+                    if self.initializers == 0 {
+                        return None;
+                    }
                     self.expression(value, state)?;
                     self.drops(drops);
                 }
@@ -343,7 +447,10 @@ impl Facts {
                 } => {
                     self.defined.insert(*binding);
                     self.expression(scrutinee, state)?;
-                    self.arms(arms, state)?;
+                    self.initializers += 1;
+                    let arms = self.arms(arms, state);
+                    self.initializers -= 1;
+                    arms?;
                 }
                 CheckedStatement::Loop {
                     body,
@@ -461,11 +568,17 @@ struct Twin<'a> {
 }
 
 impl Twin<'_> {
-    fn of(mut self, body: &[CheckedStatement]) -> Option<Vec<CheckedStatement>> {
+    fn of(
+        mut self,
+        body: &[CheckedStatement],
+        fallthrough_drops: &[CheckedDrop],
+    ) -> Option<Vec<CheckedStatement>> {
         if !one_object_statement(body) {
             return None;
         }
         let mut facts = Facts::default();
+        // The block's own bindings are released at its end.
+        facts.drops(fallthrough_drops);
         facts.statements(body, self.state)?;
         let (twin, reaches) = self.block(body)?;
         if !reaches {
@@ -556,8 +669,10 @@ impl Twin<'_> {
         if let Some(&known) = self.repeatable.get(&function) {
             return known;
         }
-        // A function met again while it is being judged adds nothing.
-        self.repeatable.insert(function, true);
+        // A function met again while it is being judged is taken not to
+        // repeat, so that no function judged meanwhile is recorded as
+        // repeating on the strength of an answer not yet given.
+        self.repeatable.insert(function, false);
         let repeats = self.judge(function).is_some();
         self.repeatable.insert(function, repeats);
         repeats
@@ -660,7 +775,7 @@ impl Twin<'_> {
                     scrutinee,
                     enum_type,
                     arms,
-                    continues,
+                    ..
                 } => {
                     let mut bodies = Vec::new();
                     let mut inside = false;
@@ -690,7 +805,9 @@ impl Twin<'_> {
                                     fallthrough_drops: Vec::new(),
                                 })
                                 .collect(),
-                            continues: *continues,
+                            // Whatever the block's arms do, the twin's fall
+                            // through to the statements after the match.
+                            continues: true,
                         });
                         reaches = true;
                     }
@@ -740,10 +857,22 @@ impl Twin<'_> {
                 self.read.insert(*binding);
             }
             CheckedExpression::ProjectValue { value, .. }
-            | CheckedExpression::NumericConversion { value, .. }
-            | CheckedExpression::Reinterpret { value, .. } => self.expression(value)?,
-            CheckedExpression::IntegerOperation { arguments, .. }
-            | CheckedExpression::FloatOperation { arguments, .. }
+            | CheckedExpression::Reinterpret { value, .. }
+            | CheckedExpression::NumericConversion {
+                mode: CheckedConversionMode::Wrap | CheckedConversionMode::Nearest,
+                value,
+                ..
+            } => self.expression(value)?,
+            CheckedExpression::IntegerOperation {
+                operation,
+                arguments,
+                ..
+            } if total(*operation) => {
+                for argument in arguments {
+                    self.expression(argument)?;
+                }
+            }
+            CheckedExpression::FloatOperation { arguments, .. }
             | CheckedExpression::BooleanOperation { arguments, .. }
             | CheckedExpression::EnumEquality { arguments, .. } => {
                 for argument in arguments {
@@ -769,10 +898,7 @@ impl Twin<'_> {
                 start,
                 end,
                 ..
-            } if root.binding().is_none() => {
-                for offset in root.offsets() {
-                    self.expression(offset)?;
-                }
+            } if root.binding().is_none() && root.offsets().next().is_none() => {
                 self.expression(start)?;
                 self.expression(end)?;
             }
@@ -782,12 +908,16 @@ impl Twin<'_> {
                 formal_effects: None,
                 formal_contract: None,
                 arguments,
+                requirements,
                 result_borrow: None,
                 allocation: None,
                 ..
             } => {
                 let callee = self.functions.get(function.0 as usize)?;
-                if callee.result_mode != CheckedMode::Own || !self.repeats(*function) {
+                if callee.result_mode != CheckedMode::Own
+                    || !requirements.is_empty()
+                    || !self.repeats(*function)
+                {
                     return None;
                 }
                 self.calls = true;

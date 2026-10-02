@@ -1,0 +1,70 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+const names: Array<u8, 8> =[97_u8, 98_u8, 99_u8, 100_u8, 101_u8, 102_u8, 103_u8, 104_u8];
+
+fn flip(map: SharedMap<u8>, flag: Shared<u64>) -> result: unit pure waits {
+  for @round (index in 0_u64..50000_u64) {
+    atomic slot = &map[&names[0_u64..2_u64]] {
+      atomic raised = &flag {
+        set raised^ = 1_u64;
+      }
+      atomic lowered = &flag {
+        set lowered^ = 0_u64;
+      }
+    }
+  }
+  return unit;
+}
+
+fn watch(map: SharedMap<u8>, flag: Shared<u64>, seen: Shared<u64>, input: &[u8]) -> result: unit reads(input) waits {
+  for @look (index in 0_u64..50000_u64) {
+    let raised = 0_u64;
+    atomic state = &map {
+      atomic slot = &state^[&input^[0_u64..0_u64]] {
+        set slot^ = Some<u8>(value: 1_u8);
+      }
+      atomic value = &flag {
+        set raised = value^;
+      }
+    }
+    if raised != 0_u64 {
+      atomic count = &seen {
+        set count^ = count^ +wrap 1_u64;
+      }
+    }
+  }
+  return unit;
+}
+
+fn watcher(map: SharedMap<u8>, flag: Shared<u64>, seen: Shared<u64>) -> result: unit pure waits {
+  watch(map: move map, flag: move flag, seen: move seen, input: &names[0_u64..1_u64]);
+  return unit;
+}
+
+fn start(map: &SharedMap<u8>, flag: &Shared<u64>, seen: &Shared<u64>) -> result: unit reads(map), reads(flag), reads(seen) waits {
+  let first = shared_map_share::<u8>(shared: map);
+  let raised = shared_share::<u64>(shared: flag);
+  spawn flip(map: move first, flag: move raised);
+  let second = shared_map_share::<u8>(shared: map);
+  let read = shared_share::<u64>(shared: flag);
+  let count = shared_share::<u64>(shared: seen);
+  spawn watcher(map: move second, flag: move read, seen: move count);
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure waits {
+  doc "A context raises and lowers a flag inside one statement on the entry under ab; another holds the whole map and reads the flag. A statement holding the whole map excludes the statement on ab, so it never reads the flag raised: status 0. Status 7 when it did.";
+  let map = shared_map_new::<u8>(capacity: 0_u64);
+  let flag = shared_new::<u64>(value: 0_u64);
+  let seen = shared_new::<u64>(value: 0_u64);
+  start(map: &map, flag: &flag, seen: &seen);
+  let total = 0_u64;
+  atomic count = &seen {
+    set total = count^;
+  }
+  if total != 0_u64 {
+    return exit_status(code: 7_u8);
+  }
+  return exit_status(code: 0_u8);
+}

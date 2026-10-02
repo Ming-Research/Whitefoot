@@ -68,6 +68,33 @@ impl IrBuilder<'_> {
         if self.value_type(start)? != index || self.value_type(end)? != index {
             return Err(LoweringFailure::InvalidCheckedProgram);
         }
+        // [SHARE-3] a twin forms a key's range before the block's own
+        // statements run, so not under every fact `lo <= hi <= x.len` was
+        // discharged under. It narrows the endpoints to the source's
+        // bounds, which leaves them as written wherever the block itself
+        // forms the range.
+        let (start, end) = if self.collecting.is_some() {
+            let length = self.define(index, IrOperation::SliceMeasure { slice })?;
+            let end = self.define(
+                index,
+                IrOperation::Integer {
+                    operation: IrIntegerOperation::Minimum,
+                    operand_type: index,
+                    arguments: vec![end, length],
+                },
+            )?;
+            let start = self.define(
+                index,
+                IrOperation::Integer {
+                    operation: IrIntegerOperation::Minimum,
+                    operand_type: index,
+                    arguments: vec![start, end],
+                },
+            )?;
+            (start, end)
+        } else {
+            (start, end)
+        };
         self.define(ty, IrOperation::SliceRange { slice, start, end })
     }
 

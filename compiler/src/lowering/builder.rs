@@ -165,6 +165,10 @@ pub(crate) fn lower_checked_from(
                 .clone()
         })
         .collect::<Vec<_>>();
+    // [SHARE-3] whether any statement of the program runs two object
+    // statements while it holds an entry or a map, in which case every
+    // statement holding a map's state holds the whole map.
+    let sections = crate::semantic::runs_object_sections(&checked.data.functions);
     let mut functions = physical
         .variants
         .iter()
@@ -184,6 +188,7 @@ pub(crate) fn lower_checked_from(
             lower_function(
                 function,
                 &checked.data.functions,
+                sections,
                 index,
                 &symbols[index],
                 context,
@@ -426,6 +431,7 @@ fn lower_nominals(
 fn lower_function<'program>(
     function: &crate::semantic::CheckedFunction,
     functions: &[crate::semantic::CheckedFunction],
+    sections: bool,
     physical_index: usize,
     symbol: &'program str,
     context: LoweringContext<'program>,
@@ -463,7 +469,7 @@ fn lower_function<'program>(
         overlap,
         symbol,
     )?;
-    if !uninhabited && function.body.is_some() {
+    if !sections && !uninhabited && function.body.is_some() {
         builder.key_twins =
             crate::semantic::key_twins(function, functions, &builder.addressed_bindings);
     }

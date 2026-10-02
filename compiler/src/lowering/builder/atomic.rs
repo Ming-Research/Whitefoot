@@ -193,6 +193,14 @@ impl IrBuilder<'_> {
                 }
                 // [SHARE-2] a statement on an entry of a held state lies
                 // directly in the block of the statement holding that state.
+                if held
+                    && !matches!(
+                        self.atomics.last().map(|region| region.hold),
+                        Some(Hold::Keys | Hold::Map)
+                    )
+                {
+                    return Err(LoweringFailure::InvalidCheckedProgram);
+                }
                 let collected = held
                     && matches!(
                         self.atomics.last().map(|region| region.hold),

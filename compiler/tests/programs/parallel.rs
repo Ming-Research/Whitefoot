@@ -443,6 +443,29 @@ fn statements_holding_their_keys_keep_every_update_on_one_driver_and_on_four() {
     }
 }
 
+/// [SHARE-3] a statement holding a map's state never sees the middle of
+/// another statement's block: one context raises and then lowers a flag in
+/// two object statements inside a statement on one entry, while another
+/// holds the map's state, reaches a different entry and reads the flag, on
+/// one driver and on four. A whole-map statement that held only its own
+/// key's entry would run beside the first and read the flag raised (status
+/// 7), so in a program with such a block every statement holding a map's
+/// state holds the map.
+#[test]
+fn a_whole_map_statement_never_sees_inside_another_block_on_one_driver_and_on_four() {
+    let program = build_program(&compile_program("shared_map_watch.wf"));
+    for drivers in ["1", "4"] {
+        for round in 0..3 {
+            let output = program.run_with_settings(None, &[("WF_DRIVERS", drivers)]);
+            assert_eq!(
+                output.status.code(),
+                Some(0),
+                "drivers {drivers}, round {round}: {output:?}"
+            );
+        }
+    }
+}
+
 /// [SHARE-3] a block that runs two statements on one shared object, a read
 /// and then a write of what it read, is a section no other statement
 /// holding the same map's state, or the same entry, enters: four contexts
