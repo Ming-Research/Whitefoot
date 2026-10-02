@@ -54,6 +54,8 @@ controls fail cohort-drift admission. No callable ABI change is selected.
 A separate [two-definition inline experiment](#two-definition-inline-chain-three-scalar-gains-incomplete-qualification)
 qualifies three scalar gains but only two peer targets; its required wide-control
 screen fails. These partial gains select no production inlining policy.
+The [matched reciprocal-loop follow-up](#exact-reciprocal-in-the-exposed-loop-mechanism-passes-timing-unqualified)
+removes per-item division but qualifies no additional scalar gain.
 The [EDIT-only two-span follow-up](#edit-only-two-span-probing-rejected)
 reduces native body instructions but has no qualified miss gain, three qualified
 two-cohort hit losses and zero candidate peer targets; its source stays rejected.
@@ -7189,3 +7191,58 @@ bodies, full import/inline remarks and compact cache identities. Lossy decoded
 cache-key material and full generated modules/objects/images are omitted.
 No map runtime execution or timing followed. No target completion, production
 hint or driver policy is claimed.
+
+### Exact reciprocal in the exposed loop: mechanism passes, timing unqualified
+
+This diagnostic starts from the forced-inline O3 consumer, not production O2.
+Both new arms pass the same post-optimization backend boundary; 12 historical
+body/relocation comparisons change in the new control. Only this newly matched
+pair supports attribution, and only its selected scalar batch differs between
+arms. The exact reduction computes m=floor((2^64−1)/d), q=high64(hash*m), then
+r=hash−q*d with one r>=d correction. Existing zero-trip/zero-capacity guards
+dominate one preheader division; the item loop uses multiply-high/correction
+without a fallback division or a new cache field.
+
+The native mechanism passes: scalar instructions grow 94→100 and the callee-save
+frame 48→64 bytes, with one extra save/restore pair per batch and no hot-loop
+stack accesses, calls or payload transfers. Wide native bodies remain equal
+within the new pair. All 14 expected native/oracle stages pass; the exact LLVM
+arithmetic and independent C observer check 270,111 cases, and four wrong LLVM
+formulas fail. The earlier C-only oracle draft was never executed. All 92 fresh
+outcomes, four 18,390-trace complete-map panels, four checksum faults and
+byte-identical accounted ledgers pass before timing.
+
+One fixed campaign exits zero in 59.12 s, retaining all 223,488 rows and 31
+unchanged pre/post pins. All eight cells are admitted; minimum real sample is
+1.127 ms, clock quantum 41 ns, maximum empty interval 42 ns, and maximum cohort
+drift 4.556%. Medians below are ns/insertion, cohort 0 / 1. Rust/C++ values
+come from the candidate panel; full ranges and both panels remain retained.
+
+| Series | Bytes / S | WF control | WF candidate | Rust | C++ | Scalar peer target |
+|---|---:|---:|---:|---:|---:|---|
+| default | 8 / 64 | 15.202 / 15.192 | 14.586 / 14.782 | 10.026 / 10.148 | 12.542 / 12.611 | fail |
+| default | 8 / 4096 | 14.620 / 14.457 | 13.791 / 13.945 | 9.382 / 9.427 | 11.203 / 11.241 | fail |
+| aligned | 8 / 64 | 15.175 / 15.290 | 14.663 / 14.718 | 7.341 / 7.365 | 21.251 / 21.463 | pass |
+| aligned | 8 / 4096 | 14.579 / 14.471 | 13.889 / 14.013 | 4.358 / 4.393 | 21.930 / 22.346 | pass |
+| default | 256 / 64 | 31.902 / 33.159 | 31.822 / 32.148 | 32.793 / 33.056 | 27.399 / 27.165 | negative control |
+| default | 256 / 4096 | 40.098 / 40.529 | 39.237 / 39.666 | 40.923 / 41.187 | 26.731 / 26.720 | negative control |
+| aligned | 256 / 64 | 31.984 / 32.070 | 31.823 / 32.209 | 30.105 / 31.476 | 37.433 / 37.292 | negative control |
+| aligned | 256 / 4096 | 39.761 / 40.700 | 39.813 / 39.262 | 35.945 / 36.408 | 41.071 / 40.844 | negative control |
+
+Scalar medians decrease 2.70–5.67%, but every scalar cell overlaps in at least
+one cohort: **0/4 qualified gains**. Only aligned S4096 separates in cohort 0,
+then overlaps in cohort 1. The two aligned scalar cells clear the slower C++
+peer; Rust remains faster, and both default scalar cells lose to both peers.
+No qualified regressions occur; all four wide negative controls pass.
+Arithmetic/native success therefore does not qualify a speedup or select a
+general reciprocal pass, source representation or production O2 policy.
+
+The fresh-insert-reciprocal-loop/ archive component retains the exact formula,
+forward/inverse patch, dominance proof, oracle/mutants, checks, raw rows and
+reductions. Per-record phase metadata distinguishes historical preparation and
+native-checkpoint snapshots from the authoritative later native/runtime/timing
+records; frozen earlier execution-status fields are unchanged. Full modules,
+binaries and generated Python bytecode are omitted with original identities.
+Standalone arithmetic inputs can exercise the exact formula with compatible
+tools; reconstructing the map requires its pinned historical dependencies.
+Prior cached-source, constant-divisor and O2 failures remain unchanged.

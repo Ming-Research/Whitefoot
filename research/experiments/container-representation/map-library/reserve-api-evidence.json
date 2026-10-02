@@ -1,8 +1,8 @@
 {
   "purpose": "Isolated ordinary public reserve with verified future entry headroom; single production baseline panel, not an optimization/adoption result",
   "archive": "reserve-api-evidence.tar.gz",
-  "archive_sha256": "e5ac08308c34eef5086c68419c1706ce05754383232ee3dc9e1998d9827e1e9b",
-  "archive_members": 1240,
+  "archive_sha256": "150e92ee1abe107735e091f66d1c7849e36a2bb45f9aa7596ee3ecc483dae5a3",
+  "archive_members": 1259,
   "base_revision": "89571a60381a685cfbe760248ceb6178d9f9ac05",
   "production_cli_sha256": "c12b2b2a6c9694fd2bc1b7be0004d582ae9628951422def849f4cf6a3ac02f77",
   "timed_image_sha256": "f1ebf18d7a94c79250bb3cbd74a0b379a2a30c6e5e4eda48396ec77d8bbdbf3f",
@@ -5215,6 +5215,41 @@
       "from": "component-index.json",
       "to": "component-index-before-o2-inline.json",
       "sha256": "5e3d06fdc834b5d5e3bca0274b0dcfcc633ae5b80b3fe52a7d5dba014e145e9c"
+    },
+    "all_prior_member_bytes_preserved": true
+  },
+  "fresh_insert_reciprocal_loop": {
+    "prefix": "fresh-insert-reciprocal-loop/",
+    "manifest": "fresh-insert-reciprocal-loop/manifest.json",
+    "manifest_sha256": "0cdfcd03e1411a0ff151b7e11cbc7a0bc3065dc328daef89bbde52a1c2f22e5f",
+    "payload_count": 18,
+    "retained_records": 299,
+    "producer_inventory_files": 304,
+    "additional_bytecode_omissions": 2,
+    "raw_row_counts": {
+      "analysis/timing/candidate-cohort-0.csv": 55872,
+      "analysis/timing/candidate-cohort-1.csv": 55872,
+      "analysis/timing/control-cohort-0.csv": 55872,
+      "analysis/timing/control-cohort-1.csv": 55872
+    },
+    "timing_rows": 223488,
+    "arithmetic_correct_cases": 270111,
+    "rejecting_arithmetic_mutants": 4,
+    "check_outcomes": 92,
+    "all_cells_admitted": true,
+    "scalar_qualified_gains": 0,
+    "scalar_peer_targets": 2,
+    "wide_negative_controls_pass": true,
+    "production_adoption": false
+  },
+  "reciprocal_loop_prior_index": {
+    "prior_archive_sha256": "e5ac08308c34eef5086c68419c1706ce05754383232ee3dc9e1998d9827e1e9b",
+    "prior_members": 1240,
+    "unchanged_names_and_bytes": 1239,
+    "renamed_member": {
+      "from": "component-index.json",
+      "to": "component-index-before-reciprocal-loop.json",
+      "sha256": "254b8cf73021c05b081e2a54ad9ef68408df839924d8c18a92696b37e4424693"
     },
     "all_prior_member_bytes_preserved": true
   }

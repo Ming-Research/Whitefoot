@@ -3026,10 +3026,13 @@ rarely insert at the same place.
   removal. The [guarded constant-divisor and cached-reciprocal screens](../research/experiments/container-representation/map-library/RESULTS.md#guarded-constant-divisor-ir-dynamic-division-remains)
   both retain reached dynamic division; the source candidate also grows its
   descriptor and computes the fallback eagerly. Neither supplies runtime
-  evidence. Reopen only with a native discriminator that removes the reached
-  quotient cost while recording setup, cache, transport and arbitrary-capacity
-  obligations, then independent arithmetic/owner checks and the fixed timing
-  criterion. Keep callable-result classification distinct from enum
+  evidence. The [matched post-O3 reciprocal-loop diagnostic](../research/experiments/container-representation/map-library/RESULTS.md#exact-reciprocal-in-the-exposed-loop-mechanism-passes-timing-unqualified)
+  later removes per-item division and passes exact arithmetic/owner checks,
+  but qualifies no scalar gain despite lower medians; its frame grows 16 bytes.
+  Keep setup, live-state/transport and arbitrary-capacity costs visible when
+  reopening insertion work against the unchanged range/peer criterion.
+  This does not select a production O2 reciprocal policy. Keep callable-result
+  classification distinct from enum
   representation and preserve shared caller/callee ABI and body/wrapper order
   if future evidence reopens the existing return-register decision.
   The [separate two-definition inline experiment](../research/experiments/container-representation/map-library/RESULTS.md#two-definition-inline-chain-three-scalar-gains-incomplete-qualification)
