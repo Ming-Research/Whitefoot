@@ -1,0 +1,92 @@
+verify-suite,reference,20 tests
+verify-suite,valkey-io,20 tests
+verify-suite,dragonfly-8,20 tests
+verify-suite,garnet-8,20 tests
+verify-suite,firn-8,20 tests
+verify-suite,firn-base-8,20 tests
+pilot,reference,16,get,1047050.12
+pilot,reference,16,lrange_100,263682.94
+pilot,firn-8,16,get,3174566.00
+pilot,firn-8,16,lrange_100,3174566.00
+reference,pass 1,8 server CPUs,pipeline 16,"GET","1569754.38","0.503","0.008","0.503","0.591","0.919","18.287"
+reference,pass 1,8 server CPUs,pipeline 16,"LRANGE_100 (first 100 elements)","321526.66","2.416","0.408","2.591","3.391","3.671","23.615"
+valkey-io,pass 1,8 server CPUs,pipeline 16,"GET","3104710.50","0.220","0.016","0.207","0.367","0.487","32.895"
+valkey-io,pass 1,8 server CPUs,pipeline 16,"LRANGE_100 (first 100 elements)","314057.00","2.387","0.128","2.279","3.447","4.047","17.935"
+dragonfly-8,pass 1,8 server CPUs,pipeline 16,"GET","3807576.25","0.190","0.024","0.183","0.319","0.391","22.479"
+dragonfly-8,pass 1,8 server CPUs,pipeline 16,"LRANGE_100 (first 100 elements)","246522.00","3.162","0.240","2.559","3.719","25.199","82.559"
+garnet-8,pass 1,8 server CPUs,pipeline 16,"GET","4116576.75","0.149","0.000","0.095","0.599","0.623","8.431"
+garnet-8,pass 1,8 server CPUs,pipeline 16,"LRANGE_100 (first 100 elements)","2768919.75","0.146","0.016","0.119","0.287","1.007","35.615"
+firn-8,pass 1,8 server CPUs,pipeline 16,"GET","6618276.50","0.068","0.000","0.063","0.143","0.199","48.351"
+firn-8,pass 1,8 server CPUs,pipeline 16,"LRANGE_100 (first 100 elements)","3311439.50","0.116","0.008","0.111","0.231","0.279","12.143"
+firn-base-8,pass 1,8 server CPUs,pipeline 16,"GET","6622879.00","0.069","0.000","0.063","0.143","0.191","35.199"
+firn-base-8,pass 1,8 server CPUs,pipeline 16,"LRANGE_100 (first 100 elements)","1347486.88","0.500","0.016","0.447","1.095","1.487","33.279"
+reference,pass 2,8 server CPUs,pipeline 16,"GET","1602709.50","0.491","0.008","0.487","0.583","0.895","53.023"
+reference,pass 2,8 server CPUs,pipeline 16,"LRANGE_100 (first 100 elements)","320121.69","2.427","0.136","2.607","3.399","3.687","30.511"
+valkey-io,pass 2,8 server CPUs,pipeline 16,"GET","3172716.00","0.218","0.008","0.207","0.367","0.479","18.223"
+valkey-io,pass 2,8 server CPUs,pipeline 16,"LRANGE_100 (first 100 elements)","314101.03","2.398","0.160","2.279","3.455","4.039","18.015"
+dragonfly-8,pass 2,8 server CPUs,pipeline 16,"GET","3715116.25","0.193","0.024","0.183","0.327","0.399","20.751"
+dragonfly-8,pass 2,8 server CPUs,pipeline 16,"LRANGE_100 (first 100 elements)","247721.09","3.150","0.280","2.551","3.703","25.119","81.663"
+garnet-8,pass 2,8 server CPUs,pipeline 16,"GET","4351702.00","0.136","0.000","0.087","0.591","0.623","17.279"
+garnet-8,pass 2,8 server CPUs,pipeline 16,"LRANGE_100 (first 100 elements)","2719697.25","0.150","0.016","0.119","0.303","0.975","16.639"
+firn-8,pass 2,8 server CPUs,pipeline 16,"GET","6622879.00","0.068","0.000","0.063","0.143","0.199","21.631"
+firn-8,pass 2,8 server CPUs,pipeline 16,"LRANGE_100 (first 100 elements)","3173244.50","0.119","0.008","0.111","0.247","0.295","4.367"
+firn-base-8,pass 2,8 server CPUs,pipeline 16,"GET","6622879.00","0.070","0.000","0.063","0.143","0.199","33.887"
+firn-base-8,pass 2,8 server CPUs,pipeline 16,"LRANGE_100 (first 100 elements)","1347486.88","0.496","0.016","0.439","1.095","1.487","10.295"
+reference,pass 3,8 server CPUs,pipeline 16,"GET","1569883.75","0.501","0.008","0.495","0.591","0.919","16.223"
+reference,pass 3,8 server CPUs,pipeline 16,"LRANGE_100 (first 100 elements)","321458.84","2.419","0.576","2.591","3.319","3.623","22.319"
+valkey-io,pass 3,8 server CPUs,pipeline 16,"GET","3235227.25","0.214","0.008","0.199","0.359","0.479","26.511"
+valkey-io,pass 3,8 server CPUs,pipeline 16,"LRANGE_100 (first 100 elements)","314755.03","2.387","0.128","2.263","3.455","4.071","6.839"
+dragonfly-8,pass 3,8 server CPUs,pipeline 16,"GET","3715116.25","0.194","0.024","0.183","0.327","0.399","37.151"
+dragonfly-8,pass 3,8 server CPUs,pipeline 16,"LRANGE_100 (first 100 elements)","247714.66","3.149","0.248","2.551","3.703","25.119","82.431"
+garnet-8,pass 3,8 server CPUs,pipeline 16,"GET","4479633.50","0.130","0.000","0.087","0.567","0.623","18.143"
+garnet-8,pass 3,8 server CPUs,pipeline 16,"LRANGE_100 (first 100 elements)","2671819.25","0.165","0.016","0.127","0.391","1.031","22.495"
+firn-8,pass 3,8 server CPUs,pipeline 16,"GET","6621728.00","0.069","0.000","0.063","0.143","0.199","54.527"
+firn-8,pass 3,8 server CPUs,pipeline 16,"LRANGE_100 (first 100 elements)","3311151.75","0.117","0.008","0.111","0.231","0.279","32.159"
+firn-base-8,pass 3,8 server CPUs,pipeline 16,"GET","6622879.00","0.069","0.000","0.063","0.143","0.199","22.303"
+firn-base-8,pass 3,8 server CPUs,pipeline 16,"LRANGE_100 (first 100 elements)","1359557.38","0.493","0.016","0.431","1.087","1.479","36.703"
+verify-suite,reference,20 tests
+verify-suite,valkey-io,20 tests
+verify-suite,dragonfly-16,20 tests
+verify-suite,garnet-16,20 tests
+verify-suite,firn-16,20 tests
+verify-suite,firn-base-16,20 tests
+pilot,reference,16,get,1047050.12
+pilot,reference,16,lrange_100,264907.78
+pilot,firn-16,16,get,3174566.00
+pilot,firn-16,16,lrange_100,3174566.00
+reference,pass 1,16 server CPUs,pipeline 16,"GET","1602709.50","0.493","0.064","0.487","0.583","0.887","19.615"
+reference,pass 1,16 server CPUs,pipeline 16,"LRANGE_100 (first 100 elements)","323522.72","2.399","0.776","2.575","3.183","3.423","22.047"
+valkey-io,pass 1,16 server CPUs,pipeline 16,"GET","1856833.62","0.376","0.008","0.383","0.607","0.687","38.271"
+valkey-io,pass 1,16 server CPUs,pipeline 16,"LRANGE_100 (first 100 elements)","281926.84","2.740","0.064","2.583","4.039","10.231","65.247"
+dragonfly-16,pass 1,16 server CPUs,pipeline 16,"GET","4008291.25","0.181","0.040","0.175","0.271","0.327","48.959"
+dragonfly-16,pass 1,16 server CPUs,pipeline 16,"LRANGE_100 (first 100 elements)","247367.22","3.168","0.176","2.583","3.519","25.007","82.751"
+garnet-16,pass 1,16 server CPUs,pipeline 16,"GET","5858035.00","0.082","0.000","0.071","0.167","0.223","16.559"
+garnet-16,pass 1,16 server CPUs,pipeline 16,"LRANGE_100 (first 100 elements)","2719697.25","0.140","0.016","0.127","0.255","0.319","12.023"
+firn-16,pass 1,16 server CPUs,pipeline 16,"GET","6345960.50","0.070","0.000","0.063","0.151","0.207","20.783"
+firn-16,pass 1,16 server CPUs,pipeline 16,"LRANGE_100 (first 100 elements)","3045878.25","0.120","0.008","0.111","0.239","0.287","36.927"
+firn-base-16,pass 1,16 server CPUs,pipeline 16,"GET","6622879.00","0.070","0.000","0.063","0.143","0.191","42.239"
+firn-base-16,pass 1,16 server CPUs,pipeline 16,"LRANGE_100 (first 100 elements)","1208438.00","0.568","0.016","0.495","1.279","1.775","14.839"
+reference,pass 2,16 server CPUs,pipeline 16,"GET","1619745.75","0.484","0.008","0.479","0.583","0.879","12.687"
+reference,pass 2,16 server CPUs,pipeline 16,"LRANGE_100 (first 100 elements)","324197.28","2.398","0.136","2.615","3.231","3.487","19.951"
+valkey-io,pass 2,16 server CPUs,pipeline 16,"GET","1856833.62","0.380","0.008","0.383","0.607","0.695","83.775"
+valkey-io,pass 2,16 server CPUs,pipeline 16,"LRANGE_100 (first 100 elements)","281912.22","2.739","0.064","2.615","4.015","8.991","50.559"
+dragonfly-16,pass 2,16 server CPUs,pipeline 16,"GET","4008291.25","0.180","0.032","0.175","0.271","0.327","23.247"
+dragonfly-16,pass 2,16 server CPUs,pipeline 16,"LRANGE_100 (first 100 elements)","246892.69","3.175","0.208","2.591","3.527","25.055","81.919"
+garnet-16,pass 2,16 server CPUs,pipeline 16,"GET","5439783.00","0.092","0.000","0.079","0.191","0.287","9.335"
+garnet-16,pass 2,16 server CPUs,pipeline 16,"LRANGE_100 (first 100 elements)","2719891.50","0.143","0.016","0.135","0.263","0.327","24.207"
+firn-16,pass 2,16 server CPUs,pipeline 16,"GET","6347018.00","0.070","0.000","0.063","0.151","0.199","68.223"
+firn-16,pass 2,16 server CPUs,pipeline 16,"LRANGE_100 (first 100 elements)","3108510.75","0.119","0.008","0.111","0.231","0.279","8.767"
+firn-base-16,pass 2,16 server CPUs,pipeline 16,"GET","6347018.00","0.071","0.000","0.063","0.151","0.199","101.439"
+firn-base-16,pass 2,16 server CPUs,pipeline 16,"LRANGE_100 (first 100 elements)","1198892.25","0.572","0.016","0.495","1.295","1.807","29.775"
+reference,pass 3,16 server CPUs,pipeline 16,"GET","1637218.50","0.480","0.008","0.479","0.567","0.871","23.407"
+reference,pass 3,16 server CPUs,pipeline 16,"LRANGE_100 (first 100 elements)","322143.88","2.412","0.136","2.615","3.231","3.487","24.063"
+valkey-io,pass 3,16 server CPUs,pipeline 16,"GET","1856743.12","0.375","0.008","0.383","0.599","0.687","36.799"
+valkey-io,pass 3,16 server CPUs,pipeline 16,"LRANGE_100 (first 100 elements)","279344.75","2.766","0.064","2.623","4.063","10.055","51.519"
+dragonfly-16,pass 3,16 server CPUs,pipeline 16,"GET","4116131.75","0.177","0.032","0.175","0.263","0.327","31.583"
+dragonfly-16,pass 3,16 server CPUs,pipeline 16,"LRANGE_100 (first 100 elements)","247294.95","3.171","0.288","2.583","3.519","25.039","82.879"
+garnet-16,pass 3,16 server CPUs,pipeline 16,"GET","5640331.50","0.089","0.000","0.087","0.175","0.231","5.327"
+garnet-16,pass 3,16 server CPUs,pipeline 16,"LRANGE_100 (first 100 elements)","2769322.50","0.134","0.016","0.127","0.239","0.303","21.471"
+firn-16,pass 3,16 server CPUs,pipeline 16,"GET","6347018.00","0.070","0.000","0.063","0.151","0.207","88.703"
+firn-16,pass 3,16 server CPUs,pipeline 16,"LRANGE_100 (first 100 elements)","3108510.75","0.118","0.008","0.111","0.231","0.271","25.311"
+firn-base-16,pass 3,16 server CPUs,pipeline 16,"GET","6348075.50","0.071","0.000","0.063","0.151","0.199","39.455"
+firn-base-16,pass 3,16 server CPUs,pipeline 16,"LRANGE_100 (first 100 elements)","1208438.00","0.566","0.016","0.487","1.287","1.791","8.719"
