@@ -1,8 +1,8 @@
 {
   "purpose": "Isolated ordinary public reserve with verified future entry headroom; single production baseline panel, not an optimization/adoption result",
   "archive": "reserve-api-evidence.tar.gz",
-  "archive_sha256": "58ced5c5da8990134ffb02a40bab006628fbdf2ff49cb92a711cdbb569716c86",
-  "archive_members": 1078,
+  "archive_sha256": "d7d2da1ab9be574702ae838ad22dc0a25e65e3ae532057981b14fd8a0797c7ec",
+  "archive_members": 1100,
   "base_revision": "89571a60381a685cfbe760248ceb6178d9f9ac05",
   "production_cli_sha256": "c12b2b2a6c9694fd2bc1b7be0004d582ae9628951422def849f4cf6a3ac02f77",
   "timed_image_sha256": "f1ebf18d7a94c79250bb3cbd74a0b379a2a30c6e5e4eda48396ec77d8bbdbf3f",
@@ -4738,6 +4738,61 @@
       "from": "component-index.json",
       "to": "component-index-before-mask-lowering-sequence.json",
       "sha256": "8390909d3ce4e9ecb17e5fb6cfcc961dffd76e353a490c1383c0f9e2d04950ad"
+    },
+    "all_prior_member_bytes_preserved": true
+  },
+  "masked_continuation": {
+    "prefix": "masked-continuation/",
+    "manifest": "masked-continuation/manifest.json",
+    "manifest_sha256": "3cca5df005b39546e99ed9dddb1479ee08060596b68056ff1b6145b38d0e540d",
+    "payload_count": 21,
+    "records": "masked-continuation/records.json",
+    "retained_records": 737,
+    "producer_files_verified": 744,
+    "producer_inventories": {
+      "masked-continuation": {
+        "inventory": "retention-inventory.json",
+        "original_sha256": "3fad51d4d8ef87e3dca10525689c8c624d229c10019b9f74eca011ea75fa7fd9",
+        "files": 744
+      }
+    },
+    "timing_rows": 1536,
+    "row_counts": {
+      "masked-continuation/candidate-build/edit-accounting.csv": 32,
+      "masked-continuation/candidate-build/reserve-accounting.csv": 96,
+      "masked-continuation/candidate-runtime/build/ecosystem/edit-cohort-0.csv": 384,
+      "masked-continuation/candidate-runtime/build/ecosystem/edit-cohort-1.csv": 384,
+      "masked-continuation/control-build/edit-accounting.csv": 32,
+      "masked-continuation/control-build/reserve-accounting.csv": 96,
+      "masked-continuation/control-runtime/build/ecosystem/edit-cohort-0.csv": 384,
+      "masked-continuation/control-runtime/build/ecosystem/edit-cohort-1.csv": 384
+    },
+    "native_body_instructions": [
+      248,
+      250
+    ],
+    "candidate_frame_bytes": 16,
+    "qualified_miss_gains": 0,
+    "qualified_two_cohort_large_hit_gains": 2,
+    "separated_losses": 0,
+    "large_miss_ranges": "scalar overlap/overlap; wide overlap/gain; both invalid",
+    "candidate_peer_targets": 4,
+    "peer_targets_are_hits_only": true,
+    "ordinary_check_stages_zero": [
+      22,
+      12
+    ],
+    "production_adoption": false,
+    "status": "Ordinary-source native pass but fixed miss-gain criterion FAIL. Two large-hit gains and four peer-hit targets do not qualify missing miss gains; two large misses remain invalid. No adoption or retry."
+  },
+  "masked_continuation_prior_index": {
+    "prior_archive_sha256": "58ced5c5da8990134ffb02a40bab006628fbdf2ff49cb92a711cdbb569716c86",
+    "prior_members": 1078,
+    "unchanged_names_and_bytes": 1077,
+    "renamed_member": {
+      "from": "component-index.json",
+      "to": "component-index-before-masked-continuation.json",
+      "sha256": "10338dc9b6fa3a5bd08729b5b3d03073962b49c2ac5d00f07be15cff58e9fffe"
     },
     "all_prior_member_bytes_preserved": true
   }

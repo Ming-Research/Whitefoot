@@ -3738,6 +3738,11 @@ condition under which it is taken up.
   A possible general selector remains unselected and unimplemented;
   reopen only with a reached consumer benefit and preserved source/word-oracle
   checks, rather than projecting toy instruction reductions onto map performance.
+  The ordinary-source [masked-continuation trial](../research/experiments/container-representation/map-library/RESULTS.md#masked-continuation-large-hit-gains-miss-criterion-fails)
+  qualifies two large-hit gains and four hit peer targets, but its miss-gain
+  criterion fails: small misses overlap and both large misses remain invalid.
+  Keep it unselected; reopen miss performance with the same full drift/oracle
+  gates and account for its worse unmeasured constant-collision native paths.
 
   The [actual integrated-candidate comparison](../research/experiments/container-representation/map-library/RESULTS.md#integrated-candidate-with-the-maintained-caller)
   has no qualified before/after gain in 40 maintained-caller cells; all four

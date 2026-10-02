@@ -65,6 +65,9 @@ boundary; it supplies no adoption ground.
 The subsequent [mask-lowering cost floor](#mask-lowering-sequence-toy-success-full-map-rejection)
 is an explicit LLVM counterfactual, not implemented compiler behavior; it
 retains zero qualified miss gains, four qualified hit losses and no peer target.
+The ordinary-source [masked continuation](#masked-continuation-large-hit-gains-miss-criterion-fails)
+qualifies two large-hit gains and all four hit peer targets, but no miss gain;
+both large misses remain invalid, so its preregistered selection criterion fails.
 
 ## Current Rust and C++ ecosystem comparison
 
@@ -6635,3 +6638,56 @@ excerpts, oracle/fault results, raw rows, reducers and original/normalized pins.
 Reused flat-control images are pinned to the preceding frozen component;
 omitted compiler/runtime/toolchain binaries and full modules are required for
 reconstruction. No unfinished continuation experiment is included.
+
+### Masked continuation: large-hit gains, miss criterion fails
+
+An ordinary-source EDIT-only power-of-two arm replaces conditional wrap with
+masked continuation; the original general-capacity source suffix stays exact.
+The budget still bounds a complete cycle and count zero returns before masking.
+Native admission passes without source repair or LLVM intervention: bodies
+248→250 instructions, frame 16 bytes and zero calls. The mask at loop head
+serves home and continuation; ready-hash first-hit through equality falls
+14→12 instructions, first-empty 11→9 and continued advance/budget 5→4.
+Generated collateral is not uniformly better: constant-collision nonpower
+first-hit grows 21→25 instructions, including division of zero; those paths
+are disclosed but unmeasured by the normal-hash panel.
+
+All 22 ordinary full-check and 12 capacity-one normal/parallel stages exit
+zero, with the candidate local source bound into the maintained witnesses.
+Complete EDIT/lookup/reserve/whole-trace outcomes and fault observations pass;
+32 EDIT and 96 reserve accounting rows are byte-identical across arms, with
+zero allocation delta. Linked bodies match the checked objects. These bounded
+witnesses do not establish general performance.
+
+One fixed campaign retains 1,536 rows, 96 complete same-seed outcome groups,
+79 unchanged pins and four zero process exits. Minimum interval is 6.523250 ms.
+Medians are ns/edit, cohort 0 / cohort 1; Rust/C++ observations are from the
+candidate panels, with full ranges and C-attribution observations archived.
+
+| Payload / slots / path | Flat WF | Masked WF | Rust | C++ | Raw ranges, cohorts 0 / 1 |
+|---|---:|---:|---:|---:|---|
+| 8 B / 64 / hit | 1.860 / 1.863 | 1.799 / 1.800 | 2.254 / 2.247 | 2.127 / 2.128 | overlap / overlap |
+| 8 B / 64 / miss | 2.440 / 2.443 | 2.259 / 2.255 | 2.199 / 2.177 | 1.705 / 1.706 | overlap / overlap |
+| 8 B / 4096 / hit | 2.133 / 2.151 | 1.931 / 1.938 | 2.395 / 2.398 | 2.973 / 2.958 | gain / gain |
+| 8 B / 4096 / miss | 4.840 / 2.675 | 2.428 / 2.266 | 2.552 / 2.572 | 1.600 / 1.572 | overlap / overlap (invalid) |
+| 256 B / 64 / hit | 1.829 / 1.858 | 1.793 / 1.795 | 2.521 / 2.517 | 2.131 / 2.127 | overlap / overlap |
+| 256 B / 64 / miss | 2.460 / 2.458 | 2.272 / 2.288 | 2.203 / 2.196 | 1.710 / 1.707 | overlap / overlap |
+| 256 B / 4096 / hit | 2.335 / 2.363 | 2.116 / 2.118 | 2.757 / 2.764 | 3.781 / 3.792 | gain / gain |
+| 256 B / 4096 / miss | 4.330 / 3.857 | 2.432 / 2.373 | 2.562 / 2.584 | 2.001 / 2.028 | overlap / gain (invalid) |
+
+Both large-hit cells have qualified separated gains of about 9–10% in both
+cohorts; all small cells overlap and no cell has a separated loss. Four of
+eight strict peer targets qualify, all hits. There are zero qualified miss
+gains. Both large misses are invalid from control-WF/C cohort and C interarm
+drift; scalar also fails the paired-WF ratio gate. Wide-large miss's raw
+cohort-1 gain cannot qualify. The preregistered miss-gain criterion therefore
+fails; no retry or adoption follows, and absence of separated loss does not
+establish nonregression in invalid cells.
+
+The `masked-continuation/` component in
+[reserve-api-evidence.tar.gz](reserve-api-evidence.tar.gz) preserves source
+and capacity-one patches, criteria, native collateral, ordinary/fault results,
+all raw rows, reducers and original/normalized pins. Native-stage no-execution
+statements precede later checks/timing. Exact omitted integrated compiler,
+carrier, runtime/native peers and toolchain are needed for reconstruction;
+no production source change or other pending experiment is included.
