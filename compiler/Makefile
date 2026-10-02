@@ -678,6 +678,7 @@ completion-windows-wine:
 
 # Managed-stack park-on-miss measurements are retired from this runtime.
 # Their dated evidence and reproduction revision remain in the investigation.
+.PHONY: concurrent-map-test-sanitized
 .PHONY: check _check static _static build test-build test-build-unit test-build-corpus format lint test _test test-unit test-corpus \
 	docs completion-test completion-test-images completion-native-test concurrent-map-test shared-object-test \
 	completion-core-read-test \

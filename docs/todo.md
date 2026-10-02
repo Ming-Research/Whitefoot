@@ -993,16 +993,19 @@ rarely insert at the same place.
 - **A keyed statement that waits for its entry spins and does not park.**
   Its wait is bounded, since one out of patience holds the whole map
   ([bounded waits](../research/investigations/concurrent-map/DESIGN.md#bounded-waits)),
-  but the driver it runs on spins instead of running its other contexts:
-  firn spent 15.9 µs of server CPU per `LRANGE mylist 0 599` reply on two
-  drivers against 8.6 µs on one, every statement on the one list holding
-  its entry. The change: let a keyed statement that has not yet locked
+  but the driver it runs on spins instead of running its other contexts.
+  Readers of one key no longer wait for each other
+  ([shared reads](../research/investigations/concurrent-map/DESIGN.md#shared-reads-of-one-key):
+  9.72 µs of server CPU per `LRANGE mylist 0 599` reply on two drivers
+  against 8.76 µs on one, where exclusive holds spent 16.4 µs), but writers
+  of one key still do: firn's `ZADD` spent 60% of its server CPU waiting
+  for its one key on four server CPUs. The change: let a keyed statement
+  that has not yet locked
   anything suspend like an object statement, with a mark for waiters (a bit
   of the hash or a word beside the cell, since the key word's second bit
   marks a pending claim) that the entry's unlock reads to wake it. Validate
-  by the `LRANGE` reply's server CPU on two drivers against one. Reopen when
-  a workload on one key is limited by the server's CPU rather than its
-  client, or with shared reads of one entry (Q37).
+  by `ZADD`'s server CPU per request on four drivers against one. Reopen
+  with the work on `ZADD`'s rate.
 
 - **`SharedMap<unit>` and maps of other payload-free values do not lower.**
   The unlock reads the entry's `Option` tag as an `i32`
@@ -1046,20 +1049,6 @@ rarely insert at the same place.
   rates on few cores become a goal, or with the next change to the
   completion wait.
 
-- **Readers of one key take its entry one at a time.** Every keyed
-  statement holds its entry exclusively, so the `LRANGE` tests, which all
-  read one list, write their replies one at a time: on the 14900K firn
-  answered `LRANGE_100` at 0.58, 0.61 and 0.44 of Garnet with 4, 8 and 16
-  server CPUs, flat between 1.24 and 1.55 million a second
-  ([many cores](../research/investigations/concurrent-map/DESIGN.md#many-cores)).
-  The change: let a keyed statement whose block writes nothing through its
-  binding read its entry beside other such statements, counting its readers
-  in the entry's cell, which the shared-maps decision deferred to this
-  workload (Q37); firn's `LRANGE` also removes an expired list in the same
-  statement and would do that in a second one. Validate by `LRANGE_100`
-  against Garnet at 4 server CPUs with no other test slower. Reopen as the
-  next work after PR #202.
-
 - **`ZADD` is held near a million a second by one key's critical section.**
   firn answered 907,000 to 1,127,000 a second at every server CPU count on
   the 14900K, 0.88 of Dragonfly at 2 and 0.95 at 16
@@ -1097,6 +1086,17 @@ rarely insert at the same place.
   state with how it is held and the condition that refused a twin, and a
   firn test that reads it. Reopen with the next statement whose hold
   matters to a measurement.
+
+- **A read of an entry nobody else holds costs `GET` 3% to 4%.** A
+  statement that only reads its entry counts itself in the cell's value
+  word and reads the key word again, a second locked read-modify-write
+  where an exclusive hold makes one, and with no other reader it gains
+  nothing: firn's `GET` answered 2.6% lower than with exclusive holds on
+  four server CPUs and 4.0% lower on one
+  ([shared reads](../research/investigations/concurrent-map/DESIGN.md#shared-reads-of-one-key)).
+  The change to measure: a reader that takes an unheld entry by the
+  writer's one compare-and-swap, in a form later readers can still join.
+  Reopen when `GET`'s rate is within 4% of a criterion.
 
 - **A statement that holds its keys' entries locks each one exclusively.**
   A block that only reads its entries, firn's `EXISTS` of several keys,

@@ -1652,11 +1652,6 @@ impl<'unit> Checker<'_, 'unit> {
             .map(|declaration| declaration.id())
     }
 
-    /// [EFF-2] the enclosing formal-rooted effect of one resolved access.
-    ///
-    /// An access rooted only in local storage contributes no enclosing path,
-    /// including through a local reference; the checked access and its
-    /// ordinary footprint remain. A const root contributes no read.
     /// Whether `declaration` is an atomic statement's binder [SHARE-2].
     pub(super) fn is_atomic_binder(&self, declaration: DeclarationId) -> bool {
         self.types
@@ -1669,6 +1664,11 @@ impl<'unit> Checker<'_, 'unit> {
             })
     }
 
+    /// [EFF-2] the enclosing formal-rooted effect of one resolved access.
+    ///
+    /// An access rooted only in local storage contributes no enclosing path,
+    /// including through a local reference; the checked access and its
+    /// ordinary footprint remain. A const root contributes no read.
     pub(super) fn effect_paths_for_place(
         &self,
         _node: NodeId,

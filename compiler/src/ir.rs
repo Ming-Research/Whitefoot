@@ -1218,7 +1218,9 @@ pub enum IrOperation {
     /// [SHARE-2, SHARE-3] waits until this context holds the entries under
     /// the collected keys together, or the whole map when the runtime cannot
     /// hold them so; statements on the map's other keys go on beside it,
-    /// which no program observes. Defines `Unit`.
+    /// which gives no outcome the whole hold would not in a program with no
+    /// object section (`semantic::runs_object_sections`), the only programs
+    /// lowering emits this in. Defines `Unit`.
     SharedMapHoldKeys {
         object: IrValueId,
     },

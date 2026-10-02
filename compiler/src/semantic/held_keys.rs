@@ -575,9 +575,6 @@ impl Twin<'_> {
         body: &[CheckedStatement],
         fallthrough_drops: &[CheckedDrop],
     ) -> Option<Vec<CheckedStatement>> {
-        if !one_object_statement(body) {
-            return None;
-        }
         let mut facts = Facts::default();
         // The block's own bindings are released at its end.
         facts.drops(fallthrough_drops);

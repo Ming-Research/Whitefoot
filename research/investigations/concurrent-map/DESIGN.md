@@ -567,12 +567,13 @@ key; the source marks nothing.
   the binder, through a place a match binds inside the entry, and through
   a call that writes such a place. A statement on an entry none of whose
   written paths is rooted at its binder reads; the statement then removes
-  the binder's paths before its effects reach the row. Seven writing
+  the binder's paths before its effects reach the row. Nine writing
   shapes (a replacement, a payload write, a field write, a write on one
-  branch and in a loop, and calls that write the payload or the entry) and
+  branch and in a loop, calls that write the payload or the entry, and
+  writes through a copy of the binder or of a payload reference) and
   three reading ones are pinned in the checker's tests; forming no paths at
-  the binder classes all seven as readers, and dropping the call's paths
-  classes the two calls as readers. A statement inside a whole-map
+  the binder classes the first seven as readers, and dropping the call's
+  paths classes the two calls as readers. A statement inside a whole-map
   statement's block holds its entry alone, as that statement holds the map.
 - *The runtime.* A cell's value word keeps, above the node's 48-bit
   address, how many reads of its entry are under way. A reader adds one
@@ -708,13 +709,38 @@ a second:
 - **`LRANGE_100` reaches Garnet** at four server CPUs, 3,109,000 a second
   against 2,538,000, and stays above it at 8 and 16; each of its three
   passes at four CPUs was above each of Garnet's.
-- **Seven of the nine other tests are within 1% of the exclusive build;
-  `SET` and `LPUSH` are 3.9% and 3.1% below, past the 3% bound.** Neither
-  statement reads, and the two builds lower both alike. `SET`'s passes were
-  5,835,000 twice and 6,069,000 once against 6,069,000 three times, two
-  neighbouring steps of `redis-benchmark`'s clock, so three passes resolve
-  no difference smaller than that step. The `quick` mode, whose rates do
-  not move in steps, is the measurement that settles these two.
+- **Six of the nine other tests are within 1% of the exclusive build,
+  `MSET` is 2% above, and `SET` and `LPUSH` are 3.9% and 3.1% below, past
+  the 3% bound.** Neither statement reads, and the two builds lower both
+  alike. `SET`'s passes were 5,835,000 twice and 6,069,000 once against
+  6,069,000 three times, two neighbouring steps of `redis-benchmark`'s
+  clock, so three passes resolve no difference smaller than that step.
+- **The `quick` mode settles them: criterion 3 is met, and `GET` pays for
+  shared reads.** The same two builds, four interleaved rounds of three
+  runs each, medians in thousands a second
+  ([raw lines](../../experiments/io-completion-bench/held-keys-14900k-samples.csv)):
+
+  | Server CPUs | Test | Shared | Exclusive | Shared / exclusive |
+  |---|---|---:|---:|---:|
+  | 4 | `SET` | 6,678 | 6,714 | 0.994 |
+  | 4 | `GET` | 6,712 | 6,889 | 0.974 |
+  | 4 | `INCR` | 6,239 | 6,278 | 0.994 |
+  | 4 | `LPUSH` | 5,140 | 5,102 | 1.008 |
+  | 4 | `LRANGE_100` | 3,320 | 1,542 | 2.152 |
+  | 1 | `SET` | 2,004 | 2,002 | 1.001 |
+  | 1 | `GET` | 1,967 | 2,049 | 0.960 |
+  | 1 | `INCR` | 1,882 | 1,914 | 0.984 |
+  | 1 | `LPUSH` | 2,121 | 2,138 | 0.992 |
+  | 1 | `LRANGE_100` | 966 | 956 | 1.010 |
+
+  `SET`, `INCR` and `LPUSH` are within 1.6% at both counts, so the `scale`
+  mode's 3.9% and 3.1% were its clock. `GET` is 2.6% lower on four CPUs,
+  each of its four shared rounds below each exclusive one, and 4.0% lower
+  on one: the cost criterion 2 could not attribute on the container is
+  real. It is inside criterion 3's 3% on four CPUs and outside criterion
+  2's bound on one. A read of an entry no other statement holds pays the
+  reader's second locked read-modify-write and gains nothing from sharing;
+  `docs/todo.md` records it.
 - **Neither firn nor Garnet answers more `LRANGE_100` past four CPUs.** One
   threaded `redis-benchmark` was the limit for `SET` at eight CPUs (two
   processes together answered 1.6 to 2.0 times one), so these runs do not
@@ -783,7 +809,7 @@ second:
 **The gap.** With one client process per client CPU (`redis-bench.sh quick`,
 which the scaling run's one threaded client hid), firn's `MSET` answered
 574,000, 545,000 and 489,000 a second on 4, 8 and 16 server CPUs, 0.35,
-0.20 and 0.10 of Garnet. Its statement holds the whole map, 74% of the
+0.19 and 0.11 of Garnet as the table below measures it. Its statement holds the whole map, 74% of the
 server's CPU was in `wf_cmap_hold`, and on one CPU it answered 592,000 to
 729,000, more than Garnet's rate per CPU. Half of it came with the ticketed
 holds of the bounded waits: firn at `c54962d33` answered 1,366,000 on four
@@ -902,8 +928,10 @@ Dragonfly measured the same way; firn at `b3a18510a`,
   corpus tests ran at the same revision.
 
 **The link and the reply** (four server CPUs, `redis-bench.sh quick`,
-thousands of requests a second). firn's module and the runtime's units were
-compiled apart at `-O2`, so each keyed statement called into the runtime:
+thousands of requests a second; these runs' lines were read from the
+mode's table and not kept, so the figures of this part are unrecorded
+beyond it). firn's module and the runtime's units were compiled apart at
+`-O2`, so each keyed statement called into the runtime:
 
 | Build | `SET` | `GET` | `LPUSH` | `ZADD` | `LRANGE_100` | `MSET` |
 |---|---:|---:|---:|---:|---:|---:|
@@ -1130,8 +1158,8 @@ statement's block runs once with its entry held:
   no value yet, and then reads the value. A cell never holds another key and
   its value is written by one store, so the value read is one the key held
   during the read; entries larger than a word would need a version in their
-  header, and stage (b)'s entries are read only under the cell's lock, since
-  every keyed statement holds its entry (Q37). The runtime's test
+  header, and stage (b)'s entries are read under the cell's lock or a
+  reader's count (shared reads above). The runtime's test
   fails when a read does not wait, and cannot fail when a read checks the
   key word again after the value, so that check was removed.
 - **A removed key stays a removed cell until the table moves,** so a probe

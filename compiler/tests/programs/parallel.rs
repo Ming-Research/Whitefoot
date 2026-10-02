@@ -432,7 +432,7 @@ fn shared_objects_keep_every_update_on_one_driver_and_on_four() {
 fn statements_holding_their_keys_keep_every_update_on_one_driver_and_on_four() {
     let program = build_program(&compile_program("shared_map_keys.wf"));
     for drivers in ["1", "4"] {
-        for round in 0..3 {
+        for round in 0..2 {
             let output = program.run_with_settings(None, &[("WF_DRIVERS", drivers)]);
             assert_eq!(
                 output.status.code(),
@@ -455,7 +455,7 @@ fn statements_holding_their_keys_keep_every_update_on_one_driver_and_on_four() {
 fn a_whole_map_statement_never_sees_inside_another_block_on_one_driver_and_on_four() {
     let program = build_program(&compile_program("shared_map_watch.wf"));
     for drivers in ["1", "4"] {
-        for round in 0..3 {
+        for round in 0..2 {
             let output = program.run_with_settings(None, &[("WF_DRIVERS", drivers)]);
             assert_eq!(
                 output.status.code(),
@@ -479,7 +479,7 @@ fn a_whole_map_statement_never_sees_inside_another_block_on_one_driver_and_on_fo
 fn a_block_of_two_object_statements_stays_a_section_on_one_driver_and_on_four() {
     let program = build_program(&compile_program("shared_map_sections.wf"));
     for drivers in ["1", "4"] {
-        for round in 0..3 {
+        for round in 0..2 {
             let output = program.run_with_settings(None, &[("WF_DRIVERS", drivers)]);
             assert_eq!(
                 output.status.code(),

@@ -165,6 +165,28 @@ fn writes_a_field(map: &SharedMap<Pair>) -> result: unit reads(map) waits {
   }
   return unit;
 }
+
+fn writes_through_a_copy(map: &SharedMap<u8>) -> result: unit reads(map) waits {
+  atomic slot = &map^[&key[0_u64..2_u64]] {
+    let same = slot;
+    set same^ = Some<u8>(value: 1_u8);
+  }
+  return unit;
+}
+
+fn writes_through_a_copied_payload(map: &SharedMap<u8>) -> result: unit reads(map) waits {
+  atomic slot = &map^[&key[0_u64..2_u64]] {
+    match slot^ {
+      Some(value: seen) => {
+        let same = seen;
+        set same^ = 2_u8;
+      }
+      None() => {
+      }
+    }
+  }
+  return unit;
+}
 "#
     );
     let names = [
@@ -175,6 +197,8 @@ fn writes_a_field(map: &SharedMap<Pair>) -> result: unit reads(map) waits {
         "writes_on_one_branch",
         "writes_in_a_loop",
         "writes_a_field",
+        "writes_through_a_copy",
+        "writes_through_a_copied_payload",
     ];
     let readers: Vec<_> = names
         .iter()

@@ -566,7 +566,7 @@ fn put_at(client: &Client, position: u64, value: u8) -> result: unit writes(clie
 }
 
 fn reply_bulk(client: &Client, stored: &Box<Slots<u8>>) -> result: unit reads(stored), writes(client) {
-  doc "Writes a stored string as a RESP bulk string. One of fewer than ten bytes, whose length is one digit, is written from one position read once, since a list's elements are mostly such and a range reply writes a hundred of them.";
+  doc "Writes a stored string as a RESP bulk string. One of fewer than ten bytes, whose length is one digit, is written from one position read once: the benchmark's list elements are three bytes and a range reply writes a hundred of them.";
   let length = stored^.inner.len;
   let needed = length +wrap 26_u64;
   reply_room(client: client, needed: needed);

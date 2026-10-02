@@ -30,9 +30,8 @@
  * cells of the last one freed are kept for the next move to that size, so a
  * map whose size holds steady moves between warm tables.
  *
- * Built with WF_CMAP_LOCKED_READ, a read locks its cell like a writer, the
- * read an atomic statement gets when every statement holds its entry
- * exclusively; it is kept for measurement beside the lock-free read.
+ * Built with WF_CMAP_LOCKED_READ, a read of a word locks its cell like a
+ * writer; it is kept for measurement beside the lock-free read.
  *
  * The file that includes this one supplies the host: WF_CMAP_TAKE(bytes) and
  * WF_CMAP_GIVE(block, bytes) for small blocks aligned to 16 bytes, which the
