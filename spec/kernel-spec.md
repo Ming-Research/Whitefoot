@@ -515,9 +515,9 @@ Within the invariant-name domain a new live declaration may not shadow another l
 Adding, removing, or changing a loop label cannot change any invariant binding.
 A named const is visible in its whole module like every top-level declaration; [CONST-2] judges the dependencies among constants.
 
-Two declarations compete when they have one spelling and one domain and, in the lexical IDENT domain, are not a callable and a value.
-That domain's callables are top-level `fn_decl`s, raw function-kind `gparam`s and PRE-1 functions; its values are its other entries; an alias is in its target's class and a module alias in both [MOD-4].
-A callable and a value never compete, because no admitted use above admits both and there are no function values [FN-5]: `let narrow = narrow(width: w);` binds a value beside a function of the same spelling, and each use selects the one its role admits.
+The lexical IDENT domain has two use classes: callables, which are top-level `fn_decl`s, raw function-kind `gparam`s and PRE-1 functions, and values, which are its other entries; a module alias is in both, and any other alias is in its target's class [MOD-4].
+Two declarations compete when they have one spelling and one domain, and that domain is not the lexical IDENT domain, both enter one module's inventory [MOD-3], or they share a use class.
+So `let narrow = narrow(width: w);` binds a value beside a function of the same spelling, each use selecting the declaration its role admits, while a module's inventory holds one declaration of each spelling in each domain.
 Two competing declarations in one module's inventory, in one record's alias header, or in the same lexical scope are a redeclaration attributed to the later declaration event.
 Declarations in unrelated function or declaration owners are not duplicates merely because their spellings match.
 A nested lexical declaration may not shadow a competing entry live at that declaration.
@@ -1841,7 +1841,7 @@ Its closed carrier roles are function, named-const, parameter, contract-definiti
 A dotless-operation ordinal is the zero-based first occurrence among distinct operation-family spellings, scanning OP-1 rows top to bottom and each `op` cell left to right and skipping every later occurrence of the same spelling.
 A mode-word ordinal is the zero-based FORM-3 alternative order `wrap`, `defined`, `checked`, `sat`, `strict`, `nearest`.
 Those two reserved sets are disjoint in this version.
-For the GRAM-10 violation defined by TYPE-6, the payload is `(binder_spelling, paired_field_spelling, optional_earlier_binder_origin, ordered_arm_entry_live_lexical_ident_origins)`.
+For the GRAM-10 violation defined by TYPE-6, the payload is `(binder_spelling, paired_field_spelling, optional_earlier_binder_origin, ordered_arm_entry_competing_lexical_ident_origins)`.
 Earlier binders and arm-entry origins are ordered by declaration-event key.
 That binder does not also create a TYPE-6 duplicate or shadow candidate.
 

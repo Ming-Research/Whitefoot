@@ -96,7 +96,7 @@ fn takes_part(functions: &[CheckedFunction], function: &CheckedFunction) -> bool
     let mut calls = false;
     for_each_call(
         function.body.as_deref().unwrap_or_default(),
-        &mut |callee| {
+        &mut |callee, _| {
             if functions
                 .get(callee.0 as usize)
                 .is_some_and(|callee| !callee.range_facts.requirements.is_empty())
@@ -108,17 +108,19 @@ fn takes_part(functions: &[CheckedFunction], function: &CheckedFunction) -> bool
     calls
 }
 
-fn for_each_call(
+/// Visits every ordinary call in `statements` with its callee and its call
+/// node.
+pub(crate) fn for_each_call(
     statements: &[super::model::CheckedStatement],
-    visit: &mut dyn FnMut(super::model::FunctionId),
+    visit: &mut dyn FnMut(super::model::FunctionId, &crate::NodePath),
 ) {
     use super::model::{CheckedStatement, expression_children};
     fn expression(
         value: &super::model::CheckedExpression,
-        visit: &mut dyn FnMut(super::model::FunctionId),
+        visit: &mut dyn FnMut(super::model::FunctionId, &crate::NodePath),
     ) {
-        if let super::model::CheckedExpression::UserCall { function, .. } = value {
-            visit(*function);
+        if let super::model::CheckedExpression::UserCall { function, call, .. } = value {
+            visit(*function, call);
         }
         for child in expression_children(value) {
             expression(child, visit);

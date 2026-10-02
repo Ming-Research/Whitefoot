@@ -342,12 +342,14 @@ impl Input<'_, '_> {
                     place,
                     element: true,
                     source: call.clone(),
+                    narrowed: None,
                 });
             } else {
                 events.push(KillEvent::Write {
                     place,
                     element: true,
                     source: call.clone(),
+                    narrowed: None,
                 });
             }
         }
@@ -466,7 +468,23 @@ impl Input<'_, '_> {
                         self.collect_view_write_kills(argument, call, events);
                         continue;
                     }
+                    let exhibited = callee
+                        .and_then(|callee| callee.parameter_exhibited_writes.as_ref())
+                        .and_then(|writes| writes.get(index));
                     for (place, entry_image_only) in self.argument_referents(argument) {
+                        // [DIAG-1] what the call would write through this
+                        // argument were its row narrowed to the body's own
+                        // writes, which a repair offering that narrowing reads.
+                        let narrowed: Narrowed = exhibited.map(|writes| {
+                            writes
+                                .iter()
+                                .map(|steps| {
+                                    let mut written = place.clone();
+                                    written.path.extend(substituted_steps(steps, &offsets));
+                                    written
+                                })
+                                .collect()
+                        });
                         for steps in writes {
                             let mut written = place.clone();
                             written.path.extend(substituted_steps(steps, &offsets));
@@ -475,12 +493,14 @@ impl Input<'_, '_> {
                                     place: written,
                                     element,
                                     source: call.clone(),
+                                    narrowed: narrowed.clone(),
                                 });
                             } else {
                                 events.push(KillEvent::Write {
                                     place: written,
                                     element,
                                     source: call.clone(),
+                                    narrowed: narrowed.clone(),
                                 });
                             }
                         }
@@ -540,6 +560,7 @@ impl Input<'_, '_> {
                     place: self.resolve(&spelled),
                     element: false,
                     source: node_path.clone(),
+                    narrowed: None,
                 }
             }
             CheckedSetTarget::RangeIndex(target) => {
@@ -553,6 +574,7 @@ impl Input<'_, '_> {
                     place: self.resolve(&spelled),
                     element: true,
                     source: node_path.clone(),
+                    narrowed: None,
                 }
             }
             // [MSR-2] an element store into a run overlaps the descriptor
@@ -562,6 +584,7 @@ impl Input<'_, '_> {
                 place: self.container_root_place(target),
                 element: true,
                 source: node_path.clone(),
+                narrowed: None,
             },
         }
     }
@@ -882,17 +905,42 @@ impl Reasoning<'_, '_, '_> {
                 .copied()
                 .collect();
             for event in events {
-                let (KillEvent::Write { place, source, .. }
-                | KillEvent::EntryImageHolderWrite { place, source, .. }) = event
+                let (KillEvent::Write {
+                    place,
+                    element,
+                    source,
+                    narrowed,
+                }
+                | KillEvent::EntryImageHolderWrite {
+                    place,
+                    element,
+                    source,
+                    narrowed,
+                }) = event
                 else {
                     continue;
                 };
                 if self.event_kills_term(separations, term, event) {
+                    let narrowable = narrowed.as_ref().is_some_and(|places| {
+                        !places.iter().any(|place| {
+                            self.event_kills_term(
+                                separations,
+                                term,
+                                &KillEvent::Write {
+                                    place: place.clone(),
+                                    element: *element,
+                                    source: source.clone(),
+                                    narrowed: None,
+                                },
+                            )
+                        })
+                    });
                     states.record_measure_kill(MeasureKill {
                         term,
                         source: source.clone(),
                         written: place.clone(),
                         cells: cells.clone(),
+                        narrowable,
                     });
                 }
             }

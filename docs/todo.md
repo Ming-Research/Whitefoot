@@ -357,8 +357,9 @@ rarely insert at the same place.
   recognizes the OP-10, OP-11 and OP-14 rows by their prelude spelling, and
   an OP-14 record takes its rule from it; the backend recognizes OP-11's row
   by symbol spelling (`compiler/src/backend/emitter.rs`). Both hold only
-  because TYPE-6 rejects a source declaration that collides with the
-  prelude. CALL-6's consistency check keeps its own closure
+  because TYPE-6 refuses a source callable that collides with a prelude
+  function; a source value may share a prelude function's spelling since
+  v0.85, and no value is a callee. CALL-6's consistency check keeps its own closure
   (`compiler/src/semantic/check/publication.rs`) beside the ENT-4 closure the
   specification names, and INV-1 affine formation and call-goal images are
   each formed in both the checker and the flow.

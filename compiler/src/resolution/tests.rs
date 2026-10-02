@@ -734,21 +734,27 @@ const value: i32 = 1_i32;
     });
 }
 
-/// [TYPE-6] a top-level function and a top-level const of one spelling are a
-/// callable and a value, which never compete, so one scope holds both.
+/// [TYPE-6, MOD-3] two declarations of one module's inventory compete in their
+/// domain whatever their class, so that a module path names one declaration:
+/// a top-level function and a top-level const of one spelling are a
+/// redeclaration, although a local value beside the same function is not.
 #[test]
-fn a_top_level_function_and_const_of_one_spelling_do_not_compete() {
+fn a_top_level_function_and_const_of_one_spelling_compete() {
     let source = br#"fn value() -> result: i32 pure {
-  return value;
+  return 1_i32;
 }
 
 const value: i32 = 1_i32;
 "#;
     with_one_resolution(source, |outcome| {
-        assert!(
-            matches!(outcome, ResolutionOutcome::Complete(_)),
-            "a callable and a value must not collide: {outcome:?}"
-        );
+        let ResolutionOutcome::SourceIssue { issue, .. } = outcome else {
+            panic!("one inventory holds one declaration of a spelling: {outcome:?}");
+        };
+        assert_eq!(issue.rule(), ResolutionRule::Type6);
+        assert!(matches!(
+            issue.kind(),
+            ResolutionIssueKind::DeclarationCollision { spelling, .. } if spelling == "value"
+        ));
     });
 }
 

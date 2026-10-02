@@ -439,8 +439,20 @@ impl<'unit> TypeContext<'unit> {
     /// the writes is not a call, whose length change no row can deny.
     fn killing_calls(
         &self,
+        function: &CheckedFunction,
         notes: &[crate::semantic::entailment::MeasureKillNote],
     ) -> Result<Vec<repairs::KillingCall>, CheckStop> {
+        // [DIAG-1] a repair names a call only where the writer can change
+        // what it names: a prelude function's row and contract are not the
+        // writer's, so a write by one leaves the ordinary repair.
+        let editable = self.editable_functions()?;
+        let mut callees = std::collections::HashMap::new();
+        crate::semantic::range_judgment::for_each_call(
+            function.body.as_deref().unwrap_or_default(),
+            &mut |callee, call| {
+                callees.insert(call.clone(), callee);
+            },
+        );
         let mut calls = Vec::new();
         for note in notes {
             let node = self
@@ -448,7 +460,11 @@ impl<'unit> TypeContext<'unit> {
                 .tree
                 .node_with_path(&note.source)
                 .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-            if self.declarations.tree.production(node)? != Production::Call {
+            if self.declarations.tree.production(node)? != Production::Call
+                || !callees
+                    .get(&note.source)
+                    .is_some_and(|callee| editable.contains(callee))
+            {
                 return Ok(Vec::new());
             }
             let spelling = self.declarations.tree.source_spelling(node)?;
@@ -465,6 +481,7 @@ impl<'unit> TypeContext<'unit> {
                 callee,
                 line,
                 written: note.written.clone(),
+                narrowable: note.narrowable,
             });
         }
         Ok(calls)
@@ -529,7 +546,7 @@ impl<'unit> TypeContext<'unit> {
                     function.entailment.obligation_term_reads(outcome).first(),
                     Some(TermRead::Constant)
                 );
-                let calls = self.killing_calls(&outcome.killed_by)?;
+                let calls = self.killing_calls(function, &outcome.killed_by)?;
                 let mechanical_fix = if self.declarations.in_requirement(&outcome.node_path)? {
                     repairs::clause_bounds(&case, constant_offset)
                 } else if let (Some(note), false) = (outcome.killed_by.first(), calls.is_empty()) {

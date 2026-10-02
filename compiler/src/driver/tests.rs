@@ -3376,3 +3376,33 @@ fn an_entry_build_reuses_every_analysis_its_module_verdicts_recorded() {
         "the entry build analyzes no function its module verdicts analyzed"
     );
 }
+
+/// [GRAM-10, TYPE-6] a module alias is in both use classes, so a match binder
+/// of its spelling competes with it, and GRAM-10, which owns binder
+/// freshness, reports it rather than TYPE-6.
+#[test]
+fn a_match_binder_beside_a_module_alias_is_a_binder_freshness_error() {
+    let source = br#"alias process = std::process;
+
+fn probe(found: Option<u8>) -> result: u8 pure {
+  match found {
+    Some(value: process) => {
+      return process;
+    }
+    None() => {
+      return 0_u8;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let failure = check(
+        &[SourceInput::new("binder.wf", source)],
+        CompilerLimits::default(),
+    )
+    .expect_err("a binder beside a module alias of its spelling is refused");
+    assert_eq!(failure.rule_id(), Some("GRAM-10"), "{failure}");
+}

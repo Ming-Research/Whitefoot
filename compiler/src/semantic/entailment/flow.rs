@@ -127,6 +127,10 @@ enum KillEvent {
         place: ResolvedPlace,
         element: bool,
         source: crate::NodePath,
+        /// For a callee's declared write, the places the same call would
+        /// write if the row declared only what the body writes [EFF-2];
+        /// `None` for every other write [DIAG-1].
+        narrowed: Narrowed,
     },
     /// (c) a consuming use of a binding.
     Consume {
@@ -149,8 +153,13 @@ enum KillEvent {
         place: ResolvedPlace,
         element: bool,
         source: crate::NodePath,
+        narrowed: Narrowed,
     },
 }
+
+/// What a call would write through one argument under a row narrowed to its
+/// callee's exhibited writes; see [`KillEvent::Write`].
+type Narrowed = Option<std::rc::Rc<[ResolvedPlace]>>;
 
 impl KillEvent {
     fn source(&self) -> &crate::NodePath {
@@ -335,6 +344,10 @@ struct MeasureKill {
     source: crate::NodePath,
     written: ResolvedPlace,
     cells: Vec<KilledCell>,
+    /// Whether the call's row, narrowed to its callee's exhibited writes,
+    /// would leave `term` alone [EFF-2, DIAG-1]; false for every write that
+    /// is not a callee's declared write.
+    narrowable: bool,
 }
 
 impl ProofFlowState {
@@ -347,6 +360,7 @@ impl ProofFlowState {
             .find(|known| known.term == kill.term && known.source == kill.source)
         {
             Some(known) => {
+                known.narrowable &= kill.narrowable;
                 for cell in kill.cells {
                     if !known.cells.contains(&cell) {
                         known.cells.push(cell);
@@ -1960,6 +1974,7 @@ mod indexed_goal_kill_tests {
                         place: ResolvedPlace::binding(binding),
                         element: false,
                         source: source.clone(),
+                        narrowed: None,
                     },
                     KillEvent::Consume { binding, source },
                 ];

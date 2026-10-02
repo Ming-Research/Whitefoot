@@ -1413,6 +1413,7 @@ impl Analyzer<'_, '_> {
                             source: kill.source.clone(),
                             written: self.input.render_place(&kill.written),
                             measure: measure.clone(),
+                            narrowable: kill.narrowable,
                         })
                         .collect()
                 }

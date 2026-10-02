@@ -1190,11 +1190,12 @@ fn build_postcondition_candidate(
         {
             continue;
         }
+        // A result datum is a value, so only values compete with it; a
+        // function of its spelling answers only a call [TYPE-6].
         if !meta.entries.iter().any(|class| {
             matches!(
                 class,
-                DeclarationClass::Function
-                    | DeclarationClass::NamedConst
+                DeclarationClass::NamedConst
                     | DeclarationClass::ConstGeneric
                     | DeclarationClass::Value
             )

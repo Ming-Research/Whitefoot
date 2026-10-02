@@ -1028,29 +1028,33 @@ pub(super) struct KillingCall {
     pub(super) callee: String,
     pub(super) line: u64,
     pub(super) written: String,
+    /// Whether the callee's row, narrowed to the paths its body writes,
+    /// would leave the measure alone [EFF-2].
+    pub(super) narrowable: bool,
 }
 
 /// [OP-4] a subscript's bound that the facts some calls' rows removed would
-/// prove: the calls are named, and where each leaves the length unchanged,
-/// a narrower row entry or a postcondition stating the length unchanged
-/// keeps those facts; the guard stays the alternative where the length may
+/// prove: the calls are named, and where each leaves the length unchanged, a
+/// postcondition stating so keeps those facts, and so does a row entry
+/// narrowed to the paths the body writes where that narrower row no longer
+/// covers the length; the guard stays the alternative where the length may
 /// change [DIAG-1].
 pub(super) fn bounds_after_kill(
     case: &GoalCase<'_>,
     measure: &str,
     calls: &[KillingCall],
 ) -> String {
-    let one = calls.len() == 1;
     let sites = calls
         .iter()
         .map(|call| format!("to `{}` at line {}", call.callee, call.line))
         .collect::<Vec<_>>()
         .join(" and ");
-    let written = calls
+    let mut written = calls
         .iter()
         .map(|call| format!("`{}`", call.written))
-        .collect::<Vec<_>>()
-        .join(" and ");
+        .collect::<Vec<_>>();
+    written.dedup();
+    let written = written.join(" and ");
     let mut callees = calls
         .iter()
         .map(|call| call.callee.as_str())
@@ -1062,15 +1066,26 @@ pub(super) fn bounds_after_kill(
         .map(|callee| format!("`{callee}`"))
         .collect::<Vec<_>>()
         .join(" and ");
-    let (call, rows, leaves, its) = if one {
-        ("call", "its row, which writes", "leaves", "its")
-    } else if callees.len() == 1 {
-        ("calls", "their rows, which write", "leaves", "its")
+    let (call, rows) = if calls.len() == 1 {
+        ("call", "its row, which writes")
     } else {
-        ("calls", "their rows, which write", "leave", "their")
+        ("calls", "their rows, which write")
+    };
+    let (leaves, its) = if callees.len() == 1 {
+        ("leaves", "its")
+    } else {
+        ("leave", "each one's")
+    };
+    let narrowing = if calls.iter().all(|call| call.narrowable) {
+        format!(
+            "narrow the entry of {its} row that covers it to the paths {} body writes, or ",
+            if callees.len() == 1 { "its" } else { "that" }
+        )
+    } else {
+        String::new()
     };
     format!(
-        "`{}` is not proved here, but facts about `{measure}` that held before the {call} {sites} would prove it, and {rows} {written}, removed them: where {who} {leaves} `{measure}` unchanged, narrow the entry of {its} row that covers it to the paths {its} body writes, or state `{measure}` unchanged in {its} `ensures`; or {}",
+        "`{}` is not proved here, but facts about `{measure}` that held before the {call} {sites} would prove it, and {rows} {written}, removed them: where {who} {leaves} `{measure}` unchanged, {narrowing}state `{measure}` unchanged in {its} `ensures`; or {}",
         case.text,
         case.guard("access", SKIP)
     )
