@@ -1,0 +1,15 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn step(value: u8) -> result: u8 pure {
+  return value;
+}
+
+fn apply<fn step(value: u8) -> result: u8 pure>(seed: u8) -> result: u8 pure {
+  doc "A function-kind parameter and a top-level function are both callables, so the parameter shadows the function [TYPE-6].";
+  return step(value: seed);
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

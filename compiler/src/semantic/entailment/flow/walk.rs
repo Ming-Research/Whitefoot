@@ -1535,6 +1535,7 @@ impl Analyzer<'_, '_> {
                         },
                         element: false,
                         source: node_path.clone(),
+                        narrowed: None,
                     }]);
                     kills.set_bindings.insert(*binder);
                 }

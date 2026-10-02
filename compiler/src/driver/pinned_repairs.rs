@@ -13,8 +13,8 @@ use super::{CompilationFailureKind, CompilerLimits, compile};
 use crate::SourceInput;
 
 mod call_separations;
+mod collisions_and_killed_facts;
 mod content_moves;
-mod layout_friction;
 mod selector_scope;
 mod storage_destructuring;
 
@@ -3658,7 +3658,7 @@ fn each_pinned_repair_is_carried_out_by_its_programs() {
         .chain(content_moves::CONTENT_MOVES)
         .chain(storage_destructuring::STORAGE_DESTRUCTURING)
         .chain(selector_scope::SELECTOR_SCOPE)
-        .chain(layout_friction::LAYOUT_FRICTION)
+        .chain(collisions_and_killed_facts::COLLISIONS_AND_KILLED_FACTS)
     {
         let failure = compile(
             &[SourceInput::new(pair.name, pair.rejected)],

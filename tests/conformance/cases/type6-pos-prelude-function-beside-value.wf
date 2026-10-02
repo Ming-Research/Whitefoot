@@ -1,0 +1,11 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  doc "A local value takes the spelling of the prelude function grow: a callable and a value do not compete [TYPE-6, PRE-1].";
+  let grow = 4_u8;
+  if grow != 4_u8 {
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 0_u8);
+}

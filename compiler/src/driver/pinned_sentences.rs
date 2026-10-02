@@ -1392,6 +1392,45 @@ fn main() -> status: std::process::ExitStatus pure {
             "\n  mechanical_fix: `next < context^.blocks.inner.len` is not proved here: when facts that reach the access imply it",
         ],
     },
+    // -------------------------------------------------------------------
+    // [OP-4, DIAG-1] the call that removed the facts is a prelude
+    // function's, whose row and contract are not the writer's to change, so
+    // the repair names no call and keeps the ordinary routes.
+    // -------------------------------------------------------------------
+    Probe {
+        name: "bounds-after-a-prelude-call.wf",
+        source: br#"struct Block {
+  y: i32;
+  height: i32;
+}
+
+struct Ctx {
+  blocks: Box<Slots<Block>>;
+  spare: Box<Slots<Block>>;
+}
+
+fn after_split(context: &Ctx, index: u64, at: u64) -> result: i32 writes(context) contract {
+  requires index <= context^.blocks.inner.len;
+  requires context^.blocks.inner.len - index <= context^.spare.inner.cap - context^.spare.inner.len;
+} {
+  if at < context^.blocks.inner.len {
+    split_off(source: &context^.blocks.inner, index: index, destination: &context^.spare.inner);
+    let y = context^.blocks.inner[at].y;
+    return y;
+  }
+  return 0_i32;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "OP-4",
+        sentences: &[
+            "]: UndischargedBoundsObligation\n",
+            "\n  mechanical_fix: `at < context^.blocks.inner.len` is not proved here: when facts that reach the access imply it",
+        ],
+    },
 ];
 
 /// Every sentence in the corpus is rendered by a program that reaches it.

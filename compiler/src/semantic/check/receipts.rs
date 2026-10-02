@@ -678,10 +678,19 @@ impl Checker<'_, '_> {
             let rendering = match kind {
                 IdKind::Function if position != index => {
                     let callee = functions.get(position)?;
+                    // The callee's exhibited writes shape only the words of
+                    // a rejection's repair [DIAG-1], and a receipt records an
+                    // accepted analysis, so they are not part of its key; a
+                    // module check, which sees no other module's body, and an
+                    // entry build then key one analysis alike.
+                    let projection = callees.get(position)?;
                     format!(
-                        "callee\n{}\n{:?}\npublished {}",
+                        "callee\n{}\n{:?} {:?} {:?} {:?}\npublished {}",
                         claims_rendering(&callee.function),
-                        callees.get(position)?,
+                        projection.parameter_declarations,
+                        projection.parameter_modes,
+                        projection.parameter_writes,
+                        projection.parameter_transports,
                         published.get(position).map_or(0, Vec::len)
                     )
                 }
