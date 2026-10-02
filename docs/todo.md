@@ -3732,6 +3732,12 @@ condition under which it is taken up.
   inconsistent-key witness changes the answer safely; any future order choice
   must state conditional hash/equality laws and extra callback behavior, without
   claiming universal callback-order or termination equivalence.
+  The [mask-lowering cost floor](../research/experiments/container-representation/map-library/RESULTS.md#mask-lowering-sequence-toy-success-full-map-rejection)
+  removes numeric byte reconstruction through an explicit LLVM intervention,
+  but still has zero miss gains/peer targets and four qualified hit losses.
+  A possible general selector remains unselected and unimplemented;
+  reopen only with a reached consumer benefit and preserved source/word-oracle
+  checks, rather than projecting toy instruction reductions onto map performance.
 
   The [actual integrated-candidate comparison](../research/experiments/container-representation/map-library/RESULTS.md#integrated-candidate-with-the-maintained-caller)
   has no qualified before/after gain in 40 maintained-caller cells; all four

@@ -1,8 +1,8 @@
 {
   "purpose": "Isolated ordinary public reserve with verified future entry headroom; single production baseline panel, not an optimization/adoption result",
   "archive": "reserve-api-evidence.tar.gz",
-  "archive_sha256": "f6f54388160c6f47e8bdf6311bacac4222a9efa9d279cb50d0e581557331f07e",
-  "archive_members": 1052,
+  "archive_sha256": "58ced5c5da8990134ffb02a40bab006628fbdf2ff49cb92a711cdbb569716c86",
+  "archive_members": 1078,
   "base_revision": "89571a60381a685cfbe760248ceb6178d9f9ac05",
   "production_cli_sha256": "c12b2b2a6c9694fd2bc1b7be0004d582ae9628951422def849f4cf6a3ac02f77",
   "timed_image_sha256": "f1ebf18d7a94c79250bb3cbd74a0b379a2a30c6e5e4eda48396ec77d8bbdbf3f",
@@ -4669,6 +4669,75 @@
       "from": "component-index.json",
       "to": "component-index-before-mirrored-byte-matches-first.json",
       "sha256": "4a94140c14d1b37d6d04351870aa98ceaa64db468d998f4d4c76dfcf112fab75"
+    },
+    "all_prior_member_bytes_preserved": true
+  },
+  "mask_lowering_sequence": {
+    "prefix": "mask-lowering-sequence/",
+    "manifest": "mask-lowering-sequence/manifest.json",
+    "manifest_sha256": "27df9afd3987936d215052ec79152634b2b22520e6178f70f34e489d52266f39",
+    "payload_count": 25,
+    "records": "mask-lowering-sequence/records.json",
+    "retained_records": 632,
+    "producer_files_verified": 634,
+    "producer_inventories": {
+      "byte-mask-pack": {
+        "inventory": "retention-inventory.json",
+        "original_sha256": "933d7e5f6c2c835ef781200a479e22ab0ec0323ba098409b879f32dd06dac93b",
+        "files": 39
+      },
+      "byte-compare-pack": {
+        "inventory": "retention-inventory.json",
+        "original_sha256": "edd75d04cdf584f8caacfc06176dcacb82975e570355a7f2e34d7cd2bf212a6b",
+        "files": 50
+      },
+      "mirrored-byte-compare-pack": {
+        "inventory": "retention-inventory.json",
+        "original_sha256": "4996a5a22143d76db6ea03a179637e53bed9394ad5da157aa2d4d3aa0cfa87dd",
+        "files": 38
+      },
+      "mirrored-byte-decompose-pack": {
+        "inventory": "retention-inventory.json",
+        "original_sha256": "587ae4bd957c616c1f32329fd1409efc480b5f5a2b811f4ea242146f68635e47",
+        "files": 507
+      }
+    },
+    "timing_rows": 1536,
+    "row_counts": {
+      "mirrored-byte-decompose-pack/qualification/candidate-build/edit-accounting.csv": 32,
+      "mirrored-byte-decompose-pack/qualification/candidate-build/reserve-accounting.csv": 96,
+      "mirrored-byte-decompose-pack/qualification/candidate-runtime/build/ecosystem/edit-cohort-0.csv": 384,
+      "mirrored-byte-decompose-pack/qualification/candidate-runtime/build/ecosystem/edit-cohort-1.csv": 384,
+      "mirrored-byte-decompose-pack/qualification/control-runtime/build/ecosystem/edit-cohort-0.csv": 384,
+      "mirrored-byte-decompose-pack/qualification/control-runtime/build/ecosystem/edit-cohort-1.csv": 384
+    },
+    "native_full_consumer_paths": {
+      "first_hit": [
+        40,
+        39
+      ],
+      "first_empty": [
+        28,
+        26
+      ]
+    },
+    "candidate_frame_bytes": 112,
+    "qualified_miss_gains": 0,
+    "qualified_two_cohort_hit_losses": 4,
+    "large_miss_ranges": "overlap and invalid",
+    "candidate_peer_targets": 0,
+    "compiler_implementation": false,
+    "production_adoption": false,
+    "status": "Pack-only FAIL; toy native/oracle PASS; full-consumer operand reconstruction FAIL; complete decomposition native/oracle/map checks PASS but explicit LLVM cost-floor timing FAIL. No ordinary-source speed or implementation claim."
+  },
+  "mask_lowering_sequence_prior_index": {
+    "prior_archive_sha256": "f6f54388160c6f47e8bdf6311bacac4222a9efa9d279cb50d0e581557331f07e",
+    "prior_members": 1052,
+    "unchanged_names_and_bytes": 1051,
+    "renamed_member": {
+      "from": "component-index.json",
+      "to": "component-index-before-mask-lowering-sequence.json",
+      "sha256": "8390909d3ce4e9ecb17e5fb6cfcc961dffd76e353a490c1383c0f9e2d04950ad"
     },
     "all_prior_member_bytes_preserved": true
   }

@@ -62,6 +62,9 @@ its early native failures and final qualified losses keep the representation uns
 The [matches-first follow-up](#matches-first-order-native-improvement-timing-rejection)
 also fails timing qualification and exposes the conditional hash/equality-law
 boundary; it supplies no adoption ground.
+The subsequent [mask-lowering cost floor](#mask-lowering-sequence-toy-success-full-map-rejection)
+is an explicit LLVM counterfactual, not implemented compiler behavior; it
+retains zero qualified miss gains, four qualified hit losses and no peer target.
 
 ## Current Rust and C++ ecosystem comparison
 
@@ -6577,3 +6580,58 @@ complete WF/Rust/C++/C ranges, reducers and original/normalized dependency pins.
 Native-stage no-execution statements precede the later authorized checks and
 timing. Pinned compiler/runtime/toolchain binaries and full generated modules
 remain omitted; this is not a standalone replay bundle.
+
+### Mask-lowering sequence: toy success, full-map rejection
+
+Four separately frozen interventions preserve their original gates. Packing
+already computed bytes alone fails the compact native gate (wrapper 51→41
+instructions). Comparing/selecting/packing loaded bytes passes the toy gate
+(helper 45→8, wrapper 51→14) and independent generated-code oracles. The full
+numeric-word consumer still fails: per-group operand reconstruction survives.
+Finally, canonicalizing all eight ordered bytes of one dominating word to a
+little-endian vector bitcast removes that reconstruction. This is an exact LLVM
+counterfactual; no compiler recognizer or production source change is implemented.
+The source keeps its original word snapshot and arbitrary 64-bit code behavior,
+with no new owner read, stronger assumption or effect motion.
+
+The final native pair is 315→290 instructions per complete batch, frame 112
+bytes and zero calls. Against original SWAR, reached ready-hash first-hit work
+is 40→39 and first-empty 28→26; the toy's 45→8 count does not describe map cost.
+An independent scalar oracle checks 655,430 word/code cases in each of four
+forms, with expected-mask and reversed-lane falsifiers exiting 7. Thirty
+expected map-check stages retain ordinary normal/parallel witnesses, boundaries,
+inconsistent-law ownership and mirror-write fault exit 32. Every actual
+candidate helper intervention applies; unchanged flat hostile control is
+explicitly uninstrumented. The 32 EDIT/96 reserve ledgers match predicted
+mirrored allocation deltas. These witnesses do not prove a generic selector.
+
+One fixed four-process campaign retains all 1,536 rows and unchanged 41 timing
+pins. Medians below are ns/edit, cohort 0 / cohort 1; Rust/C++ are the candidate
+panel observations. Complete ranges and C-attribution gates remain archived.
+
+| Payload / slots / path | Flat WF | LLVM floor WF | Rust | C++ | Both-cohort result |
+|---|---:|---:|---:|---:|---|
+| 8 B / 64 / hit | 1.863 / 1.845 | 3.911 / 3.859 | 2.262 / 2.247 | 2.129 / 2.117 | qualified loss |
+| 8 B / 64 / miss | 2.438 / 2.480 | 2.542 / 2.572 | 2.197 / 2.200 | 1.700 / 1.704 | overlap |
+| 8 B / 4096 / hit | 2.182 / 2.168 | 3.743 / 3.735 | 2.384 / 2.414 | 3.049 / 3.075 | qualified loss |
+| 8 B / 4096 / miss | 3.893 / 2.937 | 3.030 / 3.020 | 2.610 / 2.564 | 1.668 / 1.588 | overlap (invalid) |
+| 256 B / 64 / hit | 1.857 / 1.849 | 3.854 / 3.897 | 2.507 / 2.532 | 2.115 / 2.152 | qualified loss |
+| 256 B / 64 / miss | 2.441 / 2.435 | 2.604 / 2.589 | 2.187 / 2.224 | 1.716 / 1.721 | overlap |
+| 256 B / 4096 / hit | 2.392 / 2.402 | 4.006 / 4.015 | 2.782 / 2.784 | 3.683 / 3.753 | qualified loss |
+| 256 B / 4096 / miss | 3.168 / 2.795 | 3.047 / 3.105 | 2.556 / 2.607 | 2.004 / 2.063 | overlap (invalid) |
+
+All four hit cells have qualified separated losses, about 67–111% by median.
+Small misses have stable overlapping ranges; both large misses overlap and
+are invalid from WF/C cohort, interarm and paired-ratio drift. There are zero
+qualified miss gains and zero of eight raw or qualified peer targets. Thus the
+narrow lowering identity remains feasible but unselected: this complete-map
+cost floor establishes no performance benefit, ordinary-source gain or adoption.
+No filtering or retry follows; earlier failed gates remain failed.
+
+The `mask-lowering-sequence/` component in
+[reserve-api-evidence.tar.gz](reserve-api-evidence.tar.gz) retains the four
+criteria, exact source/LLVM interventions, failed preparations, compact native
+excerpts, oracle/fault results, raw rows, reducers and original/normalized pins.
+Reused flat-control images are pinned to the preceding frozen component;
+omitted compiler/runtime/toolchain binaries and full modules are required for
+reconstruction. No unfinished continuation experiment is included.
