@@ -1,8 +1,8 @@
 {
   "purpose": "Isolated ordinary public reserve with verified future entry headroom; single production baseline panel, not an optimization/adoption result",
   "archive": "reserve-api-evidence.tar.gz",
-  "archive_sha256": "382b7faeee170dbab9db8d3a819278563c254938728766c73e684c29065e872b",
-  "archive_members": 983,
+  "archive_sha256": "b45c0651eabef219344566b5607eab516c1f930de5d75b0e1f60abc141175470",
+  "archive_members": 1010,
   "base_revision": "89571a60381a685cfbe760248ceb6178d9f9ac05",
   "production_cli_sha256": "c12b2b2a6c9694fd2bc1b7be0004d582ae9628951422def849f4cf6a3ac02f77",
   "timed_image_sha256": "f1ebf18d7a94c79250bb3cbd74a0b379a2a30c6e5e4eda48396ec77d8bbdbf3f",
@@ -4441,6 +4441,85 @@
       "from": "component-index.json",
       "to": "component-index-before-first-probe-peel.json",
       "sha256": "baae10e31841ed391957bace2bfb66ec0c4758ee1cebcfffc0b09e2da8a4a1c0"
+    },
+    "all_prior_member_bytes_preserved": true
+  },
+  "fixed_hash_sensitivity": {
+    "status": "Supplemental fixed-hash first-probe-peel comparison rejected: zero qualified miss gains, scalar-large two-cohort hit loss and wide-large single-cohort hit loss; three supplemental candidate peer targets do not replace original qualification.",
+    "timing_rows": 1536,
+    "ordinary_check_stages_zero": 15,
+    "qualified_miss_gains": 0,
+    "qualified_two_cohort_hit_losses": 1,
+    "hit_cells_with_any_loss": 2,
+    "supplemental_candidate_qualified_peer_targets": 3,
+    "invalid_large_miss_cells": 2,
+    "owner_bytes": {
+      "WF": [
+        72,
+        64
+      ],
+      "Rust": [
+        64,
+        56
+      ],
+      "CPP": [
+        72,
+        64
+      ],
+      "C": [
+        40,
+        32
+      ]
+    },
+    "production_adoption": false,
+    "original_qualification_replaced": false,
+    "prefix": "fixed-hash-sensitivity/",
+    "manifest": "fixed-hash-sensitivity/manifest.json",
+    "manifest_sha256": "2e7868d1f5cc9e3fa461eed0a5c7f6af236c2c9ed8ab73190cd0b8c0b8675be9",
+    "payload_count": 18,
+    "records": "fixed-hash-sensitivity/records.json",
+    "retained_records": 703,
+    "producer_inventory_sha256": "3a5e4976a433f04855a992047acada189c046a80424a79a483f09b2b9ca0b0d7",
+    "producer_files_verified": 710,
+    "row_counts": {
+      "candidate-build/edit-accounting.csv": 32,
+      "candidate-build/reserve-accounting.csv": 96,
+      "candidate-runtime/build/ecosystem/edit-cohort-0.csv": 384,
+      "candidate-runtime/build/ecosystem/edit-cohort-1.csv": 384,
+      "control-build/edit-accounting.csv": 32,
+      "control-build/reserve-accounting.csv": 96,
+      "control-runtime/build/ecosystem/edit-cohort-0.csv": 384,
+      "control-runtime/build/ecosystem/edit-cohort-1.csv": 384
+    }
+  },
+  "byte_pack_load": {
+    "status": "Native byte-pack gate passed; no runtime, timing, map or performance claim.",
+    "native_gate_passed": true,
+    "native_helper_instructions": 16,
+    "native_wrapper_instructions": 22,
+    "native_C_control_instructions": 25,
+    "payload_loads_per_native_body": 1,
+    "runtime_execution": false,
+    "timing_run": false,
+    "production_adoption": false,
+    "prefix": "byte-pack-load/",
+    "manifest": "byte-pack-load/manifest.json",
+    "manifest_sha256": "a515793a3009ff1841903f661f829482d6e6d121fd4e439a8a3202dad3292347",
+    "payload_count": 8,
+    "records": "byte-pack-load/records.json",
+    "retained_records": 52,
+    "producer_inventory_sha256": "578013a112d3739525d2167504d19a46fb711d0bb3abdc6b8563de063d7e877a",
+    "producer_files_verified": 51,
+    "row_counts": {}
+  },
+  "fixed_hash_byte_pack_prior_index": {
+    "prior_archive_sha256": "382b7faeee170dbab9db8d3a819278563c254938728766c73e684c29065e872b",
+    "prior_members": 983,
+    "unchanged_names_and_bytes": 982,
+    "renamed_member": {
+      "from": "component-index.json",
+      "to": "component-index-before-fixed-hash-byte-pack.json",
+      "sha256": "9f82b72e74c071ae53072f0f00303a335e568ca95c64a3ed4b61ae21953f1936"
     },
     "all_prior_member_bytes_preserved": true
   }

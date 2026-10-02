@@ -3598,6 +3598,19 @@ condition under which it is taken up.
   IR instrumentation is not qualification. Reopen only with a discriminating
   mechanism that also preserves hit cost and unchanged stability/peer gates.
 
+  The [fixed-hash sensitivity](../research/experiments/container-representation/map-library/RESULTS.md#fixed-hash-sensitivity-supplemental-rejection)
+  still has zero qualified miss gains and retains hit losses. Three supplemental
+  peer-target passes do not replace original qualification; smaller owner layouts
+  and changed capacity hoisting prevent pure collision-branch attribution.
+  Keep the peeled source rejected and both large-miss drift failures visible.
+
+  The [byte-pack native screen](../research/experiments/container-representation/map-library/RESULTS.md#byte-pack-load-native-only-result)
+  removes one lowering uncertainty: packing byte inputs before scalar comparison
+  reaches one payload load in its bounded native consumer. Map metadata updates,
+  ownership/callback behavior, first-hit register pressure and allocation cost
+  remain unqualified. Reopen those concrete obligations before a representation
+  choice or any performance claim; native instruction counts alone close none.
+
   The [actual integrated-candidate comparison](../research/experiments/container-representation/map-library/RESULTS.md#integrated-candidate-with-the-maintained-caller)
   has no qualified before/after gain in 40 maintained-caller cells; all four
   overall screens remain unqualified. Its reserve maximum empty interval of

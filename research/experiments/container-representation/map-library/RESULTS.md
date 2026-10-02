@@ -52,6 +52,10 @@ two-cohort hit losses and zero candidate peer targets; its source stays rejected
 The later [first-probe peel](#first-probe-peel-native-pass-timing-rejection)
 passes its narrow native criterion but records no qualified miss gain and a
 qualified large-scalar hit loss; its source also remains rejected.
+The [fixed-hash sensitivity](#fixed-hash-sensitivity-supplemental-rejection)
+likewise supplies no qualified miss gain and does not replace the original
+consumer's qualification. [Byte packing](#byte-pack-load-native-only-result)
+passes only a native-load screen, with no runtime or map-performance claim.
 
 ## Current Rust and C++ ecosystem comparison
 
@@ -6406,3 +6410,70 @@ The fixed criterion rejects the source, with no retry, rescue or adoption.
 Exact graphs/patches, the ordinary capacity-one supplement, discarded-instrument
 history, native excerpts, statuses, ledgers, raw rows and reducers are retained
 with original/normalized pins and omitted-build replay limits.
+
+### Fixed-hash sensitivity: supplemental rejection
+
+Separate fixed salted-mix64 owner families remove collision mode in WF, Rust,
+C++ and C while preserving the original consumer families. Both map source
+arms remain the previously tested original/peeled implementations. Fixed WF
+bodies are 169/203 instructions with 16/32-byte frames, versus original
+248/276; no new hot spills or calls appear. This is not pure branch-cost
+attribution: consumer-owner sizes change WF 72→64, Rust 64→56, C++ 72→64 and
+C 40→32 bytes, and control hoists capacity dispatch while the peeled arm keeps
+it per key. C++ hasher traits/signature remain unchanged.
+
+All 15 ordinary check stages exit zero. The 32 EDIT and 96 reserve accounting
+rows match both arms and the original control byte-for-byte. Prior ordinary
+capacity-one witnesses were not rerun because map bytes are unchanged; no
+discarded instrumentation is used. The fixed four-process campaign retains
+1,536 rows, unchanged 47 pins, matching complete outcomes and minimum interval
+6.421792 ms. Medians below are ns/edit, cohort 0 / cohort 1; Rust/C++ are the
+peeled-panel observations, with complete ranges retained in the archive.
+
+| Payload / physical target / path | Control WF | Peeled WF | Rust | C++ | Before/after ranges, cohorts 0 / 1 |
+|---|---:|---:|---:|---:|---|
+| 8 B / 64 / hit | 1.825934 / 1.830861 | 1.894891 / 1.861076 | 2.259696 / 2.250249 | 1.832207 / 1.824121 | overlap / overlap |
+| 8 B / 64 / miss | 2.417927 / 2.398168 | 2.392496 / 2.400756 | 1.695936 / 1.689807 | 1.691192 / 1.688336 | overlap / overlap |
+| 8 B / 4096 / hit | 1.967256 / 1.984914 | 2.172565 / 2.155681 | 2.380898 / 2.354965 | 2.667844 / 2.579585 | loss / loss |
+| 8 B / 4096 / miss | 3.082454 / 2.689600 | 2.353927 / 2.398819 | 2.265910 / 2.276113 | 1.587992 / 1.629556 | overlap / overlap (invalid) |
+| 256 B / 64 / hit | 1.874998 / 1.835719 | 1.870990 / 1.861567 | 2.420475 / 2.438987 | 1.814614 / 1.809831 | overlap / overlap |
+| 256 B / 64 / miss | 2.478326 / 2.514501 | 2.591625 / 2.419919 | 1.710450 / 1.693209 | 1.696552 / 1.687268 | overlap / overlap |
+| 256 B / 4096 / hit | 2.217700 / 2.204155 | 2.391746 / 2.355864 | 2.748539 / 2.718826 | 3.426522 / 3.364414 | overlap / loss |
+| 256 B / 4096 / miss | 4.715760 / 5.140781 | 2.488693 / 2.475873 | 2.254441 / 2.268950 | 2.018680 / 2.578497 | gain / overlap (invalid) |
+
+There are zero qualified miss gains. Scalar-large hit loses both cohorts;
+wide-large hit loses cohort 1 and overlaps cohort 0. Both large misses are
+invalid: scalar includes control WF/C drift and paired-WF ratio spread,
+while wide includes control C, candidate C++ and interarm peer drift. Wide-large
+miss's cohort-0 raw gain does not qualify; cohort 1 overlaps. All outliers
+remain, including candidate WF 10.216047 ns and Rust 14.756958 ns in wide-large
+miss. Supplemental candidate peer targets pass 3/8 cells, all hits; no miss
+passes. These new-consumer observations do not substitute for original-image
+qualification or establish application performance. No adoption or retry follows.
+
+The `fixed-hash-sensitivity/` archive component retains exact coherent owner/
+driver patches, source graphs/audit, authoring failures, native/ordinary checks,
+ledgers, every raw row, reducers and dependency pins. Earlier native-stage
+no-execution wording precedes the separately recorded checks and timing.
+
+### Byte-pack load: native-only result
+
+A separate arbitrary-byte consumer packs eight checked bytes numerically before
+scalar equality masking. The guarded wrapper's optimized LLVM has one `i64`
+load with alignment 1; the bounded helper still has eight alignment-1 `i8`
+loads which ARM64 instruction selection combines. Both native bodies use one
+payload load, no calls or stack: helper 16 instructions, wrapper 22. The C
+control has 25 instructions with an explicit zero-mask guard. Static counts
+are not timing or runtime correctness evidence.
+
+The initial preparation failed to retain the wrapper because `main` did not
+reach it; that attempt is preserved. The repaired arbitrary-input external
+wrapper remains defined, and all eight native command stages exit zero.
+`byte-pack-load/` retains source, criterion, raw/optimized/native excerpts,
+failed preparation and pins. This establishes a compact lowering for this
+consumer only: no map metadata maintenance, ownership, first-hit pressure,
+allocation cost, runtime correctness or speed is qualified. No map/compiler
+change or representation selection follows. Both components are in
+[reserve-api-evidence.tar.gz](reserve-api-evidence.tar.gz), with normalized/original
+hashes and explicit omitted-build replay limits; no unfinished map prototype
+is included.
