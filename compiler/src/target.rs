@@ -332,9 +332,10 @@ impl TargetFrameField {
 /// byte array whose requested address alignment is stronger than its natural
 /// type alignment. `logical_fields` maps each source/emitter slot, in the
 /// caller's order, to the physical field that owns it. Positive-sized roots
-/// with one common natural alignment and no padding may instead be separate
-/// allocations: every ordering has the same complete extent. Other frames
-/// keep the struct allocation, including zero-sized or over-aligned roots.
+/// whose sizes are multiples of the maximum natural alignment, with no
+/// padding, may instead be separate allocations at that common alignment:
+/// every ordering has the same complete extent. Other frames keep the struct
+/// allocation, including zero-sized or explicitly over-aligned roots.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct TargetFramePlan {
     physical_fields: Vec<TargetStorageType>,
@@ -381,7 +382,7 @@ pub(super) fn plan_target_frame(
     let mut logical_fields = Vec::with_capacity(slots.len());
     let mut size = 0_u64;
     let mut frame_alignment = 1_u64;
-    let mut common_slot_alignment = None;
+    let mut slot_sizes = Vec::with_capacity(slots.len());
     let mut independent_slots = true;
 
     for slot in slots {
@@ -396,9 +397,8 @@ pub(super) fn plan_target_frame(
         independent_slots &= requested == layout.align
             && layout.size > 0
             && layout.size % requested == 0
-            && start == size
-            && common_slot_alignment.is_none_or(|alignment| alignment == requested);
-        common_slot_alignment = Some(requested);
+            && start == size;
+        slot_sizes.push(layout.size);
         if start != size {
             physical_fields.push(TargetStorageType::bytes(start - size));
         }
@@ -414,7 +414,12 @@ pub(super) fn plan_target_frame(
     }
 
     let complete = align_up(target, size, frame_alignment, TargetObject::StackFrame)?;
-    independent_slots &= complete == size;
+    // Every root begins and ends on the selected common alignment in any
+    // ordering. Strengthening an individual alloca's alignment therefore
+    // introduces no additional padding or unchecked complete extent.
+    independent_slots &= complete == size
+        && !slot_sizes.is_empty()
+        && slot_sizes.iter().all(|size| size % frame_alignment == 0);
     if complete != size {
         physical_fields.push(TargetStorageType::bytes(complete - size));
     }
@@ -426,7 +431,7 @@ pub(super) fn plan_target_frame(
             size: complete,
             align: frame_alignment,
         },
-        independent_slot_alignment: independent_slots.then_some(common_slot_alignment).flatten(),
+        independent_slot_alignment: independent_slots.then_some(frame_alignment),
     })
 }
 

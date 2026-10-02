@@ -3480,24 +3480,38 @@ condition under which it is taken up.
   Extending the running-index source form to `hash_map_edit` removes reached
   native bucket reconstruction, but its [complete EDIT comparison](../research/experiments/container-representation/map-library/RESULTS.md#edit-running-index-native-improvement-without-qualified-timing-gain)
   has no before/after cell with separated ranges in both cohorts, despite lower
-  medians. Keep the source patch experimental. Reopen with a discriminator for
-  remaining result staging or probe work and the same complete-outcome and
-  peer criteria; instruction removal alone does not qualify an optimization.
+  medians. Its frozen failed verdict remains unchanged when the Draft integrates
+  the same probe algorithm's mask/running-index implementation. Keep remaining
+  result staging or probe work subject to the same complete-outcome and peer
+  criteria; instruction removal alone does not qualify an optimization.
   The same campaign has only one observation per seed/arm/cohort, so marginal
-  ranges combine input variation and execution variation. Investigate repeated,
-  order-balanced identical inputs when that distinction blocks attribution;
-  keep every workload and peer target and preregister any future criterion.
+  ranges combine input variation and execution variation. The later
+  [repeated-seed diagnostic](../research/experiments/container-representation/map-library/RESULTS.md#repeated-seed-diagnostic-unresolved-execution-variation)
+  retains two median-spread flags among 160 groups and mixed paired ratios;
+  it does not isolate execution history, allocation, cache or address effects.
+  Reopen attribution with a discriminator for the reached mechanism when that
+  uncertainty blocks selection, retaining every workload and peer target.
   The existing experiment and its failed verdict remain unchanged.
+
+  The [retrospective peer-selector correction](../research/experiments/container-representation/map-library/RESULTS.md#retrospective-edit-peer-selection-unchanged-verdicts)
+  changes one selected peer among 56 cells and no historical verdict. Its
+  separately labeled canonical audit preserves the historical stricter drift
+  refusals. Historical strict-target Booleans omit an explicit duration guard;
+  all observed intervals are at least 3.769 ms, but a future short sample could be
+  mislabeled by consuming that Boolean alone. Add a tested duration refusal
+  before reusing this reduction for another selection; retain the sub-1-ms
+  rejecting fixture and distinguish that future correction from frozen flags.
 
   The [independent-alignment compiler prototype](../research/experiments/container-representation/map-library/RESULTS.md#independent-local-alignment-native-reduction-without-qualified-edit-gain)
   removes three private Result stores on the reached successful EDIT path, but
-  its registered timing criterion fails; broader eligibility remains unselected. Whole-trace
-  frame/instruction reductions include other operations and do not attribute
-  elapsed EDIT cost. The separate [EDIT home-mask trial](../research/experiments/container-representation/map-library/RESULTS.md#edit-home-mask-native-division-bypass-without-qualified-timing-gain)
+  its registered timing criterion fails. The Draft's broader eligibility is now
+  a provisional implementation proposal, not a revised verdict for that trial.
+  Whole-trace frame/instruction reductions include other operations and do not
+  attribute elapsed EDIT cost. The separate [EDIT home-mask trial](../research/experiments/container-representation/map-library/RESULTS.md#edit-home-mask-native-division-bypass-without-qualified-timing-gain)
   also fails, including adverse small-case medians despite division bypass.
-  Keep both patches experimental. Reopen only with a discriminating prospective
-  measurement of remaining EDIT work and the unchanged complete-outcome/peer
-  target; compiler regression timing remains conditional on primary gain.
+  Establish the integrated candidate's complete-root, snapshot, overlap and
+  parallel-lifetime correctness and retain the unchanged complete-outcome/peer
+  target; its conditional API screen remains unqualified as recorded below.
 
   The [outer EDIT-dispatch caller trial](../research/experiments/container-representation/map-library/RESULTS.md#outer-edit-dispatch-qualified-caller-form-gains-on-large-maps)
   qualifies large-map gains with unchanged library/compiler bytes, but small-map
@@ -3513,7 +3527,7 @@ condition under which it is taken up.
   Independent local allocation in the outer-dispatch caller qualifies five
   gain cells, but small aligned peer targets still fail and scalar-large aligned
   qualification is invalidated by C-direct drift. Keep the earlier multipath
-  failure separate. Reopen compiler eligibility only against its complete-root
+  failure separate. Validate the Draft eligibility change against its complete-root
   extent/snapshot/alias obligations and remaining API regressions; do not infer
   per-store cost or a general library gain from this caller-context result.
 
@@ -3537,6 +3551,13 @@ condition under which it is taken up.
   criteria. The separately rejected unswitch threshold grows whole bodies
   beyond its cap and adds wide hot-loop reload work, so branch hoisting alone
   does not justify that global compiler option.
+
+  Existing lookup, replace, paired churn, reserve and whole EDIT traces do not
+  separately measure public find, fresh insert, remove or isolated EDIT.
+  Treating churn or a complete trace as per-API completion would conceal those
+  gaps. Reopen immediately in the Map API phase with ordinary public wrappers,
+  complete outcomes, an independent oracle and qualified individual clock
+  windows, using the same Rust/C++ peers and existing target calculation.
 
 - **Ordered insertion replacement costs need attribution.** Both the
   [aggregate-result candidate](../research/experiments/container-representation/ordered-library/RESULTS.md#single-descent-insertion-candidate)
@@ -4098,8 +4119,9 @@ condition under which it is taken up.
   coarsened clock. Keep old samples with their original instrument identity;
   this finding does not by itself invalidate longer whole-trace windows.
   Recheck Vector's spare-append comparisons with the repaired instrument before
-  declaring the complete append API qualified. Do not change other families'
-  benchmarks during the current Vector-only step.
+  declaring the complete append API qualified. Qualify each other family's
+  benchmarks during its authorized API phase, preserving the historical samples
+  and their original instrument identity.
   The [frozen growth-route spare cross-check](../research/experiments/container-representation/vector-library/RESULTS.md#spare-append-after-growth-exposure-registered-api-cross-check)
   supplies that RAW evidence for the two experimental images: all six spare
   cells pass in both launches and both cohorts of each image, with every real

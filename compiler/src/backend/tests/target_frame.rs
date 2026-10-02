@@ -99,6 +99,54 @@ fn uniform_positive_roots_split_only_after_the_complete_extent_fits() {
 }
 
 #[test]
+fn heterogeneous_roots_split_when_each_size_is_a_multiple_of_maximum_alignment() {
+    // Same native sizes/alignments as Result<unit, unit> and Result<u64, unit>:
+    // each complete root fits at alignment eight without adding padding.
+    let smaller =
+        TargetFrameSlot::natural(TargetStorageType::array(TargetStorageType::integer(32), 2));
+    let larger =
+        TargetFrameSlot::natural(TargetStorageType::array(TargetStorageType::integer(64), 3));
+    for slots in [[smaller.clone(), larger.clone()], [larger, smaller]] {
+        let frame = plan(&slots, Some(32)).expect("both complete roots fit exactly");
+        assert_eq!(frame.independent_slot_alignment(), Some(8));
+        assert_eq!(frame.layout().size(), 32);
+        assert_eq!(frame.layout().align(), 8);
+        assert_eq!(
+            plan(&slots, Some(31)),
+            Err(TargetLayoutFailure::Unrepresentable(
+                TargetObject::StackFrame
+            ))
+        );
+    }
+}
+
+#[test]
+fn heterogeneous_split_preserves_complete_parent_extent_and_explicit_alignment() {
+    let parent =
+        TargetFrameSlot::natural(TargetStorageType::array(TargetStorageType::integer(64), 33));
+    let smaller =
+        TargetFrameSlot::natural(TargetStorageType::array(TargetStorageType::integer(32), 2));
+    let slots = [parent, smaller];
+    let frame = plan(&slots, Some(272)).expect("the complete parent and sibling fit");
+    assert_eq!(frame.independent_slot_alignment(), Some(8));
+    assert_eq!(frame.layout().size(), 272);
+    assert_eq!(frame.logical_field(1).unwrap().offset(), 264);
+    assert_eq!(
+        plan(&slots, Some(271)),
+        Err(TargetLayoutFailure::Unrepresentable(
+            TargetObject::StackFrame
+        ))
+    );
+    let explicitly_aligned = plan(
+        &[TargetFrameSlot::aligned(TargetStorageType::bytes(8), 8)],
+        None,
+    )
+    .expect("an explicit ABI alignment still fits");
+    assert_eq!(explicitly_aligned.layout().size(), 8);
+    assert_eq!(explicitly_aligned.independent_slot_alignment(), None);
+}
+
+#[test]
 fn mixed_alignment_keeps_the_struct_when_reordering_would_grow_the_frame() {
     let word = TargetFrameSlot::natural(TargetStorageType::integer(64));
     let byte = TargetFrameSlot::natural(TargetStorageType::integer(8));

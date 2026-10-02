@@ -1267,8 +1267,131 @@ fn hash_map_test_units() -> result: u64 pure {
   return seen.failures;
 }
 
+fn hash_map_test_edit_ordered(env: &HashMapTestSeen, key: &u64, value: &u64) -> result: u64 reads(key), writes(env), writes(value) {
+  set env^.visits = env^.visits +wrap 1_u64;
+  let prefix = env^.observed *wrap 10_u64;
+  let digit = key^ +wrap 1_u64;
+  set env^.observed = prefix +wrap digit;
+  set value^ = value^ +wrap 1_u64;
+  return value^;
+}
+
+fn hash_map_test_edit_home(env: &HashMapHashEnv, key: &u64) -> result: u64 pure {
+  return 5_u64;
+}
+
+binding HashMapEditBoundaryKey : HashMapKey<u64, HashMapHashEnv> {
+  hash = hash_map_test_edit_home;
+  equal = hash_map_test_scalar_equal;
+}
+
+fn hash_map_test_edit_boundaries() -> result: u64 pure {
+  doc "At capacity three, hash five starts in the last bucket, while an incorrect unconditional mask starts at a vacant bucket. Editing the sparse map checks modulo fallback; filling it, deleting the home entry and editing both survivors checks wrapped traversal through tombstones. Full-cycle and empty misses never invoke the update. Ordered callbacks and complete consumed key/value sums observe every mutation.";
+  let seen = HashMapTestSeen(failures: 0_u64, consumed: 0_u64, key_sum: 0_u64, value_sum: 0_u64, visits: 0_u64, observed: 0_u64);
+  let no = False();
+  let env = HashMapHashEnv(hostile: no);
+  let map = hash_map_new::<u64, u64, 3>(capacity: 3_u64);
+  let first_inserted = hash_map_try_put::<HashMapEditBoundaryKey, u64, 3>(map: &map, key: 0_u64, value: 0_u64, env: &env);
+  hash_map_test_scalar_outcome(outcome: first_inserted, expected: 0_u64, key: 0_u64, value: 0_u64, seen: &seen);
+  let initial_key = 0_u64;
+  let sparse = hash_map_edit::<HashMapEditBoundaryKey, u64, HashMapTestSeen, u64, fn hash_map_test_edit_ordered, 3>(map: &map, key: &initial_key, key_env: &env, edit_env: &seen);
+  match sparse {
+    Ok(value: reached) => {
+      if reached != 1_u64 {
+        hash_map_test_fail(seen: &seen);
+      }
+    }
+    Err(error: absent) => {
+      hash_map_test_fail(seen: &seen);
+    }
+  }
+  for (index in 1_u64..3_u64) {
+    let outcome = hash_map_try_put::<HashMapEditBoundaryKey, u64, 3>(map: &map, key: index, value: index, env: &env);
+    hash_map_test_scalar_outcome(outcome: outcome, expected: 0_u64, key: index, value: index, seen: &seen);
+  }
+  let absent_key = 9_u64;
+  let absent = hash_map_edit::<HashMapEditBoundaryKey, u64, HashMapTestSeen, u64, fn hash_map_test_edit_ordered, 3>(map: &map, key: &absent_key, key_env: &env, edit_env: &seen);
+  match absent {
+    Ok(value: unexpected) => {
+      hash_map_test_fail(seen: &seen);
+    }
+    Err(error: expected) => {
+    }
+  }
+  let first = 0_u64;
+  let removed = hash_map_remove::<HashMapEditBoundaryKey, u64, 3>(map: &map, key: &first, env: &env);
+  match removed {
+    Some(value: pair) => {
+      hash_map_pair_consume::<HashMapScalarConsume>(pair: pair, env: &seen);
+    }
+    None() => {
+      hash_map_test_fail(seen: &seen);
+    }
+  }
+  let wrapped = 1_u64;
+  let edited = hash_map_edit::<HashMapEditBoundaryKey, u64, HashMapTestSeen, u64, fn hash_map_test_edit_ordered, 3>(map: &map, key: &wrapped, key_env: &env, edit_env: &seen);
+  match edited {
+    Ok(value: reached) => {
+      if reached != 2_u64 {
+        hash_map_test_fail(seen: &seen);
+      }
+    }
+    Err(error: not_found) => {
+      hash_map_test_fail(seen: &seen);
+    }
+  }
+  let last_key = 2_u64;
+  let last = hash_map_edit::<HashMapEditBoundaryKey, u64, HashMapTestSeen, u64, fn hash_map_test_edit_ordered, 3>(map: &map, key: &last_key, key_env: &env, edit_env: &seen);
+  match last {
+    Ok(value: reached) => {
+      if reached != 3_u64 {
+        hash_map_test_fail(seen: &seen);
+      }
+    }
+    Err(error: last_absent) => {
+      hash_map_test_fail(seen: &seen);
+    }
+  }
+  let cycle = hash_map_edit::<HashMapEditBoundaryKey, u64, HashMapTestSeen, u64, fn hash_map_test_edit_ordered, 3>(map: &map, key: &absent_key, key_env: &env, edit_env: &seen);
+  match cycle {
+    Ok(value: unexpected) => {
+      hash_map_test_fail(seen: &seen);
+    }
+    Err(error: expected) => {
+    }
+  }
+  hash_map_free::<HashMapScalarConsume, 3>(map: move map, env: &seen);
+  let empty = hash_map_new::<u64, u64, 3>(capacity: 0_u64);
+  let missing = hash_map_edit::<HashMapEditBoundaryKey, u64, HashMapTestSeen, u64, fn hash_map_test_edit_ordered, 3>(map: &empty, key: &absent_key, key_env: &env, edit_env: &seen);
+  match missing {
+    Ok(value: unexpected) => {
+      hash_map_test_fail(seen: &seen);
+    }
+    Err(error: expected) => {
+    }
+  }
+  hash_map_free::<HashMapScalarConsume, 3>(map: move empty, env: &seen);
+  if seen.visits != 3_u64 {
+    hash_map_test_fail(seen: &seen);
+  }
+  if seen.consumed != 3_u64 {
+    hash_map_test_fail(seen: &seen);
+  }
+  if seen.value_sum != 6_u64 {
+    hash_map_test_fail(seen: &seen);
+  }
+  if seen.key_sum != 3_u64 {
+    hash_map_test_fail(seen: &seen);
+  }
+  if seen.observed != 123_u64 {
+    hash_map_test_fail(seen: &seen);
+  }
+  return seen.failures;
+}
+
 fn main() -> status: ExitStatus pure {
   doc "One representation-independent library caller covers copyable pairs, must-consume Box-owning pairs, zero-sized pairs, hostile equality, wrap, tombstones, replacement, real capacity refusal, growth and its thresholds, rehash, borrowed edit, owned callback results and exact cleanup. All observations use public operations rather than bucket fields or iteration order.";
+  let boundary_failures = hash_map_test_edit_boundaries();
   let scalar_failures = hash_map_test_scalars();
   let wrapping_failures = hash_map_test_wrapping();
   let cycle_failures = hash_map_test_cycle();
@@ -1277,6 +1400,9 @@ fn main() -> status: ExitStatus pure {
   let owned_failures = hash_map_test_owned();
   let migration_failures = hash_map_test_owned_migration();
   let unit_failures = hash_map_test_units();
+  if boundary_failures != 0_u64 {
+    return exit_status(code: 7_u8);
+  }
   if scalar_failures != 0_u64 {
     return exit_status(code: 1_u8);
   }

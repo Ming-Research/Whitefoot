@@ -1,8 +1,8 @@
 {
   "purpose": "Isolated ordinary public reserve with verified future entry headroom; single production baseline panel, not an optimization/adoption result",
   "archive": "reserve-api-evidence.tar.gz",
-  "archive_sha256": "cefb905cd4fcadea2c73d42d08cf3c96621a63af7afcaeee3444193a16578f9d",
-  "archive_members": 857,
+  "archive_sha256": "cff2027c54a3661b4e4ba462c09d8b24e763a04613782ec71eb2e284fc77d428",
+  "archive_members": 879,
   "base_revision": "89571a60381a685cfbe760248ceb6178d9f9ac05",
   "production_cli_sha256": "c12b2b2a6c9694fd2bc1b7be0004d582ae9628951422def849f4cf6a3ac02f77",
   "timed_image_sha256": "f1ebf18d7a94c79250bb3cbd74a0b379a2a30c6e5e4eda48396ec77d8bbdbf3f",
@@ -4152,5 +4152,53 @@
     "records": "alignment-running-index/records.json",
     "retained_records": 187,
     "production_adoption": false
+  },
+  "repeated_seed_diagnostic": {
+    "status": "Diagnostic only: two of 160 within-process median flags exceed 10%; mixed same-seed ratios and unresolved execution-history effects. No adoption, causal selection or previous-verdict revision.",
+    "raw_rows": 3520,
+    "within_process_pairs": 1760,
+    "within_process_groups": 160,
+    "within_process_flagged_groups": 2,
+    "cross_process_flagged_groups": 1,
+    "minimum_interval_ns": 3782000,
+    "producer_frozen_manifest_sha256": "60478a9aca603263138bda21edd99d14f11e869f40f5e7756cd976eb851321c9",
+    "prefix": "repeated-seed-diagnostic/",
+    "payload_count": 14,
+    "manifest": "repeated-seed-diagnostic/manifest.json",
+    "manifest_sha256": "83739046332cb61be781850c62976460cf057d159e1f0f4de9728c9289cddcd8",
+    "records": "repeated-seed-diagnostic/records.json",
+    "retained_records": 40,
+    "production_adoption": false
+  },
+  "peer_selection_correction": {
+    "prefix": "peer-selection-correction/",
+    "payload_count": 7,
+    "manifest": "peer-selection-correction/manifest.json",
+    "manifest_sha256": "d28905847880acf4c3a6ba3cb3d57036f49e089f5bd4b776d96e36b6ad77968d",
+    "records": "peer-selection-correction/records.json",
+    "retained_records": 42,
+    "producer_frozen_manifest_sha256": "60e6c05b60ca7323618b47294141459b8096e84b97132074280c04f742fc1441",
+    "campaigns": 7,
+    "raw_rows_reused": 12320,
+    "cells": 56,
+    "changed_peer_selections": 1,
+    "changed_range_or_target_verdicts": 0,
+    "maintained_function_fixtures": 6,
+    "minimum_interval_ns": 3769000,
+    "historical_stricter_drift_gate_preserved": true,
+    "historical_target_duration_omission_preserved_and_reported": true,
+    "production_adoption": false,
+    "status": "Routine retrospective per-cohort peer selection and tie correction; no sample or historical verdict changes. Canonical audit remains separate."
+  },
+  "repeated_seed_peer_selection_prior_index": {
+    "prior_archive_sha256": "cefb905cd4fcadea2c73d42d08cf3c96621a63af7afcaeee3444193a16578f9d",
+    "prior_members": 857,
+    "unchanged_names_and_bytes": 856,
+    "renamed_member": {
+      "from": "component-index.json",
+      "to": "component-index-before-repeated-seed-peer-selection.json",
+      "sha256": "fa88c71cb9cc5bace92f851a8366b70fa84de186387bdb7946a3f34563e09b9f"
+    },
+    "all_prior_member_bytes_preserved": true
   }
 }

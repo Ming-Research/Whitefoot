@@ -150,9 +150,20 @@ fn hash_map_edit<interface HashMapKey<K, E>, V, F, R, fn update(env: &F, key: &K
 } {
   let hash = HashMapKey::hash(env: key_env, key: key);
   let count = map^.cells.inner.len;
-  for (step in 0_u64..count) {
-    let home = hash % count;
-    let index = hash_map_probe(home: home, step: step, count: count);
+  if count == 0_u64 {
+    return Err<R, unit>(error: unit);
+  }
+  let mask = count - 1_u64;
+  let home = iand(hash, mask);
+  let non_power = iand(count, mask);
+  if non_power != 0_u64 {
+    set home = hash % count;
+  }
+  let index = home;
+  for @edit (
+    step in 0_u64..count,
+    invariant bucket: index < count
+  ) {
     let slot = &map^.cells.inner[index];
     match slot^ {
       HashMapFilled(key: saved_key, value: saved_value) => {
@@ -167,6 +178,12 @@ fn hash_map_edit<interface HashMapKey<K, E>, V, F, R, fn update(env: &F, key: &K
       }
       HashMapDeleted() => {
       }
+    }
+    let next = index + 1_u64;
+    if next < count {
+      set index = next;
+    } else {
+      set index = 0_u64;
     }
   }
   return Err<R, unit>(error: unit);

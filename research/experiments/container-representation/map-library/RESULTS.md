@@ -20,13 +20,21 @@ consumer for the [same-source compiler comparison](#same-source-inactive-storage
 Keep this experiment while it owns these comparisons; remove it when a
 maintained successor preserves the same contracts and evidence.
 
-Current follow-ups remain experimental. The [running-index interaction](#running-index-in-the-combined-experimental-context)
+The current Draft implements the provisional complete-root alignment recipe
+and ordinary EDIT mask/running-index source forms. The compiler choice remains
+[Q206, pending an owner ruling](../../../../design/amendments/independent-local-alignment.md);
+this proposed implementation is not a completed HashMap performance target or
+an owner-approved compiler selection. The source forms preserve the existing
+representation, public contracts and cyclic linear-probe algorithm.
+
+The frozen [running-index interaction](#running-index-in-the-combined-experimental-context)
 meets both small aligned peer targets, with about 19 percent marginal gain in
 its combined caller/compiler/mask context. Both large aligned comparisons are
 drift-invalid. The [conditional API screen](#conditional-api-screen-no-separated-loss-incomplete-qualification)
 also remains unqualified because three lookup cells and one mutation cell fail
-drift checks. No new compiler or library change is adopted; earlier failed
-comparisons retain their original verdicts.
+drift checks. These measurements precede the integrated Draft candidate; they
+do not establish its complete performance. Earlier failed comparisons retain
+their original verdicts and remain distinct from the provisional implementation.
 
 ## Current Rust and C++ ecosystem comparison
 
@@ -5925,3 +5933,55 @@ The `alignment-running-index/` component of
 [reserve-api-evidence.tar.gz](reserve-api-evidence.tar.gz) retains exact source,
 criteria, compact native/fault evidence, all raw rows and reducers, plus the
 threshold rejection and explicit replay limits.
+
+### Repeated-seed diagnostic: unresolved execution variation
+
+A driver-only diagnostic repeats identical seeds in opposite orders within
+one process and linked image. Its four raw CSVs retain 3,520 rows and 1,760
+paired observations; all outcomes and coverage checks pass, and the minimum
+interval is 3.782 ms. Two of 160 within-process group median spreads exceed
+10 percent. Individual same-seed ratios are mixed: controlling the seed does
+not identify temporal, allocator, cache, address or branch effects. Reversing
+order also changes execution history, and recorded link-symbol addresses do
+not establish runtime ASLR addresses. No earlier qualification or adoption
+verdict changes.
+
+The `repeated-seed-diagnostic/` component in
+[reserve-api-evidence.tar.gz](reserve-api-evidence.tar.gz) retains the exact
+driver patch, prospective criterion, raw rows, reducers, pins and statuses,
+including the first wrapper assertion failure and repair. That wrapper
+expected the earlier complete-driver count; the diagnostic driver correctly
+checks 2,714 traces. No real sample, source criterion or expected semantic
+outcome was changed to repair the wrapper. Replay needs the pinned parent
+inputs and omitted build dependencies described in the component.
+
+### Retrospective EDIT peer selection: unchanged verdicts
+
+The seven historical EDIT reducers selected one median-slower Rust/C++ peer
+across pooled cohorts. The maintained rule selects independently within each
+cohort; ties select both peers and use their less favorable minimum. Replaying
+all seven archived reductions reproduces their saved outputs before correcting
+only this selection and its dependent range checks. Across 12,320 raw rows and
+56 cells, one choice changes: original `edit-home-mask`, aligned hashing,
+8-byte payload and capacity 64, cohort 1 selects C++ instead of Rust. Its range
+check still fails. All historical range, target and source-retention verdicts
+remain unchanged.
+
+Six focused fixtures agree with the unchanged maintained Perl target function.
+The crossed-peer false-pass and false-fail fixtures satisfy duration and all
+cohort-stability gates, isolating the selector defect; the other fixtures cover
+ties, exact range equality and refusal of a sub-1-ms selected comparison.
+Initial fixture and archive-replay authoring failures and their repairs are
+retained in `peer-selection-correction/` in the same archive.
+
+The separately labeled canonical audit does not replace the historical,
+stricter all-implementation drift gate. In particular, its target passes for
+aligned scalar 4096 in the alignment-interaction and running-index campaigns
+do not requalify those historically invalid cells. The historical strict-target
+Boolean also omitted an explicit duration guard, although the source-retention
+criterion checked the global minimum. All actual intervals are at least
+3.769 ms, so that omission changes none of these observations. Future consumers
+must check duration explicitly rather than treat that Boolean alone as a
+qualified target. Exact sources, corrected outputs, canonical audits and
+archive-only replay provenance are retained with original and normalized
+hashes; original frozen records remain byte-identical.
