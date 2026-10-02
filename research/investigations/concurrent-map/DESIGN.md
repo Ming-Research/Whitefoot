@@ -379,33 +379,32 @@ begun statement whose guard stays true takes effect:
   hold an unlock had handed a parked context, which then waited again from
   its queue's head and could lose the object at every hand-off.
 
-**A keyed statement's patience.** The fix the owner first approved marked a waiter
-beside its cell and had the unlocker hand the cell to a marked waiter, in
-turn. A waiter's place then names a cell of one table: a move, which other
-users' claims can start between any two of the waiter's steps, gives the
-cell back and sends the waiter to compete for the key's cell in the next
-table, so the place does not survive the moves [WAIT-2] allows, and the
-owner approved replacing it. Instead a keyed statement counts the pauses it waits for cells, and each retry after a
-lost compare-and-swap, a claim that gave way or a move as one more, over
-every probe and table it tries (`wf_cmap_lock_entry`), so a move does not
-reset the count. The map's test runs a statement with no patience out of it
-by each retry that waits for no cell, alone: a lost claim of an empty cell,
-a lost claim of a removed cell, a claim a move gave back and a lost lock of
-its key's cell. A claim that gave way to an earlier one meets that claim's
-locked cell on its next probe and waits for it, which counts in any case,
-so no test isolates that retry. It counts pauses
-where an object statement counts vain wakes because it never parks and so
-is never woken; the count is provisional, since a pause lasts several times
-longer on some cores than others. Past 2^16 pauses, 0.77 ms on this host at
-11.7 ns a pause, it gives back
-any claim, leaves the statements under way, holds the whole map through the
-gate a whole-map statement uses, and then locks its entry, which no
-statement holds by then. Whole-map statements take turns by ticket. After
-the statement's hold closes the gate it waits for at most one keyed
-statement of each other user, those already under way, and its hold waits
-for at most one hold of each other user ahead of it. Keyed statements that
-begin between two holds are bounded by the holds' own steps, not by a
-count.
+**A keyed statement's patience.** The fix the owner first approved marked a
+waiter beside its cell and had the unlocker hand the cell to a marked
+waiter, in turn. A waiter's place then names a cell of one table: a move,
+which other users' claims can start between any two of the waiter's steps,
+gives the cell back and sends the waiter to compete for the key's cell in
+the next table, so the place does not survive the moves [WAIT-2] allows, and
+the owner approved replacing it. Instead a keyed statement counts the pauses
+it waits for cells, and each retry after a lost compare-and-swap, a claim
+that gave way or a move as one more, over every probe and table it tries
+(`wf_cmap_lock_entry`), so a move does not reset the count. The map's test
+runs a statement with no patience out of it by each retry that waits for no
+cell, alone: a lost claim of an empty cell, a lost claim of a removed cell,
+a claim a move gave back and a lost lock of its key's cell. A claim that
+gave way to an earlier one meets that claim's locked cell on its next probe
+and waits for it, which counts in any case, so no test isolates that retry.
+It counts pauses where an object statement counts vain wakes because it
+never parks and so is never woken; the count is provisional, since a pause
+lasts several times longer on some cores than others. Past 2^16 pauses, 0.77
+ms on this host at 11.7 ns a pause, it gives back any claim, leaves the
+statements under way, holds the whole map through the gate a whole-map
+statement uses, and then locks its entry, which no statement holds by then.
+Whole-map statements take turns by ticket. After the statement's hold closes
+the gate it waits for at most one keyed statement of each other user, those
+already under way, and its hold waits for at most one hold of each other
+user ahead of it. Keyed statements that begin between two holds are bounded
+by the holds' own steps, not by a count.
 
 The map's test checks the bound with four threads on one key, the first
 out of patience at its first wait and the others never, while a fifth user
@@ -463,33 +462,34 @@ the owed context ran, and every hand-off had to stop while any context was
 owed, or a context handed the object later became owed and reserved first.
 
 `compiler/src/backend/completion/shared_object_test.c` runs contexts whose
-frames it writes on one driver beside two threads that stand for
-statements in map blocks on other drivers, and steps them through each
-hand-off in a fixed order, so every cycle reaches the moments it checks
-whatever the host's speed, load or lock fairness. A thread holds the object
-until one context has parked behind it, then unlocks and takes it again
-while the other context keeps the driver, until an unlock hands the first
-context the object; the other context, on the same driver, must then
-borrow the handed hold, as must the second thread, which keeps its borrow
-until the first context has resumed and claimed the hold, and gives it
-back only once the first thread asks for the object. The test fails at
-once when an unlock hands a statement the object after other than two vain
-wakes, when a statement is handed the object twice or is overtaken after
-it resumed, or when either borrower takes the object without borrowing the
-hold, and a watchdog fails it, naming the step, when no cycle advances for
-10 s. Its 50 cycles ran 50 hand-offs and 100 borrows exactly in every run:
-200 runs on four CPUs, 60 on two and 30 on one (the slowest 22, 21 and
-595 ms), and 30 beside eight busy loops (the slowest 3.5 s). Mutants,
-eight runs each, fail in the first cycle: the take-back with a borrower
-that took the object without borrowing it, a borrow that ignores the claim
-with a resumed statement overtaken twice, a hand-off after one or after
-three vain wakes with that count, and a statement that waits instead of
-borrowing by the watchdog in the step where the other context borrows. An earlier version, whose threads held the object again and again
-untimed, reached its 50 hand-offs in 0.28 s on the hosted Linux runner but
-only 30 in 30 s on the hosted macOS one, where an unlocking thread mostly
-took the object back before the context on the driver could. The test
-links the runtime objects the default-route probe builds, so it adds no
-compilation to the runtime group.
+frames it writes on one driver beside two threads that stand for statements
+in map blocks on other drivers, and steps them through each hand-off in a
+fixed order, so every cycle reaches the moments it checks whatever the
+host's speed, load or lock fairness. A thread holds the object until one
+context has parked behind it, then unlocks and takes it again while the
+other context keeps the driver, until an unlock hands the first context the
+object; the other context, on the same driver, must then borrow the handed
+hold, as must the second thread, which keeps its borrow until the first
+context has resumed and claimed the hold, and gives it back only once the
+first thread asks for the object. The test fails at once when an unlock
+hands a statement the object after other than two vain wakes, when a
+statement is handed the object twice or is overtaken after it resumed, or
+when either borrower takes the object without borrowing the hold, and a
+watchdog fails it, naming the step, when no cycle advances for 10 s. Its 50
+cycles ran 50 hand-offs and 100 borrows exactly in every run: 200 runs on
+four CPUs, 60 on two and 30 on one (the slowest 22, 21 and 595 ms), and 30
+beside eight busy loops (the slowest 3.5 s). Mutants, eight runs each, fail
+in the first cycle: the take-back with a borrower that took the object
+without borrowing it, a borrow that ignores the claim with a resumed
+statement overtaken twice, a hand-off after one or after three vain wakes
+with that count, and a statement that waits instead of borrowing by the
+watchdog in the step where the other context borrows. An earlier version,
+whose threads held the object again and again untimed, reached its 50
+hand-offs in 0.28 s on the hosted Linux runner but only 30 in 30 s on the
+hosted macOS one, where an unlocking thread mostly took the object back
+before the context on the driver could. The test links the runtime objects
+the default-route probe builds, so it adds no compilation to the runtime
+group.
 
 ## The measurement
 
