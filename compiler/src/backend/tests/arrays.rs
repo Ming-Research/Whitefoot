@@ -53,7 +53,7 @@
 //!   caller form the reference`. The shared-reference call boundary that case
 //!   observed is kept by the three reading helpers that remain.
 //! - `runtime_allocation_bounds_include_each_shape_header_at_target_qualification`
-//!   retired with v0.85's [OP-9]. Its subject was that target qualification
+//!   retired with v0.86's [OP-9]. Its subject was that target qualification
 //!   multiplies each construction's proved count bound by the actual stride,
 //!   adds the shape's header and stops compilation one byte short. A count
 //!   now carries no static bound: the emitted operation computes the same

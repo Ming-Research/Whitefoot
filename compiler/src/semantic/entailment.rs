@@ -1674,11 +1674,15 @@ pub(super) fn collect_statement_calls(
             }
             CheckedStatement::Atomic {
                 target,
+                key,
                 guard,
                 body,
                 ..
             } => {
                 collect_expression_calls(caller, target, calls);
+                if let Some(key) = key {
+                    collect_expression_calls(caller, key, calls);
+                }
                 if let Some(guard) = guard {
                     collect_expression_calls(caller, guard, calls);
                 }

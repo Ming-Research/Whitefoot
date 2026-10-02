@@ -229,7 +229,7 @@ $(eval $(call completion-image,core-read-probe-sanitize,$(COMPLETION_CORE_READ_S
 $(eval $(call completion-image,harness-tsan,$(COMPLETION_SOURCES),$(COMPLETION_TSAN_FLAGS) $(COMPLETION_DEFINES) $(COMPLETION_HARNESS_DEFINES)))
 $(eval $(call completion-image,bridge-default-probe-tsan,$(COMPLETION_DEFAULT_ROUTE_SOURCES),$(COMPLETION_TSAN_FLAGS)))
 
-completion-test: $(COMPLETION_TMP)/harness completion-core-read-test completion-default-route-test sched-smoke sched-deque-test sched-policy-test floor-test completion-native-test
+completion-test: $(COMPLETION_TMP)/harness completion-core-read-test completion-default-route-test sched-smoke sched-deque-test sched-policy-test floor-test concurrent-map-test shared-object-test completion-native-test
 	@mkdir -p "$(COMPLETION_TMP)"
 	$(NO_CORE_DUMPS) $(NATIVE_REQUIREMENT) WF_IO_HELPERS=1 "$(COMPLETION_TMP)/harness" "$(COMPLETION_TMP)" all
 	$(NO_CORE_DUMPS) $(NATIVE_REQUIREMENT) WF_IO_HELPERS=0 "$(COMPLETION_TMP)/harness" "$(COMPLETION_TMP)" bridge
@@ -388,6 +388,57 @@ $(SCHED_PROBE_OBJECT_DIR)/floor-probe-hooks.o: src/backend/floor_probe.c src/bac
 floor-test: $(COMPLETION_TMP)/floor-probe $(COMPLETION_TMP)/floor-probe-hooks
 	WF_WORKERS=4 "$(COMPLETION_TMP)/floor-probe"
 	WF_WORKERS=4 "$(COMPLETION_TMP)/floor-probe-hooks"
+
+# The concurrent map, and its locked read built for measurement, each against
+# a reference, accounting checks and recorded histories checked for
+# linearizability (concurrent_map_test.c). The locked read changes only the
+# tests of word keys and the narrowed hashes only those of entries, so those
+# builds run only the tests they change; the default build runs every test.
+# The test includes the map's source, so that it can drive interleavings
+# through the map's own steps.
+CONCURRENT_MAP_SOURCES := src/backend/concurrent_map.c src/backend/concurrent_map_test.c
+CONCURRENT_MAP_VARIANTS := copy-out locked collide
+concurrent-map-test: $(foreach v,$(CONCURRENT_MAP_VARIANTS),$(COMPLETION_TMP)/concurrent-map-test-$(v))
+	@set -e; for v in $(CONCURRENT_MAP_VARIANTS); do "$(COMPLETION_TMP)/concurrent-map-test-$$v"; done
+$(COMPLETION_TMP)/concurrent-map-test-copy-out: $(CONCURRENT_MAP_SOURCES) src/backend/concurrent_map.h Makefile
+	@mkdir -p "$(dir $@)"
+	$(CC) $(COMPLETION_BASE_CFLAGS) src/backend/concurrent_map_test.c -o "$@"
+$(COMPLETION_TMP)/concurrent-map-test-locked: $(CONCURRENT_MAP_SOURCES) src/backend/concurrent_map.h Makefile
+	@mkdir -p "$(dir $@)"
+	$(CC) $(COMPLETION_BASE_CFLAGS) -DWF_CMAP_LOCKED_READ src/backend/concurrent_map_test.c -o "$@"
+# Entries' hashes narrowed to four bits, so that most keys share one.
+$(COMPLETION_TMP)/concurrent-map-test-collide: $(CONCURRENT_MAP_SOURCES) src/backend/concurrent_map.h Makefile
+	@mkdir -p "$(dir $@)"
+	$(CC) $(COMPLETION_BASE_CFLAGS) -DWF_CMAP_TAG_MASK=15 src/backend/concurrent_map_test.c -o "$@"
+
+# The shared-object runtime's waits, with contexts whose frames the test
+# writes and the moments the runtime lets it observe (shared_object_test.c),
+# on one driver beside threads that hold the object, stepped through each
+# hand-off in a fixed order so that it runs alike on every host and
+# processor count. It links the runtime objects the default-route probe
+# builds with the same flags, so the runtime is not compiled again for it.
+SHARED_OBJECT_TEST_OBJECTS := \
+	$(patsubst src/backend/%.c,$(COMPLETION_TMP)/objects/bridge-default-probe/%.o,$(COMPLETION_RUNTIME_SOURCES)) \
+	$(COMPLETION_TMP)/objects/bridge-default-probe/completion/shared_object_test.o
+$(COMPLETION_TMP)/shared-object-test: $(SHARED_OBJECT_TEST_OBJECTS)
+	$(CC) $(COMPLETION_BASE_CFLAGS) $^ -o "$@"
+shared-object-test: $(COMPLETION_TMP)/shared-object-test
+	$(NO_CORE_DUMPS) "$(COMPLETION_TMP)/shared-object-test"
+
+# The executables completion-test runs, which the runtime group builds with
+# every processor before it runs their cases one at a time: compiling them
+# one after another was about two thirds of the group's time, while several
+# cases measure contention and must not share the processors.
+COMPLETION_TEST_IMAGES = $(COMPLETION_TMP)/harness $(COMPLETION_TMP)/core-read-probe \
+	$(COMPLETION_TMP)/bridge-default-probe $(COMPLETION_TMP)/sched-smoke \
+	$(COMPLETION_TMP)/sched-deque-probe $(COMPLETION_TMP)/sched-deque-probe-no-stats \
+	$(SCHED_POLICY_EXE) $(COMPLETION_TMP)/sched-policy-asymmetric \
+	$(COMPLETION_TMP)/sched-policy-disabled $(COMPLETION_TMP)/sched-policy-clamped \
+	$(COMPLETION_TMP)/floor-probe $(COMPLETION_TMP)/floor-probe-hooks \
+	$(foreach v,$(CONCURRENT_MAP_VARIANTS),$(COMPLETION_TMP)/concurrent-map-test-$(v)) \
+	$(COMPLETION_TMP)/shared-object-test \
+	$(if $(filter Linux,$(shell uname -s)),$(COMPLETION_TMP)/linux-native-probe)
+completion-test-images: $(COMPLETION_TEST_IMAGES)
 
 # Manual calibration, never a correctness or automatic performance input.
 sched-wake-measure: $(COMPLETION_TMP)/sched-policy
@@ -618,7 +669,7 @@ completion-windows-wine:
 # Managed-stack park-on-miss measurements are retired from this runtime.
 # Their dated evidence and reproduction revision remain in the investigation.
 .PHONY: check _check static _static build test-build test-build-unit test-build-corpus format lint test _test test-unit test-corpus \
-	docs completion-test completion-native-test \
+	docs completion-test completion-test-images completion-native-test concurrent-map-test shared-object-test \
 	completion-core-read-test \
 	completion-tsan \
 	completion-sanitize \

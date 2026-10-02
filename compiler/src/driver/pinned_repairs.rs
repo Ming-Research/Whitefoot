@@ -2848,7 +2848,7 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "SHARE-2",
         sentences: &[
             "]: AtomicTargetNotShared\n",
-            "\n  mechanical_fix: name a place of type `Shared<T>`: create the object with `shared_new` and give each context its own handle made with `shared_share`\n",
+            "\n  mechanical_fix: name a place of type `Shared<T>` or `SharedMap<V>`, or an entry `m[key]` of a map: create the object with `shared_new` or the map with `shared_map_new`, and give each context its own handle made with `shared_share` or `shared_map_share`\n",
         ],
         repaired: &[br#"fn main() -> status: std::process::ExitStatus pure waits {
   let plain = shared_new::<u8>(value: 0_u8);
@@ -3598,7 +3598,7 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
 /// bound, and a size the target cannot allocate is heap exhaustion at run
 /// time rather than a target-layout stop. The OP-9 repair pairs, the
 /// target's count-limit stop and the tests that carried both out retired
-/// with v0.85's [OP-9]; the run-time check is observed by the backend
+/// with v0.86's [OP-9]; the run-time check is observed by the backend
 /// exhaustion tests.
 #[test]
 fn an_allocation_count_bounded_only_by_its_type_builds() {

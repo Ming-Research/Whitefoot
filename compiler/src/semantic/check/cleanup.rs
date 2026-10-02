@@ -102,6 +102,7 @@ impl<'unit> TypeContext<'unit> {
                 // release of a handle does.
                 CheckedStatement::Atomic {
                     target,
+                    key,
                     guard,
                     body,
                     fallthrough_drops,
@@ -109,6 +110,9 @@ impl<'unit> TypeContext<'unit> {
                 } => {
                     self.validate_expression_release_graphs(target)?;
                     self.release_graph_nodes(target.ty())?;
+                    if let Some(key) = key {
+                        self.validate_expression_release_graphs(key)?;
+                    }
                     if let Some(guard) = guard {
                         self.validate_expression_release_graphs(guard)?;
                     }

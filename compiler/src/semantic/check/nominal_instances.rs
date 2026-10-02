@@ -11,9 +11,9 @@ use crate::{
 
 use super::super::model::{
     CheckedConstructor, CheckedElement, CheckedField, CheckedNominal, CheckedNominalKind,
-    CheckedNumericType, CheckedType, CheckedVariant, NominalId,
+    CheckedNumericType, CheckedShared, CheckedType, CheckedVariant, NominalId,
 };
-use super::generics::GenericSubstitution;
+use super::generics::{GenericArgument, GenericSubstitution};
 use super::{
     CheckStop, Checker, ConstructorTemplate, NominalInstance, NominalTemplate, PreludeType,
 };
@@ -608,6 +608,36 @@ impl<'unit> Checker<'_, 'unit> {
         Ok(())
     }
 
+    /// [SHARE-2] the prelude's `SharedMapState<V>`, the state of a map whose values
+    /// have type `value`.
+    pub(super) fn keyed_state(
+        &mut self,
+        context: super::FunctionContext<'_, '_>,
+        value: CheckedType,
+    ) -> Result<NominalId, CheckStop> {
+        let mut found = None;
+        for (index, template) in self.types.nominal_templates.iter().enumerate() {
+            if template.name == "SharedMapState"
+                && self
+                    .types
+                    .declarations
+                    .is_prelude_opaque_declaration(template.node)?
+            {
+                found = Some(index);
+                break;
+            }
+        }
+        let index = found.ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        let key = self.types.nominal_templates[index]
+            .generic_parameters
+            .first()
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?
+            .key();
+        let substitution =
+            GenericSubstitution::from_bindings(vec![(key, GenericArgument::Type(value))])?;
+        self.ensure_source_nominal_instance(context.check_context, index, substitution)
+    }
+
     pub(super) fn ensure_source_nominal_instance(
         &mut self,
         check_context: &CheckContext<'_>,
@@ -756,17 +786,32 @@ impl<'unit> Checker<'_, 'unit> {
         let kind = (|| {
             Ok(match template.role {
                 DeclarationRole::Struct
-                    if template.name == "Shared"
-                        && self
-                            .types
-                            .declarations
-                            .is_prelude_opaque_declaration(template.node)? =>
+                    if matches!(
+                        template.name.as_str(),
+                        "Shared" | "SharedMap" | "SharedMapState"
+                    ) && self
+                        .types
+                        .declarations
+                        .is_prelude_opaque_declaration(template.node)? =>
                 {
-                    CheckedNominalKind::Shared {
-                        state: substitution
-                            .first_type_argument()
-                            .ok_or(SemanticCompilerFailure::InvalidResolution)?,
-                    }
+                    let state = substitution
+                        .first_type_argument()
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                    let shape = if template.name == "Shared" {
+                        CheckedShared::Object
+                    } else {
+                        // A map's entries are the prelude's `Option<V>`.
+                        let entry = CheckedType::Nominal(
+                            self.types
+                                .intern_prelude_nominal(PreludeType::Option(state))?,
+                        );
+                        if template.name == "SharedMap" {
+                            CheckedShared::Map { entry }
+                        } else {
+                            CheckedShared::State { entry }
+                        }
+                    };
+                    CheckedNominalKind::Shared { state, shape }
                 }
                 DeclarationRole::Struct
                     if self

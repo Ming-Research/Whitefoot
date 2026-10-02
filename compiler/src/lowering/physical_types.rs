@@ -7,7 +7,7 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::NominalId;
-use crate::semantic::{CheckedNominalKind, CheckedProgramData};
+use crate::semantic::{CheckedNominalKind, CheckedProgramData, CheckedShared};
 
 use super::*;
 
@@ -69,7 +69,12 @@ pub(super) fn base_elements(
                     .map(|field| field.ty),
             ),
             CheckedNominalKind::Box { referent, .. } => pending.push(*referent),
-            CheckedNominalKind::Shared { state } => pending.push(*state),
+            CheckedNominalKind::Shared { state, shape } => {
+                pending.push(*state);
+                if let CheckedShared::Map { entry } | CheckedShared::State { entry } = shape {
+                    pending.push(*entry);
+                }
+            }
             CheckedNominalKind::Opaque => {}
         }
     }
@@ -282,8 +287,17 @@ impl<'a> PhysicalTypes<'a> {
                 referent: self.ty(referent)?,
                 release: lower_release_class(release),
             },
-            CheckedNominalKind::Shared { state } => IrNominalKind::Shared {
+            CheckedNominalKind::Shared { state, shape } => IrNominalKind::Shared {
                 state: self.ty(state)?,
+                shape: match shape {
+                    CheckedShared::Object => IrShared::Object,
+                    CheckedShared::Map { entry } => IrShared::Map {
+                        entry: self.ty(entry)?,
+                    },
+                    CheckedShared::State { entry } => IrShared::State {
+                        entry: self.ty(entry)?,
+                    },
+                },
             },
             CheckedNominalKind::Opaque => self.nominals[id.index()].kind.clone(),
         };
@@ -420,9 +434,31 @@ impl<'a> PhysicalTypes<'a> {
                         }
                         (CheckedNominalKind::Opaque, CheckedNominalKind::Opaque) => {}
                         (
-                            CheckedNominalKind::Shared { state: left },
-                            CheckedNominalKind::Shared { state: right },
-                        ) => pending.push((*left, *right)),
+                            CheckedNominalKind::Shared {
+                                state: left,
+                                shape: left_shape,
+                            },
+                            CheckedNominalKind::Shared {
+                                state: right,
+                                shape: right_shape,
+                            },
+                        ) => match (left_shape, right_shape) {
+                            (CheckedShared::Object, CheckedShared::Object) => {
+                                pending.push((*left, *right))
+                            }
+                            (
+                                CheckedShared::Map { entry: left_entry },
+                                CheckedShared::Map { entry: right_entry },
+                            )
+                            | (
+                                CheckedShared::State { entry: left_entry },
+                                CheckedShared::State { entry: right_entry },
+                            ) => {
+                                pending.push((*left, *right));
+                                pending.push((*left_entry, *right_entry));
+                            }
+                            _ => return Ok(false),
+                        },
                         _ => return Ok(false),
                     }
                 }

@@ -6,7 +6,8 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{
     IrArrayRoot, IrElement, IrFunction, IrInstruction, IrLayoutCeiling, IrNominal, IrNominalId,
-    IrNominalKind, IrOperation, IrProgram, IrTargetDomainObligation, IrType, IrWindowShape,
+    IrNominalKind, IrOperation, IrProgram, IrShared, IrTargetDomainObligation, IrType,
+    IrWindowShape,
 };
 
 /// How large a lane frame a handed-out call is granted, in bytes.
@@ -1109,7 +1110,10 @@ fn validate_target_obligation(
             if result_type != IrType::Nominal(*nominal) {
                 return Err(TargetLayoutFailure::InvalidIr);
             }
-            let IrNominalKind::Shared { state } = program
+            let IrNominalKind::Shared {
+                state,
+                shape: IrShared::Object,
+            } = program
                 .nominal(*nominal)
                 .ok_or(TargetLayoutFailure::InvalidIr)?
                 .kind()
@@ -1125,6 +1129,31 @@ fn validate_target_obligation(
                 .is_none_or(|size| size > layouts.target.runtime_allocation_max())
                 || allocation.align > crate::backend::SHARED_STATE_OFFSET
             {
+                return Err(TargetLayoutFailure::Unrepresentable(
+                    TargetObject::RuntimeSizedAllocation,
+                ));
+            }
+        }
+        // [SHARE-1] a map keeps each entry's `Option<V>` in a slot of a node
+        // the runtime carves, aligned to at most 16 bytes.
+        IrOperation::SharedMapNew { nominal, .. } => {
+            if result_type != IrType::Nominal(*nominal) {
+                return Err(TargetLayoutFailure::InvalidIr);
+            }
+            let IrNominalKind::Shared {
+                shape: IrShared::Map { entry },
+                ..
+            } = program
+                .nominal(*nominal)
+                .ok_or(TargetLayoutFailure::InvalidIr)?
+                .kind()
+            else {
+                return Err(TargetLayoutFailure::InvalidIr);
+            };
+            let slot = layouts
+                .layout(*entry)
+                .map_err(|failure| as_object(failure, TargetObject::RuntimeSizedAllocation))?;
+            if slot.size > layouts.target.runtime_allocation_max() || slot.align > 16 {
                 return Err(TargetLayoutFailure::Unrepresentable(
                     TargetObject::RuntimeSizedAllocation,
                 ));

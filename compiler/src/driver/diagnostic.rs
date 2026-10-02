@@ -892,6 +892,8 @@ impl Report for SemanticIssueKind {
             WaitingCallOutsideWaitingFunction { callee, context, mechanical_fix };
             AtomicTargetNotShared { found, mechanical_fix };
             WaitInsideAtomic { construct, mechanical_fix };
+            AtomicKeyNotBytes { found, mechanical_fix };
+            AtomicGuardOnMap { mechanical_fix };
             AtomicGuardWrites { mechanical_fix };
             InvalidSpawn { condition };
             InvalidMusttail { condition, subject };

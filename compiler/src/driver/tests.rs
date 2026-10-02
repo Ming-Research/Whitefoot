@@ -2718,7 +2718,7 @@ fn main() -> status: std::process::ExitStatus pure {
 
 // Retired: u16_buffer_whose_proved_count_exceeds_the_target_byte_domain_is_a_target_failure.
 // Its subject, the target-layout stop at an allocation whose proved count
-// bound the selected target's byte domain cannot hold, retired with v0.85's
+// bound the selected target's byte domain cannot hold, retired with v0.86's
 // [OP-9]: a count carries no static bound, and the emitted operation checks
 // the size it computes. pinned_repairs::an_allocation_count_bounded_only_by_its_type_builds
 // keeps the build, and the backend exhaustion tests the run-time check.

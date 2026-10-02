@@ -1146,6 +1146,7 @@ impl Analyzer<'_, '_> {
             CheckedStatement::Atomic {
                 node_path,
                 target,
+                key,
                 binding,
                 guard,
                 body,
@@ -1153,6 +1154,9 @@ impl Analyzer<'_, '_> {
                 ..
             } => {
                 let _ = self.expression_effects(target, state);
+                if let Some(key) = key {
+                    let _ = self.expression_effects(key, state);
+                }
                 let outer_scope_depth = self.frames.scopes.len();
                 self.frames.scopes.push(vec![*binding]);
                 if let Some(guard) = guard {

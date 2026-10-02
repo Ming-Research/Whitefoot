@@ -946,12 +946,39 @@ pub(crate) enum CheckedNominalKind {
     },
     /// An ordinary opaque nominal has no fields or constructor.
     Opaque,
-    /// [SHARE-1] a handle to a shared object whose state has type `state`.
-    /// Like `Opaque` it has no fields or constructor; unlike it, releasing
-    /// one releases a handle, and the last release releases the state.
+    /// [SHARE-1] a handle to a shared object whose state has type `state`,
+    /// a handle to a shared map whose values have type `state`, or such a
+    /// map's state, as `shape` says. Like `Opaque` it has no fields or
+    /// constructor; unlike it, releasing a handle releases it, and the last
+    /// release releases the state.
     Shared {
         state: CheckedType,
+        shape: CheckedShared,
     },
+}
+
+/// [SHARE-2] what an atomic statement holds.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CheckedAtomicForm {
+    /// An object's state, through a `Shared<T>` handle.
+    Object,
+    /// A map's state, through a `SharedMap<V>` handle.
+    Map,
+    /// One entry of a map: through a `SharedMap<V>` handle, or, `held`,
+    /// through the state an enclosing statement holds.
+    Entry { held: bool },
+}
+
+/// [SHARE-1] which shared nominal a `Shared` kind is.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CheckedShared {
+    /// `Shared<T>`, a handle to an object.
+    Object,
+    /// `SharedMap<V>`, a handle to a map whose every entry is an `entry`,
+    /// the prelude's `Option<V>`.
+    Map { entry: CheckedType },
+    /// `SharedMapState<V>`, a map's state, which only a statement holding it names.
+    State { entry: CheckedType },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2641,12 +2668,24 @@ pub(crate) enum CheckedStatement {
         /// The complete `atomic_stmt`, which the waiting-call record names
         /// [WAIT-1] and which is the statement's own site.
         node_path: NodePath,
-        /// The reference the target place forms: a `&Shared<T>` whose handle
-        /// the statement reads when it begins.
+        /// The reference the target place forms: a `&Shared<T>` or a
+        /// `&SharedMap<V>` whose handle the statement reads when it begins,
+        /// or, for an entry of a map an enclosing statement holds, a
+        /// `&SharedMapState<V>` naming that state.
         target: Box<CheckedExpression>,
-        /// The binder, a reference variable naming the object's state.
+        /// What the statement holds [SHARE-2].
+        form: CheckedAtomicForm,
+        /// Whether the handle is reached through a reference parameter whose
+        /// declared row writes nothing below it, so that the caller's handle
+        /// stays live until the statement completes and the statement needs
+        /// no handle of its own [SHARE-2].
+        borrowed: bool,
+        /// For an entry, the `&[u8]` key the statement reads when it begins.
+        key: Option<Box<CheckedExpression>>,
+        /// The binder, a reference variable naming what the statement holds.
         binding: BindingId,
-        /// The state type `T`.
+        /// The binder's referent type: the object's state `T`, the map's
+        /// state `SharedMapState<V>`, or an entry's `Option<V>`.
         state: CheckedType,
         /// The guard, an owned `Bool` whose footprint writes no path.
         guard: Option<Box<CheckedExpression>>,
@@ -3245,6 +3284,7 @@ impl FunctionMentions {
                 }
                 CheckedStatement::Atomic {
                     target,
+                    key,
                     state,
                     guard,
                     body,
@@ -3253,6 +3293,9 @@ impl FunctionMentions {
                 } => {
                     self.types.push(*state);
                     self.expression(target);
+                    if let Some(key) = key {
+                        self.expression(key);
+                    }
                     if let Some(guard) = guard {
                         self.expression(guard);
                     }

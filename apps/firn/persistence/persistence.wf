@@ -3,7 +3,7 @@ alias DirectoryRead = std::fs::DirectoryRead;
 alias HandleFactory = std::io::HandleFactory;
 alias KeyEnv = pkg::bytes::KeyEnv;
 alias Span = pkg::protocol::Span;
-alias Store = pkg::store::Store;
+alias Keyspace = pkg::store::Keyspace;
 alias Time = pkg::store::Time;
 alias WriteFile = std::fs::WriteFile;
 alias append_once = std::fs::append_once;
@@ -46,7 +46,7 @@ fn append_all(factory: &HandleFactory, file: &WriteFile, source: &Box<Slots<u8>>
   return True();
 }
 
-fn write_log(store: Shared<Store>, factory: HandleFactory, file: WriteFile, clock: Clock) -> result: unit pure waits {
+fn write_log(store: Keyspace, factory: HandleFactory, file: WriteFile, clock: Clock) -> result: unit pure waits {
   doc "The append-only file's writer: every 10 milliseconds it exchanges the keyspace's pending bytes for an empty buffer in one atomic statement and appends what it took to the file, syncing the file once a second has passed since the last sync, as appendfsync everysec does. Once the server stops it writes the last bytes, syncs and closes the file.";
   let spare = box_slots_new::<u8>(capacity: 65536_u64);
   let last_sync = std::time::now(clock: &clock);
@@ -55,9 +55,9 @@ fn write_log(store: Shared<Store>, factory: HandleFactory, file: WriteFile, cloc
     let wake = instant_after(instant: started, nanoseconds: 10000000_u64);
     sleep_until(deadline: wake);
     let stop = False();
-    atomic state = &store {
-      set stop = state^.stopping;
-      swap(first: &state^.log, second: &spare);
+    atomic meta = &store.meta {
+      set stop = meta^.stopping;
+      swap(first: &meta^.log, second: &spare);
     }
     let appended = append_all(factory: &factory, file: &file, source: &spare);
     set spare = box_slots_new::<u8>(capacity: 65536_u64);
@@ -77,7 +77,7 @@ fn write_log(store: Shared<Store>, factory: HandleFactory, file: WriteFile, cloc
   return unit;
 }
 
-fn replay(store: &Shared<Store>, factory: &HandleFactory, root: &DirectoryRead, name: &[u8], name_length: u64, time: &Time) -> applied: u64 reads(store), reads(root), reads(name), reads(time), writes(factory) waits contract {
+fn replay(store: &Keyspace, factory: &HandleFactory, root: &DirectoryRead, name: &[u8], name_length: u64, time: &Time) -> applied: u64 reads(store), reads(root), reads(name), reads(time), writes(factory) waits contract {
   requires name_length <= name^.len;
 } {
   doc "Applies every command of the append-only file the name names, when one exists, and returns how many it applied. As Redis does while loading, no key counts as expired during the replay, time's check being zero, and an expiry whose calendar time has passed is kept as one already reached, so the commands after it in the file apply as they did when they were written; lazy and active expiry remove such a key once the server listens.";
@@ -86,6 +86,9 @@ fn replay(store: &Shared<Store>, factory: &HandleFactory, root: &DirectoryRead, 
     Ok(value: file) => {
       let env = KeyEnv();
       let client = client_new(capacity: 16384_u64);
+      atomic meta = &store^.meta {
+        set client.random = meta^.random;
+      }
       let args = box_slots_new::<Span>(capacity: 16_u64);
       let input = input_new(capacity: 65536_u64);
       let held = 0_u64;

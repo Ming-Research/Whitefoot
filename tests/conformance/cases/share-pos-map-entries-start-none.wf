@@ -1,0 +1,39 @@
+const names: Array<u8, 3> =[97_u8, 98_u8, 99_u8];
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let map = shared_map_new::<u8>(capacity: 4_u64);
+  let code = 0_u8;
+  atomic slot = &map[&names[0_u64..1_u64]] {
+    match slot^ {
+      Some(value: seen) => {
+        set code = 100_u8;
+      }
+      None() => {
+        set code = 1_u8;
+      }
+    }
+    set slot^ = Some<u8>(value: 7_u8);
+  }
+  atomic slot = &map[&names[0_u64..2_u64]] {
+    set slot^ = Some<u8>(value: 9_u8);
+  }
+  atomic slot = &map[&names[0_u64..3_u64]] {
+    set slot^ = None<u8>();
+  }
+  atomic state = &map {
+    let counted = shared_map_count::<u8>(state: state);
+    if counted == 2_u64 {
+      set code = code +wrap 2_u8;
+    }
+  }
+  atomic slot = &map[&names[0_u64..2_u64]] {
+    set slot^ = None<u8>();
+  }
+  atomic state = &map {
+    let counted = shared_map_count::<u8>(state: state);
+    if counted == 1_u64 {
+      set code = code +wrap 10_u8;
+    }
+  }
+  return std::process::exit_status(code: code);
+}

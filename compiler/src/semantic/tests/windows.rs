@@ -19,7 +19,7 @@
 //! - `buffer_new`, `buffer_vacant`, `array_new` and `box_new`'s old spelling
 //!   leave [OP-1]'s table; `buffer_fits` and its static allocation-fit
 //!   predicate leave with them. Its successor, [OP-9]'s static
-//!   allocation-size obligation, retired in turn at v0.85: an allocation's
+//!   allocation-size obligation, retired in turn at v0.86: an allocation's
 //!   size is computed at run time and a size the target cannot allocate is
 //!   heap exhaustion, so no count carries an obligation. The tests that
 //!   pinned that obligation retired with it:

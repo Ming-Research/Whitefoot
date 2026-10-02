@@ -677,14 +677,14 @@ unrepresentable allocation size heap exhaustion
 a way to avoid the run-time cost of data only a contract reads, which a
 separate record answers.
 
-Specification v0.85 implements 1B and 2B, together with 2A. Under it
+Specification v0.86 implements 1B and 2B, together with 2A. Under it
 `probes/collision/` is accepted; `probes/collision-alias/`, a type against an
 alias, is still refused, now with a repair that offers renaming either
 declaration; and `len-whole-row`, `len-window-row` and `len-loop-header` name
 the call whose row removed the length fact, while `stored-position`, whose
 bound no removed fact supplies, keeps the ordinary repair.
 
-The allocation change that follows it on a stacked branch amends v0.85 with
+The allocation change that follows it on a stacked branch amends v0.86 with
 3D, checking the multiplication and the header's addition for overflow and
 comparing the size with the target's maximum rather than saturating, which
 ends the same way. Under it, with the compiler at `77de43b53`, the five

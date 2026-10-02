@@ -392,10 +392,25 @@ pub enum IrNominalKind {
     /// An ordinary opaque nominal supplied by PRE-1.
     Opaque,
     /// [SHARE-1] a handle to a shared object: one pointer to the object,
-    /// whose state of type `state` the runtime keeps behind its header.
+    /// whose state of type `state` the runtime keeps behind its header; or a
+    /// handle to a shared map whose values have type `state`, or that map's
+    /// state, one pointer to the map, as `shape` says.
     Shared {
         state: IrType,
+        shape: IrShared,
     },
+}
+
+/// [SHARE-1] which shared nominal a `Shared` kind is.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IrShared {
+    /// `Shared<T>`: the state lives behind the object's header.
+    Object,
+    /// `SharedMap<V>`: every entry is an `entry`, the `Option<V>` the runtime
+    /// keeps a slot of in each of the map's nodes.
+    Map { entry: IrType },
+    /// `SharedMapState<V>`: the map's state, whose address is the map itself.
+    State { entry: IrType },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1094,6 +1109,13 @@ pub enum IrOperation {
     SharedAcquire {
         object: IrValueId,
     },
+    /// [SHARE-2, SHARE-3] inside the block of a statement holding a map's
+    /// state or an entry: waits, without suspending, until this context holds
+    /// the object alone, since that block's holder keeps its driver. Defines
+    /// `Unit`.
+    SharedTake {
+        object: IrValueId,
+    },
     /// [SHARE-3] a guard read false: gives up the hold and waits until a
     /// statement that writes the object ends. Defines `Unit`.
     SharedWatch {
@@ -1103,6 +1125,52 @@ pub enum IrOperation {
     /// have written the object. Defines `Unit`.
     SharedUnlock {
         object: IrValueId,
+    },
+    /// [SHARE-1] a new shared map of `nominal`, sized for `capacity` values,
+    /// holding one handle and no entry. Defines the handle.
+    SharedMapNew {
+        nominal: IrNominalId,
+        capacity: IrValueId,
+    },
+    /// [SHARE-2] the address of the state of the map `object` names, which is
+    /// the map itself. Defines an address of `state`, a `SharedMapState` nominal.
+    SharedMapState {
+        state: IrNominalId,
+        object: IrValueId,
+    },
+    /// [SHARE-2, SHARE-3] waits until this context holds the state of the map
+    /// `object` names, every keyed statement on it having ended. Defines
+    /// `Unit`.
+    SharedMapHold {
+        object: IrValueId,
+    },
+    /// [SHARE-3] gives up the hold of a map's state. Defines `Unit`.
+    SharedMapUnhold {
+        object: IrValueId,
+    },
+    /// [SHARE-2, SHARE-3] waits until this context holds the entry under the
+    /// bytes the range `key` names of the map `object` names, a handle or,
+    /// with `held`, the address of a state this context holds; an absent key
+    /// gets an entry holding `None`. Defines the address of the entry, an
+    /// `Option<V>`; one context holds one entry at a time.
+    SharedMapLock {
+        nominal: IrNominalId,
+        object: IrValueId,
+        key: IrValueId,
+        held: bool,
+    },
+    /// [SHARE-3] gives up the entry `entry` names, the address
+    /// [`Self::SharedMapLock`] defined: kept when it holds `Some`, removed
+    /// when it holds `None`. Defines `Unit`.
+    SharedMapUnlock {
+        object: IrValueId,
+        entry: IrValueId,
+        held: bool,
+    },
+    /// [SHARE-1] how many entries of the state `state` addresses hold `Some`.
+    /// Defines `u64`.
+    SharedMapCount {
+        state: IrValueId,
     },
     /// The first-element pointer used only by a synthesized split capture of
     /// a `Box<Array<T>>`. The source Box value remains the allocation-base
