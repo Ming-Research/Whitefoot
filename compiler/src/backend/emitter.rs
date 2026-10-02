@@ -2301,21 +2301,12 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 },
             ),
             IrOperation::BufferMeasure { buffer } => self.emit_buffer_length(result, ty, *buffer),
-            IrOperation::SegmentsTotal { lengths } => {
-                self.emit_segments_total(result, ty, *lengths)
-            }
-            IrOperation::SegmentsFits {
-                lengths,
-                total,
-                layout_ceiling,
-                ..
-            } => self.emit_segments_fits(result, ty, *lengths, *total, *layout_ceiling),
             IrOperation::SegmentsFill {
                 nominal,
                 lengths,
-                total,
                 value,
-            } => self.emit_segments_fill(result, ty, *nominal, *lengths, *total, *value),
+                ..
+            } => self.emit_segments_fill(result, ty, *nominal, *lengths, *value),
             IrOperation::SegmentsMeasure { segments } => {
                 self.emit_segments_measure(result, ty, *segments)
             }

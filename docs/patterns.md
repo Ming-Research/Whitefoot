@@ -207,27 +207,20 @@ for (i in 0_u64..items) {
   let count = count_of(item: i);
   set counts.inner[i] = count;
 }
-let made = box_segments_filled::<Cmd>(lengths: &counts.inner[0_u64..items], value: zero);
-match move made {
-  None() => {
-    return refused;
-  }
-  Some(value: out) => {
-    let segments = out.inner.len;
-    for (i in 0_u64..segments) {
-      fill(item: i, window: &out.inner[i]);
-    }
-    consume(commands: &out.inner.all);
-  }
+let out = box_segments_filled::<Cmd>(lengths: &counts.inner[0_u64..items], value: zero);
+let segments = out.inner.len;
+for (i in 0_u64..segments) {
+  fill(item: i, window: &out.inner[i]);
 }
+consume(commands: &out.inner.all);
 ```
 
 `&out.inner[i]` is a range reference over segment i under `i < out.inner.len`
 [OP-4, REF-4], and `&out.inner.all` is one over every element in segment
 order, which hands the joined output to a consumer without a copy. Two
 segments with distinct offsets are distinct storage, so the fill loop is an
-ordinary element map [PAR-2]. `None` means the element total passed the size
-limit [OP-13]; the elements are copy values. When the counts are known only
+ordinary element map [PAR-2]. The elements are copy values, and a total too
+large to allocate is heap exhaustion, as for any allocation [OP-9]. When the counts are known only
 by producing the outputs, and producing them twice costs too much, keep a
 per-item buffer instead: its allocations cost more, which
 [the scatter measurement](../research/investigations/segmented-storage/DESIGN.md#measurement-where-the-outputs-go)

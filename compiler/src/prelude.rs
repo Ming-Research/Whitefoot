@@ -149,10 +149,10 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
     (
         "prelude/box_segments_filled.wf",
         PreludeSource::Function,
-        r#"fn box_segments_filled<T: copy>(lengths: &[u64], value: T) -> result: Option<Box<Segments<T>>> reads(lengths) contract {
-  ensures when Some(value: made): made.inner.len == lengths^.len;
-  ensures when Some(value: made): forall sized(d in 0_u64..made.inner.len): made.inner[d].len == lengths^[d];
-  ensures when Some(value: made): forall filled(d in 0_u64..made.inner.len, k in 0_u64..made.inner[d].len): made.inner[d][k] == value;
+        r#"fn box_segments_filled<T: copy>(lengths: &[u64], value: T) -> result: Box<Segments<T>> reads(lengths) contract {
+  ensures result.inner.len == lengths^.len;
+  ensures forall sized(d in 0_u64..result.inner.len): result.inner[d].len == lengths^[d];
+  ensures forall filled(d in 0_u64..result.inner.len, k in 0_u64..result.inner[d].len): result.inner[d][k] == value;
 };
 "#,
     ),

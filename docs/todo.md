@@ -1642,14 +1642,15 @@ rarely insert at the same place.
   workers. Reopen when a measured program's per-item allocations sit on a
   parallel loop's critical path.
 
-- **An inline range argument does not carry its length into a routed
+- **An inline range argument does not carry its length into a
   postcondition.** `box_segments_filled`'s record ensures
-  `made.inner.len == lengths^.len` on `Some`. When the argument is a
-  binding, `let run = &a.inner[0_u64..3_u64];`, the caller learns the
-  segment count 3; when the same range is formed at the argument,
-  `lengths: &a.inner[0_u64..3_u64]`, `&made.inner[2_u64]` stays unproved,
-  so writers must bind the range first
-  (`tests/conformance/cases/fn9-pos-segments-routed-count.wf` binds it).
+  `result.inner.len == lengths^.len`. When the argument is a binding,
+  `let run = &a.inner[0_u64..3_u64];`, the caller learns the segment count
+  3; when the same range is formed at the argument,
+  `lengths: &a.inner[0_u64..3_u64]`, `&segments.inner[2_u64]` stays
+  unproved, so writers must bind the range first
+  (`tests/conformance/cases/fn9-pos-segments-count-postcondition.wf` binds
+  it).
   The formation's endpoint images are recorded under its capture, but the
   clause instantiation reads the argument's length only through a bound
   holder. Change: instantiate a range argument's `len` from the
