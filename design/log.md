@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-02 Compute an allocation's size at run time, and make a size the target cannot allocate heap exhaustion
+
+Nodes: language/checks-and-proofs/obligation-discharge, language/data-model, compiler/diagnostic-repairs, compiler/prelude-records
+
+Owner-approved: 2026-10-02, in the session, written in Chinese: after the handoff of PR #206's cards, Q33 B ("apart from 25, which I think needs research, I agree to all the others"); after the handoff of PR #209, which showed every rule change with its before and after behavior, the change as shown ("for Q25 option A I need to see what the code actually looks like; the others agreed")
+
+Summary: An allocation's byte size is computed at run time with checked arithmetic, and a size that wraps `u64` or exceeds the selected target's runtime-allocation maximum is heap exhaustion before the allocator is asked, so no allocation count carries a static obligation, because a size the target cannot represent and a size the heap cannot supply both end the program from the trusted base, while proving the bound made writers clamp counts to ceilings no program needed ([layout friction](../research/investigations/layout-friction/DESIGN.md)). The static obligation and standing length bounds are refused; the OP-9 repair, the target-stop report and the per-site count bound retire with the obligation, and the opaque-struct decision keeps a uniform layout ceiling without the allocation-size proof.
+
 ## 2026-10-02 Separate callables from values in name competition, and name the call behind a lost bound
 
 Nodes: language/name-resolution, compiler/diagnostic-repairs
