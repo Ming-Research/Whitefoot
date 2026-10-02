@@ -1237,9 +1237,9 @@ impl<'program> IrBuilder<'program> {
                 }
                 CheckedStatement::Loop {
                     id,
-                    invariants: _,
                     body,
                     backedge_drops,
+                    ..
                 } => self.lower_loop(*id, body, backedge_drops, give_target.clone())?,
                 CheckedStatement::CountedRange {
                     id,

@@ -78,6 +78,12 @@ pub enum ScopeKind {
     /// One type invariant's name and binder, visible only to its relation
     /// [TYPE-11].
     TypeInvariant,
+    /// One range clause's bound variables, visible only to that clause's
+    /// later binders and relations [RANGE-1].
+    RangeClause,
+    /// A counted loop's two certificate iterations, visible only to its
+    /// `use` steps [RANGE-5].
+    ApartClause,
 }
 
 /// One resolver scope and its lexical parent.
@@ -311,6 +317,13 @@ pub enum DeclarationRole {
     /// A struct type invariant's binder, a value of its struct that only its
     /// relation names [TYPE-11].
     InvariantBinder,
+    /// A range clause's name, a fact visible to the body its contract or
+    /// loop header governs [RANGE-1].
+    RangeFact,
+    /// One bound variable of a range clause [RANGE-1].
+    RangeBinder,
+    /// One of a counted loop's two certificate iterations [RANGE-5].
+    ApartBinder,
     /// A file-local alias from one source's alias header [MOD-4]. Every use
     /// of it resolves to its target's own identity.
     Alias,

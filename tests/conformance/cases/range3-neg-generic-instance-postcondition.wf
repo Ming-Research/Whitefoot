@@ -1,0 +1,36 @@
+struct Mark {
+  value: u64;
+}
+
+fn filled_with<T: copy>(count: u64, value: T, other: T) -> result: Box<Array<T>> pure contract {
+  requires count <= 1000_u64;
+  ensures result.inner.len == count;
+  ensures forall same(k in 0_u64..result.inner.len): result.inner[k] == value;
+} {
+  doc "Fills with other, not value: the u64 instance owes the postcondition at its return and cannot prove it, while the Mark instance states nothing.";
+  let made = box_array_filled::<T>(count: count, value: other);
+  return move made;
+}
+
+fn first_seven(cells: &[u64]) -> result: u64 reads(cells) contract {
+  requires forall seven(k in 0_u64..cells^.len): cells^[k] == 7_u64;
+} {
+  doc "Returns the first element, which the requirement makes 7.";
+  if 0_u64 < cells^.len {
+    let first = cells^[0_u64];
+    return first;
+  }
+  return 7_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Calls both instances; the u64 one is rejected at its return.";
+  let numbers = filled_with::<u64>(count: 3_u64, value: 7_u64, other: 7_u64);
+  let got = first_seven(cells: &numbers.inner[0_u64..3_u64]);
+  let mark = Mark(value: 1_u64);
+  let marks = filled_with::<Mark>(count: 2_u64, value: mark, other: mark);
+  if got != 7_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

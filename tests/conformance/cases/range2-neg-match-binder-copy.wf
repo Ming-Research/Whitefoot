@@ -1,0 +1,39 @@
+enum Cell {
+  Full(cells: Array<u64, 4>);
+  Empty();
+}
+
+fn positive(cells: &[u64]) -> result: u64 reads(cells) contract {
+  requires forall pos(k in 0_u64..cells^.len): cells^[k] > 0_u64;
+} {
+  doc "Returns the first cell.";
+  if 0_u64 < cells^.len {
+    let first = cells^[0_u64];
+    return first;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "A by-value payload binder copies the payload: writing the copy c leaves s, which the second match reads through d, zero-filled.";
+  let a = array_filled::<u64, 4>(value: 0_u64);
+  let s = Cell::Full(cells: a);
+  match s {
+    Full(cells: c) => {
+      set c[0_u64] = 1_u64;
+    }
+    Empty() => {
+    }
+  }
+  match s {
+    Full(cells: d) => {
+      let got = positive(cells: &d[0_u64..1_u64]);
+      if got == 0_u64 {
+        return std::process::exit_status(code: 3_u8);
+      }
+    }
+    Empty() => {
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}

@@ -2724,23 +2724,26 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     // `Float`, then the construction functions [OP-13], then the window
     // operations [OP-10], then `swap` [OP-11], `shared_new` and
     // `shared_share` [SHARE-1] and `free_empty` [OP-14], each with its type,
-    // const and value parameters in declared order.
+    // const and value parameters in declared order and then its range
+    // postconditions' names and bound variables [RANGE-1].
     assert_eq!(first[29].1, "Bool");
     assert_eq!(first[51].1, "Int");
     assert_eq!(first[52].1, "Float");
     assert_eq!(first[53].1, "box_new");
-    assert_eq!(first[70].1, "box_segments_filled");
-    assert_eq!(first[88].1, "place_back");
-    assert_eq!(first[132].1, "swap");
-    assert_eq!(first[136].1, "shared_new");
-    assert_eq!(first[139].1, "shared_share");
-    assert_eq!(first[142].1, "free_empty");
+    assert_eq!(first[72].1, "box_segments_filled");
+    assert_eq!(first[95].1, "place_back");
+    assert_eq!(first[139].1, "swap");
+    assert_eq!(first[143].1, "shared_new");
+    assert_eq!(first[146].1, "shared_share");
+    assert_eq!(first[149].1, "free_empty");
     // The opaque phase holds the four storage shapes, the cell and the
     // shared-object handle, 29 records: `Array` contributes five, `Slots`
     // six, `Ring` seven, `Segments` four, `Box` four and `Shared` three. The
     // host declarations left PRE-1 for the standard library [PRE-2], so the
-    // inventory holds 145 records where it held 397.
-    assert_eq!(first.len(), 145);
+    // inventory holds 152 records where it held 397: v0.84's range
+    // postconditions of `box_array_filled` and `box_segments_filled` add
+    // their fact names and bound variables, seven records [RANGE-1].
+    assert_eq!(first.len(), 152);
     // `free_empty`'s own value parameter is the last record of the preorder.
     assert_eq!(first.last().map(|record| record.1.as_str()), Some("window"));
     assert!(
@@ -2754,7 +2757,7 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
 /// While the host declarations were PRE-1's the inventory held 397 records,
 /// and this test showed that a late collision kept an ordinal above `u8`. The
 /// host declarations are the standard library's now [PRE-2] and the
-/// inventory holds 145, so no prelude ordinal exceeds `u8`; what remains to
+/// inventory holds 152, so no prelude ordinal exceeds `u8`; what remains to
 /// show is that the last function's collision names its own preorder ordinal.
 #[test]
 fn a_late_prelude_function_collision_names_its_preorder_ordinal() {
@@ -2771,7 +2774,7 @@ fn a_late_prelude_function_collision_names_its_preorder_ordinal() {
             };
             assert_eq!(conflicts.len(), 1);
             assert!(
-                matches!(conflicts[0].origin(), DeclarationOrigin::Prelude(id) if id.ordinal() == 142)
+                matches!(conflicts[0].origin(), DeclarationOrigin::Prelude(id) if id.ordinal() == 149)
             );
         },
     );

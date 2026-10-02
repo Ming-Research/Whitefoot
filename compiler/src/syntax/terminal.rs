@@ -172,6 +172,8 @@ pub enum FixedTerminal {
     Match,
     /// `=>`.
     FatArrow,
+    /// `apart`.
+    Apart,
     /// `+wrap`.
     PlusWrap,
     /// `+defined`.
@@ -224,6 +226,8 @@ pub enum FixedTerminal {
     Dot,
     /// `^`.
     Caret,
+    /// `forall`.
+    Forall,
     /// `pure`.
     Pure,
     /// `reads`.
@@ -233,7 +237,7 @@ pub enum FixedTerminal {
 }
 
 /// Every fixed raw-token predicate in the active specification, in first occurrence order.
-pub const ALL_FIXED_TERMINALS: [FixedTerminal; 104] = [
+pub const ALL_FIXED_TERMINALS: [FixedTerminal; 106] = [
     FixedTerminal::Public,
     FixedTerminal::Alias,
     FixedTerminal::Equal,
@@ -309,6 +313,7 @@ pub const ALL_FIXED_TERMINALS: [FixedTerminal; 104] = [
     FixedTerminal::Atomic,
     FixedTerminal::Match,
     FixedTerminal::FatArrow,
+    FixedTerminal::Apart,
     FixedTerminal::PlusWrap,
     FixedTerminal::PlusDefined,
     FixedTerminal::PlusChecked,
@@ -335,6 +340,7 @@ pub const ALL_FIXED_TERMINALS: [FixedTerminal; 104] = [
     FixedTerminal::Spawn,
     FixedTerminal::Dot,
     FixedTerminal::Caret,
+    FixedTerminal::Forall,
     FixedTerminal::Pure,
     FixedTerminal::Reads,
     FixedTerminal::Writes,
@@ -422,6 +428,7 @@ impl FixedTerminal {
             Self::Atomic => "atomic",
             Self::Match => "match",
             Self::FatArrow => "=>",
+            Self::Apart => "apart",
             Self::PlusWrap => "+wrap",
             Self::PlusDefined => "+defined",
             Self::PlusChecked => "+checked",
@@ -445,6 +452,7 @@ impl FixedTerminal {
             Self::LessEqual => "<=",
             Self::GreaterEqual => ">=",
             Self::Caret => "^",
+            Self::Forall => "forall",
             Self::Entry => "entry",
             Self::Dot => ".",
             Self::Pure => "pure",
@@ -842,7 +850,9 @@ mod tests {
         // productions close [GRAM-2], so `entry` now first occurs there, before
         // the primitive type atoms, and a call's `musttail` first occurs in
         // [GRAM-5] after the comparison atoms, with `spawn` [WAIT-3] beside
-        // it. v0.77's `waits` [WAIT-1] follows the declaration's `->`.
+        // it. v0.77's `waits` [WAIT-1] follows the declaration's `->`. v0.84's
+        // `apart` [RANGE-5] first occurs in the counted header after the match
+        // atoms, and `forall` [RANGE-1] after the element read's `^`.
         assert_eq!(FixedTerminal::Alias as u8, 1);
         assert_eq!(FixedTerminal::Equal as u8, 2);
         assert_eq!(FixedTerminal::Pkg as u8, 3);
@@ -869,13 +879,15 @@ mod tests {
         assert_eq!(FixedTerminal::Invariant as u8, 64);
         assert_eq!(FixedTerminal::Use as u8, 65);
         assert_eq!(FixedTerminal::Times as u8, 66);
-        assert_eq!(FixedTerminal::Musttail as u8, 97);
-        assert_eq!(FixedTerminal::PercentChecked as u8, 92);
-        assert_eq!(FixedTerminal::Writes as u8, 103);
+        assert_eq!(FixedTerminal::Musttail as u8, 98);
+        assert_eq!(FixedTerminal::PercentChecked as u8, 93);
+        assert_eq!(FixedTerminal::Writes as u8, 105);
         assert_eq!(FixedTerminal::Waits as u8, 23);
-        assert_eq!(FixedTerminal::Spawn as u8, 98);
-        assert_eq!(TerminalPredicate::Identifier.index(), 104);
-        assert_eq!(TerminalPredicate::Digits.index(), 110);
+        assert_eq!(FixedTerminal::Spawn as u8, 99);
+        assert_eq!(FixedTerminal::Apart as u8, 75);
+        assert_eq!(FixedTerminal::Forall as u8, 102);
+        assert_eq!(TerminalPredicate::Identifier.index(), 106);
+        assert_eq!(TerminalPredicate::Digits.index(), 112);
     }
 
     /// The inventory holds every predicate, once.

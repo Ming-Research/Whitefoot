@@ -368,7 +368,7 @@ impl CheckedConst {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) enum IntegerType {
     I8,
     I16,
@@ -2683,6 +2683,8 @@ pub(crate) enum CheckedStatement {
     },
     Loop {
         id: CheckedLoopId,
+        /// The `loop_stmt`, which the range judgment cites [RANGE-3].
+        node_path: NodePath,
         /// Formed source invariants awaiting the normal semantic proof
         /// checker. Their presence alone grants no authority.
         invariants: Vec<CheckedLoopInvariant>,
@@ -2827,6 +2829,8 @@ pub(crate) struct CheckedFunction {
     pub(crate) result: CheckedType,
     /// Formal state paths named by `writes(...)`.
     pub(crate) declared_state_writes: Vec<CheckedStatePath>,
+    /// Formal state paths named by `reads(...)`.
+    pub(crate) declared_state_reads: Vec<CheckedStatePath>,
     /// Callable-boundary predicates in `requires_clause` source order.
     pub(crate) requirements: Vec<super::goal::CheckedRequirement>,
     /// [ENT-2, FN-8] the clause (b) places each requirement forms, index-
@@ -2839,6 +2843,10 @@ pub(crate) struct CheckedFunction {
     /// constructs this metadata; the shared entailment flow proves every
     /// clause at every selected exit.
     pub(crate) postconditions: Vec<super::postcondition::CheckedPostcondition>,
+    /// [RANGE-1] every range clause of the function: its range `requires`,
+    /// each loop's range invariants, each counted loop's cross-iteration
+    /// certificate, and the certificates the range judgment found to hold.
+    pub(crate) range_facts: super::range_facts::CheckedRangeFacts,
     pub(crate) body: Option<Vec<CheckedStatement>>,
     /// Function-wide union of the resolved paths each reference holder names
     /// during the final structural walk, indexed by `BindingId`. Roots are

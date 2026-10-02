@@ -550,6 +550,37 @@ rarely insert at the same place.
   inventory is next edited; the storage-destructuring repair uses its actual
   identities and needs no inventory change.
 
+- **The range judgment splits every open read pair.** The derivation of
+  [RANGE-3] and [RANGE-5] refutes a problem only when every branch is
+  contradictory, and `Problem::search` in
+  `compiler/src/semantic/range_judgment/solver.rs` explores them as one
+  tree: it splits on the first undecided choice, then on the first open
+  pair of reads in atom order, then on a disequality, and at every node
+  re-runs saturation, a full Fourier-Motzkin elimination per alternative and
+  per guard. A pair the contradiction does not need still doubles the tree
+  below it. `research/investigations/unique-keys/owner_loop.wf`, the fact
+  Snowghost's inherited pass needs to read a custom-property set at the
+  parent's owner, checks in 12.5 s against 0.84 s without its `owned`
+  invariant at 9208728e. At 9ea2818b a measurement patch never committed
+  counted 11.3 s of it in that invariant's backedge, one problem of 30
+  atoms, 21 of them element reads, refuted in 5,463 nodes and 160,140
+  eliminations, and with the owners computed in the depth walk instead the
+  check took 392.6 s
+  (`research/investigations/unique-keys/POINTWISE.md#snowghosts-inherited-pass`).
+  The level cascade's check spends 91% of its 0.9 s in the judgment
+  (`research/investigations/unique-keys/POINTWISE.md#observations`). A
+  memo of identical literal sets within one problem does not help: on a
+  program holding the same loop it took 27 s and 2.4 GB against 13.8 s, so
+  the cost is the tree's size, not repeated eliminations. Conflict-directed
+  backjumping would keep every verdict, since the verdict does not depend on
+  the order of the splits: let elimination record which literals a
+  contradiction used, and when every leaf below a split was refuted without
+  the split's own literal, refute its other side without exploring it.
+  Validate by identical verdicts on the `range*` conformance cases, the
+  witnesses and `owner_loop.wf`, and by its node count and check time.
+  Reopen before Snowghost rewrites its inherited pass as a level loop,
+  which needs that fact.
+
 ## Containers and storage lowering
 
 - **A hash map offers no sample or bounded visit.**
@@ -1629,6 +1660,22 @@ rarely insert at the same place.
   components a budget-carrying frame variant. Reopen when such a program
   appears.
 
+- **A counted loop that binds an ordered result list is denied
+  parallelism.** [PAR-2]'s permission survey describes one written target
+  per statement, so a body containing `let (a, b) = f(...);` [CALL-4] is
+  denied as an unsupported body form (`LoopDenial::BodyForm` in
+  `compiler/src/semantic/loop_permission.rs`) whatever `f` writes. The
+  Snowghost shape D cascade hit it: its level loop's call of
+  `cascade_element`, which returns the values and a flag, moved into a
+  helper `cascade_into` that writes the values through an element reference
+  and returns the flag alone. The survey could
+  give each binder its own place, as a `let` of one value already does,
+  since every binder is a new iteration-own binding. Validate with a loop
+  whose body binds a two-result call and writes one element per iteration:
+  it should be permitted and split, with the same output as its sequential
+  build. Reopen with the next change to the permission survey or a program
+  whose wrapper costs measurable time.
+
 ## Platforms and host interfaces
 
 - **Upstream LLVM on Darwin does not yet support the selected stack-probe
@@ -2129,6 +2176,22 @@ rarely insert at the same place.
   storage as a blocker; reopen when a larger program's backend profile shows
   material retained text or rendering cost.
 
+- **The range judgment keeps its own model of places and aliases.**
+  `compiler/src/semantic/range_judgment/world.rs` models locations, moves
+  and aliasing for the range walk beside `compiler/src/semantic/places.rs`,
+  which resolves places for ownership and permission. The two can disagree:
+  the walk first treated a by-value copy of an array as an alias of its
+  source, which `places.rs` never does (fixed; conformance cases
+  `range2-neg-copy-is-not-its-source` and `range2-neg-match-binder-copy`),
+  and `certified_coverage` in `compiler/src/semantic/loop_permission.rs`
+  denies a loop whose certificate's walk skipped an access the permission
+  survey sees. Deriving the walk's locations from
+  `places.rs`'s resolved places, or sharing one access model, would leave
+  one definition of what a statement touches. Validate by identical
+  verdicts on the `range*` cases and by the permission tests. Reopen with
+  the next change to how either resolves a place, or when a range verdict
+  differs from what the ownership judgment says the code touches.
+
 ## Open language questions
 
 Questions the owner has left open on purpose. None of them is a decision;
@@ -2355,6 +2418,48 @@ each is resolved by a discussion and a tree change.
   with the polling one. Reopen when a program must wake on the earlier of an
   object's change and a time, or when the polling writer's cost shows in a
   profile.
+
+- **A function that states a range clause cannot be a function-kind
+  actual.** RANGE-1 refuses a range clause in a `fn_sig` contract, so no
+  function-kind formal can declare one, and a `fn_decl` whose requirements
+  or postconditions include a range clause is refused as the actual of
+  such a formal, as `whitefootc` reports "a function signature's contract
+  states a range clause". Impact: generic code that takes a function cannot
+  take a producer that hands back range facts, or a consumer that requires
+  them; no program has needed one yet. Change: admit range clauses in a
+  `fn_sig` contract, matched clause by clause against the actual's, with
+  the formal's clauses owed and taken at the call as a direct call's are.
+  Validate by a generic driver that takes `ramp` of
+  `tests/conformance/cases/range3-pos-postcondition-producer.wf` through a
+  function parameter. Reopen when a program passes such a function.
+
+- **A function cannot pass on a callee's routed range postcondition.** A
+  function that returns a callee's `Option` or `Result` unchanged, `return
+  move made;` after `let made = ramp(n: n);`, cannot promise the callee's
+  routed range postcondition again: the range walk holds a routed fact only
+  in a `match` arm that takes its variant [RANGE-2], so the return owes the
+  payload fact unproved. The writer matches and returns a new construction
+  of the payload, which costs a match and a move per forwarding layer.
+  Change: let a routed fact over a location stay attached to it, so a
+  return of that location selects and discharges the same route. Validate
+  by a forwarding wrapper accepted unchanged and a wrapper that forwards
+  the other variant still refused. Reopen when a program forwards a
+  producer's result through a wrapper.
+
+- **Parameters a contract names but the body does not use are passed at
+  run time.** A range requirement can only name what the callee receives,
+  so `cascade_level` in
+  `tests/conformance/cases/range5-pos-level-cascade.wf` takes `positions`,
+  `depths` and `level` only so that its `listed` and `up` requirements can
+  state the facts its certificate uses; the caller passes them on every
+  call. Each costs a pointer and a length or one integer per call, which the
+  measured cascade does not show, but a writer must keep proof-only data
+  alive and in scope to call such a function. A proof-only parameter that
+  lowering erases would need its own rule for what such a parameter may
+  flow into. Validate by measuring the call cost in a cascade with small
+  levels and by counting the functions in Snowghost whose parameters only
+  their contract reads. Reopen when that cost shows in a profile or a
+  writer must compute a value only to pass it.
 
 ## Ownership redesign (candidate x1) follow-ups
 

@@ -1,0 +1,35 @@
+fn ramp(n: u64) -> result: Box<Array<u64>> pure contract {
+  requires n <= 1000_u64;
+  ensures result.inner.len == n;
+  ensures forall up(k in 0_u64..result.inner.len): result.inner[k] == k;
+} {
+  doc "Writes element k as k, but without a loop invariant the header forgets every write, so the postcondition is unproved at the return.";
+  let cells = box_array_filled::<u64>(count: n, value: 0_u64);
+  for (k in 0_u64..n) {
+    set cells.inner[k] = k;
+  }
+  return move cells;
+}
+
+fn at_index(cells: &[u64]) -> result: u64 reads(cells) contract {
+  requires forall up(k in 0_u64..cells^.len): cells^[k] == k;
+} {
+  doc "Returns the last element, which the requirement makes the last index.";
+  if 0_u64 < cells^.len {
+    let last = cells^.len - 1_u64;
+    let value = cells^[last];
+    return value;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "The requirement at the call holds only through ramp's postcondition: the caller writes nothing into the array.";
+  let made = ramp(n: 5_u64);
+  let length = made.inner.len;
+  let got = at_index(cells: &made.inner[0_u64..length]);
+  if got != 4_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

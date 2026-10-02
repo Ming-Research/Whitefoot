@@ -476,9 +476,11 @@ fn analyzed_rendering(function: &CheckedFunction) -> String {
         result_mode,
         result,
         declared_state_writes,
+        declared_state_reads,
         requirements,
         requirement_places,
         postconditions,
+        range_facts,
         body,
         reference_origins,
         body_disposition,
@@ -492,15 +494,18 @@ fn analyzed_rendering(function: &CheckedFunction) -> String {
     format!(
         "{formal_hypothesis:?}\n{id:?}\n{declaration:?}\n{module:?}\n{name:?}\n{symbol:?}\n\
          {function_actuals:?}\n{region_parameters:?}\n{parameters:?}\n{result_mode:?}\n\
-         {result:?}\n{declared_state_writes:?}\n{requirements:?}\n{requirement_places:?}\n\
-         {postconditions:?}\n{body:?}\n{reference_origins:?}\n{body_disposition:?}\n\
-         {call_separations:?}\n{permission_separation_queries:?}\n{waiting:?}"
+         {result:?}\n{declared_state_writes:?}\n{declared_state_reads:?}\n{requirements:?}\n\
+         {requirement_places:?}\n\
+         {postconditions:?}\n{range_facts:?}\n{body:?}\n{reference_origins:?}\n\
+         {body_disposition:?}\n{call_separations:?}\n{permission_separation_queries:?}\n\
+         {waiting:?}"
     )
 }
 
 /// The rendering of what a caller's analysis reads of one callee's written
 /// boundary [FN-8, FN-9]: its signature, requirements and each
-/// postcondition's selector, substitutions and relation. The occurrences a
+/// postcondition's selector, substitutions and relation, and its range
+/// requirements and the range facts it gives callers [RANGE-2]. The occurrences a
 /// postcondition selects in the callee's body are the callee's own proof and
 /// no caller reads them, so an edit to the callee's body that keeps its
 /// boundary leaves every caller's key unchanged.
@@ -518,7 +523,7 @@ fn claims_rendering(function: &CheckedFunction) -> String {
         })
         .collect::<Vec<_>>();
     format!(
-        "{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{postconditions:?}\n{:?}",
+        "{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{postconditions:?}\n{:?}\n{:?}\n{:?}",
         function.formal_hypothesis,
         function.symbol,
         function.module,
@@ -526,8 +531,11 @@ fn claims_rendering(function: &CheckedFunction) -> String {
         function.result_mode,
         function.result,
         function.declared_state_writes,
+        function.declared_state_reads,
         function.requirements,
         function.function_actuals,
+        function.range_facts.requirements,
+        function.range_facts.postconditions,
     )
 }
 
