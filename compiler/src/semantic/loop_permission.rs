@@ -571,12 +571,18 @@ impl<'check> Survey<'check, '_> {
                 self.moved_places(value, node_path);
                 self.expression(value);
             }
-            // [CALL-4] a binder list writes more than one place in one
-            // statement. The iteration footprint below describes one written
-            // target per statement, so this form is refused rather than given
-            // a footprint that does not describe it.
-            CheckedStatement::DestructuringLet { .. } => {
-                self.refuse_form("a statement that binds an ordered result list");
+            // [GRAM-4] a binder list over a call's ordered result list
+            // [CALL-4], or a destructuring consume of `move place`: each
+            // binder is a new binding of this iteration, as a `let`'s is,
+            // which `introduced` already states, and the statement's
+            // footprint is its right-hand side's: the call's projected row
+            // and operand reads, and the places it consumes, whose fields a
+            // final `..` releases with them.
+            CheckedStatement::DestructuringLet {
+                node_path, value, ..
+            } => {
+                self.moved_places(value, node_path);
+                self.expression(value);
             }
             CheckedStatement::Set {
                 node_path,
@@ -1804,6 +1810,9 @@ fn collect_introduced(statements: &[CheckedStatement], out: &mut Vec<BindingId>)
             CheckedStatement::Let { binding, .. }
             | CheckedStatement::PropagateLet { binding, .. }
             | CheckedStatement::ValueMatchLet { binding, .. } => out.push(*binding),
+            CheckedStatement::DestructuringLet { bindings, .. } => {
+                out.extend(bindings.iter().map(|(binding, _, _)| *binding));
+            }
             CheckedStatement::CountedRange { binder, .. } => out.push(*binder),
             CheckedStatement::Atomic { binding, .. } => out.push(*binding),
             _ => {}

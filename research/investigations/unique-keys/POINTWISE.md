@@ -278,8 +278,9 @@ cascade", holds the tables and runs 22 to 25.
 - **Accepted as written.** The facts and the empty certificate checked on
   the first build; the only rewrite was for the permission judgment, not
   the proof: the loop body's call of `cascade_element`, which returns two
-  values, moved into `cascade_into`, since [PAR-2] refuses a body binding an
-  ordered result list (`docs/todo.md`).
+  values, moved into `cascade_into`, since the compiler's permission survey
+  then refused a body binding an ordered result list, which [PAR-2] does
+  not; the survey has admitted it since.
 - **Same results.** `proto_style check` agrees on the six pages present on
   the host, `--par` and sequential, with the checksums Snowghost recorded
   before the port, and on a page whose deepest element lies at the

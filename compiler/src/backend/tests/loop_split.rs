@@ -1524,6 +1524,81 @@ fn an_expression_statement_row_map_is_split_and_keeps_its_rows() {
     std::fs::remove_dir_all(&directory).expect("remove the test directory");
 }
 
+/// [CALL-4] a map whose body binds a two-result call: each iteration's
+/// binders are its own, so the loop splits, and `main` checks every element
+/// against the sequential computation.
+const ORDERED_RESULT_MAP: &[u8] = br#"fn halves(seed: u64) -> (high: u64, low: u64) pure {
+  let state = seed;
+  for (round in 0_u64..64_u64) {
+    let scaled = state *wrap 6364136223846793005_u64;
+    set state = scaled +wrap 1442695040888963407_u64;
+  }
+  let high = state / 4294967296_u64;
+  let low = iand(state, 4294967295_u64);
+  return high, low;
+}
+
+fn mapped(count: u64) -> result: Box<Array<u64>> pure contract {
+  requires count <= 1000000_u64;
+} {
+  let out = box_array_filled::<u64>(count: count, value: 0_u64);
+  for (i in 0_u64..count) {
+    let (high, low) = halves(seed: i);
+    set out.inner[i] = high +wrap low;
+  }
+  return move out;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let count = 200000_u64;
+  let out = mapped(count: count);
+  if out.inner.len != count {
+    return std::process::exit_status(code: 1_u8);
+  }
+  for (i in 0_u64..count) {
+    let (high, low) = halves(seed: i);
+    let expected = high +wrap low;
+    let seen = out.inner[i];
+    if seen != expected {
+      return std::process::exit_status(code: 2_u8);
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+
+#[test]
+fn a_map_binding_an_ordered_result_list_is_split_and_keeps_its_elements() {
+    let ledger = super::compile_permission_ledger(ORDERED_RESULT_MAP);
+    assert!(
+        ledger
+            .iter()
+            .any(|line| line.starts_with("PAR split") && line.contains(" mapped ")),
+        "the binder-list loop must be split as an independent map: {ledger:?}"
+    );
+    let unsplit = emit(ORDERED_RESULT_MAP);
+    let split = emit_with_overlap(ORDERED_RESULT_MAP);
+    assert!(module_requires_parallel_runtime(&split));
+    let directory = test_directory();
+    let reference = Command::new(build_executable(&unsplit, &directory))
+        .bounded_output()
+        .expect("run the binder-list map that splits nothing");
+    assert_eq!(reference.status.code(), Some(0), "{reference:?}");
+    let executable = build_executable(&split, &directory);
+    for workers in ["0", "1", "4"] {
+        let output = Command::new(&executable)
+            .env("WF_WORKERS", workers)
+            .bounded_output()
+            .expect("run the split binder-list map");
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "WF_WORKERS={workers}: every element must hold its iteration's two results"
+        );
+    }
+    std::fs::remove_dir_all(&directory).expect("remove the test directory");
+}
+
 /// A loop that maps and reduces still selects the Reduction result path. The
 /// full map and all eight reduction bytes are independently observable.
 #[test]
