@@ -3855,12 +3855,22 @@ condition under which it is taken up.
   `hash_map_find` is a private helper. Lookup's miss performance gap remains
   open. [Fresh insertion now has an ordinary batch window](../research/experiments/container-representation/map-library/RESULTS.md#isolated-fresh-insertion-no-qualified-candidate-gain),
   with no qualified candidate gain and only three aligned peer targets. Owned
-  removal still lacks a separate API window; paired churn and whole traces do
-  not complete that measurement. The
+  [removal now has a separate hit/miss window](../research/experiments/container-representation/map-library/RESULTS.md#isolated-public-remove-scalar-hits-qualify-misses-remain-open):
+  four scalar-hit targets qualify, all misses/wide hits fail, and one wide hit
+  is Rust-drift-invalid. Reopen absent-probe and complete wide-return costs in
+  that caller, preserving returned owners, allocation differences and both
+  peers; establish production O2 behavior before generalizing experimental O3.
+  The unexplained outer-guard/direct-process wall discrepancy also needs a
+  durable timing-boundary observation before attributing that elapsed-time gap;
+  it does not replace the independent sample-clock admission. The separate
+  callsite-native floor removes the full wide result but retains 144 bytes of
+  partial payload spills; require complete outcomes and qualified paired timing
+  before treating this structural result as a speedup or selecting an inline policy.
+  The
   [reached wide CHURN remove caller](../research/experiments/container-representation/map-library/RESULTS.md#wide-remove-caller-full-return-transfer-already-eliminated)
   already eliminates the full aggregate return transfer, retaining 104 bytes
-  of partial scalar spills and slot clearing. Inspect an isolated owned-remove
-  hit/miss batch before attributing a cost to standalone helper copies; retain
+  of partial scalar spills and slot clearing. Use the new isolated owned-remove
+  batch's reached native path before attributing standalone helper copies; retain
   complete owning outcomes, clocks and both peers. This neither selects a
   compiler change nor reopens rejected inactive-payload omission. The
   [isolated public EDIT consumer](../research/experiments/container-representation/map-library/RESULTS.md#isolated-public-edit-hit-targets-pass-misses-remain-open)

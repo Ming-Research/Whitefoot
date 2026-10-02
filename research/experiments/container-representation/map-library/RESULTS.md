@@ -46,8 +46,10 @@ optimization gain nor replaces the unchanged whole-application performance goal.
 Public `hash_map_lookup` already has isolated hit/miss measurement, with its
 miss gap still open; `hash_map_find` is private. The [fresh-insertion window](#isolated-fresh-insertion-no-qualified-candidate-gain)
 now measures ordinary per-owner batches: no qualified before/after gain in eight
-cells, with three aligned peer targets. Owned removal still needs an isolated
-API window; neither instrument replaces the whole-application goal.
+cells, with three aligned peer targets. The [isolated public REMOVE window](#isolated-public-remove-scalar-hits-qualify-misses-remain-open)
+now qualifies four scalar-hit targets in 16 cells; all misses and wide hits fail,
+with one wide-hit cell drift-invalid. Neither instrument replaces the
+whole-application goal.
 The later [scalar register-result counterfactual](#fresh-insertion-register-result-native-success-without-timing-gain)
 removes result memory traffic but qualifies no scalar gain; all wide negative
 controls fail cohort-drift admission. No callable ABI change is selected.
@@ -7354,3 +7356,82 @@ is not adopted. The direct-put-union/ component in the
 [small evidence archive](fresh-insert-matched-c-evidence.tar.gz) retains exact
 sources, patch, layout qualifications, statuses and compact primary excerpts;
 prior archive payloads and the earlier compact-result selection are unchanged.
+
+### Isolated public REMOVE: scalar hits qualify, misses remain open
+
+One fixed two-cohort campaign measures ordinary public hash_map_remove, Rust
+remove_entry and C++ extract, separately for successful and absent removals.
+Each owner starts half full; S/8 distinct successful removals leave 3S/8 entries,
+while misses preserve occupancy. Returned keys and every value word enter the
+timed receipt; C++ node destruction is also timed. Setup, full-map oracle and
+cleanup stay outside. This is an API comparison, not a before/after gain or
+the historical remove/reinsert churn trace.
+
+All 147 final qualification outcomes pass, including returned-owner, absent,
+geometry, accounting and cleanup faults. Before timing, a failed assertion was
+corrected to distinguish Rust's shrinking reported usable capacity after deletion
+from unchanged physical backing, while retaining the entry floor and zero
+removal allocations/releases. A second prospective amendment quadrupled contexts
+to 1,024/32 and operations to 2^20 per sample to protect the unchanged 1% empty
+clock threshold. The superseded 2^18 configuration was never timed. Its source,
+criteria and pins remain retained; the larger working set prevents direct
+comparison with historical 2^18 panels.
+
+Both timed processes exit zero, with 223,488 rows and unchanged input pins.
+Clock quantum is 41 ns; maximum empty intervals are 42/83 ns. Fifteen cells are
+admitted; aligned wide S4096 hits fail the Rust cohort-drift limit. Four of 16
+cells qualify against the selected slower peer: all scalar hits. All misses
+and all wide hits fail the target. Medians below are ns/remove, cohort 0 / 1;
+complete ranges, capacities and per-participant admission remain in the
+public-remove-api/ component of the [small evidence archive](fresh-insert-matched-c-evidence.tar.gz).
+
+| Series | Bytes / S | Outcome | WF | Rust | C++ | Qualified peer target |
+|---|---:|---|---:|---:|---:|---|
+| default | 8 / 64 | hit | 3.248 / 3.222 | 10.875 / 10.895 | 16.609 / 16.579 | pass |
+| default | 8 / 64 | miss | 12.978 / 12.991 | 7.476 / 7.442 | 3.418 / 3.409 | fail |
+| default | 8 / 4096 | hit | 3.109 / 3.122 | 10.307 / 10.225 | 15.267 / 15.254 | pass |
+| default | 8 / 4096 | miss | 11.428 / 11.488 | 7.170 / 7.173 | 3.146 / 3.139 | fail |
+| aligned | 8 / 64 | hit | 3.262 / 3.214 | 7.283 / 7.280 | 26.070 / 26.328 | pass |
+| aligned | 8 / 64 | miss | 12.956 / 12.982 | 2.599 / 2.596 | 10.860 / 10.833 | fail |
+| aligned | 8 / 4096 | hit | 3.127 / 3.111 | 4.488 / 4.426 | 25.333 / 25.415 | pass |
+| aligned | 8 / 4096 | miss | 11.529 / 11.561 | 2.099 / 2.115 | 10.519 / 10.633 | fail |
+| default | 256 / 64 | hit | 64.068 / 63.916 | 63.625 / 63.724 | 33.850 / 33.812 | fail |
+| default | 256 / 64 | miss | 30.408 / 30.408 | 14.908 / 14.922 | 4.459 / 4.299 | fail |
+| default | 256 / 4096 | hit | 98.872 / 101.380 | 74.141 / 77.578 | 32.584 / 33.837 | fail |
+| default | 256 / 4096 | miss | 40.254 / 39.840 | 8.878 / 8.820 | 5.937 / 6.055 | fail |
+| aligned | 256 / 64 | hit | 65.310 / 63.868 | 58.475 / 57.828 | 44.918 / 45.392 | fail |
+| aligned | 256 / 64 | miss | 31.045 / 30.421 | 7.026 / 6.880 | 13.560 / 13.556 | fail |
+| aligned | 256 / 4096 | hit | 109.566 / 100.024 | 78.777 / 69.955 | 54.012 / 53.196 | invalid: Rust drift |
+| aligned | 256 / 4096 | miss | 40.333 / 39.766 | 3.243 / 3.309 | 18.514 / 18.160 | fail |
+
+Application headroom is shared, not physical storage: WF uses 85/5,461 slots,
+Rust reports initial usable capacity 112/7,168; its physical 128/8,192 buckets
+are inferred from that initial capacity and the pinned allocation layout,
+and C++ uses 64/4,096 buckets plus nodes. The reduction retains requested bytes
+per owner and their context-scaled sum; neither is RSS or actual memory traffic.
+WF/Rust release nothing during removal; C++ releases each extracted hit node.
+These differences are part of ordinary public API cost, not equal-layout codegen.
+
+The frozen compiler emits LLVM followed by experimental single-module O3; this
+is not the production O2+ThinLTO route. Source, exact commands, native excerpts,
+failed preparation/check attempts, raw rows and reducer are retained; omitted
+compiler/runtime images and generated modules remain pinned replay dependencies.
+A retrospective guard observation reports about 1,224.97 s versus direct
+process walls of 132.457+130.107=262.564 s. The discrepancy is unexplained; no
+cause or corrected duration is invented, and no retry was performed. No library
+change, optimization or whole-application target is selected. The next measured
+gaps are absent removal and complete wide-return cost in this caller context.
+
+A separate native-only callsite floor then forces just the reached wide remove
+call inline in scratch LLVM. Its control object exactly reproduces the baseline;
+all 167 other native bodies/relocations, including scalar and standalone remove,
+remain unchanged. Ten stages pass after a retained preflight repair. The wide
+batch loses the 272-byte destination result and miss zeroing, with no per-item
+call; frame size falls 368→256 bytes. It still spills 144 bytes of payload and
+4 bytes of bucket padding, and preserves 264 bytes of retired-bucket clearing
+and every returned word in the receipt. Hash/state hoisting and caller growth
+102→190 instructions accompany the change, so it is not a per-byte cost estimate.
+This passes only the structural criterion. At this frozen stage no correctness
+execution or timing tests the new images, and actual O2 remains unmeasured;
+partial spills and complete-operation performance are still open. No inline
+policy, result ABI or library change is adopted.

@@ -5256,9 +5256,9 @@
   "fresh_insert_matched_c": {
     "archive": {
       "path": "fresh-insert-matched-c-evidence.tar.gz",
-      "bytes": 3144598,
-      "sha256": "5f4e7eb4bccd61343b27c923f468c1cc831ff74feea73abf3941d016d13e86a4",
-      "members": 26
+      "bytes": 7140255,
+      "sha256": "898845918f6454472c2070ca466e21f5651ff043793242a539c68dd01c81713f",
+      "members": 38
     },
     "prefix": "fresh-insert-matched-c/",
     "manifest": "fresh-insert-matched-c/manifest.json",
@@ -5297,9 +5297,9 @@
   "direct_put_union": {
     "archive": {
       "path": "fresh-insert-matched-c-evidence.tar.gz",
-      "bytes": 3144598,
-      "sha256": "5f4e7eb4bccd61343b27c923f468c1cc831ff74feea73abf3941d016d13e86a4",
-      "members": 26
+      "bytes": 7140255,
+      "sha256": "898845918f6454472c2070ca466e21f5651ff043793242a539c68dd01c81713f",
+      "members": 38
     },
     "prefix": "direct-put-union/",
     "manifest": "direct-put-union/manifest.json",
@@ -5313,6 +5313,39 @@
     "previous_small_archive": {
       "sha256": "c8f368b6ee4351d8da9a631741dfd30f7aeb41a6c98d5c725a4d11b778579592",
       "members": 19,
+      "member_names_and_bytes_preserved": true
+    }
+  },
+  "public_remove_api": {
+    "archive": {
+      "path": "fresh-insert-matched-c-evidence.tar.gz",
+      "bytes": 7140255,
+      "sha256": "898845918f6454472c2070ca466e21f5651ff043793242a539c68dd01c81713f",
+      "members": 38
+    },
+    "prefix": "public-remove-api/",
+    "manifest": "public-remove-api/manifest.json",
+    "manifest_sha256": "cb045781221926880c56e411589cbd9976c02e2bbcb42aa068638475fa629ade",
+    "retained_records": 423,
+    "original_frozen_sha256": "2891e519729248f1a4dd73c705fbcaebbeab03d325a105e8992e078733fb83e9",
+    "raw_rows": {
+      "campaign-x4/cohort-0.csv": 111744,
+      "campaign-x4/cohort-1.csv": 111744
+    },
+    "qualification_outcomes": 147,
+    "qualified_peer_targets": 4,
+    "cells": 16,
+    "admitted_cells": 15,
+    "production_adoption": false,
+    "native_floor": {
+      "original_frozen_sha256": "c52293dc9befbed30fb894e1d45e9de25914a1dfc73fd7a529354a2eab908bf9",
+      "native_mechanism": "PASS: full272B result eliminated;144B partial payload spills remain",
+      "runtime_checks": "not run at frozen native stage",
+      "timing": "not run at frozen native stage"
+    },
+    "previous_small_archive": {
+      "sha256": "5f4e7eb4bccd61343b27c923f468c1cc831ff74feea73abf3941d016d13e86a4",
+      "members": 26,
       "member_names_and_bytes_preserved": true
     }
   }
