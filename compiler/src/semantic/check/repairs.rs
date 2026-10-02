@@ -1027,6 +1027,60 @@ pub(super) fn bounds(case: &GoalCase<'_>, constant_offset: bool) -> String {
     }
 }
 
+/// One call on a path to a failed subscript whose row reached its measure
+/// and removed the facts that, put back, prove the bound [ENT-5].
+pub(super) struct KillingCall {
+    pub(super) callee: String,
+    pub(super) line: u64,
+    pub(super) written: String,
+}
+
+/// [OP-4] a subscript's bound that the facts some calls' rows removed would
+/// prove: the calls are named, and where each leaves the length unchanged,
+/// a narrower row entry or a postcondition stating the length unchanged
+/// keeps those facts; the guard stays the alternative where the length may
+/// change [DIAG-1].
+pub(super) fn bounds_after_kill(
+    case: &GoalCase<'_>,
+    measure: &str,
+    calls: &[KillingCall],
+) -> String {
+    let one = calls.len() == 1;
+    let sites = calls
+        .iter()
+        .map(|call| format!("to `{}` at line {}", call.callee, call.line))
+        .collect::<Vec<_>>()
+        .join(" and ");
+    let written = calls
+        .iter()
+        .map(|call| format!("`{}`", call.written))
+        .collect::<Vec<_>>()
+        .join(" and ");
+    let mut callees = calls
+        .iter()
+        .map(|call| call.callee.as_str())
+        .collect::<Vec<_>>();
+    callees.sort_unstable();
+    callees.dedup();
+    let who = callees
+        .iter()
+        .map(|callee| format!("`{callee}`"))
+        .collect::<Vec<_>>()
+        .join(" and ");
+    let (call, rows, leaves, its) = if one {
+        ("call", "its row, which writes", "leaves", "its")
+    } else if callees.len() == 1 {
+        ("calls", "their rows, which write", "leaves", "its")
+    } else {
+        ("calls", "their rows, which write", "leave", "their")
+    };
+    format!(
+        "`{}` is not proved here, but facts about `{measure}` that held before the {call} {sites} would prove it, and {rows} {written}, removed them: where {who} {leaves} `{measure}` unchanged, narrow the entry of {its} row that covers it to the paths {its} body writes, or state `{measure}` unchanged in {its} `ensures`; or {}",
+        case.text,
+        case.guard("access", SKIP)
+    )
+}
+
 /// [OP-4] a subscript of a place a contract clause forms [ENT-2, FN-8]. The
 /// place is formed at body entry in the state the requirements written before
 /// it build, so an earlier requirement establishes the bound; a clause

@@ -1,4 +1,4 @@
-# Kernel Specification v0.85
+# Kernel Specification v0.84
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -500,7 +500,7 @@ After the route's leading constructor and field are admitted, that binder is vis
 It must differ from its paired field, every parameter, the result binder, and every live definition.
 Different ensures clauses have disjoint result-datum scopes and may reuse one route-binder spelling.
 Neither kind of result datum has runtime storage or ownership state, and neither is visible in the function body, so a body `let` may reuse a result binder's spelling without a redeclaration event.
-A match binder becomes visible in its arm body only after the complete fieldbind list and only after GRAM-10 has established that it differs from its paired field label, every earlier binder in that arm list, and every lexical-IDENT declaration live on arm entry that it competes with.
+A match binder becomes visible in its arm body only after the complete fieldbind list and only after GRAM-10 has established that it differs from its paired field label, every earlier binder in that arm list, and every lexical-IDENT declaration live on arm entry.
 A `for_binding` binder becomes visible after its complete `for_binding`, including both endpoint atoms, through the remaining `header_invariant` clauses and the counted body; it is not visible in either endpoint.
 An ordinary or counted loop label, when written, is visible only in its loop body; a counted label is not visible in the binding or invariant header.
 A loop label is an optional lexical name, never the identity of the loop: every `loop_stmt` and `for_stmt` has one distinct compiler-owned structural loop identity whether or not it writes a LABEL.
@@ -515,15 +515,12 @@ Within the invariant-name domain a new live declaration may not shadow another l
 Adding, removing, or changing a loop label cannot change any invariant binding.
 A named const is visible in its whole module like every top-level declaration; [CONST-2] judges the dependencies among constants.
 
-Two declarations compete when they have one spelling and one domain and, in the lexical IDENT domain, are not a callable and a value.
-That domain's callables are top-level `fn_decl`s, raw function-kind `gparam`s and PRE-1 functions; its values are its other entries; an alias is in its target's class and a module alias in both [MOD-4].
-A callable and a value never compete, because no admitted use above admits both and there are no function values [FN-5]: `let narrow = narrow(width: w);` binds a value beside a function of the same spelling, and each use selects the one its role admits.
-Two competing declarations in one module's inventory, in one record's alias header, or in the same lexical scope are a redeclaration attributed to the later declaration event.
+Within one domain, two declarations in one module's inventory, in one record's alias header, or in the same lexical scope are a redeclaration attributed to the later declaration event.
 Declarations in unrelated function or declaration owners are not duplicates merely because their spellings match.
-A nested lexical declaration may not shadow a competing entry live at that declaration.
-GRAM-10 exclusively owns arm match-binder distinctness and freshness: a second IDENT of an arm `fieldbind` equal to its paired field label, an earlier binder in the same arm list, or any lexical-IDENT declaration live on arm entry that it competes with is rejected citing GRAM-10 at that later/offending binder before it becomes a declaration, rather than also being reported as TYPE-6 shadowing.
+A nested lexical declaration may not shadow an entry live at that declaration.
+GRAM-10 exclusively owns arm match-binder distinctness and freshness: a second IDENT of an arm `fieldbind` equal to its paired field label, an earlier binder in the same arm list, or any lexical-IDENT declaration live on arm entry is rejected citing GRAM-10 at that later/offending binder before it becomes a declaration, rather than also being reported as TYPE-6 shadowing.
 FN-9 exclusively owns the analogous result-datum checks described above; failure creates no TYPE-6 declaration or duplicate event.
-Because every top-level declaration and every alias is live throughout its module or record, a parameter, local, or generic in a nested scope that competes with one may not use its spelling even when that declaration's source item occurs later; the nested declaration is the offending shadow event.
+Because every top-level declaration and every alias is live throughout its module or record, any other parameter, local, or generic in a nested scope may not use such a spelling in its domain even when that declaration's source item occurs later; the nested declaration is the offending shadow event.
 Disjoint expired lexical scopes may reuse an ordinary value or label spelling.
 Within one module, logical paths and record boundaries never create a namespace or lookup key; a module and a record's alias header are the only scopes above a declaration [MOD-3, MOD-4].
 

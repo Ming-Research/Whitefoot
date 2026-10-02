@@ -14,6 +14,7 @@ use crate::SourceInput;
 
 mod call_separations;
 mod content_moves;
+mod layout_friction;
 mod selector_scope;
 mod storage_destructuring;
 
@@ -3657,6 +3658,7 @@ fn each_pinned_repair_is_carried_out_by_its_programs() {
         .chain(content_moves::CONTENT_MOVES)
         .chain(storage_destructuring::STORAGE_DESTRUCTURING)
         .chain(selector_scope::SELECTOR_SCOPE)
+        .chain(layout_friction::LAYOUT_FRICTION)
     {
         let failure = compile(
             &[SourceInput::new(pair.name, pair.rejected)],

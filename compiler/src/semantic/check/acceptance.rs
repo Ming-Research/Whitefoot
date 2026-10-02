@@ -435,6 +435,42 @@ impl<'unit> TypeContext<'unit> {
             _ => Err(SemanticCompilerFailure::InvalidResolution.into()),
         }
     }
+    /// [DIAG-1] the calls among the writes that removed a failed bound's
+    /// facts, each with its callee, line and written place; none when any of
+    /// the writes is not a call, whose length change no row can deny.
+    fn killing_calls(
+        &self,
+        notes: &[crate::semantic::entailment::MeasureKillNote],
+    ) -> Result<Vec<repairs::KillingCall>, CheckStop> {
+        let mut calls = Vec::new();
+        for note in notes {
+            let node = self
+                .declarations
+                .tree
+                .node_with_path(&note.source)
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+            if self.declarations.tree.production(node)? != Production::Call {
+                return Ok(Vec::new());
+            }
+            let spelling = self.declarations.tree.source_spelling(node)?;
+            let callee = spelling
+                .split('(')
+                .next()
+                .unwrap_or_default()
+                .split("::<")
+                .next()
+                .unwrap_or_default()
+                .to_owned();
+            let (_, line) = self.declarations.tree.source_line(&note.source)?;
+            calls.push(repairs::KillingCall {
+                callee,
+                line,
+                written: note.written.clone(),
+            });
+        }
+        Ok(calls)
+    }
+
     /// [ENT-6] one undischarged source obligation, reported under its
     /// record's rule with the repair what its goal reads selects.
     fn undischarged_obligation(
@@ -494,8 +530,11 @@ impl<'unit> TypeContext<'unit> {
                     function.entailment.obligation_term_reads(outcome).first(),
                     Some(TermRead::Constant)
                 );
+                let calls = self.killing_calls(&outcome.killed_by)?;
                 let mechanical_fix = if self.declarations.in_requirement(&outcome.node_path)? {
                     repairs::clause_bounds(&case, constant_offset)
+                } else if let (Some(note), false) = (outcome.killed_by.first(), calls.is_empty()) {
+                    repairs::bounds_after_kill(&case, &note.measure, &calls)
                 } else {
                     repairs::bounds(&case, constant_offset)
                 };

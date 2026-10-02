@@ -388,6 +388,21 @@ pub(crate) struct ObligationOutcome {
     /// node, which is what its repair reads to offer one [DIAG-1].
     /// Discharged obligations retain none.
     pub(crate) written_before: Vec<BindingId>,
+    /// For an undischarged bounds obligation, the writes on paths to its node
+    /// that removed facts about its measure which, put back, discharge it
+    /// [ENT-5]; its repair names them [DIAG-1]. Every other occurrence
+    /// retains none.
+    pub(crate) killed_by: Vec<MeasureKillNote>,
+}
+
+/// [DIAG-1] one write whose kill of a measure's facts an undischarged bounds
+/// obligation needed: the writing statement, and the place it wrote and the
+/// measure it reached, as the source spells them.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct MeasureKillNote {
+    pub(crate) source: NodePath,
+    pub(crate) written: String,
+    pub(crate) measure: String,
 }
 
 /// Exact normalized identity of one obligation query in the function-local

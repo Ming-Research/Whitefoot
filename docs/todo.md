@@ -550,24 +550,6 @@ rarely insert at the same place.
   inventory is next edited; the storage-destructuring repair uses its actual
   identities and needs no inventory change.
 
-- **An OP-4 repair after a call that killed the fact offers only a guard.**
-  When a subscript's relation held before a call and the callee's row
-  killed it, as `writes(context)` kills `at < context^.blocks.inner.len`
-  although the callee writes only `context.width` [EFF-2, MSR-2], OP-4's
-  repair offers an invariant, a callee `ensures` or a guard, and never names
-  the call. The writers of Snowghost's layout stage took the guard: the
-  [layout-friction investigation](../research/investigations/layout-friction/DESIGN.md#1-length-facts-after-a-call-through-a-reference)
-  finds nine guards such kills make necessary and 19 unneeded ones that
-  repeat a fact that had survived, and its probe `len-whole-row.wf` is the
-  witness. Change: keep
-  the kill event for the residual's relation and name the call and the row
-  entry, offering a narrower entry where the callee's exhibited writes allow
-  one and a postcondition stating the measure unchanged, beside the guard.
-  Validate with `len-whole-row.wf` naming `bump`'s call and `writes(context)`,
-  `len-window-row.wf` offering no narrower entry, and an OP-4 with no earlier
-  fact unchanged. Reopen with the next change to OP-4's diagnostics or a
-  writer trial that measures repairs followed.
-
 ## Containers and storage lowering
 
 - **A hash map offers no sample or bounded visit.**
@@ -2064,24 +2046,6 @@ rarely insert at the same place.
   Subtree-private independently compiled modules remain unselected; reconsider
   for a concrete privacy consumer that cannot use one module's private
   implementation files.
-
-- **The TYPE-6 repair for a collision with a module declaration cannot be
-  carried out.** A local, a parameter or an alias whose spelling a
-  module-level declaration of another record already holds is refused
-  [TYPE-6, MOD-3, MOD-4] with the repair for two nested local blocks: it
-  explains moved bindings and offers closing "the block that declares the
-  outer one", which for a module declaration is the module. A repair
-  alternative must succeed when carried out [DIAG-1]. The
-  [layout-friction investigation](../research/investigations/layout-friction/DESIGN.md#2-module-level-names-closed-to-every-local-of-the-module)
-  shows both forms, `probes/collision/` (a local against a function) and
-  `probes/collision-alias/` (an alias against a struct);
-  `compiler/src/resolution/engine/inventory.rs` chooses
-  `COLLIDES_WITH_LIVE_OUTER` for every non-prelude outer declaration. Change:
-  a repair for a module-level or record-level outer declaration that names
-  its record and offers renaming either declaration, pinned with both
-  probes. Reopen with the next diagnostics change or when the owner rules
-  on the investigation's TYPE-6 directions, which may change the rule
-  itself.
 
 ## Code structure
 

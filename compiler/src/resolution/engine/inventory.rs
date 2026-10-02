@@ -356,11 +356,12 @@ fn match_binder_issue(
         .filter_map(|candidate| tables.metas.get(*candidate))
     {
         let record = &tables.declarations[candidate.record_index];
+        // [TYPE-6] a binder is a value, and a callable of its spelling does
+        // not compete with it.
         if candidate.entries.iter().any(|class| {
             matches!(
                 class,
-                DeclarationClass::Function
-                    | DeclarationClass::NamedConst
+                DeclarationClass::NamedConst
                     | DeclarationClass::ConstGeneric
                     | DeclarationClass::Value
             )
@@ -405,7 +406,9 @@ fn collision_issue(
             declaration_domain(*class).ok_or(ResolutionCompilerFailure::InvalidRoleShape)?;
         for prelude in PRELUDE_DECLARATIONS {
             if prelude.spelling == declaration.spelling
-                && prelude.class.and_then(declaration_domain) == Some(domain)
+                && prelude
+                    .class
+                    .is_some_and(|prelude_class| competes(*class, prelude_class))
             {
                 prelude_conflicts.push(DeclarationConflict {
                     domain,
@@ -469,6 +472,7 @@ fn collision_issue(
 
     let mut shadows = Vec::new();
     let mut shadows_prelude = false;
+    let mut shadows_top_level = false;
     for candidate in tables
         .index
         .with_spelling(&declaration.spelling)
@@ -498,6 +502,7 @@ fn collision_issue(
             &mut shadows,
         );
         shadows_prelude |= shadows.len() != before && scopes.is_prelude_scope(candidate.scope);
+        shadows_top_level |= shadows.len() != before && scopes.is_unit_scope(candidate.scope);
     }
     sort_conflicts(&mut shadows, tables.declarations);
     Ok((!shadows.is_empty()).then(|| {
@@ -507,6 +512,8 @@ fn collision_issue(
             declaration_collision_rule(declaration),
             if shadows_prelude {
                 COLLIDES_WITH_PRELUDE
+            } else if shadows_top_level {
+                COLLIDES_WITH_TOP_LEVEL
             } else {
                 COLLIDES_WITH_LIVE_OUTER
             },
@@ -532,6 +539,29 @@ fn meta_for_record(
         .ok_or(ResolutionCompilerFailure::InvalidRoleShape)
 }
 
+/// [TYPE-6] Two declaration classes compete when they share a domain and,
+/// in the lexical IDENT domain, are not a callable and a value: no use admits
+/// both, so a value beside a function of its spelling is neither a
+/// redeclaration nor a shadow. A module alias is in both classes.
+fn competes(left: DeclarationClass, right: DeclarationClass) -> bool {
+    let callable = |class| {
+        matches!(
+            class,
+            DeclarationClass::Function | DeclarationClass::FunctionParameter
+        )
+    };
+    let value = |class| {
+        matches!(
+            class,
+            DeclarationClass::NamedConst | DeclarationClass::ConstGeneric | DeclarationClass::Value
+        )
+    };
+    declaration_domain(left).is_some()
+        && declaration_domain(left) == declaration_domain(right)
+        && !(callable(left) && value(right))
+        && !(value(left) && callable(right))
+}
+
 fn collect_domain_conflicts(
     declaration: &DeclarationRecord,
     meta: &DeclarationMeta,
@@ -547,7 +577,7 @@ fn collect_domain_conflicts(
             continue;
         };
         for candidate_class in &candidate_meta.entries {
-            if declaration_domain(*candidate_class) == Some(domain) {
+            if competes(*class, *candidate_class) {
                 conflicts.push(DeclarationConflict {
                     domain,
                     class: *candidate_class,
@@ -558,8 +588,8 @@ fn collect_domain_conflicts(
     }
 }
 
-/// The four colliding situations [TYPE-6] selects between, each with the
-/// repair it admits.
+/// The colliding situations [TYPE-6] selects between, each with the repair
+/// it admits.
 ///
 /// The payload locates both declarations and stops there, which leaves the
 /// surprise of the fourth one unstated: a binding whose value has been
@@ -571,6 +601,7 @@ const COLLIDES_WITH_PRELUDE: &str = "a source declaration never displaces, overr
 const COLLIDES_IN_ONE_SCOPE: &str = "one scope declares each spelling once in a domain, so this is a redeclaration and not a shadow; rename this declaration, or delete the earlier one when nothing reads it";
 const COLLIDES_IN_ONE_ENUM: &str = "one enum declares each variant name once; rename this variant";
 const COLLIDES_WITH_MODULE: &str = "a registered child module already occupies this qualified name, so a lowercase declaration of its parent module cannot take it; rename the declaration or the module directory";
+const COLLIDES_WITH_TOP_LEVEL: &str = "a top-level declaration is live in every function of its module, and a file's alias in every function of its file, whichever file declares it and wherever, so no parameter, local, or alias there may take its spelling in its domain; rename this declaration, or rename the top-level declaration or alias at the origin listed";
 const COLLIDES_WITH_LIVE_OUTER: &str = "a declaration's scope ends with the block that declares it, and not where its value is consumed: a binding whose value was moved is dead as a value while its declaration stays live, so an inner declaration of the same spelling still collides with it. Rename the inner declaration, or close the block that declares the outer one before this point";
 
 fn collision(

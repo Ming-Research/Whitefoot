@@ -189,10 +189,10 @@ impl Reasoning<'_, '_, '_> {
         separations: &dyn SeparationOracle,
         state: &mut FactState,
         kills: &LoopKills,
-    ) {
+    ) -> Vec<KilledCell> {
         self.vocabulary
             .materialize_before_event_kill(state, &kills.events);
-        state.kill(|term| {
+        let removed = state.kill(|term| {
             kills
                 .events
                 .iter()
@@ -222,6 +222,7 @@ impl Reasoning<'_, '_, '_> {
         state
             .ambiguous_goal_origins
             .retain(|binding| !kills.set_bindings.contains(binding));
+        removed
     }
 
     pub(super) fn apply_loop_kills(
@@ -248,7 +249,8 @@ impl Reasoning<'_, '_, '_> {
             live: &live,
         };
         self.kill_result_evidence(states, &kills.events);
-        self.apply_loop_kills_one(&separations, &mut states.facts, kills);
+        let removed = self.apply_loop_kills_one(&separations, &mut states.facts, kills);
+        self.record_measure_kills(&separations, states, &kills.events, &removed);
         self.apply_affine_kills(&separations, &mut states.affine, &kills.events);
         states.record_writes(&kills.events);
         let mut groups = kills.entry_image_groups.iter().collect::<Vec<_>>();

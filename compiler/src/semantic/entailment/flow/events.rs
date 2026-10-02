@@ -814,12 +814,12 @@ impl Reasoning<'_, '_, '_> {
         separations: &dyn SeparationOracle,
         state: &mut FactState,
         events: &[KillEvent],
-    ) {
+    ) -> Vec<KilledCell> {
         if events.is_empty() {
-            return;
+            return Vec::new();
         }
         self.vocabulary.materialize_before_event_kill(state, events);
-        state.kill(|term| {
+        let removed = state.kill(|term| {
             events
                 .iter()
                 .any(|event| self.event_kills_term(separations, term, event))
@@ -844,6 +844,59 @@ impl Reasoning<'_, '_, '_> {
                     .event_kills_goal_origin_binding(separations, *binding, event)
             })
         });
+        removed
+    }
+
+    /// [DIAG-1] records each write among `events` that reaches a measure
+    /// term, with the cells `removed` held about that term: a term whose
+    /// cells this batch removed, and a term an earlier write already
+    /// reached, whose later writes a repair must name too.
+    pub(super) fn record_measure_kills(
+        &self,
+        separations: &dyn SeparationOracle,
+        states: &mut ProofFlowState,
+        events: &[KillEvent],
+        removed: &[KilledCell],
+    ) {
+        let mut terms: Vec<TermId> = removed
+            .iter()
+            .flat_map(|cell| {
+                [
+                    cell.left_killed.then_some(cell.left),
+                    cell.right_killed.then_some(cell.right),
+                ]
+            })
+            .flatten()
+            .chain(states.measure_kills.iter().map(|kill| kill.term))
+            .filter(|term| matches!(self.vocabulary.terms.kind(*term), TermKind::Measure(..)))
+            .collect();
+        terms.sort_unstable();
+        terms.dedup();
+        for term in terms {
+            let cells: Vec<KilledCell> = removed
+                .iter()
+                .filter(|cell| {
+                    (cell.left_killed && cell.left == term)
+                        || (cell.right_killed && cell.right == term)
+                })
+                .copied()
+                .collect();
+            for event in events {
+                let (KillEvent::Write { place, source, .. }
+                | KillEvent::EntryImageHolderWrite { place, source, .. }) = event
+                else {
+                    continue;
+                };
+                if self.event_kills_term(separations, term, event) {
+                    states.record_measure_kill(MeasureKill {
+                        term,
+                        source: source.clone(),
+                        written: place.clone(),
+                        cells: cells.clone(),
+                    });
+                }
+            }
+        }
     }
 
     /// One batch of kill events on the path components after the Result
@@ -860,7 +913,8 @@ impl Reasoning<'_, '_, '_> {
         events: &[KillEvent],
         shared_event: Option<FlowEventId>,
     ) {
-        self.apply_kills_one(separations, &mut states.facts, events);
+        let removed = self.apply_kills_one(separations, &mut states.facts, events);
+        self.record_measure_kills(separations, states, events, &removed);
         self.apply_affine_kills(separations, &mut states.affine, events);
         self.invalidate_entry_images(states, separations, events, shared_event);
         states.record_writes(events);

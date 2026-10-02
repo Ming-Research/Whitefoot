@@ -1355,6 +1355,43 @@ fn main() -> status: std::process::ExitStatus pure {
     // and the fallible store take. Their successors are the reference rules
     // [REF-1, REF-3, REF-4] and the window rules [WIN-1, WIN-3, OP-10],
     // whose own sentences are pinned by the probes that remain above.
+    // -------------------------------------------------------------------
+    // [OP-4, ENT-5] a call's covering row removed facts about the measure,
+    // but those facts, put back, do not prove this bound, so the repair names
+    // no call and keeps the ordinary routes.
+    // -------------------------------------------------------------------
+    Probe {
+        name: "bounds-after-an-irrelevant-kill.wf",
+        source: br#"struct Ctx {
+  blocks: Box<Slots<u64>>;
+  width: i32;
+}
+
+fn bump(context: &Ctx) -> result: unit writes(context) {
+  set context^.width = context^.width +sat 1_i32;
+  return unit;
+}
+
+fn after_a_call(context: &Ctx, at: u64) -> result: u64 writes(context) {
+  if at < context^.blocks.inner.len {
+    bump(context: context);
+    let next = at +sat 1_u64;
+    let found = context^.blocks.inner[next];
+    return found;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "OP-4",
+        sentences: &[
+            "]: UndischargedBoundsObligation\n",
+            "\n  mechanical_fix: `next < context^.blocks.inner.len` is not proved here: when facts that reach the access imply it",
+        ],
+    },
 ];
 
 /// Every sentence in the corpus is rendered by a program that reaches it.

@@ -190,6 +190,7 @@ mod tests {
             affine_index_maps: Vec::new(),
             range_partitions: Vec::new(),
             written_before: Vec::new(),
+            killed_by: Vec::new(),
         }
     }
 

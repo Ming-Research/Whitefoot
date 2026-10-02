@@ -718,20 +718,37 @@ fn requires_locals_do_not_escape_into_the_function_body() {
 
 #[test]
 fn root_identifier_collisions_are_rejected_in_inventory_order() {
-    let source = br#"fn value() -> result: unit pure {
-}
+    let source = br#"const value: i32 = 2_i32;
 
 const value: i32 = 1_i32;
 "#;
     with_one_resolution(source, |outcome| {
         let ResolutionOutcome::SourceIssue { issue, .. } = outcome else {
-            panic!("function and const must share the lexical namespace: {outcome:?}");
+            panic!("two consts must share the lexical namespace: {outcome:?}");
         };
         assert_eq!(issue.rule(), ResolutionRule::Type6);
         assert!(matches!(
             issue.kind(),
             ResolutionIssueKind::DeclarationCollision { spelling, .. } if spelling == "value"
         ));
+    });
+}
+
+/// [TYPE-6] a top-level function and a top-level const of one spelling are a
+/// callable and a value, which never compete, so one scope holds both.
+#[test]
+fn a_top_level_function_and_const_of_one_spelling_do_not_compete() {
+    let source = br#"fn value() -> result: i32 pure {
+  return value;
+}
+
+const value: i32 = 1_i32;
+"#;
+    with_one_resolution(source, |outcome| {
+        assert!(
+            matches!(outcome, ResolutionOutcome::Complete(_)),
+            "a callable and a value must not collide: {outcome:?}"
+        );
     });
 }
 
@@ -2048,24 +2065,70 @@ fn duplicate_main_conformance_case_is_type6() {
 }
 
 #[test]
-fn nested_declarations_cannot_shadow_source_later_global_functions() {
+fn nested_declarations_cannot_shadow_source_later_global_constants() {
     let source = br#"fn probe() -> result: unit pure {
   let future = 1_i32;
   return unit;
 }
 
-fn future() -> result: unit pure {
-}
+const future: i32 = 2_i32;
 "#;
     with_one_resolution(source, |outcome| {
         let ResolutionOutcome::SourceIssue { issue, .. } = outcome else {
-            panic!("whole-unit function visibility must prevent shadowing: {outcome:?}");
+            panic!("whole-unit constant visibility must prevent shadowing: {outcome:?}");
         };
         assert_eq!(issue.rule(), ResolutionRule::Type6);
         assert!(matches!(
             issue.kind(),
             ResolutionIssueKind::DeclarationCollision { spelling, .. } if spelling == "future"
         ));
+    });
+}
+
+/// [TYPE-6] a callable and a value never compete: no use admits both, so a
+/// local value may take a source-later function's spelling, and each use
+/// resolves to the one its role admits.
+#[test]
+fn a_local_value_and_a_function_of_one_spelling_do_not_compete() {
+    let source = br#"fn probe() -> result: i32 pure {
+  let future = future();
+  return future;
+}
+
+fn future() -> result: i32 pure {
+  return 1_i32;
+}
+"#;
+    with_one_resolution(source, |outcome| {
+        let ResolutionOutcome::Complete(resolved) = outcome else {
+            panic!("a value beside a function of its spelling must resolve: {outcome:?}");
+        };
+        let targets: Vec<_> = resolved
+            .lexical_uses()
+            .iter()
+            .filter(|record| record.spelling() == "future")
+            .map(|record| (record.role(), record.target()))
+            .collect();
+        assert!(targets.iter().any(|(role, target)| {
+            *role == LexicalUseRole::IdentifierCallee
+                && matches!(
+                    target,
+                    ResolvedTarget::Source {
+                        class: DeclarationClass::Function,
+                        ..
+                    }
+                )
+        }));
+        assert!(targets.iter().any(|(role, target)| {
+            *role == LexicalUseRole::PlaceBase
+                && matches!(
+                    target,
+                    ResolvedTarget::Source {
+                        class: DeclarationClass::Value,
+                        ..
+                    }
+                )
+        }));
     });
 }
 
@@ -2288,8 +2351,7 @@ fn guarded() -> result: unit pure contract {
         assert_eq!(issue.rule(), ResolutionRule::Fn8);
     });
 
-    let earlier_lower_rank = br#"fn value() -> result: unit pure {
-}
+    let earlier_lower_rank = br#"const value: i32 = 2_i32;
 
 const value: i32 = 1_i32;
 
@@ -2506,7 +2568,7 @@ fn ordinary_prelude_names_cannot_be_shadowed_and_an_opaque_constructor_entry_res
     for source in [
         "struct Slots {\n}\n",
         "struct DivideByZero {\n}\n",
-        "fn helper() -> result: unit pure {\n  let box_new = 0_u64;\n  return unit;\n}\n",
+        "fn box_new() -> result: unit pure {\n  return unit;\n}\n",
     ] {
         with_resolution_sources(
             &[SourceInput::new("collision.wf", source.as_bytes())],
@@ -2524,6 +2586,21 @@ fn ordinary_prelude_names_cannot_be_shadowed_and_an_opaque_constructor_entry_res
             },
         );
     }
+    // [TYPE-6] a local value and a PRE-1 function are a value and a callable,
+    // which never compete.
+    with_resolution_sources(
+        &[SourceInput::new(
+            "value.wf",
+            b"fn helper() -> result: unit pure {\n  let box_new = 0_u64;\n  return unit;\n}\n",
+        )],
+        true,
+        |outcome| {
+            assert!(
+                matches!(outcome, ResolutionOutcome::Complete(_)),
+                "a value takes a prelude function's spelling: {outcome:?}"
+            );
+        },
+    );
     // [TYPE-6] a source variant belongs to its enum and enters no
     // constructor domain, so it shares a PRE-1 variant's spelling freely.
     with_resolution_sources(

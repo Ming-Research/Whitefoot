@@ -287,6 +287,7 @@ impl Judging<'_, '_, '_> {
             affine_index_maps: Vec::new(),
             range_partitions: Vec::new(),
             written_before: states.written_before(discharged),
+            killed_by: Vec::new(),
         });
     }
 
@@ -443,6 +444,7 @@ impl Judging<'_, '_, '_> {
             affine_index_maps: Vec::new(),
             range_partitions: Vec::new(),
             written_before: state.written_before(discharged),
+            killed_by: Vec::new(),
         });
         discharged
     }
@@ -603,6 +605,7 @@ impl Judging<'_, '_, '_> {
             affine_index_maps: Vec::new(),
             range_partitions: Vec::new(),
             written_before: states.written_before(discharged),
+            killed_by: Vec::new(),
         });
     }
 
@@ -1508,21 +1511,64 @@ impl Analyzer<'_, '_> {
                     middle,
                     left_to_middle_bound: -1,
                 });
-        let proof = self.reasoning().prove(
-            ProofContext::new(&states.facts, &states.affine),
+        let goal = || {
             ProofGoal::BoundedRelation(BoundedRelationGoal {
                 canonical: None,
                 request: Some(request),
                 direct_affine: direct_affine.as_ref(),
                 fixed_affine_bridge,
                 affine_left: affine_offset.as_ref(),
-            }),
-        );
+            })
+        };
+        let proof = self
+            .reasoning()
+            .prove(ProofContext::new(&states.facts, &states.affine), goal());
         let discharged = proof.disposition == ProofDisposition::Proved;
         let refuted = proof.disposition == ProofDisposition::Refuted;
         let contradictory = proof.route == Some(ProofRoute::Contradiction);
         let derivation = proof.derivation;
         let residual = (!discharged).then(|| rendered_residual.clone());
+        // [DIAG-1] an unproved bound whose measure lost facts to writes on the
+        // way here: when those facts, put back, discharge it, the repair
+        // names the writes that removed them [ENT-5].
+        let killed_by = if discharged || refuted {
+            Vec::new()
+        } else {
+            let kills: Vec<&MeasureKill> = states
+                .measure_kills
+                .iter()
+                .filter(|kill| kill.term == length_term)
+                .collect();
+            let mut restored = states.facts.clone();
+            for kill in &kills {
+                restored.restore_killed(&kill.cells, &self.vocabulary.derivations);
+            }
+            let counterfactual = if kills.iter().any(|kill| !kill.cells.is_empty()) {
+                Some(
+                    self.reasoning()
+                        .prove(ProofContext::new(&restored, &states.affine), goal()),
+                )
+            } else {
+                None
+            };
+            match counterfactual {
+                Some(proof)
+                    if proof.disposition == ProofDisposition::Proved
+                        && proof.route != Some(ProofRoute::Contradiction) =>
+                {
+                    let measure = format!("{}.len", self.input.render_place(&base));
+                    kills
+                        .iter()
+                        .map(|kill| MeasureKillNote {
+                            source: kill.source.clone(),
+                            written: self.input.render_place(&kill.written),
+                            measure: measure.clone(),
+                        })
+                        .collect()
+                }
+                _ => Vec::new(),
+            }
+        };
         let ordinal = u32::try_from(self.output.obligations.len())
             .expect("ENT obligation-root ordinal exceeds the u32 identity space");
         if let Some(root) = derivation {
@@ -1551,6 +1597,7 @@ impl Analyzer<'_, '_> {
             },
             range_partitions: Vec::new(),
             written_before: states.written_before(discharged),
+            killed_by,
         });
     }
 
@@ -1783,6 +1830,7 @@ impl Analyzer<'_, '_> {
             affine_index_maps: Vec::new(),
             range_partitions: Vec::new(),
             written_before: states.written_before(discharged),
+            killed_by: Vec::new(),
         });
     }
 
