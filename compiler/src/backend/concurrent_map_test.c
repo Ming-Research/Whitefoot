@@ -18,7 +18,12 @@
  *   locked; threads removing and keeping a few keys, spread or all starting
  *   at one cell so that their claims race in one run, never holding one
  *   key in two statements or two cells; and a drain that hands out every
- *   present entry once.
+ *   present entry once;
+ * - a keyed statement that waits out its patience and holds the whole map
+ *   instead: from inside a claim it gives back, after a bounded number of
+ *   statements on a key others keep locking, and with every statement doing
+ *   so while the map moves, holds count and claims race; and statements over
+ *   the whole map that hold it in the order they asked.
  *
  * Prints the first failure and exits 1, or exits 0.
  */
@@ -43,11 +48,18 @@ struct table;
 static void before_claim(struct table *t, unsigned long long index);
 static uint64_t counted_key(uint64_t k, unsigned char *bytes);
 #define WF_CMAP_BEFORE_CLAIM(t, index) before_claim((t), (index))
+struct wf_cmap_user;
+static uint64_t patience_of(struct wf_cmap_user *u);
+static void hold_seen(struct wf_cmap_user *u, int closed);
+#define WF_CMAP_PATIENCE(u) patience_of(u)
+#define WF_CMAP_HOLD_QUEUED(u) hold_seen((u), 0)
+#define WF_CMAP_HOLD_CLOSED(u) hold_seen((u), 1)
 
 /* The tests a build runs: locked reads change only wf_cmap_get, which only
  * the tests of word keys call, and narrowed hashes change only entries'
  * hashes, which only the tests of entries use, so each such build runs the
- * tests its change reaches and the default build runs both. */
+ * tests its change reaches, the default build runs both, and it alone runs
+ * the tests of turns and bounds on one key, which neither change reaches. */
 #ifdef WF_CMAP_TAG_MASK
 #define WORD_TESTS 0
 #else
@@ -62,6 +74,29 @@ static uint64_t counted_key(uint64_t k, unsigned char *bytes);
 #include "concurrent_map.c"
 
 #define THREADS 4
+
+/* Each user's patience, the map's own but in the tests that set it. */
+static uint64_t patience[WF_CMAP_MAX_USERS];
+
+static uint64_t patience_of(wf_cmap_user *u) { return patience[u - u->map->users]; }
+
+static void set_patience(uint64_t first, uint64_t rest) {
+    patience[0] = first;
+    for (unsigned i = 1; i < WF_CMAP_MAX_USERS; i++)
+        patience[i] = rest;
+}
+
+/* A clock the tests of holds count statements on, and what it read when
+ * each user's statement over the whole map took its place in line and when
+ * it closed the gate. */
+static _Atomic uint64_t *hold_clock;
+static uint64_t queued_at[WF_CMAP_MAX_USERS], closed_at[WF_CMAP_MAX_USERS];
+
+static void hold_seen(wf_cmap_user *u, int closed) {
+    _Atomic uint64_t *clock = hold_clock;
+    if (clock != NULL)
+        (closed ? closed_at : queued_at)[u - u->map->users] = atomic_load(clock);
+}
 
 static uint64_t mix64(uint64_t z) {
     z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
@@ -698,6 +733,8 @@ static void *give_back_later(void *arg) {
 
 static void settle_pending(void) {
     wf_cmap *map = wf_cmap_create_entries(8, 8, 0);
+    wf_cmap_user *u = wf_cmap_user_at(map, 0);
+    u->patience = UINT64_MAX;
     table *t = atomic_load(&map->current);
     unsigned char k[16];
     uint64_t length = counted_key(0, k), tag = tag_of(k, length);
@@ -705,12 +742,12 @@ static void settle_pending(void) {
     cell *behind = &t->cells[at], *ahead = &t->cells[next], *out = NULL;
     atomic_store(&behind->key, tag | LOCKED | PENDING);
     atomic_store(&ahead->key, tag | LOCKED | PENDING);
-    if (settle_claim(t, at, next, tag, k, length, &out) != YIELDED || atomic_load(&ahead->key) != REMOVED)
+    if (settle_claim(u, t, at, next, tag, k, length, &out) != YIELDED || atomic_load(&ahead->key) != REMOVED)
         fail("a claim ahead of a pending claim of its hash did not give way", 0, 0);
     atomic_store(&ahead->key, tag | LOCKED | PENDING);
     pthread_t thread;
     pthread_create(&thread, NULL, give_back_later, ahead);
-    int r = settle_claim(t, at, at, tag, k, length, &out);
+    int r = settle_claim(u, t, at, at, tag, k, length, &out);
     uint64_t seen = atomic_load(&ahead->key);
     pthread_join(thread, NULL);
     if (r != SETTLED || out != behind || seen != REMOVED || atomic_load(&behind->key) != (tag | LOCKED))
@@ -754,6 +791,70 @@ static void claim_yields(void) {
     slot[0] = 1;
     wf_cmap_unlock_entry(first, &entry, 0, 1);
     check_cells(map, "an empty cell claimed and given back went uncounted (counted, taken)");
+    wf_cmap_destroy(map);
+}
+
+/* As another writer of claim_key that reused the cell of the key the writer
+ * under test passed, removed meanwhile, and holds it a little longer: k's
+ * cell, holding 7, locked there until a thread lets it go. */
+static pthread_t holding_thread;
+
+static void *let_go_later(void *arg) {
+    cell *c = arg;
+    struct timespec pause = {0, 2000000};
+    nanosleep(&pause, NULL);
+    atomic_store(&c->key, atomic_load(&c->key) & ~LOCKED);
+    return NULL;
+}
+
+static void hold_behind(struct table *t, unsigned long long index) {
+    (void)index;
+    wf_cmap *map = other_user->map;
+    uint64_t tag = tag_of(claim_key, claim_length);
+    cell *c = &t->cells[start_of(t, tag)];
+    node *n = new_node(other_user, node_bytes(map, claim_length));
+    n->length = claim_length;
+    memcpy(n->bytes, claim_key, (size_t)claim_length);
+    memset(slot_of(map, n), 0, (size_t)map->slot_size);
+    ((uint64_t *)slot_of(map, n))[0] = 7;
+    atomic_store(&c->value, (uint64_t)(uintptr_t)n);
+    atomic_store(&c->key, tag | LOCKED);
+    pthread_create(&holding_thread, NULL, let_go_later, c);
+}
+
+/* Key k, with no patience, claims the empty cell after a live key's cell
+ * that another writer of k has meanwhile reused and holds: k gives its claim
+ * back, counted as taken, holds the whole map, and then finds the other
+ * writer's cell once it is let go. */
+static void claim_impatient(void) {
+    wf_cmap *map = wf_cmap_create_entries(8, 8, 0);
+    wf_cmap_user *first = wf_cmap_user_at(map, 0);
+    table *t = atomic_load(&map->current);
+    unsigned char k[16], gone[16];
+    uint64_t k_length = counted_key(0, k), skip = 0;
+    uint64_t gone_bytes = key_beside(t, k, k_length, &skip, gone);
+    wf_cmap_entry entry;
+    wf_cmap_lock_entry(first, gone, gone_bytes, 0, &entry);
+    wf_cmap_unlock_entry(first, &entry, 0, 1);
+    other_user = wf_cmap_user_at(map, 1);
+    claim_key = k;
+    claim_length = k_length;
+    at_claim = hold_behind;
+    set_patience(0, PATIENCE);
+    uint64_t *slot = wf_cmap_lock_entry(first, k, k_length, 0, &entry);
+    pthread_join(holding_thread, NULL);
+    set_patience(PATIENCE, PATIENCE);
+    cell *claimed = &t->cells[(start_of(t, tag_of(k, k_length)) + 1) & t->mask];
+    if (at_claim != NULL || !entry.upgraded || entry.fresh || slot[0] != 7)
+        fail("an impatient claim did not hold the map and find its key (upgraded, fresh)", entry.upgraded,
+             entry.fresh);
+    if (atomic_load(&claimed->key) != REMOVED)
+        fail("an impatient claim kept its cell", atomic_load(&claimed->key), 0);
+    wf_cmap_unlock_entry(first, &entry, 0, 1);
+    if (atomic_load(&map->gate) != 0 || atomic_load(&map->hold_serving) != atomic_load(&map->hold_next))
+        fail("an impatient statement left the map held (gate, turns behind)", (uint64_t)atomic_load(&map->gate),
+             atomic_load(&map->hold_next) - atomic_load(&map->hold_serving));
+    check_cells(map, "an impatient claim's cell went uncounted (counted, taken)");
     wf_cmap_destroy(map);
 }
 
@@ -813,6 +914,10 @@ static void entries_sequential(void) {
 }
 
 enum { COUNTED_KEYS = 64, COUNTING = 100000 };
+/* Statements each thread of a counting or churning test runs: a quarter as
+ * many where every statement that waits holds the map, which still holds it
+ * thousands of times. */
+static uint64_t statements;
 
 typedef struct {
     wf_cmap *map;
@@ -834,7 +939,7 @@ static void *count_entries(void *arg) {
     wf_cmap_user *user = wf_cmap_user_at(c->map, c->index);
     unsigned char bytes[16];
     uint64_t state = mix64(c->index + 99);
-    for (unsigned i = 0; i < COUNTING; i++) {
+    for (uint64_t i = 0; i < statements; i++) {
         uint64_t k = next(&state) % COUNTED_KEYS;
         uint64_t length = counted_key(k, bytes);
         wf_cmap_entry entry;
@@ -875,8 +980,12 @@ static void *hold_entries(void *arg) {
     return NULL;
 }
 
-static void entries_held(void) {
-    wf_cmap *map = wf_cmap_create_entries(8, 8, 0);
+/* With capacity 1 and no patience, the map moves while the counted keys
+ * arrive, and every statement that waits holds the whole map. */
+static void entries_held(uint64_t capacity, uint64_t patient) {
+    wf_cmap *map = wf_cmap_create_entries(8, 8, capacity);
+    set_patience(patient, patient);
+    statements = patient == 0 ? COUNTING / 4 : COUNTING;
     _Atomic uint64_t total = 0;
     _Atomic int stop = 0;
     pthread_t t[THREADS + 1];
@@ -894,8 +1003,9 @@ static void entries_held(void) {
     uint64_t sum = 0;
     for (uint64_t *slot; (slot = wf_cmap_drain(map)) != NULL;)
         sum += slot[0];
-    if (sum != (uint64_t)THREADS * COUNTING)
-        fail("a keyed statement's count was lost", sum, (uint64_t)THREADS * COUNTING);
+    if (sum != THREADS * statements)
+        fail("a keyed statement's count was lost (sum, patience)", sum, patient);
+    set_patience(PATIENCE, PATIENCE);
     wf_cmap_destroy(map);
 }
 
@@ -935,7 +1045,7 @@ static void *churn_entries(void *arg) {
     counter_t *c = arg;
     wf_cmap_user *user = wf_cmap_user_at(c->map, c->index);
     uint64_t state = 0x9e3779b97f4a7c15ull * (c->index + 1);
-    for (uint64_t i = 0; i < CHURN_OPS; i++) {
+    for (uint64_t i = 0; i < statements; i++) {
         state ^= state << 13;
         state ^= state >> 7;
         state ^= state << 17;
@@ -957,8 +1067,10 @@ static void *churn_entries(void *arg) {
     return NULL;
 }
 
-static void entries_churn(int crowded) {
+static void entries_churn(int crowded, uint64_t patient) {
     wf_cmap *map = wf_cmap_create_entries(8, 8, 0);
+    set_patience(patient, patient);
+    statements = patient == 0 ? CHURN_OPS / 4 : CHURN_OPS;
     table *t = atomic_load(&map->current);
     uint64_t skip = 0;
     churn_lengths[0] = counted_key(0, churn_bytes[0]);
@@ -982,8 +1094,119 @@ static void entries_churn(int crowded) {
         sum += slot[0];
     if (cells > CHURN_KEYS)
         fail("a churned key holds two cells (crowded, cells)", (uint64_t)crowded, cells);
-    if (sum != (uint64_t)THREADS * CHURN_OPS)
-        fail("a churned key's increment was lost", sum, (uint64_t)THREADS * CHURN_OPS);
+    if (sum != THREADS * statements)
+        fail("a churned key's increment was lost (sum, patience)", sum, patient);
+    set_patience(PATIENCE, PATIENCE);
+    wf_cmap_destroy(map);
+}
+
+/* Statements on one key from every thread at once, where only the first
+ * thread's run out of patience: each of those that holds the map is
+ * overtaken, once it has closed the gate, by at most the one statement of
+ * each other thread already under way. */
+enum { HOT_OPS = 2000 };
+static _Atomic uint64_t hot_clock;
+static _Atomic int hot_done;
+static unsigned char hot_key[16];
+static uint64_t hot_length, hot_upgraded, hot_worst;
+
+static void *hot_statements(void *arg) {
+    counter_t *c = arg;
+    wf_cmap_user *user = wf_cmap_user_at(c->map, c->index);
+    uint64_t upgraded = 0, worst = 0;
+    for (uint64_t i = 0; c->index == 0 ? i < HOT_OPS : !atomic_load(&hot_done); i++) {
+        wf_cmap_entry entry;
+        uint64_t *slot = wf_cmap_lock_entry(user, hot_key, hot_length, 0, &entry);
+        uint64_t now = atomic_fetch_add(&hot_clock, 1);
+        if (entry.upgraded) {
+            upgraded++;
+            if (now - closed_at[c->index] > worst)
+                worst = now - closed_at[c->index];
+        }
+        for (volatile int spin = 0; spin < 50; spin++) {
+        }
+        slot[0] += 1;
+        wf_cmap_unlock_entry(user, &entry, 0, 1);
+    }
+    if (c->index == 0) {
+        hot_upgraded = upgraded;
+        hot_worst = worst;
+        atomic_store(&hot_done, 1);
+    }
+    return NULL;
+}
+
+static void entries_bounded(void) {
+    wf_cmap *map = wf_cmap_create_entries(8, 8, 0);
+    hot_length = counted_key(1, hot_key);
+    atomic_store(&hot_clock, 0);
+    atomic_store(&hot_done, 0);
+    set_patience(0, UINT64_MAX);
+    hold_clock = &hot_clock;
+    pthread_t threads[THREADS];
+    counter_t c[THREADS];
+    for (unsigned i = 0; i < THREADS; i++) {
+        c[i] = (counter_t){map, i, NULL, NULL, 0};
+        pthread_create(&threads[i], NULL, hot_statements, &c[i]);
+    }
+    for (unsigned i = 0; i < THREADS; i++)
+        pthread_join(threads[i], NULL);
+    hold_clock = NULL;
+    set_patience(PATIENCE, PATIENCE);
+    if (hot_upgraded == 0)
+        fail("a statement out of patience never held the map", 0, 0);
+    if (hot_worst > THREADS - 1)
+        fail("a statement holding the map was overtaken past the bound (overtaken, bound)", hot_worst,
+             THREADS - 1);
+    uint64_t *slot = wf_cmap_drain(map);
+    if (slot == NULL || slot[0] != atomic_load(&hot_clock))
+        fail("a statement on the one key was lost (count, statements)", slot ? slot[0] : 0, atomic_load(&hot_clock));
+    wf_cmap_destroy(map);
+}
+
+/* Two threads holding the whole map again and again: once the second has
+ * taken its place in line, the first holds the map at most once before the
+ * second does. */
+enum { TURN_HOLDS = 2000 };
+static _Atomic uint64_t first_holds;
+static _Atomic int turn_done;
+static uint64_t turn_worst;
+
+static void *hold_again(void *arg) {
+    counter_t *c = arg;
+    wf_cmap_user *user = wf_cmap_user_at(c->map, c->index);
+    uint64_t worst = 0;
+    for (uint64_t i = 0; c->index == 1 ? i < TURN_HOLDS : !atomic_load(&turn_done); i++) {
+        wf_cmap_hold(user);
+        if (c->index == 0)
+            atomic_fetch_add(&first_holds, 1);
+        else if (atomic_load(&first_holds) - queued_at[1] > worst)
+            worst = atomic_load(&first_holds) - queued_at[1];
+        wf_cmap_unhold(user);
+    }
+    if (c->index == 1) {
+        turn_worst = worst;
+        atomic_store(&turn_done, 1);
+    }
+    return NULL;
+}
+
+static void holds_in_turn(void) {
+    wf_cmap *map = wf_cmap_create_entries(8, 8, 0);
+    atomic_store(&first_holds, 0);
+    atomic_store(&turn_done, 0);
+    hold_clock = &first_holds;
+    pthread_t threads[2];
+    counter_t c[2];
+    for (unsigned i = 0; i < 2; i++) {
+        c[i] = (counter_t){map, i, NULL, NULL, 0};
+        pthread_create(&threads[i], NULL, hold_again, &c[i]);
+    }
+    for (unsigned i = 0; i < 2; i++)
+        pthread_join(threads[i], NULL);
+    hold_clock = NULL;
+    if (turn_worst > 1)
+        fail("a statement over the map was overtaken by later ones (holds, bound)", turn_worst, 1);
     wf_cmap_destroy(map);
 }
 
@@ -1011,6 +1234,7 @@ int main(void) {
     /* Writers that wait on each other in a cycle fail the test here rather
      * than at the gate's limit. */
     alarm(120);
+    set_patience(PATIENCE, PATIENCE);
     if (ENTRY_TESTS) {
         entries_huge_capacity();
         entries_sequential();
@@ -1019,10 +1243,17 @@ int main(void) {
         claim_behind(0);
         settle_pending();
         claim_yields();
+        claim_impatient();
         entries_misses();
-        entries_churn(0);
-        entries_churn(1);
-        entries_held();
+        entries_churn(0, PATIENCE);
+        entries_churn(1, PATIENCE);
+        entries_churn(1, 0);
+        entries_held(0, PATIENCE);
+        entries_held(1, 0);
+    }
+    if (ENTRY_TESTS && WORD_TESTS) {
+        entries_bounded();
+        holds_in_turn();
     }
     if (WORD_TESTS) {
         checker_self_test();

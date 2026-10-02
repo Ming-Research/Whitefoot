@@ -50,6 +50,7 @@ typedef struct {
     void *cell;
     void *table;
     uint32_t fresh;
+    uint32_t upgraded; /* the statement holds the whole map to lock it */
 } wf_cmap_entry;
 
 /* Locks key's entry, creating it when absent, and returns its slot's address;
@@ -60,7 +61,8 @@ void *wf_cmap_lock_entry(wf_cmap_user *user, const unsigned char *key, uint64_t 
 /* Unlocks the entry: kept when present, else removed with its slot, which
  * then holds nothing to release. */
 void wf_cmap_unlock_entry(wf_cmap_user *user, wf_cmap_entry *entry, int held, int present);
-/* Holds every entry of the map, waiting out keyed statements under way. */
+/* Holds every entry of the map, waiting out keyed statements under way;
+ * statements over the whole map hold it in the order they asked. */
 void wf_cmap_hold(wf_cmap_user *user);
 void wf_cmap_unhold(wf_cmap_user *user);
 /* The number of entries, exact while the map is held or has no users. */
