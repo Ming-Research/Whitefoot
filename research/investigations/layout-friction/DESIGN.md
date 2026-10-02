@@ -677,7 +677,7 @@ unrepresentable allocation size heap exhaustion
 a way to avoid the run-time cost of data only a contract reads, which a
 separate record answers.
 
-Specification v0.85 implements 1B and 2B, together with 2A. Under it
+Specification v0.86 implements 1B and 2B, together with 2A. Under it
 `probes/collision/` is accepted; `probes/collision-alias/`, a type against an
 alias, is still refused, now with a repair that offers renaming either
 declaration; and `len-whole-row`, `len-window-row` and `len-loop-header` name

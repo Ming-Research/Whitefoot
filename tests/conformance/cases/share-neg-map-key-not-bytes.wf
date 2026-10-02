@@ -1,0 +1,7 @@
+fn main() -> status: std::process::ExitStatus pure waits {
+  let map = shared_map_new::<u8>(capacity: 0_u64);
+  atomic slot = &map[7_u64] {
+    set slot^ = Some<u8>(value: 1_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

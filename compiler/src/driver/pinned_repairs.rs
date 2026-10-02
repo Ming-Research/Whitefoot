@@ -2983,7 +2983,7 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "SHARE-2",
         sentences: &[
             "]: AtomicTargetNotShared\n",
-            "\n  mechanical_fix: name a place of type `Shared<T>`: create the object with `shared_new` and give each context its own handle made with `shared_share`\n",
+            "\n  mechanical_fix: name a place of type `Shared<T>` or `SharedMap<V>`, or an entry `m[key]` of a map: create the object with `shared_new` or the map with `shared_map_new`, and give each context its own handle made with `shared_share` or `shared_map_share`\n",
         ],
         repaired: &[br#"fn main() -> status: std::process::ExitStatus pure waits {
   let plain = shared_new::<u8>(value: 0_u8);

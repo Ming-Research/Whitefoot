@@ -85,6 +85,7 @@ _check-corpus:
 
 .PHONY: _check-runtime
 _check-runtime:
+	@$(MAKE) -C compiler -j"$$(getconf _NPROCESSORS_ONLN)" completion-test-images
 	@$(MAKE) -C compiler completion-test
 
 # AGENTS.md is the repository's agent entry point and carries its project rules.

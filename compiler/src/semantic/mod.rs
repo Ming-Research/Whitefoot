@@ -47,17 +47,17 @@ pub(crate) use permission::FunctionPermissions;
 pub(crate) use loop_permission::{LoopActualization, LoopCombine, LoopPermission};
 
 pub(crate) use model::{
-    BindingId, CheckedArrayRoot, CheckedBodyDisposition, CheckedBooleanOperation,
-    CheckedBufferRoot, CheckedConst, CheckedContainerRoot, CheckedConversionMode, CheckedDrop,
-    CheckedElement, CheckedEnumType, CheckedExpression, CheckedFloatOperation, CheckedFunction,
-    CheckedIntegerOperation, CheckedLayoutCeiling, CheckedLayoutMagnitude, CheckedLoopId,
-    CheckedMatchArm, CheckedMeasure, CheckedMode, CheckedNominalKind, CheckedNumericType,
-    CheckedOwnedTakeCleanup, CheckedParameter, CheckedPlaceStep, CheckedProgramData,
-    CheckedProjectedDrop, CheckedRangeElementPlace, CheckedRangeRoot, CheckedRangeSource,
-    CheckedReleaseClass, CheckedSegmentIndex, CheckedSegmentSelect, CheckedSetTarget,
-    CheckedStatement, CheckedTargetDomainObligation, CheckedType, CheckedValue,
-    CheckedWritablePlace, FunctionId, FunctionMentions, MeasureCell, MeasuredKind, NominalId,
-    PropagationContext, WindowShape,
+    BindingId, CheckedArrayRoot, CheckedAtomicForm, CheckedBodyDisposition,
+    CheckedBooleanOperation, CheckedBufferRoot, CheckedConst, CheckedContainerRoot,
+    CheckedConversionMode, CheckedDrop, CheckedElement, CheckedEnumType, CheckedExpression,
+    CheckedFloatOperation, CheckedFunction, CheckedIntegerOperation, CheckedLayoutCeiling,
+    CheckedLayoutMagnitude, CheckedLoopId, CheckedMatchArm, CheckedMeasure, CheckedMode,
+    CheckedNominalKind, CheckedNumericType, CheckedOwnedTakeCleanup, CheckedParameter,
+    CheckedPlaceStep, CheckedProgramData, CheckedProjectedDrop, CheckedRangeElementPlace,
+    CheckedRangeRoot, CheckedRangeSource, CheckedReleaseClass, CheckedSegmentIndex,
+    CheckedSegmentSelect, CheckedSetTarget, CheckedShared, CheckedStatement,
+    CheckedTargetDomainObligation, CheckedType, CheckedValue, CheckedWritablePlace, FunctionId,
+    FunctionMentions, MeasureCell, MeasuredKind, NominalId, PropagationContext, WindowShape,
 };
 
 /// Numbered rule owning one post-resolution semantic rejection.
@@ -1139,6 +1139,19 @@ pub enum SemanticIssueKind {
     AtomicTargetNotShared {
         /// The target's value, as the reference `&place` forms it.
         found: String,
+        /// The repair [DIAG-1].
+        mechanical_fix: &'static str,
+    },
+    /// A keyed atomic statement whose key is not a `&[u8]` range [SHARE-2].
+    AtomicKeyNotBytes {
+        /// The key's value.
+        found: String,
+        /// The repair [DIAG-1].
+        mechanical_fix: &'static str,
+    },
+    /// A guard on an atomic statement that holds a map's state or an entry,
+    /// or that is inside the block of one [SHARE-2].
+    AtomicGuardOnMap {
         /// The repair [DIAG-1].
         mechanical_fix: &'static str,
     },

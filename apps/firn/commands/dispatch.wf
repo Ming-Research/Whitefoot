@@ -1,7 +1,7 @@
 alias Client = pkg::protocol::Client;
 alias KeyEnv = pkg::bytes::KeyEnv;
 alias Span = pkg::protocol::Span;
-alias Store = pkg::store::Store;
+alias Keyspace = pkg::store::Keyspace;
 alias Time = pkg::store::Time;
 alias arg = pkg::protocol::arg;
 alias name_code = pkg::bytes::name_code;
@@ -75,7 +75,7 @@ const code_zcard: u64 = 293437784922_u64;
 
 const code_zscore: u64 = 76219819447130_u64;
 
-fn execute(store: &Shared<Store>, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), writes(client) waits {
+fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), writes(client) waits {
   doc "Answers one command, whose arguments are spans of the input, by appending its reply to the client's. A command that changes the keyspace does so in one atomic statement, which also appends the change to the append-only file's pending bytes when the keyspace keeps them.";
   let count = args^.inner.len;
   let name = arg(args: args, index: 0_u64);
