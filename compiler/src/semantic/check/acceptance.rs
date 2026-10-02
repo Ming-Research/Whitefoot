@@ -460,11 +460,14 @@ impl<'unit> TypeContext<'unit> {
                 .tree
                 .node_with_path(&note.source)
                 .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-            if self.declarations.tree.production(node)? != Production::Call
-                || !callees
-                    .get(&note.source)
-                    .is_some_and(|callee| editable.contains(callee))
-            {
+            let Some(callee_id) = callees
+                .get(&note.source)
+                .copied()
+                .filter(|callee| editable.contains(callee))
+            else {
+                return Ok(Vec::new());
+            };
+            if self.declarations.tree.production(node)? != Production::Call {
                 return Ok(Vec::new());
             }
             let spelling = self.declarations.tree.source_spelling(node)?;
@@ -481,7 +484,10 @@ impl<'unit> TypeContext<'unit> {
                 callee,
                 line,
                 written: note.written.clone(),
-                narrowable: note.narrowable,
+                exhibited_row: note
+                    .narrowable
+                    .then(|| self.exhibited_rows.get(&callee_id).cloned())
+                    .flatten(),
             });
         }
         Ok(calls)

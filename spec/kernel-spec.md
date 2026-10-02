@@ -516,8 +516,9 @@ Adding, removing, or changing a loop label cannot change any invariant binding.
 A named const is visible in its whole module like every top-level declaration; [CONST-2] judges the dependencies among constants.
 
 The lexical IDENT domain has two use classes: callables, which are top-level `fn_decl`s, raw function-kind `gparam`s and PRE-1 functions, and values, which are its other entries; a module alias is in both, and any other alias is in its target's class [MOD-4].
-Two declarations compete when they have one spelling and one domain, and that domain is not the lexical IDENT domain, both enter one module's inventory [MOD-3], or they share a use class.
-So `let narrow = narrow(width: w);` binds a value beside a function of the same spelling, each use selecting the declaration its role admits, while a module's inventory holds one declaration of each spelling in each domain.
+Every other domain is one use class.
+Two declarations compete when they have one spelling and one domain and either share a use class or both enter one module's inventory [MOD-3].
+So `let narrow = narrow(width: w);` binds a value beside a function of the same spelling, each use selecting the declaration its role admits.
 Two competing declarations in one module's inventory, in one record's alias header, or in the same lexical scope are a redeclaration attributed to the later declaration event.
 Declarations in unrelated function or declaration owners are not duplicates merely because their spellings match.
 A nested lexical declaration may not shadow a competing entry live at that declaration.
@@ -1977,11 +1978,11 @@ This rejection is never replaced with a runtime fallback or reported at the call
 
 An [FN-9] result-datum admission subjudgment begins only after [FN-8] contract admission, FORM-3 result reservation, the route's ordinary leading-variant lookup when present, and concrete [FN-2] signature substitution.
 Admission through freshness precedes lexical resolution or semantic checking of the owning `ensures_clause` expression; the remaining clause, selected-return, and proof judgments begin only after that expression resolves and the surrounding function's ordinary semantic judgments required by the failed premise succeed.
-For an unrouted clause, test in this fixed order: result mode/type determined by its declared `rtype` and the data [CALL-4] gives its class; header result-candidate freshness against every declaration live in the clause.
-For a routed clause, test in this fixed order: whole-result mode/type determined by its declared `rtype`, its `Result` or `Option` class, and the data [CALL-4] gives its payload type; resolved variant owner and exact success-variant identity, `Ok` for a Result and `Some` for an Option; the written field against the variant's sole declaration-order field; route-candidate freshness against that field, the header result candidate, and every declaration live in the clause.
+For an unrouted clause, test in this fixed order: result mode/type determined by its declared `rtype` and the data [CALL-4] gives its class; header result-candidate freshness against every declaration live in the clause that it competes with [TYPE-6].
+For a routed clause, test in this fixed order: whole-result mode/type determined by its declared `rtype`, its `Result` or `Option` class, and the data [CALL-4] gives its payload type; resolved variant owner and exact success-variant identity, `Ok` for a Result and `Some` for an Option; the written field against the variant's sole declaration-order field; route-candidate freshness against that field, the header result candidate, and every declaration live in the clause that it competes with [TYPE-6].
 A result, class, owner, variant, or missing-field failure uses `SourceNode` at the complete `ensures_clause` or its `result_route` when present.
 An extra, misspelled, or out-of-order field uses `SourceNode` at the complete `fieldbind`.
-A candidate equal to its paired field or another live candidate or declaration uses `SourceNode` at its owning `result_binding` or `fieldbind`, with coordinate equal to the candidate IDENT token.
+A candidate equal to its paired field, another live candidate, or a live declaration it competes with uses `SourceNode` at its owning `result_binding` or `fieldbind`, with coordinate equal to the candidate IDENT token.
 Those are FN-9 events, not GRAM-10 or TYPE-6 duplicates.
 An unresolved leading route TYPEID remains the earlier TYPE-6 lexical-use rejection and forms no FN-9 candidate.
 
