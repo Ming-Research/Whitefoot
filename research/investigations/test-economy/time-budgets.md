@@ -344,6 +344,14 @@ changed no runtime code, and 20.3 s at `ec0bb2e99`, passed at `cbee9f341`
 and `c5cdcfc9f`, and took 16.4 s locally, so its budget stays at 20 s and
 the two overruns read as runner variance.
 
+**`check/runtime` lowered to 10 s on ubuntu and 15 s on macOS.** The group
+compiled its C one file at a time, about two thirds of the stage, and the
+map test's builds held the ubuntu stage at 16.2 to 21.1 s through PR #202.
+At `32bf48bd3` the group builds its executables with every processor before
+it runs its cases one at a time, and the stage took 5.91 s on ubuntu and
+9.33 s on macOS. 1.25 times those, rounded up to 5 s and not under 10 s,
+gives 10 s and 15 s.
+
 **Judging an overrun.** A stage over its budget fails the job's verdict
 step, and the author then reads the change against the stage: added cases,
 fixtures or work on the stage's path, and the job's ranking of slowest cases
