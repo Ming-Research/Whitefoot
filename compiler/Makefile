@@ -425,6 +425,21 @@ $(COMPLETION_TMP)/shared-object-test: $(SHARED_OBJECT_TEST_OBJECTS)
 shared-object-test: $(COMPLETION_TMP)/shared-object-test
 	$(NO_CORE_DUMPS) "$(COMPLETION_TMP)/shared-object-test"
 
+# The executables completion-test runs, which the runtime group builds with
+# every processor before it runs their cases one at a time: compiling them
+# one after another was about two thirds of the group's time, while several
+# cases measure contention and must not share the processors.
+COMPLETION_TEST_IMAGES = $(COMPLETION_TMP)/harness $(COMPLETION_TMP)/core-read-probe \
+	$(COMPLETION_TMP)/bridge-default-probe $(COMPLETION_TMP)/sched-smoke \
+	$(COMPLETION_TMP)/sched-deque-probe $(COMPLETION_TMP)/sched-deque-probe-no-stats \
+	$(SCHED_POLICY_EXE) $(COMPLETION_TMP)/sched-policy-asymmetric \
+	$(COMPLETION_TMP)/sched-policy-disabled $(COMPLETION_TMP)/sched-policy-clamped \
+	$(COMPLETION_TMP)/floor-probe $(COMPLETION_TMP)/floor-probe-hooks \
+	$(foreach v,$(CONCURRENT_MAP_VARIANTS),$(COMPLETION_TMP)/concurrent-map-test-$(v)) \
+	$(COMPLETION_TMP)/shared-object-test \
+	$(if $(filter Linux,$(shell uname -s)),$(COMPLETION_TMP)/linux-native-probe)
+completion-test-images: $(COMPLETION_TEST_IMAGES)
+
 # Manual calibration, never a correctness or automatic performance input.
 sched-wake-measure: $(COMPLETION_TMP)/sched-policy
 	"$(COMPLETION_TMP)/sched-policy" wake measure
@@ -654,7 +669,7 @@ completion-windows-wine:
 # Managed-stack park-on-miss measurements are retired from this runtime.
 # Their dated evidence and reproduction revision remain in the investigation.
 .PHONY: check _check static _static build test-build test-build-unit test-build-corpus format lint test _test test-unit test-corpus \
-	docs completion-test completion-native-test concurrent-map-test shared-object-test \
+	docs completion-test completion-test-images completion-native-test concurrent-map-test shared-object-test \
 	completion-core-read-test \
 	completion-tsan \
 	completion-sanitize \
