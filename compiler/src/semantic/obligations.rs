@@ -34,8 +34,8 @@ pub(crate) struct ObligationRecord {
 pub(crate) enum ObligationSubject {
     /// One [ENT-6] obligation of a fixed family at the site: an [OP-4]
     /// subscript, an [OP-2] exact integer operation, an [OP-6] exact
-    /// conversion, an [OP-9] allocation, one of a [REF-4] formation's two
-    /// conjuncts, or a submitted separation [EFF-5, OP-11, REF-2].
+    /// conversion, one of a [REF-4] formation's two conjuncts, or a
+    /// submitted separation [EFF-5, OP-11, REF-2].
     Source {
         family: ObligationFamily,
         conjunct: u8,
@@ -185,8 +185,6 @@ mod tests {
             residual: (!discharged).then(|| "i < len_of(v)".to_owned()),
             overlap_targets: None,
             derivation: None,
-            allocation_length_upper_bound: None,
-            allocation_length_upper_bound_derivation: None,
             affine_index_maps: Vec::new(),
             range_partitions: Vec::new(),
             written_before: Vec::new(),

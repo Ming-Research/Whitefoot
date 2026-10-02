@@ -219,7 +219,7 @@ fn key_create<K>(count: u64) -> result: Box<Slots<Slot<K>>> pure contract {
   requires count <= 384307168202282324_u64;
   ensures result.inner.len == count;
 } {
-  doc "Allocation is total, so the creation has no failure arm and the static allocation-size obligation is discharged at the constructor. For this native fixture's concrete Slot types, STOR-6 also requires the 16-byte descriptor plus 24 bytes per slot to fit the signed 64-bit address domain: floor((9223372036854775807 - 16) / 24) = 384307168202282324. The former u64 product-only ceiling did not qualify a native allocation. All workload inputs and runtime observations are unchanged.";
+  doc "Allocation is total, so the creation has no failure arm [STOR-8]. All workload inputs and runtime observations are unchanged.";
   let spare = box_slots_new::<Slot<K>>(capacity: count);
   key_fill::<K>(slots: &spare, count: count);
   return move spare;

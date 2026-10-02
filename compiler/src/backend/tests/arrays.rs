@@ -32,7 +32,7 @@
 //!   `Slots` is `insert_at(window: &r, index: 0_u64, value: v)`, which moves
 //!   the same boundary and produces the same order.
 //!
-//! Two subjects retired outright, each recorded beside what replaced it:
+//! Three subjects retired outright, each recorded beside what replaced it:
 //!
 //! - `general_run_elements_preserve_box_brands_across_region_polymorphic_calls`
 //!   retired with [OWN-3], [OWN-4] and [STOR-4]. Its whole subject was that a
@@ -52,88 +52,21 @@
 //!   reference outright with the restructuring `return an index and let the
 //!   caller form the reference`. The shared-reference call boundary that case
 //!   observed is kept by the three reading helpers that remain.
+//! - `runtime_allocation_bounds_include_each_shape_header_at_target_qualification`
+//!   retired with v0.85's [OP-9]. Its subject was that target qualification
+//!   multiplies each construction's proved count bound by the actual stride,
+//!   adds the shape's header and stops compilation one byte short. A count
+//!   now carries no static bound: the emitted operation computes the same
+//!   `header + count * stride` with checked arithmetic, and a size past the
+//!   target maximum is heap exhaustion before the allocator is asked. The
+//!   same three shapes and the same exact-byte boundary are kept, at run
+//!   time, by
+//!   `exhaustion::an_allocation_size_the_target_cannot_serve_is_heap_exhaustion_before_the_allocator`.
 
 use super::owned_places::retain_calls;
 use super::system::with_ir;
 use super::{compile, compile_and_run, compile_rejection, emitted_function};
 use crate::target::{TargetLayout, TargetLayoutFailure, validate_program};
-
-fn invariant_bounded_runtime_allocation(
-    construction: &str,
-    half_ceiling: u64,
-    count_ceiling: u64,
-) -> Vec<u8> {
-    format!(
-        r#"fn allocate(n: u64, half: u64) -> result: unit pure contract {{
-  requires half <= {half_ceiling}_u64;
-}} {{
-  let doubled = half * 2_u64;
-  let within = n <= doubled;
-  if within {{
-    invariant tight: n <= {count_ceiling}_u64;
-    let values = {construction};
-  }}
-  return unit;
-}}
-
-fn main() -> status: std::process::ExitStatus pure {{
-  return std::process::exit_status(code: 0_u8);
-}}
-"#
-    )
-    .into_bytes()
-}
-
-/// [STOR-6] qualifies each accepted runtime allocation at its source call,
-/// using the selected target's actual element stride and padded block header.
-/// The retained bound comes from an invariant rather than a literal count.
-/// Validation alone observes the oversized cases, so no impossible allocation
-/// is executed.
-#[test]
-fn runtime_allocation_bounds_include_each_shape_header_at_target_qualification() {
-    let host = TargetLayout::host().expect("the backend test runs on a supported host layout");
-    for (shape, construction, header) in [
-        (
-            "Array",
-            "box_array_filled::<u16>(count: n, value: 0_u16)",
-            8_u64,
-        ),
-        ("Slots", "box_slots_new::<u16>(capacity: n)", 16_u64),
-        ("Ring", "box_ring_new::<u16>(capacity: n)", 24_u64),
-    ] {
-        let boundary = invariant_bounded_runtime_allocation(construction, 500, 1_000);
-        with_ir(&boundary, |program| {
-            let exact_bytes = header + 2_000;
-            let exact = host.with_runtime_allocation_limits_for_test(exact_bytes, 8);
-            assert_eq!(validate_program(exact, program), Ok(()), "{shape}");
-
-            // One byte short admits 999 elements, one fewer than proved.
-            let one_byte_short = host.with_runtime_allocation_limits_for_test(exact_bytes - 1, 8);
-            assert_eq!(
-                validate_program(one_byte_short, program)
-                    .err()
-                    .and_then(TargetLayoutFailure::count_excess),
-                Some((1_000, 999)),
-                "{shape}"
-            );
-        });
-
-        let oversized = invariant_bounded_runtime_allocation(
-            construction,
-            2_500_000_000_000_000_000,
-            5_000_000_000_000_000_000,
-        );
-        with_ir(&oversized, |program| {
-            assert_eq!(
-                validate_program(host, program)
-                    .err()
-                    .and_then(TargetLayoutFailure::count_excess),
-                Some((5_000_000_000_000_000_000, (i64::MAX as u64 - header) / 2)),
-                "{shape}"
-            );
-        });
-    }
-}
 
 #[test]
 fn structural_copy_aggregates_keep_independent_storage_after_generic_substitution() {
@@ -1695,15 +1628,20 @@ fn zero_stride_allocation_still_qualifies_headers_and_nonzero_controls() {
             "struct Empty {{\n}}\n\nfn allocate() -> result: unit pure {{\n  let seed = {value};\n  let values = box_array_filled::<{element}>(count: 9223372036854775809_u64, value: seed);\n  return unit;\n}}\n"
         );
         with_ir(source.as_bytes(), |program| {
+            // The count carries no static bound [OP-9], so qualification
+            // reads the header alone for either stride: a padded descriptor
+            // the target cannot allocate stops compilation [STOR-6].
+            assert_eq!(validate_program(host, program), Ok(()));
+            let exact = host.with_runtime_allocation_limits_for_test(header, 8);
+            assert_eq!(validate_program(exact, program), Ok(()));
+            let short = host.with_runtime_allocation_limits_for_test(header - 1, 8);
+            assert_eq!(
+                validate_program(short, program),
+                Err(TargetLayoutFailure::Unrepresentable(
+                    crate::target::TargetObject::RuntimeSizedAllocation
+                ))
+            );
             if element == "Empty" {
-                assert_eq!(validate_program(host, program), Ok(()));
-                let exact = host.with_runtime_allocation_limits_for_test(header, 8);
-                assert_eq!(validate_program(exact, program), Ok(()));
-                let short = host.with_runtime_allocation_limits_for_test(header - 1, 8);
-                assert!(matches!(
-                    validate_program(short, program),
-                    Err(TargetLayoutFailure::Unrepresentable(_))
-                ));
                 // Narrow only the address domain, retaining enough space for
                 // the ordinary prelude's concrete nominal representations.
                 let narrow = host.with_address_index_max_for_test(i32::MAX as u64);
@@ -1716,13 +1654,6 @@ fn zero_stride_allocation_still_qualifies_headers_and_nonzero_controls() {
                     .collect();
                 assert!(!element_steps.is_empty(), "observe narrow-target addresses");
                 assert!(element_steps.iter().all(|line| line.ends_with("i64 0")));
-            } else {
-                assert_eq!(
-                    validate_program(host, program)
-                        .err()
-                        .and_then(TargetLayoutFailure::count_excess),
-                    Some((9_223_372_036_854_775_809, i64::MAX as u64 - header))
-                );
             }
         });
     }

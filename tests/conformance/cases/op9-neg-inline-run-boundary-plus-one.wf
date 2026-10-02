@@ -4,7 +4,7 @@ alias exit_status = std::process::exit_status;
 fn inline_run_overflow(count: u64) -> made: Box<Slots<Slots<u64, 2>>> pure contract {
   requires count <= 768614336404564651_u64;
 } {
-  doc "Two u64 slots plus the inline window's length word have stride ceiling twenty-four. The permitted count includes the first count above its OP-9 limit.";
+  doc "Two u64 slots plus the inline window's length word have stride ceiling twenty-four. The permitted count includes the first count whose size at that ceiling wraps u64, and the construction is admitted [OP-9].";
   let taken = box_slots_new::<Slots<u64, 2>>(capacity: count);
   return move taken;
 }

@@ -1555,141 +1555,6 @@ fn main() -> status: std::process::ExitStatus pure {
 "#],
     },
     // -------------------------------------------------------------------
-    // [OP-9] an allocation's size.
-    // -------------------------------------------------------------------
-    // Each OP-9 repair names the ceiling as the language's limit for the
-    // element type and asks for the count the program needs, because the
-    // selected target admits less [STOR-6]; every repaired program here
-    // states such a count and builds [`every_allocation_repair_builds`].
-    RepairPair {
-        name: "allocation-fit-refuted.wf",
-        rejected: br#"fn main() -> status: std::process::ExitStatus pure {
-  let block = box_slots_new::<i64>(capacity: 18446744073709551615_u64);
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-        rule: "OP-9",
-        sentences: &[
-            "\n  disposition: Refuted\n",
-            "\n  mechanical_fix: `18446744073709551615_u64 <= 2305843009213693951_u64` is false, so this allocation cannot be formed: request the count the program needs. `2305843009213693951_u64` is the language's limit for this element type, not a bound to write: the selected target admits a smaller count, so a bound at or near that limit stops at target layout [STOR-6]\n",
-        ],
-        repaired: &[br#"fn main() -> status: std::process::ExitStatus pure {
-  let block = box_slots_new::<i64>(capacity: 4_u64);
-  return std::process::exit_status(code: 0_u8);
-}
-"#],
-    },
-    RepairPair {
-        name: "allocation-fit-over-parameters.wf",
-        rejected: br#"fn make(length: u64) -> values: Box<Slots<i64>> pure {
-  let block = box_slots_new::<i64>(capacity: length);
-  return move block;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  let values = make(length: 4_u64);
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-        rule: "OP-9",
-        sentences: &[
-            "\n  disposition: Unproved\n",
-            "\n  mechanical_fix: with N the largest count the program needs, add `requires length <= N;` to the `contract` of `make`, which each caller then establishes; or guard the allocation with `if length <= N` where refusing a larger count is the intended behavior. `2305843009213693951_u64` is the language's limit for this element type, not a bound to write: the selected target admits a smaller count, so a bound at or near that limit stops at target layout [STOR-6]\n",
-        ],
-        repaired: &[
-            br#"fn make(length: u64) -> values: Box<Slots<i64>> pure contract {
-  requires length <= 1000_u64;
-} {
-  let block = box_slots_new::<i64>(capacity: length);
-  return move block;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  let values = make(length: 4_u64);
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-            br#"fn make(length: u64) -> values: Box<Slots<i64>> pure {
-  if length <= 1000_u64 {
-    let block = box_slots_new::<i64>(capacity: length);
-    return move block;
-  }
-  let empty = box_slots_new::<i64>(capacity: 0_u64);
-  return move empty;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  let values = make(length: 4_u64);
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-        ],
-    },
-    RepairPair {
-        name: "allocation-fit-over-a-computed-count.wf",
-        rejected: br#"fn widen(x: u64) -> result: u64 pure {
-  return x;
-}
-
-fn make(length: u64) -> values: Box<Slots<i64>> pure {
-  let n = widen(x: length);
-  let block = box_slots_new::<i64>(capacity: n);
-  return move block;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  let values = make(length: 4_u64);
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-        rule: "OP-9",
-        sentences: &[
-            "\n  disposition: Unproved\n",
-            "\n  mechanical_fix: `n` is not bounded here: with N the largest count the program needs, when facts that reach the allocation imply `n <= N`, prove it with an `invariant` whose `use` steps name them (a loop's header `invariant` for a value the loop computes); when the callee whose result it reads can prove that bound, state it in the callee's `ensures`; or guard the allocation with `if n <= N` where refusing a larger count is the intended behavior. `2305843009213693951_u64` is the language's limit for this element type, not a bound to write: the selected target admits a smaller count, so a bound at or near that limit stops at target layout [STOR-6]\n",
-        ],
-        repaired: &[
-            br#"fn widen(x: u64) -> result: u64 pure contract {
-  ensures result <= 1000_u64;
-} {
-  if x <= 1000_u64 {
-    return x;
-  }
-  return 1000_u64;
-}
-
-fn make(length: u64) -> values: Box<Slots<i64>> pure {
-  let n = widen(x: length);
-  let block = box_slots_new::<i64>(capacity: n);
-  return move block;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  let values = make(length: 4_u64);
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-            br#"fn widen(x: u64) -> result: u64 pure {
-  return x;
-}
-
-fn make(length: u64) -> values: Box<Slots<i64>> pure {
-  let n = widen(x: length);
-  if n <= 1000_u64 {
-    let block = box_slots_new::<i64>(capacity: n);
-    return move block;
-  }
-  let empty = box_slots_new::<i64>(capacity: 0_u64);
-  return move empty;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  let values = make(length: 4_u64);
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-        ],
-    },
-    // -------------------------------------------------------------------
     // [REF-4] one range-formation conjunct.
     // -------------------------------------------------------------------
     RepairPair {
@@ -3701,64 +3566,10 @@ fn each_pinned_repair_is_carried_out_by_its_programs() {
     }
 }
 
-/// [OP-9, STOR-6] an allocation's repair is carried out only when the
-/// repaired program also builds: after checking, the selected target
-/// qualifies the retained bound of every allocation the entry runs, which
-/// [`each_pinned_repair_is_carried_out_by_its_programs`] does not reach.
-#[test]
-fn every_allocation_repair_builds() {
-    for pair in REPAIRS.iter().filter(|pair| pair.rule == "OP-9") {
-        for (alternative, source) in pair.repaired.iter().enumerate() {
-            if let Err(failure) = compile(
-                &[SourceInput::new(pair.name, source)],
-                CompilerLimits::default(),
-            ) {
-                panic!(
-                    "{}: alternative {alternative} does not build:\n{failure}",
-                    pair.name
-                );
-            }
-        }
-    }
-}
-
-/// Why no OP-9 repair offers its ceiling as the bound to write: a program
-/// that states it passes OP-9 and stops at target layout [STOR-6].
-#[test]
-fn an_allocation_bound_at_the_language_ceiling_stops_at_target_layout() {
-    let source = br#"fn make(length: u64) -> values: Box<Slots<i64>> pure contract {
-  requires length <= 2305843009213693951_u64;
-} {
-  let block = box_slots_new::<i64>(capacity: length);
-  return move block;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  let values = make(length: 4_u64);
-  return std::process::exit_status(code: 0_u8);
-}
-"#;
-    super::check(
-        &[SourceInput::new("ceiling.wf", source)],
-        CompilerLimits::default(),
-    )
-    .expect("the language's ceiling passes OP-9");
-    let failure = compile(
-        &[SourceInput::new("ceiling.wf", source)],
-        CompilerLimits::default(),
-    )
-    .expect_err("the ceiling exceeds the selected target's allocation domain");
-    assert_eq!(
-        failure.kind(),
-        CompilationFailureKind::TargetLayout,
-        "{failure}"
-    );
-}
-
-/// An allocation whose count is proved only by its type: `u64::MAX` for a
-/// `u8` element, which OP-9 accepts and no supported target can allocate.
-/// This is the program a writer met in an image decoder, where the count came
-/// from the image's dimensions.
+/// An allocation whose count is bounded only by its type: `u64::MAX` for a
+/// `u8` element, which no supported target can allocate. This is the program
+/// a writer met in an image decoder, where the count came from the image's
+/// dimensions.
 const UNBOUNDED_TARGET_COUNT: &[u8] = br#"alias ExitStatus = std::process::ExitStatus;
 alias Inputs = std::process::Inputs;
 alias args_count = std::text::args_count;
@@ -3783,142 +3594,25 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
 }
 "#;
 
-/// [STOR-6] the target-layout stop at an allocation the selected target
-/// cannot hold names the call, the proved bound and the largest count the
-/// target admits, and its fix is carried out by the programs below it: the
-/// same program with the count guarded in the allocating function, and with
-/// the count required there and guarded by its caller. Every supported
-/// target allocates at most `i64::MAX` bytes, and a `Slots<u8>` block spends
-/// two header words, so `i64::MAX - 16` elements fit.
+/// [OP-9] the image decoder's program builds: its count carries no static
+/// bound, and a size the target cannot allocate is heap exhaustion at run
+/// time rather than a target-layout stop. The OP-9 repair pairs, the
+/// target's count-limit stop and the tests that carried both out retired
+/// with v0.85's [OP-9]; the run-time check is observed by the backend
+/// exhaustion tests.
 #[test]
-fn an_allocation_count_the_target_cannot_hold_is_located_with_its_bounds() {
+fn an_allocation_count_bounded_only_by_its_type_builds() {
     super::check(
         &[SourceInput::new("unbounded.wf", UNBOUNDED_TARGET_COUNT)],
         CompilerLimits::default(),
     )
-    .expect("the type's own bound passes OP-9");
-    let failure = compile(
+    .expect("the count carries no static bound");
+    if let Err(failure) = compile(
         &[SourceInput::new("unbounded.wf", UNBOUNDED_TARGET_COUNT)],
         CompilerLimits::default(),
-    )
-    .expect_err("no supported target allocates u64::MAX bytes");
-    assert_eq!(
-        failure.kind(),
-        CompilationFailureKind::TargetLayout,
-        "{failure}"
-    );
-    assert_eq!(failure.rule_id(), None, "a target stop cites no rule");
-    let rendered = failure.to_string();
-    for sentence in [
-        "unbounded.wf:8:14: target layout failure in TargetLayout: AllocationCountExceedsTarget\n",
-        "\n  count: \"count\"\n",
-        "\n  proved_count_bound: 18446744073709551615\n",
-        "\n  target_count_limit: 9223372036854775791\n",
-        "\n  mechanical_fix: with N the largest count the program needs, at most 9223372036854775791, bound `count` by N before this call: add `requires count <= N;` to the `contract` of the function whose parameter it is, which each caller then establishes; state the bound in the `ensures` of the function whose result it is; or guard the allocation with `if count <= N` where refusing a larger count is the intended behavior",
-    ] {
-        assert!(
-            rendered.contains(sentence),
-            "the stop no longer carries this text.\nwanted: {sentence}\ngot:    {rendered}"
-        );
-    }
-    let guarded = br#"alias ExitStatus = std::process::ExitStatus;
-alias Inputs = std::process::Inputs;
-alias args_count = std::text::args_count;
-alias close_directory = std::fs::close_directory;
-alias exit_status = std::process::exit_status;
-
-fn make(count: u64) -> made: Box<Slots<u8>> pure {
-  if count <= 4096_u64 {
-    let cell = box_slots_new::<u8>(capacity: count);
-    return move cell;
-  }
-  let empty = box_slots_new::<u8>(capacity: 0_u64);
-  return move empty;
-}
-
-fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: files, stdin: unused, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
-  let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
-  std::fs::close_directory_write(factory: &files, directory: move cwd_write);
-  close_directory(factory: &files, directory: move cwd);
-  let n = args_count(args: &args);
-  let cell = make(count: n);
-  let cap = cell.inner.cap;
-  let code = cvt.wrap::<u64, u8>(cap);
-  return exit_status(code: code);
-}
-"#;
-    let required = br#"alias ExitStatus = std::process::ExitStatus;
-alias Inputs = std::process::Inputs;
-alias args_count = std::text::args_count;
-alias close_directory = std::fs::close_directory;
-alias exit_status = std::process::exit_status;
-
-fn make(count: u64) -> made: Box<Slots<u8>> pure contract {
-  requires count <= 4096_u64;
-} {
-  let cell = box_slots_new::<u8>(capacity: count);
-  return move cell;
-}
-
-fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: files, stdin: unused, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
-  let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
-  std::fs::close_directory_write(factory: &files, directory: move cwd_write);
-  close_directory(factory: &files, directory: move cwd);
-  let n = args_count(args: &args);
-  if n <= 4096_u64 {
-    let cell = make(count: n);
-    let cap = cell.inner.cap;
-    let code = cvt.wrap::<u64, u8>(cap);
-    return exit_status(code: code);
-  }
-  return exit_status(code: 1_u8);
-}
-"#;
-    for (name, source) in [("guarded.wf", &guarded[..]), ("required.wf", &required[..])] {
-        let contradictions = contradictory_successes(name, source)
-            .unwrap_or_else(|rejection| panic!("{name} is rejected:\n{rejection}"));
-        assert!(
-            contradictions.is_empty(),
-            "{name} succeeds only where its state is contradictory: {contradictions:?}"
-        );
-        if let Err(failure) = compile(&[SourceInput::new(name, source)], CompilerLimits::default())
-        {
-            panic!("{name} does not build:\n{failure}");
-        }
-    }
-}
-
-/// The printed limit is the target's exact threshold: a count proved at most
-/// that number builds, and one more stops at target layout [STOR-6].
-#[test]
-fn the_printed_target_count_limit_is_the_exact_threshold() {
-    let bounded = |limit: &str| {
-        format!(
-            "fn make(count: u64) -> made: Box<Slots<u8>> pure contract {{\n  requires count <= {limit}_u64;\n}} {{\n  let cell = box_slots_new::<u8>(capacity: count);\n  return move cell;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  let cell = make(count: 4_u64);\n  return std::process::exit_status(code: 0_u8);\n}}\n"
-        )
-    };
-    let at_limit = bounded("9223372036854775791");
-    if let Err(failure) = compile(
-        &[SourceInput::new("at-limit.wf", at_limit.as_bytes())],
-        CompilerLimits::default(),
     ) {
-        panic!("a count at the printed limit does not build:\n{failure}");
+        panic!("a count bounded only by its type does not build:\n{failure}");
     }
-    let above = bounded("9223372036854775792");
-    let failure = compile(
-        &[SourceInput::new("above-limit.wf", above.as_bytes())],
-        CompilerLimits::default(),
-    )
-    .expect_err("one more than the printed limit exceeds the target");
-    assert!(
-        failure
-            .detail()
-            .lines()
-            .any(|line| line == "target_count_limit: 9223372036854775791"),
-        "{failure}"
-    );
 }
 
 /// The pair test's second condition is live: a guard around a refuted goal

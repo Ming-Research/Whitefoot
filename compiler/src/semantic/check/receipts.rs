@@ -28,14 +28,14 @@ use std::collections::{HashMap, HashSet};
 use super::{CheckStop, CheckedFunctionInventory, Checker};
 use crate::semantic::entailment::{
     DerivationId, EntailmentCallee, FunctionEntailment, FunctionPostconditionProof,
-    ObligationFamily, ObligationOutcome, PostconditionAggregate,
+    PostconditionAggregate,
 };
 use crate::semantic::model::{
     CheckedBodyDisposition, CheckedContractQuery, CheckedFunction, CheckedType, IntegerType,
     NominalId,
 };
 use crate::semantic::postcondition::CheckedPostcondition;
-use crate::{DeclarationId, DeclarationRole, NodePath};
+use crate::{DeclarationId, DeclarationRole};
 
 /// The identifier kinds a checked value's rendering can carry, by the
 /// newtype names their derived `Debug` prints.
@@ -372,16 +372,13 @@ pub(super) struct ProofReceipt {
     /// The body's disposition at entry [ENT-5]: an uninhabited body
     /// publishes nothing and lowers to an unreachable terminator.
     pub(super) uninhabited: bool,
-    /// Each proved [OP-9] allocation ceiling, by the spelled path of its
-    /// allocation site.
-    pub(super) allocation_bounds: Vec<(String, u64)>,
 }
 
 impl ProofReceipt {
-    const HEADER: &'static str = "proof-receipt 1";
+    const HEADER: &'static str = "proof-receipt 2";
 
     pub(super) fn encode(&self) -> Vec<u8> {
-        let mut text = format!(
+        format!(
             "{}\n{}\n",
             Self::HEADER,
             if self.uninhabited {
@@ -389,11 +386,8 @@ impl ProofReceipt {
             } else {
                 "inhabited"
             }
-        );
-        for (site, bound) in &self.allocation_bounds {
-            text.push_str(&format!("bound {bound} {site}\n"));
-        }
-        text.into_bytes()
+        )
+        .into_bytes()
     }
 
     pub(super) fn decode(bytes: &[u8]) -> Option<Self> {
@@ -407,16 +401,10 @@ impl ProofReceipt {
             "uninhabited" => true,
             _ => return None,
         };
-        let mut allocation_bounds = Vec::new();
-        for line in lines {
-            let rest = line.strip_prefix("bound ")?;
-            let (bound, site) = rest.split_once(' ')?;
-            allocation_bounds.push((site.to_owned(), bound.parse().ok()?));
+        if lines.next().is_some() {
+            return None;
         }
-        Some(Self {
-            uninhabited,
-            allocation_bounds,
-        })
+        Some(Self { uninhabited })
     }
 }
 
@@ -769,9 +757,7 @@ impl Checker<'_, '_> {
             .load(&key)
             .and_then(|bytes| ProofReceipt::decode(&bytes))
             .and_then(|receipt| {
-                self.types
-                    .declarations
-                    .receipt_entailment(&functions.get(index)?.function, &receipt)
+                DeclarationInventory::receipt_entailment(&functions.get(index)?.function, &receipt)
             });
         if recorded.is_some() {
             if let Some(slot) = self.analysis.reused_analyses.get_mut(index) {
@@ -793,10 +779,8 @@ impl Checker<'_, '_> {
             if rejected.get(index).copied().unwrap_or(true) {
                 continue;
             }
-            if let Some(receipt) = functions
-                .get(index)
-                .and_then(|function| self.types.declarations.proof_receipt(function))
-            {
+            if let Some(function) = functions.get(index) {
+                let receipt = DeclarationInventory::proof_receipt(function);
                 store.store(&key, &receipt.encode());
             }
         }
@@ -821,81 +805,21 @@ impl<'unit> DeclarationInventory<'unit> {
             .collect();
         Ok(ItemSpellings { by_ordinal })
     }
-    /// The receipt of an accepted analysis of `function`, or `None` when an
-    /// allocation site it proved lies outside its own item.
-    pub(super) fn proof_receipt(&self, function: &CheckedFunction) -> Option<ProofReceipt> {
-        let own = self.receipt_item_ordinal(function)?;
-        let mut allocation_bounds = Vec::new();
-        for outcome in &function.entailment.obligations {
-            if outcome.family != ObligationFamily::AllocationFit || !outcome.discharged {
-                continue;
-            }
-            let bound = outcome.allocation_length_upper_bound?;
-            let (first, rest) = outcome.node_path.components().split_first()?;
-            if *first != own {
-                return None;
-            }
-            let site = rest
-                .iter()
-                .map(u32::to_string)
-                .collect::<Vec<_>>()
-                .join("/");
-            allocation_bounds.push((site, bound));
-        }
-        Some(ProofReceipt {
+    /// The receipt of an accepted analysis of `function`.
+    pub(super) fn proof_receipt(function: &CheckedFunction) -> ProofReceipt {
+        ProofReceipt {
             uninhabited: matches!(
                 function.entailment.body_disposition,
                 CheckedBodyDisposition::Uninhabited { .. }
             ),
-            allocation_bounds,
-        })
-    }
-    /// The root-child ordinal of the item whose body `function` checks.
-    fn receipt_item_ordinal(&self, function: &CheckedFunction) -> Option<u32> {
-        self.resolved
-            .declaration(function.declaration)?
-            .origin()
-            .node()
-            .components()
-            .first()
-            .copied()
+        }
     }
     /// The analysis a receipt stands for: everything later stages read of
     /// it, and every postcondition verified for publication [FN-9].
     pub(super) fn receipt_entailment(
-        &self,
         function: &CheckedFunction,
         receipt: &ProofReceipt,
     ) -> Option<FunctionEntailment> {
-        let own = self.receipt_item_ordinal(function)?;
-        let mut obligations = Vec::with_capacity(receipt.allocation_bounds.len());
-        for (site, bound) in &receipt.allocation_bounds {
-            let mut components = vec![own];
-            if !site.is_empty() {
-                for component in site.split('/') {
-                    components.push(component.parse().ok()?);
-                }
-            }
-            obligations.push(ObligationOutcome {
-                node_path: NodePath { components },
-                family: ObligationFamily::AllocationFit,
-                conjunct: 0,
-                canonical_goal: None,
-                components: Vec::new(),
-                discharged: true,
-                refuted: false,
-                contradictory: false,
-                residual: None,
-                overlap_targets: None,
-                derivation: None,
-                allocation_length_upper_bound: Some(*bound),
-                allocation_length_upper_bound_derivation: None,
-                affine_index_maps: Vec::new(),
-                range_partitions: Vec::new(),
-                written_before: Vec::new(),
-                killed_by: Vec::new(),
-            });
-        }
         let postconditions = function
             .postconditions
             .iter()
@@ -922,7 +846,6 @@ impl<'unit> DeclarationInventory<'unit> {
             } else {
                 CheckedBodyDisposition::Inhabited
             },
-            obligations,
             postconditions,
             ..FunctionEntailment::default()
         })

@@ -539,9 +539,6 @@ impl<'unit> Checker<'_, 'unit> {
                 requirements: Vec::new(),
                 result,
                 result_borrow: None,
-                allocation: self
-                    .types
-                    .allocation_fit_of_call(signature, node, &argument_atoms)?,
             },
             mode: result_mode,
             // [REF-3] no call delivers a reference: FN-1 returns owned values
@@ -936,96 +933,6 @@ impl<'unit> Checker<'_, 'unit> {
 }
 
 impl<'unit> TypeContext<'unit> {
-    /// [OP-9, OP-13, OP-10] the static allocation-size obligation this call
-    /// carries, if it is one of the operations that carry one.
-    ///
-    /// [OP-13] gives it to "each runtime-capacity construction" and [OP-10]
-    /// to `grow`, "over that operation's own stored type and count". The
-    /// three constructions take the count first and name the stored type in
-    /// their own result cell; `grow` remakes the cell it is handed, so its
-    /// stored type is that cell's and its count is its second argument. The
-    /// constant-capacity rows allocate nothing at runtime and the cell row
-    /// `box_new` allocates exactly one value, so neither carries the
-    /// obligation. `node` is the call and `atoms` its argument atoms in
-    /// declared order, whose coordinates the record keeps for a target that
-    /// cannot hold the retained bound [STOR-6].
-    fn allocation_fit_of_call(
-        &self,
-        signature: &FunctionSignature,
-        node: NodeId,
-        atoms: &[NodeId],
-    ) -> Result<Option<super::super::super::super::model::CheckedAllocationFit>, CheckStop> {
-        let (count, cell) = match signature.name.as_str() {
-            "box_array_filled" | "box_slots_new" | "box_ring_new" => (0, signature.result),
-            "grow" => {
-                let Some(parameter) = signature.parameters.first() else {
-                    return Ok(None);
-                };
-                (1, parameter.ty)
-            }
-            _ => return Ok(None),
-        };
-        let Some(element) = self.runtime_capacity_content_element(cell)? else {
-            return Ok(None);
-        };
-        let layout_ceiling = match self.instantiated_layout_ceiling(element) {
-            Some(ceiling) => ceiling,
-            None if !self.concrete_substitution_identity(&signature.substitution)? => {
-                // [ENT-1, FN-2] only a layout depending on an unresolved
-                // type or const parameter may defer the schema obligation.
-                // This includes an opaque parameter inside an aggregate,
-                // but not a fixed-layout Box shell or a known AboveU64
-                // ceiling. Inspect the operation's substitution recursively:
-                // a nominal argument can still contain a schema parameter.
-                // No deferred record grants proof or lowering authority;
-                // every concrete replay recomputes its bound.
-                return Ok(None);
-            }
-            None => return Err(SemanticCompilerFailure::InvalidResolution.into()),
-        };
-        let tree = &self.declarations.tree;
-        let count_atom = atoms
-            .get(count)
-            .copied()
-            .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        Ok(Some(
-            super::super::super::super::model::CheckedAllocationFit {
-                cell,
-                element,
-                layout_ceiling,
-                count,
-                site: tree.coordinate(node)?,
-                count_site: tree.coordinate(count_atom)?,
-                source_length_upper_bound: None,
-            },
-        ))
-    }
-    /// The element type of the runtime-capacity shape a `Box` holds [TYPE-9].
-    ///
-    /// A runtime-capacity `Array<T>`, `Slots<T>` or `Ring<T>` exists only as
-    /// the content of its cell, so this is the one place the stored type of
-    /// an allocation is found, and a constant-capacity content, which
-    /// allocates no slots of its own, has none.
-    fn runtime_capacity_content_element(
-        &self,
-        cell: CheckedType,
-    ) -> Result<Option<CheckedType>, CheckStop> {
-        let CheckedType::Nominal(nominal) = cell else {
-            return Ok(None);
-        };
-        let CheckedNominalKind::Box { referent, .. } = self.nominal(nominal)?.kind else {
-            return Ok(None);
-        };
-        Ok(match referent {
-            CheckedType::Buffer { element } => Some(self.element_type(element)?),
-            CheckedType::Window {
-                element,
-                capacity: None,
-                ..
-            } => Some(self.element_type(element)?),
-            _ => None,
-        })
-    }
     /// [EFF-5] the substituted row of one call.
     ///
     /// Each `effect_path` rooted at reference parameter i takes actual

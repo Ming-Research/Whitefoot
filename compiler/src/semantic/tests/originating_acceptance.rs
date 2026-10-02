@@ -132,29 +132,10 @@ fn main() -> status: std::process::ExitStatus pure {
     });
 }
 
-#[test]
-fn an_unproved_allocation_ceiling_rejects_under_op9() {
-    // The acquiring row is `box_array_filled`, a runtime-capacity [OP-13]
-    // construction, which carries the same [OP-9] allocation-fit obligation on
-    // its own count that the retiring `buffer_new` did. Allocation is total
-    // [STOR-8], so there is no fallible outcome to match and the refusal
-    // reached here is the static ceiling alone.
-    let source = br#"fn allocate(count: u64) -> result: unit pure {
-  let values = box_array_filled::<u16>(count: count, value: 0_u16);
-  return unit;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  return std::process::exit_status(code: 0_u8);
-}
-"#;
-    rejects_as(source, SemanticRule::Op9, |kind| {
-        matches!(
-            kind,
-            SemanticIssueKind::UndischargedAllocationFitObligation { .. }
-        )
-    });
-}
+// Retired: an_unproved_allocation_ceiling_rejects_under_op9. Its subject,
+// the static allocation-size obligation an unbounded count left unproved,
+// retired with v0.85's [OP-9]: the count carries no obligation, and the
+// conformance case v033-neg-allocation-fit-unproved pins the acceptance.
 
 #[test]
 fn unproved_prelude_endpoints_reject_under_fn8() {

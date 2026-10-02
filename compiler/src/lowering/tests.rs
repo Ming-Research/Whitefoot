@@ -1428,10 +1428,10 @@ fn main() -> status: std::process::ExitStatus pure {
     });
 }
 
-/// The schema and the shared constructor body must retain the same OP-9
-/// pair, including empty repeated pairs and a fixed type deeper than the
+/// The shared constructor body must retain the OP-9 ceiling of its stored
+/// type, including empty repeated pairs and a fixed type deeper than the
 /// former lowering-only limit of 64. Expected sizes come from OP-9's
-/// sequence rule, independently of either implementation.
+/// sequence rule, independently of the implementation.
 #[test]
 fn stored_layout_ceilings_agree_across_lowering() {
     let mut declarations =
@@ -1461,15 +1461,6 @@ fn stored_layout_ceilings_agree_across_lowering() {
                 align,
                 stride: super::IrLayoutMagnitude::Finite(size.max(1)),
             };
-            let source_ceilings = program
-                .functions()
-                .iter()
-                .flat_map(IrFunction::source_calls)
-                .filter_map(|call| {
-                    call.allocation()
-                        .map(|allocation| allocation.layout_ceiling())
-                })
-                .collect::<Vec<_>>();
             let body_ceilings = program
                 .functions()
                 .iter()
@@ -1483,139 +1474,16 @@ fn stored_layout_ceilings_agree_across_lowering() {
                     _ => None,
                 })
                 .collect::<Vec<_>>();
-            assert_eq!(source_ceilings, vec![expected], "checked {stored}");
             assert_eq!(body_ceilings, vec![expected], "lowered {stored}");
         });
     }
 }
 
-/// [STOR-6]: "The accepted [OP-9] judgment retains a numeric upper bound for
-/// the source length **at that allocation site**; target qualification
-/// multiplies that bound by the actual target stride ... before lowering the
-/// operation." The bound is a property of the site, not of the construction
-/// row, so two callers with two different proved ceilings own two different
-/// bounds and neither may be read from the other. [OP-9] says the same from
-/// the other side: "Each runtime-capacity construction [OP-13] and `grow`
-/// [OP-10] carries it over that operation's own stored type and count."
-///
-/// The second caller is what makes that falsifiable. With one caller a shared
-/// row body carrying that caller's bound is indistinguishable from a
-/// per-site bound; with two, a shared body can carry at most one of 1000 and
-/// 7, and the grouping below names the function each retained bound was found
-/// in, so the failure says where the bound actually landed.
-#[test]
-fn buffer_allocations_lower_the_source_proved_length_ceiling_into_target_obligations() {
-    let source = br#"fn allocate(n: u64) -> result: unit pure contract {
-  requires n <= 1000_u64;
-} {
-  let packed = box_array_filled::<u16>(count: n, value: 7_u16);
-  let vacant = box_slots_new::<u16>(capacity: n);
-  return unit;
-}
-
-fn small(n: u64) -> result: unit pure contract {
-  requires n <= 7_u64;
-} {
-  let packed = box_array_filled::<u16>(count: n, value: 7_u16);
-  let vacant = box_slots_new::<u16>(capacity: n);
-  return unit;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  allocate(n: 4_u64);
-  small(n: 3_u64);
-  return std::process::exit_status(code: 0_u8);
-}
-"#;
-    with_ir(source, |program| {
-        let mut sites: Vec<(&str, Vec<u64>)> = Vec::new();
-        let mut shared_allocators = Vec::new();
-        for function in program.functions() {
-            // Keep inspecting the actual allocation instructions. With the
-            // ordinary PRE-1 ABI they reside in one shared body per type,
-            // which cannot carry both callers' different bounds.
-            let shared = function
-                .blocks()
-                .iter()
-                .flat_map(IrBlock::instructions)
-                .filter_map(|instruction| {
-                    let IrInstruction::Define { operation, .. } = instruction else {
-                        return None;
-                    };
-                    match operation {
-                        IrOperation::BufferFill { target_domains, .. } => Some(*target_domains),
-                        IrOperation::WindowBlockNew { obligations, .. } => {
-                            Some(obligations.target_domains)
-                        }
-                        _ => None,
-                    }
-                })
-                .collect::<Vec<_>>();
-            for domains in shared {
-                assert!(!domains.has_call_site_bound());
-                shared_allocators.push(function.name());
-            }
-            // These are lowered IR call records, attached to the result of
-            // the actual Call instruction. Target qualification consumes
-            // them; backend arrays tests separately pin each shape's exact
-            // byte boundary and its one-byte-short rejection.
-            let bounds = function
-                .source_calls()
-                .iter()
-                .filter_map(|call| {
-                    let allocation = call.allocation()?;
-                    let instruction = function
-                        .blocks()
-                        .iter()
-                        .flat_map(IrBlock::instructions)
-                        .find(|instruction| {
-                            matches!(instruction,
-                                IrInstruction::Define { result, .. } if *result == call.result()
-                            )
-                        })
-                        .expect("an allocation bound names an emitted IR definition");
-                    let IrInstruction::Define {
-                        operation:
-                            IrOperation::Call {
-                                function: callee,
-                                arguments,
-                            },
-                        ..
-                    } = instruction
-                    else {
-                        panic!("an allocation bound must belong to an ordinary Call");
-                    };
-                    assert!(allocation.count_argument() < arguments.len());
-                    let callee = &program.functions()[*callee as usize];
-                    assert!(
-                        callee.name().starts_with("box_array_filled")
-                            || callee.name().starts_with("box_slots_new")
-                    );
-                    Some(allocation.source_length_upper_bound())
-                })
-                .collect::<Vec<_>>();
-            if !bounds.is_empty() {
-                sites.push((function.name(), bounds));
-            }
-        }
-        assert_eq!(
-            sites,
-            vec![("allocate", vec![1000, 1000]), ("small", vec![7, 7])],
-            "each allocation site keeps its own caller's proved ceiling"
-        );
-        assert_eq!(shared_allocators.len(), 2, "one body per constructor type");
-        for constructor in ["box_array_filled", "box_slots_new"] {
-            assert_eq!(
-                shared_allocators
-                    .iter()
-                    .filter(|name| name.starts_with(constructor))
-                    .count(),
-                1,
-                "site bounds do not clone the ordinary prelude body"
-            );
-        }
-    });
-}
+// Retired: buffer_allocations_lower_the_source_proved_length_ceiling_into_target_obligations.
+// Its subject, each allocation site's proved [OP-9] count bound carried on
+// its own call into target qualification, retired with v0.85's [OP-9]: a
+// count carries no static bound, and the emitted operation checks the size it
+// computes, which the backend exhaustion tests observe at run time.
 
 #[test]
 fn an_uninhabited_function_keeps_its_abi_and_lowers_to_one_unreachable_block() {

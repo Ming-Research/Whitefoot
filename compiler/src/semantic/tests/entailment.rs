@@ -2042,7 +2042,6 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                 // ranged EFF-5 pairs now share CallSeparation at a call.
                 match outcome.family {
                     ObligationFamily::Bounds => assert_eq!(outcome.conjunct, 0),
-                    ObligationFamily::AllocationFit => assert_eq!(outcome.conjunct, 0),
                     // Separation for a call, exchange or reference preservation
                     // is one occurrence, without a conjunct of its own.
                     ObligationFamily::CallSeparation(_)
@@ -2143,11 +2142,7 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                         DerivationConclusion::Goal {
                             goal,
                             sign: GoalSign::Positive,
-                        } if matches!(
-                            outcome.family,
-                            ObligationFamily::AllocationFit | ObligationFamily::RangeFormation
-                        ) =>
-                        {
+                        } if outcome.family == ObligationFamily::RangeFormation => {
                             let retained = summary
                                 .inventory
                                 .goals
@@ -2191,34 +2186,6 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                     conclusion,
                     DerivationConclusion::AffineConsequence | DerivationConclusion::Contradiction
                 ));
-            }
-            DerivationRootKind::AllocationUpperBound(ordinal) => {
-                let outcome = summary
-                    .obligations
-                    .get(ordinal as usize)
-                    .expect("allocation-ceiling root ordinal must resolve");
-                assert_eq!(outcome.family, ObligationFamily::AllocationFit);
-                assert!(outcome.discharged);
-                assert_eq!(
-                    outcome.allocation_length_upper_bound_derivation,
-                    Some(root.node)
-                );
-                let left = outcome.components[0]
-                    .left
-                    .expect("a retained numeric allocation ceiling has one length term");
-                let upper = i128::from(
-                    outcome
-                        .allocation_length_upper_bound
-                        .expect("a retained numeric allocation ceiling has one value"),
-                );
-                assert_eq!(
-                    conclusion,
-                    &DerivationConclusion::Relation(Relation::Bound {
-                        left,
-                        right: ZERO,
-                        bound: upper,
-                    })
-                );
             }
             DerivationRootKind::IntegerDomainObligation(ordinal) => {
                 let ordinal = ordinal as usize;

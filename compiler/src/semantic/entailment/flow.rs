@@ -548,16 +548,6 @@ enum ProofGoal<'a> {
     /// explicitly prepared affine forms are alternate representations of
     /// that proposition, not additional queries by either consumer.
     BoundedRelation(BoundedRelationGoal<'a>),
-    /// One fixed ordering relation exposed through an optional finite goal
-    /// normalization. OP-9 supplies both identities when its source operand
-    /// belongs to the goal fragment, and only the relation otherwise.
-    NormalizedOrdering {
-        goal: Option<GoalId>,
-        relation: Option<&'a Relation>,
-        affine: Option<&'a AffineInequality>,
-        right: Option<TermId>,
-        upper_bound: Option<NumericUpperBoundRequest<'a>>,
-    },
 }
 
 #[derive(Clone, Copy)]
@@ -593,24 +583,6 @@ struct IntegerDomainGoal<'a> {
     components: &'a [BoundsRequest],
     affine_clauses: Option<&'a [Vec<NumericAffineTarget>]>,
     affine_product: Option<&'a AffineIntegerProduct>,
-}
-
-/// Optional numeric projection requested by a consumer of one proved
-/// ordering. `admitted` is the ceiling stated by that exact ordering; `term`
-/// and `affine` are its two current-context value images, when available.
-/// Projection can tighten the admitted ceiling, but never decides whether the
-/// ordering itself is proved.
-#[derive(Clone, Copy)]
-struct NumericUpperBoundRequest<'a> {
-    term: Option<TermId>,
-    affine: Option<&'a AffineForm>,
-    admitted: i128,
-}
-
-#[derive(Clone, Copy)]
-struct ProvedNumericUpperBound {
-    value: i128,
-    derivation: DerivationId,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -651,7 +623,6 @@ struct ProofResult {
     disposition: ProofDisposition,
     route: Option<ProofRoute>,
     derivation: Option<DerivationId>,
-    numeric_upper_bound: Option<ProvedNumericUpperBound>,
     /// The interval [ENT-6]'s fixed interval-product rule proved for an
     /// admitted non-constant multiplication. Carried out of the judgment so
     /// [ENT-3.S7]'s multiplication row publishes exactly the measurement the
@@ -1358,9 +1329,6 @@ pub(super) fn finish(entailment: &mut FunctionEntailment) {
     for outcome in &mut entailment.obligations {
         outcome.derivation = outcome
             .derivation
-            .and_then(|id| remap.nodes.get(id.0 as usize).copied().flatten());
-        outcome.allocation_length_upper_bound_derivation = outcome
-            .allocation_length_upper_bound_derivation
             .and_then(|id| remap.nodes.get(id.0 as usize).copied().flatten());
         for partition in &mut outcome.range_partitions {
             for parent in [

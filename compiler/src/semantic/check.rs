@@ -1,5 +1,4 @@
 mod acceptance;
-mod allocation_bounds;
 mod behavior;
 mod cleanup;
 mod control;
@@ -27,9 +26,7 @@ mod type_regions;
 mod types;
 
 pub(crate) use receipts::ProofReceipts;
-pub(crate) use repairs::{
-    header_invariant_scope_repair, postcondition_selector_repair, target_allocation_count,
-};
+pub(crate) use repairs::{header_invariant_scope_repair, postcondition_selector_repair};
 
 use std::collections::{HashMap, HashSet};
 
@@ -1277,15 +1274,6 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         }
         for function in &mut functions {
             function.body_disposition = function.entailment.body_disposition;
-        }
-        // Copy each accepted OP-9 site's proved numeric length ceiling onto
-        // the corresponding checked allocation node. This is the sole
-        // semantic-to-target handoff: lowering receives a conclusion, not the
-        // proof arena, and performs no proof reconstruction.
-        for id in &executable_functions {
-            Checker::install_source_allocation_bounds(std::slice::from_mut(
-                &mut functions[id.0 as usize],
-            ))?;
         }
 
         let executable_nominals = self.types.view.nominals.clone();
@@ -2843,23 +2831,6 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     regions,
                 )?,
             },
-            GoalOperation::BufferFits {
-                element,
-                maximum_length: _,
-            } => {
-                let element =
-                    self.instantiate_goal_type(check_context, element, signature, regions)?;
-                let maximum_length = self
-                    .types
-                    .instantiated_layout_ceiling(element)
-                    .ok_or(SemanticCompilerFailure::InvalidResolution)?
-                    .stride
-                    .allocation_limit();
-                GoalOperation::BufferFits {
-                    element,
-                    maximum_length,
-                }
-            }
             GoalOperation::ContainerMeasure {
                 measure,
                 measured,

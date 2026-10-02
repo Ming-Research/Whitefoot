@@ -659,6 +659,10 @@ fn window_block_oom_label(result: IrValueId) -> String {
     format!("window.block.oom.v{}", result.ordinal())
 }
 
+fn window_block_allocate_label(result: IrValueId) -> String {
+    format!("window.block.allocate.v{}", result.ordinal())
+}
+
 impl<'program, 'state> FunctionEmitter<'program, 'state> {
     /// The byte size of one element of this window, as the target's own
     /// layout of it. Target qualification proved it no larger than the
@@ -997,21 +1001,20 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let element_size = self.window_element_size(shape)?;
         let header_size = self.window_header_size(shape, block_type)?;
         let block = self.output.type_name(self.program, block_type)?;
-        let slots_bytes = self.next_temporary()?;
-        let bytes = self.next_temporary()?;
         let nonnull = self.next_temporary()?;
         let ready = window_block_ready_label(result);
         let oom = window_block_oom_label(result);
+        let allocate = window_block_allocate_label(result);
         {
-            let emission_argument_0 = self.value_name(capacity);
-            let emission_argument_1 = self.value_name(result);
-            let emission_argument_2 = self.value_name(result);
-
+            let count = self.value_name(capacity);
+            let address = self.value_name(result);
+            let bytes =
+                self.emit_allocation_size(&count, &element_size, &header_size, &oom, &allocate)?;
             {
                 self.output.symbol("malloc");
                 write!(
                     self.output,
-                    "  %{slots_bytes} = mul nuw i64 {emission_argument_0}, {element_size}\n  %{bytes} = add nuw i64 %{slots_bytes}, {header_size}\n  {emission_argument_1} = call ptr @malloc(i64 %{bytes})\n  %{nonnull} = icmp ne ptr {emission_argument_2}, null\n  br i1 %{nonnull}, label %{ready}, label %{oom}\n"
+                    "  {address} = call ptr @malloc(i64 {bytes})\n  %{nonnull} = icmp ne ptr {address}, null\n  br i1 %{nonnull}, label %{ready}, label %{oom}\n"
                 )
             }?;
             self.output.open_block(oom.to_string());
@@ -1098,20 +1101,20 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             "  %{length} = load i64, ptr {old_length_address}"
         )
         .map_err(|_| BackendFailure::TextEmission)?;
-        let slots_bytes = self.next_temporary()?;
-        let bytes = self.next_temporary()?;
         let fresh = self.next_temporary()?;
         let nonnull = self.next_temporary()?;
         let ready = window_block_ready_label(result);
         let oom = window_block_oom_label(result);
+        let allocate = window_block_allocate_label(result);
         {
-            let emission_argument_0 = self.value_name(capacity);
-
+            let count = self.value_name(capacity);
+            let bytes =
+                self.emit_allocation_size(&count, &element_size, &header_size, &oom, &allocate)?;
             {
                 self.output.symbol("malloc");
                 write!(
                     self.output,
-                    "  %{slots_bytes} = mul nuw i64 {emission_argument_0}, {element_size}\n  %{bytes} = add nuw i64 %{slots_bytes}, {header_size}\n  %{fresh} = call ptr @malloc(i64 %{bytes})\n  %{nonnull} = icmp ne ptr %{fresh}, null\n  br i1 %{nonnull}, label %{ready}, label %{oom}\n"
+                    "  %{fresh} = call ptr @malloc(i64 {bytes})\n  %{nonnull} = icmp ne ptr %{fresh}, null\n  br i1 %{nonnull}, label %{ready}, label %{oom}\n"
                 )
             }?;
             self.output.open_block(oom.to_string());

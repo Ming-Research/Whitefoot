@@ -9,8 +9,8 @@
 use crate::ir::*;
 use crate::semantic::{
     CheckedBooleanOperation, CheckedConversionMode, CheckedElement, CheckedEnumType,
-    CheckedFloatOperation, CheckedIntegerOperation, CheckedLayoutCeiling, CheckedLayoutMagnitude,
-    CheckedNumericType, CheckedTargetDomainObligation, CheckedType,
+    CheckedFloatOperation, CheckedIntegerOperation, CheckedNumericType,
+    CheckedTargetDomainObligation, CheckedType,
 };
 
 mod operands;
@@ -254,25 +254,6 @@ impl From<CheckedBooleanOperation> for IrBooleanOperation {
             CheckedBooleanOperation::Or => Self::Or,
             CheckedBooleanOperation::ExclusiveOr => Self::ExclusiveOr,
             CheckedBooleanOperation::Not => Self::Not,
-        }
-    }
-}
-
-impl From<CheckedLayoutMagnitude> for IrLayoutMagnitude {
-    fn from(value: CheckedLayoutMagnitude) -> Self {
-        match value {
-            CheckedLayoutMagnitude::Finite(value) => Self::Finite(value),
-            CheckedLayoutMagnitude::AboveU64 => Self::AboveU64,
-        }
-    }
-}
-
-impl From<CheckedLayoutCeiling> for IrLayoutCeiling {
-    fn from(value: CheckedLayoutCeiling) -> Self {
-        Self {
-            size: value.size.into(),
-            align: value.align,
-            stride: value.stride.into(),
         }
     }
 }

@@ -619,6 +619,113 @@ fn every_allocation_refusal_edge_reaches_the_resource_abort() {
     }
 }
 
+/// One runtime-capacity construction whose count the process's argument
+/// count selects, so one executable reaches each count at run time.
+fn runtime_count_allocation(construction: &str) -> String {
+    format!(
+        r#"fn allocate(n: u64) -> result: u64 pure {{
+  let values = {construction};
+  return 7_u64;
+}}
+
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {{
+  let std::process::Inputs(args: args, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
+  std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
+  std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
+  let selector = std::text::args_count(args: &args);
+  let n = 1000_u64;
+  if selector == 2_u64 {{
+    set n = 1001_u64;
+  }}
+  if selector == 3_u64 {{
+    set n = 9223372036854775808_u64;
+  }}
+  if selector == 4_u64 {{
+    set n = 9223372036854775807_u64;
+  }}
+  let kept = allocate(n: n);
+  if kept == 7_u64 {{
+    return std::process::exit_status(code: 0_u8);
+  }}
+  return std::process::exit_status(code: 1_u8);
+}}
+"#
+    )
+}
+
+/// [OP-9] an allocation's size is computed with checked arithmetic, and a
+/// size the selected target cannot allocate is heap exhaustion [STOR-8]
+/// before the allocator is asked.
+///
+/// The selected target admits exactly `header + 2000` bytes, so each shape's
+/// `u16` block holds 1000 elements. The three refused counts separate the
+/// three ways a size can be unservable, each caught by one condition of the
+/// emitted check alone: 1001 elements exceed the maximum without wrapping,
+/// `2^63` elements wrap the product to zero, and `2^63 - 1` elements leave a
+/// product the header's addition carries out of `u64`. Each ends with the
+/// heap record and no interposed allocation, where a size computed without
+/// its check would hand the allocator a wrapped, small byte count, or ask it
+/// for more than the target serves. 1000 elements allocate once and run.
+#[test]
+fn an_allocation_size_the_target_cannot_serve_is_heap_exhaustion_before_the_allocator() {
+    let host = crate::target::TargetLayout::host().expect("supported test target");
+    for (shape, construction, header) in [
+        (
+            "Array",
+            "box_array_filled::<u16>(count: n, value: 0_u16)",
+            8_u64,
+        ),
+        ("Slots", "box_slots_new::<u16>(capacity: n)", 16_u64),
+        ("Ring", "box_ring_new::<u16>(capacity: n)", 24_u64),
+    ] {
+        let limited = host.with_runtime_allocation_limits_for_test(header + 2_000, 8);
+        let source = runtime_count_allocation(construction);
+        let module = super::system::with_ir(source.as_bytes(), |program| {
+            let mut llvm = crate::backend::emitter::emit_llvm_with_layout(program, limited)
+                .expect("the limited target qualifies every layout")
+                .into_string();
+            llvm.push_str(
+                &crate::driver::launcher::render(program, "main")
+                    .expect("ordinary test launcher")
+                    .render(),
+            );
+            llvm
+        });
+        let observed = module
+            .replace("@malloc(", "@wf_test_allocate(")
+            .replace("@free(", "@wf_test_release(");
+        let observer = format!(
+            "{}\n__attribute__((constructor)) static void unbuffer(void) {{ setvbuf(stdout, NULL, _IONBF, 0); }}\n",
+            super::owned_places::allocation_observer_by_process(1)
+        );
+        let directory = test_directory();
+        let executable = build_linked_executable(&observed, Some(&observer), &[], &directory);
+        for (extra, served) in [(0, true), (1, false), (2, false), (3, false)] {
+            let output = Command::new(&executable)
+                .args(std::iter::repeat_n("x", extra))
+                .env("WF_TEST_REFUSE_ALLOCATION", "0")
+                .bounded_output()
+                .expect("run the selected allocation");
+            let trace = std::str::from_utf8(&output.stdout).expect("ASCII allocation trace");
+            if served {
+                assert_eq!(output.status.code(), Some(0), "{shape}: {output:?}");
+                assert_eq!(trace, "A1;F1;", "{shape}");
+                assert!(output.stderr.is_empty(), "{shape}: {output:?}");
+            } else {
+                assert_eq!(
+                    signal_of(&output),
+                    Some(libc_sigabrt()),
+                    "{shape} with {extra} arguments: {output:?}"
+                );
+                assert_eq!(trace, "", "{shape} with {extra} arguments");
+                assert_resource_record(&output.stderr, "heap");
+            }
+        }
+        std::fs::remove_dir_all(directory).expect("remove allocation size image");
+    }
+}
+
 /// A recursion whose every activation carries an array far larger than a guard
 /// page, handed to a retained reader so the frame cannot be shrunk away. A
 /// same-index local store/load can forward its scalar value and erase the

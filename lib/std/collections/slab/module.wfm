@@ -28,7 +28,7 @@ public interface SlabConsume<T, E> {
 
 public fn slab_new<T, const ceiling: u64, const generation_limit: u64>(capacity: u64) -> result: Slab<T, ceiling, generation_limit> pure contract {
   requires capacity <= ceiling;
-} doc "Reserves one backing for at most capacity stable slots, materializing each cell only on its first insertion. The ceiling is the caller's allocation-size domain, not an allocation refusal. A handle is relative to this slab; its integers do not authenticate another slab. Allocation is total under STOR-8.";
+} doc "Reserves one backing for at most capacity stable slots, materializing each cell only on its first insertion. The ceiling is the caller's capacity domain, not an allocation refusal. A handle is relative to this slab; its integers do not authenticate another slab. Allocation is total under STOR-8.";
 
 public fn slab_insert<T, const ceiling: u64, const generation_limit: u64>(slab: &Slab<T, ceiling, generation_limit>, value: T) -> result: Result<SlabHandle, T> writes(slab) contract {
   ensures slab^.cells.inner.cap == entry(slab)^.cells.inner.cap;

@@ -35,7 +35,7 @@ fn filled_buffer<T: Int>(length: u64, value: T) -> result: Box<Slots<T>> pure co
   requires length <= 1152921504606846975_u64;
   ensures result.inner.len >= length;
 } {
-  doc "One heap cell holding a runtime-capacity window of length slots; allocation is total, so there is no failure arm, and the written bound is what discharges the static allocation-size obligation [STOR-8, OP-9].";
+  doc "One heap cell holding a runtime-capacity window of length slots; allocation is total, so there is no failure arm [STOR-8].";
   let built = box_slots_new::<T>(capacity: length);
   for @fill (
     at in 0_u64..length,

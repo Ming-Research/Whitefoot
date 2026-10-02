@@ -417,7 +417,6 @@ impl<'unit> TypeContext<'unit> {
             (
                 SemanticRule::Op4
                 | SemanticRule::Op2
-                | SemanticRule::Op9
                 | SemanticRule::Op6
                 | SemanticRule::Eff5
                 | SemanticRule::Op11
@@ -491,9 +490,9 @@ impl<'unit> TypeContext<'unit> {
         let location = self.declarations.source_location(&outcome.node_path)?;
         let (disposition, repair) = dispositions(outcome.refuted);
         // [DIAG-1] what the goal reads selects its routes: a canonical goal
-        // names its data, a bounds relation its terms. A bounds or allocation
-        // residual is written from the source atoms it relates, so it is
-        // itself a condition.
+        // names its data, a bounds relation its terms. A bounds residual is
+        // written from the source atoms it relates, so it is itself a
+        // condition.
         let editable = self.editable_functions()?;
         let reads = match &outcome.canonical_goal {
             Some(goal) => {
@@ -507,7 +506,7 @@ impl<'unit> TypeContext<'unit> {
             ),
         };
         let condition = match outcome.family {
-            ObligationFamily::Bounds | ObligationFamily::AllocationFit => true,
+            ObligationFamily::Bounds => true,
             _ => outcome
                 .canonical_goal
                 .as_ref()
@@ -553,13 +552,6 @@ impl<'unit> TypeContext<'unit> {
                             .as_ref()
                             .and_then(repairs::total_forms),
                     ),
-                    residual,
-                    disposition,
-                }
-            }
-            (SemanticRule::Op9, ObligationFamily::AllocationFit) => {
-                SemanticIssueKind::UndischargedAllocationFitObligation {
-                    mechanical_fix: repairs::allocation_fit(&case),
                     residual,
                     disposition,
                 }

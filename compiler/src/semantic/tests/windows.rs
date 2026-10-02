@@ -18,10 +18,19 @@
 //!   over one heap [STOR-8].
 //! - `buffer_new`, `buffer_vacant`, `array_new` and `box_new`'s old spelling
 //!   leave [OP-1]'s table; `buffer_fits` and its static allocation-fit
-//!   predicate leave with them. The successor of the fit predicate is [OP-9]'s
-//!   allocation-size obligation, still an `AllocationFit` obligation family in
-//!   the checker but now stated over `stride_ceiling(T) * n` staying inside
-//!   u64, carried by each runtime-capacity construction and by `grow`.
+//!   predicate leave with them. Its successor, [OP-9]'s static
+//!   allocation-size obligation, retired in turn at v0.85: an allocation's
+//!   size is computed at run time and a size the target cannot allocate is
+//!   heap exhaustion, so no count carries an obligation. The tests that
+//!   pinned that obligation retired with it:
+//!   `a_runtime_capacity_construction_owes_the_size_obligation`,
+//!   `known_stored_layouts_keep_op9_in_symbolic_schemas`,
+//!   `transitive_known_layouts_do_not_take_the_direct_opaque_deferral`,
+//!   `bounded_numeric_layouts_keep_their_exact_symbolic_op9_limit` and
+//!   `a_concrete_above_u64_stride_does_not_defer_op9`, each of whose subject
+//!   was a count the obligation refused; the generic allocations they built
+//!   remain accepted below, and a stored type whose layout no target can
+//!   represent stops at target qualification [STOR-6].
 //! - `dispose` retires with the capability leaves. The successor is [OP-14]
 //!   `free_empty(window: move r)` on a proved-empty window, and for an affine
 //!   value, moving it into a function that consumes it [PROV-6].
@@ -52,34 +61,14 @@
 //! assertions above: a `Box`'s content reached by the bare field step
 //! `b.inner` and consumed by `let n = move b.inner;` [TYPE-9, WIN-3]; a move
 //! out of a window slot citing WIN-3 with `MoveOutOfSlot`; [OP-14]'s own site
-//! for an undischarged `free_empty` requirement; [OP-9]'s allocation-size
-//! obligation at each runtime-capacity construction and at `grow`, rendered
-//! as its defining comparison rather than as the retired `buffer_fits` row;
-//! and [OP-15]'s measure member read in expression position, including one
-//! over a subscripted place.
+//! for an undischarged `free_empty` requirement; and [OP-15]'s measure member
+//! read in expression position, including one over a subscripted place.
 
-use crate::{SemanticIssueKind, SemanticOutcome, SemanticRule};
+use crate::{SemanticIssueKind, SemanticRule};
 
 use super::{
     assert_accepts, assert_rule_at, assert_rule_kind, check_case_directory, check_module_sources,
 };
-
-fn assert_op9_allocation_fit(source: &[u8], context: &str) {
-    super::with_semantics(source, |outcome| match outcome {
-        SemanticOutcome::SourceIssue { issue } => {
-            assert_eq!(issue.rule(), SemanticRule::Op9, "{context}");
-            assert!(
-                matches!(
-                    issue.kind(),
-                    SemanticIssueKind::UndischargedAllocationFitObligation { .. }
-                ),
-                "{context} must retain OP-9's allocation-fit issue kind"
-            );
-        }
-        SemanticOutcome::Complete(_) => panic!("{context} was accepted"),
-        _ => panic!("{context} did not reach OP-9"),
-    });
-}
 
 /// [WIN-1] a `Slots` is a run of `cap` slots whose initialized storage is the
 /// `len` slots beginning at `head`, and an `Array` has no window at all.
@@ -279,7 +268,7 @@ fn the_front_operations_admit_a_ring_alone() {
 }
 
 /// [OP-10] `grow` is defined on `Box<Slots<T>>` alone and remakes the cell's
-/// content whole, carrying [OP-9]'s obligation.
+/// content whole, computing its new size as [OP-9] states.
 #[test]
 fn grow_remakes_a_boxed_window() {
     assert_accepts(include_bytes!(
@@ -311,97 +300,10 @@ fn the_construction_functions_build_every_shape() {
     ));
 }
 
-/// [OP-9] each runtime-capacity construction carries the static
-/// allocation-size obligation over its own count.
-#[test]
-fn a_runtime_capacity_construction_owes_the_size_obligation() {
-    let source = include_bytes!(
-        "../../../../tests/conformance/cases/op13-neg-runtime-capacity-size-obligation.wf"
-    );
-    assert_rule_kind(source, SemanticRule::Op9, |kind| {
-        matches!(
-            kind,
-            SemanticIssueKind::UndischargedAllocationFitObligation { .. }
-        )
-    });
-}
-
-/// [ENT-1, OP-9] a source-canonical generic schema checks an allocation whose
-/// stored layout is expressible even when some unrelated part of the function
-/// remains symbolic. Scalars, pointers, and aggregates built entirely from
-/// fixed-layout components therefore cannot hide an unbounded count behind a
-/// const or type parameter.
-#[test]
-fn known_stored_layouts_keep_op9_in_symbolic_schemas() {
-    assert_op9_allocation_fit(
-        include_bytes!(
-            "../../../../tests/conformance/cases/op9-neg-known-overflow-in-unused-schema.wf"
-        ),
-        "known AboveU64 layout in an unused generic schema",
-    );
-    for (case, source) in [
-        br#"fn unchecked<const unused: u64>(count: u64) -> result: unit pure {
-  let cells = box_slots_new::<u16>(capacity: count);
-  free_empty(window: move cells);
-  return unit;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  return std::process::exit_status(code: 0_u8);
-}
-"#
-        .as_slice(),
-        br#"fn unchecked<T>(count: u64) -> result: unit pure {
-  let cells = box_slots_new::<Box<T>>(capacity: count);
-  free_empty(window: move cells);
-  return unit;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  return std::process::exit_status(code: 0_u8);
-}
-"#
-        .as_slice(),
-        br#"struct Envelope<T> {
-  payload: Box<T>;
-  tag: u8;
-}
-
-fn unchecked<T>(count: u64) -> result: unit pure {
-  let cells = box_slots_new::<Envelope<T>>(capacity: count);
-  free_empty(window: move cells);
-  return unit;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  return std::process::exit_status(code: 0_u8);
-}
-"#
-        .as_slice(),
-        br#"fn unchecked<T>(count: u64) -> result: unit pure {
-  let cells = box_slots_new::<Slots<Box<T>, 2>>(capacity: count);
-  free_empty(window: move cells);
-  return unit;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  return std::process::exit_status(code: 0_u8);
-}
-"#
-        .as_slice(),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        assert_op9_allocation_fit(source, &format!("known-layout symbolic schema case {case}"));
-    }
-}
-
-/// [ENT-1, FN-2] an opaque stored `T` has no expressible stride in the
-/// source-canonical schema, so that schema may defer [OP-9]. Each discovered
-/// concrete instance is nevertheless rechecked with its actual scalar,
-/// aggregate, pointer, or descriptor layout, including through a second
-/// generic caller.
+/// [ENT-1, FN-2] an allocation of an opaque stored `T` is accepted in its
+/// source-canonical schema and in each discovered concrete instance, with an
+/// actual scalar, aggregate, pointer, or descriptor layout, including through
+/// a second generic caller.
 #[test]
 fn unresolved_stored_layouts_defer_to_every_concrete_replay() {
     assert_accepts(include_bytes!(
@@ -509,142 +411,10 @@ fn main() -> status: std::process::ExitStatus pure {
             )
             .as_bytes(),
     );
-
-    // The same transitive nominal path still owes its actual size bound
-    // once U is concrete. Envelope<u64>'s ceiling has a 16-byte stride.
-    let source = |upper| {
-        format!(
-            r#"struct Envelope<T> {{
-  payload: T;
-  tag: u8;
-}}
-
-fn allocate<T>(count: u64) -> result: unit pure contract {{
-  requires count <= {upper}_u64;
-}} {{
-  let cells = box_slots_new::<T>(capacity: count);
-  free_empty(window: move cells);
-  return unit;
-}}
-
-fn relay<U>(count: u64) -> result: unit pure contract {{
-  requires count <= {upper}_u64;
-}} {{
-  allocate::<Envelope<U>>(count: count);
-  return unit;
-}}
-
-fn main() -> status: std::process::ExitStatus pure {{
-  relay::<u64>(count: {upper}_u64);
-  return std::process::exit_status(code: 0_u8);
-}}
-"#
-        )
-    };
-    let limit = u64::MAX / 16;
-    assert_accepts(source(limit).as_bytes());
-    assert_op9_allocation_fit(
-        source(limit + 1).as_bytes(),
-        "concrete replay of a transitive nominal allocation",
-    );
 }
 
-/// [ENT-1, FN-2, OP-9] only a layout depending on an unresolved parameter may
-/// take the source-schema deferral. When a generic relay instantiates that same
-/// allocation template with a numeric type or a fixed-layout wrapper, the
-/// alpha-renamed instance has a known ceiling and must prove its allocation
-/// bound. The scratch instance's OP-9 issue is not published as a canonical
-/// source issue; instead, a failed proof withholds its verified FN-9 summary,
-/// so the canonical relay cannot prove the relation it forwards. Returning
-/// the constructed window's capacity makes that relation depend on the
-/// constructor's verified `cap == count` publication.
-#[test]
-fn transitive_known_layouts_do_not_take_the_direct_opaque_deferral() {
-    const U64_MAX: u64 = u64::MAX;
-    for (declaration, parameter, stored, limit) in [
-        ("", "U: Int", "U", U64_MAX / 8),
-        ("", "U: Float", "U", U64_MAX / 8),
-        ("", "U", "Box<U>", U64_MAX / 8),
-        (
-            "struct Envelope<T> {\n  payload: Box<T>;\n  tag: u8;\n}",
-            "U",
-            "Envelope<U>",
-            U64_MAX / 16,
-        ),
-    ] {
-        let declaration_prefix = if declaration.is_empty() {
-            String::new()
-        } else {
-            format!("{declaration}\n\n")
-        };
-        let source = |upper| {
-            format!(
-                r#"{declaration_prefix}fn allocate<T>(count: u64) -> result: u64 pure contract {{
-  requires count <= {upper}_u64;
-  ensures result == count;
-}} {{
-  let cells = box_slots_new::<T>(capacity: count);
-  let capacity = cells.inner.cap;
-  free_empty(window: move cells);
-  return capacity;
-}}
-
-fn relay<{parameter}>(count: u64) -> result: u64 pure contract {{
-  requires count <= {upper}_u64;
-  ensures result == count;
-}} {{
-  let produced = allocate::<{stored}>(count: count);
-  return produced;
-}}
-
-fn main() -> status: std::process::ExitStatus pure {{
-  return std::process::exit_status(code: 0_u8);
-}}
-"#
-            )
-        };
-
-        let fitting = source(limit);
-        assert_accepts(fitting.as_bytes());
-
-        let excessive = source(limit + 1);
-        assert_rule_kind(excessive.as_bytes(), SemanticRule::Fn9, |kind| {
-            matches!(
-                kind,
-                SemanticIssueKind::UndischargedPostcondition(detail)
-                    if detail.disposition
-                        == crate::PostconditionProofDisposition::Unproved
-            )
-        });
-    }
-}
-
-/// An `Int` or `Float` bound fixes the largest scalar layout at eight bytes,
-/// so its schema has an expressible exact OP-9 limit. The last admitted count
-/// is accepted and the following count remains a schema rejection.
-#[test]
-fn bounded_numeric_layouts_keep_their_exact_symbolic_op9_limit() {
-    const LIMIT: u64 = u64::MAX / 8;
-    for bound in ["Int", "Float"] {
-        let source = format!(
-            "fn allocate<T: {bound}>(count: u64) -> result: unit pure contract {{\n  requires count <= {LIMIT}_u64;\n}} {{\n  let cells = box_slots_new::<T>(capacity: count);\n  free_empty(window: move cells);\n  return unit;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
-        );
-        assert_accepts(source.as_bytes());
-
-        let too_large = LIMIT + 1;
-        let source = format!(
-            "fn allocate<T: {bound}>(count: u64) -> result: unit pure contract {{\n  requires count <= {too_large}_u64;\n}} {{\n  let cells = box_slots_new::<T>(capacity: count);\n  free_empty(window: move cells);\n  return unit;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
-        );
-        assert_op9_allocation_fit(
-            source.as_bytes(),
-            &format!("{bound}-bounded schema above its eight-byte limit"),
-        );
-    }
-}
-
-/// A by-value array with a symbolic length has no schema layout ceiling, but
-/// every concrete replay recomputes it. A small array admits one stored value;
-/// an array whose concrete stride is AboveU64 rejects that same count.
+/// A by-value array with a symbolic length is accepted as a stored type in
+/// its schema and in a concrete replay.
 #[test]
 fn symbolic_const_array_layout_defers_only_until_concrete_replay() {
     let schema = br#"fn allocate<const n: u64>(count: u64) -> result: unit pure contract {
@@ -675,46 +445,6 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#;
     assert_accepts(small);
-
-    let above_u64 = br#"fn allocate<const n: u64>(count: u64) -> result: unit pure contract {
-  requires count <= 1_u64;
-} {
-  let cells = box_slots_new::<Array<u64, n>>(capacity: count);
-  free_empty(window: move cells);
-  return unit;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  allocate::<2305843009213693952>(count: 1_u64);
-  return std::process::exit_status(code: 0_u8);
-}
-"#;
-    assert_op9_allocation_fit(above_u64, "AboveU64 concrete const-array replay");
-}
-
-/// [OP-9] `AboveU64` is a concrete layout ceiling whose allocation limit is
-/// zero, not an unresolved layout. A generic schema may defer opaque `T`, but
-/// replaying it with this aggregate must still refuse every positive count.
-#[test]
-fn a_concrete_above_u64_stride_does_not_defer_op9() {
-    let source = br#"struct Giant {
-  words: Array<u64, 2305843009213693952>;
-}
-
-fn allocate<T>(count: u64) -> result: unit pure contract {
-  requires count <= 1_u64;
-} {
-  let cells = box_slots_new::<T>(capacity: count);
-  free_empty(window: move cells);
-  return unit;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  allocate::<Giant>(count: 1_u64);
-  return std::process::exit_status(code: 0_u8);
-}
-"#;
-    assert_op9_allocation_fit(source, "AboveU64 concrete aggregate replay");
 }
 
 /// [OP-14] `free_empty` consumes any window proved empty, an affine element

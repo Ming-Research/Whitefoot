@@ -873,7 +873,6 @@ impl Report for SemanticIssueKind {
             UndischargedEmptyRunRelease { residual, disposition, mechanical_fix };
             UndischargedIntegerDomainObligation { residual, disposition, mechanical_fix };
             UndischargedConversionDomainObligation { residual, disposition, mechanical_fix };
-            UndischargedAllocationFitObligation { residual, disposition, mechanical_fix };
             UndischargedRangeFormationObligation { residual, disposition, mechanical_fix };
             UndischargedCallSeparation { residual, mechanical_fix };
             OverlappingCallEffects { first, second, mechanical_fix };
@@ -963,27 +962,6 @@ impl Report for ResolutionIssue {
             UnresolvedUse { spelling, role, admissible, available };
             UndeclaredSetTarget { spelling, mechanical_fix };
         )
-    }
-}
-
-/// A target-layout stop at one allocation [STOR-6]: the count as written, the
-/// bound the program proves for it, the largest count the selected target
-/// admits, and the fix that bounds the count.
-impl Report for super::AllocationCountIssue {
-    fn report(&self, fields: &mut Fields<'_>) -> &'static str {
-        let Self {
-            count,
-            proved_count_bound,
-            target_count_limit,
-            target,
-            mechanical_fix,
-        } = self;
-        fields.field("count", &Spelled(*count));
-        fields.field("proved_count_bound", proved_count_bound);
-        fields.field("target_count_limit", target_count_limit);
-        fields.field("target", *target);
-        fields.field("mechanical_fix", mechanical_fix);
-        "AllocationCountExceedsTarget"
     }
 }
 

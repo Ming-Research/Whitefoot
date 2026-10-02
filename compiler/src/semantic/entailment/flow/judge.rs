@@ -168,129 +168,6 @@ impl Judging<'_, '_, '_> {
         (disposition, derivation)
     }
 
-    /// Judges OP-9 through either the exact total `buffer_fits::<T>(n)` goal
-    /// or its one canonical L0 component. The component is used only in this
-    /// direction: proving the comparison authorizes the allocation, while a
-    /// predicate fact does not publish an ambient comparison fact.
-    pub(super) fn judge_allocation_fit(
-        &mut self,
-        element: CheckedType,
-        maximum_length: u64,
-        length: &CheckedExpression,
-        node_path: crate::NodePath,
-        states: &ProofFlowState,
-    ) {
-        let length_goal =
-            self.reasoning()
-                .obligation_goal_operand(&node_path, 0, length, &states.facts);
-        let canonical_goal = GoalExpression::Operation {
-            row: GoalOperation::BufferFits {
-                element,
-                maximum_length,
-            },
-            type_arguments: vec![element],
-            const_arguments: Vec::new(),
-            result: CheckedType::Bool,
-            arguments: vec![length_goal],
-        };
-        let goal = Some(
-            self.reasoning()
-                .intern_goal_expression(canonical_goal.clone()),
-        );
-        let length_term = self.reasoning().read_operand(length);
-        let threshold_term = self
-            .vocabulary
-            .terms
-            .intern(TermKind::Constant(i128::from(maximum_length)));
-        let ordering_relation = length_term.map(|length| Relation::Bound {
-            left: length,
-            right: threshold_term,
-            bound: 0,
-        });
-        let affine_length = self
-            .input
-            .admitted_value_goal_expression(length)
-            .and_then(|length| self.reasoning().affine_goal_value(&length, &states.affine));
-        let affine_target = affine_length.as_ref().and_then(|length| {
-            AffineInequality::from_forms(
-                length,
-                &AffineForm::constant(i128::from(maximum_length)),
-                &mut AffineCheckState::new(),
-            )
-            .ok()
-        });
-        // [OP-9] the predicate "has no writer-callable spelling", so the
-        // residual is the defining comparison itself: the count this
-        // operation was handed against the largest one its stored type
-        // admits.
-        let rendered = format!(
-            "{} <= {maximum_length}_u64",
-            self.input.render_expression(length)
-        );
-
-        let proof = self.reasoning().prove(
-            ProofContext::new(&states.facts, &states.affine),
-            ProofGoal::NormalizedOrdering {
-                goal,
-                relation: ordering_relation.as_ref(),
-                affine: affine_target.as_ref(),
-                right: Some(threshold_term),
-                upper_bound: Some(NumericUpperBoundRequest {
-                    term: length_term,
-                    affine: affine_length.as_ref(),
-                    admitted: i128::from(maximum_length),
-                }),
-            },
-        );
-        let discharged = proof.disposition == ProofDisposition::Proved;
-        let refuted = proof.disposition == ProofDisposition::Refuted;
-        let contradictory = proof.route == Some(ProofRoute::Contradiction);
-        let derivation = proof.derivation;
-        let allocation_length_upper_bound = proof
-            .numeric_upper_bound
-            .and_then(|bound| u64::try_from(bound.value).ok());
-        let allocation_length_upper_bound_derivation =
-            proof.numeric_upper_bound.map(|bound| bound.derivation);
-        let ordinal = u32::try_from(self.output.obligations.len())
-            .expect("ENT obligation-root ordinal exceeds the u32 identity space");
-        if let Some(root) = derivation {
-            self.vocabulary
-                .derivations
-                .add_root(DerivationRootKind::BoundsObligation(ordinal), root);
-        }
-        if let Some(root) = allocation_length_upper_bound_derivation
-            && Some(root) != derivation
-        {
-            self.vocabulary
-                .derivations
-                .add_root(DerivationRootKind::AllocationUpperBound(ordinal), root);
-        }
-        self.output.obligations.push(ObligationOutcome {
-            node_path: node_path.clone(),
-            family: ObligationFamily::AllocationFit,
-            conjunct: 0,
-            canonical_goal: Some(canonical_goal),
-            components: vec![BoundsRequest {
-                left: length_term,
-                right: threshold_term,
-                bound: 0,
-                distinct: false,
-            }],
-            discharged,
-            refuted,
-            contradictory,
-            residual: (!discharged).then(|| rendered.clone()),
-            overlap_targets: None,
-            derivation,
-            allocation_length_upper_bound,
-            allocation_length_upper_bound_derivation,
-            affine_index_maps: Vec::new(),
-            range_partitions: Vec::new(),
-            written_before: states.written_before(discharged),
-            killed_by: Vec::new(),
-        });
-    }
-
     /// [OWN-7] the separations at this call or set commit: mandatory effect
     /// questions and preservation questions demanded by later reference uses.
     ///
@@ -439,8 +316,6 @@ impl Judging<'_, '_, '_> {
                 separation.right_spelling.clone(),
             )),
             derivation,
-            allocation_length_upper_bound: None,
-            allocation_length_upper_bound_derivation: None,
             affine_index_maps: Vec::new(),
             range_partitions: Vec::new(),
             written_before: state.written_before(discharged),
@@ -600,8 +475,6 @@ impl Judging<'_, '_, '_> {
             residual: (!discharged).then(|| residual.clone()),
             overlap_targets: None,
             derivation,
-            allocation_length_upper_bound: None,
-            allocation_length_upper_bound_derivation: None,
             affine_index_maps: Vec::new(),
             range_partitions: Vec::new(),
             written_before: states.written_before(discharged),
@@ -696,7 +569,6 @@ impl Analyzer<'_, '_> {
                 goal_arguments,
                 requirements,
                 formal_contract,
-                allocation,
                 ..
             } => {
                 let obligation_start = self.output.obligations.len();
@@ -740,28 +612,6 @@ impl Analyzer<'_, '_> {
                                 .establish_index_capture(*captured, argument, states);
                         }
                     }
-                }
-                // [OP-9] a runtime-capacity construction [OP-13] and `grow`
-                // [OP-10] carry the static allocation-size obligation over
-                // their own stored type and count. It is judged at the call,
-                // after the count expression's own obligations, and before
-                // the callee's written requirements: an unproved count is an
-                // OP-9 rejection of the allocation and not an FN-8 report
-                // about a clause the row happens to write.
-                if let Some(allocation) = allocation
-                    && actuals_reached
-                    && let Some(length) = arguments.get(allocation.count)
-                {
-                    self.judging().judge_allocation_fit(
-                        allocation.element,
-                        allocation.layout_ceiling.stride.allocation_limit(),
-                        length,
-                        call.clone(),
-                        states,
-                    );
-                    actuals_reached &= self
-                        .judging()
-                        .obligations_since_discharged(obligation_start);
                 }
                 let actual_parents = self.output.obligations[obligation_start..]
                     .iter()
@@ -1588,8 +1438,6 @@ impl Analyzer<'_, '_> {
             residual,
             overlap_targets: None,
             derivation,
-            allocation_length_upper_bound: None,
-            allocation_length_upper_bound_derivation: None,
             affine_index_maps: if discharged {
                 self.proved_affine_index_maps(affine_offset.as_ref(), states)
             } else {
@@ -1825,8 +1673,6 @@ impl Analyzer<'_, '_> {
             residual: (!discharged).then_some(residual),
             overlap_targets: None,
             derivation: outcome.derivation,
-            allocation_length_upper_bound: None,
-            allocation_length_upper_bound_derivation: None,
             affine_index_maps: Vec::new(),
             range_partitions: Vec::new(),
             written_before: states.written_before(discharged),

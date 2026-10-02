@@ -1632,7 +1632,6 @@ impl<'program> IrBuilder<'program> {
                 call,
                 arguments,
                 result_borrow,
-                allocation,
                 ..
             } => {
                 let function = self
@@ -1641,24 +1640,6 @@ impl<'program> IrBuilder<'program> {
                     .find_map(|(site, target)| (site == call).then_some(*target))
                     .ok_or(LoweringFailure::InvalidCheckedProgram)?;
                 let source_arguments = arguments.iter().map(lower_source_argument).collect();
-                let source_allocation = allocation
-                    .map(|allocation| {
-                        let IrType::Nominal(cell) = lower_type(self.erasure, allocation.cell)?
-                        else {
-                            return Err(LoweringFailure::InvalidCheckedProgram);
-                        };
-                        Ok(IrSourceAllocation {
-                            cell,
-                            count_argument: allocation.count,
-                            layout_ceiling: allocation.layout_ceiling.into(),
-                            source_length_upper_bound: allocation
-                                .source_length_upper_bound()
-                                .ok_or(LoweringFailure::InvalidCheckedProgram)?,
-                            site: allocation.site,
-                            count_site: allocation.count_site,
-                        })
-                    })
-                    .transpose()?;
                 let arguments = arguments
                     .iter()
                     .map(|argument| self.expression(argument))
@@ -1681,7 +1662,6 @@ impl<'program> IrBuilder<'program> {
                     result,
                     arguments: source_arguments,
                     returned_borrow_argument: result_borrow.as_ref().map(|borrow| borrow.argument),
-                    allocation: source_allocation,
                 });
                 Ok(result)
             }
