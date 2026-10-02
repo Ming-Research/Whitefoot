@@ -370,7 +370,8 @@ four the suite assumes.
 attribution runs, `redis-persistence-samples.csv` that of Experiment 8,
 `firn-samples.csv` that of the firn investigation, `keyspace-samples.csv`
 the suite of the concurrent-map investigation's stage (c), and
-`scale-14900k-samples.csv` its many-core run. They are removed with the
+`scale-14900k-samples.csv` its many-core run, and `shared-reads-samples.csv`
+its shared reads against exclusive holds. They are removed with the
 experiments' records.
 
 ## Reproducing

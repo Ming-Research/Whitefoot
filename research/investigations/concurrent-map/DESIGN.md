@@ -646,6 +646,42 @@ If the 14900K misses criterion 3 while criterion 1 holds, the readers'
 shared count is the suspect, and marks a reader sets on its own driver's
 line, which a writer scans, are the next design to measure.
 
+**Criteria 1 and 2 on this container**
+([raw lines](../../experiments/io-completion-bench/shared-reads-samples.csv)):
+firn at `e2b774708` against the same source lowered with exclusive holds
+only, one server process per build and pass, interleaved, three passes on
+one and two server CPUs and five more on one for `SET`, `GET` and `LPUSH`.
+Medians, shared against exclusive:
+
+| Server CPUs | Test | Rate | Server CPU per request |
+|---|---|---:|---:|
+| 1 | `SET` (8 passes) | 0.976 | 1.02 |
+| 1 | `GET` (8 passes) | 0.964 | 1.04 |
+| 1 | `INCR` | 0.976 | 1.03 |
+| 1 | `LPUSH` (8 passes) | 1.000 | 1.00 |
+| 1 | `LRANGE_600` | 1.08 | 0.94 |
+| 2 | `SET` | 1.03 | 0.96 |
+| 2 | `GET` | 1.03 | 1.00 |
+| 2 | `INCR` | 1.03 | 0.99 |
+| 2 | `LPUSH` | 1.00 | 0.98 |
+| 2 | `LRANGE_600` | 1.06 | 0.59 |
+
+- **Criterion 1 is met.** With shared reads firn spent 9.72 µs of server
+  CPU per `LRANGE_600` reply on two drivers and 8.76 µs on one, 1.11 times,
+  where the exclusive build spent 16.4 and 9.28 µs, 1.77 times; its rate on
+  two drivers was 55,340 a second against 52,422.
+- **Criterion 2 is met on two drivers and missed by `GET` on one.** On one
+  server CPU `GET` answered 761,325 a second against 789,540, 3.6% lower
+  over eight passes, more than one 250 ms clock step (2.5% at these run
+  lengths). In the same passes `SET`, whose statements the two builds lower
+  alike, was 2.4% lower, and the first three passes put `LPUSH` 6.5% lower
+  before eight passes put it at 1.000, so differences of about 2.5% here
+  come from the runs rather than the change. A shared read's own cost, one
+  more locked read-modify-write, was 8.6 ns in the entry reads above
+  (23.7 against 29.8 million a second on one thread), 0.7% of a `GET`'s
+  1.23 µs of server CPU. How much of `GET`'s 3.6% the change causes is not
+  settled by these runs.
+
 **Refused alternatives.**
 
 - *A read form the writer marks* (`atomic e = &m[key] reads { ... }`):
