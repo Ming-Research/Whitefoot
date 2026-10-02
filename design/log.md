@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-02 Keep shared maps of entries in a runtime concurrent index, and bound every wait on them
+
+Nodes: language/waiting/shared-objects/shared-maps, language/waiting/shared-objects, compiler/waiting-contexts/concurrent-map, compiler/waiting-contexts
+
+Owner-approved: 2026-10-02, in the session, written in Chinese, after the handoffs of PR #202: cards #1 to #11 as recommended, #6, #7 and #9 after they were explained again ("the others agreed as recommended", then "9 agreed. The others agreed too"); the revised card #9, which replaced the per-cell hand-off and the owed reservation first approved with the keyed statement's patience and ticketed holds and with the borrowed hold ("#9 approved"); and the wording added to #9 after review, that every retry counts against patience, why it counts pauses rather than wakes, and that the count is provisional ("confirmed"). This ruling authorizes no merge.
+
+Summary: State that many contexts reach by key is a shared map, `SharedMap<V>` with state `SharedMapState<V>`, keyed by byte strings, whose entries are reached only inside keyed statements that hold one entry and whole-map statements that hold them all; a keyed or whole-map block may hold objects but not wait, so entries are always taken before objects and no cycle of waits forms, which replaces the rule that an atomic statement's block contains no atomic statement. The runtime keeps the map in one concurrent hash index in C with 16-byte cells locked by one compare-and-swap, cooperative moves, entry nodes from per-user chunks, claims of removed cells settled by pending marks, and huge-page cell arrays; it led or tied every cell of the fourth duel against growt and DashMap. A keyed statement that has waited 2^16 pauses, each retry counted, holds the whole map, whole-map statements take turns by ticket, and an object statement in a map block borrows a hold handed to a parked context, so every begun statement takes effect [WAIT-2]. A statement reached through a reference parameter whose row writes nothing below it no longer counts a handle of its own. Refused: a library map behind a `Shared` object, keys of any type, shards of `Shared` objects, guarded object statements in map blocks, cache-line buckets, a per-cell waiter mark, racing holds, take-back and an owed reservation. Evidence: [the investigation](../research/investigations/concurrent-map/DESIGN.md).
+
 ## 2026-10-02 Make the range derivation order-free and refute it by conflict-directed backjumping
 
 Nodes: language/checks-and-proofs/range-facts, compiler/range-judgment, language/checks-and-proofs, language/parallelism/loop-permission, language/ownership, language/data-model/storage-shapes, compiler
