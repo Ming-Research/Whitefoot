@@ -91,11 +91,15 @@ impl Checker<'_, '_> {
                 }
                 CheckedStatement::Atomic {
                     target,
+                    key,
                     guard,
                     body,
                     ..
                 } => {
                     Checker::install_expression_allocation_bounds(target, bounds)?;
+                    if let Some(key) = key {
+                        Checker::install_expression_allocation_bounds(key, bounds)?;
+                    }
                     if let Some(guard) = guard {
                         Checker::install_expression_allocation_bounds(guard, bounds)?;
                     }

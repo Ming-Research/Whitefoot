@@ -1,0 +1,22 @@
+fn replace_and_read(cell: &Shared<u8>) -> seen: u8 writes(cell) waits {
+  let seen = 0_u8;
+  atomic state = &cell^ {
+    let fresh = shared_new::<u8>(value: 9_u8);
+    set cell^ = move fresh;
+    let other = shared_new::<u8>(value: 5_u8);
+    set seen = state^;
+    let dropped = move other;
+  }
+  return seen;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let cell = shared_new::<u8>(value: 7_u8);
+  let seen = replace_and_read(cell: &cell);
+  let now = 0_u8;
+  atomic state = &cell {
+    set now = state^;
+  }
+  let code = seen +wrap now;
+  return std::process::exit_status(code: code);
+}

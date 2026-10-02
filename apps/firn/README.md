@@ -2,8 +2,9 @@
 
 firn is a server of Redis's protocol written in Whitefoot. It answers RESP2
 and inline requests over TCP, pipelined or not, and keeps strings, lists, sets,
-hashes and sorted sets in one keyspace that every connection reaches through
-atomic statements. It is named for firn, snow that has lasted a season: stored
+hashes and sorted sets in one keyspace, a shared map that every connection
+reaches through atomic statements on one key, or on the whole keyspace for a
+command over several keys. It is named for firn, snow that has lasted a season: stored
 and compacted.
 
 Its commands are the ones `redis-benchmark`'s default suite sends, with
@@ -54,8 +55,9 @@ default.
 - `bytes`: byte strings, their hash and order, and integers read as Redis
   reads them;
 - `protocol`: reading requests and writing replies;
-- `store`: the keyspace, its value types, queued expiries and the append-only
-  file's pending bytes;
+- `store`: the keyspace, a shared map of entries beside a shared object
+  holding the queued expiries, the append-only file's pending bytes and the
+  server's counts;
 - `commands`: one file per kind of value, and the dispatch;
 - `persistence`: the append-only file's writer and its replay;
 - `server`: connections, active expiry and `main`.

@@ -1,0 +1,13 @@
+const names: Array<u8, 2> =[97_u8, 98_u8];
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let map = shared_map_new::<u8>(capacity: 0_u64);
+  atomic state = &map {
+    atomic first = &state^[&names[0_u64..1_u64]] {
+      atomic second = &state^[&names[1_u64..2_u64]] {
+        set second^ = Some<u8>(value: 1_u8);
+      }
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}

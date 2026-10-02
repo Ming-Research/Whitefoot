@@ -54,6 +54,9 @@ fn the_compiler_owned_c_units_compile_in_the_default_dialect() {
         ("sched/prim_host.c", crate::SCHED_PRIM_HOST_SOURCE),
         ("sched/entry.c", crate::SCHED_ENTRY_SOURCE),
         ("completion/floor.c", crate::FLOOR_RUNTIME_SOURCE),
+        ("concurrent_map.h", crate::CONCURRENT_MAP_HEADER),
+        ("concurrent_map.c", crate::CONCURRENT_MAP_SOURCE),
+        ("shared_map.c", crate::SHARED_MAP_SOURCE),
     ];
     for staged in ["completion", "sched"] {
         std::fs::create_dir_all(directory.join(staged)).expect("stage runtime directory");
@@ -62,12 +65,15 @@ fn the_compiler_owned_c_units_compile_in_the_default_dialect() {
         std::fs::write(directory.join(name), source).expect("write compiler-owned C unit");
     }
     for (name, _) in units {
-        if !name.ends_with(".c") {
+        // `shared_map.c` compiles the concurrent map in, as its host.
+        if !name.ends_with(".c") || name == "concurrent_map.c" {
             continue;
         }
         let checked = Command::new("/usr/bin/clang")
             .arg("-fsyntax-only")
             .arg("-pthread")
+            .arg("-I")
+            .arg(&directory)
             .arg("-I")
             .arg(directory.join("completion"))
             .arg("-x")
@@ -539,6 +545,9 @@ fn a_native_ring_carries_opens_and_closes_under_one_kind_rule() {
 fn linked_c_units_avoid_identifiers_the_host_compiler_predefines() {
     for (name, source) in [
         ("bridge.c", crate::COMPLETION_BRIDGE_SOURCE),
+        ("concurrent_map.c", crate::CONCURRENT_MAP_SOURCE),
+        ("shared_map.c", crate::SHARED_MAP_SOURCE),
+        ("concurrent_map.h", crate::CONCURRENT_MAP_HEADER),
         ("runtime.c", crate::COMPLETION_RUNTIME_SOURCE),
         ("wait_host.c", crate::COMPLETION_WAIT_HOST_SOURCE),
         ("wait_windows.c", crate::COMPLETION_WAIT_WINDOWS_SOURCE),
