@@ -2062,7 +2062,7 @@ impl<'program> Walker<'program> {
         }
         for slot in &modified.slots {
             header.slots.retain(|location, held| {
-                !(location.starts_with(slot) && !matches!(held, Slot::Alias(_)))
+                !location.starts_with(slot) || matches!(held, Slot::Alias(_))
             });
             header.forget_variants(slot);
         }

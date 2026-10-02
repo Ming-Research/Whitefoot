@@ -86,6 +86,24 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 }
 "#,
     ),
+    // A shared map's handle and its state [SHARE-1]: both are reached only
+    // through atomic statements and the prelude's functions, so neither
+    // declares a field; `V: drop` because the last handle's release drops
+    // every value.
+    (
+        "prelude/SharedMap.wf",
+        PreludeSource::Opaque,
+        r#"opaque nocopy struct SharedMap<V: drop> {
+}
+"#,
+    ),
+    (
+        "prelude/SharedMapState.wf",
+        PreludeSource::Opaque,
+        r#"opaque nocopy struct SharedMapState<V: drop> {
+}
+"#,
+    ),
     (
         "prelude/box_new.wf",
         PreludeSource::Function,
@@ -284,6 +302,24 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
         "prelude/shared_share.wf",
         PreludeSource::Function,
         r#"fn shared_share<T: drop>(shared: &Shared<T>) -> result: Shared<T> reads(shared);
+"#,
+    ),
+    (
+        "prelude/shared_map_new.wf",
+        PreludeSource::Function,
+        r#"fn shared_map_new<V: drop>(capacity: u64) -> result: SharedMap<V> pure;
+"#,
+    ),
+    (
+        "prelude/shared_map_share.wf",
+        PreludeSource::Function,
+        r#"fn shared_map_share<V: drop>(shared: &SharedMap<V>) -> result: SharedMap<V> reads(shared);
+"#,
+    ),
+    (
+        "prelude/shared_map_count.wf",
+        PreludeSource::Function,
+        r#"fn shared_map_count<V: drop>(state: &SharedMapState<V>) -> count: u64 reads(state);
 "#,
     ),
     (

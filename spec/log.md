@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-02 v0.85: shared maps and keyed atomic statements
+
+Rules: changed PRE-1, REF-1, SET-1, SHARE-1, SHARE-2, SHARE-3, STOR-3, WAIT-2
+
+Owner-approved: 2026-10-02, in the session, written in Chinese, after the handoffs of PR #202, which showed every rule change with its before and after behavior: cards #1 to #11 as recommended, #6, #7 and #9 after they were explained again ("the others agreed as recommended", then "9 agreed. The others agreed too"), the revised card #9 ("#9 approved") and the wording added to it after review ("confirmed"). The branch's amendment was written over v0.83 as v0.84; when main released its own v0.84, main's text was archived and the same rule changes were applied over it as v0.85, which the last handoff showed against main's v0.84.
+
+Summary: SHARE-1 adds the shared map, a `SharedMap<V>` handle to state `SharedMapState<V>` holding an `Option<V>` entry for each byte-string key, with `shared_map_new`, `shared_map_share` and `shared_map_count`, its state and entries belonging to no binding and no context. SHARE-2 states an atomic statement's target and binding as one table of four forms, an object, a whole map, `m[k]` and `s^[k]` under a held map state; every atomic statement counts as a waiting call for PAR-1 and PAR-2, `s^[k]` as no call for WAIT-1; a map's or an entry's block admits object statements without a guard and a whole-map block its own `s^[k]`, and only an object statement outside every atomic block has a guard. SHARE-3 gives exclusive access to what a statement holds, a map's state including its entries, with one order for the statements on one key together with the map's whole-map statements. SET-1, REF-1, STOR-3 and WAIT-2 name a map's state and entries where they named an object's state. PRE-1 declares the opaque structs `SharedMap` and `SharedMapState` and the shared-object and shared-map functions in the declaration preorder beside main's range postconditions. Selection ground: the owner's rulings above; [the investigation](../research/investigations/concurrent-map/DESIGN.md#stage-b-the-language-surface-stated-before-building).
+
 ## 2026-10-02 v0.84 amended: an order-free range derivation
 
 Rules: changed RANGE-3

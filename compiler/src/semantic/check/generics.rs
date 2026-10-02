@@ -1848,7 +1848,7 @@ impl<'unit> TypeContext<'unit> {
                         CheckedNominalKind::Box { referent, .. } => {
                             self.concrete_type_identity(*referent)?
                         }
-                        CheckedNominalKind::Shared { state } => {
+                        CheckedNominalKind::Shared { state, .. } => {
                             self.concrete_type_identity(*state)?
                         }
                         CheckedNominalKind::Opaque => {

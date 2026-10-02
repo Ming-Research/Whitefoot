@@ -420,3 +420,27 @@ fn shared_objects_keep_every_update_on_one_driver_and_on_four() {
         }
     }
 }
+
+/// [SHARE-1, SHARE-2, SHARE-3] eight contexts adding to the entries under
+/// eight keys of one map, and to a shared object inside each keyed
+/// statement, while two others hold the whole map and compare the entries'
+/// sum with that object, reach the counts every order of their statements
+/// gives, on one driver and on four. A keyed statement that did not hold its
+/// entry alone loses increments (status 2), one that ran while the map was
+/// held lets a holder see the sum and the total disagree (status 5), and an
+/// object statement inside a keyed block that did not hold its object loses
+/// increments of the total (status 4).
+#[test]
+fn shared_maps_keep_every_update_on_one_driver_and_on_four() {
+    let program = build_program(&compile_program("shared_maps.wf"));
+    for drivers in ["1", "4"] {
+        for round in 0..3 {
+            let output = program.run_with_settings(None, &[("WF_DRIVERS", drivers)]);
+            assert_eq!(
+                output.status.code(),
+                Some(0),
+                "drivers {drivers}, round {round}: {output:?}"
+            );
+        }
+    }
+}
