@@ -57,9 +57,9 @@ ROUNDS=${ROUNDS:-2}
 PASSES=${PASSES:-3}
 SECONDS_PER_RUN=${SECONDS_PER_RUN:-12}
 # A server that closes an idle client first holds that port in TIME_WAIT for
-# a minute, and firn's runtime does not set SO_REUSEADDR, so each run starts
-# its ports from its own process number rather than from one fixed port a run
-# a minute earlier may still hold.
+# a minute, and a server that does not set SO_REUSEADDR cannot listen on it
+# meanwhile, so each run starts its ports from its own process number rather
+# than from one fixed port a run a minute earlier may still hold.
 PORT=${PORT:-$((10000 + $$ % 400 * 50))}
 MODE=${1:-bench}
 
@@ -94,7 +94,7 @@ cpu_count() {
     echo "$1" | tr ',' '\n' | wc -l
 }
 # Each start takes a fresh port: a stopped server's accepted connections wait
-# out TIME_WAIT on its port, and firn's runtime does not set SO_REUSEADDR.
+# out TIME_WAIT on its port, which a server without SO_REUSEADDR cannot bind.
 start() {
     PORT=$((PORT + 1))
     cpus=$(cpu_count "$SERVER_CPUS")

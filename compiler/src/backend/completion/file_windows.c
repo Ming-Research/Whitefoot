@@ -390,7 +390,15 @@ static int wf_file_windows_endpoint(
 }
 
 /* One listen: a socket of the address's family, bound and listening, or the
- * host's own refusal with nothing left behind. */
+ * host's own refusal with nothing left behind.
+ *
+ * Unlike the POSIX leaf, this sets no SO_REUSEADDR before the bind.  A
+ * restarted server already binds its port here while the connections its
+ * earlier run accepted wait out TIME_WAIT, as an experiment on Windows 11
+ * showed (research/investigations/io-model/NETWORK.md, "Rebinding a port"),
+ * and Winsock's SO_REUSEADDR means something else: it lets one socket bind a
+ * port another socket holds, so a program's second bind of one port would no
+ * longer answer AddressInUse. */
 static wf_file_result wf_file_windows_socket_listen(
     const wf_file_request *request
 ) {

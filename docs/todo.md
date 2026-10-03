@@ -2189,17 +2189,19 @@ rarely insert at the same place.
   library's container interfaces are next revised.
 
 - **The standard library has no decimal conversion of integers.** Two
-  programs now write their own, firn's `read_number` and `put_decimal`
-  (`apps/firn/protocol/protocol.wf`) and `parse_port` in
-  `tests/programs/deadlines.wf`, each with its own handling of digits,
-  length and room. A program that reads a numeric argument or prints
-  a count repeats this, and each copy can differ at the edges (overflow past
-  19 digits, an empty field, no room left). The change: a `std::text` entry
-  that parses a decimal `u64` from a byte range with a result naming a
-  malformed or overlong field, and one that appends a `u64` in decimal into a
-  byte window it reports room for; then the two copies move to them.
-  Reopen when the library's text interfaces are next revised or a third
-  program needs one.
+  programs now write their own: firn reads its options' numbers with
+  `decimal` (`apps/firn/server/server.wf`) and writes replies' numbers with
+  `put_decimal` (`apps/firn/protocol/protocol.wf`), and
+  `tests/programs/deadlines.wf` has `parse_port`, each with its own handling
+  of digits, length and room. A program that reads a numeric argument or
+  prints a count repeats this, and each copy can differ at the edges
+  (overflow past 19 digits, an empty field, no room left). The change: a
+  `std::text` entry that parses a decimal `u64` from a byte range with a
+  result naming a malformed or overlong field, and one that appends a `u64`
+  in decimal into a byte window it reports room for; then those copies move
+  to them, while firn's `read_integer` (`apps/firn/bytes/bytes.wf`) keeps
+  Redis's own rules for a request's numbers over the first. Reopen when the
+  library's text interfaces are next revised or a third program needs one.
 
 - **Complete the vector boundary witness when comparing independent fields.**
   The maintained GrowVector program checks the shipped vector and behavior
@@ -3260,6 +3262,21 @@ condition under which it is taken up.
   least seven runs per model trips no build or case stage. Reopen when an
   overrun is traced to a change that earlier runs on faster machines passed,
   or when clippy's variance overruns come more than about once a week.
+- **Worktrees on one host share the completion tests' binaries.**
+  `WHITEFOOT_SCRATCH_ROOT` defaults to one directory for every worktree,
+  `$TMPDIR/whitefoot` or `/tmp/whitefoot`, and make judges the
+  `completion-test` binaries under it fresh by comparing their times with the
+  running worktree's sources, so a binary another worktree built later from
+  other sources counts as up to date and runs. On the 14900K host,
+  `make -C compiler static` in one worktree failed in `concurrent-map-test`
+  with a message that worktree's sources do not hold, from a binary another
+  worktree had built minutes before; with `WHITEFOOT_SCRATCH_ROOT` set to a
+  directory of its own, the same gate built every binary from its own tree
+  and passed. The change: a default of the worktree's own, such as a
+  directory named for the worktree's path, or binaries that record the tree
+  they were built from; setting the variable avoids it meanwhile. Reopen when
+  two worktrees next validate on one host, or with the next change to the
+  check runner.
 
 ## firn
 
@@ -3271,26 +3288,35 @@ condition under which it is taken up.
   firn answers as a syntax error where Redis sets the key; `SET`'s `EX` and
   `PX` beyond 10^9 seconds or 10^12 milliseconds, which firn refuses as an
   invalid expire time where Redis accepts them, since firn keeps expiries as
-  nanoseconds; `CONFIG GET` patterns, which firn does not match, and
-  `CONFIG SET`, which firn answers as an unknown option for every parameter
-  where Redis sets those it knows; a zero byte in a request's count or
-  length line, where Redis's search for the line's carriage return stops at
-  the zero byte and waits for more input, answering that the count is too big
-  only past 64 KB, while firn answers the malformed line at once; `ZADD`'s
-  options `NX`, `XX`, `CH`, `INCR`, `GT` and `LT`, which firn answers as a
-  syntax error; a score of negative zero in a sorted set Redis encodes as a
-  skiplist, one of more than 128 members or with a member longer than 64
-  bytes, which Redis keeps and writes as `-0` where firn keeps and writes 0,
-  as Redis does in a smaller set;
-  quoted arguments in inline commands; a listening address other than the
-  loopback and options by name rather than by position; `AUTH`, `SELECT`,
-  `KEYS` and `SCAN`, `INFO`, `HELLO` and RESP3, the blocking list commands,
-  `MULTI` and `EXEC`, publish and subscribe, a random hash seed, and a
-  listener that a restarted server can bind while the stopped one's
-  connections wait out TIME_WAIT, which needs the runtime's `tcp_listen` to
-  set `SO_REUSEADDR` as Redis does. The owner
-  sets the list for the deployment stage; reopen when this stage's
-  measurement is handed back.
+  nanoseconds; `SET`'s `EX` or `PX` followed by a zero byte and more, which
+  Redis's strcasecmp reads up to the zero byte and firn's `run_set` answers
+  as a syntax error; `CONFIG SET`, which firn answers as an unknown option for
+  every parameter where Redis sets those it knows, and the parameters beyond
+  the eight `CONFIG GET` reports; `ZADD`'s options `NX`, `XX`, `CH`, `INCR`,
+  `GT` and `LT`, which firn answers as a syntax error; a score of negative
+  zero in a sorted set Redis encodes as a skiplist, one of more than 128
+  members or with a member longer than 64 bytes, which Redis keeps and writes
+  as `-0` where firn keeps and writes 0, as Redis does in a smaller set; more
+  than one database, where
+  `SELECT` takes 0 alone; a listening address in IPv6, or several, where
+  `--bind` takes one IPv4 address or `*`, and users other than `default`;
+  `CLIENT` subcommands beyond `ID`, `GETNAME` and `SETNAME`, which firn
+  answers as unknown, and a command table, which `COMMAND` and
+  `COMMAND COUNT` report empty and `COMMAND DOCS`, `INFO`, `LIST` and
+  `GETKEYS` answer as unknown subcommands; `KEYS` and `SCAN`, which can match
+  with `glob_match` (`apps/firn/bytes/bytes.wf`), `INFO`, RESP3, which
+  `HELLO 3` refuses, the blocking list commands, `MULTI` and `EXEC`, publish
+  and subscribe, and a random hash seed. The owner sets the list for the
+  deployment stage; reopen when this stage's measurement is handed back.
+- **firn reads a slow request again from its start at every read.**
+  `parse_request` keeps no state between reads, so a request arriving in
+  many reads is scanned from its first byte each time: quadratic in its
+  length, and since firn takes arrays of up to 2,147,483,647 elements, as
+  Redis 7.0 does, a client sending a huge array slowly costs the server
+  work out of proportion to its bytes, where Redis resumes at the element it
+  stopped at. Keeping the parse position and the spans found so far in the
+  client between reads would remove it; reopen when firn faces clients it
+  does not trust, or a profile shows parsing past a few percent.
 - **A set never shrinks, so `SPOP` walks ever sparser buckets.** `SPOP`
   picks the first filled bucket from a random position, and a hash map keeps
   its buckets after its members are removed, so after most of a large set is

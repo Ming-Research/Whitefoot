@@ -124,7 +124,8 @@ fn replay(store: &Keyspace, factory: &HandleFactory, root: &DirectoryRead, name:
         loop @commands {
           let current = input.inner.len;
           let bytes = &input.inner[0_u64..current];
-          let parsed = parse_request(input: bytes, start: consumed, held: held, args: &args);
+          let unlocked = False();
+          let parsed = parse_request(input: bytes, start: consumed, held: held, args: &args, locked: unlocked);
           if parsed.state == 0_u64 {
             break @commands;
           }

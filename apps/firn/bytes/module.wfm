@@ -62,3 +62,9 @@ public fn read_integer(input: &[u8], start: u64, length: u64) -> number: Integer
 public fn name_code(input: &[u8], start: u64, length: u64) -> code: u64 reads(input) doc "Packs a command name's first eight bytes, letters upper-cased, little end first, into one number; a name longer than eight bytes, or one holding a zero byte, which no command's name does, has its top byte set to 255, and a name of no bytes is 0.";
 
 public fn name_is(input: &[u8], start: u64, length: u64, word: &[u8]) -> matched: Bool reads(input), reads(word) doc "Whether bytes of the input spell an upper-case word, letters in either case.";
+
+public fn lower(byte: u8) -> result: u8 pure doc "An upper-case ASCII letter in lower case and any other byte unchanged, as C's tolower folds a byte in the C locale.";
+
+public fn byte_before(input: &[u8], position: u64, end: u64) -> result: u8 reads(input) doc "One byte of the input at a position before end, or zero at end and past it, where the zero byte ending a C string is read.";
+
+public fn glob_match(input: &[u8], start: u64, length: u64, name: &[u8]) -> matched: Bool reads(input), reads(name) doc "Whether a name matches the glob pattern of length bytes of the input from start, as Redis's stringmatchlen matches one with nocase set: * matches any run of bytes, ? any one byte, [...] one byte of a class, a backslash makes the next byte literal, and any other byte matches itself in either case.";

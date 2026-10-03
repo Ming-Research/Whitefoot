@@ -1,0 +1,305 @@
+alias Client = pkg::protocol::Client;
+alias Span = pkg::protocol::Span;
+alias Keyspace = pkg::store::Keyspace;
+alias arg = pkg::protocol::arg;
+alias byte_at = pkg::bytes::byte_at;
+alias bytes_copy = pkg::bytes::bytes_copy;
+alias glob_match = pkg::bytes::glob_match;
+alias lower = pkg::bytes::lower;
+alias name_is = pkg::bytes::name_is;
+alias reply_array = pkg::protocol::reply_array;
+alias reply_arity_word = pkg::protocol::reply_arity_word;
+alias reply_bulk_decimal = pkg::protocol::reply_bulk_decimal;
+alias reply_bulk_input = pkg::protocol::reply_bulk_input;
+alias reply_echoed = pkg::protocol::reply_echoed;
+alias reply_error = pkg::protocol::reply_error;
+alias reply_text = pkg::protocol::reply_text;
+alias reply_word = pkg::protocol::reply_word;
+
+const word_get: Array<u8, 3> =[71_u8, 69_u8, 84_u8];
+
+const text_config_get_arity: Array<u8, 57> =[45_u8, 69_u8, 82_u8, 82_u8, 32_u8, 119_u8, 114_u8, 111_u8, 110_u8, 103_u8, 32_u8, 110_u8, 117_u8, 109_u8, 98_u8, 101_u8, 114_u8, 32_u8, 111_u8, 102_u8, 32_u8, 97_u8, 114_u8, 103_u8, 117_u8, 109_u8, 101_u8, 110_u8, 116_u8, 115_u8, 32_u8, 102_u8, 111_u8, 114_u8, 32_u8, 39_u8, 99_u8, 111_u8, 110_u8, 102_u8, 105_u8, 103_u8, 124_u8, 103_u8, 101_u8, 116_u8, 39_u8, 32_u8, 99_u8, 111_u8, 109_u8, 109_u8, 97_u8, 110_u8, 100_u8, 13_u8, 10_u8];
+
+const text_config_set_arity: Array<u8, 57> =[45_u8, 69_u8, 82_u8, 82_u8, 32_u8, 119_u8, 114_u8, 111_u8, 110_u8, 103_u8, 32_u8, 110_u8, 117_u8, 109_u8, 98_u8, 101_u8, 114_u8, 32_u8, 111_u8, 102_u8, 32_u8, 97_u8, 114_u8, 103_u8, 117_u8, 109_u8, 101_u8, 110_u8, 116_u8, 115_u8, 32_u8, 102_u8, 111_u8, 114_u8, 32_u8, 39_u8, 99_u8, 111_u8, 110_u8, 102_u8, 105_u8, 103_u8, 124_u8, 115_u8, 101_u8, 116_u8, 39_u8, 32_u8, 99_u8, 111_u8, 109_u8, 109_u8, 97_u8, 110_u8, 100_u8, 13_u8, 10_u8];
+
+const text_config_set: Array<u8, 61> =[45_u8, 69_u8, 82_u8, 82_u8, 32_u8, 85_u8, 110_u8, 107_u8, 110_u8, 111_u8, 119_u8, 110_u8, 32_u8, 111_u8, 112_u8, 116_u8, 105_u8, 111_u8, 110_u8, 32_u8, 111_u8, 114_u8, 32_u8, 110_u8, 117_u8, 109_u8, 98_u8, 101_u8, 114_u8, 32_u8, 111_u8, 102_u8, 32_u8, 97_u8, 114_u8, 103_u8, 117_u8, 109_u8, 101_u8, 110_u8, 116_u8, 115_u8, 32_u8, 102_u8, 111_u8, 114_u8, 32_u8, 67_u8, 79_u8, 78_u8, 70_u8, 73_u8, 71_u8, 32_u8, 83_u8, 69_u8, 84_u8, 32_u8, 45_u8, 32_u8, 39_u8];
+
+const text_quote_end: Array<u8, 3> =[39_u8, 13_u8, 10_u8];
+
+const text_try_config: Array<u8, 21> =[39_u8, 46_u8, 32_u8, 84_u8, 114_u8, 121_u8, 32_u8, 67_u8, 79_u8, 78_u8, 70_u8, 73_u8, 71_u8, 32_u8, 72_u8, 69_u8, 76_u8, 80_u8, 46_u8, 13_u8, 10_u8];
+
+const parameter_ends: Array<u64, 8> =[14_u64, 24_u64, 28_u64, 37_u64, 41_u64, 52_u64, 56_u64, 63_u64];
+
+const text_unknown_subcommand: Array<u8, 25> =[45_u8, 69_u8, 82_u8, 82_u8, 32_u8, 117_u8, 110_u8, 107_u8, 110_u8, 111_u8, 119_u8, 110_u8, 32_u8, 115_u8, 117_u8, 98_u8, 99_u8, 111_u8, 109_u8, 109_u8, 97_u8, 110_u8, 100_u8, 32_u8, 39_u8];
+
+const parameter_names: Array<u8, 63> =[97_u8, 112_u8, 112_u8, 101_u8, 110_u8, 100_u8, 102_u8, 105_u8, 108_u8, 101_u8, 110_u8, 97_u8, 109_u8, 101_u8, 97_u8, 112_u8, 112_u8, 101_u8, 110_u8, 100_u8, 111_u8, 110_u8, 108_u8, 121_u8, 98_u8, 105_u8, 110_u8, 100_u8, 100_u8, 97_u8, 116_u8, 97_u8, 98_u8, 97_u8, 115_u8, 101_u8, 115_u8, 112_u8, 111_u8, 114_u8, 116_u8, 114_u8, 101_u8, 113_u8, 117_u8, 105_u8, 114_u8, 101_u8, 112_u8, 97_u8, 115_u8, 115_u8, 115_u8, 97_u8, 118_u8, 101_u8, 116_u8, 105_u8, 109_u8, 101_u8, 111_u8, 117_u8, 116_u8];
+
+const reply_yes: Array<u8, 9> =[36_u8, 51_u8, 13_u8, 10_u8, 121_u8, 101_u8, 115_u8, 13_u8, 10_u8];
+
+const reply_no: Array<u8, 8> =[36_u8, 50_u8, 13_u8, 10_u8, 110_u8, 111_u8, 13_u8, 10_u8];
+
+const reply_empty_bulk: Array<u8, 6> =[36_u8, 48_u8, 13_u8, 10_u8, 13_u8, 10_u8];
+
+const reply_one_database: Array<u8, 7> =[36_u8, 49_u8, 13_u8, 10_u8, 49_u8, 13_u8, 10_u8];
+
+const reply_empty_array: Array<u8, 4> =[42_u8, 48_u8, 13_u8, 10_u8];
+
+const text_try_command: Array<u8, 22> =[39_u8, 46_u8, 32_u8, 84_u8, 114_u8, 121_u8, 32_u8, 67_u8, 79_u8, 77_u8, 77_u8, 65_u8, 78_u8, 68_u8, 32_u8, 72_u8, 69_u8, 76_u8, 80_u8, 46_u8, 13_u8, 10_u8];
+
+const word_count: Array<u8, 5> =[67_u8, 79_u8, 85_u8, 78_u8, 84_u8];
+
+const word_command_count: Array<u8, 13> =[99_u8, 111_u8, 109_u8, 109_u8, 97_u8, 110_u8, 100_u8, 124_u8, 99_u8, 111_u8, 117_u8, 110_u8, 116_u8];
+
+fn parameter_start(which: u64) -> start: u64 pure {
+  doc "Where the name of parameter which, counted from 0 in alphabetical order, starts in parameter_names.";
+  if which == 0_u64 {
+    return 0_u64;
+  }
+  let before = which -wrap 1_u64;
+  if before < 8_u64 {
+    let start = parameter_ends[before];
+    return start;
+  }
+  return 63_u64;
+}
+
+fn parameter_end(which: u64) -> end: u64 pure {
+  doc "Where the name of parameter which ends in parameter_names.";
+  if which < 8_u64 {
+    let end = parameter_ends[which];
+    return end;
+  }
+  return 63_u64;
+}
+
+fn same_name(input: &[u8], start: u64, length: u64, name: &[u8]) -> same: Bool reads(input), reads(name) {
+  doc "Whether bytes of the input spell a lower-case name, letters in either case.";
+  if length != name^.len {
+    return False();
+  }
+  for @bytes (offset in 0_u64..length) {
+    let position = start +wrap offset;
+    let byte = byte_at(input: input, index: position);
+    let lowered = lower(byte: byte);
+    let expected = byte_at(input: name, index: offset);
+    if lowered != expected {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn parameter_matches(input: &[u8], start: u64, length: u64, globbing: Bool, which: u64) -> matched: Bool reads(input) {
+  doc "Whether length bytes of the input from start reach parameter which: as a glob pattern matched as Redis matches one when globbing is true, or else as the parameter's name in either case.";
+  let first = parameter_start(which: which);
+  let last = parameter_end(which: which);
+  if last <= 63_u64 {
+    if first <= last {
+      let name = &parameter_names[first..last];
+      if globbing {
+        let matched = glob_match(input: input, start: start, length: length, name: name);
+        return matched;
+      }
+      let named = same_name(input: input, start: start, length: length, name: name);
+      return named;
+    }
+  }
+  return False();
+}
+
+fn reply_parameter_name(client: &Client, which: u64) -> result: unit writes(client) {
+  doc "Writes the name of parameter which as a bulk string, in lower case.";
+  let first = parameter_start(which: which);
+  let last = parameter_end(which: which);
+  if last <= 63_u64 {
+    if first <= last {
+      let name = &parameter_names[first..last];
+      let length = last -wrap first;
+      reply_bulk_input(client: client, input: name, start: 0_u64, length: length);
+    }
+  }
+  return unit;
+}
+
+fn reply_parameter_value(store: &Keyspace, client: &Client, which: u64) -> result: unit reads(store), writes(client) {
+  doc "Writes the value of parameter which as Redis formats it: the append-only file's name, yes or no, the address, 1, the port, the password, an empty string and the idle limit, in the parameters' order.";
+  if which == 0_u64 {
+    let name = bytes_copy(bytes: &client^.settings.appendfilename);
+    reply_text(client: client, text: &name);
+  } else if which == 1_u64 {
+    if store^.logging {
+      reply_word(client: client, word: &reply_yes[0_u64..9_u64]);
+    } else {
+      reply_word(client: client, word: &reply_no[0_u64..8_u64]);
+    }
+  } else if which == 2_u64 {
+    let address = bytes_copy(bytes: &client^.settings.bind);
+    reply_text(client: client, text: &address);
+  } else if which == 3_u64 {
+    reply_word(client: client, word: &reply_one_database[0_u64..7_u64]);
+  } else if which == 4_u64 {
+    let port = cvt.wrap::<u64, i64>(client^.settings.port);
+    reply_bulk_decimal(client: client, value: port);
+  } else if which == 5_u64 {
+    let password = bytes_copy(bytes: &client^.settings.password);
+    reply_text(client: client, text: &password);
+  } else if which == 6_u64 {
+    reply_word(client: client, word: &reply_empty_bulk[0_u64..6_u64]);
+  } else {
+    let timeout = cvt.wrap::<u64, i64>(client^.settings.timeout);
+    reply_bulk_decimal(client: client, value: timeout);
+  }
+  return unit;
+}
+
+fn before_zero(input: &[u8], span: Span) -> length: u64 reads(input) {
+  doc "How many bytes of an argument come before its first zero byte, all of them when it holds none: the part of it a C string holds.";
+  for @bytes (offset in 0_u64..span.length) {
+    let position = span.start +wrap offset;
+    let byte = byte_at(input: input, index: position);
+    if byte == 0_u8 {
+      return offset;
+    }
+  }
+  return span.length;
+}
+
+fn has_glob(input: &[u8], start: u64, length: u64) -> globbing: Bool reads(input) {
+  doc "Whether bytes of the input hold [, * or ?, the bytes that make CONFIG GET match an argument as a pattern.";
+  for @bytes (offset in 0_u64..length) {
+    let position = start +wrap offset;
+    let byte = byte_at(input: input, index: position);
+    let bracket = byte == 91_u8;
+    let star = byte == 42_u8;
+    let question = byte == 63_u8;
+    let wild = bor(star, question);
+    let special = bor(bracket, wild);
+    if special {
+      return True();
+    }
+  }
+  return False();
+}
+
+fn run_config(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client) -> result: unit reads(store), reads(input), reads(args), writes(client) {
+  doc "CONFIG GET parameter [parameter ...]: answers the parameters firn reports that the arguments reach, as Redis 7.0 answers: appendfilename, the append-only file's name; appendonly, yes while firn keeps the file; bind, the address firn listens on; databases, 1; port; requirepass, the password clients must give; save, empty, since firn never saves a snapshot; and timeout, the idle limit. An argument holding [, * or ? before any zero byte is a glob pattern, its bytes from a zero byte on ignored as Redis's C string ignores them, matched as glob_match matches one; any other argument names a parameter in either case. A parameter several arguments reach is answered once, spelled as the first argument reaching it spells it, a pattern spelling it in lower case; the parameters come in alphabetical order, one of the orders Redis answers in, since Redis orders them by a hash seeded anew at each start; and an argument reaching none of them, a parameter firn does not report included, matches nothing, as one Redis does not know does. CONFIG SET with an option and a value is answered as Redis answers an option it does not know, the option echoed whole, with too few arguments or an unpaired option as Redis answers them, and any other subcommand as Redis answers an unknown one, its name echoed to 128 bytes. A connection that must authenticate first is answered NOAUTH once the subcommand and its arguments are counted.";
+  let sub = arg(args: args, index: 1_u64);
+  let getting = name_is(input: input, start: sub.start, length: sub.length, word: &word_get[0_u64..3_u64]);
+  let setting = name_is(input: input, start: sub.start, length: sub.length, word: &word_set[0_u64..3_u64]);
+  let count = args^.inner.len;
+  if getting {
+    if count < 3_u64 {
+      reply_word(client: client, word: &text_config_get_arity[0_u64..57_u64]);
+      return unit;
+    }
+    let stopped = denied(client: client);
+    if stopped {
+      return unit;
+    }
+    let found = array_filled::<u64, 8>(value: 0_u64);
+    let spelled_start = array_filled::<u64, 8>(value: 0_u64);
+    let spelled_length = array_filled::<u64, 8>(value: 0_u64);
+    for @arguments (index in 2_u64..count) {
+      let parameter = arg(args: args, index: index);
+      let held = before_zero(input: input, span: parameter);
+      let globbing = has_glob(input: input, start: parameter.start, length: held);
+      let length = parameter.length;
+      if globbing {
+        set length = held;
+      }
+      for @parameters (which in 0_u64..8_u64) {
+        let unseen = found[which] == 0_u64;
+        if unseen {
+          let matched = parameter_matches(input: input, start: parameter.start, length: length, globbing: globbing, which: which);
+          if matched {
+            if globbing {
+              set found[which] = 2_u64;
+            } else {
+              set found[which] = 1_u64;
+              set spelled_start[which] = parameter.start;
+              set spelled_length[which] = parameter.length;
+            }
+          }
+        }
+      }
+    }
+    let fields = 0_u64;
+    for @counting (which in 0_u64..8_u64) {
+      if found[which] != 0_u64 {
+        set fields = fields +wrap 2_u64;
+      }
+    }
+    reply_array(client: client, count: fields);
+    for @answers (which in 0_u64..8_u64) {
+      let how = found[which];
+      if how == 1_u64 {
+        let start = spelled_start[which];
+        let length = spelled_length[which];
+        reply_bulk_input(client: client, input: input, start: start, length: length);
+      } else if how == 2_u64 {
+        reply_parameter_name(client: client, which: which);
+      }
+      if how != 0_u64 {
+        reply_parameter_value(store: store, client: client, which: which);
+      }
+    }
+    return unit;
+  }
+  if setting {
+    if count < 4_u64 {
+      reply_word(client: client, word: &text_config_set_arity[0_u64..57_u64]);
+      return unit;
+    }
+    let stopped = denied(client: client);
+    if stopped {
+      return unit;
+    }
+    let unpaired = count % 2_u64;
+    if unpaired == 1_u64 {
+      reply_error(client: client, word: &text_syntax[0_u64..16_u64]);
+      return unit;
+    }
+    let option = arg(args: args, index: 2_u64);
+    reply_word(client: client, word: &text_config_set[0_u64..61_u64]);
+    let echoed = reply_echoed(client: client, input: input, span: option, limit: option.length);
+    reply_word(client: client, word: &text_quote_end[0_u64..3_u64]);
+    return unit;
+  }
+  reply_word(client: client, word: &text_unknown_subcommand[0_u64..25_u64]);
+  let shown = imin(sub.length, 128_u64);
+  let echoed = reply_echoed(client: client, input: input, span: sub, limit: shown);
+  reply_word(client: client, word: &text_try_config[0_u64..21_u64]);
+  return unit;
+}
+
+fn run_command(input: &[u8], args: &Box<Slots<Span>>, client: &Client) -> result: unit reads(input), reads(args), writes(client) {
+  doc "COMMAND and COMMAND COUNT answer as a server that describes none of its commands: an empty array and 0. COMMAND COUNT with an argument is answered as Redis answers it, and then a connection that must authenticate first NOAUTH. Every other subcommand, COMMAND DOCS among them, is answered as Redis answers an unknown one, its name echoed to 128 bytes: redis-cli 7.0 asks for COMMAND DOCS when it starts and, given an error, takes its own built-in help, hints included, where an empty array of documents would leave it with none.";
+  let count = args^.inner.len;
+  if count == 1_u64 {
+    let stopped = denied(client: client);
+    if stopped {
+      return unit;
+    }
+    reply_word(client: client, word: &reply_empty_array[0_u64..4_u64]);
+    return unit;
+  }
+  let sub = arg(args: args, index: 1_u64);
+  let counting = name_is(input: input, start: sub.start, length: sub.length, word: &word_count[0_u64..5_u64]);
+  if counting {
+    if count != 2_u64 {
+      reply_arity_word(client: client, word: &word_command_count[0_u64..13_u64]);
+      return unit;
+    }
+    let stopped = denied(client: client);
+    if stopped {
+      return unit;
+    }
+    reply_word(client: client, word: &reply_zero[0_u64..4_u64]);
+    return unit;
+  }
+  reply_word(client: client, word: &text_unknown_subcommand[0_u64..25_u64]);
+  let shown = imin(sub.length, 128_u64);
+  let echoed = reply_echoed(client: client, input: input, span: sub, limit: shown);
+  reply_word(client: client, word: &text_try_command[0_u64..22_u64]);
+  return unit;
+}
