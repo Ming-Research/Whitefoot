@@ -31,6 +31,7 @@ alias Bytes = pkg::bytes::Bytes;
 alias bytes_new = pkg::bytes::bytes_new;
 alias bytes_length = pkg::bytes::bytes_length;
 alias byte_at = pkg::bytes::byte_at;
+alias windows_order = pkg::bytes::windows_order;
 alias bytes_integer = pkg::bytes::bytes_integer;
 alias decimal_text = pkg::bytes::decimal_text;
 alias reply_text = pkg::protocol::reply_text;
@@ -1276,5 +1277,152 @@ fn run_getrange(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client:
   if kind > 1_u64 {
     reply_wrong_type(client: client);
   }
+  return unit;
+}
+
+fn key_rank(input: &[u8], args: &Box<Slots<Span>>, order: &Box<Slots<u64>>, index: u64) -> rank: u64 reads(input), reads(args), reads(order) {
+  doc "The position, in a key set's byte order, of the key the argument at index names, found by halving among order's arguments, one naming each of the set's keys in that order; the number of keys for a key the set does not hold, which the callers never ask.";
+  let place = key_bounds(input: input, args: args, index: index);
+  let key = &input^[place.start..place.end];
+  let low = 0_u64;
+  let high = order^.inner.len;
+  loop @halving {
+    if low >= high {
+      break @halving;
+    }
+    let width = high -wrap low;
+    let half = width / 2_u64;
+    let middle = low +wrap half;
+    if middle >= order^.inner.len {
+      break @halving;
+    }
+    let probe_index = order^.inner[middle];
+    let probe_place = key_bounds(input: input, args: args, index: probe_index);
+    let probe = &input^[probe_place.start..probe_place.end];
+    let placed = windows_order(left: key, right: probe);
+    if placed == 0_i32 {
+      return middle;
+    }
+    if placed < 0_i32 {
+      set high = middle;
+    } else {
+      set low = middle +wrap 1_u64;
+    }
+  }
+  return order^.inner.len;
+}
+
+fn run_mget(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+  doc "MGET key [key ...]: answers each key's live string, or nil for an absent or expired key or one of another kind, in the order the keys are named, a key named twice answered twice, written into the reply inside one statement on the keys' entries, as Redis 7.0.15 does. Before the statement each argument is given its key's position in the key set, whose order is the keys' byte order; a key found expired is removed, and the file records its removal as log_removal does.";
+  let count = args^.inner.len;
+  let keys = key_set_new(capacity: count);
+  for @named (index in 1_u64..count) {
+    let place = key_bounds(input: input, args: args, index: index);
+    let key = &input^[place.start..place.end];
+    key_set_put(keys: &keys, key: key, payload: index);
+  }
+  let distinct = keys.len;
+  let order = box_slots_new::<u64>(capacity: 0_u64);
+  if distinct <= 1073741824_u64 {
+    set order = box_slots_new::<u64>(capacity: distinct);
+  }
+  for @ordered (at in 0_u64..keys.len) {
+    let naming = key_set_payload(keys: &keys, index: at);
+    if order.inner.len < order.inner.cap {
+      place_back(window: &order.inner, value: naming);
+    }
+  }
+  let ranks = box_slots_new::<u64>(capacity: 0_u64);
+  if count <= 1073741824_u64 {
+    set ranks = box_slots_new::<u64>(capacity: count);
+  }
+  for @ranked (index in 1_u64..count) {
+    let rank = key_rank(input: input, args: args, order: &order, index: index);
+    if ranks.inner.len < ranks.inner.cap {
+      place_back(window: &ranks.inner, value: rank);
+    }
+  }
+  let named = count -wrap 1_u64;
+  reply_array(client: client, count: named);
+  set client^.now = time^.check;
+  let logged = store^.logging;
+  atomic s = &store^.state, slots = &s^.map[keys] {
+    for @answers (step in 0_u64..ranks.inner.len) {
+      let rank = ranks.inner[step];
+      if rank < slots^.len {
+        let kind = entry_kind(slot: &slots^[rank], client: client);
+        if client^.state == state_expired {
+          if logged {
+            let index = step +wrap 1_u64;
+            let place = key_bounds(input: input, args: args, index: index);
+            let key = &input^[place.start..place.end];
+            log_removal(log: &s^.meta.log, key: key);
+          }
+        }
+        if kind == 1_u64 {
+          reply_held_text(slot: &slots^[rank], client: client);
+        } else {
+          reply_nil(client: client);
+        }
+      } else {
+        reply_nil(client: client);
+      }
+    }
+  }
+  return unit;
+}
+
+fn run_msetnx(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+  doc "MSETNX key value [key value ...]: stores every pair, without expiries, when none of the keys is live, answering 1, and stores nothing otherwise, answering 0, in one statement on the keys' entries, as Redis 7.0.15 does; a key named twice keeps its last value. A key found expired is removed, and the file records its removal as log_removal does, then the command as it was sent when it stored.";
+  let count = args^.inner.len;
+  let pairs = count / 2_u64;
+  let keys = key_set_new(capacity: pairs);
+  for @pairs (pair in 0_u64..pairs) {
+    let doubled = pair *wrap 2_u64;
+    let index = doubled +wrap 1_u64;
+    let place = key_bounds(input: input, args: args, index: index);
+    let key = &input^[place.start..place.end];
+    let next = index +wrap 1_u64;
+    key_set_put(keys: &keys, key: key, payload: next);
+  }
+  set client^.now = time^.check;
+  let logged = store^.logging;
+  let stored = False();
+  atomic s = &store^.state, slots = &s^.map[keys] {
+    let blocked = False();
+    for @checked (at in 0_u64..keys.len) {
+      let kind = entry_kind(slot: &slots^[at], client: client);
+      if client^.state == state_expired {
+        if logged {
+          let position = key_set_payload(keys: &keys, index: at);
+          let index = position -wrap 1_u64;
+          let place = key_bounds(input: input, args: args, index: index);
+          let key = &input^[place.start..place.end];
+          log_removal(log: &s^.meta.log, key: key);
+        }
+      }
+      if kind != 0_u64 {
+        set blocked = True();
+      }
+    }
+    if blocked {
+    } else {
+      for @stored (at in 0_u64..keys.len) {
+        let position = key_set_payload(keys: &keys, index: at);
+        let value_span = arg(args: args, index: position);
+        let value = bytes_new(input: input, start: value_span.start, length: value_span.length);
+        put_text(slot: &slots^[at], value: move value, expires: 0_u64);
+      }
+      if logged {
+        log_command(log: &s^.meta.log, input: input, args: args);
+      }
+      set stored = True();
+    }
+  }
+  if stored {
+    reply_word(client: client, word: &reply_one[0_u64..4_u64]);
+    return unit;
+  }
+  reply_word(client: client, word: &reply_zero[0_u64..4_u64]);
   return unit;
 }

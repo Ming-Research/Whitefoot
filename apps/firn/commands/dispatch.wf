@@ -55,6 +55,10 @@ const code_decrby: u64 = 98141382853956_u64;
 
 const code_mset: u64 = 1413829453_u64;
 
+const code_mget: u64 = 1413826381_u64;
+
+const code_msetnx: u64 = 97093444522829_u64;
+
 const code_expire: u64 = 76219719637061_u64;
 
 const code_pexpire: u64 = 19512248227087696_u64;
@@ -338,6 +342,22 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
     let go = admitted(client: client, input: input, name: name, fits: fits);
     if go {
       run_mset(store: store, input: input, args: args, client: client, env: env, time: time);
+    }
+    return unit;
+  }
+  if code == code_mget {
+    let fits = count >= 2_u64;
+    let go = admitted(client: client, input: input, name: name, fits: fits);
+    if go {
+      run_mget(store: store, input: input, args: args, client: client, env: env, time: time);
+    }
+    return unit;
+  }
+  if code == code_msetnx {
+    let fits = mset_shape;
+    let go = admitted(client: client, input: input, name: name, fits: fits);
+    if go {
+      run_msetnx(store: store, input: input, args: args, client: client, env: env, time: time);
     }
     return unit;
   }

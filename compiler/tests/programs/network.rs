@@ -1314,13 +1314,14 @@ fn firn_replays_its_append_only_file_after_a_restart_on_both_routes() {
             vec!["SET", "edited", "ab"],
             vec!["APPEND", "edited", "cd"],
             vec!["SETRANGE", "edited", "1", "XY"],
+            vec!["MSETNX", "pair:a", "1", "pair:b", "2"],
         ] {
             batch.extend(resp(&request));
         }
         client.write_all(&batch).expect("send the changes");
         expect_replies(
             &mut client,
-            b"+OK\r\n+OK\r\n+OK\r\n:1\r\n:2\r\n:12\r\n:9\r\n:8\r\n:1\r\n+OK\r\n:1\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n:6\r\n+OK\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n+OK\r\n+OK\r\n:-2\r\n+OK\r\n+OK\r\n+none\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n+OK\r\n+OK\r\n$1\r\nv\r\n+OK\r\n:1\r\n+OK\r\n:1\r\n+OK\r\n:4\r\n:4\r\n",
+            b"+OK\r\n+OK\r\n+OK\r\n:1\r\n:2\r\n:12\r\n:9\r\n:8\r\n:1\r\n+OK\r\n:1\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n:6\r\n+OK\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n+OK\r\n+OK\r\n:-2\r\n+OK\r\n+OK\r\n+none\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n+OK\r\n+OK\r\n$1\r\nv\r\n+OK\r\n:1\r\n+OK\r\n:1\r\n+OK\r\n:4\r\n:4\r\n:1\r\n",
             &what,
         );
         let timed = [
@@ -1378,13 +1379,14 @@ fn firn_replays_its_append_only_file_after_a_restart_on_both_routes() {
             vec!["GET", "lazy:l"],
             vec!["GET", "lazy:m"],
             vec!["GET", "edited"],
+            vec!["MGET", "pair:a", "pair:b"],
         ] {
             batch.extend(resp(&request));
         }
         client.write_all(&batch).expect("read the replayed keys");
         expect_replies(
             &mut client,
-            b"$-1\r\n$-1\r\n$1\r\nv\r\n$1\r\n8\r\n$1\r\nv\r\n:-1\r\n$1\r\nv\r\n:-1\r\n$-1\r\n:24\r\n$3\r\nnew\r\n$1\r\n1\r\n:-1\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n:-1\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$4\r\naXYd\r\n",
+            b"$-1\r\n$-1\r\n$1\r\nv\r\n$1\r\n8\r\n$1\r\nv\r\n:-1\r\n$1\r\nv\r\n:-1\r\n$-1\r\n:26\r\n$3\r\nnew\r\n$1\r\n1\r\n:-1\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n:-1\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$4\r\naXYd\r\n*2\r\n$1\r\n1\r\n$1\r\n2\r\n",
             &what,
         );
         for (key, expiry) in timed.iter().zip(&expiries) {
@@ -1978,8 +1980,12 @@ fn firn_answers_string_commands_as_redis_does() {
 /// more than once as Redis does, each holding its keys' entries through a key
 /// set, which keeps one element per key: `DEL` removes and counts such a key
 /// once, `EXISTS` counts a live key once for each time it is named and an
-/// absent one not at all, and `MSET` keeps the last value named for a key. The
-/// expected replies are redis-server 7.0.15's to the same requests.
+/// absent one not at all, and `MSET` keeps the last value named for a key.
+/// `MGET` answers a key named twice twice, in the order named, though its key
+/// set holds the keys in byte order, and nil for an absent key or one of
+/// another kind; `MSETNX` keeps the last value named for a key and stores
+/// nothing when any key is live, of any kind. The expected replies are
+/// redis-server 7.0.15's to the same requests.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_answers_commands_naming_a_key_twice_as_redis_does() {
@@ -2003,13 +2009,21 @@ fn firn_answers_commands_naming_a_key_twice_as_redis_does() {
         vec!["GET", "k"],
         vec!["GET", "j"],
         vec!["DBSIZE"],
+        vec!["MGET", "k", "c", "k", "absent", "j", "c"],
+        vec!["LPUSH", "l", "v"],
+        vec!["MGET", "l", "k"],
+        vec!["MSETNX", "x", "1", "y", "2", "x", "3"],
+        vec!["MGET", "x", "y"],
+        vec!["MSETNX", "x", "9", "z", "9"],
+        vec!["EXISTS", "z"],
+        vec!["MSETNX", "l", "1"],
     ] {
         batch.extend(resp(&request));
     }
     client.write_all(&batch).expect("send the batch");
     expect_replies(
         &mut client,
-        b"+OK\r\n+OK\r\n+OK\r\n:4\r\n:2\r\n:0\r\n+OK\r\n$1\r\n5\r\n$1\r\n4\r\n:3\r\n",
+        b"+OK\r\n+OK\r\n+OK\r\n:4\r\n:2\r\n:0\r\n+OK\r\n$1\r\n5\r\n$1\r\n4\r\n:3\r\n*6\r\n$1\r\n5\r\n$1\r\n3\r\n$1\r\n5\r\n$-1\r\n$1\r\n4\r\n$1\r\n3\r\n:1\r\n*2\r\n$-1\r\n$1\r\n5\r\n:1\r\n*2\r\n$1\r\n3\r\n$1\r\n2\r\n:0\r\n:0\r\n:0\r\n",
         "the commands naming a key twice",
     );
     drop(client);
