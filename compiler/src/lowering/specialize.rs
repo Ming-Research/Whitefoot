@@ -68,10 +68,13 @@ impl PhysicalFunctions {
             .iter()
             .copied()
             .filter(|source| {
-                program.functions.get(source.0 as usize).is_none_or(|function| {
-                    function.body.is_some()
-                        || !super::COMPILER_OWNED_PRELUDE_ROWS.contains(&function.name.as_str())
-                })
+                program
+                    .functions
+                    .get(source.0 as usize)
+                    .is_none_or(|function| {
+                        function.body.is_some()
+                            || !super::COMPILER_OWNED_PRELUDE_ROWS.contains(&function.name.as_str())
+                    })
             })
             .collect::<Vec<_>>();
         for root in roots.unwrap_or(&every) {

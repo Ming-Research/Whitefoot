@@ -83,7 +83,9 @@ void *wf__keyed_table_new(uint64_t slot_size, uint64_t slot_align, uint64_t capa
     return wf_cmap_create_entries(slot_size, slot_align, capacity);
 }
 
-uint64_t wf__keyed_table_count(void *table) { return wf_cmap_count((wf_cmap *)table); }
+uint64_t wf__keyed_table_count(void *table, uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag) {
+    return wf_cmap_count_held((wf_cmap *)table, tag_offset, tag_width, none_tag);
+}
 
 uint64_t *wf__keyed_table_drain(void *table) { return (uint64_t *)wf_cmap_drain((wf_cmap *)table); }
 

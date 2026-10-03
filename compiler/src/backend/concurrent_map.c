@@ -2144,6 +2144,26 @@ void wf_cmap_swap(wf_cmap *a, wf_cmap *b, uint64_t tag_offset, uint32_t tag_widt
 
 #undef SWAP_FIELD
 
+/* The count under the hold that holds the map whole, if any: each of its
+ * entries counted as it stands now, read by its slot's tag, rather than as
+ * it stood at the take, which is all the users' counts know before the
+ * release. */
+uint64_t wf_cmap_count_held(wf_cmap *map, uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag) {
+    int64_t used, live;
+    totals(map, &used, &live);
+    wf_cmap_holding *hold = map->whole_hold;
+    if (hold != NULL && hold->user != NULL) {
+        wf_cmap_held *keys = held_keys(hold);
+        for (uint64_t i = 0; i < hold->count; i++) {
+            wf_cmap_held *e = &keys[i];
+            if (!e->leads || e->cell == NULL)
+                continue;
+            live += (int64_t)slot_present(e->slot, tag_offset, tag_width, none_tag) - (int64_t)(e->fresh == 0);
+        }
+    }
+    return live > 0 ? (uint64_t)live : 0;
+}
+
 uint64_t wf_cmap_count(wf_cmap *map) {
     int64_t used, live;
     totals(map, &used, &live);

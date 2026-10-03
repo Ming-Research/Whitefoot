@@ -2765,14 +2765,33 @@ static void tables_wake_writers(void) {
         wf__table_hold_begin(&hold, table);
         wf__table_hold_whole(&hold);
         wf__table_hold_take(&hold);
-        if (wf__keyed_table_count(table) != 3)
-            fail("a table held whole miscounted (count, entries)", wf__keyed_table_count(table), 3);
+        if (wf__keyed_table_count(table, VALUE_TAG) != 3)
+            fail("a table held whole miscounted (count, entries)", wf__keyed_table_count(table, VALUE_TAG), 3);
         wf__table_hold_release(&hold, VALUE_TAG);
+
         if (atomic_load(&written_calls) != before + 2 * (uint64_t)watched)
             fail("a whole hold that only counted woke a table's watches (watched)", (uint64_t)watched, 0);
         if (!watched)
             wf__watch_table(watch, table);
     }
+    /* Held whole with keys, a count sees the statement's own writes: a
+     * fresh key given a value counts, and a present key emptied does
+     * not. */
+    wf__table_hold_begin(&hold, table);
+    if (wf__table_hold_key(&hold, (const unsigned char *)"new", 3) != 0 ||
+        wf__table_hold_key(&hold, (const unsigned char *)"key", 3) != 1)
+        fail("a whole hold's positions disagree with its keys", 0, 0);
+    wf__table_hold_whole(&hold);
+    wf__table_hold_take(&hold);
+    *(uint64_t *)wf__table_hold_slot(&hold, 0) = 4;
+    if (wf__keyed_table_count(table, VALUE_TAG) != 4)
+        fail("a count under a whole hold missed the hold's new entry (count)", wf__keyed_table_count(table, VALUE_TAG), 4);
+    *(uint64_t *)wf__table_hold_slot(&hold, 1) = 0;
+    if (wf__keyed_table_count(table, VALUE_TAG) != 3)
+        fail("a count under a whole hold kept the hold's emptied entry (count)", wf__keyed_table_count(table, VALUE_TAG), 3);
+    *(uint64_t *)wf__table_hold_slot(&hold, 0) = 0;
+    *(uint64_t *)wf__table_hold_slot(&hold, 1) = 5;
+    wf__table_hold_release(&hold, VALUE_TAG);
     void *fresh = wf__keyed_table_new(16, 8, 0);
     uint64_t before = atomic_load(&written_calls);
     wf__table_hold_begin(&hold, table);
@@ -2780,9 +2799,9 @@ static void tables_wake_writers(void) {
     wf__table_hold_take(&hold);
     wf__keyed_table_swap(table, fresh, VALUE_TAG);
     wf__table_hold_release(&hold, VALUE_TAG);
-    if (atomic_load(&written_calls) != before + 1 || wf__keyed_table_count(table) != 0 || wf__keyed_table_count(fresh) != 3)
+    if (atomic_load(&written_calls) != before + 1 || wf__keyed_table_count(table, VALUE_TAG) != 0 || wf__keyed_table_count(fresh, VALUE_TAG) != 3)
         fail("a whole hold that swapped did not wake the watches, or the swap moved no entries (wakes, count)",
-             atomic_load(&written_calls) - before, wf__keyed_table_count(fresh));
+             atomic_load(&written_calls) - before, wf__keyed_table_count(fresh, VALUE_TAG));
     uint64_t drained = 0;
     while (wf__keyed_table_drain(fresh) != NULL)
         drained++;

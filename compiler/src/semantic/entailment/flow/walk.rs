@@ -1154,7 +1154,10 @@ impl Analyzer<'_, '_> {
                 ..
             } => {
                 let _ = self.expression_effects(target, state);
-                for key in entries.iter().flat_map(crate::semantic::CheckedEntryBinding::expressions) {
+                for key in entries
+                    .iter()
+                    .flat_map(crate::semantic::CheckedEntryBinding::expressions)
+                {
                     let _ = self.expression_effects(key, state);
                 }
                 let outer_scope_depth = self.frames.scopes.len();

@@ -432,7 +432,12 @@ mod tests {
         // every other row is generic, and [FN-2] gives it a checked function
         // only per concrete instance, of which this unit, calling none of
         // them, has none.
-        let ungeneric = ["key_set_add", "key_set_new", "key_set_payload", "key_set_put"];
+        let ungeneric = [
+            "key_set_add",
+            "key_set_new",
+            "key_set_payload",
+            "key_set_put",
+        ];
         assert_eq!(signatures, ungeneric);
         for row in crate::lowering::COMPILER_OWNED_PRELUDE_ROWS {
             assert_eq!(

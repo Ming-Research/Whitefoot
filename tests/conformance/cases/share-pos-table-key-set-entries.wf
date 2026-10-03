@@ -1,0 +1,42 @@
+struct Store {
+  map: KeyedTable<u64>;
+}
+
+const names: Array<u8, 3> =[97_u8, 98_u8, 99_u8];
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let table = keyed_table_new::<u64>(capacity: 0_u64);
+  let state = Store(map: move table);
+  let store = shared_new::<Store>(value: move state);
+  let keys = key_set_new(capacity: 4_u64);
+  key_set_put(keys: &keys, key: &names[1_u64..2_u64], payload: 2_u64);
+  key_set_put(keys: &keys, key: &names[0_u64..1_u64], payload: 1_u64);
+  key_set_put(keys: &keys, key: &names[1_u64..2_u64], payload: 5_u64);
+  atomic s = &store, entries = &s^.map[keys] {
+    for @put (at in 0_u64..keys.len) {
+      let payload = key_set_payload(keys: &keys, index: at);
+      set entries^[at] = Some<u64>(value: payload);
+    }
+  }
+  let sum = 0_u64;
+  let counted = 0_u64;
+  atomic s = &store, entries = &s^.map[keys] {
+    set counted = keyed_table_count::<u64>(table: &s^.map);
+    for @read (at in 0_u64..entries^.len) {
+      match entries^[at] {
+        Some(value: held) => {
+          set sum = sum +wrap held^;
+        }
+        None() => {
+        }
+      }
+    }
+  }
+  if counted != 2_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if sum != 6_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  return std::process::exit_status(code: 8_u8);
+}

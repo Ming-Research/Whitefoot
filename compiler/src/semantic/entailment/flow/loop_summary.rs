@@ -140,7 +140,10 @@ impl Input<'_, '_> {
                     self.collect_continuing_loop_kills(body, normal_reaches, reachability, kills);
                 if reaches {
                     self.collect_loop_expression_kills(target, kills);
-                    for key in entries.iter().flat_map(crate::semantic::CheckedEntryBinding::expressions) {
+                    for key in entries
+                        .iter()
+                        .flat_map(crate::semantic::CheckedEntryBinding::expressions)
+                    {
                         self.collect_loop_expression_kills(key, kills);
                     }
                     if let Some(guard) = guard {

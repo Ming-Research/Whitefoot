@@ -739,7 +739,7 @@ impl<'check> Program<'check> {
                     || entries
                         .iter()
                         .flat_map(crate::semantic::CheckedEntryBinding::expressions)
-                        .any(|key| expression(key))
+                        .any(expression)
                     || guard.as_deref().is_some_and(expression)
                     || block(body, inner)
             }

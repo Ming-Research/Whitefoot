@@ -56,7 +56,7 @@ fn the_compiler_owned_c_units_compile_in_the_default_dialect() {
         ("completion/floor.c", crate::FLOOR_RUNTIME_SOURCE),
         ("concurrent_map.h", crate::CONCURRENT_MAP_HEADER),
         ("concurrent_map.c", crate::CONCURRENT_MAP_SOURCE),
-        ("keyed_table.c", crate::SHARED_MAP_SOURCE),
+        ("keyed_table.c", crate::KEYED_TABLE_SOURCE),
     ];
     for staged in ["completion", "sched"] {
         std::fs::create_dir_all(directory.join(staged)).expect("stage runtime directory");
@@ -546,7 +546,7 @@ fn linked_c_units_avoid_identifiers_the_host_compiler_predefines() {
     for (name, source) in [
         ("bridge.c", crate::COMPLETION_BRIDGE_SOURCE),
         ("concurrent_map.c", crate::CONCURRENT_MAP_SOURCE),
-        ("keyed_table.c", crate::SHARED_MAP_SOURCE),
+        ("keyed_table.c", crate::KEYED_TABLE_SOURCE),
         ("concurrent_map.h", crate::CONCURRENT_MAP_HEADER),
         ("runtime.c", crate::COMPLETION_RUNTIME_SOURCE),
         ("wait_host.c", crate::COMPLETION_WAIT_HOST_SOURCE),
@@ -598,8 +598,17 @@ fn frame_record_sizes_are_the_runtime_s_own() {
             .parse()
             .unwrap_or_else(|_| panic!("{name} is a number: {line}"))
     };
-    assert_eq!(defined("WF_TABLE_ENTRY_SIZE"), crate::backend::TABLE_ENTRY_SIZE);
-    assert_eq!(defined("WF_TABLE_HOLD_SIZE"), crate::backend::TABLE_HOLD_SIZE);
+    assert_eq!(
+        defined("WF_TABLE_ENTRY_SIZE"),
+        crate::backend::TABLE_ENTRY_SIZE
+    );
+    assert_eq!(
+        defined("WF_TABLE_HOLD_SIZE"),
+        crate::backend::TABLE_HOLD_SIZE
+    );
     assert_eq!(defined("WF_WATCH_SIZE"), crate::backend::WATCH_SIZE);
-    assert_eq!(defined("WF_SHARED_STATE_OFFSET"), crate::backend::SHARED_STATE_OFFSET);
+    assert_eq!(
+        defined("WF_SHARED_STATE_OFFSET"),
+        crate::backend::SHARED_STATE_OFFSET
+    );
 }

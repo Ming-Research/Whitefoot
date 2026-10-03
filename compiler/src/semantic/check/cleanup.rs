@@ -110,7 +110,10 @@ impl<'unit> TypeContext<'unit> {
                 } => {
                     self.validate_expression_release_graphs(target)?;
                     self.release_graph_nodes(target.ty())?;
-                    for key in entries.iter().flat_map(crate::semantic::CheckedEntryBinding::expressions) {
+                    for key in entries
+                        .iter()
+                        .flat_map(crate::semantic::CheckedEntryBinding::expressions)
+                    {
                         self.validate_expression_release_graphs(key)?;
                     }
                     if let Some(guard) = guard {

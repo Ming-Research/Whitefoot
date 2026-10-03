@@ -1655,7 +1655,10 @@ pub(super) fn collect_statement_calls(
                 ..
             } => {
                 collect_expression_calls(caller, target, calls);
-                for key in entries.iter().flat_map(crate::semantic::CheckedEntryBinding::expressions) {
+                for key in entries
+                    .iter()
+                    .flat_map(crate::semantic::CheckedEntryBinding::expressions)
+                {
                     collect_expression_calls(caller, key, calls);
                 }
                 if let Some(guard) = guard {

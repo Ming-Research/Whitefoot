@@ -564,8 +564,10 @@ rarely insert at the same place.
   the next visit resumes at would express sampling and incremental scans,
   as Redis's `SCAN`. Validate with a `SCAN`-style program over a map that
   changes between visits, every pair present throughout reported at least
-  once. Reopen when a program must walk a shared map without holding it for
-  the whole walk.
+  once. A keyed table [SHARE-1] offers no visit at all, so `KEYS`, `SCAN`
+  and `FLUSHALL`'s alternatives wait on the same design. Reopen when a
+  program must walk a hash map, or a keyed table without holding it for the
+  whole walk.
 
 - **A hash map that removes and inserts at its ceiling fills with vacated
   buckets.** `hash_map_put` never rebuilds a map already at its ceiling
@@ -973,24 +975,6 @@ rarely insert at the same place.
   of the same test, which no target runs. Reopen with the next change to
   `concurrent_map.c`.
 
-- **The design tree still describes the shared maps' runtime.**
-  `design/compiler/waiting-contexts/concurrent-map.md` decides that a driver
-  thread keeps the one entry, or the one set of entries, its running
-  statement has locked, that a set locks its keys by hash and then bytes,
-  and that a set with two keys of one hash holds the whole map at once;
-  `keyed_table.c` keeps nothing per thread, a hold lives in its statement's
-  frame, its keys lock in byte order, a key set's own order, and it holds
-  the whole map when its probe meets a cell it holds itself. Its node also
-  lacks the whole hold a statement asks for (`wf__table_hold_whole`), the
-  swap of a table's entries under a whole hold (`wf__keyed_table_swap`,
-  with the statement leaving the map only after any move it started has
-  ended, which that swap needs), and `design/compiler/waiting-contexts.md`
-  still gives a shared object's header a list of watching contexts, where
-  watches registered in frames now sit on lists of links that a wake takes
-  off every unit, `wf__shared_watch` among them. The change: rewrite those
-  decisions with the shared-state redesign's tree changes, for the owner's
-  approval. Reopen with that work.
-
 - **A guard that reads an absent entry through a shared read can miss the
   insert that makes it true.** A guard's watch is registered while its
   statement still holds the units the guard read, so a writer that takes
@@ -1002,16 +986,6 @@ rarely insert at the same place.
   shared reads: register the watch before the guard's first evaluation and
   take it off when the guard is true. Reopen when a guarded statement's
   exclusive take shows in a profile.
-
-- **A table held whole with keys counts its held entries as they stood at
-  the take.** `wf__keyed_table_count` sums the users' counts, which a hold's
-  entries reach only at its release, so a statement that names entries of a
-  table, holds it whole and counts it after writing them gets the count from
-  before its writes; a hold of the whole table with no key, the form a
-  statement that only counts uses, counts exactly. The change: a count that
-  takes the hold and its slots' tag layout and adds what its entries have
-  become, or lowering that counts before writing. Reopen when the compiler
-  lowers a statement that both names a table's entries and counts it.
 
 - **All guard watches share one lock.** `wf_watch_lock`
   (`compiler/src/backend/completion/bridge.c`) guards every unit's list of
@@ -1027,12 +1001,6 @@ rarely insert at the same place.
   in it, since no native caller reaches a table. The change: add the unit
   when a native caller needs tables, or say in the comment that the list
   holds what native callers link. Reopen with the first such caller.
-
-- **The keyed tables' source is exported as `SHARED_MAP_SOURCE`.** The
-  constant in `compiler/src/backend/runtime.rs` holds `keyed_table.c`, and
-  `lib.rs`, `backend.rs` and `emitter.rs` re-export it by that name. The
-  change: rename it `KEYED_TABLE_SOURCE` with the compiler work that replaces
-  the shared-map lowering. Reopen with that work.
 
 - **A keyed statement on an absent key allocates a node it then frees.**
   `wf_cmap_lock_entry` (`compiler/src/backend/concurrent_map.c`) claims a
@@ -1064,13 +1032,15 @@ rarely insert at the same place.
   by `ZADD`'s server CPU per request on four drivers against one. Reopen
   with the work on `ZADD`'s rate.
 
-- **`SharedMap<unit>` and maps of other payload-free values do not lower.**
-  The unlock reads the entry's `Option` tag as an `i32`
-  (`emit_shared_map_unlock` in `compiler/src/backend/emitter/shared.rs`) and
-  refuses a tag-only enum, which `Option<unit>` may lower to, so a byte-keyed
-  set fails with `InvalidIr` instead of compiling. The change: read the tag
-  at the width the enum's layout gives. Reopen when a program needs a set of
-  byte strings shared between contexts.
+- **`KeyedTable<unit>` and tables of other payload-free values do not
+  lower.** The emitter passes the runtime an entry's `Option` tag as the
+  `i32` at offset 0 (`checked_entry` in
+  `compiler/src/backend/emitter/shared.rs`) and refuses a tag-only enum,
+  which `Option<unit>` may lower to, so a byte-keyed set fails with
+  `InvalidIr` instead of compiling. The runtime reads a tag of 1, 2, 4 or 8
+  bytes at any offset. The change: pass the tag's offset, width and `None`
+  value from the enum's layout. Reopen when a program needs a set of byte
+  strings shared between contexts.
 
 - **Entry nodes over 512 bytes come from the pool under its one lock.**
   `new_node` takes a large key's node from the context pool, whose free
@@ -1122,27 +1092,15 @@ rarely insert at the same place.
   key. Validate by `ZADD` at depth 16 against Dragonfly at 2 and 16 server
   CPUs. Reopen with firn's next performance work.
 
-- **A statement that holds a whole map takes turns by ticket.** A block
-  that counts the map, names its state other than as an entry's target, or
-  whose keys cannot be computed first holds the whole map, and such
+- **A statement that holds a table whole takes turns by ticket.** A block
+  that counts a table or writes it whole holds it whole, and such
   statements wait in line: firn's `MSET` answered 1,366,000 a second on
   four server CPUs before the ticketed holds and 587,000 after
   ([holding only the entries](../research/investigations/concurrent-map/DESIGN.md#holding-only-the-entries-a-statement-reaches)).
-  firn's `MSET`, `DEL` and `EXISTS` now hold their keys' entries, so no
-  measured workload waits there. The change, if one does: let the next in
-  line wait without backing off. Reopen with a workload whose whole-map
-  statements cannot hold their keys.
-
-- **Nothing shows which statements hold their keys' entries.** A statement
-  holding a map's state holds only its keys' entries when a twin of its
-  block can compute them (`compiler/src/semantic/held_keys.rs`) and the
-  program runs no block of two object statements; a change to the block, or
-  one such block anywhere in the program, makes it hold the whole map with
-  no diagnostic, and `MSET` then answers a fifth as much. The change: a
-  ledger beside `--par-ledger` that lists each statement holding a map's
-  state with how it is held and the condition that refused a twin, and a
-  firn test that reads it. Reopen with the next statement whose hold
-  matters to a measurement.
+  firn's `MSET`, `DEL` and `EXISTS` name their keys' entries through key
+  sets, so no measured workload waits there; only `DBSIZE` counts. The
+  change, if one does: let the next in line wait without backing off.
+  Reopen with a workload whose statements hold a table whole often.
 
 - **A read of an entry nobody else holds costs `GET` 3% to 4%.** A
   statement that only reads its entry counts itself in the cell's value
@@ -2420,18 +2378,6 @@ rarely insert at the same place.
 
 Questions the owner has left open on purpose. None of them is a decision;
 each is resolved by a discussion and a tree change.
-
-- **SHARE-2 names one runtime container in the language.** Its table of
-  atomic targets lists `SharedMap<V>` and the forms `m[k]` and `s^[k]`, so
-  the rule for holding state by key is written for the one concurrent hash
-  index the runtime keeps, and a second keyed container, or the same one
-  built another way, would need its own rows. The owner's principle of
-  2026-10-02 is that the language states what an atomic statement means for
-  every target alike and a container only decides how narrowly it can hold.
-  The change to consider: SHARE-2 defines a target that is held by key as an
-  abstraction, `SharedMap` being one prelude type that provides it, with the
-  container's forms out of the rule. Reopen when a second container held by
-  key is proposed, or with the next change to SHARE-2's table.
 
 - **A proof counter has no type without an overflow obligation.** Minimal
   witness: a monitor invariant `produced - consumed == count` over a bounded

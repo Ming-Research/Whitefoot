@@ -37,9 +37,6 @@ pub(crate) use check::{
 };
 pub(crate) use entry::{EntryRejection, EntryRequest};
 
-/// [SHARE-3] the statements that compute a whole-map statement's keys
-/// before its block runs, which lowering runs first when one exists.
-
 /// The permission table the overlap lowering reads. It is the same table the
 /// ledger renders; nothing derives a second judgment from it.
 pub(crate) use permission::FunctionPermissions;
@@ -50,10 +47,9 @@ pub(crate) use permission::FunctionPermissions;
 pub(crate) use loop_permission::{LoopActualization, LoopCombine, LoopPermission};
 
 pub(crate) use model::{
-    BindingId, CheckedArrayRoot, CheckedBodyDisposition,
-    CheckedBooleanOperation, CheckedBufferRoot, CheckedConst, CheckedContainerRoot,
-    CheckedConversionMode, CheckedDrop, CheckedElement, CheckedEntryBinding, CheckedEntryIndex,
-    CheckedEnumType, CheckedExpression,
+    BindingId, CheckedArrayRoot, CheckedBodyDisposition, CheckedBooleanOperation,
+    CheckedBufferRoot, CheckedConst, CheckedContainerRoot, CheckedConversionMode, CheckedDrop,
+    CheckedElement, CheckedEntryBinding, CheckedEntryIndex, CheckedEnumType, CheckedExpression,
     CheckedFloatOperation, CheckedFunction, CheckedIntegerOperation, CheckedLayoutCeiling,
     CheckedLayoutMagnitude, CheckedLoopId, CheckedMatchArm, CheckedMeasure, CheckedMode,
     CheckedNominalKind, CheckedNumericType, CheckedOwnedTakeCleanup, CheckedParameter,
@@ -1163,12 +1159,6 @@ pub enum SemanticIssueKind {
         /// The repair [DIAG-1].
         mechanical_fix: &'static str,
     },
-    /// A key set written while an entry binding names its keys [SHARE-2,
-    /// REF-2].
-    AtomicKeySetWritten {
-        /// The repair [DIAG-1].
-        mechanical_fix: &'static str,
-    },
     /// A waiting call or an atomic statement inside an atomic statement's
     /// guard or block [SHARE-2].
     WaitInsideAtomic {
@@ -1637,10 +1627,6 @@ impl CheckStop {
 
 impl From<SemanticCompilerFailure> for CheckStop {
     fn from(value: SemanticCompilerFailure) -> Self {
-        if std::env::var_os("WF_DEBUG_FAILURE").is_some() {
-            eprintln!("DEBUG failure {value:?}
-{}", std::backtrace::Backtrace::force_capture());
-        }
         Self::Compiler(value)
     }
 }

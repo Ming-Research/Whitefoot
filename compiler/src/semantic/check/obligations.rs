@@ -292,7 +292,10 @@ impl Records<'_> {
                 ..
             } => {
                 self.expression(target);
-                for key in entries.iter().flat_map(crate::semantic::CheckedEntryBinding::expressions) {
+                for key in entries
+                    .iter()
+                    .flat_map(crate::semantic::CheckedEntryBinding::expressions)
+                {
                     self.expression(key);
                 }
                 if let Some(guard) = guard {

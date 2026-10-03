@@ -24,10 +24,7 @@ use crate::{IrRecord, IrRecordKind, IrShared};
 /// The frame storage of one record, by its kind.
 fn record_storage(kind: IrRecordKind) -> String {
     match kind {
-        IrRecordKind::TableEntry => format!(
-            "[{} x i8]",
-            crate::backend::TABLE_ENTRY_SIZE
-        ),
+        IrRecordKind::TableEntry => format!("[{} x i8]", crate::backend::TABLE_ENTRY_SIZE),
         IrRecordKind::TableHold => format!("[{} x i8]", crate::backend::TABLE_HOLD_SIZE),
         IrRecordKind::KeyedEntries => "{ ptr, i64, i64 }".to_owned(),
         IrRecordKind::Watch => format!("[{} x i8]", crate::backend::WATCH_SIZE),
@@ -230,19 +227,22 @@ impl FunctionEmitter<'_, '_> {
         .map_err(|_| BackendFailure::TextEmission)
     }
 
-    /// How many entries of the table hold `Some`.
+    /// How many entries of the table hold `Some`; under the statement's
+    /// whole hold the runtime reads its entries' tags, an `i32` at offset 0
+    /// whose `None` is 0, so the count sees the statement's own writes.
     pub(super) fn emit_keyed_table_count(
         &mut self,
         result: IrValueId,
         table: IrValueId,
     ) -> Result<(), BackendFailure> {
-        if !self.names_table(table)? {
+        let Some(IrType::Nominal(nominal)) = self.value_type(table) else {
             return Err(BackendFailure::InvalidIr);
-        }
+        };
+        self.checked_entry(nominal)?;
         self.names(&["wf__keyed_table_count"]);
         writeln!(
             self.output,
-            "  {} = call i64 @wf__keyed_table_count(ptr {})",
+            "  {} = call i64 @wf__keyed_table_count(ptr {}, i64 0, i32 4, i64 0)",
             self.value_name(result),
             self.value_name(table)
         )
@@ -258,9 +258,10 @@ impl FunctionEmitter<'_, '_> {
         first: IrValueId,
         second: IrValueId,
     ) -> Result<(), BackendFailure> {
-        let (Some(IrType::Nominal(nominal)), true) =
-            (self.value_type(first), self.value_type(first) == self.value_type(second))
-        else {
+        let (Some(IrType::Nominal(nominal)), true) = (
+            self.value_type(first),
+            self.value_type(first) == self.value_type(second),
+        ) else {
             return Err(BackendFailure::InvalidIr);
         };
         self.checked_entry(nominal)?;
@@ -353,7 +354,11 @@ impl FunctionEmitter<'_, '_> {
         if !self.names_table(table)? || record.kind() != IrRecordKind::TableHold {
             return Err(BackendFailure::InvalidIr);
         }
-        let arguments = format!("ptr {}, ptr {}", record_name(record), self.value_name(table));
+        let arguments = format!(
+            "ptr {}, ptr {}",
+            record_name(record),
+            self.value_name(table)
+        );
         self.emit_unit_call(result, "wf__table_hold_begin", &arguments)
     }
 
@@ -614,7 +619,11 @@ impl FunctionEmitter<'_, '_> {
             return Err(BackendFailure::InvalidIr);
         }
         let arguments = match watched {
-            Some(value) => format!("ptr {}, ptr {}", record_name(record), self.value_name(value)),
+            Some(value) => format!(
+                "ptr {}, ptr {}",
+                record_name(record),
+                self.value_name(value)
+            ),
             None => format!("ptr {}", record_name(record)),
         };
         self.emit_unit_call(result, entry, &arguments)

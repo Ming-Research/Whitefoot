@@ -2154,12 +2154,14 @@ impl<'unit> TypeContext<'unit> {
                 let entry = self.element_type(element)?;
                 let value = match entry {
                     CheckedType::Nominal(id) => match &self.nominal(id)?.kind {
-                        CheckedNominalKind::Enum { variants } => variants
-                            .iter()
-                            .find_map(|variant| match variant.fields.as_slice() {
-                                [field] => Some(field.ty),
-                                _ => None,
-                            }),
+                        CheckedNominalKind::Enum { variants } => {
+                            variants
+                                .iter()
+                                .find_map(|variant| match variant.fields.as_slice() {
+                                    [field] => Some(field.ty),
+                                    _ => None,
+                                })
+                        }
                         _ => None,
                     },
                     _ => None,

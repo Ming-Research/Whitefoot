@@ -196,6 +196,10 @@ void wf_cmap_swap(wf_cmap *a, wf_cmap *b, uint64_t tag_offset, uint32_t tag_widt
 /* The number of entries, exact while the map is held or has no users; a
  * hold's own entries count as they stood when it was taken. */
 uint64_t wf_cmap_count(wf_cmap *map);
+/* The count for a statement holding the map whole: the entries of its hold
+ * counted as they stand now, each slot's tag read as wf_cmap_hold_release
+ * reads it. */
+uint64_t wf_cmap_count_held(wf_cmap *map, uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag);
 /* With no users left: the slot of an entry not yet drained, whose value the
  * caller releases before calling again, or NULL once every entry has been. */
 void *wf_cmap_drain(wf_cmap *map);

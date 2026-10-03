@@ -264,6 +264,14 @@ impl IrBuilder<'_> {
             }
         }
 
+        // The entry binders the guard reads: each is taken alone and never
+        // read beside others, since a shared read of an absent key holds no
+        // cell and an insert of it could end unseen by the guard's watch.
+        let mut guard_roots = Vec::new();
+        if let Some(guard) = guard {
+            expression_roots(guard, &mut guard_roots);
+        }
+
         // The header: each entry binding's table field and index, read when
         // the statement begins [SHARE-2].
         let mut headers = Vec::with_capacity(entries.len());
@@ -299,7 +307,7 @@ impl IrBuilder<'_> {
                 field,
                 index,
                 referent: entry.referent,
-                read: entry.reads,
+                read: entry.reads && !guard_roots.iter().any(|root| root.binding == entry.binding),
             });
         }
 
@@ -332,7 +340,8 @@ impl IrBuilder<'_> {
                             self.project_address_path(state_address, &path)?
                         }
                     };
-                    let take = self.table_take(table, index, &mine, whole.contains(&index), &mut slots)?;
+                    let take =
+                        self.table_take(table, index, &mine, whole.contains(&index), &mut slots)?;
                     Lock::Table {
                         nominal: table,
                         field,

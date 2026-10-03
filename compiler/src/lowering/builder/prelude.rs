@@ -165,7 +165,10 @@ impl IrBuilder<'_> {
         let IrType::Nominal(nominal) = self.result else {
             return Err(LoweringFailure::InvalidCheckedProgram);
         };
-        let table = self.define(self.result, IrOperation::KeyedTableNew { nominal, capacity })?;
+        let table = self.define(
+            self.result,
+            IrOperation::KeyedTableNew { nominal, capacity },
+        )?;
         self.return_value(table)
     }
 

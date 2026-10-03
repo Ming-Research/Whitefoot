@@ -82,7 +82,10 @@ fn collect_statements(statements: &[CheckedStatement], bindings: &mut HashSet<Bi
                 ..
             } => {
                 collect_expression(target, bindings);
-                for key in entries.iter().flat_map(crate::semantic::CheckedEntryBinding::expressions) {
+                for key in entries
+                    .iter()
+                    .flat_map(crate::semantic::CheckedEntryBinding::expressions)
+                {
                     collect_expression(key, bindings);
                 }
                 if let Some(guard) = guard {

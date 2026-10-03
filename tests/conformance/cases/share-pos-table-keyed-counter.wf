@@ -1,0 +1,51 @@
+struct Counts {
+  map: KeyedTable<u8>;
+}
+
+const key: Array<u8, 1> =[107_u8];
+
+fn add(counts: Shared<Counts>) -> result: unit pure waits {
+  let name = &key[0_u64..1_u64];
+  atomic s = &counts, slot = &s^.map[name] {
+    match slot^ {
+      Some(value: seen) => {
+        let next = seen^ +wrap 1_u8;
+        set slot^ = Some<u8>(value: next);
+      }
+      None() => {
+        set slot^ = Some<u8>(value: 1_u8);
+      }
+    }
+  }
+  return unit;
+}
+
+fn add_three(counts: &Shared<Counts>) -> result: unit reads(counts) waits {
+  for @start (index in 0_u64..3_u64) {
+    let handle = shared_share::<Counts>(shared: counts);
+    spawn add(counts: move handle);
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let table = keyed_table_new::<u8>(capacity: 0_u64);
+  let state = Counts(map: move table);
+  let counts = shared_new::<Counts>(value: move state);
+  let name = &key[0_u64..1_u64];
+  atomic s = &counts, slot = &s^.map[name] {
+    set slot^ = Some<u8>(value: 4_u8);
+  }
+  add_three(counts: &counts);
+  let seen = 0_u8;
+  atomic s = &counts, slot = &s^.map[name] {
+    match slot^ {
+      Some(value: held) => {
+        set seen = held^;
+      }
+      None() => {
+      }
+    }
+  }
+  return std::process::exit_status(code: seen);
+}

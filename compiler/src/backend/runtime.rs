@@ -68,7 +68,7 @@ pub const CONCURRENT_MAP_HEADER: &str = include_str!("concurrent_map.h");
 pub const CONCURRENT_MAP_SOURCE: &str = include_str!("concurrent_map.c");
 /// `keyed_table.c`, the emitted module's `wf__keyed_table_*`, `wf__table_*`,
 /// `wf__key_set_*` and `wf__watch_table` ABI (`completion/bridge.h`).
-pub const SHARED_MAP_SOURCE: &str = include_str!("keyed_table.c");
+pub const KEYED_TABLE_SOURCE: &str = include_str!("keyed_table.c");
 
 /// Windows host primitives used by ordinary linked function definitions.
 pub const WINDOWS_RUNTIME_HEADER: &str = include_str!("windows_runtime.h");
@@ -138,7 +138,7 @@ mod tests {
             ("windows_runtime.c", WINDOWS_RUNTIME_SOURCE),
             ("concurrent_map.h", CONCURRENT_MAP_HEADER),
             ("concurrent_map.c", CONCURRENT_MAP_SOURCE),
-            ("keyed_table.c", SHARED_MAP_SOURCE),
+            ("keyed_table.c", KEYED_TABLE_SOURCE),
             ("wf_floor.c", super::super::emitter::FLOOR_RUNTIME_SOURCE),
             (
                 "wf_floor_windows.c",

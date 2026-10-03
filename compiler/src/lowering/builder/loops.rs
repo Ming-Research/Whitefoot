@@ -115,15 +115,14 @@ impl IrBuilder<'_> {
             return Err(LoweringFailure::InvalidCheckedProgram);
         }
         if self.split_counted_range(
-                id,
-                node_path,
-                binder,
-                body,
-                backedge_drops,
-                lower_capture,
-                upper_capture,
-            )?
-        {
+            id,
+            node_path,
+            binder,
+            body,
+            backedge_drops,
+            lower_capture,
+            upper_capture,
+        )? {
             return Ok(());
         }
         self.counted_range_graph(

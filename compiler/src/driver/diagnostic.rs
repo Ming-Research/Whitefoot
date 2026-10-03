@@ -898,7 +898,6 @@ impl Report for SemanticIssueKind {
             WaitInsideAtomic { construct, mechanical_fix };
             AtomicKeyNotBytes { found, mechanical_fix };
             AtomicBindingUnused { binding, mechanical_fix };
-            AtomicKeySetWritten { mechanical_fix };
             AtomicGuardWrites { mechanical_fix };
             InvalidSpawn { condition };
             InvalidMusttail { condition, subject };

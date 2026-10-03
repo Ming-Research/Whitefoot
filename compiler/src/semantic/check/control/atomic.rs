@@ -6,14 +6,14 @@ use std::collections::{HashMap, HashSet};
 
 use crate::syntax::NodeId;
 use crate::{
-    DeclarationClass, DeclarationId, DeclarationRole, LexicalUseRole, Production,
-    ResolvedTarget, SemanticCompilerFailure, SemanticIssueKind, SemanticRule,
+    DeclarationClass, DeclarationId, DeclarationRole, LexicalUseRole, Production, ResolvedTarget,
+    SemanticCompilerFailure, SemanticIssueKind, SemanticRule,
 };
 
 use super::super::super::model::{
-    BindingId, CheckedEntryBinding, CheckedEntryIndex, CheckedExpression, CheckedMode,
-    CheckedNominalKind, CheckedShared, CheckedStatePath, CheckedStatement, CheckedType,
-    IntegerType, expression_children,
+    BindingId, CheckedArrayRoot, CheckedEntryBinding, CheckedEntryIndex, CheckedExpression,
+    CheckedMode, CheckedNominalKind, CheckedRangeSource, CheckedSetTarget, CheckedShared,
+    CheckedStatePath, CheckedStatement, CheckedType, IntegerType, expression_children,
 };
 use super::super::super::places::{CapturedValue, PlaceRoot, PlaceStep, ResolvedPlace};
 use super::super::expressions::calls::user::WAIT1_DECLARE_THE_CALLER_WAITING;
@@ -38,10 +38,6 @@ pub(in crate::semantic::check) const SHARE2_READ_ONLY_GUARD: &str = "make the gu
 /// The repair for an entry binding the guard and block never use, and for a
 /// statement whose guard and block reach nothing of the state [SHARE-2].
 pub(in crate::semantic::check) const SHARE2_USE_THE_BINDING: &str = "remove the entry binding, or the whole statement when nothing in it reaches the state; an atomic statement holds what it names, so a binding nothing uses holds an entry for nothing";
-/// The repair for a key set written while an entry binding names its keys
-/// [SHARE-2, REF-2].
-pub(in crate::semantic::check) const SHARE2_KEEP_THE_KEY_SET: &str = "build the key set completely before the statement and leave it unchanged inside: its keys were locked when the statement began";
-
 /// One entry binding as the header writes it: its declaration, its place
 /// and the index atom of the place's last step.
 struct EntryHeader<'unit> {
@@ -215,7 +211,6 @@ impl Checker<'_, '_> {
             })
             .collect::<Result<Vec<_>, CheckStop>>()?;
         let mut entries = Vec::with_capacity(headers.len());
-        let mut sets = Vec::new();
         for (header, place) in headers.into_iter().zip(entry_places) {
             let Some(header) = header else {
                 return self.types.declarations.issue_node(
@@ -227,7 +222,7 @@ impl Checker<'_, '_> {
                     },
                 );
             };
-            let (entry, set_paths) = self.check_entry_binding(
+            let entry = self.check_entry_binding(
                 context,
                 node,
                 &header,
@@ -237,7 +232,6 @@ impl Checker<'_, '_> {
                 scope.loops.len(),
                 &mut effects,
             )?;
-            sets.extend(set_paths);
             entries.push(entry);
         }
 
@@ -250,24 +244,21 @@ impl Checker<'_, '_> {
             .iter()
             .map(|declaration| declaration.id())
             .collect::<Vec<_>>();
-        let touched = |root: DeclarationId,
-                       block: &EffectSet,
-                       guard: &Option<(CheckedExpression, EffectSet)>| {
-            block
-                .reads
-                .iter()
-                .chain(&block.writes)
-                .chain(
-                    guard
-                        .iter()
-                        .flat_map(|guard| guard.1.reads.iter().chain(&guard.1.writes)),
-                )
-                .any(|path| path.root == root)
+        // A binder is used where the guard or the block names it: a place
+        // through it, a reference formed through it, or the reference itself.
+        let touched = |binding: BindingId| {
+            guard
+                .as_ref()
+                .is_some_and(|guard| expression_mentions(&guard.0, binding))
+                || checked
+                    .statements
+                    .iter()
+                    .any(|statement| statement_mentions(statement, binding))
         };
         // [SHARE-2] the guard and block use every entry binding, and reach
         // the state through the binding or an entry binding.
-        for ((entry, root), place) in entries.iter().zip(&entry_roots).zip(entry_places) {
-            if !touched(*root, &checked.effects, &guard) {
+        for (entry, place) in entries.iter().zip(entry_places) {
+            if !touched(entry.binding) {
                 return self.types.declarations.issue_node(
                     SemanticRule::Share2,
                     *place,
@@ -282,30 +273,13 @@ impl Checker<'_, '_> {
                 );
             }
         }
-        if entries.is_empty() && !touched(state_root, &checked.effects, &guard) {
+        if entries.is_empty() && !touched(binding) {
             return self.types.declarations.issue_node(
                 SemanticRule::Share2,
                 node,
                 SemanticIssueKind::AtomicBindingUnused {
                     binding: declaration.spelling().to_owned(),
                     mechanical_fix: SHARE2_USE_THE_BINDING,
-                },
-            );
-        }
-        // [SHARE-2, REF-2] a key set an entry binding names stays unchanged
-        // while the binding is valid, which is the whole block.
-        let set_written = checked
-            .effects
-            .writes
-            .iter()
-            .chain(guard.iter().flat_map(|guard| guard.1.writes.iter()))
-            .any(|write| sets.iter().any(|set| state_paths_overlap(write, set)));
-        if set_written {
-            return self.types.declarations.issue_node(
-                SemanticRule::Share2,
-                node,
-                SemanticIssueKind::AtomicKeySetWritten {
-                    mechanical_fix: SHARE2_KEEP_THE_KEY_SET,
                 },
             );
         }
@@ -322,9 +296,8 @@ impl Checker<'_, '_> {
         }
         // The state belongs to no binding and no caller [SHARE-1], so no row
         // names a path rooted at the binding or an entry binding.
-        let held = |path: &CheckedStatePath| {
-            path.root == state_root || entry_roots.contains(&path.root)
-        };
+        let held =
+            |path: &CheckedStatePath| path.root == state_root || entry_roots.contains(&path.root);
         for set in
             std::iter::once(&mut checked.effects).chain(guard.iter_mut().map(|guard| &mut guard.1))
         {
@@ -423,8 +396,7 @@ impl Checker<'_, '_> {
 
     /// [SHARE-2] one entry binding: its place is the statement's binding,
     /// `^`, fields ending at a `KeyedTable<V>`, and one index whose atom has
-    /// type `&[u8]` or is a place of type `KeySet`. Returns the checked
-    /// binding and the paths of the key set it names, if any.
+    /// type `&[u8]` or is a place of type `KeySet`.
     #[allow(clippy::too_many_arguments)]
     fn check_entry_binding(
         &mut self,
@@ -436,7 +408,7 @@ impl Checker<'_, '_> {
         counters: &mut ControlCounters<'_>,
         loop_depth: usize,
         effects: &mut EffectSet,
-    ) -> Result<(CheckedEntryBinding, Vec<CheckedStatePath>), CheckStop> {
+    ) -> Result<CheckedEntryBinding, CheckStop> {
         let FunctionContext { check_context, .. } = context;
         let shape = |found: &str| SemanticIssueKind::AtomicTargetNotShared {
             found: found.to_owned(),
@@ -502,10 +474,11 @@ impl Checker<'_, '_> {
                     .tree
                     .first_child_with(place, Production::Pbase)?
                     .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-                let root = self
-                    .types
-                    .declarations
-                    .use_at(check_context, pbase, LexicalUseRole::PlaceBase)?;
+                let root = self.types.declarations.use_at(
+                    check_context,
+                    pbase,
+                    LexicalUseRole::PlaceBase,
+                )?;
                 let reference_root = match root.target() {
                     ResolvedTarget::Source {
                         declaration,
@@ -519,7 +492,7 @@ impl Checker<'_, '_> {
             }
             None => None,
         };
-        let (index, referent, set_paths) = if let Some(place) = set_place {
+        let (index, referent, set_places) = if let Some(place) = set_place {
             let set = self.check_place_borrow(
                 context,
                 header.atom,
@@ -540,15 +513,13 @@ impl Checker<'_, '_> {
                     },
                 );
             }
-            let mut paths = Vec::new();
-            for place in set
+            let places = set
                 .reference
                 .as_ref()
-                .map(|reference| reference.paths.as_slice())
-                .unwrap_or_default()
-            {
+                .map(|reference| reference.paths.clone())
+                .unwrap_or_default();
+            for place in &places {
                 for path in self.effect_paths_for_place(node, place, block_bindings)? {
-                    paths.push(path.path.clone());
                     effects.add_read(path);
                 }
             }
@@ -559,7 +530,7 @@ impl Checker<'_, '_> {
             (
                 CheckedEntryIndex::Set(Box::new(set.expression)),
                 referent,
-                paths,
+                places,
             )
         } else {
             let mut probe = block_bindings.clone();
@@ -607,37 +578,39 @@ impl Checker<'_, '_> {
         // followed by one index no other index is proved distinct from: a
         // write of the table, or of anything holding it, invalidates the
         // binder, and the entries of one table are taken as overlapping
-        // [OWN-7], since two of the header's keys may be one.
-        let selected = table
-            .reference
-            .as_ref()
-            .and_then(|reference| reference.paths.first())
-            .cloned()
-            .map(|mut place| {
-                place.path.push(PlaceStep::Index(CapturedValue::unknown()));
-                place
-            })
-            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        // [OWN-7], since two of the header's keys may be one. Entries over a
+        // key set name its keys as well, so a write of the set while the
+        // binder is valid invalidates it [SHARE-2].
+        let unknown = |mut place: ResolvedPlace| {
+            place.path.push(PlaceStep::Index(CapturedValue::unknown()));
+            place
+        };
+        let mut selected = vec![
+            table
+                .reference
+                .as_ref()
+                .and_then(|reference| reference.paths.first())
+                .cloned()
+                .map(unknown)
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?,
+        ];
+        selected.extend(set_places.into_iter().map(unknown));
         if let Some(reference) = block_bindings
             .get_mut(&header.declaration.id())
             .and_then(|local| local.reference.as_mut())
         {
-            reference.paths.push(selected.clone());
+            reference.paths.extend(selected.iter().cloned());
         }
-        self.body
-            .record_reference_origins(binding, std::slice::from_ref(&selected));
-        Ok((
-            CheckedEntryBinding {
-                node_path: self.types.declarations.tree.path(header.place)?.clone(),
-                binding,
-                table: Box::new(table.expression),
-                entry: entry_type,
-                index,
-                referent,
-                reads: false,
-            },
-            set_paths,
-        ))
+        self.body.record_reference_origins(binding, &selected);
+        Ok(CheckedEntryBinding {
+            node_path: self.types.declarations.tree.path(header.place)?.clone(),
+            binding,
+            table: Box::new(table.expression),
+            entry: entry_type,
+            index,
+            referent,
+            reads: false,
+        })
     }
 
     /// The guard and the block, checked with the binders in scope and inside
@@ -725,9 +698,94 @@ impl Checker<'_, '_> {
     }
 }
 
-/// [OWN-7] whether two state paths overlap: one root, one path a prefix of
-/// the other.
-fn state_paths_overlap(left: &CheckedStatePath, right: &CheckedStatePath) -> bool {
-    left.root == right.root
-        && (left.steps.starts_with(&right.steps) || right.steps.starts_with(&left.steps))
+/// Whether a checked statement, or a block it holds, names `binding`.
+fn statement_mentions(statement: &CheckedStatement, binding: BindingId) -> bool {
+    let expression = |value: &CheckedExpression| expression_mentions(value, binding);
+    let block = |statements: &[CheckedStatement]| {
+        statements
+            .iter()
+            .any(|statement| statement_mentions(statement, binding))
+    };
+    match statement {
+        CheckedStatement::Let { value, .. }
+        | CheckedStatement::DestructuringLet { value, .. }
+        | CheckedStatement::Evaluate { value, .. }
+        | CheckedStatement::DropExpression { value, .. }
+        | CheckedStatement::Return { value, .. }
+        | CheckedStatement::Give { value, .. } => expression(value),
+        CheckedStatement::PropagateLet { scrutinee, .. } => expression(scrutinee),
+        CheckedStatement::Set { target, value, .. } => {
+            let target = match target {
+                CheckedSetTarget::Place(place) => place.binding == binding,
+                CheckedSetTarget::RangeIndex(place) => {
+                    place.root.binding == binding || place.offsets().any(expression)
+                }
+                CheckedSetTarget::Storage(root) => {
+                    root.binding() == Some(binding) || root.offsets().any(expression)
+                }
+            };
+            target || expression(value)
+        }
+        CheckedStatement::Match {
+            scrutinee, arms, ..
+        }
+        | CheckedStatement::ValueMatchLet {
+            scrutinee, arms, ..
+        } => expression(scrutinee) || arms.iter().any(|arm| block(&arm.body)),
+        CheckedStatement::Loop { body, .. } => block(body),
+        CheckedStatement::CountedRange {
+            lower, upper, body, ..
+        } => expression(lower) || expression(upper) || block(body),
+        CheckedStatement::Atomic {
+            target,
+            entries,
+            guard,
+            body,
+            ..
+        } => {
+            expression(target)
+                || entries
+                    .iter()
+                    .flat_map(CheckedEntryBinding::expressions)
+                    .any(expression)
+                || guard.as_deref().is_some_and(expression)
+                || block(body)
+        }
+        CheckedStatement::Proof(_) | CheckedStatement::Break { .. } => false,
+    }
+}
+
+/// Whether a checked expression names `binding` as a place's root or as a
+/// value.
+fn expression_mentions(expression: &CheckedExpression, binding: BindingId) -> bool {
+    let names = match expression {
+        CheckedExpression::Binding { binding: named, .. }
+        | CheckedExpression::DerefAddressed { binding: named, .. }
+        | CheckedExpression::Project { binding: named, .. }
+        | CheckedExpression::BoxTake { binding: named, .. } => *named == binding,
+        CheckedExpression::BorrowAddressed { root, .. }
+        | CheckedExpression::ContainerMeasure { root, .. }
+        | CheckedExpression::ReadStorage { root, .. }
+        | CheckedExpression::BorrowSegment { root, .. } => root.binding() == Some(binding),
+        CheckedExpression::ArrayMeasure { root, .. }
+        | CheckedExpression::ArrayIndex { root, .. } => {
+            matches!(root, CheckedArrayRoot::Binding { binding: named, .. } if *named == binding)
+        }
+        CheckedExpression::BufferMeasure { root, .. }
+        | CheckedExpression::BufferIndex { root, .. } => root.binding == binding,
+        CheckedExpression::RangeMeasure { root, .. } => root.binding == binding,
+        CheckedExpression::RangeElementMeasure { place, .. }
+        | CheckedExpression::RangeIndex { place, .. }
+        | CheckedExpression::BorrowRangeIndex { place, .. } => place.root.binding == binding,
+        CheckedExpression::RangeOf { source, .. } => match source {
+            CheckedRangeSource::Storage(root) => root.binding() == Some(binding),
+            CheckedRangeSource::Range(root) => root.binding == binding,
+            CheckedRangeSource::Element(place) => place.root.binding == binding,
+        },
+        _ => false,
+    };
+    names
+        || expression_children(expression)
+            .into_iter()
+            .any(|child| expression_mentions(child, binding))
 }
