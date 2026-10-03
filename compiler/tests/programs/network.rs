@@ -1096,7 +1096,12 @@ fn firn_serves_every_client_over_one_keyspace() {
 /// batch, whose commands all see one reading of the clocks, `TTL` answers -1
 /// for a key without an expiry and -2 for an absent one, `EXPIRE` gives one,
 /// `PERSIST` removes it once, and `SET` refuses a zero expiry, an unknown
-/// option and a count that is not a number. A key set with `PX 100` answers a
+/// option and a count that is not a number. An expiry of 10^11 seconds, past
+/// what nanoseconds in 64 bits hold, is kept to the second, as Redis keeps
+/// expiries in calendar milliseconds; a negative `EXPIRE` removes the key at
+/// once, so that `DBSIZE` no longer counts it, and
+/// one whose milliseconds leave the range of i64, alone or added to the time,
+/// is refused, also when they would wrap to a small number. A key set with `PX 100` answers a
 /// positive `PTTL` and is absent 200 milliseconds later. A key read 5
 /// milliseconds after its expiry is absent too, which the command's own check
 /// answers: the expiring context wakes only every 100 milliseconds, so without
@@ -1129,13 +1134,23 @@ fn firn_expires_keys_on_both_routes() {
             vec!["SET", "other", "v", "XX", "1"],
             vec!["SET", "other", "v", "PX", "soon"],
             vec!["DBSIZE"],
+            vec!["SET", "far", "v", "EX", "100000000000"],
+            vec!["TTL", "far"],
+            vec!["EXPIRE", "far", "-1"],
+            vec!["DBSIZE"],
+            vec!["EXPIRE", "absent", "-1"],
+            vec!["SET", "other", "v", "EX", "9223372036854776"],
+            vec!["SET", "other", "v", "PX", "9223372036854775807"],
+            vec!["PEXPIRE", "kept", "9223372036854775000"],
+            vec!["EXPIRE", "kept", "18446744073709552"],
+            vec!["EXPIRE", "kept", "-18446744073709552"],
         ] {
             batch.extend(resp(&request));
         }
         client.write_all(&batch).expect("send the expiry batch");
         expect_replies(
             &mut client,
-            b"+OK\r\n+OK\r\n:-1\r\n:-2\r\n:1\r\n:100\r\n:1\r\n:-1\r\n:0\r\n-ERR invalid expire time in 'set' command\r\n-ERR syntax error\r\n-ERR value is not an integer or out of range\r\n:2\r\n",
+            b"+OK\r\n+OK\r\n:-1\r\n:-2\r\n:1\r\n:100\r\n:1\r\n:-1\r\n:0\r\n-ERR invalid expire time in 'set' command\r\n-ERR syntax error\r\n-ERR value is not an integer or out of range\r\n:2\r\n+OK\r\n:100000000000\r\n:1\r\n:2\r\n:0\r\n-ERR invalid expire time in 'set' command\r\n-ERR invalid expire time in 'set' command\r\n-ERR invalid expire time in 'pexpire' command\r\n-ERR invalid expire time in 'expire' command\r\n-ERR invalid expire time in 'expire' command\r\n",
             &what,
         );
         client
@@ -1215,8 +1230,15 @@ fn firn_removes_expired_keys_no_command_reads_on_both_routes() {
 /// while firn was stopped is absent. As in Redis, the replay applies the
 /// file's commands in order without expiring anything, so a key made
 /// persistent before its expiry holds its value, and a key incremented before
-/// its expiry passed is absent rather than counting again from one. The first run ends once its one
-/// client has closed, after its writer appended and synced the last changes.
+/// its expiry passed is absent rather than counting again from one. A key a
+/// command finds expired is removed, and the file records the removal, as
+/// Redis propagates it, so that the commands after it replay as they ran: a
+/// `SET` with NX, one with KEEPTTL and an `INCR` on a key set already expired,
+/// and a `SET` with NX after `EXISTS`, `GET`, `TTL`, `TYPE`, `DEL`, `PERSIST`,
+/// `EXPIRE`, a negative `EXPIRE`, `GETDEL` or `GETEX` found it so, hold their
+/// values after the restart, the `INCR` counting from zero and KEEPTTL keeping
+/// no expiry. The first run ends once its one client has closed, after its
+/// writer appended and synced the last changes.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_replays_its_append_only_file_after_a_restart_on_both_routes() {
@@ -1246,13 +1268,49 @@ fn firn_replays_its_append_only_file_after_a_restart_on_both_routes() {
             vec!["PERSIST", "persisted"],
             vec!["SET", "bumped", "5", "PX", "300"],
             vec!["INCR", "bumped"],
+            vec!["SET", "lazy:a", "old", "PXAT", "1"],
+            vec!["SET", "lazy:a", "new", "NX"],
+            vec!["SET", "lazy:b", "5", "PXAT", "1"],
+            vec!["INCR", "lazy:b"],
+            vec!["SET", "lazy:c", "old", "PXAT", "1"],
+            vec!["EXISTS", "lazy:c"],
+            vec!["SET", "lazy:c", "new", "NX"],
+            vec!["SET", "lazy:d", "old", "PXAT", "1"],
+            vec!["GET", "lazy:d"],
+            vec!["SET", "lazy:d", "new", "NX"],
+            vec!["SET", "lazy:e", "old", "PXAT", "1"],
+            vec!["SET", "lazy:e", "new", "KEEPTTL"],
+            vec!["SET", "lazy:f", "old", "PXAT", "1"],
+            vec!["TTL", "lazy:f"],
+            vec!["SET", "lazy:f", "new", "NX"],
+            vec!["SET", "lazy:g", "old", "PXAT", "1"],
+            vec!["TYPE", "lazy:g"],
+            vec!["SET", "lazy:g", "new", "NX"],
+            vec!["SET", "lazy:h", "old", "PXAT", "1"],
+            vec!["DEL", "lazy:h"],
+            vec!["SET", "lazy:h", "new", "NX"],
+            vec!["SET", "lazy:i", "old", "PXAT", "1"],
+            vec!["PERSIST", "lazy:i"],
+            vec!["SET", "lazy:i", "new", "NX"],
+            vec!["SET", "lazy:j", "old", "PXAT", "1"],
+            vec!["EXPIRE", "lazy:j", "100"],
+            vec!["SET", "lazy:j", "new", "NX"],
+            vec!["SET", "lazy:k", "old", "PXAT", "1"],
+            vec!["GETDEL", "lazy:k"],
+            vec!["SET", "lazy:k", "new", "NX"],
+            vec!["SET", "lazy:l", "old", "PXAT", "1"],
+            vec!["GETEX", "lazy:l", "PERSIST"],
+            vec!["SET", "lazy:l", "new", "NX"],
+            vec!["SET", "lazy:m", "old", "PXAT", "1"],
+            vec!["EXPIRE", "lazy:m", "-1"],
+            vec!["SET", "lazy:m", "new", "NX"],
         ] {
             batch.extend(resp(&request));
         }
         client.write_all(&batch).expect("send the changes");
         expect_replies(
             &mut client,
-            b"+OK\r\n+OK\r\n+OK\r\n:1\r\n:2\r\n:1\r\n+OK\r\n:1\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n:6\r\n",
+            b"+OK\r\n+OK\r\n+OK\r\n:1\r\n:2\r\n:1\r\n+OK\r\n:1\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n:6\r\n+OK\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n+OK\r\n+OK\r\n:-2\r\n+OK\r\n+OK\r\n+none\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n",
             &what,
         );
         drop(client);
@@ -1278,13 +1336,28 @@ fn firn_replays_its_append_only_file_after_a_restart_on_both_routes() {
             vec!["TTL", "persisted"],
             vec!["GET", "bumped"],
             vec!["DBSIZE"],
+            vec!["GET", "lazy:a"],
+            vec!["GET", "lazy:b"],
+            vec!["TTL", "lazy:b"],
+            vec!["GET", "lazy:c"],
+            vec!["GET", "lazy:d"],
+            vec!["GET", "lazy:e"],
+            vec!["TTL", "lazy:e"],
+            vec!["GET", "lazy:f"],
+            vec!["GET", "lazy:g"],
+            vec!["GET", "lazy:h"],
+            vec!["GET", "lazy:i"],
+            vec!["GET", "lazy:j"],
+            vec!["GET", "lazy:k"],
+            vec!["GET", "lazy:l"],
+            vec!["GET", "lazy:m"],
         ] {
             batch.extend(resp(&request));
         }
         client.write_all(&batch).expect("read the replayed keys");
         expect_replies(
             &mut client,
-            b"$-1\r\n$-1\r\n$1\r\nv\r\n$1\r\n2\r\n$1\r\nv\r\n:-1\r\n$1\r\nv\r\n:-1\r\n$-1\r\n:5\r\n",
+            b"$-1\r\n$-1\r\n$1\r\nv\r\n$1\r\n2\r\n$1\r\nv\r\n:-1\r\n$1\r\nv\r\n:-1\r\n$-1\r\n:18\r\n$3\r\nnew\r\n$1\r\n1\r\n:-1\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n:-1\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n",
             &what,
         );
         client
@@ -1804,6 +1877,109 @@ fn firn_keeps_strings_at_and_past_the_inline_length_apart() {
     assert_eq!(status, 0);
 }
 
+/// firn answers the string commands as Redis does. `SET` reads its options as
+/// Redis 7.0.15 reads them: NX and XX store only in place of an absent key or
+/// over a live one; GET answers the string the key held, or nil, and refuses a
+/// key of another kind, storing nothing; KEEPTTL keeps the key's expiry where a
+/// plain `SET` removes it; a later EX replaces an earlier one; a word is
+/// compared in either case up to a zero byte; an expiry option needs an amount;
+/// an option beside one it excludes, or one only `GETEX` takes, is a syntax
+/// error; and an absolute expiry already past leaves the key expired at once.
+/// `SETNX`, `SETEX`, `PSETEX`, `GETSET` and `GETDEL` answer as Redis does, and
+/// `GETEX` reads its amount only once it has found a live string, and removes
+/// the key for an absolute expiry already past, which `DBSIZE` then no longer
+/// counts. The expected replies are redis-server 7.0.15's to the same
+/// requests.
+#[cfg(target_os = "linux")]
+#[test]
+fn firn_answers_string_commands_as_redis_does() {
+    let program = firn();
+    let port = free_port();
+    let text = port.to_string();
+    let child = program.spawn_on_route(true, &[text.as_bytes(), b"1"]);
+    let mut client = connect_when_ready(port);
+    client
+        .set_read_timeout(Some(Duration::from_secs(20)))
+        .expect("bound the client's waits");
+    let mut batch = Vec::new();
+    for request in [
+        vec!["SET", "k", "v", "nx\0zz"],
+        vec!["SET", "k", "v2", "xx", "GET"],
+        vec!["SET", "k", "v3", "EX", "10", "EX", "20"],
+        vec!["TTL", "k"],
+        vec!["SET", "k", "v4", "NX", "XX"],
+        vec!["SET", "k", "v4", "KEEPTTL", "EX", "5"],
+        vec!["SET", "k", "v4", "EX", "5", "KEEPTTL"],
+        vec!["SET", "k", "v5", "KEEPTTL"],
+        vec!["TTL", "k"],
+        vec!["SET", "k", "v6"],
+        vec!["TTL", "k"],
+        vec!["SET", "k", "v7", "EX"],
+        vec!["SET", "k", "v7", "EX", "NX"],
+        vec!["SET", "k", "v7", "EX", "0"],
+        vec!["SET", "k", "v8", "GET", "GET"],
+        vec!["LPUSH", "l", "a"],
+        vec!["SET", "l", "x", "GET"],
+        vec!["SET", "l", "x", "NX", "GET"],
+        vec!["TYPE", "l"],
+        vec!["SET", "n", "x", "NX", "GET"],
+        vec!["SET", "n", "y", "NX", "GET"],
+        vec!["SET", "absent", "y", "XX", "GET"],
+        vec!["SET", "absent", "y", "XX"],
+        vec!["EXISTS", "absent"],
+        vec!["SET", "k", "v", "keepttl\0x"],
+        vec!["SET", "k", "v", "GET", "PERSIST"],
+        vec!["SET", "k", "v", ""],
+        vec!["SET", "k", "v", "PXAT", "1"],
+        vec!["GET", "k"],
+        vec!["SET", "l", "x"],
+        vec!["GET", "l"],
+        vec!["SETNX", "k", "x"],
+        vec!["SETNX", "k", "y"],
+        vec!["SETEX", "s", "100", "v"],
+        vec!["TTL", "s"],
+        vec!["SETEX", "s", "0", "v"],
+        vec!["SETEX", "s", "abc", "v"],
+        vec!["PSETEX", "s", "-5", "v"],
+        vec!["PSETEX", "s", "100000", "v"],
+        vec!["TTL", "s"],
+        vec!["GETSET", "s", "w"],
+        vec!["TTL", "s"],
+        vec!["GETSET", "nope", "w"],
+        vec!["LPUSH", "l2", "a"],
+        vec!["GETSET", "l2", "w"],
+        vec!["GETDEL", "l2"],
+        vec!["GETDEL", "nope"],
+        vec!["GETDEL", "nope"],
+        vec!["SET", "g", "val"],
+        vec!["GETEX", "g"],
+        vec!["GETEX", "g", "EX", "100"],
+        vec!["TTL", "g"],
+        vec!["GETEX", "g", "PERSIST"],
+        vec!["TTL", "g"],
+        vec!["GETEX", "g", "NX"],
+        vec!["GETEX", "g", "EX", "abc"],
+        vec!["GETEX", "missing", "EX", "abc"],
+        vec!["GETEX", "l2", "EX", "abc"],
+        vec!["GETEX", "g", "EX", "0"],
+        vec!["GETEX", "g", "EX", "10", "PERSIST"],
+        vec!["GETEX", "g", "PXAT", "1"],
+        vec!["DBSIZE"],
+        vec!["GETEX", "g"],
+    ] {
+        batch.extend(resp(&request));
+    }
+    client.write_all(&batch).expect("send the string batch");
+    expect_replies(
+        &mut client,
+        b"+OK\r\n$1\r\nv\r\n+OK\r\n:20\r\n-ERR syntax error\r\n-ERR syntax error\r\n-ERR syntax error\r\n+OK\r\n:20\r\n+OK\r\n:-1\r\n-ERR syntax error\r\n-ERR value is not an integer or out of range\r\n-ERR invalid expire time in 'set' command\r\n$2\r\nv6\r\n:1\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n+list\r\n$-1\r\n$1\r\nx\r\n$-1\r\n$-1\r\n:0\r\n+OK\r\n-ERR syntax error\r\n-ERR syntax error\r\n+OK\r\n$-1\r\n+OK\r\n$1\r\nx\r\n:1\r\n:0\r\n+OK\r\n:100\r\n-ERR invalid expire time in 'setex' command\r\n-ERR value is not an integer or out of range\r\n-ERR invalid expire time in 'psetex' command\r\n+OK\r\n:100\r\n$1\r\nv\r\n:-1\r\n$-1\r\n:1\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n$1\r\nw\r\n$-1\r\n+OK\r\n$3\r\nval\r\n$3\r\nval\r\n:100\r\n$3\r\nval\r\n:-1\r\n-ERR syntax error\r\n-ERR value is not an integer or out of range\r\n$-1\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n-ERR invalid expire time in 'getex' command\r\n-ERR syntax error\r\n$3\r\nval\r\n:5\r\n$-1\r\n",
+        "the string batch",
+    );
+    drop(client);
+    let (status, _) = finished(child);
+    assert_eq!(status, 0);
+}
+
 /// [SHARE-1, SHARE-2] firn answers `DEL`, `EXISTS` and `MSET` naming a key
 /// more than once as Redis does, each holding its keys' entries through a key
 /// set, which keeps one element per key: `DEL` removes and counts such a key
@@ -2107,10 +2283,13 @@ fn firn_carries_requests_and_replies_larger_than_its_windows() {
 /// absent, since the file records both commands, and FUNCTION FLUSH after
 /// them, as Redis does, and a FLUSHALL of the keyspace still empty before
 /// them: the file's first bytes are those redis-server 7.0.15 appends for the
-/// same requests, the SELECT it writes first aside. INFO reports the file as
-/// kept; CONFIG SET appendonly yes, the file firn keeps, succeeds, and no is
-/// refused in Redis's form for a refused value with firn's own reason, where
-/// Redis would stop its file.
+/// same requests, the SELECT it writes first aside. A key the expiring context
+/// removed is recorded as removed, as Redis propagates it, so a `SET` with NX
+/// that found it absent holds its value after the restart, where a replay
+/// keeping the expired key would refuse it. INFO reports the file as kept;
+/// CONFIG SET appendonly yes, the file firn keeps, succeeds, and no is refused
+/// in Redis's form for a refused value with firn's own reason, where Redis
+/// would stop its file.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_replays_the_value_types_from_its_append_only_file() {
@@ -2143,13 +2322,14 @@ fn firn_replays_the_value_types_from_its_append_only_file() {
         vec!["ZPOPMIN", "z"],
         vec!["ZADD", "f", "0.1", "m"],
         add,
+        vec!["SET", "lapse", "old", "PX", "1"],
     ] {
         batch.extend(resp(&request));
     }
     client.write_all(&batch).expect("send the changes");
     expect_replies(
         &mut client,
-        b"+OK\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n+OK\r\n:3\r\n$1\r\na\r\n:1\r\n:2\r\n*2\r\n$1\r\na\r\n$1\r\n1\r\n:1\r\n:50\r\n",
+        b"+OK\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n+OK\r\n:3\r\n$1\r\na\r\n:1\r\n:2\r\n*2\r\n$1\r\na\r\n$1\r\n1\r\n:1\r\n:50\r\n+OK\r\n",
         "the first run's changes",
     );
     client
@@ -2171,6 +2351,13 @@ fn firn_replays_the_value_types_from_its_append_only_file() {
         assert!(!popped.contains(&member), "{member} popped twice");
         popped.push(member);
     }
+    // The expiring context, which wakes every 100 milliseconds, removes the
+    // key set with PX 1 before this SET finds it absent.
+    std::thread::sleep(Duration::from_millis(250));
+    client
+        .write_all(&resp(&["SET", "lapse", "new", "NX"]))
+        .expect("set the expired key again");
+    expect_replies(&mut client, b"+OK\r\n", "the key set again");
     drop(client);
     let (status, _) = finished(child);
     assert_eq!(status, 0, "the first run");
@@ -2200,13 +2387,14 @@ fn firn_replays_the_value_types_from_its_append_only_file() {
         vec!["SCARD", "s"],
         remove,
         vec!["EXISTS", "flushed", "flushed-list"],
+        vec!["GET", "lapse"],
     ] {
         batch.extend(resp(&request));
     }
     client.write_all(&batch).expect("read the replayed values");
     expect_replies(
         &mut client,
-        b"*2\r\n$1\r\nb\r\n$1\r\nc\r\n$1\r\nv\r\n:1\r\n$1\r\n2\r\n$19\r\n0.10000000000000001\r\n:25\r\n:0\r\n:0\r\n",
+        b"*2\r\n$1\r\nb\r\n$1\r\nc\r\n$1\r\nv\r\n:1\r\n$1\r\n2\r\n$19\r\n0.10000000000000001\r\n:25\r\n:0\r\n:0\r\n$3\r\nnew\r\n",
         "the replayed values",
     );
     let mut batch = resp(&["CONFIG", "SET", "appendonly", "yes"]);

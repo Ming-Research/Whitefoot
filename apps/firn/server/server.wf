@@ -231,10 +231,8 @@ fn password_required(store: &Keyspace) -> required: Bool reads(store) waits {
   return required;
 }
 
-fn read_time(clock: &Clock, wall: &WallClock, origin: Instant) -> result: Reading reads(wall), writes(clock) {
-  doc "Reads both clocks: the monotonic one as nanoseconds from the program's origin, and the calendar one as milliseconds since 1970 for the commands' time and as microseconds for TIME.";
-  let reading = std::time::now(clock: clock);
-  let offset = nanoseconds_from(earlier: origin, later: reading);
+fn read_time(wall: &WallClock) -> result: Reading reads(wall) {
+  doc "Reads the calendar clock as milliseconds since 1970 for the commands' time, against which expiries are kept as Redis keeps them, and as microseconds for TIME.";
   let calendar = unix_nanoseconds(clock: wall);
   let unix_ms = 0_u64;
   let unix_us = 0_u64;
@@ -244,12 +242,12 @@ fn read_time(clock: &Clock, wall: &WallClock, origin: Instant) -> result: Readin
     set unix_us = wide / 1000_u64;
   }
   let live = False();
-  let time = Time(now: offset, unix_ms: unix_ms, check: offset, loading: live);
+  let time = Time(unix_ms: unix_ms, check: unix_ms, loading: live);
   return Reading(time: time, unix_us: unix_us);
 }
 
 fn serve(connection: TcpConnection, factory: HandleFactory, store: Keyspace, clock: Clock, wall: WallClock, origin: Instant, required: Bool, settings: Settings, id: u64) -> result: unit pure waits {
-  doc "Serves one client, the id-th the server accepted, in a context of its own: reads requests into its input, which grows to hold a request larger than it, answers every complete request the input holds with one send, sending sooner once 16,384 bytes of replies are waiting, and keeps an incomplete one for the next read. Every command of one read sees the clocks as read once after it. A client silent for the idle limit the server's state holds, when it is not zero, is closed, its silence counted from its last request or the replies to it, whichever came later, as Redis counts it from a client's last read or write: while a limit is set, each read waits no longer than the limit leaves and no longer than a second, and the client reads the limit again when that wait ends and at most once a second while it sends, so that a limit CONFIG SET changes reaches it within a second; a client that waits with no limit set reads none until it sends. A client that sends a malformed request is closed after its error, and one that sends QUIT after its reply. A client accepted while a password is required, when required is true, has not authenticated until it gives the password, as AUTH and HELLO record; until then it reads the password again before each request and must give it before other commands while one is set, as Redis's clients must.";
+  doc "Serves one client, the id-th the server accepted, in a context of its own: reads requests into its input, which grows to hold a request larger than it, answers every complete request the input holds with one send, sending sooner once 16,384 bytes of replies are waiting, and keeps an incomplete one for the next read. Every command of one read sees the calendar clock as read once after it. A client silent for the idle limit the server's state holds, when it is not zero, is closed, its silence measured on the monotonic clock from the program's origin and counted from its last request or the replies to it, whichever came later, as Redis counts it from a client's last read or write: while a limit is set, each read waits no longer than the limit leaves and no longer than a second, and the client reads the limit again when that wait ends and at most once a second while it sends, so that a limit CONFIG SET changes reaches it within a second; a client that waits with no limit set reads none until it sends. A client that sends a malformed request is closed after its error, and one that sends QUIT after its reply. A client accepted while a password is required, when required is true, has not authenticated until it gives the password, as AUTH and HELLO record; until then it reads the password again before each request and must give it before other commands while one is set, as Redis's clients must.";
   let env = KeyEnv();
   let client = client_new(capacity: 16384_u64);
   atomic s = &store.state {
@@ -331,14 +329,16 @@ fn serve(connection: TcpConnection, factory: HandleFactory, store: Keyspace, clo
       break @requests;
     }
     set held = received;
-    let reading = read_time(clock: &clock, wall: &wall, origin: origin);
+    let reading = read_time(wall: &wall);
     let time = reading.time;
     set client.unix_us = reading.unix_us;
-    set last = time.now;
-    let since = time.now -sat polled;
+    let woke = std::time::now(clock: &clock);
+    let arrived = nanoseconds_from(earlier: origin, later: woke);
+    set last = arrived;
+    let since = arrived -sat polled;
     if since >= 1000000000_u64 {
       set idle = idle_limit(store: &store);
-      set polled = time.now;
+      set polled = arrived;
     }
     let consumed = 0_u64;
     let broken = False();
@@ -399,16 +399,16 @@ fn serve(connection: TcpConnection, factory: HandleFactory, store: Keyspace, clo
   return unit;
 }
 
-fn expire_keys(store: Keyspace, clock: Clock, origin: Instant) -> result: unit pure waits {
-  doc "Wakes ten times a second and removes the keys whose expiry has passed, in batches of atomic statements so that clients proceed between them, until the server stops. A key whose expiry did not fit the queue is removed only when a command finds it expired.";
+fn expire_keys(store: Keyspace, clock: Clock, wall: WallClock) -> result: unit pure waits {
+  doc "Wakes ten times a second and removes the keys whose expiry has passed on the calendar clock, in batches of atomic statements so that clients proceed between them, until the server stops. A key whose expiry did not fit the queue is removed only when a command finds it expired.";
   let env = KeyEnv();
   let batch = box_slots_new::<Due>(capacity: 256_u64);
   loop @ticks {
     let started = std::time::now(clock: &clock);
     let wake = instant_after(instant: started, nanoseconds: 100000000_u64);
     sleep_until(deadline: wake);
-    let reading = std::time::now(clock: &clock);
-    let current = nanoseconds_from(earlier: origin, later: reading);
+    let reading = read_time(wall: &wall);
+    let current = reading.time.unix_ms;
     let stop = False();
     loop @batches {
       atomic s = &store.state {
@@ -851,13 +851,14 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let calendar = unix_nanoseconds(clock: &wall_clock);
   let seed = cvt.wrap::<i64, u64>(calendar);
   let quiet = False();
-  let root = keyspace_new(seed: seed, logging: quiet, password: move password_text, timeout: idle);
+  let startup = read_time(wall: &wall_clock);
+  let root = keyspace_new(seed: seed, logging: quiet, password: move password_text, timeout: idle, started: startup.time.unix_ms);
   let logging = False();
   let failed = False();
   if options.logging {
-    let read = read_time(clock: &clock, wall: &wall_clock, origin: origin);
+    let read = read_time(wall: &wall_clock);
     let replaying = True();
-    let time = Time(now: read.time.now, unix_ms: read.time.unix_ms, check: 0_u64, loading: replaying);
+    let time = Time(unix_ms: read.time.unix_ms, check: 0_u64, loading: replaying);
     let applied = replay(store: &root, factory: &handles, root: &cwd, name: name, name_length: name_length, time: &time);
     match open_append(factory: &handles, root: &cwd_write, name: name, start: 0_u64, end: name_length) {
       Ok(value: file) => {
@@ -880,7 +881,8 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let keyspace = keyspace_logging(store: &root, logging: logging);
   let expiring_store = keyspace_share(store: &keyspace);
   let expiring_clock = clock_share(clock: &clock);
-  spawn expire_keys(store: move expiring_store, clock: move expiring_clock, origin: origin);
+  let expiring_wall = wall_clock_share(clock: &wall_clock);
+  spawn expire_keys(store: move expiring_store, clock: move expiring_clock, wall: move expiring_wall);
   let address = socket_address_v4(a: listen_at.a, b: listen_at.b, c: listen_at.c, d: listen_at.d, port: port);
   let listened = True();
   match tcp_listen(factory: &handles, address: &address) {

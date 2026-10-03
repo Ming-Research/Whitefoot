@@ -14,7 +14,9 @@ own:
 
 - keys: `DEL`, `EXISTS`, `TYPE`, `EXPIRE`, `PEXPIRE`, `PEXPIREAT`, `TTL`,
   `PTTL`, `PERSIST`, `DBSIZE`;
-- strings: `GET`, `SET` with `EX` or `PX`, `MSET`, `INCR`;
+- strings: `GET`, `SET` with its options `NX`, `XX`, `GET`, `KEEPTTL`,
+  `EX`, `PX`, `EXAT` and `PXAT`, `SETNX`, `SETEX`, `PSETEX`, `GETSET`,
+  `GETDEL`, `GETEX`, `MSET`, `INCR`;
 - lists: `LPUSH`, `RPUSH`, `LPOP`, `RPOP`, `LRANGE`, `LLEN`;
 - sets: `SADD`, `SREM`, `SPOP`, `SCARD`;
 - hashes: `HSET`, `HGET`;
@@ -156,7 +158,8 @@ default.
   and the server's counts
   ([firn under the shared-state design](../../research/investigations/shared-state/DESIGN.md#firn-under-the-design)),
   and beside it a second shared state, the server's, with what `CONFIG SET`
-  changes and the count of accepted connections;
+  changes, the count of accepted connections and the time the server
+  started;
 - `commands`: one file per kind of value, the connection and server
   commands, and the dispatch;
 - `persistence`: the append-only file's writer and its replay;

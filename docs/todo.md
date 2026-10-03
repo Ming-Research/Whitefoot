@@ -3294,18 +3294,12 @@ condition under which it is taken up.
   The owner set this stage's features to the commands `redis-benchmark`'s
   default suite sends ([firn](../research/investigations/firn/DESIGN.md#the-owners-rulings));
   a server someone deploys in place of Redis needs more. Missing, among
-  others: `SET`'s `NX`, `XX`, `GET`, `KEEPTTL`, `EXAT` and `PXAT`, which
-  firn answers as a syntax error where Redis sets the key; `SET`'s `EX` and
-  `PX` beyond 10^9 seconds or 10^12 milliseconds, which firn refuses as an
-  invalid expire time where Redis accepts them, since firn keeps expiries as
-  nanoseconds; `SET`'s `EX` or `PX` followed by a zero byte and more, which
-  Redis's strcasecmp reads up to the zero byte and firn's `run_set` answers
-  as a syntax error; `CONFIG SET` of `appendonly`, `port` or `bind` to a value
-  other than the one firn started with, and of a nonempty `save` schedule,
-  which firn refuses where Redis applies them, since the append-only file's
-  writer and the listener would have to change while firn runs, `appendonly
-  yes` with keys present needs a rewrite that visits every key, and firn saves
-  no snapshot; the parameters beyond firn's 22, refused as unknown; `FUNCTION`
+  others: `CONFIG SET` of `appendonly`, `port` or `bind` to a value other
+  than the one firn started with, and of a nonempty `save` schedule, which
+  firn refuses where Redis applies them, since the append-only file's writer
+  and the listener would have to change while firn runs, `appendonly yes`
+  with keys present needs a rewrite that visits every key, and firn saves no
+  snapshot; the parameters beyond firn's 22, refused as unknown; `FUNCTION`
   subcommands beyond `FLUSH` and `DEBUG` subcommands beyond `LOG`, answered
   as unknown; `ZADD`'s options `NX`, `XX`, `CH`, `INCR`,
   `GT` and `LT`, which firn answers as a syntax error; a score of negative
@@ -3344,6 +3338,28 @@ condition under which it is taken up.
   a new run belongs in that record. The
   owner sets the list for the deployment stage; reopen when this stage's
   measurement is handed back.
+- **A list, set, hash or sorted-set write that finds its key expired leaves
+  the removal out of the append-only file.** A replay counts no key as
+  expired, so a removal the file does not record is undone there: the
+  replay applies the next command to the old value. The read paths, the
+  expiring context and the string and key commands record each removal as
+  `DEL key`, as Redis 7.0.15 propagates it (`log_removal` in
+  `apps/firn/store/store.wf`), but the visitors of `LPUSH`, `RPUSH`, `LPOP`,
+  `RPOP`, `SADD`, `SREM`, `SPOP`, `HSET`, `ZADD` and `ZPOPMIN` replace or
+  drop an expired value inside their statements without it, so an `LPUSH`
+  onto a list that had expired replays onto the old elements. The change:
+  call `log_removal` where each of those statements finds its entry
+  expired, as `set_key` (`apps/firn/commands/strings.wf`) does, touching
+  the keyspace's `meta` only on that branch. Reopen with the next change to
+  those commands.
+- **firn writes a removal and the command that made it as two records
+  where Redis wraps them in `MULTI` and `EXEC`.** When one command
+  propagates more than one record, a key it found expired and the command
+  itself, or several expired keys, Redis 7.0.15 brackets them in `MULTI`
+  and `EXEC`; firn has no transactions to replay, so it writes the records
+  alone, which replays to the same state. A multi-key command also records
+  its expired keys in byte order where Redis records them in the order the
+  command names them. Reopen when firn answers `MULTI` and `EXEC`.
 - **firn reads a slow request again from its start at every read.**
   `parse_request` keeps no state between reads, so a request arriving in
   many reads is scanned from its first byte each time: quadratic in its
@@ -3459,9 +3475,10 @@ condition under which it is taken up.
   the key should no longer be here" found the key still there at least 2.1
   seconds after `EXPIRE x 2`: `GET` answered its value and `EXISTS` 1. The
   run before, the run after and five runs of the unit alone on the same
-  binary passed it. A key's expiry is an instant of the monotonic clock,
-  which `serve` (`apps/firn/server/server.wf`) reads once after each
-  receive, so no wait should leave a key past it; the cause is unknown.
+  binary passed it. A key's expiry was then an instant of the monotonic
+  clock, which `serve` (`apps/firn/server/server.wf`) read once after each
+  receive, so no wait should have left a key past it; the cause is unknown,
+  and expiries have since become calendar milliseconds (`8f8b43b48`).
   Reopen when it recurs, with each `EXPIRE`'s instant and each read's clock
   logged in a run under load.
 - **The framework commands' reviews left four small items open.**

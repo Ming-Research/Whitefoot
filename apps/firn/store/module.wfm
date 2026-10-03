@@ -31,13 +31,13 @@ public enum Value {
 }
 
 public struct Entry {
-  doc "A key's value and its expiry: nanoseconds from the program's origin, or zero for none.";
+  doc "A key's value and its expiry: the calendar time in milliseconds at which it expires, as Redis keeps it, or zero for none.";
   public value: Value;
   public expires: u64;
 }
 
 public struct Due {
-  doc "An expiry queued for active removal: the key's bytes and the instant it was set to expire at.";
+  doc "An expiry queued for active removal: the key's bytes and the calendar milliseconds it was set to expire at.";
   public key: Bytes;
   public at: u64;
 }
@@ -58,11 +58,12 @@ public struct KeyspaceState {
 }
 
 public struct ServerState {
-  doc "What the server keeps beside the keyspace that every connection reaches: the password clients must give, empty for none, and how many seconds a silent client is kept, zero for no limit, which CONFIG SET changes; the values of the parameters whose only effect in Redis is on its internal encodings, which CONFIG SET sets and CONFIG GET reports and firn does not use, in the order of their names: hash-max-listpack-entries, hash-max-listpack-value, list-compress-depth, list-max-listpack-size, set-max-intset-entries, stream-node-max-bytes, stream-node-max-entries, zset-max-listpack-entries and zset-max-listpack-value; and how many connections the server has accepted since it started or CONFIG RESETSTAT last ran.";
+  doc "What the server keeps beside the keyspace that every connection reaches: the password clients must give, empty for none, and how many seconds a silent client is kept, zero for no limit, which CONFIG SET changes; the values of the parameters whose only effect in Redis is on its internal encodings, which CONFIG SET sets and CONFIG GET reports and firn does not use, in the order of their names: hash-max-listpack-entries, hash-max-listpack-value, list-compress-depth, list-max-listpack-size, set-max-intset-entries, stream-node-max-bytes, stream-node-max-entries, zset-max-listpack-entries and zset-max-listpack-value; how many connections the server has accepted since it started or CONFIG RESETSTAT last ran; and the calendar time in milliseconds at which it started, which INFO's uptime counts from.";
   public password: Bytes;
   public timeout: u64;
   public encodings: Array<i64, 9>;
   public connections: u64;
+  public started: u64;
 }
 
 public struct Keyspace {
@@ -73,8 +74,7 @@ public struct Keyspace {
 }
 
 public struct Time {
-  doc "The clocks as one command sees them: now, nanoseconds from the program's origin that new expiries count from; unix_ms, calendar milliseconds; check, the instant an expiry is compared against, which is zero while a file is replayed; and whether a file is being replayed.";
-  public now: u64;
+  doc "The clock as one command sees it: unix_ms, calendar milliseconds, which a relative expiry counts from; check, the instant an expiry is compared against, unix_ms while clients are served and zero while a file is replayed; and whether a file is being replayed.";
   public unix_ms: u64;
   public check: u64;
   public loading: Bool;
@@ -94,7 +94,7 @@ public binding DueOrder : PriorityOrder<Due, KeyEnv> {
 
 public fn keyspace_table() -> made: KeyedTable<Entry> pure doc "An empty table of entries sized for 2^18 keys, as a new keyspace's table is, and as FLUSHALL's is.";
 
-public fn keyspace_new(seed: u64, logging: Bool, password: Bytes, timeout: u64) -> made: Keyspace pure doc "An empty keyspace, its table made by keyspace_table, appending changes to the append-only file's pending bytes when logging is true, whose SPOP draws start from the seed, beside a server's state that requires the password, none when it is empty, keeps a silent client timeout seconds, none when it is zero, and holds Redis 7.0.15's defaults for the encoding parameters.";
+public fn keyspace_new(seed: u64, logging: Bool, password: Bytes, timeout: u64, started: u64) -> made: Keyspace pure doc "An empty keyspace, its table made by keyspace_table, appending changes to the append-only file's pending bytes when logging is true, whose SPOP draws start from the seed, beside a server's state that requires the password, none when it is empty, keeps a silent client timeout seconds, none when it is zero, holds Redis 7.0.15's defaults for the encoding parameters, and records started, the calendar time in milliseconds at which the server started.";
 
 public fn keyspace_share(store: &Keyspace) -> made: Keyspace reads(store) doc "Another context's handle to the same keyspace.";
 
@@ -102,11 +102,13 @@ public fn keyspace_logging(store: &Keyspace, logging: Bool) -> made: Keyspace re
 
 public fn expired(expires: u64, now: u64) -> reached: Bool pure doc "Whether an expiry, zero for none, has been reached at now.";
 
-public fn remove_expired(store: &Keyspace, key: &[u8], now: u64) -> result: unit reads(store), reads(key) waits doc "Removes the key when its expiry has been reached at now, for a command that found it expired in a statement that only read it; a key set again since keeps its value.";
+public fn remove_expired(store: &Keyspace, key: &[u8], now: u64) -> result: unit reads(store), reads(key) waits doc "Removes the key when its expiry has been reached at now, for a command that found it expired in a statement that only read it, recording the removal as log_removal does; a key set again since keeps its value.";
 
-public fn expire_batch(store: &Keyspace, now: u64, env: &KeyEnv, batch: &Box<Slots<Due>>) -> more: Bool reads(store), reads(env), writes(batch) waits doc "Takes up to 256 queued expiries that have been reached, the earliest first, in one atomic statement, then removes each key whose expiry is still the one queued in a statement on that key, and returns whether more may be due. A queued expiry that no longer matches its key's, because the key was set, given another expiry or removed since, is dropped. The batch is scratch space the caller keeps.";
+public fn expire_batch(store: &Keyspace, now: u64, env: &KeyEnv, batch: &Box<Slots<Due>>) -> more: Bool reads(store), reads(env), writes(batch) waits doc "Takes up to 256 queued expiries that have been reached, the earliest first, in one atomic statement, then removes each key whose expiry is still the one queued in a statement on that key, recording the removal as log_removal does, and returns whether more may be due. A queued expiry that no longer matches its key's, because the key was set, given another expiry or removed since, is dropped. The batch is scratch space the caller keeps.";
 
 public fn queue_expiry(meta: &Meta, key: &[u8], at: u64, env: &KeyEnv) -> result: unit reads(key), reads(env), writes(meta) doc "Queues a key's new expiry for active removal; one past the queue's ceiling is left to lazy removal.";
+
+public fn log_removal(log: &Box<Slots<u8>>, key: &[u8]) -> result: unit reads(key), writes(log) doc "Appends DEL key, as Redis 7.0.15 propagates the removal of a key whose expiry has passed, so that a replay, which counts no key as expired, removes the key where the server did and a later command finds it absent there too.";
 
 public fn log_count(log: &Box<Slots<u8>>, count: u64, room: u64) -> result: unit writes(log) doc "Makes room for a command of about room bytes and appends the header of a RESP array of count elements.";
 

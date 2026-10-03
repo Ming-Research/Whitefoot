@@ -337,13 +337,15 @@ fn server_copy(store: &Keyspace) -> made: ServerState reads(store) waits {
   let timeout = 0_u64;
   let encodings = array_filled::<i64, 9>(value: 0_i64);
   let connections = 0_u64;
+  let started = 0_u64;
   atomic v = &store^.server {
     set password = bytes_copy(bytes: &v^.password);
     set timeout = v^.timeout;
     set encodings = v^.encodings;
     set connections = v^.connections;
+    set started = v^.started;
   }
-  return ServerState(password: move password, timeout: timeout, encodings: encodings, connections: connections);
+  return ServerState(password: move password, timeout: timeout, encodings: encodings, connections: connections, started: started);
 }
 
 fn reply_parameter_value(store: &Keyspace, client: &Client, which: u64, server: &ServerState) -> result: unit reads(store), reads(server), writes(client) {
