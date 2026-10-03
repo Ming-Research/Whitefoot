@@ -3464,3 +3464,19 @@ condition under which it is taken up.
   receive, so no wait should leave a key past it; the cause is unknown.
   Reopen when it recurs, with each `EXPIRE`'s instant and each read's clock
   logged in a run under load.
+- **The framework commands' reviews left four small items open.**
+  `memory_value`, `c_space` and `save_token_valid`, firn's readings of
+  Redis's memtoull and strtoll, sit in `apps/firn/commands/server.wf`, where
+  the README's layout puts such readings in `bytes`, beside `read_integer`
+  and `glob_match`. No case gives `CONFIG SET port` a value that does not
+  parse, so that branch of `run_config_set` is unchecked. The idle case in
+  `compiler/tests/programs/network.rs` pins a sending client's
+  once-a-second reading of the limit only loosely: its pings end about 1.9
+  seconds after the client's last reading, so a period up to that passes.
+  And its waits make it firn's longest case, about 20 seconds with the
+  build, where the whole group took 11.2 seconds at `51bc58e13`, while the
+  corpus stage is over its budget on ubuntu. Moving the readings to
+  `bytes`, adding the case, ending the pings 1.2 seconds after the last
+  reading, and running the first route's checks beside the second's would
+  settle them. Reopen with the next change to `CONFIG SET` or the idle
+  limit, or when the corpus stage needs the time back.
