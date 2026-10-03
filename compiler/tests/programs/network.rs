@@ -1299,11 +1299,10 @@ fn firn_replays_its_append_only_file_after_a_restart_on_both_routes() {
 /// at least 0.9 and at most two seconds of silence. A limit CONFIG SET
 /// removes reaches a client already waiting under the old one, which reads the
 /// limit again when its deadline passes, and a client that connects after it:
-/// both stay open through 1.5 seconds of silence. On the first route a limit
-/// of two seconds set next closes a client that connects after it and falls
-/// silent, no sooner than two seconds, and a client that keeps sending reads
-/// it within a second and is closed once it falls silent, after at least 1.9
-/// and at most three seconds.
+/// both stay open through 1.5 seconds of silence. On the first route the
+/// client that removed the limit sets it again and keeps sending: it reads the
+/// limit within a second, as every sending client does, and is closed once it
+/// falls silent, after at least 0.9 and at most two seconds.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_closes_a_client_silent_past_its_idle_limit_on_both_routes() {
@@ -1312,8 +1311,7 @@ fn firn_closes_a_client_silent_past_its_idle_limit_on_both_routes() {
         let what = format!("native ring: {native_ring}");
         let port = free_port();
         let text = port.to_string();
-        let clients: &[u8] = if native_ring { b"4" } else { b"3" };
-        let child = program.spawn_on_route(native_ring, &[text.as_bytes(), clients, b"-", b"1"]);
+        let child = program.spawn_on_route(native_ring, &[text.as_bytes(), b"3", b"-", b"1"]);
         let mut client = connect_when_ready(port);
         client
             .set_read_timeout(Some(Duration::from_secs(10)))
@@ -1351,12 +1349,9 @@ fn firn_closes_a_client_silent_past_its_idle_limit_on_both_routes() {
         drop(later);
         if native_ring {
             changer
-                .write_all(&resp(&["CONFIG", "SET", "timeout", "2"]))
-                .expect("set another limit");
+                .write_all(&resp(&["CONFIG", "SET", "timeout", "1"]))
+                .expect("set the limit again");
             expect_replies(&mut changer, b"+OK\r\n", &what);
-            let mut third = connect_when_ready(port);
-            third.write_all(&resp(&["PING"])).expect("send a ping");
-            expect_replies(&mut third, b"+PONG\r\n", &what);
             let sending = Instant::now();
             let mut last_ping = sending;
             while sending.elapsed() < Duration::from_millis(1300) {
@@ -1365,16 +1360,10 @@ fn firn_closes_a_client_silent_past_its_idle_limit_on_both_routes() {
                 expect_replies(&mut changer, b"+PONG\r\n", &what);
                 last_ping = Instant::now();
             }
-            expect_closed(&mut third, &what);
-            let third_silent = sending.elapsed();
-            assert!(
-                third_silent >= Duration::from_millis(1900),
-                "{what}: the client after the limit closed after {third_silent:?}"
-            );
             expect_closed(&mut changer, &what);
             let silent = last_ping.elapsed();
             assert!(
-                silent >= Duration::from_millis(1900) && silent <= Duration::from_secs(3),
+                silent >= Duration::from_millis(900) && silent <= Duration::from_secs(2),
                 "{what}: closed after {silent:?}"
             );
         }

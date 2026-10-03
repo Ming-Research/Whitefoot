@@ -3321,15 +3321,20 @@ condition under which it is taken up.
   `GETKEYS` answer as unknown subcommands; `KEYS` and `SCAN`, which can match
   with `glob_match` (`apps/firn/bytes/bytes.wf`), RESP3, which
   `HELLO 3` refuses, the blocking list commands, `MULTI` and `EXEC`, publish
-  and subscribe, and a random hash seed. No test of Redis's own suite reaches
-  firn, since the suite's framework sends `FLUSHALL` and `FUNCTION FLUSH`
-  at the start of every block and ends the unit when either fails; with
-  those calls allowed to fail, firn at `cea9188d4` passes 107 of the 1,994
-  tests Redis passes there, 25 of which a server knowing only `PING` passes
-  too, most of the rest stopping at a command firn lacks, and redis-py 8.1.0
-  fails every call made with its defaults, since it opens each connection
-  with `HELLO 3`
-  ([redis-compat](../research/experiments/redis-compat/README.md)). The
+  and subscribe, and a random hash seed. The calls the suite's framework
+  makes before any test, `FLUSHALL`, `FUNCTION FLUSH`, `CONFIG GET` and
+  `CONFIG SET` of a block's overrides, `INFO` and `DEBUG LOG`, are answered,
+  so Redis's own suite runs on firn as released until a test reaches a
+  command firn lacks, but for a block whose override names a parameter firn
+  refuses, `appendonly yes`, which ends `unit/type/stream`, or does not
+  know, `slowlog-log-slower-than`, which ends `unit/slowlog`. The
+  measurement in redis-compat is of firn at `cea9188d4`, before those
+  commands, when every unit stopped at the first `FLUSHALL`; with the calls
+  allowed to fail it passed 107 of the 1,994 tests Redis passes there, 25 of
+  which a server knowing only `PING` passes too, and redis-py 8.1.0 fails
+  every call made with its defaults, since it opens each connection with
+  `HELLO 3` ([redis-compat](../research/experiments/redis-compat/README.md));
+  a new run belongs in that record. The
   owner sets the list for the deployment stage; reopen when this stage's
   measurement is handed back.
 - **firn reads a slow request again from its start at every read.**
@@ -3411,3 +3416,15 @@ condition under which it is taken up.
   shared statement on each command, which would serialize every connection.
   Reopen when firn is monitored through `INFO`, or with the next work on
   firn's statistics.
+- **A signal stops firn without writing its pending append-only bytes.**
+  firn handles no signal, and the standard library's `std::process`
+  delivers none, so SIGTERM or SIGINT ends it at once, losing the changes its
+  writer (`write_log` in `apps/firn/persistence/persistence.wf`) has not yet
+  appended, up to one 10-millisecond cycle, and the bytes not yet synced,
+  where Redis on SIGTERM appends and syncs its file before it exits, as its
+  `SHUTDOWN` command does, which firn lacks. Seen on 2026-10-03: a `SET` sent
+  a few milliseconds before a SIGTERM was absent after the replay. A signal
+  delivered to a context could set the keyspace's `stopping`, which makes the
+  writer append, sync and close, as it does once the client limit is
+  reached. Reopen with `SHUTDOWN`, or when firn runs under a service manager
+  that stops it with SIGTERM.
