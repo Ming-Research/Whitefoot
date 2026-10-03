@@ -1204,11 +1204,12 @@ fn firn_removes_expired_keys_no_command_reads_on_both_routes() {
 /// and a `SET` with NX after `EXISTS`, `GET`, `TTL`, `TYPE`, `DEL`, `PERSIST`,
 /// `EXPIRE`, a negative `EXPIRE`, `GETDEL` or `GETEX` found it so, hold their
 /// values after the restart, the `INCR` counting from zero and KEEPTTL keeping
-/// no expiry. So does a list pushed to or moved to once it had expired, and
-/// so do keys removed on expiry before an RPUSH by a list command that
-/// pops, sets, removes, trims, inserts or moves from. The first run ends
-/// once its one client has closed, after its writer appended and synced
-/// the last changes.
+/// no expiry. So do a list pushed to or moved to and a set added to or moved
+/// to once they had expired, and keys removed on expiry before an RPUSH by
+/// a list command that pops, sets, removes, trims, inserts or moves from, or
+/// a set command that removes, pops, moves from or stores from. The first
+/// run ends once its one client has closed, after its writer appended and
+/// synced the last changes.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_replays_its_append_only_file_after_a_restart_on_both_routes() {
@@ -1283,7 +1284,7 @@ fn firn_replays_its_append_only_file_after_a_restart_on_both_routes() {
             b"+OK\r\n+OK\r\n+OK\r\n:1\r\n:2\r\n:1\r\n+OK\r\n:1\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n:6\r\n+OK\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n+OK\r\n+OK\r\n:-2\r\n+OK\r\n+OK\r\n+none\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n",
             &what,
         );
-        // Keys a list command finds expired: each is given an expiry of one
+        // Keys a list or set command finds expired: each is given an expiry of one
         // millisecond and written five milliseconds later, by a command that
         // writes it or by one that only removes it, then by RPUSH.
         let mut batch = Vec::new();
@@ -1297,6 +1298,14 @@ fn firn_replays_its_append_only_file_after_a_restart_on_both_routes() {
             vec!["RPUSH", "list:from", "old"],
             vec!["RPUSH", "list:to", "old"],
             vec!["RPUSH", "list:source", "m"],
+            vec!["SADD", "set:add", "old"],
+            vec!["SADD", "set:rem", "old"],
+            vec!["SADD", "set:pop", "old"],
+            vec!["SADD", "set:from", "old"],
+            vec!["SADD", "set:to", "old"],
+            vec!["SADD", "set:store", "old"],
+            vec!["SADD", "set:moving", "m"],
+            vec!["SADD", "set:other", "old"],
         ] {
             batch.extend(resp(&request));
         }
@@ -1309,11 +1318,17 @@ fn firn_replays_its_append_only_file_after_a_restart_on_both_routes() {
             "list:insert",
             "list:from",
             "list:to",
+            "set:add",
+            "set:rem",
+            "set:pop",
+            "set:from",
+            "set:to",
+            "set:store",
         ] {
             batch.extend(resp(&["PEXPIRE", key, "1"]));
         }
         client.write_all(&batch).expect("give keys a brief expiry");
-        expect_replies(&mut client, &b":1\r\n".repeat(17), &what);
+        expect_replies(&mut client, &b":1\r\n".repeat(31), &what);
         std::thread::sleep(Duration::from_millis(5));
         let mut batch = Vec::new();
         for request in [
@@ -1325,6 +1340,12 @@ fn firn_replays_its_append_only_file_after_a_restart_on_both_routes() {
             vec!["LINSERT", "list:insert", "BEFORE", "old", "v"],
             vec!["LMOVE", "list:from", "list:nowhere", "LEFT", "LEFT"],
             vec!["LMOVE", "list:source", "list:to", "LEFT", "RIGHT"],
+            vec!["SADD", "set:add", "new"],
+            vec!["SREM", "set:rem", "old"],
+            vec!["SPOP", "set:pop"],
+            vec!["SMOVE", "set:from", "set:nowhere", "old"],
+            vec!["SMOVE", "set:moving", "set:to", "m"],
+            vec!["SINTERSTORE", "set:stored", "set:store", "set:other"],
         ] {
             batch.extend(resp(&request));
         }
@@ -1335,15 +1356,18 @@ fn firn_replays_its_append_only_file_after_a_restart_on_both_routes() {
             "list:trim",
             "list:insert",
             "list:from",
+            "set:rem",
+            "set:pop",
+            "set:from",
+            "set:store",
         ] {
             batch.extend(resp(&["RPUSH", key, "new"]));
         }
         client
             .write_all(&batch)
             .expect("write the keys found expired");
-        let mut expected =
-            b":1\r\n$-1\r\n-ERR no such key\r\n:0\r\n+OK\r\n:0\r\n$-1\r\n$1\r\nm\r\n".to_vec();
-        expected.extend_from_slice(&b":1\r\n".repeat(6));
+        let mut expected = b":1\r\n$-1\r\n-ERR no such key\r\n:0\r\n+OK\r\n:0\r\n$-1\r\n$1\r\nm\r\n:1\r\n:0\r\n$-1\r\n:0\r\n:1\r\n:0\r\n".to_vec();
+        expected.extend_from_slice(&b":1\r\n".repeat(10));
         expect_replies(&mut client, &expected, &what);
         drop(client);
         let (status, _) = finished(child);
@@ -1389,7 +1413,7 @@ fn firn_replays_its_append_only_file_after_a_restart_on_both_routes() {
         client.write_all(&batch).expect("read the replayed keys");
         expect_replies(
             &mut client,
-            b"$-1\r\n$-1\r\n$1\r\nv\r\n$1\r\n2\r\n$1\r\nv\r\n:-1\r\n$1\r\nv\r\n:-1\r\n$-1\r\n:26\r\n$3\r\nnew\r\n$1\r\n1\r\n:-1\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n:-1\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n",
+            b"$-1\r\n$-1\r\n$1\r\nv\r\n$1\r\n2\r\n$1\r\nv\r\n:-1\r\n$1\r\nv\r\n:-1\r\n$-1\r\n:33\r\n$3\r\nnew\r\n$1\r\n1\r\n:-1\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n:-1\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n",
             &what,
         );
         client
@@ -1423,6 +1447,15 @@ fn firn_replays_its_append_only_file_after_a_restart_on_both_routes() {
                 "*1\r\n$3\r\nnew\r\n",
             ),
             (vec!["LRANGE", "list:to", "0", "-1"], "*1\r\n$1\r\nm\r\n"),
+            (vec!["LRANGE", "set:rem", "0", "-1"], "*1\r\n$3\r\nnew\r\n"),
+            (vec!["LRANGE", "set:pop", "0", "-1"], "*1\r\n$3\r\nnew\r\n"),
+            (vec!["LRANGE", "set:from", "0", "-1"], "*1\r\n$3\r\nnew\r\n"),
+            (
+                vec!["LRANGE", "set:store", "0", "-1"],
+                "*1\r\n$3\r\nnew\r\n",
+            ),
+            (vec!["SMEMBERS", "set:add"], "*1\r\n$3\r\nnew\r\n"),
+            (vec!["SMEMBERS", "set:to"], "*1\r\n$1\r\nm\r\n"),
         ];
         let mut batch = Vec::new();
         for (request, _) in &reads {
@@ -1493,8 +1526,14 @@ fn firn_closes_a_client_silent_past_its_idle_limit_on_both_routes() {
 /// removes, trims, inserts into, searches and moves list elements, an
 /// absent key looked up before an index that is no integer, an option read
 /// up to a zero byte as Redis's strcasecmp reads it, and a source equal to
-/// its destination rotating its list. The expected bytes are those
-/// redis-server 7.0.15 returns for the same bytes.
+/// its destination rotating its list; a third asks set membership, counts,
+/// stores and moves sets, the destination of a store whatever it held and
+/// one emptied by an empty result removed, with Redis's errors for counts
+/// and options. The expected bytes are those redis-server 7.0.15 returns
+/// for the same bytes. Last, SRANDMEMBER with a positive count answers
+/// that many distinct members, both below and above a third of the set, and
+/// with a negative count that many members, which then must repeat, as Redis
+/// promises.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_answers_the_value_types_as_redis_does() {
@@ -1605,6 +1644,80 @@ fn firn_answers_the_value_types_as_redis_does() {
         b":5\r\n$1\r\nb\r\n$-1\r\n-ERR value is not an integer or out of range\r\n$-1\r\n:1\r\n*2\r\n:4\r\n:0\r\n-ERR RANK can't be zero: use 1 to start from the first match, 2 from the second ... or use negative to start from the end of the list\r\n-ERR syntax error\r\n:3\r\n+OK\r\n-ERR index out of range\r\n-ERR no such key\r\n*3\r\n$1\r\na\r\n$1\r\nb\r\n$1\r\nC\r\n:5\r\n:2\r\n*3\r\n$1\r\na\r\n$1\r\nb\r\n$1\r\nb\r\n:2\r\n:3\r\n:4\r\n:-1\r\n-ERR syntax error\r\n*4\r\n$1\r\na\r\n$1\r\nx\r\n$1\r\nb\r\n$1\r\ny\r\n:5\r\n+OK\r\n*3\r\n$1\r\n2\r\n$1\r\n3\r\n$1\r\n4\r\n:0\r\n:1\r\n:2\r\n:3\r\n*3\r\n$1\r\na\r\n$1\r\nm\r\n$1\r\nz\r\n:3\r\n*0\r\n*2\r\n$1\r\nc\r\n$1\r\nb\r\n:3\r\n$1\r\na\r\n$1\r\nc\r\n$1\r\nb\r\n-ERR syntax error\r\n+OK\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n$-1\r\n*1\r\n$1\r\nc\r\n*2\r\n$1\r\nb\r\n$1\r\na\r\n",
         "the list batch",
     );
+    let mut batch = Vec::new();
+    for request in [
+        vec!["SADD", "sm", "a", "b"],
+        vec!["SISMEMBER", "sm", "a"],
+        vec!["SMISMEMBER", "sm", "a", "z"],
+        vec!["SMISMEMBER", "nosm", "a", "b"],
+        vec!["SMEMBERS", "nosm"],
+        vec!["SRANDMEMBER", "sm", "0"],
+        vec!["SRANDMEMBER", "sm", "1", "2"],
+        vec!["SRANDMEMBER", "sm", "-9223372036854775808"],
+        vec!["SPOP", "sm", "1", "2"],
+        vec!["SCARD", "sm"],
+        vec!["SADD", "sc1", "a", "b", "c", "d"],
+        vec!["SADD", "sc2", "c", "d", "e"],
+        vec!["SINTERCARD", "2", "sc1", "sc2"],
+        vec!["SINTERCARD", "2", "sc1", "sc2", "LIMIT", "1"],
+        vec!["SINTERCARD", "0", "sc1"],
+        vec!["SINTERCARD", "3", "sc1", "sc2"],
+        vec!["SINTERSTORE", "si", "sc1", "sc2"],
+        vec!["SUNIONSTORE", "su", "sc1", "sc2"],
+        vec!["SDIFFSTORE", "sd", "sc1", "sc2"],
+        vec!["SDIFF", "sc2", "sc1"],
+        vec!["SINTER", "sc1", "nosuch"],
+        vec!["SUNION", "nosuch"],
+        vec!["SINTERSTORE", "si", "sc1", "nosuch"],
+        vec!["EXISTS", "si"],
+        vec!["SADD", "sv1", "e", "f"],
+        vec!["SMOVE", "sv1", "sv2", "e"],
+        vec!["SMEMBERS", "sv2"],
+        vec!["SMOVE", "sv1", "sv2", "zz"],
+        vec!["SMEMBERS", "sv1"],
+        vec!["SET", "sstr", "v"],
+        vec!["SINTER", "sc1", "sstr"],
+        vec!["SMOVE", "nosuch", "sstr", "a"],
+        vec!["SUNIONSTORE", "sstr", "sv2"],
+        vec!["TYPE", "sstr"],
+    ] {
+        batch.extend(resp(&request));
+    }
+    client.write_all(&batch).expect("send the set batch");
+    expect_replies(
+        &mut client,
+        b":2\r\n:1\r\n*2\r\n:1\r\n:0\r\n*2\r\n:0\r\n:0\r\n*0\r\n*0\r\n-ERR syntax error\r\n-ERR value is out of range, value must between -9223372036854775807 and 9223372036854775807\r\n-ERR syntax error\r\n:2\r\n:4\r\n:3\r\n:2\r\n:1\r\n-ERR numkeys should be greater than 0\r\n-ERR Number of keys can't be greater than number of args\r\n:2\r\n:5\r\n:2\r\n*1\r\n$1\r\ne\r\n*0\r\n*0\r\n:0\r\n:0\r\n:2\r\n:1\r\n*1\r\n$1\r\ne\r\n:0\r\n*1\r\n$1\r\nf\r\n+OK\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n:0\r\n:1\r\n+set\r\n",
+        "the set batch",
+    );
+    // Draws from 60 members: 20 and 59 distinct ones, the two ways firn
+    // chooses them, and 90 that must repeat some.
+    let members = (0..60)
+        .map(|index| format!("m{index:02}"))
+        .collect::<Vec<_>>();
+    let mut add = vec!["SADD", "mr"];
+    add.extend(members.iter().map(String::as_str));
+    client.write_all(&resp(&add)).expect("add 60 members");
+    expect_replies(&mut client, b":60\r\n", "the members to draw from");
+    for (count, distinct) in [(20_i64, true), (59, true), (-90, false)] {
+        let what = format!("SRANDMEMBER mr {count}");
+        client
+            .write_all(&resp(&["SRANDMEMBER", "mr", &count.to_string()]))
+            .expect("draw members");
+        let length = count.unsigned_abs() as usize;
+        assert_eq!(reply_line(&mut client, &what), format!("*{length}\r\n"));
+        let mut drawn = Vec::new();
+        for _ in 0..length {
+            assert_eq!(reply_line(&mut client, &what), "$3\r\n");
+            let member = reply_line(&mut client, &what).trim_end().to_owned();
+            assert!(members.contains(&member), "{what}: {member}");
+            drawn.push(member);
+        }
+        if distinct {
+            drawn.sort();
+            drawn.dedup();
+            assert_eq!(drawn.len(), length, "{what}: a member repeated");
+        }
+    }
     drop(client);
     let (status, _) = finished(child);
     assert_eq!(status, 0);
@@ -2134,7 +2247,8 @@ fn firn_carries_requests_and_replies_larger_than_its_windows() {
 /// a generator seeded by the clock at each start, would almost surely remove
 /// others. A list replaced, removed from, trimmed, inserted into and pushed
 /// onto where it exists, and its elements moved to another list, holds what
-/// those commands left. A key the expiring context removed is recorded as
+/// those commands left, and so do the sets a member moved between and
+/// the results the three stores wrote. A key the expiring context removed is recorded as
 /// removed, as Redis
 /// propagates it, so a `SET` with NX that found it absent holds its value after
 /// the restart, where a replay keeping the expired key would refuse it.
@@ -2175,13 +2289,19 @@ fn firn_replays_the_value_types_from_its_append_only_file() {
         vec!["LMOVE", "k", "k2", "RIGHT", "LEFT"],
         vec!["RPOPLPUSH", "k", "k2"],
         vec!["LPOP", "k", "1"],
+        vec!["SADD", "t1", "a", "b", "c"],
+        vec!["SADD", "t2", "b", "c", "d"],
+        vec!["SMOVE", "t1", "t3", "a"],
+        vec!["SINTERSTORE", "ti", "t1", "t2"],
+        vec!["SUNIONSTORE", "tu", "t1", "t2"],
+        vec!["SDIFFSTORE", "td", "t2", "t1"],
     ] {
         batch.extend(resp(&request));
     }
     client.write_all(&batch).expect("send the changes");
     expect_replies(
         &mut client,
-        b":3\r\n$1\r\na\r\n:1\r\n:2\r\n*2\r\n$1\r\na\r\n$1\r\n1\r\n:1\r\n:50\r\n+OK\r\n:6\r\n+OK\r\n:1\r\n+OK\r\n:5\r\n:6\r\n:7\r\n$1\r\nq\r\n$1\r\ne\r\n*1\r\n$1\r\np\r\n",
+        b":3\r\n$1\r\na\r\n:1\r\n:2\r\n*2\r\n$1\r\na\r\n$1\r\n1\r\n:1\r\n:50\r\n+OK\r\n:6\r\n+OK\r\n:1\r\n+OK\r\n:5\r\n:6\r\n:7\r\n$1\r\nq\r\n$1\r\ne\r\n*1\r\n$1\r\np\r\n:3\r\n:3\r\n:1\r\n:2\r\n:3\r\n:1\r\n",
         "the first run's changes",
     );
     client
@@ -2234,13 +2354,18 @@ fn firn_replays_the_value_types_from_its_append_only_file() {
         vec!["GET", "lapse"],
         vec!["LRANGE", "k", "0", "-1"],
         vec!["LRANGE", "k2", "0", "-1"],
+        vec!["SCARD", "t1"],
+        vec!["SMEMBERS", "t3"],
+        vec!["SMISMEMBER", "ti", "b", "c", "d"],
+        vec!["SMISMEMBER", "tu", "b", "c", "d"],
+        vec!["SMEMBERS", "td"],
     ] {
         batch.extend(resp(&request));
     }
     client.write_all(&batch).expect("read the replayed values");
     expect_replies(
         &mut client,
-        b"*2\r\n$1\r\nb\r\n$1\r\nc\r\n$1\r\nv\r\n:1\r\n$1\r\n2\r\n$19\r\n0.10000000000000001\r\n:25\r\n:0\r\n$3\r\nnew\r\n*4\r\n$1\r\nA\r\n$1\r\nx\r\n$1\r\nb\r\n$1\r\nd\r\n*2\r\n$1\r\ne\r\n$1\r\nq\r\n",
+        b"*2\r\n$1\r\nb\r\n$1\r\nc\r\n$1\r\nv\r\n:1\r\n$1\r\n2\r\n$19\r\n0.10000000000000001\r\n:25\r\n:0\r\n$3\r\nnew\r\n*4\r\n$1\r\nA\r\n$1\r\nx\r\n$1\r\nb\r\n$1\r\nd\r\n*2\r\n$1\r\ne\r\n$1\r\nq\r\n:2\r\n*1\r\n$1\r\na\r\n*3\r\n:1\r\n:1\r\n:0\r\n*3\r\n:1\r\n:1\r\n:1\r\n*1\r\n$1\r\nd\r\n",
         "the replayed values",
     );
     drop(client);
