@@ -22,7 +22,7 @@ Decision: Ordinary enum slots remain the owning sparse-map baseline, because the
 
 Decision: Data-dependent occupancy is stored by the program in ordinary tags or options, because no window slot carries a compiler-maintained tag or can be observed empty, instead of per-slot occupancy metadata or vacancy type states.
 
-Decision: Fieldless opaque structs retain a uniform allocation-fit ceiling independent of their linked representation, because native catalog sizes must not choose source acceptance; allocation-size arithmetic uses the ordinary overflow proof while heap exhaustion remains outside source proof obligations, instead of link-selected allocation bounds or unavailable opaque allocation-fit queries.
+Decision: Fieldless opaque structs retain a uniform layout ceiling independent of their linked representation, because native catalog sizes must not choose source behavior or the ceilings target qualification holds a layout to, while heap exhaustion remains outside source proof obligations, instead of link-selected layout ceilings or unavailable opaque layout queries.
 
 Rejected:
 - Store brands, providers, and region parameters carried inside types: rejected because one heap serves every allocation and a reference never outlives the function that formed it, so a store name in a type protects nothing.

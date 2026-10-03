@@ -823,6 +823,10 @@ fn window_block_oom_label(result: IrValueId) -> String {
     format!("window.block.oom.v{}", result.ordinal())
 }
 
+fn window_block_allocate_label(result: IrValueId) -> String {
+    format!("window.block.allocate.v{}", result.ordinal())
+}
+
 impl<'program, 'state> FunctionEmitter<'program, 'state> {
     /// The byte size of one element of this window, as the target's own
     /// layout of it. Target qualification proved it no larger than the
@@ -852,15 +856,14 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     }
 
     /// Allocate a positive runtime Slots payload or use the static anchor at
-    /// zero physical extent. Target qualification has checked the
-    /// stride, allocation domain and alignment before this multiplication.
+    /// zero physical extent. The checked allocation-size calculation rejects
+    /// overflow and the selected target's byte limit before allocation.
     fn allocate_window_payload(
         &mut self,
         result: IrValueId,
         capacity: IrValueId,
         element_size: &str,
     ) -> Result<String, BackendFailure> {
-        let extent = self.next_temporary()?;
         let zero = self.next_temporary()?;
         let selected = self.next_temporary()?;
         let payload = self.next_temporary()?;
@@ -870,16 +873,18 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let ready = window_block_ready_label(result);
         let oom = window_block_oom_label(result);
         self.output.symbol(EMPTY_SLOTS_ANCHOR);
+        let checked = format!("window.payload.checked.v{}", result.ordinal());
+        let count = self.value_name(capacity);
+        let extent = self.emit_allocation_size(&count, element_size, "0", &oom, &checked)?;
         writeln!(self.output,
-            "  %{extent} = mul nuw i64 {}, {element_size}\n  %{zero} = icmp eq i64 %{extent}, 0\n  br i1 %{zero}, label %{empty}, label %{allocate}",
-            self.value_name(capacity)
+            "  %{zero} = icmp eq i64 {extent}, 0\n  br i1 %{zero}, label %{empty}, label %{allocate}"
         ).map_err(|_| BackendFailure::TextEmission)?;
         self.output.open_block(empty.clone());
         writeln!(self.output, "  br label %{ready}")?;
         self.output.open_block(allocate.clone());
         self.output.symbol("malloc");
         writeln!(self.output,
-            "  %{payload} = call ptr @malloc(i64 %{extent})\n  %{nonnull} = icmp ne ptr %{payload}, null\n  br i1 %{nonnull}, label %{ready}, label %{oom}"
+            "  %{payload} = call ptr @malloc(i64 {extent})\n  %{nonnull} = icmp ne ptr %{payload}, null\n  br i1 %{nonnull}, label %{ready}, label %{oom}"
         ).map_err(|_| BackendFailure::TextEmission)?;
         self.output.open_block(oom.to_string());
         self.output.symbol("wf_resource_abort");
@@ -1254,21 +1259,20 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         }
         let header_size = self.window_header_size(shape, block_type)?;
         let block = self.output.type_name(self.program, block_type)?;
-        let slots_bytes = self.next_temporary()?;
-        let bytes = self.next_temporary()?;
         let nonnull = self.next_temporary()?;
         let ready = window_block_ready_label(result);
         let oom = window_block_oom_label(result);
+        let allocate = window_block_allocate_label(result);
         {
-            let emission_argument_0 = self.value_name(capacity);
-            let emission_argument_1 = self.value_name(result);
-            let emission_argument_2 = self.value_name(result);
-
+            let count = self.value_name(capacity);
+            let address = self.value_name(result);
+            let bytes =
+                self.emit_allocation_size(&count, &element_size, &header_size, &oom, &allocate)?;
             {
                 self.output.symbol("malloc");
                 write!(
                     self.output,
-                    "  %{slots_bytes} = mul nuw i64 {emission_argument_0}, {element_size}\n  %{bytes} = add nuw i64 %{slots_bytes}, {header_size}\n  {emission_argument_1} = call ptr @malloc(i64 %{bytes})\n  %{nonnull} = icmp ne ptr {emission_argument_2}, null\n  br i1 %{nonnull}, label %{ready}, label %{oom}\n"
+                    "  {address} = call ptr @malloc(i64 {bytes})\n  %{nonnull} = icmp ne ptr {address}, null\n  br i1 %{nonnull}, label %{ready}, label %{oom}\n"
                 )
             }?;
             self.output.open_block(oom.to_string());
@@ -1363,7 +1367,6 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let old_capacity = self.next_temporary()?;
         let old_payload = self.next_temporary()?;
         let old_bytes = self.next_temporary()?;
-        let bytes = self.next_temporary()?;
         let full = self.next_temporary()?;
         let positive = self.next_temporary()?;
         let reuse = self.next_temporary()?;
@@ -1384,9 +1387,15 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let ready = window_block_ready_label(result);
         let oom = window_block_oom_label(result);
         writeln!(self.output,
-            "  %{length} = load i64, ptr {length_field}\n  %{old_capacity} = load i64, ptr {capacity_field}\n  %{old_payload} = load ptr, ptr {payload_field}\n  %{old_bytes} = mul nuw i64 %{old_capacity}, {element_size}\n  %{bytes} = mul nuw i64 {}, {element_size}\n  %{zero} = icmp eq i64 %{bytes}, 0\n  br i1 %{zero}, label %{unchanged}, label %{positive_new}",
-            self.value_name(capacity)
+            "  %{length} = load i64, ptr {length_field}\n  %{old_capacity} = load i64, ptr {capacity_field}\n  %{old_payload} = load ptr, ptr {payload_field}\n  %{old_bytes} = mul nuw i64 %{old_capacity}, {element_size}"
         ).map_err(|_| BackendFailure::TextEmission)?;
+        let checked = format!("window.grow.checked.v{}", result.ordinal());
+        let count = self.value_name(capacity);
+        let bytes = self.emit_allocation_size(&count, &element_size, "0", &oom, &checked)?;
+        writeln!(
+            self.output,
+            "  %{zero} = icmp eq i64 {bytes}, 0\n  br i1 %{zero}, label %{unchanged}, label %{positive_new}"
+        )?;
         self.output.open_block(unchanged.clone());
         writeln!(self.output, "  br label %{ready}")?;
         self.output.open_block(positive_new);
@@ -1399,12 +1408,12 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         self.output.open_block(reallocate.clone());
         self.output.symbol("realloc");
         writeln!(self.output,
-            "  %{resized} = call ptr @realloc(ptr %{old_payload}, i64 %{bytes})\n  %{resized_nonnull} = icmp ne ptr %{resized}, null\n  br i1 %{resized_nonnull}, label %{ready}, label %{oom}"
+            "  %{resized} = call ptr @realloc(ptr %{old_payload}, i64 {bytes})\n  %{resized_nonnull} = icmp ne ptr %{resized}, null\n  br i1 %{resized_nonnull}, label %{ready}, label %{oom}"
         ).map_err(|_| BackendFailure::TextEmission)?;
         self.output.open_block(copy.clone());
         self.output.symbol("malloc");
         writeln!(self.output,
-            "  %{fresh} = call ptr @malloc(i64 %{bytes})\n  %{fresh_nonnull} = icmp ne ptr %{fresh}, null\n  br i1 %{fresh_nonnull}, label %{copy_ready}, label %{oom}"
+            "  %{fresh} = call ptr @malloc(i64 {bytes})\n  %{fresh_nonnull} = icmp ne ptr %{fresh}, null\n  br i1 %{fresh_nonnull}, label %{copy_ready}, label %{oom}"
         ).map_err(|_| BackendFailure::TextEmission)?;
         self.output.open_block(copy_ready.clone());
         writeln!(

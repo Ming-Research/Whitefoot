@@ -5,6 +5,46 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-02 Keep data only proofs read ordinary, and leave its cost to the compiler
+
+Nodes: language/checks-and-proofs
+
+Owner-approved: 2026-10-02, in the session, written in Chinese, after the handoff of PR #210's card and the witnesses written under its option A: Q25 A-prime, no proof declarations and the cost measured first ("Q25 choose A-prime, measure the cost first"); after the measurement, the node's ground as shown, naming what was measured ("agreed")
+
+Summary: Data that only proofs read stays ordinary data under no declaration of its own, and removing its run-time cost is the compiler's work once a measurement shows it worth a pass, because a proof marking splits every name into two kinds with a one-way flow between them that a reader must keep straight, for a saving bounded below 1% of Snowghost's sequential style stage on two pages, while the compiler, which erases proofs before lowering and sees every call, finds the same data unaided ([proof-only data](../research/investigations/proof-only-data/DESIGN.md)). Proof declarations, proof-only parameters and a logical model are refused.
+
+## 2026-10-02 Make box_segments_filled heap exhaustion instead of a refusal past 2^62
+
+Nodes: language/checks-and-proofs/obligation-discharge, language/checks-and-proofs/range-facts, language/data-model/storage-shapes, compiler/storage-representation
+
+Owner-approved: 2026-10-02, in the session, written in Chinese: Q34 A ("for Q25 option A I need to see what the code actually looks like; the others agreed"); after the handoff of PR #211, which showed every rule change with its before and after behavior and these tree edits, the change as shown ("agreed")
+
+Summary: `box_segments_filled` returns its cell, summing its lengths and sizing its block at run time with the checked arithmetic of every other runtime allocation, so a total that wraps or a size the target cannot allocate is heap exhaustion, because its `None` covered only sizes above `2^62` bytes, which no supported heap can supply, while a smaller size the heap cannot supply already ended the program. Refused: keeping the target-independent predicate's `None`, and a `None` sized by the selected target, which would make a result depend on the target. The storage-representation, storage-shapes and range-facts nodes drop the predicate and the `Some` route from their wording.
+
+## 2026-10-02 Compute an allocation's size at run time, and make a size the target cannot allocate heap exhaustion
+
+Nodes: language/checks-and-proofs/obligation-discharge, language/data-model, compiler/diagnostic-repairs, compiler/prelude-records
+
+Owner-approved: 2026-10-02, in the session, written in Chinese: after the handoff of PR #206's cards, Q33 B ("apart from 25, which I think needs research, I agree to all the others"); after the handoff of PR #209, which showed every rule change with its before and after behavior, the change as shown ("for Q25 option A I need to see what the code actually looks like; the others agreed")
+
+Summary: An allocation's byte size is computed at run time with checked arithmetic, and a size that wraps `u64` or exceeds the selected target's runtime-allocation maximum is heap exhaustion before the allocator is asked, so no allocation count carries a static obligation, because a size the target cannot represent and a size the heap cannot supply both end the program from the trusted base, while proving the bound made writers clamp counts to ceilings no program needed ([layout friction](../research/investigations/layout-friction/DESIGN.md)). The static obligation and standing length bounds are refused; the OP-9 repair, the target-stop report and the per-site count bound retire with the obligation, and the opaque-struct decision keeps a uniform layout ceiling without the allocation-size proof.
+
+## 2026-10-02 Separate callables from values in name competition, and name the call behind a lost bound
+
+Nodes: language/name-resolution, compiler/diagnostic-repairs
+
+Owner-approved: 2026-10-02, in the session, written in Chinese: after the handoff of PR #206's cards, Q29 A and Q32 B ("apart from 25, which I think needs research, I agree to all the others"); after the handoff of PR #207, which showed every rule change with its before and after behavior, Q35 A and the change as shown ("for Q25 option A I need to see what the code actually looks like; the others agreed")
+
+Summary: The lexical identifier domain splits into callables and values, a module alias being both, and two declarations compete only within a class, except that two declarations of one module's inventory compete whatever their class, because no use admits both a callable and a value while an alias binds by path alone; a local value beside a function of its spelling is therefore neither a redeclaration nor a shadow, which the layout census found cost every merge of separately written records renames ([layout friction](../research/investigations/layout-friction/DESIGN.md)). An unproved subscript bound whose length facts a call's row removed is asked again on a copy of its state with those cells put back, and when that discharges it the repair names the call and offers the callee's `ensures` and, where it would help, the row the callee's body exhibits, beside the guard; acceptance never reads the copy, and receipt keys leave out what bodies exhibit.
+
+## 2026-10-02 Keep killed length facts and stored positions to the writer, after the layout-stage census
+
+Nodes: language/effects, language/checks-and-proofs/range-facts
+
+Owner-approved: 2026-10-02, in the session, written in Chinese, after the handoff of PR #206's cards: Q30 A and Q31 A, together with Q29 A, Q32 B and Q33 B, which their own changes record, Q25 being left for research ("apart from 25, which I think needs research, I agree to all the others")
+
+Summary: A census of Snowghost's layout stage, deleting each of its 228 length guards in turn, found that a callee row covering a window killed the caller's length fact behind 9 of them, that 68 were not needed, and that 151 bounded an index no fact had bounded, 90 of them a position read from another window ([layout friction](../research/investigations/layout-friction/DESIGN.md)). `language/effects` now records that a write at a computed index stays attributed to the window that holds it and a covering row keeps killing its callers' length facts, the writer narrowing the row, passing a range reference or stating the length unchanged; refused: attributing such writes to the window's filled slots, requiring the narrowest row, and inferring private functions' rows. `language/checks-and-proofs/range-facts` now records that no ordinary obligation consumes a range fact, so a subscript at a stored position is bounded by a guard; refused: written instances in local invariants with range terms over integer fields, and range terms over enum payloads.
+
 ## 2026-10-02 Keep shared maps of entries in a runtime concurrent index, and bound every wait on them
 
 Nodes: language/waiting/shared-objects/shared-maps, language/waiting/shared-objects, compiler/waiting-contexts/concurrent-map, compiler/waiting-contexts
@@ -234,12 +274,6 @@ Nodes: language/parallelism, compiler/waiting-contexts
 Owner-approved: The owner approved both decision cards for PR #165 ("approve all", written in Chinese) on 2026-09-28.
 
 Summary: Apply the two reviewed amendments unchanged. Add to language/parallelism that a waiting call in a `let` right-hand side whose callee takes only value parameters may execute alongside the statements after it, completing before its binding is next used and before the activation leaves, with `mustpar` asserting that permission (kernel-spec v0.78 WAIT-2, PAR-4). In compiler/waiting-contexts, add the bound start's result slot and its join before the first later statement whose footprint reaches the binding, and replace the decision that every context runs on the entry's thread with several driver threads, each with its own ring and run queue, starts made ready on the starter's driver and idle drivers taking ready contexts; the one-driver alternative and round-robin placement join the rejected list. The [waiting investigation](../research/investigations/io-model/WAITS.md) holds the grounds, Experiments 5 and 6 the measurements. Remove the two accepted amendments and their directory. This ruling authorizes no merge.
-
-## 2026-09-28 Withdraw unsubstantiated function-actual inlining preference
-
-Nodes: compiler
-
-Summary: The owner accepted withdrawal of PR #108's uniform function-actual `inlinehint` proposal after the independent review. Its historical callback threshold effect belonged to a combined raw-LLVM artifact, while the actual-compiler factor comparison produces identical native objects with or without hints at its recorded Vector pin. Remove the pending amendment and its hint-specific inventory, IR flag and emission; retire the metadata assertions while retaining independent ordinary-call, specialization and cache coverage. The [behavior investigation](../research/investigations/containers-and-resources/BEHAVIOR.md#ordinary-inlining-hints-for-supplied-functions) records the bounded evidence and reopening condition. The separate terminal-consumption proposal remains unresolved; this ruling changes no language rule or live-tree decision and authorizes no merge.
 
 ## 2026-09-28 Add waiting functions, sequential meaning for contexts and resumable frames
 

@@ -9083,6 +9083,11 @@ Overall, 50/72 combined medians are no slower than the slower peer; only
 and C++ separately have 6/72 and 9/72 complete-range wins for WF. This does
 not qualify Vector. Construction and `free_empty` have no dedicated API
 timing rows, and current whole-Vector performance qualification is missing.
+The current compiler emits contiguous Slots shifts under the inline owner.
+This panel does not compare them against a walk-only compiler with that same
+layout. The [earlier header-first trial](#slots-final-code-and-paired-timing-regression-prevents-selection)
+failed its no-regression criterion; the changed representation does not by
+itself resolve that adverse observation or establish a shift speedup.
 Back-pop and swap-remove measure complete removal chains from the stated
 initial count; their averages do not identify first-removal latency. Setup,
 independent final-state verification and cleanup are outside the operation

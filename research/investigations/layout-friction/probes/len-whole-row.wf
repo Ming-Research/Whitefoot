@@ -1,0 +1,29 @@
+struct Block {
+  y: i32;
+  height: i32;
+}
+
+struct Ctx {
+  blocks: Box<Slots<Block>>;
+  width: i32;
+}
+
+fn bump(context: &Ctx) -> result: unit writes(context) {
+  doc "Widens the context, declaring the whole context, as the layout code writes its rows.";
+  set context^.width = context^.width +sat 1_i32;
+  return unit;
+}
+
+fn after_a_whole_row(context: &Ctx, at: u64) -> result: i32 writes(context) {
+  doc "The call's row covers the window's length, so the guard's fact dies at the call.";
+  if at < context^.blocks.inner.len {
+    bump(context: context);
+    let y = context^.blocks.inner[at].y;
+    return y;
+  }
+  return 0_i32;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

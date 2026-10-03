@@ -543,7 +543,6 @@ to source-language conformance.
 FN-2 and FN-5 define concrete function actuals but imply neither small bodies,
 frequent calls, termination nor an inlining benefit. Reopen a hint policy only
 when a real program supplies a discriminating native-code effect and matched
-performance evidence without the recorded regressions. The
-[owner ruling](../../../design/log.md#2026-09-28-withdraw-unsubstantiated-function-actual-inlining-preference)
+performance evidence without the recorded regressions. The withdrawal
 removes the pending amendment; it selects no global threshold, forced inlining,
 name-based rule or export-visibility change.

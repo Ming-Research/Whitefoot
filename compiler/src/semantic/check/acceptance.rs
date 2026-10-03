@@ -417,7 +417,6 @@ impl<'unit> TypeContext<'unit> {
             (
                 SemanticRule::Op4
                 | SemanticRule::Op2
-                | SemanticRule::Op9
                 | SemanticRule::Op6
                 | SemanticRule::Eff5
                 | SemanticRule::Op11
@@ -435,6 +434,65 @@ impl<'unit> TypeContext<'unit> {
             _ => Err(SemanticCompilerFailure::InvalidResolution.into()),
         }
     }
+    /// [DIAG-1] the calls among the writes that removed a failed bound's
+    /// facts, each with its callee, line and written place; none when any of
+    /// the writes is not a call, whose length change no row can deny.
+    fn killing_calls(
+        &self,
+        function: &CheckedFunction,
+        notes: &[crate::semantic::entailment::MeasureKillNote],
+    ) -> Result<Vec<repairs::KillingCall>, CheckStop> {
+        // [DIAG-1] a repair names a call only where the writer can change
+        // what it names: a prelude function's row and contract are not the
+        // writer's, so a write by one leaves the ordinary repair.
+        let editable = self.editable_functions()?;
+        let mut callees = std::collections::HashMap::new();
+        crate::semantic::range_judgment::for_each_call(
+            function.body.as_deref().unwrap_or_default(),
+            &mut |callee, call| {
+                callees.insert(call.clone(), callee);
+            },
+        );
+        let mut calls = Vec::new();
+        for note in notes {
+            let node = self
+                .declarations
+                .tree
+                .node_with_path(&note.source)
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+            let Some(callee_id) = callees
+                .get(&note.source)
+                .copied()
+                .filter(|callee| editable.contains(callee))
+            else {
+                return Ok(Vec::new());
+            };
+            if self.declarations.tree.production(node)? != Production::Call {
+                return Ok(Vec::new());
+            }
+            let spelling = self.declarations.tree.source_spelling(node)?;
+            let callee = spelling
+                .split('(')
+                .next()
+                .unwrap_or_default()
+                .split("::<")
+                .next()
+                .unwrap_or_default()
+                .to_owned();
+            let (_, line) = self.declarations.tree.source_line(&note.source)?;
+            calls.push(repairs::KillingCall {
+                callee,
+                line,
+                written: note.written.clone(),
+                exhibited_row: note
+                    .narrowable
+                    .then(|| self.exhibited_rows.get(&callee_id).cloned())
+                    .flatten(),
+            });
+        }
+        Ok(calls)
+    }
+
     /// [ENT-6] one undischarged source obligation, reported under its
     /// record's rule with the repair what its goal reads selects.
     fn undischarged_obligation(
@@ -455,9 +513,9 @@ impl<'unit> TypeContext<'unit> {
         let location = self.declarations.source_location(&outcome.node_path)?;
         let (disposition, repair) = dispositions(outcome.refuted);
         // [DIAG-1] what the goal reads selects its routes: a canonical goal
-        // names its data, a bounds relation its terms. A bounds or allocation
-        // residual is written from the source atoms it relates, so it is
-        // itself a condition.
+        // names its data, a bounds relation its terms. A bounds residual is
+        // written from the source atoms it relates, so it is itself a
+        // condition.
         let editable = self.editable_functions()?;
         let reads = match &outcome.canonical_goal {
             Some(goal) => {
@@ -471,7 +529,7 @@ impl<'unit> TypeContext<'unit> {
             ),
         };
         let condition = match outcome.family {
-            ObligationFamily::Bounds | ObligationFamily::AllocationFit => true,
+            ObligationFamily::Bounds => true,
             _ => outcome
                 .canonical_goal
                 .as_ref()
@@ -494,8 +552,11 @@ impl<'unit> TypeContext<'unit> {
                     function.entailment.obligation_term_reads(outcome).first(),
                     Some(TermRead::Constant)
                 );
+                let calls = self.killing_calls(function, &outcome.killed_by)?;
                 let mechanical_fix = if self.declarations.in_requirement(&outcome.node_path)? {
                     repairs::clause_bounds(&case, constant_offset)
+                } else if let (Some(note), false) = (outcome.killed_by.first(), calls.is_empty()) {
+                    repairs::bounds_after_kill(&case, &note.measure, &calls)
                 } else {
                     repairs::bounds(&case, constant_offset)
                 };
@@ -514,13 +575,6 @@ impl<'unit> TypeContext<'unit> {
                             .as_ref()
                             .and_then(repairs::total_forms),
                     ),
-                    residual,
-                    disposition,
-                }
-            }
-            (SemanticRule::Op9, ObligationFamily::AllocationFit) => {
-                SemanticIssueKind::UndischargedAllocationFitObligation {
-                    mechanical_fix: repairs::allocation_fit(&case),
                     residual,
                     disposition,
                 }

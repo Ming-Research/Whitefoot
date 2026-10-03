@@ -342,12 +342,14 @@ impl Input<'_, '_> {
                     place,
                     element: true,
                     source: call.clone(),
+                    narrowed: None,
                 });
             } else {
                 events.push(KillEvent::Write {
                     place,
                     element: true,
                     source: call.clone(),
+                    narrowed: None,
                 });
             }
         }
@@ -466,7 +468,23 @@ impl Input<'_, '_> {
                         self.collect_view_write_kills(argument, call, events);
                         continue;
                     }
+                    let exhibited = callee
+                        .and_then(|callee| callee.parameter_exhibited_writes.as_ref())
+                        .and_then(|writes| writes.get(index));
                     for (place, entry_image_only) in self.argument_referents(argument) {
+                        // [DIAG-1] what the call would write through this
+                        // argument were its row narrowed to the body's own
+                        // writes, which a repair offering that narrowing reads.
+                        let narrowed: Narrowed = exhibited.map(|writes| {
+                            writes
+                                .iter()
+                                .map(|steps| {
+                                    let mut written = place.clone();
+                                    written.path.extend(substituted_steps(steps, &offsets));
+                                    written
+                                })
+                                .collect()
+                        });
                         for steps in writes {
                             let mut written = place.clone();
                             written.path.extend(substituted_steps(steps, &offsets));
@@ -475,12 +493,14 @@ impl Input<'_, '_> {
                                     place: written,
                                     element,
                                     source: call.clone(),
+                                    narrowed: narrowed.clone(),
                                 });
                             } else {
                                 events.push(KillEvent::Write {
                                     place: written,
                                     element,
                                     source: call.clone(),
+                                    narrowed: narrowed.clone(),
                                 });
                             }
                         }
@@ -540,6 +560,7 @@ impl Input<'_, '_> {
                     place: self.resolve(&spelled),
                     element: false,
                     source: node_path.clone(),
+                    narrowed: None,
                 }
             }
             CheckedSetTarget::RangeIndex(target) => {
@@ -553,6 +574,7 @@ impl Input<'_, '_> {
                     place: self.resolve(&spelled),
                     element: true,
                     source: node_path.clone(),
+                    narrowed: None,
                 }
             }
             // [MSR-2] an element store into a run overlaps the descriptor
@@ -562,6 +584,7 @@ impl Input<'_, '_> {
                 place: self.container_root_place(target),
                 element: true,
                 source: node_path.clone(),
+                narrowed: None,
             },
         }
     }
@@ -814,12 +837,12 @@ impl Reasoning<'_, '_, '_> {
         separations: &dyn SeparationOracle,
         state: &mut FactState,
         events: &[KillEvent],
-    ) {
+    ) -> Vec<KilledCell> {
         if events.is_empty() {
-            return;
+            return Vec::new();
         }
         self.vocabulary.materialize_before_event_kill(state, events);
-        state.kill(|term| {
+        let removed = state.kill(|term| {
             events
                 .iter()
                 .any(|event| self.event_kills_term(separations, term, event))
@@ -844,6 +867,84 @@ impl Reasoning<'_, '_, '_> {
                     .event_kills_goal_origin_binding(separations, *binding, event)
             })
         });
+        removed
+    }
+
+    /// [DIAG-1] records each write among `events` that reaches a measure
+    /// term, with the cells `removed` held about that term: a term whose
+    /// cells this batch removed, and a term an earlier write already
+    /// reached, whose later writes a repair must name too.
+    pub(super) fn record_measure_kills(
+        &self,
+        separations: &dyn SeparationOracle,
+        states: &mut ProofFlowState,
+        events: &[KillEvent],
+        removed: &[KilledCell],
+    ) {
+        let mut terms: Vec<TermId> = removed
+            .iter()
+            .flat_map(|cell| {
+                [
+                    cell.left_killed.then_some(cell.left),
+                    cell.right_killed.then_some(cell.right),
+                ]
+            })
+            .flatten()
+            .chain(states.measure_kills.iter().map(|kill| kill.term))
+            .filter(|term| matches!(self.vocabulary.terms.kind(*term), TermKind::Measure(..)))
+            .collect();
+        terms.sort_unstable();
+        terms.dedup();
+        for term in terms {
+            let cells: Vec<KilledCell> = removed
+                .iter()
+                .filter(|cell| {
+                    (cell.left_killed && cell.left == term)
+                        || (cell.right_killed && cell.right == term)
+                })
+                .copied()
+                .collect();
+            for event in events {
+                let (KillEvent::Write {
+                    place,
+                    element,
+                    source,
+                    narrowed,
+                }
+                | KillEvent::EntryImageHolderWrite {
+                    place,
+                    element,
+                    source,
+                    narrowed,
+                }) = event
+                else {
+                    continue;
+                };
+                if self.event_kills_term(separations, term, event) {
+                    let narrowable = narrowed.as_ref().is_some_and(|places| {
+                        !places.iter().any(|place| {
+                            self.event_kills_term(
+                                separations,
+                                term,
+                                &KillEvent::Write {
+                                    place: place.clone(),
+                                    element: *element,
+                                    source: source.clone(),
+                                    narrowed: None,
+                                },
+                            )
+                        })
+                    });
+                    states.record_measure_kill(MeasureKill {
+                        term,
+                        source: source.clone(),
+                        written: place.clone(),
+                        cells: cells.clone(),
+                        narrowable,
+                    });
+                }
+            }
+        }
     }
 
     /// One batch of kill events on the path components after the Result
@@ -860,7 +961,8 @@ impl Reasoning<'_, '_, '_> {
         events: &[KillEvent],
         shared_event: Option<FlowEventId>,
     ) {
-        self.apply_kills_one(separations, &mut states.facts, events);
+        let removed = self.apply_kills_one(separations, &mut states.facts, events);
+        self.record_measure_kills(separations, states, events, &removed);
         self.apply_affine_kills(separations, &mut states.affine, events);
         self.invalidate_entry_images(states, separations, events, shared_event);
         states.record_writes(events);

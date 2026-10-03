@@ -346,14 +346,10 @@ impl Records<'_> {
                 call,
                 arguments,
                 requirements,
-                allocation,
                 ..
             } => {
                 for argument in arguments {
                     self.expression(argument);
-                }
-                if allocation.is_some() {
-                    self.source(SemanticRule::Op9, call, ObligationFamily::AllocationFit, 0);
                 }
                 let rule = if (self.empties_run)(*function) {
                     SemanticRule::Op14

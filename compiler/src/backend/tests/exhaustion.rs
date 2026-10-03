@@ -306,10 +306,9 @@ const fn libc_sigabrt() -> i32 {
 /// Handing a call out makes concurrent allocation refusal possible, so this
 /// module must use the shared first-record latch.
 ///
-/// The count is a literal the host cannot satisfy, and with `u8`'s stride of
-/// one it still discharges [OP-9]'s allocation-size obligation, so the module
-/// really carries the construction whose heap exhaustion the trusted base
-/// reports. Nothing in the source names that outcome: [STOR-8] hands back no
+/// The count is a literal the host cannot satisfy but can represent, so the
+/// allocator is asked and refuses, and the module really carries the
+/// construction whose heap exhaustion the trusted base reports. Nothing in the source names that outcome: [STOR-8] hands back no
 /// payload and the program holds no failure arm.
 const HEAP_RECORD_LANE: &[u8] = br#"fn leafwork(v: u64) -> result: u64 pure {
   return v *wrap 3_u64;
@@ -365,9 +364,9 @@ fn a_module_that_writes_a_resource_record_and_hands_a_call_out_is_latched() {
 /// One program reaching every allocation form the emitter lowers: a filled
 /// array, an empty window, a heap box, and a ring.
 ///
-/// The counts are constants so [OP-9]'s allocation-size obligation discharges
-/// statically and the fixture stays about the refusal edges rather than about
-/// proving a dynamic count fits.
+/// The counts are small constants so the fixture stays about the allocator's
+/// refusal edges; a size the target cannot allocate at all is the subject of
+/// `an_allocation_size_the_target_cannot_serve_is_heap_exhaustion_before_the_allocator`.
 ///
 /// The arena node this image carried in v0.59 is gone with regions and arenas
 /// [OWN-3, OWN-4, OWN-10, FORM-8, STOR-4]; the fourth form is now
@@ -1025,10 +1024,10 @@ fn target_qualified_buffers_keep_only_the_heap_refusal_path() {
 /// distinct refusal edges over four allocations: `box_new`'s scalar cell takes
 /// `box.new.oom.`, the one block of `box_array_filled` takes
 /// `buffer.fill.oom.`, and `box_slots_new` and `box_ring_new` share
-/// `window.block.oom.`, because a window's block is header-first and one
-/// address computation serves both [STOR-1, WIN-1]. Each construction takes
-/// exactly one block: [TYPE-9] stores a `Box`'s content "in exactly one heap
-/// object the `Box` value owns".
+/// `window.block.oom.`, the shared heap-exhaustion edge for their selected
+/// representations [STOR-1, WIN-1]. These positive-capacity, positive-stride
+/// fixtures each own one allocation; a zero-extent Slots owner has no
+/// allocation and uses its aligned static storage instead [STOR-1].
 #[test]
 fn every_allocation_refusal_edge_reaches_the_resource_abort() {
     let module = heap_module();
@@ -1050,6 +1049,176 @@ fn every_allocation_refusal_edge_reaches_the_resource_abort() {
             found > 0,
             "the fixture must reach a {refusal} edge:\n{module}"
         );
+    }
+}
+
+/// One runtime-capacity allocation whose count the process's argument count
+/// selects, so one executable reaches each count at run time. `statements`
+/// allocate with the count `n`.
+fn runtime_count_allocation(statements: &str) -> String {
+    format!(
+        r#"fn allocate(n: u64) -> result: u64 pure contract {{
+  requires n >= 2_u64;
+}} {{
+  {statements}
+  return 7_u64;
+}}
+
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {{
+  let std::process::Inputs(args: args, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
+  std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
+  std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
+  let selector = std::text::args_count(args: &args);
+  let n = 1000_u64;
+  if selector == 2_u64 {{
+    set n = 1001_u64;
+  }}
+  if selector == 3_u64 {{
+    set n = 9223372036854775808_u64;
+  }}
+  if selector == 4_u64 {{
+    set n = 9223372036854775807_u64;
+  }}
+  let kept = allocate(n: n);
+  if kept == 7_u64 {{
+    return std::process::exit_status(code: 0_u8);
+  }}
+  return std::process::exit_status(code: 1_u8);
+}}
+"#
+    )
+}
+
+/// [OP-9] an allocation's size is computed with checked arithmetic, and a
+/// size the selected target cannot allocate is heap exhaustion [STOR-8]
+/// before the allocator is asked.
+///
+/// The selected target admits exactly `header + 2000` bytes, so each shape's
+/// `u16` block holds 1000 elements. The three refused counts separate the
+/// three ways a size can be unservable, each caught by one condition of the
+/// emitted check alone: 1001 elements exceed the maximum without wrapping,
+/// `2^63` elements wrap the product to zero, and `2^63 - 1` elements leave a
+/// product the header's addition carries out of `u64`. Each ends with the
+/// heap record and no interposed allocation, where a size computed without
+/// its check would hand the allocator a wrapped, small byte count, or ask it
+/// for more than the target serves. 1000 elements allocate once and run.
+///
+/// `grow` computes its size at its own emitted site. An empty inline Slots
+/// owner allocates nothing before growth; full and partial positive owners
+/// allocate once before growth, then respectively resize or allocate and
+/// release. A refused count reaches exhaustion before either route calls an
+/// allocator, leaving the original positive allocation unreleased.
+///
+/// `box_segments_filled` [OP-13] sums its lengths before it sizes its block,
+/// so its run has two lengths of `n` one-byte elements behind a 32-byte
+/// descriptor, and its lengths array is the first allocation: 1000 and 1000
+/// fill the maximum, 1001 and 1001 exceed it, two lengths of `2^63` sum past
+/// `u64`, which only the sum's own check refuses since the wrapped total is
+/// zero, and two of `2^63 - 1` leave a total the descriptor's addition
+/// carries.
+#[test]
+fn an_allocation_size_the_target_cannot_serve_is_heap_exhaustion_before_the_allocator() {
+    let host = crate::target::TargetLayout::host().expect("supported test target");
+    for (shape, statements, header, served_trace, refused_trace) in [
+        (
+            "Array",
+            "let values = box_array_filled::<u16>(count: n, value: 0_u16);",
+            8_u64,
+            "A1;F1;",
+            "",
+        ),
+        (
+            "Slots",
+            "let values = box_slots_new::<u16>(capacity: n);",
+            0_u64,
+            "A1;F1;",
+            "",
+        ),
+        (
+            "Ring",
+            "let values = box_ring_new::<u16>(capacity: n);",
+            24_u64,
+            "A1;F1;",
+            "",
+        ),
+        (
+            "grow",
+            "let values = box_slots_new::<u16>(capacity: 0_u64);\n  grow(cell: &values, capacity: n);",
+            0_u64,
+            "A1;F1;",
+            "",
+        ),
+        (
+            "grow-full",
+            "let values = box_slots_new::<u16>(capacity: 1_u64);\n  place_back(window: &values.inner, value: 7_u16);\n  grow(cell: &values, capacity: n);",
+            0_u64,
+            "A1;R1;F1;",
+            "A1;",
+        ),
+        (
+            "grow-partial",
+            "let values = box_slots_new::<u16>(capacity: 2_u64);\n  place_back(window: &values.inner, value: 7_u16);\n  grow(cell: &values, capacity: n);",
+            0_u64,
+            "A1;A2;F1;F2;",
+            "A1;",
+        ),
+        (
+            "Segments",
+            "let lengths = box_array_filled::<u64>(count: 2_u64, value: n);\n  let values = box_segments_filled::<u8>(lengths: &lengths.inner[0_u64..2_u64], value: 0_u8);",
+            32_u64,
+            "A1;A2;F2;F1;",
+            "A1;",
+        ),
+    ] {
+        let limited = host.with_runtime_allocation_limits_for_test(header + 2_000, 8);
+        let source = runtime_count_allocation(statements);
+        let module = super::system::with_ir(source.as_bytes(), |program| {
+            let mut llvm = crate::backend::emitter::emit_llvm_with_layout(program, limited)
+                .expect("the limited target qualifies every layout")
+                .into_string();
+            llvm.push_str(
+                &crate::driver::launcher::render(program, "main")
+                    .expect("ordinary test launcher")
+                    .render(),
+            );
+            llvm
+        });
+        let observed = module
+            .replace("@malloc(", "@wf_test_allocate(")
+            .replace("@free(", "@wf_test_release(")
+            .replace("@realloc(", "@wf_test_resize(");
+        let observer = format!(
+            "{}\n__attribute__((constructor)) static void unbuffer(void) {{ setvbuf(stdout, NULL, _IONBF, 0); }}\n",
+            super::owned_places::allocation_observer_by_process(2)
+        );
+        let observer = format!(
+            "{observer}\nvoid *wf_test_resize(void *old, size_t bytes) {{ printf(\"R1;\"); if (old != held[1]) abort(); void *fresh = realloc(old, bytes); if (!fresh) abort(); held[1] = fresh; return fresh; }}\n"
+        );
+        let directory = test_directory();
+        let executable = build_linked_executable(&observed, Some(&observer), &[], &directory);
+        for (extra, served) in [(0, true), (1, false), (2, false), (3, false)] {
+            let output = Command::new(&executable)
+                .args(std::iter::repeat_n("x", extra))
+                .env("WF_TEST_REFUSE_ALLOCATION", "0")
+                .bounded_output()
+                .expect("run the selected allocation");
+            let trace = std::str::from_utf8(&output.stdout).expect("ASCII allocation trace");
+            if served {
+                assert_eq!(output.status.code(), Some(0), "{shape}: {output:?}");
+                assert_eq!(trace, served_trace, "{shape}");
+                assert!(output.stderr.is_empty(), "{shape}: {output:?}");
+            } else {
+                assert_eq!(
+                    signal_of(&output),
+                    Some(libc_sigabrt()),
+                    "{shape} with {extra} arguments: {output:?}"
+                );
+                assert_eq!(trace, refused_trace, "{shape} with {extra} arguments");
+                assert_resource_record(&output.stderr, "heap");
+            }
+        }
+        std::fs::remove_dir_all(directory).expect("remove allocation size image");
     }
 }
 

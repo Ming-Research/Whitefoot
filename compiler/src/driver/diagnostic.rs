@@ -27,10 +27,7 @@
 //! Stops that are not source rejections -- resource ceilings, invocation
 //! envelopes, internal invariants, target layout, backend -- carry
 //! compiler-facing payloads with no writer repair. They keep their stage
-//! value's `Debug` text as one `payload` field. The one exception is a
-//! target-layout stop at a written allocation whose proved count the
-//! selected target cannot hold [STOR-6]: the writer fixes it by bounding the
-//! count, so it is located at the call and lists its fields.
+//! value's `Debug` text as one `payload` field.
 
 use core::fmt::{self, Write as _};
 
@@ -873,7 +870,6 @@ impl Report for SemanticIssueKind {
             UndischargedEmptyRunRelease { residual, disposition, mechanical_fix };
             UndischargedIntegerDomainObligation { residual, disposition, mechanical_fix };
             UndischargedConversionDomainObligation { residual, disposition, mechanical_fix };
-            UndischargedAllocationFitObligation { residual, disposition, mechanical_fix };
             UndischargedRangeFormationObligation { residual, disposition, mechanical_fix };
             UndischargedCallSeparation { residual, mechanical_fix };
             OverlappingCallEffects { first, second, mechanical_fix };
@@ -965,27 +961,6 @@ impl Report for ResolutionIssue {
             UnresolvedUse { spelling, role, admissible, available };
             UndeclaredSetTarget { spelling, mechanical_fix };
         )
-    }
-}
-
-/// A target-layout stop at one allocation [STOR-6]: the count as written, the
-/// bound the program proves for it, the largest count the selected target
-/// admits, and the fix that bounds the count.
-impl Report for super::AllocationCountIssue {
-    fn report(&self, fields: &mut Fields<'_>) -> &'static str {
-        let Self {
-            count,
-            proved_count_bound,
-            target_count_limit,
-            target,
-            mechanical_fix,
-        } = self;
-        fields.field("count", &Spelled(*count));
-        fields.field("proved_count_bound", proved_count_bound);
-        fields.field("target_count_limit", target_count_limit);
-        fields.field("target", *target);
-        fields.field("mechanical_fix", mechanical_fix);
-        "AllocationCountExceedsTarget"
     }
 }
 

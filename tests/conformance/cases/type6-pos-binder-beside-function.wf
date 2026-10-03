@@ -1,0 +1,24 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn total(value: i32) -> result: i32 pure {
+  doc "The value itself.";
+  return value;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "A match binder takes the spelling of a live top-level function: GRAM-10's freshness counts only the declarations a binder competes with [TYPE-6], and a callable is not one.";
+  let v = match 40_i32 +checked 2_i32 {
+    Ok(value: total) => {
+      give total;
+    }
+    Err(error: e) => {
+      give 0_i32;
+    }
+  }
+  let back = total(value: v);
+  if back != 42_i32 {
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 0_u8);
+}

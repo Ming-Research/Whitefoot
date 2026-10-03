@@ -1,0 +1,44 @@
+fn scatter(order: &[u64], out: &[u64]) -> result: unit reads(order), writes(out) {
+  doc "Writes each iteration's index at the slot order names, with no requirement that separates two iterations.";
+  let count = order^.len;
+  for (
+    k in 0_u64..count,
+    apart(i, j) {
+    }
+  ) {
+    let e = order^[k];
+    if e < out^.len {
+      set out^[e] = k;
+    }
+  }
+  return unit;
+}
+
+fn reversed(n: u64) -> result: u64 pure contract {
+  requires n <= 1000_u64;
+  requires n >= 1_u64;
+} {
+  doc "Builds the reversal order[k] = n - 1 - k, proving descending by two loop invariants that the scatter no longer requires.";
+  let order = box_array_filled::<u64>(count: n, value: 0_u64);
+  let out = box_array_filled::<u64>(count: n, value: 0_u64);
+  let last = n - 1_u64;
+  for (
+    k in 0_u64..n,
+    invariant forall vals(q in 0_u64..k): order.inner[q] == last - q,
+    invariant forall descending(a in 0_u64..k, b in 0_u64..k) when a < b: order.inner[b] < order.inner[a]
+  ) {
+    let back = last - k;
+    set order.inner[k] = back;
+  }
+  scatter(order: &order.inner[0_u64..n], out: &out.inner[0_u64..n]);
+  let first = out.inner[0_u64];
+  return first;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let got = reversed(n: 5_u64);
+  if got != 4_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

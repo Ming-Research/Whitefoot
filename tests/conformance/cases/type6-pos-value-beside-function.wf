@@ -1,0 +1,16 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn narrow(width: u32) -> result: u32 pure {
+  doc "Half of width.";
+  return width / 2_u32;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "A local value takes the spelling of a top-level function: a local value and a function share no use class, so they do not compete [TYPE-6], and each use selects the declaration its role admits, the call the function and the operand the value.";
+  let narrow = narrow(width: 8_u32);
+  if narrow != 4_u32 {
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 0_u8);
+}

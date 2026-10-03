@@ -1,0 +1,108 @@
+struct Block {
+  y: i32;
+  height: i32;
+}
+
+struct Ctx {
+  blocks: Box<Slots<Block>>;
+  fragments: Box<Slots<u64>>;
+  width: i32;
+}
+
+fn a_field_write(context: &Ctx, at: u64) -> result: i32 writes(context) {
+  doc "A write to a field of one element keeps the window's length fact.";
+  if at < context^.blocks.inner.len {
+    set context^.blocks.inner[at].height = 3_i32;
+    let y = context^.blocks.inner[at].y;
+    return y;
+  }
+  return 0_i32;
+}
+
+fn another_window(context: &Ctx, at: u64) -> result: i32 writes(context) {
+  doc "Removing the last element of another window keeps this window's length fact.";
+  if at < context^.blocks.inner.len {
+    if 0_u64 < context^.fragments.inner.len {
+      let dropped = take_back(window: &context^.fragments.inner);
+    }
+    let y = context^.blocks.inner[at].y;
+    return y;
+  }
+  return 0_i32;
+}
+
+fn bump_width(context: &Ctx) -> result: unit writes(context.width) {
+  doc "Widens the context, declaring the one field it writes.";
+  set context^.width = context^.width +sat 1_i32;
+  return unit;
+}
+
+fn after_a_field_row(context: &Ctx, at: u64) -> result: i32 writes(context) {
+  doc "A callee whose row names a sibling field keeps the fact.";
+  if at < context^.blocks.inner.len {
+    bump_width(context: context);
+    let y = context^.blocks.inner[at].y;
+    return y;
+  }
+  return 0_i32;
+}
+
+fn lift(context: &Ctx, at: u64) -> result: unit writes(context.blocks.inner[at]) contract {
+  requires at < context^.blocks.inner.len;
+} {
+  doc "Raises one element, declaring that element.";
+  set context^.blocks.inner[at].y = context^.blocks.inner[at].y +sat 1_i32;
+  return unit;
+}
+
+fn after_an_element_row(context: &Ctx, at: u64) -> result: i32 writes(context) {
+  doc "A callee whose row names one element keeps the fact.";
+  if at < context^.blocks.inner.len {
+    lift(context: context, at: at);
+    let y = context^.blocks.inner[at].y;
+    return y;
+  }
+  return 0_i32;
+}
+
+fn lift_run(run: &[Block]) -> result: unit writes(run) {
+  doc "Raises every element of a run.";
+  let count = run^.len;
+  for (k in 0_u64..count) {
+    set run^[k].y = run^[k].y +sat 1_i32;
+  }
+  return unit;
+}
+
+fn after_a_run_argument(context: &Ctx, at: u64) -> result: i32 writes(context) {
+  doc "A callee that receives a run of the window keeps the window's length fact.";
+  let count = context^.blocks.inner.len;
+  if at < count {
+    lift_run(run: &context^.blocks.inner[0_u64..count]);
+    let y = context^.blocks.inner[at].y;
+    return y;
+  }
+  return 0_i32;
+}
+
+fn bump_keeping(context: &Ctx) -> result: unit writes(context) contract {
+  ensures context^.blocks.inner.len == entry(context)^.blocks.inner.len;
+} {
+  doc "Widens the context under a whole row and promises the window's length unchanged.";
+  set context^.width = context^.width +sat 1_i32;
+  return unit;
+}
+
+fn after_a_keeping_call(context: &Ctx, at: u64) -> result: i32 writes(context) {
+  doc "A whole-row callee that states the length unchanged keeps the fact.";
+  if at < context^.blocks.inner.len {
+    bump_keeping(context: context);
+    let y = context^.blocks.inner[at].y;
+    return y;
+  }
+  return 0_i32;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

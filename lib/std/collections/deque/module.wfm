@@ -11,7 +11,7 @@ public fn deque_new<T, const ceiling: u64>(capacity: u64) -> made: Box<Ring<T>> 
   ensures made.inner.len == 0_u64;
   ensures made.inner.cap == capacity;
   ensures made.inner.head == 0_u64;
-} doc "Constructs an empty ring with the requested capacity. The explicit ceiling bounds this concrete allocation instance under OP-9; it is not a hidden invariant on an owning Box<Ring<T>>. Allocation is total under STOR-8, including zero capacity.";
+} doc "Constructs an empty ring with the requested capacity. The explicit ceiling bounds this concrete instance's capacity; it is not a hidden invariant on an owning Box<Ring<T>>. Allocation is total under STOR-8, including zero capacity.";
 
 public fn deque_push_back<T>(values: &Box<Ring<T>>, value: T) -> length: u64 writes(values.inner.next), writes(values.inner.len) contract {
   requires values^.inner.len < values^.inner.cap;

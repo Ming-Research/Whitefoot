@@ -1,0 +1,32 @@
+struct Block {
+  y: i32;
+  height: i32;
+}
+
+struct Ctx {
+  blocks: Box<Slots<Block>>;
+  width: i32;
+}
+
+fn lift_all(context: &Ctx) -> result: unit writes(context.blocks.inner) {
+  doc "Raises every element; an element write at a loop index is declared by the window that holds it.";
+  let count = context^.blocks.inner.len;
+  for (k in 0_u64..count) {
+    set context^.blocks.inner[k].y = context^.blocks.inner[k].y +sat 1_i32;
+  }
+  return unit;
+}
+
+fn after_a_window_row(context: &Ctx, at: u64) -> result: i32 writes(context) {
+  doc "The callee changes no length, but its row names the window, which covers the length.";
+  if at < context^.blocks.inner.len {
+    lift_all(context: context);
+    let y = context^.blocks.inner[at].y;
+    return y;
+  }
+  return 0_i32;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

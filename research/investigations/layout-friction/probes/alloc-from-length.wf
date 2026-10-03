@@ -1,0 +1,15 @@
+struct Mark {
+  at: u64;
+  kind: u8;
+}
+
+fn marks_for(source: &[u64]) -> result: Box<Slots<Mark>> reads(source) {
+  doc "Room for one mark per element of source, sized by source's length.";
+  let count = source^.len;
+  let marks = box_slots_new::<Mark>(capacity: count);
+  return move marks;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

@@ -1027,7 +1027,6 @@ pub(super) fn render_goal_row(
             [collection, offset] => format!("{collection}[{offset}]"),
             _ => "<invalid index goal>".to_owned(),
         },
-        GoalOperation::BufferFits { .. } => render_operation_spelling("buffer_fits", arguments),
     }
 }
 
