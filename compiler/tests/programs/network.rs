@@ -1243,8 +1243,9 @@ fn firn_removes_expired_keys_no_command_reads_on_both_routes() {
 /// `SETEX`, `PSETEX`, `GETEX`, `EXPIRE` with an option and `PEXPIRE`, keeps
 /// the very calendar millisecond `PEXPIRETIME` gave before the restart, which
 /// a file recording the relative amount would replay later; a string
-/// `APPEND` and `SETRANGE` edited holds its bytes; and an expiry moves with its
-/// key under `RENAME` and is copied with it by `COPY`. The first run ends once its
+/// `APPEND` and `SETRANGE` edited holds its bytes; an expiry moves with its
+/// key under `RENAME` and is copied with it by `COPY`; and a sum `INCRBYFLOAT`
+/// wrote keeps its text and the key its expiry. The first run ends once its
 /// one client has closed, after its writer appended and synced the last
 /// changes.
 #[cfg(target_os = "linux")]
@@ -1330,13 +1331,15 @@ fn firn_replays_its_append_only_file_after_a_restart_on_both_routes() {
             vec!["SET", "mv:src", "v", "PXAT", "99999999999999"],
             vec!["RENAME", "mv:src", "mv:dst"],
             vec!["COPY", "mv:dst", "mv:copy"],
+            vec!["SET", "float", "10.5", "PXAT", "99999999999999"],
+            vec!["INCRBYFLOAT", "float", "0.1"],
         ] {
             batch.extend(resp(&request));
         }
         client.write_all(&batch).expect("send the changes");
         expect_replies(
             &mut client,
-            b"+OK\r\n+OK\r\n+OK\r\n:1\r\n:2\r\n:12\r\n:9\r\n:8\r\n:1\r\n+OK\r\n:1\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n:6\r\n+OK\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n+OK\r\n+OK\r\n:-2\r\n+OK\r\n+OK\r\n+none\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n+OK\r\n+OK\r\n$1\r\nv\r\n+OK\r\n:1\r\n+OK\r\n:1\r\n+OK\r\n:4\r\n:4\r\n:1\r\n+OK\r\n+OK\r\n:1\r\n",
+            b"+OK\r\n+OK\r\n+OK\r\n:1\r\n:2\r\n:12\r\n:9\r\n:8\r\n:1\r\n+OK\r\n:1\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n:6\r\n+OK\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n+OK\r\n+OK\r\n:-2\r\n+OK\r\n+OK\r\n+none\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n+OK\r\n+OK\r\n$1\r\nv\r\n+OK\r\n:1\r\n+OK\r\n:1\r\n+OK\r\n:4\r\n:4\r\n:1\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n$4\r\n10.6\r\n",
             &what,
         );
         let timed = [
@@ -1398,13 +1401,15 @@ fn firn_replays_its_append_only_file_after_a_restart_on_both_routes() {
             vec!["PEXPIRETIME", "mv:dst"],
             vec!["PEXPIRETIME", "mv:copy"],
             vec!["EXISTS", "mv:src"],
+            vec!["GET", "float"],
+            vec!["PEXPIRETIME", "float"],
         ] {
             batch.extend(resp(&request));
         }
         client.write_all(&batch).expect("read the replayed keys");
         expect_replies(
             &mut client,
-            b"$-1\r\n$-1\r\n$1\r\nv\r\n$1\r\n8\r\n$1\r\nv\r\n:-1\r\n$1\r\nv\r\n:-1\r\n$-1\r\n:28\r\n$3\r\nnew\r\n$1\r\n1\r\n:-1\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n:-1\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$4\r\naXYd\r\n*2\r\n$1\r\n1\r\n$1\r\n2\r\n:99999999999999\r\n:99999999999999\r\n:0\r\n",
+            b"$-1\r\n$-1\r\n$1\r\nv\r\n$1\r\n8\r\n$1\r\nv\r\n:-1\r\n$1\r\nv\r\n:-1\r\n$-1\r\n:29\r\n$3\r\nnew\r\n$1\r\n1\r\n:-1\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n:-1\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$4\r\naXYd\r\n*2\r\n$1\r\n1\r\n$1\r\n2\r\n:99999999999999\r\n:99999999999999\r\n:0\r\n$4\r\n10.6\r\n:99999999999999\r\n",
             &what,
         );
         for (key, expiry) in timed.iter().zip(&expiries) {
@@ -1876,8 +1881,17 @@ fn firn_keeps_strings_at_and_past_the_inline_length_apart() {
 /// and refuses a string past 512 MiB, its offset and length summed without
 /// overflow; each refuses another kind. `INCRBY`, `DECR` and `DECRBY` add
 /// with Redis's overflow checks, `DECRBY` refusing the least i64 before it
-/// reads the key, and keep the key's expiry. The expected replies are
-/// redis-server 7.0.15's to the same requests.
+/// reads the key, and keep the key's expiry. `INCRBYFLOAT` adds in x87 long
+/// double arithmetic and writes the sum as Redis's `%.17Lf` with its trailing
+/// zeros dropped: 10.5 plus 0.1 is 10.6, where doubles would give
+/// 10.59999999999999964; hexadecimal text reads; text halfway between two
+/// long doubles reads to the even one both ways, unless a digit far after the
+/// halfway point breaks the tie; a tie at the seventeenth digit after the
+/// point writes to even both ways; a subnormal sum, and negative zero, write
+/// 0; a sum near the largest double writes all 309 digits, and one past the
+/// largest long double is refused, as are an infinity, NaN, a leading space,
+/// a zero byte and a value that is not a number, after a key of another kind.
+/// The expected replies are redis-server 7.0.15's to the same requests.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_answers_string_commands_as_redis_does() {
@@ -2004,13 +2018,50 @@ fn firn_answers_string_commands_as_redis_does() {
         vec!["DECRBY", "t", "3"],
         vec!["PEXPIRETIME", "t"],
         vec!["INCRBY", "i", " 1"],
+        vec!["SET", "fl", "10.5"],
+        vec!["INCRBYFLOAT", "fl", "0.1"],
+        vec!["INCRBYFLOAT", "fl", "-10.6"],
+        vec!["SET", "fl2", "3.0e3"],
+        vec!["INCRBYFLOAT", "fl2", "1.0e3"],
+        vec!["SET", "fl3", "0x1p3"],
+        vec!["INCRBYFLOAT", "fl3", "0x1.8p1"],
+        vec!["SET", "fl4", "0.000003814697265625"],
+        vec!["INCRBYFLOAT", "fl4", "0"],
+        vec!["SET", "fl5", "0.000011444091796875"],
+        vec!["INCRBYFLOAT", "fl5", "0"],
+        vec!["INCRBYFLOAT", "nofl", "1e-4940"],
+        vec!["GET", "nofl"],
+        vec!["SET", "neg", "-0.0"],
+        vec!["INCRBYFLOAT", "neg", "0"],
+        vec!["INCRBYFLOAT", "fl", "inf"],
+        vec!["INCRBYFLOAT", "fl", "nan"],
+        vec!["INCRBYFLOAT", "fl", " 1"],
+        vec!["INCRBYFLOAT", "fl", "1.5\0abc"],
+        vec!["SET", "bad", "abc"],
+        vec!["INCRBYFLOAT", "bad", "1"],
+        vec!["INCRBYFLOAT", "l2", "1"],
+        vec!["INCRBYFLOAT", "l2", "abc"],
+        vec!["SET", "huge", "1.18973149535723176502e4932"],
+        vec!["INCRBYFLOAT", "huge", "1.18973149535723176502e4932"],
+        vec!["SET", "fe", "5", "PXAT", "99999999999999"],
+        vec!["INCRBYFLOAT", "fe", "1.5"],
+        vec!["PEXPIRETIME", "fe"],
+        vec!["SET", "big", "15.5"],
+        vec!["INCRBYFLOAT", "big", "1.7976931348623157e308"],
+        vec!["INCRBYFLOAT", "tie1", "18446744073709551617"],
+        vec!["INCRBYFLOAT", "tie2", "18446744073709551619"],
+        vec![
+            "INCRBYFLOAT",
+            "tie3",
+            "18446744073709551617.0000000000000000000000001",
+        ],
     ] {
         batch.extend(resp(&request));
     }
     client.write_all(&batch).expect("send the string batch");
     expect_replies(
         &mut client,
-        b"+OK\r\n$1\r\nv\r\n+OK\r\n:20\r\n-ERR syntax error\r\n-ERR syntax error\r\n-ERR syntax error\r\n+OK\r\n:20\r\n+OK\r\n:-1\r\n-ERR syntax error\r\n-ERR value is not an integer or out of range\r\n-ERR invalid expire time in 'set' command\r\n$2\r\nv6\r\n:1\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n+list\r\n$-1\r\n$1\r\nx\r\n$-1\r\n$-1\r\n:0\r\n+OK\r\n-ERR syntax error\r\n-ERR syntax error\r\n+OK\r\n$-1\r\n+OK\r\n$1\r\nx\r\n:1\r\n:0\r\n+OK\r\n:100\r\n-ERR invalid expire time in 'setex' command\r\n-ERR value is not an integer or out of range\r\n-ERR invalid expire time in 'psetex' command\r\n+OK\r\n:100\r\n$1\r\nv\r\n:-1\r\n$-1\r\n:1\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n$1\r\nw\r\n$-1\r\n+OK\r\n$3\r\nval\r\n$3\r\nval\r\n:100\r\n$3\r\nval\r\n:-1\r\n-ERR syntax error\r\n-ERR value is not an integer or out of range\r\n$-1\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n-ERR invalid expire time in 'getex' command\r\n-ERR syntax error\r\n$3\r\nval\r\n:5\r\n$-1\r\n+OK\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n:0\r\n:1\r\n:0\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n$5\r\nhello\r\n$3\r\nllo\r\n$0\r\n\r\n$0\r\n\r\n$1\r\nh\r\n$5\r\nhello\r\n$0\r\n\r\n-ERR value is not an integer or out of range\r\n-ERR value is not an integer or out of range\r\n$0\r\n\r\n-ERR value is not an integer or out of range\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n$5\r\nhello\r\n$0\r\n\r\n$1\r\nh\r\n$3\r\nell\r\n-ERR offset is out of range\r\n-ERR value is not an integer or out of range\r\n:0\r\n:0\r\n:5\r\n-ERR string exceeds maximum allowed size (proto-max-bulk-len)\r\n-ERR string exceeds maximum allowed size (proto-max-bulk-len)\r\n-ERR string exceeds maximum allowed size (proto-max-bulk-len)\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n$5\r\nhello\r\n:5\r\n-ERR value is not an integer or out of range\r\n:-5\r\n:-6\r\n:-1\r\n-ERR decrement would overflow\r\n:-9223372036854775808\r\n-ERR increment or decrement would overflow\r\n-ERR increment or decrement would overflow\r\n:-1\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n-ERR decrement would overflow\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n+OK\r\n:7\r\n:4\r\n:99999999999999\r\n-ERR value is not an integer or out of range\r\n",
+        b"+OK\r\n$1\r\nv\r\n+OK\r\n:20\r\n-ERR syntax error\r\n-ERR syntax error\r\n-ERR syntax error\r\n+OK\r\n:20\r\n+OK\r\n:-1\r\n-ERR syntax error\r\n-ERR value is not an integer or out of range\r\n-ERR invalid expire time in 'set' command\r\n$2\r\nv6\r\n:1\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n+list\r\n$-1\r\n$1\r\nx\r\n$-1\r\n$-1\r\n:0\r\n+OK\r\n-ERR syntax error\r\n-ERR syntax error\r\n+OK\r\n$-1\r\n+OK\r\n$1\r\nx\r\n:1\r\n:0\r\n+OK\r\n:100\r\n-ERR invalid expire time in 'setex' command\r\n-ERR value is not an integer or out of range\r\n-ERR invalid expire time in 'psetex' command\r\n+OK\r\n:100\r\n$1\r\nv\r\n:-1\r\n$-1\r\n:1\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n$1\r\nw\r\n$-1\r\n+OK\r\n$3\r\nval\r\n$3\r\nval\r\n:100\r\n$3\r\nval\r\n:-1\r\n-ERR syntax error\r\n-ERR value is not an integer or out of range\r\n$-1\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n-ERR invalid expire time in 'getex' command\r\n-ERR syntax error\r\n$3\r\nval\r\n:5\r\n$-1\r\n+OK\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n:0\r\n:1\r\n:0\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n$5\r\nhello\r\n$3\r\nllo\r\n$0\r\n\r\n$0\r\n\r\n$1\r\nh\r\n$5\r\nhello\r\n$0\r\n\r\n-ERR value is not an integer or out of range\r\n-ERR value is not an integer or out of range\r\n$0\r\n\r\n-ERR value is not an integer or out of range\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n$5\r\nhello\r\n$0\r\n\r\n$1\r\nh\r\n$3\r\nell\r\n-ERR offset is out of range\r\n-ERR value is not an integer or out of range\r\n:0\r\n:0\r\n:5\r\n-ERR string exceeds maximum allowed size (proto-max-bulk-len)\r\n-ERR string exceeds maximum allowed size (proto-max-bulk-len)\r\n-ERR string exceeds maximum allowed size (proto-max-bulk-len)\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n$5\r\nhello\r\n:5\r\n-ERR value is not an integer or out of range\r\n:-5\r\n:-6\r\n:-1\r\n-ERR decrement would overflow\r\n:-9223372036854775808\r\n-ERR increment or decrement would overflow\r\n-ERR increment or decrement would overflow\r\n:-1\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n-ERR decrement would overflow\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n+OK\r\n:7\r\n:4\r\n:99999999999999\r\n-ERR value is not an integer or out of range\r\n+OK\r\n$4\r\n10.6\r\n$1\r\n0\r\n+OK\r\n$4\r\n4000\r\n+OK\r\n$2\r\n11\r\n+OK\r\n$19\r\n0.00000381469726562\r\n+OK\r\n$19\r\n0.00001144409179688\r\n$1\r\n0\r\n$1\r\n0\r\n+OK\r\n$1\r\n0\r\n-ERR increment would produce NaN or Infinity\r\n-ERR value is not a valid float\r\n-ERR value is not a valid float\r\n-ERR value is not a valid float\r\n+OK\r\n-ERR value is not a valid float\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n+OK\r\n-ERR increment would produce NaN or Infinity\r\n+OK\r\n$3\r\n6.5\r\n:99999999999999\r\n+OK\r\n$309\r\n179769313486231569995921046774104434048386446944329178485314420765176628523124396354701868608387085564428793419425520689308708363451136055357897278026477617073498977686288394835618163294045594434929537447290627480669417384648879122776218333598953852832103282504751611691208117720159985926376802466863339536384\r\n$20\r\n18446744073709551616\r\n$20\r\n18446744073709551620\r\n$20\r\n18446744073709551618\r\n",
         "the string batch",
     );
     drop(client);

@@ -1,0 +1,1196 @@
+alias Bytes = pkg::bytes::Bytes;
+alias byte_at = pkg::bytes::byte_at;
+alias bytes_new = pkg::bytes::bytes_new;
+alias name_is = pkg::bytes::name_is;
+
+const decimal_shifts: Array<u64, 19> =[0_u64, 3_u64, 6_u64, 9_u64, 13_u64, 16_u64, 19_u64, 23_u64, 26_u64, 29_u64, 33_u64, 36_u64, 39_u64, 43_u64, 46_u64, 49_u64, 53_u64, 56_u64, 59_u64];
+
+const digit_room: u64 = 12000_u64;
+
+const scratch_room: u64 = 12032_u64;
+
+const top_bit: u64 = 9223372036854775808_u64;
+
+const all_bits: u64 = 18446744073709551615_u64;
+
+const least_place: i64 = -16445_i64;
+
+const greatest_place: i64 = 16320_i64;
+
+const kind_zero: u64 = 0_u64;
+
+const kind_finite: u64 = 1_u64;
+
+const kind_infinite: u64 = 2_u64;
+
+const kind_nan: u64 = 3_u64;
+
+const exponent_bound: i64 = 1000000_i64;
+
+const seventeen_digits: u64 = 100000000000000000_u64;
+
+const limb: u64 = 1000000000_u64;
+
+const word_inf: Array<u8, 3> =[73_u8, 78_u8, 70_u8];
+
+const word_infinity: Array<u8, 8> =[73_u8, 78_u8, 70_u8, 73_u8, 78_u8, 73_u8, 84_u8, 89_u8];
+
+struct Wide {
+  doc "A number held to more bits than a long double, before rounding: top, its leading 64 bits with the top one set, low, the next 64, and whether any bit after them is set, the low word's least bit standing for two to the exponent.";
+  negative: Bool;
+  top: u64;
+  low: u64;
+  sticky: Bool;
+  exponent: i64;
+}
+
+struct Decimal {
+  doc "A nonnegative decimal, 0.d1d2d3... times 10^point: count digits, one per byte, most significant first and with no trailing zero. The first 12,000 are held, more than the 11,515 significant digits a long double's halfway point has, and the 5,119 an argument string2ld takes can bring; truncated records that a nonzero digit past them was dropped, which can only decide a tie. scratch is room for a shift's digits.";
+  digits: Box<Slots<u8>>;
+  scratch: Box<Slots<u8>>;
+  count: u64;
+  point: i64;
+  truncated: Bool;
+}
+
+struct Exponent {
+  value: i64;
+  next: u64;
+  found: Bool;
+}
+
+fn zero_value(negative: Bool) -> value: Extended pure {
+  doc "Zero of a sign.";
+  return Extended(negative: negative, kind: kind_zero, exponent: 0_i64, significand: 0_u64);
+}
+
+fn infinite_value(negative: Bool) -> value: Extended pure {
+  doc "An infinity of a sign.";
+  return Extended(negative: negative, kind: kind_infinite, exponent: 0_i64, significand: 0_u64);
+}
+
+fn refused() -> reading: Reading pure {
+  doc "The reading of text string2ld refuses.";
+  let positive = False();
+  let value = zero_value(negative: positive);
+  let invalid = False();
+  return Reading(value: value, valid: invalid);
+}
+
+fn accepted(value: Extended) -> reading: Reading pure {
+  doc "The reading of a number string2ld accepts.";
+  let valid = True();
+  return Reading(value: value, valid: valid);
+}
+
+fn filled(capacity: u64) -> made: Box<Slots<u8>> pure {
+  doc "A window of capacity zero bytes, every one filled; no window for more than 2^30 bytes, which no caller asks.";
+  let made = box_slots_new::<u8>(capacity: 0_u64);
+  if capacity <= 1073741824_u64 {
+    set made = box_slots_new::<u8>(capacity: capacity);
+  }
+  loop @fill {
+    if made.inner.len < made.inner.cap {
+      place_back(window: &made.inner, value: 0_u8);
+    } else {
+      break @fill;
+    }
+  }
+  return move made;
+}
+
+fn decimal_new() -> made: Decimal pure {
+  doc "A decimal holding zero.";
+  let digits = filled(capacity: digit_room);
+  let scratch = filled(capacity: scratch_room);
+  let exact = False();
+  return Decimal(digits: move digits, scratch: move scratch, count: 0_u64, point: 0_i64, truncated: exact);
+}
+
+fn digit_at(decimal: &Decimal, index: u64) -> digit: u8 reads(decimal) {
+  doc "The digit at a position, or zero past the digits the decimal holds.";
+  if index < decimal^.count {
+    if index < decimal^.digits.inner.len {
+      return decimal^.digits.inner[index];
+    }
+  }
+  return 0_u8;
+}
+
+fn put_digit(decimal: &Decimal, index: u64, digit: u8) -> result: unit writes(decimal) {
+  doc "Writes a digit at a position within the digits a decimal has room for; its count is the caller's to set.";
+  if index < decimal^.digits.inner.len {
+    set decimal^.digits.inner[index] = digit;
+  }
+  return unit;
+}
+
+fn add_digit(decimal: &Decimal, digit: u8) -> result: unit writes(decimal) {
+  doc "Appends a digit, or notes a nonzero one past the room held as truncated.";
+  let count = decimal^.count;
+  if count < digit_room {
+    put_digit(decimal: decimal, index: count, digit: digit);
+    set decimal^.count = count +wrap 1_u64;
+  } else if digit != 0_u8 {
+    set decimal^.truncated = True();
+  }
+  return unit;
+}
+
+fn trim(decimal: &Decimal) -> result: unit writes(decimal) {
+  doc "Drops trailing zero digits.";
+  loop @zeros {
+    let count = decimal^.count;
+    if count == 0_u64 {
+      break @zeros;
+    }
+    let last = count -wrap 1_u64;
+    let digit = digit_at(decimal: decimal, index: last);
+    if digit != 0_u8 {
+      break @zeros;
+    }
+    set decimal^.count = last;
+  }
+  return unit;
+}
+
+fn left_shift(decimal: &Decimal, shift: u64) -> result: unit writes(decimal) {
+  doc "Multiplies the decimal by 2^shift, for a shift from 1 to 60, exactly but for digits past the room held, whose nonzero ones are noted. The digits are multiplied from the last, each product and carry below 10 times 2^60, written out in reverse into scratch and then copied back in order.";
+  let count = decimal^.count;
+  if count == 0_u64 {
+    return unit;
+  }
+  let amount = cvt.wrap::<u64, u32>(shift);
+  let produced = 0_u64;
+  let carry = 0_u64;
+  for @digits (step in 0_u64..count) {
+    let back = count -wrap step;
+    let index = back -wrap 1_u64;
+    let digit = digit_at(decimal: decimal, index: index);
+    let wide = cvt::<u8, u64>(digit);
+    let scaled = ishl.wrap(wide, amount);
+    let sum = carry +wrap scaled;
+    let low = sum % 10_u64;
+    let narrow = cvt.wrap::<u64, u8>(low);
+    if produced < decimal^.scratch.inner.len {
+      set decimal^.scratch.inner[produced] = narrow;
+    }
+    set produced = produced +wrap 1_u64;
+    set carry = sum / 10_u64;
+  }
+  loop @carrying {
+    if carry == 0_u64 {
+      break @carrying;
+    }
+    let rest = carry % 10_u64;
+    let leading = cvt.wrap::<u64, u8>(rest);
+    if produced < decimal^.scratch.inner.len {
+      set decimal^.scratch.inner[produced] = leading;
+    }
+    set produced = produced +wrap 1_u64;
+    set carry = carry / 10_u64;
+  }
+  let kept = imin(produced, digit_room);
+  for @copying (position in 0_u64..kept) {
+    let remaining = produced -wrap position;
+    let from = remaining -wrap 1_u64;
+    let copied = 0_u8;
+    if from < decimal^.scratch.inner.len {
+      set copied = decimal^.scratch.inner[from];
+    }
+    put_digit(decimal: decimal, index: position, digit: copied);
+  }
+  let dropped = produced -wrap kept;
+  for @dropping (low_index in 0_u64..dropped) {
+    if low_index < decimal^.scratch.inner.len {
+      let lost = decimal^.scratch.inner[low_index];
+      if lost != 0_u8 {
+        set decimal^.truncated = True();
+      }
+    }
+  }
+  let added = produced -wrap count;
+  let raise = cvt.wrap::<u64, i64>(added);
+  let point = decimal^.point;
+  set decimal^.point = point +wrap raise;
+  set decimal^.count = kept;
+  trim(decimal: decimal);
+  return unit;
+}
+
+fn right_shift(decimal: &Decimal, shift: u64) -> result: unit writes(decimal) {
+  doc "Divides the decimal by 2^shift, for a shift from 1 to 60, exactly but for digits past the room held, whose nonzero ones are noted. Digits are read into a running value below 10 times 2^60 until it reaches 2^shift, then each step writes the value's quotient by 2^shift as a digit, behind the one read, and carries its remainder.";
+  let count = decimal^.count;
+  let amount = cvt.wrap::<u64, u32>(shift);
+  let read = 0_u64;
+  let written = 0_u64;
+  let value = 0_u64;
+  loop @leading {
+    let high = ishr.wrap(value, amount);
+    if high != 0_u64 {
+      break @leading;
+    }
+    if read < count {
+      let digit = digit_at(decimal: decimal, index: read);
+      let wide = cvt::<u8, u64>(digit);
+      let tens = value *wrap 10_u64;
+      set value = tens +wrap wide;
+      set read = read +wrap 1_u64;
+    } else if value == 0_u64 {
+      set decimal^.count = 0_u64;
+      return unit;
+    } else {
+      loop @scaling {
+        let top = ishr.wrap(value, amount);
+        if top != 0_u64 {
+          break @scaling;
+        }
+        set value = value *wrap 10_u64;
+        set read = read +wrap 1_u64;
+      }
+      break @leading;
+    }
+  }
+  let moved = cvt.wrap::<u64, i64>(read);
+  let point = decimal^.point;
+  let lowered = point -wrap moved;
+  set decimal^.point = lowered +wrap 1_i64;
+  let unit_bit = ishl.wrap(1_u64, amount);
+  let mask = unit_bit -wrap 1_u64;
+  loop @middle {
+    if read >= count {
+      break @middle;
+    }
+    let quotient = ishr.wrap(value, amount);
+    let rest = iand(value, mask);
+    let next = digit_at(decimal: decimal, index: read);
+    let next_wide = cvt::<u8, u64>(next);
+    let rest_tens = rest *wrap 10_u64;
+    set value = rest_tens +wrap next_wide;
+    set read = read +wrap 1_u64;
+    let narrow = cvt.wrap::<u64, u8>(quotient);
+    put_digit(decimal: decimal, index: written, digit: narrow);
+    set written = written +wrap 1_u64;
+  }
+  loop @tail {
+    if value == 0_u64 {
+      break @tail;
+    }
+    let tail_quotient = ishr.wrap(value, amount);
+    let tail_rest = iand(value, mask);
+    set value = tail_rest *wrap 10_u64;
+    let tail_digit = cvt.wrap::<u64, u8>(tail_quotient);
+    if written < digit_room {
+      put_digit(decimal: decimal, index: written, digit: tail_digit);
+      set written = written +wrap 1_u64;
+    } else if tail_digit != 0_u8 {
+      set decimal^.truncated = True();
+    }
+  }
+  set decimal^.count = written;
+  trim(decimal: decimal);
+  return unit;
+}
+
+fn decimal_shift(power: i64) -> shift: u64 pure {
+  doc "How far a decimal whose point is power places from the units may shift without passing 1: below power times log2(10) bits, and 60 from 19 places.";
+  if power >= 0_i64 {
+    if power < 19_i64 {
+      let index = cvt.wrap::<i64, u64>(power);
+      if index < 19_u64 {
+        return decimal_shifts[index];
+      }
+    }
+  }
+  return 60_u64;
+}
+
+fn decimal_wide(decimal: &Decimal, negative: Bool) -> wide: Wide writes(decimal) {
+  doc "A nonzero decimal as a wide number, by Simple Decimal Conversion: shifts by powers of two, exact in decimal, bring the value to [1/2, 1) while an exponent counts them; a shift of 64 bits then gives the leading 64 bits as the integer part, and the first digit after the point and those after it give the next bit and whether any bit after that is set. A decimal of 10^4934 or more stands for a number past every long double, and one below 10^-4952 for one below half the least.";
+  let none = False();
+  if decimal^.count == 0_u64 {
+    return Wide(negative: negative, top: 0_u64, low: 0_u64, sticky: none, exponent: 0_i64);
+  }
+  if decimal^.point > 4934_i64 {
+    return Wide(negative: negative, top: top_bit, low: 0_u64, sticky: none, exponent: exponent_bound);
+  }
+  if decimal^.point < -4952_i64 {
+    return Wide(negative: negative, top: 0_u64, low: 0_u64, sticky: none, exponent: 0_i64);
+  }
+  let exponent = 0_i64;
+  loop @down {
+    let point = decimal^.point;
+    if point <= 0_i64 {
+      break @down;
+    }
+    let shift = decimal_shift(power: point);
+    right_shift(decimal: decimal, shift: shift);
+    let moved = cvt.wrap::<u64, i64>(shift);
+    set exponent = exponent +wrap moved;
+  }
+  loop @up {
+    let place = decimal^.point;
+    if place > 0_i64 {
+      break @up;
+    }
+    let step = 0_u64;
+    if place == 0_i64 {
+      let lead = digit_at(decimal: decimal, index: 0_u64);
+      if lead >= 5_u8 {
+        break @up;
+      }
+      set step = 1_u64;
+      if lead <= 1_u8 {
+        set step = 2_u64;
+      }
+    } else {
+      let depth = 0_i64 -wrap place;
+      set step = decimal_shift(power: depth);
+    }
+    left_shift(decimal: decimal, shift: step);
+    let lowered = cvt.wrap::<u64, i64>(step);
+    set exponent = exponent -wrap lowered;
+  }
+  left_shift(decimal: decimal, shift: 60_u64);
+  left_shift(decimal: decimal, shift: 4_u64);
+  let whole = 0_u64;
+  if decimal^.point > 0_i64 {
+    set whole = cvt.wrap::<i64, u64>(decimal^.point);
+  }
+  let top = 0_u64;
+  for @integral (index in 0_u64..whole) {
+    let digit = digit_at(decimal: decimal, index: index);
+    let wide = cvt::<u8, u64>(digit);
+    let tens = top *wrap 10_u64;
+    set top = tens +wrap wide;
+  }
+  let count = decimal^.count;
+  let first = digit_at(decimal: decimal, index: whole);
+  let half = first >= 5_u8;
+  let after = whole +wrap 1_u64;
+  let more = count > after;
+  let rest = decimal^.truncated;
+  if half {
+    let five = first == 5_u8;
+    let alone = bnot(more);
+    let tie = band(five, alone);
+    let beyond = bnot(tie);
+    set rest = bor(beyond, rest);
+  } else {
+    let some = count > whole;
+    set rest = bor(some, rest);
+  }
+  let low = 0_u64;
+  if half {
+    set low = top_bit;
+  }
+  let place = exponent -wrap 128_i64;
+  return Wide(negative: negative, top: top, low: low, sticky: rest, exponent: place);
+}
+
+fn round_wide(wide: Wide) -> value: Extended pure {
+  doc "The long double nearest a wide number, ties to even, as x87 arithmetic and glibc's strtold round: a number below the least normal keeps only the bits at and above the least subnormal's, one that rounds below that is zero, and one past the greatest finite long double is an infinity.";
+  if wide.top == 0_u64 {
+    let zero = zero_value(negative: wide.negative);
+    return zero;
+  }
+  let top = wide.top;
+  let low = wide.low;
+  let sticky = wide.sticky;
+  let place = wide.exponent +wrap 64_i64;
+  if place < least_place {
+    let gap_signed = least_place -wrap place;
+    let gap = cvt.wrap::<i64, u64>(gap_signed);
+    if gap >= 128_u64 {
+      let top_set = top != 0_u64;
+      let low_set = low != 0_u64;
+      let any = bor(top_set, low_set);
+      set sticky = bor(sticky, any);
+      set top = 0_u64;
+      set low = 0_u64;
+    } else if gap >= 64_u64 {
+      let shift = gap -wrap 64_u64;
+      let low_set = low != 0_u64;
+      set sticky = bor(sticky, low_set);
+      if shift == 0_u64 {
+        set low = top;
+      } else {
+        let amount = cvt.wrap::<u64, u32>(shift);
+        let back_wide = 64_u64 -wrap shift;
+        let back = cvt.wrap::<u64, u32>(back_wide);
+        let lost = ishl.wrap(top, back);
+        let lost_set = lost != 0_u64;
+        set sticky = bor(sticky, lost_set);
+        set low = ishr.wrap(top, amount);
+      }
+      set top = 0_u64;
+    } else {
+      let amount = cvt.wrap::<u64, u32>(gap);
+      let back_wide = 64_u64 -wrap gap;
+      let back = cvt.wrap::<u64, u32>(back_wide);
+      let lost = ishl.wrap(low, back);
+      let lost_set = lost != 0_u64;
+      set sticky = bor(sticky, lost_set);
+      let carried = ishl.wrap(top, back);
+      let shifted = ishr.wrap(low, amount);
+      set low = ior(shifted, carried);
+      set top = ishr.wrap(top, amount);
+    }
+    set place = least_place;
+  }
+  let half_bit = iand(low, top_bit);
+  let half = half_bit != 0_u64;
+  let below = top_bit -wrap 1_u64;
+  let rest_bits = iand(low, below);
+  let rest_set = rest_bits != 0_u64;
+  let rest = bor(rest_set, sticky);
+  let odd_bit = iand(top, 1_u64);
+  let odd = odd_bit != 0_u64;
+  let lean = bor(rest, odd);
+  let up = band(half, lean);
+  if up {
+    if top == all_bits {
+      set top = top_bit;
+      set place = place +wrap 1_i64;
+    } else {
+      set top = top +wrap 1_u64;
+    }
+  }
+  if top == 0_u64 {
+    let zero = zero_value(negative: wide.negative);
+    return zero;
+  }
+  if place > greatest_place {
+    let infinity = infinite_value(negative: wide.negative);
+    return infinity;
+  }
+  return Extended(negative: wide.negative, kind: kind_finite, exponent: place, significand: top);
+}
+
+fn hex_value(byte: u8) -> value: u64 pure {
+  doc "The value of a hexadecimal digit in either case, or 16 for a byte that is none.";
+  let wide = cvt::<u8, u64>(byte);
+  let digit_low = byte >= 48_u8;
+  let digit_high = byte <= 57_u8;
+  let digit = band(digit_low, digit_high);
+  if digit {
+    let value = wide -wrap 48_u64;
+    return value;
+  }
+  let upper_low = byte >= 65_u8;
+  let upper_high = byte <= 70_u8;
+  let upper = band(upper_low, upper_high);
+  if upper {
+    let value = wide -wrap 55_u64;
+    return value;
+  }
+  let lower_low = byte >= 97_u8;
+  let lower_high = byte <= 102_u8;
+  let lower = band(lower_low, lower_high);
+  if lower {
+    let value = wide -wrap 87_u64;
+    return value;
+  }
+  return 16_u64;
+}
+
+fn read_exponent(input: &[u8], position: u64, end: u64) -> exponent: Exponent reads(input) {
+  doc "Reads an exponent's optional sign and decimal digits from a position before end, its magnitude held at a million, past which every number is an overflow or an underflow; found is False when no digit follows, and strtold then leaves the exponent's letter unread.";
+  let at = position;
+  let negative = False();
+  if at < end {
+    let sign = byte_at(input: input, index: at);
+    if sign == 43_u8 {
+      set at = at +wrap 1_u64;
+    } else if sign == 45_u8 {
+      set negative = True();
+      set at = at +wrap 1_u64;
+    }
+  }
+  let digits = 0_u64;
+  let value = 0_i64;
+  loop @digits {
+    if at >= end {
+      break @digits;
+    }
+    let byte = byte_at(input: input, index: at);
+    let low = byte >= 48_u8;
+    let high = byte <= 57_u8;
+    let digit = band(low, high);
+    if digit {
+    } else {
+      break @digits;
+    }
+    if value < exponent_bound {
+      let face = byte -wrap 48_u8;
+      let wide = cvt::<u8, i64>(face);
+      let tens = value *wrap 10_i64;
+      set value = tens +wrap wide;
+    }
+    set digits = digits +wrap 1_u64;
+    set at = at +wrap 1_u64;
+  }
+  if digits == 0_u64 {
+    let missing = False();
+    return Exponent(value: 0_i64, next: position, found: missing);
+  }
+  if negative {
+    set value = 0_i64 -wrap value;
+  }
+  let found = True();
+  return Exponent(value: value, next: at, found: found);
+}
+
+fn finished(value: Extended, nonzero: Bool) -> reading: Reading pure {
+  doc "The reading of a number strtold converted whole: refused when a nonzero number rounded to zero or to an infinity, as string2ld refuses strtold's range errors.";
+  if value.kind == kind_infinite {
+    let overflow = refused();
+    return overflow;
+  }
+  if value.kind == kind_zero {
+    if nonzero {
+      let underflow = refused();
+      return underflow;
+    }
+  }
+  let reading = accepted(value: value);
+  return reading;
+}
+
+fn read_decimal(input: &[u8], position: u64, end: u64, negative: Bool) -> reading: Reading reads(input) {
+  doc "Reads the rest of a decimal number from a position, after its sign: digits with at most one point among them, at least one digit, then an optional exponent, and nothing after them before end.";
+  let decimal = decimal_new();
+  let at = position;
+  let saw = False();
+  let nonzero = False();
+  let after_point = False();
+  loop @mantissa {
+    if at >= end {
+      break @mantissa;
+    }
+    let byte = byte_at(input: input, index: at);
+    let low = byte >= 48_u8;
+    let high = byte <= 57_u8;
+    let digit = band(low, high);
+    if digit {
+      set saw = True();
+      let face = byte -wrap 48_u8;
+      let zero_digit = face == 0_u8;
+      let unseen = bnot(nonzero);
+      let leading = band(zero_digit, unseen);
+      if leading {
+        if after_point {
+          set decimal.point = decimal.point -wrap 1_i64;
+        }
+      } else {
+        set nonzero = True();
+        add_digit(decimal: &decimal, digit: face);
+        if after_point {
+        } else {
+          set decimal.point = decimal.point +wrap 1_i64;
+        }
+      }
+      set at = at +wrap 1_u64;
+    } else if byte == 46_u8 {
+      if after_point {
+        break @mantissa;
+      }
+      set after_point = True();
+      set at = at +wrap 1_u64;
+    } else {
+      break @mantissa;
+    }
+  }
+  if saw {
+  } else {
+    let none = refused();
+    return none;
+  }
+  if at < end {
+    let letter = byte_at(input: input, index: at);
+    let small = letter == 101_u8;
+    let capital = letter == 69_u8;
+    let marked = bor(small, capital);
+    if marked {
+      let following = at +wrap 1_u64;
+      let exponent = read_exponent(input: input, position: following, end: end);
+      if exponent.found {
+        set at = exponent.next;
+        set decimal.point = decimal.point +wrap exponent.value;
+      }
+    }
+  }
+  if at != end {
+    let trailing = refused();
+    return trailing;
+  }
+  trim(decimal: &decimal);
+  if nonzero {
+  } else {
+    let zero = zero_value(negative: negative);
+    let reading = accepted(value: zero);
+    return reading;
+  }
+  let wide = decimal_wide(decimal: &decimal, negative: negative);
+  let value = round_wide(wide: wide);
+  let reading = finished(value: value, nonzero: nonzero);
+  return reading;
+}
+
+fn read_hex(input: &[u8], position: u64, end: u64, negative: Bool) -> reading: Reading reads(input) {
+  doc "Reads the rest of a C99 hexadecimal number from a position after its 0x: hexadecimal digits with at most one point among them, at least one digit, an optional binary exponent after p in either case, and nothing after them before end. Its first 32 significant digits are kept in 128 bits, any nonzero digit after them noted for the rounding.";
+  let high = 0_u64;
+  let low = 0_u64;
+  let collected = 0_u64;
+  let nonzero = False();
+  let sticky = False();
+  let saw = False();
+  let after_point = False();
+  let exponent = 0_i64;
+  let at = position;
+  loop @digits {
+    if at >= end {
+      break @digits;
+    }
+    let byte = byte_at(input: input, index: at);
+    let value = hex_value(byte: byte);
+    if value < 16_u64 {
+      set saw = True();
+      let zero_digit = value == 0_u64;
+      let unseen = bnot(nonzero);
+      let leading = band(zero_digit, unseen);
+      if leading {
+        if after_point {
+          set exponent = exponent -wrap 4_i64;
+        }
+      } else {
+        set nonzero = True();
+        if collected < 32_u64 {
+          let shifted_high = ishl.wrap(high, 4_u32);
+          let carried = ishr.wrap(low, 60_u32);
+          set high = ior(shifted_high, carried);
+          let shifted_low = ishl.wrap(low, 4_u32);
+          set low = ior(shifted_low, value);
+          set collected = collected +wrap 1_u64;
+          if after_point {
+            set exponent = exponent -wrap 4_i64;
+          }
+        } else {
+          if value != 0_u64 {
+            set sticky = True();
+          }
+          if after_point {
+          } else {
+            set exponent = exponent +wrap 4_i64;
+          }
+        }
+      }
+      set at = at +wrap 1_u64;
+    } else if byte == 46_u8 {
+      if after_point {
+        break @digits;
+      }
+      set after_point = True();
+      set at = at +wrap 1_u64;
+    } else {
+      break @digits;
+    }
+  }
+  if saw {
+  } else {
+    let none = refused();
+    return none;
+  }
+  if at < end {
+    let letter = byte_at(input: input, index: at);
+    let small = letter == 112_u8;
+    let capital = letter == 80_u8;
+    let marked = bor(small, capital);
+    if marked {
+      let following = at +wrap 1_u64;
+      let power = read_exponent(input: input, position: following, end: end);
+      if power.found {
+        set at = power.next;
+        set exponent = exponent +wrap power.value;
+      }
+    }
+  }
+  if at != end {
+    let trailing = refused();
+    return trailing;
+  }
+  if nonzero {
+  } else {
+    let zero = zero_value(negative: negative);
+    let reading = accepted(value: zero);
+    return reading;
+  }
+  let shift = 0_u64;
+  if high != 0_u64 {
+    let count = iclz(high);
+    set shift = cvt::<u32, u64>(count);
+  } else {
+    let count = iclz(low);
+    let wide = cvt::<u32, u64>(count);
+    set shift = wide +wrap 64_u64;
+  }
+  if shift >= 64_u64 {
+    let amount_wide = shift -wrap 64_u64;
+    let amount = cvt.wrap::<u64, u32>(amount_wide);
+    set high = ishl.wrap(low, amount);
+    set low = 0_u64;
+  } else if shift > 0_u64 {
+    let amount = cvt.wrap::<u64, u32>(shift);
+    let back_wide = 64_u64 -wrap shift;
+    let back = cvt.wrap::<u64, u32>(back_wide);
+    let moved_high = ishl.wrap(high, amount);
+    let carried = ishr.wrap(low, back);
+    set high = ior(moved_high, carried);
+    set low = ishl.wrap(low, amount);
+  }
+  let lowered = cvt.wrap::<u64, i64>(shift);
+  let place = exponent -wrap lowered;
+  let wide = Wide(negative: negative, top: high, low: low, sticky: sticky, exponent: place);
+  let value = round_wide(wide: wide);
+  let reading = finished(value: value, nonzero: nonzero);
+  return reading;
+}
+
+fn extended_read(input: &[u8], start: u64, length: u64) -> reading: Reading reads(input) {
+  doc "Reads length bytes of the input from start as Redis 7.0.15's string2ld reads them, with glibc's strtold and nothing after it, to the nearest long double with ties to even: an optional sign, then a decimal number with an optional exponent, a C99 hexadecimal one with an optional binary exponent, or inf or infinity in either case. Text of no bytes or of 5,120 or more, any byte strtold leaves, a leading space among them since strtold's skipping of spaces, which string2ld refuses, is never done here, NaN, and a number that overflows to infinity or a nonzero one that rounds to zero are refused.";
+  let empty = length == 0_u64;
+  let long = length >= 5120_u64;
+  let outside = bor(empty, long);
+  if outside {
+    let none = refused();
+    return none;
+  }
+  let end = start +wrap length;
+  let first = byte_at(input: input, index: start);
+  let at = start;
+  let negative = False();
+  if first == 43_u8 {
+    set at = at +wrap 1_u64;
+  } else if first == 45_u8 {
+    set negative = True();
+    set at = at +wrap 1_u64;
+  }
+  let remaining = end -wrap at;
+  let short = name_is(input: input, start: at, length: remaining, word: &word_inf[0_u64..3_u64]);
+  let spelled = name_is(input: input, start: at, length: remaining, word: &word_infinity[0_u64..8_u64]);
+  let infinite = bor(short, spelled);
+  if infinite {
+    let value = infinite_value(negative: negative);
+    let reading = accepted(value: value);
+    return reading;
+  }
+  let lead = byte_at(input: input, index: at);
+  let next = at +wrap 1_u64;
+  let marker = byte_at(input: input, index: next);
+  let zero = lead == 48_u8;
+  let small = marker == 120_u8;
+  let capital = marker == 88_u8;
+  let lettered = bor(small, capital);
+  let within = next < end;
+  let marked = band(within, lettered);
+  let hexadecimal = band(zero, marked);
+  if hexadecimal {
+    let digits = next +wrap 1_u64;
+    let reading = read_hex(input: input, position: digits, end: end, negative: negative);
+    return reading;
+  }
+  let reading = read_decimal(input: input, position: at, end: end, negative: negative);
+  return reading;
+}
+
+fn normalized(value: &Extended) -> wide: Wide reads(value) {
+  doc "A finite nonzero long double as a wide number whose top word has its top bit set, its low word zero, a subnormal's significand shifted up to that.";
+  let count = iclz(value^.significand);
+  let amount = cvt::<u32, u64>(count);
+  let significand = ishl.wrap(value^.significand, count);
+  let lowered = cvt.wrap::<u64, i64>(amount);
+  let place = value^.exponent -wrap lowered;
+  let exponent = place -wrap 64_i64;
+  let none = False();
+  return Wide(negative: value^.negative, top: significand, low: 0_u64, sticky: none, exponent: exponent);
+}
+
+fn extended_add(left: &Extended, right: &Extended) -> sum: Extended reads(left), reads(right) {
+  doc "The sum of two long doubles rounded to nearest with ties to even, as x87 addition gives it: not a number from either one or from infinities of opposite signs, an infinity from an infinity, zero of the sign both share for two zeros and positive zero for an exact cancellation. The smaller is aligned below the larger in 128 bits, with a note of any bit shifted out, which leaves the rounding exact.";
+  let positive = False();
+  let left_nan = left^.kind == kind_nan;
+  let right_nan = right^.kind == kind_nan;
+  let either_nan = bor(left_nan, right_nan);
+  if either_nan {
+    return Extended(negative: positive, kind: kind_nan, exponent: 0_i64, significand: 0_u64);
+  }
+  if left^.kind == kind_infinite {
+    if right^.kind == kind_infinite {
+      let opposite = bxor(left^.negative, right^.negative);
+      if opposite {
+        return Extended(negative: positive, kind: kind_nan, exponent: 0_i64, significand: 0_u64);
+      }
+    }
+    let infinity = infinite_value(negative: left^.negative);
+    return infinity;
+  }
+  if right^.kind == kind_infinite {
+    let infinity = infinite_value(negative: right^.negative);
+    return infinity;
+  }
+  if left^.kind == kind_zero {
+    if right^.kind == kind_zero {
+      let both = band(left^.negative, right^.negative);
+      let zero = zero_value(negative: both);
+      return zero;
+    }
+    return Extended(negative: right^.negative, kind: right^.kind, exponent: right^.exponent, significand: right^.significand);
+  }
+  if right^.kind == kind_zero {
+    return Extended(negative: left^.negative, kind: left^.kind, exponent: left^.exponent, significand: left^.significand);
+  }
+  let first = normalized(value: left);
+  let second = normalized(value: right);
+  let larger = first;
+  let smaller = second;
+  let later = second.exponent > first.exponent;
+  let level = second.exponent == first.exponent;
+  let bigger = second.top > first.top;
+  let tied_bigger = band(level, bigger);
+  let swapped = bor(later, tied_bigger);
+  if swapped {
+    set larger = second;
+    set smaller = first;
+  }
+  let gap_signed = larger.exponent -wrap smaller.exponent;
+  let gap = cvt.wrap::<i64, u64>(gap_signed);
+  let small_high = 0_u64;
+  let small_low = 0_u64;
+  let sticky = False();
+  if gap == 0_u64 {
+    set small_high = smaller.top;
+  } else if gap < 64_u64 {
+    let amount = cvt.wrap::<u64, u32>(gap);
+    let back_wide = 64_u64 -wrap gap;
+    let back = cvt.wrap::<u64, u32>(back_wide);
+    set small_high = ishr.wrap(smaller.top, amount);
+    set small_low = ishl.wrap(smaller.top, back);
+  } else if gap < 128_u64 {
+    let shift = gap -wrap 64_u64;
+    if shift == 0_u64 {
+      set small_low = smaller.top;
+    } else {
+      let amount = cvt.wrap::<u64, u32>(shift);
+      let back_wide = 64_u64 -wrap shift;
+      let back = cvt.wrap::<u64, u32>(back_wide);
+      set small_low = ishr.wrap(smaller.top, amount);
+      let lost = ishl.wrap(smaller.top, back);
+      set sticky = lost != 0_u64;
+    }
+  } else {
+    set sticky = True();
+  }
+  let opposite = bxor(larger.negative, smaller.negative);
+  if opposite {
+    let high = larger.top -wrap small_high;
+    let low = 0_u64 -wrap small_low;
+    if small_low != 0_u64 {
+      set high = high -wrap 1_u64;
+    }
+    if sticky {
+      if low == 0_u64 {
+        set high = high -wrap 1_u64;
+      }
+      set low = low -wrap 1_u64;
+    }
+    let vanished_high = high == 0_u64;
+    let vanished_low = low == 0_u64;
+    let vanished = band(vanished_high, vanished_low);
+    let exact = bnot(sticky);
+    let cancelled = band(vanished, exact);
+    if cancelled {
+      let zero = zero_value(negative: positive);
+      return zero;
+    }
+    let shift = 0_u64;
+    if high != 0_u64 {
+      let count = iclz(high);
+      set shift = cvt::<u32, u64>(count);
+    } else {
+      let count = iclz(low);
+      let wide = cvt::<u32, u64>(count);
+      set shift = wide +wrap 64_u64;
+    }
+    if shift >= 64_u64 {
+      let amount_wide = shift -wrap 64_u64;
+      let amount = cvt.wrap::<u64, u32>(amount_wide);
+      set high = ishl.wrap(low, amount);
+      set low = 0_u64;
+    } else if shift > 0_u64 {
+      let amount = cvt.wrap::<u64, u32>(shift);
+      let back_wide = 64_u64 -wrap shift;
+      let back = cvt.wrap::<u64, u32>(back_wide);
+      let moved_high = ishl.wrap(high, amount);
+      let carried = ishr.wrap(low, back);
+      set high = ior(moved_high, carried);
+      set low = ishl.wrap(low, amount);
+    }
+    let lowered = cvt.wrap::<u64, i64>(shift);
+    let place = larger.exponent -wrap lowered;
+    let wide = Wide(negative: larger.negative, top: high, low: low, sticky: sticky, exponent: place);
+    let difference = round_wide(wide: wide);
+    return difference;
+  }
+  let high = larger.top +wrap small_high;
+  let low = small_low;
+  let place = larger.exponent;
+  if high < larger.top {
+    let low_bit = iand(low, 1_u64);
+    let lost = low_bit != 0_u64;
+    set sticky = bor(sticky, lost);
+    let carried = ishl.wrap(high, 63_u32);
+    let shifted = ishr.wrap(low, 1_u32);
+    set low = ior(shifted, carried);
+    let halved = ishr.wrap(high, 1_u32);
+    set high = ior(halved, top_bit);
+    set place = place +wrap 1_i64;
+  }
+  let wide = Wide(negative: larger.negative, top: high, low: low, sticky: sticky, exponent: place);
+  let total = round_wide(wide: wide);
+  return total;
+}
+
+fn push_byte(out: &Box<Slots<u8>>, byte: u8) -> result: unit writes(out) {
+  doc "Appends a byte to text being written, which was made with room for it.";
+  if out^.inner.len < out^.inner.cap {
+    place_back(window: &out^.inner, value: byte);
+  }
+  return unit;
+}
+
+fn push_digits(out: &Box<Slots<u8>>, value: u64, width: u64) -> result: unit writes(out) {
+  doc "Appends a number's decimal digits, padded with leading zeros to width digits, at most 20.";
+  let digits = array_filled::<u8, 20>(value: 48_u8);
+  let count = 0_u64;
+  let rest = value;
+  loop @digits {
+    let low = rest % 10_u64;
+    let narrow = cvt.wrap::<u64, u8>(low);
+    if count < 20_u64 {
+      set digits[count] = narrow +wrap 48_u8;
+    }
+    set count = count +wrap 1_u64;
+    set rest = rest / 10_u64;
+    if rest == 0_u64 {
+      break @digits;
+    }
+  }
+  let shown = imax(count, width);
+  let kept = imin(shown, 20_u64);
+  for @emit (index in 0_u64..kept) {
+    let back = kept -wrap index;
+    let from = back -wrap 1_u64;
+    let glyph = 48_u8;
+    if from < 20_u64 {
+      set glyph = digits[from];
+    }
+    push_byte(out: out, byte: glyph);
+  }
+  return unit;
+}
+
+fn push_shifted(out: &Box<Slots<u8>>, significand: u64, shift: u64) -> result: unit writes(out) {
+  doc "Appends the decimal digits of significand times 2^shift, a shift of at most 16,320 giving at most 4,933 digits, by doubling in limbs of nine decimal digits, 30 bits at a time.";
+  let limbs = box_slots_new::<u64>(capacity: 600_u64);
+  let rest = significand;
+  loop @split {
+    let part = rest % limb;
+    if limbs.inner.len < limbs.inner.cap {
+      place_back(window: &limbs.inner, value: part);
+    }
+    set rest = rest / limb;
+    if rest == 0_u64 {
+      break @split;
+    }
+  }
+  let remaining = shift;
+  loop @doubling {
+    if remaining == 0_u64 {
+      break @doubling;
+    }
+    let step = imin(remaining, 30_u64);
+    let amount = cvt.wrap::<u64, u32>(step);
+    let carry = 0_u64;
+    for @limbs (index in 0_u64..limbs.inner.len) {
+      let held = limbs.inner[index];
+      let moved = ishl.wrap(held, amount);
+      let sum = moved +wrap carry;
+      set limbs.inner[index] = sum % limb;
+      set carry = sum / limb;
+    }
+    loop @carrying {
+      if carry == 0_u64 {
+        break @carrying;
+      }
+      let part = carry % limb;
+      if limbs.inner.len < limbs.inner.cap {
+        place_back(window: &limbs.inner, value: part);
+      }
+      set carry = carry / limb;
+    }
+    set remaining = remaining -wrap step;
+  }
+  let count = limbs.inner.len;
+  for @emit (step in 0_u64..count) {
+    let back = count -wrap step;
+    let index = back -wrap 1_u64;
+    let held = 0_u64;
+    if index < limbs.inner.len {
+      set held = limbs.inner[index];
+    }
+    let width = 9_u64;
+    if step == 0_u64 {
+      set width = 1_u64;
+    }
+    push_digits(out: out, value: held, width: width);
+  }
+  return unit;
+}
+
+fn extended_text(value: &Extended) -> text: Bytes reads(value) {
+  doc "Writes a finite long double as Redis 7.0.15's ld2string writes it for INCRBYFLOAT: C's %.17Lf, the exact value rounded to 17 digits after the point with ties to even, as glibc rounds it, then the trailing zeros and a trailing point dropped, and -0 written 0. A zero writes 0, and an infinity or not a number, which INCRBYFLOAT refuses before writing, also 0.";
+  let out = box_slots_new::<u8>(capacity: 5000_u64);
+  if value^.kind != kind_finite {
+    push_byte(out: &out, byte: 48_u8);
+    let length = out.inner.len;
+    let made = bytes_new(input: &out.inner[0_u64..length], start: 0_u64, length: length);
+    return move made;
+  }
+  let significand = value^.significand;
+  let place = value^.exponent;
+  let whole = 0_u64;
+  let fraction = 0_u64;
+  let large = place >= 0_i64;
+  if large {
+  } else {
+    let shift_signed = 0_i64 -wrap place;
+    let shift = cvt.wrap::<i64, u64>(shift_signed);
+    let numerator = significand;
+    if shift < 64_u64 {
+      let amount = cvt.wrap::<u64, u32>(shift);
+      set whole = ishr.wrap(significand, amount);
+      let unit_bit = ishl.wrap(1_u64, amount);
+      let mask = unit_bit -wrap 1_u64;
+      set numerator = iand(significand, mask);
+    }
+    let low = numerator *wrap seventeen_digits;
+    let high = imulhi(numerator, seventeen_digits);
+    let up = False();
+    let tie = False();
+    if shift < 64_u64 {
+      let amount = cvt.wrap::<u64, u32>(shift);
+      let back_wide = 64_u64 -wrap shift;
+      let back = cvt.wrap::<u64, u32>(back_wide);
+      let upper = ishl.wrap(high, back);
+      let lower = ishr.wrap(low, amount);
+      set fraction = ior(upper, lower);
+      let unit_bit = ishl.wrap(1_u64, amount);
+      let mask = unit_bit -wrap 1_u64;
+      let rest = iand(low, mask);
+      let half_shift_wide = shift -wrap 1_u64;
+      let half_shift = cvt.wrap::<u64, u32>(half_shift_wide);
+      let half = ishl.wrap(1_u64, half_shift);
+      set up = rest > half;
+      set tie = rest == half;
+    } else if shift == 64_u64 {
+      set fraction = high;
+      set up = low > top_bit;
+      set tie = low == top_bit;
+    } else if shift < 128_u64 {
+      let above = shift -wrap 64_u64;
+      let amount = cvt.wrap::<u64, u32>(above);
+      set fraction = ishr.wrap(high, amount);
+      let unit_bit = ishl.wrap(1_u64, amount);
+      let mask = unit_bit -wrap 1_u64;
+      let rest_high = iand(high, mask);
+      let half_shift_wide = above -wrap 1_u64;
+      let half_shift = cvt.wrap::<u64, u32>(half_shift_wide);
+      let half_high = ishl.wrap(1_u64, half_shift);
+      if rest_high > half_high {
+        set up = True();
+      } else if rest_high == half_high {
+        if low != 0_u64 {
+          set up = True();
+        } else {
+          set tie = True();
+        }
+      }
+    }
+    if tie {
+      let odd_bit = iand(fraction, 1_u64);
+      set up = odd_bit != 0_u64;
+    }
+    if up {
+      set fraction = fraction +wrap 1_u64;
+      if fraction == seventeen_digits {
+        set fraction = 0_u64;
+        set whole = whole +wrap 1_u64;
+      }
+    }
+  }
+  let whole_set = whole != 0_u64;
+  let shown_whole = bor(large, whole_set);
+  let shown_fraction = fraction != 0_u64;
+  let shown = bor(shown_whole, shown_fraction);
+  let signed = band(value^.negative, shown);
+  if signed {
+    push_byte(out: &out, byte: 45_u8);
+  }
+  if large {
+    let shift = cvt.wrap::<i64, u64>(place);
+    push_shifted(out: &out, significand: significand, shift: shift);
+  } else {
+    push_digits(out: &out, value: whole, width: 1_u64);
+  }
+  if shown_fraction {
+    push_byte(out: &out, byte: 46_u8);
+    let digits = 17_u64;
+    let trimmed = fraction;
+    loop @zeros {
+      let last = trimmed % 10_u64;
+      if last != 0_u64 {
+        break @zeros;
+      }
+      set trimmed = trimmed / 10_u64;
+      set digits = digits -wrap 1_u64;
+    }
+    push_digits(out: &out, value: trimmed, width: digits);
+  }
+  let length = out.inner.len;
+  let made = bytes_new(input: &out.inner[0_u64..length], start: 0_u64, length: length);
+  return move made;
+}
+
+fn extended_sum(value: &[u8], increment: &Reading) -> sum: Sum reads(value), reads(increment) {
+  doc "Adds the increment to the number value's bytes read as extended_read reads them, in long double arithmetic rounded to nearest with ties to even, and writes the sum as Redis 7.0.15's ld2string writes it for INCRBYFLOAT: C's %.17Lf, the exact value rounded to 17 digits after the point with ties to even, its trailing zeros and then a trailing point dropped, and -0 written 0.";
+  let nothing = slots_new::<u8, 24>();
+  let length = value^.len;
+  let reading = extended_read(input: value, start: 0_u64, length: length);
+  let readable = band(reading.valid, increment^.valid);
+  if readable {
+  } else {
+    let empty = Bytes::Short(bytes: move nothing);
+    return Sum(text: move empty, state: 0_u64);
+  }
+  let total = extended_add(left: &reading.value, right: &increment^.value);
+  let infinite = total.kind == kind_infinite;
+  let undefined = total.kind == kind_nan;
+  let outside = bor(infinite, undefined);
+  if outside {
+    let empty = Bytes::Short(bytes: move nothing);
+    return Sum(text: move empty, state: 2_u64);
+  }
+  let unused = move nothing;
+  let text = extended_text(value: &total);
+  return Sum(text: move text, state: 1_u64);
+}

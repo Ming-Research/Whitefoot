@@ -32,6 +32,12 @@ alias bytes_new = pkg::bytes::bytes_new;
 alias bytes_length = pkg::bytes::bytes_length;
 alias byte_at = pkg::bytes::byte_at;
 alias windows_order = pkg::bytes::windows_order;
+alias Reading = pkg::extended::Reading;
+alias Sum = pkg::extended::Sum;
+alias extended_read = pkg::extended::extended_read;
+alias extended_sum = pkg::extended::extended_sum;
+alias bytes_copy = pkg::bytes::bytes_copy;
+alias log_text = pkg::store::log_text;
 alias bytes_integer = pkg::bytes::bytes_integer;
 alias decimal_text = pkg::bytes::decimal_text;
 alias reply_text = pkg::protocol::reply_text;
@@ -39,6 +45,12 @@ alias reply_text = pkg::protocol::reply_text;
 const word_set: Array<u8, 3> =[83_u8, 69_u8, 84_u8];
 
 const word_pxat: Array<u8, 4> =[80_u8, 88_u8, 65_u8, 84_u8];
+
+const word_keepttl: Array<u8, 7> =[75_u8, 69_u8, 69_u8, 80_u8, 84_u8, 84_u8, 76_u8];
+
+const word_zero: Array<u8, 1> =[48_u8];
+
+const text_nan: Array<u8, 43> =[69_u8, 82_u8, 82_u8, 32_u8, 105_u8, 110_u8, 99_u8, 114_u8, 101_u8, 109_u8, 101_u8, 110_u8, 116_u8, 32_u8, 119_u8, 111_u8, 117_u8, 108_u8, 100_u8, 32_u8, 112_u8, 114_u8, 111_u8, 100_u8, 117_u8, 99_u8, 101_u8, 32_u8, 78_u8, 97_u8, 78_u8, 32_u8, 111_u8, 114_u8, 32_u8, 73_u8, 110_u8, 102_u8, 105_u8, 110_u8, 105_u8, 116_u8, 121_u8];
 
 const code_ex: u64 = 22597_u64;
 
@@ -115,6 +127,13 @@ struct StringOptions {
 
 struct Deadline {
   at: u64;
+  state: u64;
+}
+
+struct FloatSum {
+  increment: Reading;
+  text: Bytes;
+  now: u64;
   state: u64;
 }
 
@@ -1424,5 +1443,144 @@ fn run_msetnx(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
     return unit;
   }
   reply_word(client: client, word: &reply_zero[0_u64..4_u64]);
+  return unit;
+}
+
+fn text_sum(text: &Bytes, increment: &Reading) -> sum: Sum reads(text), reads(increment) {
+  doc "The increment added to a stored string read as a long double, as extended_sum adds it.";
+  match text^ {
+    Short(bytes: short) => {
+      let length = short^.len;
+      let window = &short^[0_u64..length];
+      let sum = extended_sum(value: window, increment: increment);
+      return move sum;
+    }
+    Long(bytes: long) => {
+      let length = long^.inner.len;
+      let window = &long^.inner[0_u64..length];
+      let sum = extended_sum(value: window, increment: increment);
+      return move sum;
+    }
+  }
+}
+
+fn float_value(env: &FloatSum, value: &Entry) -> result: u64 writes(env), writes(value) {
+  doc "Adds env's increment to a live string read as a long double, as INCRBYFLOAT does, keeping its expiry: state 1 has stored the sum's text and kept it in env, 3 marks another kind, 5 a string or an increment that is not a number, 6 a sum that is not a number or is infinite, and 2 an expired entry.";
+  let reached = expired(expires: value^.expires, now: env^.now);
+  if reached {
+    set env^.state = state_expired;
+    return 2_u64;
+  }
+  match value^.value {
+    Text(bytes: stored) => {
+      let sum = text_sum(text: stored, increment: &env^.increment);
+      let Sum(text: made, state: outcome) = move sum;
+      if outcome == 1_u64 {
+        let kept = bytes_copy(bytes: &made);
+        set stored^ = move kept;
+        set env^.text = move made;
+        set env^.state = state_done;
+        return 1_u64;
+      }
+      let unused = move made;
+      if outcome == 2_u64 {
+        set env^.state = 6_u64;
+        return 6_u64;
+      }
+      set env^.state = 5_u64;
+      return 5_u64;
+    }
+    Items(items: list) => {
+      set env^.state = state_wrong;
+      return 3_u64;
+    }
+    Members(members: set_of) => {
+      set env^.state = state_wrong;
+      return 3_u64;
+    }
+    Fields(fields: hash_of) => {
+      set env^.state = state_wrong;
+      return 3_u64;
+    }
+    Ranked(ranked: sorted) => {
+      set env^.state = state_wrong;
+      return 3_u64;
+    }
+  }
+}
+
+fn log_float(log: &Box<Slots<u8>>, input: &[u8], key: Span, text: &Bytes) -> result: unit reads(input), reads(text), writes(log) {
+  doc "Appends SET key value KEEPTTL, the form Redis 7.0.15 propagates INCRBYFLOAT in, so that a replay stores the very text the sum was written as.";
+  let length = bytes_length(bytes: text);
+  let sum = key.length +wrap length;
+  let room = sum +wrap 32_u64;
+  log_count(log: log, count: 4_u64, room: room);
+  log_word(log: log, word: &word_set[0_u64..3_u64]);
+  log_input(log: log, input: input, span: key);
+  log_text(log: log, text: text);
+  log_word(log: log, word: &word_keepttl[0_u64..7_u64]);
+  return unit;
+}
+
+fn run_incrbyfloat(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+  doc "INCRBYFLOAT key increment: adds the increment to the stored number in x87 long double arithmetic and stores the sum written as Redis 7.0.15 writes it, keeping the key's expiry, or stores the increment's sum with zero without one for an absent or expired key, in one atomic statement, and answers the sum as a bulk string. The increment is read before the statement and judged after the key, so that a key of another kind is refused first; a value or increment that is not a number and a sum that is not a number or is infinite are refused. The file records the change as SET key value KEEPTTL, as Redis propagates it, after a key found expired as log_removal records it.";
+  let amount = arg(args: args, index: 2_u64);
+  let increment = extended_read(input: input, start: amount.start, length: amount.length);
+  let key_span = arg(args: args, index: 1_u64);
+  let place = key_bounds(input: input, args: args, index: 1_u64);
+  let key = &input^[place.start..place.end];
+  let logged = store^.logging;
+  let nothing = slots_new::<u8, 24>();
+  let empty = Bytes::Short(bytes: move nothing);
+  let summed = FloatSum(increment: increment, text: move empty, now: time^.check, state: state_absent);
+  atomic s = &store^.state, slot = &s^.map[key] {
+    let fresh_needed = True();
+    match slot^ {
+      Some(value: held) => {
+        let outcome = float_value(env: &summed, value: held);
+        set fresh_needed = False();
+      }
+      None() => {
+      }
+    }
+    if summed.state == state_expired {
+      set fresh_needed = True();
+      if logged {
+        log_removal(log: &s^.meta.log, key: key);
+      }
+    }
+    if fresh_needed {
+      let zero = &word_zero[0_u64..1_u64];
+      let sum = extended_sum(value: zero, increment: &summed.increment);
+      let Sum(text: made, state: outcome) = move sum;
+      if outcome == 1_u64 {
+        let kept = bytes_copy(bytes: &made);
+        put_text(slot: slot, value: move kept, expires: 0_u64);
+        set summed.text = move made;
+        set summed.state = state_done;
+      } else {
+        let unused = move made;
+        if outcome == 2_u64 {
+          set summed.state = 6_u64;
+        } else {
+          set summed.state = 5_u64;
+        }
+      }
+    }
+    if summed.state == state_done {
+      if logged {
+        log_float(log: &s^.meta.log, input: input, key: key_span, text: &summed.text);
+      }
+    }
+  }
+  if summed.state == state_done {
+    reply_text(client: client, text: &summed.text);
+  } else if summed.state == state_wrong {
+    reply_wrong_type(client: client);
+  } else if summed.state == 6_u64 {
+    reply_error(client: client, word: &text_nan[0_u64..43_u64]);
+  } else {
+    reply_error(client: client, word: &text_not_float[0_u64..30_u64]);
+  }
   return unit;
 }

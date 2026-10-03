@@ -19,7 +19,8 @@ own:
 - strings: `GET`, `SET` with its options `NX`, `XX`, `GET`, `KEEPTTL`,
   `EX`, `PX`, `EXAT` and `PXAT`, `SETNX`, `SETEX`, `PSETEX`, `GETSET`,
   `GETDEL`, `GETEX`, `MGET`, `MSET`, `MSETNX`, `INCR`, `INCRBY`, `DECR`,
-  `DECRBY`, `APPEND`, `STRLEN`, `GETRANGE`, `SUBSTR`, `SETRANGE`;
+  `DECRBY`, `INCRBYFLOAT`, `APPEND`, `STRLEN`, `GETRANGE`, `SUBSTR`,
+  `SETRANGE`;
 - lists: `LPUSH`, `RPUSH`, `LPOP`, `RPOP`, `LRANGE`, `LLEN`;
 - sets: `SADD`, `SREM`, `SPOP`, `SCARD`;
 - hashes: `HSET`, `HGET`;
@@ -98,6 +99,9 @@ default.
   settings;
 - `scores`: sorted-set scores read as Redis's `strtod` reads them, to the
   nearest double, and written as its `%.17g` writes them;
+- `extended`: numbers of x86-64's 80-bit long double, read as glibc's
+  `strtold` reads them, added, and written as `%.17Lf` writes them, the
+  arithmetic of `INCRBYFLOAT`;
 - `store`: the keyspace, one shared state holding a keyed table of entries
   and, after it, the queued expiries, the append-only file's pending bytes
   and the server's counts

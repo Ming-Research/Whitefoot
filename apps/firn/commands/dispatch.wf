@@ -63,6 +63,10 @@ const code_incrby: u64 = 98141382856265_u64;
 
 const code_decrby: u64 = 98141382853956_u64;
 
+const code_incrbyfloat: u64 = 18394487869424225865_u64;
+
+const word_incrbyfloat: Array<u8, 11> =[73_u8, 78_u8, 67_u8, 82_u8, 66_u8, 89_u8, 70_u8, 76_u8, 79_u8, 65_u8, 84_u8];
+
 const code_mset: u64 = 1413829453_u64;
 
 const code_mget: u64 = 1413826381_u64;
@@ -388,6 +392,17 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
       run_incrby(store: store, input: input, args: args, client: client, env: env, time: time, negate: negate);
     }
     return unit;
+  }
+  if code == code_incrbyfloat {
+    let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_incrbyfloat[0_u64..11_u64]);
+    if spelled {
+      let fits = count == 3_u64;
+      let go = admitted(client: client, input: input, name: name, fits: fits);
+      if go {
+        run_incrbyfloat(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return unit;
+    }
   }
   if code == code_mset {
     let fits = mset_shape;

@@ -1,0 +1,25 @@
+alias Bytes = pkg::bytes::Bytes;
+
+public struct Extended {
+  doc "A number of x86-64's long double, the 80-bit extended format Redis 7.0.15's INCRBYFLOAT computes in: kind 0 is zero, 1 a finite nonzero number, the significand times two to the exponent, its top bit set unless the number is subnormal, 2 an infinity and 3 not a number; negative is its sign.";
+  public negative: Bool;
+  public kind: u64;
+  public exponent: i64;
+  public significand: u64;
+}
+
+public struct Reading {
+  doc "A number read as Redis's string2ld reads one: valid is False for text it refuses, whose value is then zero.";
+  public value: Extended;
+  public valid: Bool;
+}
+
+public struct Sum {
+  doc "What INCRBYFLOAT computes: state 1 is the sum's text, as Redis writes it; 0 a value that does not read as a number; 2 a sum that is not a number or is infinite, which Redis refuses. The text is empty but for state 1.";
+  public text: Bytes;
+  public state: u64;
+}
+
+public fn extended_read(input: &[u8], start: u64, length: u64) -> reading: Reading reads(input) doc "Reads length bytes of the input from start as Redis 7.0.15's string2ld reads them, with glibc's strtold and nothing after it, to the nearest long double with ties to even: an optional sign, then a decimal number with an optional exponent, a C99 hexadecimal one with an optional binary exponent, or inf or infinity in either case. Text of no bytes or of 5,120 or more, any byte strtold leaves, a leading space among them since strtold's skipping of spaces, which string2ld refuses, is never done here, NaN, and a number that overflows to infinity or a nonzero one that rounds to zero are refused.";
+
+public fn extended_sum(value: &[u8], increment: &Reading) -> sum: Sum reads(value), reads(increment) doc "Adds the increment to the number value's bytes read as extended_read reads them, in long double arithmetic rounded to nearest with ties to even, and writes the sum as Redis 7.0.15's ld2string writes it for INCRBYFLOAT: C's %.17Lf, the exact value rounded to 17 digits after the point with ties to even, its trailing zeros and then a trailing point dropped, and -0 written 0.";
