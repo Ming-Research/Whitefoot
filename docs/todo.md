@@ -3111,16 +3111,29 @@ condition under which it is taken up.
   failing runs alike, so firn is not seen to crash, and ports chosen below the
   ephemeral range, one per case, changed nothing. The gate's hosted runners
   showed the like once, on macOS at `cea9188d4`
-  (`a_loopback_echo_preserves_all_bytes_and_half_close_on_both_routes`). The
-  change: keep a failing case's server output, which the harness drops, and
-  find whether firn closes the connection, exits or never accepts it. On
+  (`a_loopback_echo_preserves_all_bytes_and_half_close_on_both_routes`). On
   branch `firn/strings` the reset came in about 1 group run of 3 with
-  firn's cases alone, yet 440 servers of that branch and 440 of
-  `51bc58e13`, started 20 and 30 at a time outside the harness, each
-  answering the first case's batch, saw no reset and all exited 0, which
-  points at something the
-  harness does rather than at firn, such as `free_port` releasing its
-  reservation before firn binds the port. Reopen
+  firn's cases alone and in 1 run of the whole corpus at `44f10c449` (the
+  replay case, on the native ring), while 440 servers of that branch and
+  440 of `51bc58e13`, started 20 and 30 at a time outside the harness, each
+  answering the first case's batch, saw no reset and all exited 0. Giving
+  each of `connect_to_when_ready`'s attempts 5 seconds instead of 100
+  milliseconds still left a reset in 1 group run of 8. A scratch patch to
+  `ProgramChild`'s drop that reports the program when its case panics saw
+  7 resets in 78 group runs at `44f10c449`, none in the last 24. Each time
+  firn was running with nothing on its standard error; in the 6 examined
+  further, firn held no socket (2) or no process held one on firn's port
+  (4), and firn was still running a second (2) or ten seconds (4) later,
+  where 1,000 firn servers started 40 at a time outside the harness each
+  accepted a first connection within 62 milliseconds. Three of the four
+  had not reached `tcp_listen`: they still held the working directory
+  `main` closes before it, and 3 of the 96 anonymous descriptors a started
+  firn holds on this host, 3 for each of its 32 drivers; the fourth held
+  30. So firn stalls in its start, and the harness's
+  connection must have reached some other socket on the port meanwhile,
+  which a port `free_port` released allows and the fixed ports above
+  should have ruled out. The change: keep that report in the harness for
+  a case that panics, and find what stalls firn's start there. Reopen
   when a hosted run of the corpus fails this way, or before the corpus gates
   on a large host.
 - **firn's replay case allows the restart two seconds, which a loaded host
