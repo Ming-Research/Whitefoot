@@ -2176,6 +2176,14 @@ any surviving form still needs semantic/fault, full accounting and complete
 family performance controls. Bulk transfer is a separate algorithm/API
 question and is not authorized by this observation.
 
+The subsequent [ordinary-call boundary analysis](../../../../docs/todo.md)
+closes the raw-head equality-only candidate: the published `head <= cap`
+contract admits `head == cap`, for which that successor can exceed capacity.
+The [boundary regression](../../../../compiler/src/backend/tests/windows.rs)
+therefore normalizes only TakeFront's physical address and preserves its
+numerical head update. The earlier native counts remain observations; this
+raw-head successor is not a valid next optimization under the current contract.
+
 The read-only native record is `residual-diagnosis/loop-observations.json`
 under the private preparation directory, SHA-256
 `b87e2092dff9addc16ed10cd1051c024b8bf52f972899ad0ac7647c9df0fb598`.

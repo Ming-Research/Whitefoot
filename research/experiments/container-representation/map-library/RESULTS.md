@@ -7435,3 +7435,25 @@ This passes only the structural criterion. At this frozen stage no correctness
 execution or timing tests the new images, and actual O2 remains unmeasured;
 partial spills and complete-operation performance are still open. No inline
 policy, result ABI or library change is adopted.
+
+### Paired REMOVE callsite floor: no qualified gain
+
+The subsequent fixed A0/B0/B1/A1 campaign completes all four processes with
+446,976 raw rows and unchanged frozen inputs. All 147 candidate qualification
+outcomes pass; the 48-row account ledger matches the baseline except permitted
+Rust post-removal capacity variation. A0 exits 1 after a 375 ns maximum empty
+clock interval; the other processes exit zero with 42 ns maxima. The captured
+guard exits 1 at 553.66 s. No process is retried or sample discarded.
+
+Only four of 16 cells admit every participant in both arms. There are zero
+qualified paired gains or losses; two candidate peer targets qualify, both
+scalar S4096 hits. All wide candidate medians fall, but seven wide cells fail
+cohort-drift admission and the admitted default S64 hit ranges overlap. The
+native result-transfer reduction therefore has no qualified timing benefit.
+The comparison reducer completes successfully while retaining these failures;
+its success is not campaign qualification. Production O2 remains unmeasured,
+and no inline policy, ABI or library change is selected. The
+public-remove-inline-paired/ component of the [small evidence archive](fresh-insert-matched-c-evidence.tar.gz)
+retains every raw row, criteria, scripts, qualification and failed-clock records,
+chronology, guard log, pins and full reductions. The earlier source/native-floor
+component supplies the unchanged source and structural evidence.

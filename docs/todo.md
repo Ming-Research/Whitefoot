@@ -3864,8 +3864,12 @@ condition under which it is taken up.
   durable timing-boundary observation before attributing that elapsed-time gap;
   it does not replace the independent sample-clock admission. The separate
   callsite-native floor removes the full wide result but retains 144 bytes of
-  partial payload spills; require complete outcomes and qualified paired timing
-  before treating this structural result as a speedup or selecting an inline policy.
+  partial payload spills. Its [fixed paired campaign](../research/experiments/container-representation/map-library/RESULTS.md#paired-remove-callsite-floor-no-qualified-gain)
+  passes candidate correctness checks but qualifies no paired gain: the first
+  control process fails clock admission, seven wide cells fail cohort drift,
+  and the remaining wide hit ranges overlap. Reopen with a distinct mechanism
+  or a prospectively qualified timing campaign before treating the structural
+  result as a speedup or selecting an inline policy.
   The
   [reached wide CHURN remove caller](../research/experiments/container-representation/map-library/RESULTS.md#wide-remove-caller-full-return-transfer-already-eliminated)
   already eliminates the full aggregate return transfer, retaining 104 bytes

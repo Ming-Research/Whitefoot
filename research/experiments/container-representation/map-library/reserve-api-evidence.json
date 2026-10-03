@@ -5256,9 +5256,9 @@
   "fresh_insert_matched_c": {
     "archive": {
       "path": "fresh-insert-matched-c-evidence.tar.gz",
-      "bytes": 7140255,
-      "sha256": "898845918f6454472c2070ca466e21f5651ff043793242a539c68dd01c81713f",
-      "members": 38
+      "bytes": 14877834,
+      "sha256": "56d798e151f2f17fd0331870af86b21743b59668532ce558da4c396f26b82688",
+      "members": 53
     },
     "prefix": "fresh-insert-matched-c/",
     "manifest": "fresh-insert-matched-c/manifest.json",
@@ -5297,9 +5297,9 @@
   "direct_put_union": {
     "archive": {
       "path": "fresh-insert-matched-c-evidence.tar.gz",
-      "bytes": 7140255,
-      "sha256": "898845918f6454472c2070ca466e21f5651ff043793242a539c68dd01c81713f",
-      "members": 38
+      "bytes": 14877834,
+      "sha256": "56d798e151f2f17fd0331870af86b21743b59668532ce558da4c396f26b82688",
+      "members": 53
     },
     "prefix": "direct-put-union/",
     "manifest": "direct-put-union/manifest.json",
@@ -5319,9 +5319,9 @@
   "public_remove_api": {
     "archive": {
       "path": "fresh-insert-matched-c-evidence.tar.gz",
-      "bytes": 7140255,
-      "sha256": "898845918f6454472c2070ca466e21f5651ff043793242a539c68dd01c81713f",
-      "members": 38
+      "bytes": 14877834,
+      "sha256": "56d798e151f2f17fd0331870af86b21743b59668532ce558da4c396f26b82688",
+      "members": 53
     },
     "prefix": "public-remove-api/",
     "manifest": "public-remove-api/manifest.json",
@@ -5346,6 +5346,66 @@
     "previous_small_archive": {
       "sha256": "5f4e7eb4bccd61343b27c923f468c1cc831ff74feea73abf3941d016d13e86a4",
       "members": 26,
+      "member_names_and_bytes_preserved": true
+    }
+  },
+  "public_remove_inline_paired": {
+    "archive": {
+      "path": "fresh-insert-matched-c-evidence.tar.gz",
+      "bytes": 14877834,
+      "sha256": "56d798e151f2f17fd0331870af86b21743b59668532ce558da4c396f26b82688",
+      "members": 53
+    },
+    "prefix": "public-remove-inline-paired/",
+    "manifest": "public-remove-inline-paired/manifest.json",
+    "manifest_sha256": "a64afc69e441b07231c9a802b8d5296ef22b57f9c1c0b5f72399cd27f525ba06",
+    "retained_records": 321,
+    "original_frozen_sha256": "56bcea97c84e61b0fd1819a854de44d6bbdb5e74d152fe162333fda844b06d3b",
+    "raw_rows": {
+      "campaign/A/cohort-0.csv": 111744,
+      "campaign/A/cohort-1.csv": 111744,
+      "campaign/B/cohort-0.csv": 111744,
+      "campaign/B/cohort-1.csv": 111744
+    },
+    "qualification_outcomes": 147,
+    "account_rows": 48,
+    "process_order": [
+      [
+        "A",
+        0
+      ],
+      [
+        "B",
+        0
+      ],
+      [
+        "B",
+        1
+      ],
+      [
+        "A",
+        1
+      ]
+    ],
+    "process_exits": [
+      1,
+      0,
+      0,
+      0
+    ],
+    "guard_exit": 1,
+    "guard_wall_s": 553.66,
+    "comparison_summary": {
+      "both_arms_admitted": 4,
+      "qualified_gain": 0,
+      "qualified_loss": 0,
+      "qualified_candidate_peer_target": 2
+    },
+    "production_adoption": false,
+    "source_and_native_evidence": "public-remove-api/records.json",
+    "previous_small_archive": {
+      "sha256": "898845918f6454472c2070ca466e21f5651ff043793242a539c68dd01c81713f",
+      "members": 38,
       "member_names_and_bytes_preserved": true
     }
   }
