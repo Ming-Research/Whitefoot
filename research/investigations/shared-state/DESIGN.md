@@ -165,9 +165,9 @@ a key named twice counts twice.
   in the header are taken in one step, sorted, at the table's first use, so a
   later unit, such as the log after the entries, is taken only on the path
   that reaches it: `INCR` takes the log only when it logs.
-- **Release.** After the statement's last taking on a path, each unit is
-  released once the block no longer uses it or any reference derived from it,
-  and otherwise when the block ends.
+- **Release.** After the statement's last taking on a path, a unit may be
+  released once the block no longer uses it or any reference derived from it.
+  The first implementation releases every unit when the block ends.
 - **One point.** Every taking precedes every release, which is two-phase
   locking, so every execution equals one in which the statements on a state
   run one after another, each with the whole state to itself. A block's
@@ -185,14 +185,16 @@ a key named twice counts twice.
 
 ### Type invariants
 
-A type invariant is owed at a construction and at a function's entry
-[TYPE-11], not over a value's whole life. Making the edges of an atomic block
-such points, assumed at entry and owed at every exit, is the monitor invariant
-of the concurrency model
-([section 5](../io-model/CONCURRENCY-MODEL.md#5-monitor-invariants)). It does
-not constrain how parts are locked: by the two-phase argument above, each
-block runs as it would with the whole state, where the invariant held at its
-entry. It is the next step after this change, not part of it.
+A type invariant is owed at a construction and at a function's entry, not
+over a value's whole life, and [TYPE-11] already makes the edges of an atomic
+block on a state of such a struct points of the same kind: established at the
+block's entry and owed at every edge leaving it, the monitor invariant of the
+concurrency model
+([section 5](../io-model/CONCURRENCY-MODEL.md#5-monitor-invariants)). Locking
+by parts does not weaken it: by the two-phase argument above, each block runs
+as it would with the whole state, where the invariant held at its entry, and a
+block's behaviour depends only on what it reads. (In the discussion I first
+called this a next step; the specification has carried it since v0.82.)
 
 ### Guards
 
@@ -347,8 +349,8 @@ statements in nine files.
 
 ## Open
 
-- type invariants owed at the edges of atomic blocks (above);
 - finer layouts chosen at composition;
+- releasing a unit once its block no longer uses it, after the last taking;
 - wait lists per entry instead of per table;
 - a cheaper read of one entry than the reader count;
 - the names `Table` and `Keys`, the payload operations, and the spelling of
