@@ -188,8 +188,12 @@ Redis's observable behavior on the suite's commands and says what it refused.
   listpack keeps it in a sorted set of at most 128 members of at most 64
   bytes; a larger set, which Redis keeps as a skiplist, keeps and writes
   `-0`, and matching both needs the set's encoding, which firn does not
-  track. The first version accepted only integers below 2^52, the scores the
-  suite sends, and refused others with an error that said so.
+  track. Hexadecimal text is rounded to the nearest double as decimal text
+  is, where glibc 2.39's `strtod`, and so redis-server on this host, rounds
+  some 14- and 15-digit hexadecimal subnormals down by one unit when the
+  dropped part is above half: that is a defect of the library, which firn
+  does not reproduce. The first version accepted only integers below 2^52,
+  the scores the suite sends, and refused others with an error that said so.
 - **A malformed request is answered with Redis's protocol error and the
   connection is closed**, as Redis closes it, where the subset closed it
   without an answer.
@@ -230,14 +234,23 @@ The *Correct* criterion rests on four observations:
   kept outside the repository, differed only on `SET` with `XX`, one of the
   options listed as missing in [docs/todo.md](../../../docs/todo.md) under
   firn.
-- A randomized script, also kept outside the repository and run once, sent
-  3,000,000 scores to firn and to redis-server 7.0.15 as `ZADD`, `ZSCORE` and
-  `ZPOPMIN`, 200,000 of each of fifteen kinds: shortest and 17-digit
+- A randomized script, also kept outside the repository, sent 3,200,000
+  scores to firn and to redis-server 7.0.15 as `ZADD`, `ZSCORE` and
+  `ZPOPMIN`, 200,000 of each of sixteen kinds: shortest and 17-digit
   spellings of random doubles, exact halfway points between neighboring
   doubles with a digit added or taken away, subnormals, digit strings up to
-  3,000 digits, hexadecimal text, infinities and NaN, malformed text, and
-  doubles whose seventeenth digit is a tie; and 1,000 sets of up to 120
-  members at such scores, each popped whole. No reply differed.
+  3,000 digits, hexadecimal text, infinities and NaN, malformed text,
+  doubles whose seventeenth digit is a tie, and halfway points of at most 19
+  digits padded with zeros past the 800th digit, with or without a nonzero
+  digit after them; and 1,000 sets of up to 120 members at such scores, each
+  popped whole. Two replies differed, the `ZSCORE` and `ZPOPMIN` of one
+  hexadecimal subnormal that redis-server rounds down by one unit where the
+  nearest double is above. glibc's `strtod` itself differs from correct
+  rounding (Python's `float.fromhex`) on 110 of 100,000 hexadecimal
+  subnormals of 13 to 15 digits, and firn on none. The sixteenth kind was
+  added after a review found that the `scores` module as first committed
+  rounded such a padded halfway point to even when a nonzero digit followed
+  the zeros; on 5,000 of them that build differed in 3,220 replies.
 
 A build a result names by commit is on the branch. A refused variant's code
 was not kept; its section describes it, and the drivers that ran the rounds

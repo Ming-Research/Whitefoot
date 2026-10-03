@@ -3223,6 +3223,20 @@ condition under which it is taken up.
   set `SO_REUSEADDR` as Redis does. The owner
   sets the list for the deployment stage; reopen when this stage's
   measurement is handed back.
+- **Writing a score far from 1 is slow, and `ZSCORE` and `ZPOPMIN` write it
+  while the key is held.** The `scores` module writes a score from its exact
+  decimal expansion, one digit per byte, so the cost grows with the score's
+  binary exponent; with two drivers and `redis-benchmark -c 50 -P 16 -n
+  200000`, `ZSCORE` answered 3.85M requests per second for a score of 7,
+  2.94M for 0.1, 0.36M for 1e300 and 0.28M for 4.9e-324 on the i9-14900K, in
+  one run of one server. The visitors
+  `member_score` and `pop_lowest` (`apps/firn/commands/sorted.wf`) write the
+  reply inside the key's atomic statement, so that time is also time the key
+  is held. Carrying the scores out in the client, as a command's other
+  results are carried, and writing the reply after the statement would take
+  the cost out of the statement; an exact writer that works in base-10^9
+  words would shrink it. Reopen with the rewrite of firn's atomic statements,
+  or when a workload stores scores far from 1.
 - **A set never shrinks, so `SPOP` walks ever sparser buckets.** `SPOP`
   picks the first filled bucket from a random position, and a hash map keeps
   its buckets after its members are removed, so after most of a large set is

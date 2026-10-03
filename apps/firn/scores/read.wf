@@ -1,0 +1,512 @@
+alias byte_at = pkg::bytes::byte_at;
+alias name_is = pkg::bytes::name_is;
+
+const word_inf: Array<u8, 3> = "INF";
+
+const word_infinity: Array<u8, 8> = "INFINITY";
+
+const sign_bit: u64 = 9223372036854775808_u64;
+
+const powers_of_ten: Array<f64, 23> =[1.0_f64, 10.0_f64, 1.0e2_f64, 1.0e3_f64, 1.0e4_f64, 1.0e5_f64, 1.0e6_f64, 1.0e7_f64, 1.0e8_f64, 1.0e9_f64, 1.0e10_f64, 1.0e11_f64, 1.0e12_f64, 1.0e13_f64, 1.0e14_f64, 1.0e15_f64, 1.0e16_f64, 1.0e17_f64, 1.0e18_f64, 1.0e19_f64, 1.0e20_f64, 1.0e21_f64, 1.0e22_f64];
+
+struct ScoreBits {
+  doc "A score's magnitude as the bits of a double, its sign bit clear, and whether Redis accepts the text it was read from.";
+  bits: u64;
+  valid: Bool;
+}
+
+struct Exponent {
+  doc "An exponent read after its marker: its value, saturated, the position after its last digit, and whether it had a digit.";
+  value: i64;
+  next: u64;
+  valid: Bool;
+}
+
+fn refused() -> result: ScoreBits pure {
+  doc "Text Redis does not accept as a score.";
+  let invalid = False();
+  return ScoreBits(bits: 0_u64, valid: invalid);
+}
+
+fn accepted(bits: u64) -> result: ScoreBits pure {
+  doc "A score Redis accepts, the bits of its magnitude.";
+  let valid = True();
+  return ScoreBits(bits: bits, valid: valid);
+}
+
+fn decimal_digit(byte: u8) -> value: u8 pure {
+  doc "A decimal digit's value, or 10 for any other byte.";
+  let low = byte >= 48_u8;
+  let high = byte <= 57_u8;
+  let within = band(low, high);
+  if within {
+    let face = byte -wrap 48_u8;
+    return face;
+  }
+  return 10_u8;
+}
+
+fn hex_digit(byte: u8) -> value: u64 pure {
+  doc "A hexadecimal digit's value, letters in either case, or 16 for any other byte.";
+  let wide = cvt::<u8, u64>(byte);
+  let digit_low = byte >= 48_u8;
+  let digit_high = byte <= 57_u8;
+  let decimal = band(digit_low, digit_high);
+  if decimal {
+    let face = wide -wrap 48_u64;
+    return face;
+  }
+  let lower_low = byte >= 97_u8;
+  let lower_high = byte <= 102_u8;
+  let lower = band(lower_low, lower_high);
+  if lower {
+    let lower_face = wide -wrap 87_u64;
+    return lower_face;
+  }
+  let upper_low = byte >= 65_u8;
+  let upper_high = byte <= 70_u8;
+  let upper = band(upper_low, upper_high);
+  if upper {
+    let upper_face = wide -wrap 55_u64;
+    return upper_face;
+  }
+  return 16_u64;
+}
+
+fn read_exponent(input: &[u8], start: u64, end: u64) -> exponent: Exponent reads(input) {
+  doc "Reads an exponent's optional sign and decimal digits from the position after its marker, its value saturating; it is not valid without a digit, since strtod then stops before the marker.";
+  let position = start;
+  let sign = byte_at(input: input, index: position);
+  let sign_inside = position < end;
+  let minus = sign == 45_u8;
+  let plus = sign == 43_u8;
+  let sign_written = bor(minus, plus);
+  let skip_sign = band(sign_inside, sign_written);
+  if skip_sign {
+    set position = position +wrap 1_u64;
+  }
+  let magnitude = 0_i64;
+  let digits = 0_u64;
+  loop @digits {
+    if position >= end {
+      break @digits;
+    }
+    let byte = byte_at(input: input, index: position);
+    let digit = decimal_digit(byte: byte);
+    if digit >= 10_u8 {
+      break @digits;
+    }
+    let wide = cvt::<u8, i64>(digit);
+    let tens = magnitude *sat 10_i64;
+    set magnitude = tens +sat wide;
+    set digits = digits +wrap 1_u64;
+    set position = position +wrap 1_u64;
+  }
+  let negative = band(skip_sign, minus);
+  if negative {
+    set magnitude = 0_i64 -sat magnitude;
+  }
+  let found = digits > 0_u64;
+  return Exponent(value: magnitude, next: position, valid: found);
+}
+
+fn quick_decimal(decimal: &Decimal) -> read: ScoreBits reads(decimal) {
+  doc "The double nearest a decimal of at most 19 digits, w times 10^p with p its point less its count, that holds every digit it was read from: for p zero, one conversion of w; for w at most 2^53 and p from -22 to 22, where w and 10^|p| are exact doubles, one IEEE multiplication or division, which rounds the value correctly. Any other decimal is refused here and left to Simple Decimal Conversion, also one whose digits trim to 19 or fewer after a nonzero digit past the 800 held was dropped, since that digit decides a tie the value w times 10^p would round to even.";
+  if decimal^.truncated {
+    return refused();
+  }
+  let count = decimal^.count;
+  if count > 19_u64 {
+    return refused();
+  }
+  let whole = 0_u64;
+  for @digits (index in 0_u64..count) {
+    let digit = digit_at(decimal: decimal, index: index);
+    let wide = cvt::<u8, u64>(digit);
+    let tens = whole *wrap 10_u64;
+    set whole = tens +wrap wide;
+  }
+  let length = cvt.wrap::<u64, i64>(count);
+  let power = decimal^.point -sat length;
+  if power == 0_i64 {
+    let exact = cvt.nearest::<u64, f64>(whole);
+    let exact_bits = reinterpret::<f64, u64>(exact);
+    return accepted(bits: exact_bits);
+  }
+  if whole > 9007199254740992_u64 {
+    return refused();
+  }
+  if power > 22_i64 {
+    return refused();
+  }
+  if power < -22_i64 {
+    return refused();
+  }
+  let base = cvt.nearest::<u64, f64>(whole);
+  if power > 0_i64 {
+    let up_index = cvt.wrap::<i64, u64>(power);
+    if up_index < 23_u64 {
+      let up_scale = powers_of_ten[up_index];
+      let product = fmul.strict(base, up_scale);
+      let product_bits = reinterpret::<f64, u64>(product);
+      return accepted(bits: product_bits);
+    }
+  }
+  let depth = 0_i64 -wrap power;
+  let down_index = cvt.wrap::<i64, u64>(depth);
+  if down_index < 23_u64 {
+    let down_scale = powers_of_ten[down_index];
+    let quotient = fdiv.strict(base, down_scale);
+    let quotient_bits = reinterpret::<f64, u64>(quotient);
+    return accepted(bits: quotient_bits);
+  }
+  return refused();
+}
+
+fn read_whole(input: &[u8], start: u64, length: u64) -> read: ScoreBits reads(input) {
+  doc "Reads from 1 to 19 decimal digits and nothing else, an integer below 2^64, as the double one conversion rounds it to; anything else is refused here and read as a decimal number.";
+  if length == 0_u64 {
+    return refused();
+  }
+  if length > 19_u64 {
+    return refused();
+  }
+  let magnitude = 0_u64;
+  for @digits (offset in 0_u64..length) {
+    let position = start +wrap offset;
+    let byte = byte_at(input: input, index: position);
+    let digit = decimal_digit(byte: byte);
+    if digit >= 10_u8 {
+      return refused();
+    }
+    let wide = cvt::<u8, u64>(digit);
+    let tens = magnitude *wrap 10_u64;
+    set magnitude = tens +wrap wide;
+  }
+  let value = cvt.nearest::<u64, f64>(magnitude);
+  let bits = reinterpret::<f64, u64>(value);
+  return accepted(bits: bits);
+}
+
+fn read_decimal(input: &[u8], start: u64, end: u64) -> read: ScoreBits reads(input) {
+  doc "Reads a decimal number, digits with an optional point and then an optional exponent, e or E with an optional sign and at least one digit, filling every byte up to end. The double nearest it comes from quick_decimal when that applies and from Simple Decimal Conversion otherwise; one that rounds past the largest double, or a nonzero one that rounds to zero, is refused, as strtod's range error makes Redis refuse it.";
+  let digits = array_filled::<u8, 800>(value: 0_u8);
+  let exact = False();
+  let decimal = Decimal(digits: digits, count: 0_u64, point: 0_i64, truncated: exact);
+  let position = start;
+  let seen = 0_u64;
+  let significant = False();
+  loop @integral {
+    if position >= end {
+      break @integral;
+    }
+    let byte = byte_at(input: input, index: position);
+    let digit = decimal_digit(byte: byte);
+    if digit >= 10_u8 {
+      break @integral;
+    }
+    set seen = seen +wrap 1_u64;
+    if digit != 0_u8 {
+      set significant = True();
+    }
+    if significant {
+      add_digit(decimal: &decimal, digit: digit);
+      set decimal.point = decimal.point +sat 1_i64;
+    }
+    set position = position +wrap 1_u64;
+  }
+  let dot = byte_at(input: input, index: position);
+  let dot_inside = position < end;
+  let pointed = dot == 46_u8;
+  let fractional = band(dot_inside, pointed);
+  if fractional {
+    set position = position +wrap 1_u64;
+    loop @fraction {
+      if position >= end {
+        break @fraction;
+      }
+      let fraction_byte = byte_at(input: input, index: position);
+      let fraction_digit = decimal_digit(byte: fraction_byte);
+      if fraction_digit >= 10_u8 {
+        break @fraction;
+      }
+      set seen = seen +wrap 1_u64;
+      if fraction_digit != 0_u8 {
+        set significant = True();
+      }
+      if significant {
+        add_digit(decimal: &decimal, digit: fraction_digit);
+      } else {
+        set decimal.point = decimal.point -sat 1_i64;
+      }
+      set position = position +wrap 1_u64;
+    }
+  }
+  if seen == 0_u64 {
+    return refused();
+  }
+  let marker = byte_at(input: input, index: position);
+  let marker_inside = position < end;
+  let lower_e = marker == 101_u8;
+  let upper_e = marker == 69_u8;
+  let either_e = bor(lower_e, upper_e);
+  let exponential = band(marker_inside, either_e);
+  if exponential {
+    let after_marker = position +wrap 1_u64;
+    let power = read_exponent(input: input, start: after_marker, end: end);
+    if power.valid {
+    } else {
+      return refused();
+    }
+    set position = power.next;
+    set decimal.point = decimal.point +sat power.value;
+  }
+  if position != end {
+    return refused();
+  }
+  trim(decimal: &decimal);
+  if decimal.count == 0_u64 {
+    return accepted(bits: 0_u64);
+  }
+  let quick = quick_decimal(decimal: &decimal);
+  if quick.valid {
+    return quick;
+  }
+  let converted = decimal_bits(decimal: &decimal);
+  if converted == infinity_bits {
+    return refused();
+  }
+  if converted == 0_u64 {
+    return refused();
+  }
+  return accepted(bits: converted);
+}
+
+fn round_bits(value: u64, shift: u64, sticky: Bool) -> rounded: u64 pure {
+  doc "A value shifted right by shift bits and rounded to nearest with ties to even, sticky noting nonzero bits already dropped below it.";
+  if shift == 0_u64 {
+    return value;
+  }
+  if shift > 64_u64 {
+    return 0_u64;
+  }
+  if shift == 64_u64 {
+    let top_half = 9223372036854775808_u64;
+    let over = value > top_half;
+    let even_tie = value == top_half;
+    let sticky_tie = band(even_tie, sticky);
+    let rounds_up = bor(over, sticky_tie);
+    if rounds_up {
+      return 1_u64;
+    }
+    return 0_u64;
+  }
+  let amount = cvt.wrap::<u64, u32>(shift);
+  let quotient = ishr.wrap(value, amount);
+  let one = ishl.wrap(1_u64, amount);
+  let mask = one -wrap 1_u64;
+  let rest = iand(value, mask);
+  let below = amount -wrap 1_u32;
+  let half = ishl.wrap(1_u64, below);
+  let odd_bit = iand(quotient, 1_u64);
+  let odd = odd_bit == 1_u64;
+  let above = rest > half;
+  let tie = rest == half;
+  let breaks = bor(sticky, odd);
+  let tie_up = band(tie, breaks);
+  let up = bor(above, tie_up);
+  if up {
+    let raised = quotient +wrap 1_u64;
+    return raised;
+  }
+  return quotient;
+}
+
+fn read_hex(input: &[u8], start: u64, end: u64) -> read: ScoreBits reads(input) {
+  doc "Reads the rest of a hexadecimal number after its 0x, digits with an optional point and then an optional binary exponent, p or P with an optional sign and at least one decimal digit, filling every byte up to end. Its first digits, at least 61 bits, are kept and a later nonzero digit only noted, which is all rounding to the nearest double, ties to even, needs; one that rounds past the largest double, or a nonzero one that rounds to zero, is refused.";
+  let mantissa = 0_u64;
+  let sticky = False();
+  let exponent = 0_i64;
+  let seen = 0_u64;
+  let position = start;
+  loop @integral {
+    if position >= end {
+      break @integral;
+    }
+    let byte = byte_at(input: input, index: position);
+    let digit = hex_digit(byte: byte);
+    if digit >= 16_u64 {
+      break @integral;
+    }
+    set seen = seen +wrap 1_u64;
+    let top = ishr.wrap(mantissa, 60_u32);
+    if top == 0_u64 {
+      let raised = ishl.wrap(mantissa, 4_u32);
+      set mantissa = ior(raised, digit);
+    } else {
+      if digit != 0_u64 {
+        set sticky = True();
+      }
+      set exponent = exponent +sat 4_i64;
+    }
+    set position = position +wrap 1_u64;
+  }
+  let dot = byte_at(input: input, index: position);
+  let dot_inside = position < end;
+  let pointed = dot == 46_u8;
+  let fractional = band(dot_inside, pointed);
+  if fractional {
+    set position = position +wrap 1_u64;
+    loop @fraction {
+      if position >= end {
+        break @fraction;
+      }
+      let fraction_byte = byte_at(input: input, index: position);
+      let fraction_digit = hex_digit(byte: fraction_byte);
+      if fraction_digit >= 16_u64 {
+        break @fraction;
+      }
+      set seen = seen +wrap 1_u64;
+      let fraction_top = ishr.wrap(mantissa, 60_u32);
+      if fraction_top == 0_u64 {
+        let fraction_raised = ishl.wrap(mantissa, 4_u32);
+        set mantissa = ior(fraction_raised, fraction_digit);
+        set exponent = exponent -sat 4_i64;
+      } else if fraction_digit != 0_u64 {
+        set sticky = True();
+      }
+      set position = position +wrap 1_u64;
+    }
+  }
+  if seen == 0_u64 {
+    return refused();
+  }
+  let marker = byte_at(input: input, index: position);
+  let marker_inside = position < end;
+  let lower_p = marker == 112_u8;
+  let upper_p = marker == 80_u8;
+  let either_p = bor(lower_p, upper_p);
+  let exponential = band(marker_inside, either_p);
+  if exponential {
+    let after_marker = position +wrap 1_u64;
+    let binary = read_exponent(input: input, start: after_marker, end: end);
+    if binary.valid {
+    } else {
+      return refused();
+    }
+    set position = binary.next;
+    set exponent = exponent +sat binary.value;
+  }
+  if position != end {
+    return refused();
+  }
+  if mantissa == 0_u64 {
+    return accepted(bits: 0_u64);
+  }
+  let leading = iclz(mantissa);
+  set mantissa = ishl.wrap(mantissa, leading);
+  let leading_wide = cvt::<u32, i64>(leading);
+  set exponent = exponent -sat leading_wide;
+  let top_bit = exponent +sat 63_i64;
+  if top_bit >= -1022_i64 {
+    let normal = round_bits(value: mantissa, shift: 11_u64, sticky: sticky);
+    let normal_top = top_bit;
+    if normal >= 9007199254740992_u64 {
+      set normal = ishr.wrap(normal, 1_u32);
+      set normal_top = top_bit +sat 1_i64;
+    }
+    if normal_top > 1023_i64 {
+      return refused();
+    }
+    let biased = normal_top +wrap 1023_i64;
+    let field = cvt.wrap::<i64, u64>(biased);
+    let placed = ishl.wrap(field, 52_u32);
+    let fraction = iand(normal, fraction_mask);
+    let joined = ior(placed, fraction);
+    return accepted(bits: joined);
+  }
+  let gap = -1011_i64 -sat top_bit;
+  let shift = 128_u64;
+  if gap < 128_i64 {
+    set shift = cvt.wrap::<i64, u64>(gap);
+  }
+  let subnormal = round_bits(value: mantissa, shift: shift, sticky: sticky);
+  if subnormal == 0_u64 {
+    return refused();
+  }
+  return accepted(bits: subnormal);
+}
+
+fn is_infinity(input: &[u8], start: u64, length: u64) -> infinite: Bool reads(input) {
+  doc "Whether bytes spell inf or infinity, letters in either case, as C's strtod reads an infinity.";
+  let short = name_is(input: input, start: start, length: length, word: &word_inf[0_u64..3_u64]);
+  let long = name_is(input: input, start: start, length: length, word: &word_infinity[0_u64..8_u64]);
+  let either = bor(short, long);
+  return either;
+}
+
+fn read_magnitude(input: &[u8], start: u64, length: u64) -> read: ScoreBits reads(input) {
+  doc "Reads a score after its sign: an infinity, a hexadecimal number after 0x or 0X, or a decimal number, a plain integer of at most 19 digits read at once.";
+  let infinite = is_infinity(input: input, start: start, length: length);
+  if infinite {
+    return accepted(bits: infinity_bits);
+  }
+  let end = start +sat length;
+  let lead = byte_at(input: input, index: start);
+  let second = start +wrap 1_u64;
+  let marker = byte_at(input: input, index: second);
+  let zero = lead == 48_u8;
+  let lower_x = marker == 120_u8;
+  let upper_x = marker == 88_u8;
+  let either_x = bor(lower_x, upper_x);
+  let prefixed = band(zero, either_x);
+  let marker_inside = second < end;
+  let hexadecimal = band(prefixed, marker_inside);
+  if hexadecimal {
+    let digits_start = second +wrap 1_u64;
+    let hex = read_hex(input: input, start: digits_start, end: end);
+    return hex;
+  }
+  let whole = read_whole(input: input, start: start, length: length);
+  if whole.valid {
+    return whole;
+  }
+  let decimal = read_decimal(input: input, start: start, end: end);
+  return decimal;
+}
+
+fn read_score(input: &[u8], start: u64, length: u64) -> score: Score reads(input) {
+  doc "Reads bytes of the input as a sorted-set score as Redis 7.0.15 reads one, with C's strtod and nothing after it: an optional sign, then a decimal number with an optional exponent, a C99 hexadecimal one with an optional binary exponent, or inf or infinity in either case, rounded to the nearest double with ties to even. Leading spaces, trailing bytes, NaN, a number that overflows to infinity and a nonzero number that rounds to zero are refused.";
+  let end = start +sat length;
+  let first = byte_at(input: input, index: start);
+  let negative = first == 45_u8;
+  let positive = first == 43_u8;
+  let signed = bor(negative, positive);
+  let body = start;
+  if signed {
+    set body = start +wrap 1_u64;
+  }
+  let read = refused();
+  if body < end {
+    let body_length = end -wrap body;
+    set read = read_magnitude(input: input, start: body, length: body_length);
+  }
+  if read.valid {
+    let bits = read.bits;
+    if negative {
+      set bits = ior(bits, sign_bit);
+    }
+    let value = reinterpret::<u64, f64>(bits);
+    return Score(value: value, valid: read.valid);
+  }
+  return Score(value: 0.0_f64, valid: read.valid);
+}
+
+fn kept_score(score: f64) -> kept: f64 pure {
+  doc "The score a sorted set keeps for one read: negative zero becomes zero, as Redis keeps it in a sorted set it encodes as a listpack, one of at most 128 members of at most 64 bytes, which stores a score equal to an integer as that integer.";
+  let zero = feq(score, 0.0_f64);
+  if zero {
+    return 0.0_f64;
+  }
+  return score;
+}
