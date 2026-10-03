@@ -99,6 +99,52 @@ fn run_flush(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &C
   return unit;
 }
 
+const word_flush: Array<u8, 5> = "FLUSH";
+
+const text_try_function: Array<u8, 23> = "'. Try FUNCTION HELP.\r\n";
+
+const text_subcommand_or_arity: Array<u8, 58> = "-ERR unknown subcommand or wrong number of arguments for '";
+
+const text_flush_option: Array<u8, 50> = "ERR FUNCTION FLUSH only supports SYNC|ASYNC option";
+
+fn run_function(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client) -> result: unit reads(store), reads(input), reads(args), writes(client) waits {
+  doc "FUNCTION FLUSH [ASYNC | SYNC]: firn has no functions, so it answers OK as Redis does with none loaded, and appends the command as the client sent it to the append-only file's pending bytes when the keyspace keeps them, as Redis appends it. Two options or more, and an option other than ASYNC or SYNC, read up to a zero byte, are answered as Redis answers them, after a connection that must authenticate first is answered NOAUTH. Every other subcommand, LOAD and LIST among them, is answered as Redis answers an unknown one, its name echoed to 128 bytes.";
+  let count = args^.inner.len;
+  let sub = arg(args: args, index: 1_u64);
+  let flushing = name_is(input: input, start: sub.start, length: sub.length, word: &word_flush[0_u64..5_u64]);
+  if flushing {
+  } else {
+    reply_word(client: client, word: &text_unknown_subcommand[0_u64..25_u64]);
+    let shown = imin(sub.length, 128_u64);
+    let echoed = reply_echoed(client: client, input: input, span: sub, limit: shown);
+    reply_word(client: client, word: &text_try_function[0_u64..23_u64]);
+    return unit;
+  }
+  let stopped = denied(client: client);
+  if stopped {
+    return unit;
+  }
+  if count > 3_u64 {
+    reply_word(client: client, word: &text_subcommand_or_arity[0_u64..58_u64]);
+    let echoed = reply_echoed(client: client, input: input, span: sub, limit: sub.length);
+    reply_word(client: client, word: &text_try_function[0_u64..23_u64]);
+    return unit;
+  }
+  let known = flush_mode(input: input, args: args, from: 2_u64);
+  if known {
+  } else {
+    reply_error(client: client, word: &text_flush_option[0_u64..50_u64]);
+    return unit;
+  }
+  if store^.logging {
+    atomic s = &store^.state {
+      log_command(log: &s^.meta.log, input: input, args: args);
+    }
+  }
+  reply_ok(client: client);
+  return unit;
+}
+
 fn parameter_start(which: u64) -> start: u64 pure {
   doc "Where the name of parameter which, counted from 0 in alphabetical order, starts in parameter_names.";
   if which == 0_u64 {

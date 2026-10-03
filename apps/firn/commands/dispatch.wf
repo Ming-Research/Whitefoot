@@ -47,6 +47,8 @@ const code_flushall: u64 = 5497841024004082758_u64;
 
 const code_flushdb: u64 = 18652425889336390_u64;
 
+const code_function: u64 = 5642809484373808454_u64;
+
 const code_lpush: u64 = 310635745356_u64;
 
 const code_rpush: u64 = 310635745362_u64;
@@ -280,6 +282,15 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
     let go = admitted(client: client, input: input, name: name, fits: fits);
     if go {
       run_flush(store: store, input: input, args: args, client: client);
+    }
+    return unit;
+  }
+  if code == code_function {
+    let fits = count >= 2_u64;
+    if fits {
+      run_function(store: store, input: input, args: args, client: client);
+    } else {
+      reply_arity(client: client, input: input, name: name);
     }
     return unit;
   }

@@ -1690,8 +1690,11 @@ fn firn_answers_commands_naming_a_key_twice_as_redis_does() {
 /// become spaces so that an error stays one line, an unknown subcommand is
 /// echoed to 128 bytes and an unknown `CONFIG SET` option whole, and a
 /// carriage return a malformed request holds where a dollar sign belongs is
-/// echoed as a space before the connection closes. The expected replies are
-/// redis-server 7.0.15's to the same bytes.
+/// echoed as a space before the connection closes. `FUNCTION FLUSH` succeeds
+/// with no option, or with `ASYNC` or `SYNC` read up to a zero byte, and
+/// refuses another option and two of them; `FUNCTION` alone is short of
+/// arguments, and a subcommand whose name holds a zero byte is unknown. The
+/// expected replies are redis-server 7.0.15's to the same bytes.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_answers_config_and_echoes_client_bytes_as_redis_does() {
@@ -1712,7 +1715,19 @@ fn firn_answers_config_and_echoes_client_bytes_as_redis_does() {
     batch.extend_from_slice(&[b'c'; 150]);
     batch.push(0);
     batch.extend_from_slice(&[b'd'; 10]);
-    batch.extend_from_slice(b"\r\n$1\r\nv\r\n*1\r\n\r\n");
+    batch.extend_from_slice(b"\r\n$1\r\nv\r\n");
+    for request in [
+        vec!["FUNCTION"],
+        vec!["FUNCTION", "FLUSH"],
+        vec!["function", "flush", "async"],
+        vec!["FUNCTION", "FLUSH", "SYNC\0x"],
+        vec!["FUNCTION", "FLUSH", "x"],
+        vec!["FUNCTION", "FLUSH", "a", "b"],
+        vec!["FUNCTION", "flush\0"],
+    ] {
+        batch.extend(resp(&request));
+    }
+    batch.extend_from_slice(b"*1\r\n\r\n");
     client.write_all(&batch).expect("send the batch");
     let mut expected = b"-ERR wrong number of arguments for 'config' command\r\n-ERR wrong number of arguments for 'config|get' command\r\n-ERR wrong number of arguments for 'config|set' command\r\n-ERR syntax error\r\n-ERR Unknown option or number of arguments for CONFIG SET - 'x'\r\n*4\r\n$10\r\nappendonly\r\n$2\r\nno\r\n$4\r\nsave\r\n$0\r\n\r\n*4\r\n$10\r\nappendonly\r\n$2\r\nno\r\n$4\r\nsave\r\n$0\r\n\r\n*0\r\n*2\r\n$4\r\nsave\r\n$0\r\n\r\n*2\r\n$10\r\nAPPENDONLY\r\n$2\r\nno\r\n*2\r\n$4\r\nSave\r\n$0\r\n\r\n-ERR unknown command 'GET', with args beginning with: 'a' \r\n-ERR unknown command 'G  T', with args beginning with: 'b c' 'd' \r\n-ERR unknown subcommand 'NO P'. Try CONFIG HELP.\r\n".to_vec();
     expected.extend_from_slice(b"-ERR unknown subcommand '");
@@ -1721,7 +1736,8 @@ fn firn_answers_config_and_echoes_client_bytes_as_redis_does() {
         b"'. Try CONFIG HELP.\r\n-ERR Unknown option or number of arguments for CONFIG SET - '",
     );
     expected.extend_from_slice(&[b'c'; 150]);
-    expected.extend_from_slice(b"'\r\n-ERR Protocol error: expected '$', got ' '\r\n");
+    expected.extend_from_slice(b"'\r\n-ERR wrong number of arguments for 'function' command\r\n+OK\r\n+OK\r\n+OK\r\n-ERR FUNCTION FLUSH only supports SYNC|ASYNC option\r\n-ERR unknown subcommand or wrong number of arguments for 'FLUSH'. Try FUNCTION HELP.\r\n-ERR unknown subcommand 'flush'. Try FUNCTION HELP.\r\n");
+    expected.extend_from_slice(b"-ERR Protocol error: expected '$', got ' '\r\n");
     expect_replies(&mut client, &expected, "the CONFIG and echo batch");
     drop(client);
     let (status, _) = finished(child);
@@ -1785,7 +1801,9 @@ fn firn_carries_requests_and_replies_larger_than_its_windows() {
 /// members it chose, as Redis records it; a replay that popped at random, from
 /// a generator seeded by the clock at each start, would almost surely remove
 /// others. A string set before FLUSHALL and a list pushed before FLUSHDB stay
-/// absent, since the file records both commands as Redis does.
+/// absent, since the file records both commands, and FUNCTION FLUSH after
+/// them, as Redis does: the file's first bytes are those redis-server 7.0.15
+/// appends for the same requests, the SELECT it writes first aside.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_replays_the_value_types_from_its_append_only_file() {
@@ -1809,6 +1827,7 @@ fn firn_replays_the_value_types_from_its_append_only_file() {
         vec!["FLUSHALL"],
         vec!["RPUSH", "flushed-list", "a"],
         vec!["FLUSHDB", "ASYNC"],
+        vec!["FUNCTION", "FLUSH", "ASYNC"],
         vec!["RPUSH", "l", "a", "b", "c"],
         vec!["LPOP", "l"],
         vec!["HSET", "h", "f", "v"],
@@ -1822,7 +1841,7 @@ fn firn_replays_the_value_types_from_its_append_only_file() {
     client.write_all(&batch).expect("send the changes");
     expect_replies(
         &mut client,
-        b"+OK\r\n+OK\r\n:1\r\n+OK\r\n:3\r\n$1\r\na\r\n:1\r\n:2\r\n*2\r\n$1\r\na\r\n$1\r\n1\r\n:1\r\n:50\r\n",
+        b"+OK\r\n+OK\r\n:1\r\n+OK\r\n+OK\r\n:3\r\n$1\r\na\r\n:1\r\n:2\r\n*2\r\n$1\r\na\r\n$1\r\n1\r\n:1\r\n:50\r\n",
         "the first run's changes",
     );
     client
@@ -1847,6 +1866,13 @@ fn firn_replays_the_value_types_from_its_append_only_file() {
     drop(client);
     let (status, _) = finished(child);
     assert_eq!(status, 0, "the first run");
+    let file = std::fs::read(program.working_directory().join(name)).expect("read the file");
+    let head: &[u8] = b"*3\r\n$3\r\nSET\r\n$7\r\nflushed\r\n$1\r\nv\r\n*1\r\n$8\r\nFLUSHALL\r\n*3\r\n$5\r\nRPUSH\r\n$12\r\nflushed-list\r\n$1\r\na\r\n*2\r\n$7\r\nFLUSHDB\r\n$5\r\nASYNC\r\n*3\r\n$8\r\nFUNCTION\r\n$5\r\nFLUSH\r\n$5\r\nASYNC\r\n";
+    assert_eq!(
+        String::from_utf8_lossy(&file[..head.len().min(file.len())]),
+        String::from_utf8_lossy(head),
+        "the file's first commands"
+    );
     let port = free_port();
     let text = port.to_string();
     let child = program.spawn_on_route(true, &[text.as_bytes(), b"1", name.as_bytes()]);
@@ -2235,10 +2261,10 @@ fn firn_listens_again_on_its_port_after_a_restart() {
 
 /// firn requires the password --requirepass names as Redis does. A connection
 /// that has not authenticated is answered NOAUTH for every command but AUTH,
-/// HELLO and QUIT, after an unknown command or a wrong count of arguments is
-/// answered as such; a wrong password, one of the right length among them,
-/// the user default with a wrong one and another user are answered WRONGPASS
-/// and leave it locked; the password
+/// HELLO and QUIT, after an unknown command or subcommand or a wrong count of
+/// arguments is answered as such; a wrong password, one of the right length
+/// among them, the user default with a wrong one and another user are answered
+/// WRONGPASS and leave it locked; the password
 /// unlocks it, and a wrong one afterwards leaves it unlocked. HELLO with AUTH
 /// unlocks a connection too and answers with its id. While locked, an array of
 /// more than 10 elements or a bulk string of more than 16,384 bytes is a
@@ -2264,6 +2290,8 @@ fn firn_requires_its_password_as_redis_does() {
         vec!["CONFIG", "GET"],
         vec!["CONFIG", "GET", "save"],
         vec!["CLIENT", "FOO"],
+        vec!["FUNCTION", "NOPE"],
+        vec!["FUNCTION", "FLUSH"],
         vec!["HELLO", "2"],
         vec!["AUTH", "wrong"],
         vec!["AUTH", "secreT"],
@@ -2282,7 +2310,7 @@ fn firn_requires_its_password_as_redis_does() {
     client.write_all(&batch).expect("send the locked batch");
     expect_replies(
         &mut client,
-        b"-NOAUTH Authentication required.\r\n-ERR unknown command 'NOPE', with args beginning with: 'a' \r\n-ERR wrong number of arguments for 'get' command\r\n-ERR wrong number of arguments for 'config|get' command\r\n-NOAUTH Authentication required.\r\n-ERR unknown subcommand 'FOO'. Try CLIENT HELP.\r\n-NOAUTH HELLO must be called with the client already authenticated, otherwise the HELLO AUTH <user> <pass> option can be used to authenticate the client and select the RESP protocol version at the same time\r\n-WRONGPASS invalid username-password pair or user is disabled.\r\n-WRONGPASS invalid username-password pair or user is disabled.\r\n-WRONGPASS invalid username-password pair or user is disabled.\r\n-WRONGPASS invalid username-password pair or user is disabled.\r\n-NOAUTH Authentication required.\r\n+OK\r\n+PONG\r\n-WRONGPASS invalid username-password pair or user is disabled.\r\n+PONG\r\n*2\r\n$11\r\nrequirepass\r\n$6\r\nsecret\r\n:0\r\n",
+        b"-NOAUTH Authentication required.\r\n-ERR unknown command 'NOPE', with args beginning with: 'a' \r\n-ERR wrong number of arguments for 'get' command\r\n-ERR wrong number of arguments for 'config|get' command\r\n-NOAUTH Authentication required.\r\n-ERR unknown subcommand 'FOO'. Try CLIENT HELP.\r\n-ERR unknown subcommand 'NOPE'. Try FUNCTION HELP.\r\n-NOAUTH Authentication required.\r\n-NOAUTH HELLO must be called with the client already authenticated, otherwise the HELLO AUTH <user> <pass> option can be used to authenticate the client and select the RESP protocol version at the same time\r\n-WRONGPASS invalid username-password pair or user is disabled.\r\n-WRONGPASS invalid username-password pair or user is disabled.\r\n-WRONGPASS invalid username-password pair or user is disabled.\r\n-WRONGPASS invalid username-password pair or user is disabled.\r\n-NOAUTH Authentication required.\r\n+OK\r\n+PONG\r\n-WRONGPASS invalid username-password pair or user is disabled.\r\n+PONG\r\n*2\r\n$11\r\nrequirepass\r\n$6\r\nsecret\r\n:0\r\n",
         "the locked batch",
     );
     drop(client);

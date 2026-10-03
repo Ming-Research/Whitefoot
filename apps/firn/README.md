@@ -32,7 +32,10 @@ own:
   and `FLUSHDB`, with `ASYNC` or `SYNC`, empty firn's one database and its
   queued expiries in one atomic statement and are appended to the
   append-only file as Redis appends them; the old keys are released before
-  the reply under either option.
+  the reply under either option. `FUNCTION FLUSH`, with `ASYNC` or `SYNC`,
+  succeeds as Redis does with no function loaded, firn having none, and is
+  appended to the file as Redis appends it; every other `FUNCTION`
+  subcommand is answered as an unknown one.
 
 `HELLO` reports the server as `redis` version 7.0.15, the version whose
 replies firn follows.
