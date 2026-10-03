@@ -391,23 +391,25 @@ floor-test: $(COMPLETION_TMP)/floor-probe $(COMPLETION_TMP)/floor-probe-hooks
 
 # The concurrent map, and its locked read built for measurement, each against
 # a reference, accounting checks and recorded histories checked for
-# linearizability (concurrent_map_test.c). The locked read changes only the
-# tests of word keys and the narrowed hashes only those of entries, so those
-# builds run only the tests they change; the default build runs every test.
-# The test includes the map's source, so that it can drive interleavings
-# through the map's own steps.
-CONCURRENT_MAP_SOURCES := src/backend/concurrent_map.c src/backend/concurrent_map_test.c
+# linearizability, with the key sets, holds and keyed tables built on it
+# (concurrent_map_test.c). The locked read changes only the tests of word
+# keys and the narrowed hashes only those of entries, so those builds run
+# only the tests they change; the default build runs every test. The test
+# includes the keyed tables' unit, and through it the map's source, so that
+# it can drive interleavings through the map's own steps.
+CONCURRENT_MAP_SOURCES := src/backend/concurrent_map.c src/backend/keyed_table.c src/backend/concurrent_map_test.c \
+	src/backend/concurrent_map.h $(COMPLETION_DIR)/bridge.h
 CONCURRENT_MAP_VARIANTS := copy-out locked collide
 concurrent-map-test: $(foreach v,$(CONCURRENT_MAP_VARIANTS),$(COMPLETION_TMP)/concurrent-map-test-$(v))
 	@set -e; for v in $(CONCURRENT_MAP_VARIANTS); do "$(COMPLETION_TMP)/concurrent-map-test-$$v"; done
-$(COMPLETION_TMP)/concurrent-map-test-copy-out: $(CONCURRENT_MAP_SOURCES) src/backend/concurrent_map.h Makefile
+$(COMPLETION_TMP)/concurrent-map-test-copy-out: $(CONCURRENT_MAP_SOURCES) Makefile
 	@mkdir -p "$(dir $@)"
 	$(CC) $(COMPLETION_BASE_CFLAGS) src/backend/concurrent_map_test.c -o "$@"
-$(COMPLETION_TMP)/concurrent-map-test-locked: $(CONCURRENT_MAP_SOURCES) src/backend/concurrent_map.h Makefile
+$(COMPLETION_TMP)/concurrent-map-test-locked: $(CONCURRENT_MAP_SOURCES) Makefile
 	@mkdir -p "$(dir $@)"
 	$(CC) $(COMPLETION_BASE_CFLAGS) -DWF_CMAP_LOCKED_READ src/backend/concurrent_map_test.c -o "$@"
 # Entries' hashes narrowed to four bits, so that most keys share one.
-$(COMPLETION_TMP)/concurrent-map-test-collide: $(CONCURRENT_MAP_SOURCES) src/backend/concurrent_map.h Makefile
+$(COMPLETION_TMP)/concurrent-map-test-collide: $(CONCURRENT_MAP_SOURCES) Makefile
 	@mkdir -p "$(dir $@)"
 	$(CC) $(COMPLETION_BASE_CFLAGS) -DWF_CMAP_TAG_MASK=15 src/backend/concurrent_map_test.c -o "$@"
 
@@ -415,7 +417,7 @@ $(COMPLETION_TMP)/concurrent-map-test-collide: $(CONCURRENT_MAP_SOURCES) src/bac
 # only witness of a read of a freed node: such a read's result is discarded,
 # so no outcome differs. It is not part of completion-test, whose budget it
 # would exceed; docs/todo.md asks whether it joins the gate.
-concurrent-map-test-sanitized: $(CONCURRENT_MAP_SOURCES) src/backend/concurrent_map.h Makefile
+concurrent-map-test-sanitized: $(CONCURRENT_MAP_SOURCES) Makefile
 	@mkdir -p "$(COMPLETION_TMP)"
 	$(CC) $(COMPLETION_BASE_CFLAGS) -fsanitize=address,undefined -fno-sanitize-recover=undefined \
 		src/backend/concurrent_map_test.c -o "$(COMPLETION_TMP)/concurrent-map-test-sanitized"
@@ -425,11 +427,16 @@ concurrent-map-test-sanitized: $(CONCURRENT_MAP_SOURCES) src/backend/concurrent_
 # writes and the moments the runtime lets it observe (shared_object_test.c),
 # on one driver beside threads that hold the object, stepped through each
 # hand-off in a fixed order so that it runs alike on every host and
-# processor count. It links the runtime objects the default-route probe
-# builds with the same flags, so the runtime is not compiled again for it.
+# processor count, and then guards that read a keyed table parking and
+# waking. It links the runtime objects the default-route probe builds with
+# the same flags, so the runtime is not compiled again for it, and the keyed
+# tables' unit.
 SHARED_OBJECT_TEST_OBJECTS := \
 	$(patsubst src/backend/%.c,$(COMPLETION_TMP)/objects/bridge-default-probe/%.o,$(COMPLETION_RUNTIME_SOURCES)) \
+	$(COMPLETION_TMP)/objects/bridge-default-probe/keyed_table.o \
 	$(COMPLETION_TMP)/objects/bridge-default-probe/completion/shared_object_test.o
+# The keyed tables' unit compiles the map's source in.
+$(COMPLETION_TMP)/objects/bridge-default-probe/keyed_table.o: src/backend/concurrent_map.c
 $(COMPLETION_TMP)/shared-object-test: $(SHARED_OBJECT_TEST_OBJECTS)
 	$(CC) $(COMPLETION_BASE_CFLAGS) $^ -o "$@"
 shared-object-test: $(COMPLETION_TMP)/shared-object-test

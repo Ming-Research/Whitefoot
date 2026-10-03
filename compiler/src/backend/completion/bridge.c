@@ -1172,6 +1172,40 @@ struct wf_context_chunk {
 #define WF_CONTEXT_CHUNK_SLACK 4096u
 
 typedef struct wf_context wf_context;
+
+/* A guard's watch (bridge.h): the context that registered it, where it
+ * stands, how many links it has registered, the first of them in itself and
+ * the rest in chunks from the pool, newest first.  A link sits on one
+ * unit's list: the next link there, the pointer to this one, its watch, and
+ * the unit's count of links.  Lists, links and a registered watch's state
+ * change only under `wf_watch_lock` (the guard-watch section below). */
+typedef struct wf_watch_link wf_watch_link;
+typedef struct wf_watch wf_watch;
+struct wf_watch_link {
+    wf_watch_link *next;
+    wf_watch_link **back;
+    wf_watch *watch;
+    uint32_t *count;
+};
+#define WF_WATCH_INLINE_LINKS 4u
+#define WF_WATCH_CHUNK_LINKS 8u
+typedef struct wf_watch_chunk wf_watch_chunk;
+struct wf_watch_chunk {
+    wf_watch_chunk *next;
+    size_t pool_bytes;
+    uint32_t used;
+    wf_watch_link links[WF_WATCH_CHUNK_LINKS];
+};
+struct wf_watch {
+    wf_context *context;
+    uint32_t state;
+    uint32_t used;
+    wf_watch_chunk *more;
+    wf_watch_link links[WF_WATCH_INLINE_LINKS];
+};
+_Static_assert(sizeof(wf_watch) == WF_WATCH_SIZE, "WF_WATCH_SIZE is a watch's size");
+_Static_assert(_Alignof(wf_watch) == WF_WATCH_ALIGN, "WF_WATCH_ALIGN is a watch's alignment");
+
 struct wf_context {
     /* The frame the driver resumes when the context is chosen. */
     void *resume;
@@ -1209,6 +1243,12 @@ struct wf_context {
     uint32_t shared_woken;
     uint32_t shared_write;
     _Atomic uint32_t shared_granted;
+    /* The watch its running statement registered after a false guard and
+     * has not parked yet, while that statement's releases write nothing;
+     * and the watch `wf__shared_watch` registers for a guard that read only
+     * the object. */
+    wf_watch *watching;
+    wf_watch shared_watch;
     /* How many waits in a row the host, an object or a join answered at once
      * since the driver last resumed the context [WAIT-2]. */
     uint32_t passes;
@@ -2176,6 +2216,9 @@ static void wf_group_finish(uint64_t *group) {
 static void wf_context_finish(wf_context *context) {
     uint64_t *group = context->group;
     wf_context *previous = wf_context_current;
+    if (context->watching != NULL) {
+        wf_bridge_fail("a context finished between registering a guard's watch and parking it");
+    }
     wf_context_current = context;
     wf__coro_destroy(context->root);
     wf_context_current = previous;
@@ -2185,6 +2228,223 @@ static void wf_context_finish(wf_context *context) {
     atomic_fetch_sub_explicit(&wf_context_live, 1u, memory_order_release);
     wf_group_finish(group);
     wf_pool_give(context, context->pool_bytes);
+}
+
+/* ------------------------------------------------------ guard watches */
+
+/* A statement whose guard reads false registers a watch, while it still
+ * holds every unit its guard read, on each such unit's list: the object's
+ * other fields, or a keyed table's entries (keyed_table.c).  It then
+ * releases every unit and parks.  A statement that wrote a unit wakes every
+ * watch on the unit's list as it ends: a parked watch's context is made
+ * ready, and a watch not yet parked is marked woken, so its park answers at
+ * once and no wake is lost.  Waking a watch takes every link of it off every
+ * list, so a watch is registered nowhere once its park has answered or its
+ * context resumed.  One lock guards every list, because guards wait rarely,
+ * while a statement that finds no link on its unit reads one word and takes
+ * no lock.  A release that follows its own statement's false guard writes
+ * nothing [SHARE-2] and wakes no one, or the watches on one unit would wake
+ * one another without end. */
+enum { WF_GUARD_IDLE, WF_GUARD_REGISTERED, WF_GUARD_WOKEN, WF_GUARD_PARKED };
+
+static atomic_flag wf_watch_lock = ATOMIC_FLAG_INIT;
+
+/* What the runtime's tests observe (bridge.h); a program links this, which
+ * does nothing. */
+__attribute__((weak)) void wf__watch_seen(unsigned moment) {
+    (void)moment;
+}
+
+static void wf_ready_all(wf_context *list) {
+    while (list != NULL) {
+        wf_context *next = list->next;
+        wf_context_ready(list);
+        list = next;
+    }
+}
+
+void wf__watch_begin(void *watch_frame) {
+    wf_watch *watch = (wf_watch *)watch_frame;
+    watch->context = wf_context_current;
+    watch->state = WF_GUARD_IDLE;
+    watch->used = 0u;
+    watch->more = NULL;
+}
+
+/* How many of a watch's links are its own. */
+static uint32_t wf_watch_inline_used(const wf_watch *watch) {
+    return watch->used < WF_WATCH_INLINE_LINKS ? watch->used : WF_WATCH_INLINE_LINKS;
+}
+
+/* Whether the watch has a link on the list a unit counts in `count`. */
+static int wf_watch_on_unit(const wf_watch *watch, const uint32_t *count) {
+    uint32_t index;
+    const wf_watch_chunk *chunk;
+    for (index = 0u; index < wf_watch_inline_used(watch); index++) {
+        if (watch->links[index].count == count) {
+            return 1;
+        }
+    }
+    for (chunk = watch->more; chunk != NULL; chunk = chunk->next) {
+        for (index = 0u; index < chunk->used; index++) {
+            if (chunk->links[index].count == count) {
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+/* Registers the running statement's watch on a unit's list, which the unit
+ * counts in `count`.  A watch already woken is registered no further, since
+ * its park answers at once. */
+static void wf_watch_on(wf_watch *watch, uint32_t *count, wf_watch_link **head) {
+    wf_context *self = wf_context_current;
+    wf_watch_chunk *fresh = NULL;
+    if (self == NULL || watch == NULL || watch->context != self) {
+        wf_bridge_fail("a guard registered a watch outside its context");
+    }
+    for (;;) {
+        wf_watch_link *link;
+        wf_spin_lock(&wf_watch_lock);
+        if (watch->state == WF_GUARD_WOKEN || wf_watch_on_unit(watch, count)) {
+            wf_spin_unlock(&wf_watch_lock);
+            break;
+        }
+        if (watch->used < WF_WATCH_INLINE_LINKS) {
+            link = &watch->links[watch->used];
+        } else if (watch->more != NULL && watch->more->used < WF_WATCH_CHUNK_LINKS) {
+            link = &watch->more->links[watch->more->used];
+            watch->more->used += 1u;
+        } else if (fresh != NULL) {
+            fresh->next = watch->more;
+            fresh->used = 1u;
+            watch->more = fresh;
+            link = &fresh->links[0];
+            fresh = NULL;
+        } else {
+            size_t granted;
+            wf_spin_unlock(&wf_watch_lock);
+            fresh = (wf_watch_chunk *)wf_pool_take(sizeof(*fresh), &granted);
+            fresh->pool_bytes = granted;
+            continue;
+        }
+        link->watch = watch;
+        link->count = count;
+        link->next = *head;
+        link->back = head;
+        if (*head != NULL) {
+            (*head)->back = &link->next;
+        }
+        *head = link;
+        __atomic_store_n(count, __atomic_load_n(count, __ATOMIC_RELAXED) + 1u, __ATOMIC_RELAXED);
+        watch->used += 1u;
+        watch->state = WF_GUARD_REGISTERED;
+        self->watching = watch;
+        wf_spin_unlock(&wf_watch_lock);
+        break;
+    }
+    if (fresh != NULL) {
+        wf_pool_give(fresh, fresh->pool_bytes);
+    }
+}
+
+static void wf_watch_link_off(wf_watch_link *link) {
+    *link->back = link->next;
+    if (link->next != NULL) {
+        link->next->back = link->back;
+    }
+    __atomic_store_n(link->count, __atomic_load_n(link->count, __ATOMIC_RELAXED) - 1u, __ATOMIC_RELAXED);
+}
+
+/* Wakes every watch on a unit's list, under the watch lock: takes each
+ * watch's links off every list, its chunks onto `dead`, to give back once
+ * the lock is released, and answers the contexts of parked watches, chained
+ * through `next`, to make ready then. */
+static wf_context *wf_watch_wake_locked(wf_watch_link **head, wf_watch_chunk **dead) {
+    wf_context *ready = NULL;
+    while (*head != NULL) {
+        wf_watch *watch = (*head)->watch;
+        uint32_t index;
+        wf_watch_chunk *chunk;
+        for (index = 0u; index < wf_watch_inline_used(watch); index++) {
+            wf_watch_link_off(&watch->links[index]);
+        }
+        while ((chunk = watch->more) != NULL) {
+            for (index = 0u; index < chunk->used; index++) {
+                wf_watch_link_off(&chunk->links[index]);
+            }
+            watch->more = chunk->next;
+            chunk->next = *dead;
+            *dead = chunk;
+        }
+        watch->used = 0u;
+        if (watch->state == WF_GUARD_PARKED) {
+            watch->state = WF_GUARD_IDLE;
+            watch->context->next = ready;
+            ready = watch->context;
+        } else {
+            watch->state = WF_GUARD_WOKEN;
+        }
+    }
+    return ready;
+}
+
+static void wf_watch_give_back(wf_watch_chunk *dead) {
+    while (dead != NULL) {
+        wf_watch_chunk *next = dead->next;
+        wf_pool_give(dead, dead->pool_bytes);
+        dead = next;
+    }
+}
+
+/* Whether the running context's statement has registered its watch and not
+ * parked it: its releases follow its false guard and write nothing. */
+static int wf_watch_quiet(void) {
+    wf_context *self = wf_context_current;
+    return self != NULL && self->watching != NULL;
+}
+
+void wf__watch_written(wf_watch_list *list) {
+    wf_watch_chunk *dead = NULL;
+    wf_context *ready;
+    wf__watch_seen(WF_WATCH_WRITTEN);
+    if (wf_watch_quiet()) {
+        return;
+    }
+    wf_spin_lock(&wf_watch_lock);
+    ready = wf_watch_wake_locked(&list->links, &dead);
+    wf_spin_unlock(&wf_watch_lock);
+    wf_watch_give_back(dead);
+    wf_ready_all(ready);
+}
+
+void wf__watch_unit(void *watch, wf_watch_list *list) {
+    wf_watch_on((wf_watch *)watch, &list->count, &list->links);
+}
+
+int wf__watch_park(void *watch_frame, void *frame) {
+    wf_watch *watch = (wf_watch *)watch_frame;
+    wf_context *self = wf_context_current;
+    if (self == NULL || frame == NULL || watch == NULL || watch->context != self) {
+        wf_bridge_fail("a guard parked outside its context");
+    }
+    wf_spin_lock(&wf_watch_lock);
+    self->watching = NULL;
+    if (watch->state == WF_GUARD_WOKEN) {
+        watch->state = WF_GUARD_IDLE;
+        wf_spin_unlock(&wf_watch_lock);
+        wf__watch_seen(WF_WATCH_EARLY);
+        return wf_context_pass(self, frame);
+    }
+    /* A watch registered on no unit waits for a write no statement makes,
+     * and its statement does not complete, as one whose guard is false at
+     * every point does not [SHARE-3]. */
+    watch->state = WF_GUARD_PARKED;
+    self->resume = frame;
+    wf_context_parked_away = 1;
+    wf_spin_unlock(&wf_watch_lock);
+    return 1;
 }
 
 /* ------------------------------------------------------ shared objects */
@@ -2202,13 +2462,14 @@ static void wf_context_finish(wf_context *context) {
  * later statement park behind it; a woken statement that misses again goes
  * back to the head of the queue, and once WF_SHARED_HANDOFF unlocks have
  * woken it in vain the next one hands it the object, so a parked statement
- * is overtaken a bounded number of times [WAIT-2].  A statement inside a
- * map's block cannot park, and may run on the driver whose queue holds the
- * context an unlock handed the object to, so it borrows that hold and gives
- * it back when it ends (wf__shared_take); the context keeps the object, and
- * once it runs again it waits only for the borrower under way.  Contexts
- * whose guard read false wait in `watching` until a statement that writes
- * the object ends. */
+ * is overtaken a bounded number of times [WAIT-2].  A statement that holds a
+ * keyed table's entries when it takes the object cannot park, and may run on
+ * the driver whose queue holds the context an unlock handed the object to,
+ * so it borrows that hold and gives it back when it ends
+ * (wf__shared_take); the context keeps the object, and
+ * once it runs again it waits only for the borrower under way.  The watches
+ * of guards that read the object sit on `watching`, `watched` of them (the
+ * guard-watch section), until a statement that writes the object ends. */
 typedef struct wf_shared {
     _Atomic uint64_t handles;
     atomic_flag lock;
@@ -2217,10 +2478,11 @@ typedef struct wf_shared {
      * for the hold back, which ends the borrowing. */
     _Atomic uint8_t borrowed;
     _Atomic uint8_t claimed;
+    uint32_t watched;
     _Atomic uint64_t holders;
     wf_context *waiting_head;
     wf_context *waiting_tail;
-    wf_context *watching;
+    wf_watch_link *watching;
     /* The parked context an unlock handed the object to, until it resumes
      * and takes it. */
     _Atomic(wf_context *) granted;
@@ -2247,8 +2509,8 @@ __attribute__((weak)) void wf__shared_seen(unsigned moment) {
     (void)moment;
 }
 
-/* The runtime's concurrent maps (shared_map.c) number their users by
- * driver. */
+/* The runtime's concurrent maps, the keyed tables (keyed_table.c), number
+ * their users by driver. */
 _Static_assert(
     WF_DRIVER_LIMIT <= WF_CMAP_MAX_USERS,
     "every driver must number a user of a concurrent map"
@@ -2373,14 +2635,6 @@ static wf_context *wf_shared_wake_locked(wf_shared *shared) {
     return first;
 }
 
-static void wf_shared_ready_all(wf_context *list) {
-    while (list != NULL) {
-        wf_context *next = list->next;
-        wf_context_ready(list);
-        list = next;
-    }
-}
-
 /* Waits a bounded time and then gives up the processor, for a hold that a
  * running statement ends. */
 static void wf_shared_spin(unsigned *spins) {
@@ -2404,9 +2658,9 @@ int wf__shared_acquire(void *object, uint32_t write, void *frame) {
     if (self == NULL || frame == NULL) {
         wf_bridge_fail("an atomic statement ran outside every context");
     }
-    /* A handed hold stays the context's.  A statement inside a map's block
-     * may be borrowing it; the context then claims it, which ends the
-     * borrowing, and waits for that running statement to give it back. */
+    /* A handed hold stays the context's.  A statement holding a table's
+     * entries may be borrowing it; the context then claims it, which ends
+     * the borrowing, and waits for that running statement to give it back. */
     if (atomic_load_explicit(&self->shared_granted, memory_order_relaxed) != 0u) {
         wf_spin_lock(&shared->lock);
         wf__shared_seen(WF_SHARED_RESUMED);
@@ -2476,9 +2730,9 @@ static int wf_shared_lendable(wf_shared *shared, int exact) {
             == (granted->shared_write != 0u ? WF_SHARED_WRITER : 1u);
 }
 
-/* [SHARE-2] An object's statement inside the block of a statement holding
- * a map's state or an entry, which keeps its driver until it ends, so this
- * statement spins rather than parks.  Every holder of an object is a running
+/* [SHARE-2] The object of a statement that already holds a keyed table's
+ * entries, which keeps its driver until it ends, so the statement spins
+ * rather than parks.  Every holder of an object is a running
  * context whose block waits for nothing, but for a parked context an unlock
  * handed the object to, which may wait in this very driver's queue: this
  * statement borrows such a hold, alone, and its unlock gives it back. */
@@ -2509,10 +2763,27 @@ void wf__shared_take(void *object, uint32_t write) {
     }
 }
 
+/* After a statement wrote the object, under the object's lock: wakes every
+ * watch on the object's list, unless the statement's own guard was false,
+ * answering the contexts to make ready and adding chunks to `dead`. */
+static wf_context *wf_shared_written_locked(wf_shared *shared, wf_watch_chunk **dead) {
+    wf_context *ready = NULL;
+    if (__atomic_load_n(&shared->watched, __ATOMIC_RELAXED) == 0u) {
+        return NULL;
+    }
+    wf__watch_seen(WF_WATCH_WRITTEN);
+    if (!wf_watch_quiet()) {
+        wf_spin_lock(&wf_watch_lock);
+        ready = wf_watch_wake_locked(&shared->watching, dead);
+        wf_spin_unlock(&wf_watch_lock);
+    }
+    return ready;
+}
+
 /* Ends one hold under the object's lock and returns the contexts to make
  * ready: the first parked statement once the object is free, woken or handed
  * the object, and, after a write, every context watching for one. */
-static wf_context *wf_shared_end_hold_locked(wf_shared *shared, uint32_t write, int wrote) {
+static wf_context *wf_shared_end_hold_locked(wf_shared *shared, uint32_t write, int wrote, wf_watch_chunk **dead) {
     wf_context *ready = NULL;
     wf_context *woken = NULL;
     if (write != 0u) {
@@ -2521,8 +2792,7 @@ static wf_context *wf_shared_end_hold_locked(wf_shared *shared, uint32_t write, 
         atomic_fetch_sub_explicit(&shared->holders, 1u, memory_order_relaxed);
     }
     if (wrote) {
-        ready = shared->watching;
-        shared->watching = NULL;
+        ready = wf_shared_written_locked(shared, dead);
     }
     if (atomic_load_explicit(&shared->holders, memory_order_relaxed) == 0u) {
         woken = wf_shared_wake_locked(shared);
@@ -2537,7 +2807,7 @@ static wf_context *wf_shared_end_hold_locked(wf_shared *shared, uint32_t write, 
 /* Gives a borrowed hold back to the parked context it was handed to, and
  * returns, after a write, every context watching for one.  Called under the
  * object's lock. */
-static wf_context *wf_shared_give_back_locked(wf_shared *shared, uint32_t write) {
+static wf_context *wf_shared_give_back_locked(wf_shared *shared, uint32_t write, wf_watch_chunk **dead) {
     wf_context *granted = atomic_load_explicit(&shared->granted, memory_order_relaxed);
     wf_context *ready = NULL;
     atomic_store_explicit(
@@ -2547,8 +2817,7 @@ static wf_context *wf_shared_give_back_locked(wf_shared *shared, uint32_t write)
     );
     atomic_store_explicit(&shared->borrowed, 0u, memory_order_relaxed);
     if (write != 0u) {
-        ready = shared->watching;
-        shared->watching = NULL;
+        ready = wf_shared_written_locked(shared, dead);
     }
     return ready;
 }
@@ -2558,34 +2827,51 @@ static wf_context *wf_shared_give_back_locked(wf_shared *shared, uint32_t write)
 void wf__shared_unlock(void *object, uint32_t write) {
     wf_shared *shared = (wf_shared *)object;
     wf_context *ready;
+    wf_watch_chunk *dead = NULL;
     wf_spin_lock(&shared->lock);
     if (atomic_load_explicit(&shared->borrowed, memory_order_relaxed) != 0u) {
-        ready = wf_shared_give_back_locked(shared, write);
+        ready = wf_shared_give_back_locked(shared, write, &dead);
     } else {
-        ready = wf_shared_end_hold_locked(shared, write, write != 0u);
+        ready = wf_shared_end_hold_locked(shared, write, write != 0u, &dead);
     }
     wf_spin_unlock(&shared->lock);
-    wf_shared_ready_all(ready);
+    wf_watch_give_back(dead);
+    wf_ready_all(ready);
 }
 
+/* A guard that read the object: registered while the statement holds the
+ * object, which no writer can change before the hold ends. */
+void wf__watch_object(void *watch, void *object) {
+    wf_shared *shared = (wf_shared *)object;
+    wf_watch_on((wf_watch *)watch, &shared->watched, &shared->watching);
+}
+
+/* A guard that read only the object registers the context's own watch; one
+ * that also read a table has begun and registered a watch of its own, which
+ * this one joins. */
 int wf__shared_watch(void *object, uint32_t write, void *frame) {
     wf_shared *shared = (wf_shared *)object;
     wf_context *self = wf_context_current;
     wf_context *ready;
+    wf_watch *watch;
+    wf_watch_chunk *dead = NULL;
     if (self == NULL || frame == NULL) {
         wf_bridge_fail("an atomic statement ran outside every context");
     }
-    wf_spin_lock(&shared->lock);
-    self->resume = frame;
+    watch = self->watching;
+    if (watch == NULL) {
+        watch = &self->shared_watch;
+        wf__watch_begin(watch);
+    }
+    wf_watch_on(watch, &shared->watched, &shared->watching);
     self->shared_woken = 0u;
-    self->next = shared->watching;
-    shared->watching = self;
-    wf_context_parked_away = 1;
+    wf_spin_lock(&shared->lock);
     /* The guard wrote nothing, so no watcher has a change to see. */
-    ready = wf_shared_end_hold_locked(shared, write, 0);
+    ready = wf_shared_end_hold_locked(shared, write, 0, &dead);
     wf_spin_unlock(&shared->lock);
-    wf_shared_ready_all(ready);
-    return 1;
+    wf_watch_give_back(dead);
+    wf_ready_all(ready);
+    return wf__watch_park(watch, frame);
 }
 
 /* [WAIT-2] whether the program can take no further step: every driver has

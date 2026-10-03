@@ -26,7 +26,15 @@
  *   every statement doing so while the map moves, holds count and claims
  *   race; and statements over the whole map that hold it in the order they
  *   asked, each after the keyed statements the hold before it kept
- *   waiting.
+ *   waiting;
+ * - key sets, in byte order whatever order their keys come in, and holds of
+ *   several entries kept in a statement's frame: positions with repeats,
+ *   the order they lock in, the release at each tag width, holds of two
+ *   maps at once, holds of the whole map, a hold waiting out a move under
+ *   way, swaps of two maps' entries, and the keyed tables' functions
+ *   (keyed_table.c), which the test compiles in with the map, standing in
+ *   for the completion runtime they take a driver's number and guards'
+ *   watches from.
  *
  * Prints the first failure and exits 1, or exits 0.
  */
@@ -42,11 +50,18 @@
 
 #include <sched.h>
 
-/* The host the runtime supplies the map, here from the C library. */
-#define WF_CMAP_TAKE(bytes) aligned_alloc(16, ((size_t)(bytes) + 15) / 16 * 16)
-#define WF_CMAP_GIVE(block, bytes) free(block)
+/* The host the runtime supplies the map, here from the C library, counting
+ * the blocks it has handed out and not had back. */
+static _Atomic int64_t blocks_out;
+static void *test_take(size_t bytes);
+static void test_give(void *block);
+#define WF_CMAP_TAKE(bytes) test_take((size_t)(bytes))
+#define WF_CMAP_GIVE(block, bytes) test_give(block)
 #define WF_CMAP_YIELD() sched_yield()
 #define WF_CMAP_EXHAUSTED() abort()
+struct wf_cmap;
+static void finishing(struct wf_cmap *map);
+#define WF_CMAP_FINISHING(map) finishing(map)
 struct table;
 struct cell;
 static void before_claim(struct table *t, unsigned long long index);
@@ -82,7 +97,49 @@ static void hold_seen(struct wf_cmap_user *u, int closed);
 #define ENTRY_TESTS 1
 #endif
 
-#include "concurrent_map.c"
+#include "keyed_table.c"
+
+static void *test_take(size_t bytes) {
+    atomic_fetch_add(&blocks_out, 1);
+    return aligned_alloc(16, (bytes + 15) / 16 * 16);
+}
+
+static void test_give(void *block) {
+    atomic_fetch_sub(&blocks_out, 1);
+    free(block);
+}
+
+/* What keyed_table.c takes from the completion runtime, here: each test
+ * thread names the driver it stands for, and a guard's watch is counted on
+ * its table, whose wakes are counted. */
+static _Thread_local unsigned test_driver;
+static _Atomic uint64_t written_calls;
+
+unsigned wf__driver_index(void) { return test_driver; }
+
+void wf__watch_written(wf_watch_list *list) {
+    (void)list;
+    atomic_fetch_add(&written_calls, 1);
+}
+
+void wf__watch_unit(void *watch, wf_watch_list *list) {
+    (void)watch;
+    list->count += 1;
+}
+
+/* A step the test of moves under way takes once, when the thread standing
+ * for driver 1 is about to help a move of pause_map to its end: it waits
+ * there until it is let go. */
+static wf_cmap *pause_map;
+static _Atomic int pause_armed, pause_reached, pause_released;
+
+static void finishing(struct wf_cmap *map) {
+    if (map != pause_map || test_driver != 1 || !atomic_exchange(&pause_armed, 0))
+        return;
+    atomic_store(&pause_reached, 1);
+    while (!atomic_load(&pause_released))
+        sched_yield();
+}
 
 #define THREADS 4
 
@@ -608,24 +665,26 @@ static void check_cells(wf_cmap *map, const char *what) {
 }
 
 /* A step another writer takes once, when the writer under test is about to
- * claim the cell at index; the claim tests below set it. */
-static void (*at_claim)(struct table *t, unsigned long long index);
+ * claim the cell at index; the claim tests below set it. Threads of the
+ * other tests pass here too, finding no step, so the step is taken by one
+ * exchange after a plain look. */
+typedef void (*claim_step)(struct table *t, unsigned long long index);
+static _Atomic(claim_step) at_claim;
 
 static void before_claim(struct table *t, unsigned long long index) {
-    void (*step)(struct table *, unsigned long long) = at_claim;
-    at_claim = NULL;
-    if (step != NULL)
+    claim_step step = atomic_load_explicit(&at_claim, memory_order_relaxed);
+    if (step != NULL && (step = atomic_exchange(&at_claim, NULL)) != NULL)
         step(t, index);
 }
 
 /* The same, when the writer under test is about to lock a cell of its key's
  * hash. */
-static void (*at_lock)(struct cell *c);
+typedef void (*lock_step)(struct cell *c);
+static _Atomic(lock_step) at_lock;
 
 static void before_lock(struct cell *c) {
-    void (*step)(struct cell *) = at_lock;
-    at_lock = NULL;
-    if (step != NULL)
+    lock_step step = atomic_load_explicit(&at_lock, memory_order_relaxed);
+    if (step != NULL && (step = atomic_exchange(&at_lock, NULL)) != NULL)
         step(c);
 }
 
@@ -896,12 +955,11 @@ static void claim_impatient(void) {
 
 /* As another writer that begins a move just after a reader has found its
  * entry and before the reader looks for one. */
-static wf_cmap *read_found_map;
+static _Atomic(wf_cmap *) read_found_map;
 
 static void read_found(struct table *t) {
-    wf_cmap *map = read_found_map;
-    read_found_map = NULL;
-    if (map != NULL)
+    wf_cmap *map = atomic_load_explicit(&read_found_map, memory_order_relaxed);
+    if (map != NULL && (map = atomic_exchange(&read_found_map, NULL)) != NULL)
         start_move(map, t);
 }
 
@@ -1555,116 +1613,110 @@ static void holds_in_turn(void) {
     wf_cmap_destroy(map);
 }
 
-/* A capacity past what any table can hold sizes the first table at the
- * limit, and the map works. */
-/* Sets of entries held together (wf_cmap_hold_set). */
+/* Holds of several entries (wf_cmap_hold_take). The slots of these tests
+ * keep a value in their first word, which is also their tag: zero is None. */
+#define VALUE_TAG 0, 8, 0
 
 enum { SET_KEYS = 8 };
 
-/* One thread's sets of up to eight keys, some of them repeated, against a
- * plain reference: every key of a set is found, fresh exactly when the
- * reference lacks it, with the reference's value; a key outside the set is
- * not found; and what a release keeps and removes is what the next set
- * finds. The map starts with one cell, so the sets cross many moves. */
-static void sets_sequential(void) {
+/* One thread's holds of up to eight keys, some of them repeated, against a
+ * plain reference: each key's position is the order it was added in,
+ * repeated keys share one slot and different keys do not, the keys are
+ * ranked in byte order, an entry is fresh exactly when the reference lacks
+ * it and holds the reference's value otherwise, and what a release keeps
+ * and removes is what the next hold finds. The map starts with one cell, so
+ * the holds cross many moves. */
+static void holds_sequential(void) {
     enum { OPS = 15000 };
     static uint8_t present[ENTRY_KEYS];
     static uint64_t value[ENTRY_KEYS];
-    static unsigned char bytes[SET_KEYS + 1][ENTRY_KEY_BYTES];
+    static unsigned char bytes[SET_KEYS][ENTRY_KEY_BYTES];
     wf_cmap *map = wf_cmap_create_entries(16, 8, 1);
     wf_cmap_user *user = wf_cmap_user_at(map, 0);
-    wf_cmap_set set = {0};
+    wf_cmap_holding hold;
     uint64_t state = 23, live = 0, whole = 0;
     for (unsigned i = 0; i < OPS; i++) {
         uint64_t r = next(&state);
         unsigned count = 1 + (unsigned)(r % SET_KEYS);
         unsigned keys[SET_KEYS];
-        uint64_t lengths[SET_KEYS + 1];
-        wf_cmap_set_clear(&set);
+        wf_cmap_hold_begin(&hold, map);
         for (unsigned j = 0; j < count; j++) {
             /* Every fourth key repeats the one before it. */
             keys[j] = j > 0 && (next(&state) & 3) == 0 ? keys[j - 1] : (unsigned)(next(&state) % ENTRY_KEYS);
-            lengths[j] = entry_key(keys[j], bytes[j]);
-            wf_cmap_set_add(&set, bytes[j], lengths[j]);
+            uint64_t length = entry_key(keys[j], bytes[j]);
+            if (wf_cmap_hold_key(&hold, bytes[j], length) != j)
+                fail("a key's position is not the order it was added in", j, i);
         }
-        /* Whether two different keys of the set share a hash. */
-        int shared = 0;
-        for (unsigned j = 0; j < count; j++)
-            for (unsigned k = 0; k < j; k++)
-                shared |= keys[j] != keys[k] &&
-                          tag_of(bytes[j], lengths[j]) == tag_of(bytes[k], lengths[k]);
         user->waited = 0;
-        wf_cmap_hold_set(user, &set);
-        /* Such a set holds the map at once: locking its keys in turn, it
-         * would wait for a cell it holds itself until its patience ended. */
-        if (shared && (!set.whole || user->waited != 0))
-            fail("a set with two keys of one hash did not hold the map at once (whole, waited)", set.whole,
-                 user->waited);
-        if (set.whole) {
-            whole++;
-            wf_cmap_release_set(user, &set);
-            continue;
-        }
-        unsigned outside = (unsigned)(next(&state) % ENTRY_KEYS);
-        int inside = 0;
-        for (unsigned j = 0; j < count; j++)
-            inside |= keys[j] == outside;
-        lengths[SET_KEYS] = entry_key(outside, bytes[SET_KEYS]);
-        if (!inside && wf_cmap_set_find(&set, bytes[SET_KEYS], lengths[SET_KEYS]) != NULL)
-            fail("a set found a key it does not hold", outside, i);
+        wf_cmap_hold_take(user, &hold);
+        /* A hold that meets a cell it holds itself, which two of its keys of
+         * one hash make it do, holds the map at once: waiting for that cell,
+         * it would wait until its patience ended. */
+        if (hold.whole && user->waited != 0)
+            fail("a hold waited for a cell it holds itself (whole, waited)", hold.whole, user->waited);
+        whole += hold.whole;
+        wf_cmap_held *held = held_keys(&hold);
+        for (unsigned j = 1; j < count; j++)
+            if (held_order(ranked(held, j - 1), ranked(held, j)) > 0)
+                fail("a hold's keys are not ranked in byte order", j, i);
         for (unsigned j = 0; j < count; j++) {
             unsigned k = keys[j];
-            wf_cmap_held *held = wf_cmap_set_find(&set, bytes[j], lengths[j]);
-            if (held == NULL)
-                fail("a set did not find one of its keys", k, i);
-            uint64_t *slot = held->slot;
-            if (held->present != present[k])
-                fail("a held entry's presence disagrees with the reference", k, held->present);
-            if (present[k] && slot[0] != value[k])
-                fail("a held entry's value disagrees with the reference", k, slot[0]);
-            if (!present[k] && held->fresh && (slot[0] != 0 || slot[1] != 0))
-                fail("a fresh held entry's slot is not zero", k, slot[0]);
-            uint64_t change = next(&state);
-            int keep = (change & 3) != 0;
-            /* A slot left empty is zero again, as a fresh one is, since the
-             * set may name the key once more. */
+            uint64_t *slot = wf_cmap_hold_slot(&hold, j);
+            for (unsigned m = 0; m < j; m++)
+                if ((keys[m] == k) != (wf_cmap_hold_slot(&hold, m) == slot))
+                    fail("repeated keys do not share one slot, or different keys do (key, other)", k, keys[m]);
+            if (present[k] ? slot[0] != value[k] : (slot[0] != 0 || slot[1] != 0))
+                fail("a held entry disagrees with the reference (key, value)", k, slot[0]);
+            if (held[j].leads && (held[j].fresh != 0) != !present[k])
+                fail("a held entry's freshness disagrees with the reference", k, held[j].fresh);
+        }
+        for (unsigned j = 0; j < count; j++) {
+            unsigned k = keys[j];
+            int first = 1;
+            for (unsigned m = 0; m < j; m++)
+                first &= keys[m] != k;
+            if (!first)
+                continue;
+            uint64_t change = next(&state) | 1;
+            int keep = (change & 6) != 0;
+            uint64_t *slot = wf_cmap_hold_slot(&hold, j);
+            /* A slot left empty is zero again, as a fresh one is. */
             slot[0] = keep ? change : 0;
             value[k] = change;
             live += (uint64_t)keep - (uint64_t)present[k];
             present[k] = (uint8_t)keep;
-            held->present = (uint32_t)keep;
         }
-        wf_cmap_release_set(user, &set);
+        wf_cmap_hold_release(&hold, VALUE_TAG);
     }
     if (!SHARED_HASHES && whole != 0)
-        fail("a set of keys with different hashes held the whole map", whole, 0);
-    /* With hashes narrowed, most sets of several keys share one. */
+        fail("a hold of keys with different hashes held the whole map", whole, 0);
+    /* With hashes narrowed, most holds of several keys share one. */
     if (SHARED_HASHES && whole == 0)
-        fail("no set of keys sharing a hash held the whole map", whole, 0);
+        fail("no hold of keys sharing a hash held the whole map", whole, 0);
     if (wf_cmap_count(map) != live)
-        fail("the count of entries disagrees with the reference after sets", wf_cmap_count(map), live);
-    check_cells(map, "sets miscounted the cells they took (counted, taken)");
+        fail("the count of entries disagrees with the reference after holds", wf_cmap_count(map), live);
+    check_cells(map, "holds miscounted the cells they took (counted, taken)");
     unsigned char probe[ENTRY_KEY_BYTES];
     for (unsigned k = 0; k < ENTRY_KEYS; k++) {
         wf_cmap_entry entry;
         uint64_t length = entry_key(k, probe);
         uint64_t *slot = wf_cmap_lock_entry(user, probe, length, 0, &entry);
         if (entry.fresh == present[k] || (present[k] && slot[0] != value[k]))
-            fail("a keyed statement disagrees with what the sets left", k, entry.fresh);
+            fail("a keyed statement disagrees with what the holds left", k, entry.fresh);
         wf_cmap_unlock_entry(user, &entry, 0, present[k]);
     }
     wf_cmap_destroy(map);
 }
 
 /* Two keys absent from map whose hashes differ, the first before the second
- * in a set's order. */
+ * in byte order. */
 static void ordered_pair(unsigned char first[16], unsigned char second[16]) {
     uint64_t k = 0;
     counted_key(k++, first);
     do
         counted_key(k++, second);
     while (tag_of(first, 12) == tag_of(second, 12));
-    if (tag_of(first, 12) > tag_of(second, 12)) {
+    if (compare_keys(first, 12, second, 12) > 0) {
         unsigned char swap[16];
         memcpy(swap, first, 16);
         memcpy(first, second, 16);
@@ -1672,7 +1724,7 @@ static void ordered_pair(unsigned char first[16], unsigned char second[16]) {
     }
 }
 
-/* As another writer that, just before the set under test claims its first
+/* As another writer that, just before the hold under test claims its first
  * cell, moves the whole table, so the claim lands in a table that is no
  * longer current. */
 static void move_all(struct table *t, unsigned long long index) {
@@ -1681,33 +1733,31 @@ static void move_all(struct table *t, unsigned long long index) {
     help(other_user->map, t);
 }
 
-/* A set that claims a cell in a table a move has left gives the cell back
+/* A hold that claims a cell in a table a move has left gives the cell back
  * and holds its keys in the next table: kept where it was claimed, its
  * entries would stay in a table no statement reads again. */
-static void sets_follow_moves(void) {
+static void holds_follow_moves(void) {
     wf_cmap *map = wf_cmap_create_entries(8, 8, 0);
     wf_cmap_user *first = wf_cmap_user_at(map, 0);
     other_user = wf_cmap_user_at(map, 1);
     unsigned char a[16], b[16];
     ordered_pair(a, b);
-    wf_cmap_set set = {0};
-    wf_cmap_set_add(&set, a, 12);
-    wf_cmap_set_add(&set, b, 12);
+    wf_cmap_holding hold;
+    wf_cmap_hold_begin(&hold, map);
+    wf_cmap_hold_key(&hold, a, 12);
+    wf_cmap_hold_key(&hold, b, 12);
     at_claim = move_all;
-    wf_cmap_hold_set(first, &set);
-    if (at_claim != NULL || set.whole)
-        fail("the set met no move, or held the whole map for one (whole)", set.whole, 0);
-    for (unsigned i = 0; i < 2; i++) {
-        wf_cmap_held *held = wf_cmap_set_find(&set, i == 0 ? a : b, 12);
-        *(uint64_t *)held->slot = 5 + i;
-        held->present = 1;
-    }
-    wf_cmap_release_set(first, &set);
+    wf_cmap_hold_take(first, &hold);
+    if (at_claim != NULL || hold.whole)
+        fail("the hold met no move, or held the whole map for one (whole)", hold.whole, 0);
+    for (unsigned i = 0; i < 2; i++)
+        *(uint64_t *)wf_cmap_hold_slot(&hold, i) = 5 + i;
+    wf_cmap_hold_release(&hold, VALUE_TAG);
     for (unsigned i = 0; i < 2; i++) {
         wf_cmap_entry entry;
         uint64_t *slot = wf_cmap_lock_entry(first, i == 0 ? a : b, 12, 0, &entry);
         if (entry.fresh || slot[0] != 5 + i)
-            fail("a set's entry was left in a table that had moved (key, fresh)", i, entry.fresh);
+            fail("a hold's entry was left in a table that had moved (key, fresh)", i, entry.fresh);
         wf_cmap_unlock_entry(first, &entry, 0, 1);
     }
     wf_cmap_destroy(map);
@@ -1727,7 +1777,7 @@ static void move_at_lock(struct cell *c) {
 /* A statement that locks its key's cell in a table a move has left reads
  * nothing through the cell, whose node a statement in the next table may
  * have freed, gives the cell back as it was and locks the key in the next
- * table: a keyed statement, and a set, which holds no cell for that key
+ * table: a keyed statement, and a hold, which holds no cell for that key
  * while it does. */
 static void locks_follow_moves(void) {
     wf_cmap *map = wf_cmap_create_entries(8, 8, 0);
@@ -1747,19 +1797,20 @@ static void locks_follow_moves(void) {
         fail("a keyed statement lost its key to a move at its lock (fresh, value)", entry.fresh, slot[0]);
     slot[0] = 7;
     wf_cmap_unlock_entry(first, &entry, 0, 1);
-    wf_cmap_set set = {0};
-    wf_cmap_set_add(&set, a, 12);
-    wf_cmap_set_add(&set, b, 12);
+    wf_cmap_holding hold;
+    wf_cmap_hold_begin(&hold, map);
+    wf_cmap_hold_key(&hold, a, 12);
+    wf_cmap_hold_key(&hold, b, 12);
     at_lock = move_at_lock;
-    wf_cmap_hold_set(first, &set);
-    if (at_lock != NULL || set.whole)
-        fail("a set met no move at its lock, or held the whole map for one (whole)", set.whole, 0);
+    wf_cmap_hold_take(first, &hold);
+    if (at_lock != NULL || hold.whole)
+        fail("a hold met no move at its lock, or held the whole map for one (whole)", hold.whole, 0);
     for (unsigned i = 0; i < 2; i++) {
-        wf_cmap_held *held = wf_cmap_set_find(&set, i == 0 ? a : b, 12);
-        if (held == NULL || held->fresh || *(uint64_t *)held->slot != (i == 0 ? 7u : 4u))
-            fail("a set lost a key to a move at its lock (key, fresh)", i, held == NULL ? 2 : held->fresh);
+        wf_cmap_held *held = &held_keys(&hold)[i];
+        if (held->fresh || *(uint64_t *)wf_cmap_hold_slot(&hold, i) != (i == 0 ? 7u : 4u))
+            fail("a hold lost a key to a move at its lock (key, fresh)", i, held->fresh);
     }
-    wf_cmap_release_set(first, &set);
+    wf_cmap_hold_release(&hold, VALUE_TAG);
     check_cells(map, "a move at a lock miscounted the cells taken (counted, taken)");
     wf_cmap_destroy(map);
 }
@@ -1788,7 +1839,7 @@ static void locks_read_no_freed_node(void) {
     static unsigned char key[LONG];
     for (unsigned i = 0; i < LONG; i++)
         key[i] = (unsigned char)(i * 7 + 1);
-    for (int with_set = 0; with_set < 2; with_set++) {
+    for (int with_hold = 0; with_hold < 2; with_hold++) {
         wf_cmap *map = wf_cmap_create_entries(8, 8, 0);
         wf_cmap_user *first = wf_cmap_user_at(map, 0);
         other_user = wf_cmap_user_at(map, 1);
@@ -1799,32 +1850,32 @@ static void locks_read_no_freed_node(void) {
         freed_key = key;
         freed_length = LONG;
         at_lock = move_and_remove_at_lock;
-        if (with_set) {
-            wf_cmap_set set = {0};
-            wf_cmap_set_add(&set, key, LONG);
-            wf_cmap_hold_set(first, &set);
-            wf_cmap_held *held = wf_cmap_set_find(&set, key, LONG);
-            if (at_lock != NULL || set.whole || held == NULL || !held->fresh)
-                fail("a set found a key removed in the next table (whole, set)", set.whole, 1);
-            wf_cmap_release_set(first, &set);
-            WF_CMAP_GIVE(set.entries, 0);
+        if (with_hold) {
+            wf_cmap_holding hold;
+            wf_cmap_hold_begin(&hold, map);
+            wf_cmap_hold_key(&hold, key, LONG);
+            wf_cmap_hold_take(first, &hold);
+            if (at_lock != NULL || hold.whole || !held_keys(&hold)[0].fresh)
+                fail("a hold found a key removed in the next table (whole, hold)", hold.whole, 1);
+            wf_cmap_hold_release(&hold, VALUE_TAG);
         } else {
             wf_cmap_lock_entry(first, key, LONG, 0, &entry);
             if (at_lock != NULL || !entry.fresh)
-                fail("a statement found a key removed in the next table (fresh, set)", entry.fresh, 0);
+                fail("a statement found a key removed in the next table (fresh, hold)", entry.fresh, 0);
             wf_cmap_unlock_entry(first, &entry, 0, 0);
         }
         if (wf_cmap_count(map) != 0)
-            fail("a removed key was counted after a move at a lock (count, set)", wf_cmap_count(map),
-                 (uint64_t)with_set);
+            fail("a removed key was counted after a move at a lock (count, hold)", wf_cmap_count(map),
+                 (uint64_t)with_hold);
         wf_cmap_destroy(map);
     }
 }
 
-/* A set with no patience that has claimed a cell for its first key and then
+/* A hold with no patience that has claimed a cell for its first key and then
  * loses the lock of its second gives the claim back, counted as a cell
- * taken, and holds the whole map. */
-static void sets_give_back_counted(void) {
+ * taken, and holds the whole map. Its keys come in the reverse of byte
+ * order, which is the order it locks them in. */
+static void holds_give_back_counted(void) {
     wf_cmap *map = wf_cmap_create_entries(8, 8, 0);
     wf_cmap_user *first = wf_cmap_user_at(map, 0);
     other_user = wf_cmap_user_at(map, 1);
@@ -1834,26 +1885,29 @@ static void sets_give_back_counted(void) {
     uint64_t *slot = wf_cmap_lock_entry(first, b, 12, 0, &entry);
     slot[0] = 9;
     wf_cmap_unlock_entry(first, &entry, 0, 1);
-    wf_cmap_set set = {0};
-    wf_cmap_set_add(&set, b, 12);
-    wf_cmap_set_add(&set, a, 12);
+    wf_cmap_holding hold;
+    wf_cmap_hold_begin(&hold, map);
+    wf_cmap_hold_key(&hold, b, 12);
+    wf_cmap_hold_key(&hold, a, 12);
     at_lock = remove_under_lock;
     set_patience(0, PATIENCE);
-    wf_cmap_hold_set(first, &set);
+    wf_cmap_hold_take(first, &hold);
     set_patience(PATIENCE, PATIENCE);
-    if (at_lock != NULL || !set.whole)
-        fail("a set that lost a lock did not hold the whole map (whole)", set.whole, 0);
-    wf_cmap_release_set(first, &set);
-    check_cells(map, "a set's given-back claim was not counted (counted, taken)");
+    if (at_lock != NULL || !hold.whole)
+        fail("a hold that lost a lock did not hold the whole map (whole)", hold.whole, 0);
+    wf_cmap_hold_release(&hold, VALUE_TAG);
+    check_cells(map, "a hold's given-back claim was not counted (counted, taken)");
     wf_cmap_destroy(map);
 }
 
-/* Threads holding sets while others hold single entries and one holds the
- * whole map. A set's statement moves an amount from its first key to its
- * others, one write at a time, so the keys' sum is unchanged only once the
- * statement has ended; a keyed statement adds one to the total and then to
- * its key; a statement holding every key as one set, and one holding the
- * whole map, must each find the sum equal to the total. */
+/* Threads holding several entries while others hold single entries and one
+ * holds every account. A hold's statement moves an amount from its first
+ * key to its others, one write at a time, so the keys' sum is unchanged only
+ * once the statement has ended; a keyed statement adds one to the total and
+ * then to its key; a statement holding every key, as one hold, as one hold
+ * of the whole map, and as the whole map with each key locked under it,
+ * must find the sum equal to the total, and the map held whole counts its
+ * entries exactly. */
 enum { ACCOUNTS = 48, TRANSFERS = 4000 };
 static _Atomic uint64_t set_wholes, set_holds;
 
@@ -1867,42 +1921,27 @@ typedef struct {
 
 static void *move_between(void *arg) {
     mover_t *m = arg;
+    test_driver = m->index;
     wf_cmap_user *user = wf_cmap_user_at(m->map, m->index);
     unsigned char bytes[SET_KEYS][16];
-    wf_cmap_set set = {0};
+    wf_cmap_holding hold;
     uint64_t state = mix64(m->index + 7);
     for (uint64_t i = 0; i < statements; i++) {
         unsigned count = 2 + (unsigned)(next(&state) % (SET_KEYS - 1));
-        wf_cmap_set_clear(&set);
-        uint64_t lengths[SET_KEYS];
-        for (unsigned j = 0; j < count; j++) {
-            lengths[j] = counted_key(next(&state) % ACCOUNTS, bytes[j]);
-            wf_cmap_set_add(&set, bytes[j], lengths[j]);
-        }
-        wf_cmap_hold_set(user, &set);
+        wf_cmap_hold_begin(&hold, m->map);
+        for (unsigned j = 0; j < count; j++)
+            wf_cmap_hold_key(&hold, bytes[j], counted_key(next(&state) % ACCOUNTS, bytes[j]));
+        wf_cmap_hold_take(user, &hold);
         atomic_fetch_add(&set_holds, 1);
-        if (set.whole) {
+        if (hold.whole)
             atomic_fetch_add(&set_wholes, 1);
-            /* Under the whole map: the same statement through held entries. */
-            for (unsigned j = 0; j < count; j++) {
-                wf_cmap_entry entry;
-                uint64_t *slot = wf_cmap_lock_entry(user, bytes[j], lengths[j], 1, &entry);
-                slot[0] += j == 0 ? (uint64_t)(count - 1) * 3 : (uint64_t)0 - 3;
-                wf_cmap_unlock_entry(user, &entry, 1, slot[0] != 0);
-            }
-        } else {
-            for (unsigned j = 0; j < count; j++) {
-                wf_cmap_held *held = wf_cmap_set_find(&set, bytes[j], lengths[j]);
-                if (held == NULL)
-                    fail("a set did not find a key it added", j, i);
-                uint64_t *slot = held->slot;
-                slot[0] += j == 0 ? (uint64_t)(count - 1) * 3 : (uint64_t)0 - 3;
-                held->present = slot[0] != 0;
-                for (volatile int spin = 0; spin < 20; spin++) {
-                }
+        for (unsigned j = 0; j < count; j++) {
+            uint64_t *slot = wf_cmap_hold_slot(&hold, j);
+            slot[0] += j == 0 ? (uint64_t)(count - 1) * 3 : (uint64_t)0 - 3;
+            for (volatile int spin = 0; spin < 20; spin++) {
             }
         }
-        wf_cmap_release_set(user, &set);
+        wf_cmap_hold_release(&hold, VALUE_TAG);
     }
     return NULL;
 }
@@ -1923,36 +1962,33 @@ static void *count_account(void *arg) {
     return NULL;
 }
 
-/* Holds every account, as one set or as the whole map by turns. */
 static void *audit_accounts(void *arg) {
     mover_t *m = arg;
+    test_driver = m->index;
     wf_cmap_user *user = wf_cmap_user_at(m->map, m->index);
     static unsigned char bytes[ACCOUNTS][16];
-    wf_cmap_set set = {0};
+    wf_cmap_holding hold;
     while (!atomic_load(m->stop)) {
-        uint64_t sum = 0, total;
-        if (m->checks % 2 == 0) {
-            wf_cmap_set_clear(&set);
+        uint64_t sum = 0, total, way = m->checks % 3;
+        if (way < 2) {
+            wf_cmap_hold_begin(&hold, m->map);
+            if (way == 1)
+                wf_cmap_hold_whole(&hold);
             for (unsigned k = 0; k < ACCOUNTS; k++)
-                wf_cmap_set_add(&set, bytes[k], counted_key(k, bytes[k]));
-            wf_cmap_hold_set(user, &set);
+                wf_cmap_hold_key(&hold, bytes[k], counted_key(k, bytes[k]));
+            wf_cmap_hold_take(user, &hold);
             total = atomic_load(m->total);
-            if (set.whole) {
-                for (unsigned k = 0; k < ACCOUNTS; k++) {
-                    wf_cmap_entry entry;
-                    uint64_t *slot = wf_cmap_lock_entry(user, bytes[k], 12, 1, &entry);
-                    sum += slot[0];
-                    wf_cmap_unlock_entry(user, &entry, 1, !entry.fresh);
-                }
-            } else {
-                for (unsigned k = 0; k < ACCOUNTS; k++) {
-                    wf_cmap_held *held = wf_cmap_set_find(&set, bytes[k], 12);
-                    if (held == NULL)
-                        fail("the audit's set lacks an account", k, 0);
-                    sum += *(uint64_t *)held->slot;
-                }
+            uint64_t present = 0;
+            for (unsigned k = 0; k < ACCOUNTS; k++) {
+                uint64_t value = *(uint64_t *)wf_cmap_hold_slot(&hold, k);
+                sum += value;
+                present += value != 0;
             }
-            wf_cmap_release_set(user, &set);
+            /* An account is kept exactly when it holds a value, and every
+             * account is held here as it stood. */
+            if (way == 1 && wf_cmap_count(m->map) != present)
+                fail("a map held whole miscounted its entries (count, present)", wf_cmap_count(m->map), present);
+            wf_cmap_hold_release(&hold, VALUE_TAG);
         } else {
             wf_cmap_hold(user);
             total = atomic_load(m->total);
@@ -1971,9 +2007,9 @@ static void *audit_accounts(void *arg) {
     return NULL;
 }
 
-/* With capacity 1 the map moves while sets are held and locked, and with no
- * patience every set that waits holds the whole map instead. */
-static void sets_move_amounts(uint64_t capacity, uint64_t patient) {
+/* With capacity 1 the map moves while holds are taken and locked, and with
+ * no patience every hold that waits holds the whole map instead. */
+static void holds_move_amounts(uint64_t capacity, uint64_t patient) {
     enum { MOVERS = 3, COUNTERS = 2 };
     wf_cmap *map = wf_cmap_create_entries(8, 8, capacity);
     set_patience(patient, patient);
@@ -1993,52 +2029,53 @@ static void sets_move_amounts(uint64_t capacity, uint64_t patient) {
         pthread_join(t[i], NULL);
     atomic_store(&stop, 1);
     pthread_join(t[MOVERS + COUNTERS], NULL);
-    if (m[MOVERS + COUNTERS].checks < 2)
-        fail("the audit never held the accounts both ways", m[MOVERS + COUNTERS].checks, 0);
-    /* Keys with different hashes and ordinary patience: a set holds the map
-     * only after a wait no cycle causes or when the table is full, so nearly
-     * every set holds its entries. */
+    if (m[MOVERS + COUNTERS].checks < 3)
+        fail("the audit never held the accounts every way", m[MOVERS + COUNTERS].checks, 3);
+    /* Keys with different hashes and ordinary patience: a hold holds the
+     * map only after a wait no cycle causes or when the table is full, so
+     * nearly every hold holds its entries. */
     if (!SHARED_HASHES && patient == PATIENCE && atomic_load(&set_wholes) * 20 > atomic_load(&set_holds))
-        fail("sets held the whole map more than once in twenty (whole, sets)", atomic_load(&set_wholes),
+        fail("holds held the whole map more than once in twenty (whole, holds)", atomic_load(&set_wholes),
              atomic_load(&set_holds));
-    check_cells(map, "sets and keyed statements miscounted the cells they took (counted, taken)");
+    check_cells(map, "holds and keyed statements miscounted the cells they took (counted, taken)");
     uint64_t sum = 0;
     for (uint64_t *slot; (slot = wf_cmap_drain(map)) != NULL;)
         sum += slot[0];
     if (sum != COUNTERS * statements)
-        fail("a statement's change was lost under sets (sum, patience)", sum, patient);
+        fail("a statement's change was lost under holds (sum, patience)", sum, patient);
     set_patience(PATIENCE, PATIENCE);
     wf_cmap_destroy(map);
 }
 
-/* Two threads whose sets name the same two keys in opposite orders, with
- * patience that never runs out: each locks them in the map's one order, so
- * neither waits for the other while it holds a key the other waits for. Sets
- * locked in the order they were added would stop here until the alarm. */
+/* Two threads whose holds name the same two keys in opposite orders, with
+ * patience that never runs out: each locks them in byte order, so neither
+ * waits for the other while it holds a key the other waits for, and each
+ * key's slot is at the position it was added at. Holds locking their keys
+ * in the order they were added would stop here until the alarm. */
 static unsigned char pair_bytes[2][16];
 
 static void *hold_pair(void *arg) {
     mover_t *m = arg;
+    test_driver = m->index;
     wf_cmap_user *user = wf_cmap_user_at(m->map, m->index);
-    wf_cmap_set set = {0};
+    wf_cmap_holding hold;
     for (uint64_t i = 0; i < statements; i++) {
-        wf_cmap_set_clear(&set);
-        wf_cmap_set_add(&set, pair_bytes[m->index], 12);
-        wf_cmap_set_add(&set, pair_bytes[1 - m->index], 12);
-        wf_cmap_hold_set(user, &set);
-        if (set.whole)
+        wf_cmap_hold_begin(&hold, m->map);
+        wf_cmap_hold_key(&hold, pair_bytes[m->index], 12);
+        wf_cmap_hold_key(&hold, pair_bytes[1 - m->index], 12);
+        wf_cmap_hold_take(user, &hold);
+        if (hold.whole)
             fail("a pair of keys with patience to spare held the whole map", m->index, i);
-        for (unsigned j = 0; j < 2; j++) {
-            wf_cmap_held *held = wf_cmap_set_find(&set, pair_bytes[j], 12);
-            *(uint64_t *)held->slot += 1;
-            held->present = 1;
-        }
-        wf_cmap_release_set(user, &set);
+        /* The first position counts in the low half and the second in the
+         * high, so that a slot answered for the wrong position shows. */
+        *(uint64_t *)wf_cmap_hold_slot(&hold, 0) += 1;
+        *(uint64_t *)wf_cmap_hold_slot(&hold, 1) += 1ull << 32;
+        wf_cmap_hold_release(&hold, VALUE_TAG);
     }
     return NULL;
 }
 
-static void sets_in_one_order(void) {
+static void holds_in_one_order(void) {
     wf_cmap *map = wf_cmap_create_entries(8, 8, 0);
     set_patience(UINT64_MAX, UINT64_MAX);
     statements = 20000;
@@ -2056,15 +2093,693 @@ static void sets_in_one_order(void) {
     }
     for (unsigned i = 0; i < 2; i++)
         pthread_join(t[i], NULL);
-    uint64_t sum = 0;
-    for (uint64_t *slot; (slot = wf_cmap_drain(map)) != NULL;)
-        sum += slot[0];
-    if (sum != 4 * statements)
-        fail("a pair's change was lost (sum, expected)", sum, 4 * statements);
+    /* Each key stands first in one thread's holds and second in the
+     * other's. */
+    for (unsigned k = 0; k < 2; k++) {
+        wf_cmap_entry entry;
+        uint64_t *slot = wf_cmap_lock_entry(wf_cmap_user_at(map, 0), pair_bytes[k], 12, 0, &entry);
+        if (slot[0] != (statements | statements << 32))
+            fail("a pair's slot was reached at the wrong position or lost a change (key, value)", k, slot[0]);
+        wf_cmap_unlock_entry(wf_cmap_user_at(map, 0), &entry, 0, 1);
+    }
     set_patience(PATIENCE, PATIENCE);
     wf_cmap_destroy(map);
 }
 
+/* Key sets: distinct keys in increasing byte order, a proper prefix first,
+ * whatever order they are put in; put replaces a payload and add adds to
+ * it, modulo 2^64; a set grows past its capacity, a capacity past the first
+ * store's limit asks for the limit, and a release, of the set or of its
+ * memory alone, gives back every block the set took. */
+static int key_is(const wf_key_set *set, uint64_t index, const char *bytes, uint64_t length) {
+    uint64_t got;
+    const unsigned char *key = wf_key_set_key(set, index, &got);
+    return got == length && (length == 0 || memcmp(key, bytes, (size_t)length) == 0);
+}
+
+static void key_sets(void) {
+    static const struct {
+        const char *bytes;
+        uint64_t length;
+    } words[] = {{"b", 1}, {"ab", 2}, {"", 0}, {"abc", 3}, {"a", 1}, {"\xff", 1}, {"a\0", 2}, {"abd", 3}, {"B", 1}};
+    /* The words in byte order. */
+    static const unsigned order[] = {2, 8, 4, 6, 1, 3, 7, 0, 5};
+    enum { WORDS = sizeof words / sizeof words[0] };
+    int64_t before = atomic_load(&blocks_out);
+    wf_key_set set;
+    wf_key_set_new(&set, 0);
+    if (set.len != 0 || set.store != NULL)
+        fail("a set of no capacity took memory (len, store)", set.len, set.store != NULL);
+    for (unsigned i = 0; i < WORDS; i++)
+        wf_key_set_put(&set, (const unsigned char *)words[i].bytes, words[i].length, 100 + i);
+    if (set.len != WORDS)
+        fail("a set lost or repeated a key (len, words)", set.len, WORDS);
+    for (unsigned i = 0; i < WORDS; i++)
+        if (!key_is(&set, i, words[order[i]].bytes, words[order[i]].length) ||
+            wf_key_set_payload(&set, i) != 100 + order[i])
+            fail("a set's keys are not in byte order, a prefix first (index, word)", i, order[i]);
+    /* "ab" stands at index 4, and "zz" goes between "b" and the byte 0xff. */
+    wf_key_set_put(&set, (const unsigned char *)"ab", 2, 7);
+    wf_key_set_add(&set, (const unsigned char *)"ab", 2, 5);
+    wf_key_set_add(&set, (const unsigned char *)"zz", 2, UINT64_MAX);
+    wf_key_set_add(&set, (const unsigned char *)"zz", 2, 3);
+    wf_key_set_put(&set, (const unsigned char *)"a", 1, 1);
+    if (set.len != WORDS + 1 || wf_key_set_payload(&set, 4) != 12 || !key_is(&set, WORDS - 1, "zz", 2) ||
+        wf_key_set_payload(&set, WORDS - 1) != 2 || wf_key_set_payload(&set, 2) != 1 || !key_is(&set, WORDS, "\xff", 1))
+        fail("put or add disagrees (len, payload of ab)", set.len, wf_key_set_payload(&set, 4));
+    wf_key_set_release(&set);
+    if (set.len != 0 || set.store != NULL || atomic_load(&blocks_out) != before)
+        fail("a released set kept memory (len, blocks)", set.len, (uint64_t)(atomic_load(&blocks_out) - before));
+    /* Many keys of many lengths, added in no order, some of them again,
+     * against a count of each key's additions. */
+    enum { MANY = 1000 };
+    static uint64_t added[MANY];
+    static unsigned char bytes[ENTRY_KEY_BYTES];
+    memset(added, 0, sizeof added);
+    wf_key_set_new(&set, 3);
+    uint64_t state = 41, distinct = 0;
+    for (unsigned i = 0; i < 2 * MANY; i++) {
+        unsigned k = (unsigned)(next(&state) % MANY);
+        uint64_t length = entry_key(k, bytes);
+        distinct += added[k] == 0;
+        added[k] += 1;
+        wf_key_set_add(&set, bytes, length, 1);
+    }
+    if (set.len != distinct)
+        fail("a grown set lost or repeated keys (len, distinct)", set.len, distinct);
+    for (uint64_t i = 0; i < set.len; i++) {
+        uint64_t length, earlier_length, k;
+        const unsigned char *key = wf_key_set_key(&set, i, &length);
+        if (i > 0) {
+            const unsigned char *earlier = wf_key_set_key(&set, i - 1, &earlier_length);
+            if (compare_keys(earlier, earlier_length, key, length) >= 0)
+                fail("a grown set's keys do not increase", i, 0);
+        }
+        /* A key begins with the eight bytes of the number it was made from. */
+        memcpy(&k, key, 8);
+        if (k >= MANY || wf_key_set_payload(&set, i) != added[k])
+            fail("a grown set's payload is not its key's count (key, payload)", k, wf_key_set_payload(&set, i));
+    }
+    /* Released through its memory alone, as compiled code does. */
+    wf_key_set_free_store(set.store);
+    wf_key_set_free_store(NULL);
+    if (atomic_load(&blocks_out) != before)
+        fail("a set released through its memory kept some (blocks)", (uint64_t)(atomic_load(&blocks_out) - before), 0);
+    wf_key_set_new(&set, 1ull << 60);
+    if (((key_store *)set.store)->room != KEY_SET_FIRST_LIMIT)
+        fail("a capacity past the limit sized another store (room, limit)", ((key_store *)set.store)->room,
+             KEY_SET_FIRST_LIMIT);
+    wf_key_set_put(&set, (const unsigned char *)"k", 1, 1);
+    wf_key_set_release(&set);
+    if (atomic_load(&blocks_out) != before)
+        fail("a set sized at the limit kept memory (blocks)", (uint64_t)(atomic_load(&blocks_out) - before), 0);
+}
+
+/* Writes the width bytes of a tag at offset of a slot. */
+static void put_tag(unsigned char *slot, uint64_t offset, uint32_t width, uint64_t tag) {
+    uint8_t one = (uint8_t)tag;
+    uint16_t two = (uint16_t)tag;
+    uint32_t four = (uint32_t)tag;
+    const void *bytes = width == 1 ? (const void *)&one : width == 2 ? (const void *)&two
+                      : width == 4 ? (const void *)&four : (const void *)&tag;
+    memcpy(slot + offset, bytes, width);
+}
+
+/* The entry of key in map read as a keyed statement that only reads does:
+ * 1 and its slot's first byte when it is present, else 0. */
+static int read_present(wf_cmap_user *user, const unsigned char *key, uint64_t length, unsigned char *first) {
+    wf_cmap_entry entry;
+    const unsigned char *slot = wf_cmap_read_entry(user, key, length, 0, &entry);
+    int present = entry.cell != NULL;
+    *first = slot[0];
+    wf_cmap_unread_entry(user, &entry, 0);
+    return present;
+}
+
+/* A hold's positions answer the slot of the key added at each, single keys
+ * and a key set's keys alike, repeated keys sharing an entry, and the
+ * release keeps exactly the entries whose tag, read at its width, differs
+ * from the None tag, whatever the slot's other bytes hold. A hold of more
+ * keys than its own room takes memory that its user keeps for the next. */
+static void holds_positions(void) {
+    for (uint32_t width = 1; width <= 8; width *= 2) {
+        uint64_t offset = width == 1 ? 5 : width == 8 ? 8 : 4, none = 3;
+        wf_cmap *map = wf_cmap_create_entries(16, 8, 0);
+        wf_cmap_user *user = wf_cmap_user_at(map, 0);
+        wf_key_set set;
+        wf_key_set_new(&set, 4);
+        wf_key_set_put(&set, (const unsigned char *)"k6", 2, 0);
+        wf_key_set_put(&set, (const unsigned char *)"k2", 2, 0);
+        wf_key_set_put(&set, (const unsigned char *)"k4", 2, 0);
+        wf_cmap_holding hold;
+        wf_cmap_hold_begin(&hold, map);
+        uint64_t five = wf_cmap_hold_key(&hold, (const unsigned char *)"k5", 2);
+        uint64_t keys = wf_cmap_hold_keys(&hold, &set);
+        uint64_t two = wf_cmap_hold_key(&hold, (const unsigned char *)"k2", 2);
+        uint64_t one = wf_cmap_hold_key(&hold, (const unsigned char *)"k1", 2);
+        uint64_t again = wf_cmap_hold_key(&hold, (const unsigned char *)"k5", 2);
+        if (five != 0 || keys != 1 || two != 4 || one != 5 || again != 6 || hold.count != 7)
+            fail("positions are not the order the keys were added in (set, last)", keys, again);
+        if (hold.keys == NULL)
+            fail("seven keys stayed in a hold's own room (count, room)", hold.count, WF_CMAP_HOLD_INLINE);
+        wf_cmap_hold_take(user, &hold);
+        unsigned char *k5 = wf_cmap_hold_slot(&hold, 0), *k2 = wf_cmap_hold_slot(&hold, 1);
+        unsigned char *k4 = wf_cmap_hold_slot(&hold, 2), *k6 = wf_cmap_hold_slot(&hold, 3);
+        unsigned char *k1 = wf_cmap_hold_slot(&hold, 5);
+        if (wf_cmap_hold_slot(&hold, 4) != k2 || wf_cmap_hold_slot(&hold, 6) != k5)
+            fail("a repeated key did not share its entry (width, position)", width, 4);
+        unsigned char *distinct[] = {k1, k2, k4, k5, k6};
+        for (unsigned i = 0; i < 5; i++)
+            for (unsigned j = 0; j < i; j++)
+                if (distinct[i] == distinct[j])
+                    fail("two keys share a slot (width, key)", width, i);
+        memset(k1, 0, 16);
+        put_tag(k1, offset, width, none);
+        memset(k4, 0xee, 16);
+        put_tag(k4, offset, width, none);
+        memset(k2, 0, 16);
+        put_tag(k2, offset, width, none + 1);
+        k2[0] = 22;
+        memset(k5, 0, 16);
+        put_tag(k5, offset, width, 0);
+        k5[0] = 55;
+        /* Equal to None in its low byte, and different at the width. */
+        memset(k6, 0, 16);
+        put_tag(k6, offset, width, width == 1 ? none + 2 : none | 1ull << (8 * width - 8));
+        k6[0] = 66;
+        wf_cmap_hold_release(&hold, offset, width, none);
+        static const char *const names[] = {"k1", "k2", "k4", "k5", "k6"};
+        static const unsigned char kept[] = {0, 22, 0, 55, 66};
+        for (unsigned i = 0; i < 5; i++) {
+            unsigned char first;
+            if (read_present(user, (const unsigned char *)names[i], 2, &first) != (kept[i] != 0) ||
+                (kept[i] != 0 && first != kept[i]))
+                fail("a release kept or removed an entry against its tag (width, key)", width, i);
+        }
+        if (wf_cmap_count(map) != 3)
+            fail("a release counted its entries wrong (width, count)", width, wf_cmap_count(map));
+        if (user->spare_keys == NULL)
+            fail("a released hold's memory was not kept for the next (width, room)", width, user->spare_room);
+        wf_cmap_hold_begin(&hold, map);
+        for (unsigned i = 0; i < 5; i++)
+            wf_cmap_hold_key(&hold, (const unsigned char *)"k1", 2);
+        if (user->spare_keys != NULL || hold.keys == NULL)
+            fail("a hold past its own room did not take its user's spare memory (width, count)", width, hold.count);
+        wf_cmap_hold_take(user, &hold);
+        put_tag(wf_cmap_hold_slot(&hold, 3), offset, width, none);
+        wf_cmap_hold_release(&hold, offset, width, none);
+        unsigned char first;
+        if (read_present(user, (const unsigned char *)"k1", 2, &first))
+            fail("a hold of one key added five times kept it against its tag (width)", width, 0);
+        wf_key_set_release(&set);
+        wf_cmap_destroy(map);
+    }
+}
+
+/* Statements holding entries of two maps at once, the first map's before
+ * the second's: movers move amounts between accounts of the two, keyed
+ * statements count on either, and an audit holds every account of both, by
+ * keys or each map whole. The sum over both maps equals the count of keyed
+ * statements in every audit and at the end. Patience never runs out where
+ * hashes are whole, so holds taken out of order would wait for each other
+ * until the alarm. */
+enum { PAIR_ACCOUNTS = 16, PAIR_MOVES = 3000, PAIR_COUNTS = 6000 };
+
+typedef struct {
+    wf_cmap *maps[2];
+    unsigned index;
+    _Atomic uint64_t *total;
+    _Atomic int *stop;
+    uint64_t checks;
+} across_t;
+
+static void *move_across(void *arg) {
+    across_t *p = arg;
+    test_driver = p->index;
+    wf_cmap_user *users[2] = {wf_cmap_user_at(p->maps[0], p->index), wf_cmap_user_at(p->maps[1], p->index)};
+    unsigned char bytes[2][3][16];
+    wf_cmap_holding holds[2];
+    uint64_t state = mix64(p->index + 77);
+    for (uint64_t i = 0; i < PAIR_MOVES; i++) {
+        unsigned counts[2] = {1 + (unsigned)(next(&state) % 3), 1 + (unsigned)(next(&state) % 3)};
+        int forward = (int)(next(&state) & 1);
+        for (unsigned t = 0; t < 2; t++) {
+            wf_cmap_hold_begin(&holds[t], p->maps[t]);
+            for (unsigned j = 0; j < counts[t]; j++)
+                wf_cmap_hold_key(&holds[t], bytes[t][j], counted_key(next(&state) % PAIR_ACCOUNTS, bytes[t][j]));
+        }
+        wf_cmap_hold_take(users[0], &holds[0]);
+        wf_cmap_hold_take(users[1], &holds[1]);
+        /* Each of the giving map's keys gives one unit per key of the
+         * other, which takes one per key of the giver. */
+        for (unsigned t = 0; t < 2; t++)
+            for (unsigned j = 0; j < counts[t]; j++) {
+                uint64_t *slot = wf_cmap_hold_slot(&holds[t], j);
+                uint64_t units = counts[1 - t];
+                *slot += (t == 0) == forward ? (uint64_t)0 - units : units;
+            }
+        wf_cmap_hold_release(&holds[1], VALUE_TAG);
+        wf_cmap_hold_release(&holds[0], VALUE_TAG);
+    }
+    return NULL;
+}
+
+static void *count_across(void *arg) {
+    across_t *p = arg;
+    test_driver = p->index;
+    unsigned char bytes[16];
+    uint64_t state = mix64(p->index + 13);
+    for (uint64_t i = 0; i < PAIR_COUNTS; i++) {
+        wf_cmap *map = p->maps[next(&state) & 1];
+        wf_cmap_user *user = wf_cmap_user_at(map, p->index);
+        wf_cmap_entry entry;
+        uint64_t *slot = wf_cmap_lock_entry(user, bytes, counted_key(next(&state) % PAIR_ACCOUNTS, bytes), 0, &entry);
+        atomic_fetch_add(p->total, 1);
+        slot[0] += 1;
+        wf_cmap_unlock_entry(user, &entry, 0, slot[0] != 0);
+    }
+    return NULL;
+}
+
+static void *audit_across(void *arg) {
+    across_t *p = arg;
+    test_driver = p->index;
+    static unsigned char bytes[PAIR_ACCOUNTS][16];
+    wf_cmap_holding holds[2];
+    while (!atomic_load(p->stop)) {
+        uint64_t sum = 0;
+        for (unsigned t = 0; t < 2; t++) {
+            wf_cmap_hold_begin(&holds[t], p->maps[t]);
+            if (p->checks % 2 == 1)
+                wf_cmap_hold_whole(&holds[t]);
+            for (unsigned k = 0; k < PAIR_ACCOUNTS; k++)
+                wf_cmap_hold_key(&holds[t], bytes[k], counted_key(k, bytes[k]));
+        }
+        wf_cmap_hold_take(wf_cmap_user_at(p->maps[0], p->index), &holds[0]);
+        wf_cmap_hold_take(wf_cmap_user_at(p->maps[1], p->index), &holds[1]);
+        uint64_t total = atomic_load(p->total);
+        for (unsigned t = 0; t < 2; t++)
+            for (unsigned k = 0; k < PAIR_ACCOUNTS; k++)
+                sum += *(uint64_t *)wf_cmap_hold_slot(&holds[t], k);
+        wf_cmap_hold_release(&holds[1], VALUE_TAG);
+        wf_cmap_hold_release(&holds[0], VALUE_TAG);
+        if (sum != total)
+            fail("an audit of two maps saw a statement half done (sum, total)", sum, total);
+        p->checks++;
+    }
+    return NULL;
+}
+
+static void holds_across_maps(void) {
+    enum { MOVERS = 2, COUNTERS = 2 };
+    wf_cmap *maps[2] = {wf_cmap_create_entries(8, 8, 0), wf_cmap_create_entries(8, 8, 0)};
+    set_patience(SHARED_HASHES ? PATIENCE : UINT64_MAX, SHARED_HASHES ? PATIENCE : UINT64_MAX);
+    _Atomic uint64_t total = 0;
+    _Atomic int stop = 0;
+    pthread_t t[MOVERS + COUNTERS + 1];
+    across_t p[MOVERS + COUNTERS + 1];
+    for (unsigned i = 0; i <= MOVERS + COUNTERS; i++) {
+        p[i] = (across_t){{maps[0], maps[1]}, i, &total, &stop, 0};
+        pthread_create(&t[i], NULL, i < MOVERS ? move_across : i < MOVERS + COUNTERS ? count_across : audit_across, &p[i]);
+    }
+    for (unsigned i = 0; i < MOVERS + COUNTERS; i++)
+        pthread_join(t[i], NULL);
+    atomic_store(&stop, 1);
+    pthread_join(t[MOVERS + COUNTERS], NULL);
+    if (p[MOVERS + COUNTERS].checks < 2)
+        fail("the audit never held both maps both ways", p[MOVERS + COUNTERS].checks, 2);
+    uint64_t sum = 0;
+    for (unsigned m = 0; m < 2; m++) {
+        for (uint64_t *slot; (slot = wf_cmap_drain(maps[m])) != NULL;)
+            sum += slot[0];
+        wf_cmap_destroy(maps[m]);
+    }
+    if (sum != COUNTERS * PAIR_COUNTS)
+        fail("a change was lost across two maps (sum, expected)", sum, COUNTERS * PAIR_COUNTS);
+    set_patience(PATIENCE, PATIENCE);
+}
+
+/* A hold of the whole map waits out a statement holding an entry, keeps new
+ * ones out until its release, and still reaches its added keys' slots,
+ * creating the absent ones; the map held whole counts its entries exactly,
+ * and the release keeps and removes the hold's entries by their tags. With
+ * no key added it only holds the map, as a statement that counts does. */
+static wf_cmap *whole_map;
+static unsigned char whole_keys[12][16];
+static _Atomic int entry_holding, entry_release, whole_taken, beside_started, beside_done;
+
+static void *hold_one_entry(void *arg) {
+    (void)arg;
+    test_driver = 1;
+    wf_cmap_user *user = wf_cmap_user_at(whole_map, 1);
+    wf_cmap_entry entry;
+    wf_cmap_lock_entry(user, whole_keys[1], 12, 0, &entry);
+    atomic_store(&entry_holding, 1);
+    while (!atomic_load(&entry_release))
+        sched_yield();
+    wf_cmap_unlock_entry(user, &entry, 0, 1);
+    return NULL;
+}
+
+static void *take_whole(void *arg) {
+    test_driver = 2;
+    wf_cmap_hold_take(wf_cmap_user_at(whole_map, 2), arg);
+    atomic_store(&whole_taken, 1);
+    return NULL;
+}
+
+static void *lock_beside(void *arg) {
+    (void)arg;
+    test_driver = 3;
+    wf_cmap_user *user = wf_cmap_user_at(whole_map, 3);
+    wf_cmap_entry entry;
+    atomic_store(&beside_started, 1);
+    uint64_t *slot = wf_cmap_lock_entry(user, whole_keys[5], 12, 0, &entry);
+    slot[0] += 1;
+    wf_cmap_unlock_entry(user, &entry, 0, 1);
+    atomic_store(&beside_done, 1);
+    return NULL;
+}
+
+/* Waits up to a second for flag, and fails with what when it stays clear. */
+static void wait_for(_Atomic int *flag, const char *what) {
+    struct timespec pause = {0, 100000};
+    for (unsigned waited = 0; !atomic_load(flag); waited++) {
+        if (waited == 10000)
+            fail(what, 0, 0);
+        nanosleep(&pause, NULL);
+    }
+}
+
+static void holds_whole(void) {
+    struct timespec settle = {0, 2000000};
+    whole_map = wf_cmap_create_entries(8, 8, 0);
+    wf_cmap_user *user = wf_cmap_user_at(whole_map, 0);
+    for (unsigned k = 0; k < 12; k++)
+        counted_key(k, whole_keys[k]);
+    for (unsigned k = 0; k < 10; k++) {
+        wf_cmap_entry entry;
+        uint64_t *slot = wf_cmap_lock_entry(user, whole_keys[k], 12, 0, &entry);
+        slot[0] = k + 1;
+        wf_cmap_unlock_entry(user, &entry, 0, 1);
+    }
+    atomic_store(&entry_holding, 0);
+    atomic_store(&entry_release, 0);
+    atomic_store(&whole_taken, 0);
+    atomic_store(&beside_started, 0);
+    atomic_store(&beside_done, 0);
+    atomic_store(&closed_seen[2], 0);
+    pthread_t holder, taker, beside;
+    pthread_create(&holder, NULL, hold_one_entry, NULL);
+    wait_for(&entry_holding, "the statement on an entry never locked it");
+    wf_cmap_holding hold;
+    wf_cmap_hold_begin(&hold, whole_map);
+    wf_cmap_hold_whole(&hold);
+    wf_cmap_hold_key(&hold, whole_keys[1], 12);
+    wf_cmap_hold_key(&hold, whole_keys[11], 12);
+    pthread_create(&taker, NULL, take_whole, &hold);
+    wait_for(&closed_seen[2], "a hold of the whole map never closed the gate");
+    nanosleep(&settle, NULL);
+    if (atomic_load(&whole_taken))
+        fail("a hold of the whole map ran beside a statement holding an entry", 0, 0);
+    atomic_store(&entry_release, 1);
+    pthread_join(holder, NULL);
+    pthread_join(taker, NULL);
+    if (!hold.whole || hold.held)
+        fail("a hold asked for the whole map did not take it itself (whole, held)", hold.whole, hold.held);
+    pthread_create(&beside, NULL, lock_beside, NULL);
+    wait_for(&beside_started, "the statement beside the hold never began");
+    nanosleep(&settle, NULL);
+    if (atomic_load(&beside_done))
+        fail("a statement on an entry ran while the map was held whole", 0, 0);
+    uint64_t *one = wf_cmap_hold_slot(&hold, 0), *eleven = wf_cmap_hold_slot(&hold, 1);
+    if (one[0] != 2 || eleven[0] != 0 || !held_keys(&hold)[1].fresh)
+        fail("a hold of the whole map did not reach its keys' entries (present, absent)", one[0], eleven[0]);
+    if (wf_cmap_count(whole_map) != 10)
+        fail("a map held whole miscounted its entries (count, entries)", wf_cmap_count(whole_map), 10);
+    one[0] = 0;
+    eleven[0] = 42;
+    if (!wf_cmap_hold_release(&hold, VALUE_TAG))
+        fail("a release of held entries said it wrote nothing", 0, 0);
+    pthread_join(beside, NULL);
+    unsigned char first;
+    if (read_present(user, whole_keys[1], 12, &first) || !read_present(user, whole_keys[11], 12, &first) ||
+        first != 42)
+        fail("a release under the whole map kept or removed an entry against its tag", first, 0);
+    if (wf_cmap_count(whole_map) != 10)
+        fail("a whole hold's release counted its entries wrong (count, entries)", wf_cmap_count(whole_map), 10);
+    wf_cmap_hold_begin(&hold, whole_map);
+    wf_cmap_hold_whole(&hold);
+    wf_cmap_hold_take(user, &hold);
+    if (!hold.whole || wf_cmap_count(whole_map) != 10)
+        fail("a hold of the whole map with no key miscounted (whole, count)", hold.whole, wf_cmap_count(whole_map));
+    if (wf_cmap_hold_release(&hold, VALUE_TAG))
+        fail("a hold of the whole map with no key said it wrote", 0, 0);
+    wf_cmap_destroy(whole_map);
+}
+
+/* A statement whose release starts a move stays inside the map until the
+ * move has ended, so a hold of the whole map, which may then swap the map's
+ * entries, waits for it rather than closing while the move is under way. */
+static _Atomic int moved_hold_done;
+
+static void *insert_until_move(void *arg) {
+    wf_cmap *map = arg;
+    test_driver = 1;
+    wf_cmap_user *user = wf_cmap_user_at(map, 1);
+    unsigned char bytes[16];
+    table *first = atomic_load(&map->current);
+    for (uint64_t k = 0; atomic_load(&map->current) == first; k++) {
+        wf_cmap_entry entry;
+        uint64_t *slot = wf_cmap_lock_entry(user, bytes, counted_key(k, bytes), 0, &entry);
+        slot[0] = 1;
+        wf_cmap_unlock_entry(user, &entry, 0, 1);
+    }
+    return NULL;
+}
+
+static void *hold_after_move(void *arg) {
+    wf_cmap *map = arg;
+    test_driver = 2;
+    wf_cmap_user *user = wf_cmap_user_at(map, 2);
+    wf_cmap_hold(user);
+    atomic_store(&moved_hold_done, 1);
+    wf_cmap_unhold(user);
+    return NULL;
+}
+
+static void holds_wait_out_moves(void) {
+    struct timespec settle = {0, 2000000};
+    wf_cmap *map = wf_cmap_create_entries(8, 8, 1);
+    pause_map = map;
+    atomic_store(&pause_reached, 0);
+    atomic_store(&pause_released, 0);
+    atomic_store(&moved_hold_done, 0);
+    atomic_store(&closed_seen[2], 0);
+    atomic_store(&pause_armed, 1);
+    pthread_t mover, holder;
+    pthread_create(&mover, NULL, insert_until_move, map);
+    wait_for(&pause_reached, "no release started a move");
+    pthread_create(&holder, NULL, hold_after_move, map);
+    wait_for(&closed_seen[2], "a hold of the whole map never closed the gate");
+    nanosleep(&settle, NULL);
+    if (atomic_load(&moved_hold_done))
+        fail("a hold of the whole map closed while a statement's move was under way", 0, 0);
+    atomic_store(&pause_released, 1);
+    pthread_join(mover, NULL);
+    pthread_join(holder, NULL);
+    pause_map = NULL;
+    wf_cmap_destroy(map);
+}
+
+/* Swapping a held map's entries with another map's: each map then has the
+ * other's entries, count and memory, which drain and free as any map's; a
+ * statement waiting at the held map's gate during the swap reaches the
+ * entries the map has after it; a hold of the held map's entries taken
+ * before a swap leaves them to the other map; and the guards' watches stay
+ * with each map. */
+static wf_cmap *swap_map;
+static _Atomic int swap_waited;
+
+static void *lock_after_swap(void *arg) {
+    (void)arg;
+    test_driver = 1;
+    wf_cmap_user *user = wf_cmap_user_at(swap_map, 1);
+    unsigned char bytes[16];
+    wf_cmap_entry entry;
+    uint64_t *slot = wf_cmap_lock_entry(user, bytes, counted_key(0, bytes), 0, &entry);
+    atomic_store(&swap_waited, (int)entry.fresh + 1);
+    slot[0] = 77;
+    wf_cmap_unlock_entry(user, &entry, 0, 1);
+    return NULL;
+}
+
+static void put_counted(wf_cmap *map, unsigned user_index, uint64_t k, uint64_t value) {
+    unsigned char bytes[16];
+    wf_cmap_entry entry;
+    wf_cmap_user *user = wf_cmap_user_at(map, user_index);
+    uint64_t *slot = wf_cmap_lock_entry(user, bytes, counted_key(k, bytes), 0, &entry);
+    slot[0] = value;
+    wf_cmap_unlock_entry(user, &entry, 0, value != 0);
+}
+
+static uint64_t counted_value(wf_cmap *map, uint64_t k) {
+    unsigned char bytes[16];
+    wf_cmap_entry entry;
+    wf_cmap_user *user = wf_cmap_user_at(map, 0);
+    const uint64_t *slot = wf_cmap_read_entry(user, bytes, counted_key(k, bytes), 0, &entry);
+    uint64_t value = entry.cell != NULL ? slot[0] : 0;
+    wf_cmap_unread_entry(user, &entry, 0);
+    return value;
+}
+
+static uint64_t drain_sum(wf_cmap *map, uint64_t *count) {
+    uint64_t sum = 0;
+    *count = 0;
+    for (uint64_t *slot; (slot = wf_cmap_drain(map)) != NULL; ++*count)
+        sum += slot[0];
+    return sum;
+}
+
+static void maps_swap(void) {
+    swap_map = wf_cmap_create_entries(8, 8, 0);
+    wf_cmap *other = wf_cmap_create_entries(8, 8, 0);
+    for (uint64_t k = 0; k < 5; k++)
+        put_counted(swap_map, 0, k, 10 + k);
+    put_counted(other, 0, 100, 200);
+    put_counted(other, 0, 101, 201);
+    wf_cmap_holding hold;
+    wf_cmap_hold_begin(&hold, swap_map);
+    wf_cmap_hold_whole(&hold);
+    wf_cmap_hold_take(wf_cmap_user_at(swap_map, 0), &hold);
+    atomic_store(&swap_waited, 0);
+    pthread_t waiter;
+    pthread_create(&waiter, NULL, lock_after_swap, NULL);
+    struct timespec pause = {0, 100000};
+    for (unsigned waited = 0; atomic_load(&swap_map->waiting) == 0; waited++) {
+        if (waited == 10000)
+            fail("a statement never waited at a held map's gate", 0, 0);
+        nanosleep(&pause, NULL);
+    }
+    wf_cmap_swap(swap_map, other);
+    if (!wf_cmap_hold_release(&hold, VALUE_TAG))
+        fail("a hold of the whole map that swapped its entries said it wrote nothing", 0, 0);
+    pthread_join(waiter, NULL);
+    if (atomic_load(&swap_waited) != 2 || counted_value(swap_map, 0) != 77)
+        fail("a statement that waited out a swap missed the map's new entries (fresh, value)",
+             (uint64_t)atomic_load(&swap_waited) - 1, counted_value(swap_map, 0));
+    if (wf_cmap_count(swap_map) != 3 || counted_value(swap_map, 100) != 200 || counted_value(swap_map, 101) != 201)
+        fail("a swap did not give the map the other's entries (count, value)", wf_cmap_count(swap_map),
+             counted_value(swap_map, 100));
+    if (wf_cmap_count(other) != 5)
+        fail("a swap did not give the other map the held one's entries (count)", wf_cmap_count(other), 5);
+    uint64_t drained, sum = drain_sum(other, &drained);
+    if (drained != 5 || sum != 10 + 11 + 12 + 13 + 14)
+        fail("a swapped-out map did not drain its entries (drained, sum)", drained, sum);
+    wf_cmap_destroy(other);
+    /* A hold taken before a swap */
+    other = wf_cmap_create_entries(8, 8, 0);
+    wf_cmap_hold_begin(&hold, swap_map);
+    wf_cmap_hold_whole(&hold);
+    unsigned char bytes[2][16];
+    wf_cmap_hold_key(&hold, bytes[0], counted_key(100, bytes[0]));
+    wf_cmap_hold_key(&hold, bytes[1], counted_key(102, bytes[1]));
+    wf_cmap_hold_take(wf_cmap_user_at(swap_map, 0), &hold);
+    *(uint64_t *)wf_cmap_hold_slot(&hold, 0) = 0;
+    *(uint64_t *)wf_cmap_hold_slot(&hold, 1) = 9;
+    wf_cmap_swap(swap_map, other);
+    if (!wf_cmap_hold_release(&hold, VALUE_TAG))
+        fail("a hold whose map was swapped said it wrote nothing", 0, 0);
+    if (wf_cmap_count(swap_map) != 0 || counted_value(swap_map, 100) != 0)
+        fail("a hold taken before a swap left entries in the map (count)", wf_cmap_count(swap_map), 0);
+    sum = drain_sum(other, &drained);
+    if (drained != 4 || sum != 0 + 9 + 201 + 77)
+        fail("a hold taken before a swap did not leave its entries to the other map (drained, sum)", drained, sum);
+    wf_cmap_destroy(other);
+    /* The watches stay with the map */
+    other = wf_cmap_create_entries(8, 8, 0);
+    swap_map->watch.count = 1;
+    wf_cmap_swap(swap_map, other);
+    if (swap_map->watch.count != 1 || other->watch.count != 0)
+        fail("a swap moved a map's watches (kept, moved)", swap_map->watch.count, other->watch.count);
+    swap_map->watch.count = 0;
+    wf_cmap_destroy(other);
+    wf_cmap_destroy(swap_map);
+}
+
+/* The keyed tables' functions (keyed_table.c): a table no guard watches
+ * never enters a write's slow path; with a watch registered, a statement
+ * that may have written enters it as it ends, and one that only read, or
+ * held the table whole and only counted, does not; a whole hold that
+ * swapped does. Each also does what the map's own function does. */
+static void tables_wake_writers(void) {
+    test_driver = 0;
+    void *table = wf__keyed_table_new(16, 8, 0);
+    wf_table_entry entry;
+    wf_cmap_holding hold;
+    wf_key_set set;
+    unsigned char watch[WF_WATCH_SIZE];
+    atomic_store(&written_calls, 0);
+    for (int watched = 0; watched < 2; watched++) {
+        uint64_t before = atomic_load(&written_calls);
+        uint64_t *slot = wf__table_lock_entry(table, (const unsigned char *)"key", 3, 0, &entry);
+        slot[0] = 5;
+        wf__table_unlock_entry(&entry, 1);
+        if (atomic_load(&written_calls) != before + (uint64_t)watched)
+            fail("a write's end disagrees with the table's watches (watched, wakes)", (uint64_t)watched,
+                 atomic_load(&written_calls) - before);
+        const uint64_t *read = wf__table_lock_entry(table, (const unsigned char *)"key", 3, 1, &entry);
+        if (read[0] != 5)
+            fail("a read of an entry missed its value", read[0], 5);
+        wf__table_unlock_entry(&entry, 0);
+        if (atomic_load(&written_calls) != before + (uint64_t)watched)
+            fail("a read's end woke a table's watches (watched)", (uint64_t)watched, 0);
+        wf__key_set_new(&set, 2);
+        wf__key_set_put(&set, (const unsigned char *)"two", 3, 2);
+        wf__key_set_put(&set, (const unsigned char *)"one", 3, 1);
+        wf__table_hold_begin(&hold, table);
+        if (wf__table_hold_keys(&hold, &set) != 0 || wf__table_hold_key(&hold, (const unsigned char *)"key", 3) != 2)
+            fail("a hold's positions disagree with its keys", 0, 0);
+        wf__table_hold_take(&hold);
+        for (uint64_t i = 0; i < 2; i++)
+            *(uint64_t *)wf__table_hold_slot(&hold, i) = wf__key_set_payload(&set, i) + 10 * (uint64_t)watched;
+        wf__table_hold_release(&hold, VALUE_TAG);
+        wf__key_set_free(set.store);
+        if (atomic_load(&written_calls) != before + 2 * (uint64_t)watched)
+            fail("a hold's release disagrees with the table's watches (watched)", (uint64_t)watched, 0);
+        wf__table_hold_begin(&hold, table);
+        wf__table_hold_whole(&hold);
+        wf__table_hold_take(&hold);
+        if (wf__keyed_table_count(table) != 3)
+            fail("a table held whole miscounted (count, entries)", wf__keyed_table_count(table), 3);
+        wf__table_hold_release(&hold, VALUE_TAG);
+        if (atomic_load(&written_calls) != before + 2 * (uint64_t)watched)
+            fail("a whole hold that only counted woke a table's watches (watched)", (uint64_t)watched, 0);
+        if (!watched)
+            wf__watch_table(watch, table);
+    }
+    void *fresh = wf__keyed_table_new(16, 8, 0);
+    uint64_t before = atomic_load(&written_calls);
+    wf__table_hold_begin(&hold, table);
+    wf__table_hold_whole(&hold);
+    wf__table_hold_take(&hold);
+    wf__keyed_table_swap(table, fresh);
+    wf__table_hold_release(&hold, VALUE_TAG);
+    if (atomic_load(&written_calls) != before + 1 || wf__keyed_table_count(table) != 0 || wf__keyed_table_count(fresh) != 3)
+        fail("a whole hold that swapped did not wake the watches, or the swap moved no entries (wakes, count)",
+             atomic_load(&written_calls) - before, wf__keyed_table_count(fresh));
+    uint64_t drained = 0;
+    while (wf__keyed_table_drain(fresh) != NULL)
+        drained++;
+    if (drained != 3)
+        fail("a swapped table did not drain its entries (drained)", drained, 3);
+    wf__keyed_table_free(fresh);
+    ((wf_cmap *)table)->watch.count = 0;
+    wf__keyed_table_free(table);
+}
+
+/* A capacity past what any table can hold sizes the first table at the
+ * limit, and the map works. */
 static void entries_huge_capacity(void) {
     wf_cmap *map = wf_cmap_create_entries(8, 8, 1ull << 61);
     wf_cmap_user *user = wf_cmap_user_at(map, 0);
@@ -2111,15 +2826,22 @@ int main(void) {
         reads_block_moves();
         entries_shared_reads(0);
         entries_shared_reads(1);
-        sets_sequential();
-        sets_follow_moves();
+        key_sets();
+        holds_sequential();
+        holds_positions();
+        holds_follow_moves();
         locks_follow_moves();
         locks_read_no_freed_node();
-        sets_give_back_counted();
-        sets_in_one_order();
-        sets_move_amounts(0, PATIENCE);
-        sets_move_amounts(1, PATIENCE);
-        sets_move_amounts(1, 0);
+        holds_give_back_counted();
+        holds_in_one_order();
+        holds_whole();
+        holds_wait_out_moves();
+        maps_swap();
+        tables_wake_writers();
+        holds_move_amounts(0, PATIENCE);
+        holds_move_amounts(1, PATIENCE);
+        holds_move_amounts(1, 0);
+        holds_across_maps();
     }
     if (ENTRY_TESTS && WORD_TESTS) {
         entries_bounded();
