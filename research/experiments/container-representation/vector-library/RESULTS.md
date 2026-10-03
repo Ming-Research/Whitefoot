@@ -5942,7 +5942,7 @@ per-iteration header/cache store or helper call; the 48-byte frame, payload
 writes, capacity checks and ordinary growth call remain. Before ordinary
 calls and region exits it conditionally publishes length, then reloads after
 ordinary calls. Unsupported paths retain ordinary lowering and public ABI.
-The [pending amendment](../../../../design/amendments/window-length-residency.md)
+The [provisional compiler decision](../../../../design/compiler/window-length-residency.md)
 records this bounded implementation choice; no source rule changes.
 
 The focused regression batch passes two tests in 2.19 seconds after a

@@ -1605,7 +1605,7 @@ rarely insert at the same place.
   allocator oracle before executing the cap0 witness. Repair lowering without
   narrowing accepted source or selecting shared empty backing. The branch
   now implements the owner-slot repair under the
-  [pending representation amendment](../design/amendments/runtime-content-references.md).
+  [provisional representation decision](../design/compiler/storage-representation.md).
   The maintained runtime-content tests pass ordinary and retained links in
   both lowering modes, with exact concurrent release ledgers and a real worker
   grant; the affected backend and reference filters also pass. Keep this item

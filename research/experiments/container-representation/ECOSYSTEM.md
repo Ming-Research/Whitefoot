@@ -892,7 +892,7 @@ The combined compiler implementation at
 `9efd6c624d5d947f68e676a9181e58b3168d9a69` was built from unchanged practical
 callers/library sources against preserved `.build/main-6bb-f` controls from
 `f945eceecb3aacac20e76864c73edf8b7c87902b`. It implements the provisional
-[terminal-consumption](../../../design/amendments/terminal-owned-consumption.md)
+[terminal-consumption](../../../design/compiler/terminal-owned-consumption.md)
 and [function-actual hint](../../investigations/containers-and-resources/BEHAVIOR.md#ordinary-inlining-hints-for-supplied-functions)
 choices at that pin; the latter was subsequently withdrawn by the owner.
 This is actual compiler output, distinct from Vector's raw K+hint
