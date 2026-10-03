@@ -43,6 +43,10 @@ const code_dbsize: u64 = 76254079566404_u64;
 
 const code_config: u64 = 78380037721923_u64;
 
+const code_flushall: u64 = 5497841024004082758_u64;
+
+const code_flushdb: u64 = 18652425889336390_u64;
+
 const code_lpush: u64 = 310635745356_u64;
 
 const code_rpush: u64 = 310635745362_u64;
@@ -265,6 +269,17 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
       run_config(store: store, input: input, args: args, client: client);
     } else {
       reply_arity(client: client, input: input, name: name);
+    }
+    return unit;
+  }
+  let flushing_all = code == code_flushall;
+  let flushing_one = code == code_flushdb;
+  let flushing = bor(flushing_all, flushing_one);
+  if flushing {
+    let fits = count >= 1_u64;
+    let go = admitted(client: client, input: input, name: name, fits: fits);
+    if go {
+      run_flush(store: store, input: input, args: args, client: client);
     }
     return unit;
   }

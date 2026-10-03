@@ -1289,10 +1289,13 @@ fn firn_closes_a_client_silent_past_its_idle_limit_on_both_routes() {
 /// ranges and pops a list until it is empty, which removes its key; adds and
 /// removes set members; sets and reads hash fields; adds, rescores and pops
 /// sorted-set members; refuses a list command on a string and a string command
-/// on a hash; sets ten keys in one MSET, a command of eleven arguments; and
-/// names an unknown command and a command short of arguments as Redis does.
-/// Two inline commands close the batch. The expected bytes are those
-/// redis-server 7.0.15 returns for the same bytes.
+/// on a hash; sets ten keys in one MSET, a command of eleven arguments; empties
+/// the keyspace, keys of every kind and one with an expiry, with FLUSHALL and
+/// an option read up to a zero byte, after refusing an unknown option and two
+/// options, and FLUSHDB empties it again; and names an unknown command and a
+/// command short of arguments as Redis does. Two inline commands close the
+/// batch. The expected bytes are those redis-server 7.0.15 returns for the
+/// same bytes.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_answers_the_value_types_as_redis_does() {
@@ -1336,6 +1339,15 @@ fn firn_answers_the_value_types_as_redis_does() {
             "MSET", "k1", "1", "k2", "2", "k3", "3", "k4", "4", "k5", "5",
         ],
         vec!["GET", "k5"],
+        vec!["SET", "brief", "v", "PX", "60000"],
+        vec!["DBSIZE"],
+        vec!["FLUSHALL", "x"],
+        vec!["FLUSHDB", "SYNC", "ASYNC"],
+        vec!["FLUSHALL", "async\0x"],
+        vec!["DBSIZE"],
+        vec!["EXISTS", "l", "s", "h", "z", "str", "k1", "brief"],
+        vec!["TTL", "brief"],
+        vec!["FLUSHDB"],
         vec!["NOPE", "a", "b"],
         vec!["LLEN"],
     ] {
@@ -1345,7 +1357,7 @@ fn firn_answers_the_value_types_as_redis_does() {
     client.write_all(&batch).expect("send the batch");
     expect_replies(
         &mut client,
-        b":3\r\n:4\r\n*4\r\n$1\r\nz\r\n$1\r\na\r\n$1\r\nb\r\n$1\r\nc\r\n*2\r\n$1\r\na\r\n$1\r\nb\r\n$1\r\nz\r\n*2\r\n$1\r\nc\r\n$1\r\nb\r\n:1\r\n$1\r\na\r\n:0\r\n:3\r\n:1\r\n:2\r\n:2\r\n:0\r\n$1\r\n3\r\n$-1\r\n:3\r\n:0\r\n$1\r\n0\r\n*4\r\n$1\r\nc\r\n$1\r\n0\r\n$1\r\na\r\n$1\r\n1\r\n:1\r\n+OK\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n:1\r\n+set\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n+OK\r\n$1\r\n5\r\n-ERR unknown command 'NOPE', with args beginning with: 'a' 'b' \r\n-ERR wrong number of arguments for 'llen' command\r\n+OK\r\n$3\r\nyes\r\n",
+        b":3\r\n:4\r\n*4\r\n$1\r\nz\r\n$1\r\na\r\n$1\r\nb\r\n$1\r\nc\r\n*2\r\n$1\r\na\r\n$1\r\nb\r\n$1\r\nz\r\n*2\r\n$1\r\nc\r\n$1\r\nb\r\n:1\r\n$1\r\na\r\n:0\r\n:3\r\n:1\r\n:2\r\n:2\r\n:0\r\n$1\r\n3\r\n$-1\r\n:3\r\n:0\r\n$1\r\n0\r\n*4\r\n$1\r\nc\r\n$1\r\n0\r\n$1\r\na\r\n$1\r\n1\r\n:1\r\n+OK\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n:1\r\n+set\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n+OK\r\n$1\r\n5\r\n+OK\r\n:11\r\n-ERR syntax error\r\n-ERR syntax error\r\n+OK\r\n:0\r\n:0\r\n:-2\r\n+OK\r\n-ERR unknown command 'NOPE', with args beginning with: 'a' 'b' \r\n-ERR wrong number of arguments for 'llen' command\r\n+OK\r\n$3\r\nyes\r\n",
         "the value-type batch",
     );
     drop(client);
@@ -1772,7 +1784,8 @@ fn firn_carries_requests_and_replies_larger_than_its_windows() {
 /// removed stay removed, since the file records the pop as the SREM of the
 /// members it chose, as Redis records it; a replay that popped at random, from
 /// a generator seeded by the clock at each start, would almost surely remove
-/// others.
+/// others. A string set before FLUSHALL and a list pushed before FLUSHDB stay
+/// absent, since the file records both commands as Redis does.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_replays_the_value_types_from_its_append_only_file() {
@@ -1792,6 +1805,10 @@ fn firn_replays_the_value_types_from_its_append_only_file() {
     add.extend(members.iter().map(String::as_str));
     let mut batch = Vec::new();
     for request in [
+        vec!["SET", "flushed", "v"],
+        vec!["FLUSHALL"],
+        vec!["RPUSH", "flushed-list", "a"],
+        vec!["FLUSHDB", "ASYNC"],
         vec!["RPUSH", "l", "a", "b", "c"],
         vec!["LPOP", "l"],
         vec!["HSET", "h", "f", "v"],
@@ -1805,7 +1822,7 @@ fn firn_replays_the_value_types_from_its_append_only_file() {
     client.write_all(&batch).expect("send the changes");
     expect_replies(
         &mut client,
-        b":3\r\n$1\r\na\r\n:1\r\n:2\r\n*2\r\n$1\r\na\r\n$1\r\n1\r\n:1\r\n:50\r\n",
+        b"+OK\r\n+OK\r\n:1\r\n+OK\r\n:3\r\n$1\r\na\r\n:1\r\n:2\r\n*2\r\n$1\r\na\r\n$1\r\n1\r\n:1\r\n:50\r\n",
         "the first run's changes",
     );
     client
@@ -1848,13 +1865,14 @@ fn firn_replays_the_value_types_from_its_append_only_file() {
         vec!["ZSCORE", "f", "m"],
         vec!["SCARD", "s"],
         remove,
+        vec!["EXISTS", "flushed", "flushed-list"],
     ] {
         batch.extend(resp(&request));
     }
     client.write_all(&batch).expect("read the replayed values");
     expect_replies(
         &mut client,
-        b"*2\r\n$1\r\nb\r\n$1\r\nc\r\n$1\r\nv\r\n:1\r\n$1\r\n2\r\n$19\r\n0.10000000000000001\r\n:25\r\n:0\r\n",
+        b"*2\r\n$1\r\nb\r\n$1\r\nc\r\n$1\r\nv\r\n:1\r\n$1\r\n2\r\n$19\r\n0.10000000000000001\r\n:25\r\n:0\r\n:0\r\n",
         "the replayed values",
     );
     drop(client);

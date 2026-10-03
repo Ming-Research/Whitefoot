@@ -28,7 +28,11 @@ own:
   `appendfilename`, `appendonly`, `bind`, `databases`, `port`,
   `requirepass`, `save` and `timeout`, `TIME`, and `COMMAND` and
   `COMMAND COUNT`, which describe no command. `COMMAND DOCS` is answered as
-  an unknown subcommand, so that `redis-cli` uses its own help.
+  an unknown subcommand, so that `redis-cli` uses its own help. `FLUSHALL`
+  and `FLUSHDB`, with `ASYNC` or `SYNC`, empty firn's one database and its
+  queued expiries in one atomic statement and are appended to the
+  append-only file as Redis appends them; the old keys are released before
+  the reply under either option.
 
 `HELLO` reports the server as `redis` version 7.0.15, the version whose
 replies firn follows.

@@ -83,7 +83,9 @@ public binding DueOrder : PriorityOrder<Due, KeyEnv> {
   compare = due_order;
 }
 
-public fn keyspace_new(seed: u64, logging: Bool) -> made: Keyspace pure doc "An empty keyspace sized for 2^18 keys, appending changes to the append-only file's pending bytes when logging is true, whose SPOP draws start from the seed.";
+public fn keyspace_table() -> made: KeyedTable<Entry> pure doc "An empty table of entries sized for 2^18 keys, as a new keyspace's table is, and as FLUSHALL's is.";
+
+public fn keyspace_new(seed: u64, logging: Bool) -> made: Keyspace pure doc "An empty keyspace, its table made by keyspace_table, appending changes to the append-only file's pending bytes when logging is true, whose SPOP draws start from the seed.";
 
 public fn keyspace_share(store: &Keyspace) -> made: Keyspace reads(store) doc "Another context's handle to the same keyspace.";
 

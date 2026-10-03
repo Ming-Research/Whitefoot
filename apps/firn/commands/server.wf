@@ -1,7 +1,13 @@
 alias Client = pkg::protocol::Client;
+alias Due = pkg::store::Due;
 alias Span = pkg::protocol::Span;
 alias Keyspace = pkg::store::Keyspace;
 alias arg = pkg::protocol::arg;
+alias ceiling = pkg::store::ceiling;
+alias keyspace_table = pkg::store::keyspace_table;
+alias log_command = pkg::store::log_command;
+alias priority_queue_new = std::collections::priority_queue::priority_queue_new;
+alias reply_ok = pkg::protocol::reply_ok;
 alias byte_at = pkg::bytes::byte_at;
 alias bytes_copy = pkg::bytes::bytes_copy;
 alias glob_match = pkg::bytes::glob_match;
@@ -49,6 +55,49 @@ const text_try_command: Array<u8, 22> =[39_u8, 46_u8, 32_u8, 84_u8, 114_u8, 121_
 const word_count: Array<u8, 5> =[67_u8, 79_u8, 85_u8, 78_u8, 84_u8];
 
 const word_command_count: Array<u8, 13> =[99_u8, 111_u8, 109_u8, 109_u8, 97_u8, 110_u8, 100_u8, 124_u8, 99_u8, 111_u8, 117_u8, 110_u8, 116_u8];
+
+const word_async: Array<u8, 5> = "ASYNC";
+
+const word_sync: Array<u8, 4> = "SYNC";
+
+fn flush_mode(input: &[u8], args: &Box<Slots<Span>>, from: u64) -> known: Bool reads(input), reads(args) {
+  doc "Whether the arguments from position from on are none, or one that is ASYNC or SYNC in either case, read up to a zero byte as Redis's strcasecmp reads it: the options FLUSHALL, FLUSHDB and FUNCTION FLUSH take.";
+  let count = args^.inner.len;
+  if count <= from {
+    return True();
+  }
+  let last = from +wrap 1_u64;
+  if count > last {
+    return False();
+  }
+  let option = arg(args: args, index: from);
+  let spelled = before_zero(input: input, span: option);
+  let asynchronous = name_is(input: input, start: option.start, length: spelled, word: &word_async[0_u64..5_u64]);
+  let synchronous = name_is(input: input, start: option.start, length: spelled, word: &word_sync[0_u64..4_u64]);
+  let known = bor(asynchronous, synchronous);
+  return known;
+}
+
+fn run_flush(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client) -> result: unit reads(store), reads(input), reads(args), writes(client) waits {
+  doc "FLUSHALL and FLUSHDB [ASYNC | SYNC], firn's one database being all of them: empties the keyspace in one atomic statement, which exchanges the table whole for an empty one and the queued expiries for none, and appends the command as the client sent it to the append-only file's pending bytes when the keyspace keeps them, also when the keyspace was already empty, as Redis logs both. Any other argument, or more than one, is a syntax error. The table and queue taken out are released after the statement, before the reply, whichever option was given: unlike Redis's ASYNC, no other context frees them, but no other statement waits for their release either.";
+  let known = flush_mode(input: input, args: args, from: 1_u64);
+  if known {
+  } else {
+    reply_error(client: client, word: &text_syntax[0_u64..16_u64]);
+    return unit;
+  }
+  let fresh = keyspace_table();
+  let none_due = priority_queue_new::<Due, ceiling>();
+  atomic s = &store^.state {
+    swap(first: &s^.map, second: &fresh);
+    swap(first: &s^.meta.due, second: &none_due);
+    if store^.logging {
+      log_command(log: &s^.meta.log, input: input, args: args);
+    }
+  }
+  reply_ok(client: client);
+  return unit;
+}
 
 fn parameter_start(which: u64) -> start: u64 pure {
   doc "Where the name of parameter which, counted from 0 in alphabetical order, starts in parameter_names.";

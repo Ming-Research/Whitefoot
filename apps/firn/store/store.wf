@@ -41,9 +41,15 @@ fn due_order(env: &KeyEnv, left: &Due, right: &Due) -> order: i32 reads(left), r
   return 0_i32;
 }
 
+fn keyspace_table() -> made: KeyedTable<Entry> pure {
+  doc "An empty table of entries sized for 2^18 keys, which spares a benchmark's 2^17 keys the table's moves into memory the host has not yet given the process.";
+  let made = keyed_table_new::<Entry>(capacity: 262144_u64);
+  return move made;
+}
+
 fn keyspace_new(seed: u64, logging: Bool) -> made: Keyspace pure {
-  doc "An empty keyspace sized for 2^18 keys, appending changes to the append-only file's pending bytes when logging is true, whose SPOP draws start from the seed. The size spares a benchmark's 2^17 keys the table's moves into memory the host has not yet given the process.";
-  let map = keyed_table_new::<Entry>(capacity: 262144_u64);
+  doc "An empty keyspace, its table made by keyspace_table, appending changes to the append-only file's pending bytes when logging is true, whose SPOP draws start from the seed.";
+  let map = keyspace_table();
   let due = priority_queue_new::<Due, ceiling>();
   let log = box_slots_new::<u8>(capacity: 65536_u64);
   let running = False();
