@@ -60,12 +60,9 @@ static inline int wf_file_open_kind_flags(enum wf_file_expected_kind expected) {
 
 /* One socket of the family one portable address names, closed on exec.
  *
- * SO_REUSEADDR is deliberately not set.  It exists to let a program bind a
- * port a previous connection still holds in TIME_WAIT, which is a decision
- * about what the program's own bind means, and (ordinary native library) already fixes that
- * meaning: two binds of one port are the program's own source-order conflict
- * and `AddressInUse` is the host's answer to the second.  Setting it would
- * make that answer depend on a runtime option no source names. */
+ * A socket made for a listen gets SO_REUSEADDR before its bind
+ * (`file_posix.c`, `wf_socket_reuse_address`); a connect's socket needs no
+ * option. */
 static inline int wf_socket_open(const wf_socket_address *address) {
     int family = wf_socket_address_family(address);
 #if defined(SOCK_CLOEXEC)

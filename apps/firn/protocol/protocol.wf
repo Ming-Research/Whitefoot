@@ -2,6 +2,10 @@ alias Bytes = pkg::bytes::Bytes;
 alias Key = pkg::bytes::Key;
 alias KeyEnv = pkg::bytes::KeyEnv;
 alias byte_at = pkg::bytes::byte_at;
+alias byte_before = pkg::bytes::byte_before;
+alias bytes_copy = pkg::bytes::bytes_copy;
+alias lower = pkg::bytes::lower;
+alias read_integer = pkg::bytes::read_integer;
 
 const reply_crlf: Array<u8, 2> =[13_u8, 10_u8];
 
@@ -19,6 +23,16 @@ const text_bulk: Array<u8, 39> =[69_u8, 82_u8, 82_u8, 32_u8, 80_u8, 114_u8, 111_
 
 const text_inline: Array<u8, 42> =[69_u8, 82_u8, 82_u8, 32_u8, 80_u8, 114_u8, 111_u8, 116_u8, 111_u8, 99_u8, 111_u8, 108_u8, 32_u8, 101_u8, 114_u8, 114_u8, 111_u8, 114_u8, 58_u8, 32_u8, 116_u8, 111_u8, 111_u8, 32_u8, 98_u8, 105_u8, 103_u8, 32_u8, 105_u8, 110_u8, 108_u8, 105_u8, 110_u8, 101_u8, 32_u8, 114_u8, 101_u8, 113_u8, 117_u8, 101_u8, 115_u8, 116_u8];
 
+const text_unbalanced: Array<u8, 48> =[69_u8, 82_u8, 82_u8, 32_u8, 80_u8, 114_u8, 111_u8, 116_u8, 111_u8, 99_u8, 111_u8, 108_u8, 32_u8, 101_u8, 114_u8, 114_u8, 111_u8, 114_u8, 58_u8, 32_u8, 117_u8, 110_u8, 98_u8, 97_u8, 108_u8, 97_u8, 110_u8, 99_u8, 101_u8, 100_u8, 32_u8, 113_u8, 117_u8, 111_u8, 116_u8, 101_u8, 115_u8, 32_u8, 105_u8, 110_u8, 32_u8, 114_u8, 101_u8, 113_u8, 117_u8, 101_u8, 115_u8, 116_u8];
+
+const text_count_line: Array<u8, 46> =[69_u8, 82_u8, 82_u8, 32_u8, 80_u8, 114_u8, 111_u8, 116_u8, 111_u8, 99_u8, 111_u8, 108_u8, 32_u8, 101_u8, 114_u8, 114_u8, 111_u8, 114_u8, 58_u8, 32_u8, 116_u8, 111_u8, 111_u8, 32_u8, 98_u8, 105_u8, 103_u8, 32_u8, 109_u8, 98_u8, 117_u8, 108_u8, 107_u8, 32_u8, 99_u8, 111_u8, 117_u8, 110_u8, 116_u8, 32_u8, 115_u8, 116_u8, 114_u8, 105_u8, 110_u8, 103_u8];
+
+const text_length_line: Array<u8, 45> =[69_u8, 82_u8, 82_u8, 32_u8, 80_u8, 114_u8, 111_u8, 116_u8, 111_u8, 99_u8, 111_u8, 108_u8, 32_u8, 101_u8, 114_u8, 114_u8, 111_u8, 114_u8, 58_u8, 32_u8, 116_u8, 111_u8, 111_u8, 32_u8, 98_u8, 105_u8, 103_u8, 32_u8, 98_u8, 117_u8, 108_u8, 107_u8, 32_u8, 99_u8, 111_u8, 117_u8, 110_u8, 116_u8, 32_u8, 115_u8, 116_u8, 114_u8, 105_u8, 110_u8, 103_u8];
+
+const text_locked_count: Array<u8, 52> =[69_u8, 82_u8, 82_u8, 32_u8, 80_u8, 114_u8, 111_u8, 116_u8, 111_u8, 99_u8, 111_u8, 108_u8, 32_u8, 101_u8, 114_u8, 114_u8, 111_u8, 114_u8, 58_u8, 32_u8, 117_u8, 110_u8, 97_u8, 117_u8, 116_u8, 104_u8, 101_u8, 110_u8, 116_u8, 105_u8, 99_u8, 97_u8, 116_u8, 101_u8, 100_u8, 32_u8, 109_u8, 117_u8, 108_u8, 116_u8, 105_u8, 98_u8, 117_u8, 108_u8, 107_u8, 32_u8, 108_u8, 101_u8, 110_u8, 103_u8, 116_u8, 104_u8];
+
+const text_locked_length: Array<u8, 47> =[69_u8, 82_u8, 82_u8, 32_u8, 80_u8, 114_u8, 111_u8, 116_u8, 111_u8, 99_u8, 111_u8, 108_u8, 32_u8, 101_u8, 114_u8, 114_u8, 111_u8, 114_u8, 58_u8, 32_u8, 117_u8, 110_u8, 97_u8, 117_u8, 116_u8, 104_u8, 101_u8, 110_u8, 116_u8, 105_u8, 99_u8, 97_u8, 116_u8, 101_u8, 100_u8, 32_u8, 98_u8, 117_u8, 108_u8, 107_u8, 32_u8, 108_u8, 101_u8, 110_u8, 103_u8, 116_u8, 104_u8];
+
 const text_wrong_type: Array<u8, 65> =[87_u8, 82_u8, 79_u8, 78_u8, 71_u8, 84_u8, 89_u8, 80_u8, 69_u8, 32_u8, 79_u8, 112_u8, 101_u8, 114_u8, 97_u8, 116_u8, 105_u8, 111_u8, 110_u8, 32_u8, 97_u8, 103_u8, 97_u8, 105_u8, 110_u8, 115_u8, 116_u8, 32_u8, 97_u8, 32_u8, 107_u8, 101_u8, 121_u8, 32_u8, 104_u8, 111_u8, 108_u8, 100_u8, 105_u8, 110_u8, 103_u8, 32_u8, 116_u8, 104_u8, 101_u8, 32_u8, 119_u8, 114_u8, 111_u8, 110_u8, 103_u8, 32_u8, 107_u8, 105_u8, 110_u8, 100_u8, 32_u8, 111_u8, 102_u8, 32_u8, 118_u8, 97_u8, 108_u8, 117_u8, 101_u8];
 
 const text_arity: Array<u8, 35> =[69_u8, 82_u8, 82_u8, 32_u8, 119_u8, 114_u8, 111_u8, 110_u8, 103_u8, 32_u8, 110_u8, 117_u8, 109_u8, 98_u8, 101_u8, 114_u8, 32_u8, 111_u8, 102_u8, 32_u8, 97_u8, 114_u8, 103_u8, 117_u8, 109_u8, 101_u8, 110_u8, 116_u8, 115_u8, 32_u8, 102_u8, 111_u8, 114_u8, 32_u8, 39_u8];
@@ -29,55 +43,78 @@ const text_unknown: Array<u8, 21> =[45_u8, 69_u8, 82_u8, 82_u8, 32_u8, 117_u8, 1
 
 const text_beginning: Array<u8, 28> =[44_u8, 32_u8, 119_u8, 105_u8, 116_u8, 104_u8, 32_u8, 97_u8, 114_u8, 103_u8, 115_u8, 32_u8, 98_u8, 101_u8, 103_u8, 105_u8, 110_u8, 110_u8, 105_u8, 110_u8, 103_u8, 32_u8, 119_u8, 105_u8, 116_u8, 104_u8, 58_u8, 32_u8];
 
-struct Number {
-  value: u64;
-  next: u64;
+struct Line {
+  value: i64;
+  end: u64;
   state: u64;
 }
 
-fn read_number(input: &[u8], start: u64, held: u64) -> result: Number reads(input) {
-  doc "Reads a decimal number of at most 18 digits ended by CR LF from a position. State 1 is a number, 0 means the bytes held end before it does, and 2 is a malformed one.";
-  let value = 0_u64;
-  let index = start;
+fn read_line(input: &[u8], marker: u64, held: u64) -> line: Line reads(input) {
+  doc "Reads a count or length line whose marker byte, * or $, is at marker, as Redis 7.0 reads one. The line ends at the first carriage return from the marker on, found as strchr finds it, so that a zero byte, like the end of the bytes held, leaves the line incomplete; the byte after the carriage return must be held too and is skipped unread. State 1 is a complete line whose bytes after the marker read as a number, as string2ll reads one, into value; 2 is a complete line that does not read as one; 0 is an incomplete line; and 3 is a line still incomplete with more than 65,536 bytes held from its marker. end is the carriage return's position. Digits without a sign or leading zero, at most nine of them, are summed as they are scanned; any other line is read again by read_integer.";
+  let position = marker;
   let digits = 0_u64;
-  loop @digits {
-    if index >= held {
-      return Number(value: 0_u64, next: index, state: 0_u64);
+  let plain = True();
+  let leading = 0_u8;
+  let value = 0_u64;
+  loop @find {
+    if position >= held {
+      break @find;
     }
-    let byte = byte_at(input: input, index: index);
+    let byte = byte_at(input: input, index: position);
     if byte == 13_u8 {
-      break @digits;
+      let after = position +wrap 1_u64;
+      if after >= held {
+        return Line(value: 0_i64, end: position, state: 0_u64);
+      }
+      let some = digits >= 1_u64;
+      let short = digits <= 9_u64;
+      let lone = digits == 1_u64;
+      let unpadded = leading != 48_u8;
+      let canonical = bor(lone, unpadded);
+      let counted = band(some, short);
+      let simple = band(plain, counted);
+      let quick = band(simple, canonical);
+      if quick {
+        let summed = cvt.wrap::<u64, i64>(value);
+        return Line(value: summed, end: position, state: 1_u64);
+      }
+      if position > marker {
+        let first = marker +wrap 1_u64;
+        let length = position -wrap first;
+        let number = read_integer(input: input, start: first, length: length);
+        if number.state == 1_u64 {
+          return Line(value: number.value, end: position, state: 1_u64);
+        }
+      }
+      return Line(value: 0_i64, end: position, state: 2_u64);
     }
-    let low = byte >= 48_u8;
-    let high = byte <= 57_u8;
-    let digit = band(low, high);
-    if digit {
-    } else {
-      return Number(value: 0_u64, next: index, state: 2_u64);
+    if byte == 0_u8 {
+      break @find;
     }
-    if digits >= 18_u64 {
-      return Number(value: 0_u64, next: index, state: 2_u64);
+    if position > marker {
+      let low = byte >= 48_u8;
+      let high = byte <= 57_u8;
+      let digit = band(low, high);
+      if digit {
+        if digits == 0_u64 {
+          set leading = byte;
+        }
+        set digits = digits +wrap 1_u64;
+        let offset = byte -wrap 48_u8;
+        let wide = cvt::<u8, u64>(offset);
+        let scaled = value *wrap 10_u64;
+        set value = scaled +wrap wide;
+      } else {
+        set plain = False();
+      }
     }
-    let offset = byte -wrap 48_u8;
-    let wide = cvt::<u8, u64>(offset);
-    let scaled = value *wrap 10_u64;
-    set value = scaled +wrap wide;
-    set digits = digits +wrap 1_u64;
-    set index = index +wrap 1_u64;
+    set position = position +wrap 1_u64;
   }
-  let after = index +wrap 1_u64;
-  if after >= held {
-    return Number(value: 0_u64, next: index, state: 0_u64);
+  let pending = held -wrap marker;
+  if pending > 65536_u64 {
+    return Line(value: 0_i64, end: position, state: 3_u64);
   }
-  let feed = byte_at(input: input, index: after);
-  if feed != 10_u8 {
-    return Number(value: 0_u64, next: index, state: 2_u64);
-  }
-  if digits == 0_u64 {
-    return Number(value: 0_u64, next: index, state: 2_u64);
-  }
-  let next = after +wrap 1_u64;
-  return Number(value: value, next: next, state: 1_u64);
+  return Line(value: 0_i64, end: position, state: 0_u64);
 }
 
 fn clear_args(args: &Box<Slots<Span>>) -> result: unit writes(args) {
@@ -112,88 +149,156 @@ fn push_arg(args: &Box<Slots<Span>>, start: u64, length: u64) -> result: unit wr
   return unit;
 }
 
-fn parse_multibulk(input: &[u8], start: u64, held: u64, args: &Box<Slots<Span>>) -> parsed: Parsed reads(input), writes(args) {
-  doc "Reads a RESP array of bulk strings whose leading asterisk is at start. An array of no element or a negative count is skipped, as Redis skips it; more than 1,048,576 elements or a bulk string longer than 536,870,912 bytes is malformed.";
-  let header_start = start +wrap 1_u64;
-  let sign = byte_at(input: input, index: header_start);
-  if sign == 45_u8 {
-    let line_end = header_start;
-    loop @skip {
-      if line_end >= held {
-        return Parsed(state: 0_u64, next: start);
-      }
-      let byte = byte_at(input: input, index: line_end);
-      if byte == 10_u8 {
-        break @skip;
-      }
-      set line_end = line_end +wrap 1_u64;
-    }
-    let after = line_end +wrap 1_u64;
-    return Parsed(state: 6_u64, next: after);
-  }
-  let header = read_number(input: input, start: header_start, held: held);
+fn parse_multibulk(input: &[u8], start: u64, held: u64, args: &Box<Slots<Span>>, locked: Bool) -> parsed: Parsed reads(input), writes(args) {
+  doc "Reads a RESP array of bulk strings whose leading asterisk is at start, as Redis 7.0 reads one. Every count and length line is read as read_line reads it. The count is at most 2,147,483,647, and an array of no element or a negative count is skipped; each bulk string's line starts with a dollar sign, its length is 0 to 536,870,912, and the two bytes after its data are skipped unread. A client that must authenticate first, when locked is true, may send at most 10 elements and bulk strings of at most 16,384 bytes.";
+  let header = read_line(input: input, marker: start, held: held);
   if header.state == 0_u64 {
     return Parsed(state: 0_u64, next: start);
+  }
+  if header.state == 3_u64 {
+    return Parsed(state: 8_u64, next: start);
   }
   if header.state == 2_u64 {
     return Parsed(state: 2_u64, next: start);
   }
-  let count = header.value;
-  if count > 1048576_u64 {
+  let elements = header.value;
+  if elements > 2147483647_i64 {
     return Parsed(state: 2_u64, next: start);
   }
-  if count == 0_u64 {
-    return Parsed(state: 6_u64, next: header.next);
+  if elements > 10_i64 {
+    if locked {
+      return Parsed(state: 10_u64, next: start);
+    }
   }
+  let position = header.end +wrap 2_u64;
+  if elements <= 0_i64 {
+    return Parsed(state: 6_u64, next: position);
+  }
+  let count = cvt.wrap::<i64, u64>(elements);
   clear_args(args: args);
-  let position = header.next;
   for @arguments (ordinal in 0_u64..count) {
-    if position >= held {
+    let line = read_line(input: input, marker: position, held: held);
+    if line.state == 0_u64 {
       return Parsed(state: 0_u64, next: start);
+    }
+    if line.state == 3_u64 {
+      return Parsed(state: 9_u64, next: start);
     }
     let dollar = byte_at(input: input, index: position);
     if dollar != 36_u8 {
       return Parsed(state: 3_u64, next: position);
     }
-    let length_start = position +wrap 1_u64;
-    let length = read_number(input: input, start: length_start, held: held);
-    if length.state == 0_u64 {
-      return Parsed(state: 0_u64, next: start);
-    }
-    if length.state == 2_u64 {
+    if line.state == 2_u64 {
       return Parsed(state: 4_u64, next: position);
     }
-    if length.value > 536870912_u64 {
+    let size = line.value;
+    if size < 0_i64 {
       return Parsed(state: 4_u64, next: position);
     }
-    let data_start = length.next;
-    let data_end = data_start +wrap length.value;
+    if size > 536870912_i64 {
+      return Parsed(state: 4_u64, next: position);
+    }
+    if size > 16384_i64 {
+      if locked {
+        return Parsed(state: 11_u64, next: position);
+      }
+    }
+    let length = cvt.wrap::<i64, u64>(size);
+    let data_start = line.end +wrap 2_u64;
+    let data_end = data_start +wrap length;
     let closed = data_end +wrap 2_u64;
     if closed > held {
       return Parsed(state: 0_u64, next: start);
     }
-    push_arg(args: args, start: data_start, length: length.value);
+    push_arg(args: args, start: data_start, length: length);
     set position = closed;
   }
   return Parsed(state: 1_u64, next: position);
 }
 
-fn parse_inline(input: &[u8], start: u64, held: u64, args: &Box<Slots<Span>>) -> parsed: Parsed reads(input), writes(args) {
-  doc "Reads an inline command: words separated by spaces or tabs up to a line feed, a carriage return before it dropped. A line of no word is skipped; a line longer than 65,536 bytes is malformed.";
+fn blank(byte: u8) -> result: Bool pure {
+  doc "Whether a byte is white space as C's isspace reads it in the C locale: space, tab, line feed, vertical tab, form feed or carriage return.";
+  let space = byte == 32_u8;
+  let low = byte >= 9_u8;
+  let high = byte <= 13_u8;
+  let control = band(low, high);
+  let white = bor(space, control);
+  return white;
+}
+
+fn hex_value(byte: u8) -> result: u8 pure {
+  doc "The value of a hexadecimal digit in either case, or 16 for a byte that is not one.";
+  let digit_low = byte >= 48_u8;
+  let digit_high = byte <= 57_u8;
+  let digit = band(digit_low, digit_high);
+  if digit {
+    let value = byte -wrap 48_u8;
+    return value;
+  }
+  let lowered = ior(byte, 32_u8);
+  let letter_low = lowered >= 97_u8;
+  let letter_high = lowered <= 102_u8;
+  let letter = band(letter_low, letter_high);
+  if letter {
+    let value = lowered -wrap 87_u8;
+    return value;
+  }
+  return 16_u8;
+}
+
+fn escaped(byte: u8) -> result: u8 pure {
+  doc "The byte a backslash before a byte stands for inside double quotes: n, r, t, b and a stand for line feed, carriage return, tab, backspace and bell, and any other byte for itself.";
+  if byte == 110_u8 {
+    return 10_u8;
+  }
+  if byte == 114_u8 {
+    return 13_u8;
+  }
+  if byte == 116_u8 {
+    return 9_u8;
+  }
+  if byte == 98_u8 {
+    return 8_u8;
+  }
+  if byte == 97_u8 {
+    return 7_u8;
+  }
+  return byte;
+}
+
+fn put_decoded(input: &[u8], position: u64, value: u8) -> result: unit writes(input) {
+  doc "Writes one decoded byte of an inline argument into the input at a position no later than the byte it was read from.";
+  if position < input^.len {
+    set input^[position] = value;
+  }
+  return unit;
+}
+
+fn parse_inline(input: &[u8], start: u64, held: u64, args: &Box<Slots<Span>>) -> parsed: Parsed writes(input), writes(args) {
+  doc "Reads an inline command as Redis 7.0 reads one. The line runs to a line feed found as strchr finds it, so that a zero byte before it leaves the line incomplete, and a carriage return before the line feed is dropped; a line incomplete with more than 65,536 bytes held is malformed. The line splits into arguments as sdssplitargs splits it: white space separates them; an argument may hold double-quoted parts, where a backslash before x and two hexadecimal digits stands for that byte, before n, r, t, b or a for line feed, carriage return, tab, backspace or bell, and before any other byte for that byte, and single-quoted parts, where only a backslash before a quote stands for the quote; a closing quote must be followed by white space or the end of the line, and a part not closed is malformed. Each argument's decoded bytes are written back into the input from where the line's earlier arguments end, so that each span names decoded bytes and no write passes the byte being read. A line of no argument is skipped.";
   let line_end = start;
+  let found = False();
   loop @find {
     if line_end >= held {
-      let pending = held -wrap start;
-      if pending > 65536_u64 {
-        return Parsed(state: 5_u64, next: start);
-      }
-      return Parsed(state: 0_u64, next: start);
+      break @find;
     }
     let byte = byte_at(input: input, index: line_end);
     if byte == 10_u8 {
+      set found = True();
+      break @find;
+    }
+    if byte == 0_u8 {
       break @find;
     }
     set line_end = line_end +wrap 1_u64;
+  }
+  if found {
+  } else {
+    let pending = held -wrap start;
+    if pending > 65536_u64 {
+      return Parsed(state: 5_u64, next: start);
+    }
+    return Parsed(state: 0_u64, next: start);
   }
   let next = line_end +wrap 1_u64;
   let content_end = line_end;
@@ -205,33 +310,123 @@ fn parse_inline(input: &[u8], start: u64, held: u64, args: &Box<Slots<Span>>) ->
     }
   }
   clear_args(args: args);
-  let word_start = start;
-  let in_word = False();
-  let position = start;
-  loop @words {
-    if position >= content_end {
-      break @words;
-    }
-    let byte = byte_at(input: input, index: position);
-    let space = byte == 32_u8;
-    let tab = byte == 9_u8;
-    let blank = bor(space, tab);
-    if blank {
-      if in_word {
-        let length = position -wrap word_start;
-        push_arg(args: args, start: word_start, length: length);
-        set in_word = False();
+  let read = start;
+  let write = start;
+  loop @arguments {
+    loop @blanks {
+      let leading = byte_before(input: input, position: read, end: content_end);
+      let skipped = blank(byte: leading);
+      if skipped {
+        set read = read +wrap 1_u64;
+      } else {
+        break @blanks;
       }
-    } else if in_word {
-    } else {
-      set word_start = position;
-      set in_word = True();
     }
-    set position = position +wrap 1_u64;
-  }
-  if in_word {
-    let length = content_end -wrap word_start;
-    push_arg(args: args, start: word_start, length: length);
+    if read >= content_end {
+      break @arguments;
+    }
+    let first = write;
+    let mode = 0_u64;
+    let done = False();
+    loop @bytes {
+      if done {
+        break @bytes;
+      }
+      let byte = byte_before(input: input, position: read, end: content_end);
+      let second_position = read +wrap 1_u64;
+      let second = byte_before(input: input, position: second_position, end: content_end);
+      let consumed = 1_u64;
+      if mode == 1_u64 {
+        let third_position = read +wrap 2_u64;
+        let third = byte_before(input: input, position: third_position, end: content_end);
+        let fourth_position = read +wrap 3_u64;
+        let fourth = byte_before(input: input, position: fourth_position, end: content_end);
+        let high = hex_value(byte: third);
+        let low = hex_value(byte: fourth);
+        let backslash = byte == 92_u8;
+        let marked = second == 120_u8;
+        let high_digit = high < 16_u8;
+        let low_digit = low < 16_u8;
+        let introduced = band(backslash, marked);
+        let digits = band(high_digit, low_digit);
+        let hexadecimal = band(introduced, digits);
+        let follows = second != 0_u8;
+        let escape = band(backslash, follows);
+        if hexadecimal {
+          let scaled = high *wrap 16_u8;
+          let value = scaled +wrap low;
+          put_decoded(input: input, position: write, value: value);
+          set write = write +wrap 1_u64;
+          set consumed = 4_u64;
+        } else if escape {
+          let value = escaped(byte: second);
+          put_decoded(input: input, position: write, value: value);
+          set write = write +wrap 1_u64;
+          set consumed = 2_u64;
+        } else if byte == 34_u8 {
+          let spaced = blank(byte: second);
+          let ended = second == 0_u8;
+          let closes = bor(spaced, ended);
+          if closes {
+          } else {
+            return Parsed(state: 7_u64, next: next);
+          }
+          set done = True();
+        } else if byte == 0_u8 {
+          return Parsed(state: 7_u64, next: next);
+        } else {
+          put_decoded(input: input, position: write, value: byte);
+          set write = write +wrap 1_u64;
+        }
+      } else if mode == 2_u64 {
+        let backslash = byte == 92_u8;
+        let quote_next = second == 39_u8;
+        let escape = band(backslash, quote_next);
+        if escape {
+          put_decoded(input: input, position: write, value: 39_u8);
+          set write = write +wrap 1_u64;
+          set consumed = 2_u64;
+        } else if byte == 39_u8 {
+          let spaced = blank(byte: second);
+          let ended = second == 0_u8;
+          let closes = bor(spaced, ended);
+          if closes {
+          } else {
+            return Parsed(state: 7_u64, next: next);
+          }
+          set done = True();
+        } else if byte == 0_u8 {
+          return Parsed(state: 7_u64, next: next);
+        } else {
+          put_decoded(input: input, position: write, value: byte);
+          set write = write +wrap 1_u64;
+        }
+      } else {
+        let space = byte == 32_u8;
+        let feed = byte == 10_u8;
+        let carriage = byte == 13_u8;
+        let tab = byte == 9_u8;
+        let line_break = bor(feed, carriage);
+        let gap = bor(space, tab);
+        let separator = bor(line_break, gap);
+        if separator {
+          set done = True();
+        } else if byte == 0_u8 {
+          set done = True();
+          set consumed = 0_u64;
+        } else if byte == 34_u8 {
+          set mode = 1_u64;
+        } else if byte == 39_u8 {
+          set mode = 2_u64;
+        } else {
+          put_decoded(input: input, position: write, value: byte);
+          set write = write +wrap 1_u64;
+        }
+      }
+      set read = read +wrap consumed;
+    }
+    let length = write -wrap first;
+    push_arg(args: args, start: first, length: length);
   }
   if args^.inner.len == 0_u64 {
     return Parsed(state: 6_u64, next: next);
@@ -239,14 +434,14 @@ fn parse_inline(input: &[u8], start: u64, held: u64, args: &Box<Slots<Span>>) ->
   return Parsed(state: 1_u64, next: next);
 }
 
-fn parse_request(input: &[u8], start: u64, held: u64, args: &Box<Slots<Span>>) -> parsed: Parsed reads(input), writes(args) {
-  doc "Reads one request from a position of the input, of which held bytes are filled: a RESP array of bulk strings, or an inline command of words separated by spaces and ended by a line feed. A command's arguments replace what args held, one span each.";
+fn parse_request(input: &[u8], start: u64, held: u64, args: &Box<Slots<Span>>, locked: Bool) -> parsed: Parsed writes(input), writes(args) {
+  doc "Reads one request from a position of the input, of which held bytes are filled: a RESP array of bulk strings, or an inline command, told apart by its first byte as Redis tells them. A command's arguments replace what args held, one span each; an inline command's decoded arguments are written back into the input over its line. locked is true for a client that must authenticate first, whose arrays Redis limits.";
   if start >= held {
     return Parsed(state: 0_u64, next: start);
   }
   let marker = byte_at(input: input, index: start);
   if marker == 42_u8 {
-    let parsed = parse_multibulk(input: input, start: start, held: held, args: args);
+    let parsed = parse_multibulk(input: input, start: start, held: held, args: args, locked: locked);
     return parsed;
   }
   let parsed = parse_inline(input: input, start: start, held: held, args: args);
@@ -268,8 +463,18 @@ fn protocol_error(client: &Client, input: &[u8], parsed: Parsed) -> result: unit
     reply_word(client: client, word: &reply_crlf[0_u64..2_u64]);
   } else if state == 4_u64 {
     reply_error(client: client, word: &text_bulk[0_u64..39_u64]);
-  } else {
+  } else if state == 5_u64 {
     reply_error(client: client, word: &text_inline[0_u64..42_u64]);
+  } else if state == 7_u64 {
+    reply_error(client: client, word: &text_unbalanced[0_u64..48_u64]);
+  } else if state == 8_u64 {
+    reply_error(client: client, word: &text_count_line[0_u64..46_u64]);
+  } else if state == 9_u64 {
+    reply_error(client: client, word: &text_length_line[0_u64..45_u64]);
+  } else if state == 10_u64 {
+    reply_error(client: client, word: &text_locked_count[0_u64..52_u64]);
+  } else {
+    reply_error(client: client, word: &text_locked_length[0_u64..47_u64]);
   }
   return unit;
 }
@@ -351,7 +556,33 @@ fn client_new(capacity: u64) -> made: Client pure contract {
   let items = box_slots_new::<Key>(capacity: 16_u64);
   let scores = box_slots_new::<f64>(capacity: 16_u64);
   let keys = KeyEnv();
-  return Client(bytes: move bytes, at: 0_u64, now: 0_u64, state: 0_u64, number: 0_u64, low: 0_i64, high: 0_i64, items: move items, scores: move scores, keys: keys, random: 0_u64);
+  let name = empty_text();
+  let unlocked = False();
+  let open = False();
+  let settings = settings_empty();
+  return Client(bytes: move bytes, at: 0_u64, now: 0_u64, state: 0_u64, number: 0_u64, low: 0_i64, high: 0_i64, items: move items, scores: move scores, keys: keys, random: 0_u64, id: 0_u64, name: move name, locked: unlocked, closing: open, unix_us: 0_u64, settings: move settings);
+}
+
+fn empty_text() -> made: Bytes pure {
+  doc "A string of no bytes.";
+  let short = slots_new::<u8, 24>();
+  return Bytes::Short(bytes: move short);
+}
+
+fn settings_empty() -> made: Settings pure {
+  doc "Settings of port 0, no idle limit, and empty address, file name and password, for a client no server configured, such as the one an append-only file's replay runs its commands as.";
+  let bind = empty_text();
+  let appendfilename = empty_text();
+  let password = empty_text();
+  return Settings(port: 0_u64, timeout: 0_u64, bind: move bind, appendfilename: move appendfilename, password: move password);
+}
+
+fn settings_copy(settings: &Settings) -> made: Settings reads(settings) {
+  doc "A copy of the settings, for another connection.";
+  let bind = bytes_copy(bytes: &settings^.bind);
+  let appendfilename = bytes_copy(bytes: &settings^.appendfilename);
+  let password = bytes_copy(bytes: &settings^.password);
+  return Settings(port: settings^.port, timeout: settings^.timeout, bind: move bind, appendfilename: move appendfilename, password: move password);
 }
 
 fn clear_items(client: &Client) -> result: unit writes(client) {
@@ -715,18 +946,6 @@ fn reply_wrong_type(client: &Client) -> result: unit writes(client) {
   return unit;
 }
 
-fn lower(byte: u8) -> result: u8 pure {
-  doc "An upper-case ASCII letter in lower case, and any other byte unchanged.";
-  let low = byte >= 65_u8;
-  let high = byte <= 90_u8;
-  let letter = band(low, high);
-  if letter {
-    let lowered = byte +wrap 32_u8;
-    return lowered;
-  }
-  return byte;
-}
-
 fn reply_arity(client: &Client, input: &[u8], name: Span) -> result: unit reads(input), writes(client) {
   doc "Writes the error Redis replies to a known command given the wrong number of arguments, naming the command in lower case.";
   reply_byte(client: client, value: 45_u8);
@@ -739,6 +958,15 @@ fn reply_arity(client: &Client, input: &[u8], name: Span) -> result: unit reads(
     let lowered = lower(byte: byte);
     put(client: client, value: lowered);
   }
+  reply_word(client: client, word: &text_command[0_u64..11_u64]);
+  return unit;
+}
+
+fn reply_arity_word(client: &Client, word: &[u8]) -> result: unit reads(word), writes(client) {
+  doc "Writes the error Redis replies to a known command or subcommand given the wrong number of arguments, naming it by a constant word such as client|id.";
+  reply_byte(client: client, value: 45_u8);
+  reply_word(client: client, word: &text_arity[0_u64..35_u64]);
+  reply_word(client: client, word: word);
   reply_word(client: client, word: &text_command[0_u64..11_u64]);
   return unit;
 }

@@ -183,8 +183,9 @@ receive, send, stream read, half-close) and the routes are:
   round trip would cost more than the operation it wraps. `file_posix.c`
   executes every kind against the host — `socket`, `bind`, `listen`, `accept4`,
   `connect`, `recv`, `send`, `shutdown`, `close`, IPv4 and IPv6,
-  `SOCK_CLOEXEC`, and no `SO_REUSEADDR`, because [SYS-17] already fixes what a
-  second bind of one port means. The two conversions between the emitted
+  `SOCK_CLOEXEC`, and then no `SO_REUSEADDR`, because [SYS-17] already fixed
+  what a second bind of one port means; listening sockets have it now
+  ([Rebinding a port](#rebinding-a-port)). The two conversions between the emitted
   `SocketAddress` value and the host's own address record are `static inline`
   in `file_posix.h`, so both POSIX engines state one contract. The pair's
   two-count is `wf_file_connection_release` in `file_adapter.c`: the first
@@ -298,6 +299,41 @@ Each new kind is one more case in the two host leaves (`file_posix.c`,
 `file_windows.c`) and the two rings; nothing in the core or the bridge's
 routing changes shape. The two halves of a connection share one descriptor
 in the runtime with a two-count the releases decrement.
+
+### Rebinding a port
+
+Slice 2 set no `SO_REUSEADDR`, on the ground that a program's second bind of
+one port should answer `AddressInUse`. That kept a restarted server from
+listening: the connections its earlier run accepted and closed first wait
+out TIME_WAIT on the port, a minute on Linux, and a POSIX bind refuses the
+port meanwhile. firn's restart case shows it: after a client's `QUIT`, whose
+connection firn closes first, a second firn on the same port exits with the
+listen's failure (`firn_listens_again_on_its_port_after_a_restart` in
+`compiler/tests/programs/network.rs`). Redis sets the option on its
+listeners for this reason.
+
+The POSIX leaf now sets `SO_REUSEADDR` on each listening socket before its
+bind. The ground of slice 2 survives it for one address: the option never
+lets a second socket listen on an address and port another socket listens
+on, so a program's second listen of one address still answers
+`AddressInUse`, which the same case checks. On Linux, where sockets with
+the option on WSL2's kernel 6.18 also refused 127.0.0.1 beside a listener
+of 0.0.0.0 on one port and the reverse, what the option admits is a port
+held only by connections, in TIME_WAIT or otherwise. The BSDs, macOS among
+them, also let a socket with the option bind a specific address beside a
+wildcard listener on the same port; that rule comes from their
+documentation and was not run here.
+
+Windows needs no option. An experiment on Windows 11 (build 22631), with
+Python 3.13's sockets over Winsock on the loopback and no option set on any
+socket, found: after a listener's accepted connection was closed by the
+server first, so that `netstat` showed it in TIME_WAIT, and the listener
+closed, a new socket bound and listened on the same port; it did so too
+while the accepted connection was still established; and a second socket
+binding the port while the first still listened was refused with
+`WSAEADDRINUSE`. Winsock's `SO_REUSEADDR` is a different option: it lets a
+socket bind a port another socket holds, which would turn that refusal into
+a shared port, so the Windows leaf sets nothing.
 
 ## 6. The control test, and the bar
 
