@@ -1795,3 +1795,181 @@ byte. Both peers, all useful cells, unranked controls and adverse replicates
 remain visible. The no-loss criterion refuses the guarded policy and the
 slower-standard target remains incomplete; no threshold tuning or additional
 timing follows this refusal.
+
+
+### Reusing the node-search comparison: rejected
+
+Returning the selected comparison from private `ordered_map_search` removes
+repeated native work, but this all-consumer candidate is rejected by two
+scalar mutation regressions. A distinct lookup-only follow-up appears below. The
+[small evidence bundle](search-result-reuse-evidence.tar.gz) retains exact
+control/candidate module carriers, prospective criteria, native excerpts,
+commands, direct statuses, reductions and all 12,864 raw rows from four
+separate screens. It belongs to this experiment and is superseded with its
+record when this comparison is retired.
+
+The trial starts from `7c56c8ba2163b6652cf31bac4d697636307380ee`, using the frozen
+gate-profile compiler with SHA-256
+`fb19727639fd2b5301b164f58c299754b884b970f447610ac7dcd6ea7e1ccea0` and matching
+compiler/library/specification trees, Apple Clang 21.0.0, arm64 Darwin 25.6.0.
+The candidate returns a bounded position plus its observed `i32` comparison;
+exhaustion returns the node length and a positive sentinel. Lookup, edit,
+replacement and removal test equality before the unchanged `position < len`
+guard; insertion and range-start use only the position. Public interfaces,
+representation and comparator effects are unchanged, and no ordering law is
+assumed. Both private source versions are retained, with no compiler changes.
+
+The initial bounds-first variant removed repeated loads but still repeated
+the key comparison, failing the strict native criterion. Reordering the two
+guards then lets public `-O2` and the existing internalized `-O3` harness reuse
+search flags with `ccmp`: the duplicate key comparison and terminal key/query
+reloads disappear. The lookup frame remains 16 bytes, with ordinary recursive
+calls. Under retained `-O2`, scalar and wide lookup instead remove the second
+comparator call, keeping their 80-byte saved-register frames and stack
+accesses. No per-level helper call, result spill or complete owner transfer is
+added. However, the normal scalar scan loses its post-indexed load and needs a
+separate pointer increment per iteration. All 134 baseline public native
+function bodies match the std baseline after namespace, instance-symbol and
+assembly-label normalization; both arms use that same carrier.
+
+Both maintained `ordered-map-program.wf` and `ordered-map-cleanup-order.wf`
+compile and execute in both arms under default lowering and `--no-overlap`:
+sixteen successful build/run stages, 16.16 guarded seconds. Their existing
+sorted model, empty/end cases, ceiling replacement, must-consume owner ledgers
+and inconsistent comparators remain covered. These runs use ordinary
+allocation; the separate native allocation observer was not rerun. Existing
+normal/retained and structural harness checks also pass in both arms (9.34
+guarded construction/check seconds). No new behavioral case was necessary.
+
+The exploratory `-O2` screen uses the unchanged `ordered-costs` driver, all
+thirty cells in each boundary, source-shaped/direct/AVL C controls, warmup zero
+then five samples, and two cohorts reversing arm and implementation order.
+Each WF interval is divided by its same-cell source-C interval; a direction
+separates only when the entire five-sample normalized range lies beyond the
+other arm's range in both cohorts. Eight processes pass in 7.52 guarded
+seconds, with three apparent improvements and no repeated losses. This does
+**not** qualify performance: 3,259 of 4,800 timed intervals are below 1 ms
+(overall 39,000–5,347,000 ns), all quantized to 1,000 ns. Normal scalar count-eight
+lookup even shows normalized medians 1.120/1.133, but only one cohort separates
+as a loss. Its samples and verdict remain exploratory.
+
+Two follow-ups register duration admission before collecting their samples.
+They multiply complete traces in the same driver, retaining `seed + trace` in
+both independent oracle and timed loops. Each cell requires every used
+WF/source-C interval to be at least 1 ms and 1,000 clock quanta, and at most
+10% drift between its four arm/cohort source-C medians. The same full-range
+comparison applies; any admitted repeated loss refuses the source. No failed
+cell is rerun. Four clock observations per follow-up all report and observe
+1,000 ns. Short-interval and excessive-drift controls each refuse admission.
+
+- **Lookup, scale 64:** twenty build/check/clock/timing stages pass in 60.86
+  guarded seconds. WF/source-C intervals span 4.776–138.256 ms. Eleven of twelve
+  cells admit; normal scalar count 256 fails source drift (1.324164 max/min).
+  Three count-eight cells separate as gains, with candidate/control medians of
+  WF/source-C ratios 0.887438/0.879291 (normal scalar), 0.926562/0.940743
+  (retained scalar) and 0.942285/0.925656 (retained wide). Four overlap and four
+  have mixed cohort directions. The different trace/seed workload does not
+  retrospectively repair the exploratory screen.
+- **All nonlookup paths, scale 32:** before sampling, scale 32 replaces the
+  proposed 64 to bound runtime: the earlier measured intervals alone predict
+  over 304 seconds at 64 before oracle/build overhead, while its 39-microsecond
+  minimum predicts 1.248 ms at 32. Admission thresholds remain unchanged.
+  Twenty stages pass in 213.65 guarded seconds. All forty-eight cells admit
+  (WF/source-C intervals 1.234–167.319 ms): five gains, two losses, thirty-one
+  overlaps and ten mixed-cohort outcomes. The two normal scalar losses decide
+  rejection:
+
+| Count / path | Candidate/control median of WF/source-C ratios, cohort 0 / 1 | Source-C max/min across arms/cohorts |
+| --- | ---: | ---: |
+| 8 / replace-edit-remove-insert | 1.318924 / 1.338136 | 1.013983 |
+| 256 / replace-edit-remove-insert | 1.104886 / 1.096744 | 1.013681 |
+
+These are normalized complete-trace comparisons, not isolated-operation or
+raw-time estimates and not evidence of Rust/C++ parity. The native lookup
+reduction does not establish the cause of either mutation loss. Reopening
+requires a different source formulation with evidence addressing those paths;
+there is no hint, compiler policy, source adoption or unchanged-image retry.
+
+For replay, unpack the bundle into an ignored build directory and use the
+pinned compiler. For either carrier, emit with `whitefootc --emit-llvm --graph
+<arm>/modules.wfg --entry main -o <arm>.raw.ll`, then inspect with `clang -O2
+-Wno-override-module -x ir -S <arm>.raw.ll -o <arm>.s`. Run construction under
+`perl .github/run-check.pl <label> <command>`. The unchanged Makefile harness
+consumes the emitted module after replacing symbol prefix
+`wf_collections.ordered_map.` with `wf_std.collections.ordered_map.` and saving
+it as `<build>/ordered-library.raw.ll`, newer than its carrier source. Run
+`make -j2 -C research/experiments/container-representation/ordered-library check
+BUILD=<build> WHITEFOOTC=<compiler> LIBRARY_SOURCE=<arm>/collections/ordered_map/ordered-map.wf`
+and verify that Make retained the supplied raw bytes. Exact construction and
+behavior commands are in the status JSON files. `scaled-screen.py` and
+`remaining-screen.py` reuse those resulting objects to reproduce the fixed
+follow-ups under the host guard; their driver sources retain the complete
+changes, and the corresponding `reduce-*.py` files reproduce admission and
+ranges. The three `*-samples.csv`/`samples.csv` files retain warmups as well as
+all timed observations. Behavior replay uses the named maintained programs
+with only their ordered-map imports remapped from `std` to the carrier's `pkg`.
+
+
+### Lookup-only comparison reuse
+
+The selected follow-up confines result reuse to lookup. One private search
+core returns position and comparison; the existing position-only search wraps
+it for every other consumer. Only `ordered_map_lookup_node` consumes the
+comparison, retaining the equality-before-bounds guard. This keeps one loop
+implementation, the original public interface and node representation, and
+ordinary bounds/owner proofs without assumed comparator laws. The rejected
+all-consumer result above remains rejected.
+
+Before timing, the one source-shape trial requires every existing nonlookup
+native body to equal its baseline, and lookup to equal the prior candidate.
+The gate passes at public, normal and retained `-O2`: baseline inventories have
+134, 29 and 54 bodies respectively, with exactly two existing lookup bodies
+changed per boundary and no other body change. Both lookup bodies equal the
+prior candidate. Normalization changes only namespace, comment and local-label
+spelling; instructions and registers remain exact. Public emission adds two
+result-core instances, which disappear through inlining under both harness
+boundaries. This confines the earlier comparison/call removal to lookup,
+without introducing calls or spills in the measured nonlookup paths.
+
+The two maintained programs pass in both lowering modes again: eight build/run
+stages, 8.67 guarded seconds. All four normal/retained harness images pass their
+existing behavior and structural checks. Before samples, one candidate link
+attempt fails because the scratch linkage adapter internalized
+`wf__main_body`; restoring its external definition matches the Makefile's
+runtime-symbol exclusion. The initial exit-one status and exact two-header
+repair are retained. Both arms' runtime definition rows then match. No source
+redesign or timing retry occurs.
+
+The fixed follow-up includes twelve lookup cells at trace scale 64 and only
+the two previously losing normal scalar mutation cells at scale 32. It keeps
+both reversed cohorts, five timed samples, three C controls, and the same
+clock/duration/source-drift/range criteria. All fourteen cells admit;
+WF/source-C windows are 5.322–172.785 ms and clock quantum is 1,000 ns. All eight
+timing processes pass (the candidate-build/check/clock continuation plus timing
+takes 61.87 guarded seconds). Results are two separated normalized gains, zero
+losses, eight overlaps and four mixed-cohort outcomes:
+
+| Cell | Candidate/control median of WF/source-C ratios, cohort 0 / 1 | Outcome |
+| --- | ---: | --- |
+| retained scalar, count 8, hit/miss | 0.937129 / 0.934302 | separated gain |
+| normal scalar, count 8, replace-edit-remove-insert | 0.999725 / 0.987022 | overlap |
+| normal scalar, count 256, replace-edit-remove-insert | 0.968894 / 0.955073 | separated gain |
+
+There is no separated normal-lookup gain in this image. The count-256 mutation
+body is unchanged, so its measured gain is not attributed to comparison reuse.
+The adoption ground is a real lookup work reduction, one duration-qualified
+retained lookup gain, unchanged nonlookup native bodies, and no admitted loss
+in the fixed controls. This remains a narrow whole-trace result, not a general
+speedup, raw-time reduction or Rust/C++/ThinLTO parity claim.
+
+The same evidence bundle contains `lookup-only/`, complete baseline/candidate
+assembly and `audit-lookup-only.py`, the eight behavior outcomes, initial link
+failure and linkage repair, `ordered-costs-narrow.c`, exact build/run commands,
+all 1,344 new rows in `narrow-samples.csv`, and `reduce-narrow.py`. The source
+in that carrier is byte-identical to the selected library file; `pins.json`
+records its digest. Replay this candidate with the same module emission and
+existing Makefile harness described above, preserving the runtime `wf__`
+symbols' linkage. `narrow-screen.py` runs the fixed final comparison against
+those prepared images; `narrow-resume.py` records the original continuation
+from the pre-sample link repair. No extra cases or benchmark infrastructure
+enter the maintained gate.
