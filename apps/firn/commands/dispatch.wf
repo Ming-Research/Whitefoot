@@ -435,14 +435,14 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   if code == code_auth {
     let fits = count >= 2_u64;
     if fits {
-      run_auth(input: input, args: args, client: client);
+      run_auth(store: store, input: input, args: args, client: client);
     } else {
       reply_arity(client: client, input: input, name: name);
     }
     return unit;
   }
   if code == code_hello {
-    run_hello(input: input, args: args, client: client);
+    run_hello(store: store, input: input, args: args, client: client);
     return unit;
   }
   if code == code_quit {

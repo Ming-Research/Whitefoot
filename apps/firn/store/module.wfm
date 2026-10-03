@@ -57,9 +57,18 @@ public struct KeyspaceState {
   public meta: Meta;
 }
 
+public struct ServerState {
+  doc "What the server keeps beside the keyspace that every connection reaches: the password clients must give, empty for none, and how many seconds a silent client is kept, zero for no limit, which CONFIG SET changes; the values of the parameters whose only effect in Redis is on its internal encodings, which CONFIG SET sets and CONFIG GET reports and firn does not use, in the order of encoding_defaults; and how many connections the server has accepted since it started or CONFIG RESETSTAT last ran.";
+  public password: Bytes;
+  public timeout: u64;
+  public encodings: Array<i64, 9>;
+  public connections: u64;
+}
+
 public struct Keyspace {
-  doc "One context's handle to the keyspace, and whether changes are appended to the append-only file's pending bytes, fixed before any client is served.";
+  doc "One context's handle to the keyspace and to the server's state beside it, and whether changes are appended to the append-only file's pending bytes, fixed before any client is served.";
   public state: Shared<KeyspaceState>;
+  public server: Shared<ServerState>;
   public logging: Bool;
 }
 
@@ -85,7 +94,7 @@ public binding DueOrder : PriorityOrder<Due, KeyEnv> {
 
 public fn keyspace_table() -> made: KeyedTable<Entry> pure doc "An empty table of entries sized for 2^18 keys, as a new keyspace's table is, and as FLUSHALL's is.";
 
-public fn keyspace_new(seed: u64, logging: Bool) -> made: Keyspace pure doc "An empty keyspace, its table made by keyspace_table, appending changes to the append-only file's pending bytes when logging is true, whose SPOP draws start from the seed.";
+public fn keyspace_new(seed: u64, logging: Bool, password: Bytes, timeout: u64) -> made: Keyspace pure doc "An empty keyspace, its table made by keyspace_table, appending changes to the append-only file's pending bytes when logging is true, whose SPOP draws start from the seed, beside a server's state that requires the password, none when it is empty, keeps a silent client timeout seconds, none when it is zero, and holds Redis 7.0.15's defaults for the encoding parameters.";
 
 public fn keyspace_share(store: &Keyspace) -> made: Keyspace reads(store) doc "Another context's handle to the same keyspace.";
 

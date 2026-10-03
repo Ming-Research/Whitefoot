@@ -24,11 +24,10 @@ own:
   version 2, version 3 being refused as unsupported, `SELECT 0`, firn
   having one database, and `CLIENT ID`, `CLIENT GETNAME` and
   `CLIENT SETNAME`;
-- server: `CONFIG GET` with Redis's glob patterns over the parameters
-  `appendfilename`, `appendonly`, `bind`, `databases`, `port`,
-  `requirepass`, `save` and `timeout`, `TIME`, and `COMMAND` and
-  `COMMAND COUNT`, which describe no command. `COMMAND DOCS` is answered as
-  an unknown subcommand, so that `redis-cli` uses its own help. `FLUSHALL`
+- server: `CONFIG GET`, `CONFIG SET` and `CONFIG RESETSTAT`, described
+  below, `TIME`, and `COMMAND` and `COMMAND COUNT`, which describe no
+  command. `COMMAND DOCS` is answered as an unknown subcommand, so that
+  `redis-cli` uses its own help. `FLUSHALL`
   and `FLUSHDB`, with `ASYNC` or `SYNC`, empty firn's one database and its
   queued expiries in one atomic statement and are appended to the
   append-only file as Redis appends them; the old keys are released before
@@ -39,6 +38,32 @@ own:
   answers OK, as Redis does with its debug command enabled, firn keeping no
   log to write it to; every other `DEBUG` subcommand is answered as an
   unknown one.
+
+`CONFIG GET` takes Redis's glob patterns over firn's parameters:
+`appendfilename`, `appendonly`, `bind`, `databases`, `port`, `requirepass`,
+`save` and `timeout`, and the parameters whose only effect in Redis is on its
+internal encodings, `hash-max-listpack-entries`, `hash-max-listpack-value`,
+`list-compress-depth`, `list-max-listpack-size`, `set-max-intset-entries`,
+`stream-node-max-bytes`, `stream-node-max-entries`,
+`zset-max-listpack-entries` and `zset-max-listpack-value`, with their aliases
+`hash-max-ziplist-entries`, `hash-max-ziplist-value`, `list-max-ziplist-size`,
+`zset-max-ziplist-entries` and `zset-max-ziplist-value`. firn has none of
+those encodings: it reports their parameters with Redis's defaults and keeps
+what `CONFIG SET` gives them, and they change nothing else.
+
+`CONFIG SET` takes these parameters with Redis's checks and errors, refusing
+any other as Redis refuses one it does not know, and applies all of its pairs
+or none. `requirepass` changes the password for new connections and for
+those that have not given it, and removing it lets those in; `timeout`
+changes the idle limit for new connections and for connections waiting under
+a limit, while a connection that waits with no limit reads a new one only
+once it sends again. `appendfilename` and `databases` are refused as Redis
+refuses them. An `appendonly`, `port` or `bind` other than the one firn
+started with, and a `save` schedule other than the empty one, are refused in
+Redis's form for a refused value with firn's own reason, since firn cannot
+change them while it runs and saves no snapshot; Redis would apply them.
+`CONFIG RESETSTAT` answers OK and zeroes the count of connections the server
+has accepted.
 
 `HELLO` reports the server as `redis` version 7.0.15, the version whose
 replies firn follows.
@@ -106,7 +131,9 @@ default.
 - `store`: the keyspace, one shared state holding a keyed table of entries
   and, after it, the queued expiries, the append-only file's pending bytes
   and the server's counts
-  ([firn under the shared-state design](../../research/investigations/shared-state/DESIGN.md#firn-under-the-design));
+  ([firn under the shared-state design](../../research/investigations/shared-state/DESIGN.md#firn-under-the-design)),
+  and beside it a second shared state, the server's, with what `CONFIG SET`
+  changes and the count of accepted connections;
 - `commands`: one file per kind of value, the connection and server
   commands, and the dispatch;
 - `persistence`: the append-only file's writer and its replay;

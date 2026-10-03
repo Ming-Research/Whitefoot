@@ -3300,9 +3300,14 @@ condition under which it is taken up.
   invalid expire time where Redis accepts them, since firn keeps expiries as
   nanoseconds; `SET`'s `EX` or `PX` followed by a zero byte and more, which
   Redis's strcasecmp reads up to the zero byte and firn's `run_set` answers
-  as a syntax error; `CONFIG SET`, which firn answers as an unknown option for
-  every parameter where Redis sets those it knows, and the parameters beyond
-  the eight `CONFIG GET` reports; `ZADD`'s options `NX`, `XX`, `CH`, `INCR`,
+  as a syntax error; `CONFIG SET` of `appendonly`, `port` or `bind` to a value
+  other than the one firn started with, and of a nonempty `save` schedule,
+  which firn refuses where Redis applies them, since the append-only file's
+  writer and the listener would have to change while firn runs, `appendonly
+  yes` with keys present needs a rewrite that visits every key, and firn saves
+  no snapshot; the parameters beyond firn's 22, refused as unknown; `FUNCTION`
+  subcommands beyond `FLUSH` and `DEBUG` subcommands beyond `LOG`, answered
+  as unknown; `ZADD`'s options `NX`, `XX`, `CH`, `INCR`,
   `GT` and `LT`, which firn answers as a syntax error; a score of negative
   zero in a sorted set Redis encodes as a skiplist, one of more than 128
   members or with a member longer than 64 bytes, which Redis keeps and writes
@@ -3377,3 +3382,15 @@ condition under which it is taken up.
   A library entry that picks a filled bucket, as uniformly as its layout
   allows, would remove both. Reopen with the library's next hash map change
   or when a second program needs a random member.
+- **A connection that waits with no idle limit misses a limit `CONFIG SET`
+  sets.** firn's `serve` (`apps/firn/server/server.wf`) gives a receive a
+  deadline only while an idle limit is set, and reads the limit again when a
+  deadline passes and at most once a second while the client sends; a client
+  waiting with no limit has no deadline, so after `CONFIG SET timeout 5` it
+  stays open until it sends, where Redis's `clientsCron` closes every client
+  silent past the new limit. Every receive with a deadline of at most a second
+  would close the gap; a receive that parks then pays a timer insertion and
+  removal on its driver's heap (`wf_context_arm_deadline` in
+  `compiler/src/backend/completion/bridge.c`), which an unpipelined benchmark
+  pays on every request. Measure that cost with `redis-bench.sh quick` before
+  choosing; reopen when a deployment changes the limit while it runs.

@@ -15,16 +15,14 @@ public struct Parsed {
 }
 
 public struct Settings {
-  doc "The server's configuration as a connection reports and checks it: the port it listens on, how many seconds a silent client is kept, zero for no limit, the address it listens on and the append-only file's name as given, and the password a client must give before other commands, empty for none.";
+  doc "The server's configuration that does not change while it runs, as a connection reports it: the port it listens on, and the address it listens on and the append-only file's name as given. What CONFIG SET changes is in the server's state beside the keyspace.";
   public port: u64;
-  public timeout: u64;
   public bind: Bytes;
   public appendfilename: Bytes;
-  public password: Bytes;
 }
 
 public struct Client {
-  doc "What one connection's commands work with. Replies are written into bytes, a window filled to its capacity, up to at, where the next reply starts. A command that changes or reads the keyspace in an atomic statement passes the client as its visitor's environment: now is the instant expiries are read against, low, high and number carry the command's numbers in and a visitor's results out, state reports what the visitor found, items and scores hold the owned keys and scores the command prepared, each key hashed when it was made so that no hash is computed inside an atomic statement, the last to be used first, keys is the environment the key protocols take, and random is the state SPOP draws from while it runs. The connection's own state follows: id is its number, counted from 1 in the order the server accepted it; name is the name CLIENT SETNAME gave it, empty for none; locked is true while a password is required and not yet given; closing is set by QUIT, after whose reply the connection ends; unix_us is the calendar time in microseconds as the clocks were last read; and settings is the server's configuration.";
+  doc "What one connection's commands work with. Replies are written into bytes, a window filled to its capacity, up to at, where the next reply starts. A command that changes or reads the keyspace in an atomic statement passes the client as its visitor's environment: now is the instant expiries are read against, low, high and number carry the command's numbers in and a visitor's results out, state reports what the visitor found, items and scores hold the owned keys and scores the command prepared, each key hashed when it was made so that no hash is computed inside an atomic statement, the last to be used first, keys is the environment the key protocols take, and random is the state SPOP draws from while it runs. The connection's own state follows: id is its number, counted from 1 in the order the server accepted it; name is the name CLIENT SETNAME gave it, empty for none; locked is true while a password is required and not yet given; closing is set by QUIT, after whose reply the connection ends; unix_us is the calendar time in microseconds as the clocks were last read; and settings is the server's configuration that does not change while it runs.";
   public bytes: Box<Slots<u8>>;
   public at: u64;
   public now: u64;

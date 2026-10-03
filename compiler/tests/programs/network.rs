@@ -1252,7 +1252,14 @@ fn firn_replays_its_append_only_file_after_a_restart_on_both_routes() {
 
 /// [PRE-2] a deadline on `receive_next` closes a client silent past
 /// firn's idle limit: with a limit of one second, the connection ends after
-/// at least 0.9 and at most two seconds of silence.
+/// at least 0.9 and at most two seconds of silence. A limit CONFIG SET
+/// removes reaches a client already waiting under the old one, which reads the
+/// limit again when its deadline passes, and a client that connects after it:
+/// both stay open through 1.5 seconds of silence. On the first route a limit
+/// of two seconds set next closes a client that connects after it and falls
+/// silent, no sooner than two seconds, and a client that keeps sending reads
+/// it within a second and is closed once it falls silent, after at least 1.9
+/// and at most three seconds.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_closes_a_client_silent_past_its_idle_limit_on_both_routes() {
@@ -1261,7 +1268,8 @@ fn firn_closes_a_client_silent_past_its_idle_limit_on_both_routes() {
         let what = format!("native ring: {native_ring}");
         let port = free_port();
         let text = port.to_string();
-        let child = program.spawn_on_route(native_ring, &[text.as_bytes(), b"1", b"-", b"1"]);
+        let clients: &[u8] = if native_ring { b"4" } else { b"3" };
+        let child = program.spawn_on_route(native_ring, &[text.as_bytes(), clients, b"-", b"1"]);
         let mut client = connect_when_ready(port);
         client
             .set_read_timeout(Some(Duration::from_secs(10)))
@@ -1280,6 +1288,53 @@ fn firn_closes_a_client_silent_past_its_idle_limit_on_both_routes() {
             "{what}: closed after {silent:?}"
         );
         drop(client);
+        let mut changer = connect_when_ready(port);
+        changer
+            .write_all(&resp(&["CONFIG", "SET", "timeout", "0"]))
+            .expect("remove the limit");
+        expect_replies(&mut changer, b"+OK\r\n", &what);
+        let mut later = connect_when_ready(port);
+        later.write_all(&resp(&["PING"])).expect("send a ping");
+        expect_replies(&mut later, b"+PONG\r\n", &what);
+        expect_silence_for(&mut changer, Duration::from_millis(1500), &what);
+        expect_silence(&mut later, &what);
+        changer
+            .write_all(&resp(&["CONFIG", "GET", "timeout"]))
+            .expect("read the limit");
+        expect_replies(&mut changer, b"*2\r\n$7\r\ntimeout\r\n$1\r\n0\r\n", &what);
+        later.write_all(&resp(&["PING"])).expect("send a ping");
+        expect_replies(&mut later, b"+PONG\r\n", &what);
+        drop(later);
+        if native_ring {
+            changer
+                .write_all(&resp(&["CONFIG", "SET", "timeout", "2"]))
+                .expect("set another limit");
+            expect_replies(&mut changer, b"+OK\r\n", &what);
+            let mut third = connect_when_ready(port);
+            third.write_all(&resp(&["PING"])).expect("send a ping");
+            expect_replies(&mut third, b"+PONG\r\n", &what);
+            let sending = Instant::now();
+            let mut last_ping = sending;
+            while sending.elapsed() < Duration::from_millis(1300) {
+                std::thread::sleep(Duration::from_millis(200));
+                changer.write_all(&resp(&["PING"])).expect("keep sending");
+                expect_replies(&mut changer, b"+PONG\r\n", &what);
+                last_ping = Instant::now();
+            }
+            expect_closed(&mut third, &what);
+            let third_silent = sending.elapsed();
+            assert!(
+                third_silent >= Duration::from_millis(1900),
+                "{what}: the client after the limit closed after {third_silent:?}"
+            );
+            expect_closed(&mut changer, &what);
+            let silent = last_ping.elapsed();
+            assert!(
+                silent >= Duration::from_millis(1900) && silent <= Duration::from_secs(3),
+                "{what}: closed after {silent:?}"
+            );
+        }
+        drop(changer);
         let (status, _) = finished(child);
         assert_eq!(status, 0, "{what}");
     }
@@ -1690,7 +1745,12 @@ fn firn_answers_commands_naming_a_key_twice_as_redis_does() {
 /// become spaces so that an error stays one line, an unknown subcommand is
 /// echoed to 128 bytes and an unknown `CONFIG SET` option whole, and a
 /// carriage return a malformed request holds where a dollar sign belongs is
-/// echoed as a space before the connection closes. `FUNCTION FLUSH` succeeds
+/// echoed as a space before the connection closes. `CONFIG SET` answers the
+/// first unknown, immutable or repeated name as Redis does, an alias not
+/// repeating its parameter; then the first refused value, read as string2ll or
+/// memtoull reads it, the latter's product wrapping modulo 2^64, with Redis's
+/// range and the parameter's own name; and sets nothing when any pair is
+/// refused. `CONFIG RESETSTAT` succeeds. `FUNCTION FLUSH` succeeds
 /// with no option, or with `ASYNC` or `SYNC` read up to a zero byte, and
 /// refuses another option and two of them; `FUNCTION` alone is short of
 /// arguments, and a subcommand whose name holds a zero byte is unknown.
@@ -1698,7 +1758,10 @@ fn firn_answers_commands_naming_a_key_twice_as_redis_does() {
 /// zero byte, while `LOG` without exactly one message and an unknown
 /// subcommand, its line breaks echoed as spaces, are answered as Redis answers
 /// a `DEBUG` subcommand it does not know. The expected replies are
-/// redis-server 7.0.15's to the same bytes, its debug command enabled.
+/// redis-server 7.0.15's to the same bytes, its debug command enabled, but for
+/// the last three `CONFIG SET`s, which ask for a snapshot schedule, the
+/// append-only file and another address: Redis would apply them, and firn
+/// refuses them in Redis's form for a refused value, with its own reason.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_answers_config_and_echoes_client_bytes_as_redis_does() {
@@ -1720,7 +1783,72 @@ fn firn_answers_config_and_echoes_client_bytes_as_redis_does() {
     batch.push(0);
     batch.extend_from_slice(&[b'd'; 10]);
     batch.extend_from_slice(b"\r\n$1\r\nv\r\n");
+    let addresses = (1..=17)
+        .map(|n| n.to_string())
+        .collect::<Vec<_>>()
+        .join(" ");
     for request in [
+        vec!["CONFIG", "SET", "databases", "16"],
+        vec!["CONFIG", "SET", "nosuch", "1", "databases", "16"],
+        vec!["CONFIG", "SET", "Databases", "16", "nosuch", "1"],
+        vec!["CONFIG", "SET", "timeout", "0", "TIMEOUT", "1"],
+        vec![
+            "CONFIG",
+            "SET",
+            "hash-max-ziplist-entries",
+            "1",
+            "hash-max-listpack-entries",
+            "2",
+        ],
+        vec!["CONFIG", "GET", "hash-max-ziplist-entries"],
+        vec!["CONFIG", "SET", "TIMEOUT", "-1"],
+        vec!["CONFIG", "SET", "timeout", "007"],
+        vec!["CONFIG", "SET", "hash-max-listpack-entries", "-1"],
+        vec!["CONFIG", "SET", "list-max-ziplist-size", "-2147483649"],
+        vec![
+            "CONFIG",
+            "SET",
+            "zset-max-ziplist-value",
+            "1kb",
+            "zset-max-listpack-entries",
+            "7",
+        ],
+        vec!["CONFIG", "SET", "hash-max-listpack-value", "12\0kb"],
+        vec![
+            "CONFIG",
+            "SET",
+            "stream-node-max-bytes",
+            "18014398509481984kb",
+        ],
+        vec![
+            "CONFIG",
+            "GET",
+            "zset-max-listpack-value",
+            "hash-max-listpack-value",
+            "stream-node-max-bytes",
+        ],
+        vec![
+            "CONFIG",
+            "SET",
+            "stream-node-max-bytes",
+            "20000000000000000000",
+        ],
+        vec!["CONFIG", "SET", "stream-node-max-bytes", "5 kb"],
+        vec!["CONFIG", "SET", "appendonly", "maybe"],
+        vec!["CONFIG", "SET", "appendonly", "No\0x"],
+        vec!["CONFIG", "SET", "save", "1 2 3"],
+        vec!["CONFIG", "SET", "save", ""],
+        vec!["CONFIG", "SET", "bind", addresses.as_str()],
+        vec!["CONFIG", "SET", "timeout", "9", "port", "70000"],
+        vec!["CONFIG", "SET", "port", "70000", "timeout", "abc"],
+        vec!["CONFIG", "SET", "appendonly", "yes", "timeout", "abc"],
+        vec!["CONFIG", "GET", "timeout"],
+        vec!["CONFIG", "RESETSTAT"],
+        vec!["CONFIG", "RESETSTAT", "x"],
+        vec!["CONFIG", "SET", "save", "3600 1"],
+        vec!["CONFIG", "SET", "appendonly", "yes"],
+        vec!["CONFIG", "SET", "timeout", "5", "bind", "0.0.0.0"],
+        vec!["CONFIG", "GET", "timeout"],
         vec!["FUNCTION"],
         vec!["FUNCTION", "FLUSH"],
         vec!["function", "flush", "async"],
@@ -1746,7 +1874,43 @@ fn firn_answers_config_and_echoes_client_bytes_as_redis_does() {
         b"'. Try CONFIG HELP.\r\n-ERR Unknown option or number of arguments for CONFIG SET - '",
     );
     expected.extend_from_slice(&[b'c'; 150]);
-    expected.extend_from_slice(b"'\r\n-ERR wrong number of arguments for 'function' command\r\n+OK\r\n+OK\r\n+OK\r\n-ERR FUNCTION FLUSH only supports SYNC|ASYNC option\r\n-ERR unknown subcommand or wrong number of arguments for 'FLUSH'. Try FUNCTION HELP.\r\n-ERR unknown subcommand 'flush'. Try FUNCTION HELP.\r\n");
+    expected.extend_from_slice(b"'\r\n");
+    let failed = "-ERR CONFIG SET failed (possibly related to argument";
+    let wide = "9223372036854775807";
+    expected.extend(
+        format!(
+            "{failed} 'databases') - can't set immutable config\r\n\
+             -ERR Unknown option or number of arguments for CONFIG SET - 'nosuch'\r\n\
+             {failed} 'Databases') - can't set immutable config\r\n\
+             {failed} 'TIMEOUT') - duplicate parameter\r\n\
+             +OK\r\n*2\r\n$24\r\nhash-max-ziplist-entries\r\n$1\r\n2\r\n\
+             {failed} 'timeout') - argument must be between 0 and 2147483647 inclusive\r\n\
+             {failed} 'timeout') - argument couldn't be parsed into an integer\r\n\
+             {failed} 'hash-max-listpack-entries') - argument must be between 0 and {wide} inclusive\r\n\
+             {failed} 'list-max-ziplist-size') - argument must be between -2147483648 and 2147483647 inclusive\r\n\
+             +OK\r\n+OK\r\n+OK\r\n\
+             *6\r\n$23\r\nhash-max-listpack-value\r\n$2\r\n12\r\n$21\r\nstream-node-max-bytes\r\n$1\r\n0\r\n$23\r\nzset-max-listpack-value\r\n$4\r\n1024\r\n\
+             {failed} 'stream-node-max-bytes') - argument must be between 0 and {wide} inclusive\r\n\
+             {failed} 'stream-node-max-bytes') - argument must be a memory value\r\n\
+             {failed} 'appendonly') - argument must be 'yes' or 'no'\r\n\
+             +OK\r\n\
+             {failed} 'save') - Invalid save parameters\r\n\
+             +OK\r\n\
+             {failed} 'bind') - Too many bind addresses specified.\r\n\
+             {failed} 'port') - argument must be between 0 and 65535 inclusive\r\n\
+             {failed} 'port') - argument must be between 0 and 65535 inclusive\r\n\
+             {failed} 'timeout') - argument couldn't be parsed into an integer\r\n\
+             *2\r\n$7\r\ntimeout\r\n$1\r\n0\r\n\
+             +OK\r\n\
+             -ERR wrong number of arguments for 'config|resetstat' command\r\n\
+             {failed} 'save') - firn saves no snapshot\r\n\
+             {failed} 'appendonly') - firn cannot change it while running\r\n\
+             {failed} 'bind') - firn cannot change it while running\r\n\
+             *2\r\n$7\r\ntimeout\r\n$1\r\n0\r\n"
+        )
+        .bytes(),
+    );
+    expected.extend_from_slice(b"-ERR wrong number of arguments for 'function' command\r\n+OK\r\n+OK\r\n+OK\r\n-ERR FUNCTION FLUSH only supports SYNC|ASYNC option\r\n-ERR unknown subcommand or wrong number of arguments for 'FLUSH'. Try FUNCTION HELP.\r\n-ERR unknown subcommand 'flush'. Try FUNCTION HELP.\r\n");
     expected.extend_from_slice(b"-ERR wrong number of arguments for 'debug' command\r\n+OK\r\n+OK\r\n-ERR unknown subcommand or wrong number of arguments for 'LOG'. Try DEBUG HELP.\r\n-ERR unknown subcommand or wrong number of arguments for 'LOG'. Try DEBUG HELP.\r\n-ERR unknown subcommand or wrong number of arguments for 'NO  PE'. Try DEBUG HELP.\r\n");
     expected.extend_from_slice(b"-ERR Protocol error: expected '$', got ' '\r\n");
     expect_replies(&mut client, &expected, "the CONFIG and echo batch");
@@ -1935,8 +2099,15 @@ fn expect_closed(stream: &mut TcpStream, what: &str) {
 /// Fails when the server sends anything within a third of a second.
 #[cfg(target_os = "linux")]
 fn expect_silence(stream: &mut TcpStream, what: &str) {
+    expect_silence_for(stream, Duration::from_millis(300), what);
+}
+
+/// Fails when the server sends anything, or closes the connection, within the
+/// wait.
+#[cfg(target_os = "linux")]
+fn expect_silence_for(stream: &mut TcpStream, wait: Duration, what: &str) {
     stream
-        .set_read_timeout(Some(Duration::from_millis(300)))
+        .set_read_timeout(Some(wait))
         .expect("bound the wait for silence");
     let mut byte = [0_u8; 1];
     match stream.read(&mut byte) {
@@ -2073,16 +2244,17 @@ fn firn_reads_count_and_length_lines_as_redis_does() {
 
 /// firn answers CONFIG GET for the parameters it reports as Redis 7.0 does,
 /// matching an argument that holds [, * or ? as Redis's stringmatchlen
-/// matches a pattern, in either case: * reaches all eight; an argument
-/// naming a parameter and a pattern reaching it answer it once, spelled as the
-/// first argument spells it; a class with a range, ? and a negated class
-/// match; the range [Z-a] holds nothing, because Redis swaps a reversed
-/// range's bounds before folding their case; a backslash outside a class
-/// folds case and inside one does not; a pattern stops at a zero byte; and an
-/// argument with none of the three bytes is a name, \Port among them. The
-/// options --timeout and --appendfilename set the values reported. Every reply
-/// holds what redis-server 7.0.15 answers for these parameters with the same
-/// settings, in alphabetical order, one of the orders Redis answers in.
+/// matches a pattern, in either case: * reaches all 22, the encoding
+/// parameters and their aliases among them, each with Redis's default; an
+/// argument naming a parameter and a pattern reaching it answer it once,
+/// spelled as the first argument spells it; a class with a range, ? and a
+/// negated class match; the range [Z-a] holds nothing, because Redis swaps a
+/// reversed range's bounds before folding their case; a backslash outside a
+/// class folds case and inside one does not; a pattern stops at a zero byte;
+/// and an argument with none of the three bytes is a name, \Port among them.
+/// The options --timeout and --appendfilename set the values reported. Every
+/// reply holds what redis-server 7.0.15 answers for these parameters with the
+/// same settings, in alphabetical order, one of the orders Redis answers in.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_matches_config_get_patterns_as_redis_does() {
@@ -2124,21 +2296,24 @@ fn firn_matches_config_get_patterns_as_redis_does() {
     }
     client.write_all(&batch).expect("send the patterns");
     let port_field = format!("$4\r\nport\r\n${}\r\n{text}\r\n", text.len());
+    let hash_and_list = "$25\r\nhash-max-listpack-entries\r\n$3\r\n512\r\n$23\r\nhash-max-listpack-value\r\n$2\r\n64\r\n$24\r\nhash-max-ziplist-entries\r\n$3\r\n512\r\n$22\r\nhash-max-ziplist-value\r\n$2\r\n64\r\n$19\r\nlist-compress-depth\r\n$1\r\n0\r\n$22\r\nlist-max-listpack-size\r\n$2\r\n-2\r\n$21\r\nlist-max-ziplist-size\r\n$2\r\n-2\r\n";
+    let s_fields = "$4\r\nsave\r\n$0\r\n\r\n$22\r\nset-max-intset-entries\r\n$3\r\n512\r\n$21\r\nstream-node-max-bytes\r\n$4\r\n4096\r\n$23\r\nstream-node-max-entries\r\n$3\r\n100\r\n";
+    let zset_fields = "$25\r\nzset-max-listpack-entries\r\n$3\r\n128\r\n$23\r\nzset-max-listpack-value\r\n$2\r\n64\r\n$24\r\nzset-max-ziplist-entries\r\n$3\r\n128\r\n$22\r\nzset-max-ziplist-value\r\n$2\r\n64\r\n";
     let expected = format!(
-        "*16\r\n$14\r\nappendfilename\r\n$12\r\npatterns.aof\r\n$10\r\nappendonly\r\n$2\r\nno\r\n$4\r\nbind\r\n$9\r\n127.0.0.1\r\n$9\r\ndatabases\r\n$1\r\n1\r\n{port_field}$11\r\nrequirepass\r\n$0\r\n\r\n$4\r\nsave\r\n$0\r\n\r\n$7\r\ntimeout\r\n$1\r\n7\r\n\
+        "*44\r\n$14\r\nappendfilename\r\n$12\r\npatterns.aof\r\n$10\r\nappendonly\r\n$2\r\nno\r\n$4\r\nbind\r\n$9\r\n127.0.0.1\r\n$9\r\ndatabases\r\n$1\r\n1\r\n{hash_and_list}{port_field}$11\r\nrequirepass\r\n$0\r\n\r\n{s_fields}$7\r\ntimeout\r\n$1\r\n7\r\n{zset_fields}\
          *4\r\n$14\r\nappendfilename\r\n$12\r\npatterns.aof\r\n$10\r\nappendonly\r\n$2\r\nno\r\n\
          *4\r\n$14\r\nappendfilename\r\n$12\r\npatterns.aof\r\n$10\r\nAPPENDONLY\r\n$2\r\nno\r\n\
          *4\r\n$4\r\nbind\r\n$9\r\n127.0.0.1\r\n$9\r\ndatabases\r\n$1\r\n1\r\n\
          *2\r\n{port_field}\
          *4\r\n{port_field}$7\r\ntimeout\r\n$1\r\n7\r\n\
-         *4\r\n$4\r\nsave\r\n$0\r\n\r\n$7\r\ntimeout\r\n$1\r\n7\r\n\
+         *18\r\n{s_fields}$7\r\ntimeout\r\n$1\r\n7\r\n{zset_fields}\
          *0\r\n\
          *0\r\n\
          *2\r\n{port_field}\
          *0\r\n\
-         *2\r\n$4\r\nsave\r\n$0\r\n\r\n\
+         *8\r\n{s_fields}\
          *0\r\n\
-         *2\r\n$4\r\nsave\r\n$0\r\n\r\n"
+         *8\r\n{s_fields}"
     );
     expect_replies(&mut client, expected.as_bytes(), "the patterns");
     drop(client);
@@ -2280,15 +2455,18 @@ fn firn_listens_again_on_its_port_after_a_restart() {
 /// unlocks a connection too and answers with its id. While locked, an array of
 /// more than 10 elements or a bulk string of more than 16,384 bytes is a
 /// protocol error that closes the connection, and once unlocked an array of
-/// 11 elements is a command. The expected bytes are redis-server 7.0.15's with
-/// the same password, the connection's id aside.
+/// 11 elements is a command. CONFIG SET requirepass changes the password: the
+/// connection that changed it stays authenticated, a new one is refused the
+/// old password, and removing the password unlocks that one at once. The
+/// expected bytes are redis-server 7.0.15's with the same password, the
+/// connection's id aside.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_requires_its_password_as_redis_does() {
     let program = firn();
     let port = free_port();
     let text = port.to_string();
-    let child = program.spawn_on_route(true, &[text.as_bytes(), b"4", b"--requirepass", b"secret"]);
+    let child = program.spawn_on_route(true, &[text.as_bytes(), b"7", b"--requirepass", b"secret"]);
     let mut client = connect_when_ready(port);
     let mut batch = Vec::new();
     let mut eleven = vec!["DEL"];
@@ -2361,6 +2539,52 @@ fn firn_requires_its_password_as_redis_does() {
     );
     expect_closed(&mut client, "16,385 bytes while locked");
     drop(client);
+    let mut setter = connect_when_ready(port);
+    let mut batch = resp(&["AUTH", "secret"]);
+    batch.extend(resp(&["CONFIG", "SET", "requirepass", "other"]));
+    batch.extend(resp(&["PING"]));
+    batch.extend(resp(&["CONFIG", "GET", "requirepass"]));
+    setter.write_all(&batch).expect("change the password");
+    expect_replies(
+        &mut setter,
+        b"+OK\r\n+OK\r\n+PONG\r\n*2\r\n$11\r\nrequirepass\r\n$5\r\nother\r\n",
+        "the password changed",
+    );
+    let mut waiting = connect_when_ready(port);
+    let mut batch = resp(&["PING"]);
+    batch.extend(resp(&["AUTH", "secret"]));
+    waiting.write_all(&batch).expect("give the old password");
+    expect_replies(
+        &mut waiting,
+        b"-NOAUTH Authentication required.\r\n-WRONGPASS invalid username-password pair or user is disabled.\r\n",
+        "the old password",
+    );
+    setter
+        .write_all(&resp(&["CONFIG", "SET", "requirepass", ""]))
+        .expect("remove the password");
+    expect_replies(&mut setter, b"+OK\r\n", "the password removed");
+    let mut batch = resp(&["PING"]);
+    batch.extend(resp(&["AUTH", "x"]));
+    waiting
+        .write_all(&batch)
+        .expect("send once the password is removed");
+    expect_replies(
+        &mut waiting,
+        b"+PONG\r\n-ERR AUTH <password> called without any password configured for the default user. Are you sure your configuration is correct?\r\n",
+        "once the password is removed",
+    );
+    drop(waiting);
+    drop(setter);
+    let mut fresh = connect_when_ready(port);
+    fresh
+        .write_all(&resp(&["PING"]))
+        .expect("send with no password");
+    expect_replies(
+        &mut fresh,
+        b"+PONG\r\n",
+        "a new connection with no password",
+    );
+    drop(fresh);
     let (status, _) = finished(child);
     assert_eq!(status, 0);
 }
