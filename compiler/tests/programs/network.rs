@@ -943,8 +943,8 @@ fn bulk_reply(stream: &mut TcpStream, what: &str) -> String {
 }
 
 /// The section names of an INFO reply in order, checking Redis's form: each
-/// section a `# ` header and lines that end in CR LF, one blank line between
-/// two sections.
+/// section a `# ` header and `name:value` lines, every line ending in CR LF
+/// and holding no other CR or LF, one blank line between two sections.
 #[cfg(target_os = "linux")]
 fn info_sections(info: &str, what: &str) -> Vec<String> {
     assert!(
@@ -954,8 +954,17 @@ fn info_sections(info: &str, what: &str) -> Vec<String> {
     info.split("\r\n\r\n")
         .filter(|section| !section.is_empty())
         .map(|section| {
-            let header = section.split("\r\n").next().unwrap_or_default();
+            let body = section.strip_suffix("\r\n").unwrap_or(section);
+            let mut lines = body.split("\r\n");
+            let header = lines.next().unwrap_or_default();
             assert!(header.starts_with("# "), "{what}: {section:?}");
+            assert!(!header.contains(['\r', '\n']), "{what}: {header:?}");
+            for line in lines {
+                let named = line
+                    .split_once(':')
+                    .is_some_and(|(name, _)| !name.is_empty());
+                assert!(named && !line.contains(['\r', '\n']), "{what}: {line:?}");
+            }
             header[2..].to_owned()
         })
         .collect()
@@ -1299,7 +1308,8 @@ fn firn_replays_its_append_only_file_after_a_restart_on_both_routes() {
 /// at least 0.9 and at most two seconds of silence. A limit CONFIG SET
 /// removes reaches a client already waiting under the old one, which reads the
 /// limit again when its deadline passes, and a client that connects after it:
-/// both stay open through 1.5 seconds of silence. On the first route the
+/// both stay open through 1.5 seconds of silence. INFO then reports an uptime
+/// of at least the whole seconds since firn listened. On the first route the
 /// client that removed the limit sets one of five seconds, under which another
 /// client waits, then one of a second, and keeps sending: it reads the limit
 /// within a second, as every sending client does, and is closed once it falls
@@ -1320,6 +1330,7 @@ fn firn_closes_a_client_silent_past_its_idle_limit_on_both_routes() {
         let clients: &[u8] = if native_ring { b"5" } else { b"3" };
         let child = program.spawn_on_route(native_ring, &[text.as_bytes(), clients, b"-", b"1"]);
         let mut client = connect_when_ready(port);
+        let ready = Instant::now();
         client
             .set_read_timeout(Some(Duration::from_secs(10)))
             .expect("bound the client's waits");
@@ -1351,6 +1362,18 @@ fn firn_closes_a_client_silent_past_its_idle_limit_on_both_routes() {
             .write_all(&resp(&["CONFIG", "GET", "timeout"]))
             .expect("read the limit");
         expect_replies(&mut changer, b"*2\r\n$7\r\ntimeout\r\n$1\r\n0\r\n", &what);
+        let listened = ready.elapsed().as_secs();
+        changer
+            .write_all(&resp(&["INFO", "server"]))
+            .expect("ask for the uptime");
+        let info = bulk_reply(&mut changer, &what);
+        let uptime = info_field(&info, "uptime_in_seconds")
+            .and_then(|value| value.parse::<u64>().ok())
+            .expect("INFO's uptime_in_seconds");
+        assert!(
+            listened >= 2 && uptime >= listened,
+            "{what}: {uptime} seconds up, {listened} since firn listened"
+        );
         later.write_all(&resp(&["PING"])).expect("send a ping");
         expect_replies(&mut later, b"+PONG\r\n", &what);
         drop(later);
@@ -1836,19 +1859,20 @@ fn firn_answers_commands_naming_a_key_twice_as_redis_does() {
 /// it, the latter's product wrapping modulo 2^64, with Redis's range and the
 /// parameter's own name, or a save schedule as Redis splits and reads one, a
 /// lone piece that starts with a zero byte being the empty schedule; and sets
-/// nothing when any pair is refused. `CONFIG RESETSTAT` succeeds. `FUNCTION
-/// FLUSH` succeeds with no option, or with `ASYNC` or `SYNC` read up to a zero
-/// byte, and refuses another option and two of them; `FUNCTION` alone is short
-/// of arguments, and a subcommand whose name holds a zero byte is unknown.
-/// `DEBUG LOG` with one message, empty or not, succeeds, its name read up to a
-/// zero byte, while `LOG` without exactly one message and an unknown
-/// subcommand, its line breaks echoed as spaces, are answered as Redis answers
-/// a `DEBUG` subcommand it does not know. The expected replies are redis-server
-/// 7.0.15's to the same bytes, its debug command enabled, a `CONFIG GET` of
-/// several parameters in alphabetical order, one of the orders Redis answers
-/// in, but for the last three `CONFIG SET`s, which ask for a snapshot schedule,
-/// the append-only file and another address: Redis would apply them, and firn
-/// refuses them in Redis's form for a refused value, with its own reason.
+/// nothing when any pair is refused. The port and address firn listens on are
+/// accepted. `CONFIG RESETSTAT` succeeds. `FUNCTION FLUSH` succeeds with no
+/// option, or with `ASYNC` or `SYNC` read up to a zero byte, and refuses
+/// another option and two of them; `FUNCTION` alone is short of arguments, and
+/// a subcommand whose name holds a zero byte is unknown. `DEBUG LOG` with one
+/// message, empty or not, succeeds, its name read up to a zero byte, while
+/// `LOG` without exactly one message and an unknown subcommand, its line breaks
+/// echoed as spaces, are answered as Redis answers a `DEBUG` subcommand it does
+/// not know. The expected replies are redis-server 7.0.15's to the same bytes,
+/// its debug command enabled, a `CONFIG GET` of several parameters in
+/// alphabetical order, one of the orders Redis answers in, but for the last
+/// four `CONFIG SET`s, which ask for a snapshot schedule, the append-only file,
+/// another address and another port: Redis would apply them, and firn refuses
+/// them in Redis's form for a refused value, with its own reason.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_answers_config_and_echoes_client_bytes_as_redis_does() {
@@ -1874,6 +1898,7 @@ fn firn_answers_config_and_echoes_client_bytes_as_redis_does() {
         .map(|n| n.to_string())
         .collect::<Vec<_>>()
         .join(" ");
+    let other = port.checked_add(1).unwrap_or(1024).to_string();
     for request in [
         vec!["CONFIG", "SET", "databases", "16"],
         vec!["CONFIG", "SET", "nosuch", "1", "databases", "16"],
@@ -1892,6 +1917,10 @@ fn firn_answers_config_and_echoes_client_bytes_as_redis_does() {
         vec!["CONFIG", "SET", "timeout", "007"],
         vec!["CONFIG", "SET", "hash-max-listpack-entries", "-1"],
         vec!["CONFIG", "SET", "list-max-ziplist-size", "-2147483649"],
+        vec!["CONFIG", "SET", "list-compress-depth", "-1"],
+        vec!["CONFIG", "SET", "set-max-intset-entries", "-1"],
+        vec!["CONFIG", "SET", "stream-node-max-entries", "-1"],
+        vec!["CONFIG", "SET", "zset-max-listpack-entries", "-1"],
         vec![
             "CONFIG",
             "SET",
@@ -1931,12 +1960,14 @@ fn firn_answers_config_and_echoes_client_bytes_as_redis_does() {
         vec!["CONFIG", "SET", "timeout", "9", "port", "70000"],
         vec!["CONFIG", "SET", "port", "70000", "timeout", "abc"],
         vec!["CONFIG", "SET", "appendonly", "yes", "timeout", "abc"],
+        vec!["CONFIG", "SET", "port", text.as_str(), "bind", "127.0.0.1"],
         vec!["CONFIG", "GET", "timeout"],
         vec!["CONFIG", "RESETSTAT"],
         vec!["CONFIG", "RESETSTAT", "x"],
         vec!["CONFIG", "SET", "save", "3600 1"],
         vec!["CONFIG", "SET", "appendonly", "yes"],
         vec!["CONFIG", "SET", "timeout", "5", "bind", "0.0.0.0"],
+        vec!["CONFIG", "SET", "port", other.as_str()],
         vec!["CONFIG", "GET", "timeout"],
         vec!["FUNCTION"],
         vec!["FUNCTION", "FLUSH"],
@@ -1977,6 +2008,10 @@ fn firn_answers_config_and_echoes_client_bytes_as_redis_does() {
              {failed} 'timeout') - argument couldn't be parsed into an integer\r\n\
              {failed} 'hash-max-listpack-entries') - argument must be between 0 and {wide} inclusive\r\n\
              {failed} 'list-max-ziplist-size') - argument must be between -2147483648 and 2147483647 inclusive\r\n\
+             {failed} 'list-compress-depth') - argument must be between 0 and 2147483647 inclusive\r\n\
+             {failed} 'set-max-intset-entries') - argument must be between 0 and {wide} inclusive\r\n\
+             {failed} 'stream-node-max-entries') - argument must be between 0 and {wide} inclusive\r\n\
+             {failed} 'zset-max-listpack-entries') - argument must be between 0 and {wide} inclusive\r\n\
              +OK\r\n+OK\r\n+OK\r\n\
              *6\r\n$23\r\nhash-max-listpack-value\r\n$2\r\n12\r\n$21\r\nstream-node-max-bytes\r\n$1\r\n0\r\n$23\r\nzset-max-listpack-value\r\n$4\r\n1024\r\n\
              {failed} 'stream-node-max-bytes') - argument must be between 0 and {wide} inclusive\r\n\
@@ -1991,12 +2026,14 @@ fn firn_answers_config_and_echoes_client_bytes_as_redis_does() {
              {failed} 'port') - argument must be between 0 and 65535 inclusive\r\n\
              {failed} 'port') - argument must be between 0 and 65535 inclusive\r\n\
              {failed} 'timeout') - argument couldn't be parsed into an integer\r\n\
+             +OK\r\n\
              *2\r\n$7\r\ntimeout\r\n$1\r\n0\r\n\
              +OK\r\n\
              -ERR wrong number of arguments for 'config|resetstat' command\r\n\
              {failed} 'save') - firn saves no snapshot\r\n\
              {failed} 'appendonly') - firn cannot change it while running\r\n\
              {failed} 'bind') - firn cannot change it while running\r\n\
+             {failed} 'port') - firn cannot change it while running\r\n\
              *2\r\n$7\r\ntimeout\r\n$1\r\n0\r\n"
         )
         .bytes(),
@@ -2068,9 +2105,12 @@ fn firn_carries_requests_and_replies_larger_than_its_windows() {
 /// a generator seeded by the clock at each start, would almost surely remove
 /// others. A string set before FLUSHALL and a list pushed before FLUSHDB stay
 /// absent, since the file records both commands, and FUNCTION FLUSH after
-/// them, as Redis does: the file's first bytes are those redis-server 7.0.15
-/// appends for the same requests, the SELECT it writes first aside. INFO
-/// reports the file as kept.
+/// them, as Redis does, and a FLUSHALL of the keyspace still empty before
+/// them: the file's first bytes are those redis-server 7.0.15 appends for the
+/// same requests, the SELECT it writes first aside. INFO reports the file as
+/// kept; CONFIG SET appendonly yes, the file firn keeps, succeeds, and no is
+/// refused in Redis's form for a refused value with firn's own reason, where
+/// Redis would stop its file.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_replays_the_value_types_from_its_append_only_file() {
@@ -2090,6 +2130,7 @@ fn firn_replays_the_value_types_from_its_append_only_file() {
     add.extend(members.iter().map(String::as_str));
     let mut batch = Vec::new();
     for request in [
+        vec!["FLUSHALL"],
         vec!["SET", "flushed", "v"],
         vec!["FLUSHALL"],
         vec!["RPUSH", "flushed-list", "a"],
@@ -2108,7 +2149,7 @@ fn firn_replays_the_value_types_from_its_append_only_file() {
     client.write_all(&batch).expect("send the changes");
     expect_replies(
         &mut client,
-        b"+OK\r\n+OK\r\n:1\r\n+OK\r\n+OK\r\n:3\r\n$1\r\na\r\n:1\r\n:2\r\n*2\r\n$1\r\na\r\n$1\r\n1\r\n:1\r\n:50\r\n",
+        b"+OK\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n+OK\r\n:3\r\n$1\r\na\r\n:1\r\n:2\r\n*2\r\n$1\r\na\r\n$1\r\n1\r\n:1\r\n:50\r\n",
         "the first run's changes",
     );
     client
@@ -2134,7 +2175,7 @@ fn firn_replays_the_value_types_from_its_append_only_file() {
     let (status, _) = finished(child);
     assert_eq!(status, 0, "the first run");
     let file = std::fs::read(program.working_directory().join(name)).expect("read the file");
-    let head: &[u8] = b"*3\r\n$3\r\nSET\r\n$7\r\nflushed\r\n$1\r\nv\r\n*1\r\n$8\r\nFLUSHALL\r\n*3\r\n$5\r\nRPUSH\r\n$12\r\nflushed-list\r\n$1\r\na\r\n*2\r\n$7\r\nFLUSHDB\r\n$5\r\nASYNC\r\n*3\r\n$8\r\nFUNCTION\r\n$5\r\nFLUSH\r\n$5\r\nASYNC\r\n";
+    let head: &[u8] = b"*1\r\n$8\r\nFLUSHALL\r\n*3\r\n$3\r\nSET\r\n$7\r\nflushed\r\n$1\r\nv\r\n*1\r\n$8\r\nFLUSHALL\r\n*3\r\n$5\r\nRPUSH\r\n$12\r\nflushed-list\r\n$1\r\na\r\n*2\r\n$7\r\nFLUSHDB\r\n$5\r\nASYNC\r\n*3\r\n$8\r\nFUNCTION\r\n$5\r\nFLUSH\r\n$5\r\nASYNC\r\n";
     assert_eq!(
         String::from_utf8_lossy(&file[..head.len().min(file.len())]),
         String::from_utf8_lossy(head),
@@ -2168,9 +2209,17 @@ fn firn_replays_the_value_types_from_its_append_only_file() {
         b"*2\r\n$1\r\nb\r\n$1\r\nc\r\n$1\r\nv\r\n:1\r\n$1\r\n2\r\n$19\r\n0.10000000000000001\r\n:25\r\n:0\r\n:0\r\n",
         "the replayed values",
     );
+    let mut batch = resp(&["CONFIG", "SET", "appendonly", "yes"]);
+    batch.extend(resp(&["CONFIG", "SET", "appendonly", "no"]));
+    batch.extend(resp(&["INFO", "persistence"]));
     client
-        .write_all(&resp(&["INFO", "persistence"]))
-        .expect("ask whether the file is kept");
+        .write_all(&batch)
+        .expect("ask for the file and whether it is kept");
+    expect_replies(
+        &mut client,
+        b"+OK\r\n-ERR CONFIG SET failed (possibly related to argument 'appendonly') - firn cannot change it while running\r\n",
+        "CONFIG SET appendonly with the file kept",
+    );
     let info = bulk_reply(&mut client, "INFO persistence");
     assert_eq!(info_field(&info, "aof_enabled").as_deref(), Some("1"));
     drop(client);
@@ -2737,9 +2786,10 @@ fn firn_requires_its_password_as_redis_does() {
 /// DOCS is an unknown subcommand; TIME answers the calendar time; INFO
 /// answers Redis's sections in Redis's form and order, the default ones, all
 /// of them for all or everything, or those named, an unknown name adding none,
-/// with the real port, clients connected, connections accepted, calendar time
-/// and uptime, and its cluster, keyspace and modules sections byte for byte as
-/// Redis answers them; CONFIG RESETSTAT zeroes the connections INFO counts;
+/// with the real port, two clients connected, connections accepted, calendar
+/// time and uptime, and its cluster, keyspace and modules sections byte for
+/// byte as Redis answers them, the keyspace section with no line while the
+/// keyspace is empty; CONFIG RESETSTAT zeroes the connections INFO counts;
 /// and QUIT answers OK and closes the connection, leaving the request after it
 /// unanswered. The expected bytes are redis-server 7.0.15's, started with one
 /// database, but for the ids and HELLO 3, which Redis would answer in RESP3.
@@ -2750,7 +2800,7 @@ fn firn_answers_connection_commands_as_redis_does() {
     let port = free_port();
     let text = port.to_string();
     let spawned = Instant::now();
-    let child = program.spawn_on_route(true, &[text.as_bytes(), b"2"]);
+    let child = program.spawn_on_route(true, &[text.as_bytes(), b"3"]);
     let mut client = connect_when_ready(port);
     let mut batch = Vec::new();
     for request in [
@@ -2786,13 +2836,14 @@ fn firn_answers_connection_commands_as_redis_does() {
         vec!["COMMAND", "COUNT", "x"],
         vec!["COMMAND", "DOCS"],
         vec!["TIME", "x"],
+        vec!["INFO", "keyspace"],
     ] {
         batch.extend(resp(&request));
     }
     client.write_all(&batch).expect("send the connection batch");
     let hello = "*14\r\n$6\r\nserver\r\n$5\r\nredis\r\n$7\r\nversion\r\n$6\r\n7.0.15\r\n$5\r\nproto\r\n:2\r\n$2\r\nid\r\n:1\r\n$4\r\nmode\r\n$10\r\nstandalone\r\n$4\r\nrole\r\n$6\r\nmaster\r\n$7\r\nmodules\r\n*0\r\n";
     let expected = format!(
-        ":1\r\n$-1\r\n+OK\r\n$6\r\nconn-1\r\n-ERR Client names cannot contain spaces, newlines or special characters.\r\n$6\r\nconn-1\r\n+OK\r\n$-1\r\n-ERR unknown subcommand 'SETINFO'. Try CLIENT HELP.\r\n-ERR wrong number of arguments for 'client|id' command\r\n-ERR wrong number of arguments for 'client' command\r\n{hello}-NOPROTO unsupported protocol version\r\n-NOPROTO unsupported protocol version\r\n-ERR Protocol version is not an integer or out of range\r\n{hello}$9\r\nvia-hello\r\n-ERR Syntax error in HELLO option 'FOO'\r\n{hello}$8\r\nvia-zero\r\n{hello}-ERR AUTH <password> called without any password configured for the default user. Are you sure your configuration is correct?\r\n+OK\r\n+OK\r\n-ERR DB index is out of range\r\n-ERR value is not an integer or out of range\r\n-ERR value is out of range, value must between -2147483648 and 2147483647\r\n*0\r\n:0\r\n-ERR wrong number of arguments for 'command|count' command\r\n-ERR unknown subcommand 'DOCS'. Try COMMAND HELP.\r\n-ERR wrong number of arguments for 'time' command\r\n"
+        ":1\r\n$-1\r\n+OK\r\n$6\r\nconn-1\r\n-ERR Client names cannot contain spaces, newlines or special characters.\r\n$6\r\nconn-1\r\n+OK\r\n$-1\r\n-ERR unknown subcommand 'SETINFO'. Try CLIENT HELP.\r\n-ERR wrong number of arguments for 'client|id' command\r\n-ERR wrong number of arguments for 'client' command\r\n{hello}-NOPROTO unsupported protocol version\r\n-NOPROTO unsupported protocol version\r\n-ERR Protocol version is not an integer or out of range\r\n{hello}$9\r\nvia-hello\r\n-ERR Syntax error in HELLO option 'FOO'\r\n{hello}$8\r\nvia-zero\r\n{hello}-ERR AUTH <password> called without any password configured for the default user. Are you sure your configuration is correct?\r\n+OK\r\n+OK\r\n-ERR DB index is out of range\r\n-ERR value is not an integer or out of range\r\n-ERR value is out of range, value must between -2147483648 and 2147483647\r\n*0\r\n:0\r\n-ERR wrong number of arguments for 'command|count' command\r\n-ERR unknown subcommand 'DOCS'. Try COMMAND HELP.\r\n-ERR wrong number of arguments for 'time' command\r\n$12\r\n# Keyspace\r\n\r\n"
     );
     expect_replies(&mut client, expected.as_bytes(), "the connection batch");
     let before = std::time::SystemTime::now()
@@ -2868,6 +2919,11 @@ fn firn_answers_connection_commands_as_redis_does() {
         let info = bulk_reply(&mut client, "INFO");
         assert_eq!(info_sections(&info, "INFO"), sections, "{request:?}");
     }
+    let mut second = connect_when_ready(port);
+    second
+        .write_all(&resp(&["PING"]))
+        .expect("send a ping on a second connection");
+    expect_replies(&mut second, b"+PONG\r\n", "a second connection");
     let before = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("the host clock is past 1970")
@@ -2878,12 +2934,13 @@ fn firn_answers_connection_commands_as_redis_does() {
     for (field, value) in [
         ("redis_version", "7.0.15"),
         ("tcp_port", text.as_str()),
-        ("connected_clients", "1"),
+        ("uptime_in_days", "0"),
+        ("connected_clients", "2"),
         ("loading", "0"),
         ("aof_enabled", "0"),
         ("aof_rewrite_in_progress", "0"),
         ("aof_rewrite_scheduled", "0"),
-        ("total_connections_received", "1"),
+        ("total_connections_received", "2"),
         ("role", "master"),
     ] {
         assert_eq!(
@@ -2907,6 +2964,7 @@ fn firn_answers_connection_commands_as_redis_does() {
         uptime <= elapsed + 1,
         "{uptime} seconds up, {elapsed} since the start"
     );
+    drop(second);
     let mut batch = resp(&["CONFIG", "RESETSTAT"]);
     batch.extend(resp(&["INFO", "stats"]));
     client.write_all(&batch).expect("reset the counts");
@@ -2925,8 +2983,8 @@ fn firn_answers_connection_commands_as_redis_does() {
     let mut client = connect_when_ready(port);
     client
         .write_all(&resp(&["CLIENT", "ID"]))
-        .expect("ask the second connection's id");
-    expect_replies(&mut client, b":2\r\n", "the second connection's id");
+        .expect("ask the third connection's id");
+    expect_replies(&mut client, b":3\r\n", "the third connection's id");
     drop(client);
     let (status, _) = finished(child);
     assert_eq!(status, 0);
