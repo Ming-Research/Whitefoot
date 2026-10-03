@@ -68,11 +68,11 @@ fn keyspace_logging(store: &Keyspace, logging: Bool) -> made: Keyspace reads(sto
 }
 
 fn expired(expires: u64, now: u64) -> reached: Bool pure {
-  doc "Whether an expiry, zero for none, has been reached at now.";
+  doc "Whether an expiry, zero for none, has passed at now: a key lives through the millisecond its expiry names, as Redis 7.0.15's keyIsExpired keeps it.";
   if expires == 0_u64 {
     return False();
   }
-  let reached = expires <= now;
+  let reached = expires < now;
   return reached;
 }
 
@@ -83,7 +83,7 @@ fn due_at(env: &Probe, value: &Due) -> result: u64 reads(value), writes(env) {
 }
 
 fn take_due(meta: &Meta, now: u64, env: &KeyEnv, batch: &Box<Slots<Due>>) -> more: Bool reads(env), writes(meta), writes(batch) {
-  doc "Moves up to 256 queued expiries that have been reached, the earliest first, into the batch, and returns whether more may be due.";
+  doc "Moves up to 256 queued expiries that have passed, the earliest first, into the batch, and returns whether more may be due.";
   for @batch (step in 0_u64..256_u64) {
     let pending = priority_queue_len::<Due, ceiling>(queue: &meta^.due);
     if pending == 0_u64 {
@@ -91,7 +91,7 @@ fn take_due(meta: &Meta, now: u64, env: &KeyEnv, batch: &Box<Slots<Due>>) -> mor
     }
     let probe = Probe(at: 0_u64);
     let first = priority_queue_peek::<Due, Probe, u64, fn due_at, ceiling>(queue: &meta^.due, env: &probe);
-    if first > now {
+    if first >= now {
       return False();
     }
     let due = priority_queue_pop::<DueOrder, ceiling>(queue: &meta^.due, env: env);
@@ -141,7 +141,7 @@ fn expire_key(store: &Keyspace, key: &[u8], at: u64) -> result: unit reads(store
 }
 
 fn remove_expired(store: &Keyspace, key: &[u8], now: u64) -> result: unit reads(store), reads(key) waits {
-  doc "Removes the key when its expiry has been reached at now, for a command that found it expired in a statement that only read it, recording the removal as log_removal does; a key set again since keeps its value.";
+  doc "Removes the key when its expiry has passed at now, for a command that found it expired in a statement that only read it, recording the removal as log_removal does; a key set again since keeps its value.";
   let logged = store^.logging;
   atomic s = &store^.state, slot = &s^.map[key] {
     let lapsed = False();
@@ -163,7 +163,7 @@ fn remove_expired(store: &Keyspace, key: &[u8], now: u64) -> result: unit reads(
 }
 
 fn expire_batch(store: &Keyspace, now: u64, env: &KeyEnv, batch: &Box<Slots<Due>>) -> more: Bool reads(store), reads(env), writes(batch) waits {
-  doc "Takes up to 256 queued expiries that have been reached, the earliest first, in one atomic statement, then removes each key whose expiry is still the one queued in a statement on that key, recording the removal as log_removal does, and returns whether more may be due. A queued expiry that no longer matches its key's, because the key was set, given another expiry or removed since, is dropped.";
+  doc "Takes up to 256 queued expiries that have passed, the earliest first, in one atomic statement, then removes each key whose expiry is still the one queued in a statement on that key, recording the removal as log_removal does, and returns whether more may be due. A queued expiry that no longer matches its key's, because the key was set, given another expiry or removed since, is dropped.";
   let more = False();
   atomic s = &store^.state {
     set more = take_due(meta: &s^.meta, now: now, env: env, batch: batch);

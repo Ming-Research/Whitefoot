@@ -924,6 +924,22 @@ fn integer_reply(stream: &mut TcpStream, what: &str) -> i64 {
         .unwrap_or_else(|| panic!("{what}: not an integer reply: {line:?}"))
 }
 
+/// Reads one `TIME` reply as calendar milliseconds.
+#[cfg(target_os = "linux")]
+fn time_reply(stream: &mut TcpStream, what: &str) -> u64 {
+    assert_eq!(reply_line(stream, what), "*2\r\n", "{what}: TIME");
+    let mut parts = [0_u64; 2];
+    for part in &mut parts {
+        reply_line(stream, what);
+        let digits = reply_line(stream, what);
+        *part = digits
+            .trim_end()
+            .parse()
+            .unwrap_or_else(|_| panic!("{what}: TIME answered {digits:?}"));
+    }
+    parts[0] * 1000 + parts[1] / 1000
+}
+
 /// Reads exactly the bytes of the expected replies and compares them.
 #[cfg(target_os = "linux")]
 fn expect_replies(stream: &mut TcpStream, expected: &[u8], what: &str) {
@@ -1059,7 +1075,12 @@ fn firn_serves_every_client_over_one_keyspace() {
 /// positive `PTTL` and is absent 200 milliseconds later. A key read 5
 /// milliseconds after its expiry is absent too, which the command's own check
 /// answers: the expiring context wakes only every 100 milliseconds, so without
-/// that check the value would usually still be returned.
+/// that check the value would usually still be returned. A key lives through
+/// the millisecond its expiry names, as Redis's `keyIsExpired` keeps it: of
+/// keys set to expire at each of a hundred milliseconds from a reading of the
+/// clock, each read back at once in a batch whose commands share the reading a
+/// `TIME` before and after them reports, those expiring at that reading or
+/// later answer their value and the earlier ones nil.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_expires_keys_on_both_routes() {
@@ -1095,6 +1116,7 @@ fn firn_expires_keys_on_both_routes() {
             vec!["EXPIRE", "absent", "-1"],
             vec!["SET", "other", "v", "EX", "9223372036854776"],
             vec!["SET", "other", "v", "PX", "9223372036854775807"],
+            vec!["SET", "other", "v", "EXAT", "9223372036854776"],
             vec!["PEXPIRE", "kept", "9223372036854775000"],
             vec!["EXPIRE", "kept", "18446744073709552"],
             vec!["EXPIRE", "kept", "-18446744073709552"],
@@ -1141,7 +1163,7 @@ fn firn_expires_keys_on_both_routes() {
         client.write_all(&batch).expect("send the expiry batch");
         expect_replies(
             &mut client,
-            b"+OK\r\n+OK\r\n:-1\r\n:-2\r\n:1\r\n:100\r\n:1\r\n:-1\r\n:0\r\n-ERR invalid expire time in 'set' command\r\n-ERR syntax error\r\n-ERR value is not an integer or out of range\r\n:2\r\n+OK\r\n:100000000000\r\n:1\r\n:2\r\n:0\r\n-ERR invalid expire time in 'set' command\r\n-ERR invalid expire time in 'set' command\r\n-ERR invalid expire time in 'pexpire' command\r\n-ERR invalid expire time in 'expire' command\r\n-ERR invalid expire time in 'expire' command\r\n+OK\r\n:1\r\n:0\r\n:0\r\n:1\r\n:300\r\n:0\r\n:1\r\n:1\r\n:1\r\n:0\r\n:0\r\n:1\r\n-ERR NX and XX, GT or LT options at the same time are not compatible\r\n-ERR GT and LT options at the same time are not compatible\r\n-ERR Unsupported option FOO\r\n-ERR Unsupported option   ab c\r\n-ERR Unsupported option fo\r\n:0\r\n:1\r\n:99999999999\r\n:99999999999000\r\n:1\r\n:100000000000\r\n:1\r\n:99999999999\r\n:0\r\n:0\r\n-ERR Unsupported option ab\r\n-ERR invalid expire time in 'expireat' command\r\n:-1\r\n:-2\r\n:0\r\n:1\r\n:0\r\n-ERR unknown command 'PEXPIRETIMEX', with args beginning with: 'e' \r\n-ERR unknown command 'EXPIRETIMEX', with args beginning with: 'e' \r\n",
+            b"+OK\r\n+OK\r\n:-1\r\n:-2\r\n:1\r\n:100\r\n:1\r\n:-1\r\n:0\r\n-ERR invalid expire time in 'set' command\r\n-ERR syntax error\r\n-ERR value is not an integer or out of range\r\n:2\r\n+OK\r\n:100000000000\r\n:1\r\n:2\r\n:0\r\n-ERR invalid expire time in 'set' command\r\n-ERR invalid expire time in 'set' command\r\n-ERR invalid expire time in 'set' command\r\n-ERR invalid expire time in 'pexpire' command\r\n-ERR invalid expire time in 'expire' command\r\n-ERR invalid expire time in 'expire' command\r\n+OK\r\n:1\r\n:0\r\n:0\r\n:1\r\n:300\r\n:0\r\n:1\r\n:1\r\n:1\r\n:0\r\n:0\r\n:1\r\n-ERR NX and XX, GT or LT options at the same time are not compatible\r\n-ERR GT and LT options at the same time are not compatible\r\n-ERR Unsupported option FOO\r\n-ERR Unsupported option   ab c\r\n-ERR Unsupported option fo\r\n:0\r\n:1\r\n:99999999999\r\n:99999999999000\r\n:1\r\n:100000000000\r\n:1\r\n:99999999999\r\n:0\r\n:0\r\n-ERR Unsupported option ab\r\n-ERR invalid expire time in 'expireat' command\r\n:-1\r\n:-2\r\n:0\r\n:1\r\n:0\r\n-ERR unknown command 'PEXPIRETIMEX', with args beginning with: 'e' \r\n-ERR unknown command 'EXPIRETIMEX', with args beginning with: 'e' \r\n",
             &what,
         );
         client
@@ -1164,6 +1186,54 @@ fn firn_expires_keys_on_both_routes() {
             .write_all(&resp(&["GET", "flash"]))
             .expect("read it after its expiry");
         expect_replies(&mut client, b"$-1\r\n", &what);
+        // A batch the server read in two parts, or later than the hundredth
+        // millisecond, cannot place the boundary and is sent again.
+        let mut placed = false;
+        for _ in 0..10 {
+            client.write_all(&resp(&["TIME"])).expect("ask the time");
+            let start = time_reply(&mut client, &what);
+            let mut edge = resp(&["TIME"]);
+            for offset in 0..100_u64 {
+                let key = format!("edge:{offset}");
+                let at = (start + offset).to_string();
+                edge.extend(resp(&["SET", &key, "v", "PXAT", &at]));
+                edge.extend(resp(&["GET", &key]));
+            }
+            edge.extend(resp(&["TIME"]));
+            client
+                .write_all(&edge)
+                .expect("set keys expiring around the time");
+            let now = time_reply(&mut client, &what);
+            let mut alive = Vec::new();
+            for _ in 0..100 {
+                assert_eq!(reply_line(&mut client, &what), "+OK\r\n", "{what}");
+                let header = reply_line(&mut client, &what);
+                let live = header == "$1\r\n";
+                if live {
+                    assert_eq!(reply_line(&mut client, &what), "v\r\n", "{what}");
+                } else {
+                    assert_eq!(header, "$-1\r\n", "{what}");
+                }
+                alive.push(live);
+            }
+            let later = time_reply(&mut client, &what);
+            if later != now || now < start || now >= start + 100 {
+                continue;
+            }
+            let expected = (0..100)
+                .map(|offset| start + offset >= now)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                alive, expected,
+                "{what}: keys expiring from {start} on, read at {now}"
+            );
+            placed = true;
+            break;
+        }
+        assert!(
+            placed,
+            "{what}: no batch was read at one reading within its keys"
+        );
         drop(client);
         let (status, _) = finished(child);
         assert_eq!(status, 0, "{what}");
@@ -1235,11 +1305,14 @@ fn firn_removes_expired_keys_no_command_reads_on_both_routes() {
 /// its expiry passed is absent rather than counting again from one. A key a
 /// command finds expired is removed, and the file records the removal, as
 /// Redis propagates it, so that the commands after it replay as they ran: a
-/// `SET` with NX, one with KEEPTTL and an `INCR` on a key set already expired,
-/// and a `SET` with NX after `EXISTS`, `GET`, `TTL`, `TYPE`, `DEL`, `PERSIST`,
-/// `EXPIRE`, a negative `EXPIRE`, `GETDEL` or `GETEX` found it so, hold their
-/// values after the restart, the `INCR` counting from zero and KEEPTTL keeping
-/// no expiry. Each expiry given relative to the time, by `SET` with EX or PX,
+/// `SET` with NX, one with KEEPTTL, an `INCR`, `APPEND`, `SETRANGE`, `MSETNX`
+/// and `INCRBYFLOAT` on a key set already expired, a `SET` with NX after
+/// `EXISTS`, `GET`, `TTL`, `TYPE`, `DEL`, `PERSIST`, `EXPIRE`, a negative
+/// `EXPIRE`, `GETDEL`, `GETEX`, `STRLEN`, `GETRANGE`, `MGET`, or `RENAME` or
+/// `COPY` from it, found it so, and a `RENAMENX` and a `COPY` onto it hold
+/// their values after the restart, the `INCR` counting from zero and KEEPTTL,
+/// as `INCRBYFLOAT`'s record has it, keeping no expiry. Each expiry given
+/// relative to the time, by `SET` with EX or PX,
 /// `SETEX`, `PSETEX`, `GETEX`, `EXPIRE` with an option and `PEXPIRE`, keeps
 /// the very calendar millisecond `PEXPIRETIME` gave before the restart, which
 /// a file recording the relative amount would replay later; a string
@@ -1316,6 +1389,35 @@ fn firn_replays_its_append_only_file_after_a_restart_on_both_routes() {
             vec!["SET", "lazy:m", "old", "PXAT", "1"],
             vec!["EXPIRE", "lazy:m", "-1"],
             vec!["SET", "lazy:m", "new", "NX"],
+            vec!["SET", "lazy:n", "old", "PXAT", "1"],
+            vec!["APPEND", "lazy:n", "x"],
+            vec!["SET", "lazy:o", "old", "PXAT", "1"],
+            vec!["SETRANGE", "lazy:o", "0", "x"],
+            vec!["SET", "lazy:p", "old", "PXAT", "1"],
+            vec!["STRLEN", "lazy:p"],
+            vec!["SET", "lazy:p", "new", "NX"],
+            vec!["SET", "lazy:q", "old", "PXAT", "1"],
+            vec!["GETRANGE", "lazy:q", "0", "-1"],
+            vec!["SET", "lazy:q", "new", "NX"],
+            vec!["SET", "lazy:r", "old", "PXAT", "1"],
+            vec!["MGET", "lazy:r"],
+            vec!["SET", "lazy:r", "new", "NX"],
+            vec!["SET", "lazy:s", "old", "PXAT", "1"],
+            vec!["MSETNX", "lazy:s", "new"],
+            vec!["SET", "lazy:t", "5", "PXAT", "1"],
+            vec!["INCRBYFLOAT", "lazy:t", "0.5"],
+            vec!["SET", "lazy:u", "old", "PXAT", "1"],
+            vec!["RENAME", "lazy:u", "lazy:u2"],
+            vec!["SET", "lazy:u", "new", "NX"],
+            vec!["SET", "lazy:v", "old", "PXAT", "1"],
+            vec!["SET", "lazy:vs", "v"],
+            vec!["RENAMENX", "lazy:vs", "lazy:v"],
+            vec!["SET", "lazy:w", "old", "PXAT", "1"],
+            vec!["COPY", "lazy:w", "lazy:w2"],
+            vec!["SET", "lazy:w", "new", "NX"],
+            vec!["SET", "lazy:x", "old", "PXAT", "1"],
+            vec!["SET", "lazy:xs", "v"],
+            vec!["COPY", "lazy:xs", "lazy:x"],
             vec!["SETEX", "at:setex", "100", "v"],
             vec!["PSETEX", "at:psetex", "100000", "v"],
             vec!["SET", "at:getex", "v"],
@@ -1339,7 +1441,7 @@ fn firn_replays_its_append_only_file_after_a_restart_on_both_routes() {
         client.write_all(&batch).expect("send the changes");
         expect_replies(
             &mut client,
-            b"+OK\r\n+OK\r\n+OK\r\n:1\r\n:2\r\n:12\r\n:9\r\n:8\r\n:1\r\n+OK\r\n:1\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n:6\r\n+OK\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n+OK\r\n+OK\r\n:-2\r\n+OK\r\n+OK\r\n+none\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n+OK\r\n+OK\r\n$1\r\nv\r\n+OK\r\n:1\r\n+OK\r\n:1\r\n+OK\r\n:4\r\n:4\r\n:1\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n$4\r\n10.6\r\n",
+            b"+OK\r\n+OK\r\n+OK\r\n:1\r\n:2\r\n:12\r\n:9\r\n:8\r\n:1\r\n+OK\r\n:1\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n:6\r\n+OK\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n+OK\r\n+OK\r\n:-2\r\n+OK\r\n+OK\r\n+none\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n:1\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n$0\r\n\r\n+OK\r\n+OK\r\n*1\r\n$-1\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n$3\r\n0.5\r\n+OK\r\n-ERR no such key\r\n+OK\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n+OK\r\n+OK\r\n$1\r\nv\r\n+OK\r\n:1\r\n+OK\r\n:1\r\n+OK\r\n:4\r\n:4\r\n:1\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n$4\r\n10.6\r\n",
             &what,
         );
         let timed = [
@@ -1396,6 +1498,17 @@ fn firn_replays_its_append_only_file_after_a_restart_on_both_routes() {
             vec!["GET", "lazy:k"],
             vec!["GET", "lazy:l"],
             vec!["GET", "lazy:m"],
+            vec!["GET", "lazy:n"],
+            vec!["GET", "lazy:o"],
+            vec!["GET", "lazy:p"],
+            vec!["GET", "lazy:q"],
+            vec!["GET", "lazy:r"],
+            vec!["GET", "lazy:s"],
+            vec!["GET", "lazy:t"],
+            vec!["GET", "lazy:u"],
+            vec!["GET", "lazy:v"],
+            vec!["GET", "lazy:w"],
+            vec!["GET", "lazy:x"],
             vec!["GET", "edited"],
             vec!["MGET", "pair:a", "pair:b"],
             vec!["PEXPIRETIME", "mv:dst"],
@@ -1409,7 +1522,7 @@ fn firn_replays_its_append_only_file_after_a_restart_on_both_routes() {
         client.write_all(&batch).expect("read the replayed keys");
         expect_replies(
             &mut client,
-            b"$-1\r\n$-1\r\n$1\r\nv\r\n$1\r\n8\r\n$1\r\nv\r\n:-1\r\n$1\r\nv\r\n:-1\r\n$-1\r\n:29\r\n$3\r\nnew\r\n$1\r\n1\r\n:-1\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n:-1\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$4\r\naXYd\r\n*2\r\n$1\r\n1\r\n$1\r\n2\r\n:99999999999999\r\n:99999999999999\r\n:0\r\n$4\r\n10.6\r\n:99999999999999\r\n",
+            b"$-1\r\n$-1\r\n$1\r\nv\r\n$1\r\n8\r\n$1\r\nv\r\n:-1\r\n$1\r\nv\r\n:-1\r\n$-1\r\n:41\r\n$3\r\nnew\r\n$1\r\n1\r\n:-1\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n:-1\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$1\r\nx\r\n$1\r\nx\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\n0.5\r\n$3\r\nnew\r\n$1\r\nv\r\n$3\r\nnew\r\n$1\r\nv\r\n$4\r\naXYd\r\n*2\r\n$1\r\n1\r\n$1\r\n2\r\n:99999999999999\r\n:99999999999999\r\n:0\r\n$4\r\n10.6\r\n:99999999999999\r\n",
             &what,
         );
         for (key, expiry) in timed.iter().zip(&expiries) {
@@ -2082,7 +2195,12 @@ fn firn_answers_string_commands_as_redis_does() {
 /// `MGET` answers a key named twice twice, in the order named, though its key
 /// set holds the keys in byte order, and nil for an absent key or one of
 /// another kind; `MSETNX` keeps the last value named for a key and stores
-/// nothing when any key is live, of any kind. `RENAME` and `RENAMENX` naming
+/// nothing when any key is live, of any kind, looking its keys up in the
+/// order named and stopping at the first live one, so that a key expired
+/// before the command and named after that one stays in place for `DBSIZE`
+/// to count, as Redis leaves it; the expiring context, which may remove it at
+/// any time, could change that count only between `MSETNX`'s statement and the
+/// second `DBSIZE`, a window of microseconds. `RENAME` and `RENAMENX` naming
 /// one key twice leave a live key as it is, answering OK and 0, and refuse an
 /// absent one; `COPY` refuses one key named twice before it reads the key,
 /// and `RENAMENX` and `COPY` without REPLACE leave a live destination alone.
@@ -2152,6 +2270,21 @@ fn firn_answers_commands_naming_a_key_twice_as_redis_does() {
         &mut client,
         b"+OK\r\n+OK\r\n+OK\r\n:4\r\n:2\r\n:0\r\n+OK\r\n$1\r\n5\r\n$1\r\n4\r\n:3\r\n*6\r\n$1\r\n5\r\n$1\r\n3\r\n$1\r\n5\r\n$-1\r\n$1\r\n4\r\n$1\r\n3\r\n:1\r\n*2\r\n$-1\r\n$1\r\n5\r\n:1\r\n*2\r\n$1\r\n3\r\n$1\r\n2\r\n:0\r\n:0\r\n:0\r\n+OK\r\n:0\r\n-ERR no such key\r\n-ERR source and destination objects are the same\r\n+OK\r\n*2\r\n$-1\r\n$1\r\n3\r\n:0\r\n:0\r\n:1\r\n*2\r\n$1\r\n3\r\n$1\r\n3\r\n:2\r\n:3\r\n-ERR DB index is out of range\r\n-ERR DB index is out of range\r\n-ERR value is not an integer or out of range\r\n-ERR value is out of range, value must between -2147483648 and 2147483647\r\n-ERR syntax error\r\n-ERR syntax error\r\n-ERR DB index is out of range\r\n:1\r\n*1\r\n$1\r\n3\r\n:4\r\n",
         "the commands naming a key twice",
+    );
+    let mut late = resp(&["SET", "late", "1", "PXAT", "1"]);
+    late.extend(resp(&["DBSIZE"]));
+    late.extend(resp(&["MSETNX", "k", "1", "late", "2"]));
+    late.extend(resp(&["DBSIZE"]));
+    client
+        .write_all(&late)
+        .expect("send MSETNX past a live key");
+    expect_replies(&mut client, b"+OK\r\n", "an expired key");
+    let before = integer_reply(&mut client, "DBSIZE before MSETNX");
+    assert_eq!(integer_reply(&mut client, "MSETNX past a live key"), 0);
+    let after = integer_reply(&mut client, "DBSIZE after MSETNX");
+    assert_eq!(
+        after, before,
+        "MSETNX looked up a key named after a live one"
     );
     drop(client);
     let (status, _) = finished(child);

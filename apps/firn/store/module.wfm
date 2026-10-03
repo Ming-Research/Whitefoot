@@ -88,11 +88,11 @@ public fn keyspace_share(store: &Keyspace) -> made: Keyspace reads(store) doc "A
 
 public fn keyspace_logging(store: &Keyspace, logging: Bool) -> made: Keyspace reads(store) doc "A handle to the same keyspace that appends changes to the append-only file's pending bytes when logging is true.";
 
-public fn expired(expires: u64, now: u64) -> reached: Bool pure doc "Whether an expiry, zero for none, has been reached at now.";
+public fn expired(expires: u64, now: u64) -> reached: Bool pure doc "Whether an expiry, zero for none, has passed at now: a key lives through the millisecond its expiry names, as Redis 7.0.15's keyIsExpired keeps it.";
 
-public fn remove_expired(store: &Keyspace, key: &[u8], now: u64) -> result: unit reads(store), reads(key) waits doc "Removes the key when its expiry has been reached at now, for a command that found it expired in a statement that only read it, recording the removal as log_removal does; a key set again since keeps its value.";
+public fn remove_expired(store: &Keyspace, key: &[u8], now: u64) -> result: unit reads(store), reads(key) waits doc "Removes the key when its expiry has passed at now, for a command that found it expired in a statement that only read it, recording the removal as log_removal does; a key set again since keeps its value.";
 
-public fn expire_batch(store: &Keyspace, now: u64, env: &KeyEnv, batch: &Box<Slots<Due>>) -> more: Bool reads(store), reads(env), writes(batch) waits doc "Takes up to 256 queued expiries that have been reached, the earliest first, in one atomic statement, then removes each key whose expiry is still the one queued in a statement on that key, recording the removal as log_removal does, and returns whether more may be due. A queued expiry that no longer matches its key's, because the key was set, given another expiry or removed since, is dropped. The batch is scratch space the caller keeps.";
+public fn expire_batch(store: &Keyspace, now: u64, env: &KeyEnv, batch: &Box<Slots<Due>>) -> more: Bool reads(store), reads(env), writes(batch) waits doc "Takes up to 256 queued expiries that have passed, the earliest first, in one atomic statement, then removes each key whose expiry is still the one queued in a statement on that key, recording the removal as log_removal does, and returns whether more may be due. A queued expiry that no longer matches its key's, because the key was set, given another expiry or removed since, is dropped. The batch is scratch space the caller keeps.";
 
 public fn queue_expiry(meta: &Meta, key: &[u8], at: u64, env: &KeyEnv) -> result: unit reads(key), reads(env), writes(meta) doc "Queues a key's new expiry for active removal; one past the queue's ceiling is left to lazy removal.";
 

@@ -3100,8 +3100,8 @@ condition under which it is taken up.
 
 ## Verification tooling
 
-- **firn's network cases now and then lose their first connection when the
-  whole corpus runs at once on a 32-CPU host.** `cargo test --test corpus` on
+- **firn's network cases now and then lose their first connection when many
+  cases run at once on a 32-CPU host.** `cargo test --test corpus` on
   the 14900K under WSL2, every case at once, failed one of firn's cases in
   `compiler/tests/programs/network.rs`, a different one each time, with
   "Connection reset by peer" on the first batch's reply, or once with the
@@ -3370,9 +3370,10 @@ condition under which it is taken up.
   propagates more than one record, a key it found expired and the command
   itself, or several expired keys, Redis 7.0.15 brackets them in `MULTI`
   and `EXEC`; firn has no transactions to replay, so it writes the records
-  alone, which replays to the same state. A multi-key command also records
-  its expired keys in byte order where Redis records them in the order the
-  command names them. Reopen when firn answers `MULTI` and `EXEC`.
+  alone, which replays to the same state. `DEL`, `UNLINK`, `EXISTS`, `TOUCH`
+  and `MSET` also record the keys they find expired in byte order, where Redis
+  records them in the order the command names them, as firn's `MGET` and
+  `MSETNX` do. Reopen when firn answers `MULTI` and `EXEC`.
 - **firn converts decimals to binary twice, by one algorithm.**
   `apps/firn/scores/decimal.wf` reads a double and
   `apps/firn/extended/extended.wf` a long double by the same Simple Decimal

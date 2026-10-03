@@ -231,7 +231,7 @@ fn kind_of(env: &Client, value: &Entry) -> kind: u64 reads(value), writes(env) {
 }
 
 fn entry_kind(slot: &Option<Entry>, client: &Client) -> kind: u64 writes(slot), writes(client) {
-  doc "The kind of the value an entry holds, as kind_of reports it, removing it when its expiry has been reached; 0 for an absent or expired key.";
+  doc "The kind of the value an entry holds, as kind_of reports it, removing it when its expiry has passed; 0 for an absent or expired key.";
   set client^.state = state_absent;
   let kind = 0_u64;
   match slot^ {
@@ -249,7 +249,7 @@ fn entry_kind(slot: &Option<Entry>, client: &Client) -> kind: u64 writes(slot), 
 }
 
 fn remove_live(slot: &Option<Entry>, now: u64) -> found: u64 writes(slot) {
-  doc "Removes an entry and reports what it held: 1 a live value, 2 one whose expiry had been reached, 0 nothing.";
+  doc "Removes an entry and reports what it held: 1 a live value, 2 one whose expiry had passed, 0 nothing.";
   let found = 0_u64;
   match slot^ {
     Some(value: gone) => {

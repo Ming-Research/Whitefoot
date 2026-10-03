@@ -8,9 +8,9 @@ the entries of the keys a command names, so that commands on different keys
 do not wait for each other. It is named for firn, snow that has lasted a
 season: stored and compacted.
 
-Its commands are the ones `redis-benchmark`'s default suite sends, with
-expiry, an append-only file and the connection commands clients send on their
-own:
+Its commands are these, which began as the ones `redis-benchmark`'s default
+suite sends, with expiry, an append-only file and the connection commands
+clients send on their own:
 
 - keys: `DEL`, `UNLINK`, `EXISTS`, `TOUCH`, `TYPE`, `RENAME`, `RENAMENX`,
   `COPY` with `REPLACE` and `DB 0`, `EXPIRE`, `PEXPIRE`, `EXPIREAT` and
