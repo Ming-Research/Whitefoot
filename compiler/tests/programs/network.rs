@@ -1670,15 +1670,16 @@ fn expect_silence(stream: &mut TcpStream, what: &str) {
 /// an argument starts; an empty quoted argument; and a quoted command name,
 /// the decoded arguments echoed by an unknown command's error. A closing quote
 /// followed by anything but white space is an unbalanced quote, answered with
-/// Redis's error before the connection closes, the PING after it unanswered.
-/// The expected bytes are redis-server 7.0.15's for the same bytes.
+/// Redis's error before the connection closes, the PING after it unanswered,
+/// and so is a double or single quote the line leaves open. The expected bytes
+/// are redis-server 7.0.15's for the same bytes.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_splits_quoted_inline_arguments_as_redis_does() {
     let program = firn();
     let port = free_port();
     let text = port.to_string();
-    let child = program.spawn_on_route(true, &[text.as_bytes(), b"1"]);
+    let child = program.spawn_on_route(true, &[text.as_bytes(), b"3"]);
     let mut client = connect_when_ready(port);
     client
         .write_all(b"ECHO \"hello world\"\r\nECHO \"a\\nb\\r\\t\\b\\a\\\\\\\"\\x41\\x4a\\xzz\\q\"\r\nECHO 'it\\'s'\r\nECHO 'a\\nb'\r\nECHO a\"b c\"\r\nECHO a\x0bb\r\nECHO \x0ba\r\nECHO \"a\"\x0bb\r\nECHO \"\"\r\n\"ECHO\" x\r\nECHO \"\\x4\"\r\nNOPE \"a b\" 'c\\'d' e\r\nECHO \"abc\"x\r\nPING\r\n")
@@ -1690,45 +1691,69 @@ fn firn_splits_quoted_inline_arguments_as_redis_does() {
     );
     expect_closed(&mut client, "after the unbalanced quote");
     drop(client);
+    for line in [
+        &b"ECHO \"abc\r\nPING\r\n"[..],
+        &b"ECHO 'abc\r\nPING\r\n"[..],
+    ] {
+        let what = format!("{:?}", String::from_utf8_lossy(line));
+        let mut client = connect_when_ready(port);
+        client.write_all(line).expect("send a quote left open");
+        expect_replies(
+            &mut client,
+            b"-ERR Protocol error: unbalanced quotes in request\r\n",
+            &what,
+        );
+        expect_closed(&mut client, &what);
+    }
     let (status, _) = finished(child);
     assert_eq!(status, 0);
 }
 
 /// firn reads a request's count and length lines as Redis 7.0 reads them. A
 /// carriage return ends a line whatever byte follows it, which is skipped
-/// unread; a negative count is skipped; and an array of 2,000,000 elements is
-/// a request still arriving, since Redis takes up to 2,147,483,647, while
-/// 2,147,483,648 is malformed. A zero byte before a line's carriage return
-/// leaves the line incomplete, because Redis finds the carriage return with
-/// strchr: with 65,536 bytes held from the line's first byte the connection
-/// waits, and one more byte is answered as a count, or a length, line too big
-/// before the connection closes. The expected bytes are redis-server
-/// 7.0.15's.
+/// unread; a negative count is skipped; and an array of 2,147,483,647
+/// elements is a request still arriving, the most Redis takes, while
+/// 2,147,483,648 elements, a count that is not a number and a negative length
+/// are malformed and close the connection. A zero byte before a line's
+/// carriage return leaves the line incomplete, because Redis finds the
+/// carriage return with strchr: with 65,536 bytes held from the line's first
+/// byte the connection waits, and one more byte is answered as a count, or a
+/// length, line too big before the connection closes. The expected bytes are
+/// redis-server 7.0.15's.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_reads_count_and_length_lines_as_redis_does() {
     let program = firn();
     let port = free_port();
     let text = port.to_string();
-    let child = program.spawn_on_route(true, &[text.as_bytes(), b"4"]);
+    let child = program.spawn_on_route(true, &[text.as_bytes(), b"6"]);
     let mut client = connect_when_ready(port);
     client
-        .write_all(b"*1\r\n$4\rXPING\r\n*1\rX$4\r\nPING\r\n*-1\r\n*2000000\r\n")
+        .write_all(b"*1\r\n$4\rXPING\r\n*1\rX$4\r\nPING\r\n*-1\r\n*2147483647\r\n")
         .expect("send lines of every shape");
     expect_replies(&mut client, b"+PONG\r\n+PONG\r\n", "the lines' shapes");
-    expect_silence(&mut client, "an array of 2,000,000 elements");
+    expect_silence(&mut client, "an array of 2,147,483,647 elements");
     drop(client);
-    let mut client = connect_when_ready(port);
-    client
-        .write_all(b"*2147483648\r\n")
-        .expect("send a count past 2^31 - 1");
-    expect_replies(
-        &mut client,
-        b"-ERR Protocol error: invalid multibulk length\r\n",
-        "a count past 2^31 - 1",
-    );
-    expect_closed(&mut client, "after the count past 2^31 - 1");
-    drop(client);
+    for (line, error) in [
+        (
+            &b"*2147483648\r\n"[..],
+            &b"-ERR Protocol error: invalid multibulk length\r\n"[..],
+        ),
+        (
+            &b"*-abc\r\n"[..],
+            &b"-ERR Protocol error: invalid multibulk length\r\n"[..],
+        ),
+        (
+            &b"*1\r\n$-1\r\n"[..],
+            &b"-ERR Protocol error: invalid bulk length\r\n"[..],
+        ),
+    ] {
+        let what = format!("{:?}", String::from_utf8_lossy(line));
+        let mut client = connect_when_ready(port);
+        client.write_all(line).expect("send a malformed line");
+        expect_replies(&mut client, error, &what);
+        expect_closed(&mut client, &what);
+    }
     for (head, error) in [
         (
             &b"*1\x00\r\n"[..],
@@ -1831,13 +1856,16 @@ fn firn_matches_config_get_patterns_as_redis_does() {
     assert_eq!(status, 0);
 }
 
-/// firn takes options by name: with --bind 127.0.0.2 it listens on that
-/// address, so a connection to 127.0.0.1 on the same port is refused, and
-/// CONFIG GET reports the address and the port --port named. An unknown
-/// option, an option without its value, a port past 65,535, an address that is
-/// not one, an --appendonly other than yes or no, a fifth argument by position
-/// and an argument by position after one by name each stop firn with status 1
-/// before it listens.
+/// firn takes options by name, in either case, a later value replacing an
+/// earlier one: with --bind 127.0.0.2 it listens on that address, so a
+/// connection to 127.0.0.1 on the same port is refused, and CONFIG GET
+/// reports the address, the port the last --port named, the append-only file
+/// --appendonly yes turned on under the name --appendfilename gave, and the
+/// idle limit --timeout set. An unknown option, an option without its value, a
+/// port past 65,535, an address that is not one, an --appendonly other than
+/// yes or no, an idle limit past 2,147,483,647 seconds, an empty file name, a
+/// fifth argument by position and an argument by position after one by name
+/// each stop firn with status 1 before it listens.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_listens_where_its_options_by_name_say() {
@@ -1847,12 +1875,20 @@ fn firn_listens_where_its_options_by_name_say() {
     let child = program.spawn_on_route(
         true,
         &[
+            b"--port",
+            b"1",
             b"--bind",
             b"127.0.0.2",
-            b"--port",
+            b"--PORT",
             text.as_bytes(),
-            b"--clients",
+            b"--Clients",
             b"1",
+            b"--appendonly",
+            b"yes",
+            b"--appendfilename",
+            b"options.aof",
+            b"--timeout",
+            b"9",
         ],
     );
     let mut client = connect_to_when_ready(SocketAddr::from(([127, 0, 0, 2], port)));
@@ -1862,27 +1898,36 @@ fn firn_listens_where_its_options_by_name_say() {
         "firn listens on 127.0.0.1 too"
     );
     let mut batch = resp(&["PING"]);
-    batch.extend(resp(&["CONFIG", "GET", "bind"]));
-    batch.extend(resp(&["CONFIG", "GET", "port"]));
+    batch.extend(resp(&[
+        "CONFIG",
+        "GET",
+        "bind",
+        "port",
+        "appendonly",
+        "appendfilename",
+        "timeout",
+    ]));
     client.write_all(&batch).expect("ask where firn listens");
     expect_replies(
         &mut client,
         format!(
-            "+PONG\r\n*2\r\n$4\r\nbind\r\n$9\r\n127.0.0.2\r\n*2\r\n$4\r\nport\r\n${}\r\n{text}\r\n",
+            "+PONG\r\n*10\r\n$14\r\nappendfilename\r\n$11\r\noptions.aof\r\n$10\r\nappendonly\r\n$3\r\nyes\r\n$4\r\nbind\r\n$9\r\n127.0.0.2\r\n$4\r\nport\r\n${}\r\n{text}\r\n$7\r\ntimeout\r\n$1\r\n9\r\n",
             text.len()
         )
         .as_bytes(),
-        "the address and port",
+        "the options' values",
     );
     drop(client);
     let (status, _) = finished(child);
     assert_eq!(status, 0);
-    let refused: [&[&[u8]]; 7] = [
+    let refused: [&[&[u8]]; 9] = [
         &[b"--nosuch", b"1"],
         &[b"--port"],
         &[b"--port", b"65536"],
         &[b"--bind", b"127.0.0"],
         &[b"--appendonly", b"maybe"],
+        &[b"--timeout", b"2147483648"],
+        &[b"--appendfilename", b""],
         &[b"6379", b"0", b"-", b"0", b"5"],
         &[b"--port", b"6379", b"0"],
     ];
@@ -1899,7 +1944,9 @@ fn firn_listens_where_its_options_by_name_say() {
 /// closes the connection itself, leaving the server's side of it in TIME_WAIT
 /// on the port, and a second run started at once on the same port accepts a
 /// client and answers it. Without the option the second run's listen fails
-/// and firn stops with status 3.
+/// and firn stops with status 3. The option still refuses a listen of an
+/// address and port another socket listens on: a third run started while the
+/// second listens stops with status 3.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_listens_again_on_its_port_after_a_restart() {
@@ -1916,11 +1963,18 @@ fn firn_listens_again_on_its_port_after_a_restart() {
         drop(client);
         let (status, _) = finished(child);
         assert_eq!(status, 0, "{what}: the first run");
-        let child = program.spawn_on_route(native_ring, &[text.as_bytes(), b"1"]);
+        let child = program.spawn_on_route(native_ring, &[text.as_bytes(), b"2"]);
         let mut client = connect_when_ready(port);
+        let third = program.spawn_on_route(native_ring, &[text.as_bytes(), b"1"]);
+        let (status, _) = finished(third);
+        assert_eq!(
+            status, 3,
+            "{what}: a third run on a port the second listens on"
+        );
         client.write_all(&resp(&["PING"])).expect("send a ping");
         expect_replies(&mut client, b"+PONG\r\n", &what);
         drop(client);
+        drop(connect_when_ready(port));
         let (status, _) = finished(child);
         assert_eq!(status, 0, "{what}: the second run");
     }
@@ -2023,7 +2077,8 @@ fn firn_requires_its_password_as_redis_does() {
 /// old one, and removes it with the empty name; CLIENT SETINFO, which Redis
 /// 7.0 does not have, is an unknown subcommand; HELLO answers RESP2's map with
 /// no version or version 2 and refuses 1 and 3 as unsupported, since firn
-/// speaks RESP2 alone, and its SETNAME names the connection; AUTH without a
+/// speaks RESP2 alone, and its SETNAME names the connection, an option's name
+/// read up to a zero byte as Redis's strcasecmp reads it; AUTH without a
 /// configured password is answered with Redis's error for the password alone
 /// and succeeds for the user default; SELECT takes 0 alone, as Redis does with
 /// one database; COMMAND and COMMAND COUNT describe no command and COMMAND
@@ -2059,6 +2114,9 @@ fn firn_answers_connection_commands_as_redis_does() {
         vec!["HELLO", "2", "SETNAME", "via-hello"],
         vec!["CLIENT", "GETNAME"],
         vec!["HELLO", "2", "FOO"],
+        vec!["HELLO", "2", "SETNAME\0x", "via-zero"],
+        vec!["CLIENT", "GETNAME"],
+        vec!["HELLO", "2", "AUTH\0x", "default", "x"],
         vec!["AUTH", "x"],
         vec!["AUTH", "default", "x"],
         vec!["SELECT", "0"],
@@ -2076,7 +2134,7 @@ fn firn_answers_connection_commands_as_redis_does() {
     client.write_all(&batch).expect("send the connection batch");
     let hello = "*14\r\n$6\r\nserver\r\n$5\r\nredis\r\n$7\r\nversion\r\n$6\r\n7.0.15\r\n$5\r\nproto\r\n:2\r\n$2\r\nid\r\n:1\r\n$4\r\nmode\r\n$10\r\nstandalone\r\n$4\r\nrole\r\n$6\r\nmaster\r\n$7\r\nmodules\r\n*0\r\n";
     let expected = format!(
-        ":1\r\n$-1\r\n+OK\r\n$6\r\nconn-1\r\n-ERR Client names cannot contain spaces, newlines or special characters.\r\n$6\r\nconn-1\r\n+OK\r\n$-1\r\n-ERR unknown subcommand 'SETINFO'. Try CLIENT HELP.\r\n-ERR wrong number of arguments for 'client|id' command\r\n-ERR wrong number of arguments for 'client' command\r\n{hello}-NOPROTO unsupported protocol version\r\n-NOPROTO unsupported protocol version\r\n-ERR Protocol version is not an integer or out of range\r\n{hello}$9\r\nvia-hello\r\n-ERR Syntax error in HELLO option 'FOO'\r\n-ERR AUTH <password> called without any password configured for the default user. Are you sure your configuration is correct?\r\n+OK\r\n+OK\r\n-ERR DB index is out of range\r\n-ERR value is not an integer or out of range\r\n-ERR value is out of range, value must between -2147483648 and 2147483647\r\n*0\r\n:0\r\n-ERR wrong number of arguments for 'command|count' command\r\n-ERR unknown subcommand 'DOCS'. Try COMMAND HELP.\r\n-ERR wrong number of arguments for 'time' command\r\n"
+        ":1\r\n$-1\r\n+OK\r\n$6\r\nconn-1\r\n-ERR Client names cannot contain spaces, newlines or special characters.\r\n$6\r\nconn-1\r\n+OK\r\n$-1\r\n-ERR unknown subcommand 'SETINFO'. Try CLIENT HELP.\r\n-ERR wrong number of arguments for 'client|id' command\r\n-ERR wrong number of arguments for 'client' command\r\n{hello}-NOPROTO unsupported protocol version\r\n-NOPROTO unsupported protocol version\r\n-ERR Protocol version is not an integer or out of range\r\n{hello}$9\r\nvia-hello\r\n-ERR Syntax error in HELLO option 'FOO'\r\n{hello}$8\r\nvia-zero\r\n{hello}-ERR AUTH <password> called without any password configured for the default user. Are you sure your configuration is correct?\r\n+OK\r\n+OK\r\n-ERR DB index is out of range\r\n-ERR value is not an integer or out of range\r\n-ERR value is out of range, value must between -2147483648 and 2147483647\r\n*0\r\n:0\r\n-ERR wrong number of arguments for 'command|count' command\r\n-ERR unknown subcommand 'DOCS'. Try COMMAND HELP.\r\n-ERR wrong number of arguments for 'time' command\r\n"
     );
     expect_replies(&mut client, expected.as_bytes(), "the connection batch");
     let before = std::time::SystemTime::now()

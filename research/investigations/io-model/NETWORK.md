@@ -313,11 +313,16 @@ listen's failure (`firn_listens_again_on_its_port_after_a_restart` in
 listeners for this reason.
 
 The POSIX leaf now sets `SO_REUSEADDR` on each listening socket before its
-bind. The ground of slice 2 survives it on Linux and the BSDs, where the
-option never lets a second socket listen on an address and port another
-socket listens on, so a program's second listen of one address still
-answers `AddressInUse`; what the option admits is a port held only by
-connections, in TIME_WAIT or otherwise.
+bind. The ground of slice 2 survives it for one address: the option never
+lets a second socket listen on an address and port another socket listens
+on, so a program's second listen of one address still answers
+`AddressInUse`, which the same case checks. On Linux, where sockets with
+the option on WSL2's kernel 6.18 also refused 127.0.0.1 beside a listener
+of 0.0.0.0 on one port and the reverse, what the option admits is a port
+held only by connections, in TIME_WAIT or otherwise. The BSDs, macOS among
+them, also let a socket with the option bind a specific address beside a
+wildcard listener on the same port; that rule comes from their
+documentation and was not run here.
 
 Windows needs no option. An experiment on Windows 11 (build 22631), with
 Python 3.13's sockets over Winsock on the loopback and no option set on any

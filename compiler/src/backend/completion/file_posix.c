@@ -127,10 +127,12 @@ static void wf_socket_disable_nagle(int descriptor) {
 /* SO_REUSEADDR on every listening socket this leaf creates, before its bind,
  * so that a restarted server binds its port while the connections its earlier
  * run accepted wait out TIME_WAIT, as Redis's listener does; without it the
- * bind answers AddressInUse for up to a minute on Linux.  On Linux and the
- * BSDs the option never lets a second socket listen on an address and port
- * another socket listens on, so a program's second listen of one address
- * still answers AddressInUse.  Windows needs no option for the restart, and
+ * bind answers AddressInUse for up to a minute on Linux.  The option never
+ * lets a second socket listen on an address and port another socket listens
+ * on, so a program's second listen of one address still answers
+ * AddressInUse; the BSDs, unlike Linux, do let a specific address be bound
+ * beside a wildcard listener of the same port.  Windows needs no option for
+ * the restart, and
  * its SO_REUSEADDR means something else (`file_windows.c`).  A refusal leaves
  * an ordinary socket whose bind may wait out TIME_WAIT, so it is never folded
  * into the operation's own outcome. */

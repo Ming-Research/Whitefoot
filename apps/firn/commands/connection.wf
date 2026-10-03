@@ -189,7 +189,7 @@ fn run_auth(input: &[u8], args: &Box<Slots<Span>>, client: &Client) -> result: u
 }
 
 fn run_hello(input: &[u8], args: &Box<Slots<Span>>, client: &Client) -> result: unit reads(input), reads(args), writes(client) {
-  doc "HELLO [protover [AUTH username password] [SETNAME clientname]]: answers as Redis 7.0 answers under RESP2. A version that is not a number is refused with Redis's error, and one other than 2 as unsupported, 3 included, since firn speaks RESP2 alone. The options then apply in order, AUTH as AUTH with a user name applies, SETNAME as CLIENT SETNAME does, each stopping the command at its error with the options before it applied, and any other option is a syntax error. A connection still locked is then refused; any other is answered with Redis's map of the server's facts, an array under RESP2: server redis and version 7.0.15, the server and version whose replies firn follows, protocol 2, the connection's id, standalone mode, the master role and no modules.";
+  doc "HELLO [protover [AUTH username password] [SETNAME clientname]]: answers as Redis 7.0 answers under RESP2. A version that is not a number is refused with Redis's error, and one other than 2 as unsupported, 3 included, since firn speaks RESP2 alone. The options then apply in order, AUTH as AUTH with a user name applies, SETNAME as CLIENT SETNAME does, each stopping the command at its error with the options before it applied, and any other option is a syntax error; an option's name is read up to a zero byte, as Redis's strcasecmp reads it. A connection still locked is then refused; any other is answered with Redis's map of the server's facts, an array under RESP2: server redis and version 7.0.15, the server and version whose replies firn follows, protocol 2, the connection's id, standalone mode, the master role and no modules.";
   let count = args^.inner.len;
   if count >= 2_u64 {
     let version = arg(args: args, index: 1_u64);
@@ -211,8 +211,9 @@ fn run_hello(input: &[u8], args: &Box<Slots<Span>>, client: &Client) -> result: 
     let option = arg(args: args, index: index);
     let last = count -wrap 1_u64;
     let more = last -wrap index;
-    let authenticating = name_is(input: input, start: option.start, length: option.length, word: &word_auth[0_u64..4_u64]);
-    let naming = name_is(input: input, start: option.start, length: option.length, word: &word_setname[0_u64..7_u64]);
+    let spelled = before_zero(input: input, span: option);
+    let authenticating = name_is(input: input, start: option.start, length: spelled, word: &word_auth[0_u64..4_u64]);
+    let naming = name_is(input: input, start: option.start, length: spelled, word: &word_setname[0_u64..7_u64]);
     let paired = more >= 2_u64;
     let single = more >= 1_u64;
     let auth_option = band(authenticating, paired);

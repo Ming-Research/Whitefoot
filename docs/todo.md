@@ -2132,17 +2132,19 @@ rarely insert at the same place.
   library's container interfaces are next revised.
 
 - **The standard library has no decimal conversion of integers.** Two
-  programs now write their own, firn's `read_number` and `put_decimal`
-  (`apps/firn/protocol/protocol.wf`) and `parse_port` in
-  `tests/programs/deadlines.wf`, each with its own handling of digits,
-  length and room. A program that reads a numeric argument or prints
-  a count repeats this, and each copy can differ at the edges (overflow past
-  19 digits, an empty field, no room left). The change: a `std::text` entry
-  that parses a decimal `u64` from a byte range with a result naming a
-  malformed or overlong field, and one that appends a `u64` in decimal into a
-  byte window it reports room for; then the two copies move to them.
-  Reopen when the library's text interfaces are next revised or a third
-  program needs one.
+  programs now write their own: firn reads its options' numbers with
+  `decimal` (`apps/firn/server/server.wf`) and writes replies' numbers with
+  `put_decimal` (`apps/firn/protocol/protocol.wf`), and
+  `tests/programs/deadlines.wf` has `parse_port`, each with its own handling
+  of digits, length and room. A program that reads a numeric argument or
+  prints a count repeats this, and each copy can differ at the edges
+  (overflow past 19 digits, an empty field, no room left). The change: a
+  `std::text` entry that parses a decimal `u64` from a byte range with a
+  result naming a malformed or overlong field, and one that appends a `u64`
+  in decimal into a byte window it reports room for; then those copies move
+  to them, while firn's `read_integer` (`apps/firn/bytes/bytes.wf`) keeps
+  Redis's own rules for a request's numbers over the first. Reopen when the
+  library's text interfaces are next revised or a third program needs one.
 
 - **Complete the vector boundary witness when comparing independent fields.**
   The maintained GrowVector program checks the shipped vector and behavior
@@ -3192,6 +3194,21 @@ condition under which it is taken up.
   least seven runs per model trips no build or case stage. Reopen when an
   overrun is traced to a change that earlier runs on faster machines passed,
   or when clippy's variance overruns come more than about once a week.
+- **Worktrees on one host share the completion tests' binaries.**
+  `WHITEFOOT_SCRATCH_ROOT` defaults to one directory for every worktree,
+  `$TMPDIR/whitefoot` or `/tmp/whitefoot`, and make judges the
+  `completion-test` binaries under it fresh by comparing their times with the
+  running worktree's sources, so a binary another worktree built later from
+  other sources counts as up to date and runs. On the 14900K host,
+  `make -C compiler static` in one worktree failed in `concurrent-map-test`
+  with a message that worktree's sources do not hold, from a binary another
+  worktree had built minutes before; with `WHITEFOOT_SCRATCH_ROOT` set to a
+  directory of its own, the same gate built every binary from its own tree
+  and passed. The change: a default of the worktree's own, such as a
+  directory named for the worktree's path, or binaries that record the tree
+  they were built from; setting the variable avoids it meanwhile. Reopen when
+  two worktrees next validate on one host, or with the next change to the
+  check runner.
 
 ## firn
 
