@@ -220,6 +220,9 @@ struct wf_cmap {
      * swaps the map has had. */
     chunk *chunks;
     uint32_t generation;
+    /* The hold that holds the map whole, from its take to its release, whose
+     * entries a swap settles before it exchanges the map's (wf_cmap_swap). */
+    wf_cmap_holding *whole_hold;
     void *raw;
     wf_cmap_user users[WF_CMAP_MAX_USERS];
 };
@@ -1924,6 +1927,8 @@ void wf_cmap_hold_take(wf_cmap_user *u, wf_cmap_holding *hold) {
         }
     }
     u->own = NULL;
+    if (hold->whole)
+        u->map->whole_hold = hold;
     /* Read once the hold keeps every other statement from swapping the map's
      * entries (wf_cmap_swap). */
     hold->generation = u->map->generation;
@@ -1972,41 +1977,51 @@ static int slot_present(const void *slot, uint64_t tag_offset, uint32_t tag_widt
     return tag != none_tag;
 }
 
+/* Settles a taken hold's entries: each kept when its slot's tag says it holds
+ * a value, else removed with its slot, and unlocked, counted as it now
+ * stands. Answers whether one was created for the hold. */
+static int settle_entries(wf_cmap_user *u, wf_cmap_holding *hold, uint64_t tag_offset, uint32_t tag_width,
+                          uint64_t none_tag) {
+    wf_cmap *map = u->map;
+    wf_cmap_held *keys = held_keys(hold);
+    int fresh = 0;
+    for (uint64_t i = 0; i < hold->count; i++) {
+        wf_cmap_held *e = &keys[i];
+        if (!e->leads || e->cell == NULL)
+            continue;
+        cell *c = e->cell;
+        int present = slot_present(e->slot, tag_offset, tag_width, none_tag);
+        /* Counted before the unlock: a mover waiting for this cell sums the
+         * counts once it has the cell, into the next table's base. */
+        count(u, 0, (int64_t)present - (int64_t)(e->fresh == 0));
+        if (present) {
+            unlock(c, atomic_load_explicit(&c->key, memory_order_relaxed) & ~LOCKED);
+        } else {
+            node *n = node_at(c);
+            free_node(u, n, node_bytes(map, n->length));
+            unlock(c, REMOVED);
+        }
+        fresh |= e->fresh != 0;
+        e->cell = NULL;
+    }
+    return fresh;
+}
+
 int wf_cmap_hold_release(wf_cmap_holding *hold, uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag) {
     wf_cmap_user *u = hold->user;
     int wrote = 0;
     if (u != NULL) {
         wf_cmap *map = u->map;
-        /* Swapped out of the map since the take, the hold's entries went with
-         * the other map, which drops them; they are not this map's to keep
+        /* Swapped since the take, the hold's entries were settled by the
+         * swap and went with the other map; they are not this map's to keep
          * or count. */
         int swapped = hold->generation != map->generation;
         int fresh = 0;
         table *t = hold->table;
         wrote = swapped;
         if (hold->count != 0 && !swapped) {
-            wf_cmap_held *keys = held_keys(hold);
             wrote = 1;
-            for (uint64_t i = 0; i < hold->count; i++) {
-                wf_cmap_held *e = &keys[i];
-                if (!e->leads)
-                    continue;
-                cell *c = e->cell;
-                int present = slot_present(e->slot, tag_offset, tag_width, none_tag);
-                /* Counted before the unlock: a mover waiting for this cell
-                 * sums the counts once it has the cell, into the next
-                 * table's base. */
-                count(u, 0, (int64_t)present - (int64_t)(e->fresh == 0));
-                if (present) {
-                    unlock(c, atomic_load_explicit(&c->key, memory_order_relaxed) & ~LOCKED);
-                } else {
-                    node *n = node_at(c);
-                    free_node(u, n, node_bytes(map, n->length));
-                    unlock(c, REMOVED);
-                }
-                fresh |= e->fresh != 0;
-                e->cell = NULL;
-            }
+            fresh = settle_entries(u, hold, tag_offset, tag_width, none_tag);
         }
         /* A claim may cross the threshold, as an insert's may. A move it
          * starts ends before the statement leaves the map, so that a hold of
@@ -2021,9 +2036,11 @@ int wf_cmap_hold_release(wf_cmap_holding *hold, uint64_t tag_offset, uint32_t ta
                     finish_move(map, t);
             }
         }
-        if (hold->whole)
+        if (hold->whole) {
+            if (map->whole_hold == hold)
+                map->whole_hold = NULL;
             wf_cmap_unhold(u);
-        else if (!hold->held && hold->count != 0)
+        } else if (!hold->held && hold->count != 0)
             atomic_store_explicit(&u->active, 0, memory_order_release);
     }
     if (hold->keys != NULL)
@@ -2071,16 +2088,30 @@ static void fold_users(wf_cmap *map) {
         b->field = swap_held;                                                                                          \
     } while (0)
 
+/* Settles the entries of the hold that holds map whole, so they are unlocked
+ * and counted in map before its entries move: the hold's statement uses none
+ * of them after a swap, which writes the table they lie in [REF-2]. */
+static void settle_whole_hold(wf_cmap *map, uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag) {
+    wf_cmap_holding *hold = map->whole_hold;
+    if (hold == NULL || hold->user == NULL || hold->count == 0)
+        return;
+    settle_entries(hold->user, hold, tag_offset, tag_width, none_tag);
+    hold->count = 0;
+}
+
 /* Two maps of one slot layout exchange their entries, their counts, their
  * tables and the memory their entries live in, while each keeps its
  * identity, so a statement that reached either map before goes on reaching
  * the same one. No other statement may be inside either map: the caller
- * holds a whole, or holds neither map's handle in common with anyone. A
- * hold of a's or b's entries taken before learns of the swap from the map's
- * generation. */
-void wf_cmap_swap(wf_cmap *a, wf_cmap *b) {
+ * holds a whole, or holds neither map's handle in common with anyone. The
+ * entries of a hold of either map taken whole before are settled first,
+ * reading each slot's tag as a hold's release does; such a hold learns of
+ * the swap from the map's generation. */
+void wf_cmap_swap(wf_cmap *a, wf_cmap *b, uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag) {
     if (a->slot_size != b->slot_size || a->slot_align != b->slot_align)
         abort();
+    settle_whole_hold(a, tag_offset, tag_width, none_tag);
+    settle_whole_hold(b, tag_offset, tag_width, none_tag);
     fold_users(a);
     fold_users(b);
     table *current = atomic_load_explicit(&a->current, memory_order_relaxed);

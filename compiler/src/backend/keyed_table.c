@@ -98,7 +98,9 @@ void wf__keyed_table_free(void *table) {
 
 /* The table's watches stay with it: a statement that holds a whole and
  * swaps writes it, which its hold's release reports (wf_cmap_hold_release). */
-void wf__keyed_table_swap(void *a, void *b) { wf_cmap_swap((wf_cmap *)a, (wf_cmap *)b); }
+void wf__keyed_table_swap(void *a, void *b, uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag) {
+    wf_cmap_swap((wf_cmap *)a, (wf_cmap *)b, tag_offset, tag_width, none_tag);
+}
 
 void *wf__table_lock_entry(void *table, const unsigned char *key, uint64_t length, uint32_t read,
                            wf_table_entry *entry) {

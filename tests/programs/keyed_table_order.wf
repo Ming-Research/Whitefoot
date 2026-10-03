@@ -1,0 +1,132 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+const names: Array<u8, 2> =[97_u8, 98_u8];
+
+struct Ledger {
+  count: u64;
+  map: KeyedTable<u64>;
+  log: u64;
+}
+
+struct Store {
+  map: KeyedTable<u64>;
+  log: u64;
+}
+
+fn add_one(slot: &Option<u64>) -> result: unit writes(slot) {
+  match slot^ {
+    Some(value: seen) => {
+      let next = seen^ +wrap 1_u64;
+      set slot^ = Some<u64>(value: next);
+    }
+    None() => {
+      set slot^ = Some<u64>(value: 1_u64);
+    }
+  }
+  return unit;
+}
+
+fn entry_then_count(ledger: Shared<Ledger>) -> result: unit pure waits {
+  doc "Adds to an entry and then to the count, in that order in its block.";
+  let key = &names[0_u64..1_u64];
+  for @round (index in 0_u64..2000_u64) {
+    atomic l = &ledger, slot = &l^.map[key] {
+      add_one(slot: slot);
+      set l^.count = l^.count +wrap 1_u64;
+    }
+  }
+  return unit;
+}
+
+fn count_then_entry(ledger: Shared<Ledger>) -> result: unit pure waits {
+  doc "Adds to the count and then to the same entry, the other order.";
+  let key = &names[0_u64..1_u64];
+  for @round (index in 0_u64..2000_u64) {
+    atomic l = &ledger, slot = &l^.map[key] {
+      set l^.count = l^.count +wrap 1_u64;
+      add_one(slot: slot);
+    }
+  }
+  return unit;
+}
+
+fn logged(store: Shared<Store>, logging: Bool) -> result: unit pure waits {
+  doc "Adds to an entry and, when logging, to the log after it: the log is reached only on that path.";
+  let key = &names[1_u64..2_u64];
+  for @round (index in 0_u64..2000_u64) {
+    atomic s = &store, slot = &s^.map[key] {
+      add_one(slot: slot);
+      if logging {
+        set s^.log = s^.log +wrap 1_u64;
+      }
+    }
+  }
+  return unit;
+}
+
+fn run(ledger: &Shared<Ledger>, store: &Shared<Store>) -> result: unit reads(ledger), reads(store) waits {
+  for @start (index in 0_u64..3_u64) {
+    let first = shared_share::<Ledger>(shared: ledger);
+    spawn entry_then_count(ledger: move first);
+    let second = shared_share::<Ledger>(shared: ledger);
+    spawn count_then_entry(ledger: move second);
+    let writer = shared_share::<Store>(shared: store);
+    let on = True();
+    spawn logged(store: move writer, logging: on);
+    let quiet = shared_share::<Store>(shared: store);
+    let off = False();
+    spawn logged(store: move quiet, logging: off);
+  }
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure waits {
+  doc "Two states whose units the statements meet in opposite orders: in the ledger the count is declared before the table, and half the statements reach the entry first and the count after it, half the count first; in the store the table is declared first and the log is reached only when logging. Every statement takes the units in their declared order whatever its block's order, so none waits for another in a cycle; the entry and the count agree, the log counts exactly the logging statements, and the program ends on any number of drivers, its status naming the first wrong count.";
+  let ledger_table = keyed_table_new::<u64>(capacity: 0_u64);
+  let ledger_state = Ledger(count: 0_u64, map: move ledger_table, log: 0_u64);
+  let ledger = shared_new::<Ledger>(value: move ledger_state);
+  let store_table = keyed_table_new::<u64>(capacity: 0_u64);
+  let store_state = Store(map: move store_table, log: 0_u64);
+  let store = shared_new::<Store>(value: move store_state);
+  run(ledger: &ledger, store: &store);
+  let first = &names[0_u64..1_u64];
+  let value = 0_u64;
+  let count = 1_u64;
+  atomic l = &ledger, slot = &l^.map[first] {
+    match slot^ {
+      Some(value: seen) => {
+        set value = seen^;
+      }
+      None() => {
+      }
+    }
+    set count = l^.count;
+  }
+  if value != 12000_u64 {
+    return exit_status(code: 1_u8);
+  }
+  if count != value {
+    return exit_status(code: 2_u8);
+  }
+  let second = &names[1_u64..2_u64];
+  let added = 0_u64;
+  let logs = 0_u64;
+  atomic s = &store, slot = &s^.map[second] {
+    match slot^ {
+      Some(value: seen) => {
+        set added = seen^;
+      }
+      None() => {
+      }
+    }
+    set logs = s^.log;
+  }
+  if added != 12000_u64 {
+    return exit_status(code: 3_u8);
+  }
+  if logs != 6000_u64 {
+    return exit_status(code: 4_u8);
+  }
+  return exit_status(code: 0_u8);
+}

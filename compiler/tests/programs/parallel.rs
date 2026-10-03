@@ -421,95 +421,66 @@ fn shared_objects_keep_every_update_on_one_driver_and_on_four() {
     }
 }
 
-/// [SHARE-3] statements holding a map's state whose keys are computed before
-/// their blocks run hold those keys' entries and no others, so three of
-/// them on one key each run beside each other and beside two that read five
-/// keys, on one driver and on four. Each adds to its entry and, in its one
-/// object statement, to a total; a reader that saw another's statement half
-/// done finds the entries' sum and the total disagree (status 5), and a lost
-/// addition leaves the total short (status 4).
-#[test]
-fn statements_holding_their_keys_keep_every_update_on_one_driver_and_on_four() {
-    let program = build_program(&compile_program("shared_map_keys.wf"));
+/// Runs one program on one driver and on four, `rounds` times each, and
+/// requires status 0, which each program gives only when every count it
+/// checks is the one every order of its atomic statements gives.
+fn run_on_one_driver_and_on_four(name: &str, rounds: usize) {
+    let program = build_program(&compile_program(name));
     for drivers in ["1", "4"] {
-        for round in 0..2 {
+        for round in 0..rounds {
             let output = program.run_with_settings(None, &[("WF_DRIVERS", drivers)]);
             assert_eq!(
                 output.status.code(),
                 Some(0),
-                "drivers {drivers}, round {round}: {output:?}"
-            );
-        }
-    }
-}
-
-/// [SHARE-3] a statement holding a map's state never sees the middle of
-/// another statement's block: one context raises and then lowers a flag in
-/// two object statements inside a statement on one entry, while another
-/// holds the map's state, reaches a different entry and reads the flag, on
-/// one driver and on four. A whole-map statement that held only its own
-/// key's entry would run beside the first and read the flag raised (status
-/// 7), so in a program with such a block every statement holding a map's
-/// state holds the map.
-#[test]
-fn a_whole_map_statement_never_sees_inside_another_block_on_one_driver_and_on_four() {
-    let program = build_program(&compile_program("shared_map_watch.wf"));
-    for drivers in ["1", "4"] {
-        for round in 0..2 {
-            let output = program.run_with_settings(None, &[("WF_DRIVERS", drivers)]);
-            assert_eq!(
-                output.status.code(),
-                Some(0),
-                "drivers {drivers}, round {round}: {output:?}"
-            );
-        }
-    }
-}
-
-/// [SHARE-3] a block that runs two statements on one shared object, a read
-/// and then a write of what it read, is a section no other statement
-/// holding the same map's state, or the same entry, enters: four contexts
-/// whose whole-map blocks reach one key each, and four whose blocks read
-/// one entry and write nothing through it, add to their totals without a
-/// lost addition, on one driver and on four. Whole-map statements that held
-/// only their keys' entries would lose additions of the first total (status
-/// 1), and statements that shared the entry they only read would lose
-/// additions of the second (status 2).
-#[test]
-fn a_block_of_two_object_statements_stays_a_section_on_one_driver_and_on_four() {
-    let program = build_program(&compile_program("shared_map_sections.wf"));
-    for drivers in ["1", "4"] {
-        for round in 0..2 {
-            let output = program.run_with_settings(None, &[("WF_DRIVERS", drivers)]);
-            assert_eq!(
-                output.status.code(),
-                Some(0),
-                "drivers {drivers}, round {round}: {output:?}"
+                "{name}: drivers {drivers}, round {round}: {output:?}"
             );
         }
     }
 }
 
 /// [SHARE-1, SHARE-2, SHARE-3] eight contexts adding to the entries under
-/// eight keys of one map, and to a shared object inside each keyed
-/// statement, while two others hold the whole map and compare the entries'
-/// sum with that object, reach the counts every order of their statements
-/// gives, on one driver and on four. A keyed statement that did not hold its
-/// entry alone loses increments (status 2), one that ran while the map was
-/// held lets a holder see the sum and the total disagree (status 5), and an
-/// object statement inside a keyed block that did not hold its object loses
-/// increments of the total (status 4).
+/// eight keys of a state's table, and to the state's total in the same
+/// statement, while two others hold all eight entries through a key set and
+/// compare their sum with the total, reach the counts every order of their
+/// statements gives, on one driver and on four. An entry not locked alone
+/// loses increments (status 2), a statement that took its entries and the
+/// total apart lets a reader see the sum and the total disagree (status 5),
+/// and a count that did not hold the table whole miscounts (status 1).
 #[test]
-fn shared_maps_keep_every_update_on_one_driver_and_on_four() {
-    let program = build_program(&compile_program("shared_maps.wf"));
-    for drivers in ["1", "4"] {
-        for round in 0..3 {
-            let output = program.run_with_settings(None, &[("WF_DRIVERS", drivers)]);
-            assert_eq!(
-                output.status.code(),
-                Some(0),
-                "drivers {drivers}, round {round}: {output:?}"
-            );
-        }
-    }
+fn keyed_tables_keep_every_update_on_one_driver_and_on_four() {
+    run_on_one_driver_and_on_four("keyed_tables.wf", 3);
+}
+
+/// [SHARE-3] guards that read entries of a table: four pairs pass values
+/// through one entry each, a sender waiting for its entry to be empty and a
+/// taker for it to hold a value, and two contexts wait on a guard reading an
+/// entry and the state's own field together, on one driver and on four. A
+/// guard that missed a write to the table it read would wait for ever, and a
+/// value passed twice or lost leaves the total wrong (status 1).
+#[test]
+fn guards_on_table_entries_wake_on_every_write_on_one_driver_and_on_four() {
+    run_on_one_driver_and_on_four("keyed_table_watch.wf", 2);
+}
+
+/// [SHARE-1, SHARE-3] a state's table replaced whole and exchanged with
+/// another while other statements lock its entries one key at a time keeps
+/// its entries' sum equal to the state's total, on one driver and on four. A
+/// statement that locked the table it read before the replacement would add
+/// to a table no longer the state's (status 1 or 3), and a hold whose
+/// entries an exchange moved away still locked would leave the next
+/// statement on those keys waiting for ever
+/// (compiler/waiting-contexts/state-locks).
+#[test]
+fn a_table_replaced_whole_keeps_its_identity_on_one_driver_and_on_four() {
+    run_on_one_driver_and_on_four("keyed_table_resets.wf", 2);
+}
+
+/// [SHARE-3] statements whose blocks meet a state's units in opposite
+/// orders, and a statement that reaches a unit only on one path, end and
+/// keep every count on one driver and on four: each statement takes the
+/// units in their declared order, so none waits for another in a cycle
+/// (compiler/waiting-contexts/state-locks).
+#[test]
+fn units_met_in_any_order_are_taken_in_one_on_one_driver_and_on_four() {
+    run_on_one_driver_and_on_four("keyed_table_order.wf", 2);
 }

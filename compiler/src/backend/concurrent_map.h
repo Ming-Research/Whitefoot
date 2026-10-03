@@ -188,8 +188,10 @@ int wf_cmap_hold_release(wf_cmap_holding *hold, uint64_t tag_offset, uint32_t ta
  * tables and memory, while each map keeps its identity: its gate, its whole
  * holds' line, its users and their marks, and the includer's members. No
  * other statement may be inside either map: the caller holds a's whole
- * map, or neither map is shared. */
-void wf_cmap_swap(wf_cmap *a, wf_cmap *b);
+ * map, or neither map is shared. A hold holding either map whole has its
+ * entries settled first, each slot's tag read as wf_cmap_hold_release reads
+ * it. */
+void wf_cmap_swap(wf_cmap *a, wf_cmap *b, uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag);
 
 /* The number of entries, exact while the map is held or has no users; a
  * hold's own entries count as they stood when it was taken. */

@@ -205,7 +205,7 @@ pub(super) fn shared_runtime_declarations() -> Module {
         ("wf__keyed_table_count", "i64", &["ptr"]),
         ("wf__keyed_table_drain", "ptr", &["ptr"]),
         ("wf__keyed_table_free", "void", &["ptr"]),
-        ("wf__keyed_table_swap", "void", &["ptr", "ptr"]),
+        ("wf__keyed_table_swap", "void", &["ptr", "ptr", "i64", "i32", "i64"]),
         ("wf__table_lock_entry", "ptr", &["ptr", "ptr", "i64", "i32", "ptr"]),
         ("wf__table_unlock_entry", "void", &["ptr", "i32"]),
         ("wf__table_hold_begin", "void", &["ptr", "ptr"]),

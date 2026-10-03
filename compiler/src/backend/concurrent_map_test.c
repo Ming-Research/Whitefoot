@@ -2661,7 +2661,7 @@ static void maps_swap(void) {
             fail("a statement never waited at a held map's gate", 0, 0);
         nanosleep(&pause, NULL);
     }
-    wf_cmap_swap(swap_map, other);
+    wf_cmap_swap(swap_map, other, VALUE_TAG);
     if (!wf_cmap_hold_release(&hold, VALUE_TAG))
         fail("a hold of the whole map that swapped its entries said it wrote nothing", 0, 0);
     pthread_join(waiter, NULL);
@@ -2687,19 +2687,34 @@ static void maps_swap(void) {
     wf_cmap_hold_take(wf_cmap_user_at(swap_map, 0), &hold);
     *(uint64_t *)wf_cmap_hold_slot(&hold, 0) = 0;
     *(uint64_t *)wf_cmap_hold_slot(&hold, 1) = 9;
-    wf_cmap_swap(swap_map, other);
+    wf_cmap_swap(swap_map, other, VALUE_TAG);
+    /* The swap settled the hold's entries: none of the other map's cells is
+     * left locked, which a later hold of the same keys would wait on for
+     * ever once the entries come back. */
+    {
+        table *moved = atomic_load(&other->current);
+        for (uint64_t i = 0; i < moved->capacity; i++)
+            if (atomic_load(&moved->cells[i].key) & LOCKED)
+                fail("a swap left a hold's cell locked in the other map (cell)", i, 0);
+    }
     if (!wf_cmap_hold_release(&hold, VALUE_TAG))
         fail("a hold whose map was swapped said it wrote nothing", 0, 0);
     if (wf_cmap_count(swap_map) != 0 || counted_value(swap_map, 100) != 0)
         fail("a hold taken before a swap left entries in the map (count)", wf_cmap_count(swap_map), 0);
+    /* Swapped back, the entries the hold settled are lockable again. */
+    wf_cmap_swap(swap_map, other, VALUE_TAG);
+    if (counted_value(swap_map, 102) != 9 || counted_value(swap_map, 100) != 0)
+        fail("entries a swap settled are not as the hold left them (kept, removed)", counted_value(swap_map, 102),
+             counted_value(swap_map, 100));
+    wf_cmap_swap(swap_map, other, VALUE_TAG);
     sum = drain_sum(other, &drained);
-    if (drained != 4 || sum != 0 + 9 + 201 + 77)
+    if (drained != 3 || sum != 9 + 201 + 77)
         fail("a hold taken before a swap did not leave its entries to the other map (drained, sum)", drained, sum);
     wf_cmap_destroy(other);
     /* The watches stay with the map */
     other = wf_cmap_create_entries(8, 8, 0);
     swap_map->watch.count = 1;
-    wf_cmap_swap(swap_map, other);
+    wf_cmap_swap(swap_map, other, VALUE_TAG);
     if (swap_map->watch.count != 1 || other->watch.count != 0)
         fail("a swap moved a map's watches (kept, moved)", swap_map->watch.count, other->watch.count);
     swap_map->watch.count = 0;
@@ -2763,7 +2778,7 @@ static void tables_wake_writers(void) {
     wf__table_hold_begin(&hold, table);
     wf__table_hold_whole(&hold);
     wf__table_hold_take(&hold);
-    wf__keyed_table_swap(table, fresh);
+    wf__keyed_table_swap(table, fresh, VALUE_TAG);
     wf__table_hold_release(&hold, VALUE_TAG);
     if (atomic_load(&written_calls) != before + 1 || wf__keyed_table_count(table) != 0 || wf__keyed_table_count(fresh) != 3)
         fail("a whole hold that swapped did not wake the watches, or the swap moved no entries (wakes, count)",

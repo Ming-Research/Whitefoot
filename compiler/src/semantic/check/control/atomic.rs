@@ -15,7 +15,7 @@ use super::super::super::model::{
     CheckedNominalKind, CheckedShared, CheckedStatePath, CheckedStatement, CheckedType,
     IntegerType, expression_children,
 };
-use super::super::super::places::{PlaceRoot, ResolvedPlace};
+use super::super::super::places::{CapturedValue, PlaceRoot, PlaceStep, ResolvedPlace};
 use super::super::expressions::calls::user::WAIT1_DECLARE_THE_CALLER_WAITING;
 use super::super::references::{ReferenceInfo, ReferenceKind};
 use super::super::{CheckStop, Checker, EffectSet, LocalBinding};
@@ -603,6 +603,29 @@ impl Checker<'_, '_> {
             referent,
             loop_depth,
         )?;
+        // [REF-2] the binder's selected path is an entry of the table, `s^.t`
+        // followed by one index no other index is proved distinct from: a
+        // write of the table, or of anything holding it, invalidates the
+        // binder, and the entries of one table are taken as overlapping
+        // [OWN-7], since two of the header's keys may be one.
+        let selected = table
+            .reference
+            .as_ref()
+            .and_then(|reference| reference.paths.first())
+            .cloned()
+            .map(|mut place| {
+                place.path.push(PlaceStep::Index(CapturedValue::unknown()));
+                place
+            })
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+        if let Some(reference) = block_bindings
+            .get_mut(&header.declaration.id())
+            .and_then(|local| local.reference.as_mut())
+        {
+            reference.paths.push(selected.clone());
+        }
+        self.body
+            .record_reference_origins(binding, std::slice::from_ref(&selected));
         Ok((
             CheckedEntryBinding {
                 node_path: self.types.declarations.tree.path(header.place)?.clone(),

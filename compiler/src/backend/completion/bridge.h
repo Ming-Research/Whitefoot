@@ -358,13 +358,14 @@ void wf__key_set_free(void *store);
  * entries of `a` and `b`, with their count and memory, while each keeps its
  * identity, which a statement that read either pointer before goes on
  * using: no other statement may be inside either table, so the caller holds
- * `a` whole or shares neither, and a hold of `a`'s entries taken before the
- * swap leaves them to the other table at its release. */
+ * `a` whole or shares neither, and the entries of a hold of `a` taken whole
+ * before the swap are settled first, each slot's tag read as
+ * `wf__table_hold_release` reads it, and go with the other table. */
 void *wf__keyed_table_new(uint64_t slot_size, uint64_t slot_align, uint64_t capacity);
 uint64_t wf__keyed_table_count(void *table);
 uint64_t *wf__keyed_table_drain(void *table);
 void wf__keyed_table_free(void *table);
-void wf__keyed_table_swap(void *a, void *b);
+void wf__keyed_table_swap(void *a, void *b, uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag);
 
 /* One key: locks the entry, or reads it beside other readers when `read`
  * is nonzero, and returns its `Option<V>` slot, filled with zeros, `None`,

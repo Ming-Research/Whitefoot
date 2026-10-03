@@ -249,18 +249,23 @@ impl FunctionEmitter<'_, '_> {
         .map_err(|_| BackendFailure::TextEmission)
     }
 
-    /// Exchanges two tables' entries, each keeping its identity.
+    /// Exchanges two tables' entries, each keeping its identity; the
+    /// runtime first settles the entries of a hold of either taken whole,
+    /// reading each entry's tag as a hold's release does.
     pub(super) fn emit_keyed_table_swap(
         &mut self,
         result: IrValueId,
         first: IrValueId,
         second: IrValueId,
     ) -> Result<(), BackendFailure> {
-        if !self.names_table(first)? || !self.names_table(second)? {
+        let (Some(IrType::Nominal(nominal)), true) =
+            (self.value_type(first), self.value_type(first) == self.value_type(second))
+        else {
             return Err(BackendFailure::InvalidIr);
-        }
+        };
+        self.checked_entry(nominal)?;
         let arguments = format!(
-            "ptr {}, ptr {}",
+            "ptr {}, ptr {}, i64 0, i32 4, i64 0",
             self.value_name(first),
             self.value_name(second)
         );
