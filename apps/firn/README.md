@@ -17,7 +17,10 @@ own:
 - strings: `GET`, `SET` with its options `NX`, `XX`, `GET`, `KEEPTTL`,
   `EX`, `PX`, `EXAT` and `PXAT`, `SETNX`, `SETEX`, `PSETEX`, `GETSET`,
   `GETDEL`, `GETEX`, `MSET`, `INCR`;
-- lists: `LPUSH`, `RPUSH`, `LPOP`, `RPOP`, `LRANGE`, `LLEN`;
+- lists: `LPUSH`, `RPUSH`, `LPUSHX`, `RPUSHX`, `LPOP` and `RPOP` with or
+  without a count, `LRANGE`, `LLEN`, `LINDEX`, `LSET`, `LREM`, `LTRIM`,
+  `LINSERT`, `LPOS` with `RANK`, `COUNT` and `MAXLEN`, and `LMOVE` and
+  `RPOPLPUSH`, which move an element in one statement holding both keys;
 - sets: `SADD`, `SREM`, `SPOP`, `SCARD`;
 - hashes: `HSET`, `HGET`;
 - sorted sets: `ZADD`, `ZPOPMIN`, `ZCARD`, `ZSCORE`, with scores read and

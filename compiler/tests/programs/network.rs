@@ -924,6 +924,26 @@ fn integer_reply(stream: &mut TcpStream, what: &str) -> i64 {
         .unwrap_or_else(|| panic!("{what}: not an integer reply: {line:?}"))
 }
 
+/// Reads one whole RESP reply, a bulk string's or an array's elements
+/// included, and returns its bytes.
+#[cfg(target_os = "linux")]
+fn whole_reply(stream: &mut TcpStream, what: &str) -> String {
+    let mut reply = reply_line(stream, what);
+    let count = reply[1..reply.len() - 2].parse::<i64>().unwrap_or(-1);
+    if reply.starts_with('$') && count >= 0 {
+        let mut body = vec![0_u8; count as usize + 2];
+        stream
+            .read_exact(&mut body)
+            .unwrap_or_else(|error| panic!("{what}: {error}"));
+        reply.push_str(&String::from_utf8_lossy(&body));
+    } else if reply.starts_with('*') {
+        for _ in 0..count.max(0) {
+            reply.push_str(&whole_reply(stream, what));
+        }
+    }
+    reply
+}
+
 /// Reads exactly the bytes of the expected replies and compares them.
 #[cfg(target_os = "linux")]
 fn expect_replies(stream: &mut TcpStream, expected: &[u8], what: &str) {
@@ -1184,8 +1204,11 @@ fn firn_removes_expired_keys_no_command_reads_on_both_routes() {
 /// and a `SET` with NX after `EXISTS`, `GET`, `TTL`, `TYPE`, `DEL`, `PERSIST`,
 /// `EXPIRE`, a negative `EXPIRE`, `GETDEL` or `GETEX` found it so, hold their
 /// values after the restart, the `INCR` counting from zero and KEEPTTL keeping
-/// no expiry. The first run ends once its one client has closed, after its
-/// writer appended and synced the last changes.
+/// no expiry. So does a list pushed to or moved to once it had expired, and
+/// so do keys removed on expiry before an RPUSH by a list command that
+/// pops, sets, removes, trims, inserts or moves from. The first run ends
+/// once its one client has closed, after its writer appended and synced
+/// the last changes.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_replays_its_append_only_file_after_a_restart_on_both_routes() {
@@ -1260,6 +1283,68 @@ fn firn_replays_its_append_only_file_after_a_restart_on_both_routes() {
             b"+OK\r\n+OK\r\n+OK\r\n:1\r\n:2\r\n:1\r\n+OK\r\n:1\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n:6\r\n+OK\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n+OK\r\n+OK\r\n:-2\r\n+OK\r\n+OK\r\n+none\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n",
             &what,
         );
+        // Keys a list command finds expired: each is given an expiry of one
+        // millisecond and written five milliseconds later, by a command that
+        // writes it or by one that only removes it, then by RPUSH.
+        let mut batch = Vec::new();
+        for request in [
+            vec!["RPUSH", "list:push", "old"],
+            vec!["RPUSH", "list:pop", "old"],
+            vec!["RPUSH", "list:set", "old"],
+            vec!["RPUSH", "list:rem", "old"],
+            vec!["RPUSH", "list:trim", "old"],
+            vec!["RPUSH", "list:insert", "old"],
+            vec!["RPUSH", "list:from", "old"],
+            vec!["RPUSH", "list:to", "old"],
+            vec!["RPUSH", "list:source", "m"],
+        ] {
+            batch.extend(resp(&request));
+        }
+        for key in [
+            "list:push",
+            "list:pop",
+            "list:set",
+            "list:rem",
+            "list:trim",
+            "list:insert",
+            "list:from",
+            "list:to",
+        ] {
+            batch.extend(resp(&["PEXPIRE", key, "1"]));
+        }
+        client.write_all(&batch).expect("give keys a brief expiry");
+        expect_replies(&mut client, &b":1\r\n".repeat(17), &what);
+        std::thread::sleep(Duration::from_millis(5));
+        let mut batch = Vec::new();
+        for request in [
+            vec!["LPUSH", "list:push", "new"],
+            vec!["LPOP", "list:pop"],
+            vec!["LSET", "list:set", "0", "v"],
+            vec!["LREM", "list:rem", "0", "old"],
+            vec!["LTRIM", "list:trim", "0", "0"],
+            vec!["LINSERT", "list:insert", "BEFORE", "old", "v"],
+            vec!["LMOVE", "list:from", "list:nowhere", "LEFT", "LEFT"],
+            vec!["LMOVE", "list:source", "list:to", "LEFT", "RIGHT"],
+        ] {
+            batch.extend(resp(&request));
+        }
+        for key in [
+            "list:pop",
+            "list:set",
+            "list:rem",
+            "list:trim",
+            "list:insert",
+            "list:from",
+        ] {
+            batch.extend(resp(&["RPUSH", key, "new"]));
+        }
+        client
+            .write_all(&batch)
+            .expect("write the keys found expired");
+        let mut expected =
+            b":1\r\n$-1\r\n-ERR no such key\r\n:0\r\n+OK\r\n:0\r\n$-1\r\n$1\r\nm\r\n".to_vec();
+        expected.extend_from_slice(&b":1\r\n".repeat(6));
+        expect_replies(&mut client, &expected, &what);
         drop(client);
         let (status, _) = finished(child);
         assert_eq!(status, 0, "{what}: the first run");
@@ -1304,7 +1389,7 @@ fn firn_replays_its_append_only_file_after_a_restart_on_both_routes() {
         client.write_all(&batch).expect("read the replayed keys");
         expect_replies(
             &mut client,
-            b"$-1\r\n$-1\r\n$1\r\nv\r\n$1\r\n2\r\n$1\r\nv\r\n:-1\r\n$1\r\nv\r\n:-1\r\n$-1\r\n:18\r\n$3\r\nnew\r\n$1\r\n1\r\n:-1\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n:-1\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n",
+            b"$-1\r\n$-1\r\n$1\r\nv\r\n$1\r\n2\r\n$1\r\nv\r\n:-1\r\n$1\r\nv\r\n:-1\r\n$-1\r\n:26\r\n$3\r\nnew\r\n$1\r\n1\r\n:-1\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n:-1\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n",
             &what,
         );
         client
@@ -1317,6 +1402,46 @@ fn firn_replays_its_append_only_file_after_a_restart_on_both_routes() {
             .expect("ask the time left");
         let later = integer_reply(&mut client, &what);
         assert!((58_000..=60_000).contains(&later), "{what}: {later}");
+        let reads = [
+            (
+                vec!["LRANGE", "list:push", "0", "-1"],
+                "*1\r\n$3\r\nnew\r\n",
+            ),
+            (vec!["LRANGE", "list:pop", "0", "-1"], "*1\r\n$3\r\nnew\r\n"),
+            (vec!["LRANGE", "list:set", "0", "-1"], "*1\r\n$3\r\nnew\r\n"),
+            (vec!["LRANGE", "list:rem", "0", "-1"], "*1\r\n$3\r\nnew\r\n"),
+            (
+                vec!["LRANGE", "list:trim", "0", "-1"],
+                "*1\r\n$3\r\nnew\r\n",
+            ),
+            (
+                vec!["LRANGE", "list:insert", "0", "-1"],
+                "*1\r\n$3\r\nnew\r\n",
+            ),
+            (
+                vec!["LRANGE", "list:from", "0", "-1"],
+                "*1\r\n$3\r\nnew\r\n",
+            ),
+            (vec!["LRANGE", "list:to", "0", "-1"], "*1\r\n$1\r\nm\r\n"),
+        ];
+        let mut batch = Vec::new();
+        for (request, _) in &reads {
+            batch.extend(resp(request));
+        }
+        client
+            .write_all(&batch)
+            .expect("read the keys found expired");
+        let mut wrong = Vec::new();
+        for (request, expected) in &reads {
+            let reply = whole_reply(&mut client, &what);
+            if reply != *expected {
+                wrong.push(format!("{}: {reply:?}", request[1]));
+            }
+        }
+        assert!(
+            wrong.is_empty(),
+            "{what}: keys replayed against the values that had expired: {wrong:?}"
+        );
         drop(client);
         let (status, _) = finished(child);
         assert_eq!(status, 0, "{what}: the second run");
@@ -1364,7 +1489,11 @@ fn firn_closes_a_client_silent_past_its_idle_limit_on_both_routes() {
 /// sorted-set members; refuses a list command on a string and a string command
 /// on a hash; sets ten keys in one MSET, a command of eleven arguments; and
 /// names an unknown command and a command short of arguments as Redis does.
-/// Two inline commands close the batch. The expected bytes are those
+/// Two inline commands close the batch. A second batch reads, replaces,
+/// removes, trims, inserts into, searches and moves list elements, an
+/// absent key looked up before an index that is no integer, an option read
+/// up to a zero byte as Redis's strcasecmp reads it, and a source equal to
+/// its destination rotating its list. The expected bytes are those
 /// redis-server 7.0.15 returns for the same bytes.
 #[cfg(target_os = "linux")]
 #[test]
@@ -1420,6 +1549,61 @@ fn firn_answers_the_value_types_as_redis_does() {
         &mut client,
         b":3\r\n:4\r\n*4\r\n$1\r\nz\r\n$1\r\na\r\n$1\r\nb\r\n$1\r\nc\r\n*2\r\n$1\r\na\r\n$1\r\nb\r\n$1\r\nz\r\n*2\r\n$1\r\nc\r\n$1\r\nb\r\n:1\r\n$1\r\na\r\n:0\r\n:3\r\n:1\r\n:2\r\n:2\r\n:0\r\n$1\r\n3\r\n$-1\r\n:3\r\n:0\r\n$1\r\n0\r\n*4\r\n$1\r\nc\r\n$1\r\n0\r\n$1\r\na\r\n$1\r\n1\r\n:1\r\n+OK\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n:1\r\n+set\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n+OK\r\n$1\r\n5\r\n-ERR unknown command 'NOPE', with args beginning with: 'a' 'b' \r\n-ERR wrong number of arguments for 'llen' command\r\n+OK\r\n$3\r\nyes\r\n",
         "the value-type batch",
+    );
+    let mut batch = Vec::new();
+    for request in [
+        vec!["RPUSH", "li", "a", "b", "c", "b", "a"],
+        vec!["LINDEX", "li", "-2"],
+        vec!["LINDEX", "li", "9"],
+        vec!["LINDEX", "li", "x"],
+        vec!["LINDEX", "noli", "x"],
+        vec!["LPOS", "li", "b"],
+        vec!["LPOS", "li", "a", "RANK", "-1", "COUNT", "0"],
+        vec!["LPOS", "li", "a", "RANK", "0"],
+        vec!["LPOS", "li", "a", "COUNT"],
+        vec!["RPUSH", "ls", "a", "b", "c"],
+        vec!["LSET", "ls", "-1", "C"],
+        vec!["LSET", "ls", "9", "x"],
+        vec!["LSET", "nols", "0", "x"],
+        vec!["LRANGE", "ls", "0", "-1"],
+        vec!["RPUSH", "lr", "a", "b", "a", "b", "a"],
+        vec!["LREM", "lr", "-2", "a"],
+        vec!["LRANGE", "lr", "0", "-1"],
+        vec!["RPUSH", "lin", "a", "b"],
+        vec!["LINSERT", "lin", "BEFORE", "b", "x"],
+        vec!["LINSERT", "lin", "after\x00junk", "b", "y"],
+        vec!["LINSERT", "lin", "BEFORE", "zz", "y"],
+        vec!["LINSERT", "lin", "MIDDLE", "b", "y"],
+        vec!["LRANGE", "lin", "0", "-1"],
+        vec!["RPUSH", "lt", "1", "2", "3", "4", "5"],
+        vec!["LTRIM", "lt", "1", "-2"],
+        vec!["LRANGE", "lt", "0", "-1"],
+        vec!["LPUSHX", "nolx", "z"],
+        vec!["RPUSH", "lx", "m"],
+        vec!["RPUSHX", "lx", "z"],
+        vec!["LPUSHX", "lx", "a"],
+        vec!["LRANGE", "lx", "0", "-1"],
+        vec!["RPUSH", "lp", "a", "b", "c"],
+        vec!["LPOP", "lp", "0"],
+        vec!["RPOP", "lp", "2"],
+        vec!["RPUSH", "lm", "a", "b", "c"],
+        vec!["LMOVE", "lm", "lm2", "LEFT", "RIGHT"],
+        vec!["LMOVE", "lm", "lm", "RIGHT", "LEFT"],
+        vec!["RPOPLPUSH", "lm", "lm2"],
+        vec!["LMOVE", "lm", "lm2", "UP", "LEFT"],
+        vec!["SET", "mstr", "v"],
+        vec!["LMOVE", "lm", "mstr", "LEFT", "LEFT"],
+        vec!["LMOVE", "nolm", "mstr", "LEFT", "LEFT"],
+        vec!["LRANGE", "lm", "0", "-1"],
+        vec!["LRANGE", "lm2", "0", "-1"],
+    ] {
+        batch.extend(resp(&request));
+    }
+    client.write_all(&batch).expect("send the list batch");
+    expect_replies(
+        &mut client,
+        b":5\r\n$1\r\nb\r\n$-1\r\n-ERR value is not an integer or out of range\r\n$-1\r\n:1\r\n*2\r\n:4\r\n:0\r\n-ERR RANK can't be zero: use 1 to start from the first match, 2 from the second ... or use negative to start from the end of the list\r\n-ERR syntax error\r\n:3\r\n+OK\r\n-ERR index out of range\r\n-ERR no such key\r\n*3\r\n$1\r\na\r\n$1\r\nb\r\n$1\r\nC\r\n:5\r\n:2\r\n*3\r\n$1\r\na\r\n$1\r\nb\r\n$1\r\nb\r\n:2\r\n:3\r\n:4\r\n:-1\r\n-ERR syntax error\r\n*4\r\n$1\r\na\r\n$1\r\nx\r\n$1\r\nb\r\n$1\r\ny\r\n:5\r\n+OK\r\n*3\r\n$1\r\n2\r\n$1\r\n3\r\n$1\r\n4\r\n:0\r\n:1\r\n:2\r\n:3\r\n*3\r\n$1\r\na\r\n$1\r\nm\r\n$1\r\nz\r\n:3\r\n*0\r\n*2\r\n$1\r\nc\r\n$1\r\nb\r\n:3\r\n$1\r\na\r\n$1\r\nc\r\n$1\r\nb\r\n-ERR syntax error\r\n+OK\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n$-1\r\n*1\r\n$1\r\nc\r\n*2\r\n$1\r\nb\r\n$1\r\na\r\n",
+        "the list batch",
     );
     drop(client);
     let (status, _) = finished(child);
@@ -1948,7 +2132,10 @@ fn firn_carries_requests_and_replies_larger_than_its_windows() {
 /// removed stay removed, since the file records the pop as the SREM of the
 /// members it chose, as Redis records it; a replay that popped at random, from
 /// a generator seeded by the clock at each start, would almost surely remove
-/// others. A key the expiring context removed is recorded as removed, as Redis
+/// others. A list replaced, removed from, trimmed, inserted into and pushed
+/// onto where it exists, and its elements moved to another list, holds what
+/// those commands left. A key the expiring context removed is recorded as
+/// removed, as Redis
 /// propagates it, so a `SET` with NX that found it absent holds its value after
 /// the restart, where a replay keeping the expired key would refuse it.
 #[cfg(target_os = "linux")]
@@ -1978,13 +2165,23 @@ fn firn_replays_the_value_types_from_its_append_only_file() {
         vec!["ZADD", "f", "0.1", "m"],
         add,
         vec!["SET", "lapse", "old", "PX", "1"],
+        vec!["RPUSH", "k", "a", "b", "c", "d", "e", "f"],
+        vec!["LSET", "k", "0", "A"],
+        vec!["LREM", "k", "1", "c"],
+        vec!["LTRIM", "k", "0", "3"],
+        vec!["LINSERT", "k", "AFTER", "A", "x"],
+        vec!["LPUSHX", "k", "p"],
+        vec!["RPUSHX", "k", "q"],
+        vec!["LMOVE", "k", "k2", "RIGHT", "LEFT"],
+        vec!["RPOPLPUSH", "k", "k2"],
+        vec!["LPOP", "k", "1"],
     ] {
         batch.extend(resp(&request));
     }
     client.write_all(&batch).expect("send the changes");
     expect_replies(
         &mut client,
-        b":3\r\n$1\r\na\r\n:1\r\n:2\r\n*2\r\n$1\r\na\r\n$1\r\n1\r\n:1\r\n:50\r\n+OK\r\n",
+        b":3\r\n$1\r\na\r\n:1\r\n:2\r\n*2\r\n$1\r\na\r\n$1\r\n1\r\n:1\r\n:50\r\n+OK\r\n:6\r\n+OK\r\n:1\r\n+OK\r\n:5\r\n:6\r\n:7\r\n$1\r\nq\r\n$1\r\ne\r\n*1\r\n$1\r\np\r\n",
         "the first run's changes",
     );
     client
@@ -2035,13 +2232,15 @@ fn firn_replays_the_value_types_from_its_append_only_file() {
         vec!["SCARD", "s"],
         remove,
         vec!["GET", "lapse"],
+        vec!["LRANGE", "k", "0", "-1"],
+        vec!["LRANGE", "k2", "0", "-1"],
     ] {
         batch.extend(resp(&request));
     }
     client.write_all(&batch).expect("read the replayed values");
     expect_replies(
         &mut client,
-        b"*2\r\n$1\r\nb\r\n$1\r\nc\r\n$1\r\nv\r\n:1\r\n$1\r\n2\r\n$19\r\n0.10000000000000001\r\n:25\r\n:0\r\n$3\r\nnew\r\n",
+        b"*2\r\n$1\r\nb\r\n$1\r\nc\r\n$1\r\nv\r\n:1\r\n$1\r\n2\r\n$19\r\n0.10000000000000001\r\n:25\r\n:0\r\n$3\r\nnew\r\n*4\r\n$1\r\nA\r\n$1\r\nx\r\n$1\r\nb\r\n$1\r\nd\r\n*2\r\n$1\r\ne\r\n$1\r\nq\r\n",
         "the replayed values",
     );
     drop(client);

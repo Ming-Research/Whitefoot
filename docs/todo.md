@@ -3309,9 +3309,10 @@ condition under which it is taken up.
   `COMMAND COUNT` report empty and `COMMAND DOCS`, `INFO`, `LIST` and
   `GETKEYS` answer as unknown subcommands; `KEYS` and `SCAN`, which can match
   with `glob_match` (`apps/firn/bytes/bytes.wf`), `INFO`, RESP3, which
-  `HELLO 3` refuses, the blocking list commands, `MULTI` and `EXEC`, publish
-  and subscribe, and a random hash seed. No test of Redis's own suite reaches
-  firn, since the suite's framework sends `FLUSHALL` and `FUNCTION FLUSH`
+  `HELLO 3` refuses, `LMPOP` and the blocking list commands, `MULTI` and
+  `EXEC`, publish and subscribe, and a random hash seed. No test of Redis's
+  own suite reaches firn, since the suite's framework sends `FLUSHALL` and
+  `FUNCTION FLUSH`
   at the start of every block and ends the unit when either fails; with
   those calls allowed to fail, firn at `cea9188d4` passes 107 of the 1,994
   tests Redis passes there, 25 of which a server knowing only `PING` passes
@@ -3321,16 +3322,16 @@ condition under which it is taken up.
   ([redis-compat](../research/experiments/redis-compat/README.md)). The
   owner sets the list for the deployment stage; reopen when this stage's
   measurement is handed back.
-- **A list, set, hash or sorted-set write that finds its key expired leaves
-  the removal out of the append-only file.** A replay counts no key as
+- **A set, hash or sorted-set write that finds its key expired leaves the
+  removal out of the append-only file.** A replay counts no key as
   expired, so a removal the file does not record is undone there: the
   replay applies the next command to the old value. The read paths, the
-  expiring context and the string and key commands record each removal as
-  `DEL key`, as Redis 7.0.15 propagates it (`log_removal` in
-  `apps/firn/store/store.wf`), but the visitors of `LPUSH`, `RPUSH`, `LPOP`,
-  `RPOP`, `SADD`, `SREM`, `SPOP`, `HSET`, `ZADD` and `ZPOPMIN` replace or
-  drop an expired value inside their statements without it, so an `LPUSH`
-  onto a list that had expired replays onto the old elements. The change:
+  expiring context and the string, key and list commands record each
+  removal as `DEL key`, as Redis 7.0.15 propagates it (`log_removal` in
+  `apps/firn/store/store.wf`), but the visitors of `SADD`, `SREM`, `SPOP`,
+  `HSET`, `ZADD` and `ZPOPMIN` replace or drop an expired value inside
+  their statements without it, so an `SADD` to a set that had expired
+  replays onto the old members. The change:
   call `log_removal` where each of those statements finds its entry
   expired, as `set_key` (`apps/firn/commands/strings.wf`) does, touching
   the keyspace's `meta` only on that branch. Reopen with the next change to

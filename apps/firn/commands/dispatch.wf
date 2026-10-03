@@ -67,6 +67,26 @@ const code_lrange: u64 = 76172557898316_u64;
 
 const code_llen: u64 = 1313164364_u64;
 
+const code_lindex: u64 = 97054521968972_u64;
+
+const code_lset: u64 = 1413829452_u64;
+
+const code_lrem: u64 = 1296388684_u64;
+
+const code_ltrim: u64 = 331942614092_u64;
+
+const code_linsert: u64 = 23734355747555660_u64;
+
+const code_lpos: u64 = 1397706828_u64;
+
+const code_lpushx: u64 = 97067658989644_u64;
+
+const code_rpushx: u64 = 97067658989650_u64;
+
+const code_lmove: u64 = 297800781132_u64;
+
+const code_rpoplpush: u64 = 18398700141387141202_u64;
+
 const code_sadd: u64 = 1145323859_u64;
 
 const code_srem: u64 = 1296388691_u64;
@@ -332,7 +352,8 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
     let fits = count >= 3_u64;
     let go = admitted(client: client, input: input, name: name, fits: fits);
     if go {
-      run_push(store: store, input: input, args: args, client: client, env: env, time: time, front: head);
+      let creating = False();
+      run_push(store: store, input: input, args: args, client: client, env: env, time: time, front: head, existing: creating);
     }
     return unit;
   }
@@ -340,7 +361,8 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
     let fits = count >= 3_u64;
     let go = admitted(client: client, input: input, name: name, fits: fits);
     if go {
-      run_push(store: store, input: input, args: args, client: client, env: env, time: time, front: tail);
+      let creating = False();
+      run_push(store: store, input: input, args: args, client: client, env: env, time: time, front: tail, existing: creating);
     }
     return unit;
   }
@@ -375,6 +397,91 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
       run_llen(store: store, input: input, args: args, client: client, env: env, time: time);
     }
     return unit;
+  }
+  if code == code_lindex {
+    let fits = count == 3_u64;
+    let go = admitted(client: client, input: input, name: name, fits: fits);
+    if go {
+      run_lindex(store: store, input: input, args: args, client: client, env: env, time: time);
+    }
+    return unit;
+  }
+  if code == code_lset {
+    let fits = count == 4_u64;
+    let go = admitted(client: client, input: input, name: name, fits: fits);
+    if go {
+      run_lset(store: store, input: input, args: args, client: client, env: env, time: time);
+    }
+    return unit;
+  }
+  if code == code_lrem {
+    let fits = count == 4_u64;
+    let go = admitted(client: client, input: input, name: name, fits: fits);
+    if go {
+      run_lrem(store: store, input: input, args: args, client: client, env: env, time: time);
+    }
+    return unit;
+  }
+  if code == code_ltrim {
+    let fits = count == 4_u64;
+    let go = admitted(client: client, input: input, name: name, fits: fits);
+    if go {
+      run_ltrim(store: store, input: input, args: args, client: client, env: env, time: time);
+    }
+    return unit;
+  }
+  if code == code_linsert {
+    let fits = count == 5_u64;
+    let go = admitted(client: client, input: input, name: name, fits: fits);
+    if go {
+      run_linsert(store: store, input: input, args: args, client: client, env: env, time: time);
+    }
+    return unit;
+  }
+  if code == code_lpos {
+    let fits = count >= 3_u64;
+    let go = admitted(client: client, input: input, name: name, fits: fits);
+    if go {
+      run_lpos(store: store, input: input, args: args, client: client, env: env, time: time);
+    }
+    return unit;
+  }
+  if code == code_lpushx {
+    let fits = count >= 3_u64;
+    let go = admitted(client: client, input: input, name: name, fits: fits);
+    if go {
+      let existing = True();
+      run_push(store: store, input: input, args: args, client: client, env: env, time: time, front: head, existing: existing);
+    }
+    return unit;
+  }
+  if code == code_rpushx {
+    let fits = count >= 3_u64;
+    let go = admitted(client: client, input: input, name: name, fits: fits);
+    if go {
+      let existing = True();
+      run_push(store: store, input: input, args: args, client: client, env: env, time: time, front: tail, existing: existing);
+    }
+    return unit;
+  }
+  if code == code_lmove {
+    let fits = count == 5_u64;
+    let go = admitted(client: client, input: input, name: name, fits: fits);
+    if go {
+      run_lmove_named(store: store, input: input, args: args, client: client, env: env, time: time);
+    }
+    return unit;
+  }
+  if code == code_rpoplpush {
+    let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_rpoplpush[0_u64..9_u64]);
+    if spelled {
+      let fits = count == 3_u64;
+      let go = admitted(client: client, input: input, name: name, fits: fits);
+      if go {
+        run_lmove(store: store, input: input, args: args, client: client, env: env, time: time, from_head: tail, to_head: head);
+      }
+      return unit;
+    }
   }
   if code == code_sadd {
     let fits = count >= 3_u64;
