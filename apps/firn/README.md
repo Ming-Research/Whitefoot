@@ -57,9 +57,11 @@ or none. `requirepass` changes the password for every connection that has
 not authenticated, as in Redis: a connection authenticates by giving the
 password, or by being accepted while none is set, and stays authenticated;
 removing the password lets the others in until one is set again. `timeout`
-changes the idle limit for new connections and for connections waiting under
-a limit, while a connection that waits with no limit reads a new one only
-once it sends again. `appendfilename` and `databases` are refused as Redis
+changes the idle limit for new connections and, within a second, for
+connections waiting under a limit, while a connection that waits with no
+limit reads a new one only once it sends again. A client's silence is
+counted from its last request or the replies to it, as Redis counts it from
+its last read or write. `appendfilename` and `databases` are refused as Redis
 refuses them. An `appendonly`, `port` or `bind` other than the one firn
 started with, and a `save` schedule other than the empty one, are refused in
 Redis's form for a refused value with firn's own reason, since firn cannot

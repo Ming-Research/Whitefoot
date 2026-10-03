@@ -3389,16 +3389,21 @@ condition under which it is taken up.
   or when a second program needs a random member.
 - **A connection that waits with no idle limit misses a limit `CONFIG SET`
   sets.** firn's `serve` (`apps/firn/server/server.wf`) gives a receive a
-  deadline only while an idle limit is set, and reads the limit again when a
-  deadline passes and at most once a second while the client sends; a client
-  waiting with no limit has no deadline, so after `CONFIG SET timeout 5` it
-  stays open until it sends, where Redis's `clientsCron` closes every client
-  silent past the new limit. Every receive with a deadline of at most a second
-  would close the gap; a receive that parks then pays a timer insertion and
-  removal on its driver's heap (`wf_context_arm_deadline` in
-  `compiler/src/backend/completion/bridge.c`), which an unpipelined benchmark
-  pays on every request. Measure that cost with `redis-bench.sh quick` before
-  choosing; reopen when a deployment changes the limit while it runs.
+  deadline, at most a second away, only while an idle limit is set, and reads
+  the limit again when a deadline passes and at most once a second while the
+  client sends; a client waiting with no limit has no deadline, so after
+  `CONFIG SET timeout 5` it stays open until it sends, where Redis's
+  `clientsCron` closes every client silent past the new limit. Every receive
+  with a deadline of at most a second would close the gap; a receive that
+  parks then pays a timer insertion and removal on its driver's heap
+  (`wf_context_arm_deadline` in `compiler/src/backend/completion/bridge.c`),
+  which an unpipelined benchmark pays on every request. Measure that cost with
+  `redis-bench.sh quick` before choosing. Nor is a client closed while firn's
+  send to it waits on replies it leaves unread, where Redis closes one that
+  nothing has been written to for the limit; `flush` could pass `send_once`
+  (`lib/std/net/module.wfm`) a deadline while a limit is set. Reopen when a
+  deployment changes the limit while it runs or relies on it to drop clients
+  that stop reading.
 - **`INFO` leaves out what firn does not measure.** `run_info`
   (`apps/firn/commands/info.wf`) reports real values for the port, the
   calendar time, the uptime, the clients connected, whether the append-only

@@ -1300,9 +1300,15 @@ fn firn_replays_its_append_only_file_after_a_restart_on_both_routes() {
 /// removes reaches a client already waiting under the old one, which reads the
 /// limit again when its deadline passes, and a client that connects after it:
 /// both stay open through 1.5 seconds of silence. On the first route the
-/// client that removed the limit sets it again and keeps sending: it reads the
-/// limit within a second, as every sending client does, and is closed once it
-/// falls silent, after at least 0.9 and at most two seconds.
+/// client that removed the limit sets one of five seconds, under which another
+/// client waits, then one of a second, and keeps sending: it reads the limit
+/// within a second, as every sending client does, and is closed once it falls
+/// silent, after at least 0.9 and at most two seconds, while the waiting
+/// client, whose waits under a limit last a second at most, is closed within
+/// 2.5 seconds of its last request rather than five. A third client there
+/// leaves the replies to its requests unread for 1.5 seconds, more than the
+/// limit, and sends again half a second after reading them: its silence counts
+/// from the replies, as Redis counts it from its last write, so it stays open.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_closes_a_client_silent_past_its_idle_limit_on_both_routes() {
@@ -1311,7 +1317,8 @@ fn firn_closes_a_client_silent_past_its_idle_limit_on_both_routes() {
         let what = format!("native ring: {native_ring}");
         let port = free_port();
         let text = port.to_string();
-        let child = program.spawn_on_route(native_ring, &[text.as_bytes(), b"3", b"-", b"1"]);
+        let clients: &[u8] = if native_ring { b"5" } else { b"3" };
+        let child = program.spawn_on_route(native_ring, &[text.as_bytes(), clients, b"-", b"1"]);
         let mut client = connect_when_ready(port);
         client
             .set_read_timeout(Some(Duration::from_secs(10)))
@@ -1349,9 +1356,19 @@ fn firn_closes_a_client_silent_past_its_idle_limit_on_both_routes() {
         drop(later);
         if native_ring {
             changer
+                .write_all(&resp(&["CONFIG", "SET", "timeout", "5"]))
+                .expect("set a longer limit");
+            expect_replies(&mut changer, b"+OK\r\n", &what);
+            let mut waiter = connect_when_ready(port);
+            waiter.write_all(&resp(&["PING"])).expect("send a ping");
+            expect_replies(&mut waiter, b"+PONG\r\n", &what);
+            let waited = Instant::now();
+            changer
                 .write_all(&resp(&["CONFIG", "SET", "timeout", "1"]))
                 .expect("set the limit again");
             expect_replies(&mut changer, b"+OK\r\n", &what);
+            let reader = what.clone();
+            let late = std::thread::spawn(move || read_replies_late(port, &reader));
             let sending = Instant::now();
             let mut last_ping = sending;
             while sending.elapsed() < Duration::from_millis(1300) {
@@ -1360,17 +1377,52 @@ fn firn_closes_a_client_silent_past_its_idle_limit_on_both_routes() {
                 expect_replies(&mut changer, b"+PONG\r\n", &what);
                 last_ping = Instant::now();
             }
+            expect_closed(&mut waiter, &what);
+            let silent = waited.elapsed();
+            assert!(
+                silent <= Duration::from_millis(2500),
+                "{what}: the waiting client closed after {silent:?}"
+            );
             expect_closed(&mut changer, &what);
             let silent = last_ping.elapsed();
             assert!(
                 silent >= Duration::from_millis(900) && silent <= Duration::from_secs(2),
                 "{what}: closed after {silent:?}"
             );
+            late.join().expect("the client reading its replies late");
         }
         drop(changer);
         let (status, _) = finished(child);
         assert_eq!(status, 0, "{what}");
     }
+}
+
+/// Connects under an idle limit of one second, asks for 24 copies of a
+/// 1 MiB value, more than the sockets' buffers hold, so that firn's sends
+/// wait while the replies stay unread for 1.5 seconds, then reads them all
+/// and, half a second later, expects an answer to PING.
+#[cfg(target_os = "linux")]
+fn read_replies_late(port: u16, what: &str) {
+    const SIZE: usize = 1 << 20;
+    const COPIES: usize = 24;
+    let mut stream = connect_when_ready(port);
+    let mut set = format!("*3\r\n$3\r\nSET\r\n$3\r\nbig\r\n${SIZE}\r\n").into_bytes();
+    set.resize(set.len() + SIZE, b'v');
+    set.extend_from_slice(b"\r\n");
+    stream.write_all(&set).expect("set a large value");
+    expect_replies(&mut stream, b"+OK\r\n", what);
+    stream
+        .write_all(&resp(&["GET", "big"]).repeat(COPIES))
+        .expect("ask for the value's copies");
+    std::thread::sleep(Duration::from_millis(1500));
+    let header = format!("${SIZE}\r\n");
+    let mut replies = vec![0_u8; COPIES * (header.len() + SIZE + 2)];
+    stream
+        .read_exact(&mut replies)
+        .unwrap_or_else(|error| panic!("{what}: the copies: {error}"));
+    std::thread::sleep(Duration::from_millis(500));
+    stream.write_all(&resp(&["PING"])).expect("send a ping");
+    expect_replies(&mut stream, b"+PONG\r\n", what);
 }
 
 /// firn answers the value types as Redis does. One pipelined batch pushes,

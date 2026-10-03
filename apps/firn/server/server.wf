@@ -249,7 +249,7 @@ fn read_time(clock: &Clock, wall: &WallClock, origin: Instant) -> result: Readin
 }
 
 fn serve(connection: TcpConnection, factory: HandleFactory, store: Keyspace, clock: Clock, wall: WallClock, origin: Instant, required: Bool, settings: Settings, id: u64) -> result: unit pure waits {
-  doc "Serves one client, the id-th the server accepted, in a context of its own: reads requests into its input, which grows to hold a request larger than it, answers every complete request the input holds with one send, sending sooner once 16,384 bytes of replies are waiting, and keeps an incomplete one for the next read. Every command of one read sees the clocks as read once after it. A client silent for the idle limit the server's state holds, when it is not zero, is closed: while a limit is set, each read waits no longer than the limit leaves, and the client reads the limit again when that wait ends and at most once a second while it sends, so that a limit CONFIG SET changes reaches it; a client that waits with no limit set reads none until it sends. A client that sends a malformed request is closed after its error, and one that sends QUIT after its reply. A client accepted while a password is required, when required is true, has not authenticated until it gives the password, as AUTH and HELLO record; until then it reads the password again before each request and must give it before other commands while one is set, as Redis's clients must.";
+  doc "Serves one client, the id-th the server accepted, in a context of its own: reads requests into its input, which grows to hold a request larger than it, answers every complete request the input holds with one send, sending sooner once 16,384 bytes of replies are waiting, and keeps an incomplete one for the next read. Every command of one read sees the clocks as read once after it. A client silent for the idle limit the server's state holds, when it is not zero, is closed, its silence counted from its last request or the replies to it, whichever came later, as Redis counts it from a client's last read or write: while a limit is set, each read waits no longer than the limit leaves and no longer than a second, and the client reads the limit again when that wait ends and at most once a second while it sends, so that a limit CONFIG SET changes reaches it within a second; a client that waits with no limit set reads none until it sends. A client that sends a malformed request is closed after its error, and one that sends QUIT after its reply. A client accepted while a password is required, when required is true, has not authenticated until it gives the password, as AUTH and HELLO record; until then it reads the password again before each request and must give it before other commands while one is set, as Redis's clients must.";
   let env = KeyEnv();
   let client = client_new(capacity: 16384_u64);
   atomic s = &store.state {
@@ -277,17 +277,23 @@ fn serve(connection: TcpConnection, factory: HandleFactory, store: Keyspace, clo
     }
     let ended = False();
     let received = held;
+    let fresh = True();
     loop @receiving {
       let limit = None<Instant>();
       if idle != 0_u64 {
         let before = std::time::now(clock: &clock);
         let current = nanoseconds_from(earlier: origin, later: before);
+        if fresh {
+          set last = current;
+        }
         let quiet = current -sat last;
         let idle_ns = idle *wrap 1000000000_u64;
         let left = idle_ns -sat quiet;
-        let bound = instant_after(instant: before, nanoseconds: left);
+        let wait = imin(left, 1000000000_u64);
+        let bound = instant_after(instant: before, nanoseconds: wait);
         set limit = Some<Instant>(value: bound);
       }
+      set fresh = False();
       let length = input.inner.len;
       let window = &input.inner[0_u64..length];
       let waited = False();
