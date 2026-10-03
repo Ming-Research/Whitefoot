@@ -3321,6 +3321,28 @@ condition under which it is taken up.
   ([redis-compat](../research/experiments/redis-compat/README.md)). The
   owner sets the list for the deployment stage; reopen when this stage's
   measurement is handed back.
+- **A list, set, hash or sorted-set write that finds its key expired leaves
+  the removal out of the append-only file.** A replay counts no key as
+  expired, so a removal the file does not record is undone there: the
+  replay applies the next command to the old value. The read paths, the
+  expiring context and the string and key commands record each removal as
+  `DEL key`, as Redis 7.0.15 propagates it (`log_removal` in
+  `apps/firn/store/store.wf`), but the visitors of `LPUSH`, `RPUSH`, `LPOP`,
+  `RPOP`, `SADD`, `SREM`, `SPOP`, `HSET`, `ZADD` and `ZPOPMIN` replace or
+  drop an expired value inside their statements without it, so an `LPUSH`
+  onto a list that had expired replays onto the old elements. The change:
+  call `log_removal` where each of those statements finds its entry
+  expired, as `set_key` (`apps/firn/commands/strings.wf`) does, touching
+  the keyspace's `meta` only on that branch. Reopen with the next change to
+  those commands.
+- **firn writes a removal and the command that made it as two records
+  where Redis wraps them in `MULTI` and `EXEC`.** When one command
+  propagates more than one record, a key it found expired and the command
+  itself, or several expired keys, Redis 7.0.15 brackets them in `MULTI`
+  and `EXEC`; firn has no transactions to replay, so it writes the records
+  alone, which replays to the same state. A multi-key command also records
+  its expired keys in byte order where Redis records them in the order the
+  command names them. Reopen when firn answers `MULTI` and `EXEC`.
 - **firn reads a slow request again from its start at every read.**
   `parse_request` keeps no state between reads, so a request arriving in
   many reads is scanned from its first byte each time: quadratic in its

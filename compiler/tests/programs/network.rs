@@ -1177,8 +1177,15 @@ fn firn_removes_expired_keys_no_command_reads_on_both_routes() {
 /// while firn was stopped is absent. As in Redis, the replay applies the
 /// file's commands in order without expiring anything, so a key made
 /// persistent before its expiry holds its value, and a key incremented before
-/// its expiry passed is absent rather than counting again from one. The first run ends once its one
-/// client has closed, after its writer appended and synced the last changes.
+/// its expiry passed is absent rather than counting again from one. A key a
+/// command finds expired is removed, and the file records the removal, as
+/// Redis propagates it, so that the commands after it replay as they ran: a
+/// `SET` with NX, one with KEEPTTL and an `INCR` on a key set already expired,
+/// and a `SET` with NX after `EXISTS`, `GET`, `TTL`, `TYPE`, `DEL`, `PERSIST`,
+/// `EXPIRE`, a negative `EXPIRE`, `GETDEL` or `GETEX` found it so, hold their
+/// values after the restart, the `INCR` counting from zero and KEEPTTL keeping
+/// no expiry. The first run ends once its one client has closed, after its
+/// writer appended and synced the last changes.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_replays_its_append_only_file_after_a_restart_on_both_routes() {
@@ -1208,13 +1215,49 @@ fn firn_replays_its_append_only_file_after_a_restart_on_both_routes() {
             vec!["PERSIST", "persisted"],
             vec!["SET", "bumped", "5", "PX", "300"],
             vec!["INCR", "bumped"],
+            vec!["SET", "lazy:a", "old", "PXAT", "1"],
+            vec!["SET", "lazy:a", "new", "NX"],
+            vec!["SET", "lazy:b", "5", "PXAT", "1"],
+            vec!["INCR", "lazy:b"],
+            vec!["SET", "lazy:c", "old", "PXAT", "1"],
+            vec!["EXISTS", "lazy:c"],
+            vec!["SET", "lazy:c", "new", "NX"],
+            vec!["SET", "lazy:d", "old", "PXAT", "1"],
+            vec!["GET", "lazy:d"],
+            vec!["SET", "lazy:d", "new", "NX"],
+            vec!["SET", "lazy:e", "old", "PXAT", "1"],
+            vec!["SET", "lazy:e", "new", "KEEPTTL"],
+            vec!["SET", "lazy:f", "old", "PXAT", "1"],
+            vec!["TTL", "lazy:f"],
+            vec!["SET", "lazy:f", "new", "NX"],
+            vec!["SET", "lazy:g", "old", "PXAT", "1"],
+            vec!["TYPE", "lazy:g"],
+            vec!["SET", "lazy:g", "new", "NX"],
+            vec!["SET", "lazy:h", "old", "PXAT", "1"],
+            vec!["DEL", "lazy:h"],
+            vec!["SET", "lazy:h", "new", "NX"],
+            vec!["SET", "lazy:i", "old", "PXAT", "1"],
+            vec!["PERSIST", "lazy:i"],
+            vec!["SET", "lazy:i", "new", "NX"],
+            vec!["SET", "lazy:j", "old", "PXAT", "1"],
+            vec!["EXPIRE", "lazy:j", "100"],
+            vec!["SET", "lazy:j", "new", "NX"],
+            vec!["SET", "lazy:k", "old", "PXAT", "1"],
+            vec!["GETDEL", "lazy:k"],
+            vec!["SET", "lazy:k", "new", "NX"],
+            vec!["SET", "lazy:l", "old", "PXAT", "1"],
+            vec!["GETEX", "lazy:l", "PERSIST"],
+            vec!["SET", "lazy:l", "new", "NX"],
+            vec!["SET", "lazy:m", "old", "PXAT", "1"],
+            vec!["EXPIRE", "lazy:m", "-1"],
+            vec!["SET", "lazy:m", "new", "NX"],
         ] {
             batch.extend(resp(&request));
         }
         client.write_all(&batch).expect("send the changes");
         expect_replies(
             &mut client,
-            b"+OK\r\n+OK\r\n+OK\r\n:1\r\n:2\r\n:1\r\n+OK\r\n:1\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n:6\r\n",
+            b"+OK\r\n+OK\r\n+OK\r\n:1\r\n:2\r\n:1\r\n+OK\r\n:1\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n:6\r\n+OK\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n+OK\r\n+OK\r\n:-2\r\n+OK\r\n+OK\r\n+none\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n",
             &what,
         );
         drop(client);
@@ -1240,13 +1283,28 @@ fn firn_replays_its_append_only_file_after_a_restart_on_both_routes() {
             vec!["TTL", "persisted"],
             vec!["GET", "bumped"],
             vec!["DBSIZE"],
+            vec!["GET", "lazy:a"],
+            vec!["GET", "lazy:b"],
+            vec!["TTL", "lazy:b"],
+            vec!["GET", "lazy:c"],
+            vec!["GET", "lazy:d"],
+            vec!["GET", "lazy:e"],
+            vec!["TTL", "lazy:e"],
+            vec!["GET", "lazy:f"],
+            vec!["GET", "lazy:g"],
+            vec!["GET", "lazy:h"],
+            vec!["GET", "lazy:i"],
+            vec!["GET", "lazy:j"],
+            vec!["GET", "lazy:k"],
+            vec!["GET", "lazy:l"],
+            vec!["GET", "lazy:m"],
         ] {
             batch.extend(resp(&request));
         }
         client.write_all(&batch).expect("read the replayed keys");
         expect_replies(
             &mut client,
-            b"$-1\r\n$-1\r\n$1\r\nv\r\n$1\r\n2\r\n$1\r\nv\r\n:-1\r\n$1\r\nv\r\n:-1\r\n$-1\r\n:5\r\n",
+            b"$-1\r\n$-1\r\n$1\r\nv\r\n$1\r\n2\r\n$1\r\nv\r\n:-1\r\n$1\r\nv\r\n:-1\r\n$-1\r\n:18\r\n$3\r\nnew\r\n$1\r\n1\r\n:-1\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n:-1\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n",
             &what,
         );
         client
@@ -1890,7 +1948,9 @@ fn firn_carries_requests_and_replies_larger_than_its_windows() {
 /// removed stay removed, since the file records the pop as the SREM of the
 /// members it chose, as Redis records it; a replay that popped at random, from
 /// a generator seeded by the clock at each start, would almost surely remove
-/// others.
+/// others. A key the expiring context removed is recorded as removed, as Redis
+/// propagates it, so a `SET` with NX that found it absent holds its value after
+/// the restart, where a replay keeping the expired key would refuse it.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_replays_the_value_types_from_its_append_only_file() {
@@ -1917,13 +1977,14 @@ fn firn_replays_the_value_types_from_its_append_only_file() {
         vec!["ZPOPMIN", "z"],
         vec!["ZADD", "f", "0.1", "m"],
         add,
+        vec!["SET", "lapse", "old", "PX", "1"],
     ] {
         batch.extend(resp(&request));
     }
     client.write_all(&batch).expect("send the changes");
     expect_replies(
         &mut client,
-        b":3\r\n$1\r\na\r\n:1\r\n:2\r\n*2\r\n$1\r\na\r\n$1\r\n1\r\n:1\r\n:50\r\n",
+        b":3\r\n$1\r\na\r\n:1\r\n:2\r\n*2\r\n$1\r\na\r\n$1\r\n1\r\n:1\r\n:50\r\n+OK\r\n",
         "the first run's changes",
     );
     client
@@ -1945,6 +2006,13 @@ fn firn_replays_the_value_types_from_its_append_only_file() {
         assert!(!popped.contains(&member), "{member} popped twice");
         popped.push(member);
     }
+    // The expiring context, which wakes every 100 milliseconds, removes the
+    // key set with PX 1 before this SET finds it absent.
+    std::thread::sleep(Duration::from_millis(250));
+    client
+        .write_all(&resp(&["SET", "lapse", "new", "NX"]))
+        .expect("set the expired key again");
+    expect_replies(&mut client, b"+OK\r\n", "the key set again");
     drop(client);
     let (status, _) = finished(child);
     assert_eq!(status, 0, "the first run");
@@ -1966,13 +2034,14 @@ fn firn_replays_the_value_types_from_its_append_only_file() {
         vec!["ZSCORE", "f", "m"],
         vec!["SCARD", "s"],
         remove,
+        vec!["GET", "lapse"],
     ] {
         batch.extend(resp(&request));
     }
     client.write_all(&batch).expect("read the replayed values");
     expect_replies(
         &mut client,
-        b"*2\r\n$1\r\nb\r\n$1\r\nc\r\n$1\r\nv\r\n:1\r\n$1\r\n2\r\n$19\r\n0.10000000000000001\r\n:25\r\n:0\r\n",
+        b"*2\r\n$1\r\nb\r\n$1\r\nc\r\n$1\r\nv\r\n:1\r\n$1\r\n2\r\n$19\r\n0.10000000000000001\r\n:25\r\n:0\r\n$3\r\nnew\r\n",
         "the replayed values",
     );
     drop(client);

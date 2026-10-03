@@ -259,7 +259,7 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
     let fits = mset_shape;
     let go = admitted(client: client, input: input, name: name, fits: fits);
     if go {
-      run_mset(store: store, input: input, args: args, client: client, env: env);
+      run_mset(store: store, input: input, args: args, client: client, env: env, time: time);
     }
     return unit;
   }
