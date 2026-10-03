@@ -23,8 +23,9 @@ alias hash_map_lookup = std::collections::hash_map::hash_map_lookup;
 alias hash_map_new = std::collections::hash_map::hash_map_new;
 alias hash_map_put = std::collections::hash_map::hash_map_put;
 alias hash_map_remove = std::collections::hash_map::hash_map_remove;
-alias name_is = pkg::bytes::name_is;
+alias kept_score = pkg::scores::kept_score;
 alias log_command = pkg::store::log_command;
+alias name_code = pkg::bytes::name_code;
 alias ordered_map_len = std::collections::ordered_map::ordered_map_len;
 alias ordered_map_new = std::collections::ordered_map::ordered_map_new;
 alias ordered_map_put = std::collections::ordered_map::ordered_map_put;
@@ -32,183 +33,30 @@ alias ordered_map_remove = std::collections::ordered_map::ordered_map_remove;
 alias push_item = pkg::protocol::push_item;
 alias push_score = pkg::protocol::push_score;
 alias read_integer = pkg::bytes::read_integer;
+alias read_score = pkg::scores::read_score;
 alias reply_array = pkg::protocol::reply_array;
-alias reply_bulk_decimal = pkg::protocol::reply_bulk_decimal;
 alias reply_error = pkg::protocol::reply_error;
 alias reply_integer = pkg::protocol::reply_integer;
 alias reply_nil = pkg::protocol::reply_nil;
+alias reply_score = pkg::scores::reply_score;
 alias reply_wrong_type = pkg::protocol::reply_wrong_type;
 alias reply_text = pkg::protocol::reply_text;
 
-const word_inf: Array<u8, 3> =[73_u8, 78_u8, 70_u8];
-
-const word_infinity: Array<u8, 8> =[73_u8, 78_u8, 70_u8, 73_u8, 78_u8, 73_u8, 84_u8, 89_u8];
-
 const text_not_float: Array<u8, 30> =[69_u8, 82_u8, 82_u8, 32_u8, 118_u8, 97_u8, 108_u8, 117_u8, 101_u8, 32_u8, 105_u8, 115_u8, 32_u8, 110_u8, 111_u8, 116_u8, 32_u8, 97_u8, 32_u8, 118_u8, 97_u8, 108_u8, 105_u8, 100_u8, 32_u8, 102_u8, 108_u8, 111_u8, 97_u8, 116_u8];
 
-const text_integer_scores: Array<u8, 59> =[69_u8, 82_u8, 82_u8, 32_u8, 102_u8, 105_u8, 114_u8, 110_u8, 32_u8, 115_u8, 116_u8, 111_u8, 114_u8, 101_u8, 115_u8, 32_u8, 111_u8, 110_u8, 108_u8, 121_u8, 32_u8, 105_u8, 110_u8, 116_u8, 101_u8, 103_u8, 101_u8, 114_u8, 32_u8, 115_u8, 99_u8, 111_u8, 114_u8, 101_u8, 115_u8, 32_u8, 98_u8, 101_u8, 108_u8, 111_u8, 119_u8, 32_u8, 50_u8, 94_u8, 53_u8, 50_u8, 32_u8, 105_u8, 110_u8, 32_u8, 109_u8, 97_u8, 103_u8, 110_u8, 105_u8, 116_u8, 117_u8, 100_u8, 101_u8];
+const code_nx: u64 = 22606_u64;
 
-struct Score {
-  value: f64;
-  state: u64;
-}
+const code_xx: u64 = 22616_u64;
+
+const code_ch: u64 = 18499_u64;
+
+const code_gt: u64 = 21575_u64;
+
+const code_lt: u64 = 21580_u64;
 
 struct ScoreProbe {
   score: f64;
   found: Bool;
-}
-
-fn is_infinity(input: &[u8], start: u64, length: u64) -> infinite: Bool reads(input) {
-  doc "Whether bytes spell inf or infinity, letters in either case, as C's strtod reads an infinity.";
-  let short = name_is(input: input, start: start, length: length, word: &word_inf[0_u64..3_u64]);
-  let long = name_is(input: input, start: start, length: length, word: &word_infinity[0_u64..8_u64]);
-  let either = bor(short, long);
-  return either;
-}
-
-fn float_shaped(input: &[u8], span: Span) -> shaped: Bool reads(input) {
-  doc "Whether an argument is a floating-point number as C's strtod reads one whole, an optional sign then digits with an optional point and an optional exponent, or an infinity; firn refuses such a score as a limit of its own rather than as a malformed number.";
-  let length = span.length;
-  if length == 0_u64 {
-    return False();
-  }
-  let first = byte_at(input: input, index: span.start);
-  let plus = first == 43_u8;
-  let minus = first == 45_u8;
-  let signed = bor(plus, minus);
-  let position = 0_u64;
-  if signed {
-    set position = 1_u64;
-  }
-  let rest_start = span.start +wrap position;
-  let rest_length = length -wrap position;
-  let infinite = is_infinity(input: input, start: rest_start, length: rest_length);
-  if infinite {
-    return True();
-  }
-  let digits = 0_u64;
-  let seen_point = False();
-  let seen_exponent = False();
-  let exponent_digits = 0_u64;
-  let after_exponent = False();
-  loop @bytes {
-    if position >= length {
-      break @bytes;
-    }
-    let at = span.start +wrap position;
-    let byte = byte_at(input: input, index: at);
-    let low = byte >= 48_u8;
-    let high = byte <= 57_u8;
-    let digit = band(low, high);
-    let point = byte == 46_u8;
-    let upper_e = byte == 69_u8;
-    let lower_e = byte == 101_u8;
-    let exponent = bor(upper_e, lower_e);
-    let exponent_plus = byte == 43_u8;
-    let exponent_minus = byte == 45_u8;
-    let exponent_sign = bor(exponent_plus, exponent_minus);
-    if digit {
-      if seen_exponent {
-        set exponent_digits = exponent_digits +wrap 1_u64;
-      } else {
-        set digits = digits +wrap 1_u64;
-      }
-      set after_exponent = False();
-    } else if point {
-      let late = bor(seen_point, seen_exponent);
-      if late {
-        return False();
-      }
-      set seen_point = True();
-    } else if exponent {
-      let early = digits == 0_u64;
-      let twice = bor(seen_exponent, early);
-      if twice {
-        return False();
-      }
-      set seen_exponent = True();
-      set after_exponent = True();
-    } else if exponent_sign {
-      if after_exponent {
-        set after_exponent = False();
-      } else {
-        return False();
-      }
-    } else {
-      return False();
-    }
-    set position = position +wrap 1_u64;
-  }
-  if digits == 0_u64 {
-    return False();
-  }
-  if seen_exponent {
-    let bare = exponent_digits == 0_u64;
-    if bare {
-      return False();
-    }
-  }
-  return True();
-}
-
-fn read_score(input: &[u8], span: Span) -> score: Score reads(input) {
-  doc "Reads a score written as an integer, with an optional sign and leading zeros, whose magnitude is below 2^52: state 1. A score spelled as another floating-point number is state 2, which firn does not store yet; anything else is state 0, not a number.";
-  let length = span.length;
-  if length == 0_u64 {
-    return Score(value: 0.0_f64, state: 0_u64);
-  }
-  let first = byte_at(input: input, index: span.start);
-  let negative = first == 45_u8;
-  let positive = first == 43_u8;
-  let signed = bor(negative, positive);
-  let skip = 0_u64;
-  if signed {
-    set skip = 1_u64;
-  }
-  let digits = length -wrap skip;
-  let integral = digits > 0_u64;
-  let magnitude = 0_u64;
-  for @digits (offset in skip..length) {
-    let position = span.start +wrap offset;
-    let byte = byte_at(input: input, index: position);
-    let low = byte >= 48_u8;
-    let high = byte <= 57_u8;
-    let digit = band(low, high);
-    if digit {
-      let face = byte -wrap 48_u8;
-      let wide = cvt::<u8, u64>(face);
-      let scaled = magnitude *sat 10_u64;
-      set magnitude = scaled +sat wide;
-    } else {
-      set integral = False();
-    }
-  }
-  let within = magnitude < 4503599627370496_u64;
-  let exact = band(integral, within);
-  if exact {
-    let value = cvt.nearest::<u64, f64>(magnitude);
-    if negative {
-      set value = fneg(value);
-    }
-    return Score(value: value, state: 1_u64);
-  }
-  let shaped = float_shaped(input: input, span: span);
-  if shaped {
-    return Score(value: 0.0_f64, state: 2_u64);
-  }
-  return Score(value: 0.0_f64, state: 0_u64);
-}
-
-fn score_integer(score: f64) -> value: i64 pure {
-  doc "A stored score as the integer it holds; every score firn stores is an integer below 2^52 in magnitude.";
-  match cvt.checked::<f64, i64>(score) {
-    Ok(value: whole) => {
-      return whole;
-    }
-    Err(error: narrow) => {
-      return 0_i64;
-    }
-  }
 }
 
 fn score_probe(env: &ScoreProbe, key: &Key, value: &f64) -> result: u64 reads(value), writes(env) {
@@ -291,8 +139,40 @@ fn add_scores(env: &Client, value: &Entry) -> kind: u64 writes(env), writes(valu
   }
 }
 
+fn zadd_option(input: &[u8], span: Span) -> option: Bool reads(input) {
+  doc "Whether an argument is one of ZADD's options, NX, XX, CH, INCR, GT or LT, letters in either case, compared as Redis compares it with strcasecmp, up to a zero byte.";
+  let length = span.length;
+  for @bytes (offset in 0_u64..span.length) {
+    let position = span.start +wrap offset;
+    let byte = byte_at(input: input, index: position);
+    if byte == 0_u8 {
+      set length = offset;
+      break @bytes;
+    }
+  }
+  let code = name_code(input: input, start: span.start, length: length);
+  let nx = code == code_nx;
+  let xx = code == code_xx;
+  let ch = code == code_ch;
+  let incr = code == code_incr;
+  let gt = code == code_gt;
+  let lt = code == code_lt;
+  let exclusive = bor(nx, xx);
+  let changed = bor(exclusive, ch);
+  let increment = bor(changed, incr);
+  let greater = bor(increment, gt);
+  let any = bor(greater, lt);
+  return any;
+}
+
 fn run_zadd(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
-  doc "ZADD key score member [score member ...]: gives each member its score, creating the sorted set for an absent key, and answers how many members were new. Redis's options are answered as a syntax error, and a score that is not an integer below 2^52 in magnitude is refused.";
+  doc "ZADD key score member [score member ...]: gives each member its score, creating the sorted set for an absent key, and answers how many members were new. Redis's options, which it reads before the first score, are answered as a syntax error, and a score Redis refuses is refused before any member is added, as Redis refuses it.";
+  let leading = arg(args: args, index: 2_u64);
+  let optioned = zadd_option(input: input, span: leading);
+  if optioned {
+    reply_error(client: client, word: &text_syntax[0_u64..16_u64]);
+    return unit;
+  }
   let count = args^.inner.len;
   let pairs_length = count -wrap 2_u64;
   let odd = pairs_length % 2_u64;
@@ -309,20 +189,17 @@ fn run_zadd(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
     let score_index = doubled +wrap 2_u64;
     let member_index = score_index +wrap 1_u64;
     let written = arg(args: args, index: score_index);
-    let score = read_score(input: input, span: written);
-    if score.state == 0_u64 {
+    let score = read_score(input: input, start: written.start, length: written.length);
+    if score.valid {
+    } else {
       clear_items(client: client);
       reply_error(client: client, word: &text_not_float[0_u64..30_u64]);
       return unit;
     }
-    if score.state == 2_u64 {
-      clear_items(client: client);
-      reply_error(client: client, word: &text_integer_scores[0_u64..59_u64]);
-      return unit;
-    }
     let member = key_at(input: input, args: args, index: member_index);
     push_item(client: client, item: move member);
-    push_score(client: client, score: score.value);
+    let kept = kept_score(score: score.value);
+    push_score(client: client, score: kept);
   }
   let place = key_bounds(input: input, args: args, index: 1_u64);
   let key = &input^[place.start..place.end];
@@ -424,8 +301,7 @@ fn pop_lowest(env: &Client, value: &Entry) -> kind: u64 writes(env), writes(valu
             let removed = ordered_map_remove::<RankOrder, unit, ceiling>(map: &sorted^.order, key: &rank, env: &keys);
             let dropped = hash_map_remove::<KeyHash, f64, ceiling>(map: &sorted^.scores, key: &rank.member, env: &keys);
             reply_text(client: env, text: &rank.member.bytes);
-            let whole = score_integer(score: rank.score);
-            reply_bulk_decimal(client: env, value: whole);
+            reply_score(client: env, score: rank.score);
           }
           None() => {
           }
@@ -593,8 +469,7 @@ fn member_score(env: &Client, value: &Entry) -> kind: u64 reads(value), writes(e
         let probe = ScoreProbe(score: 0.0_f64, found: absent);
         let seen = hash_map_lookup::<KeyHash, f64, ScoreProbe, u64, fn score_probe, ceiling>(map: &sorted^.scores, key: &member, key_env: &keys, visit_env: &probe);
         if probe.found {
-          let whole = score_integer(score: probe.score);
-          reply_bulk_decimal(client: env, value: whole);
+          reply_score(client: env, score: probe.score);
           set env^.state = state_done;
         }
       }

@@ -3276,10 +3276,12 @@ condition under which it is taken up.
   where Redis sets those it knows; a zero byte in a request's count or
   length line, where Redis's search for the line's carriage return stops at
   the zero byte and waits for more input, answering that the count is too big
-  only past 64 KB, while firn answers the malformed line at once; sorted-set
-  scores that are not integers below 2^52, which need reading a
-  decimal to the nearest double and printing one with 17 significant digits
-  exactly;
+  only past 64 KB, while firn answers the malformed line at once; `ZADD`'s
+  options `NX`, `XX`, `CH`, `INCR`, `GT` and `LT`, which firn answers as a
+  syntax error; a score of negative zero in a sorted set Redis encodes as a
+  skiplist, one of more than 128 members or with a member longer than 64
+  bytes, which Redis keeps and writes as `-0` where firn keeps and writes 0,
+  as Redis does in a smaller set;
   quoted arguments in inline commands; a listening address other than the
   loopback and options by name rather than by position; `AUTH`, `SELECT`,
   `KEYS` and `SCAN`, `INFO`, `HELLO` and RESP3, the blocking list commands,
