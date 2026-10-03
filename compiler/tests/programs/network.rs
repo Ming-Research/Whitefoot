@@ -1350,6 +1350,175 @@ fn firn_answers_the_value_types_as_redis_does() {
     assert_eq!(status, 0);
 }
 
+/// The exact decimal expansion of `m / 2^k`, which has `k` digits after the
+/// point: `m * 5^k` with the point placed `k` digits from its end.
+#[cfg(target_os = "linux")]
+fn dyadic_decimal(m: u64, k: usize) -> String {
+    let mut digits: Vec<u8> = m.to_string().bytes().rev().map(|b| b - b'0').collect();
+    for _ in 0..k {
+        let mut carry = 0;
+        for digit in &mut digits {
+            let value = *digit * 5 + carry;
+            *digit = value % 10;
+            carry = value / 10;
+        }
+        if carry > 0 {
+            digits.push(carry);
+        }
+    }
+    digits.resize(digits.len().max(k + 1), 0);
+    let text: String = digits
+        .iter()
+        .rev()
+        .map(|digit| char::from(b'0' + digit))
+        .collect();
+    let (whole, fraction) = text.split_at(text.len() - k);
+    format!("{whole}.{fraction}")
+}
+
+/// firn reads and writes sorted-set scores as Redis does. Each score is added
+/// with `ZADD`, read back with `ZSCORE` and popped with `ZPOPMIN`. Decimal text
+/// rounds to the nearest double with ties to even: at the two halfway points
+/// past 2^53, at the 752-digit halfway point below the smallest subnormal,
+/// which rounds to zero and is refused as Redis refuses an underflow, and at
+/// the 768-digit halfway points on either side of the smallest normal double,
+/// which round up to it and down to it. A nonzero digit after a halfway point
+/// breaks its tie, also when it lies past the 800th significant digit, and a
+/// digit taken away keeps the value below it.
+/// Hexadecimal text, infinities and arguments of 400 and 1,000 digits are read
+/// as strtod reads them; NaN, overflow, a leading or trailing space, an empty
+/// argument and a zero byte are refused. Every score is written as %.17g
+/// writes it, ties at the seventeenth digit to even, in exponential notation
+/// below 10^-4 and from 10^17; negative zero is kept as 0, as Redis keeps it in
+/// a sorted set it encodes as a listpack. Members at infinite, subnormal,
+/// zero and equal scores pop in Redis's order, and an option word before the
+/// first score is a syntax error while one in a later score's place is an
+/// invalid score. The expected replies are redis-server 7.0.15's.
+#[cfg(target_os = "linux")]
+#[test]
+fn firn_reads_and_writes_scores_as_redis_does() {
+    let half_smallest = dyadic_decimal(1, 1075);
+    let half_smallest_above = format!("{half_smallest}1");
+    let half_smallest_far_above = format!("{half_smallest}{}1", "0".repeat(60));
+    let below_normal = dyadic_decimal((1 << 53) - 1, 1075);
+    let below_normal_below = format!(
+        "{}4{}",
+        &below_normal[..below_normal.len() - 1],
+        "9".repeat(20)
+    );
+    let above_normal = dyadic_decimal((1 << 53) + 1, 1075);
+    let above_normal_far_above = format!("{above_normal}{}1", "0".repeat(40));
+    let long_zeros = format!("0.{}1e401", "0".repeat(400));
+    let long_thirds = format!("3.{}", "3".repeat(1000));
+    let cases: [(&str, Option<&str>); 42] = [
+        ("1.5", Some("1.5")),
+        ("-2.5e-3", Some("-0.0025000000000000001")),
+        ("0.1", Some("0.10000000000000001")),
+        ("1e23", Some("9.9999999999999992e+22")),
+        ("9007199254740993", Some("9007199254740992")),
+        ("9007199254740995", Some("9007199254740996")),
+        ("2.2250738585072011e-308", Some("2.2250738585072009e-308")),
+        ("4.9e-324", Some("4.9406564584124654e-324")),
+        ("2.4703282292062327e-324", None),
+        ("2.4703282292062328e-324", Some("4.9406564584124654e-324")),
+        (&half_smallest, None),
+        (&half_smallest_above, Some("4.9406564584124654e-324")),
+        (&half_smallest_far_above, Some("4.9406564584124654e-324")),
+        (&below_normal, Some("2.2250738585072014e-308")),
+        (&below_normal_below, Some("2.2250738585072009e-308")),
+        (&above_normal, Some("2.2250738585072014e-308")),
+        (&above_normal_far_above, Some("2.2250738585072019e-308")),
+        ("1.7976931348623158e308", Some("1.7976931348623157e+308")),
+        ("1.7976931348623159e308", None),
+        ("1e-400", None),
+        (&long_zeros, Some("1")),
+        (&long_thirds, Some("3.3333333333333335")),
+        ("inf", Some("inf")),
+        ("-Infinity", Some("-inf")),
+        ("nan", None),
+        ("infinit", None),
+        ("0x1.8p1", Some("3")),
+        ("0x1p-1075", None),
+        ("1125899906842623.75", Some("1125899906842623.8")),
+        ("1125899906842623.25", Some("1125899906842623.2")),
+        ("0.0001", Some("0.0001")),
+        ("0.00001", Some("1.0000000000000001e-05")),
+        ("99999999999999984", Some("99999999999999984")),
+        ("1e17", Some("1e+17")),
+        ("-0", Some("0")),
+        (" 1", None),
+        ("1 ", None),
+        ("1e", None),
+        ("", None),
+        ("1\0", None),
+        ("+.5", Some("0.5")),
+        ("007", Some("7")),
+    ];
+    let program = firn();
+    let port = free_port();
+    let text = port.to_string();
+    let child = program.spawn_on_route(true, &[text.as_bytes(), b"1"]);
+    let mut client = connect_when_ready(port);
+    client
+        .set_read_timeout(Some(Duration::from_secs(20)))
+        .expect("bound the client's waits");
+    let mut batch = Vec::new();
+    let mut expected = Vec::new();
+    for (score, written) in cases {
+        batch.extend(resp(&["ZADD", "z", score, "m"]));
+        batch.extend(resp(&["ZSCORE", "z", "m"]));
+        batch.extend(resp(&["ZPOPMIN", "z"]));
+        match written {
+            Some(written) => expected.extend(
+                format!(
+                    ":1\r\n${length}\r\n{written}\r\n*2\r\n$1\r\nm\r\n${length}\r\n{written}\r\n",
+                    length = written.len()
+                )
+                .bytes(),
+            ),
+            None => expected.extend_from_slice(b"-ERR value is not a valid float\r\n$-1\r\n*0\r\n"),
+        }
+    }
+    batch.extend(resp(&[
+        "ZADD", "o", "inf", "top", "-inf", "bottom", "1.5", "b", "1.5", "a", "0", "zero", "-0",
+        "negative", "4.9e-324", "tiny", "-1e308", "low", "2.5e-3", "small",
+    ]));
+    batch.extend(resp(&["ZPOPMIN", "o", "20"]));
+    let popped = [
+        "bottom",
+        "-inf",
+        "low",
+        "-1e+308",
+        "negative",
+        "0",
+        "zero",
+        "0",
+        "tiny",
+        "4.9406564584124654e-324",
+        "small",
+        "0.0025000000000000001",
+        "a",
+        "1.5",
+        "b",
+        "1.5",
+        "top",
+        "inf",
+    ];
+    expected.extend(format!(":9\r\n*{}\r\n", popped.len()).bytes());
+    for item in popped {
+        expected.extend(format!("${}\r\n{item}\r\n", item.len()).bytes());
+    }
+    batch.extend(resp(&["ZADD", "q", "nx", "m"]));
+    batch.extend(resp(&["ZADD", "q", "1", "a", "nx", "b"]));
+    batch.extend(resp(&["ZCARD", "q"]));
+    expected.extend_from_slice(b"-ERR syntax error\r\n-ERR value is not a valid float\r\n:0\r\n");
+    client.write_all(&batch).expect("send the batch");
+    expect_replies(&mut client, &expected, "the score batch");
+    drop(client);
+    let (status, _) = finished(child);
+    assert_eq!(status, 0);
+}
+
 /// firn keeps strings of at most 24 bytes inside the keyspace and longer ones
 /// in allocations of their own. Keys, members, fields and values of exactly 24
 /// bytes and of 25 bytes sharing those 24, and a key differing from them only

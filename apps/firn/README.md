@@ -16,8 +16,8 @@ expiry and an append-only file:
 - lists: `LPUSH`, `RPUSH`, `LPOP`, `RPOP`, `LRANGE`, `LLEN`;
 - sets: `SADD`, `SREM`, `SPOP`, `SCARD`;
 - hashes: `HSET`, `HGET`;
-- sorted sets: `ZADD`, `ZPOPMIN`, `ZCARD`, `ZSCORE`, with integer scores
-  below 2^52 in magnitude;
+- sorted sets: `ZADD`, `ZPOPMIN`, `ZCARD`, `ZSCORE`, with scores read and
+  written as Redis 7.0.15 reads and writes them;
 - connection and server: `PING`, `ECHO`, `CONFIG GET`.
 
 What is not there yet is listed in [docs/todo.md](../../docs/todo.md) under
@@ -55,6 +55,8 @@ default.
 - `bytes`: byte strings, their hash and order, and integers read as Redis
   reads them;
 - `protocol`: reading requests and writing replies;
+- `scores`: sorted-set scores read as Redis's `strtod` reads them, to the
+  nearest double, and written as its `%.17g` writes them;
 - `store`: the keyspace, a shared map of entries beside a shared object
   holding the queued expiries, the append-only file's pending bytes and the
   server's counts;

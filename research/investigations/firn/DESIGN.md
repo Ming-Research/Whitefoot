@@ -116,7 +116,7 @@ slowest there.
 
 ## Design of the program
 
-`apps/firn` is a module program of six modules and about 5,400 lines;
+`apps/firn` is a module program of seven modules and about 6,600 lines;
 [its README](../../../apps/firn/README.md) lists them. Each choice below keeps
 Redis's observable behavior on the suite's commands and says what it refused.
 
@@ -171,12 +171,25 @@ Redis's observable behavior on the suite's commands and says what it refused.
   `SET` then `PEXPIREAT`, and an `SPOP` as the `SREM` of the members it chose,
   so that a replay removes the same members. `SPOP` draws from a generator
   seeded by the clock when the server starts, as Redis seeds its own.
-- **Sorted-set scores are integers below 2^52 in magnitude.** Every score the
-  suite sends is one, and Redis prints such a score as the integer. A score
-  written as another floating-point number is refused with an error that says
-  so: reading one to the nearest double and printing it with 17 significant
-  digits, as Redis does, needs exact decimal conversion firn does not have
-  yet.
+- **Sorted-set scores are read and written as Redis 7.0.15 reads and writes
+  them** (the `scores` module): read as `strtod` reads them, decimal or
+  hexadecimal text or an infinity, to the nearest double with ties to even,
+  NaN and a result past the double range refused as Redis refuses them; and
+  written as `%.17g` writes them. A decimal is converted exactly by Simple
+  Decimal Conversion, shifts by powers of two over its first 800 digits with
+  a note of any nonzero digit dropped, after two exact fast paths, an integer
+  of at most 19 digits and Clinger's single multiplication or division; a
+  score is written from its exact decimal expansion, an integer below 10^17
+  at once. Eisel and Lemire's multiplication by a table of 128-bit powers of
+  five would read a long decimal faster, but it still needs an exact fallback
+  for the inputs it cannot decide, and no measurement here asks for that
+  speed; a shortest-digits writer such as Ryu answers another question than
+  `%.17g`'s seventeen digits. Negative zero is kept as zero, as Redis's
+  listpack keeps it in a sorted set of at most 128 members of at most 64
+  bytes; a larger set, which Redis keeps as a skiplist, keeps and writes
+  `-0`, and matching both needs the set's encoding, which firn does not
+  track. The first version accepted only integers below 2^52, the scores the
+  suite sends, and refused others with an error that said so.
 - **A malformed request is answered with Redis's protocol error and the
   connection is closed**, as Redis closes it, where the subset closed it
   without an answer.
@@ -200,7 +213,7 @@ Building firn found four things outside the program, recorded under
 
 ## Correctness
 
-The *Correct* criterion rests on three observations:
+The *Correct* criterion rests on four observations:
 
 - The measurement script's check (`redis-bench.sh`, `verify_suite`) runs all
   20 tests on every line before measuring and fails on an error reply or a
@@ -209,13 +222,22 @@ The *Correct* criterion rests on three observations:
 - firn's tests in `compiler/tests/programs/network.rs` compare its replies
   byte for byte with redis-server 7.0.15's to the same requests: the value
   types, wrong kinds, unknown commands and arity errors, strings at and past
-  the inline length, `CONFIG` and client bytes echoed in errors. Others check
+  the inline length, `CONFIG` and client bytes echoed in errors, and
+  sorted-set scores at the hard cases of decimal conversion. Others check
   requests and replies larger than firn's first windows, expiry, idle
   clients and the append-only file's replay.
 - A differential script of 103 commands sent to firn and to redis-server,
   kept outside the repository, differed only on `SET` with `XX`, one of the
   options listed as missing in [docs/todo.md](../../../docs/todo.md) under
   firn.
+- A randomized script, also kept outside the repository and run once, sent
+  3,000,000 scores to firn and to redis-server 7.0.15 as `ZADD`, `ZSCORE` and
+  `ZPOPMIN`, 200,000 of each of fifteen kinds: shortest and 17-digit
+  spellings of random doubles, exact halfway points between neighboring
+  doubles with a digit added or taken away, subnormals, digit strings up to
+  3,000 digits, hexadecimal text, infinities and NaN, malformed text, and
+  doubles whose seventeenth digit is a tie; and 1,000 sets of up to 120
+  members at such scores, each popped whole. No reply differed.
 
 A build a result names by commit is on the branch. A refused variant's code
 was not kept; its section describes it, and the drivers that ran the rounds
