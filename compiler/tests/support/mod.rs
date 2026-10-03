@@ -133,7 +133,7 @@ const SOURCES: &[(&str, &str)] = &[
     ("completion/linux_io_uring.c", NATIVE_SOURCE),
     ("concurrent_map.h", CONCURRENT_MAP_HEADER),
     ("concurrent_map.c", CONCURRENT_MAP_SOURCE),
-    ("shared_map.c", SHARED_MAP_SOURCE),
+    ("keyed_table.c", SHARED_MAP_SOURCE),
 ];
 
 // Preserve the original link order, including all library bodies. These are
@@ -149,7 +149,7 @@ const UNITS: &[&str] = &[
     "completion/file_posix.c",
     "completion/completion_bridge.c",
     "completion/linux_io_uring.c",
-    "shared_map.c",
+    "keyed_table.c",
     "ordinary_values.c",
     "ordinary_values.ll",
     #[cfg(windows)]

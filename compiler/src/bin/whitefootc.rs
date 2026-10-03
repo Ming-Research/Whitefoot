@@ -153,7 +153,7 @@ const COMPLETION_SHARED_UNITS: &[RuntimeUnit] = &[
     unit("completion/bridge.c", COMPLETION_BRIDGE_SOURCE),
     unit("concurrent_map.h", CONCURRENT_MAP_HEADER),
     unit("concurrent_map.c", CONCURRENT_MAP_SOURCE),
-    unit("shared_map.c", SHARED_MAP_SOURCE),
+    unit("keyed_table.c", SHARED_MAP_SOURCE),
 ];
 
 #[cfg(not(target_os = "windows"))]
@@ -173,7 +173,7 @@ const COMPLETION_COMPILE_UNITS: &[&str] = &[
     "completion/file_posix.c",
     "completion/bridge.c",
     "completion/linux_io_uring.c",
-    "shared_map.c",
+    "keyed_table.c",
 ];
 
 #[cfg(target_os = "windows")]
@@ -190,7 +190,7 @@ const COMPLETION_COMPILE_UNITS: &[&str] = &[
     "completion/file_windows.c",
     "completion/bridge.c",
     "completion/windows_iocp.c",
-    "shared_map.c",
+    "keyed_table.c",
 ];
 
 /// The arguments this host's link needs beside the dialect and the inputs.

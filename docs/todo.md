@@ -968,14 +968,71 @@ rarely insert at the same place.
   the lock; it is not part of `completion-test`, whose runtime stage has
   run over its budget on macOS. The decision for the owner: raise the
   runtime budget and run it in the gate, or run it in a workflow of its
-  own. Reopen with the next change to `concurrent_map.c`.
+  own. The change that brought keyed tables, key sets and holds in a
+  statement's frame passed it in 7.0 s, and passed a ThreadSanitizer build
+  of the same test, which no target runs. Reopen with the next change to
+  `concurrent_map.c`.
 
-- **A driver thread's set of collected keys is never given back.**
-  `wf_shared_map_keyed` (`compiler/src/backend/shared_map.c`) grows by
-  doubling to the largest set of keys a statement on the thread has
-  collected and keeps that block until the process ends, since drivers
-  never leave. Reopen when drivers can be stopped, or when a program
-  collects a set large enough to matter once.
+- **The design tree still describes the shared maps' runtime.**
+  `design/compiler/waiting-contexts/concurrent-map.md` decides that a driver
+  thread keeps the one entry, or the one set of entries, its running
+  statement has locked, that a set locks its keys by hash and then bytes,
+  and that a set with two keys of one hash holds the whole map at once;
+  `keyed_table.c` keeps nothing per thread, a hold lives in its statement's
+  frame, its keys lock in byte order, a key set's own order, and it holds
+  the whole map when its probe meets a cell it holds itself. Its node also
+  lacks the whole hold a statement asks for (`wf__table_hold_whole`), the
+  swap of a table's entries under a whole hold (`wf__keyed_table_swap`,
+  with the statement leaving the map only after any move it started has
+  ended, which that swap needs), and `design/compiler/waiting-contexts.md`
+  still gives a shared object's header a list of watching contexts, where
+  watches registered in frames now sit on lists of links that a wake takes
+  off every unit, `wf__shared_watch` among them. The change: rewrite those
+  decisions with the shared-state redesign's tree changes, for the owner's
+  approval. Reopen with that work.
+
+- **A guard that reads an absent entry through a shared read can miss the
+  insert that makes it true.** A guard's watch is registered while its
+  statement still holds the units the guard read, so a writer that takes
+  such a unit after the release sees the registration; a shared read of an
+  absent key (`wf_cmap_read_entry`) holds no cell, so an insert of that key
+  can end, finding no watch, before the watch is registered. The keyed
+  tables' contract therefore has a guard's entries taken with `read` zero,
+  which claims a cell for an absent key. The change, if guards should keep
+  shared reads: register the watch before the guard's first evaluation and
+  take it off when the guard is true. Reopen when a guarded statement's
+  exclusive take shows in a profile.
+
+- **A table held whole with keys counts its held entries as they stood at
+  the take.** `wf__keyed_table_count` sums the users' counts, which a hold's
+  entries reach only at its release, so a statement that names entries of a
+  table, holds it whole and counts it after writing them gets the count from
+  before its writes; a hold of the whole table with no key, the form a
+  statement that only counts uses, counts exactly. The change: a count that
+  takes the hold and its slots' tag layout and adds what its entries have
+  become, or lowering that counts before writing. Reopen when the compiler
+  lowers a statement that both names a table's entries and counts it.
+
+- **All guard watches share one lock.** `wf_watch_lock`
+  (`compiler/src/backend/completion/bridge.c`) guards every unit's list of
+  watches, so that a wake can take a watch off all its units at once, and a
+  table's write that finds watches takes it to wake them all, coarse by
+  table as decided. Many contexts blocked on one table's keys would contend
+  on it and each write would wake all of them. Reopen with the blocking pops
+  work, measuring wakes per write.
+
+- **The runtime unit list for native callers lacks the keyed tables.**
+  `compiler/runtime.mk` says its list stays aligned with the compiler's
+  runtime units, but neither `shared_map.c` before nor `keyed_table.c` now is
+  in it, since no native caller reaches a table. The change: add the unit
+  when a native caller needs tables, or say in the comment that the list
+  holds what native callers link. Reopen with the first such caller.
+
+- **The keyed tables' source is exported as `SHARED_MAP_SOURCE`.** The
+  constant in `compiler/src/backend/runtime.rs` holds `keyed_table.c`, and
+  `lib.rs`, `backend.rs` and `emitter.rs` re-export it by that name. The
+  change: rename it `KEYED_TABLE_SOURCE` with the compiler work that replaces
+  the shared-map lowering. Reopen with that work.
 
 - **A keyed statement on an absent key allocates a node it then frees.**
   `wf_cmap_lock_entry` (`compiler/src/backend/concurrent_map.c`) claims a
@@ -2276,6 +2333,17 @@ rarely insert at the same place.
   measured. Remove each with no behavior change (identical verdicts and LLVM),
   timing the double check before and after. Close when each is removed or kept
   with a stated consumer.
+
+- **The completion bridge has grown past one reader.**
+  `compiler/src/backend/completion/bridge.c` has 4,215 lines: the file
+  submits and joins, the context drivers, their pools and parking, shared
+  objects and, since keyed tables, the guards' watches. The shared objects
+  and the watches touch the contexts only through `wf_context_ready`,
+  `wf_context_pass`, the running context and its parking flag, so they can
+  move to a unit of their own behind a small internal header. The unit lists
+  name each staged source by a constant `lib.rs` re-exports, so the split
+  changes those lists too. Validate by unchanged runtime tests. Split when
+  no open branch edits the bridge heavily.
 
 - **Native construction lives in the CLI and repeats in the harnesses.**
   The runtime-unit inventory, object caches, LTO flags and linking live in
