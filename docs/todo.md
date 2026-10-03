@@ -3235,8 +3235,8 @@ condition under which it is taken up.
   is held. Carrying the scores out in the client, as a command's other
   results are carried, and writing the reply after the statement would take
   the cost out of the statement; an exact writer that works in base-10^9
-  words would shrink it. Reopen with the rewrite of firn's atomic statements,
-  or when a workload stores scores far from 1.
+  words would shrink it. Reopen when those visitors or the atomic statements
+  that call them next change, or when a workload stores scores far from 1.
 - **A set never shrinks, so `SPOP` walks ever sparser buckets.** `SPOP`
   picks the first filled bucket from a random position, and a hash map keeps
   its buckets after its members are removed, so after most of a large set is

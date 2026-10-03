@@ -1387,7 +1387,9 @@ fn dyadic_decimal(m: u64, k: usize) -> String {
 /// after hundreds of digits and after a halfway point of at most 19 digits
 /// followed by zeros, and a digit taken away keeps the value below it.
 /// Hexadecimal text rounds as decimal text does, a nonzero digit past the bits
-/// kept breaking a tie and a value rounded past the largest double refused;
+/// kept breaking a tie, a subnormal rounding to the smallest one, and a value
+/// rounded past the largest double refused, also with an exponent past the
+/// range of i64;
 /// infinities and arguments of 400 and 1,000 digits are read as strtod reads
 /// them; NaN, overflow, a leading or trailing space, an empty argument and a
 /// zero byte are refused. Every score is written as %.17g writes it, ties at
@@ -1416,7 +1418,7 @@ fn firn_reads_and_writes_scores_as_redis_does() {
     let scaled_tie_far_above = format!("5.{}1e22", "0".repeat(799));
     let long_zeros = format!("0.{}1e401", "0".repeat(400));
     let long_thirds = format!("3.{}", "3".repeat(1000));
-    let cases: [(&str, Option<&str>); 47] = [
+    let cases: [(&str, Option<&str>); 49] = [
         ("1.5", Some("1.5")),
         ("-2.5e-3", Some("-0.0025000000000000001")),
         ("0.1", Some("0.10000000000000001")),
@@ -1449,6 +1451,8 @@ fn firn_reads_and_writes_scores_as_redis_does() {
         ("0x1.00000000000008p0", Some("1")),
         ("0x1.000000000000080001p0", Some("1.0000000000000002")),
         ("0x1.fffffffffffff8p1023", None),
+        ("0x1.fffffffffffff8p99999999999999999999", None),
+        ("0x3p-1076", Some("4.9406564584124654e-324")),
         ("0x1p-1075", None),
         ("1125899906842623.75", Some("1125899906842623.8")),
         ("1125899906842623.25", Some("1125899906842623.2")),
@@ -1717,8 +1721,8 @@ fn firn_carries_requests_and_replies_larger_than_its_windows() {
 /// firn replays the value types from its append-only file: after a restart a
 /// list keeps the elements its pushes and pops left, a hash its field, a
 /// sorted set the member ZPOPMIN left at its score, and a member added at 0.1
-/// the double nearest 0.1, which the replay reads again from the score's text
-/// as the command read it. The 25 of 50 members SPOP
+/// keeps the double nearest 0.1, which the replay reads again from the score's
+/// text as the command read it. The 25 of 50 members SPOP
 /// removed stay removed, since the file records the pop as the SREM of the
 /// members it chose, as Redis records it; a replay that popped at random, from
 /// a generator seeded by the clock at each start, would almost surely remove

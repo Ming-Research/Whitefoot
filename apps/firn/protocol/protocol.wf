@@ -649,6 +649,40 @@ fn reply_bulk_input(client: &Client, input: &[u8], start: u64, length: u64) -> r
   return unit;
 }
 
+fn reply_bulk_decimal(client: &Client, value: i64) -> result: unit writes(client) {
+  doc "Writes a number as a RESP bulk string of its decimal digits, with a leading minus sign when it is negative.";
+  let magnitude = cvt.wrap::<i64, u64>(value);
+  let negative = value < 0_i64;
+  if negative {
+    set magnitude = 0_u64 -wrap magnitude;
+  }
+  let digits = 1_u64;
+  let rest = magnitude / 10_u64;
+  loop @count {
+    if rest == 0_u64 {
+      break @count;
+    }
+    set digits = digits +wrap 1_u64;
+    set rest = rest / 10_u64;
+  }
+  let length = digits;
+  if negative {
+    set length = digits +wrap 1_u64;
+  }
+  reply_room(client: client, needed: 48_u64);
+  put(client: client, value: 36_u8);
+  put_decimal(client: client, value: length);
+  put(client: client, value: 13_u8);
+  put(client: client, value: 10_u8);
+  if negative {
+    put(client: client, value: 45_u8);
+  }
+  put_decimal(client: client, value: magnitude);
+  put(client: client, value: 13_u8);
+  put(client: client, value: 10_u8);
+  return unit;
+}
+
 fn reply_ok(client: &Client) -> result: unit writes(client) {
   doc "Writes +OK.";
   reply_word(client: client, word: &reply_plain_ok[0_u64..5_u64]);

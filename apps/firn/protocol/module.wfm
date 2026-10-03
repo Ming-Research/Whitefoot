@@ -74,6 +74,8 @@ public fn reply_text(client: &Client, text: &Bytes) -> result: unit reads(text),
 
 public fn reply_bulk_input(client: &Client, input: &[u8], start: u64, length: u64) -> result: unit reads(input), writes(client) doc "Writes bytes of the input as a RESP bulk string.";
 
+public fn reply_bulk_decimal(client: &Client, value: i64) -> result: unit writes(client) doc "Writes a number as a RESP bulk string of its decimal digits, with a leading minus sign when it is negative.";
+
 public fn reply_ok(client: &Client) -> result: unit writes(client) doc "Writes +OK.";
 
 public fn reply_nil(client: &Client) -> result: unit writes(client) doc "Writes the RESP2 null bulk string.";
