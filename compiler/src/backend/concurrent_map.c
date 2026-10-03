@@ -1338,7 +1338,9 @@ typedef struct {
 #define KEY_SET_MIN_ROOM 8ull
 #define KEY_SET_MIN_BYTES 64ull
 /* The largest store, and arena, a thread keeps as its spare: a set of up to
- * 1,024 keys whose bytes fit in 64 KiB. */
+ * 1,024 keys whose bytes fit in 64 KiB. Of two stores it may keep, it keeps
+ * the one with room for more keys, so a small set freed between large ones
+ * does not leave every large one taking memory again. */
 #define KEY_SET_SPARE_ROOM 1024ull
 #define KEY_SET_SPARE_BYTES (64ull * 1024)
 
@@ -1501,16 +1503,22 @@ static void give_store(key_store *s) {
     WF_CMAP_GIVE(s, store_bytes(s->room));
 }
 
-/* A freed store becomes the calling thread's spare when it has none and the
- * store is no larger than a spare may be (first_store). */
+/* A freed store no larger than a spare may be becomes the calling thread's
+ * spare when it has none or the one it has room for fewer keys, which is
+ * given back instead (first_store). */
 void wf_cmap_key_set_free_store(void *store) {
     key_store *s = store;
     if (s == NULL)
         return;
 #ifdef WF_CMAP_SPARE_KEYS
-    if (WF_CMAP_SPARE_KEYS() == NULL && s->room <= KEY_SET_SPARE_ROOM && s->bytes_room <= KEY_SET_SPARE_BYTES) {
-        WF_CMAP_SPARE_KEYS() = s;
-        return;
+    if (s->room <= KEY_SET_SPARE_ROOM && s->bytes_room <= KEY_SET_SPARE_BYTES) {
+        key_store *spare = WF_CMAP_SPARE_KEYS();
+        if (spare == NULL || spare->room < s->room) {
+            WF_CMAP_SPARE_KEYS() = s;
+            if (spare != NULL)
+                give_store(spare);
+            return;
+        }
     }
 #endif
     give_store(s);

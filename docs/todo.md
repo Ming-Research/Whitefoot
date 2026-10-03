@@ -82,7 +82,8 @@ rarely insert at the same place.
   `KeyedTable<V>`, and names nothing a writer can do instead, where the
   intended form is an entry binding in the header, `e = &s^.map[k]`
   [SHARE-2]. The change: give that refusal a repair naming the header form.
-  Found by the adversarial tests of the keyed tables.
+  Found by the adversarial tests of the keyed tables. Reopen with the next
+  change to how a subscript's base is refused.
 
 - **A direct call result loses its struct invariant at a reference target.**
   For a `nocopy Pair` with private `left` and `right` fields and invariant
@@ -3118,7 +3119,7 @@ condition under which it is taken up.
 
 - **The trusted runtime is large and growing.** Every program links from
   about 27,000 lines of C and LLVM IR in `compiler/src/backend`, its tests
-  aside, that no checker reads (the scheduler, the completion bridge at 4,216
+  and probes aside, that no checker reads (the scheduler, the completion bridge at 4,216
   lines, the hosts' I/O adapters, the concurrent map at 2,398), and each
   language feature has
   added to it: the shared map's first claim protocol let one key hold two

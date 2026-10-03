@@ -170,9 +170,10 @@ a key named twice counts twice.
   their first fields, and one table's entries by the byte order of their keys.
 - **Taking.** The implementation takes each unit before the block first uses
   it, and takes an earlier unit before any later one. A table's entries named
-  in the header are taken in one step, sorted, at the table's first use, so a
-  later unit, such as the log after the entries, is taken only on the path
-  that reaches it: `INCR` takes the log only when it logs.
+  in the header are taken in one step, sorted, before the guard and the block,
+  since the take reads the keys the statement reads when it begins; a later
+  unit, such as the log after the entries, is taken only on the path that
+  reaches it: `INCR` takes the log only when it logs.
 - **Release.** After the statement's last taking on a path, a unit may be
   released once the block no longer uses it or any reference derived from it.
   The first implementation releases every unit when the block ends.
@@ -316,9 +317,9 @@ statements in nine files.
 
 ## Measured
 
-`redis-bench.sh quick` on the owner's i9-14900K under WSL2, firn at the head
-against firn at `cea9188d4`, the branch before this design, with the runs of
-each build interleaved
+`redis-bench.sh quick` on the owner's i9-14900K under WSL2, firn at
+`f8ca277a9`, and then with the two fixes below, against firn at `cea9188d4`,
+the branch before this design, with the runs of each build interleaved
 ([raw lines](../../experiments/io-completion-bench/shared-state-14900k-samples.csv)).
 Ratios are the head's rate to `cea9188d4`'s.
 
@@ -341,9 +342,11 @@ intend:
 - **One hot key.** firn's client grew from 80 to 280 bytes with the
   connection commands, and a read of one of its fields through a reference
   copied the whole client first; at 280 bytes LLVM no longer removed the
-  copies, and `SADD`'s statement made six `memcpy` calls inside its block
-  where `cea9188d4`'s made one. A field read through a reference now loads
-  that field alone.
+  copies, and `SADD`'s compiled statement made seven copy calls where
+  `cea9188d4`'s and the migration's, `0e992aa3d`, before the connection
+  commands, made one
+  ([profiles and copies](../../experiments/io-completion-bench/shared-state-14900k-profiles.txt)).
+  A field read through a reference now loads that field alone.
 
 After both, on 4, 8 and 16 server CPUs, `SET`, `GET`, `INCR`, `ZADD` and
 `LRANGE_100` answered 0.97 to 1.02, the four tests on one hot key 0.89 to
@@ -352,8 +355,10 @@ After both, on 4, 8 and 16 server CPUs, `SET`, `GET`, `INCR`, `ZADD` and
 
 - `MSET` builds an ordered set that owns its keys' bytes, a binary search
   and a copy per key, where `cea9188d4`'s statement collected the keys'
-  places in the request and sorted them; profiles put the difference in the
-  set's insertion. It is the price of keys that are values when a
+  places in the request and sorted them. Profiles of `MSET` on four drivers
+  show the head's time in `run_mset`, where the set's insertion is
+  inlined, and in `insert_key`, where `cea9188d4`'s went to sorting its
+  held keys (`sift_held`). It is the price of keys that are values when a
   statement begins.
 - On one hot key the head stays 4% to 11% below on some counts. Profiles of
   `SADD` on four drivers spend 60% of the CPU waiting for the cell in both

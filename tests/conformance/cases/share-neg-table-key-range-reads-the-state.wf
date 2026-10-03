@@ -1,0 +1,21 @@
+struct Store {
+  map: KeyedTable<u8>;
+  from: u64;
+  to: u64;
+}
+
+fn put(store: &Shared<Store>, name: &[u8]) -> result: unit reads(store), reads(name) waits {
+  atomic s = &store^, slot = &s^.map[&name^[s^.from..s^.to]] {
+    set slot^ = Some<u8>(value: 1_u8);
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let table = keyed_table_new::<u8>(capacity: 0_u64);
+  let name = array_filled::<u8, 2>(value: 97_u8);
+  let state = Store(map: move table, from: 0_u64, to: 1_u64);
+  let store = shared_new::<Store>(value: move state);
+  put(store: &store, name: &name[0_u64..2_u64]);
+  return std::process::exit_status(code: 0_u8);
+}

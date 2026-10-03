@@ -10,8 +10,9 @@
 //! it every earlier unit the statement reaches anywhere, so each wait is for
 //! a lock after every lock the waiter holds. A flag in the frame records
 //! which units the path took, and every edge leaving the block releases
-//! those, so every take precedes every release. A table's header entries are
-//! taken together, at the table's first use.
+//! those, so every take precedes every release. A table with header entries
+//! is taken before the guard and the block, all its header entries together,
+//! since the take reads the keys the statement reads when it begins.
 //!
 //! A statement reached through a handle takes a handle of its own first, so
 //! the object stays live until the statement completes whatever the block
@@ -464,11 +465,9 @@ impl IrBuilder<'_> {
         })
     }
 
-    /// The guard: its units, taken again each time a statement that wrote
-    /// one wakes it, and its value, read until it holds [SHARE-3].
-    /// The guard, after taking the units it reads and every table with
-    /// header entries, through the unit `headed` (lower_atomic), each time it
-    /// is evaluated.
+    /// The guard: its units, with every table with header entries through the
+    /// unit `headed` (lower_atomic), taken again each time a statement that
+    /// wrote one wakes it, and its value, read until it holds [SHARE-3].
     fn lower_guard(
         &mut self,
         region: &AtomicRegion,

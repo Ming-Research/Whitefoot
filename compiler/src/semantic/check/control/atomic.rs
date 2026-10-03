@@ -213,6 +213,9 @@ impl Checker<'_, '_> {
             })
             .collect::<Result<Vec<_>, CheckStop>>()?;
         let mut entries = Vec::with_capacity(headers.len());
+        // The declarations an index atom may not read through: the binding's
+        // and each earlier entry binding's.
+        let mut statement_roots = vec![declaration.id()];
         for (header, place) in headers.into_iter().zip(entry_places) {
             let Some(header) = header else {
                 return self.types.declarations.issue_node(
@@ -234,11 +237,13 @@ impl Checker<'_, '_> {
                 &header,
                 binding,
                 &earlier,
+                &statement_roots,
                 &mut block_bindings,
                 counters,
                 scope.loops.len(),
                 &mut effects,
             )?;
+            statement_roots.push(header.declaration.id());
             entries.push(entry);
         }
 
@@ -412,6 +417,7 @@ impl Checker<'_, '_> {
         header: &EntryHeader<'_>,
         state_binding: BindingId,
         earlier: &[BindingId],
+        statement_roots: &[DeclarationId],
         block_bindings: &mut HashMap<DeclarationId, LocalBinding>,
         counters: &mut ControlCounters<'_>,
         loop_depth: usize,
@@ -501,6 +507,14 @@ impl Checker<'_, '_> {
         }
         // The statement reads its index atoms when it begins, before it holds
         // the state, so none reads through its bindings.
+        // A place the atom names, and anything its range's endpoints read.
+        let touches_the_state = |effects: &EffectSet| {
+            effects
+                .reads
+                .iter()
+                .chain(&effects.writes)
+                .any(|path| statement_roots.contains(&path.root))
+        };
         let reads_the_state = |places: &[ResolvedPlace]| {
             places.iter().any(|place| {
                 matches!(place.root, PlaceRoot::Binding(root) if root == state_binding || earlier.contains(&root))
@@ -570,7 +584,7 @@ impl Checker<'_, '_> {
                 .as_ref()
                 .map(|reference| reference.paths.clone())
                 .unwrap_or_default();
-            if reads_the_state(&places) {
+            if reads_the_state(&places) || touches_the_state(&set.effects) {
                 return self.types.declarations.issue_node(
                     SemanticRule::Share2,
                     header.atom,
@@ -615,7 +629,8 @@ impl Checker<'_, '_> {
                     .as_ref()
                     .map(|reference| reference.paths.as_slice())
                     .unwrap_or_default(),
-            ) {
+            ) || touches_the_state(&key.effects)
+            {
                 return self.types.declarations.issue_node(
                     SemanticRule::Share2,
                     header.atom,

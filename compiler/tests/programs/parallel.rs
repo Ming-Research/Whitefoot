@@ -438,6 +438,20 @@ fn run_on_one_driver_and_on_four(name: &str, rounds: usize) {
     }
 }
 
+/// [PAR-1, SHARE-1] a pure function builds and releases a key set on every
+/// iteration of a loop the parallel lowering splits over compute workers,
+/// and the sum of the payloads it reads is the sequential one on every
+/// worker count. Key set memory kept per driver number, which every compute
+/// worker shares with driver 0, corrupted the sets and faulted in every run.
+#[test]
+fn key_sets_built_on_compute_workers_keep_their_payloads() {
+    let parallel = build_program(&compile_program_with_overlap("parallel/key_sets.wf"));
+    for workers in [Some("1"), Some("4"), Some("8")] {
+        let output = parallel.run_with_workers(workers);
+        assert!(output.status.success(), "workers={workers:?}: {output:?}");
+    }
+}
+
 /// [SHARE-1, SHARE-2, SHARE-3] eight contexts adding to the entries under
 /// eight keys of a state's table, and to the state's total in the same
 /// statement, while two others hold all eight entries through a key set and

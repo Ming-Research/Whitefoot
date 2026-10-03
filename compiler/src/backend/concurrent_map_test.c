@@ -2164,6 +2164,39 @@ static void key_sets(void) {
     wf_cmap_key_set_drop_spare();
     if (atomic_load(&blocks_out) != before)
         fail("a dropped spare kept memory (blocks)", (uint64_t)(atomic_load(&blocks_out) - before), 0);
+    /* A spare too small for a set is passed over, and the larger store that
+     * set leaves replaces it, so the next set of that size takes nothing. */
+    wf_cmap_key_set_new(&set, 1);
+    wf_cmap_key_set_put(&set, (const unsigned char *)"a", 1, 1);
+    wf_cmap_key_set_release(&set);
+    wf_cmap_key_set_new(&set, 10);
+    for (unsigned i = 0; i < 10; i++) {
+        unsigned char key[2] = {'k', (unsigned char)('0' + i)};
+        wf_cmap_key_set_put(&set, key, 2, i);
+    }
+    wf_cmap_key_set_release(&set);
+    int64_t larger = atomic_load(&blocks_out);
+    wf_cmap_key_set_new(&set, 10);
+    for (unsigned i = 0; i < 10; i++) {
+        unsigned char key[2] = {'k', (unsigned char)('0' + i)};
+        wf_cmap_key_set_put(&set, key, 2, i);
+    }
+    if (atomic_load(&blocks_out) != larger || set.len != 10)
+        fail("a set after a larger one was freed took memory (blocks, len)",
+             (uint64_t)(atomic_load(&blocks_out) - larger), set.len);
+    wf_cmap_key_set_release(&set);
+    wf_cmap_key_set_drop_spare();
+    /* A set whose bytes pass the spare's bound is given back whole. */
+    static unsigned char long_key[40000];
+    memset(long_key, 'x', sizeof long_key);
+    wf_cmap_key_set_new(&set, 2);
+    long_key[0] = 'a';
+    wf_cmap_key_set_put(&set, long_key, sizeof long_key, 1);
+    long_key[0] = 'b';
+    wf_cmap_key_set_put(&set, long_key, sizeof long_key, 2);
+    wf_cmap_key_set_release(&set);
+    if (atomic_load(&blocks_out) != before)
+        fail("a set past the spare's bytes was kept (blocks)", (uint64_t)(atomic_load(&blocks_out) - before), 0);
     /* Many keys of many lengths, added in no order, some of them again,
      * against a count of each key's additions. */
     enum { MANY = 1000 };

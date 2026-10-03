@@ -384,8 +384,10 @@ the suite of the concurrent-map investigation's stage (c), and
 its shared reads against exclusive holds, with
 `shared-reads-14900k-samples.csv` the same comparison on the many-core host,
 and `held-keys-14900k-samples.csv` the sweep of the longest wait and the
-quick comparisons of statements that hold only their keys' entries.
-They are removed with the
+quick comparisons of statements that hold only their keys' entries;
+`shared-state-14900k-samples.csv` holds the quick comparisons of the shared
+state locked by parts, and `shared-state-14900k-profiles.txt` the profiles
+and copy counts its record cites. They are removed with the
 experiments' records.
 
 ## Reproducing

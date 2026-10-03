@@ -1,0 +1,95 @@
+# Profiles and copy counts of research/investigations/shared-state/DESIGN.md, "Measured", on the owner's i9-14900K under WSL2 (kernel 6.18.40.1-microsoft-standard-WSL2), 2026-10-03.
+# Profiles: firn on CPUs 0 to 3 with WF_DRIVERS=4, redis-benchmark 7.0.15 --threads 8 -c 128 -P 16 -r 100000 on CPUs 4 to 19, perf 6.8 (linux-tools-6.8.0-146) record -e cpu-clock -F 1999 -g for 5 s of firn's process; head is firn built from the tree committed as a008b01ef, base firn at cea9188d4, both --full-lto. Self time by symbol, the first 20 lines of perf report --no-children --sort symbol.
+
+== head-sadd: rps=4084364.0
+    59.96%  [.] try_entry                      -      -            
+    10.88%  [.] wf_commands.add_all            -      -            
+     3.29%  [.] wf_commands.prepare_keys       -      -            
+     3.26%  [.] acquire_entry                  -      -            
+     2.55%  [.] wf__table_lock_entry           -      -            
+     2.50%  [.] wf_bytes.bytes_same            -      -            
+     2.44%  [.] wf_commands.execute.resume     -      -            
+     2.30%  [.] wf_server.serve.resume         -      -            
+     1.47%  [.] wf_protocol.read_line          -      -            
+     1.35%  [.] wf_bytes.bytes_new             -      -            
+     1.27%  [.] wf_protocol.parse_multibulk    -      -            
+     1.18%  [.] wf__table_unlock_entry         -      -            
+     0.89%  [.] wf_protocol.push_item          -      -            
+     0.81%  [.] wf_commands.run_sadd.resume    -      -            
+     0.72%  [.] wf_server.send_all.resume      -      -            
+     0.58%  [.] wf_context_allocate            -      -            
+     0.58%  [.] __send                         -      -            
+     0.47%  [.] wf_protocol.reply_integer      -      -            
+     0.42%  [.] wf__context_frame_release      -      -            
+     0.35%  [.] __vdso_clock_gettime           -      -            
+
+== base-sadd: rps=4425280.0
+    60.35%  [.] try_entry                      -      -            
+    11.10%  [.] wf_commands.add_all            -      -            
+     3.43%  [.] wf_commands.prepare_keys       -      -            
+     3.28%  [.] acquire_entry                  -      -            
+     3.18%  [.] wf_commands.execute.resume     -      -            
+     2.44%  [.] wf_bytes.bytes_same            -      -            
+     2.24%  [.] wf_server.serve.resume         -      -            
+     2.23%  [.] wf_cmap_lock_entry             -      -            
+     1.90%  [.] wf_protocol.parse_multibulk    -      -            
+     1.53%  [.] wf_bytes.bytes_new             -      -            
+     1.06%  [.] wf_cmap_unlock_entry           -      -            
+     0.90%  [.] wf_commands.run_sadd.resume    -      -            
+     0.85%  [.] wf_protocol.push_item          -      -            
+     0.62%  [.] __send                         -      -            
+     0.61%  [.] wf_server.send_all.resume      -      -            
+     0.45%  [.] wf_protocol.reply_integer      -      -            
+     0.42%  [.] wf__context_frame_release      -      -            
+     0.40%  [.] __vdso_clock_gettime           -      -            
+     0.40%  [.] lock_entry                     -      -            
+     0.38%  [.] wf_context_allocate            -      -            
+
+== head-mset: rps=1694088.0
+    22.18%  [.] try_entry                       -      -            
+    17.00%  [.] wf_commands.run_mset.resume     -      -            
+     7.53%  [.] wf_bytes.bytes_new              -      -            
+     7.24%  [.] acquire_entry                   -      -            
+     5.11%  [.] wf_protocol.read_line           -      -            
+     4.63%  [.] wf__table_hold_take             -      -            
+     4.46%  [.] 0x000000000018891d              -      -            
+     4.03%  [.] wf_protocol.parse_multibulk     -      -            
+     2.78%  [.] insert_key                      -      -            
+     1.99%  [.] wf__key_set_free                -      -            
+     1.71%  [.] fill_slots                      -      -            
+     1.29%  [.] wf_server.serve.resume          -      -            
+     1.27%  [.] wf__table_hold_release          -      -            
+     1.22%  [.] wf__table_hold_keys             -      -            
+     0.85%  [.] wf_commands.execute.resume      -      -            
+     0.81%  [.] 0x0000000000188708              -      -            
+     0.75%  [.] 0x000000000018890e              -      -            
+     0.73%  [.] 0x0000000000188919              -      -            
+     0.54%  [.] 0x0000000000188d91              -      -            
+     0.44%  [.] 0x0000000000188928              -      -            
+
+== base-mset: rps=1741004.1
+    23.64%  [.] try_entry                       -      -            
+    10.03%  [.] sift_held                       -      -            
+     8.58%  [.] wf_bytes.bytes_new              -      -            
+     7.70%  [.] acquire_entry                   -      -            
+     7.43%  [.] wf__shared_map_held             -      -            
+     6.84%  [.] wf_protocol.parse_multibulk     -      -            
+     5.75%  [.] wf_commands.run_mset.resume     -      -            
+     5.27%  [.] wf__shared_map_hold_keys        -      -            
+     3.50%  [.] wf__shared_map_key              -      -            
+     3.09%  [.] 0x000000000018891d              -      -            
+     1.73%  [.] wf__shared_map_release_keys     -      -            
+     1.59%  [.] wf_server.serve.resume          -      -            
+     1.21%  [.] wf_commands.execute.resume      -      -            
+     0.80%  [.] 0x00000000001889cb              -      -            
+     0.54%  [.] wf_protocol.reply_word          -      -            
+     0.54%  [.] 0x0000000000188919              -      -            
+     0.54%  [.] wf_server.send_all.resume       -      -            
+     0.52%  [.] __send                          -      -            
+     0.51%  [.] epoll_wait                      -      -            
+     0.47%  [.] wf_bridge_progress              -      -            
+
+# Copy calls in SADD's statement: objdump -d of wf_commands.run_sadd.resume, counting calls to memcpy or memmove.
+f8ca277a9: 7 copy calls in 463 instructions
+cea9188d4: 1 copy calls in 391 instructions
+0e992aa3d: 1 copy calls in 499 instructions
