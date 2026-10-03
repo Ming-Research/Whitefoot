@@ -91,6 +91,8 @@ const text_too_long: Array<u8, 60> =[69_u8, 82_u8, 82_u8, 32_u8, 115_u8, 116_u8,
 
 const text_offset_range: Array<u8, 26> =[69_u8, 82_u8, 82_u8, 32_u8, 111_u8, 102_u8, 102_u8, 115_u8, 101_u8, 116_u8, 32_u8, 105_u8, 115_u8, 32_u8, 111_u8, 117_u8, 116_u8, 32_u8, 111_u8, 102_u8, 32_u8, 114_u8, 97_u8, 110_u8, 103_u8, 101_u8];
 
+const text_decrement: Array<u8, 28> =[69_u8, 82_u8, 82_u8, 32_u8, 100_u8, 101_u8, 99_u8, 114_u8, 101_u8, 109_u8, 101_u8, 110_u8, 116_u8, 32_u8, 119_u8, 111_u8, 117_u8, 108_u8, 100_u8, 32_u8, 111_u8, 118_u8, 101_u8, 114_u8, 102_u8, 108_u8, 111_u8, 119_u8];
+
 const reply_pong: Array<u8, 7> =[43_u8, 80_u8, 79_u8, 78_u8, 71_u8, 13_u8, 10_u8];
 
 const text_overflow: Array<u8, 41> =[69_u8, 82_u8, 82_u8, 32_u8, 105_u8, 110_u8, 99_u8, 114_u8, 101_u8, 109_u8, 101_u8, 110_u8, 116_u8, 32_u8, 111_u8, 114_u8, 32_u8, 100_u8, 101_u8, 99_u8, 114_u8, 101_u8, 109_u8, 101_u8, 110_u8, 116_u8, 32_u8, 119_u8, 111_u8, 117_u8, 108_u8, 100_u8, 32_u8, 111_u8, 118_u8, 101_u8, 114_u8, 102_u8, 108_u8, 111_u8, 119_u8];
@@ -99,6 +101,7 @@ const text_expire_set: Array<u8, 40> =[69_u8, 82_u8, 82_u8, 32_u8, 105_u8, 110_u
 
 struct Counted {
   value: i64;
+  delta: i64;
   now: u64;
   state: u64;
 }
@@ -731,7 +734,7 @@ fn run_mset(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
 }
 
 fn bump_value(env: &Counted, value: &Entry) -> result: u64 writes(env), writes(value) {
-  doc "Adds one to a live stored decimal in place, keeping its expiry. State 1 is done, 3 marks another kind, 5 a string that is not a number, 6 a sum past the range of i64, and 2 an expired entry.";
+  doc "Adds env's delta to a live stored decimal in place, keeping its expiry. State 1 is done, 3 marks another kind, 5 a string that is not a number, 6 a sum past the range of i64, and 2 an expired entry.";
   let reached = expired(expires: value^.expires, now: env^.now);
   if reached {
     set env^.state = state_expired;
@@ -744,16 +747,19 @@ fn bump_value(env: &Counted, value: &Entry) -> result: u64 writes(env), writes(v
         set env^.state = 5_u64;
         return 5_u64;
       }
-      if number.value == 9223372036854775807_i64 {
-        set env^.state = 6_u64;
-        return 6_u64;
+      match number.value +checked env^.delta {
+        Ok(value: bumped) => {
+          let fresh = decimal_text(value: bumped);
+          set stored^ = move fresh;
+          set env^.value = bumped;
+          set env^.state = state_done;
+          return 1_u64;
+        }
+        Err(error: overflow) => {
+          set env^.state = 6_u64;
+          return 6_u64;
+        }
       }
-      let bumped = number.value +wrap 1_i64;
-      let fresh = decimal_text(value: bumped);
-      set stored^ = move fresh;
-      set env^.value = bumped;
-      set env^.state = state_done;
-      return 1_u64;
     }
     Items(items: list) => {
       set env^.state = state_wrong;
@@ -774,11 +780,11 @@ fn bump_value(env: &Counted, value: &Entry) -> result: u64 writes(env), writes(v
   }
 }
 
-fn run_incr(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
-  doc "INCR key: adds one to the stored number, keeping its expiry, or stores 1 without one for an absent or expired key, in one atomic statement; the file records an expired key's removal as log_removal does, then the command.";
+fn run_incr(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time, delta: i64) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+  doc "INCR key (delta 1), DECR key (delta -1), and INCRBY and DECRBY once run_incrby has read their amount: adds delta to the stored number, keeping its expiry, or stores delta without one for an absent or expired key, in one atomic statement, as Redis 7.0.15's incrDecrCommand does; another kind, a string that is not an integer and a sum past the range of i64 are refused. The file records an expired key's removal as log_removal does, then the command as it was sent.";
   let place = key_bounds(input: input, args: args, index: 1_u64);
   let key = &input^[place.start..place.end];
-  let counted = Counted(value: 0_i64, now: time^.check, state: state_absent);
+  let counted = Counted(value: 0_i64, delta: delta, now: time^.check, state: state_absent);
   atomic s = &store^.state, slot = &s^.map[key] {
     let fresh_needed = True();
     match slot^ {
@@ -796,9 +802,9 @@ fn run_incr(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
       }
     }
     if fresh_needed {
-      let fresh = decimal_text(value: 1_i64);
+      let fresh = decimal_text(value: delta);
       put_text(slot: slot, value: move fresh, expires: 0_u64);
-      set counted.value = 1_i64;
+      set counted.value = delta;
       set counted.state = state_done;
     }
     if counted.state == state_done {
@@ -816,6 +822,27 @@ fn run_incr(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   } else {
     reply_error(client: client, word: &text_not_integer[0_u64..43_u64]);
   }
+  return unit;
+}
+
+fn run_incrby(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time, negate: Bool) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+  doc "INCRBY key increment and DECRBY key decrement (negate): reads the amount as Redis reads one, refusing text that is not an integer before the key is read, and for DECRBY the least i64, whose negation would overflow, then adds it, or its negation, as run_incr does.";
+  let amount = arg(args: args, index: 2_u64);
+  let number = read_integer(input: input, start: amount.start, length: amount.length);
+  if number.state != 1_u64 {
+    reply_error(client: client, word: &text_not_integer[0_u64..43_u64]);
+    return unit;
+  }
+  let delta = number.value;
+  if negate {
+    let least = cvt.wrap::<u64, i64>(9223372036854775808_u64);
+    if delta == least {
+      reply_error(client: client, word: &text_decrement[0_u64..28_u64]);
+      return unit;
+    }
+    set delta = 0_i64 -wrap delta;
+  }
+  run_incr(store: store, input: input, args: args, client: client, env: env, time: time, delta: delta);
   return unit;
 }
 

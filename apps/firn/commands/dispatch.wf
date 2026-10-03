@@ -47,6 +47,12 @@ const code_type: u64 = 1162893652_u64;
 
 const code_incr: u64 = 1380142665_u64;
 
+const code_decr: u64 = 1380140356_u64;
+
+const code_incrby: u64 = 98141382856265_u64;
+
+const code_decrby: u64 = 98141382853956_u64;
+
 const code_mset: u64 = 1413829453_u64;
 
 const code_expire: u64 = 76219719637061_u64;
@@ -297,7 +303,33 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
     let fits = count == 2_u64;
     let go = admitted(client: client, input: input, name: name, fits: fits);
     if go {
-      run_incr(store: store, input: input, args: args, client: client, env: env, time: time);
+      run_incr(store: store, input: input, args: args, client: client, env: env, time: time, delta: 1_i64);
+    }
+    return unit;
+  }
+  if code == code_decr {
+    let fits = count == 2_u64;
+    let go = admitted(client: client, input: input, name: name, fits: fits);
+    if go {
+      run_incr(store: store, input: input, args: args, client: client, env: env, time: time, delta: -1_i64);
+    }
+    return unit;
+  }
+  if code == code_incrby {
+    let fits = count == 3_u64;
+    let go = admitted(client: client, input: input, name: name, fits: fits);
+    if go {
+      let negate = False();
+      run_incrby(store: store, input: input, args: args, client: client, env: env, time: time, negate: negate);
+    }
+    return unit;
+  }
+  if code == code_decrby {
+    let fits = count == 3_u64;
+    let go = admitted(client: client, input: input, name: name, fits: fits);
+    if go {
+      let negate = True();
+      run_incrby(store: store, input: input, args: args, client: client, env: env, time: time, negate: negate);
     }
     return unit;
   }

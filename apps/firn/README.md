@@ -17,8 +17,8 @@ own:
   `EXPIRETIME`, `PEXPIRETIME`, `PERSIST`, `DBSIZE`;
 - strings: `GET`, `SET` with its options `NX`, `XX`, `GET`, `KEEPTTL`,
   `EX`, `PX`, `EXAT` and `PXAT`, `SETNX`, `SETEX`, `PSETEX`, `GETSET`,
-  `GETDEL`, `GETEX`, `MSET`, `INCR`, `APPEND`, `STRLEN`, `GETRANGE`,
-  `SUBSTR`, `SETRANGE`;
+  `GETDEL`, `GETEX`, `MSET`, `INCR`, `INCRBY`, `DECR`, `DECRBY`, `APPEND`,
+  `STRLEN`, `GETRANGE`, `SUBSTR`, `SETRANGE`;
 - lists: `LPUSH`, `RPUSH`, `LPOP`, `RPOP`, `LRANGE`, `LLEN`;
 - sets: `SADD`, `SREM`, `SPOP`, `SCARD`;
 - hashes: `HSET`, `HGET`;
