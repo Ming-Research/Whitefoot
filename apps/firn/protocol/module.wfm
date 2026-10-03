@@ -9,13 +9,22 @@ public struct Span {
 }
 
 public struct Parsed {
-  doc "What reading one request found. State 1 is a command whose arguments parse_request placed, ending before next; 0 means the bytes held end before the request does; 6 is a request of no arguments, which is skipped up to next; 2 to 5 are malformed requests, whose replies protocol_error writes.";
+  doc "What reading one request found. State 1 is a command whose arguments parse_request placed, ending before next; 0 means the bytes held end before the request does; 6 is a request of no arguments, which is skipped up to next; 2 to 5 and 7 to 11 are malformed requests, whose replies protocol_error writes.";
   public state: u64;
   public next: u64;
 }
 
+public struct Settings {
+  doc "The server's configuration as a connection reports and checks it: the port it listens on, how many seconds a silent client is kept, zero for no limit, the address it listens on and the append-only file's name as given, and the password a client must give before other commands, empty for none.";
+  public port: u64;
+  public timeout: u64;
+  public bind: Bytes;
+  public appendfilename: Bytes;
+  public password: Bytes;
+}
+
 public struct Client {
-  doc "What one connection's commands work with. Replies are written into bytes, a window filled to its capacity, up to at, where the next reply starts. A command that changes or reads the keyspace in an atomic statement passes the client as its visitor's environment: now is the instant expiries are read against, low, high and number carry the command's numbers in and a visitor's results out, state reports what the visitor found, items and scores hold the owned keys and scores the command prepared, each key hashed when it was made so that no hash is computed inside an atomic statement, the last to be used first, keys is the environment the key protocols take, and random is the state SPOP draws from while it runs.";
+  doc "What one connection's commands work with. Replies are written into bytes, a window filled to its capacity, up to at, where the next reply starts. A command that changes or reads the keyspace in an atomic statement passes the client as its visitor's environment: now is the instant expiries are read against, low, high and number carry the command's numbers in and a visitor's results out, state reports what the visitor found, items and scores hold the owned keys and scores the command prepared, each key hashed when it was made so that no hash is computed inside an atomic statement, the last to be used first, keys is the environment the key protocols take, and random is the state SPOP draws from while it runs. The connection's own state follows: id is its number, counted from 1 in the order the server accepted it; name is the name CLIENT SETNAME gave it, empty for none; locked is true while a password is required and not yet given; closing is set by QUIT, after whose reply the connection ends; unix_us is the calendar time in microseconds as the clocks were last read; and settings is the server's configuration.";
   public bytes: Box<Slots<u8>>;
   public at: u64;
   public now: u64;
@@ -27,9 +36,17 @@ public struct Client {
   public scores: Box<Slots<f64>>;
   public keys: KeyEnv;
   public random: u64;
+  public id: u64;
+  public name: Bytes;
+  public locked: Bool;
+  public closing: Bool;
+  public unix_us: u64;
+  public settings: Settings;
 }
 
-public fn parse_request(input: &[u8], start: u64, held: u64, args: &Box<Slots<Span>>) -> parsed: Parsed reads(input), writes(args) doc "Reads one request from a position of the input, of which held bytes are filled: a RESP array of bulk strings, or an inline command of words separated by spaces and ended by a line feed. A command's arguments replace what args held, one span each.";
+public fn parse_request(input: &[u8], start: u64, held: u64, args: &Box<Slots<Span>>, locked: Bool) -> parsed: Parsed writes(input), writes(args) doc "Reads one request from a position of the input, of which held bytes are filled: a RESP array of bulk strings, or an inline command split as Redis splits one, quotes and escapes included. A command's arguments replace what args held, one span each; an inline command's decoded arguments are written back into the input over its line. locked is true for a client that must authenticate first, whose arrays Redis limits.";
+
+public fn settings_copy(settings: &Settings) -> made: Settings reads(settings) doc "A copy of the settings, for another connection.";
 
 public fn protocol_error(client: &Client, input: &[u8], parsed: Parsed) -> result: unit reads(input), writes(client) doc "Writes the error Redis replies to a malformed request parse_request reported; for a missing dollar sign, next is the position of the byte found instead.";
 
@@ -87,5 +104,7 @@ public fn reply_error(client: &Client, word: &[u8]) -> result: unit reads(word),
 public fn reply_wrong_type(client: &Client) -> result: unit writes(client) doc "Writes the error Redis replies to a command on a key holding another kind of value.";
 
 public fn reply_arity(client: &Client, input: &[u8], name: Span) -> result: unit reads(input), writes(client) doc "Writes the error Redis replies to a known command given the wrong number of arguments, naming the command in lower case.";
+
+public fn reply_arity_word(client: &Client, word: &[u8]) -> result: unit reads(word), writes(client) doc "Writes the error Redis replies to a known command or subcommand given the wrong number of arguments, naming it by a constant word such as client|id.";
 
 public fn reply_unknown(client: &Client, input: &[u8], args: &Box<Slots<Span>>) -> result: unit reads(input), reads(args), writes(client) doc "Writes the error Redis replies to a command it does not know, naming the command and its first arguments.";

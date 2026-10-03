@@ -1,0 +1,361 @@
+alias Bytes = pkg::bytes::Bytes;
+alias Client = pkg::protocol::Client;
+alias Span = pkg::protocol::Span;
+alias arg = pkg::protocol::arg;
+alias byte_at = pkg::bytes::byte_at;
+alias bytes_copy = pkg::bytes::bytes_copy;
+alias bytes_length = pkg::bytes::bytes_length;
+alias bytes_new = pkg::bytes::bytes_new;
+alias name_is = pkg::bytes::name_is;
+alias read_integer = pkg::bytes::read_integer;
+alias reply_array = pkg::protocol::reply_array;
+alias reply_arity_word = pkg::protocol::reply_arity_word;
+alias reply_bulk_decimal = pkg::protocol::reply_bulk_decimal;
+alias reply_echoed = pkg::protocol::reply_echoed;
+alias reply_error = pkg::protocol::reply_error;
+alias reply_integer = pkg::protocol::reply_integer;
+alias reply_nil = pkg::protocol::reply_nil;
+alias reply_ok = pkg::protocol::reply_ok;
+alias reply_text = pkg::protocol::reply_text;
+alias reply_word = pkg::protocol::reply_word;
+
+const text_noauth: Array<u8, 31> =[78_u8, 79_u8, 65_u8, 85_u8, 84_u8, 72_u8, 32_u8, 65_u8, 117_u8, 116_u8, 104_u8, 101_u8, 110_u8, 116_u8, 105_u8, 99_u8, 97_u8, 116_u8, 105_u8, 111_u8, 110_u8, 32_u8, 114_u8, 101_u8, 113_u8, 117_u8, 105_u8, 114_u8, 101_u8, 100_u8, 46_u8];
+
+const text_auth_unset: Array<u8, 124> =[69_u8, 82_u8, 82_u8, 32_u8, 65_u8, 85_u8, 84_u8, 72_u8, 32_u8, 60_u8, 112_u8, 97_u8, 115_u8, 115_u8, 119_u8, 111_u8, 114_u8, 100_u8, 62_u8, 32_u8, 99_u8, 97_u8, 108_u8, 108_u8, 101_u8, 100_u8, 32_u8, 119_u8, 105_u8, 116_u8, 104_u8, 111_u8, 117_u8, 116_u8, 32_u8, 97_u8, 110_u8, 121_u8, 32_u8, 112_u8, 97_u8, 115_u8, 115_u8, 119_u8, 111_u8, 114_u8, 100_u8, 32_u8, 99_u8, 111_u8, 110_u8, 102_u8, 105_u8, 103_u8, 117_u8, 114_u8, 101_u8, 100_u8, 32_u8, 102_u8, 111_u8, 114_u8, 32_u8, 116_u8, 104_u8, 101_u8, 32_u8, 100_u8, 101_u8, 102_u8, 97_u8, 117_u8, 108_u8, 116_u8, 32_u8, 117_u8, 115_u8, 101_u8, 114_u8, 46_u8, 32_u8, 65_u8, 114_u8, 101_u8, 32_u8, 121_u8, 111_u8, 117_u8, 32_u8, 115_u8, 117_u8, 114_u8, 101_u8, 32_u8, 121_u8, 111_u8, 117_u8, 114_u8, 32_u8, 99_u8, 111_u8, 110_u8, 102_u8, 105_u8, 103_u8, 117_u8, 114_u8, 97_u8, 116_u8, 105_u8, 111_u8, 110_u8, 32_u8, 105_u8, 115_u8, 32_u8, 99_u8, 111_u8, 114_u8, 114_u8, 101_u8, 99_u8, 116_u8, 63_u8];
+
+const text_wrongpass: Array<u8, 61> =[87_u8, 82_u8, 79_u8, 78_u8, 71_u8, 80_u8, 65_u8, 83_u8, 83_u8, 32_u8, 105_u8, 110_u8, 118_u8, 97_u8, 108_u8, 105_u8, 100_u8, 32_u8, 117_u8, 115_u8, 101_u8, 114_u8, 110_u8, 97_u8, 109_u8, 101_u8, 45_u8, 112_u8, 97_u8, 115_u8, 115_u8, 119_u8, 111_u8, 114_u8, 100_u8, 32_u8, 112_u8, 97_u8, 105_u8, 114_u8, 32_u8, 111_u8, 114_u8, 32_u8, 117_u8, 115_u8, 101_u8, 114_u8, 32_u8, 105_u8, 115_u8, 32_u8, 100_u8, 105_u8, 115_u8, 97_u8, 98_u8, 108_u8, 101_u8, 100_u8, 46_u8];
+
+const text_hello_noauth: Array<u8, 205> =[78_u8, 79_u8, 65_u8, 85_u8, 84_u8, 72_u8, 32_u8, 72_u8, 69_u8, 76_u8, 76_u8, 79_u8, 32_u8, 109_u8, 117_u8, 115_u8, 116_u8, 32_u8, 98_u8, 101_u8, 32_u8, 99_u8, 97_u8, 108_u8, 108_u8, 101_u8, 100_u8, 32_u8, 119_u8, 105_u8, 116_u8, 104_u8, 32_u8, 116_u8, 104_u8, 101_u8, 32_u8, 99_u8, 108_u8, 105_u8, 101_u8, 110_u8, 116_u8, 32_u8, 97_u8, 108_u8, 114_u8, 101_u8, 97_u8, 100_u8, 121_u8, 32_u8, 97_u8, 117_u8, 116_u8, 104_u8, 101_u8, 110_u8, 116_u8, 105_u8, 99_u8, 97_u8, 116_u8, 101_u8, 100_u8, 44_u8, 32_u8, 111_u8, 116_u8, 104_u8, 101_u8, 114_u8, 119_u8, 105_u8, 115_u8, 101_u8, 32_u8, 116_u8, 104_u8, 101_u8, 32_u8, 72_u8, 69_u8, 76_u8, 76_u8, 79_u8, 32_u8, 65_u8, 85_u8, 84_u8, 72_u8, 32_u8, 60_u8, 117_u8, 115_u8, 101_u8, 114_u8, 62_u8, 32_u8, 60_u8, 112_u8, 97_u8, 115_u8, 115_u8, 62_u8, 32_u8, 111_u8, 112_u8, 116_u8, 105_u8, 111_u8, 110_u8, 32_u8, 99_u8, 97_u8, 110_u8, 32_u8, 98_u8, 101_u8, 32_u8, 117_u8, 115_u8, 101_u8, 100_u8, 32_u8, 116_u8, 111_u8, 32_u8, 97_u8, 117_u8, 116_u8, 104_u8, 101_u8, 110_u8, 116_u8, 105_u8, 99_u8, 97_u8, 116_u8, 101_u8, 32_u8, 116_u8, 104_u8, 101_u8, 32_u8, 99_u8, 108_u8, 105_u8, 101_u8, 110_u8, 116_u8, 32_u8, 97_u8, 110_u8, 100_u8, 32_u8, 115_u8, 101_u8, 108_u8, 101_u8, 99_u8, 116_u8, 32_u8, 116_u8, 104_u8, 101_u8, 32_u8, 82_u8, 69_u8, 83_u8, 80_u8, 32_u8, 112_u8, 114_u8, 111_u8, 116_u8, 111_u8, 99_u8, 111_u8, 108_u8, 32_u8, 118_u8, 101_u8, 114_u8, 115_u8, 105_u8, 111_u8, 110_u8, 32_u8, 97_u8, 116_u8, 32_u8, 116_u8, 104_u8, 101_u8, 32_u8, 115_u8, 97_u8, 109_u8, 101_u8, 32_u8, 116_u8, 105_u8, 109_u8, 101_u8];
+
+const text_noproto: Array<u8, 36> =[78_u8, 79_u8, 80_u8, 82_u8, 79_u8, 84_u8, 79_u8, 32_u8, 117_u8, 110_u8, 115_u8, 117_u8, 112_u8, 112_u8, 111_u8, 114_u8, 116_u8, 101_u8, 100_u8, 32_u8, 112_u8, 114_u8, 111_u8, 116_u8, 111_u8, 99_u8, 111_u8, 108_u8, 32_u8, 118_u8, 101_u8, 114_u8, 115_u8, 105_u8, 111_u8, 110_u8];
+
+const text_proto_number: Array<u8, 54> =[69_u8, 82_u8, 82_u8, 32_u8, 80_u8, 114_u8, 111_u8, 116_u8, 111_u8, 99_u8, 111_u8, 108_u8, 32_u8, 118_u8, 101_u8, 114_u8, 115_u8, 105_u8, 111_u8, 110_u8, 32_u8, 105_u8, 115_u8, 32_u8, 110_u8, 111_u8, 116_u8, 32_u8, 97_u8, 110_u8, 32_u8, 105_u8, 110_u8, 116_u8, 101_u8, 103_u8, 101_u8, 114_u8, 32_u8, 111_u8, 114_u8, 32_u8, 111_u8, 117_u8, 116_u8, 32_u8, 111_u8, 102_u8, 32_u8, 114_u8, 97_u8, 110_u8, 103_u8, 101_u8];
+
+const text_hello_option: Array<u8, 35> =[45_u8, 69_u8, 82_u8, 82_u8, 32_u8, 83_u8, 121_u8, 110_u8, 116_u8, 97_u8, 120_u8, 32_u8, 101_u8, 114_u8, 114_u8, 111_u8, 114_u8, 32_u8, 105_u8, 110_u8, 32_u8, 72_u8, 69_u8, 76_u8, 76_u8, 79_u8, 32_u8, 111_u8, 112_u8, 116_u8, 105_u8, 111_u8, 110_u8, 32_u8, 39_u8];
+
+const reply_hello_head: Array<u8, 76> =[42_u8, 49_u8, 52_u8, 13_u8, 10_u8, 36_u8, 54_u8, 13_u8, 10_u8, 115_u8, 101_u8, 114_u8, 118_u8, 101_u8, 114_u8, 13_u8, 10_u8, 36_u8, 53_u8, 13_u8, 10_u8, 114_u8, 101_u8, 100_u8, 105_u8, 115_u8, 13_u8, 10_u8, 36_u8, 55_u8, 13_u8, 10_u8, 118_u8, 101_u8, 114_u8, 115_u8, 105_u8, 111_u8, 110_u8, 13_u8, 10_u8, 36_u8, 54_u8, 13_u8, 10_u8, 55_u8, 46_u8, 48_u8, 46_u8, 49_u8, 53_u8, 13_u8, 10_u8, 36_u8, 53_u8, 13_u8, 10_u8, 112_u8, 114_u8, 111_u8, 116_u8, 111_u8, 13_u8, 10_u8, 58_u8, 50_u8, 13_u8, 10_u8, 36_u8, 50_u8, 13_u8, 10_u8, 105_u8, 100_u8, 13_u8, 10_u8];
+
+const reply_hello_tail: Array<u8, 66> =[36_u8, 52_u8, 13_u8, 10_u8, 109_u8, 111_u8, 100_u8, 101_u8, 13_u8, 10_u8, 36_u8, 49_u8, 48_u8, 13_u8, 10_u8, 115_u8, 116_u8, 97_u8, 110_u8, 100_u8, 97_u8, 108_u8, 111_u8, 110_u8, 101_u8, 13_u8, 10_u8, 36_u8, 52_u8, 13_u8, 10_u8, 114_u8, 111_u8, 108_u8, 101_u8, 13_u8, 10_u8, 36_u8, 54_u8, 13_u8, 10_u8, 109_u8, 97_u8, 115_u8, 116_u8, 101_u8, 114_u8, 13_u8, 10_u8, 36_u8, 55_u8, 13_u8, 10_u8, 109_u8, 111_u8, 100_u8, 117_u8, 108_u8, 101_u8, 115_u8, 13_u8, 10_u8, 42_u8, 48_u8, 13_u8, 10_u8];
+
+const text_client_names: Array<u8, 71> =[69_u8, 82_u8, 82_u8, 32_u8, 67_u8, 108_u8, 105_u8, 101_u8, 110_u8, 116_u8, 32_u8, 110_u8, 97_u8, 109_u8, 101_u8, 115_u8, 32_u8, 99_u8, 97_u8, 110_u8, 110_u8, 111_u8, 116_u8, 32_u8, 99_u8, 111_u8, 110_u8, 116_u8, 97_u8, 105_u8, 110_u8, 32_u8, 115_u8, 112_u8, 97_u8, 99_u8, 101_u8, 115_u8, 44_u8, 32_u8, 110_u8, 101_u8, 119_u8, 108_u8, 105_u8, 110_u8, 101_u8, 115_u8, 32_u8, 111_u8, 114_u8, 32_u8, 115_u8, 112_u8, 101_u8, 99_u8, 105_u8, 97_u8, 108_u8, 32_u8, 99_u8, 104_u8, 97_u8, 114_u8, 97_u8, 99_u8, 116_u8, 101_u8, 114_u8, 115_u8, 46_u8];
+
+const text_try_client: Array<u8, 21> =[39_u8, 46_u8, 32_u8, 84_u8, 114_u8, 121_u8, 32_u8, 67_u8, 76_u8, 73_u8, 69_u8, 78_u8, 84_u8, 32_u8, 72_u8, 69_u8, 76_u8, 80_u8, 46_u8, 13_u8, 10_u8];
+
+const word_client_id: Array<u8, 9> =[99_u8, 108_u8, 105_u8, 101_u8, 110_u8, 116_u8, 124_u8, 105_u8, 100_u8];
+
+const word_client_getname: Array<u8, 14> =[99_u8, 108_u8, 105_u8, 101_u8, 110_u8, 116_u8, 124_u8, 103_u8, 101_u8, 116_u8, 110_u8, 97_u8, 109_u8, 101_u8];
+
+const word_client_setname: Array<u8, 14> =[99_u8, 108_u8, 105_u8, 101_u8, 110_u8, 116_u8, 124_u8, 115_u8, 101_u8, 116_u8, 110_u8, 97_u8, 109_u8, 101_u8];
+
+const word_id: Array<u8, 2> =[73_u8, 68_u8];
+
+const word_getname: Array<u8, 7> =[71_u8, 69_u8, 84_u8, 78_u8, 65_u8, 77_u8, 69_u8];
+
+const word_setname: Array<u8, 7> =[83_u8, 69_u8, 84_u8, 78_u8, 65_u8, 77_u8, 69_u8];
+
+const word_auth: Array<u8, 4> =[65_u8, 85_u8, 84_u8, 72_u8];
+
+const word_default: Array<u8, 7> =[100_u8, 101_u8, 102_u8, 97_u8, 117_u8, 108_u8, 116_u8];
+
+const text_db_range: Array<u8, 28> =[69_u8, 82_u8, 82_u8, 32_u8, 68_u8, 66_u8, 32_u8, 105_u8, 110_u8, 100_u8, 101_u8, 120_u8, 32_u8, 105_u8, 115_u8, 32_u8, 111_u8, 117_u8, 116_u8, 32_u8, 111_u8, 102_u8, 32_u8, 114_u8, 97_u8, 110_u8, 103_u8, 101_u8];
+
+const text_select_range: Array<u8, 72> =[69_u8, 82_u8, 82_u8, 32_u8, 118_u8, 97_u8, 108_u8, 117_u8, 101_u8, 32_u8, 105_u8, 115_u8, 32_u8, 111_u8, 117_u8, 116_u8, 32_u8, 111_u8, 102_u8, 32_u8, 114_u8, 97_u8, 110_u8, 103_u8, 101_u8, 44_u8, 32_u8, 118_u8, 97_u8, 108_u8, 117_u8, 101_u8, 32_u8, 109_u8, 117_u8, 115_u8, 116_u8, 32_u8, 98_u8, 101_u8, 116_u8, 119_u8, 101_u8, 101_u8, 110_u8, 32_u8, 45_u8, 50_u8, 49_u8, 52_u8, 55_u8, 52_u8, 56_u8, 51_u8, 54_u8, 52_u8, 56_u8, 32_u8, 97_u8, 110_u8, 100_u8, 32_u8, 50_u8, 49_u8, 52_u8, 55_u8, 52_u8, 56_u8, 51_u8, 54_u8, 52_u8, 55_u8];
+
+fn denied(client: &Client) -> stopped: Bool writes(client) {
+  doc "Whether the connection must still authenticate, in which case the command is answered NOAUTH, as Redis answers every command but AUTH, HELLO and QUIT from such a connection once the command is known and its arguments are counted.";
+  if client^.locked {
+    reply_error(client: client, word: &text_noauth[0_u64..31_u64]);
+    return True();
+  }
+  return False();
+}
+
+fn window_matches(input: &[u8], span: Span, window: &[u8]) -> equal: Bool reads(input), reads(window) {
+  doc "Whether an argument holds exactly the bytes of a window, reading every byte of the window whatever the argument holds and never stopping at the first difference, so that the time taken depends on the window's length alone.";
+  let length = window^.len;
+  let difference = 0_u8;
+  if span.length != length {
+    set difference = 1_u8;
+  }
+  for @bytes (offset in 0_u64..length) {
+    let expected = window^[offset];
+    let given = 0_u8;
+    if offset < span.length {
+      let position = span.start +wrap offset;
+      set given = byte_at(input: input, index: position);
+    }
+    let mixed = ixor(expected, given);
+    set difference = ior(difference, mixed);
+  }
+  let equal = difference == 0_u8;
+  return equal;
+}
+
+fn secret_matches(input: &[u8], span: Span, secret: &Bytes) -> equal: Bool reads(input), reads(secret) {
+  doc "Whether an argument holds exactly the bytes of a secret, compared as window_matches compares them.";
+  match secret^ {
+    Short(bytes: short) => {
+      let length = short^.len;
+      let window = &short^[0_u64..length];
+      let equal = window_matches(input: input, span: span, window: window);
+      return equal;
+    }
+    Long(bytes: long) => {
+      let length = long^.inner.len;
+      let window = &long^.inner[0_u64..length];
+      let equal = window_matches(input: input, span: span, window: window);
+      return equal;
+    }
+  }
+}
+
+fn exact_word(input: &[u8], span: Span, word: &[u8]) -> same: Bool reads(input), reads(word) {
+  doc "Whether an argument spells a word exactly, case included.";
+  if span.length != word^.len {
+    return False();
+  }
+  for @bytes (offset in 0_u64..span.length) {
+    let position = span.start +wrap offset;
+    let byte = byte_at(input: input, index: position);
+    let expected = byte_at(input: word, index: offset);
+    if byte != expected {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn credentials_accepted(client: &Client, input: &[u8], user: Span, password: Span) -> accepted: Bool reads(client), reads(input) {
+  doc "Whether a user name and a password authenticate as Redis's check of its default user does: default, spelled exactly, is the only user, and it takes any password while none is configured.";
+  let named = exact_word(input: input, span: user, word: &word_default[0_u64..7_u64]);
+  if named {
+  } else {
+    return False();
+  }
+  let length = bytes_length(bytes: &client^.settings.password);
+  if length == 0_u64 {
+    return True();
+  }
+  let right = secret_matches(input: input, span: password, secret: &client^.settings.password);
+  return right;
+}
+
+fn set_name(client: &Client, input: &[u8], name: Span) -> named: Bool reads(input), writes(client) {
+  doc "Gives the connection a name as CLIENT SETNAME does and returns true, the empty name removing it; a name holding a byte outside ! to ~, a space or a line break among them, is refused with Redis's error, and the connection keeps its name.";
+  for @bytes (offset in 0_u64..name.length) {
+    let position = name.start +wrap offset;
+    let byte = byte_at(input: input, index: position);
+    let below = byte < 33_u8;
+    let above = byte > 126_u8;
+    let outside = bor(below, above);
+    if outside {
+      reply_error(client: client, word: &text_client_names[0_u64..71_u64]);
+      return False();
+    }
+  }
+  let made = bytes_new(input: input, start: name.start, length: name.length);
+  set client^.name = move made;
+  return True();
+}
+
+fn run_auth(input: &[u8], args: &Box<Slots<Span>>, client: &Client) -> result: unit reads(input), reads(args), writes(client) {
+  doc "AUTH [username] password: authenticates the connection as Redis 7.0 does with its one user, default. With a password configured, the right one, alone or after the user name default, unlocks the connection, and a wrong one or another user name is answered WRONGPASS and leaves the connection as it was. With none configured, a password alone is answered with Redis's error for that and default with any password succeeds. More than two arguments are a syntax error.";
+  let count = args^.inner.len;
+  if count > 3_u64 {
+    reply_error(client: client, word: &text_syntax[0_u64..16_u64]);
+    return unit;
+  }
+  let accepted = False();
+  if count == 2_u64 {
+    let length = bytes_length(bytes: &client^.settings.password);
+    if length == 0_u64 {
+      reply_error(client: client, word: &text_auth_unset[0_u64..124_u64]);
+      return unit;
+    }
+    let password = arg(args: args, index: 1_u64);
+    set accepted = secret_matches(input: input, span: password, secret: &client^.settings.password);
+  } else {
+    let user = arg(args: args, index: 1_u64);
+    let password = arg(args: args, index: 2_u64);
+    set accepted = credentials_accepted(client: client, input: input, user: user, password: password);
+  }
+  if accepted {
+    set client^.locked = False();
+    reply_ok(client: client);
+  } else {
+    reply_error(client: client, word: &text_wrongpass[0_u64..61_u64]);
+  }
+  return unit;
+}
+
+fn run_hello(input: &[u8], args: &Box<Slots<Span>>, client: &Client) -> result: unit reads(input), reads(args), writes(client) {
+  doc "HELLO [protover [AUTH username password] [SETNAME clientname]]: answers as Redis 7.0 answers under RESP2. A version that is not a number is refused with Redis's error, and one other than 2 as unsupported, 3 included, since firn speaks RESP2 alone. The options then apply in order, AUTH as AUTH with a user name applies, SETNAME as CLIENT SETNAME does, each stopping the command at its error with the options before it applied, and any other option is a syntax error. A connection still locked is then refused; any other is answered with Redis's map of the server's facts, an array under RESP2: server redis and version 7.0.15, the server and version whose replies firn follows, protocol 2, the connection's id, standalone mode, the master role and no modules.";
+  let count = args^.inner.len;
+  if count >= 2_u64 {
+    let version = arg(args: args, index: 1_u64);
+    let number = read_integer(input: input, start: version.start, length: version.length);
+    if number.state != 1_u64 {
+      reply_error(client: client, word: &text_proto_number[0_u64..54_u64]);
+      return unit;
+    }
+    if number.value != 2_i64 {
+      reply_error(client: client, word: &text_noproto[0_u64..36_u64]);
+      return unit;
+    }
+  }
+  let index = 2_u64;
+  loop @options {
+    if index >= count {
+      break @options;
+    }
+    let option = arg(args: args, index: index);
+    let last = count -wrap 1_u64;
+    let more = last -wrap index;
+    let authenticating = name_is(input: input, start: option.start, length: option.length, word: &word_auth[0_u64..4_u64]);
+    let naming = name_is(input: input, start: option.start, length: option.length, word: &word_setname[0_u64..7_u64]);
+    let paired = more >= 2_u64;
+    let single = more >= 1_u64;
+    let auth_option = band(authenticating, paired);
+    let name_option = band(naming, single);
+    if auth_option {
+      let user_index = index +wrap 1_u64;
+      let password_index = index +wrap 2_u64;
+      let user = arg(args: args, index: user_index);
+      let password = arg(args: args, index: password_index);
+      let accepted = credentials_accepted(client: client, input: input, user: user, password: password);
+      if accepted {
+        set client^.locked = False();
+      } else {
+        reply_error(client: client, word: &text_wrongpass[0_u64..61_u64]);
+        return unit;
+      }
+      set index = index +wrap 3_u64;
+    } else if name_option {
+      let name_index = index +wrap 1_u64;
+      let name = arg(args: args, index: name_index);
+      let named = set_name(client: client, input: input, name: name);
+      if named {
+      } else {
+        return unit;
+      }
+      set index = index +wrap 2_u64;
+    } else {
+      reply_word(client: client, word: &text_hello_option[0_u64..35_u64]);
+      let shown = reply_echoed(client: client, input: input, span: option, limit: option.length);
+      reply_word(client: client, word: &text_quote_end[0_u64..3_u64]);
+      return unit;
+    }
+  }
+  if client^.locked {
+    reply_error(client: client, word: &text_hello_noauth[0_u64..205_u64]);
+    return unit;
+  }
+  reply_word(client: client, word: &reply_hello_head[0_u64..76_u64]);
+  let id = cvt.wrap::<u64, i64>(client^.id);
+  reply_integer(client: client, value: id);
+  reply_word(client: client, word: &reply_hello_tail[0_u64..66_u64]);
+  return unit;
+}
+
+fn run_quit(client: &Client) -> result: unit writes(client) {
+  doc "QUIT: answers OK and marks the connection to close once its replies are sent, the requests after it left unread, as Redis does; it takes any arguments and needs no authentication.";
+  reply_ok(client: client);
+  set client^.closing = True();
+  return unit;
+}
+
+fn run_client(input: &[u8], args: &Box<Slots<Span>>, client: &Client) -> result: unit reads(input), reads(args), writes(client) {
+  doc "CLIENT ID, CLIENT GETNAME and CLIENT SETNAME name answer as Redis does: the connection's id; its name, or the null bulk string when it has none; and OK once SETNAME has given or removed the name. Each given the wrong number of arguments is answered as Redis answers it, and then a connection that must authenticate first is answered NOAUTH. Any other subcommand, CLIENT SETINFO among them, which Redis 7.0 does not have, is answered as Redis answers an unknown one, its name echoed to 128 bytes.";
+  let count = args^.inner.len;
+  let sub = arg(args: args, index: 1_u64);
+  let identifying = name_is(input: input, start: sub.start, length: sub.length, word: &word_id[0_u64..2_u64]);
+  let getting = name_is(input: input, start: sub.start, length: sub.length, word: &word_getname[0_u64..7_u64]);
+  let setting = name_is(input: input, start: sub.start, length: sub.length, word: &word_setname[0_u64..7_u64]);
+  if identifying {
+    if count != 2_u64 {
+      reply_arity_word(client: client, word: &word_client_id[0_u64..9_u64]);
+      return unit;
+    }
+    let stopped = denied(client: client);
+    if stopped {
+      return unit;
+    }
+    let id = cvt.wrap::<u64, i64>(client^.id);
+    reply_integer(client: client, value: id);
+    return unit;
+  }
+  if getting {
+    if count != 2_u64 {
+      reply_arity_word(client: client, word: &word_client_getname[0_u64..14_u64]);
+      return unit;
+    }
+    let stopped = denied(client: client);
+    if stopped {
+      return unit;
+    }
+    let length = bytes_length(bytes: &client^.name);
+    if length == 0_u64 {
+      reply_nil(client: client);
+      return unit;
+    }
+    let name = bytes_copy(bytes: &client^.name);
+    reply_text(client: client, text: &name);
+    return unit;
+  }
+  if setting {
+    if count != 3_u64 {
+      reply_arity_word(client: client, word: &word_client_setname[0_u64..14_u64]);
+      return unit;
+    }
+    let stopped = denied(client: client);
+    if stopped {
+      return unit;
+    }
+    let name = arg(args: args, index: 2_u64);
+    let named = set_name(client: client, input: input, name: name);
+    if named {
+      reply_ok(client: client);
+    }
+    return unit;
+  }
+  reply_word(client: client, word: &text_unknown_subcommand[0_u64..25_u64]);
+  let shown = imin(sub.length, 128_u64);
+  let echoed = reply_echoed(client: client, input: input, span: sub, limit: shown);
+  reply_word(client: client, word: &text_try_client[0_u64..21_u64]);
+  return unit;
+}
+
+fn run_select(input: &[u8], args: &Box<Slots<Span>>, client: &Client) -> result: unit reads(input), reads(args), writes(client) {
+  doc "SELECT index: firn keeps one database, so 0 is answered OK and any other index as Redis answers one past its databases; an index that is not a number, or not one of 32 bits, is answered with Redis's error for each.";
+  let index = arg(args: args, index: 1_u64);
+  let number = read_integer(input: input, start: index.start, length: index.length);
+  if number.state != 1_u64 {
+    reply_error(client: client, word: &text_not_integer[0_u64..43_u64]);
+    return unit;
+  }
+  let below = number.value < -2147483648_i64;
+  let above = number.value > 2147483647_i64;
+  let outside = bor(below, above);
+  if outside {
+    reply_error(client: client, word: &text_select_range[0_u64..72_u64]);
+    return unit;
+  }
+  if number.value != 0_i64 {
+    reply_error(client: client, word: &text_db_range[0_u64..28_u64]);
+    return unit;
+  }
+  reply_ok(client: client);
+  return unit;
+}
+
+fn run_time(client: &Client) -> result: unit writes(client) {
+  doc "TIME: the calendar time as the clocks were last read, as Redis answers it: the seconds since 1970 and the microseconds within that second, each a bulk string of its decimal digits.";
+  let seconds = client^.unix_us / 1000000_u64;
+  let micro = client^.unix_us % 1000000_u64;
+  let whole = cvt.wrap::<u64, i64>(seconds);
+  let part = cvt.wrap::<u64, i64>(micro);
+  reply_array(client: client, count: 2_u64);
+  reply_bulk_decimal(client: client, value: whole);
+  reply_bulk_decimal(client: client, value: part);
+  return unit;
+}

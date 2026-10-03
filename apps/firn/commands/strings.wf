@@ -37,35 +37,11 @@ const word_ex: Array<u8, 2> =[69_u8, 88_u8];
 
 const word_px: Array<u8, 2> =[80_u8, 88_u8];
 
-const word_get: Array<u8, 3> =[71_u8, 69_u8, 84_u8];
-
 const reply_pong: Array<u8, 7> =[43_u8, 80_u8, 79_u8, 78_u8, 71_u8, 13_u8, 10_u8];
 
 const text_overflow: Array<u8, 41> =[69_u8, 82_u8, 82_u8, 32_u8, 105_u8, 110_u8, 99_u8, 114_u8, 101_u8, 109_u8, 101_u8, 110_u8, 116_u8, 32_u8, 111_u8, 114_u8, 32_u8, 100_u8, 101_u8, 99_u8, 114_u8, 101_u8, 109_u8, 101_u8, 110_u8, 116_u8, 32_u8, 119_u8, 111_u8, 117_u8, 108_u8, 100_u8, 32_u8, 111_u8, 118_u8, 101_u8, 114_u8, 102_u8, 108_u8, 111_u8, 119_u8];
 
 const text_expire_set: Array<u8, 40> =[69_u8, 82_u8, 82_u8, 32_u8, 105_u8, 110_u8, 118_u8, 97_u8, 108_u8, 105_u8, 100_u8, 32_u8, 101_u8, 120_u8, 112_u8, 105_u8, 114_u8, 101_u8, 32_u8, 116_u8, 105_u8, 109_u8, 101_u8, 32_u8, 105_u8, 110_u8, 32_u8, 39_u8, 115_u8, 101_u8, 116_u8, 39_u8, 32_u8, 99_u8, 111_u8, 109_u8, 109_u8, 97_u8, 110_u8, 100_u8];
-
-const text_config: Array<u8, 25> =[45_u8, 69_u8, 82_u8, 82_u8, 32_u8, 117_u8, 110_u8, 107_u8, 110_u8, 111_u8, 119_u8, 110_u8, 32_u8, 115_u8, 117_u8, 98_u8, 99_u8, 111_u8, 109_u8, 109_u8, 97_u8, 110_u8, 100_u8, 32_u8, 39_u8];
-
-const word_save: Array<u8, 4> =[83_u8, 65_u8, 86_u8, 69_u8];
-
-const word_appendonly: Array<u8, 10> =[65_u8, 80_u8, 80_u8, 69_u8, 78_u8, 68_u8, 79_u8, 78_u8, 76_u8, 89_u8];
-
-const text_config_get_arity: Array<u8, 57> =[45_u8, 69_u8, 82_u8, 82_u8, 32_u8, 119_u8, 114_u8, 111_u8, 110_u8, 103_u8, 32_u8, 110_u8, 117_u8, 109_u8, 98_u8, 101_u8, 114_u8, 32_u8, 111_u8, 102_u8, 32_u8, 97_u8, 114_u8, 103_u8, 117_u8, 109_u8, 101_u8, 110_u8, 116_u8, 115_u8, 32_u8, 102_u8, 111_u8, 114_u8, 32_u8, 39_u8, 99_u8, 111_u8, 110_u8, 102_u8, 105_u8, 103_u8, 124_u8, 103_u8, 101_u8, 116_u8, 39_u8, 32_u8, 99_u8, 111_u8, 109_u8, 109_u8, 97_u8, 110_u8, 100_u8, 13_u8, 10_u8];
-
-const text_config_set_arity: Array<u8, 57> =[45_u8, 69_u8, 82_u8, 82_u8, 32_u8, 119_u8, 114_u8, 111_u8, 110_u8, 103_u8, 32_u8, 110_u8, 117_u8, 109_u8, 98_u8, 101_u8, 114_u8, 32_u8, 111_u8, 102_u8, 32_u8, 97_u8, 114_u8, 103_u8, 117_u8, 109_u8, 101_u8, 110_u8, 116_u8, 115_u8, 32_u8, 102_u8, 111_u8, 114_u8, 32_u8, 39_u8, 99_u8, 111_u8, 110_u8, 102_u8, 105_u8, 103_u8, 124_u8, 115_u8, 101_u8, 116_u8, 39_u8, 32_u8, 99_u8, 111_u8, 109_u8, 109_u8, 97_u8, 110_u8, 100_u8, 13_u8, 10_u8];
-
-const reply_config_save: Array<u8, 20> =[42_u8, 50_u8, 13_u8, 10_u8, 36_u8, 52_u8, 13_u8, 10_u8, 115_u8, 97_u8, 118_u8, 101_u8, 13_u8, 10_u8, 36_u8, 48_u8, 13_u8, 10_u8, 13_u8, 10_u8];
-
-const reply_config_append_yes: Array<u8, 30> =[42_u8, 50_u8, 13_u8, 10_u8, 36_u8, 49_u8, 48_u8, 13_u8, 10_u8, 97_u8, 112_u8, 112_u8, 101_u8, 110_u8, 100_u8, 111_u8, 110_u8, 108_u8, 121_u8, 13_u8, 10_u8, 36_u8, 51_u8, 13_u8, 10_u8, 121_u8, 101_u8, 115_u8, 13_u8, 10_u8];
-
-const reply_config_append_no: Array<u8, 29> =[42_u8, 50_u8, 13_u8, 10_u8, 36_u8, 49_u8, 48_u8, 13_u8, 10_u8, 97_u8, 112_u8, 112_u8, 101_u8, 110_u8, 100_u8, 111_u8, 110_u8, 108_u8, 121_u8, 13_u8, 10_u8, 36_u8, 50_u8, 13_u8, 10_u8, 110_u8, 111_u8, 13_u8, 10_u8];
-
-const text_config_set: Array<u8, 61> =[45_u8, 69_u8, 82_u8, 82_u8, 32_u8, 85_u8, 110_u8, 107_u8, 110_u8, 111_u8, 119_u8, 110_u8, 32_u8, 111_u8, 112_u8, 116_u8, 105_u8, 111_u8, 110_u8, 32_u8, 111_u8, 114_u8, 32_u8, 110_u8, 117_u8, 109_u8, 98_u8, 101_u8, 114_u8, 32_u8, 111_u8, 102_u8, 32_u8, 97_u8, 114_u8, 103_u8, 117_u8, 109_u8, 101_u8, 110_u8, 116_u8, 115_u8, 32_u8, 102_u8, 111_u8, 114_u8, 32_u8, 67_u8, 79_u8, 78_u8, 70_u8, 73_u8, 71_u8, 32_u8, 83_u8, 69_u8, 84_u8, 32_u8, 45_u8, 32_u8, 39_u8];
-
-const text_quote_end: Array<u8, 3> =[39_u8, 13_u8, 10_u8];
-
-const text_try_config: Array<u8, 21> =[39_u8, 46_u8, 32_u8, 84_u8, 114_u8, 121_u8, 32_u8, 67_u8, 79_u8, 78_u8, 70_u8, 73_u8, 71_u8, 32_u8, 72_u8, 69_u8, 76_u8, 80_u8, 46_u8, 13_u8, 10_u8];
 
 struct Counted {
   value: i64;
@@ -354,85 +330,5 @@ fn run_incr(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   } else {
     reply_error(client: client, word: &text_not_integer[0_u64..43_u64]);
   }
-  return unit;
-}
-
-fn run_config(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client) -> result: unit reads(store), reads(input), reads(args), writes(client) {
-  doc "CONFIG GET parameter [parameter ...]: answers each of save, which firn never does and reports as empty, and appendonly, yes when firn keeps an append-only file, that a parameter names, spelled as the first parameter naming it spells it, and appendonly first, one of the two orders Redis answers in, since Redis orders them by a hash seeded anew at each start; other parameters match nothing, as a parameter Redis does not know does, and patterns are not matched. CONFIG SET with an option and a value is answered as Redis answers an option it does not know, the option echoed whole, with too few arguments or an unpaired option as Redis answers them, and any other subcommand as Redis answers an unknown one, its name echoed to 128 bytes.";
-  let sub = arg(args: args, index: 1_u64);
-  let getting = name_is(input: input, start: sub.start, length: sub.length, word: &word_get[0_u64..3_u64]);
-  let setting = name_is(input: input, start: sub.start, length: sub.length, word: &word_set[0_u64..3_u64]);
-  let count = args^.inner.len;
-  if getting {
-    if count < 3_u64 {
-      reply_word(client: client, word: &text_config_get_arity[0_u64..57_u64]);
-      return unit;
-    }
-    let saving = False();
-    let appending = False();
-    let save_name = Span(start: 0_u64, length: 0_u64);
-    let append_name = Span(start: 0_u64, length: 0_u64);
-    for @parameters (index in 2_u64..count) {
-      let parameter = arg(args: args, index: index);
-      let named_save = name_is(input: input, start: parameter.start, length: parameter.length, word: &word_save[0_u64..4_u64]);
-      let named_append = name_is(input: input, start: parameter.start, length: parameter.length, word: &word_appendonly[0_u64..10_u64]);
-      if named_save {
-        if saving {
-        } else {
-          set saving = True();
-          set save_name = parameter;
-        }
-      }
-      if named_append {
-        if appending {
-        } else {
-          set appending = True();
-          set append_name = parameter;
-        }
-      }
-    }
-    let fields = 0_u64;
-    if saving {
-      set fields = fields +wrap 2_u64;
-    }
-    if appending {
-      set fields = fields +wrap 2_u64;
-    }
-    reply_array(client: client, count: fields);
-    if appending {
-      let logging = store^.logging;
-      reply_bulk_input(client: client, input: input, start: append_name.start, length: append_name.length);
-      if logging {
-        reply_word(client: client, word: &reply_config_append_yes[21_u64..30_u64]);
-      } else {
-        reply_word(client: client, word: &reply_config_append_no[21_u64..29_u64]);
-      }
-    }
-    if saving {
-      reply_bulk_input(client: client, input: input, start: save_name.start, length: save_name.length);
-      reply_word(client: client, word: &reply_config_save[14_u64..20_u64]);
-    }
-    return unit;
-  }
-  if setting {
-    if count < 4_u64 {
-      reply_word(client: client, word: &text_config_set_arity[0_u64..57_u64]);
-      return unit;
-    }
-    let unpaired = count % 2_u64;
-    if unpaired == 1_u64 {
-      reply_error(client: client, word: &text_syntax[0_u64..16_u64]);
-      return unit;
-    }
-    let option = arg(args: args, index: 2_u64);
-    reply_word(client: client, word: &text_config_set[0_u64..61_u64]);
-    let echoed = reply_echoed(client: client, input: input, span: option, limit: option.length);
-    reply_word(client: client, word: &text_quote_end[0_u64..3_u64]);
-    return unit;
-  }
-  reply_word(client: client, word: &text_config[0_u64..25_u64]);
-  let shown = imin(sub.length, 128_u64);
-  let echoed = reply_echoed(client: client, input: input, span: sub, limit: shown);
-  reply_word(client: client, word: &text_try_config[0_u64..21_u64]);
   return unit;
 }

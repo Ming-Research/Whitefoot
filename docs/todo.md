@@ -3203,24 +3203,33 @@ condition under which it is taken up.
   firn answers as a syntax error where Redis sets the key; `SET`'s `EX` and
   `PX` beyond 10^9 seconds or 10^12 milliseconds, which firn refuses as an
   invalid expire time where Redis accepts them, since firn keeps expiries as
-  nanoseconds; `CONFIG GET` patterns, which firn does not match, and
-  `CONFIG SET`, which firn answers as an unknown option for every parameter
-  where Redis sets those it knows; a zero byte in a request's count or
-  length line, where Redis's search for the line's carriage return stops at
-  the zero byte and waits for more input, answering that the count is too big
-  only past 64 KB, while firn answers the malformed line at once; sorted-set
-  scores that are not integers below 2^52, which need reading a
-  decimal to the nearest double and printing one with 17 significant digits
-  exactly;
-  quoted arguments in inline commands; a listening address other than the
-  loopback and options by name rather than by position; `AUTH`, `SELECT`,
-  `KEYS` and `SCAN`, `INFO`, `HELLO` and RESP3, the blocking list commands,
-  `MULTI` and `EXEC`, publish and subscribe, a random hash seed, and a
-  listener that a restarted server can bind while the stopped one's
-  connections wait out TIME_WAIT, which needs the runtime's `tcp_listen` to
-  set `SO_REUSEADDR` as Redis does. The owner
-  sets the list for the deployment stage; reopen when this stage's
+  nanoseconds; `CONFIG SET`, which firn answers as an unknown option for
+  every parameter where Redis sets those it knows, and the parameters beyond
+  the eight `CONFIG GET` reports; sorted-set scores that are not integers
+  below 2^52, which need reading a decimal to the nearest double and printing
+  one with 17 significant digits exactly; more than one database, where
+  `SELECT` takes 0 alone; a listening address in IPv6, or several, where
+  `--bind` takes one IPv4 address or `*`, and users other than `default`;
+  `CLIENT` subcommands beyond `ID`, `GETNAME` and `SETNAME`, which firn
+  answers as unknown, and a command table, which `COMMAND` and
+  `COMMAND COUNT` report empty and `COMMAND DOCS`, `INFO`, `LIST` and
+  `GETKEYS` answer as unknown subcommands; `KEYS` and `SCAN`, which can match
+  with `glob_match` (`apps/firn/bytes/bytes.wf`), `INFO`, RESP3, which
+  `HELLO 3` refuses, the blocking list commands, `MULTI` and `EXEC`, publish
+  and subscribe, a random hash seed, and a listener that a restarted server
+  can bind while the stopped one's connections wait out TIME_WAIT, which
+  needs the runtime's `tcp_listen` to set `SO_REUSEADDR` as Redis does. The
+  owner sets the list for the deployment stage; reopen when this stage's
   measurement is handed back.
+- **firn reads a slow request again from its start at every read.**
+  `parse_request` keeps no state between reads, so a request arriving in
+  many reads is scanned from its first byte each time: quadratic in its
+  length, and since firn takes arrays of up to 2,147,483,647 elements, as
+  Redis 7.0 does, a client sending a huge array slowly costs the server
+  work out of proportion to its bytes, where Redis resumes at the element it
+  stopped at. Keeping the parse position and the spans found so far in the
+  client between reads would remove it; reopen when firn faces clients it
+  does not trust, or a profile shows parsing past a few percent.
 - **A set never shrinks, so `SPOP` walks ever sparser buckets.** `SPOP`
   picks the first filled bucket from a random position, and a hash map keeps
   its buckets after its members are removed, so after most of a large set is
