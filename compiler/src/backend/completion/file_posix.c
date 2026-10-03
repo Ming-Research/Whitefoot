@@ -124,6 +124,21 @@ static void wf_socket_disable_nagle(int descriptor) {
     (void)setsockopt(descriptor, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
 }
 
+/* SO_REUSEADDR on every listening socket this leaf creates, before its bind,
+ * so that a restarted server binds its port while the connections its earlier
+ * run accepted wait out TIME_WAIT, as Redis's listener does; without it the
+ * bind answers AddressInUse for up to a minute on Linux.  On Linux and the
+ * BSDs the option never lets a second socket listen on an address and port
+ * another socket listens on, so a program's second listen of one address
+ * still answers AddressInUse.  Windows needs no option for the restart, and
+ * its SO_REUSEADDR means something else (`file_windows.c`).  A refusal leaves
+ * an ordinary socket whose bind may wait out TIME_WAIT, so it is never folded
+ * into the operation's own outcome. */
+static void wf_socket_reuse_address(int descriptor) {
+    int one = 1;
+    (void)setsockopt(descriptor, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+}
+
 static wf_file_result wf_file_execute_once(wf_file_request *request) {
     wf_file_result result;
     memset(&result, 0, sizeof(result));
@@ -322,6 +337,7 @@ static wf_file_result wf_file_execute_once(wf_file_request *request) {
             break;
         }
         wf_socket_disable_nagle(endpoint);
+        wf_socket_reuse_address(endpoint);
         if (bind(endpoint, (const struct sockaddr *)native.bytes,
                  (socklen_t)length)
                 == 0

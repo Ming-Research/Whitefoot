@@ -29,10 +29,8 @@ use super::support::{
 /// One port the host is not using, released before the program binds it.
 ///
 /// A listening socket that never accepted leaves no connection in `TIME_WAIT`,
-/// so the port is free the moment this drops and the program's own `bind`
-/// answers without `SO_REUSEADDR` — which the runtime deliberately does not
-/// set, because it would change what a second bind of one port means
-///.
+/// so the port is free the moment this drops, and the program's own `bind`
+/// would take it even on a host where the runtime set no `SO_REUSEADDR`.
 fn free_port() -> u16 {
     let listener = TcpListener::bind("127.0.0.1:0").expect("reserve a loopback port");
     listener
@@ -1892,6 +1890,39 @@ fn firn_listens_where_its_options_by_name_say() {
         let child = program.spawn_on_route(true, arguments);
         let (status, _) = finished(child);
         assert_eq!(status, 1, "{arguments:?}");
+    }
+}
+
+/// A restarted firn listens on its port while the connection its first run
+/// closed waits out TIME_WAIT there, as Redis does, which takes SO_REUSEADDR
+/// on the runtime's listening socket: the first run answers QUIT with OK and
+/// closes the connection itself, leaving the server's side of it in TIME_WAIT
+/// on the port, and a second run started at once on the same port accepts a
+/// client and answers it. Without the option the second run's listen fails
+/// and firn stops with status 3.
+#[cfg(target_os = "linux")]
+#[test]
+fn firn_listens_again_on_its_port_after_a_restart() {
+    let program = firn();
+    for native_ring in [true, false] {
+        let what = format!("native ring: {native_ring}");
+        let port = free_port();
+        let text = port.to_string();
+        let child = program.spawn_on_route(native_ring, &[text.as_bytes(), b"1"]);
+        let mut client = connect_when_ready(port);
+        client.write_all(&resp(&["QUIT"])).expect("send QUIT");
+        expect_replies(&mut client, b"+OK\r\n", &what);
+        expect_closed(&mut client, &what);
+        drop(client);
+        let (status, _) = finished(child);
+        assert_eq!(status, 0, "{what}: the first run");
+        let child = program.spawn_on_route(native_ring, &[text.as_bytes(), b"1"]);
+        let mut client = connect_when_ready(port);
+        client.write_all(&resp(&["PING"])).expect("send a ping");
+        expect_replies(&mut client, b"+PONG\r\n", &what);
+        drop(client);
+        let (status, _) = finished(child);
+        assert_eq!(status, 0, "{what}: the second run");
     }
 }
 

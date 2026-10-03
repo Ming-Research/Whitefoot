@@ -3216,11 +3216,8 @@ condition under which it is taken up.
   `GETKEYS` answer as unknown subcommands; `KEYS` and `SCAN`, which can match
   with `glob_match` (`apps/firn/bytes/bytes.wf`), `INFO`, RESP3, which
   `HELLO 3` refuses, the blocking list commands, `MULTI` and `EXEC`, publish
-  and subscribe, a random hash seed, and a listener that a restarted server
-  can bind while the stopped one's connections wait out TIME_WAIT, which
-  needs the runtime's `tcp_listen` to set `SO_REUSEADDR` as Redis does. The
-  owner sets the list for the deployment stage; reopen when this stage's
-  measurement is handed back.
+  and subscribe, and a random hash seed. The owner sets the list for the
+  deployment stage; reopen when this stage's measurement is handed back.
 - **firn reads a slow request again from its start at every read.**
   `parse_request` keeps no state between reads, so a request arriving in
   many reads is scanned from its first byte each time: quadratic in its

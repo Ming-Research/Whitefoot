@@ -137,10 +137,11 @@ int wf__windows_socket_startup(void);
  *
  * The overlapped flag is what lets the completion port carry this socket's
  * transfers; the no-inherit flag is this platform's spelling of the
- * close-on-exec the POSIX leaf asks `socket` for.  `SO_REUSEADDR` is
- * deliberately not set, for the reason `completion/file_posix.h` states at
- * `wf_socket_open`: (ordinary native library) already fixes what a second bind of one port
- * means. */
+ * close-on-exec the POSIX leaf asks `socket` for.  `SO_REUSEADDR`, which the
+ * POSIX leaf sets on a listening socket, is not set here: Winsock's plain
+ * bind already takes a port whose earlier connections wait out TIME_WAIT,
+ * and its `SO_REUSEADDR` would let one socket bind a port another socket
+ * holds (`completion/file_windows.c`, `wf_file_windows_socket_listen`). */
 int wf__windows_socket_open(int family);
 
 /* The native socket behind a descriptor, or INVALID_SOCKET. */
