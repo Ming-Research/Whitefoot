@@ -17,6 +17,18 @@ const code_set: u64 = 5522771_u64;
 
 const code_get: u64 = 5522759_u64;
 
+const code_setnx: u64 = 379271267667_u64;
+
+const code_setex: u64 = 379120272723_u64;
+
+const code_psetex: u64 = 97054789817168_u64;
+
+const code_getset: u64 = 92656727508295_u64;
+
+const code_getdel: u64 = 83860382827847_u64;
+
+const code_getex: u64 = 379120272711_u64;
+
 const code_del: u64 = 4998468_u64;
 
 const code_exists: u64 = 91621639673925_u64;
@@ -160,6 +172,54 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
     let go = admitted(client: client, input: input, name: name, fits: fits);
     if go {
       run_set(store: store, input: input, args: args, client: client, env: env, time: time);
+    }
+    return unit;
+  }
+  if code == code_setnx {
+    let fits = count == 3_u64;
+    let go = admitted(client: client, input: input, name: name, fits: fits);
+    if go {
+      run_setnx(store: store, input: input, args: args, client: client, env: env, time: time);
+    }
+    return unit;
+  }
+  if code == code_setex {
+    let fits = count == 4_u64;
+    let go = admitted(client: client, input: input, name: name, fits: fits);
+    if go {
+      run_setex(store: store, input: input, args: args, client: client, env: env, time: time, in_seconds: whole_seconds, invalid: &text_expire_setex[0_u64..42_u64]);
+    }
+    return unit;
+  }
+  if code == code_psetex {
+    let fits = count == 4_u64;
+    let go = admitted(client: client, input: input, name: name, fits: fits);
+    if go {
+      run_setex(store: store, input: input, args: args, client: client, env: env, time: time, in_seconds: milliseconds, invalid: &text_expire_psetex[0_u64..43_u64]);
+    }
+    return unit;
+  }
+  if code == code_getset {
+    let fits = count == 3_u64;
+    let go = admitted(client: client, input: input, name: name, fits: fits);
+    if go {
+      run_getset(store: store, input: input, args: args, client: client, env: env, time: time);
+    }
+    return unit;
+  }
+  if code == code_getdel {
+    let fits = count == 2_u64;
+    let go = admitted(client: client, input: input, name: name, fits: fits);
+    if go {
+      run_getdel(store: store, input: input, args: args, client: client, env: env, time: time);
+    }
+    return unit;
+  }
+  if code == code_getex {
+    let fits = count >= 2_u64;
+    let go = admitted(client: client, input: input, name: name, fits: fits);
+    if go {
+      run_getex(store: store, input: input, args: args, client: client, env: env, time: time);
     }
     return unit;
   }

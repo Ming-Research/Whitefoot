@@ -1644,6 +1644,109 @@ fn firn_keeps_strings_at_and_past_the_inline_length_apart() {
     assert_eq!(status, 0);
 }
 
+/// firn answers the string commands as Redis does. `SET` reads its options as
+/// Redis 7.0.15 reads them: NX and XX store only in place of an absent key or
+/// over a live one; GET answers the string the key held, or nil, and refuses a
+/// key of another kind, storing nothing; KEEPTTL keeps the key's expiry where a
+/// plain `SET` removes it; a later EX replaces an earlier one; a word is
+/// compared in either case up to a zero byte; an expiry option needs an amount;
+/// an option beside one it excludes, or one only `GETEX` takes, is a syntax
+/// error; and an absolute expiry already past leaves the key expired at once.
+/// `SETNX`, `SETEX`, `PSETEX`, `GETSET` and `GETDEL` answer as Redis does, and
+/// `GETEX` reads its amount only once it has found a live string, and removes
+/// the key for an absolute expiry already past, which `DBSIZE` then no longer
+/// counts. The expected replies are redis-server 7.0.15's to the same
+/// requests.
+#[cfg(target_os = "linux")]
+#[test]
+fn firn_answers_string_commands_as_redis_does() {
+    let program = firn();
+    let port = free_port();
+    let text = port.to_string();
+    let child = program.spawn_on_route(true, &[text.as_bytes(), b"1"]);
+    let mut client = connect_when_ready(port);
+    client
+        .set_read_timeout(Some(Duration::from_secs(20)))
+        .expect("bound the client's waits");
+    let mut batch = Vec::new();
+    for request in [
+        vec!["SET", "k", "v", "nx\0zz"],
+        vec!["SET", "k", "v2", "xx", "GET"],
+        vec!["SET", "k", "v3", "EX", "10", "EX", "20"],
+        vec!["TTL", "k"],
+        vec!["SET", "k", "v4", "NX", "XX"],
+        vec!["SET", "k", "v4", "KEEPTTL", "EX", "5"],
+        vec!["SET", "k", "v4", "EX", "5", "KEEPTTL"],
+        vec!["SET", "k", "v5", "KEEPTTL"],
+        vec!["TTL", "k"],
+        vec!["SET", "k", "v6"],
+        vec!["TTL", "k"],
+        vec!["SET", "k", "v7", "EX"],
+        vec!["SET", "k", "v7", "EX", "NX"],
+        vec!["SET", "k", "v7", "EX", "0"],
+        vec!["SET", "k", "v8", "GET", "GET"],
+        vec!["LPUSH", "l", "a"],
+        vec!["SET", "l", "x", "GET"],
+        vec!["SET", "l", "x", "NX", "GET"],
+        vec!["TYPE", "l"],
+        vec!["SET", "n", "x", "NX", "GET"],
+        vec!["SET", "n", "y", "NX", "GET"],
+        vec!["SET", "absent", "y", "XX", "GET"],
+        vec!["SET", "absent", "y", "XX"],
+        vec!["EXISTS", "absent"],
+        vec!["SET", "k", "v", "keepttl\0x"],
+        vec!["SET", "k", "v", "GET", "PERSIST"],
+        vec!["SET", "k", "v", ""],
+        vec!["SET", "k", "v", "PXAT", "1"],
+        vec!["GET", "k"],
+        vec!["SET", "l", "x"],
+        vec!["GET", "l"],
+        vec!["SETNX", "k", "x"],
+        vec!["SETNX", "k", "y"],
+        vec!["SETEX", "s", "100", "v"],
+        vec!["TTL", "s"],
+        vec!["SETEX", "s", "0", "v"],
+        vec!["SETEX", "s", "abc", "v"],
+        vec!["PSETEX", "s", "-5", "v"],
+        vec!["PSETEX", "s", "100000", "v"],
+        vec!["TTL", "s"],
+        vec!["GETSET", "s", "w"],
+        vec!["TTL", "s"],
+        vec!["GETSET", "nope", "w"],
+        vec!["LPUSH", "l2", "a"],
+        vec!["GETSET", "l2", "w"],
+        vec!["GETDEL", "l2"],
+        vec!["GETDEL", "nope"],
+        vec!["GETDEL", "nope"],
+        vec!["SET", "g", "val"],
+        vec!["GETEX", "g"],
+        vec!["GETEX", "g", "EX", "100"],
+        vec!["TTL", "g"],
+        vec!["GETEX", "g", "PERSIST"],
+        vec!["TTL", "g"],
+        vec!["GETEX", "g", "NX"],
+        vec!["GETEX", "g", "EX", "abc"],
+        vec!["GETEX", "missing", "EX", "abc"],
+        vec!["GETEX", "l2", "EX", "abc"],
+        vec!["GETEX", "g", "EX", "0"],
+        vec!["GETEX", "g", "EX", "10", "PERSIST"],
+        vec!["GETEX", "g", "PXAT", "1"],
+        vec!["DBSIZE"],
+        vec!["GETEX", "g"],
+    ] {
+        batch.extend(resp(&request));
+    }
+    client.write_all(&batch).expect("send the string batch");
+    expect_replies(
+        &mut client,
+        b"+OK\r\n$1\r\nv\r\n+OK\r\n:20\r\n-ERR syntax error\r\n-ERR syntax error\r\n-ERR syntax error\r\n+OK\r\n:20\r\n+OK\r\n:-1\r\n-ERR syntax error\r\n-ERR value is not an integer or out of range\r\n-ERR invalid expire time in 'set' command\r\n$2\r\nv6\r\n:1\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n+list\r\n$-1\r\n$1\r\nx\r\n$-1\r\n$-1\r\n:0\r\n+OK\r\n-ERR syntax error\r\n-ERR syntax error\r\n+OK\r\n$-1\r\n+OK\r\n$1\r\nx\r\n:1\r\n:0\r\n+OK\r\n:100\r\n-ERR invalid expire time in 'setex' command\r\n-ERR value is not an integer or out of range\r\n-ERR invalid expire time in 'psetex' command\r\n+OK\r\n:100\r\n$1\r\nv\r\n:-1\r\n$-1\r\n:1\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n$1\r\nw\r\n$-1\r\n+OK\r\n$3\r\nval\r\n$3\r\nval\r\n:100\r\n$3\r\nval\r\n:-1\r\n-ERR syntax error\r\n-ERR value is not an integer or out of range\r\n$-1\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n-ERR invalid expire time in 'getex' command\r\n-ERR syntax error\r\n$3\r\nval\r\n:5\r\n$-1\r\n",
+        "the string batch",
+    );
+    drop(client);
+    let (status, _) = finished(child);
+    assert_eq!(status, 0);
+}
+
 /// [SHARE-1, SHARE-2] firn answers `DEL`, `EXISTS` and `MSET` naming a key
 /// more than once as Redis does, each holding its keys' entries through a key
 /// set, which keeps one element per key: `DEL` removes and counts such a key

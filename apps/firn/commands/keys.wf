@@ -10,6 +10,8 @@ alias arg = pkg::protocol::arg;
 alias clear_items = pkg::protocol::clear_items;
 alias push_item = pkg::protocol::push_item;
 alias make_key = pkg::bytes::make_key;
+alias byte_at = pkg::bytes::byte_at;
+alias name_code = pkg::bytes::name_code;
 alias expired = pkg::store::expired;
 alias log_command = pkg::store::log_command;
 alias log_count = pkg::store::log_count;
@@ -107,6 +109,21 @@ fn key_bounds(input: &[u8], args: &Box<Slots<Span>>, index: u64) -> bounds: Boun
     return Bounds(start: span.start, end: end);
   }
   return Bounds(start: 0_u64, end: 0_u64);
+}
+
+fn option_code(input: &[u8], span: Span) -> code: u64 reads(input) {
+  doc "The number name_code packs from an option word's bytes up to its first zero byte, since Redis compares an option as a C string, with strcasecmp or letter by letter.";
+  let length = span.length;
+  for @bytes (offset in 0_u64..span.length) {
+    let position = span.start +wrap offset;
+    let byte = byte_at(input: input, index: position);
+    if byte == 0_u8 {
+      set length = offset;
+      break @bytes;
+    }
+  }
+  let code = name_code(input: input, start: span.start, length: length);
+  return code;
 }
 
 fn kind_of(env: &Client, value: &Entry) -> kind: u64 reads(value), writes(env) {
@@ -309,7 +326,7 @@ fn read_expiry(env: &Remaining, value: &Entry) -> result: u64 reads(value), writ
 }
 
 fn log_expire_at(log: &Box<Slots<u8>>, input: &[u8], key: Span, at_ms: u64) -> result: unit reads(input), writes(log) {
-  doc "Appends PEXPIREAT key with the expiry as calendar milliseconds, as Redis 7 writes an expiry EXPIRE, PEXPIRE or PEXPIREAT sets; Redis writes a SET with an expiry as one SET with PXAT, which firn writes as SET followed by PEXPIREAT.";
+  doc "Appends PEXPIREAT key with the expiry as calendar milliseconds, as Redis 7.0.15 propagates an expiry EXPIRE, PEXPIRE, PEXPIREAT or GETEX sets.";
   let room = key.length +wrap 64_u64;
   log_count(log: log, count: 3_u64, room: room);
   log_word(log: log, word: &word_pexpireat[0_u64..9_u64]);

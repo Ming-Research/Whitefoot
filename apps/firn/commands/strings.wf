@@ -11,6 +11,7 @@ alias expired = pkg::store::expired;
 alias remove_expired = pkg::store::remove_expired;
 alias log_command = pkg::store::log_command;
 alias log_count = pkg::store::log_count;
+alias log_decimal = pkg::store::log_decimal;
 alias log_input = pkg::store::log_input;
 alias log_word = pkg::store::log_word;
 alias queue_expiry = pkg::store::queue_expiry;
@@ -33,9 +34,49 @@ alias reply_text = pkg::protocol::reply_text;
 
 const word_set: Array<u8, 3> =[83_u8, 69_u8, 84_u8];
 
-const word_ex: Array<u8, 2> =[69_u8, 88_u8];
+const word_pxat: Array<u8, 4> =[80_u8, 88_u8, 65_u8, 84_u8];
 
-const word_px: Array<u8, 2> =[80_u8, 88_u8];
+const code_ex: u64 = 22597_u64;
+
+const code_px: u64 = 22608_u64;
+
+const code_exat: u64 = 1413568581_u64;
+
+const code_pxat: u64 = 1413568592_u64;
+
+const code_keepttl: u64 = 21484819330712907_u64;
+
+const option_nx: u64 = 1_u64;
+
+const option_xx: u64 = 2_u64;
+
+const option_get: u64 = 4_u64;
+
+const option_keepttl: u64 = 8_u64;
+
+const option_persist: u64 = 16_u64;
+
+const option_ex: u64 = 32_u64;
+
+const option_px: u64 = 64_u64;
+
+const option_exat: u64 = 128_u64;
+
+const option_pxat: u64 = 256_u64;
+
+const options_expiry: u64 = 480_u64;
+
+const mode_set: u64 = 0_u64;
+
+const mode_setnx: u64 = 1_u64;
+
+const mode_getset: u64 = 2_u64;
+
+const text_expire_setex: Array<u8, 42> =[69_u8, 82_u8, 82_u8, 32_u8, 105_u8, 110_u8, 118_u8, 97_u8, 108_u8, 105_u8, 100_u8, 32_u8, 101_u8, 120_u8, 112_u8, 105_u8, 114_u8, 101_u8, 32_u8, 116_u8, 105_u8, 109_u8, 101_u8, 32_u8, 105_u8, 110_u8, 32_u8, 39_u8, 115_u8, 101_u8, 116_u8, 101_u8, 120_u8, 39_u8, 32_u8, 99_u8, 111_u8, 109_u8, 109_u8, 97_u8, 110_u8, 100_u8];
+
+const text_expire_psetex: Array<u8, 43> =[69_u8, 82_u8, 82_u8, 32_u8, 105_u8, 110_u8, 118_u8, 97_u8, 108_u8, 105_u8, 100_u8, 32_u8, 101_u8, 120_u8, 112_u8, 105_u8, 114_u8, 101_u8, 32_u8, 116_u8, 105_u8, 109_u8, 101_u8, 32_u8, 105_u8, 110_u8, 32_u8, 39_u8, 112_u8, 115_u8, 101_u8, 116_u8, 101_u8, 120_u8, 39_u8, 32_u8, 99_u8, 111_u8, 109_u8, 109_u8, 97_u8, 110_u8, 100_u8];
+
+const text_expire_getex: Array<u8, 42> =[69_u8, 82_u8, 82_u8, 32_u8, 105_u8, 110_u8, 118_u8, 97_u8, 108_u8, 105_u8, 100_u8, 32_u8, 101_u8, 120_u8, 112_u8, 105_u8, 114_u8, 101_u8, 32_u8, 116_u8, 105_u8, 109_u8, 101_u8, 32_u8, 105_u8, 110_u8, 32_u8, 39_u8, 103_u8, 101_u8, 116_u8, 101_u8, 120_u8, 39_u8, 32_u8, 99_u8, 111_u8, 109_u8, 109_u8, 97_u8, 110_u8, 100_u8];
 
 const reply_pong: Array<u8, 7> =[43_u8, 80_u8, 79_u8, 78_u8, 71_u8, 13_u8, 10_u8];
 
@@ -46,6 +87,17 @@ const text_expire_set: Array<u8, 40> =[69_u8, 82_u8, 82_u8, 32_u8, 105_u8, 110_u
 struct Counted {
   value: i64;
   now: u64;
+  state: u64;
+}
+
+struct StringOptions {
+  flags: u64;
+  amount: u64;
+  valid: Bool;
+}
+
+struct Deadline {
+  at: u64;
   state: u64;
 }
 
@@ -136,76 +188,466 @@ fn put_text(slot: &Option<Entry>, value: Bytes, expires: u64) -> result: unit wr
   return unit;
 }
 
-fn run_set(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), writes(client) waits {
-  doc "SET key value [EX seconds | PX milliseconds]: stores the value with the expiry the option gives, counted from the command's time, or none, replacing any value the key held, in one atomic statement that also appends the change to the append-only file's pending bytes. Redis's other options are answered as a syntax error.";
+fn string_options(input: &[u8], args: &Box<Slots<Span>>, first: u64, setting: Bool) -> options: StringOptions reads(input), reads(args) {
+  doc "Reads SET's options from the argument at first on (setting), or GETEX's (not setting), as Redis 7.0.15's parseExtendedStringArgumentsOrReply reads them, each word compared in either case up to a zero byte: NX or XX, GET and KEEPTTL for SET alone, PERSIST for GETEX alone, and EX, PX, EXAT or PXAT followed by its amount, whose index amount records, a later amount of the same option replacing an earlier one. An option beside one it excludes, an expiry option with no argument after it and any other word make the options invalid, which Redis answers as a syntax error.";
   let count = args^.inner.len;
-  let expires = 0_u64;
-  if count == 5_u64 {
-    let option = arg(args: args, index: 3_u64);
-    let in_seconds = name_is(input: input, start: option.start, length: option.length, word: &word_ex[0_u64..2_u64]);
-    let in_milliseconds = name_is(input: input, start: option.start, length: option.length, word: &word_px[0_u64..2_u64]);
-    let known = bor(in_seconds, in_milliseconds);
-    if known {
+  let flags = 0_u64;
+  let amount = 0_u64;
+  let index = first;
+  let readable = True();
+  loop @options {
+    if index >= count {
+      break @options;
+    }
+    let span = arg(args: args, index: index);
+    let code = option_code(input: input, span: span);
+    let flag = 0_u64;
+    let refused = 0_u64;
+    let allowed = setting;
+    let expiry = False();
+    if code == code_nx {
+      set flag = option_nx;
+      set refused = option_xx;
+    } else if code == code_xx {
+      set flag = option_xx;
+      set refused = option_nx;
+    } else if code == code_get {
+      set flag = option_get;
+    } else if code == code_keepttl {
+      set flag = option_keepttl;
+      set refused = ior(option_persist, options_expiry);
+    } else if code == code_persist {
+      set flag = option_persist;
+      set refused = ior(option_keepttl, options_expiry);
+      set allowed = bnot(setting);
+    } else if code == code_ex {
+      set flag = option_ex;
+      set expiry = True();
+    } else if code == code_px {
+      set flag = option_px;
+      set expiry = True();
+    } else if code == code_exat {
+      set flag = option_exat;
+      set expiry = True();
+    } else if code == code_pxat {
+      set flag = option_pxat;
+      set expiry = True();
+    }
+    let following = index +wrap 1_u64;
+    if expiry {
+      set allowed = following < count;
+      let others = ixor(options_expiry, flag);
+      let persistence = ior(option_keepttl, option_persist);
+      set refused = ior(persistence, others);
+    }
+    let clash = iand(flags, refused);
+    let unknown = flag == 0_u64;
+    let excluded = clash != 0_u64;
+    let barred = bnot(allowed);
+    let misplaced = bor(excluded, barred);
+    let refusal = bor(unknown, misplaced);
+    if refusal {
+      set readable = False();
+      break @options;
+    }
+    set flags = ior(flags, flag);
+    if expiry {
+      set amount = following;
+      set index = following;
+    }
+    set index = index +wrap 1_u64;
+  }
+  return StringOptions(flags: flags, amount: amount, valid: readable);
+}
+
+fn string_deadline(input: &[u8], span: Span, flags: u64, unix_ms: u64) -> deadline: Deadline reads(input) {
+  doc "The calendar milliseconds an expiry option's amount names, as Redis 7.0.15's getExpireMillisecondsOrReply reads it: a positive integer, of seconds for EX and EXAT, at most what milliseconds in i64 hold, and of milliseconds for PX and PXAT, EX and PX counting from the command's time. State 1 is an expiry, 0 an amount that is not an integer, and 2 one that is not positive or whose milliseconds, or their sum with the command's time, leave the range of i64, which Redis answers as an invalid expire time.";
+  let number = read_integer(input: input, start: span.start, length: span.length);
+  if number.state != 1_u64 {
+    return Deadline(at: 0_u64, state: 0_u64);
+  }
+  if number.value <= 0_i64 {
+    return Deadline(at: 0_u64, state: 2_u64);
+  }
+  let value = cvt.wrap::<i64, u64>(number.value);
+  let seconds = ior(option_ex, option_exat);
+  let in_seconds = iand(flags, seconds);
+  if in_seconds != 0_u64 {
+    if value > 9223372036854775_u64 {
+      return Deadline(at: 0_u64, state: 2_u64);
+    }
+    set value = value *wrap 1000_u64;
+  }
+  let relative = ior(option_ex, option_px);
+  let counted = iand(flags, relative);
+  if counted != 0_u64 {
+    set value = value +wrap unix_ms;
+    if value > 9223372036854775807_u64 {
+      return Deadline(at: 0_u64, state: 2_u64);
+    }
+  }
+  return Deadline(at: value, state: 1_u64);
+}
+
+fn held_expiry(slot: &Option<Entry>) -> expires: u64 reads(slot) {
+  doc "The expiry an entry's value holds, zero for none and for an absent entry.";
+  match slot^ {
+    Some(value: held) => {
+      return held^.expires;
+    }
+    None() => {
+      return 0_u64;
+    }
+  }
+}
+
+fn hold_expiry(slot: &Option<Entry>, expires: u64) -> result: unit writes(slot) {
+  doc "Gives an entry's value the expiry, zero for none; an absent entry stays absent.";
+  match slot^ {
+    Some(value: held) => {
+      set held^.expires = expires;
+    }
+    None() => {
+    }
+  }
+  return unit;
+}
+
+fn reply_held_text(slot: &Option<Entry>, client: &Client) -> result: unit reads(slot), writes(client) {
+  doc "Writes the string a live entry holds as a bulk string reply, as text_value writes it; another kind and an absent entry write nothing.";
+  match slot^ {
+    Some(value: held) => {
+      let kind = text_value(env: client, value: held);
+    }
+    None() => {
+    }
+  }
+  return unit;
+}
+
+fn log_set(log: &Box<Slots<u8>>, input: &[u8], key: Span, value: Span) -> result: unit reads(input), writes(log) {
+  doc "Appends SET key value.";
+  let room = key.length +wrap value.length;
+  log_count(log: log, count: 3_u64, room: room);
+  log_word(log: log, word: &word_set[0_u64..3_u64]);
+  log_input(log: log, input: input, span: key);
+  log_input(log: log, input: input, span: value);
+  return unit;
+}
+
+fn log_set_at(log: &Box<Slots<u8>>, input: &[u8], key: Span, value: Span, at: u64) -> result: unit reads(input), writes(log) {
+  doc "Appends SET key value PXAT at, the form Redis 7.0.15 propagates every store with an expiry in, the expiry as calendar milliseconds.";
+  let room = key.length +wrap value.length;
+  let more = room +wrap 48_u64;
+  log_count(log: log, count: 5_u64, room: more);
+  log_word(log: log, word: &word_set[0_u64..3_u64]);
+  log_input(log: log, input: input, span: key);
+  log_input(log: log, input: input, span: value);
+  log_word(log: log, word: &word_pxat[0_u64..4_u64]);
+  log_decimal(log: log, value: at);
+  return unit;
+}
+
+fn get_option(input: &[u8], args: &Box<Slots<Span>>, index: u64) -> option: Bool reads(input), reads(args) {
+  doc "Whether the argument at index is one of SET's GET options: from the fourth argument on, GET in either case up to a zero byte.";
+  if index < 3_u64 {
+    return False();
+  }
+  let span = arg(args: args, index: index);
+  let code = option_code(input: input, span: span);
+  let option = code == code_get;
+  return option;
+}
+
+fn log_without_get(log: &Box<Slots<u8>>, input: &[u8], args: &Box<Slots<Span>>) -> result: unit reads(input), reads(args), writes(log) {
+  doc "Appends a SET as it was sent but for its GET options, which Redis 7.0.15 leaves out of what it propagates.";
+  let count = args^.inner.len;
+  let kept = 0_u64;
+  for @counting (index in 0_u64..count) {
+    let dropped = get_option(input: input, args: args, index: index);
+    if dropped {
     } else {
-      reply_error(client: client, word: &text_syntax[0_u64..16_u64]);
-      return unit;
+      set kept = kept +wrap 1_u64;
     }
-    let amount = arg(args: args, index: 4_u64);
-    let number = read_integer(input: input, start: amount.start, length: amount.length);
-    if number.state != 1_u64 {
-      reply_error(client: client, word: &text_not_integer[0_u64..43_u64]);
-      return unit;
-    }
-    let positive = number.value > 0_i64;
-    if positive {
+  }
+  log_count(log: log, count: kept, room: 0_u64);
+  for @arguments (index in 0_u64..count) {
+    let dropped = get_option(input: input, args: args, index: index);
+    if dropped {
     } else {
-      reply_error(client: client, word: &text_expire_set[0_u64..40_u64]);
-      return unit;
+      let span = args^.inner[index];
+      log_input(log: log, input: input, span: span);
     }
-    let value = cvt.wrap::<i64, u64>(number.value);
-    if in_seconds {
-      if value > 9223372036854775_u64 {
-        reply_error(client: client, word: &text_expire_set[0_u64..40_u64]);
-        return unit;
+  }
+  return unit;
+}
+
+fn set_key(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time, key_index: u64, value_index: u64, flags: u64, at: u64, mode: u64) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), writes(client) waits {
+  doc "Stores the argument at value_index under the key at key_index as Redis 7.0.15's setGenericCommand does, in one atomic statement on the key's entry that also appends the change to the append-only file's pending bytes, an expired key counting as absent. With GET the string the key held is written as the reply first and a key of another kind is refused, nothing stored; with NX nothing is stored over a live key, with XX nothing in place of an absent one. The value keeps the key's expiry with KEEPTTL, takes at with an expiry option, and has none otherwise. The reply is OK, or nil when nothing was stored; 1 or 0 for SETNX (mode_setnx); with GET the old string or nil alone. The file records a store with an expiry as SET key value PXAT at, GETSET (mode_getset) as SET key value, a SET with GET as it was sent without its GET options, and any other as it was sent, as Redis propagates them.";
+  let key_span = arg(args: args, index: key_index);
+  let value_span = arg(args: args, index: value_index);
+  let place = key_bounds(input: input, args: args, index: key_index);
+  let key = &input^[place.start..place.end];
+  let value = bytes_new(input: input, start: value_span.start, length: value_span.length);
+  let getting_flag = iand(flags, option_get);
+  let getting = getting_flag != 0_u64;
+  let fresh_flag = iand(flags, option_nx);
+  let only_fresh = fresh_flag != 0_u64;
+  let present_flag = iand(flags, option_xx);
+  let only_present = present_flag != 0_u64;
+  let keep_flag = iand(flags, option_keepttl);
+  let keep = keep_flag != 0_u64;
+  let timed_flag = iand(flags, options_expiry);
+  let timed = timed_flag != 0_u64;
+  let logged = store^.logging;
+  set client^.now = time^.check;
+  let outcome = state_absent;
+  let answered = False();
+  atomic s = &store^.state, slot = &s^.map[key] {
+    let kind = entry_kind(slot: slot, client: client);
+    let found = kind != 0_u64;
+    let text = kind == 1_u64;
+    let other = kind > 1_u64;
+    let refused = band(getting, other);
+    if refused {
+      set outcome = state_wrong;
+      let unused = move value;
+    } else {
+      if getting {
+        if text {
+          reply_held_text(slot: slot, client: client);
+          set answered = True();
+        }
       }
-      set value = value *wrap 1000_u64;
+      let absent = bnot(found);
+      let occupied = band(only_fresh, found);
+      let missing = band(only_present, absent);
+      let blocked = bor(occupied, missing);
+      if blocked {
+        let unused = move value;
+      } else {
+        let expires = 0_u64;
+        if keep {
+          set expires = held_expiry(slot: slot);
+        }
+        if timed {
+          set expires = at;
+        }
+        put_text(slot: slot, value: move value, expires: expires);
+        if timed {
+          queue_expiry(meta: &s^.meta, key: key, at: at, env: env);
+        }
+        if logged {
+          if timed {
+            log_set_at(log: &s^.meta.log, input: input, key: key_span, value: value_span, at: at);
+          } else if mode == mode_getset {
+            log_set(log: &s^.meta.log, input: input, key: key_span, value: value_span);
+          } else if getting {
+            log_without_get(log: &s^.meta.log, input: input, args: args);
+          } else {
+            log_command(log: &s^.meta.log, input: input, args: args);
+          }
+        }
+        set outcome = state_done;
+      }
     }
-    let at = value +wrap time^.unix_ms;
-    if at > 9223372036854775807_u64 {
-      reply_error(client: client, word: &text_expire_set[0_u64..40_u64]);
-      return unit;
+  }
+  if outcome == state_wrong {
+    reply_wrong_type(client: client);
+    return unit;
+  }
+  let stored = outcome == state_done;
+  if mode == mode_setnx {
+    if stored {
+      reply_word(client: client, word: &reply_one[0_u64..4_u64]);
+    } else {
+      reply_word(client: client, word: &reply_zero[0_u64..4_u64]);
     }
-    set expires = at;
-  } else if count != 3_u64 {
+    return unit;
+  }
+  if getting {
+    if answered {
+    } else {
+      reply_nil(client: client);
+    }
+    return unit;
+  }
+  if stored {
+    reply_ok(client: client);
+    return unit;
+  }
+  reply_nil(client: client);
+  return unit;
+}
+
+fn run_set(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), writes(client) waits {
+  doc "SET key value [NX | XX] [GET] [EX seconds | PX milliseconds | EXAT unix-seconds | PXAT unix-milliseconds | KEEPTTL]: reads the options and their amount as Redis 7.0.15 does, refusing them before the key is read, and stores the value as set_key stores it.";
+  let setting = True();
+  let options = string_options(input: input, args: args, first: 3_u64, setting: setting);
+  if options.valid {
+  } else {
     reply_error(client: client, word: &text_syntax[0_u64..16_u64]);
     return unit;
   }
+  let at = 0_u64;
+  let timed = iand(options.flags, options_expiry);
+  if timed != 0_u64 {
+    let amount = arg(args: args, index: options.amount);
+    let deadline = string_deadline(input: input, span: amount, flags: options.flags, unix_ms: time^.unix_ms);
+    if deadline.state == 0_u64 {
+      reply_error(client: client, word: &text_not_integer[0_u64..43_u64]);
+      return unit;
+    }
+    if deadline.state == 2_u64 {
+      reply_error(client: client, word: &text_expire_set[0_u64..40_u64]);
+      return unit;
+    }
+    set at = deadline.at;
+  }
+  set_key(store: store, input: input, args: args, client: client, env: env, time: time, key_index: 1_u64, value_index: 2_u64, flags: options.flags, at: at, mode: mode_set);
+  return unit;
+}
+
+fn run_setnx(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), writes(client) waits {
+  doc "SETNX key value: stores the value when the key is absent, answering 1, and answers 0 otherwise, as SET with NX stores it.";
+  set_key(store: store, input: input, args: args, client: client, env: env, time: time, key_index: 1_u64, value_index: 2_u64, flags: option_nx, at: 0_u64, mode: mode_setnx);
+  return unit;
+}
+
+fn run_setex(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time, in_seconds: Bool, invalid: &[u8]) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), reads(invalid), writes(client) waits {
+  doc "SETEX key seconds value (in_seconds) and PSETEX key milliseconds value: stores the value with the expiry the amount gives, counted from the command's time, as SET with EX or PX stores it; invalid is the reply to an amount out of range.";
+  let flags = option_px;
+  if in_seconds {
+    set flags = option_ex;
+  }
+  let amount = arg(args: args, index: 2_u64);
+  let deadline = string_deadline(input: input, span: amount, flags: flags, unix_ms: time^.unix_ms);
+  if deadline.state == 0_u64 {
+    reply_error(client: client, word: &text_not_integer[0_u64..43_u64]);
+    return unit;
+  }
+  if deadline.state == 2_u64 {
+    reply_error(client: client, word: invalid);
+    return unit;
+  }
+  set_key(store: store, input: input, args: args, client: client, env: env, time: time, key_index: 1_u64, value_index: 3_u64, flags: flags, at: deadline.at, mode: mode_set);
+  return unit;
+}
+
+fn run_getset(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), writes(client) waits {
+  doc "GETSET key value: answers the string the key held, or nil, and stores the value without an expiry, as SET with GET does, refusing a key of another kind; the file records it as SET key value.";
+  set_key(store: store, input: input, args: args, client: client, env: env, time: time, key_index: 1_u64, value_index: 2_u64, flags: option_get, at: 0_u64, mode: mode_getset);
+  return unit;
+}
+
+fn run_getdel(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+  doc "GETDEL key: answers a live string as GET does and removes the key in the same atomic statement, which the file records as DEL key, as Redis propagates it; a key of another kind is refused and kept.";
   let key_span = arg(args: args, index: 1_u64);
-  let value_span = arg(args: args, index: 2_u64);
   let place = key_bounds(input: input, args: args, index: 1_u64);
   let key = &input^[place.start..place.end];
-  let value = bytes_new(input: input, start: value_span.start, length: value_span.length);
-  let at_ms = expires;
-  let queued = expires != 0_u64;
   let logged = store^.logging;
+  set client^.now = time^.check;
+  let kind = 0_u64;
   atomic s = &store^.state, slot = &s^.map[key] {
-    put_text(slot: slot, value: move value, expires: expires);
-    if queued {
-      queue_expiry(meta: &s^.meta, key: key, at: expires, env: env);
-    }
-    if logged {
-      let key_value = arg(args: args, index: 2_u64);
-      let room = key_span.length +wrap key_value.length;
-      log_count(log: &s^.meta.log, count: 3_u64, room: room);
-      log_word(log: &s^.meta.log, word: &word_set[0_u64..3_u64]);
-      log_input(log: &s^.meta.log, input: input, span: key_span);
-      log_input(log: &s^.meta.log, input: input, span: key_value);
-      if queued {
-        log_expire_at(log: &s^.meta.log, input: input, key: key_span, at_ms: at_ms);
+    set kind = entry_kind(slot: slot, client: client);
+    if kind == 1_u64 {
+      reply_held_text(slot: slot, client: client);
+      set slot^ = None<Entry>();
+      if logged {
+        log_key_word(log: &s^.meta.log, word: &word_del[0_u64..3_u64], input: input, key: key_span);
       }
     }
   }
-  reply_ok(client: client);
+  if kind == 0_u64 {
+    reply_nil(client: client);
+    return unit;
+  }
+  if kind != 1_u64 {
+    reply_wrong_type(client: client);
+  }
+  return unit;
+}
+
+fn run_getex(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), writes(client) waits {
+  doc "GETEX key [EX seconds | PX milliseconds | EXAT unix-seconds | PXAT unix-milliseconds | PERSIST]: answers a live string as GET does and gives it the expiry the option names, or removes its expiry with PERSIST, in one atomic statement on the key, as Redis 7.0.15 does; an absolute expiry already past removes the key instead. The options are read before the key and their amount after it, so that an absent key answers nil, and a key of another kind is refused, whatever the amount. The file records the change as Redis propagates it: PEXPIREAT key at, DEL key, or PERSIST key when an expiry was removed.";
+  let setting = False();
+  let options = string_options(input: input, args: args, first: 2_u64, setting: setting);
+  if options.valid {
+  } else {
+    reply_error(client: client, word: &text_syntax[0_u64..16_u64]);
+    return unit;
+  }
+  let flags = options.flags;
+  let timed_flag = iand(flags, options_expiry);
+  let timed = timed_flag != 0_u64;
+  let persist_flag = iand(flags, option_persist);
+  let persisting = persist_flag != 0_u64;
+  let deadline = Deadline(at: 0_u64, state: 1_u64);
+  if timed {
+    let amount = arg(args: args, index: options.amount);
+    set deadline = string_deadline(input: input, span: amount, flags: flags, unix_ms: time^.unix_ms);
+  }
+  let calendar = ior(option_exat, option_pxat);
+  let absolute_flag = iand(flags, calendar);
+  let absolute = absolute_flag != 0_u64;
+  let passed = deadline.at <= time^.unix_ms;
+  let lapsed = band(absolute, passed);
+  if time^.loading {
+    set lapsed = False();
+  }
+  let readable = deadline.state == 1_u64;
+  let at = deadline.at;
+  let key_span = arg(args: args, index: 1_u64);
+  let place = key_bounds(input: input, args: args, index: 1_u64);
+  let key = &input^[place.start..place.end];
+  let logged = store^.logging;
+  set client^.now = time^.check;
+  let kind = 0_u64;
+  atomic s = &store^.state, slot = &s^.map[key] {
+    set kind = entry_kind(slot: slot, client: client);
+    let text = kind == 1_u64;
+    let go = band(text, readable);
+    if go {
+      reply_held_text(slot: slot, client: client);
+      if timed {
+        if lapsed {
+          set slot^ = None<Entry>();
+          if logged {
+            log_key_word(log: &s^.meta.log, word: &word_del[0_u64..3_u64], input: input, key: key_span);
+          }
+        } else {
+          hold_expiry(slot: slot, expires: at);
+          queue_expiry(meta: &s^.meta, key: key, at: at, env: env);
+          if logged {
+            log_expire_at(log: &s^.meta.log, input: input, key: key_span, at_ms: at);
+          }
+        }
+      } else if persisting {
+        let had = held_expiry(slot: slot);
+        if had != 0_u64 {
+          hold_expiry(slot: slot, expires: 0_u64);
+          if logged {
+            log_key_word(log: &s^.meta.log, word: &word_persist[0_u64..7_u64], input: input, key: key_span);
+          }
+        }
+      }
+    }
+  }
+  if kind == 0_u64 {
+    reply_nil(client: client);
+    return unit;
+  }
+  if kind != 1_u64 {
+    reply_wrong_type(client: client);
+    return unit;
+  }
+  if deadline.state == 0_u64 {
+    reply_error(client: client, word: &text_not_integer[0_u64..43_u64]);
+    return unit;
+  }
+  if deadline.state == 2_u64 {
+    reply_error(client: client, word: &text_expire_getex[0_u64..42_u64]);
+  }
   return unit;
 }
 

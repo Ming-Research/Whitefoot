@@ -14,7 +14,9 @@ own:
 
 - keys: `DEL`, `EXISTS`, `TYPE`, `EXPIRE`, `PEXPIRE`, `PEXPIREAT`, `TTL`,
   `PTTL`, `PERSIST`, `DBSIZE`;
-- strings: `GET`, `SET` with `EX` or `PX`, `MSET`, `INCR`;
+- strings: `GET`, `SET` with its options `NX`, `XX`, `GET`, `KEEPTTL`,
+  `EX`, `PX`, `EXAT` and `PXAT`, `SETNX`, `SETEX`, `PSETEX`, `GETSET`,
+  `GETDEL`, `GETEX`, `MSET`, `INCR`;
 - lists: `LPUSH`, `RPUSH`, `LPOP`, `RPOP`, `LRANGE`, `LLEN`;
 - sets: `SADD`, `SREM`, `SPOP`, `SCARD`;
 - hashes: `HSET`, `HGET`;
