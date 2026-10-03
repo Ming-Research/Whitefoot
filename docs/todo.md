@@ -101,17 +101,36 @@ rarely insert at the same place.
   route. Validate direct-set and let-then-set positives, false callee results,
   alias writes and stale destination facts under the existing rules.
 
-- **A length guard on a match binder is not a fact inside a loop that
-  writes through it.** Minimal witness: a function matches `held^` as
-  `List(items: list)` and, in a `for` loop, pops from `list` under
-  `if list^.inner.len > 0_u64`; `deque_pop_front` then refuses [FN-8] for want
-  of `values^.inner.len > 0`, although the guard reads exactly that place
-  just before the call. The same guard on a parameter discharges it, so firn's
-  `pop_items` passes the binder to a helper, `pop_one`, that takes the list as
-  a parameter. Find why the binder's place loses the guard fact across the loop's
-  writes, likely the fact's place key naming the binder rather than the
-  matched field, and add a conformance case that the fixed checker accepts.
-  Reopen with the next program that needs the helper.
+- **A length guard written through a reference holder stops proving the
+  requirement of a call passing that holder once a write reaches the
+  referent.** Minimal witness: in a function with `value: &Value` and
+  `writes(value)`, an arm of `match value^` binding `Items(items: list)` that
+  guards two `deque_pop_front::<u8>(values: list)` calls, each under
+  `if list^.inner.len > 0_u64`, refuses the second [FN-8], instantiated goal
+  `value^.Items.items.inner.len > 0_u64`; a loop with one guarded pop per
+  iteration refuses its first. This is the specified verdict, not a checker
+  defect. The call instantiates the formal at the holder's resolved referent
+  [FN-8, ENT-2]; `list^.inner.len` and `value^.Items.items.inner.len` are
+  distinct terms, "distinct spellings are distinct terms even when they
+  resolve to overlapping storage" [ENT-2]; and the one relation between them
+  is the PAYLOAD placement datum [MSR-3], established at arm entry and killed
+  by the first write through the binder, in the loop by the head's
+  continuing kill [ENT-5]. A `let q = p;` alias, under the REBIND placement,
+  behaves the same; a holder formed by `let q = &x;`, which no placement
+  covers, proves nothing even before a write; a guard on a reference
+  parameter does prove it, the parameter's resolved referent being spelled
+  through the parameter itself. [ENT-1] fixes every call goal's disposition,
+  so the checker cannot accept these on its own. Writers match the enum
+  again before each later pop, or pass the
+  binder to a helper taking a reference parameter, as firn's `pop_items`
+  does with `pop_one` (`apps/firn/commands/lists.wf`). Accepting them is a
+  specification change for the owner, for example giving a place written
+  through a holder whose path is one exact place that place's term identity
+  [REF-1, ENT-2]. Not yet checked: such a rule would also accept
+  `fn8-neg-reference-guard-after-conditional-offset-write`, and it needs the
+  holder's path at the use, not the function-wide origin inventory. Reopen
+  with the owner's decision or the next program that needs the helper or
+  the second match.
 
 - **A widening conversion's operand is read as any affine side.**
   [ENT-2] admits `cvt::<S, D>(e)` as a relation term or comparison-origin
@@ -557,6 +576,22 @@ rarely insert at the same place.
   reader adding a consumer. Update those descriptions when the nominal
   inventory is next edited; the storage-destructuring repair uses its actual
   identities and needs no inventory change.
+
+- **A written payload step in a body place is refused as a field.** Inside
+  the `Some` arm of `match cell^`, with `cell: &Option<u64>`,
+  `let direct = cell^.Some.value;` is a TYPE-5 rejection, "expected: a source
+  struct, whose declared field this suffix selects", although [GRAM-5] makes
+  `.Variant.field` the one spelling for reaching a payload, [REF-1] lists
+  `p^.Some.value` among the forms written through a reference, and [OWN-13]
+  admits a newly written payload selection under a current [ENT-3.S15]
+  refinement. `elaborate_place_member` in
+  `compiler/src/semantic/check/expressions/places.rs` selects only Box content
+  and struct fields, so a payload is reachable only through a match binder.
+  This is a source rejection of an admitted form, where an unimplemented
+  capability should stop as unsupported [DIAG-1]. The change: elaborate the
+  payload suffix under the arm's live refinement with its [REF-2] witness, or
+  meanwhile report it as unsupported, with a conformance case either way.
+  Reopen when a program needs a payload read without a binder.
 
 ## Containers and storage lowering
 
