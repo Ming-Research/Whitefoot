@@ -1693,8 +1693,12 @@ fn firn_answers_commands_naming_a_key_twice_as_redis_does() {
 /// echoed as a space before the connection closes. `FUNCTION FLUSH` succeeds
 /// with no option, or with `ASYNC` or `SYNC` read up to a zero byte, and
 /// refuses another option and two of them; `FUNCTION` alone is short of
-/// arguments, and a subcommand whose name holds a zero byte is unknown. The
-/// expected replies are redis-server 7.0.15's to the same bytes.
+/// arguments, and a subcommand whose name holds a zero byte is unknown.
+/// `DEBUG LOG` with one message, empty or not, succeeds, its name read up to a
+/// zero byte, while `LOG` without exactly one message and an unknown
+/// subcommand, its line breaks echoed as spaces, are answered as Redis answers
+/// a `DEBUG` subcommand it does not know. The expected replies are
+/// redis-server 7.0.15's to the same bytes, its debug command enabled.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_answers_config_and_echoes_client_bytes_as_redis_does() {
@@ -1724,6 +1728,12 @@ fn firn_answers_config_and_echoes_client_bytes_as_redis_does() {
         vec!["FUNCTION", "FLUSH", "x"],
         vec!["FUNCTION", "FLUSH", "a", "b"],
         vec!["FUNCTION", "flush\0"],
+        vec!["DEBUG"],
+        vec!["DEBUG", "LOG", "a message"],
+        vec!["debug", "log\0x", ""],
+        vec!["DEBUG", "LOG"],
+        vec!["DEBUG", "LOG", "a", "b"],
+        vec!["DEBUG", "NO\r\nPE"],
     ] {
         batch.extend(resp(&request));
     }
@@ -1737,6 +1747,7 @@ fn firn_answers_config_and_echoes_client_bytes_as_redis_does() {
     );
     expected.extend_from_slice(&[b'c'; 150]);
     expected.extend_from_slice(b"'\r\n-ERR wrong number of arguments for 'function' command\r\n+OK\r\n+OK\r\n+OK\r\n-ERR FUNCTION FLUSH only supports SYNC|ASYNC option\r\n-ERR unknown subcommand or wrong number of arguments for 'FLUSH'. Try FUNCTION HELP.\r\n-ERR unknown subcommand 'flush'. Try FUNCTION HELP.\r\n");
+    expected.extend_from_slice(b"-ERR wrong number of arguments for 'debug' command\r\n+OK\r\n+OK\r\n-ERR unknown subcommand or wrong number of arguments for 'LOG'. Try DEBUG HELP.\r\n-ERR unknown subcommand or wrong number of arguments for 'LOG'. Try DEBUG HELP.\r\n-ERR unknown subcommand or wrong number of arguments for 'NO  PE'. Try DEBUG HELP.\r\n");
     expected.extend_from_slice(b"-ERR Protocol error: expected '$', got ' '\r\n");
     expect_replies(&mut client, &expected, "the CONFIG and echo batch");
     drop(client);
@@ -2292,6 +2303,8 @@ fn firn_requires_its_password_as_redis_does() {
         vec!["CLIENT", "FOO"],
         vec!["FUNCTION", "NOPE"],
         vec!["FUNCTION", "FLUSH"],
+        vec!["DEBUG"],
+        vec!["DEBUG", "LOG", "x"],
         vec!["HELLO", "2"],
         vec!["AUTH", "wrong"],
         vec!["AUTH", "secreT"],
@@ -2310,7 +2323,7 @@ fn firn_requires_its_password_as_redis_does() {
     client.write_all(&batch).expect("send the locked batch");
     expect_replies(
         &mut client,
-        b"-NOAUTH Authentication required.\r\n-ERR unknown command 'NOPE', with args beginning with: 'a' \r\n-ERR wrong number of arguments for 'get' command\r\n-ERR wrong number of arguments for 'config|get' command\r\n-NOAUTH Authentication required.\r\n-ERR unknown subcommand 'FOO'. Try CLIENT HELP.\r\n-ERR unknown subcommand 'NOPE'. Try FUNCTION HELP.\r\n-NOAUTH Authentication required.\r\n-NOAUTH HELLO must be called with the client already authenticated, otherwise the HELLO AUTH <user> <pass> option can be used to authenticate the client and select the RESP protocol version at the same time\r\n-WRONGPASS invalid username-password pair or user is disabled.\r\n-WRONGPASS invalid username-password pair or user is disabled.\r\n-WRONGPASS invalid username-password pair or user is disabled.\r\n-WRONGPASS invalid username-password pair or user is disabled.\r\n-NOAUTH Authentication required.\r\n+OK\r\n+PONG\r\n-WRONGPASS invalid username-password pair or user is disabled.\r\n+PONG\r\n*2\r\n$11\r\nrequirepass\r\n$6\r\nsecret\r\n:0\r\n",
+        b"-NOAUTH Authentication required.\r\n-ERR unknown command 'NOPE', with args beginning with: 'a' \r\n-ERR wrong number of arguments for 'get' command\r\n-ERR wrong number of arguments for 'config|get' command\r\n-NOAUTH Authentication required.\r\n-ERR unknown subcommand 'FOO'. Try CLIENT HELP.\r\n-ERR unknown subcommand 'NOPE'. Try FUNCTION HELP.\r\n-NOAUTH Authentication required.\r\n-ERR wrong number of arguments for 'debug' command\r\n-NOAUTH Authentication required.\r\n-NOAUTH HELLO must be called with the client already authenticated, otherwise the HELLO AUTH <user> <pass> option can be used to authenticate the client and select the RESP protocol version at the same time\r\n-WRONGPASS invalid username-password pair or user is disabled.\r\n-WRONGPASS invalid username-password pair or user is disabled.\r\n-WRONGPASS invalid username-password pair or user is disabled.\r\n-WRONGPASS invalid username-password pair or user is disabled.\r\n-NOAUTH Authentication required.\r\n+OK\r\n+PONG\r\n-WRONGPASS invalid username-password pair or user is disabled.\r\n+PONG\r\n*2\r\n$11\r\nrequirepass\r\n$6\r\nsecret\r\n:0\r\n",
         "the locked batch",
     );
     drop(client);

@@ -145,6 +145,29 @@ fn run_function(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client:
   return unit;
 }
 
+const word_log: Array<u8, 3> = "LOG";
+
+const text_try_debug: Array<u8, 20> = "'. Try DEBUG HELP.\r\n";
+
+fn run_debug(input: &[u8], args: &Box<Slots<Span>>, client: &Client) -> result: unit reads(input), reads(args), writes(client) {
+  doc "DEBUG LOG message: answers OK, as Redis does with its debug command enabled, as the servers of Redis's own test suite enable it, the subcommand's name read up to a zero byte as Redis's strcasecmp reads it; Redis writes the message to its log, which firn does not keep. LOG without exactly one message and every other subcommand are answered as Redis answers a DEBUG subcommand it does not know, the name echoed to 128 bytes.";
+  let count = args^.inner.len;
+  let sub = arg(args: args, index: 1_u64);
+  let spelled = before_zero(input: input, span: sub);
+  let named = name_is(input: input, start: sub.start, length: spelled, word: &word_log[0_u64..3_u64]);
+  let one_message = count == 3_u64;
+  let logging = band(named, one_message);
+  if logging {
+    reply_ok(client: client);
+    return unit;
+  }
+  reply_word(client: client, word: &text_subcommand_or_arity[0_u64..58_u64]);
+  let shown = imin(sub.length, 128_u64);
+  let echoed = reply_echoed(client: client, input: input, span: sub, limit: shown);
+  reply_word(client: client, word: &text_try_debug[0_u64..20_u64]);
+  return unit;
+}
+
 fn parameter_start(which: u64) -> start: u64 pure {
   doc "Where the name of parameter which, counted from 0 in alphabetical order, starts in parameter_names.";
   if which == 0_u64 {

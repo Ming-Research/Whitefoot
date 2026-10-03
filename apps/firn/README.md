@@ -35,7 +35,10 @@ own:
   the reply under either option. `FUNCTION FLUSH`, with `ASYNC` or `SYNC`,
   succeeds as Redis does with no function loaded, firn having none, and is
   appended to the file as Redis appends it; every other `FUNCTION`
-  subcommand is answered as an unknown one.
+  subcommand is answered as an unknown one. `DEBUG LOG` with a message
+  answers OK, as Redis does with its debug command enabled, firn keeping no
+  log to write it to; every other `DEBUG` subcommand is answered as an
+  unknown one.
 
 `HELLO` reports the server as `redis` version 7.0.15, the version whose
 replies firn follows.
