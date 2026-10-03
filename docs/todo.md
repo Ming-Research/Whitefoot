@@ -3132,13 +3132,14 @@ condition under which it is taken up.
   30. So firn stalls in its start, and the harness's connection must have
   reached some other socket on the port meanwhile, which a port
   `free_port` released allows and the fixed ports above should have ruled
-  out. The branch's longer group seems more exposed: run alternately with
-  `51bc58e13`'s, 3 of its 5 runs at `abcb3127d` failed this way, once with
-  the server never listening, against none of the base's 5; yet 8 runs
-  later, with a monitor that reported any program left more than 1.5
-  seconds without a socket, neither failed nor showed one. The change: keep
-  that report in the harness for a case that panics, and find what stalls
-  firn's start there. Reopen
+  out. Run alternately with `51bc58e13`'s group, the branch's longer one
+  failed this way in 3 of 5 runs at `abcb3127d`, once with the server never
+  listening, against none of the base's 5, and in 1 of 4 at `474bb9da3`,
+  against 1 of the base's 4, two cases at once; 8 runs at `abcb3127d` with a
+  monitor that reported any program left more than 1.5 seconds without a
+  socket neither failed nor showed one. The change: keep that report in the
+  harness for a case that panics, and find what stalls firn's start there.
+  Reopen
   when a hosted run of the corpus fails this way, or before the corpus gates
   on a large host.
 - **firn's replay case allows the restart two seconds, which a loaded host
@@ -3371,14 +3372,16 @@ condition under which it is taken up.
   the keyspace's `meta` only on that branch. Reopen with the next change to
   those commands.
 - **firn writes a removal and the command that made it as two records
-  where Redis wraps them in `MULTI` and `EXEC`.** When one command
-  propagates more than one record, a key it found expired and the command
-  itself, or several expired keys, Redis 7.0.15 brackets them in `MULTI`
-  and `EXEC`; firn has no transactions to replay, so it writes the records
-  alone, which replays to the same state. Nor does firn, with one database,
-  write the `SELECT 0` Redis writes before its first record.
+  where Redis wraps them in `MULTI` and `EXEC`, and no `SELECT 0`.** When
+  one command propagates more than one record, a key it found expired and
+  the command itself, or several expired keys, Redis 7.0.15 brackets them
+  in `MULTI` and `EXEC`; firn has no transactions to replay, so it writes
+  the records alone, which replays to the same state. Nor does firn, with
+  one database, write the `SELECT 0` Redis writes before its first record.
   `firn_records_its_writes_as_redis_propagates_them` compares firn's file
-  with Redis's but for both. Reopen when firn answers `MULTI` and `EXEC`.
+  with Redis's but for both. The change: write each where Redis does. Reopen
+  when firn answers `MULTI` and `EXEC`, or `SELECT` with more than one
+  database.
 - **`DEL`, `UNLINK`, `EXISTS`, `TOUCH` and `MSET` record the keys they find
   expired in byte order.** Redis 7.0.15 looks the keys up, and propagates
   each expired one's removal, in the order the command names them; these
@@ -3394,13 +3397,15 @@ condition under which it is taken up.
   queued expiry equal to the time in the queue, so that the expiring context
   keeps the key through that millisecond, as Redis's
   `activeExpireCycleTryExpire` does (`now > t`). Were it to take the key,
-  only a command reading the clock in that millisecond after the context's
-  tick would find it absent, and no case can make a command's reading fall
-  there, since the context ticks when the program chooses; nor does the
-  file show it, recording the removal as `DEL` whichever context makes it.
-  The change: none is known short of a way for a case to run the expiring
-  context at a time it names. Reopen when the runtime or firn gives one, or
-  when `take_due` changes.
+  only a command whose reading of the clock falls in that millisecond and
+  that runs after the context's tick would find it absent, and no case can
+  place a command there, since the context ticks when the program chooses;
+  nor does the file show it, recording the removal as `DEL` whichever
+  context makes it. The change: a check entry in firn's module graph that
+  queues an expiry and calls `expire_batch` with `now` equal to it, which
+  `compile_app` can build as a second entry, as module graphs with two
+  entries do (`research/investigations/modular-compilation/demo/modules.wfg`).
+  Reopen when `take_due` changes, or when firn gains such entries.
 - **firn converts decimals to binary twice, by one algorithm.**
   `apps/firn/scores/decimal.wf` reads a double and
   `apps/firn/extended/extended.wf` a long double by the same Simple Decimal

@@ -1558,7 +1558,10 @@ fn firn_replays_its_append_only_file_after_a_restart_on_both_routes() {
 /// both in milliseconds, a `PEXPIREAT` its LT refused not at all, and the
 /// other commands as they were sent. The expected file is redis-server
 /// 7.0.15's for the same requests but for the `SELECT 0` it writes first and
-/// the `MULTI` and `EXEC` it brackets one command's records in.
+/// the `MULTI` and `EXEC` it brackets one command's records in. The expiring
+/// context, which records the same `DEL` when it removes an expired key
+/// first, could change the file only by removing `zz` or `aa` between their
+/// `SET` and `MSETNX`, a window of microseconds.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_records_its_writes_as_redis_propagates_them() {
