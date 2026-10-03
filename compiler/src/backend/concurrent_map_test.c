@@ -1910,6 +1910,11 @@ static void holds_give_back_counted(void) {
  * entries exactly. */
 enum { ACCOUNTS = 48, TRANSFERS = 4000 };
 static _Atomic uint64_t set_wholes, set_holds;
+/* The audit's checks, which the movers go on transferring past their quota
+ * to wait for, so that the audit holds the accounts every way while
+ * transfers run even where its thread takes turns with five others on three
+ * CPUs, as a hosted macOS runner's did. */
+static _Atomic uint64_t audits;
 
 typedef struct {
     wf_cmap *map;
@@ -1926,7 +1931,7 @@ static void *move_between(void *arg) {
     unsigned char bytes[SET_KEYS][16];
     wf_cmap_holding hold;
     uint64_t state = mix64(m->index + 7);
-    for (uint64_t i = 0; i < statements; i++) {
+    for (uint64_t i = 0; i < statements || atomic_load(&audits) < 3; i++) {
         unsigned count = 2 + (unsigned)(next(&state) % (SET_KEYS - 1));
         wf_cmap_hold_begin(&hold, m->map);
         for (unsigned j = 0; j < count; j++)
@@ -2003,6 +2008,7 @@ static void *audit_accounts(void *arg) {
         if (sum != total)
             fail("an audit saw a statement half done (sum, total)", sum, total);
         m->checks++;
+        atomic_fetch_add(&audits, 1);
     }
     return NULL;
 }
@@ -2016,6 +2022,7 @@ static void holds_move_amounts(uint64_t capacity, uint64_t patient) {
     statements = patient == 0 ? TRANSFERS / 4 : TRANSFERS;
     atomic_store(&set_wholes, 0);
     atomic_store(&set_holds, 0);
+    atomic_store(&audits, 0);
     _Atomic uint64_t total = 0;
     _Atomic int stop = 0;
     pthread_t t[MOVERS + COUNTERS + 1];
