@@ -43,26 +43,26 @@ fn due_order(env: &KeyEnv, left: &Due, right: &Due) -> order: i32 reads(left), r
 
 fn keyspace_new(seed: u64, logging: Bool) -> made: Keyspace pure {
   doc "An empty keyspace sized for 2^18 keys, appending changes to the append-only file's pending bytes when logging is true, whose SPOP draws start from the seed. The size spares a benchmark's 2^17 keys the table's moves into memory the host has not yet given the process.";
-  let map = shared_map_new::<Entry>(capacity: 262144_u64);
+  let map = keyed_table_new::<Entry>(capacity: 262144_u64);
   let due = priority_queue_new::<Due, ceiling>();
   let log = box_slots_new::<u8>(capacity: 65536_u64);
   let running = False();
   let meta = Meta(due: move due, log: move log, clients: 0_u64, stopping: running, random: seed);
-  let shared = shared_new::<Meta>(value: move meta);
-  return Keyspace(map: move map, meta: move shared, logging: logging);
+  let state = KeyspaceState(map: move map, meta: move meta);
+  let shared = shared_new::<KeyspaceState>(value: move state);
+  return Keyspace(state: move shared, logging: logging);
 }
 
 fn keyspace_share(store: &Keyspace) -> made: Keyspace reads(store) {
-  doc "Another context's handles to the same keyspace.";
+  doc "Another context's handle to the same keyspace.";
   let made = keyspace_logging(store: store, logging: store^.logging);
   return move made;
 }
 
 fn keyspace_logging(store: &Keyspace, logging: Bool) -> made: Keyspace reads(store) {
-  doc "Handles to the same keyspace that append changes to the append-only file's pending bytes when logging is true.";
-  let map = shared_map_share::<Entry>(shared: &store^.map);
-  let meta = shared_share::<Meta>(shared: &store^.meta);
-  return Keyspace(map: move map, meta: move meta, logging: logging);
+  doc "A handle to the same keyspace that appends changes to the append-only file's pending bytes when logging is true.";
+  let shared = shared_share::<KeyspaceState>(shared: &store^.state);
+  return Keyspace(state: move shared, logging: logging);
 }
 
 fn expired(expires: u64, now: u64) -> reached: Bool pure {
@@ -105,7 +105,7 @@ fn take_due(meta: &Meta, now: u64, env: &KeyEnv, batch: &Box<Slots<Due>>) -> mor
 
 fn expire_key(store: &Keyspace, key: &[u8], at: u64) -> result: unit reads(store), reads(key) waits {
   doc "Removes the key when its expiry is still the one queued at at.";
-  atomic slot = &store^.map[key] {
+  atomic s = &store^.state, slot = &s^.map[key] {
     let matched = False();
     match slot^ {
       Some(value: held) => {
@@ -125,7 +125,7 @@ fn expire_key(store: &Keyspace, key: &[u8], at: u64) -> result: unit reads(store
 
 fn remove_expired(store: &Keyspace, key: &[u8], now: u64) -> result: unit reads(store), reads(key) waits {
   doc "Removes the key when its expiry has been reached at now, for a command that found it expired in a statement that only read it; a key set again since keeps its value.";
-  atomic slot = &store^.map[key] {
+  atomic s = &store^.state, slot = &s^.map[key] {
     let lapsed = False();
     match slot^ {
       Some(value: held) => {
@@ -144,8 +144,8 @@ fn remove_expired(store: &Keyspace, key: &[u8], now: u64) -> result: unit reads(
 fn expire_batch(store: &Keyspace, now: u64, env: &KeyEnv, batch: &Box<Slots<Due>>) -> more: Bool reads(store), reads(env), writes(batch) waits {
   doc "Takes up to 256 queued expiries that have been reached, the earliest first, in one atomic statement, then removes each key whose expiry is still the one queued in a statement on that key, and returns whether more may be due. A queued expiry that no longer matches its key's, because the key was set, given another expiry or removed since, is dropped.";
   let more = False();
-  atomic meta = &store^.meta {
-    set more = take_due(meta: &meta^, now: now, env: env, batch: batch);
+  atomic s = &store^.state {
+    set more = take_due(meta: &s^.meta, now: now, env: env, batch: batch);
   }
   loop @keys {
     if batch^.inner.len == 0_u64 {

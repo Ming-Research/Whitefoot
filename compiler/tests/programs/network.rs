@@ -1607,6 +1607,49 @@ fn firn_keeps_strings_at_and_past_the_inline_length_apart() {
     assert_eq!(status, 0);
 }
 
+/// [SHARE-1, SHARE-2] firn answers `DEL`, `EXISTS` and `MSET` naming a key
+/// more than once as Redis does, each holding its keys' entries through a key
+/// set, which keeps one element per key: `DEL` removes and counts such a key
+/// once, `EXISTS` counts a live key once for each time it is named and an
+/// absent one not at all, and `MSET` keeps the last value named for a key. The
+/// expected replies are redis-server 7.0.15's to the same requests.
+#[cfg(target_os = "linux")]
+#[test]
+fn firn_answers_commands_naming_a_key_twice_as_redis_does() {
+    let program = firn();
+    let port = free_port();
+    let text = port.to_string();
+    let child = program.spawn_on_route(true, &[text.as_bytes(), b"1"]);
+    let mut client = connect_when_ready(port);
+    client
+        .set_read_timeout(Some(Duration::from_secs(20)))
+        .expect("bound the client's waits");
+    let mut batch = Vec::new();
+    for request in [
+        vec!["SET", "a", "1"],
+        vec!["SET", "b", "2"],
+        vec!["SET", "c", "3"],
+        vec!["EXISTS", "c", "a", "c", "absent", "c"],
+        vec!["DEL", "a", "a", "absent", "b"],
+        vec!["EXISTS", "a", "b", "a"],
+        vec!["MSET", "k", "1", "j", "2", "k", "3", "j", "4", "k", "5"],
+        vec!["GET", "k"],
+        vec!["GET", "j"],
+        vec!["DBSIZE"],
+    ] {
+        batch.extend(resp(&request));
+    }
+    client.write_all(&batch).expect("send the batch");
+    expect_replies(
+        &mut client,
+        b"+OK\r\n+OK\r\n+OK\r\n:4\r\n:2\r\n:0\r\n+OK\r\n$1\r\n5\r\n$1\r\n4\r\n:3\r\n",
+        "the commands naming a key twice",
+    );
+    drop(client);
+    let (status, _) = finished(child);
+    assert_eq!(status, 0);
+}
+
 /// firn answers `CONFIG` with too few arguments, an unpaired option or
 /// several parameters, and echoes client bytes in its errors, as Redis does:
 /// a zero byte ends an echoed name or argument, carriage return and line feed

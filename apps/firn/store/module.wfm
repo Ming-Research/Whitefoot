@@ -43,7 +43,7 @@ public struct Due {
 }
 
 public struct Meta {
-  doc "What the keyspace keeps beside its keys, which every client reaches through atomic statements on one object: the queued expiries, the append-only file's pending bytes, the clients connected, whether the server is stopping, and the state SPOP draws from.";
+  doc "What the keyspace keeps beside its keys: the queued expiries, the append-only file's pending bytes, the clients connected, whether the server is stopping, and the state SPOP draws from.";
   public due: PriorityQueue<Due, ceiling>;
   public log: Box<Slots<u8>>;
   public clients: u64;
@@ -51,10 +51,15 @@ public struct Meta {
   public random: u64;
 }
 
+public struct KeyspaceState {
+  doc "The keyspace every client reaches through atomic statements: its keys, a table whose entries statements on different keys hold without waiting for each other, then what the keyspace keeps beside them, declared after the table so that a statement on a key takes it only where its block reaches it, after the key's entry.";
+  public map: KeyedTable<Entry>;
+  public meta: Meta;
+}
+
 public struct Keyspace {
-  doc "One context's handles to the keyspace: its keys, a shared map whose keyed statements on different keys do not wait for each other, what it keeps beside them, and whether changes are appended to the append-only file's pending bytes, fixed before any client is served.";
-  public map: SharedMap<Entry>;
-  public meta: Shared<Meta>;
+  doc "One context's handle to the keyspace, and whether changes are appended to the append-only file's pending bytes, fixed before any client is served.";
+  public state: Shared<KeyspaceState>;
   public logging: Bool;
 }
 
@@ -80,9 +85,9 @@ public binding DueOrder : PriorityOrder<Due, KeyEnv> {
 
 public fn keyspace_new(seed: u64, logging: Bool) -> made: Keyspace pure doc "An empty keyspace sized for 2^18 keys, appending changes to the append-only file's pending bytes when logging is true, whose SPOP draws start from the seed.";
 
-public fn keyspace_share(store: &Keyspace) -> made: Keyspace reads(store) doc "Another context's handles to the same keyspace.";
+public fn keyspace_share(store: &Keyspace) -> made: Keyspace reads(store) doc "Another context's handle to the same keyspace.";
 
-public fn keyspace_logging(store: &Keyspace, logging: Bool) -> made: Keyspace reads(store) doc "Handles to the same keyspace that append changes to the append-only file's pending bytes when logging is true.";
+public fn keyspace_logging(store: &Keyspace, logging: Bool) -> made: Keyspace reads(store) doc "A handle to the same keyspace that appends changes to the append-only file's pending bytes when logging is true.";
 
 public fn expired(expires: u64, now: u64) -> reached: Bool pure doc "Whether an expiry, zero for none, has been reached at now.";
 

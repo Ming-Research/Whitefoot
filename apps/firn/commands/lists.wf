@@ -142,7 +142,7 @@ fn run_push(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   if front {
     set client^.low = 0_i64;
   }
-  atomic slot = &store^.map[key] {
+  atomic s = &store^.state, slot = &s^.map[key] {
     match slot^ {
       Some(value: held) => {
         let edited = push_items(env: client, value: held);
@@ -170,9 +170,7 @@ fn run_push(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
     }
     if client^.state == state_done {
       if store^.logging {
-        atomic meta = &store^.meta {
-          log_command(log: &meta^.log, input: input, args: args);
-        }
+        log_command(log: &s^.meta.log, input: input, args: args);
       }
     }
   }
@@ -278,7 +276,7 @@ fn run_pop(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   if counted {
     set client^.high = 1_i64;
   }
-  atomic slot = &store^.map[key] {
+  atomic s = &store^.state, slot = &s^.map[key] {
     match slot^ {
       Some(value: held) => {
         let edited = pop_items(env: client, value: held);
@@ -296,9 +294,7 @@ fn run_pop(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
     let changed = bor(done, emptied);
     if changed {
       if store^.logging {
-        atomic meta = &store^.meta {
-          log_command(log: &meta^.log, input: input, args: args);
-        }
+        log_command(log: &s^.meta.log, input: input, args: args);
       }
     }
   }
@@ -405,7 +401,7 @@ fn run_lrange(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
   set client^.state = state_absent;
   set client^.low = start.value;
   set client^.high = stop.value;
-  atomic slot = &store^.map[key] {
+  atomic s = &store^.state, slot = &s^.map[key] {
     match slot^ {
       Some(value: held) => {
         let found = range_items(env: client, value: held);
@@ -467,7 +463,7 @@ fn run_llen(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   set client^.now = time^.check;
   set client^.state = state_absent;
   set client^.number = 0_u64;
-  atomic slot = &store^.map[key] {
+  atomic s = &store^.state, slot = &s^.map[key] {
     match slot^ {
       Some(value: held) => {
         let found = list_length(env: client, value: held);
