@@ -1,0 +1,2214 @@
+unit	outcome	cause	detail	test
+unit/printver	block-error	unknown-command	info	-
+unit/dump	errored	unknown-command	dump	DUMP / RESTORE are able to serialize / unserialize a simple key
+unit/dump	errored	unknown-command	dump	RESTORE can set an arbitrary expire to the materialized key
+unit/dump	errored	unknown-command	dump	RESTORE can set an expire that overflows a 32 bit integer
+unit/dump	errored	unknown-command	dump	RESTORE can set an absolute expire
+unit/dump	errored	unknown-command	dump	RESTORE with ABSTTL in the past
+unit/dump	errored	unknown-command	dump	RESTORE can set LRU
+unit/dump	errored	unknown-command	dump	RESTORE can set LFU
+unit/dump	failed	unknown-command	restore	RESTORE returns an error of the key already exists
+unit/dump	errored	unknown-command	dump	RESTORE can overwrite an existing key with REPLACE
+unit/dump	failed	unknown-command	restore	RESTORE can detect a syntax error for unrecongized options
+unit/dump	errored	unknown-command	dump	DUMP of non existing key returns nil
+unit/dump	skipped		Not supported on external server	MIGRATE is caching connections
+unit/dump	errored	unknown-command	info	MIGRATE cached connections are released after some time
+unit/dump	skipped		Not supported on external server	MIGRATE is able to migrate a key between two instances
+unit/dump	skipped		Not supported on external server	MIGRATE is able to copy a key between two instances
+unit/dump	skipped		Not supported on external server	MIGRATE will not overwrite existing keys, unless REPLACE is used
+unit/dump	skipped		Not supported on external server	MIGRATE propagates TTL correctly
+unit/dump	skipped		Not supported on external server	MIGRATE can correctly transfer large values
+unit/dump	skipped		Not supported on external server	MIGRATE can correctly transfer hashes
+unit/dump	skipped		Not supported on external server	MIGRATE timeout actually works
+unit/dump	skipped		Not supported on external server	MIGRATE can migrate multiple keys at once
+unit/dump	skipped		Not supported on external server	MIGRATE with multiple keys must have empty key arg
+unit/dump	skipped		Not supported on external server	MIGRATE with multiple keys migrate just existing ones
+unit/dump	skipped		Not supported on external server	MIGRATE with multiple keys: stress command rewriting
+unit/dump	skipped		Not supported on external server	MIGRATE with multiple keys: delete just ack keys
+unit/dump	skipped		Not supported on external server	MIGRATE AUTH: correct and wrong password cases
+unit/auth	skipped-block		Not supported on external server	-
+unit/auth	skipped-block		Not supported on external server	-
+unit/auth	skipped-block		Not supported on external server	-
+unit/protocol	passed			Handle an empty query
+unit/protocol	passed			Negative multibulk length
+unit/protocol	passed			Out of range multibulk length
+unit/protocol	passed			Wrong multibulk payload header
+unit/protocol	passed			Negative multibulk payload length
+unit/protocol	passed			Out of range multibulk payload length
+unit/protocol	passed			Non-number multibulk payload length
+unit/protocol	passed			Multi bulk request not followed by bulk arguments
+unit/protocol	passed			Generic wrong number of args
+unit/protocol	failed	wrong-reply	Expected an error matching '*unbalanced*' but got 'OK' (context: type eval line 6 cmd {assert_error "*unbalanced*" {r...	Unbalanced number of quotes
+unit/protocol	passed			Protocol desync regression test #1
+unit/protocol	passed			Protocol desync regression test #2
+unit/protocol	passed			Protocol desync regression test #3
+unit/protocol	failed	unknown-command	srandmember	raw protocol response
+unit/protocol	failed	unknown-command	srandmember	raw protocol response - deferred
+unit/protocol	failed	unknown-command	srandmember	raw protocol response - multiline
+unit/protocol	errored	unknown-command	hello	RESP3 attributes
+unit/protocol	errored	unknown-command	hello	RESP3 attributes readraw
+unit/protocol	errored	unknown-command	hello	RESP3 attributes on RESP2
+unit/protocol	errored	unknown-command	hello	test big number parsing
+unit/protocol	errored	unknown-command	hello	test bool parsing
+unit/protocol	errored	unknown-command	hello	test verbatim str parsing
+unit/protocol	errored	unknown-command	flushdb	test large number of args
+unit/protocol	errored	unknown-command	flushdb	test argument rewriting - issue 9598
+unit/protocol	passed			Regression for a crash with blocking ops and pipelining
+unit/keyspace	passed			DEL against a single item
+unit/keyspace	errored	unknown-command	mget	Vararg DEL
+unit/keyspace	errored	unknown-command	mget	Untagged multi-key commands
+unit/keyspace	errored	unknown-command	keys	KEYS with pattern
+unit/keyspace	errored	unknown-command	keys	KEYS to get all keys
+unit/keyspace	failed	wrong-reply	Expected '6' to equal or match '9'	DBSIZE
+unit/keyspace	errored	unknown-command	keys	DEL all keys
+unit/keyspace	errored	unknown-command	debug	DEL against expired key
+unit/keyspace	passed			EXISTS
+unit/keyspace	passed			Zero length value in key. SET/GET/EXISTS
+unit/keyspace	passed			Commands pipelining
+unit/keyspace	passed			Non existing command
+unit/keyspace	errored	unknown-command	rename	RENAME basic usage
+unit/keyspace	passed			RENAME source key should no longer exist
+unit/keyspace	errored	unknown-command	rename	RENAME against already existing key
+unit/keyspace	errored	unknown-command	renamenx	RENAMENX basic usage
+unit/keyspace	errored	unknown-command	renamenx	RENAMENX against already existing key
+unit/keyspace	passed			RENAMENX against already existing key (2)
+unit/keyspace	passed			RENAME against non existing source key
+unit/keyspace	errored	unknown-command	rename	RENAME where source and dest key are the same (existing)
+unit/keyspace	errored	unknown-command	renamenx	RENAMENX where source and dest key are the same (existing)
+unit/keyspace	passed			RENAME where source and dest key are the same (non existing)
+unit/keyspace	errored	unknown-command	rename	RENAME with volatile key, should move the TTL as well
+unit/keyspace	errored	unknown-command	rename	RENAME with volatile key, should not inherit TTL of target key
+unit/keyspace	errored	unknown-command	keys	DEL all keys again (DB 0)
+unit/keyspace	skipped		Not supported on singledb	DEL all keys again (DB 1)
+unit/keyspace	errored	unknown-command	copy	COPY basic usage for string
+unit/keyspace	skipped		Not supported on singledb	COPY for string does not replace an existing key without REPLACE option
+unit/keyspace	skipped		Not supported on singledb	COPY for string can replace an existing key with REPLACE option
+unit/keyspace	skipped		Not supported on singledb	COPY for string ensures that copied data is independent of copying data
+unit/keyspace	failed	unknown-command	copy	COPY for string does not copy data to no-integer DB
+unit/keyspace	errored	unknown-command	copy	COPY can copy key expire metadata as well
+unit/keyspace	errored	unknown-command	copy	COPY does not create an expire if it does not exist
+unit/keyspace	errored	unknown-command	copy	COPY basic usage for list
+unit/keyspace	errored	unknown-command	copy	COPY basic usage for intset set
+unit/keyspace	errored	unknown-command	copy	COPY basic usage for hashtable set
+unit/keyspace	errored	unknown-command	copy	COPY basic usage for listpack sorted set
+unit/keyspace	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'zset-max-ziplist-entries'	COPY basic usage for skiplist sorted set
+unit/keyspace	errored	unknown-command	copy	COPY basic usage for listpack hash
+unit/keyspace	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'hash-max-ziplist-entries'	COPY basic usage for hashtable hash
+unit/keyspace	errored	unknown-command	xadd	COPY basic usage for stream
+unit/keyspace	errored	unknown-command	xadd	COPY basic usage for stream-cgroups
+unit/keyspace	skipped		Not supported on singledb	MOVE basic usage
+unit/keyspace	skipped		Not supported on singledb	MOVE against key existing in the target DB
+unit/keyspace	skipped		Not supported on singledb	MOVE against non-integer DB (#1428)
+unit/keyspace	skipped		Not supported on singledb	MOVE can move key expire metadata as well
+unit/keyspace	skipped		Not supported on singledb	MOVE does not create an expire if it does not exist
+unit/keyspace	skipped		Not supported on singledb	SET/GET keys in different DBs
+unit/keyspace	errored	unknown-command	flushdb	RANDOMKEY
+unit/keyspace	errored	unknown-command	flushdb	RANDOMKEY against empty DB
+unit/keyspace	errored	unknown-command	flushdb	RANDOMKEY regression 1
+unit/keyspace	errored	unknown-command	flushdb	KEYS * two times with long key, Github issue #1208
+unit/keyspace	errored	unknown-command	flushdb	Regression for pattern matching long nested loops
+unit/scan	errored	unknown-command	flushdb	SCAN basic
+unit/scan	errored	unknown-command	flushdb	SCAN COUNT
+unit/scan	errored	unknown-command	flushdb	SCAN MATCH
+unit/scan	errored	unknown-command	flushdb	SCAN TYPE
+unit/scan	errored	unknown-command	sscan	SSCAN with encoding intset
+unit/scan	errored	unknown-command	sscan	SSCAN with encoding hashtable
+unit/scan	errored	unknown-command	hmset	HSCAN with encoding listpack
+unit/scan	errored	unknown-command	hmset	HSCAN with encoding hashtable
+unit/scan	errored	unknown-command	zscan	ZSCAN with encoding listpack
+unit/scan	errored	unknown-command	zscan	ZSCAN with encoding skiplist
+unit/scan	errored	unknown-command	flushdb	SCAN guarantees check under write load
+unit/scan	errored	unknown-command	sscan	SSCAN with integer encoded object (issue #1345)
+unit/scan	errored	unknown-command	sscan	SSCAN with PATTERN
+unit/scan	errored	unknown-command	hmset	HSCAN with PATTERN
+unit/scan	errored	unknown-command	zscan	ZSCAN with PATTERN
+unit/scan	errored	error-reply	ERR firn stores only integer scores below 2^52 in magnitude	ZSCAN scores: regression test for issue #2175
+unit/scan	errored	unknown-command	sscan	SCAN regression test for issue #4906
+unit/info	skipped-block		Not supported on external server	-
+unit/info-command	errored	unknown-command	info	info command with at most one sub command
+unit/info-command	errored	unknown-command	info	info command with one sub-section
+unit/info-command	errored	unknown-command	info	info command with multiple sub-sections
+unit/type/string	passed			SET and GET an item
+unit/type/string	passed			SET and GET an empty item
+unit/type/string	passed			Very big payload in GET/SET
+unit/type/string	passed			Very big payload random access
+unit/type/string	errored	unknown-command	flushdb	SET 10000 numeric keys and access all them in reverse order
+unit/type/string	failed	wrong-reply	Expected '10000' to equal or match '102'	DBSIZE should be 10000 now
+unit/type/string	errored	unknown-command	setnx	SETNX target key missing
+unit/type/string	errored	unknown-command	setnx	SETNX target key exists
+unit/type/string	errored	unknown-command	setnx	SETNX against not-expired volatile key
+unit/type/string	errored	unknown-command	setex	SETNX against expired volatile key
+unit/type/string	errored	unknown-command	getex	GETEX EX option
+unit/type/string	errored	unknown-command	getex	GETEX PX option
+unit/type/string	errored	unknown-command	getex	GETEX EXAT option
+unit/type/string	errored	unknown-command	getex	GETEX PXAT option
+unit/type/string	errored	unknown-command	getex	GETEX PERSIST option
+unit/type/string	errored	unknown-command	getex	GETEX no option
+unit/type/string	failed	unknown-command	getex	GETEX syntax errors
+unit/type/string	failed	unknown-command	getex	GETEX no arguments
+unit/type/string	errored	unknown-command	getdel	GETDEL command
+unit/type/string	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'repl-ping-replica-period'	GETDEL propagate as DEL command to replica
+unit/type/string	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'repl-ping-replica-period'	GETEX without argument does not propagate to replica
+unit/type/string	errored	unknown-command	flushdb	MGET
+unit/type/string	errored	unknown-command	mget	MGET against non existing key
+unit/type/string	errored	unknown-command	mget	MGET against non-string key
+unit/type/string	errored	unknown-command	getset	GETSET (set new value)
+unit/type/string	errored	unknown-command	getset	GETSET (replace old value)
+unit/type/string	errored	unknown-command	mget	MSET base case
+unit/type/string	failed	unknown-command	msetnx	MSET/MSETNX wrong number of args
+unit/type/string	errored	unknown-command	msetnx	MSETNX with already existent key
+unit/type/string	errored	unknown-command	msetnx	MSETNX with not existing keys
+unit/type/string	errored	unknown-command	msetnx	MSETNX with not existing keys - same key twice
+unit/type/string	errored	unknown-command	msetnx	MSETNX with already existing keys - same key twice
+unit/type/string	errored	unknown-command	strlen	STRLEN against non-existing key
+unit/type/string	errored	unknown-command	strlen	STRLEN against integer-encoded value
+unit/type/string	errored	unknown-command	strlen	STRLEN against plain string
+unit/type/string	errored	unknown-command	setbit	SETBIT against non-existing key
+unit/type/string	errored	unknown-command	setbit	SETBIT against string-encoded key
+unit/type/string	errored	unknown-command	setbit	SETBIT against integer-encoded key
+unit/type/string	failed	unknown-command	setbit	SETBIT against key with wrong type
+unit/type/string	failed	unknown-command	setbit	SETBIT with out of range bit offset
+unit/type/string	failed	unknown-command	setbit	SETBIT with non-bit argument
+unit/type/string	errored	unknown-command	setbit	SETBIT fuzzing
+unit/type/string	errored	unknown-command	getbit	GETBIT against non-existing key
+unit/type/string	errored	unknown-command	getbit	GETBIT against string-encoded key
+unit/type/string	errored	unknown-command	getbit	GETBIT against integer-encoded key
+unit/type/string	errored	unknown-command	setrange	SETRANGE against non-existing key
+unit/type/string	errored	unknown-command	setrange	SETRANGE against string-encoded key
+unit/type/string	errored	unknown-command	setrange	SETRANGE against integer-encoded key
+unit/type/string	failed	unknown-command	setrange	SETRANGE against key with wrong type
+unit/type/string	failed	unknown-command	setrange	SETRANGE with out of range offset
+unit/type/string	errored	unknown-command	getrange	GETRANGE against non-existing key
+unit/type/string	errored	unknown-command	getrange	GETRANGE against string value
+unit/type/string	errored	unknown-command	getrange	GETRANGE against integer-encoded value
+unit/type/string	errored	unknown-command	getrange	GETRANGE fuzzing
+unit/type/string	block-error	unknown-command	info	-
+unit/type/string	not-reached			trim on SET with big value
+unit/type/string	not-reached			Extended SET can detect syntax errors
+unit/type/string	not-reached			Extended SET NX option
+unit/type/string	not-reached			Extended SET XX option
+unit/type/string	not-reached			Extended SET GET option
+unit/type/string	not-reached			Extended SET GET option with no previous value
+unit/type/string	not-reached			Extended SET GET option with XX
+unit/type/string	not-reached			Extended SET GET option with XX and no previous value
+unit/type/string	not-reached			Extended SET GET option with NX
+unit/type/string	not-reached			Extended SET GET option with NX and previous value
+unit/type/string	not-reached			Extended SET GET with incorrect type should result in wrong type error
+unit/type/string	not-reached			Extended SET EX option
+unit/type/string	not-reached			Extended SET PX option
+unit/type/string	not-reached			Extended SET EXAT option
+unit/type/string	not-reached			Extended SET PXAT option
+unit/type/string	not-reached			Extended SET using multiple options at once
+unit/type/string	not-reached			GETRANGE with huge ranges, Github issue #1844
+unit/type/string	not-reached			LCS basic
+unit/type/string	not-reached			LCS len
+unit/type/string	not-reached			LCS indexes
+unit/type/string	not-reached			LCS indexes with match len
+unit/type/string	not-reached			LCS indexes with match len and minimum match len
+unit/type/string	not-reached			SETRANGE with huge offset
+unit/type/incr	passed			INCR against non existing key
+unit/type/incr	passed			INCR against key created by incr itself
+unit/type/incr	passed			INCR against key originally set with SET
+unit/type/incr	passed			INCR over 32bit value
+unit/type/incr	errored	unknown-command	incrby	INCRBY over 32bit value with over 32bit increment
+unit/type/incr	passed			INCR fails against key with spaces (left)
+unit/type/incr	passed			INCR fails against key with spaces (right)
+unit/type/incr	passed			INCR fails against key with spaces (both)
+unit/type/incr	passed			DECRBY negation overflow
+unit/type/incr	passed			INCR fails against a key holding a list
+unit/type/incr	errored	unknown-command	decrby	DECRBY over 32bit value with over 32bit increment, negative res
+unit/type/incr	errored	unknown-command	object	INCR uses shared objects in the 0-9999 range
+unit/type/incr	errored	unknown-command	object	INCR can modify objects in-place
+unit/type/incr	errored	unknown-command	incrbyfloat	INCRBYFLOAT against non existing key
+unit/type/incr	errored	unknown-command	incrbyfloat	INCRBYFLOAT against key originally set with SET
+unit/type/incr	errored	unknown-command	incrbyfloat	INCRBYFLOAT over 32bit value
+unit/type/incr	errored	unknown-command	incrbyfloat	INCRBYFLOAT over 32bit value with over 32bit increment
+unit/type/incr	failed	unknown-command	incrbyfloat	INCRBYFLOAT fails against key with spaces (left)
+unit/type/incr	failed	unknown-command	incrbyfloat	INCRBYFLOAT fails against key with spaces (right)
+unit/type/incr	failed	unknown-command	incrbyfloat	INCRBYFLOAT fails against key with spaces (both)
+unit/type/incr	failed	unknown-command	incrbyfloat	INCRBYFLOAT fails against a key holding a list
+unit/type/incr	failed	unknown-command	incrbyfloat	INCRBYFLOAT does not allow NaN or Infinity
+unit/type/incr	errored	unknown-command	incrbyfloat	INCRBYFLOAT decrement
+unit/type/incr	errored	unknown-command	setrange	string to double with null terminator
+unit/type/incr	errored	unknown-command	incrbyfloat	No negative zero
+unit/type/list	block-error	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'list-compress-depth'	-
+unit/type/list	errored	unknown-command	flushdb	Test LPUSH and LPOP on plain nodes
+unit/type/list	errored	unknown-command	flushdb	Test LINDEX and LINSERT on plain nodes
+unit/type/list	errored	unknown-command	flushdb	Test LTRIM on plain nodes
+unit/type/list	errored	unknown-command	flushdb	Test LREM on plain nodes
+unit/type/list	errored	unknown-command	flushdb	Test LPOS on plain nodes
+unit/type/list	errored	unknown-command	flushdb	Test LMOVE on plain nodes
+unit/type/list	errored	unknown-command	debug	Test LSET with packed / plain combinations
+unit/type/list	errored	unknown-command	flushdb	Test LSET with packed is split in the middle
+unit/type/list	errored	unknown-command	flushdb	Test LSET with packed consist only one item
+unit/type/list	errored	unknown-command	flushdb	Crash due to delete entry from a compress quicklist node
+unit/type/list	errored	unknown-command	flushdb	Crash due to split quicklist node wrongly
+unit/type/list	errored	unknown-command	lpos	LPOS basic usage
+unit/type/list	errored	unknown-command	lpos	LPOS RANK (positive, negative and zero rank) option
+unit/type/list	errored	unknown-command	lpos	LPOS COUNT option
+unit/type/list	errored	unknown-command	lpos	LPOS COUNT + RANK option
+unit/type/list	errored	unknown-command	lpos	LPOS non existing key
+unit/type/list	errored	unknown-command	lpos	LPOS no match
+unit/type/list	errored	unknown-command	lpos	LPOS MAXLEN
+unit/type/list	errored	unknown-command	lpos	LPOS when RANK is greater than matches
+unit/type/list	errored	unknown-command	lindex	LPUSH, RPUSH, LLENGTH, LINDEX, LPOP - ziplist
+unit/type/list	errored	unknown-command	lindex	LPUSH, RPUSH, LLENGTH, LINDEX, LPOP - regular list
+unit/type/list	passed			LPOP/RPOP with wrong number of arguments
+unit/type/list	passed			RPOP/LPOP with the optional count argument
+unit/type/list	block-error	unknown-command	hello	-
+unit/type/list	not-reached			reg node check compression with insert and pop
+unit/type/list	not-reached			reg node check compression combined with trim
+unit/type/list	not-reached			reg node check compression with lset
+unit/type/list	not-reached			plain node check compression
+unit/type/list	not-reached			plain node check compression with ltrim
+unit/type/list	not-reached			plain node check compression using lset
+unit/type/list	not-reached			Test LPUSH and LPOP on plain nodes over 4GB
+unit/type/list	not-reached			Test LINDEX and LINSERT on plain nodes over 4GB
+unit/type/list	not-reached			Test LTRIM on plain nodes over 4GB
+unit/type/list	not-reached			Test LREM on plain nodes over 4GB
+unit/type/list	not-reached			Test LSET on plain nodes over 4GB
+unit/type/list	not-reached			Test LMOVE on plain nodes over 4GB
+unit/type/list	not-reached			LPOP/RPOP with the count 0 returns an empty array in RESP3
+unit/type/list	not-reached			LPOP/RPOP against non existing key in RESP3
+unit/type/list	not-reached			LPOP/RPOP with <count> against non existing key in RESP3
+unit/type/list	not-reached			LPOP/RPOP with the count 0 returns an empty array in RESP2
+unit/type/list	not-reached			LPOP/RPOP against non existing key in RESP2
+unit/type/list	not-reached			LPOP/RPOP with <count> against non existing key in RESP2
+unit/type/list	not-reached			Variadic RPUSH/LPUSH
+unit/type/list	not-reached			DEL a list
+unit/type/list	not-reached			BLPOP: single existing list - linkedlist
+unit/type/list	not-reached			BLPOP: multiple existing lists - linkedlist
+unit/type/list	not-reached			BLPOP: second list has an entry - linkedlist
+unit/type/list	not-reached			BLMPOP_LEFT: single existing list - linkedlist
+unit/type/list	not-reached			BLMPOP_LEFT: multiple existing lists - linkedlist
+unit/type/list	not-reached			BLMPOP_LEFT: second list has an entry - linkedlist
+unit/type/list	not-reached			BRPOPLPUSH - linkedlist
+unit/type/list	not-reached			BLMOVE left left - linkedlist
+unit/type/list	not-reached			BLMOVE left right - linkedlist
+unit/type/list	not-reached			BLMOVE right left - linkedlist
+unit/type/list	not-reached			BLMOVE right right - linkedlist
+unit/type/list	not-reached			BLPOP: single existing list - ziplist
+unit/type/list	not-reached			BLPOP: multiple existing lists - ziplist
+unit/type/list	not-reached			BLPOP: second list has an entry - ziplist
+unit/type/list	not-reached			BLMPOP_LEFT: single existing list - ziplist
+unit/type/list	not-reached			BLMPOP_LEFT: multiple existing lists - ziplist
+unit/type/list	not-reached			BLMPOP_LEFT: second list has an entry - ziplist
+unit/type/list	not-reached			BRPOPLPUSH - ziplist
+unit/type/list	not-reached			BLMOVE left left - ziplist
+unit/type/list	not-reached			BLMOVE left right - ziplist
+unit/type/list	not-reached			BLMOVE right left - ziplist
+unit/type/list	not-reached			BLMOVE right right - ziplist
+unit/type/list	not-reached			BLPOP, LPUSH + DEL should not awake blocked client
+unit/type/list	not-reached			BLPOP, LPUSH + DEL + SET should not awake blocked client
+unit/type/list	not-reached			BLMPOP_LEFT, LPUSH + DEL should not awake blocked client
+unit/type/list	not-reached			BLMPOP_LEFT, LPUSH + DEL + SET should not awake blocked client
+unit/type/list	not-reached			BLPOP with same key multiple times should work (issue #801)
+unit/type/list	not-reached			MULTI/EXEC is isolated from the point of view of BLPOP
+unit/type/list	not-reached			BLPOP with variadic LPUSH
+unit/type/list	not-reached			MULTI/EXEC is isolated from the point of view of BLMPOP_LEFT
+unit/type/list	not-reached			BLMPOP_LEFT with variadic LPUSH
+unit/type/list	not-reached			BRPOPLPUSH with zero timeout should block indefinitely
+unit/type/list	not-reached			BLMOVE left left with zero timeout should block indefinitely
+unit/type/list	not-reached			BLMOVE left right with zero timeout should block indefinitely
+unit/type/list	not-reached			BLMOVE right left with zero timeout should block indefinitely
+unit/type/list	not-reached			BLMOVE right right with zero timeout should block indefinitely
+unit/type/list	not-reached			BLMOVE (left, left) with a client BLPOPing the target list
+unit/type/list	not-reached			BLMOVE (left, right) with a client BLPOPing the target list
+unit/type/list	not-reached			BLMOVE (right, left) with a client BLPOPing the target list
+unit/type/list	not-reached			BLMOVE (right, right) with a client BLPOPing the target list
+unit/type/list	not-reached			BRPOPLPUSH with wrong source type
+unit/type/list	not-reached			BRPOPLPUSH with wrong destination type
+unit/type/list	not-reached			BRPOPLPUSH maintains order of elements after failure
+unit/type/list	not-reached			BRPOPLPUSH with multiple blocked clients
+unit/type/list	not-reached			BLMPOP with multiple blocked clients
+unit/type/list	not-reached			Linked LMOVEs
+unit/type/list	not-reached			Circular BRPOPLPUSH
+unit/type/list	not-reached			Self-referential BRPOPLPUSH
+unit/type/list	not-reached			BRPOPLPUSH inside a transaction
+unit/type/list	not-reached			PUSH resulting from BRPOPLPUSH affect WATCH
+unit/type/list	not-reached			BRPOPLPUSH does not affect WATCH while still blocked
+unit/type/list	not-reached			BRPOPLPUSH timeout
+unit/type/list	not-reached			SWAPDB awakes blocked client
+unit/type/list	not-reached			SWAPDB wants to wake blocked client, but the key already expired
+unit/type/list	not-reached			MULTI + LPUSH + EXPIRE + DEBUG SLEEP on blocked client, key already expired
+unit/type/list	not-reached			BLPOP when new key is moved into place
+unit/type/list	not-reached			BLPOP when result key is created by SORT..STORE
+unit/type/list	not-reached			BLMPOP_LEFT when new key is moved into place
+unit/type/list	not-reached			BLMPOP_LEFT when result key is created by SORT..STORE
+unit/type/list	not-reached			BLPOP: with single empty list argument
+unit/type/list	not-reached			BLPOP: with negative timeout
+unit/type/list	not-reached			BLPOP: with non-integer timeout
+unit/type/list	not-reached			BLPOP: with zero timeout should block indefinitely
+unit/type/list	not-reached			BLPOP: with 0.001 timeout should not block indefinitely
+unit/type/list	not-reached			BLPOP: second argument is not a list
+unit/type/list	not-reached			BLPOP: timeout
+unit/type/list	not-reached			BLPOP: arguments are empty
+unit/type/list	not-reached			BRPOP: with single empty list argument
+unit/type/list	not-reached			BRPOP: with negative timeout
+unit/type/list	not-reached			BRPOP: with non-integer timeout
+unit/type/list	not-reached			BRPOP: with zero timeout should block indefinitely
+unit/type/list	not-reached			BRPOP: with 0.001 timeout should not block indefinitely
+unit/type/list	not-reached			BRPOP: second argument is not a list
+unit/type/list	not-reached			BRPOP: timeout
+unit/type/list	not-reached			BRPOP: arguments are empty
+unit/type/list	not-reached			BLMPOP_LEFT: with single empty list argument
+unit/type/list	not-reached			BLMPOP_LEFT: with negative timeout
+unit/type/list	not-reached			BLMPOP_LEFT: with non-integer timeout
+unit/type/list	not-reached			BLMPOP_LEFT: with zero timeout should block indefinitely
+unit/type/list	not-reached			BLMPOP_LEFT: with 0.001 timeout should not block indefinitely
+unit/type/list	not-reached			BLMPOP_LEFT: second argument is not a list
+unit/type/list	not-reached			BLMPOP_LEFT: timeout
+unit/type/list	not-reached			BLMPOP_LEFT: arguments are empty
+unit/type/list	not-reached			BLMPOP_RIGHT: with single empty list argument
+unit/type/list	not-reached			BLMPOP_RIGHT: with negative timeout
+unit/type/list	not-reached			BLMPOP_RIGHT: with non-integer timeout
+unit/type/list	not-reached			BLMPOP_RIGHT: with zero timeout should block indefinitely
+unit/type/list	not-reached			BLMPOP_RIGHT: with 0.001 timeout should not block indefinitely
+unit/type/list	not-reached			BLMPOP_RIGHT: second argument is not a list
+unit/type/list	not-reached			BLMPOP_RIGHT: timeout
+unit/type/list	not-reached			BLMPOP_RIGHT: arguments are empty
+unit/type/list	not-reached			BLPOP inside a transaction
+unit/type/list	not-reached			BLMPOP_LEFT inside a transaction
+unit/type/list	not-reached			BLMPOP propagate as pop with count command to replica
+unit/type/list	not-reached			LPUSHX, RPUSHX - generic
+unit/type/list	not-reached			LPUSHX, RPUSHX - linkedlist
+unit/type/list	not-reached			LINSERT - linkedlist
+unit/type/list	not-reached			LPUSHX, RPUSHX - ziplist
+unit/type/list	not-reached			LINSERT - ziplist
+unit/type/list	not-reached			LINSERT raise error on bad syntax
+unit/type/list	not-reached			LINDEX consistency test - quicklist
+unit/type/list	not-reached			LINDEX random access - quicklist
+unit/type/list	not-reached			Check if list is still ok after a DEBUG RELOAD - quicklist
+unit/type/list	not-reached			LINDEX consistency test - quicklist
+unit/type/list	not-reached			LINDEX random access - quicklist
+unit/type/list	not-reached			Check if list is still ok after a DEBUG RELOAD - quicklist
+unit/type/list	not-reached			LLEN against non-list value error
+unit/type/list	not-reached			LLEN against non existing key
+unit/type/list	not-reached			LINDEX against non-list value error
+unit/type/list	not-reached			LINDEX against non existing key
+unit/type/list	not-reached			LPUSH against non-list value error
+unit/type/list	not-reached			RPUSH against non-list value error
+unit/type/list	not-reached			RPOPLPUSH base case - linkedlist
+unit/type/list	not-reached			LMOVE left left base case - linkedlist
+unit/type/list	not-reached			LMOVE left right base case - linkedlist
+unit/type/list	not-reached			LMOVE right left base case - linkedlist
+unit/type/list	not-reached			LMOVE right right base case - linkedlist
+unit/type/list	not-reached			RPOPLPUSH with the same list as src and dst - linkedlist
+unit/type/list	not-reached			LMOVE left left with the same list as src and dst - linkedlist
+unit/type/list	not-reached			LMOVE left right with the same list as src and dst - linkedlist
+unit/type/list	not-reached			LMOVE right left with the same list as src and dst - linkedlist
+unit/type/list	not-reached			LMOVE right right with the same list as src and dst - linkedlist
+unit/type/list	not-reached			RPOPLPUSH with linkedlist source and existing target linkedlist
+unit/type/list	not-reached			LMOVE left left with linkedlist source and existing target linkedlist
+unit/type/list	not-reached			LMOVE left right with linkedlist source and existing target linkedlist
+unit/type/list	not-reached			LMOVE right left with linkedlist source and existing target linkedlist
+unit/type/list	not-reached			LMOVE right right with linkedlist source and existing target linkedlist
+unit/type/list	not-reached			RPOPLPUSH with linkedlist source and existing target ziplist
+unit/type/list	not-reached			LMOVE left left with linkedlist source and existing target ziplist
+unit/type/list	not-reached			LMOVE left right with linkedlist source and existing target ziplist
+unit/type/list	not-reached			LMOVE right left with linkedlist source and existing target ziplist
+unit/type/list	not-reached			LMOVE right right with linkedlist source and existing target ziplist
+unit/type/list	not-reached			RPOPLPUSH base case - ziplist
+unit/type/list	not-reached			LMOVE left left base case - ziplist
+unit/type/list	not-reached			LMOVE left right base case - ziplist
+unit/type/list	not-reached			LMOVE right left base case - ziplist
+unit/type/list	not-reached			LMOVE right right base case - ziplist
+unit/type/list	not-reached			RPOPLPUSH with the same list as src and dst - ziplist
+unit/type/list	not-reached			LMOVE left left with the same list as src and dst - ziplist
+unit/type/list	not-reached			LMOVE left right with the same list as src and dst - ziplist
+unit/type/list	not-reached			LMOVE right left with the same list as src and dst - ziplist
+unit/type/list	not-reached			LMOVE right right with the same list as src and dst - ziplist
+unit/type/list	not-reached			RPOPLPUSH with ziplist source and existing target linkedlist
+unit/type/list	not-reached			LMOVE left left with ziplist source and existing target linkedlist
+unit/type/list	not-reached			LMOVE left right with ziplist source and existing target linkedlist
+unit/type/list	not-reached			LMOVE right left with ziplist source and existing target linkedlist
+unit/type/list	not-reached			LMOVE right right with ziplist source and existing target linkedlist
+unit/type/list	not-reached			RPOPLPUSH with ziplist source and existing target ziplist
+unit/type/list	not-reached			LMOVE left left with ziplist source and existing target ziplist
+unit/type/list	not-reached			LMOVE left right with ziplist source and existing target ziplist
+unit/type/list	not-reached			LMOVE right left with ziplist source and existing target ziplist
+unit/type/list	not-reached			LMOVE right right with ziplist source and existing target ziplist
+unit/type/list	not-reached			RPOPLPUSH against non existing key
+unit/type/list	not-reached			RPOPLPUSH against non list src key
+unit/type/list	not-reached			RPOPLPUSH against non list dst key
+unit/type/list	not-reached			RPOPLPUSH against non existing src key
+unit/type/list	not-reached			Basic LPOP/RPOP/LMPOP - linkedlist
+unit/type/list	not-reached			Basic LPOP/RPOP/LMPOP - ziplist
+unit/type/list	not-reached			LPOP/RPOP/LMPOP against empty list
+unit/type/list	not-reached			LPOP/RPOP/LMPOP NON-BLOCK or BLOCK against non list value
+unit/type/list	not-reached			Mass RPOP/LPOP - quicklist
+unit/type/list	not-reached			Mass RPOP/LPOP - quicklist
+unit/type/list	not-reached			LMPOP with illegal argument
+unit/type/list	not-reached			LMPOP single existing list
+unit/type/list	not-reached			LMPOP multiple existing lists
+unit/type/list	not-reached			LMPOP propagate as pop with count command to replica
+unit/type/list	not-reached			LRANGE basics - linkedlist
+unit/type/list	not-reached			LRANGE inverted indexes - linkedlist
+unit/type/list	not-reached			LRANGE out of range indexes including the full list - linkedlist
+unit/type/list	not-reached			LRANGE out of range negative end index - linkedlist
+unit/type/list	not-reached			LRANGE basics - ziplist
+unit/type/list	not-reached			LRANGE inverted indexes - ziplist
+unit/type/list	not-reached			LRANGE out of range indexes including the full list - ziplist
+unit/type/list	not-reached			LRANGE out of range negative end index - ziplist
+unit/type/list	not-reached			LRANGE against non existing key
+unit/type/list	not-reached			LRANGE with start > end yields an empty array for backward compatibility
+unit/type/list	not-reached			LTRIM basics - linkedlist
+unit/type/list	not-reached			LTRIM out of range negative end index - linkedlist
+unit/type/list	not-reached			LTRIM basics - ziplist
+unit/type/list	not-reached			LTRIM out of range negative end index - ziplist
+unit/type/list	not-reached			LSET - linkedlist
+unit/type/list	not-reached			LSET out of range index - linkedlist
+unit/type/list	not-reached			LSET - ziplist
+unit/type/list	not-reached			LSET out of range index - ziplist
+unit/type/list	not-reached			LSET against non existing key
+unit/type/list	not-reached			LSET against non list value
+unit/type/list	not-reached			LREM remove all the occurrences - linkedlist
+unit/type/list	not-reached			LREM remove the first occurrence - linkedlist
+unit/type/list	not-reached			LREM remove non existing element - linkedlist
+unit/type/list	not-reached			LREM starting from tail with negative count - linkedlist
+unit/type/list	not-reached			LREM starting from tail with negative count (2) - linkedlist
+unit/type/list	not-reached			LREM deleting objects that may be int encoded - linkedlist
+unit/type/list	not-reached			LREM remove all the occurrences - ziplist
+unit/type/list	not-reached			LREM remove the first occurrence - ziplist
+unit/type/list	not-reached			LREM remove non existing element - ziplist
+unit/type/list	not-reached			LREM starting from tail with negative count - ziplist
+unit/type/list	not-reached			LREM starting from tail with negative count (2) - ziplist
+unit/type/list	not-reached			LREM deleting objects that may be int encoded - ziplist
+unit/type/list	not-reached			Regression for bug 593 - chaining BRPOPLPUSH with other blocking cmds
+unit/type/list	not-reached			client unblock tests
+unit/type/list	not-reached			client unblock tests
+unit/type/list	not-reached			List ziplist of various encodings
+unit/type/list	not-reached			List ziplist of various encodings - sanitize dump
+unit/type/list-2	errored	unknown-command	ltrim	LTRIM stress testing - linkedlist
+unit/type/list-2	errored	unknown-command	ltrim	LTRIM stress testing - ziplist
+unit/type/list-3	errored	unknown-command	lindex	Explicit regression for a list bug
+unit/type/list-3	errored	unknown-command	lset	Regression for quicklist #3343 bug
+unit/type/list-3	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'list-compress-depth'	Check compression with recompress
+unit/type/list-3	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'list-compress-depth'	Crash due to wrongly recompress after lrem
+unit/type/list-3	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'list-compress-depth'	LINSERT correctly recompress full quicklistNode after inserting a element before it
+unit/type/list-3	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'list-compress-depth'	LINSERT correctly recompress full quicklistNode after inserting a element after it
+unit/type/list-3	block-error	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'list-compress-depth'	-
+unit/type/list-3	not-reached			Stress tester for #3343-alike bugs comp: 2
+unit/type/list-3	not-reached			Stress tester for #3343-alike bugs comp: 1
+unit/type/list-3	not-reached			Stress tester for #3343-alike bugs comp: 0
+unit/type/list-3	not-reached			ziplist implementation: value encoding and backlink
+unit/type/list-3	not-reached			ziplist implementation: encoding stress testing
+unit/type/set	errored	unknown-command	sismember	SADD, SCARD, SISMEMBER, SMISMEMBER, SMEMBERS basics - regular set
+unit/type/set	errored	unknown-command	sismember	SADD, SCARD, SISMEMBER, SMISMEMBER, SMEMBERS basics - intset
+unit/type/set	failed	unknown-command	smismember	SMISMEMBER against non set
+unit/type/set	errored	unknown-command	smismember	SMISMEMBER non existing key
+unit/type/set	failed	unknown-command	smismember	SMISMEMBER requires one or more members
+unit/type/set	passed			SADD against non set
+unit/type/set	passed			SADD a non-integer against an intset
+unit/type/set	errored	unknown-command	sismember	SADD an integer larger than 64 bits
+unit/type/set	passed			SADD overflows the maximum allowed integers in an intset
+unit/type/set	errored	unknown-command	smembers	Variadic SADD
+unit/type/set	errored	unknown-command	debug	Set encoding after DEBUG RELOAD
+unit/type/set	errored	unknown-command	smembers	SREM basics - regular set
+unit/type/set	errored	unknown-command	smembers	SREM basics - intset
+unit/type/set	errored	unknown-command	smembers	SREM with multiple arguments
+unit/type/set	passed			SREM variadic version with more args needed to destroy the key
+unit/type/set	failed	unknown-command	sintercard	SINTERCARD with illegal arguments
+unit/type/set	failed	unknown-command	sintercard	SINTERCARD against non-set should throw error
+unit/type/set	errored	unknown-command	sintercard	SINTERCARD against non-existing key
+unit/type/set	passed			Generated sets must be encoded as hashtable
+unit/type/set	errored	unknown-command	sinter	SINTER with two sets - hashtable
+unit/type/set	errored	unknown-command	sintercard	SINTERCARD with two sets - hashtable
+unit/type/set	errored	unknown-command	sinterstore	SINTERSTORE with two sets - hashtable
+unit/type/set	errored	unknown-command	debug	SINTERSTORE with two sets, after a DEBUG RELOAD - hashtable
+unit/type/set	errored	unknown-command	smembers	SUNION with two sets - hashtable
+unit/type/set	errored	unknown-command	sunionstore	SUNIONSTORE with two sets - hashtable
+unit/type/set	errored	unknown-command	sinter	SINTER against three sets - hashtable
+unit/type/set	errored	unknown-command	sintercard	SINTERCARD against three sets - hashtable
+unit/type/set	errored	unknown-command	sinterstore	SINTERSTORE with three sets - hashtable
+unit/type/set	errored	unknown-command	smembers	SUNION with non existing keys - hashtable
+unit/type/set	errored	unknown-command	sdiff	SDIFF with two sets - hashtable
+unit/type/set	errored	unknown-command	sdiff	SDIFF with three sets - hashtable
+unit/type/set	errored	unknown-command	sdiffstore	SDIFFSTORE with three sets - hashtable
+unit/type/set	errored	unknown-command	smembers	SINTER/SUNION/SDIFF with three same sets - hashtable
+unit/type/set	passed			Generated sets must be encoded as intset
+unit/type/set	errored	unknown-command	sinter	SINTER with two sets - intset
+unit/type/set	errored	unknown-command	sintercard	SINTERCARD with two sets - intset
+unit/type/set	errored	unknown-command	sinterstore	SINTERSTORE with two sets - intset
+unit/type/set	errored	unknown-command	debug	SINTERSTORE with two sets, after a DEBUG RELOAD - intset
+unit/type/set	errored	unknown-command	smembers	SUNION with two sets - intset
+unit/type/set	errored	unknown-command	sunionstore	SUNIONSTORE with two sets - intset
+unit/type/set	errored	unknown-command	sinter	SINTER against three sets - intset
+unit/type/set	errored	unknown-command	sintercard	SINTERCARD against three sets - intset
+unit/type/set	errored	unknown-command	sinterstore	SINTERSTORE with three sets - intset
+unit/type/set	errored	unknown-command	smembers	SUNION with non existing keys - intset
+unit/type/set	errored	unknown-command	sdiff	SDIFF with two sets - intset
+unit/type/set	errored	unknown-command	sdiff	SDIFF with three sets - intset
+unit/type/set	errored	unknown-command	sdiffstore	SDIFFSTORE with three sets - intset
+unit/type/set	errored	unknown-command	smembers	SINTER/SUNION/SDIFF with three same sets - intset
+unit/type/set	errored	unknown-command	sdiff	SDIFF with first set empty
+unit/type/set	errored	unknown-command	sdiff	SDIFF with same set two times
+unit/type/set	errored	unknown-command	sdiff	SDIFF fuzzing
+unit/type/set	failed	unknown-command	sdiff	SDIFF against non-set should throw error
+unit/type/set	errored	unknown-command	sdiff	SDIFF should handle non existing key as empty
+unit/type/set	failed	unknown-command	sdiffstore	SDIFFSTORE against non-set should throw error
+unit/type/set	errored	unknown-command	sdiffstore	SDIFFSTORE should handle non existing key as empty
+unit/type/set	failed	unknown-command	sinter	SINTER against non-set should throw error
+unit/type/set	errored	unknown-command	sinter	SINTER should handle non existing key as empty
+unit/type/set	errored	unknown-command	sinter	SINTER with same integer elements but different encoding
+unit/type/set	failed	unknown-command	sinterstore	SINTERSTORE against non-set should throw error
+unit/type/set	errored	unknown-command	sinterstore	SINTERSTORE against non existing keys should delete dstkey
+unit/type/set	failed	unknown-command	sunion	SUNION against non-set should throw error
+unit/type/set	errored	unknown-command	sunion	SUNION should handle non existing key as empty
+unit/type/set	failed	unknown-command	sunionstore	SUNIONSTORE against non-set should throw error
+unit/type/set	errored	unknown-command	sunionstore	SUNIONSTORE should handle non existing key as empty
+unit/type/set	errored	unknown-command	sunionstore	SUNIONSTORE against non existing keys should delete dstkey
+unit/type/set	passed			SPOP basics - hashtable
+unit/type/set	passed			SPOP with <count>=1 - hashtable
+unit/type/set	errored	unknown-command	srandmember	SRANDMEMBER - hashtable
+unit/type/set	passed			SPOP basics - intset
+unit/type/set	passed			SPOP with <count>=1 - intset
+unit/type/set	errored	unknown-command	srandmember	SRANDMEMBER - intset
+unit/type/set	passed			SPOP with <count>
+unit/type/set	passed			SPOP with <count>
+unit/type/set	passed			SPOP using integers, testing Knuth's and Floyd's algorithm
+unit/type/set	passed			SPOP using integers with Knuth's algorithm
+unit/type/set	passed			SPOP new implementation: code path #1
+unit/type/set	errored	unknown-command	smembers	SPOP new implementation: code path #2
+unit/type/set	errored	unknown-command	smembers	SPOP new implementation: code path #3
+unit/type/set	errored	unknown-command	srandmember	SRANDMEMBER count of 0 is handled correctly
+unit/type/set	errored	unknown-command	srandmember	SRANDMEMBER with <count> against non existing key
+unit/type/set	failed	unknown-command	srandmember	SRANDMEMBER count overflow
+unit/type/set	failed	unknown-command	srandmember	SRANDMEMBER count of 0 is handled correctly - emptyarray
+unit/type/set	failed	unknown-command	srandmember	SRANDMEMBER with <count> against non existing key - emptyarray
+unit/type/set	errored	unknown-command	smembers	SRANDMEMBER with <count> - hashtable
+unit/type/set	errored	unknown-command	smembers	SRANDMEMBER with <count> - intset
+unit/type/set	errored	unknown-command	smembers	SRANDMEMBER histogram distribution - hashtable
+unit/type/set	errored	unknown-command	smembers	SRANDMEMBER histogram distribution - intset
+unit/type/set	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'save'	SRANDMEMBER with a dict containing long chain
+unit/type/set	errored	unknown-command	smove	SMOVE basics - from regular set to intset
+unit/type/set	errored	unknown-command	smove	SMOVE basics - from intset to regular set
+unit/type/set	errored	unknown-command	smove	SMOVE non existing key
+unit/type/set	errored	unknown-command	smove	SMOVE non existing src set
+unit/type/set	errored	unknown-command	smove	SMOVE from regular set to non existing destination set
+unit/type/set	errored	unknown-command	smove	SMOVE from intset to non existing destination set
+unit/type/set	failed	unknown-command	smove	SMOVE wrong src key type
+unit/type/set	failed	unknown-command	smove	SMOVE wrong dst key type
+unit/type/set	errored	unknown-command	smove	SMOVE with identical source and destination
+unit/type/set	errored	unknown-command	watch	SMOVE only notify dstset when the addition is successful
+unit/type/set	errored	unknown-command	smembers	intsets implementation stress testing
+unit/type/set	not-reached			SADD, SCARD, SISMEMBER - large data
+unit/type/zset	block-error	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'zset-max-ziplist-entries'	-
+unit/type/zset	not-reached			Check encoding - listpack
+unit/type/zset	not-reached			ZSET basic ZADD and score update - listpack
+unit/type/zset	not-reached			ZSET element can't be set to NaN with ZADD - listpack
+unit/type/zset	not-reached			ZSET element can't be set to NaN with ZINCRBY - listpack
+unit/type/zset	not-reached			ZADD with options syntax error with incomplete pair - listpack
+unit/type/zset	not-reached			ZADD XX option without key - listpack
+unit/type/zset	not-reached			ZADD XX existing key - listpack
+unit/type/zset	not-reached			ZADD XX returns the number of elements actually added - listpack
+unit/type/zset	not-reached			ZADD XX updates existing elements score - listpack
+unit/type/zset	not-reached			ZADD GT updates existing elements when new scores are greater - listpack
+unit/type/zset	not-reached			ZADD LT updates existing elements when new scores are lower - listpack
+unit/type/zset	not-reached			ZADD GT XX updates existing elements when new scores are greater and skips new elements - listpack
+unit/type/zset	not-reached			ZADD LT XX updates existing elements when new scores are lower and skips new elements - listpack
+unit/type/zset	not-reached			ZADD XX and NX are not compatible - listpack
+unit/type/zset	not-reached			ZADD NX with non existing key - listpack
+unit/type/zset	not-reached			ZADD NX only add new elements without updating old ones - listpack
+unit/type/zset	not-reached			ZADD GT and NX are not compatible - listpack
+unit/type/zset	not-reached			ZADD LT and NX are not compatible - listpack
+unit/type/zset	not-reached			ZADD LT and GT are not compatible - listpack
+unit/type/zset	not-reached			ZADD INCR LT/GT replies with nill if score not updated - listpack
+unit/type/zset	not-reached			ZADD INCR LT/GT with inf - listpack
+unit/type/zset	not-reached			ZADD INCR works like ZINCRBY - listpack
+unit/type/zset	not-reached			ZADD INCR works with a single score-elemenet pair - listpack
+unit/type/zset	not-reached			ZADD CH option changes return value to all changed elements - listpack
+unit/type/zset	not-reached			ZINCRBY calls leading to NaN result in error - listpack
+unit/type/zset	not-reached			ZADD - Variadic version base case - $encoding
+unit/type/zset	not-reached			ZADD - Return value is the number of actually added items - $encoding
+unit/type/zset	not-reached			ZADD - Variadic version does not add nothing on single parsing err - $encoding
+unit/type/zset	not-reached			ZADD - Variadic version will raise error on missing arg - $encoding
+unit/type/zset	not-reached			ZINCRBY does not work variadic even if shares ZADD implementation - $encoding
+unit/type/zset	not-reached			ZCARD basics - listpack
+unit/type/zset	not-reached			ZREM removes key after last element is removed - listpack
+unit/type/zset	not-reached			ZREM variadic version - listpack
+unit/type/zset	not-reached			ZREM variadic version -- remove elements after key deletion - listpack
+unit/type/zset	not-reached			ZRANGE basics - listpack
+unit/type/zset	not-reached			ZREVRANGE basics - listpack
+unit/type/zset	not-reached			ZRANK/ZREVRANK basics - listpack
+unit/type/zset	not-reached			ZRANK - after deletion - listpack
+unit/type/zset	not-reached			ZINCRBY - can create a new sorted set - listpack
+unit/type/zset	not-reached			ZINCRBY - increment and decrement - listpack
+unit/type/zset	not-reached			ZINCRBY return value - listpack
+unit/type/zset	not-reached			ZRANGEBYSCORE/ZREVRANGEBYSCORE/ZCOUNT basics - listpack
+unit/type/zset	not-reached			ZRANGEBYSCORE with WITHSCORES - listpack
+unit/type/zset	not-reached			ZRANGEBYSCORE with LIMIT - listpack
+unit/type/zset	not-reached			ZRANGEBYSCORE with LIMIT and WITHSCORES - listpack
+unit/type/zset	not-reached			ZRANGEBYSCORE with non-value min or max - listpack
+unit/type/zset	not-reached			ZRANGEBYLEX/ZREVRANGEBYLEX/ZLEXCOUNT basics - listpack
+unit/type/zset	not-reached			ZLEXCOUNT advanced - listpack
+unit/type/zset	not-reached			ZRANGEBYSLEX with LIMIT - listpack
+unit/type/zset	not-reached			ZRANGEBYLEX with invalid lex range specifiers - listpack
+unit/type/zset	not-reached			ZREMRANGEBYSCORE basics - listpack
+unit/type/zset	not-reached			ZREMRANGEBYSCORE with non-value min or max - listpack
+unit/type/zset	not-reached			ZREMRANGEBYRANK basics - listpack
+unit/type/zset	not-reached			ZUNIONSTORE against non-existing key doesn't set destination - listpack
+unit/type/zset	not-reached			ZUNION/ZINTER/ZINTERCARD/ZDIFF against non-existing key - listpack
+unit/type/zset	not-reached			ZUNIONSTORE with empty set - listpack
+unit/type/zset	not-reached			ZUNION/ZINTER/ZINTERCARD/ZDIFF with empty set - listpack
+unit/type/zset	not-reached			ZUNIONSTORE basics - listpack
+unit/type/zset	not-reached			ZUNION/ZINTER/ZINTERCARD/ZDIFF with integer members - listpack
+unit/type/zset	not-reached			ZUNIONSTORE with weights - listpack
+unit/type/zset	not-reached			ZUNION with weights - listpack
+unit/type/zset	not-reached			ZUNIONSTORE with a regular set and weights - listpack
+unit/type/zset	not-reached			ZUNIONSTORE with AGGREGATE MIN - listpack
+unit/type/zset	not-reached			ZUNION/ZINTER with AGGREGATE MIN - listpack
+unit/type/zset	not-reached			ZUNIONSTORE with AGGREGATE MAX - listpack
+unit/type/zset	not-reached			ZUNION/ZINTER with AGGREGATE MAX - listpack
+unit/type/zset	not-reached			ZINTERSTORE basics - listpack
+unit/type/zset	not-reached			ZINTER basics - listpack
+unit/type/zset	not-reached			ZINTERCARD with illegal arguments
+unit/type/zset	not-reached			ZINTERCARD basics - listpack
+unit/type/zset	not-reached			ZINTER RESP3 - listpack
+unit/type/zset	not-reached			ZINTERSTORE with weights - listpack
+unit/type/zset	not-reached			ZINTER with weights - listpack
+unit/type/zset	not-reached			ZINTERSTORE with a regular set and weights - listpack
+unit/type/zset	not-reached			ZINTERSTORE with AGGREGATE MIN - listpack
+unit/type/zset	not-reached			ZINTERSTORE with AGGREGATE MAX - listpack
+unit/type/zset	not-reached			ZUNIONSTORE with +inf/-inf scores - listpack
+unit/type/zset	not-reached			ZUNIONSTORE with NaN weights - listpack
+unit/type/zset	not-reached			ZINTERSTORE with +inf/-inf scores - listpack
+unit/type/zset	not-reached			ZINTERSTORE with NaN weights - listpack
+unit/type/zset	not-reached			ZDIFFSTORE basics - listpack
+unit/type/zset	not-reached			ZDIFF basics - listpack
+unit/type/zset	not-reached			ZDIFFSTORE with a regular set - listpack
+unit/type/zset	not-reached			ZDIFF subtracting set from itself - listpack
+unit/type/zset	not-reached			ZDIFF algorithm 1 - listpack
+unit/type/zset	not-reached			ZDIFF algorithm 2 - listpack
+unit/type/zset	not-reached			ZDIFF fuzzing - listpack
+unit/type/zset	not-reached			ZPOPMIN with the count 0 returns an empty array
+unit/type/zset	not-reached			ZPOPMIN with negative count
+unit/type/zset	not-reached			ZPOPMAX with the count 0 returns an empty array
+unit/type/zset	not-reached			ZPOPMAX with negative count
+unit/type/zset	not-reached			Basic ZPOPMIN/ZPOPMAX with a single key - listpack
+unit/type/zset	not-reached			ZPOPMIN/ZPOPMAX with count - listpack
+unit/type/zset	not-reached			Basic ZMPOP_MIN/ZMPOP_MAX with a single key - listpack
+unit/type/zset	not-reached			ZMPOP_MIN/ZMPOP_MAX with count - listpack
+unit/type/zset	not-reached			BZPOPMIN/BZPOPMAX with a single existing sorted set - listpack
+unit/type/zset	not-reached			BZPOPMIN/BZPOPMAX with multiple existing sorted sets - listpack
+unit/type/zset	not-reached			BZPOPMIN/BZPOPMAX second sorted set has members - listpack
+unit/type/zset	not-reached			BZMPOP_MIN/BZMPOP_MAX with a single existing sorted set - listpack
+unit/type/zset	not-reached			BZMPOP_MIN/BZMPOP_MAX with multiple existing sorted sets - listpack
+unit/type/zset	not-reached			BZMPOP_MIN/BZMPOP_MAX second sorted set has members - listpack
+unit/type/zset	not-reached			Basic ZPOPMIN/ZPOPMAX - listpack RESP3
+unit/type/zset	not-reached			ZPOPMIN/ZPOPMAX with count - listpack RESP3
+unit/type/zset	not-reached			Basic ZMPOP_MIN/ZMPOP_MAX - listpack RESP3
+unit/type/zset	not-reached			ZMPOP_MIN/ZMPOP_MAX with count - listpack RESP3
+unit/type/zset	not-reached			BZPOPMIN/BZPOPMAX - listpack RESP3
+unit/type/zset	not-reached			BZMPOP_MIN/BZMPOP_MAX - listpack RESP3
+unit/type/zset	not-reached			Check encoding - skiplist
+unit/type/zset	not-reached			ZSET basic ZADD and score update - skiplist
+unit/type/zset	not-reached			ZSET element can't be set to NaN with ZADD - skiplist
+unit/type/zset	not-reached			ZSET element can't be set to NaN with ZINCRBY - skiplist
+unit/type/zset	not-reached			ZADD with options syntax error with incomplete pair - skiplist
+unit/type/zset	not-reached			ZADD XX option without key - skiplist
+unit/type/zset	not-reached			ZADD XX existing key - skiplist
+unit/type/zset	not-reached			ZADD XX returns the number of elements actually added - skiplist
+unit/type/zset	not-reached			ZADD XX updates existing elements score - skiplist
+unit/type/zset	not-reached			ZADD GT updates existing elements when new scores are greater - skiplist
+unit/type/zset	not-reached			ZADD LT updates existing elements when new scores are lower - skiplist
+unit/type/zset	not-reached			ZADD GT XX updates existing elements when new scores are greater and skips new elements - skiplist
+unit/type/zset	not-reached			ZADD LT XX updates existing elements when new scores are lower and skips new elements - skiplist
+unit/type/zset	not-reached			ZADD XX and NX are not compatible - skiplist
+unit/type/zset	not-reached			ZADD NX with non existing key - skiplist
+unit/type/zset	not-reached			ZADD NX only add new elements without updating old ones - skiplist
+unit/type/zset	not-reached			ZADD GT and NX are not compatible - skiplist
+unit/type/zset	not-reached			ZADD LT and NX are not compatible - skiplist
+unit/type/zset	not-reached			ZADD LT and GT are not compatible - skiplist
+unit/type/zset	not-reached			ZADD INCR LT/GT replies with nill if score not updated - skiplist
+unit/type/zset	not-reached			ZADD INCR LT/GT with inf - skiplist
+unit/type/zset	not-reached			ZADD INCR works like ZINCRBY - skiplist
+unit/type/zset	not-reached			ZADD INCR works with a single score-elemenet pair - skiplist
+unit/type/zset	not-reached			ZADD CH option changes return value to all changed elements - skiplist
+unit/type/zset	not-reached			ZINCRBY calls leading to NaN result in error - skiplist
+unit/type/zset	not-reached			ZADD - Variadic version base case - $encoding
+unit/type/zset	not-reached			ZADD - Return value is the number of actually added items - $encoding
+unit/type/zset	not-reached			ZADD - Variadic version does not add nothing on single parsing err - $encoding
+unit/type/zset	not-reached			ZADD - Variadic version will raise error on missing arg - $encoding
+unit/type/zset	not-reached			ZINCRBY does not work variadic even if shares ZADD implementation - $encoding
+unit/type/zset	not-reached			ZCARD basics - skiplist
+unit/type/zset	not-reached			ZREM removes key after last element is removed - skiplist
+unit/type/zset	not-reached			ZREM variadic version - skiplist
+unit/type/zset	not-reached			ZREM variadic version -- remove elements after key deletion - skiplist
+unit/type/zset	not-reached			ZRANGE basics - skiplist
+unit/type/zset	not-reached			ZREVRANGE basics - skiplist
+unit/type/zset	not-reached			ZRANK/ZREVRANK basics - skiplist
+unit/type/zset	not-reached			ZRANK - after deletion - skiplist
+unit/type/zset	not-reached			ZINCRBY - can create a new sorted set - skiplist
+unit/type/zset	not-reached			ZINCRBY - increment and decrement - skiplist
+unit/type/zset	not-reached			ZINCRBY return value - skiplist
+unit/type/zset	not-reached			ZRANGEBYSCORE/ZREVRANGEBYSCORE/ZCOUNT basics - skiplist
+unit/type/zset	not-reached			ZRANGEBYSCORE with WITHSCORES - skiplist
+unit/type/zset	not-reached			ZRANGEBYSCORE with LIMIT - skiplist
+unit/type/zset	not-reached			ZRANGEBYSCORE with LIMIT and WITHSCORES - skiplist
+unit/type/zset	not-reached			ZRANGEBYSCORE with non-value min or max - skiplist
+unit/type/zset	not-reached			ZRANGEBYLEX/ZREVRANGEBYLEX/ZLEXCOUNT basics - skiplist
+unit/type/zset	not-reached			ZLEXCOUNT advanced - skiplist
+unit/type/zset	not-reached			ZRANGEBYSLEX with LIMIT - skiplist
+unit/type/zset	not-reached			ZRANGEBYLEX with invalid lex range specifiers - skiplist
+unit/type/zset	not-reached			ZREMRANGEBYSCORE basics - skiplist
+unit/type/zset	not-reached			ZREMRANGEBYSCORE with non-value min or max - skiplist
+unit/type/zset	not-reached			ZREMRANGEBYRANK basics - skiplist
+unit/type/zset	not-reached			ZUNIONSTORE against non-existing key doesn't set destination - skiplist
+unit/type/zset	not-reached			ZUNION/ZINTER/ZINTERCARD/ZDIFF against non-existing key - skiplist
+unit/type/zset	not-reached			ZUNIONSTORE with empty set - skiplist
+unit/type/zset	not-reached			ZUNION/ZINTER/ZINTERCARD/ZDIFF with empty set - skiplist
+unit/type/zset	not-reached			ZUNIONSTORE basics - skiplist
+unit/type/zset	not-reached			ZUNION/ZINTER/ZINTERCARD/ZDIFF with integer members - skiplist
+unit/type/zset	not-reached			ZUNIONSTORE with weights - skiplist
+unit/type/zset	not-reached			ZUNION with weights - skiplist
+unit/type/zset	not-reached			ZUNIONSTORE with a regular set and weights - skiplist
+unit/type/zset	not-reached			ZUNIONSTORE with AGGREGATE MIN - skiplist
+unit/type/zset	not-reached			ZUNION/ZINTER with AGGREGATE MIN - skiplist
+unit/type/zset	not-reached			ZUNIONSTORE with AGGREGATE MAX - skiplist
+unit/type/zset	not-reached			ZUNION/ZINTER with AGGREGATE MAX - skiplist
+unit/type/zset	not-reached			ZINTERSTORE basics - skiplist
+unit/type/zset	not-reached			ZINTER basics - skiplist
+unit/type/zset	not-reached			ZINTERCARD with illegal arguments
+unit/type/zset	not-reached			ZINTERCARD basics - skiplist
+unit/type/zset	not-reached			ZINTER RESP3 - skiplist
+unit/type/zset	not-reached			ZINTERSTORE with weights - skiplist
+unit/type/zset	not-reached			ZINTER with weights - skiplist
+unit/type/zset	not-reached			ZINTERSTORE with a regular set and weights - skiplist
+unit/type/zset	not-reached			ZINTERSTORE with AGGREGATE MIN - skiplist
+unit/type/zset	not-reached			ZINTERSTORE with AGGREGATE MAX - skiplist
+unit/type/zset	not-reached			ZUNIONSTORE with +inf/-inf scores - skiplist
+unit/type/zset	not-reached			ZUNIONSTORE with NaN weights - skiplist
+unit/type/zset	not-reached			ZINTERSTORE with +inf/-inf scores - skiplist
+unit/type/zset	not-reached			ZINTERSTORE with NaN weights - skiplist
+unit/type/zset	not-reached			ZDIFFSTORE basics - skiplist
+unit/type/zset	not-reached			ZDIFF basics - skiplist
+unit/type/zset	not-reached			ZDIFFSTORE with a regular set - skiplist
+unit/type/zset	not-reached			ZDIFF subtracting set from itself - skiplist
+unit/type/zset	not-reached			ZDIFF algorithm 1 - skiplist
+unit/type/zset	not-reached			ZDIFF algorithm 2 - skiplist
+unit/type/zset	not-reached			ZDIFF fuzzing - skiplist
+unit/type/zset	not-reached			ZPOPMIN with the count 0 returns an empty array
+unit/type/zset	not-reached			ZPOPMIN with negative count
+unit/type/zset	not-reached			ZPOPMAX with the count 0 returns an empty array
+unit/type/zset	not-reached			ZPOPMAX with negative count
+unit/type/zset	not-reached			Basic ZPOPMIN/ZPOPMAX with a single key - skiplist
+unit/type/zset	not-reached			ZPOPMIN/ZPOPMAX with count - skiplist
+unit/type/zset	not-reached			Basic ZMPOP_MIN/ZMPOP_MAX with a single key - skiplist
+unit/type/zset	not-reached			ZMPOP_MIN/ZMPOP_MAX with count - skiplist
+unit/type/zset	not-reached			BZPOPMIN/BZPOPMAX with a single existing sorted set - skiplist
+unit/type/zset	not-reached			BZPOPMIN/BZPOPMAX with multiple existing sorted sets - skiplist
+unit/type/zset	not-reached			BZPOPMIN/BZPOPMAX second sorted set has members - skiplist
+unit/type/zset	not-reached			BZMPOP_MIN/BZMPOP_MAX with a single existing sorted set - skiplist
+unit/type/zset	not-reached			BZMPOP_MIN/BZMPOP_MAX with multiple existing sorted sets - skiplist
+unit/type/zset	not-reached			BZMPOP_MIN/BZMPOP_MAX second sorted set has members - skiplist
+unit/type/zset	not-reached			Basic ZPOPMIN/ZPOPMAX - skiplist RESP3
+unit/type/zset	not-reached			ZPOPMIN/ZPOPMAX with count - skiplist RESP3
+unit/type/zset	not-reached			Basic ZMPOP_MIN/ZMPOP_MAX - skiplist RESP3
+unit/type/zset	not-reached			ZMPOP_MIN/ZMPOP_MAX with count - skiplist RESP3
+unit/type/zset	not-reached			BZPOPMIN/BZPOPMAX - skiplist RESP3
+unit/type/zset	not-reached			BZMPOP_MIN/BZMPOP_MAX - skiplist RESP3
+unit/type/zset	not-reached			ZPOP/ZMPOP against wrong type
+unit/type/zset	not-reached			ZMPOP with illegal argument
+unit/type/zset	not-reached			ZMPOP propagate as pop with count command to replica
+unit/type/zset	not-reached			ZPOPMIN/ZPOPMAX readraw in RESP3
+unit/type/zset	not-reached			BZPOPMIN/BZPOPMAX readraw in RESP3
+unit/type/zset	not-reached			ZMPOP readraw in RESP3
+unit/type/zset	not-reached			BZMPOP readraw in RESP3
+unit/type/zset	not-reached			ZPOPMIN/ZPOPMAX readraw in RESP2
+unit/type/zset	not-reached			BZPOPMIN/BZPOPMAX readraw in RESP2
+unit/type/zset	not-reached			ZMPOP readraw in RESP2
+unit/type/zset	not-reached			BZMPOP readraw in RESP2
+unit/type/zset	not-reached			ZINTERSTORE regression with two sets, intset+hashtable
+unit/type/zset	not-reached			ZUNIONSTORE regression, should not create NaN in scores
+unit/type/zset	not-reached			ZINTERSTORE #516 regression, mixed sets and ziplist zsets
+unit/type/zset	not-reached			ZUNIONSTORE result is sorted
+unit/type/zset	not-reached			ZUNIONSTORE/ZINTERSTORE/ZDIFFSTORE error if using WITHSCORES
+unit/type/zset	not-reached			ZMSCORE retrieve
+unit/type/zset	not-reached			ZMSCORE retrieve from empty set
+unit/type/zset	not-reached			ZMSCORE retrieve with missing member
+unit/type/zset	not-reached			ZMSCORE retrieve single member
+unit/type/zset	not-reached			ZMSCORE retrieve requires one or more members
+unit/type/zset	not-reached			ZSET commands don't accept the empty strings as valid score
+unit/type/zset	not-reached			zunionInterDiffGenericCommand at least 1 input key
+unit/type/zset	not-reached			ZSCORE - listpack
+unit/type/zset	not-reached			ZMSCORE - listpack
+unit/type/zset	not-reached			ZSCORE after a DEBUG RELOAD - listpack
+unit/type/zset	not-reached			ZSET sorting stresser - listpack
+unit/type/zset	not-reached			ZRANGEBYSCORE fuzzy test, 100 ranges in 128 element sorted set - listpack
+unit/type/zset	not-reached			ZRANGEBYLEX fuzzy test, 100 ranges in 128 element sorted set - listpack
+unit/type/zset	not-reached			ZREMRANGEBYLEX fuzzy test, 100 ranges in 128 element sorted set - listpack
+unit/type/zset	not-reached			ZSETs skiplist implementation backlink consistency test - listpack
+unit/type/zset	not-reached			ZSETs ZRANK augmented skip list stress testing - listpack
+unit/type/zset	not-reached			BZPOPMIN, ZADD + DEL should not awake blocked client
+unit/type/zset	not-reached			BZPOPMIN, ZADD + DEL + SET should not awake blocked client
+unit/type/zset	not-reached			BZMPOP_MIN, ZADD + DEL should not awake blocked client
+unit/type/zset	not-reached			BZMPOP_MIN, ZADD + DEL + SET should not awake blocked client
+unit/type/zset	not-reached			BZPOPMIN with same key multiple times should work
+unit/type/zset	not-reached			MULTI/EXEC is isolated from the point of view of BZPOPMIN
+unit/type/zset	not-reached			BZPOPMIN with variadic ZADD
+unit/type/zset	not-reached			BZPOPMIN with zero timeout should block indefinitely
+unit/type/zset	not-reached			MULTI/EXEC is isolated from the point of view of BZMPOP_MIN
+unit/type/zset	not-reached			BZMPOP_MIN with variadic ZADD
+unit/type/zset	not-reached			BZMPOP_MIN with zero timeout should block indefinitely
+unit/type/zset	not-reached			ZSCORE - skiplist
+unit/type/zset	not-reached			ZMSCORE - skiplist
+unit/type/zset	not-reached			ZSCORE after a DEBUG RELOAD - skiplist
+unit/type/zset	not-reached			ZSET sorting stresser - skiplist
+unit/type/zset	not-reached			ZRANGEBYSCORE fuzzy test, 100 ranges in 100 element sorted set - skiplist
+unit/type/zset	not-reached			ZRANGEBYLEX fuzzy test, 100 ranges in 100 element sorted set - skiplist
+unit/type/zset	not-reached			ZREMRANGEBYLEX fuzzy test, 100 ranges in 100 element sorted set - skiplist
+unit/type/zset	not-reached			ZSETs skiplist implementation backlink consistency test - skiplist
+unit/type/zset	not-reached			ZSETs ZRANK augmented skip list stress testing - skiplist
+unit/type/zset	not-reached			BZPOPMIN, ZADD + DEL should not awake blocked client
+unit/type/zset	not-reached			BZPOPMIN, ZADD + DEL + SET should not awake blocked client
+unit/type/zset	not-reached			BZMPOP_MIN, ZADD + DEL should not awake blocked client
+unit/type/zset	not-reached			BZMPOP_MIN, ZADD + DEL + SET should not awake blocked client
+unit/type/zset	not-reached			BZPOPMIN with same key multiple times should work
+unit/type/zset	not-reached			MULTI/EXEC is isolated from the point of view of BZPOPMIN
+unit/type/zset	not-reached			BZPOPMIN with variadic ZADD
+unit/type/zset	not-reached			BZPOPMIN with zero timeout should block indefinitely
+unit/type/zset	not-reached			MULTI/EXEC is isolated from the point of view of BZMPOP_MIN
+unit/type/zset	not-reached			BZMPOP_MIN with variadic ZADD
+unit/type/zset	not-reached			BZMPOP_MIN with zero timeout should block indefinitely
+unit/type/zset	not-reached			BZPOP/BZMPOP against wrong type
+unit/type/zset	not-reached			BZMPOP with illegal argument
+unit/type/zset	not-reached			BZMPOP with multiple blocked clients
+unit/type/zset	not-reached			BZMPOP propagate as pop with count command to replica
+unit/type/zset	not-reached			BZMPOP should not blocks on non key arguments - #10762
+unit/type/zset	not-reached			ZSET skiplist order consistency when elements are moved
+unit/type/zset	not-reached			ZRANGESTORE basic
+unit/type/zset	not-reached			ZRANGESTORE RESP3
+unit/type/zset	not-reached			ZRANGESTORE range
+unit/type/zset	not-reached			ZRANGESTORE BYLEX
+unit/type/zset	not-reached			ZRANGESTORE BYSCORE
+unit/type/zset	not-reached			ZRANGESTORE BYSCORE LIMIT
+unit/type/zset	not-reached			ZRANGESTORE BYSCORE REV LIMIT
+unit/type/zset	not-reached			ZRANGE BYSCORE REV LIMIT
+unit/type/zset	not-reached			ZRANGESTORE - src key missing
+unit/type/zset	not-reached			ZRANGESTORE - src key wrong type
+unit/type/zset	not-reached			ZRANGESTORE - empty range
+unit/type/zset	not-reached			ZRANGESTORE BYLEX - empty range
+unit/type/zset	not-reached			ZRANGESTORE BYSCORE - empty range
+unit/type/zset	not-reached			ZRANGE BYLEX
+unit/type/zset	not-reached			ZRANGESTORE invalid syntax
+unit/type/zset	not-reached			ZRANGESTORE with zset-max-listpack-entries 0 #10767 case
+unit/type/zset	not-reached			ZRANGESTORE with zset-max-listpack-entries 1 dst key should use skiplist encoding
+unit/type/zset	not-reached			ZRANGE invalid syntax
+unit/type/zset	not-reached			ZRANDMEMBER - listpack
+unit/type/zset	not-reached			ZRANDMEMBER - skiplist
+unit/type/zset	not-reached			ZRANDMEMBER with RESP3
+unit/type/zset	not-reached			ZRANDMEMBER count of 0 is handled correctly
+unit/type/zset	not-reached			ZRANDMEMBER with <count> against non existing key
+unit/type/zset	not-reached			ZRANDMEMBER count overflow
+unit/type/zset	not-reached			ZRANDMEMBER count of 0 is handled correctly - emptyarray
+unit/type/zset	not-reached			ZRANDMEMBER with <count> against non existing key - emptyarray
+unit/type/zset	not-reached			ZRANDMEMBER with <count> - skiplist
+unit/type/zset	not-reached			ZRANDMEMBER with <count> - listpack
+unit/type/zset	not-reached			zset score double range
+unit/type/hash	errored	unknown-command	hlen	HSET/HLEN - Small hash creation
+unit/type/hash	passed			Is the small hash encoded with a listpack?
+unit/type/hash	block-error	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'hash-max-ziplist-value'	-
+unit/type/hash	not-reached			HRANDFIELD - listpack
+unit/type/hash	not-reached			HRANDFIELD - hashtable
+unit/type/hash	not-reached			HRANDFIELD with RESP3
+unit/type/hash	not-reached			HRANDFIELD count of 0 is handled correctly
+unit/type/hash	not-reached			HRANDFIELD count overflow
+unit/type/hash	not-reached			HRANDFIELD with <count> against non existing key
+unit/type/hash	not-reached			HRANDFIELD count of 0 is handled correctly - emptyarray
+unit/type/hash	not-reached			HRANDFIELD with <count> against non existing key - emptyarray
+unit/type/hash	not-reached			HRANDFIELD with <count> - hashtable
+unit/type/hash	not-reached			HRANDFIELD with <count> - listpack
+unit/type/hash	not-reached			HSET/HLEN - Big hash creation
+unit/type/hash	not-reached			Is the big hash encoded with an hash table?
+unit/type/hash	not-reached			HGET against the small hash
+unit/type/hash	not-reached			HGET against the big hash
+unit/type/hash	not-reached			HGET against non existing key
+unit/type/hash	not-reached			HSET in update and insert mode
+unit/type/hash	not-reached			HSETNX target key missing - small hash
+unit/type/hash	not-reached			HSETNX target key exists - small hash
+unit/type/hash	not-reached			HSETNX target key missing - big hash
+unit/type/hash	not-reached			HSETNX target key exists - big hash
+unit/type/hash	not-reached			HSET/HMSET wrong number of args
+unit/type/hash	not-reached			HMSET - small hash
+unit/type/hash	not-reached			HMSET - big hash
+unit/type/hash	not-reached			HMGET against non existing key and fields
+unit/type/hash	not-reached			HMGET against wrong type
+unit/type/hash	not-reached			HMGET - small hash
+unit/type/hash	not-reached			HMGET - big hash
+unit/type/hash	not-reached			HKEYS - small hash
+unit/type/hash	not-reached			HKEYS - big hash
+unit/type/hash	not-reached			HVALS - small hash
+unit/type/hash	not-reached			HVALS - big hash
+unit/type/hash	not-reached			HGETALL - small hash
+unit/type/hash	not-reached			HGETALL - big hash
+unit/type/hash	not-reached			HDEL and return value
+unit/type/hash	not-reached			HDEL - more than a single value
+unit/type/hash	not-reached			HDEL - hash becomes empty before deleting all specified fields
+unit/type/hash	not-reached			HEXISTS
+unit/type/hash	not-reached			Is a ziplist encoded Hash promoted on big payload?
+unit/type/hash	not-reached			HINCRBY against non existing database key
+unit/type/hash	not-reached			HINCRBY against non existing hash key
+unit/type/hash	not-reached			HINCRBY against hash key created by hincrby itself
+unit/type/hash	not-reached			HINCRBY against hash key originally set with HSET
+unit/type/hash	not-reached			HINCRBY over 32bit value
+unit/type/hash	not-reached			HINCRBY over 32bit value with over 32bit increment
+unit/type/hash	not-reached			HINCRBY fails against hash value with spaces (left)
+unit/type/hash	not-reached			HINCRBY fails against hash value with spaces (right)
+unit/type/hash	not-reached			HINCRBY can detect overflows
+unit/type/hash	not-reached			HINCRBYFLOAT against non existing database key
+unit/type/hash	not-reached			HINCRBYFLOAT against non existing hash key
+unit/type/hash	not-reached			HINCRBYFLOAT against hash key created by hincrby itself
+unit/type/hash	not-reached			HINCRBYFLOAT against hash key originally set with HSET
+unit/type/hash	not-reached			HINCRBYFLOAT over 32bit value
+unit/type/hash	not-reached			HINCRBYFLOAT over 32bit value with over 32bit increment
+unit/type/hash	not-reached			HINCRBYFLOAT fails against hash value with spaces (left)
+unit/type/hash	not-reached			HINCRBYFLOAT fails against hash value with spaces (right)
+unit/type/hash	not-reached			HINCRBYFLOAT fails against hash value that contains a null-terminator in the middle
+unit/type/hash	not-reached			HSTRLEN against the small hash
+unit/type/hash	not-reached			HSTRLEN against the big hash
+unit/type/hash	not-reached			HSTRLEN against non existing field
+unit/type/hash	not-reached			HSTRLEN corner cases
+unit/type/hash	not-reached			HINCRBYFLOAT over hash-max-listpack-value encoded with a listpack
+unit/type/hash	not-reached			Hash ziplist regression test for large keys
+unit/type/hash	not-reached			Hash fuzzing #1 - 10 fields
+unit/type/hash	not-reached			Hash fuzzing #2 - 10 fields
+unit/type/hash	not-reached			Hash fuzzing #1 - 512 fields
+unit/type/hash	not-reached			Hash fuzzing #2 - 512 fields
+unit/type/hash	not-reached			Stress test the hash ziplist -> hashtable encoding conversion
+unit/type/hash	not-reached			Test HINCRBYFLOAT for correct float representation (issue #2846)
+unit/type/hash	not-reached			Hash ziplist of various encodings
+unit/type/hash	not-reached			Hash ziplist of various encodings - sanitize dump
+unit/type/hash	not-reached			HINCRBYFLOAT does not allow NaN or Infinity
+unit/type/stream	failed	unknown-command	xadd	XADD wrong number of args
+unit/type/stream	errored	unknown-command	xadd	XADD can add entries into a stream that XRANGE can fetch
+unit/type/stream	errored	unknown-command	xadd	XADD IDs are incremental
+unit/type/stream	errored	unknown-command	multi	XADD IDs are incremental when ms is the same as well
+unit/type/stream	errored	unknown-command	xadd	XADD IDs correctly report an error when overflowing
+unit/type/stream	errored	unknown-command	xadd	XADD auto-generated sequence is incremented for last ID
+unit/type/stream	errored	unknown-command	xadd	XADD auto-generated sequence is zero for future timestamp ID
+unit/type/stream	errored	unknown-command	xadd	XADD auto-generated sequence can't be smaller than last ID
+unit/type/stream	errored	unknown-command	xadd	XADD auto-generated sequence can't overflow
+unit/type/stream	errored	unknown-command	xadd	XADD 0-* should succeed
+unit/type/stream	errored	unknown-command	xadd	XADD with MAXLEN option
+unit/type/stream	errored	unknown-command	xadd	XADD with MAXLEN option and the '=' argument
+unit/type/stream	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'stream-node-max-entries'	XADD with MAXLEN option and the '~' argument
+unit/type/stream	errored	unknown-command	xadd	XADD with NOMKSTREAM option
+unit/type/stream	errored	unknown-command	xadd	XADD with MINID option
+unit/type/stream	errored	unknown-command	xadd	XTRIM with MINID option
+unit/type/stream	errored	unknown-command	xadd	XTRIM with MINID option, big delta from master record
+unit/type/stream	errored	unknown-command	multi	XADD mass insertion and XLEN
+unit/type/stream	passed			XADD with ID 0-0
+unit/type/stream	errored	unknown-command	xadd	XADD with LIMIT delete entries no more than limit
+unit/type/stream	errored	unknown-command	xrange	XRANGE COUNT works as expected
+unit/type/stream	errored	unknown-command	xrevrange	XREVRANGE COUNT works as expected
+unit/type/stream	errored	unknown-command	xrange	XRANGE can be used to iterate the whole stream
+unit/type/stream	errored	unknown-command	xrange	XREVRANGE returns the reverse of XRANGE
+unit/type/stream	errored	unknown-command	multi	XRANGE exclusive ranges
+unit/type/stream	errored	unknown-command	xread	XREAD with non empty stream
+unit/type/stream	errored	unknown-command	xread	Non blocking XREAD with empty streams
+unit/type/stream	errored	unknown-command	multi	XREAD with non empty second stream
+unit/type/stream	errored	unknown-command	xadd	Blocking XREAD waiting new data
+unit/type/stream	errored	unknown-command	xadd	Blocking XREAD waiting old data
+unit/type/stream	errored	unknown-command	xadd	Blocking XREAD will not reply with an empty array
+unit/type/stream	errored	unknown-command	xadd	Blocking XREAD for stream that ran dry (issue #5299)
+unit/type/stream	errored	unknown-command	info	XREAD: XADD + DEL should not awake client
+unit/type/stream	errored	unknown-command	info	XREAD: XADD + DEL + LPUSH should not awake client
+unit/type/stream	errored	unknown-command	xadd	XREAD with same stream name multiple times should work
+unit/type/stream	errored	unknown-command	xadd	XREAD + multiple XADD inside transaction
+unit/type/stream	errored	unknown-command	xadd	XDEL basic test
+unit/type/stream	errored	unknown-command	xadd	XDEL fuzz test
+unit/type/stream	errored	unknown-command	xrange	XRANGE fuzzing
+unit/type/stream	errored	unknown-command	xadd	XREVRANGE regression test for issue #5006
+unit/type/stream	errored	unknown-command	xadd	XREAD streamID edge (no-blocking)
+unit/type/stream	errored	unknown-command	info	XREAD streamID edge (blocking)
+unit/type/stream	errored	unknown-command	xadd	XADD streamID edge
+unit/type/stream	errored	unknown-command	xadd	XTRIM with MAXLEN option basic test
+unit/type/stream	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'stream-node-max-entries'	XADD with LIMIT consecutive calls
+unit/type/stream	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'stream-node-max-entries'	XTRIM with ~ is limited
+unit/type/stream	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'stream-node-max-entries'	XTRIM without ~ is not limited
+unit/type/stream	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'stream-node-max-entries'	XTRIM without ~ and with LIMIT
+unit/type/stream	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'stream-node-max-entries'	XTRIM with LIMIT delete entries no more than limit
+unit/type/stream	errored	unknown-command	xadd	XADD with MAXLEN > xlen can propagate correctly
+unit/type/stream	errored	unknown-command	xadd	XADD with MINID > lastid can propagate correctly
+unit/type/stream	errored	unknown-command	xadd	XADD with ~ MAXLEN can propagate correctly
+unit/type/stream	errored	unknown-command	xadd	XADD with ~ MAXLEN and LIMIT can propagate correctly
+unit/type/stream	errored	unknown-command	xadd	XADD with ~ MINID can propagate correctly
+unit/type/stream	errored	unknown-command	xadd	XADD with ~ MINID and LIMIT can propagate correctly
+unit/type/stream	errored	unknown-command	xadd	XTRIM with ~ MAXLEN can propagate correctly
+unit/type/stream	errored	unknown-command	xadd	XADD can CREATE an empty stream
+unit/type/stream	errored	unknown-command	xsetid	XSETID can set a specific ID
+unit/type/stream	errored	unknown-command	xadd	XSETID cannot SETID with smaller ID
+unit/type/stream	failed	unknown-command	xsetid	XSETID cannot SETID on non-existent key
+unit/type/stream	failed	unknown-command	xsetid	XSETID cannot run with an offset but without a maximal tombstone
+unit/type/stream	failed	unknown-command	xsetid	XSETID cannot run with a maximal tombstone but without an offset
+unit/type/stream	failed	unknown-command	xsetid	XSETID errors on negstive offset
+unit/type/stream	errored	unknown-command	xadd	XSETID cannot set the maximal tombstone with larger ID
+unit/type/stream	errored	unknown-command	xadd	XSETID cannot set the offset to less than the length
+unit/type/stream	errored	unknown-command	xadd	XADD advances the entries-added counter and sets the recorded-first-entry-id
+unit/type/stream	errored	unknown-command	xadd	XDEL/TRIM are reflected by recorded first entry
+unit/type/stream	errored	unknown-command	xadd	Maxmimum XDEL ID behaves correctly
+unit/type/stream	errored	unknown-command	xadd	Empty stream can be rewrite into AOF correctly
+unit/type/stream	errored	unknown-command	xsetid	Stream can be rewrite into AOF correctly after XDEL lastid
+unit/type/stream	failed	unknown-command	xgroup	XGROUP HELP should not have unexpected options
+unit/type/stream	failed	unknown-command	xinfo	XINFO HELP should not have unexpected options
+unit/type/stream-cgroups	errored	unknown-command	xadd	XGROUP CREATE: creation and duplicate group name detection
+unit/type/stream-cgroups	passed			XGROUP CREATE: automatic stream creation fails without MKSTREAM
+unit/type/stream-cgroups	errored	unknown-command	xgroup	XGROUP CREATE: automatic stream creation works with MKSTREAM
+unit/type/stream-cgroups	errored	unknown-command	xadd	XREADGROUP will return only new elements
+unit/type/stream-cgroups	errored	unknown-command	xadd	XREADGROUP can read the history of the elements we own
+unit/type/stream-cgroups	errored	unknown-command	xpending	XPENDING is able to return pending items
+unit/type/stream-cgroups	errored	unknown-command	xpending	XPENDING can return single consumer items
+unit/type/stream-cgroups	errored	unknown-command	xpending	XPENDING only group
+unit/type/stream-cgroups	errored	unknown-command	xpending	XPENDING with IDLE
+unit/type/stream-cgroups	errored	unknown-command	xpending	XPENDING with exclusive range intervals works as expected
+unit/type/stream-cgroups	errored	unknown-command	xpending	XACK is able to remove items from the consumer/group PEL
+unit/type/stream-cgroups	errored	other	can't read "id1": no such variable	XACK can't remove the same item multiple times
+unit/type/stream-cgroups	errored	other	can't read "id1": no such variable	XACK is able to accept multiple arguments
+unit/type/stream-cgroups	errored	unknown-command	xgroup	XACK should fail if got at least one invalid ID
+unit/type/stream-cgroups	errored	unknown-command	xadd	PEL NACK reassignment after XGROUP SETID event
+unit/type/stream-cgroups	errored	unknown-command	xadd	XREADGROUP will not report data on empty history. Bug #5577
+unit/type/stream-cgroups	errored	unknown-command	xgroup	XREADGROUP history reporting of deleted entries. Bug #5570
+unit/type/stream-cgroups	errored	unknown-command	xgroup	Blocking XREADGROUP will not reply with an empty array
+unit/type/stream-cgroups	errored	unknown-command	xadd	Blocking XREADGROUP: key deleted
+unit/type/stream-cgroups	errored	unknown-command	xadd	Blocking XREADGROUP: key type changed with SET
+unit/type/stream-cgroups	errored	unknown-command	xadd	Blocking XREADGROUP: key type changed with transaction
+unit/type/stream-cgroups	errored	unknown-command	xadd	Blocking XREADGROUP: flushed DB
+unit/type/stream-cgroups	skipped		Not supported on external server	Blocking XREADGROUP: swapped DB, key doesn't exist
+unit/type/stream-cgroups	skipped		Not supported on external server	Blocking XREADGROUP: swapped DB, key is not a stream
+unit/type/stream-cgroups	errored	unknown-command	xadd	Blocking XREAD: key deleted
+unit/type/stream-cgroups	errored	unknown-command	xadd	Blocking XREAD: key type changed with SET
+unit/type/stream-cgroups	errored	unknown-command	xgroup	Blocking XREADGROUP for stream that ran dry (issue #5299)
+unit/type/stream-cgroups	errored	unknown-command	xgroup	Blocking XREADGROUP will ignore BLOCK if ID is not >
+unit/type/stream-cgroups	errored	unknown-subcommand	config resetstat	XGROUP DESTROY should unblock XREADGROUP with -NOGROUP
+unit/type/stream-cgroups	errored	unknown-command	xgroup	RENAME can unblock XREADGROUP with data
+unit/type/stream-cgroups	errored	unknown-command	xgroup	RENAME can unblock XREADGROUP with -NOGROUP
+unit/type/stream-cgroups	errored	unknown-command	xadd	XCLAIM can claim PEL items from another consumer
+unit/type/stream-cgroups	errored	unknown-command	xadd	XCLAIM without JUSTID increments delivery count
+unit/type/stream-cgroups	errored	unknown-command	xadd	XCLAIM same consumer
+unit/type/stream-cgroups	errored	unknown-command	xadd	XAUTOCLAIM can claim PEL items from another consumer
+unit/type/stream-cgroups	errored	unknown-command	xadd	XAUTOCLAIM as an iterator
+unit/type/stream-cgroups	failed	unknown-command	xautoclaim	XAUTOCLAIM COUNT must be > 0
+unit/type/stream-cgroups	errored	unknown-command	xadd	XCLAIM with XDEL
+unit/type/stream-cgroups	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'stream-node-max-entries'	XCLAIM with trimming
+unit/type/stream-cgroups	errored	unknown-command	xadd	XAUTOCLAIM with XDEL
+unit/type/stream-cgroups	errored	unknown-command	xadd	XAUTOCLAIM with XDEL and count
+unit/type/stream-cgroups	failed	unknown-command	xautoclaim	XAUTOCLAIM with out of range count
+unit/type/stream-cgroups	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'stream-node-max-entries'	XCLAIM with trimming
+unit/type/stream-cgroups	errored	unknown-command	xadd	XINFO FULL output
+unit/type/stream-cgroups	errored	unknown-command	xgroup	XGROUP CREATECONSUMER: create consumer if does not exist
+unit/type/stream-cgroups	errored	unknown-command	xadd	XGROUP CREATECONSUMER: group must exist
+unit/type/stream-cgroups	errored	unknown-command	xgroup	XREADGROUP with NOACK creates consumer
+unit/type/stream-cgroups	errored	unknown-command	xgroup	Consumer without PEL is present in AOF after AOFRW
+unit/type/stream-cgroups	errored	unknown-command	xgroup	Consumer group read counter and lag in empty streams
+unit/type/stream-cgroups	errored	unknown-command	xadd	Consumer group read counter and lag sanity
+unit/type/stream-cgroups	errored	unknown-command	xadd	Consumer group lag with XDELs
+unit/type/stream-cgroups	errored	unknown-command	restore	Loading from legacy (Redis <= v6.2.x, rdb_ver < 10) persistence
+unit/type/stream-cgroups	skipped-block		Not supported on external server	-
+unit/type/stream-cgroups	skipped-block		Not supported on external server	-
+unit/type/stream-cgroups	errored	unknown-command	xgroup	Empty stream with no lastid can be rewrite into AOF correctly
+unit/sort	errored	unknown-command	sort	Old Ziplist: SORT BY key
+unit/sort	errored	unknown-command	sort	Old Ziplist: SORT BY key with limit
+unit/sort	errored	unknown-command	sort	Old Ziplist: SORT BY hash field
+unit/sort	errored	unknown-command	sort	Old Linked list: SORT BY key
+unit/sort	errored	unknown-command	sort	Old Linked list: SORT BY key with limit
+unit/sort	errored	unknown-command	sort	Old Linked list: SORT BY hash field
+unit/sort	errored	unknown-command	sort	Old Big Linked list: SORT BY key
+unit/sort	errored	unknown-command	sort	Old Big Linked list: SORT BY key with limit
+unit/sort	errored	unknown-command	sort	Old Big Linked list: SORT BY hash field
+unit/sort	errored	unknown-command	sort	Intset: SORT BY key
+unit/sort	errored	unknown-command	sort	Intset: SORT BY key with limit
+unit/sort	errored	unknown-command	sort	Intset: SORT BY hash field
+unit/sort	errored	unknown-command	sort	Hash table: SORT BY key
+unit/sort	errored	unknown-command	sort	Hash table: SORT BY key with limit
+unit/sort	errored	unknown-command	sort	Hash table: SORT BY hash field
+unit/sort	errored	unknown-command	sort	Big Hash table: SORT BY key
+unit/sort	errored	unknown-command	sort	Big Hash table: SORT BY key with limit
+unit/sort	errored	unknown-command	sort	Big Hash table: SORT BY hash field
+unit/sort	errored	unknown-command	sort	SORT GET #
+unit/sort	errored	unknown-command	sort	SORT GET <const>
+unit/sort	errored	unknown-command	sort	SORT GET (key and hash) with sanity check
+unit/sort	errored	unknown-command	sort	SORT BY key STORE
+unit/sort	errored	unknown-command	sort	SORT BY hash field STORE
+unit/sort	errored	unknown-command	command	SORT extracts STORE correctly
+unit/sort	errored	unknown-command	command	SORT_RO get keys
+unit/sort	errored	unknown-command	command	SORT extracts multiple STORE correctly
+unit/sort	errored	unknown-command	sort	SORT DESC
+unit/sort	errored	unknown-command	sort	SORT ALPHA against integer encoded strings
+unit/sort	errored	unknown-command	sort	SORT sorted set
+unit/sort	errored	unknown-command	multi	SORT sorted set BY nosort should retain ordering
+unit/sort	errored	unknown-command	sort	SORT sorted set BY nosort + LIMIT
+unit/sort	errored	unknown-command	eval	SORT sorted set BY nosort works as expected from scripts
+unit/sort	errored	error-reply	ERR firn stores only integer scores below 2^52 in magnitude	SORT sorted set: +inf and -inf handling
+unit/sort	errored	unknown-command	flushdb	SORT regression for issue #19, sorting floats
+unit/sort	errored	unknown-command	flushdb	SORT with STORE returns zero if result is empty (github issue 224)
+unit/sort	errored	unknown-command	flushdb	SORT with STORE does not create empty lists (github issue 224)
+unit/sort	errored	unknown-command	flushdb	SORT with STORE removes key if result is empty (github issue 227)
+unit/sort	errored	unknown-command	sort	SORT with BY <constant> and STORE should still order output
+unit/sort	failed	unknown-command	sort	SORT will complain with numerical sorting and bad doubles (1)
+unit/sort	failed	unknown-command	sort	SORT will complain with numerical sorting and bad doubles (2)
+unit/sort	errored	unknown-command	sort	SORT BY sub-sorts lexicographically if score is the same
+unit/sort	errored	unknown-command	sort	SORT GET with pattern ending with just -> does not get hash field
+unit/sort	errored	unknown-command	sort	SORT by nosort retains native order for lists
+unit/sort	errored	unknown-command	sort	SORT by nosort plus store retains native order for lists
+unit/sort	errored	unknown-command	sort	SORT by nosort with limit returns based on original list order
+unit/sort	errored	unknown-command	sort_ro	SORT_RO - Successful case
+unit/sort	failed	unknown-command	sort_ro	SORT_RO - Cannot run with STORE arg
+unit/sort	errored	unknown-command	sort	SORT speed, 100 element list BY key, 100 times
+unit/sort	errored	unknown-command	sort	SORT speed, 100 element list BY hash field, 100 times
+unit/sort	errored	unknown-command	sort	SORT speed, 100 element list directly, 100 times
+unit/sort	errored	unknown-command	sort	SORT speed, 100 element list BY <const>, 100 times
+unit/sort	passed			SETRANGE with huge offset
+unit/expire	passed			EXPIRE - set timeouts multiple times
+unit/expire	passed			EXPIRE - It should be still possible to read 'x'
+unit/expire	passed			EXPIRE - After 2.1 seconds the key should no longer be here
+unit/expire	passed			EXPIRE - write on expire should work
+unit/expire	errored	unknown-command	expireat	EXPIREAT - Check for EXPIRE alike behavior
+unit/expire	errored	unknown-command	setex	SETEX - Set + Expire combo operation. Check for TTL
+unit/expire	failed	wrong-reply	Expected 'test' to equal or match 'foo'	SETEX - Check value
+unit/expire	errored	unknown-command	setex	SETEX - Overwrite old key
+unit/expire	passed			SETEX - Wait for the key to expire
+unit/expire	failed	unknown-command	setex	SETEX - Wrong time parameter
+unit/expire	passed			PERSIST can undo an EXPIRE
+unit/expire	passed			PERSIST returns 0 against non existing or non volatile keys
+unit/expire	errored	unknown-command	setex	EXPIRE precision is now the millisecond
+unit/expire	errored	unknown-command	psetex	PSETEX can set sub-second expires
+unit/expire	passed			PEXPIRE can set sub-second expires
+unit/expire	errored	unknown-command	time	PEXPIREAT can set sub-second expires
+unit/expire	errored	unknown-command	setex	TTL returns time to live in seconds
+unit/expire	errored	unknown-command	setex	PTTL returns time to live in milliseconds
+unit/expire	errored	unknown-command	expiretime	TTL / PTTL / EXPIRETIME / PEXPIRETIME return -1 if key has no expire
+unit/expire	errored	unknown-command	expiretime	TTL / PTTL / EXPIRETIME / PEXPIRETIME return -2 if key does not exit
+unit/expire	errored	error-reply	ERR syntax error	EXPIRETIME returns absolute expiration time in seconds
+unit/expire	errored	error-reply	ERR syntax error	PEXPIRETIME returns absolute expiration time in milliseconds
+unit/expire	errored	unknown-command	flushdb	Redis should actively expire keys incrementally
+unit/expire	errored	unknown-command	flushdb	Redis should lazy expire keys
+unit/expire	errored	unknown-command	debug	EXPIRE should not resurrect keys (issue #1026)
+unit/expire	errored	unknown-command	flushdb	5 keys in, 5 keys out
+unit/expire	passed			EXPIRE with empty string as TTL should report an error
+unit/expire	passed			SET with EX with big integer should report an error
+unit/expire	passed			SET with EX with smallest integer should report an error
+unit/expire	failed	unknown-command	getex	GETEX with big integer should report an error
+unit/expire	failed	unknown-command	getex	GETEX with smallest integer should report an error
+unit/expire	passed			EXPIRE with big integer overflows when converted to milliseconds
+unit/expire	passed			PEXPIRE with big integer overflow when basetime is added
+unit/expire	passed			EXPIRE with big negative integer
+unit/expire	errored	error-reply	ERR invalid expire time in 'pexpireat' command	PEXPIREAT with big integer works
+unit/expire	errored	error-reply	ERR invalid expire time in 'pexpireat' command	PEXPIREAT with big negative integer works
+unit/expire	skipped-block		Not supported on external server	-
+unit/expire	errored	unknown-command	flushall	All TTL in commands are propagated as absolute timestamp in replication stream
+unit/expire	skipped-block		Not supported on external server	-
+unit/expire	passed			SET command will remove expire
+unit/expire	errored	error-reply	ERR syntax error	SET - use KEEPTTL option, TTL should not be removed
+unit/expire	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'appendonly'	SET - use KEEPTTL option, TTL should not be removed after loadaof
+unit/expire	errored	unknown-command	getex	GETEX use of PERSIST option should remove TTL
+unit/expire	errored	unknown-command	getex	GETEX use of PERSIST option should remove TTL after loadaof
+unit/expire	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'repl-ping-replica-period'	GETEX propagate as to replica as PERSIST, DEL, or nothing
+unit/expire	errored	error-reply	ERR wrong number of arguments for 'expire' command	EXPIRE with NX option on a key with ttl
+unit/expire	errored	error-reply	ERR wrong number of arguments for 'expire' command	EXPIRE with NX option on a key without ttl
+unit/expire	errored	error-reply	ERR wrong number of arguments for 'expire' command	EXPIRE with XX option on a key with ttl
+unit/expire	errored	error-reply	ERR wrong number of arguments for 'expire' command	EXPIRE with XX option on a key without ttl
+unit/expire	errored	error-reply	ERR wrong number of arguments for 'expire' command	EXPIRE with GT option on a key with lower ttl
+unit/expire	errored	error-reply	ERR wrong number of arguments for 'expire' command	EXPIRE with GT option on a key with higher ttl
+unit/expire	errored	error-reply	ERR wrong number of arguments for 'expire' command	EXPIRE with GT option on a key without ttl
+unit/expire	errored	error-reply	ERR wrong number of arguments for 'expire' command	EXPIRE with LT option on a key with higher ttl
+unit/expire	errored	error-reply	ERR wrong number of arguments for 'expire' command	EXPIRE with LT option on a key with lower ttl
+unit/expire	errored	error-reply	ERR wrong number of arguments for 'expire' command	EXPIRE with LT option on a key without ttl
+unit/expire	errored	error-reply	ERR wrong number of arguments for 'expire' command	EXPIRE with LT and XX option on a key with ttl
+unit/expire	errored	error-reply	ERR wrong number of arguments for 'expire' command	EXPIRE with LT and XX option on a key without ttl
+unit/expire	failed	wrong-reply	Expected 'ERR GT and LT options at the same time are not compatible' to equal or match 'ERR wrong number of arguments...	EXPIRE with conflicting options: LT GT
+unit/expire	failed	wrong-reply	Expected 'ERR NX and XX, GT or LT options at the same time are not compatible' to equal or match 'ERR wrong number of...	EXPIRE with conflicting options: NX GT
+unit/expire	failed	wrong-reply	Expected 'ERR NX and XX, GT or LT options at the same time are not compatible' to equal or match 'ERR wrong number of...	EXPIRE with conflicting options: NX LT
+unit/expire	failed	wrong-reply	Expected 'ERR NX and XX, GT or LT options at the same time are not compatible' to equal or match 'ERR wrong number of...	EXPIRE with conflicting options: NX XX
+unit/expire	failed	wrong-reply	Expected 'ERR Unsupported option AB' to equal or match 'ERR wrong number of arguments for 'expire' command'	EXPIRE with unsupported options
+unit/expire	failed	wrong-reply	Expected 'ERR Unsupported option AB' to equal or match 'ERR wrong number of arguments for 'expire' command'	EXPIRE with unsupported options
+unit/expire	errored	error-reply	ERR wrong number of arguments for 'expire' command	EXPIRE with negative expiry
+unit/expire	errored	error-reply	ERR wrong number of arguments for 'expire' command	EXPIRE with negative expiry on a non-valitale key
+unit/expire	errored	error-reply	ERR wrong number of arguments for 'expire' command	EXPIRE with non-existed key
+unit/expire	errored	unknown-command	debug	SCAN: Lazy-expire should not be wrapped in MULTI/EXEC
+unit/expire	errored	unknown-command	debug	RANDOMKEY: Lazy-expire should not be wrapped in MULTI/EXEC
+unit/other	errored	unknown-command	info	SAVE - make sure there are all the types as values
+unit/other	passed			FUZZ stresser with data model binary
+unit/other	passed			FUZZ stresser with data model alpha
+unit/other	passed			FUZZ stresser with data model compr
+unit/other	skipped-block		Not supported on external server	-
+unit/other	errored	unknown-command	flushall	BGSAVE
+unit/other	failed	unknown-command	select	SELECT an out of range DB
+unit/other	errored	unknown-command	flushdb	Check consistency of different data types after a reload
+unit/other	passed			Same dataset digest if saving/reloading as AOF?
+unit/other	errored	unknown-command	flushdb	EXPIRES after a reload (snapshot + append only file rewrite)
+unit/other	errored	unknown-command	flushdb	EXPIRES after AOF reload (without rewrite)
+unit/other	passed			PIPELINING stresser (also a regression for the old epoll bug)
+unit/other	errored	unknown-command	append	APPEND basics
+unit/other	errored	unknown-command	append	APPEND basics, integer encoded values
+unit/other	errored	unknown-command	append	APPEND fuzzing
+unit/other	errored	unknown-command	flushdb	FLUSHDB
+unit/other	errored	unknown-command	info	Perform a final SAVE to leave a clean DB on disk
+unit/other	errored	unknown-command	client	RESET clears client state
+unit/other	errored	unknown-command	monitor	RESET clears MONITOR state
+unit/other	errored	unknown-command	multi	RESET clears and discards MULTI state
+unit/other	errored	unknown-command	subscribe	RESET clears Pub/Sub state
+unit/other	errored	unknown-command	acl	RESET clears authenticated state
+unit/other	passed			Subcommand syntax error crash (issue #10070)
+unit/other	skipped-block		Not supported on external server	-
+unit/other	skipped-block		Not supported on external server	-
+unit/multi	errored	unknown-command	multi	MULTI / EXEC basics
+unit/multi	errored	unknown-command	multi	DISCARD
+unit/multi	errored	unknown-command	multi	Nested MULTI are not allowed
+unit/multi	errored	unknown-command	multi	MULTI where commands alter argc/argv
+unit/multi	errored	unknown-command	multi	WATCH inside MULTI is not allowed
+unit/multi	errored	unknown-command	multi	EXEC fails if there are errors while queueing commands #1
+unit/multi	errored	unknown-command	multi	EXEC fails if there are errors while queueing commands #2
+unit/multi	errored	unknown-command	multi	If EXEC aborts, the client MULTI state is cleared
+unit/multi	errored	unknown-command	watch	EXEC works on WATCHed key not modified
+unit/multi	errored	unknown-command	watch	EXEC fail on WATCHed key modified (1 key of 1 watched)
+unit/multi	errored	unknown-command	watch	EXEC fail on WATCHed key modified (1 key of 5 watched)
+unit/multi	errored	unknown-command	flushdb	EXEC fail on WATCHed key modified by SORT with STORE even if the result is empty
+unit/multi	errored	unknown-command	debug	EXEC fail on lazy expired WATCHed key
+unit/multi	errored	unknown-command	debug	WATCH stale keys should not fail EXEC
+unit/multi	errored	unknown-command	debug	Delete WATCHed stale keys should not fail EXEC
+unit/multi	errored	unknown-command	debug	FLUSHDB while watching stale keys should not fail EXEC
+unit/multi	errored	unknown-command	watch	After successful EXEC key is no longer watched
+unit/multi	errored	unknown-command	watch	After failed EXEC key is no longer watched
+unit/multi	errored	unknown-command	watch	It is possible to UNWATCH
+unit/multi	errored	unknown-command	unwatch	UNWATCH when there is nothing watched works as expected
+unit/multi	errored	unknown-command	watch	FLUSHALL is able to touch the watched keys
+unit/multi	errored	unknown-command	watch	FLUSHALL does not touch non affected keys
+unit/multi	errored	unknown-command	watch	FLUSHDB is able to touch the watched keys
+unit/multi	errored	unknown-command	watch	FLUSHDB does not touch non affected keys
+unit/multi	skipped		Not supported on singledb	SWAPDB is able to touch the watched keys that exist
+unit/multi	skipped		Not supported on singledb	SWAPDB is able to touch the watched keys that do not exist
+unit/multi	skipped		Not supported on singledb	SWAPDB does not touch watched stale keys
+unit/multi	skipped		Not supported on singledb	SWAPDB does not touch non-existing key replaced with stale key
+unit/multi	skipped		Not supported on singledb	SWAPDB does not touch stale key replaced with another stale key
+unit/multi	skipped		Not supported on singledb	WATCH is able to remember the DB a key belongs to
+unit/multi	errored	unknown-command	watch	WATCH will consider touched keys target of EXPIRE
+unit/multi	errored	unknown-command	flushall	WATCH will consider touched expired keys
+unit/multi	errored	unknown-command	watch	DISCARD should clear the WATCH dirty flag on the client
+unit/multi	errored	unknown-command	watch	DISCARD should UNWATCH all the keys
+unit/multi	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'repl-ping-replica-period'	MULTI / EXEC is not propagated (single write command)
+unit/multi	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'repl-ping-replica-period'	MULTI / EXEC is propagated correctly (multiple commands)
+unit/multi	skipped		Not supported on singledb	MULTI / EXEC is propagated correctly (multiple commands with SELECT)
+unit/multi	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'repl-ping-replica-period'	MULTI / EXEC is propagated correctly (empty transaction)
+unit/multi	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'repl-ping-replica-period'	MULTI / EXEC is propagated correctly (read-only commands)
+unit/multi	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'repl-ping-replica-period'	MULTI / EXEC is propagated correctly (write command, no effect)
+unit/multi	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'repl-ping-replica-period'	MULTI / EXEC with REPLICAOF
+unit/multi	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'maxmemory'	DISCARD should not fail during OOM
+unit/multi	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'lua-time-limit'	MULTI and script timeout
+unit/multi	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'lua-time-limit'	EXEC and script timeout
+unit/multi	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'lua-time-limit'	MULTI-EXEC body and script timeout
+unit/multi	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'lua-time-limit'	just EXEC and script timeout
+unit/multi	errored	unknown-command	multi	exec with write commands and state change
+unit/multi	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'replica-serve-stale-data'	exec with read commands and stale replica state change
+unit/multi	errored	unknown-command	multi	EXEC with only read commands should not be rejected when OOM
+unit/multi	errored	unknown-command	multi	EXEC with at least one use-memory command should fail
+unit/multi	errored	unknown-command	xgroup	Blocking commands ignores the timeout
+unit/multi	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'repl-ping-replica-period'	MULTI propagation of PUBLISH
+unit/multi	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'repl-ping-replica-period'	MULTI propagation of SCRIPT LOAD
+unit/multi	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'repl-ping-replica-period'	MULTI propagation of EVAL
+unit/multi	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'repl-ping-replica-period'	MULTI propagation of SCRIPT FLUSH
+unit/multi	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'repl-ping-replica-period'	MULTI propagation of XREADGROUP
+unit/multi	errored	unknown-command	multi	MULTI with SAVE
+unit/multi	errored	unknown-command	multi	MULTI with SHUTDOWN
+unit/multi	skipped		Not supported on external server	MULTI with BGREWRITEAOF
+unit/multi	skipped		Not supported on external server	MULTI with config set appendonly
+unit/multi	errored	unknown-command	multi	MULTI with config error
+unit/multi	errored	unknown-command	flushall	Flushall while watching several keys by one client
+unit/multi	skipped-block		Not supported on external server	-
+unit/quit	errored	unknown-command	quit	QUIT returns OK
+unit/quit	errored	unknown-command	quit	Pipelined commands after QUIT must not be executed
+unit/quit	errored	unknown-command	quit	Pipelined commands after QUIT that exceed read buffer size
+unit/aofrw	skipped-block		Not supported on external server	-
+unit/aofrw	skipped-block		Not supported on external server	-
+unit/acl	skipped-block		Not supported on external server	-
+unit/acl	skipped-block		Not supported on external server	-
+unit/acl	skipped-block		Not supported on external server	-
+unit/acl	skipped-block		Not supported on external server	-
+unit/acl	skipped-block		Not supported on external server	-
+unit/acl	skipped-block		Not supported on external server	-
+unit/acl	skipped-block		Not supported on external server	-
+unit/acl	skipped-block		Not supported on external server	-
+unit/acl-v2	skipped-block		Not supported on external server	-
+unit/acl-v2	skipped-block		Not supported on external server	-
+unit/latency-monitor	block-error	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'latency-monitor-threshold'	-
+unit/latency-monitor	not-reached			LATENCY HISTOGRAM with empty histogram
+unit/latency-monitor	not-reached			LATENCY HISTOGRAM all commands
+unit/latency-monitor	not-reached			LATENCY HISTOGRAM sub commands
+unit/latency-monitor	not-reached			LATENCY HISTOGRAM with a subset of commands
+unit/latency-monitor	not-reached			LATENCY HISTOGRAM command
+unit/latency-monitor	not-reached			LATENCY HISTOGRAM with wrong command name skips the invalid one
+unit/latency-monitor	not-reached			Test latency events logging
+unit/latency-monitor	not-reached			LATENCY HISTORY output is ok
+unit/latency-monitor	not-reached			LATENCY LATEST output is ok
+unit/latency-monitor	not-reached			LATENCY of expire events are correctly collected
+unit/latency-monitor	not-reached			LATENCY HISTORY / RESET with wrong event name is fine
+unit/latency-monitor	not-reached			LATENCY DOCTOR produces some output
+unit/latency-monitor	not-reached			LATENCY RESET is able to reset events
+unit/latency-monitor	not-reached			LATENCY HELP should not have unexpected options
+integration/block-repl	skipped-block		Not supported on external server	-
+integration/replication	skipped-block		Not supported on external server	-
+integration/replication	skipped-block		Not supported on external server	-
+integration/replication	skipped-block		Not supported on external server	-
+integration/replication	skipped-block		Not supported on external server	-
+integration/replication	skipped-block		Not supported on external server	-
+integration/replication	skipped-block		Not supported on external server	-
+integration/replication	skipped-block		Not supported on external server	-
+integration/replication	skipped-block		Not supported on external server	-
+integration/replication	skipped-block		Not supported on external server	-
+integration/replication	skipped-block		Not supported on external server	-
+integration/replication	skipped-block		Not supported on external server	-
+integration/replication	skipped-block		Not supported on external server	-
+integration/replication	skipped		Not supported on external server	diskless loading short read
+integration/replication	skipped-block		Not supported on external server	-
+integration/replication	skipped		Not supported on external server	diskless replication child being killed is collected
+integration/replication	skipped		Not supported on external server	replication child dies when parent is killed - diskless: yes
+integration/replication	skipped		Not supported on external server	replication child dies when parent is killed - diskless: no
+integration/replication	skipped		Not supported on external server	diskless replication read pipe cleanup
+integration/replication	skipped		Not supported on external server	replicaof right after disconnection
+integration/replication	skipped		Not supported on external server	Kill rdb child process if its dumping RDB is not useful
+integration/replication	skipped-block		Not supported on external server	-
+integration/replication	skipped		Not supported on external server	replica can handle EINTR if use diskless load
+integration/replication	skipped-block		Not supported on external server	-
+integration/replication-2	skipped-block		Not supported on external server	-
+integration/replication-3	skipped-block		Not supported on external server	-
+integration/replication-4	skipped-block		Not supported on external server	-
+integration/replication-4	skipped-block		Not supported on external server	-
+integration/replication-4	skipped-block		Not supported on external server	-
+integration/replication-4	skipped-block		Not supported on external server	-
+integration/replication-4	skipped-block		Not supported on external server	-
+integration/replication-psync	skipped-block		Not supported on external server	-
+integration/replication-buffer	skipped-block		Not supported on external server	-
+integration/replication-buffer	skipped-block		Not supported on external server	-
+integration/replication-buffer	skipped-block		Not supported on external server	-
+integration/replication-buffer	passed			Partial resynchronization is successful even client-output-buffer-limit is less than repl-backlog-size
+integration/replication-buffer	skipped-block		Not supported on external server	-
+integration/replication-buffer	passed			Replica client-output-buffer size is limited to backlog_limit/16 when no replication data is pending
+integration/shutdown	skipped		Not supported on external server	Shutting down master waits for replica to catch up (sigterm)
+integration/shutdown	skipped		Not supported on external server	Shutting down master waits for replica to catch up (shutdown)
+integration/shutdown	skipped		Not supported on external server	Shutting down master waits for replica timeout
+integration/shutdown	skipped		Not supported on external server	Shutting down master waits for replica then fails
+integration/shutdown	skipped		Not supported on external server	Shutting down master waits for replica then aborted
+integration/aof	skipped-block		Not supported on external server	-
+integration/aof-multi-part	skipped-block		Not supported on external server	-
+integration/rdb	skipped-block		Not supported on external server	-
+integration/corrupt-dump	skipped-block		Not supported on external server	-
+integration/corrupt-dump-fuzzer	skipped-block		Not supported on external server	-
+integration/convert-zipmap-hash-on-load	skipped-block		Not supported on external server	-
+integration/convert-ziplist-hash-on-load	skipped-block		Not supported on external server	-
+integration/convert-ziplist-zset-on-load	skipped-block		Not supported on external server	-
+integration/logging	skipped-block		Not supported on external server	-
+integration/psync2	skipped-block		Not supported on external server	-
+integration/psync2-reg	skipped-block		Not supported on external server	-
+integration/psync2-pingoff	skipped-block		Not supported on external server	-
+integration/psync2-pingoff	skipped-block		Not supported on external server	-
+integration/psync2-pingoff	skipped-block		Not supported on external server	-
+integration/psync2-master-restart	skipped-block		Not supported on external server	-
+integration/failover	skipped-block		Not supported on external server	-
+integration/redis-cli	passed			Interactive CLI: INFO response should be printed raw
+integration/redis-cli	passed			Interactive CLI: Status reply
+integration/redis-cli	passed			Interactive CLI: Integer reply
+integration/redis-cli	passed			Interactive CLI: Bulk reply
+integration/redis-cli	passed			Interactive CLI: Multi-bulk reply
+integration/redis-cli	passed			Interactive CLI: Parsing quotes
+integration/redis-cli	passed			Non-interactive TTY CLI: Status reply
+integration/redis-cli	passed			Non-interactive TTY CLI: Integer reply
+integration/redis-cli	passed			Non-interactive TTY CLI: Bulk reply
+integration/redis-cli	passed			Non-interactive TTY CLI: Multi-bulk reply
+integration/redis-cli	passed			Non-interactive TTY CLI: Read last argument from pipe
+integration/redis-cli	passed			Non-interactive TTY CLI: Read last argument from file
+integration/redis-cli	errored	unknown-command	hello	Non-interactive TTY CLI: Escape character in JSON mode
+integration/redis-cli	passed			Non-interactive non-TTY CLI: Status reply
+integration/redis-cli	passed			Non-interactive non-TTY CLI: Integer reply
+integration/redis-cli	passed			Non-interactive non-TTY CLI: Bulk reply
+integration/redis-cli	passed			Non-interactive non-TTY CLI: Multi-bulk reply
+integration/redis-cli	passed			Non-interactive non-TTY CLI: ASK redirect test
+integration/redis-cli	passed			Non-interactive non-TTY CLI: Quoted input arguments
+integration/redis-cli	passed			Non-interactive non-TTY CLI: No accidental unquoting of input arguments
+integration/redis-cli	passed			Non-interactive non-TTY CLI: Invalid quoted input arguments
+integration/redis-cli	passed			Non-interactive non-TTY CLI: Read last argument from pipe
+integration/redis-cli	passed			Non-interactive non-TTY CLI: Read last argument from file
+integration/redis-cli	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'repl-diskless-sync'	Dumping an RDB - functions only: no
+integration/redis-cli	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'repl-diskless-sync'	Dumping an RDB - functions only: yes
+integration/redis-cli	errored	unknown-command	flushdb	Scan mode
+integration/redis-cli	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'repl-diskless-sync'	Connecting as a replica
+integration/redis-cli	passed			Piping raw protocol
+integration/redis-cli	passed			Options -X with illegal argument
+integration/redis-cli	failed	unknown-command	restore	DUMP RESTORE with -x option
+integration/redis-cli	failed	unknown-command	restore	DUMP RESTORE with -X option
+integration/redis-benchmark	skipped-block		Not supported on external server	-
+integration/dismiss-mem	skipped-block		Not supported on external server	-
+unit/pubsub	errored	unknown-command	subscribe	Pub/Sub PING
+unit/pubsub	errored	unknown-command	subscribe	PUBLISH/SUBSCRIBE basics
+unit/pubsub	errored	unknown-command	subscribe	PUBLISH/SUBSCRIBE with two clients
+unit/pubsub	errored	unknown-command	subscribe	PUBLISH/SUBSCRIBE after UNSUBSCRIBE without arguments
+unit/pubsub	errored	unknown-command	subscribe	SUBSCRIBE to one channel more than once
+unit/pubsub	errored	unknown-command	unsubscribe	UNSUBSCRIBE from non-subscribed channels
+unit/pubsub	errored	unknown-command	psubscribe	PUBLISH/PSUBSCRIBE basics
+unit/pubsub	errored	unknown-command	psubscribe	PUBLISH/PSUBSCRIBE with two clients
+unit/pubsub	errored	unknown-command	psubscribe	PUBLISH/PSUBSCRIBE after PUNSUBSCRIBE without arguments
+unit/pubsub	errored	unknown-command	hello	PubSub messages with CLIENT REPLY OFF
+unit/pubsub	errored	unknown-command	punsubscribe	PUNSUBSCRIBE from non-subscribed channels
+unit/pubsub	errored	unknown-command	pubsub	NUMSUB returns numbers, not strings (#1561)
+unit/pubsub	errored	unknown-command	psubscribe	NUMPATs returns the number of unique patterns
+unit/pubsub	errored	unknown-command	subscribe	Mix SUBSCRIBE and PSUBSCRIBE
+unit/pubsub	errored	unknown-command	punsubscribe	PUNSUBSCRIBE and UNSUBSCRIBE should always reply
+unit/pubsub	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'notify-keyspace-events'	Keyspace notifications: we receive keyspace notifications
+unit/pubsub	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'notify-keyspace-events'	Keyspace notifications: we receive keyevent notifications
+unit/pubsub	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'notify-keyspace-events'	Keyspace notifications: we can receive both kind of events
+unit/pubsub	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'notify-keyspace-events'	Keyspace notifications: we are able to mask events
+unit/pubsub	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'notify-keyspace-events'	Keyspace notifications: general events test
+unit/pubsub	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'notify-keyspace-events'	Keyspace notifications: list events test
+unit/pubsub	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'notify-keyspace-events'	Keyspace notifications: set events test
+unit/pubsub	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'notify-keyspace-events'	Keyspace notifications: zset events test
+unit/pubsub	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'notify-keyspace-events'	Keyspace notifications: hash events test
+unit/pubsub	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'notify-keyspace-events'	Keyspace notifications: stream events test
+unit/pubsub	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'notify-keyspace-events'	Keyspace notifications: expired events (triggered expire)
+unit/pubsub	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'notify-keyspace-events'	Keyspace notifications: expired events (background expire)
+unit/pubsub	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'notify-keyspace-events'	Keyspace notifications: evicted events
+unit/pubsub	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'notify-keyspace-events'	Keyspace notifications: test CONFIG GET/SET of event flags
+unit/pubsub	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'notify-keyspace-events'	Keyspace notifications: new key test
+unit/pubsubshard	skipped-block		Not supported on external server	-
+unit/pubsubshard	skipped-block		Not supported on external server	-
+unit/slowlog	errored	unknown-command	slowlog	SLOWLOG - check that it starts with an empty log
+unit/slowlog	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'slowlog-log-slower-than'	SLOWLOG - only logs commands taking more time than specified
+unit/slowlog	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'slowlog-log-slower-than'	SLOWLOG - max entries is correctly handled
+unit/slowlog	errored	unknown-command	slowlog	SLOWLOG - GET optional argument to limit output len works
+unit/slowlog	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'slowlog-log-slower-than'	SLOWLOG - RESET subcommand works
+unit/slowlog	errored	unknown-command	client	SLOWLOG - logged entry sanity check
+unit/slowlog	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'slowlog-log-slower-than'	SLOWLOG - Certain commands are omitted that contain sensitive information
+unit/slowlog	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'slowlog-log-slower-than'	SLOWLOG - Some commands can redact sensitive fields
+unit/slowlog	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'slowlog-log-slower-than'	SLOWLOG - Rewritten commands are logged as their original command
+unit/slowlog	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'slowlog-log-slower-than'	SLOWLOG - commands with too many arguments are trimmed
+unit/slowlog	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'slowlog-log-slower-than'	SLOWLOG - too long arguments are trimmed
+unit/slowlog	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'slowlog-log-slower-than'	SLOWLOG - EXEC is not logged, just executed commands
+unit/slowlog	errored	unknown-command	client	SLOWLOG - can clean older entries
+unit/slowlog	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'slowlog-max-len'	SLOWLOG - can be disabled
+unit/slowlog	failed	unknown-command	slowlog	SLOWLOG - count must be >= -1
+unit/slowlog	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'slowlog-log-slower-than'	SLOWLOG - get all slow logs
+unit/scripting	errored	unknown-command	function	EVAL - Does Lua interpreter replies to our requests?
+unit/scripting	errored	unknown-command	function	EVAL - Return _G
+unit/scripting	errored	unknown-command	function	EVAL - Return table with a metatable that raise error
+unit/scripting	errored	unknown-command	function	EVAL - Return table with a metatable that call redis
+unit/scripting	errored	unknown-command	function	EVAL - Lua integer -> Redis protocol type conversion
+unit/scripting	errored	unknown-command	function	EVAL - Lua string -> Redis protocol type conversion
+unit/scripting	errored	unknown-command	function	EVAL - Lua true boolean -> Redis protocol type conversion
+unit/scripting	errored	unknown-command	function	EVAL - Lua false boolean -> Redis protocol type conversion
+unit/scripting	errored	unknown-command	function	EVAL - Lua status code reply -> Redis protocol type conversion
+unit/scripting	failed	unknown-command	function	EVAL - Lua error reply -> Redis protocol type conversion
+unit/scripting	errored	unknown-command	function	EVAL - Lua table -> Redis protocol type conversion
+unit/scripting	errored	unknown-command	function	EVAL - Are the KEYS and ARGV arrays populated correctly?
+unit/scripting	errored	unknown-command	function	EVAL - is Lua able to call Redis API?
+unit/scripting	errored	unknown-command	function	EVAL - Redis integer -> Lua type conversion
+unit/scripting	errored	unknown-command	function	EVAL - Redis bulk -> Lua type conversion
+unit/scripting	errored	unknown-command	function	EVAL - Redis multi bulk -> Lua type conversion
+unit/scripting	errored	unknown-command	function	EVAL - Redis status reply -> Lua type conversion
+unit/scripting	errored	unknown-command	function	EVAL - Redis error reply -> Lua type conversion
+unit/scripting	errored	unknown-command	function	EVAL - Redis nil bulk reply -> Lua type conversion
+unit/scripting	skipped		Not supported on singledb	EVAL - Is the Lua client using the currently selected DB?
+unit/scripting	skipped		Not supported on singledb	EVAL - SELECT inside Lua should not affect the caller
+unit/scripting	failed	unknown-command	function	EVAL - Scripts can't run blpop command
+unit/scripting	failed	unknown-command	function	EVAL - Scripts can't run brpop command
+unit/scripting	failed	unknown-command	function	EVAL - Scripts can't run brpoplpush command
+unit/scripting	failed	unknown-command	function	EVAL - Scripts can't run blmove command
+unit/scripting	failed	unknown-command	function	EVAL - Scripts can't run bzpopmin command
+unit/scripting	failed	unknown-command	function	EVAL - Scripts can't run bzpopmax command
+unit/scripting	errored	unknown-command	xgroup	EVAL - Scripts can't run XREAD and XREADGROUP with BLOCK option
+unit/scripting	failed	unknown-command	function	EVAL - Scripts can run non-deterministic commands
+unit/scripting	failed	unknown-command	function	EVAL - No arguments to redis.call/pcall is considered an error
+unit/scripting	failed	unknown-command	function	EVAL - redis.call variant raises a Lua error on Redis cmd error (1)
+unit/scripting	failed	unknown-command	function	EVAL - redis.call variant raises a Lua error on Redis cmd error (1)
+unit/scripting	failed	unknown-command	function	EVAL - redis.call variant raises a Lua error on Redis cmd error (1)
+unit/scripting	errored	unknown-command	function	EVAL - JSON numeric decoding
+unit/scripting	errored	unknown-command	function	EVAL - JSON string decoding
+unit/scripting	errored	unknown-command	function	EVAL - JSON smoke test
+unit/scripting	errored	unknown-command	function	EVAL - cmsgpack can pack double?
+unit/scripting	errored	unknown-command	function	EVAL - cmsgpack can pack negative int64?
+unit/scripting	errored	unknown-command	function	EVAL - cmsgpack pack/unpack smoke test
+unit/scripting	errored	unknown-command	function	EVAL - cmsgpack can pack and unpack circular references?
+unit/scripting	errored	unknown-command	function	EVAL - Numerical sanity check from bitop
+unit/scripting	errored	unknown-command	function	EVAL - Verify minimal bitop functionality
+unit/scripting	errored	unknown-command	function	EVAL - Able to parse trailing comments
+unit/scripting	errored	unknown-command	function	EVAL_RO - Successful case
+unit/scripting	failed	unknown-command	function	EVAL_RO - Cannot run write commands
+unit/scripting	errored	unknown-command	function	redis.sha1hex() implementation
+unit/scripting	failed	unknown-command	function	Globals protection reading an undeclared global variable
+unit/scripting	failed	unknown-command	function	Globals protection setting an undeclared global*
+unit/scripting	errored	unknown-command	function	Test an example script DECR_IF_GT
+unit/scripting	errored	unknown-command	script	EVAL does not leak in the Lua stack
+unit/scripting	errored	unknown-command	function	Call Redis command with many args from Lua (issue #1764)
+unit/scripting	errored	unknown-command	function	Number conversion precision test (issue #1118)
+unit/scripting	errored	unknown-command	function	String containing number precision test (regression of issue #1118)
+unit/scripting	failed	unknown-command	function	Verify negative arg count is error instead of crash (issue #1842)
+unit/scripting	failed	unknown-command	function	Scripts can handle commands with incorrect arity
+unit/scripting	errored	unknown-command	function	Correct handling of reused argv (issue #1939)
+unit/scripting	failed	unknown-command	function	Functions in the Redis namespace are able to report errors
+unit/scripting	failed	unknown-command	function	CLUSTER RESET can not be invoke from within a script
+unit/scripting	errored	unknown-command	hello	Script with RESP3 map
+unit/scripting	timed-out	hang	timed out in an earlier attempt	Script return recursive object
+unit/scripting	errored	unknown-command	function	Script check unpack with massive arguments
+unit/scripting	errored	unknown-command	function	Script read key with expiration set
+unit/scripting	errored	unknown-command	function	Script del key with expiration set
+unit/scripting	errored	unknown-command	acl	Script ACL check
+unit/scripting	failed	unknown-command	function	Binary code loading failed
+unit/scripting	failed	unknown-command	function	Try trick global protection 1
+unit/scripting	failed	unknown-command	function	Try trick global protection 2
+unit/scripting	failed	unknown-command	function	Try trick global protection 3
+unit/scripting	failed	unknown-command	function	Try trick global protection 4
+unit/scripting	failed	unknown-command	function	Try trick readonly table on redis table
+unit/scripting	failed	unknown-command	function	Try trick readonly table on json table
+unit/scripting	failed	unknown-command	function	Try trick readonly table on cmsgpack table
+unit/scripting	failed	unknown-command	function	Try trick readonly table on bit table
+unit/scripting	failed	unknown-command	function	Test loadfile are not available
+unit/scripting	failed	unknown-command	function	Test dofile are not available
+unit/scripting	failed	unknown-command	function	Test print are not available
+unit/scripting	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'lua-time-limit'	Timedout read-only scripts can be killed by SCRIPT KILL
+unit/scripting	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'lua-time-limit'	Timedout read-only scripts can be killed by SCRIPT KILL even when use pcall
+unit/scripting	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'lua-time-limit'	Timedout script does not cause a false dead client
+unit/scripting	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'lua-time-limit'	Timedout script link is still usable after Lua returns
+unit/scripting	skipped		Not supported on external server	Timedout scripts and unblocked command
+unit/scripting	skipped		Not supported on external server	Timedout scripts that modified data can't be killed by SCRIPT KILL
+unit/scripting	skipped		Not supported on external server	SHUTDOWN NOSAVE can kill a timedout script anyway
+unit/scripting	skipped-block		Not supported on external server	-
+unit/scripting	skipped-block		Not supported on external server	-
+unit/scripting	block-error	unknown-command	debug	-
+unit/scripting	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'maxmemory'	Script - disallow write on OOM
+unit/scripting	errored	unknown-command	eval	EVAL - Does Lua interpreter replies to our requests?
+unit/scripting	errored	unknown-command	eval	EVAL - Return _G
+unit/scripting	errored	unknown-command	eval	EVAL - Return table with a metatable that raise error
+unit/scripting	errored	unknown-command	eval	EVAL - Return table with a metatable that call redis
+unit/scripting	errored	unknown-command	eval	EVAL - Lua integer -> Redis protocol type conversion
+unit/scripting	errored	unknown-command	eval	EVAL - Lua string -> Redis protocol type conversion
+unit/scripting	errored	unknown-command	eval	EVAL - Lua true boolean -> Redis protocol type conversion
+unit/scripting	errored	unknown-command	eval	EVAL - Lua false boolean -> Redis protocol type conversion
+unit/scripting	errored	unknown-command	eval	EVAL - Lua status code reply -> Redis protocol type conversion
+unit/scripting	failed	unknown-command	eval	EVAL - Lua error reply -> Redis protocol type conversion
+unit/scripting	errored	unknown-command	eval	EVAL - Lua table -> Redis protocol type conversion
+unit/scripting	errored	unknown-command	eval	EVAL - Are the KEYS and ARGV arrays populated correctly?
+unit/scripting	errored	unknown-command	eval	EVAL - is Lua able to call Redis API?
+unit/scripting	errored	unknown-command	evalsha	EVALSHA - Can we call a SHA1 if already defined?
+unit/scripting	errored	unknown-command	evalsha	EVALSHA - Can we call a SHA1 in uppercase?
+unit/scripting	failed	unknown-command	evalsha	EVALSHA - Do we get an error on invalid SHA1?
+unit/scripting	failed	unknown-command	evalsha	EVALSHA - Do we get an error on non defined SHA1?
+unit/scripting	errored	unknown-command	eval	EVAL - Redis integer -> Lua type conversion
+unit/scripting	errored	unknown-command	eval	EVAL - Redis bulk -> Lua type conversion
+unit/scripting	errored	unknown-command	eval	EVAL - Redis multi bulk -> Lua type conversion
+unit/scripting	errored	unknown-command	eval	EVAL - Redis status reply -> Lua type conversion
+unit/scripting	errored	unknown-command	eval	EVAL - Redis error reply -> Lua type conversion
+unit/scripting	errored	unknown-command	eval	EVAL - Redis nil bulk reply -> Lua type conversion
+unit/scripting	skipped		Not supported on singledb	EVAL - Is the Lua client using the currently selected DB?
+unit/scripting	skipped		Not supported on singledb	EVAL - SELECT inside Lua should not affect the caller
+unit/scripting	failed	unknown-command	eval	EVAL - Scripts can't run blpop command
+unit/scripting	failed	unknown-command	eval	EVAL - Scripts can't run brpop command
+unit/scripting	failed	unknown-command	eval	EVAL - Scripts can't run brpoplpush command
+unit/scripting	failed	unknown-command	eval	EVAL - Scripts can't run blmove command
+unit/scripting	failed	unknown-command	eval	EVAL - Scripts can't run bzpopmin command
+unit/scripting	failed	unknown-command	eval	EVAL - Scripts can't run bzpopmax command
+unit/scripting	errored	unknown-command	xgroup	EVAL - Scripts can't run XREAD and XREADGROUP with BLOCK option
+unit/scripting	failed	unknown-command	eval	EVAL - Scripts can run non-deterministic commands
+unit/scripting	failed	unknown-command	eval	EVAL - No arguments to redis.call/pcall is considered an error
+unit/scripting	failed	unknown-command	eval	EVAL - redis.call variant raises a Lua error on Redis cmd error (1)
+unit/scripting	failed	unknown-command	eval	EVAL - redis.call variant raises a Lua error on Redis cmd error (1)
+unit/scripting	failed	unknown-command	eval	EVAL - redis.call variant raises a Lua error on Redis cmd error (1)
+unit/scripting	errored	unknown-command	eval	EVAL - JSON numeric decoding
+unit/scripting	errored	unknown-command	eval	EVAL - JSON string decoding
+unit/scripting	errored	unknown-command	eval	EVAL - JSON smoke test
+unit/scripting	errored	unknown-command	eval	EVAL - cmsgpack can pack double?
+unit/scripting	errored	unknown-command	eval	EVAL - cmsgpack can pack negative int64?
+unit/scripting	errored	unknown-command	eval	EVAL - cmsgpack pack/unpack smoke test
+unit/scripting	errored	unknown-command	eval	EVAL - cmsgpack can pack and unpack circular references?
+unit/scripting	errored	unknown-command	eval	EVAL - Numerical sanity check from bitop
+unit/scripting	errored	unknown-command	eval	EVAL - Verify minimal bitop functionality
+unit/scripting	errored	unknown-command	eval	EVAL - Able to parse trailing comments
+unit/scripting	errored	unknown-command	eval_ro	EVAL_RO - Successful case
+unit/scripting	failed	unknown-command	eval_ro	EVAL_RO - Cannot run write commands
+unit/scripting	errored	unknown-command	evalsha	SCRIPTING FLUSH - is able to clear the scripts cache?
+unit/scripting	errored	unknown-command	script	SCRIPTING FLUSH ASYNC
+unit/scripting	errored	unknown-command	eval	SCRIPT EXISTS - can detect already defined scripts?
+unit/scripting	errored	unknown-command	script	SCRIPT LOAD - is able to register scripts in the scripting cache
+unit/scripting	errored	unknown-command	eval	SORT is normally not alpha re-ordered for the scripting engine
+unit/scripting	errored	unknown-command	eval	SORT BY <constant> output gets ordered for scripting
+unit/scripting	errored	unknown-command	eval	SORT BY <constant> with GET gets ordered for scripting
+unit/scripting	errored	unknown-command	eval	redis.sha1hex() implementation
+unit/scripting	failed	unknown-command	eval	Globals protection reading an undeclared global variable
+unit/scripting	failed	unknown-command	eval	Globals protection setting an undeclared global*
+unit/scripting	errored	unknown-command	eval	Test an example script DECR_IF_GT
+unit/scripting	errored	unknown-command	eval	random numbers are random now
+unit/scripting	errored	unknown-command	eval	Scripting engine PRNG can be seeded correctly
+unit/scripting	errored	unknown-command	script	EVAL does not leak in the Lua stack
+unit/scripting	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'repl-ping-replica-period'	SPOP: We can call scripts rewriting client->argv from Lua
+unit/scripting	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'repl-ping-replica-period'	MGET: mget shouldn't be propagated in Lua
+unit/scripting	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'repl-ping-replica-period'	EXPIRE: We can call scripts rewriting client->argv from Lua
+unit/scripting	block-error	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'repl-ping-replica-period'	-
+unit/scripting	passed			INCRBYFLOAT: We can call scripts expanding client->argv from Lua
+unit/scripting	errored	unknown-command	eval	Call Redis command with many args from Lua (issue #1764)
+unit/scripting	errored	unknown-command	eval	Number conversion precision test (issue #1118)
+unit/scripting	errored	unknown-command	eval	String containing number precision test (regression of issue #1118)
+unit/scripting	failed	unknown-command	eval	Verify negative arg count is error instead of crash (issue #1842)
+unit/scripting	failed	unknown-command	eval	Scripts can handle commands with incorrect arity
+unit/scripting	errored	unknown-command	eval	Correct handling of reused argv (issue #1939)
+unit/scripting	failed	unknown-command	eval	Functions in the Redis namespace are able to report errors
+unit/scripting	failed	unknown-command	eval	CLUSTER RESET can not be invoke from within a script
+unit/scripting	errored	unknown-command	hello	Script with RESP3 map
+unit/scripting	skipped		by name	Script return recursive object
+unit/scripting	errored	unknown-command	eval	Script check unpack with massive arguments
+unit/scripting	errored	unknown-command	eval	Script read key with expiration set
+unit/scripting	errored	unknown-command	eval	Script del key with expiration set
+unit/scripting	errored	unknown-command	acl	Script ACL check
+unit/scripting	failed	unknown-command	eval	Binary code loading failed
+unit/scripting	failed	unknown-command	eval	Try trick global protection 1
+unit/scripting	failed	unknown-command	eval	Try trick global protection 2
+unit/scripting	failed	unknown-command	eval	Try trick global protection 3
+unit/scripting	failed	unknown-command	eval	Try trick global protection 4
+unit/scripting	failed	unknown-command	eval	Try trick readonly table on redis table
+unit/scripting	failed	unknown-command	eval	Try trick readonly table on json table
+unit/scripting	failed	unknown-command	eval	Try trick readonly table on cmsgpack table
+unit/scripting	failed	unknown-command	eval	Try trick readonly table on bit table
+unit/scripting	failed	unknown-command	eval	Test loadfile are not available
+unit/scripting	failed	unknown-command	eval	Test dofile are not available
+unit/scripting	failed	unknown-command	eval	Test print are not available
+unit/scripting	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'lua-time-limit'	Timedout read-only scripts can be killed by SCRIPT KILL
+unit/scripting	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'lua-time-limit'	Timedout read-only scripts can be killed by SCRIPT KILL even when use pcall
+unit/scripting	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'lua-time-limit'	Timedout script does not cause a false dead client
+unit/scripting	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'lua-time-limit'	Timedout script link is still usable after Lua returns
+unit/scripting	skipped		Not supported on external server	Timedout scripts and unblocked command
+unit/scripting	skipped		Not supported on external server	Timedout scripts that modified data can't be killed by SCRIPT KILL
+unit/scripting	skipped		Not supported on external server	SHUTDOWN NOSAVE can kill a timedout script anyway
+unit/scripting	skipped-block		Not supported on external server	-
+unit/scripting	skipped-block		Not supported on external server	-
+unit/scripting	skipped-block		Not supported on external server	-
+unit/scripting	skipped-block		Not supported on external server	-
+unit/scripting	block-error	unknown-command	debug	-
+unit/scripting	failed	unknown-command	eval	Shebang support for lua engine
+unit/scripting	failed	unknown-command	eval	Unknown shebang option
+unit/scripting	failed	unknown-command	eval	Unknown shebang flag
+unit/scripting	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'maxmemory'	allow-oom shebang flag
+unit/scripting	failed	unknown-command	eval	no-writes shebang flag
+unit/scripting	skipped-block		Not supported on external server	-
+unit/scripting	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'min-replicas-to-write'	not enough good replicas
+unit/scripting	skipped		Not supported on external server	not enough good replicas state change during long script
+unit/scripting	skipped		Not supported on external server	allow-stale shebang flag
+unit/scripting	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'maxmemory'	reject script do not cause a Lua stack leak
+unit/scripting	errored	unknown-subcommand	config resetstat	Consistent eval error reporting
+unit/scripting	errored	unknown-subcommand	config resetstat	LUA redis.error_reply API
+unit/scripting	errored	unknown-subcommand	config resetstat	LUA redis.error_reply API with empty string
+unit/scripting	errored	unknown-subcommand	config resetstat	LUA redis.status_reply API
+unit/scripting	errored	unknown-command	eval	LUA test pcall
+unit/scripting	errored	unknown-command	eval	LUA test pcall with error
+unit/scripting	failed	unknown-command	eval	LUA test pcall with non string/integer arg
+unit/scripting	not-reached			test RESP2/2 big number protocol parsing
+unit/scripting	not-reached			test RESP2/2 malformed big number protocol parsing
+unit/scripting	not-reached			test RESP2/2 map protocol parsing
+unit/scripting	not-reached			test RESP2/2 set protocol parsing
+unit/scripting	not-reached			test RESP2/2 double protocol parsing
+unit/scripting	not-reached			test RESP2/2 null protocol parsing
+unit/scripting	not-reached			test RESP2/2 verbatim protocol parsing
+unit/scripting	not-reached			test RESP2/2 true protocol parsing
+unit/scripting	not-reached			test RESP2/2 false protocol parsing
+unit/scripting	not-reached			test RESP2/3 big number protocol parsing
+unit/scripting	not-reached			test RESP2/3 malformed big number protocol parsing
+unit/scripting	not-reached			test RESP2/3 map protocol parsing
+unit/scripting	not-reached			test RESP2/3 set protocol parsing
+unit/scripting	not-reached			test RESP2/3 double protocol parsing
+unit/scripting	not-reached			test RESP2/3 null protocol parsing
+unit/scripting	not-reached			test RESP2/3 verbatim protocol parsing
+unit/scripting	not-reached			test RESP2/3 true protocol parsing
+unit/scripting	not-reached			test RESP2/3 false protocol parsing
+unit/scripting	not-reached			test RESP3/2 big number protocol parsing
+unit/scripting	not-reached			test RESP3/2 malformed big number protocol parsing
+unit/scripting	not-reached			test RESP3/2 map protocol parsing
+unit/scripting	not-reached			test RESP3/2 set protocol parsing
+unit/scripting	not-reached			test RESP3/2 double protocol parsing
+unit/scripting	not-reached			test RESP3/2 null protocol parsing
+unit/scripting	not-reached			test RESP3/2 verbatim protocol parsing
+unit/scripting	not-reached			test RESP3/2 true protocol parsing
+unit/scripting	not-reached			test RESP3/2 false protocol parsing
+unit/scripting	not-reached			test RESP3/3 big number protocol parsing
+unit/scripting	not-reached			test RESP3/3 malformed big number protocol parsing
+unit/scripting	not-reached			test RESP3/3 map protocol parsing
+unit/scripting	not-reached			test RESP3/3 set protocol parsing
+unit/scripting	not-reached			test RESP3/3 double protocol parsing
+unit/scripting	not-reached			test RESP3/3 null protocol parsing
+unit/scripting	not-reached			test RESP3/3 verbatim protocol parsing
+unit/scripting	not-reached			test RESP3/3 true protocol parsing
+unit/scripting	not-reached			test RESP3/3 false protocol parsing
+unit/scripting	not-reached			test resp3 attribute protocol parsing
+unit/scripting	not-reached			Script block the time during execution
+unit/scripting	not-reached			Script delete the expired key
+unit/scripting	not-reached			test RESP2/2 big number protocol parsing
+unit/scripting	not-reached			test RESP2/2 malformed big number protocol parsing
+unit/scripting	not-reached			test RESP2/2 map protocol parsing
+unit/scripting	not-reached			test RESP2/2 set protocol parsing
+unit/scripting	not-reached			test RESP2/2 double protocol parsing
+unit/scripting	not-reached			test RESP2/2 null protocol parsing
+unit/scripting	not-reached			test RESP2/2 verbatim protocol parsing
+unit/scripting	not-reached			test RESP2/2 true protocol parsing
+unit/scripting	not-reached			test RESP2/2 false protocol parsing
+unit/scripting	not-reached			test RESP2/3 big number protocol parsing
+unit/scripting	not-reached			test RESP2/3 malformed big number protocol parsing
+unit/scripting	not-reached			test RESP2/3 map protocol parsing
+unit/scripting	not-reached			test RESP2/3 set protocol parsing
+unit/scripting	not-reached			test RESP2/3 double protocol parsing
+unit/scripting	not-reached			test RESP2/3 null protocol parsing
+unit/scripting	not-reached			test RESP2/3 verbatim protocol parsing
+unit/scripting	not-reached			test RESP2/3 true protocol parsing
+unit/scripting	not-reached			test RESP2/3 false protocol parsing
+unit/scripting	not-reached			test RESP3/2 big number protocol parsing
+unit/scripting	not-reached			test RESP3/2 malformed big number protocol parsing
+unit/scripting	not-reached			test RESP3/2 map protocol parsing
+unit/scripting	not-reached			test RESP3/2 set protocol parsing
+unit/scripting	not-reached			test RESP3/2 double protocol parsing
+unit/scripting	not-reached			test RESP3/2 null protocol parsing
+unit/scripting	not-reached			test RESP3/2 verbatim protocol parsing
+unit/scripting	not-reached			test RESP3/2 true protocol parsing
+unit/scripting	not-reached			test RESP3/2 false protocol parsing
+unit/scripting	not-reached			test RESP3/3 big number protocol parsing
+unit/scripting	not-reached			test RESP3/3 malformed big number protocol parsing
+unit/scripting	not-reached			test RESP3/3 map protocol parsing
+unit/scripting	not-reached			test RESP3/3 set protocol parsing
+unit/scripting	not-reached			test RESP3/3 double protocol parsing
+unit/scripting	not-reached			test RESP3/3 null protocol parsing
+unit/scripting	not-reached			test RESP3/3 verbatim protocol parsing
+unit/scripting	not-reached			test RESP3/3 true protocol parsing
+unit/scripting	not-reached			test RESP3/3 false protocol parsing
+unit/scripting	not-reached			test resp3 attribute protocol parsing
+unit/scripting	not-reached			Script block the time during execution
+unit/scripting	not-reached			Script delete the expired key
+unit/functions	errored	unknown-command	function	FUNCTION - Basic usage
+unit/functions	failed	unknown-command	function	FUNCTION - Load with unknown argument
+unit/functions	failed	unknown-command	function	FUNCTION - Create an already exiting library raise error
+unit/functions	failed	unknown-command	function	FUNCTION - Create an already exiting library raise error (case insensitive)
+unit/functions	failed	unknown-command	function	FUNCTION - Create a library with wrong name format
+unit/functions	failed	unknown-command	function	FUNCTION - Create library with unexisting engine
+unit/functions	failed	unknown-command	function	FUNCTION - Test uncompiled script
+unit/functions	errored	unknown-command	function	FUNCTION - test replace argument
+unit/functions	errored	unknown-command	fcall	FUNCTION - test function case insensitive
+unit/functions	errored	unknown-command	fcall	FUNCTION - test replace argument with failure keeps old libraries
+unit/functions	errored	unknown-command	function	FUNCTION - test function delete
+unit/functions	errored	unknown-command	function	FUNCTION - test fcall bad arguments
+unit/functions	failed	unknown-command	fcall	FUNCTION - test fcall bad number of keys arguments
+unit/functions	failed	unknown-command	fcall	FUNCTION - test fcall negative number of keys
+unit/functions	failed	unknown-command	function	FUNCTION - test delete on not exiting library
+unit/functions	failed	unknown-command	function	FUNCTION - test function kill when function is not running
+unit/functions	failed	unknown-command	function	FUNCTION - test wrong subcommand
+unit/functions	errored	unknown-command	debug	FUNCTION - test loading from rdb
+unit/functions	failed	unknown-command	debug	FUNCTION - test debug reload different options
+unit/functions	errored	unknown-command	function	FUNCTION - test debug reload with nosave and noflush
+unit/functions	errored	unknown-command	function	FUNCTION - test flushall and flushdb do not clean functions
+unit/functions	errored	unknown-command	function	FUNCTION - test function dump and restore
+unit/functions	errored	unknown-command	function	FUNCTION - test function dump and restore with flush argument
+unit/functions	errored	unknown-command	function	FUNCTION - test function dump and restore with append argument
+unit/functions	errored	unknown-command	function	FUNCTION - test function dump and restore with replace argument
+unit/functions	errored	unknown-command	function	FUNCTION - test function restore with bad payload do not drop existing functions
+unit/functions	failed	unknown-command	function	FUNCTION - test function restore with wrong number of arguments
+unit/functions	errored	unknown-command	function	FUNCTION - test fcall_ro with write command
+unit/functions	errored	unknown-command	function	FUNCTION - test fcall_ro with read only commands
+unit/functions	errored	unknown-command	function	FUNCTION - test keys and argv
+unit/functions	errored	unknown-command	command	FUNCTION - test command get keys on fcall
+unit/functions	errored	unknown-command	command	FUNCTION - test command get keys on fcall_ro
+unit/functions	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'busy-reply-threshold'	FUNCTION - test function kill
+unit/functions	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'busy-reply-threshold'	FUNCTION - test script kill not working on function
+unit/functions	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'busy-reply-threshold'	FUNCTION - test function kill not working on eval
+unit/functions	errored	unknown-command	function	FUNCTION - test function flush
+unit/functions	failed	unknown-command	function	FUNCTION - test function wrong argument
+unit/functions	skipped-block		Not supported on external server	-
+unit/functions	skipped		Not supported on external server	FUNCTION can processes create, delete and flush commands in AOF when doing "debug loadaof" in read-only slaves
+unit/functions	errored	unknown-command	function	LIBRARIES - test shared function can access default globals
+unit/functions	errored	unknown-command	function	LIBRARIES - usage and code sharing
+unit/functions	failed	unknown-command	function	LIBRARIES - test registration failure revert the entire load
+unit/functions	failed	unknown-command	function	LIBRARIES - test registration function name collision
+unit/functions	failed	unknown-command	function	LIBRARIES - test registration function name collision on same library
+unit/functions	failed	unknown-command	function	LIBRARIES - test registration with no argument
+unit/functions	failed	unknown-command	function	LIBRARIES - test registration with only name
+unit/functions	failed	unknown-command	function	LIBRARIES - test registration with to many arguments
+unit/functions	failed	unknown-command	function	LIBRARIES - test registration with no string name
+unit/functions	failed	unknown-command	function	LIBRARIES - test registration with wrong name format
+unit/functions	failed	unknown-command	function	LIBRARIES - test registration with empty name
+unit/functions	failed	unknown-command	function	LIBRARIES - math.random from function load
+unit/functions	failed	unknown-command	function	LIBRARIES - redis.call from function load
+unit/functions	failed	unknown-command	function	LIBRARIES - redis.setresp from function load
+unit/functions	failed	unknown-command	function	LIBRARIES - redis.set_repl from function load
+unit/functions	errored	unknown-command	function	LIBRARIES - malicious access test
+unit/functions	errored	unknown-command	function	LIBRARIES - delete removed all functions on library
+unit/functions	errored	unknown-command	function	LIBRARIES - register function inside a function
+unit/functions	errored	unknown-command	function	LIBRARIES - register library with no functions
+unit/functions	failed	unknown-command	function	LIBRARIES - load timeout
+unit/functions	failed	unknown-command	function	LIBRARIES - verify global protection on the load run
+unit/functions	errored	unknown-command	function	LIBRARIES - named arguments
+unit/functions	failed	unknown-command	function	LIBRARIES - named arguments, bad function name
+unit/functions	failed	unknown-command	function	LIBRARIES - named arguments, bad callback type
+unit/functions	failed	unknown-command	function	LIBRARIES - named arguments, bad description
+unit/functions	failed	unknown-command	function	LIBRARIES - named arguments, unknown argument
+unit/functions	failed	unknown-command	function	LIBRARIES - named arguments, missing function name
+unit/functions	failed	unknown-command	function	LIBRARIES - named arguments, missing callback
+unit/functions	errored	unknown-command	function	FUNCTION - test function restore with function name collision
+unit/functions	errored	unknown-command	function	FUNCTION - test function list with code
+unit/functions	errored	unknown-command	function	FUNCTION - test function list with pattern
+unit/functions	failed	unknown-command	function	FUNCTION - test function list wrong argument
+unit/functions	failed	unknown-command	function	FUNCTION - test function list with bad argument to library name
+unit/functions	failed	unknown-command	function	FUNCTION - test function list withcode multiple times
+unit/functions	failed	unknown-command	function	FUNCTION - test function list libraryname multiple times
+unit/functions	errored	unknown-command	function	FUNCTION - verify OOM on function load and function restore
+unit/functions	errored	unknown-command	function	FUNCTION - verify allow-omm allows running any command
+unit/functions	failed	unknown-command	function	FUNCTION - wrong flags type named arguments
+unit/functions	failed	unknown-command	function	FUNCTION - wrong flag type
+unit/functions	failed	unknown-command	function	FUNCTION - unknown flag
+unit/functions	errored	unknown-command	function	FUNCTION - write script on fcall_ro
+unit/functions	errored	unknown-command	function	FUNCTION - write script with no-writes flag
+unit/functions	errored	unknown-command	function	FUNCTION - deny oom
+unit/functions	errored	unknown-command	function	FUNCTION - deny oom on no-writes function
+unit/functions	skipped		Not supported on external server	FUNCTION - allow stale
+unit/functions	errored	unknown-command	function	FUNCTION - redis version api
+unit/functions	errored	unknown-command	function	FUNCTION - function stats
+unit/functions	errored	unknown-command	debug	FUNCTION - function stats reloaded correctly from rdb
+unit/functions	errored	unknown-command	function	FUNCTION - function stats delete library
+unit/functions	errored	unknown-command	function	FUNCTION - test function stats on loading failure
+unit/functions	errored	unknown-command	function	FUNCTION - function stats cleaned after flush
+unit/functions	failed	unknown-command	function	FUNCTION - function test empty engine
+unit/functions	failed	unknown-command	function	FUNCTION - function test unknown metadata value
+unit/functions	failed	unknown-command	function	FUNCTION - function test no name
+unit/functions	failed	unknown-command	function	FUNCTION - function test multiple names
+unit/functions	errored	unknown-command	function	FUNCTION - function test name with quotes
+unit/functions	errored	unknown-command	function	FUNCTION - trick global protection 1
+unit/functions	errored	unknown-command	function	FUNCTION - test getmetatable on script load
+unit/maxmemory	skipped-block		Not supported on external server	-
+unit/maxmemory	skipped-block		Not supported on external server	-
+unit/maxmemory	skipped-block		Not supported on external server	-
+unit/maxmemory	skipped-block		Not supported on external server	-
+unit/maxmemory	skipped-block		Not supported on external server	-
+unit/maxmemory	skipped-block		Not supported on external server	-
+unit/maxmemory	skipped-block		Not supported on external server	-
+unit/maxmemory	skipped-block		Not supported on external server	-
+unit/introspection	passed			PING
+unit/introspection	errored	unknown-command	client	CLIENT LIST
+unit/introspection	errored	unknown-command	client	CLIENT LIST with IDs
+unit/introspection	errored	unknown-command	client	CLIENT INFO
+unit/introspection	failed	unknown-command	client	CLIENT KILL with illegal arguments
+unit/introspection	errored	unknown-command	info	CLIENT KILL SKIPME YES/NO will kill all clients
+unit/introspection	errored	unknown-command	client	CLIENT REPLY OFF/ON: disable all commands reply
+unit/introspection	errored	unknown-command	client	CLIENT REPLY SKIP: skip the next command reply
+unit/introspection	errored	unknown-command	client	CLIENT REPLY ON: unset SKIP flag
+unit/introspection	errored	unknown-command	monitor	MONITOR can log executed commands
+unit/introspection	errored	unknown-command	monitor	MONITOR can log commands issued by the scripting engine
+unit/introspection	errored	unknown-command	function	MONITOR can log commands issued by functions
+unit/introspection	errored	unknown-command	monitor	MONITOR supports redacting command arguments
+unit/introspection	errored	unknown-command	monitor	MONITOR correctly handles multi-exec cases
+unit/introspection	errored	unknown-command	client	CLIENT GETNAME should return NIL if name is not assigned
+unit/introspection	errored	unknown-command	client	CLIENT LIST shows empty fields for unassigned names
+unit/introspection	passed			CLIENT SETNAME does not accept spaces
+unit/introspection	errored	unknown-command	client	CLIENT SETNAME can assign a name to this connection
+unit/introspection	errored	unknown-command	client	CLIENT SETNAME can change the name of an existing connection
+unit/introspection	errored	unknown-command	client	After CLIENT SETNAME, connection can still be closed
+unit/introspection	skipped		Not supported on external server	CONFIG save params special case handled properly
+unit/introspection	passed			CONFIG sanity
+unit/introspection	skipped		Not supported on external server	CONFIG REWRITE sanity
+unit/introspection	skipped		Not supported on external server	CONFIG REWRITE handles save and shutdown properly
+unit/introspection	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'maxmemory'	CONFIG SET with multiple args
+unit/introspection	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'maxmemory'	CONFIG SET rollback on set error
+unit/introspection	failed	wrong-reply	Expected 'ERR Unknown option or number of arguments for CONFIG SET - 'maxmemory'' to match 'ERR CONFIG SET failed (po...	CONFIG SET rollback on apply error
+unit/introspection	failed	wrong-reply	Expected 'ERR Unknown option or number of arguments for CONFIG SET - 'maxmemory'' to match 'ERR *duplicate*' (context...	CONFIG SET duplicate configs
+unit/introspection	failed	wrong-reply	Expected 'ERR Unknown option or number of arguments for CONFIG SET - 'daemonize'' to match 'ERR *immutable*' (context...	CONFIG SET set immutable
+unit/introspection	failed	wrong-reply	Expected [dict exists [r config get key-load-delay] "key-load-delay"] (context: type eval line 8 cmd {assert {[dict e...	CONFIG GET hidden configs
+unit/introspection	failed	wrong-reply	Expected [dict exists  slaveof] && [dict exists  replicaof] (context: type eval line 8 cmd {assert {[dict exists $res...	CONFIG GET multiple args
+unit/introspection	skipped		Not supported on external server	redis-server command line arguments - error cases
+unit/introspection	skipped		Not supported on external server	redis-server command line arguments - allow passing option name and option value in the same arg
+unit/introspection	skipped		Not supported on external server	redis-server command line arguments - wrong usage that we support anyway
+unit/introspection	skipped		Not supported on external server	redis-server command line arguments - allow option value to use the `--` prefix
+unit/introspection	skipped		Not supported on external server	redis-server command line arguments - option name and option value in the same arg and `--` prefix
+unit/introspection	skipped		Not supported on external server	redis-server command line arguments - save with empty input
+unit/introspection	skipped		Not supported on external server	redis-server command line arguments - take one bulk string with spaces for MULTI_ARG configs parsing
+unit/introspection	skipped-block		Not supported on external server	-
+unit/introspection	skipped-block		Not supported on external server	-
+unit/introspection	skipped		Not supported on external server	config during loading
+unit/introspection	skipped		Not supported on external server	CONFIG REWRITE handles rename-command properly
+unit/introspection	skipped		Not supported on external server	CONFIG REWRITE handles alias config properly
+unit/introspection-2	errored	unknown-command	object	TTL, TYPE and EXISTS do not alter the last access time of a key
+unit/introspection-2	errored	unknown-command	touch	TOUCH alters the last access time of a key
+unit/introspection-2	errored	unknown-command	flushdb	TOUCH returns the number of existing keys specified
+unit/introspection-2	errored	unknown-subcommand	config resetstat	command stats for GEOADD
+unit/introspection-2	errored	unknown-subcommand	config resetstat	errors stats for GEOADD
+unit/introspection-2	errored	unknown-subcommand	config resetstat	command stats for EXPIRE
+unit/introspection-2	errored	unknown-subcommand	config resetstat	command stats for BRPOP
+unit/introspection-2	errored	unknown-subcommand	config resetstat	command stats for MULTI
+unit/introspection-2	errored	unknown-subcommand	config resetstat	command stats for scripts
+unit/introspection-2	errored	unknown-command	command	COMMAND GETKEYS GET
+unit/introspection-2	errored	unknown-command	command	COMMAND GETKEYSANDFLAGS
+unit/introspection-2	errored	unknown-command	command	COMMAND GETKEYS MEMORY USAGE
+unit/introspection-2	errored	unknown-command	command	COMMAND GETKEYS XGROUP
+unit/introspection-2	errored	unknown-command	command	COMMAND GETKEYS EVAL with keys
+unit/introspection-2	errored	unknown-command	command	COMMAND GETKEYS EVAL without keys
+unit/introspection-2	errored	unknown-command	command	COMMAND GETKEYS LCS
+unit/introspection-2	errored	unknown-command	command	COMMAND GETKEYS MORE THAN 256 KEYS
+unit/introspection-2	failed	unknown-command	command	COMMAND LIST syntax error
+unit/introspection-2	errored	unknown-command	command	COMMAND LIST WITHOUT FILTERBY
+unit/introspection-2	errored	unknown-command	command	COMMAND LIST FILTERBY ACLCAT against non existing category
+unit/introspection-2	errored	unknown-command	command	COMMAND LIST FILTERBY ACLCAT - list all commands/subcommands
+unit/introspection-2	errored	unknown-command	command	COMMAND LIST FILTERBY PATTERN - list all commands/subcommands
+unit/introspection-2	errored	unknown-command	command	COMMAND LIST FILTERBY MODULE against non existing module
+unit/introspection-2	errored	unknown-command	command	COMMAND INFO of invalid subcommands
+unit/introspection-2	errored	unknown-command	command	SET command will not be marked with movablekeys
+unit/introspection-2	errored	unknown-command	command	GET command will not be marked with movablekeys
+unit/introspection-2	errored	unknown-command	command	MSET command will not be marked with movablekeys
+unit/introspection-2	errored	unknown-command	command	BITFIELD command will not be marked with movablekeys
+unit/introspection-2	errored	unknown-command	command	LMOVE command will not be marked with movablekeys
+unit/introspection-2	errored	unknown-command	command	LPOP command will not be marked with movablekeys
+unit/introspection-2	errored	unknown-command	command	BLPOP command will not be marked with movablekeys
+unit/introspection-2	errored	unknown-command	command	PING command will not be marked with movablekeys
+unit/introspection-2	errored	unknown-command	command	MEMORY command will not be marked with movablekeys
+unit/introspection-2	errored	unknown-command	command	MEMORY|USAGE command will not be marked with movablekeys
+unit/introspection-2	errored	unknown-command	command	RENAME command will not be marked with movablekeys
+unit/introspection-2	errored	unknown-command	command	GEORADIUS_RO command will not be marked with movablekeys
+unit/introspection-2	errored	unknown-command	command	ZUNIONSTORE command is marked with movablekeys
+unit/introspection-2	errored	unknown-command	command	XREAD command is marked with movablekeys
+unit/introspection-2	errored	unknown-command	command	EVAL command is marked with movablekeys
+unit/introspection-2	errored	unknown-command	command	SORT command is marked with movablekeys
+unit/introspection-2	errored	unknown-command	command	SORT_RO command is marked with movablekeys
+unit/introspection-2	errored	unknown-command	command	MIGRATE command is marked with movablekeys
+unit/introspection-2	errored	unknown-command	command	GEORADIUS command is marked with movablekeys
+unit/limits	skipped-block		Not supported on external server	-
+unit/obuf-limits	skipped-block		Not supported on external server	-
+unit/bitops	errored	unknown-command	bitcount	BITCOUNT returns 0 against non existing key
+unit/bitops	errored	unknown-command	bitcount	BITCOUNT returns 0 with out of range indexes
+unit/bitops	errored	unknown-command	bitcount	BITCOUNT returns 0 with negative indexes where start > end
+unit/bitops	errored	unknown-command	bitcount	BITCOUNT against test vector #1
+unit/bitops	errored	unknown-command	bitcount	BITCOUNT against test vector #2
+unit/bitops	errored	unknown-command	bitcount	BITCOUNT against test vector #3
+unit/bitops	errored	unknown-command	bitcount	BITCOUNT against test vector #4
+unit/bitops	errored	unknown-command	bitcount	BITCOUNT against test vector #5
+unit/bitops	errored	unknown-command	bitcount	BITCOUNT fuzzing without start/end
+unit/bitops	errored	unknown-command	bitcount	BITCOUNT fuzzing with start/end
+unit/bitops	errored	unknown-command	bitcount	BITCOUNT with start, end
+unit/bitops	failed	unknown-command	bitcount	BITCOUNT syntax error #1
+unit/bitops	failed	unknown-command	bitcount	BITCOUNT syntax error #2
+unit/bitops	errored	unknown-command	setbit	BITCOUNT regression test for github issue #582
+unit/bitops	errored	unknown-command	bitcount	BITCOUNT misaligned prefix
+unit/bitops	errored	unknown-command	bitcount	BITCOUNT misaligned prefix + full words + remainder
+unit/bitops	errored	unknown-command	bitop	BITOP NOT (empty string)
+unit/bitops	errored	unknown-command	bitop	BITOP NOT (known string)
+unit/bitops	errored	unknown-command	bitop	BITOP where dest and target are the same key
+unit/bitops	errored	unknown-command	bitop	BITOP AND|OR|XOR don't change the string with single input key
+unit/bitops	errored	unknown-command	bitop	BITOP missing key is considered a stream of zero
+unit/bitops	errored	unknown-command	bitop	BITOP shorter keys are zero-padded to the key with max length
+unit/bitops	errored	unknown-command	flushall	BITOP and fuzzing
+unit/bitops	errored	unknown-command	flushall	BITOP or fuzzing
+unit/bitops	errored	unknown-command	flushall	BITOP xor fuzzing
+unit/bitops	errored	unknown-command	flushall	BITOP NOT fuzzing
+unit/bitops	errored	unknown-command	bitop	BITOP with integer encoded source objects
+unit/bitops	failed	unknown-command	bitop	BITOP with non string source key
+unit/bitops	errored	unknown-command	flushdb	BITOP with empty string after non empty string (issue #529)
+unit/bitops	errored	unknown-command	bitpos	BITPOS bit=0 with empty key returns 0
+unit/bitops	errored	unknown-command	bitpos	BITPOS bit=1 with empty key returns -1
+unit/bitops	errored	unknown-command	bitpos	BITPOS bit=0 with string less than 1 word works
+unit/bitops	errored	unknown-command	bitpos	BITPOS bit=1 with string less than 1 word works
+unit/bitops	errored	unknown-command	bitpos	BITPOS bit=0 starting at unaligned address
+unit/bitops	errored	unknown-command	bitpos	BITPOS bit=1 starting at unaligned address
+unit/bitops	errored	unknown-command	append	BITPOS bit=0 unaligned+full word+reminder
+unit/bitops	errored	unknown-command	append	BITPOS bit=1 unaligned+full word+reminder
+unit/bitops	errored	unknown-command	bitpos	BITPOS bit=1 returns -1 if string is all 0 bits
+unit/bitops	errored	unknown-command	bitpos	BITPOS bit=0 works with intervals
+unit/bitops	errored	unknown-command	bitpos	BITPOS bit=1 works with intervals
+unit/bitops	errored	unknown-command	bitpos	BITPOS bit=0 changes behavior if end is given
+unit/bitops	errored	unknown-command	info	SETBIT/BITFIELD only increase dirty when the value changed
+unit/bitops	errored	unknown-command	bitpos	BITPOS bit=1 fuzzy testing using SETBIT
+unit/bitops	errored	unknown-command	bitpos	BITPOS bit=0 fuzzy testing using SETBIT
+unit/bitops	errored	unknown-command	setbit	BITPOS/BITCOUNT fuzzy testing using SETBIT
+unit/bitops	skipped		large memory flag not provided	BIT pos larger than UINT_MAX
+unit/bitops	skipped		large memory flag not provided	SETBIT values larger than UINT32_MAX and lzf_compress/lzf_decompress correctly
+unit/bitfield	errored	unknown-command	bitfield	BITFIELD signed SET and GET basics
+unit/bitfield	errored	unknown-command	bitfield	BITFIELD unsigned SET and GET basics
+unit/bitfield	errored	unknown-command	bitfield	BITFIELD signed SET and GET together
+unit/bitfield	errored	unknown-command	bitfield	BITFIELD unsigned with SET, GET and INCRBY arguments
+unit/bitfield	errored	unknown-command	bitfield	BITFIELD with only key as argument
+unit/bitfield	errored	unknown-command	bitfield	BITFIELD #<idx> form
+unit/bitfield	errored	unknown-command	bitfield	BITFIELD basic INCRBY form
+unit/bitfield	errored	unknown-command	bitfield	BITFIELD chaining of multiple commands
+unit/bitfield	errored	unknown-command	bitfield	BITFIELD unsigned overflow wrap
+unit/bitfield	errored	unknown-command	bitfield	BITFIELD unsigned overflow sat
+unit/bitfield	errored	unknown-command	bitfield	BITFIELD signed overflow wrap
+unit/bitfield	errored	unknown-command	bitfield	BITFIELD signed overflow sat
+unit/bitfield	errored	unknown-command	bitfield	BITFIELD overflow detection fuzzing
+unit/bitfield	errored	unknown-command	bitfield	BITFIELD overflow wrap fuzzing
+unit/bitfield	errored	unknown-command	bitfield	BITFIELD regression for #3221
+unit/bitfield	errored	unknown-command	bitfield	BITFIELD regression for #3564
+unit/bitfield	skipped-block		Not supported on external server	-
+unit/geo	failed	unknown-command	georadius	GEO with wrong type src key
+unit/geo	failed	unknown-command	georadius	GEO with non existing src key
+unit/geo	errored	unknown-command	geoadd	GEO BYLONLAT with empty search
+unit/geo	errored	unknown-command	geoadd	GEO BYMEMBER with non existing member
+unit/geo	errored	unknown-command	geoadd	GEOADD create
+unit/geo	errored	unknown-command	geoadd	GEOADD update
+unit/geo	errored	unknown-command	geoadd	GEOADD update with CH option
+unit/geo	errored	unknown-command	geoadd	GEOADD update with NX option
+unit/geo	errored	unknown-command	geoadd	GEOADD update with XX option
+unit/geo	errored	unknown-command	geoadd	GEOADD update with CH NX option
+unit/geo	errored	unknown-command	geoadd	GEOADD update with CH XX option
+unit/geo	failed	unknown-command	geoadd	GEOADD update with XX NX option will return syntax error
+unit/geo	failed	unknown-command	geoadd	GEOADD update with invalid option
+unit/geo	failed	unknown-command	geoadd	GEOADD invalid coordinates
+unit/geo	errored	unknown-command	geoadd	GEOADD multi add
+unit/geo	errored	unknown-command	zrange	Check geoset values
+unit/geo	errored	unknown-command	georadius	GEORADIUS simple (sorted)
+unit/geo	errored	unknown-command	geosearch	GEOSEARCH simple (sorted)
+unit/geo	failed	unknown-command	geosearch	GEOSEARCH FROMLONLAT and FROMMEMBER cannot exist at the same time
+unit/geo	failed	unknown-command	geosearch	GEOSEARCH FROMLONLAT and FROMMEMBER one must exist
+unit/geo	failed	unknown-command	geosearch	GEOSEARCH BYRADIUS and BYBOX cannot exist at the same time
+unit/geo	failed	unknown-command	geosearch	GEOSEARCH BYRADIUS and BYBOX one must exist
+unit/geo	failed	unknown-command	geosearch	GEOSEARCH with STOREDIST option
+unit/geo	errored	unknown-command	georadius	GEORADIUS withdist (sorted)
+unit/geo	errored	unknown-command	geosearch	GEOSEARCH withdist (sorted)
+unit/geo	errored	unknown-command	georadius	GEORADIUS with COUNT
+unit/geo	errored	unknown-command	georadius	GEORADIUS with ANY not sorted by default
+unit/geo	errored	unknown-command	georadius	GEORADIUS with ANY sorted by ASC
+unit/geo	failed	unknown-command	georadius	GEORADIUS with ANY but no COUNT
+unit/geo	failed	unknown-command	georadius	GEORADIUS with COUNT but missing integer argument
+unit/geo	errored	unknown-command	georadius	GEORADIUS with COUNT DESC
+unit/geo	errored	unknown-command	geoadd	GEORADIUS HUGE, issue #2767
+unit/geo	errored	unknown-command	georadiusbymember	GEORADIUSBYMEMBER simple (sorted)
+unit/geo	errored	unknown-command	geoadd	GEORADIUSBYMEMBER search areas contain satisfied points in oblique direction
+unit/geo	errored	unknown-command	geoadd	GEORADIUSBYMEMBER crossing pole search
+unit/geo	errored	unknown-command	geosearch	GEOSEARCH FROMMEMBER simple (sorted)
+unit/geo	errored	unknown-command	geoadd	GEOSEARCH vs GEORADIUS
+unit/geo	errored	unknown-command	geoadd	GEOSEARCH non square, long and narrow
+unit/geo	errored	unknown-command	geoadd	GEOSEARCH corner point test
+unit/geo	errored	unknown-command	georadiusbymember	GEORADIUSBYMEMBER withdist (sorted)
+unit/geo	errored	unknown-command	geoadd	GEOHASH is able to return geohash strings
+unit/geo	errored	unknown-command	geoadd	GEOPOS simple
+unit/geo	errored	unknown-command	geoadd	GEOPOS missing element
+unit/geo	errored	unknown-command	geoadd	GEODIST simple & unit
+unit/geo	errored	unknown-command	geoadd	GEODIST missing elements
+unit/geo	errored	unknown-command	geoadd	GEORADIUS STORE option: syntax error
+unit/geo	failed	unknown-command	geosearchstore	GEOSEARCHSTORE STORE option: syntax error
+unit/geo	errored	unknown-command	geoadd	GEORANGE STORE option: incompatible options
+unit/geo	errored	unknown-command	geoadd	GEORANGE STORE option: plain usage
+unit/geo	errored	unknown-command	geoadd	GEORADIUSBYMEMBER STORE/STOREDIST option: plain usage
+unit/geo	errored	unknown-command	geosearchstore	GEOSEARCHSTORE STORE option: plain usage
+unit/geo	errored	unknown-command	geoadd	GEORANGE STOREDIST option: plain usage
+unit/geo	errored	unknown-command	geosearchstore	GEOSEARCHSTORE STOREDIST option: plain usage
+unit/geo	errored	unknown-command	geoadd	GEORANGE STOREDIST option: COUNT ASC and DESC
+unit/geo	errored	unknown-command	geoadd	GEOSEARCH the box spans -180° or 180°
+unit/geo	errored	unknown-command	geoadd	GEOSEARCH with small distance
+unit/geo	errored	unknown-command	geoadd	GEOSEARCH fuzzy test - byradius
+unit/geo	errored	unknown-command	geoadd	GEOSEARCH fuzzy test - bybox
+unit/geo	errored	unknown-command	geoadd	GEOSEARCH box edges fuzzy test
+unit/memefficiency	skipped-block		Not supported on external server	-
+unit/memefficiency	skipped-block		Not supported on external server	-
+unit/hyperloglog	failed	unknown-command	pfselftest	HyperLogLog self test passes
+unit/hyperloglog	errored	unknown-command	pfadd	PFADD without arguments creates an HLL value
+unit/hyperloglog	errored	unknown-command	pfcount	Approximated cardinality after creation is zero
+unit/hyperloglog	errored	unknown-command	pfadd	PFADD returns 1 when at least 1 reg was modified
+unit/hyperloglog	errored	unknown-command	pfadd	PFADD returns 0 when no reg was modified
+unit/hyperloglog	errored	unknown-command	pfadd	PFADD works with empty string (regression)
+unit/hyperloglog	errored	unknown-command	pfadd	PFCOUNT returns approximated cardinality of set
+unit/hyperloglog	errored	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'hll-sparse-max-bytes'	HyperLogLogs are promote from sparse to dense
+unit/hyperloglog	errored	unknown-command	pfadd	HyperLogLog sparse encoding stress test
+unit/hyperloglog	errored	unknown-command	pfadd	Corrupted sparse HyperLogLogs are detected: Additional at tail
+unit/hyperloglog	errored	unknown-command	pfadd	Corrupted sparse HyperLogLogs are detected: Broken magic
+unit/hyperloglog	errored	unknown-command	pfadd	Corrupted sparse HyperLogLogs are detected: Invalid encoding
+unit/hyperloglog	errored	unknown-command	pfadd	Corrupted dense HyperLogLogs are detected: Wrong length
+unit/hyperloglog	errored	unknown-command	pfadd	Fuzzing dense/sparse encoding: Redis should always detect errors
+unit/hyperloglog	failed	unknown-command	pfadd	PFADD, PFCOUNT, PFMERGE type checking works
+unit/hyperloglog	errored	unknown-command	pfadd	PFMERGE results on the cardinality of union of sets
+unit/hyperloglog	errored	unknown-command	pfadd	PFCOUNT multiple-keys merge returns cardinality of union #1
+unit/hyperloglog	errored	unknown-command	pfadd	PFCOUNT multiple-keys merge returns cardinality of union #2
+unit/hyperloglog	errored	unknown-command	pfadd	PFDEBUG GETREG returns the HyperLogLog raw registers
+unit/hyperloglog	errored	unknown-command	pfadd	PFADD / PFCOUNT cache invalidation works
+unit/lazyfree	errored	unknown-command	info	UNLINK can reclaim memory in background
+unit/lazyfree	errored	unknown-command	info	FLUSHDB ASYNC can reclaim memory in background
+unit/lazyfree	errored	unknown-command	info	lazy free a stream with all types of metadata
+unit/lazyfree	errored	unknown-subcommand	config resetstat	lazy free a stream with deleted cgroup
+unit/wait	skipped-block		Not supported on external server	-
+unit/pause	errored	unknown-command	client	Test read commands are not blocked by client pause
+unit/pause	errored	unknown-command	client	Test write commands are paused by RO
+unit/pause	errored	unknown-command	pfadd	Test special commands are paused by RO
+unit/pause	errored	unknown-command	client	Test read/admin mutli-execs are not blocked by pause RO
+unit/pause	errored	unknown-command	multi	Test write mutli-execs are blocked by pause RO
+unit/pause	errored	unknown-command	client	Test scripts are blocked by pause RO
+unit/pause	errored	unknown-command	function	Test RO scripts are not blocked by pause RO
+unit/pause	errored	unknown-command	client	Test read-only scripts in mutli-exec are not blocked by pause RO
+unit/pause	errored	unknown-command	multi	Test write scripts in mutli-exec are blocked by pause RO
+unit/pause	failed	unknown-command	eval_ro	Test may-replicate commands are rejected in RO scripts
+unit/pause	errored	unknown-command	client	Test multiple clients can be queued up and unblocked
+unit/pause	errored	unknown-command	client	Test clients with syntax errors will get responses immediately
+unit/pause	errored	unknown-command	info	Test both active and passive expires are skipped during client pause
+unit/pause	errored	unknown-command	multi	Test that client pause starts at the end of a transaction
+unit/pause	skipped-block		Not supported on external server	-
+unit/pause	block-error	unknown-command	client	-
+unit/querybuf	errored	unknown-command	client	query buffer resized correctly
+unit/querybuf	errored	unknown-command	client	query buffer resized correctly when not idle
+unit/pendingquerybuf	skipped-block		Not supported on external server	-
+unit/tracking	block-error	unknown-command	client	-
+unit/tracking	not-reached			Clients are able to enable tracking and redirect it
+unit/tracking	not-reached			The other connection is able to get invalidations
+unit/tracking	not-reached			The client is now able to disable tracking
+unit/tracking	not-reached			Clients can enable the BCAST mode with the empty prefix
+unit/tracking	not-reached			The connection gets invalidation messages about all the keys
+unit/tracking	not-reached			Clients can enable the BCAST mode with prefixes
+unit/tracking	not-reached			Adding prefixes to BCAST mode works
+unit/tracking	not-reached			Tracking NOLOOP mode in standard mode works
+unit/tracking	not-reached			Tracking NOLOOP mode in BCAST mode works
+unit/tracking	not-reached			Tracking gets notification of expired keys
+unit/tracking	not-reached			Tracking gets notification of lazy expired keys
+unit/tracking	not-reached			HELLO 3 reply is correct
+unit/tracking	not-reached			HELLO without protover
+unit/tracking	not-reached			RESP3 based basic invalidation
+unit/tracking	not-reached			RESP3 tracking redirection
+unit/tracking	not-reached			Invalidations of previous keys can be redirected after switching to RESP3
+unit/tracking	not-reached			Invalidations of new keys can be redirected after switching to RESP3
+unit/tracking	not-reached			Invalid keys should not be tracked for scripts in NOLOOP mode
+unit/tracking	not-reached			Tracking only occurs for scripts when a command calls a read-only command
+unit/tracking	not-reached			RESP3 Client gets tracking-redir-broken push message after cached key changed when rediretion client is terminated
+unit/tracking	not-reached			Different clients can redirect to the same connection
+unit/tracking	not-reached			Different clients using different protocols can track the same key
+unit/tracking	not-reached			No invalidation message when using OPTIN option
+unit/tracking	not-reached			Invalidation message sent when using OPTIN option with CLIENT CACHING yes
+unit/tracking	not-reached			Invalidation message sent when using OPTOUT option
+unit/tracking	not-reached			No invalidation message when using OPTOUT option with CLIENT CACHING no
+unit/tracking	not-reached			Able to redirect to a RESP3 client
+unit/tracking	not-reached			After switching from normal tracking to BCAST mode, no invalidation message is produced for pre-BCAST keys
+unit/tracking	not-reached			BCAST with prefix collisions throw errors
+unit/tracking	not-reached			hdel deliver invalidate message after response in the same connection
+unit/tracking	not-reached			Tracking invalidation message is not interleaved with multiple keys response
+unit/tracking	not-reached			Tracking invalidation message is not interleaved with transaction response
+unit/tracking	not-reached			Tracking invalidation message of eviction keys should be before response
+unit/tracking	not-reached			Unblocked BLMOVE gets notification after response
+unit/tracking	not-reached			Tracking gets notification on tracking table key eviction
+unit/tracking	not-reached			Invalidation message received for flushall
+unit/tracking	not-reached			Invalidation message received for flushdb
+unit/tracking	not-reached			Test ASYNC flushall
+unit/tracking	not-reached			flushdb tracking invalidation message is not interleaved with transaction response
+unit/tracking	not-reached			Server is able to evacuate enough keys when num of keys surpasses limit by more than defined initial effort
+unit/tracking	not-reached			Tracking info is correct
+unit/tracking	not-reached			CLIENT GETREDIR provides correct client id
+unit/tracking	not-reached			CLIENT TRACKINGINFO provides reasonable results when tracking off
+unit/tracking	not-reached			CLIENT TRACKINGINFO provides reasonable results when tracking on
+unit/tracking	not-reached			CLIENT TRACKINGINFO provides reasonable results when tracking on with options
+unit/tracking	not-reached			CLIENT TRACKINGINFO provides reasonable results when tracking optin
+unit/tracking	not-reached			CLIENT TRACKINGINFO provides reasonable results when tracking optout
+unit/tracking	not-reached			CLIENT TRACKINGINFO provides reasonable results when tracking bcast mode
+unit/tracking	not-reached			CLIENT TRACKINGINFO provides reasonable results when tracking redir broken
+unit/tracking	not-reached			Regression test for #11715
+unit/tracking	not-reached			RESP3 based basic invalidation with client reply off
+unit/tracking	not-reached			RESP2 based basic invalidation with client reply off
+unit/tracking	not-reached			RESP3 based basic redirect invalidation with client reply off
+unit/tracking	not-reached			RESP3 based basic tracking-redir-broken with client reply off
+unit/oom-score-adj	skipped-block		Not supported on external server	-
+unit/shutdown	skipped-block		Not supported on external server	-
+unit/shutdown	skipped-block		Not supported on external server	-
+unit/shutdown	skipped-block		Not supported on external server	-
+unit/networking	skipped		Not supported on external server	CONFIG SET port number
+unit/networking	skipped		Not supported on external server	CONFIG SET bind address
+unit/networking	skipped		Not supported on external server	CONFIG SET bind-source-addr
+unit/networking	skipped-block		Not supported on external server	-
+unit/cluster	skipped-block		Not supported on external server	-
+unit/client-eviction	skipped-block		Not supported on external server	-
+unit/violations	skipped		large memory flag not provided	XADD one huge field
+unit/violations	skipped		large memory flag not provided	XADD one huge field - 1
+unit/violations	skipped		large memory flag not provided	several XADD big fields
+unit/violations	skipped		large memory flag not provided	single XADD big fields
+unit/violations	block-error	error-reply	ERR Unknown option or number of arguments for CONFIG SET - 'hash-max-ziplist-value'	-
+unit/violations	skipped		large memory flag not provided	hash with one huge field
+unit/violations	errored	unknown-command	sort	SORT adds integer field to list
+unit/violations	not-reached			hash with many big fields
+unit/replybufsize	errored	unknown-command	debug	verify reply buffer limits
+unit/cluster-scripting	skipped-block		Not supported on external server	-
+unit/cluster/misc	skipped-block		Not supported on external server	-
+unit/cluster/links	skipped-block		Not supported on external server	-

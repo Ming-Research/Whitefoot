@@ -3253,6 +3253,22 @@ condition under which it is taken up.
   they were built from; setting the variable avoids it meanwhile. Reopen when
   two worktrees next validate on one host, or with the next change to the
   check runner.
+- **The gate-profile compiler does not build exactly the release
+  compiler's executable.** At `cea9188d4`, `whitefootc` built with the gate
+  profile and with the release profile emits byte-identical LLVM IR for
+  firn (`--emit-llvm`), and two gate builds of firn are byte-identical, yet
+  the release compiler's firn differs in 21 bytes of `.text` besides the
+  build ID, all in `wf__ctx_start_server.main.0.resume`, where a few vector
+  loads and stores of equal length come in another order or register, with
+  every function's size and place unchanged
+  ([redis-compat](../research/experiments/redis-compat/README.md#limitations)).
+  The difference is harmless here, but AGENTS.md says the gate profile does
+  not change how WF source is compiled, and a gate-built executable is what
+  the checks run. Find which step after IR emission depends on the
+  compiler's profile, by comparing the commands and inputs of both
+  compilers' native builds, and make the two agree or state the exception.
+  Reopen when an executable built for a measurement or a check must match
+  the release compiler's byte for byte.
 
 ## firn
 
@@ -3282,8 +3298,17 @@ condition under which it is taken up.
   `GETKEYS` answer as unknown subcommands; `KEYS` and `SCAN`, which can match
   with `glob_match` (`apps/firn/bytes/bytes.wf`), `INFO`, RESP3, which
   `HELLO 3` refuses, the blocking list commands, `MULTI` and `EXEC`, publish
-  and subscribe, and a random hash seed. The owner sets the list for the
-  deployment stage; reopen when this stage's measurement is handed back.
+  and subscribe, and a random hash seed. No test of Redis's own suite reaches
+  firn, since the suite's framework sends `FLUSHALL` and `FUNCTION FLUSH`
+  at the start of every block and ends the unit when either fails; with
+  those calls allowed to fail, firn at `cea9188d4` passes 107 of the 1,994
+  tests Redis passes there, 25 of which a server knowing only `PING` passes
+  too, most of the rest stopping at a command firn lacks, and redis-py 8.1.0
+  fails every call made with its defaults, since it opens each connection
+  with `HELLO 3`
+  ([redis-compat](../research/experiments/redis-compat/README.md)). The
+  owner sets the list for the deployment stage; reopen when this stage's
+  measurement is handed back.
 - **firn reads a slow request again from its start at every read.**
   `parse_request` keeps no state between reads, so a request arriving in
   many reads is scanned from its first byte each time: quadratic in its
