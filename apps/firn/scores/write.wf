@@ -1,0 +1,208 @@
+alias Client = pkg::protocol::Client;
+alias reply_bulk_input = pkg::protocol::reply_bulk_input;
+
+const text_inf: Array<u8, 3> = "inf";
+
+const text_nan: Array<u8, 3> = "nan";
+
+struct ScoreText {
+  doc "A score written out: length bytes, at most 32.";
+  bytes: Array<u8, 32>;
+  length: u64;
+}
+
+fn text_push(text: &ScoreText, byte: u8) -> result: unit writes(text) {
+  doc "Appends one byte while the text has room.";
+  let length = text^.length;
+  if length < text^.bytes.len {
+    set text^.bytes[length] = byte;
+    set text^.length = length +wrap 1_u64;
+  }
+  return unit;
+}
+
+fn text_word(text: &ScoreText, word: &[u8]) -> result: unit reads(word), writes(text) {
+  doc "Appends every byte of a word.";
+  let length = word^.len;
+  for @word (index in 0_u64..length) {
+    let byte = word^[index];
+    text_push(text: text, byte: byte);
+  }
+  return unit;
+}
+
+fn text_number(text: &ScoreText, value: u64) -> result: unit writes(text) {
+  doc "Appends a number in decimal.";
+  let digits = array_filled::<u8, 20>(value: 0_u8);
+  let count = 0_u64;
+  let rest = value;
+  loop @digits {
+    let low = rest % 10_u64;
+    let narrow = cvt.wrap::<u64, u8>(low);
+    let glyph = narrow +wrap 48_u8;
+    if count < digits.len {
+      set digits[count] = glyph;
+      set count = count +wrap 1_u64;
+    }
+    set rest = rest / 10_u64;
+    if rest == 0_u64 {
+      break @digits;
+    }
+  }
+  for @emit (step in 0_u64..count) {
+    let back = count -wrap step;
+    let from = back -wrap 1_u64;
+    if from < digits.len {
+      let emitted = digits[from];
+      text_push(text: text, byte: emitted);
+    }
+  }
+  return unit;
+}
+
+fn text_digits(text: &ScoreText, decimal: &Decimal, from: u64, to: u64) -> result: unit reads(decimal), writes(text) {
+  doc "Appends the decimal's digits from one position up to another, a position past its digits as zero.";
+  for @digits (index in from..to) {
+    let digit = digit_at(decimal: decimal, index: index);
+    let glyph = digit +wrap 48_u8;
+    text_push(text: text, byte: glyph);
+  }
+  return unit;
+}
+
+fn text_decimal(text: &ScoreText, decimal: &Decimal) -> result: unit reads(decimal), writes(text) {
+  doc "Appends a decimal of 1 to 17 digits as %.17g writes the value they round it to: with x one less than its point, in fixed notation when x is from -4 to 16 and otherwise as one digit, the rest after a point, and e with a sign and at least two digits of x; a trailing zero after a point is never written, since the digits have none.";
+  let count = decimal^.count;
+  let exponent = decimal^.point -wrap 1_i64;
+  let small = exponent < -4_i64;
+  let large = exponent >= 17_i64;
+  let scientific = bor(small, large);
+  if scientific {
+    text_digits(text: text, decimal: decimal, from: 0_u64, to: 1_u64);
+    if count > 1_u64 {
+      text_push(text: text, byte: 46_u8);
+      text_digits(text: text, decimal: decimal, from: 1_u64, to: count);
+    }
+    text_push(text: text, byte: 101_u8);
+    let magnitude = exponent;
+    if exponent < 0_i64 {
+      text_push(text: text, byte: 45_u8);
+      set magnitude = 0_i64 -wrap exponent;
+    } else {
+      text_push(text: text, byte: 43_u8);
+    }
+    let wide = cvt.wrap::<i64, u64>(magnitude);
+    if wide < 10_u64 {
+      text_push(text: text, byte: 48_u8);
+    }
+    text_number(text: text, value: wide);
+    return unit;
+  }
+  if exponent >= 0_i64 {
+    let integral = cvt.wrap::<i64, u64>(exponent);
+    let whole = integral +wrap 1_u64;
+    text_digits(text: text, decimal: decimal, from: 0_u64, to: whole);
+    if count > whole {
+      text_push(text: text, byte: 46_u8);
+      text_digits(text: text, decimal: decimal, from: whole, to: count);
+    }
+    return unit;
+  }
+  text_push(text: text, byte: 48_u8);
+  text_push(text: text, byte: 46_u8);
+  let depth = 0_i64 -wrap exponent;
+  let wide_depth = cvt.wrap::<i64, u64>(depth);
+  let zeros = wide_depth -wrap 1_u64;
+  for @zeros (step in 0_u64..zeros) {
+    text_push(text: text, byte: 48_u8);
+  }
+  text_digits(text: text, decimal: decimal, from: 0_u64, to: count);
+  return unit;
+}
+
+fn score_text(score: f64) -> text: ScoreText pure {
+  doc "A score as Redis 7.0.15 writes one: inf or -inf for an infinity; for a zero, or an integer below 10^17, its digits with a minus sign when negative; otherwise its exact decimal expansion, at most 767 digits, rounded to 17 significant digits with ties to even and written as %.17g writes it.";
+  let bytes = array_filled::<u8, 32>(value: 0_u8);
+  let written = ScoreText(bytes: bytes, length: 0_u64);
+  let bits = reinterpret::<f64, u64>(score);
+  let sign = ishr.wrap(bits, 63_u32);
+  let shifted = ishr.wrap(bits, 52_u32);
+  let biased = iand(shifted, 2047_u64);
+  let fraction = iand(bits, fraction_mask);
+  if sign == 1_u64 {
+    text_push(text: &written, byte: 45_u8);
+  }
+  if biased == 2047_u64 {
+    if fraction == 0_u64 {
+      text_word(text: &written, word: &text_inf[0_u64..3_u64]);
+    } else {
+      text_word(text: &written, word: &text_nan[0_u64..3_u64]);
+    }
+    return written;
+  }
+  let zero_field = biased == 0_u64;
+  let zero_fraction = fraction == 0_u64;
+  let zero = band(zero_field, zero_fraction);
+  if zero {
+    text_push(text: &written, byte: 48_u8);
+    return written;
+  }
+  match cvt.checked::<f64, i64>(score) {
+    Ok(value: whole) => {
+      let magnitude = cvt.wrap::<i64, u64>(whole);
+      if whole < 0_i64 {
+        set magnitude = 0_u64 -wrap magnitude;
+      }
+      if magnitude < 100000000000000000_u64 {
+        text_number(text: &written, value: magnitude);
+        return written;
+      }
+    }
+    Err(error: fractional) => {
+    }
+  }
+  let mantissa = fraction;
+  let exponent = -1074_i64;
+  if biased != 0_u64 {
+    set mantissa = ior(fraction, hidden_bit);
+    let field = cvt.wrap::<u64, i64>(biased);
+    set exponent = field -wrap 1075_i64;
+  }
+  let zeros = ictz(mantissa);
+  set mantissa = ishr.wrap(mantissa, zeros);
+  let zeros_wide = cvt::<u32, i64>(zeros);
+  set exponent = exponent +wrap zeros_wide;
+  let decimal = decimal_from(value: mantissa);
+  loop @up {
+    if exponent <= 0_i64 {
+      break @up;
+    }
+    let up_wide = cvt.wrap::<i64, u64>(exponent);
+    let up_shift = imin(up_wide, 60_u64);
+    left_shift(decimal: &decimal, shift: up_shift);
+    let up_taken = cvt.wrap::<u64, i64>(up_shift);
+    set exponent = exponent -wrap up_taken;
+  }
+  loop @down {
+    if exponent >= 0_i64 {
+      break @down;
+    }
+    let depth = 0_i64 -wrap exponent;
+    let down_wide = cvt.wrap::<i64, u64>(depth);
+    let down_shift = imin(down_wide, 60_u64);
+    right_shift(decimal: &decimal, shift: down_shift);
+    let down_taken = cvt.wrap::<u64, i64>(down_shift);
+    set exponent = exponent +wrap down_taken;
+  }
+  round_significant(decimal: &decimal, kept: 17_u64);
+  text_decimal(text: &written, decimal: &decimal);
+  return written;
+}
+
+fn reply_score(client: &Client, score: f64) -> result: unit writes(client) {
+  doc "Writes a score as Redis 7.0.15 writes one under RESP2: a bulk string of inf or -inf for an infinity, and otherwise of C's %.17g, the value rounded to 17 significant digits with ties to even, in fixed notation when its decimal exponent is from -4 to 16 and in exponential notation otherwise, trailing zeros dropped.";
+  let text = score_text(score: score);
+  let window = &text.bytes[0_u64..32_u64];
+  reply_bulk_input(client: client, input: window, start: 0_u64, length: text.length);
+  return unit;
+}

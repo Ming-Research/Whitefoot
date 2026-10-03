@@ -1,0 +1,409 @@
+const decimal_shifts: Array<u64, 19> =[0_u64, 3_u64, 6_u64, 9_u64, 13_u64, 16_u64, 19_u64, 23_u64, 26_u64, 29_u64, 33_u64, 36_u64, 39_u64, 43_u64, 46_u64, 49_u64, 53_u64, 56_u64, 59_u64];
+
+const infinity_bits: u64 = 9218868437227405312_u64;
+
+const hidden_bit: u64 = 4503599627370496_u64;
+
+const fraction_mask: u64 = 4503599627370495_u64;
+
+struct Decimal {
+  doc "A nonnegative decimal, 0.d1d2d3... times 10^point: count digits, one per byte, most significant first and with no trailing zero. Only the first 800 are held, more than the 768 a double's halfway point needs; truncated records that a nonzero digit past them was dropped, which can only decide a tie.";
+  digits: Array<u8, 800>;
+  count: u64;
+  point: i64;
+  truncated: Bool;
+}
+
+fn digit_at(decimal: &Decimal, index: u64) -> digit: u8 reads(decimal) {
+  doc "The digit at a position, or zero past the digits the decimal holds.";
+  if index < decimal^.count {
+    if index < decimal^.digits.len {
+      return decimal^.digits[index];
+    }
+  }
+  return 0_u8;
+}
+
+fn put_digit(decimal: &Decimal, index: u64, digit: u8) -> result: unit writes(decimal) {
+  doc "Writes a digit at a position within the 800 a decimal holds; its count is the caller's to set.";
+  if index < decimal^.digits.len {
+    set decimal^.digits[index] = digit;
+  }
+  return unit;
+}
+
+fn add_digit(decimal: &Decimal, digit: u8) -> result: unit writes(decimal) {
+  doc "Appends a digit, or notes a nonzero one past the 800 held as truncated.";
+  let count = decimal^.count;
+  if count < 800_u64 {
+    put_digit(decimal: decimal, index: count, digit: digit);
+    set decimal^.count = count +wrap 1_u64;
+  } else if digit != 0_u8 {
+    set decimal^.truncated = True();
+  }
+  return unit;
+}
+
+fn trim(decimal: &Decimal) -> result: unit writes(decimal) {
+  doc "Drops trailing zero digits.";
+  loop @zeros {
+    let count = decimal^.count;
+    if count == 0_u64 {
+      break @zeros;
+    }
+    let last = count -wrap 1_u64;
+    let digit = digit_at(decimal: decimal, index: last);
+    if digit != 0_u8 {
+      break @zeros;
+    }
+    set decimal^.count = last;
+  }
+  return unit;
+}
+
+fn left_shift(decimal: &Decimal, shift: u64) -> result: unit writes(decimal) {
+  doc "Multiplies the decimal by 2^shift, for a shift from 1 to 60, exactly but for digits past the 800 held, whose nonzero ones are noted. The digits are multiplied from the last, each product and carry below 10 times 2^60, written out in reverse and then copied back in order.";
+  let count = decimal^.count;
+  if count == 0_u64 {
+    return unit;
+  }
+  let amount = cvt.wrap::<u64, u32>(shift);
+  let reversed = array_filled::<u8, 832>(value: 0_u8);
+  let produced = 0_u64;
+  let carry = 0_u64;
+  for @digits (step in 0_u64..count) {
+    let back = count -wrap step;
+    let index = back -wrap 1_u64;
+    let digit = digit_at(decimal: decimal, index: index);
+    let wide = cvt::<u8, u64>(digit);
+    let scaled = ishl.wrap(wide, amount);
+    let sum = carry +wrap scaled;
+    let low = sum % 10_u64;
+    let narrow = cvt.wrap::<u64, u8>(low);
+    if produced < reversed.len {
+      set reversed[produced] = narrow;
+    }
+    set produced = produced +wrap 1_u64;
+    set carry = sum / 10_u64;
+  }
+  loop @carrying {
+    if carry == 0_u64 {
+      break @carrying;
+    }
+    let rest = carry % 10_u64;
+    let leading = cvt.wrap::<u64, u8>(rest);
+    if produced < reversed.len {
+      set reversed[produced] = leading;
+    }
+    set produced = produced +wrap 1_u64;
+    set carry = carry / 10_u64;
+  }
+  let kept = imin(produced, 800_u64);
+  for @copying (position in 0_u64..kept) {
+    let remaining = produced -wrap position;
+    let from = remaining -wrap 1_u64;
+    let copied = 0_u8;
+    if from < reversed.len {
+      set copied = reversed[from];
+    }
+    put_digit(decimal: decimal, index: position, digit: copied);
+  }
+  let dropped = produced -wrap kept;
+  for @dropping (low_index in 0_u64..dropped) {
+    if low_index < reversed.len {
+      let lost = reversed[low_index];
+      if lost != 0_u8 {
+        set decimal^.truncated = True();
+      }
+    }
+  }
+  let added = produced -wrap count;
+  let raise = cvt.wrap::<u64, i64>(added);
+  let point = decimal^.point;
+  set decimal^.point = point +wrap raise;
+  set decimal^.count = kept;
+  trim(decimal: decimal);
+  return unit;
+}
+
+fn right_shift(decimal: &Decimal, shift: u64) -> result: unit writes(decimal) {
+  doc "Divides the decimal by 2^shift, for a shift from 1 to 60, exactly but for digits past the 800 held, whose nonzero ones are noted. Digits are read into a running value below 10 times 2^60 until it reaches 2^shift, then each step writes the value's quotient by 2^shift as a digit, behind the one read, and carries its remainder.";
+  let count = decimal^.count;
+  let amount = cvt.wrap::<u64, u32>(shift);
+  let read = 0_u64;
+  let written = 0_u64;
+  let value = 0_u64;
+  loop @leading {
+    let high = ishr.wrap(value, amount);
+    if high != 0_u64 {
+      break @leading;
+    }
+    if read < count {
+      let digit = digit_at(decimal: decimal, index: read);
+      let wide = cvt::<u8, u64>(digit);
+      let tens = value *wrap 10_u64;
+      set value = tens +wrap wide;
+      set read = read +wrap 1_u64;
+    } else if value == 0_u64 {
+      set decimal^.count = 0_u64;
+      return unit;
+    } else {
+      loop @scaling {
+        let top = ishr.wrap(value, amount);
+        if top != 0_u64 {
+          break @scaling;
+        }
+        set value = value *wrap 10_u64;
+        set read = read +wrap 1_u64;
+      }
+      break @leading;
+    }
+  }
+  let moved = cvt.wrap::<u64, i64>(read);
+  let point = decimal^.point;
+  let lowered = point -wrap moved;
+  set decimal^.point = lowered +wrap 1_i64;
+  let unit_bit = ishl.wrap(1_u64, amount);
+  let mask = unit_bit -wrap 1_u64;
+  loop @middle {
+    if read >= count {
+      break @middle;
+    }
+    let quotient = ishr.wrap(value, amount);
+    let rest = iand(value, mask);
+    let next = digit_at(decimal: decimal, index: read);
+    let next_wide = cvt::<u8, u64>(next);
+    let rest_tens = rest *wrap 10_u64;
+    set value = rest_tens +wrap next_wide;
+    set read = read +wrap 1_u64;
+    let narrow = cvt.wrap::<u64, u8>(quotient);
+    put_digit(decimal: decimal, index: written, digit: narrow);
+    set written = written +wrap 1_u64;
+  }
+  loop @tail {
+    if value == 0_u64 {
+      break @tail;
+    }
+    let tail_quotient = ishr.wrap(value, amount);
+    let tail_rest = iand(value, mask);
+    set value = tail_rest *wrap 10_u64;
+    let tail_digit = cvt.wrap::<u64, u8>(tail_quotient);
+    if written < 800_u64 {
+      put_digit(decimal: decimal, index: written, digit: tail_digit);
+      set written = written +wrap 1_u64;
+    } else if tail_digit != 0_u8 {
+      set decimal^.truncated = True();
+    }
+  }
+  set decimal^.count = written;
+  trim(decimal: decimal);
+  return unit;
+}
+
+fn decimal_round(decimal: &Decimal) -> mantissa: u64 reads(decimal) {
+  doc "The decimal rounded to an integer of at most 18 digits with ties to even, a tie broken upward when nonzero digits were dropped; 2^64 - 1 for a larger one.";
+  if decimal^.count == 0_u64 {
+    return 0_u64;
+  }
+  let point = decimal^.point;
+  if point < 0_i64 {
+    return 0_u64;
+  }
+  if point > 18_i64 {
+    return 18446744073709551615_u64;
+  }
+  let whole = cvt.wrap::<i64, u64>(point);
+  let value = 0_u64;
+  for @integral (index in 0_u64..whole) {
+    let digit = digit_at(decimal: decimal, index: index);
+    let wide = cvt::<u8, u64>(digit);
+    let tens = value *wrap 10_u64;
+    set value = tens +wrap wide;
+  }
+  let count = decimal^.count;
+  if whole < count {
+    let next = digit_at(decimal: decimal, index: whole);
+    let up = next >= 5_u8;
+    if next == 5_u8 {
+      let after = whole +wrap 1_u64;
+      if after == count {
+        let odd_bit = iand(value, 1_u64);
+        let odd = odd_bit == 1_u64;
+        set up = bor(decimal^.truncated, odd);
+      }
+    }
+    if up {
+      set value = value +wrap 1_u64;
+    }
+  }
+  return value;
+}
+
+fn decimal_shift(power: i64) -> shift: u64 pure {
+  doc "How far a decimal whose point is power places from the units may shift without passing 1: below power times log2(10) bits, and 60 from 19 places.";
+  if power >= 0_i64 {
+    if power < 19_i64 {
+      let index = cvt.wrap::<i64, u64>(power);
+      if index < 19_u64 {
+        return decimal_shifts[index];
+      }
+    }
+  }
+  return 60_u64;
+}
+
+fn decimal_bits(decimal: &Decimal) -> bits: u64 writes(decimal) {
+  doc "The bits of the double nearest a nonzero decimal, ties to even, by Simple Decimal Conversion: shifts by powers of two, exact in decimal, bring the value to [1/2, 1) while an exponent counts them; shifts right make room for a subnormal; then the top 53 bits are rounded. Zero for a value that rounds to zero, and the bits of infinity for one past the largest double.";
+  if decimal^.count == 0_u64 {
+    return 0_u64;
+  }
+  if decimal^.point < -324_i64 {
+    return 0_u64;
+  }
+  if decimal^.point >= 310_i64 {
+    return infinity_bits;
+  }
+  let exponent = 0_i64;
+  loop @down {
+    let point = decimal^.point;
+    if point <= 0_i64 {
+      break @down;
+    }
+    let shift = decimal_shift(power: point);
+    right_shift(decimal: decimal, shift: shift);
+    let moved = cvt.wrap::<u64, i64>(shift);
+    set exponent = exponent +wrap moved;
+  }
+  loop @up {
+    let place = decimal^.point;
+    if place > 0_i64 {
+      break @up;
+    }
+    let step = 0_u64;
+    if place == 0_i64 {
+      let lead = digit_at(decimal: decimal, index: 0_u64);
+      if lead >= 5_u8 {
+        break @up;
+      }
+      set step = 1_u64;
+      if lead <= 1_u8 {
+        set step = 2_u64;
+      }
+    } else {
+      let depth = 0_i64 -wrap place;
+      set step = decimal_shift(power: depth);
+    }
+    left_shift(decimal: decimal, shift: step);
+    let lowered = cvt.wrap::<u64, i64>(step);
+    set exponent = exponent -wrap lowered;
+  }
+  set exponent = exponent -wrap 1_i64;
+  loop @subnormal {
+    if exponent >= -1022_i64 {
+      break @subnormal;
+    }
+    let gap = -1022_i64 -wrap exponent;
+    let wide_gap = cvt.wrap::<i64, u64>(gap);
+    let room = imin(wide_gap, 60_u64);
+    right_shift(decimal: decimal, shift: room);
+    let raised = cvt.wrap::<u64, i64>(room);
+    set exponent = exponent +wrap raised;
+  }
+  if exponent >= 1024_i64 {
+    return infinity_bits;
+  }
+  left_shift(decimal: decimal, shift: 53_u64);
+  let mantissa = decimal_round(decimal: decimal);
+  if mantissa >= 9007199254740992_u64 {
+    right_shift(decimal: decimal, shift: 1_u64);
+    set exponent = exponent +wrap 1_i64;
+    set mantissa = decimal_round(decimal: decimal);
+    if exponent >= 1024_i64 {
+      return infinity_bits;
+    }
+  }
+  let biased = exponent +wrap 1023_i64;
+  if mantissa < hidden_bit {
+    set biased = biased -wrap 1_i64;
+  }
+  let field = cvt.wrap::<i64, u64>(biased);
+  let placed = ishl.wrap(field, 52_u32);
+  let fraction = iand(mantissa, fraction_mask);
+  let joined = ior(placed, fraction);
+  return joined;
+}
+
+fn decimal_from(value: u64) -> made: Decimal pure {
+  doc "A decimal holding a nonzero integer.";
+  let digits = array_filled::<u8, 800>(value: 0_u8);
+  let exact = False();
+  let made = Decimal(digits: digits, count: 0_u64, point: 0_i64, truncated: exact);
+  let length = 0_u64;
+  let rest = value;
+  loop @counting {
+    set length = length +wrap 1_u64;
+    set rest = rest / 10_u64;
+    if rest == 0_u64 {
+      break @counting;
+    }
+  }
+  set rest = value;
+  for @filling (step in 0_u64..length) {
+    let back = length -wrap step;
+    let index = back -wrap 1_u64;
+    let low = rest % 10_u64;
+    let digit = cvt.wrap::<u64, u8>(low);
+    put_digit(decimal: &made, index: index, digit: digit);
+    set rest = rest / 10_u64;
+  }
+  set made.count = length;
+  set made.point = cvt.wrap::<u64, i64>(length);
+  trim(decimal: &made);
+  return made;
+}
+
+fn round_significant(decimal: &Decimal, kept: u64) -> result: unit writes(decimal) {
+  doc "Rounds the decimal to kept significant digits, at least one, with ties to even, as printf rounds an exact value.";
+  let count = decimal^.count;
+  if count <= kept {
+    return unit;
+  }
+  if kept == 0_u64 {
+    return unit;
+  }
+  let next = digit_at(decimal: decimal, index: kept);
+  let last_index = kept -wrap 1_u64;
+  let last = digit_at(decimal: decimal, index: last_index);
+  let up = next > 5_u8;
+  if next == 5_u8 {
+    let after = kept +wrap 1_u64;
+    let beyond = count > after;
+    let odd_digit = iand(last, 1_u8);
+    let odd = odd_digit == 1_u8;
+    let tail = bor(beyond, decimal^.truncated);
+    set up = bor(tail, odd);
+  }
+  set decimal^.count = kept;
+  if up {
+    let index = kept;
+    loop @carry {
+      if index == 0_u64 {
+        put_digit(decimal: decimal, index: 0_u64, digit: 1_u8);
+        set decimal^.count = 1_u64;
+        let point = decimal^.point;
+        set decimal^.point = point +wrap 1_i64;
+        break @carry;
+      }
+      set index = index -wrap 1_u64;
+      let digit = digit_at(decimal: decimal, index: index);
+      if digit < 9_u8 {
+        let raised = digit +wrap 1_u8;
+        put_digit(decimal: decimal, index: index, digit: raised);
+        break @carry;
+      }
+      put_digit(decimal: decimal, index: index, digit: 0_u8);
+    }
+  }
+  trim(decimal: decimal);
+  return unit;
+}

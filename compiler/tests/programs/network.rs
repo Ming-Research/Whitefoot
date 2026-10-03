@@ -1386,17 +1386,23 @@ fn dyadic_decimal(m: u64, k: usize) -> String {
 /// which rounds to zero and is refused as Redis refuses an underflow, and at
 /// the 768-digit halfway points on either side of the smallest normal double,
 /// which round up to it and down to it. A nonzero digit after a halfway point
-/// breaks its tie, also when it lies past the 800th significant digit, and a
-/// digit taken away keeps the value below it.
-/// Hexadecimal text, infinities and arguments of 400 and 1,000 digits are read
-/// as strtod reads them; NaN, overflow, a leading or trailing space, an empty
-/// argument and a zero byte are refused. Every score is written as %.17g
-/// writes it, ties at the seventeenth digit to even, in exponential notation
-/// below 10^-4 and from 10^17; negative zero is kept as 0, as Redis keeps it in
-/// a sorted set it encodes as a listpack. Members at infinite, subnormal,
-/// zero and equal scores pop in Redis's order, and an option word before the
-/// first score is a syntax error while one in a later score's place is an
-/// invalid score. The expected replies are redis-server 7.0.15's.
+/// breaks its tie, also when it lies past the 800th significant digit, both
+/// after hundreds of digits and after a halfway point of at most 19 digits
+/// followed by zeros, and a digit taken away keeps the value below it.
+/// Hexadecimal text rounds as decimal text does, a nonzero digit past the bits
+/// kept breaking a tie, a subnormal rounding to the smallest one, and a value
+/// rounded past the largest double refused, also with an exponent past the
+/// range of i64;
+/// infinities and arguments of 400 and 1,000 digits are read as strtod reads
+/// them; NaN, overflow, a leading or trailing space, an empty argument and a
+/// zero byte are refused. Every score is written as %.17g writes it, ties at
+/// the seventeenth digit to even, in exponential notation below 10^-4 and from
+/// 10^17; negative zero is kept as 0, as Redis keeps it in a sorted set it
+/// encodes as a listpack. Members at infinite, subnormal, zero and equal scores
+/// pop in Redis's order. An option word before the first score, in either case
+/// and compared up to a zero byte as strcasecmp compares it, is a syntax
+/// error, while one in a later score's place is an invalid score. The expected
+/// replies are redis-server 7.0.15's.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_reads_and_writes_scores_as_redis_does() {
@@ -1411,9 +1417,11 @@ fn firn_reads_and_writes_scores_as_redis_does() {
     );
     let above_normal = dyadic_decimal((1 << 53) + 1, 1075);
     let above_normal_far_above = format!("{above_normal}{}1", "0".repeat(40));
+    let short_tie_far_above = format!("9007199254740993.{}1", "0".repeat(784));
+    let scaled_tie_far_above = format!("5.{}1e22", "0".repeat(799));
     let long_zeros = format!("0.{}1e401", "0".repeat(400));
     let long_thirds = format!("3.{}", "3".repeat(1000));
-    let cases: [(&str, Option<&str>); 42] = [
+    let cases: [(&str, Option<&str>); 49] = [
         ("1.5", Some("1.5")),
         ("-2.5e-3", Some("-0.0025000000000000001")),
         ("0.1", Some("0.10000000000000001")),
@@ -1431,6 +1439,8 @@ fn firn_reads_and_writes_scores_as_redis_does() {
         (&below_normal_below, Some("2.2250738585072009e-308")),
         (&above_normal, Some("2.2250738585072014e-308")),
         (&above_normal_far_above, Some("2.2250738585072019e-308")),
+        (&short_tie_far_above, Some("9007199254740994")),
+        (&scaled_tie_far_above, Some("5.0000000000000004e+22")),
         ("1.7976931348623158e308", Some("1.7976931348623157e+308")),
         ("1.7976931348623159e308", None),
         ("1e-400", None),
@@ -1441,6 +1451,11 @@ fn firn_reads_and_writes_scores_as_redis_does() {
         ("nan", None),
         ("infinit", None),
         ("0x1.8p1", Some("3")),
+        ("0x1.00000000000008p0", Some("1")),
+        ("0x1.000000000000080001p0", Some("1.0000000000000002")),
+        ("0x1.fffffffffffff8p1023", None),
+        ("0x1.fffffffffffff8p99999999999999999999", None),
+        ("0x3p-1076", Some("4.9406564584124654e-324")),
         ("0x1p-1075", None),
         ("1125899906842623.75", Some("1125899906842623.8")),
         ("1125899906842623.25", Some("1125899906842623.2")),
@@ -1512,9 +1527,13 @@ fn firn_reads_and_writes_scores_as_redis_does() {
         expected.extend(format!("${}\r\n{item}\r\n", item.len()).bytes());
     }
     batch.extend(resp(&["ZADD", "q", "nx", "m"]));
+    batch.extend(resp(&["ZADD", "q", "Ch", "m"]));
+    batch.extend(resp(&["ZADD", "q", "gt\0x", "m"]));
     batch.extend(resp(&["ZADD", "q", "1", "a", "nx", "b"]));
     batch.extend(resp(&["ZCARD", "q"]));
-    expected.extend_from_slice(b"-ERR syntax error\r\n-ERR value is not a valid float\r\n:0\r\n");
+    expected.extend_from_slice(
+        b"-ERR syntax error\r\n-ERR syntax error\r\n-ERR syntax error\r\n-ERR value is not a valid float\r\n:0\r\n",
+    );
     client.write_all(&batch).expect("send the batch");
     expect_replies(&mut client, &expected, "the score batch");
     drop(client);
@@ -1746,8 +1765,10 @@ fn firn_carries_requests_and_replies_larger_than_its_windows() {
 }
 
 /// firn replays the value types from its append-only file: after a restart a
-/// list keeps the elements its pushes and pops left, a hash its field, and a
-/// sorted set the member ZPOPMIN left at its score. The 25 of 50 members SPOP
+/// list keeps the elements its pushes and pops left, a hash its field, a
+/// sorted set the member ZPOPMIN left at its score, and a member added at 0.1
+/// keeps the double nearest 0.1, which the replay reads again from the score's
+/// text as the command read it. The 25 of 50 members SPOP
 /// removed stay removed, since the file records the pop as the SREM of the
 /// members it chose, as Redis records it; a replay that popped at random, from
 /// a generator seeded by the clock at each start, would almost surely remove
@@ -1776,6 +1797,7 @@ fn firn_replays_the_value_types_from_its_append_only_file() {
         vec!["HSET", "h", "f", "v"],
         vec!["ZADD", "z", "1", "a", "2", "b"],
         vec!["ZPOPMIN", "z"],
+        vec!["ZADD", "f", "0.1", "m"],
         add,
     ] {
         batch.extend(resp(&request));
@@ -1783,7 +1805,7 @@ fn firn_replays_the_value_types_from_its_append_only_file() {
     client.write_all(&batch).expect("send the changes");
     expect_replies(
         &mut client,
-        b":3\r\n$1\r\na\r\n:1\r\n:2\r\n*2\r\n$1\r\na\r\n$1\r\n1\r\n:50\r\n",
+        b":3\r\n$1\r\na\r\n:1\r\n:2\r\n*2\r\n$1\r\na\r\n$1\r\n1\r\n:1\r\n:50\r\n",
         "the first run's changes",
     );
     client
@@ -1823,6 +1845,7 @@ fn firn_replays_the_value_types_from_its_append_only_file() {
         vec!["HGET", "h", "f"],
         vec!["ZCARD", "z"],
         vec!["ZSCORE", "z", "b"],
+        vec!["ZSCORE", "f", "m"],
         vec!["SCARD", "s"],
         remove,
     ] {
@@ -1831,7 +1854,7 @@ fn firn_replays_the_value_types_from_its_append_only_file() {
     client.write_all(&batch).expect("read the replayed values");
     expect_replies(
         &mut client,
-        b"*2\r\n$1\r\nb\r\n$1\r\nc\r\n$1\r\nv\r\n:1\r\n$1\r\n2\r\n:25\r\n:0\r\n",
+        b"*2\r\n$1\r\nb\r\n$1\r\nc\r\n$1\r\nv\r\n:1\r\n$1\r\n2\r\n$19\r\n0.10000000000000001\r\n:25\r\n:0\r\n",
         "the replayed values",
     );
     drop(client);
