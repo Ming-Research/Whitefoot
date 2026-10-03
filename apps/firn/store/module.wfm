@@ -58,7 +58,7 @@ public struct KeyspaceState {
 }
 
 public struct ServerState {
-  doc "What the server keeps beside the keyspace that every connection reaches: the password clients must give, empty for none, and how many seconds a silent client is kept, zero for no limit, which CONFIG SET changes; the values of the parameters whose only effect in Redis is on its internal encodings, which CONFIG SET sets and CONFIG GET reports and firn does not use, in the order of encoding_defaults; and how many connections the server has accepted since it started or CONFIG RESETSTAT last ran.";
+  doc "What the server keeps beside the keyspace that every connection reaches: the password clients must give, empty for none, and how many seconds a silent client is kept, zero for no limit, which CONFIG SET changes; the values of the parameters whose only effect in Redis is on its internal encodings, which CONFIG SET sets and CONFIG GET reports and firn does not use, in the order of their names: hash-max-listpack-entries, hash-max-listpack-value, list-compress-depth, list-max-listpack-size, set-max-intset-entries, stream-node-max-bytes, stream-node-max-entries, zset-max-listpack-entries and zset-max-listpack-value; and how many connections the server has accepted since it started or CONFIG RESETSTAT last ran.";
   public password: Bytes;
   public timeout: u64;
   public encodings: Array<i64, 9>;
@@ -98,7 +98,7 @@ public fn keyspace_new(seed: u64, logging: Bool, password: Bytes, timeout: u64) 
 
 public fn keyspace_share(store: &Keyspace) -> made: Keyspace reads(store) doc "Another context's handle to the same keyspace.";
 
-public fn keyspace_logging(store: &Keyspace, logging: Bool) -> made: Keyspace reads(store) doc "A handle to the same keyspace that appends changes to the append-only file's pending bytes when logging is true.";
+public fn keyspace_logging(store: &Keyspace, logging: Bool) -> made: Keyspace reads(store) doc "A handle to the same keyspace and server's state that appends changes to the append-only file's pending bytes when logging is true.";
 
 public fn expired(expires: u64, now: u64) -> reached: Bool pure doc "Whether an expiry, zero for none, has been reached at now.";
 

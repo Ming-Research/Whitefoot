@@ -30,8 +30,8 @@ own:
   so that `redis-cli` uses its own help. `FLUSHALL` and `FLUSHDB`, with
   `ASYNC` or `SYNC`, empty firn's one database and its queued expiries in
   one atomic statement and are appended to the append-only file as Redis
-  appends them; the old keys are released before the reply under either
-  option. `FUNCTION FLUSH`, with `ASYNC` or `SYNC`,
+  appends them; the old keys are released before the reply is sent, under
+  either option. `FUNCTION FLUSH`, with `ASYNC` or `SYNC`,
   succeeds as Redis does with no function loaded, firn having none, and is
   appended to the file as Redis appends it; every other `FUNCTION`
   subcommand is answered as an unknown one. `DEBUG LOG` with a message
@@ -42,7 +42,8 @@ own:
 `CONFIG GET` takes Redis's glob patterns over firn's parameters:
 `appendfilename`, `appendonly`, `bind`, `databases`, `port`, `requirepass`,
 `save` and `timeout`, and the parameters whose only effect in Redis is on its
-internal encodings, `hash-max-listpack-entries`, `hash-max-listpack-value`,
+internal encodings, leaving every value as commands read it,
+`hash-max-listpack-entries`, `hash-max-listpack-value`,
 `list-compress-depth`, `list-max-listpack-size`, `set-max-intset-entries`,
 `stream-node-max-bytes`, `stream-node-max-entries`,
 `zset-max-listpack-entries` and `zset-max-listpack-value`, with their aliases
@@ -50,6 +51,8 @@ internal encodings, `hash-max-listpack-entries`, `hash-max-listpack-value`,
 `zset-max-ziplist-entries` and `zset-max-ziplist-value`. firn has none of
 those encodings: it reports their parameters with Redis's defaults and keeps
 what `CONFIG SET` gives them, and they change nothing else.
+`hll-sparse-max-bytes` is not among them, since a HyperLogLog's encoding is
+the string `GET` reads, and firn has no HyperLogLog.
 
 `CONFIG SET` takes these parameters with Redis's checks and errors, refusing
 any other as Redis refuses one it does not know, and applies all of its pairs

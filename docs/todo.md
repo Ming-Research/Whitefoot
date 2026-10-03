@@ -3433,3 +3433,16 @@ condition under which it is taken up.
   writer append, sync and close, as it does once the client limit is
   reached. Reopen with `SHUTDOWN`, or when firn runs under a service manager
   that stops it with SIGTERM.
+- **firn writes decimals and reads `CONFIG SET`'s integers in repeated
+  code.** `text_reserve` and `text_number` in `apps/firn/commands/info.wf`
+  copy `log_reserve` and `log_number` in `apps/firn/store/store.wf`, the one
+  for `INFO`'s text and the other for the append-only file's, and
+  `run_config_set` (`apps/firn/commands/server.wf`) writes the same reading
+  three times, for the port, the idle limit and the encoding parameters:
+  `read_integer`, the error for a value that does not parse, the range check
+  and `reply_bounds`. A fix to one copy can miss the others. Writing into a
+  growing byte buffer belongs in one public function of the `bytes` or
+  `protocol` module that both callers use, and the three readings in one
+  helper that takes the parameter's range from a table like
+  `encoding_lower` and `encoding_upper`. Reopen with the next change to
+  either writer or to `CONFIG SET`'s parameters.

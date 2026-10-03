@@ -146,7 +146,7 @@ fn flush_mode(input: &[u8], args: &Box<Slots<Span>>, from: u64) -> known: Bool r
 }
 
 fn run_flush(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client) -> result: unit reads(store), reads(input), reads(args), writes(client) waits {
-  doc "FLUSHALL and FLUSHDB [ASYNC | SYNC], firn's one database being all of them: empties the keyspace in one atomic statement, which exchanges the table whole for an empty one and the queued expiries for none, and appends the command as the client sent it to the append-only file's pending bytes when the keyspace keeps them, also when the keyspace was already empty, as Redis logs both. Any other argument, or more than one, is a syntax error. The table and queue taken out are released after the statement, before the reply, whichever option was given: unlike Redis's ASYNC, no other context frees them, but no other statement waits for their release either.";
+  doc "FLUSHALL and FLUSHDB [ASYNC | SYNC], firn's one database being all of them: empties the keyspace in one atomic statement, which exchanges the table whole for an empty one and the queued expiries for none, and appends the command as the client sent it to the append-only file's pending bytes when the keyspace keeps them, also when the keyspace was already empty, as Redis logs both. Any other argument, or more than one, is a syntax error. The table and queue taken out are released when run_flush returns, after the statement and before the reply is sent, whichever option was given: unlike Redis's ASYNC, no other context frees them, but no other statement waits for their release either.";
   let known = flush_mode(input: input, args: args, from: 1_u64);
   if known {
   } else {
@@ -331,7 +331,7 @@ fn lookup_parameter(input: &[u8], span: Span) -> which: u64 reads(input) {
 }
 
 fn server_copy(store: &Keyspace) -> made: ServerState reads(store) waits {
-  doc "A copy of the server's state as it stands now, read in one atomic statement, for CONFIG GET and INFO to report.";
+  doc "A copy of the server's state as it stands now, read in one atomic statement, for CONFIG GET to report.";
   let none = slots_new::<u8, 24>();
   let password = Bytes::Short(bytes: move none);
   let timeout = 0_u64;
