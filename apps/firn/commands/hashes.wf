@@ -91,7 +91,7 @@ fn run_hset(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   set client^.now = time^.check;
   set client^.state = state_absent;
   set client^.number = 0_u64;
-  atomic slot = &store^.map[key] {
+  atomic s = &store^.state, slot = &s^.map[key] {
     match slot^ {
       Some(value: held) => {
         let edited = set_fields(env: client, value: held);
@@ -118,9 +118,7 @@ fn run_hset(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
     }
     if client^.state == state_done {
       if store^.logging {
-        atomic meta = &store^.meta {
-          log_command(log: &meta^.log, input: input, args: args);
-        }
+        log_command(log: &s^.meta.log, input: input, args: args);
       }
     }
   }
@@ -185,7 +183,7 @@ fn run_hget(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   let key = &input^[place.start..place.end];
   set client^.now = time^.check;
   set client^.state = state_absent;
-  atomic slot = &store^.map[key] {
+  atomic s = &store^.state, slot = &s^.map[key] {
     match slot^ {
       Some(value: held) => {
         let found = get_field(env: client, value: held);

@@ -186,42 +186,32 @@ fn prepare_keys(input: &[u8], args: &Box<Slots<Span>>, client: &Client, first: u
   return unit;
 }
 
-fn run_del(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
-  doc "DEL key [key ...]: removes every key named, one key in a statement on that key and several in one statement over the whole keyspace, and answers how many were live.";
+fn named_keys(input: &[u8], args: &Box<Slots<Span>>) -> keys: KeySet reads(input), reads(args) {
+  doc "The keys the arguments from the second on name, each carrying how many times it is named.";
   let count = args^.inner.len;
-  let removed = 0_u64;
-  if count == 2_u64 {
-    let place = key_bounds(input: input, args: args, index: 1_u64);
+  let keys = key_set_new(capacity: count);
+  for @named (index in 1_u64..count) {
+    let place = key_bounds(input: input, args: args, index: index);
     let key = &input^[place.start..place.end];
-    atomic slot = &store^.map[key] {
-      let live = remove_live(slot: slot, now: time^.check);
+    key_set_add(keys: &keys, key: key, amount: 1_u64);
+  }
+  return move keys;
+}
+
+fn run_del(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+  doc "DEL key [key ...]: removes every key named, in one statement on their entries, and answers how many were live; a key named twice is removed and counted once.";
+  let keys = named_keys(input: input, args: args);
+  let removed = 0_u64;
+  atomic s = &store^.state, slots = &s^.map[keys] {
+    for @named (at in 0_u64..keys.len) {
+      let live = remove_live(slot: &slots^[at], now: time^.check);
       if live {
-        set removed = 1_u64;
-        if store^.logging {
-          atomic meta = &store^.meta {
-            log_command(log: &meta^.log, input: input, args: args);
-          }
-        }
+        set removed = removed +wrap 1_u64;
       }
     }
-  } else {
-    atomic state = &store^.map {
-      for @keys (index in 1_u64..count) {
-        let place = key_bounds(input: input, args: args, index: index);
-        let key = &input^[place.start..place.end];
-        atomic slot = &state^[key] {
-          let live = remove_live(slot: slot, now: time^.check);
-          if live {
-            set removed = removed +wrap 1_u64;
-          }
-        }
-      }
-      if removed > 0_u64 {
-        if store^.logging {
-          atomic meta = &store^.meta {
-            log_command(log: &meta^.log, input: input, args: args);
-          }
-        }
+    if removed > 0_u64 {
+      if store^.logging {
+        log_command(log: &s^.meta.log, input: input, args: args);
       }
     }
   }
@@ -231,30 +221,16 @@ fn run_del(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
 }
 
 fn run_exists(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
-  doc "EXISTS key [key ...]: answers how many of the keys named are live, a key named twice counted twice; one key is read in a statement on that key and several in one statement over the whole keyspace.";
-  let count = args^.inner.len;
+  doc "EXISTS key [key ...]: answers how many of the keys named are live, a key named twice counted twice, in one statement on their entries.";
+  let keys = named_keys(input: input, args: args);
   set client^.now = time^.check;
   let live = 0_u64;
-  if count == 2_u64 {
-    let place = key_bounds(input: input, args: args, index: 1_u64);
-    let key = &input^[place.start..place.end];
-    atomic slot = &store^.map[key] {
-      let kind = entry_kind(slot: slot, client: client);
+  atomic s = &store^.state, slots = &s^.map[keys] {
+    for @named (at in 0_u64..keys.len) {
+      let kind = entry_kind(slot: &slots^[at], client: client);
       if kind != 0_u64 {
-        set live = 1_u64;
-      }
-    }
-  } else {
-    atomic state = &store^.map {
-      for @keys (index in 1_u64..count) {
-        let place = key_bounds(input: input, args: args, index: index);
-        let key = &input^[place.start..place.end];
-        atomic slot = &state^[key] {
-          let kind = entry_kind(slot: slot, client: client);
-          if kind != 0_u64 {
-            set live = live +wrap 1_u64;
-          }
-        }
+        let occurrences = key_set_payload(keys: &keys, index: at);
+        set live = live +wrap occurrences;
       }
     }
   }
@@ -269,7 +245,7 @@ fn run_type(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   let key = &input^[place.start..place.end];
   set client^.now = time^.check;
   let kind = 0_u64;
-  atomic slot = &store^.map[key] {
+  atomic s = &store^.state, slot = &s^.map[key] {
     set kind = entry_kind(slot: slot, client: client);
   }
   if kind == 1_u64 {
@@ -402,15 +378,13 @@ fn run_expire(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
   }
   let at_ms = time^.unix_ms +wrap ttl_ms;
   let expiry = Expiry(at: expires, now: time^.check, state: state_absent);
-  atomic slot = &store^.map[key] {
+  atomic s = &store^.state, slot = &s^.map[key] {
     if remove_now {
       let live = remove_live(slot: slot, now: time^.check);
       if live {
         set expiry.state = state_done;
         if store^.logging {
-          atomic meta = &store^.meta {
-            log_key_word(log: &meta^.log, word: &word_del[0_u64..3_u64], input: input, key: key_span);
-          }
+          log_key_word(log: &s^.meta.log, word: &word_del[0_u64..3_u64], input: input, key: key_span);
         }
       }
     } else {
@@ -425,11 +399,9 @@ fn run_expire(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
         set slot^ = None<Entry>();
       }
       if expiry.state == state_done {
-        atomic meta = &store^.meta {
-          queue_expiry(meta: &meta^, key: key, at: expires, env: env);
-          if store^.logging {
-            log_expire_at(log: &meta^.log, input: input, key: key_span, at_ms: at_ms);
-          }
+        queue_expiry(meta: &s^.meta, key: key, at: expires, env: env);
+        if store^.logging {
+          log_expire_at(log: &s^.meta.log, input: input, key: key_span, at_ms: at_ms);
         }
       }
     }
@@ -447,7 +419,7 @@ fn run_ttl(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   let remaining = Remaining(left: 0_u64, now: time^.check, state: 3_u64);
   let place = key_bounds(input: input, args: args, index: 1_u64);
   let key = &input^[place.start..place.end];
-  atomic slot = &store^.map[key] {
+  atomic s = &store^.state, slot = &s^.map[key] {
     match slot^ {
       Some(value: held) => {
         let found = read_expiry(env: &remaining, value: held);
@@ -484,7 +456,7 @@ fn run_persist(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: 
   let key_span = arg(args: args, index: 1_u64);
   let place = key_bounds(input: input, args: args, index: 1_u64);
   let key = &input^[place.start..place.end];
-  atomic slot = &store^.map[key] {
+  atomic s = &store^.state, slot = &s^.map[key] {
     match slot^ {
       Some(value: held) => {
         let outcome = clear_expiry(env: &expiry, value: held);
@@ -497,9 +469,7 @@ fn run_persist(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: 
     }
     if expiry.state == state_done {
       if store^.logging {
-        atomic meta = &store^.meta {
-          log_key_word(log: &meta^.log, word: &word_persist[0_u64..7_u64], input: input, key: key_span);
-        }
+        log_key_word(log: &s^.meta.log, word: &word_persist[0_u64..7_u64], input: input, key: key_span);
       }
     }
   }
@@ -512,10 +482,10 @@ fn run_persist(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: 
 }
 
 fn run_dbsize(store: &Keyspace, client: &Client) -> result: unit reads(store), writes(client) waits {
-  doc "DBSIZE: answers how many keys the keyspace holds, counting an expired key not yet removed, as Redis does, in one statement over the whole keyspace.";
+  doc "DBSIZE: answers how many keys the keyspace holds, counting an expired key not yet removed, as Redis does, in one statement that holds the keyspace's table whole.";
   let size = 0_u64;
-  atomic state = &store^.map {
-    set size = shared_map_count::<Entry>(state: state);
+  atomic s = &store^.state {
+    set size = keyed_table_count::<Entry>(table: &s^.map);
   }
   let answer = cvt.wrap::<u64, i64>(size);
   reply_integer(client: client, value: answer);

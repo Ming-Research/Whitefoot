@@ -129,7 +129,7 @@ fn run_get(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   let key = &input^[place.start..place.end];
   set client^.now = time^.check;
   set client^.state = state_absent;
-  atomic slot = &store^.map[key] {
+  atomic s = &store^.state, slot = &s^.map[key] {
     match slot^ {
       Some(value: held) => {
         let kind = text_value(env: client, value: held);
@@ -216,25 +216,20 @@ fn run_set(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   let at_ms = time^.unix_ms +wrap ttl_ms;
   let queued = expires != 0_u64;
   let logged = store^.logging;
-  let beside = bor(queued, logged);
-  atomic slot = &store^.map[key] {
+  atomic s = &store^.state, slot = &s^.map[key] {
     put_text(slot: slot, value: move value, expires: expires);
-    if beside {
-      atomic meta = &store^.meta {
-        if queued {
-          queue_expiry(meta: &meta^, key: key, at: expires, env: env);
-        }
-        if logged {
-          let key_value = arg(args: args, index: 2_u64);
-          let room = key_span.length +wrap key_value.length;
-          log_count(log: &meta^.log, count: 3_u64, room: room);
-          log_word(log: &meta^.log, word: &word_set[0_u64..3_u64]);
-          log_input(log: &meta^.log, input: input, span: key_span);
-          log_input(log: &meta^.log, input: input, span: key_value);
-          if queued {
-            log_expire_at(log: &meta^.log, input: input, key: key_span, at_ms: at_ms);
-          }
-        }
+    if queued {
+      queue_expiry(meta: &s^.meta, key: key, at: expires, env: env);
+    }
+    if logged {
+      let key_value = arg(args: args, index: 2_u64);
+      let room = key_span.length +wrap key_value.length;
+      log_count(log: &s^.meta.log, count: 3_u64, room: room);
+      log_word(log: &s^.meta.log, word: &word_set[0_u64..3_u64]);
+      log_input(log: &s^.meta.log, input: input, span: key_span);
+      log_input(log: &s^.meta.log, input: input, span: key_value);
+      if queued {
+        log_expire_at(log: &s^.meta.log, input: input, key: key_span, at_ms: at_ms);
       }
     }
   }
@@ -243,26 +238,27 @@ fn run_set(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
 }
 
 fn run_mset(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv) -> result: unit reads(store), reads(input), reads(args), writes(client) waits {
-  doc "MSET key value [key value ...]: stores every pair, removing any expiry the keys had, in one statement over the whole keyspace; a key named twice keeps its last value.";
+  doc "MSET key value [key value ...]: stores every pair, removing any expiry the keys had, in one statement on the keys' entries; a key named twice keeps its last value.";
   let count = args^.inner.len;
   let pairs = count / 2_u64;
-  atomic state = &store^.map {
-    for @pairs (pair in 0_u64..pairs) {
-      let doubled = pair *wrap 2_u64;
-      let index = doubled +wrap 1_u64;
-      let place = key_bounds(input: input, args: args, index: index);
-      let key = &input^[place.start..place.end];
-      let next = index +wrap 1_u64;
-      let value_span = arg(args: args, index: next);
+  let keys = key_set_new(capacity: pairs);
+  for @pairs (pair in 0_u64..pairs) {
+    let doubled = pair *wrap 2_u64;
+    let index = doubled +wrap 1_u64;
+    let place = key_bounds(input: input, args: args, index: index);
+    let key = &input^[place.start..place.end];
+    let next = index +wrap 1_u64;
+    key_set_put(keys: &keys, key: key, payload: next);
+  }
+  atomic s = &store^.state, slots = &s^.map[keys] {
+    for @stored (at in 0_u64..keys.len) {
+      let position = key_set_payload(keys: &keys, index: at);
+      let value_span = arg(args: args, index: position);
       let value = bytes_new(input: input, start: value_span.start, length: value_span.length);
-      atomic slot = &state^[key] {
-        put_text(slot: slot, value: move value, expires: 0_u64);
-      }
+      put_text(slot: &slots^[at], value: move value, expires: 0_u64);
     }
     if store^.logging {
-      atomic meta = &store^.meta {
-        log_command(log: &meta^.log, input: input, args: args);
-      }
+      log_command(log: &s^.meta.log, input: input, args: args);
     }
   }
   reply_ok(client: client);
@@ -318,7 +314,7 @@ fn run_incr(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   let place = key_bounds(input: input, args: args, index: 1_u64);
   let key = &input^[place.start..place.end];
   let counted = Counted(value: 0_i64, now: time^.check, state: state_absent);
-  atomic slot = &store^.map[key] {
+  atomic s = &store^.state, slot = &s^.map[key] {
     let fresh_needed = True();
     match slot^ {
       Some(value: held) => {
@@ -339,9 +335,7 @@ fn run_incr(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
     }
     if counted.state == state_done {
       if store^.logging {
-        atomic meta = &store^.meta {
-          log_command(log: &meta^.log, input: input, args: args);
-        }
+        log_command(log: &s^.meta.log, input: input, args: args);
       }
     }
   }

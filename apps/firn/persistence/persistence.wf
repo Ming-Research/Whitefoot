@@ -55,9 +55,9 @@ fn write_log(store: Keyspace, factory: HandleFactory, file: WriteFile, clock: Cl
     let wake = instant_after(instant: started, nanoseconds: 10000000_u64);
     sleep_until(deadline: wake);
     let stop = False();
-    atomic meta = &store.meta {
-      set stop = meta^.stopping;
-      swap(first: &meta^.log, second: &spare);
+    atomic s = &store.state {
+      set stop = s^.meta.stopping;
+      swap(first: &s^.meta.log, second: &spare);
     }
     let appended = append_all(factory: &factory, file: &file, source: &spare);
     set spare = box_slots_new::<u8>(capacity: 65536_u64);
@@ -86,8 +86,8 @@ fn replay(store: &Keyspace, factory: &HandleFactory, root: &DirectoryRead, name:
     Ok(value: file) => {
       let env = KeyEnv();
       let client = client_new(capacity: 16384_u64);
-      atomic meta = &store^.meta {
-        set client.random = meta^.random;
+      atomic s = &store^.state {
+        set client.random = s^.meta.random;
       }
       let args = box_slots_new::<Span>(capacity: 16_u64);
       let input = input_new(capacity: 65536_u64);

@@ -97,7 +97,7 @@ fn run_sadd(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   set client^.now = time^.check;
   set client^.state = state_absent;
   set client^.number = 0_u64;
-  atomic slot = &store^.map[key] {
+  atomic s = &store^.state, slot = &s^.map[key] {
     match slot^ {
       Some(value: held) => {
         let edited = add_members(env: client, value: held);
@@ -125,9 +125,7 @@ fn run_sadd(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
     if client^.state == state_done {
       if client^.number > 0_u64 {
         if store^.logging {
-          atomic meta = &store^.meta {
-            log_command(log: &meta^.log, input: input, args: args);
-          }
+          log_command(log: &s^.meta.log, input: input, args: args);
         }
       }
     }
@@ -202,7 +200,7 @@ fn run_srem(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   set client^.now = time^.check;
   set client^.state = state_absent;
   set client^.number = 0_u64;
-  atomic slot = &store^.map[key] {
+  atomic s = &store^.state, slot = &s^.map[key] {
     match slot^ {
       Some(value: held) => {
         let edited = remove_members(env: client, value: held);
@@ -218,9 +216,7 @@ fn run_srem(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
     }
     if client^.number > 0_u64 {
       if store^.logging {
-        atomic meta = &store^.meta {
-          log_command(log: &meta^.log, input: input, args: args);
-        }
+        log_command(log: &s^.meta.log, input: input, args: args);
       }
     }
   }
@@ -356,7 +352,7 @@ fn run_spop(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   if counted {
     set client^.high = 1_i64;
   }
-  atomic slot = &store^.map[key] {
+  atomic s = &store^.state, slot = &s^.map[key] {
     match slot^ {
       Some(value: held) => {
         let edited = pop_members(env: client, value: held);
@@ -373,15 +369,13 @@ fn run_spop(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
     let popped = client^.items.inner.len;
     if popped > 0_u64 {
       if store^.logging {
-        atomic meta = &store^.meta {
-          let count = popped +wrap 2_u64;
-          log_count(log: &meta^.log, count: count, room: key_span.length);
-          log_word(log: &meta^.log, word: &word_srem[0_u64..4_u64]);
-          log_input(log: &meta^.log, input: input, span: key_span);
-          for @members (index in 0_u64..popped) {
-            if index < client^.items.inner.len {
-              log_text(log: &meta^.log, text: &client^.items.inner[index].bytes);
-            }
+        let count = popped +wrap 2_u64;
+        log_count(log: &s^.meta.log, count: count, room: key_span.length);
+        log_word(log: &s^.meta.log, word: &word_srem[0_u64..4_u64]);
+        log_input(log: &s^.meta.log, input: input, span: key_span);
+        for @members (index in 0_u64..popped) {
+          if index < client^.items.inner.len {
+            log_text(log: &s^.meta.log, text: &client^.items.inner[index].bytes);
           }
         }
       }
@@ -445,7 +439,7 @@ fn run_scard(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &C
   set client^.now = time^.check;
   set client^.state = state_absent;
   set client^.number = 0_u64;
-  atomic slot = &store^.map[key] {
+  atomic s = &store^.state, slot = &s^.map[key] {
     match slot^ {
       Some(value: held) => {
         let found = set_size(env: client, value: held);

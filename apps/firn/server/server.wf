@@ -113,10 +113,10 @@ fn serve(connection: TcpConnection, factory: HandleFactory, store: Keyspace, clo
   doc "Serves one client in a context of its own: reads requests into its input, which grows to hold a request larger than it, answers every complete request the input holds with one send, sending sooner once 16,384 bytes of replies are waiting, and keeps an incomplete one for the next read. Every command of one read sees the clocks as read once after it; a client silent for idle seconds, when idle is not zero, is closed, and so is one that sends a malformed request, after its error.";
   let env = KeyEnv();
   let client = client_new(capacity: 16384_u64);
-  atomic meta = &store.meta {
-    set client.random = meta^.random;
-    let stepped = meta^.random *wrap 6364136223846793005_u64;
-    set meta^.random = stepped +wrap 1442695040888963407_u64;
+  atomic s = &store.state {
+    set client.random = s^.meta.random;
+    let stepped = s^.meta.random *wrap 6364136223846793005_u64;
+    set s^.meta.random = stepped +wrap 1442695040888963407_u64;
   }
   let args = box_slots_new::<Span>(capacity: 16_u64);
   let input = input_new(capacity: 16384_u64);
@@ -193,8 +193,8 @@ fn serve(connection: TcpConnection, factory: HandleFactory, store: Keyspace, clo
   let TcpConnection(receive: closing_receive, send: closing_send) = move connection;
   close_receive(factory: &factory, receive: move closing_receive);
   close_send(factory: &factory, send: move closing_send);
-  atomic meta = &store.meta {
-    set meta^.clients = meta^.clients -wrap 1_u64;
+  atomic s = &store.state {
+    set s^.meta.clients = s^.meta.clients -wrap 1_u64;
   }
   return unit;
 }
@@ -211,8 +211,8 @@ fn expire_keys(store: Keyspace, clock: Clock, origin: Instant) -> result: unit p
     let current = nanoseconds_from(earlier: origin, later: reading);
     let stop = False();
     loop @batches {
-      atomic meta = &store.meta {
-        set stop = meta^.stopping;
+      atomic s = &store.state {
+        set stop = s^.meta.stopping;
       }
       let more = expire_batch(store: &store, now: current, env: &env, batch: &batch);
       if more {
@@ -275,7 +275,7 @@ fn argument(args: &std::text::Args, position: u64, window: &[u8]) -> result: u64
 }
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  doc "firn, a server of Redis's protocol: PING, ECHO, GET, SET with EX or PX, MSET, INCR, DEL, EXISTS, TYPE, EXPIRE, PEXPIRE, PEXPIREAT, TTL, PTTL, PERSIST, DBSIZE, CONFIG GET, the lists' LPUSH, RPUSH, LPOP, RPOP, LRANGE and LLEN, the sets' SADD, SREM, SPOP and SCARD, the hashes' HSET and HGET and the sorted sets' ZADD, ZPOPMIN, ZCARD and ZSCORE, over TCP in RESP2 or as inline commands, with pipelining. It listens on the loopback port the first argument names and serves each accepted client in a context of its own over one keyspace, a shared map every client reaches through atomic statements on one key, or on the whole keyspace for a command over several keys. The second argument is how many clients to accept; zero accepts until the listener fails. A third argument other than - names an append-only file in the working directory: firn replays it before it listens and appends every change to it, syncing it once a second. A fourth argument, when not zero, closes a client silent for that many seconds. Expired keys are removed when a command finds them and by a context that wakes ten times a second.";
+  doc "firn, a server of Redis's protocol: PING, ECHO, GET, SET with EX or PX, MSET, INCR, DEL, EXISTS, TYPE, EXPIRE, PEXPIRE, PEXPIREAT, TTL, PTTL, PERSIST, DBSIZE, CONFIG GET, the lists' LPUSH, RPUSH, LPOP, RPOP, LRANGE and LLEN, the sets' SADD, SREM, SPOP and SCARD, the hashes' HSET and HGET and the sorted sets' ZADD, ZPOPMIN, ZCARD and ZSCORE, over TCP in RESP2 or as inline commands, with pipelining. It listens on the loopback port the first argument names and serves each accepted client in a context of its own over one keyspace, a shared state every client reaches through atomic statements that hold the entries of the keys a command names, or the keyspace's table whole for DBSIZE. The second argument is how many clients to accept; zero accepts until the listener fails. A third argument other than - names an append-only file in the working directory: firn replays it before it listens and appends every change to it, syncing it once a second. A fourth argument, when not zero, closes a client silent for that many seconds. Expired keys are removed when a command finds them and by a context that wakes ten times a second.";
   let Inputs(args: args, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: clock, wall_clock: wall_clock) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   let digits = slots_new::<u8, 16>();
@@ -383,8 +383,8 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
             let handle = keyspace_share(store: &keyspace);
             let serving_clock = clock_share(clock: &clock);
             let serving_wall = wall_clock_share(clock: &wall_clock);
-            atomic meta = &keyspace.meta {
-              set meta^.clients = meta^.clients +wrap 1_u64;
+            atomic s = &keyspace.state {
+              set s^.meta.clients = s^.meta.clients +wrap 1_u64;
             }
             spawn serve(connection: move connection, factory: move factory, store: move handle, clock: move serving_clock, wall: move serving_wall, origin: origin, idle: idle);
           }
@@ -400,8 +400,8 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
       set listened = False();
     }
   }
-  atomic meta = &keyspace.meta when meta^.clients == 0_u64 {
-    set meta^.stopping = True();
+  atomic s = &keyspace.state when s^.meta.clients == 0_u64 {
+    set s^.meta.stopping = True();
   }
   if listened {
     return exit_status(code: 0_u8);

@@ -206,7 +206,7 @@ fn run_zadd(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   set client^.now = time^.check;
   set client^.state = state_absent;
   set client^.number = 0_u64;
-  atomic slot = &store^.map[key] {
+  atomic s = &store^.state, slot = &s^.map[key] {
     match slot^ {
       Some(value: held) => {
         let edited = add_scores(env: client, value: held);
@@ -234,9 +234,7 @@ fn run_zadd(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
     }
     if client^.state == state_done {
       if store^.logging {
-        atomic meta = &store^.meta {
-          log_command(log: &meta^.log, input: input, args: args);
-        }
+        log_command(log: &s^.meta.log, input: input, args: args);
       }
     }
   }
@@ -354,7 +352,7 @@ fn run_zpopmin(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: 
   set client^.now = time^.check;
   set client^.state = state_absent;
   set client^.number = wanted;
-  atomic slot = &store^.map[key] {
+  atomic s = &store^.state, slot = &s^.map[key] {
     match slot^ {
       Some(value: held) => {
         let edited = pop_lowest(env: client, value: held);
@@ -372,9 +370,7 @@ fn run_zpopmin(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: 
     let changed = bor(done, emptied);
     if changed {
       if store^.logging {
-        atomic meta = &store^.meta {
-          log_command(log: &meta^.log, input: input, args: args);
-        }
+        log_command(log: &s^.meta.log, input: input, args: args);
       }
     }
   }
@@ -431,7 +427,7 @@ fn run_zcard(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &C
   set client^.now = time^.check;
   set client^.state = state_absent;
   set client^.number = 0_u64;
-  atomic slot = &store^.map[key] {
+  atomic s = &store^.state, slot = &s^.map[key] {
     match slot^ {
       Some(value: held) => {
         let found = sorted_size(env: client, value: held);
@@ -503,7 +499,7 @@ fn run_zscore(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
   let key = &input^[place.start..place.end];
   set client^.now = time^.check;
   set client^.state = state_absent;
-  atomic slot = &store^.map[key] {
+  atomic s = &store^.state, slot = &s^.map[key] {
     match slot^ {
       Some(value: held) => {
         let found = member_score(env: client, value: held);
