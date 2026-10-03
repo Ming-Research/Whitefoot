@@ -29,6 +29,8 @@ alias reply_word = pkg::protocol::reply_word;
 alias reply_wrong_type = pkg::protocol::reply_wrong_type;
 alias Bytes = pkg::bytes::Bytes;
 alias bytes_new = pkg::bytes::bytes_new;
+alias bytes_length = pkg::bytes::bytes_length;
+alias byte_at = pkg::bytes::byte_at;
 alias bytes_integer = pkg::bytes::bytes_integer;
 alias decimal_text = pkg::bytes::decimal_text;
 alias reply_text = pkg::protocol::reply_text;
@@ -78,6 +80,16 @@ const text_expire_setex: Array<u8, 42> =[69_u8, 82_u8, 82_u8, 32_u8, 105_u8, 110
 const text_expire_psetex: Array<u8, 43> =[69_u8, 82_u8, 82_u8, 32_u8, 105_u8, 110_u8, 118_u8, 97_u8, 108_u8, 105_u8, 100_u8, 32_u8, 101_u8, 120_u8, 112_u8, 105_u8, 114_u8, 101_u8, 32_u8, 116_u8, 105_u8, 109_u8, 101_u8, 32_u8, 105_u8, 110_u8, 32_u8, 39_u8, 112_u8, 115_u8, 101_u8, 116_u8, 101_u8, 120_u8, 39_u8, 32_u8, 99_u8, 111_u8, 109_u8, 109_u8, 97_u8, 110_u8, 100_u8];
 
 const text_expire_getex: Array<u8, 42> =[69_u8, 82_u8, 82_u8, 32_u8, 105_u8, 110_u8, 118_u8, 97_u8, 108_u8, 105_u8, 100_u8, 32_u8, 101_u8, 120_u8, 112_u8, 105_u8, 114_u8, 101_u8, 32_u8, 116_u8, 105_u8, 109_u8, 101_u8, 32_u8, 105_u8, 110_u8, 32_u8, 39_u8, 103_u8, 101_u8, 116_u8, 101_u8, 120_u8, 39_u8, 32_u8, 99_u8, 111_u8, 109_u8, 109_u8, 97_u8, 110_u8, 100_u8];
+
+const state_long: u64 = 5_u64;
+
+const string_limit: u64 = 536870912_u64;
+
+const reply_empty: Array<u8, 6> =[36_u8, 48_u8, 13_u8, 10_u8, 13_u8, 10_u8];
+
+const text_too_long: Array<u8, 60> =[69_u8, 82_u8, 82_u8, 32_u8, 115_u8, 116_u8, 114_u8, 105_u8, 110_u8, 103_u8, 32_u8, 101_u8, 120_u8, 99_u8, 101_u8, 101_u8, 100_u8, 115_u8, 32_u8, 109_u8, 97_u8, 120_u8, 105_u8, 109_u8, 117_u8, 109_u8, 32_u8, 97_u8, 108_u8, 108_u8, 111_u8, 119_u8, 101_u8, 100_u8, 32_u8, 115_u8, 105_u8, 122_u8, 101_u8, 32_u8, 40_u8, 112_u8, 114_u8, 111_u8, 116_u8, 111_u8, 45_u8, 109_u8, 97_u8, 120_u8, 45_u8, 98_u8, 117_u8, 108_u8, 107_u8, 45_u8, 108_u8, 101_u8, 110_u8, 41_u8];
+
+const text_offset_range: Array<u8, 26> =[69_u8, 82_u8, 82_u8, 32_u8, 111_u8, 102_u8, 102_u8, 115_u8, 101_u8, 116_u8, 32_u8, 105_u8, 115_u8, 32_u8, 111_u8, 117_u8, 116_u8, 32_u8, 111_u8, 102_u8, 32_u8, 114_u8, 97_u8, 110_u8, 103_u8, 101_u8];
 
 const reply_pong: Array<u8, 7> =[43_u8, 80_u8, 79_u8, 78_u8, 71_u8, 13_u8, 10_u8];
 
@@ -803,6 +815,439 @@ fn run_incr(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
     reply_error(client: client, word: &text_overflow[0_u64..41_u64]);
   } else {
     reply_error(client: client, word: &text_not_integer[0_u64..43_u64]);
+  }
+  return unit;
+}
+
+fn text_with(input: &[u8], span: Span, offset: u64, prefix: &[u8]) -> made: Bytes reads(input), reads(prefix) {
+  doc "A string of the bytes of prefix, then zero bytes up to offset, then the bytes of the input span names starting at offset, overwriting any of prefix there, held inline when it has at most 24 bytes, as bytes_new chooses the form. A string longer than 2^62 bytes, which the callers' limit of 512 MiB rules out, is made empty.";
+  let old_length = prefix^.len;
+  let end = offset +wrap span.length;
+  let total = imax(old_length, end);
+  if total <= 24_u64 {
+    let short = slots_new::<u8, 24>();
+    for @filling (position in 0_u64..total) {
+      let byte = 0_u8;
+      if position < old_length {
+        set byte = prefix^[position];
+      }
+      let inside = position >= offset;
+      if inside {
+        if position < end {
+          let from = position -wrap offset;
+          let source = span.start +wrap from;
+          set byte = byte_at(input: input, index: source);
+        }
+      }
+      if short.len < short.cap {
+        place_back(window: &short, value: byte);
+      }
+    }
+    return Bytes::Short(bytes: move short);
+  }
+  if total > 4611686018427387904_u64 {
+    let empty = slots_new::<u8, 24>();
+    return Bytes::Short(bytes: move empty);
+  }
+  let long = box_slots_new::<u8>(capacity: total);
+  for @copying (position in 0_u64..total) {
+    let byte = 0_u8;
+    if position < old_length {
+      set byte = prefix^[position];
+    }
+    let inside = position >= offset;
+    if inside {
+      if position < end {
+        let from = position -wrap offset;
+        let source = span.start +wrap from;
+        set byte = byte_at(input: input, index: source);
+      }
+    }
+    if long.inner.len < long.inner.cap {
+      place_back(window: &long.inner, value: byte);
+    }
+  }
+  return Bytes::Long(bytes: move long);
+}
+
+fn long_write(long: &Box<Slots<u8>>, input: &[u8], span: Span, offset: u64) -> result: unit reads(input), writes(long) {
+  doc "Writes the bytes of the input span names into a string held in an allocation of its own, starting at offset, first filling it with zero bytes up to offset and growing the allocation at least to twice its size when it is full, so that writing at its end in steps costs time in proportion to the bytes written. The allocation stops growing at 2^62 bytes, which the callers' limit of 512 MiB rules out.";
+  let end = offset +wrap span.length;
+  let capacity = long^.inner.cap;
+  if end > capacity {
+    let doubled = capacity +wrap capacity;
+    let target = imax(doubled, end);
+    let fits = target <= 4611686018427387904_u64;
+    if fits {
+      if target >= long^.inner.cap {
+        grow(cell: long, capacity: target);
+      }
+    }
+  }
+  loop @zeros {
+    if long^.inner.len >= offset {
+      break @zeros;
+    }
+    if long^.inner.len < long^.inner.cap {
+      place_back(window: &long^.inner, value: 0_u8);
+    } else {
+      break @zeros;
+    }
+  }
+  for @bytes (step in 0_u64..span.length) {
+    let position = offset +wrap step;
+    let source = span.start +wrap step;
+    let byte = byte_at(input: input, index: source);
+    if position < long^.inner.len {
+      set long^.inner[position] = byte;
+    } else if long^.inner.len < long^.inner.cap {
+      place_back(window: &long^.inner, value: byte);
+    }
+  }
+  return unit;
+}
+
+fn text_write(text: &Bytes, input: &[u8], span: Span, offset: u64) -> length: u64 reads(input), writes(text) {
+  doc "Writes the bytes of the input span names into a string starting at offset, as SETRANGE and, at the string's end, APPEND write them: zero bytes fill any gap before offset, and the string keeps the form bytes_new would choose for its new length, held inline while it has at most 24 bytes. Returns the new length.";
+  let moved = False();
+  let made = slots_new::<u8, 24>();
+  let replacement = Bytes::Short(bytes: move made);
+  match text^ {
+    Short(bytes: short) => {
+      let length = short^.len;
+      let window = &short^[0_u64..length];
+      set replacement = text_with(input: input, span: span, offset: offset, prefix: window);
+      set moved = True();
+    }
+    Long(bytes: long) => {
+      long_write(long: long, input: input, span: span, offset: offset);
+    }
+  }
+  if moved {
+    set text^ = move replacement;
+  } else {
+    let unused = move replacement;
+  }
+  let length = bytes_length(bytes: text);
+  return length;
+}
+
+fn held_text_length(slot: &Option<Entry>) -> length: u64 reads(slot) {
+  doc "The length of the string a live entry holds, zero for another kind and for an absent entry.";
+  match slot^ {
+    Some(value: held) => {
+      match held^.value {
+        Text(bytes: stored) => {
+          let length = bytes_length(bytes: stored);
+          return length;
+        }
+        Items(items: list) => {
+          return 0_u64;
+        }
+        Members(members: set_of) => {
+          return 0_u64;
+        }
+        Fields(fields: hash_of) => {
+          return 0_u64;
+        }
+        Ranked(ranked: sorted) => {
+          return 0_u64;
+        }
+      }
+    }
+    None() => {
+      return 0_u64;
+    }
+  }
+}
+
+fn held_text_write(slot: &Option<Entry>, input: &[u8], span: Span, offset: u64) -> length: u64 reads(input), writes(slot) {
+  doc "Writes into the string a live entry holds as text_write does, keeping its expiry, and returns the new length; another kind and an absent entry are left as they are, answering zero.";
+  match slot^ {
+    Some(value: held) => {
+      match held^.value {
+        Text(bytes: stored) => {
+          let length = text_write(text: stored, input: input, span: span, offset: offset);
+          return length;
+        }
+        Items(items: list) => {
+          return 0_u64;
+        }
+        Members(members: set_of) => {
+          return 0_u64;
+        }
+        Fields(fields: hash_of) => {
+          return 0_u64;
+        }
+        Ranked(ranked: sorted) => {
+          return 0_u64;
+        }
+      }
+    }
+    None() => {
+      return 0_u64;
+    }
+  }
+}
+
+fn reply_text_range(client: &Client, text: &Bytes, start: i64, end: i64) -> result: unit reads(text), writes(client) {
+  doc "Writes the bytes of a string from start to end, both included, as Redis 7.0.15's getrangeCommand reads them: a negative index counts from the end, both are then clamped to the string, and a range that ends before it starts, or two negative indices in that order, is the empty bulk string.";
+  let length = bytes_length(bytes: text);
+  let size = cvt.wrap::<u64, i64>(length);
+  let backwards = start > end;
+  let first_negative = start < 0_i64;
+  let last_negative = end < 0_i64;
+  let both = band(first_negative, last_negative);
+  let reversed = band(both, backwards);
+  if reversed {
+    reply_word(client: client, word: &reply_empty[0_u64..6_u64]);
+    return unit;
+  }
+  let from = start;
+  let to = end;
+  if from < 0_i64 {
+    set from = size +wrap from;
+  }
+  if to < 0_i64 {
+    set to = size +wrap to;
+  }
+  if from < 0_i64 {
+    set from = 0_i64;
+  }
+  if to < 0_i64 {
+    set to = 0_i64;
+  }
+  if to >= size {
+    set to = size -wrap 1_i64;
+  }
+  let empty = length == 0_u64;
+  let after = from > to;
+  let nothing = bor(empty, after);
+  if nothing {
+    reply_word(client: client, word: &reply_empty[0_u64..6_u64]);
+    return unit;
+  }
+  let first = cvt.wrap::<i64, u64>(from);
+  let last = cvt.wrap::<i64, u64>(to);
+  let span = last -wrap first;
+  let count = span +wrap 1_u64;
+  match text^ {
+    Short(bytes: short) => {
+      let size_held = short^.len;
+      let window = &short^[0_u64..size_held];
+      reply_bulk_input(client: client, input: window, start: first, length: count);
+    }
+    Long(bytes: long) => {
+      let size_held = long^.inner.len;
+      let window = &long^.inner[0_u64..size_held];
+      reply_bulk_input(client: client, input: window, start: first, length: count);
+    }
+  }
+  return unit;
+}
+
+fn reply_held_range(slot: &Option<Entry>, client: &Client, start: i64, end: i64) -> result: unit reads(slot), writes(client) {
+  doc "Writes a range of the string a live entry holds as reply_text_range writes it; another kind and an absent entry write nothing.";
+  match slot^ {
+    Some(value: held) => {
+      match held^.value {
+        Text(bytes: stored) => {
+          reply_text_range(client: client, text: stored, start: start, end: end);
+        }
+        Items(items: list) => {
+        }
+        Members(members: set_of) => {
+        }
+        Fields(fields: hash_of) => {
+        }
+        Ranked(ranked: sorted) => {
+        }
+      }
+    }
+    None() => {
+    }
+  }
+  return unit;
+}
+
+fn run_append(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+  doc "APPEND key value: appends the value to a live string, keeping its expiry, or stores it as a string without one for an absent or expired key, an empty value included, and answers the string's length, in one atomic statement, as Redis 7.0.15 does; a key of another kind is refused, and so is a string that would pass proto-max-bulk-len's 512 MiB. The file records the command as it was sent, after a key found expired as log_removal records it.";
+  let place = key_bounds(input: input, args: args, index: 1_u64);
+  let key = &input^[place.start..place.end];
+  let value_span = arg(args: args, index: 2_u64);
+  let logged = store^.logging;
+  set client^.now = time^.check;
+  let outcome = state_absent;
+  let length = 0_u64;
+  atomic s = &store^.state, slot = &s^.map[key] {
+    let kind = entry_kind(slot: slot, client: client);
+    if client^.state == state_expired {
+      if logged {
+        log_removal(log: &s^.meta.log, key: key);
+      }
+    }
+    if kind == 0_u64 {
+      let value = bytes_new(input: input, start: value_span.start, length: value_span.length);
+      put_text(slot: slot, value: move value, expires: 0_u64);
+      set length = value_span.length;
+      set outcome = state_done;
+    } else if kind == 1_u64 {
+      let held = held_text_length(slot: slot);
+      let total = held +wrap value_span.length;
+      if total > string_limit {
+        set outcome = state_long;
+      } else {
+        set length = held_text_write(slot: slot, input: input, span: value_span, offset: held);
+        set outcome = state_done;
+      }
+    } else {
+      set outcome = state_wrong;
+    }
+    if outcome == state_done {
+      if logged {
+        log_command(log: &s^.meta.log, input: input, args: args);
+      }
+    }
+  }
+  if outcome == state_wrong {
+    reply_wrong_type(client: client);
+    return unit;
+  }
+  if outcome == state_long {
+    reply_error(client: client, word: &text_too_long[0_u64..60_u64]);
+    return unit;
+  }
+  let answer = cvt.wrap::<u64, i64>(length);
+  reply_integer(client: client, value: answer);
+  return unit;
+}
+
+fn run_setrange(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+  doc "SETRANGE key offset value: writes the value into a live string from offset on, keeping its expiry, zero bytes filling any gap, or into a new string of zero bytes for an absent or expired key, and answers the string's length, in one atomic statement, as Redis 7.0.15 does. An empty value changes nothing, answering the length or 0 for an absent key; an offset that is not an integer, a negative one, a key of another kind and a string that would pass proto-max-bulk-len's 512 MiB are refused. The file records a change as it was sent, after a key found expired as log_removal records it.";
+  let amount = arg(args: args, index: 2_u64);
+  let number = read_integer(input: input, start: amount.start, length: amount.length);
+  if number.state != 1_u64 {
+    reply_error(client: client, word: &text_not_integer[0_u64..43_u64]);
+    return unit;
+  }
+  if number.value < 0_i64 {
+    reply_error(client: client, word: &text_offset_range[0_u64..26_u64]);
+    return unit;
+  }
+  let offset = cvt.wrap::<i64, u64>(number.value);
+  let place = key_bounds(input: input, args: args, index: 1_u64);
+  let key = &input^[place.start..place.end];
+  let value_span = arg(args: args, index: 3_u64);
+  let empty = value_span.length == 0_u64;
+  let total = offset +wrap value_span.length;
+  let beyond = total > string_limit;
+  let logged = store^.logging;
+  set client^.now = time^.check;
+  let outcome = state_absent;
+  let length = 0_u64;
+  atomic s = &store^.state, slot = &s^.map[key] {
+    let kind = entry_kind(slot: slot, client: client);
+    if client^.state == state_expired {
+      if logged {
+        log_removal(log: &s^.meta.log, key: key);
+      }
+    }
+    if kind > 1_u64 {
+      set outcome = state_wrong;
+    } else if empty {
+      set length = held_text_length(slot: slot);
+    } else if beyond {
+      set outcome = state_long;
+    } else if kind == 0_u64 {
+      let nothing = slots_new::<u8, 24>();
+      let prefix = &nothing[0_u64..0_u64];
+      let value = text_with(input: input, span: value_span, offset: offset, prefix: prefix);
+      put_text(slot: slot, value: move value, expires: 0_u64);
+      set length = total;
+      set outcome = state_done;
+    } else {
+      set length = held_text_write(slot: slot, input: input, span: value_span, offset: offset);
+      set outcome = state_done;
+    }
+    if outcome == state_done {
+      if logged {
+        log_command(log: &s^.meta.log, input: input, args: args);
+      }
+    }
+  }
+  if outcome == state_wrong {
+    reply_wrong_type(client: client);
+    return unit;
+  }
+  if outcome == state_long {
+    reply_error(client: client, word: &text_too_long[0_u64..60_u64]);
+    return unit;
+  }
+  let answer = cvt.wrap::<u64, i64>(length);
+  reply_integer(client: client, value: answer);
+  return unit;
+}
+
+fn run_strlen(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+  doc "STRLEN key: answers the length of a live string, 0 for an absent or expired key, which is removed and its removal recorded as log_removal records it, and refuses a key of another kind.";
+  let place = key_bounds(input: input, args: args, index: 1_u64);
+  let key = &input^[place.start..place.end];
+  let logged = store^.logging;
+  set client^.now = time^.check;
+  let kind = 0_u64;
+  let length = 0_u64;
+  atomic s = &store^.state, slot = &s^.map[key] {
+    set kind = entry_kind(slot: slot, client: client);
+    if client^.state == state_expired {
+      if logged {
+        log_removal(log: &s^.meta.log, key: key);
+      }
+    }
+    set length = held_text_length(slot: slot);
+  }
+  if kind > 1_u64 {
+    reply_wrong_type(client: client);
+    return unit;
+  }
+  let answer = cvt.wrap::<u64, i64>(length);
+  reply_integer(client: client, value: answer);
+  return unit;
+}
+
+fn run_getrange(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+  doc "GETRANGE key start end and SUBSTR key start end: answers the bytes of a live string between the indices, as reply_text_range reads them, written into the reply inside the statement on the key; the empty bulk string for an absent or expired key, which is removed and its removal recorded as log_removal records it. Indices that are not integers are refused before the key is read, as is a key of another kind after.";
+  let first = arg(args: args, index: 2_u64);
+  let start = read_integer(input: input, start: first.start, length: first.length);
+  if start.state != 1_u64 {
+    reply_error(client: client, word: &text_not_integer[0_u64..43_u64]);
+    return unit;
+  }
+  let last = arg(args: args, index: 3_u64);
+  let end = read_integer(input: input, start: last.start, length: last.length);
+  if end.state != 1_u64 {
+    reply_error(client: client, word: &text_not_integer[0_u64..43_u64]);
+    return unit;
+  }
+  let place = key_bounds(input: input, args: args, index: 1_u64);
+  let key = &input^[place.start..place.end];
+  let logged = store^.logging;
+  set client^.now = time^.check;
+  let kind = 0_u64;
+  atomic s = &store^.state, slot = &s^.map[key] {
+    set kind = entry_kind(slot: slot, client: client);
+    if client^.state == state_expired {
+      if logged {
+        log_removal(log: &s^.meta.log, key: key);
+      }
+    }
+    reply_held_range(slot: slot, client: client, start: start.value, end: end.value);
+  }
+  if kind == 0_u64 {
+    reply_word(client: client, word: &reply_empty[0_u64..6_u64]);
+    return unit;
+  }
+  if kind > 1_u64 {
+    reply_wrong_type(client: client);
   }
   return unit;
 }

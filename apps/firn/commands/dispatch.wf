@@ -29,6 +29,16 @@ const code_getdel: u64 = 83860382827847_u64;
 
 const code_getex: u64 = 379120272711_u64;
 
+const code_append: u64 = 75102961029185_u64;
+
+const code_strlen: u64 = 86059540173907_u64;
+
+const code_getrange: u64 = 4992044754424579399_u64;
+
+const code_substr: u64 = 90522127586643_u64;
+
+const code_setrange: u64 = 4992044754424579411_u64;
+
 const code_del: u64 = 4998468_u64;
 
 const code_exists: u64 = 91621639673925_u64;
@@ -221,6 +231,41 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
     let go = admitted(client: client, input: input, name: name, fits: fits);
     if go {
       run_getex(store: store, input: input, args: args, client: client, env: env, time: time);
+    }
+    return unit;
+  }
+  if code == code_append {
+    let fits = count == 3_u64;
+    let go = admitted(client: client, input: input, name: name, fits: fits);
+    if go {
+      run_append(store: store, input: input, args: args, client: client, env: env, time: time);
+    }
+    return unit;
+  }
+  if code == code_strlen {
+    let fits = count == 2_u64;
+    let go = admitted(client: client, input: input, name: name, fits: fits);
+    if go {
+      run_strlen(store: store, input: input, args: args, client: client, env: env, time: time);
+    }
+    return unit;
+  }
+  let ranged = code == code_getrange;
+  let substring = code == code_substr;
+  let read_range = bor(ranged, substring);
+  if read_range {
+    let fits = count == 4_u64;
+    let go = admitted(client: client, input: input, name: name, fits: fits);
+    if go {
+      run_getrange(store: store, input: input, args: args, client: client, env: env, time: time);
+    }
+    return unit;
+  }
+  if code == code_setrange {
+    let fits = count == 4_u64;
+    let go = admitted(client: client, input: input, name: name, fits: fits);
+    if go {
+      run_setrange(store: store, input: input, args: args, client: client, env: env, time: time);
     }
     return unit;
   }

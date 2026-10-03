@@ -1231,9 +1231,10 @@ fn firn_removes_expired_keys_no_command_reads_on_both_routes() {
 /// no expiry. Each expiry given relative to the time, by `SET` with EX or PX,
 /// `SETEX`, `PSETEX`, `GETEX`, `EXPIRE` with an option and `PEXPIRE`, keeps
 /// the very calendar millisecond `PEXPIRETIME` gave before the restart, which
-/// a file recording the relative amount would replay later. The first run
-/// ends once its one client has closed, after its writer appended and synced
-/// the last changes.
+/// a file recording the relative amount would replay later, and a string
+/// `APPEND` and `SETRANGE` edited holds its bytes. The first run ends once its
+/// one client has closed, after its writer appended and synced the last
+/// changes.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_replays_its_append_only_file_after_a_restart_on_both_routes() {
@@ -1307,13 +1308,16 @@ fn firn_replays_its_append_only_file_after_a_restart_on_both_routes() {
             vec!["EXPIRE", "at:expire", "100", "NX"],
             vec!["SET", "at:pexpire", "v"],
             vec!["PEXPIRE", "at:pexpire", "100000"],
+            vec!["SET", "edited", "ab"],
+            vec!["APPEND", "edited", "cd"],
+            vec!["SETRANGE", "edited", "1", "XY"],
         ] {
             batch.extend(resp(&request));
         }
         client.write_all(&batch).expect("send the changes");
         expect_replies(
             &mut client,
-            b"+OK\r\n+OK\r\n+OK\r\n:1\r\n:2\r\n:1\r\n+OK\r\n:1\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n:6\r\n+OK\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n+OK\r\n+OK\r\n:-2\r\n+OK\r\n+OK\r\n+none\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n+OK\r\n+OK\r\n$1\r\nv\r\n+OK\r\n:1\r\n+OK\r\n:1\r\n",
+            b"+OK\r\n+OK\r\n+OK\r\n:1\r\n:2\r\n:1\r\n+OK\r\n:1\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n:6\r\n+OK\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n+OK\r\n+OK\r\n:-2\r\n+OK\r\n+OK\r\n+none\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n+OK\r\n+OK\r\n$1\r\nv\r\n+OK\r\n:1\r\n+OK\r\n:1\r\n+OK\r\n:4\r\n:4\r\n",
             &what,
         );
         let timed = [
@@ -1370,13 +1374,14 @@ fn firn_replays_its_append_only_file_after_a_restart_on_both_routes() {
             vec!["GET", "lazy:k"],
             vec!["GET", "lazy:l"],
             vec!["GET", "lazy:m"],
+            vec!["GET", "edited"],
         ] {
             batch.extend(resp(&request));
         }
         client.write_all(&batch).expect("read the replayed keys");
         expect_replies(
             &mut client,
-            b"$-1\r\n$-1\r\n$1\r\nv\r\n$1\r\n2\r\n$1\r\nv\r\n:-1\r\n$1\r\nv\r\n:-1\r\n$-1\r\n:23\r\n$3\r\nnew\r\n$1\r\n1\r\n:-1\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n:-1\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n",
+            b"$-1\r\n$-1\r\n$1\r\nv\r\n$1\r\n2\r\n$1\r\nv\r\n:-1\r\n$1\r\nv\r\n:-1\r\n$-1\r\n:24\r\n$3\r\nnew\r\n$1\r\n1\r\n:-1\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n:-1\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$4\r\naXYd\r\n",
             &what,
         );
         for (key, expiry) in timed.iter().zip(&expiries) {
@@ -1697,8 +1702,11 @@ fn firn_reads_and_writes_scores_as_redis_does() {
 /// in allocations of their own. Keys, members, fields and values of exactly 24
 /// bytes and of 25 bytes sharing those 24, and a key differing from them only
 /// in its last byte, stay distinct in every kind of value, and a number that
-/// `INCR` rewrites to a different length reads back whole; the expected replies
-/// are redis-server 7.0.15's to the same requests.
+/// `INCR` rewrites to a different length reads back whole. A string `APPEND`
+/// or `SETRANGE` grows from 23 or 24 bytes past 24 reads back whole, as does
+/// one `SETRANGE` creates on either side of the limit, its gap filled with
+/// zero bytes, and `GETRANGE` and `STRLEN` read either form; the expected
+/// replies are redis-server 7.0.15's to the same requests.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_keeps_strings_at_and_past_the_inline_length_apart() {
@@ -1717,6 +1725,8 @@ fn firn_keeps_strings_at_and_past_the_inline_length_apart() {
     let short_value = "v".repeat(24);
     let long_value = "v".repeat(25);
     let (v24, v25) = (short_value.as_str(), long_value.as_str());
+    let short_run = "a".repeat(23);
+    let a23 = short_run.as_str();
     let wide = format!("1{}", "0".repeat(25));
     let mut batch = Vec::new();
     for request in [
@@ -1767,13 +1777,33 @@ fn firn_keeps_strings_at_and_past_the_inline_length_apart() {
         vec!["MSET", a, v25, b, v24],
         vec!["GET", a],
         vec!["GET", b],
+        vec!["SET", "p", a23],
+        vec!["APPEND", "p", "b"],
+        vec!["APPEND", "p", "c"],
+        vec!["GET", "p"],
+        vec!["GETRANGE", "p", "22", "24"],
+        vec!["STRLEN", "p"],
+        vec!["SET", "q", v24],
+        vec!["SETRANGE", "q", "24", "w"],
+        vec!["GET", "q"],
+        vec!["SETRANGE", "q", "0", "W"],
+        vec!["GET", "q"],
+        vec!["STRLEN", "q"],
+        vec!["SETRANGE", "q", "30", "Z"],
+        vec!["GET", "q"],
+        vec!["APPEND", "q", "d"],
+        vec!["SETRANGE", "r", "30", "end"],
+        vec!["GET", "r"],
+        vec!["SETRANGE", "gap", "3", "x"],
+        vec!["GET", "gap"],
+        vec!["GETRANGE", "gap", "-1", "-1"],
     ] {
         batch.extend(resp(&request));
     }
     client.write_all(&batch).expect("send the batch");
     expect_replies(
         &mut client,
-        b"+OK\r\n+OK\r\n+OK\r\n$1\r\n1\r\n$1\r\n2\r\n$1\r\n3\r\n:2\r\n:3\r\n$1\r\n2\r\n$1\r\n3\r\n+OK\r\n$24\r\nvvvvvvvvvvvvvvvvvvvvvvvv\r\n+OK\r\n$25\r\nvvvvvvvvvvvvvvvvvvvvvvvvv\r\n+OK\r\n$24\r\nvvvvvvvvvvvvvvvvvvvvvvvv\r\n+OK\r\n:9223372036854775807\r\n-ERR increment or decrement would overflow\r\n$19\r\n9223372036854775807\r\n+OK\r\n:-9223372036854775806\r\n$20\r\n-9223372036854775806\r\n+OK\r\n-ERR value is not an integer or out of range\r\n:3\r\n:3\r\n:1\r\n:2\r\n:1\r\n:1\r\n:2\r\n$25\r\nvvvvvvvvvvvvvvvvvvvvvvvvv\r\n$24\r\nvvvvvvvvvvvvvvvvvvvvvvvv\r\n$-1\r\n:3\r\n$1\r\n2\r\n:0\r\n*4\r\n$25\r\naaaaaaaaaaaaaaaaaaaaaaaxy\r\n$1\r\n0\r\n$24\r\naaaaaaaaaaaaaaaaaaaaaaax\r\n$1\r\n1\r\n:2\r\n*2\r\n$25\r\naaaaaaaaaaaaaaaaaaaaaaaxy\r\n$24\r\naaaaaaaaaaaaaaaaaaaaaaax\r\n:3\r\n:2\r\n:1\r\n+OK\r\n$25\r\nvvvvvvvvvvvvvvvvvvvvvvvvv\r\n$24\r\nvvvvvvvvvvvvvvvvvvvvvvvv\r\n",
+        b"+OK\r\n+OK\r\n+OK\r\n$1\r\n1\r\n$1\r\n2\r\n$1\r\n3\r\n:2\r\n:3\r\n$1\r\n2\r\n$1\r\n3\r\n+OK\r\n$24\r\nvvvvvvvvvvvvvvvvvvvvvvvv\r\n+OK\r\n$25\r\nvvvvvvvvvvvvvvvvvvvvvvvvv\r\n+OK\r\n$24\r\nvvvvvvvvvvvvvvvvvvvvvvvv\r\n+OK\r\n:9223372036854775807\r\n-ERR increment or decrement would overflow\r\n$19\r\n9223372036854775807\r\n+OK\r\n:-9223372036854775806\r\n$20\r\n-9223372036854775806\r\n+OK\r\n-ERR value is not an integer or out of range\r\n:3\r\n:3\r\n:1\r\n:2\r\n:1\r\n:1\r\n:2\r\n$25\r\nvvvvvvvvvvvvvvvvvvvvvvvvv\r\n$24\r\nvvvvvvvvvvvvvvvvvvvvvvvv\r\n$-1\r\n:3\r\n$1\r\n2\r\n:0\r\n*4\r\n$25\r\naaaaaaaaaaaaaaaaaaaaaaaxy\r\n$1\r\n0\r\n$24\r\naaaaaaaaaaaaaaaaaaaaaaax\r\n$1\r\n1\r\n:2\r\n*2\r\n$25\r\naaaaaaaaaaaaaaaaaaaaaaaxy\r\n$24\r\naaaaaaaaaaaaaaaaaaaaaaax\r\n:3\r\n:2\r\n:1\r\n+OK\r\n$25\r\nvvvvvvvvvvvvvvvvvvvvvvvvv\r\n$24\r\nvvvvvvvvvvvvvvvvvvvvvvvv\r\n+OK\r\n:24\r\n:25\r\n$25\r\naaaaaaaaaaaaaaaaaaaaaaabc\r\n$3\r\nabc\r\n:25\r\n+OK\r\n:25\r\n$25\r\nvvvvvvvvvvvvvvvvvvvvvvvvw\r\n:25\r\n$25\r\nWvvvvvvvvvvvvvvvvvvvvvvvw\r\n:25\r\n:31\r\n$31\r\nWvvvvvvvvvvvvvvvvvvvvvvvw\x00\x00\x00\x00\x00Z\r\n:32\r\n:33\r\n$33\r\n\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00end\r\n:4\r\n$4\r\n\x00\x00\x00x\r\n$1\r\nx\r\n",
         "the strings around the inline length",
     );
     drop(client);
@@ -1792,8 +1822,13 @@ fn firn_keeps_strings_at_and_past_the_inline_length_apart() {
 /// `SETNX`, `SETEX`, `PSETEX`, `GETSET` and `GETDEL` answer as Redis does, and
 /// `GETEX` reads its amount only once it has found a live string, and removes
 /// the key for an absolute expiry already past, which `DBSIZE` then no longer
-/// counts. The expected replies are redis-server 7.0.15's to the same
-/// requests.
+/// counts. `APPEND` of nothing creates an empty string; `GETRANGE` and
+/// `SUBSTR` count negative indices from the end, clamp both to the string and
+/// answer the empty string for an absent key or a range ending before it
+/// starts; `SETRANGE` of nothing changes nothing, refuses a negative offset,
+/// and refuses a string past 512 MiB, its offset and length summed without
+/// overflow; each refuses another kind. The expected replies are
+/// redis-server 7.0.15's to the same requests.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_answers_string_commands_as_redis_does() {
@@ -1870,13 +1905,45 @@ fn firn_answers_string_commands_as_redis_does() {
         vec!["GETEX", "g", "PXAT", "1"],
         vec!["DBSIZE"],
         vec!["GETEX", "g"],
+        vec!["SET", "r", "hello"],
+        vec!["APPEND", "l2", "x"],
+        vec!["APPEND", "newa", ""],
+        vec!["EXISTS", "newa"],
+        vec!["STRLEN", "nope"],
+        vec!["STRLEN", "l2"],
+        vec!["GETRANGE", "r", "0", "4"],
+        vec!["GETRANGE", "r", "-3", "-1"],
+        vec!["GETRANGE", "r", "-1", "-5"],
+        vec!["GETRANGE", "r", "3", "1"],
+        vec!["GETRANGE", "r", "0", "-100"],
+        vec!["GETRANGE", "r", "-100", "100"],
+        vec!["GETRANGE", "r", "100", "200"],
+        vec!["GETRANGE", "r", "x", "1"],
+        vec!["GETRANGE", "r", "1", "x"],
+        vec!["GETRANGE", "nope", "0", "1"],
+        vec!["GETRANGE", "nope", "x", "1"],
+        vec!["GETRANGE", "l2", "0", "1"],
+        vec!["GETRANGE", "r", "-9223372036854775808", "9223372036854775807"],
+        vec!["GETRANGE", "r", "-10", "-20"],
+        vec!["GETRANGE", "r", "-20", "-10"],
+        vec!["SUBSTR", "r", "1", "3"],
+        vec!["SETRANGE", "r", "-1", "x"],
+        vec!["SETRANGE", "r", "x", "x"],
+        vec!["SETRANGE", "nope", "5", ""],
+        vec!["EXISTS", "nope"],
+        vec!["SETRANGE", "r", "99999999999", ""],
+        vec!["SETRANGE", "nope", "536870911", "ab"],
+        vec!["SETRANGE", "nope", "9223372036854775807", "ab"],
+        vec!["SETRANGE", "r", "536870911", "ab"],
+        vec!["SETRANGE", "l2", "0", ""],
+        vec!["GET", "r"],
     ] {
         batch.extend(resp(&request));
     }
     client.write_all(&batch).expect("send the string batch");
     expect_replies(
         &mut client,
-        b"+OK\r\n$1\r\nv\r\n+OK\r\n:20\r\n-ERR syntax error\r\n-ERR syntax error\r\n-ERR syntax error\r\n+OK\r\n:20\r\n+OK\r\n:-1\r\n-ERR syntax error\r\n-ERR value is not an integer or out of range\r\n-ERR invalid expire time in 'set' command\r\n$2\r\nv6\r\n:1\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n+list\r\n$-1\r\n$1\r\nx\r\n$-1\r\n$-1\r\n:0\r\n+OK\r\n-ERR syntax error\r\n-ERR syntax error\r\n+OK\r\n$-1\r\n+OK\r\n$1\r\nx\r\n:1\r\n:0\r\n+OK\r\n:100\r\n-ERR invalid expire time in 'setex' command\r\n-ERR value is not an integer or out of range\r\n-ERR invalid expire time in 'psetex' command\r\n+OK\r\n:100\r\n$1\r\nv\r\n:-1\r\n$-1\r\n:1\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n$1\r\nw\r\n$-1\r\n+OK\r\n$3\r\nval\r\n$3\r\nval\r\n:100\r\n$3\r\nval\r\n:-1\r\n-ERR syntax error\r\n-ERR value is not an integer or out of range\r\n$-1\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n-ERR invalid expire time in 'getex' command\r\n-ERR syntax error\r\n$3\r\nval\r\n:5\r\n$-1\r\n",
+        b"+OK\r\n$1\r\nv\r\n+OK\r\n:20\r\n-ERR syntax error\r\n-ERR syntax error\r\n-ERR syntax error\r\n+OK\r\n:20\r\n+OK\r\n:-1\r\n-ERR syntax error\r\n-ERR value is not an integer or out of range\r\n-ERR invalid expire time in 'set' command\r\n$2\r\nv6\r\n:1\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n+list\r\n$-1\r\n$1\r\nx\r\n$-1\r\n$-1\r\n:0\r\n+OK\r\n-ERR syntax error\r\n-ERR syntax error\r\n+OK\r\n$-1\r\n+OK\r\n$1\r\nx\r\n:1\r\n:0\r\n+OK\r\n:100\r\n-ERR invalid expire time in 'setex' command\r\n-ERR value is not an integer or out of range\r\n-ERR invalid expire time in 'psetex' command\r\n+OK\r\n:100\r\n$1\r\nv\r\n:-1\r\n$-1\r\n:1\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n$1\r\nw\r\n$-1\r\n+OK\r\n$3\r\nval\r\n$3\r\nval\r\n:100\r\n$3\r\nval\r\n:-1\r\n-ERR syntax error\r\n-ERR value is not an integer or out of range\r\n$-1\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n-ERR invalid expire time in 'getex' command\r\n-ERR syntax error\r\n$3\r\nval\r\n:5\r\n$-1\r\n+OK\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n:0\r\n:1\r\n:0\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n$5\r\nhello\r\n$3\r\nllo\r\n$0\r\n\r\n$0\r\n\r\n$1\r\nh\r\n$5\r\nhello\r\n$0\r\n\r\n-ERR value is not an integer or out of range\r\n-ERR value is not an integer or out of range\r\n$0\r\n\r\n-ERR value is not an integer or out of range\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n$5\r\nhello\r\n$0\r\n\r\n$1\r\nh\r\n$3\r\nell\r\n-ERR offset is out of range\r\n-ERR value is not an integer or out of range\r\n:0\r\n:0\r\n:5\r\n-ERR string exceeds maximum allowed size (proto-max-bulk-len)\r\n-ERR string exceeds maximum allowed size (proto-max-bulk-len)\r\n-ERR string exceeds maximum allowed size (proto-max-bulk-len)\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n$5\r\nhello\r\n",
         "the string batch",
     );
     drop(client);
