@@ -1065,11 +1065,11 @@ rarely insert at the same place.
   its one lock.** `new_node` takes a large key's node from the context pool,
   whose free lists sit behind one spin lock (`wf_pool_take` in
   `compiler/src/backend/completion/bridge.c`), while smaller nodes come from
-  per-user chunks. A key set's memory comes from the same pool; each driver
+  per-user chunks. A key set's memory comes from the same pool; each thread
   keeps the last set it freed, up to 1,024 keys in 64 KiB, for its next
   (`first_store` in `compiler/src/backend/concurrent_map.c`), since firn's
-  `MSET` on four drivers answered 0.58 of its rate before key sets while
-  every set took and gave that memory. A workload of long keys, of sets past
+  `MSET` on four drivers answered 0.58 of the rate firn had before key sets
+  while every set took and gave that memory. A workload of long keys, of sets past
   those bounds, or of statements that each build two sets at once, from many
   drivers, would contend on the lock. Reopen when a measured workload's keys
   exceed 512 bytes or its sets exceed the spare's bounds.
@@ -3098,6 +3098,23 @@ condition under which it is taken up.
   Found while fixing the completion review of PR #145.
 
 ## Verification tooling
+
+- **firn's network cases now and then lose their first connection when the
+  whole corpus runs at once on a 32-CPU host.** `cargo test --test corpus` on
+  the 14900K under WSL2, every case at once, failed one of firn's cases in
+  `compiler/tests/programs/network.rs`, a different one each time, with
+  "Connection reset by peer" on the first batch's reply, or once with the
+  server never listening: 1 run of 3 at `cea9188d4`, 3 of 4 at `f8ca277a9`,
+  and 4 of 8 at `a008b01ef` and after; a case run alone passed 6 times of 6.
+  The programs that abort during those runs are the same two in passing and
+  failing runs alike, so firn is not seen to crash, and ports chosen below the
+  ephemeral range, one per case, changed nothing. The gate's hosted runners
+  showed the like once, on macOS at `cea9188d4`
+  (`a_loopback_echo_preserves_all_bytes_and_half_close_on_both_routes`). The
+  change: keep a failing case's server output, which the harness drops, and
+  find whether firn closes the connection, exits or never accepts it. Reopen
+  when a hosted run of the corpus fails this way, or before the corpus gates
+  on a large host.
 
 - **The trusted runtime is large and growing.** Every program links from
   about 27,000 lines of C and LLVM IR in `compiler/src/backend`, its tests

@@ -12,7 +12,7 @@
  * wf_table_entry for one key, a hold for several keys or the whole table,
  * and a watch for a guard. So one statement may hold entries of several
  * bindings and several tables at once, and this unit keeps nothing per
- * thread for a statement; it keeps each driver's spare key set memory, which
+ * thread for a statement; it keeps each thread's spare key set memory, which
  * no statement holds.
  */
 #if defined(__linux__) && !defined(_GNU_SOURCE)
@@ -34,10 +34,11 @@
 /* The calling thread's user of a map, whose spare memory a hold's keys
  * reuse. */
 #define WF_CMAP_CURRENT_USER(map) wf_cmap_user_at((map), wf__driver_index())
-/* Each driver's spare key set memory, which the driver alone uses. */
-#include "concurrent_map.h"
-static void *wf_key_set_spares[WF_CMAP_MAX_USERS];
-#define WF_CMAP_SPARE_KEYS() (wf_key_set_spares[wf__driver_index()])
+/* The calling thread's spare key set memory. A thread of its own, not a
+ * driver's number: the key set's functions are pure, so a compute worker may
+ * build a set too, and every thread that is no driver counts as driver 0. */
+static _Thread_local void *wf_key_set_spare;
+#define WF_CMAP_SPARE_KEYS() (wf_key_set_spare)
 #include "concurrent_map.c"
 
 /* What a statement on one key keeps in its frame: the entry's unlock, the

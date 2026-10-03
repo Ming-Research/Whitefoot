@@ -336,7 +336,7 @@ intend:
 - **`MSET`.** Every statement that names keys builds a key set, and its
   store and arena came from the context pool, whose free lists sit behind
   one lock every driver takes: about eight takes and gives for ten keys.
-  The cost grew with the drivers. Each driver now keeps the last set it
+  The cost grew with the drivers. Each thread now keeps the last set it
   freed for its next one.
 - **One hot key.** firn's client grew from 80 to 280 bytes with the
   connection commands, and a read of one of its fields through a reference
