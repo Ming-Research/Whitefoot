@@ -1043,7 +1043,12 @@ fn firn_serves_every_client_over_one_keyspace() {
 /// batch, whose commands all see one reading of the clocks, `TTL` answers -1
 /// for a key without an expiry and -2 for an absent one, `EXPIRE` gives one,
 /// `PERSIST` removes it once, and `SET` refuses a zero expiry, an unknown
-/// option and a count that is not a number. A key set with `PX 100` answers a
+/// option and a count that is not a number. An expiry of 10^11 seconds, past
+/// what nanoseconds in 64 bits hold, is kept to the second, as Redis keeps
+/// expiries in calendar milliseconds; a negative `EXPIRE` removes the key at
+/// once, so that `DBSIZE` no longer counts it, and
+/// one whose milliseconds leave the range of i64, alone or added to the time,
+/// is refused, also when they would wrap to a small number. A key set with `PX 100` answers a
 /// positive `PTTL` and is absent 200 milliseconds later. A key read 5
 /// milliseconds after its expiry is absent too, which the command's own check
 /// answers: the expiring context wakes only every 100 milliseconds, so without
@@ -1076,13 +1081,23 @@ fn firn_expires_keys_on_both_routes() {
             vec!["SET", "other", "v", "XX", "1"],
             vec!["SET", "other", "v", "PX", "soon"],
             vec!["DBSIZE"],
+            vec!["SET", "far", "v", "EX", "100000000000"],
+            vec!["TTL", "far"],
+            vec!["EXPIRE", "far", "-1"],
+            vec!["DBSIZE"],
+            vec!["EXPIRE", "absent", "-1"],
+            vec!["SET", "other", "v", "EX", "9223372036854776"],
+            vec!["SET", "other", "v", "PX", "9223372036854775807"],
+            vec!["PEXPIRE", "kept", "9223372036854775000"],
+            vec!["EXPIRE", "kept", "18446744073709552"],
+            vec!["EXPIRE", "kept", "-18446744073709552"],
         ] {
             batch.extend(resp(&request));
         }
         client.write_all(&batch).expect("send the expiry batch");
         expect_replies(
             &mut client,
-            b"+OK\r\n+OK\r\n:-1\r\n:-2\r\n:1\r\n:100\r\n:1\r\n:-1\r\n:0\r\n-ERR invalid expire time in 'set' command\r\n-ERR syntax error\r\n-ERR value is not an integer or out of range\r\n:2\r\n",
+            b"+OK\r\n+OK\r\n:-1\r\n:-2\r\n:1\r\n:100\r\n:1\r\n:-1\r\n:0\r\n-ERR invalid expire time in 'set' command\r\n-ERR syntax error\r\n-ERR value is not an integer or out of range\r\n:2\r\n+OK\r\n:100000000000\r\n:1\r\n:2\r\n:0\r\n-ERR invalid expire time in 'set' command\r\n-ERR invalid expire time in 'set' command\r\n-ERR invalid expire time in 'pexpire' command\r\n-ERR invalid expire time in 'expire' command\r\n-ERR invalid expire time in 'expire' command\r\n",
             &what,
         );
         client

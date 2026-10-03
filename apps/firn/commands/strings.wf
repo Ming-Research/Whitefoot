@@ -137,9 +137,9 @@ fn put_text(slot: &Option<Entry>, value: Bytes, expires: u64) -> result: unit wr
 }
 
 fn run_set(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), writes(client) waits {
-  doc "SET key value [EX seconds | PX milliseconds]: stores the value with the expiry the option gives, or none, replacing any value the key held, in one atomic statement that also appends the change to the append-only file's pending bytes. Redis's other options are answered as a syntax error.";
+  doc "SET key value [EX seconds | PX milliseconds]: stores the value with the expiry the option gives, counted from the command's time, or none, replacing any value the key held, in one atomic statement that also appends the change to the append-only file's pending bytes. Redis's other options are answered as a syntax error.";
   let count = args^.inner.len;
-  let ttl_ms = 0_u64;
+  let expires = 0_u64;
   if count == 5_u64 {
     let option = arg(args: args, index: 3_u64);
     let in_seconds = name_is(input: input, start: option.start, length: option.length, word: &word_ex[0_u64..2_u64]);
@@ -163,18 +163,19 @@ fn run_set(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
       return unit;
     }
     let value = cvt.wrap::<i64, u64>(number.value);
-    let beyond = value > 1000000000000_u64;
     if in_seconds {
-      set beyond = value > 1000000000_u64;
+      if value > 9223372036854775_u64 {
+        reply_error(client: client, word: &text_expire_set[0_u64..40_u64]);
+        return unit;
+      }
+      set value = value *wrap 1000_u64;
     }
-    if beyond {
+    let at = value +wrap time^.unix_ms;
+    if at > 9223372036854775807_u64 {
       reply_error(client: client, word: &text_expire_set[0_u64..40_u64]);
       return unit;
     }
-    set ttl_ms = value;
-    if in_seconds {
-      set ttl_ms = value *wrap 1000_u64;
-    }
+    set expires = at;
   } else if count != 3_u64 {
     reply_error(client: client, word: &text_syntax[0_u64..16_u64]);
     return unit;
@@ -184,12 +185,7 @@ fn run_set(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   let place = key_bounds(input: input, args: args, index: 1_u64);
   let key = &input^[place.start..place.end];
   let value = bytes_new(input: input, start: value_span.start, length: value_span.length);
-  let expires = 0_u64;
-  if ttl_ms != 0_u64 {
-    let ttl_ns = ttl_ms *wrap 1000000_u64;
-    set expires = time^.now +wrap ttl_ns;
-  }
-  let at_ms = time^.unix_ms +wrap ttl_ms;
+  let at_ms = expires;
   let queued = expires != 0_u64;
   let logged = store^.logging;
   atomic s = &store^.state, slot = &s^.map[key] {

@@ -31,13 +31,13 @@ public enum Value {
 }
 
 public struct Entry {
-  doc "A key's value and its expiry: nanoseconds from the program's origin, or zero for none.";
+  doc "A key's value and its expiry: the calendar time in milliseconds at which it expires, as Redis keeps it, or zero for none.";
   public value: Value;
   public expires: u64;
 }
 
 public struct Due {
-  doc "An expiry queued for active removal: the key's bytes and the instant it was set to expire at.";
+  doc "An expiry queued for active removal: the key's bytes and the calendar milliseconds it was set to expire at.";
   public key: Bytes;
   public at: u64;
 }
@@ -64,8 +64,7 @@ public struct Keyspace {
 }
 
 public struct Time {
-  doc "The clocks as one command sees them: now, nanoseconds from the program's origin that new expiries count from; unix_ms, calendar milliseconds; check, the instant an expiry is compared against, which is zero while a file is replayed; and whether a file is being replayed.";
-  public now: u64;
+  doc "The clock as one command sees it: unix_ms, calendar milliseconds, which a relative expiry counts from; check, the instant an expiry is compared against, unix_ms while clients are served and zero while a file is replayed; and whether a file is being replayed.";
   public unix_ms: u64;
   public check: u64;
   public loading: Bool;

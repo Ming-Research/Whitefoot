@@ -80,7 +80,7 @@ struct Bounds {
 }
 
 struct Remaining {
-  left: u64;
+  at: u64;
   now: u64;
   state: u64;
 }
@@ -293,7 +293,7 @@ fn clear_expiry(env: &Expiry, value: &Entry) -> result: u64 writes(env), writes(
 }
 
 fn read_expiry(env: &Remaining, value: &Entry) -> result: u64 reads(value), writes(env) {
-  doc "Reads how long a live entry has left. State 2 has an expiry and its nanoseconds left, 1 has none, and 0 marks an expired entry.";
+  doc "Reads a live entry's expiry. State 2 has one, its calendar milliseconds recorded in at, 1 has none, and 0 marks an expired entry.";
   let reached = expired(expires: value^.expires, now: env^.now);
   if reached {
     set env^.state = 0_u64;
@@ -303,7 +303,7 @@ fn read_expiry(env: &Remaining, value: &Entry) -> result: u64 reads(value), writ
     set env^.state = 1_u64;
     return 1_u64;
   }
-  set env^.left = value^.expires -wrap env^.now;
+  set env^.at = value^.expires;
   set env^.state = 2_u64;
   return 2_u64;
 }
@@ -328,7 +328,7 @@ fn log_key_word(log: &Box<Slots<u8>>, word: &[u8], input: &[u8], key: Span) -> r
 }
 
 fn run_expire(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time, scale: u64, absolute: Bool, invalid: &[u8]) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), reads(invalid), writes(client) waits {
-  doc "EXPIRE key seconds (scale 1000), PEXPIRE key milliseconds (scale 1) and PEXPIREAT key calendar-milliseconds (absolute): gives a live key an expiry, or removes it when the expiry is zero or already past, and answers 1 when the key was live and 0 otherwise. While a file is replayed an expiry already past is kept as one already reached, as Redis keeps it while loading, so a later PERSIST in the file still finds the key; invalid is the reply to an expiry out of range. A negative expiry is out of range here, where Redis removes the key.";
+  doc "EXPIRE key seconds (scale 1000), PEXPIRE key milliseconds (scale 1) and PEXPIREAT key calendar-milliseconds (absolute): gives a live key the expiry at those calendar milliseconds, a relative amount counting from the command's time, or removes the key when that time has passed, and answers 1 when the key was live and 0 otherwise, as Redis 7.0.15 does. An amount whose milliseconds, or their sum with the command's time, leave the range of i64 is answered with invalid. While a file is replayed an expiry already past is kept as one already reached, as Redis keeps it while loading, so a later PERSIST in the file still finds the key.";
   let key_span = arg(args: args, index: 1_u64);
   let amount = arg(args: args, index: 2_u64);
   let number = read_integer(input: input, start: amount.start, length: amount.length);
@@ -336,47 +336,39 @@ fn run_expire(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
     reply_error(client: client, word: &text_not_integer[0_u64..43_u64]);
     return unit;
   }
-  if number.value < 0_i64 {
-    reply_error(client: client, word: invalid);
-    return unit;
-  }
-  let value = cvt.wrap::<i64, u64>(number.value);
-  let ttl_ms = 0_u64;
-  let remove_now = False();
-  if absolute {
-    if value <= time^.unix_ms {
-      set remove_now = True();
-    } else {
-      set ttl_ms = value -wrap time^.unix_ms;
-    }
-  } else if value == 0_u64 {
-    set remove_now = True();
-  } else {
-    let limit = 1000000000000_u64;
-    if scale == 1000_u64 {
-      set limit = 1000000000_u64;
-    }
-    if value > limit {
+  let deadline = number.value;
+  if scale == 1000_u64 {
+    let above = deadline > 9223372036854775_i64;
+    let below = deadline < -9223372036854775_i64;
+    let outside = bor(above, below);
+    if outside {
       reply_error(client: client, word: invalid);
       return unit;
     }
-    set ttl_ms = value *wrap scale;
+    set deadline = deadline *wrap 1000_i64;
   }
-  if ttl_ms > 1000000000000_u64 {
+  let now = cvt.wrap::<u64, i64>(time^.unix_ms);
+  let base = now;
+  if absolute {
+    set base = 0_i64;
+  }
+  let room = 9223372036854775807_i64 -wrap base;
+  if deadline > room {
     reply_error(client: client, word: invalid);
     return unit;
   }
+  set deadline = deadline +wrap base;
+  let remove_now = deadline <= now;
+  if time^.loading {
+    set remove_now = False();
+  }
+  let expires = 1_u64;
+  if deadline > 0_i64 {
+    set expires = cvt.wrap::<i64, u64>(deadline);
+  }
   let place = key_bounds(input: input, args: args, index: 1_u64);
   let key = &input^[place.start..place.end];
-  let ttl_ns = ttl_ms *wrap 1000000_u64;
-  let expires = time^.now +wrap ttl_ns;
-  if remove_now {
-    if time^.loading {
-      set remove_now = False();
-      set expires = 1_u64;
-    }
-  }
-  let at_ms = time^.unix_ms +wrap ttl_ms;
+  let at_ms = expires;
   let expiry = Expiry(at: expires, now: time^.check, state: state_absent);
   atomic s = &store^.state, slot = &s^.map[key] {
     if remove_now {
@@ -416,7 +408,7 @@ fn run_expire(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
 
 fn run_ttl(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time, in_seconds: Bool) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
   doc "TTL key and PTTL key: answers the time a live key has left, in seconds rounded as Redis rounds them or in milliseconds, -1 for a key without an expiry and -2 for an absent or expired one.";
-  let remaining = Remaining(left: 0_u64, now: time^.check, state: 3_u64);
+  let remaining = Remaining(at: 0_u64, now: time^.check, state: 3_u64);
   let place = key_bounds(input: input, args: args, index: 1_u64);
   let key = &input^[place.start..place.end];
   atomic s = &store^.state, slot = &s^.map[key] {
@@ -436,10 +428,9 @@ fn run_ttl(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
     return unit;
   }
   if remaining.state == 2_u64 {
-    let milliseconds = remaining.left / 1000000_u64;
-    let answer = milliseconds;
+    let answer = remaining.at -wrap time^.check;
     if in_seconds {
-      let rounded = milliseconds +wrap 500_u64;
+      let rounded = answer +wrap 500_u64;
       set answer = rounded / 1000_u64;
     }
     let signed = cvt.wrap::<u64, i64>(answer);

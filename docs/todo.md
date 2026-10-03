@@ -3295,10 +3295,8 @@ condition under which it is taken up.
   default suite sends ([firn](../research/investigations/firn/DESIGN.md#the-owners-rulings));
   a server someone deploys in place of Redis needs more. Missing, among
   others: `SET`'s `NX`, `XX`, `GET`, `KEEPTTL`, `EXAT` and `PXAT`, which
-  firn answers as a syntax error where Redis sets the key; `SET`'s `EX` and
-  `PX` beyond 10^9 seconds or 10^12 milliseconds, which firn refuses as an
-  invalid expire time where Redis accepts them, since firn keeps expiries as
-  nanoseconds; `SET`'s `EX` or `PX` followed by a zero byte and more, which
+  firn answers as a syntax error where Redis sets the key; `SET`'s `EX` or
+  `PX` followed by a zero byte and more, which
   Redis's strcasecmp reads up to the zero byte and firn's `run_set` answers
   as a syntax error; `CONFIG SET`, which firn answers as an unknown option for
   every parameter where Redis sets those it knows, and the parameters beyond
