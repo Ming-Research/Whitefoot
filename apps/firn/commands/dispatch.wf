@@ -41,6 +41,16 @@ const code_setrange: u64 = 4992044754424579411_u64;
 
 const code_del: u64 = 4998468_u64;
 
+const code_unlink: u64 = 82799609269845_u64;
+
+const code_touch: u64 = 310367309652_u64;
+
+const code_rename: u64 = 76198110446930_u64;
+
+const code_renamenx: u64 = 6363099521631536466_u64;
+
+const code_copy: u64 = 1498435395_u64;
+
 const code_exists: u64 = 91621639673925_u64;
 
 const code_type: u64 = 1162893652_u64;
@@ -287,11 +297,53 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
     }
     return unit;
   }
+  if code == code_unlink {
+    let fits = count >= 2_u64;
+    let go = admitted(client: client, input: input, name: name, fits: fits);
+    if go {
+      run_del(store: store, input: input, args: args, client: client, env: env, time: time);
+    }
+    return unit;
+  }
   if code == code_exists {
     let fits = count >= 2_u64;
     let go = admitted(client: client, input: input, name: name, fits: fits);
     if go {
       run_exists(store: store, input: input, args: args, client: client, env: env, time: time);
+    }
+    return unit;
+  }
+  if code == code_touch {
+    let fits = count >= 2_u64;
+    let go = admitted(client: client, input: input, name: name, fits: fits);
+    if go {
+      run_exists(store: store, input: input, args: args, client: client, env: env, time: time);
+    }
+    return unit;
+  }
+  if code == code_rename {
+    let fits = count == 3_u64;
+    let go = admitted(client: client, input: input, name: name, fits: fits);
+    if go {
+      let fresh = False();
+      run_rename(store: store, input: input, args: args, client: client, env: env, time: time, fresh: fresh);
+    }
+    return unit;
+  }
+  if code == code_renamenx {
+    let fits = count == 3_u64;
+    let go = admitted(client: client, input: input, name: name, fits: fits);
+    if go {
+      let fresh = True();
+      run_rename(store: store, input: input, args: args, client: client, env: env, time: time, fresh: fresh);
+    }
+    return unit;
+  }
+  if code == code_copy {
+    let fits = count >= 3_u64;
+    let go = admitted(client: client, input: input, name: name, fits: fits);
+    if go {
+      run_copy(store: store, input: input, args: args, client: client, env: env, time: time);
     }
     return unit;
   }

@@ -1172,7 +1172,8 @@ fn firn_expires_keys_on_both_routes() {
 
 /// [PRE-2] firn's expiring context removes keys no command reads:
 /// a thousand keys set with `PX 50` leave `DBSIZE`, which reads no key, at
-/// zero within three seconds.
+/// zero within three seconds, as do a key `RENAME` moved and one `COPY` made,
+/// whose expiries are queued under their new names.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_removes_expired_keys_no_command_reads_on_both_routes() {
@@ -1192,8 +1193,18 @@ fn firn_removes_expired_keys_no_command_reads_on_both_routes() {
             let key = format!("key:{index}");
             batch.extend(resp(&["SET", &key, "v", "PX", "50"]));
         }
+        for request in [
+            vec!["SET", "mover", "v", "PX", "200"],
+            vec!["RENAME", "mover", "moved"],
+            vec!["SET", "copier", "v", "PX", "200"],
+            vec!["COPY", "copier", "copied"],
+        ] {
+            batch.extend(resp(&request));
+        }
         client.write_all(&batch).expect("send the keys");
-        expect_replies(&mut client, &b"+OK\r\n".repeat(KEYS), &what);
+        let mut expected = b"+OK\r\n".repeat(KEYS);
+        expected.extend_from_slice(b"+OK\r\n+OK\r\n+OK\r\n:1\r\n");
+        expect_replies(&mut client, &expected, &what);
         let started = Instant::now();
         loop {
             client
@@ -1231,8 +1242,9 @@ fn firn_removes_expired_keys_no_command_reads_on_both_routes() {
 /// no expiry. Each expiry given relative to the time, by `SET` with EX or PX,
 /// `SETEX`, `PSETEX`, `GETEX`, `EXPIRE` with an option and `PEXPIRE`, keeps
 /// the very calendar millisecond `PEXPIRETIME` gave before the restart, which
-/// a file recording the relative amount would replay later, and a string
-/// `APPEND` and `SETRANGE` edited holds its bytes. The first run ends once its
+/// a file recording the relative amount would replay later; a string
+/// `APPEND` and `SETRANGE` edited holds its bytes; and an expiry moves with its
+/// key under `RENAME` and is copied with it by `COPY`. The first run ends once its
 /// one client has closed, after its writer appended and synced the last
 /// changes.
 #[cfg(target_os = "linux")]
@@ -1315,13 +1327,16 @@ fn firn_replays_its_append_only_file_after_a_restart_on_both_routes() {
             vec!["APPEND", "edited", "cd"],
             vec!["SETRANGE", "edited", "1", "XY"],
             vec!["MSETNX", "pair:a", "1", "pair:b", "2"],
+            vec!["SET", "mv:src", "v", "PXAT", "99999999999999"],
+            vec!["RENAME", "mv:src", "mv:dst"],
+            vec!["COPY", "mv:dst", "mv:copy"],
         ] {
             batch.extend(resp(&request));
         }
         client.write_all(&batch).expect("send the changes");
         expect_replies(
             &mut client,
-            b"+OK\r\n+OK\r\n+OK\r\n:1\r\n:2\r\n:12\r\n:9\r\n:8\r\n:1\r\n+OK\r\n:1\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n:6\r\n+OK\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n+OK\r\n+OK\r\n:-2\r\n+OK\r\n+OK\r\n+none\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n+OK\r\n+OK\r\n$1\r\nv\r\n+OK\r\n:1\r\n+OK\r\n:1\r\n+OK\r\n:4\r\n:4\r\n:1\r\n",
+            b"+OK\r\n+OK\r\n+OK\r\n:1\r\n:2\r\n:12\r\n:9\r\n:8\r\n:1\r\n+OK\r\n:1\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n:6\r\n+OK\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n+OK\r\n+OK\r\n:-2\r\n+OK\r\n+OK\r\n+none\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n+OK\r\n+OK\r\n$1\r\nv\r\n+OK\r\n:1\r\n+OK\r\n:1\r\n+OK\r\n:4\r\n:4\r\n:1\r\n+OK\r\n+OK\r\n:1\r\n",
             &what,
         );
         let timed = [
@@ -1380,13 +1395,16 @@ fn firn_replays_its_append_only_file_after_a_restart_on_both_routes() {
             vec!["GET", "lazy:m"],
             vec!["GET", "edited"],
             vec!["MGET", "pair:a", "pair:b"],
+            vec!["PEXPIRETIME", "mv:dst"],
+            vec!["PEXPIRETIME", "mv:copy"],
+            vec!["EXISTS", "mv:src"],
         ] {
             batch.extend(resp(&request));
         }
         client.write_all(&batch).expect("read the replayed keys");
         expect_replies(
             &mut client,
-            b"$-1\r\n$-1\r\n$1\r\nv\r\n$1\r\n8\r\n$1\r\nv\r\n:-1\r\n$1\r\nv\r\n:-1\r\n$-1\r\n:26\r\n$3\r\nnew\r\n$1\r\n1\r\n:-1\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n:-1\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$4\r\naXYd\r\n*2\r\n$1\r\n1\r\n$1\r\n2\r\n",
+            b"$-1\r\n$-1\r\n$1\r\nv\r\n$1\r\n8\r\n$1\r\nv\r\n:-1\r\n$1\r\nv\r\n:-1\r\n$-1\r\n:28\r\n$3\r\nnew\r\n$1\r\n1\r\n:-1\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n:-1\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$4\r\naXYd\r\n*2\r\n$1\r\n1\r\n$1\r\n2\r\n:99999999999999\r\n:99999999999999\r\n:0\r\n",
             &what,
         );
         for (key, expiry) in timed.iter().zip(&expiries) {
@@ -1453,6 +1471,9 @@ fn firn_closes_a_client_silent_past_its_idle_limit_on_both_routes() {
 /// sorted-set members; refuses a list command on a string and a string command
 /// on a hash; sets ten keys in one MSET, a command of eleven arguments; and
 /// names an unknown command and a command short of arguments as Redis does.
+/// `COPY` duplicates a set, a hash, a sorted set and a list whole, each copy
+/// changed afterwards without changing its original, and with REPLACE puts a
+/// list in place of a set; `RENAME` moves a hash over a list.
 /// Two inline commands close the batch. The expected bytes are those
 /// redis-server 7.0.15 returns for the same bytes.
 #[cfg(target_os = "linux")]
@@ -1500,6 +1521,27 @@ fn firn_answers_the_value_types_as_redis_does() {
         vec!["GET", "k5"],
         vec!["NOPE", "a", "b"],
         vec!["LLEN"],
+        vec!["COPY", "s", "s2"],
+        vec!["SADD", "s2", "x"],
+        vec!["SCARD", "s"],
+        vec!["SCARD", "s2"],
+        vec!["COPY", "h", "h2"],
+        vec!["HSET", "h2", "f", "9"],
+        vec!["HGET", "h", "f"],
+        vec!["HGET", "h2", "f"],
+        vec!["COPY", "z", "z2"],
+        vec!["ZADD", "z2", "5", "q"],
+        vec!["ZCARD", "z"],
+        vec!["ZPOPMIN", "z2", "2"],
+        vec!["RPUSH", "lst", "a", "b", "c"],
+        vec!["COPY", "lst", "lst2"],
+        vec!["RPOP", "lst2"],
+        vec!["LRANGE", "lst", "0", "-1"],
+        vec!["COPY", "lst", "s", "REPLACE"],
+        vec!["TYPE", "s"],
+        vec!["RENAME", "h", "lst"],
+        vec!["TYPE", "lst"],
+        vec!["EXISTS", "h"],
     ] {
         batch.extend(resp(&request));
     }
@@ -1507,7 +1549,7 @@ fn firn_answers_the_value_types_as_redis_does() {
     client.write_all(&batch).expect("send the batch");
     expect_replies(
         &mut client,
-        b":3\r\n:4\r\n*4\r\n$1\r\nz\r\n$1\r\na\r\n$1\r\nb\r\n$1\r\nc\r\n*2\r\n$1\r\na\r\n$1\r\nb\r\n$1\r\nz\r\n*2\r\n$1\r\nc\r\n$1\r\nb\r\n:1\r\n$1\r\na\r\n:0\r\n:3\r\n:1\r\n:2\r\n:2\r\n:0\r\n$1\r\n3\r\n$-1\r\n:3\r\n:0\r\n$1\r\n0\r\n*4\r\n$1\r\nc\r\n$1\r\n0\r\n$1\r\na\r\n$1\r\n1\r\n:1\r\n+OK\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n:1\r\n+set\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n+OK\r\n$1\r\n5\r\n-ERR unknown command 'NOPE', with args beginning with: 'a' 'b' \r\n-ERR wrong number of arguments for 'llen' command\r\n+OK\r\n$3\r\nyes\r\n",
+        b":3\r\n:4\r\n*4\r\n$1\r\nz\r\n$1\r\na\r\n$1\r\nb\r\n$1\r\nc\r\n*2\r\n$1\r\na\r\n$1\r\nb\r\n$1\r\nz\r\n*2\r\n$1\r\nc\r\n$1\r\nb\r\n:1\r\n$1\r\na\r\n:0\r\n:3\r\n:1\r\n:2\r\n:2\r\n:0\r\n$1\r\n3\r\n$-1\r\n:3\r\n:0\r\n$1\r\n0\r\n*4\r\n$1\r\nc\r\n$1\r\n0\r\n$1\r\na\r\n$1\r\n1\r\n:1\r\n+OK\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n:1\r\n+set\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n+OK\r\n$1\r\n5\r\n-ERR unknown command 'NOPE', with args beginning with: 'a' 'b' \r\n-ERR wrong number of arguments for 'llen' command\r\n:1\r\n:1\r\n:2\r\n:3\r\n:1\r\n:0\r\n$1\r\n3\r\n$1\r\n9\r\n:1\r\n:1\r\n:1\r\n*4\r\n$1\r\nb\r\n$1\r\n2\r\n$1\r\nq\r\n$1\r\n5\r\n:3\r\n:1\r\n$1\r\nc\r\n*3\r\n$1\r\na\r\n$1\r\nb\r\n$1\r\nc\r\n:1\r\n+list\r\n+OK\r\n+hash\r\n:0\r\n+OK\r\n$3\r\nyes\r\n",
         "the value-type batch",
     );
     drop(client);
@@ -1984,8 +2026,15 @@ fn firn_answers_string_commands_as_redis_does() {
 /// `MGET` answers a key named twice twice, in the order named, though its key
 /// set holds the keys in byte order, and nil for an absent key or one of
 /// another kind; `MSETNX` keeps the last value named for a key and stores
-/// nothing when any key is live, of any kind. The expected replies are
-/// redis-server 7.0.15's to the same requests.
+/// nothing when any key is live, of any kind. `RENAME` and `RENAMENX` naming
+/// one key twice leave a live key as it is, answering OK and 0, and refuse an
+/// absent one; `COPY` refuses one key named twice before it reads the key,
+/// and `RENAMENX` and `COPY` without REPLACE leave a live destination alone.
+/// `UNLINK` removes and counts a key named twice once, `TOUCH` counts it
+/// twice. `COPY` reads its options in order, each up to a zero byte: DB takes
+/// an integer of the int range, of which only 0 names firn's one database.
+/// The expected replies are redis-server 7.0.15's to the same requests, a
+/// server configured with one database for `COPY`'s DB.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_answers_commands_naming_a_key_twice_as_redis_does() {
@@ -2017,13 +2066,35 @@ fn firn_answers_commands_naming_a_key_twice_as_redis_does() {
         vec!["MSETNX", "x", "9", "z", "9"],
         vec!["EXISTS", "z"],
         vec!["MSETNX", "l", "1"],
+        vec!["RENAME", "c", "c"],
+        vec!["RENAMENX", "c", "c"],
+        vec!["RENAME", "absent", "absent"],
+        vec!["COPY", "c", "c"],
+        vec!["RENAME", "c", "k"],
+        vec!["MGET", "c", "k"],
+        vec!["RENAMENX", "k", "j"],
+        vec!["COPY", "k", "j"],
+        vec!["COPY", "k", "j", "REPLACE"],
+        vec!["MGET", "k", "j"],
+        vec!["UNLINK", "j", "j", "absent", "x"],
+        vec!["TOUCH", "k", "k", "absent", "y"],
+        vec!["COPY", "k", "m", "DB", "1"],
+        vec!["COPY", "k", "m", "DB", "-1"],
+        vec!["COPY", "k", "m", "DB", "x"],
+        vec!["COPY", "k", "m", "DB", "4294967296"],
+        vec!["COPY", "k", "m", "DB"],
+        vec!["COPY", "k", "m", "FOO"],
+        vec!["COPY", "k", "m", "DB", "0", "DB", "1"],
+        vec!["COPY", "k", "m", "replace\0x", "db\0", "0"],
+        vec!["MGET", "m"],
+        vec!["DBSIZE"],
     ] {
         batch.extend(resp(&request));
     }
     client.write_all(&batch).expect("send the batch");
     expect_replies(
         &mut client,
-        b"+OK\r\n+OK\r\n+OK\r\n:4\r\n:2\r\n:0\r\n+OK\r\n$1\r\n5\r\n$1\r\n4\r\n:3\r\n*6\r\n$1\r\n5\r\n$1\r\n3\r\n$1\r\n5\r\n$-1\r\n$1\r\n4\r\n$1\r\n3\r\n:1\r\n*2\r\n$-1\r\n$1\r\n5\r\n:1\r\n*2\r\n$1\r\n3\r\n$1\r\n2\r\n:0\r\n:0\r\n:0\r\n",
+        b"+OK\r\n+OK\r\n+OK\r\n:4\r\n:2\r\n:0\r\n+OK\r\n$1\r\n5\r\n$1\r\n4\r\n:3\r\n*6\r\n$1\r\n5\r\n$1\r\n3\r\n$1\r\n5\r\n$-1\r\n$1\r\n4\r\n$1\r\n3\r\n:1\r\n*2\r\n$-1\r\n$1\r\n5\r\n:1\r\n*2\r\n$1\r\n3\r\n$1\r\n2\r\n:0\r\n:0\r\n:0\r\n+OK\r\n:0\r\n-ERR no such key\r\n-ERR source and destination objects are the same\r\n+OK\r\n*2\r\n$-1\r\n$1\r\n3\r\n:0\r\n:0\r\n:1\r\n*2\r\n$1\r\n3\r\n$1\r\n3\r\n:2\r\n:3\r\n-ERR DB index is out of range\r\n-ERR DB index is out of range\r\n-ERR value is not an integer or out of range\r\n-ERR value is out of range, value must between -2147483648 and 2147483647\r\n-ERR syntax error\r\n-ERR syntax error\r\n-ERR DB index is out of range\r\n:1\r\n*1\r\n$1\r\n3\r\n:4\r\n",
         "the commands naming a key twice",
     );
     drop(client);

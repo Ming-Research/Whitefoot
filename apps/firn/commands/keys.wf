@@ -11,6 +11,32 @@ alias clear_items = pkg::protocol::clear_items;
 alias push_item = pkg::protocol::push_item;
 alias make_key = pkg::bytes::make_key;
 alias byte_at = pkg::bytes::byte_at;
+alias Bytes = pkg::bytes::Bytes;
+alias DequeVisit = std::collections::deque::DequeVisit;
+alias HashMap = std::collections::hash_map::HashMap;
+alias KeyHash = pkg::bytes::KeyHash;
+alias OrderedMap = std::collections::ordered_map::OrderedMap;
+alias Rank = pkg::store::Rank;
+alias RankOrder = pkg::store::RankOrder;
+alias Sorted = pkg::store::Sorted;
+alias Value = pkg::store::Value;
+alias bytes_boxed = pkg::bytes::bytes_boxed;
+alias bytes_copy = pkg::bytes::bytes_copy;
+alias bytes_new = pkg::bytes::bytes_new;
+alias ceiling = pkg::store::ceiling;
+alias copy_key = pkg::bytes::copy_key;
+alias deque_new = std::collections::deque::deque_new;
+alias deque_push_back = std::collections::deque::deque_push_back;
+alias deque_visit = std::collections::deque::deque_visit;
+alias hash_map_each = std::collections::hash_map::hash_map_each;
+alias hash_map_len = std::collections::hash_map::hash_map_len;
+alias hash_map_new = std::collections::hash_map::hash_map_new;
+alias hash_map_put = std::collections::hash_map::hash_map_put;
+alias ordered_map_each = std::collections::ordered_map::ordered_map_each;
+alias ordered_map_new = std::collections::ordered_map::ordered_map_new;
+alias ordered_map_put = std::collections::ordered_map::ordered_map_put;
+alias reply_ok = pkg::protocol::reply_ok;
+alias windows_order = pkg::bytes::windows_order;
 alias name_code = pkg::bytes::name_code;
 alias expired = pkg::store::expired;
 alias log_command = pkg::store::log_command;
@@ -60,6 +86,24 @@ const text_expire_gt: Array<u8, 57> =[69_u8, 82_u8, 82_u8, 32_u8, 71_u8, 84_u8, 
 const text_expire_expireat: Array<u8, 45> =[69_u8, 82_u8, 82_u8, 32_u8, 105_u8, 110_u8, 118_u8, 97_u8, 108_u8, 105_u8, 100_u8, 32_u8, 101_u8, 120_u8, 112_u8, 105_u8, 114_u8, 101_u8, 32_u8, 116_u8, 105_u8, 109_u8, 101_u8, 32_u8, 105_u8, 110_u8, 32_u8, 39_u8, 101_u8, 120_u8, 112_u8, 105_u8, 114_u8, 101_u8, 97_u8, 116_u8, 39_u8, 32_u8, 99_u8, 111_u8, 109_u8, 109_u8, 97_u8, 110_u8, 100_u8];
 
 const text_crlf: Array<u8, 2> =[13_u8, 10_u8];
+
+const rename_missing: u64 = 0_u64;
+
+const rename_same: u64 = 1_u64;
+
+const rename_occupied: u64 = 2_u64;
+
+const rename_done: u64 = 3_u64;
+
+const code_replace: u64 = 19495721125299538_u64;
+
+const code_db: u64 = 16964_u64;
+
+const text_no_key: Array<u8, 15> =[69_u8, 82_u8, 82_u8, 32_u8, 110_u8, 111_u8, 32_u8, 115_u8, 117_u8, 99_u8, 104_u8, 32_u8, 107_u8, 101_u8, 121_u8];
+
+const text_same_object: Array<u8, 47> =[69_u8, 82_u8, 82_u8, 32_u8, 115_u8, 111_u8, 117_u8, 114_u8, 99_u8, 101_u8, 32_u8, 97_u8, 110_u8, 100_u8, 32_u8, 100_u8, 101_u8, 115_u8, 116_u8, 105_u8, 110_u8, 97_u8, 116_u8, 105_u8, 111_u8, 110_u8, 32_u8, 111_u8, 98_u8, 106_u8, 101_u8, 99_u8, 116_u8, 115_u8, 32_u8, 97_u8, 114_u8, 101_u8, 32_u8, 116_u8, 104_u8, 101_u8, 32_u8, 115_u8, 97_u8, 109_u8, 101_u8];
+
+const text_int_range: Array<u8, 72> =[69_u8, 82_u8, 82_u8, 32_u8, 118_u8, 97_u8, 108_u8, 117_u8, 101_u8, 32_u8, 105_u8, 115_u8, 32_u8, 111_u8, 117_u8, 116_u8, 32_u8, 111_u8, 102_u8, 32_u8, 114_u8, 97_u8, 110_u8, 103_u8, 101_u8, 44_u8, 32_u8, 118_u8, 97_u8, 108_u8, 117_u8, 101_u8, 32_u8, 109_u8, 117_u8, 115_u8, 116_u8, 32_u8, 98_u8, 101_u8, 116_u8, 119_u8, 101_u8, 101_u8, 110_u8, 32_u8, 45_u8, 50_u8, 49_u8, 52_u8, 55_u8, 52_u8, 56_u8, 51_u8, 54_u8, 52_u8, 56_u8, 32_u8, 97_u8, 110_u8, 100_u8, 32_u8, 50_u8, 49_u8, 52_u8, 55_u8, 52_u8, 56_u8, 51_u8, 54_u8, 52_u8, 55_u8];
 
 const word_del: Array<u8, 3> =[68_u8, 69_u8, 76_u8];
 
@@ -266,7 +310,7 @@ fn named_bounds(input: &[u8], args: &Box<Slots<Span>>, payload: u64) -> bounds: 
 }
 
 fn run_del(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
-  doc "DEL key [key ...]: removes every key named, in one statement on their entries, and answers how many were live; a key named twice is removed and counted once. The file records a key found expired as log_removal does, then the command as it was sent when it removed a live key, as Redis propagates them.";
+  doc "DEL key [key ...] and UNLINK key [key ...]: removes every key named, in one statement on their entries, and answers how many were live; a key named twice is removed and counted once. The file records a key found expired as log_removal does, then the command as it was sent when it removed a live key, as Redis propagates them.";
   let keys = named_keys(input: input, args: args);
   let removed = 0_u64;
   let logged = store^.logging;
@@ -297,7 +341,7 @@ fn run_del(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
 }
 
 fn run_exists(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
-  doc "EXISTS key [key ...]: answers how many of the keys named are live, a key named twice counted twice, in one statement on their entries, removing a key found expired, which the file records as log_removal does.";
+  doc "EXISTS key [key ...] and TOUCH key [key ...]: answers how many of the keys named are live, a key named twice counted twice, in one statement on their entries, removing a key found expired, which the file records as log_removal does.";
   let keys = named_keys(input: input, args: args);
   set client^.now = time^.check;
   let live = 0_u64;
@@ -715,5 +759,357 @@ fn run_dbsize(store: &Keyspace, client: &Client) -> result: unit reads(store), w
   }
   let answer = cvt.wrap::<u64, i64>(size);
   reply_integer(client: client, value: answer);
+  return unit;
+}
+
+struct ListCopy {
+  items: Box<Ring<Box<Slots<u8>>>>;
+}
+
+struct MemberCopy {
+  members: HashMap<Key, unit, ceiling>;
+  keys: KeyEnv;
+}
+
+struct FieldCopy {
+  fields: HashMap<Key, Bytes, ceiling>;
+  keys: KeyEnv;
+}
+
+struct RankCopy {
+  order: OrderedMap<Rank, unit, ceiling>;
+  keys: KeyEnv;
+}
+
+struct ScoreCopy {
+  scores: HashMap<Key, f64, ceiling>;
+  keys: KeyEnv;
+}
+
+fn copy_element(env: &ListCopy, value: &Box<Slots<u8>>) -> result: unit reads(value), writes(env) {
+  doc "Appends a copy of one list element to the copy being built, which was made with room for every element.";
+  let length = value^.inner.len;
+  let window = &value^.inner[0_u64..length];
+  let text = bytes_new(input: window, start: 0_u64, length: length);
+  let copied = bytes_boxed(bytes: move text);
+  if env^.items.inner.len < env^.items.inner.cap {
+    let placed = deque_push_back::<Box<Slots<u8>>>(values: &env^.items, value: move copied);
+  } else {
+    let dropped = move copied;
+  }
+  return unit;
+}
+
+binding ElementCopy : DequeVisit<Box<Slots<u8>>, ListCopy> {
+  accept = copy_element;
+}
+
+fn copy_member(env: &MemberCopy, key: &Key, value: &unit) -> result: unit reads(key), writes(env) {
+  doc "Adds a copy of one set member to the copy being built.";
+  let copied = copy_key(key: key);
+  let keys = env^.keys;
+  let put = hash_map_put::<KeyHash, unit, ceiling>(map: &env^.members, key: move copied, value: unit, env: &keys);
+  return unit;
+}
+
+fn copy_field(env: &FieldCopy, key: &Key, value: &Bytes) -> result: unit reads(key), reads(value), writes(env) {
+  doc "Adds a copy of one hash field and its value to the copy being built.";
+  let copied = copy_key(key: key);
+  let text = bytes_copy(bytes: value);
+  let keys = env^.keys;
+  let put = hash_map_put::<KeyHash, Bytes, ceiling>(map: &env^.fields, key: move copied, value: move text, env: &keys);
+  return unit;
+}
+
+fn copy_rank(env: &RankCopy, key: &Rank, value: &unit) -> result: unit reads(key), writes(env) {
+  doc "Adds a copy of one sorted-set member at its score to the order being built.";
+  let member = copy_key(key: &key^.member);
+  let rank = Rank(score: key^.score, member: move member);
+  let keys = env^.keys;
+  let put = ordered_map_put::<RankOrder, unit, ceiling>(map: &env^.order, key: move rank, value: unit, env: &keys);
+  return unit;
+}
+
+fn copy_score(env: &ScoreCopy, key: &Key, value: &f64) -> result: unit reads(key), reads(value), writes(env) {
+  doc "Adds a copy of one sorted-set member's score to the scores being built.";
+  let copied = copy_key(key: key);
+  let keys = env^.keys;
+  let put = hash_map_put::<KeyHash, f64, ceiling>(map: &env^.scores, key: move copied, value: value^, env: &keys);
+  return unit;
+}
+
+fn copy_value(value: &Value) -> made: Value reads(value) {
+  doc "A copy of a value, every element, member, field and score copied, as COPY duplicates one; a container is made with room for what the original holds, within the ceiling every container of firn keeps.";
+  match value^ {
+    Text(bytes: stored) => {
+      let copied = bytes_copy(bytes: stored);
+      return Value::Text(bytes: move copied);
+    }
+    Items(items: list) => {
+      let length = list^.inner.len;
+      let made = deque_new::<Box<Slots<u8>>, ceiling>(capacity: 0_u64);
+      if length <= ceiling {
+        set made = deque_new::<Box<Slots<u8>>, ceiling>(capacity: length);
+      }
+      let env = ListCopy(items: move made);
+      deque_visit::<ElementCopy>(values: list, env: &env);
+      let ListCopy(items: copied) = move env;
+      return Value::Items(items: move copied);
+    }
+    Members(members: set_of) => {
+      let length = hash_map_len::<Key, unit, ceiling>(map: set_of);
+      let made = hash_map_new::<Key, unit, ceiling>(capacity: 0_u64);
+      if length <= ceiling {
+        set made = hash_map_new::<Key, unit, ceiling>(capacity: length);
+      }
+      let keys = KeyEnv();
+      let env = MemberCopy(members: move made, keys: keys);
+      hash_map_each::<Key, unit, MemberCopy, fn copy_member, ceiling>(map: set_of, env: &env);
+      let MemberCopy(members: copied, keys: unused) = move env;
+      return Value::Members(members: move copied);
+    }
+    Fields(fields: hash_of) => {
+      let length = hash_map_len::<Key, Bytes, ceiling>(map: hash_of);
+      let made = hash_map_new::<Key, Bytes, ceiling>(capacity: 0_u64);
+      if length <= ceiling {
+        set made = hash_map_new::<Key, Bytes, ceiling>(capacity: length);
+      }
+      let keys = KeyEnv();
+      let env = FieldCopy(fields: move made, keys: keys);
+      hash_map_each::<Key, Bytes, FieldCopy, fn copy_field, ceiling>(map: hash_of, env: &env);
+      let FieldCopy(fields: copied, keys: unused) = move env;
+      return Value::Fields(fields: move copied);
+    }
+    Ranked(ranked: sorted) => {
+      let order = ordered_map_new::<Rank, unit, ceiling>();
+      let keys = KeyEnv();
+      let ranks = RankCopy(order: move order, keys: keys);
+      ordered_map_each::<Rank, unit, RankCopy, fn copy_rank, ceiling>(map: &sorted^.order, env: &ranks);
+      let RankCopy(order: copied_order, keys: unused_order) = move ranks;
+      let length = hash_map_len::<Key, f64, ceiling>(map: &sorted^.scores);
+      let made = hash_map_new::<Key, f64, ceiling>(capacity: 0_u64);
+      if length <= ceiling {
+        set made = hash_map_new::<Key, f64, ceiling>(capacity: length);
+      }
+      let score_keys = KeyEnv();
+      let scores = ScoreCopy(scores: move made, keys: score_keys);
+      hash_map_each::<Key, f64, ScoreCopy, fn copy_score, ceiling>(map: &sorted^.scores, env: &scores);
+      let ScoreCopy(scores: copied_scores, keys: unused_scores) = move scores;
+      let copied = Sorted(order: move copied_order, scores: move copied_scores);
+      return Value::Ranked(ranked: move copied);
+    }
+  }
+}
+
+fn held_copy(slot: &Option<Entry>) -> made: Option<Entry> reads(slot) {
+  doc "A copy of the value an entry holds, its expiry kept, as COPY makes one; None for an absent entry.";
+  match slot^ {
+    Some(value: held) => {
+      let copied = copy_value(value: &held^.value);
+      let duplicate = Entry(value: move copied, expires: held^.expires);
+      return Some<Entry>(value: move duplicate);
+    }
+    None() => {
+      return None<Entry>();
+    }
+  }
+}
+
+fn pair_keys(input: &[u8], args: &Box<Slots<Span>>) -> keys: KeySet reads(input), reads(args) {
+  doc "The key set of a command's source, the second argument, and destination, the third, the source's payload carrying 1 and the destination's 2, so that one key named as both carries 3.";
+  let keys = key_set_new(capacity: 2_u64);
+  let source = key_bounds(input: input, args: args, index: 1_u64);
+  let source_key = &input^[source.start..source.end];
+  key_set_add(keys: &keys, key: source_key, amount: 1_u64);
+  let target = key_bounds(input: input, args: args, index: 2_u64);
+  let target_key = &input^[target.start..target.end];
+  key_set_add(keys: &keys, key: target_key, amount: 2_u64);
+  return move keys;
+}
+
+fn run_rename(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time, fresh: Bool) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), writes(client) waits {
+  doc "RENAME key newkey and RENAMENX key newkey (fresh): moves a live key's value and expiry to newkey, replacing any value newkey held, or for RENAMENX only when newkey is absent, in one statement on both keys' entries, as Redis 7.0.15's renameGenericCommand does: an absent source is refused as no such key, one key named as both is left as it is, answering OK or 0, and RENAMENX over a live key answers 0. The file records the command as it was sent when it moved the value, after each key found expired as log_removal records it, and the expiry is queued under the new name.";
+  let keys = pair_keys(input: input, args: args);
+  let source_place = key_bounds(input: input, args: args, index: 1_u64);
+  let source_key = &input^[source_place.start..source_place.end];
+  let target_place = key_bounds(input: input, args: args, index: 2_u64);
+  let target_key = &input^[target_place.start..target_place.end];
+  set client^.now = time^.check;
+  let logged = store^.logging;
+  let outcome = rename_missing;
+  atomic s = &store^.state, slots = &s^.map[keys] {
+    let source = 0_u64;
+    let target = 0_u64;
+    for @find (at in 0_u64..keys.len) {
+      let payload = key_set_payload(keys: &keys, index: at);
+      let named_source = iand(payload, 1_u64);
+      if named_source != 0_u64 {
+        set source = at;
+      }
+      let named_target = iand(payload, 2_u64);
+      if named_target != 0_u64 {
+        set target = at;
+      }
+    }
+    if source < slots^.len {
+      let kind = entry_kind(slot: &slots^[source], client: client);
+      if client^.state == state_expired {
+        if logged {
+          log_removal(log: &s^.meta.log, key: source_key);
+        }
+      }
+      if kind == 0_u64 {
+      } else if keys.len == 1_u64 {
+        set outcome = rename_same;
+      } else if target < slots^.len {
+        let held = entry_kind(slot: &slots^[target], client: client);
+        if client^.state == state_expired {
+          if logged {
+            log_removal(log: &s^.meta.log, key: target_key);
+          }
+        }
+        let occupied = held != 0_u64;
+        let refused = band(fresh, occupied);
+        if refused {
+          set outcome = rename_occupied;
+        } else {
+          let moved = None<Entry>();
+          swap(first: &slots^[source], second: &moved);
+          let at = held_expiry(slot: &moved);
+          set slots^[target] = move moved;
+          if at != 0_u64 {
+            queue_expiry(meta: &s^.meta, key: target_key, at: at, env: env);
+          }
+          if logged {
+            log_command(log: &s^.meta.log, input: input, args: args);
+          }
+          set outcome = rename_done;
+        }
+      }
+    }
+  }
+  if outcome == rename_missing {
+    reply_error(client: client, word: &text_no_key[0_u64..15_u64]);
+    return unit;
+  }
+  if fresh {
+    if outcome == rename_done {
+      reply_word(client: client, word: &reply_one[0_u64..4_u64]);
+    } else {
+      reply_word(client: client, word: &reply_zero[0_u64..4_u64]);
+    }
+    return unit;
+  }
+  reply_ok(client: client);
+  return unit;
+}
+
+fn run_copy(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), writes(client) waits {
+  doc "COPY source destination [DB destination-db] [REPLACE]: copies a live key's value and expiry to destination, answering 1, unless destination is live and REPLACE is absent, answering 0, as does an absent source, in one statement on both keys' entries, as Redis 7.0.15's copyCommand does with one database. The options are read in order, each word compared in either case up to a zero byte: REPLACE, and DB followed by an integer of the int range, of which only 0, the one database, is in range; any other word, DB with nothing after it, and one key named as both are refused. The file records the command as it was sent when it copied, after each key found expired as log_removal records it, and the expiry is queued under the destination.";
+  let count = args^.inner.len;
+  let replace = False();
+  let index = 3_u64;
+  loop @options {
+    if index >= count {
+      break @options;
+    }
+    let span = arg(args: args, index: index);
+    let code = option_code(input: input, span: span);
+    let following = index +wrap 1_u64;
+    let more = following < count;
+    let named_database = code == code_db;
+    let database = band(named_database, more);
+    if code == code_replace {
+      set replace = True();
+    } else if database {
+      let amount = arg(args: args, index: following);
+      let number = read_integer(input: input, start: amount.start, length: amount.length);
+      if number.state != 1_u64 {
+        reply_error(client: client, word: &text_not_integer[0_u64..43_u64]);
+        return unit;
+      }
+      let above = number.value > 2147483647_i64;
+      let below = number.value < -2147483648_i64;
+      let outside = bor(above, below);
+      if outside {
+        reply_error(client: client, word: &text_int_range[0_u64..72_u64]);
+        return unit;
+      }
+      if number.value != 0_i64 {
+        reply_error(client: client, word: &text_db_range[0_u64..28_u64]);
+        return unit;
+      }
+      set index = following;
+    } else {
+      reply_error(client: client, word: &text_syntax[0_u64..16_u64]);
+      return unit;
+    }
+    set index = index +wrap 1_u64;
+  }
+  let source_place = key_bounds(input: input, args: args, index: 1_u64);
+  let source_key = &input^[source_place.start..source_place.end];
+  let target_place = key_bounds(input: input, args: args, index: 2_u64);
+  let target_key = &input^[target_place.start..target_place.end];
+  let same = windows_order(left: source_key, right: target_key);
+  if same == 0_i32 {
+    reply_error(client: client, word: &text_same_object[0_u64..47_u64]);
+    return unit;
+  }
+  let keys = pair_keys(input: input, args: args);
+  set client^.now = time^.check;
+  let logged = store^.logging;
+  let done = False();
+  atomic s = &store^.state, slots = &s^.map[keys] {
+    let source = 0_u64;
+    let target = 0_u64;
+    for @find (at in 0_u64..keys.len) {
+      let payload = key_set_payload(keys: &keys, index: at);
+      let named_source = iand(payload, 1_u64);
+      if named_source != 0_u64 {
+        set source = at;
+      }
+      let named_target = iand(payload, 2_u64);
+      if named_target != 0_u64 {
+        set target = at;
+      }
+    }
+    if source < slots^.len {
+      let kind = entry_kind(slot: &slots^[source], client: client);
+      if client^.state == state_expired {
+        if logged {
+          log_removal(log: &s^.meta.log, key: source_key);
+        }
+      }
+      if kind != 0_u64 {
+        if target < slots^.len {
+          let held = entry_kind(slot: &slots^[target], client: client);
+          if client^.state == state_expired {
+            if logged {
+              log_removal(log: &s^.meta.log, key: target_key);
+            }
+          }
+          let vacant = held == 0_u64;
+          let allowed = bor(vacant, replace);
+          if allowed {
+            let copied = held_copy(slot: &slots^[source]);
+            let at = held_expiry(slot: &copied);
+            set slots^[target] = move copied;
+            if at != 0_u64 {
+              queue_expiry(meta: &s^.meta, key: target_key, at: at, env: env);
+            }
+            if logged {
+              log_command(log: &s^.meta.log, input: input, args: args);
+            }
+            set done = True();
+          }
+        }
+      }
+    }
+  }
+  if done {
+    reply_word(client: client, word: &reply_one[0_u64..4_u64]);
+    return unit;
+  }
+  reply_word(client: client, word: &reply_zero[0_u64..4_u64]);
   return unit;
 }
