@@ -16,8 +16,6 @@ use std::time::{Duration, Instant};
 #[cfg(unix)]
 use whitefoot::{CompilerLimits, OverlapLowering, SourceInput};
 
-#[cfg(target_os = "linux")]
-use super::support::compile_app;
 use super::support::{
     CompiledProgram, ProgramChild, build_program, compile_program, compile_program_with_overlap,
 };
@@ -25,6 +23,8 @@ use super::support::{
 use super::support::{
     compile_and_run, compile_program_without_overlap, emitted_function, program_permission_ledger,
 };
+#[cfg(target_os = "linux")]
+use super::support::{compile_app, fixture_directory};
 
 /// One port the host is not using, released before the program binds it.
 ///
@@ -1548,6 +1548,80 @@ fn firn_replays_its_append_only_file_after_a_restart_on_both_routes() {
     }
 }
 
+/// [PRE-2] firn records its writes in its append-only file as Redis 7.0.15
+/// propagates them, which a replay does not show where two forms replay to the
+/// same state: a key `MSET` or `GET` finds expired is recorded as its `DEL`
+/// before the command, and so is each key `MSETNX` finds expired before its
+/// first live one, in the order named; `GETDEL` is recorded as `DEL`,
+/// `GETSET` as `SET`, `INCRBYFLOAT` as `SET` with `KEEPTTL`, `GETEX` as
+/// `PEXPIREAT` or `PERSIST`, `EXAT` as `PXAT` and `EXPIREAT` as `PEXPIREAT`,
+/// both in milliseconds, a `PEXPIREAT` its LT refused not at all, and the
+/// other commands as they were sent. The expected file is redis-server
+/// 7.0.15's for the same requests but for the `SELECT 0` it writes first and
+/// the `MULTI` and `EXEC` it brackets one command's records in.
+#[cfg(target_os = "linux")]
+#[test]
+fn firn_records_its_writes_as_redis_propagates_them() {
+    let program = firn();
+    let fixture = fixture_directory();
+    let port = free_port();
+    let text = port.to_string();
+    let client = std::thread::spawn(move || {
+        let mut client = connect_when_ready(port);
+        let mut batch = Vec::new();
+        for request in [
+            vec!["SET", "mset:k", "old", "PXAT", "1"],
+            vec!["MSET", "mset:k", "new"],
+            vec!["SET", "read", "v", "PXAT", "1"],
+            vec!["GET", "read"],
+            vec!["SET", "gd", "v"],
+            vec!["GETDEL", "gd"],
+            vec!["SET", "gs", "a"],
+            vec!["GETSET", "gs", "b"],
+            vec!["SET", "f", "10.5"],
+            vec!["INCRBYFLOAT", "f", "0.1"],
+            vec!["SET", "ge", "v"],
+            vec!["GETEX", "ge", "PXAT", "99999999999999"],
+            vec!["GETEX", "ge", "PERSIST"],
+            vec!["SET", "at", "v", "EXAT", "99999999999"],
+            vec!["EXPIREAT", "at", "99999999998"],
+            vec!["PEXPIREAT", "at", "99999999999999", "LT"],
+            vec!["SETNX", "nx", "v"],
+            vec!["APPEND", "ap", "x"],
+            vec!["SETRANGE", "ap", "3", "y"],
+            vec!["INCRBY", "ib", "5"],
+            vec!["DECR", "ib"],
+            vec!["SET", "zz", "1", "PXAT", "1"],
+            vec!["SET", "aa", "1", "PXAT", "1"],
+            vec!["SET", "live", "v"],
+            vec!["MSETNX", "zz", "1", "aa", "2", "live", "3"],
+            vec!["MSETNX", "m1", "a", "m2", "b"],
+            vec!["RENAME", "m1", "m3"],
+            vec!["COPY", "m3", "m4"],
+            vec!["UNLINK", "m4"],
+        ] {
+            batch.extend(resp(&request));
+        }
+        client.write_all(&batch).expect("send the writes");
+        expect_replies(
+            &mut client,
+            b"+OK\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n$1\r\nv\r\n+OK\r\n$1\r\na\r\n+OK\r\n$4\r\n10.6\r\n+OK\r\n$1\r\nv\r\n$1\r\nv\r\n+OK\r\n:1\r\n:0\r\n:1\r\n:1\r\n:4\r\n:5\r\n:4\r\n+OK\r\n+OK\r\n+OK\r\n:0\r\n:1\r\n+OK\r\n:1\r\n:1\r\n",
+            "the writes",
+        );
+    });
+    let output = program.run(fixture.path(), &[text.as_bytes(), b"1", b"forms.aof"]);
+    client.join().expect("the client's exchange");
+    assert!(output.status.success(), "firn: {:?}", output.status);
+    let file = std::fs::read(fixture.path().join("forms.aof")).expect("read firn's file");
+    assert_eq!(
+        String::from_utf8_lossy(&file),
+        String::from_utf8_lossy(
+            b"*5\r\n$3\r\nSET\r\n$6\r\nmset:k\r\n$3\r\nold\r\n$4\r\nPXAT\r\n$1\r\n1\r\n*2\r\n$3\r\nDEL\r\n$6\r\nmset:k\r\n*3\r\n$4\r\nMSET\r\n$6\r\nmset:k\r\n$3\r\nnew\r\n*5\r\n$3\r\nSET\r\n$4\r\nread\r\n$1\r\nv\r\n$4\r\nPXAT\r\n$1\r\n1\r\n*2\r\n$3\r\nDEL\r\n$4\r\nread\r\n*3\r\n$3\r\nSET\r\n$2\r\ngd\r\n$1\r\nv\r\n*2\r\n$3\r\nDEL\r\n$2\r\ngd\r\n*3\r\n$3\r\nSET\r\n$2\r\ngs\r\n$1\r\na\r\n*3\r\n$3\r\nSET\r\n$2\r\ngs\r\n$1\r\nb\r\n*3\r\n$3\r\nSET\r\n$1\r\nf\r\n$4\r\n10.5\r\n*4\r\n$3\r\nSET\r\n$1\r\nf\r\n$4\r\n10.6\r\n$7\r\nKEEPTTL\r\n*3\r\n$3\r\nSET\r\n$2\r\nge\r\n$1\r\nv\r\n*3\r\n$9\r\nPEXPIREAT\r\n$2\r\nge\r\n$14\r\n99999999999999\r\n*2\r\n$7\r\nPERSIST\r\n$2\r\nge\r\n*5\r\n$3\r\nSET\r\n$2\r\nat\r\n$1\r\nv\r\n$4\r\nPXAT\r\n$14\r\n99999999999000\r\n*3\r\n$9\r\nPEXPIREAT\r\n$2\r\nat\r\n$14\r\n99999999998000\r\n*3\r\n$5\r\nSETNX\r\n$2\r\nnx\r\n$1\r\nv\r\n*3\r\n$6\r\nAPPEND\r\n$2\r\nap\r\n$1\r\nx\r\n*4\r\n$8\r\nSETRANGE\r\n$2\r\nap\r\n$1\r\n3\r\n$1\r\ny\r\n*3\r\n$6\r\nINCRBY\r\n$2\r\nib\r\n$1\r\n5\r\n*2\r\n$4\r\nDECR\r\n$2\r\nib\r\n*5\r\n$3\r\nSET\r\n$2\r\nzz\r\n$1\r\n1\r\n$4\r\nPXAT\r\n$1\r\n1\r\n*5\r\n$3\r\nSET\r\n$2\r\naa\r\n$1\r\n1\r\n$4\r\nPXAT\r\n$1\r\n1\r\n*3\r\n$3\r\nSET\r\n$4\r\nlive\r\n$1\r\nv\r\n*2\r\n$3\r\nDEL\r\n$2\r\nzz\r\n*2\r\n$3\r\nDEL\r\n$2\r\naa\r\n*5\r\n$6\r\nMSETNX\r\n$2\r\nm1\r\n$1\r\na\r\n$2\r\nm2\r\n$1\r\nb\r\n*3\r\n$6\r\nRENAME\r\n$2\r\nm1\r\n$2\r\nm3\r\n*3\r\n$4\r\nCOPY\r\n$2\r\nm3\r\n$2\r\nm4\r\n*2\r\n$6\r\nUNLINK\r\n$2\r\nm4\r\n"
+        ),
+        "firn's append-only file"
+    );
+}
+
 /// [PRE-2] a deadline on `receive_next` closes a client silent past
 /// firn's idle limit: with a limit of one second, the connection ends after
 /// at least 0.9 and at most two seconds of silence.
@@ -2200,9 +2274,9 @@ fn firn_answers_string_commands_as_redis_does() {
 /// expired before the command stays in place for `DBSIZE` to count when it is
 /// named after that one, and is removed when named before it, though it sorts
 /// after it. The expiring context, which may remove that key at any time,
-/// could upset the first count only between the two `DBSIZE` commands around
-/// `MSETNX`, outside its statement, a window of microseconds, and cannot upset
-/// the second. `RENAME` and `RENAMENX` naming
+/// could upset the comparison only between the first two `DBSIZE` commands,
+/// outside the first `MSETNX`'s statement, a window of microseconds, and
+/// cannot upset the last count. `RENAME` and `RENAMENX` naming
 /// one key twice leave a live key as it is, answering OK and 0, and refuse an
 /// absent one; `COPY` refuses one key named twice before it reads the key,
 /// and `RENAMENX` and `COPY` without REPLACE leave a live destination alone.

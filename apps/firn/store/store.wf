@@ -83,7 +83,7 @@ fn due_at(env: &Probe, value: &Due) -> result: u64 reads(value), writes(env) {
 }
 
 fn take_due(meta: &Meta, now: u64, env: &KeyEnv, batch: &Box<Slots<Due>>) -> more: Bool reads(env), writes(meta), writes(batch) {
-  doc "Moves up to 256 queued expiries that have passed, the earliest first, into the batch, and returns whether more may be due.";
+  doc "Moves up to 256 queued expiries that have passed, the earliest first, into the batch, and returns whether more may be due; an expiry equal to now stays queued, as Redis's active expiry keeps a key through the millisecond its expiry names.";
   for @batch (step in 0_u64..256_u64) {
     let pending = priority_queue_len::<Due, ceiling>(queue: &meta^.due);
     if pending == 0_u64 {

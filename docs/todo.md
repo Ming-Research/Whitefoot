@@ -3129,11 +3129,16 @@ condition under which it is taken up.
   had not reached `tcp_listen`: they still held the working directory
   `main` closes before it, and 3 of the 96 anonymous descriptors a started
   firn holds on this host, 3 for each of its 32 drivers; the fourth held
-  30. So firn stalls in its start, and the harness's
-  connection must have reached some other socket on the port meanwhile,
-  which a port `free_port` released allows and the fixed ports above
-  should have ruled out. The change: keep that report in the harness for
-  a case that panics, and find what stalls firn's start there. Reopen
+  30. So firn stalls in its start, and the harness's connection must have
+  reached some other socket on the port meanwhile, which a port
+  `free_port` released allows and the fixed ports above should have ruled
+  out. The branch's longer group seems more exposed: run alternately with
+  `51bc58e13`'s, 3 of its 5 runs at `abcb3127d` failed this way, once with
+  the server never listening, against none of the base's 5; yet 8 runs
+  later, with a monitor that reported any program left more than 1.5
+  seconds without a socket, neither failed nor showed one. The change: keep
+  that report in the harness for a case that panics, and find what stalls
+  firn's start there. Reopen
   when a hosted run of the corpus fails this way, or before the corpus gates
   on a large host.
 - **firn's replay case allows the restart two seconds, which a loaded host
@@ -3370,8 +3375,10 @@ condition under which it is taken up.
   propagates more than one record, a key it found expired and the command
   itself, or several expired keys, Redis 7.0.15 brackets them in `MULTI`
   and `EXEC`; firn has no transactions to replay, so it writes the records
-  alone, which replays to the same state. Reopen when firn answers `MULTI`
-  and `EXEC`.
+  alone, which replays to the same state. Nor does firn, with one database,
+  write the `SELECT 0` Redis writes before its first record.
+  `firn_records_its_writes_as_redis_propagates_them` compares firn's file
+  with Redis's but for both. Reopen when firn answers `MULTI` and `EXEC`.
 - **`DEL`, `UNLINK`, `EXISTS`, `TOUCH` and `MSET` record the keys they find
   expired in byte order.** Redis 7.0.15 looks the keys up, and propagates
   each expired one's removal, in the order the command names them; these
@@ -3379,23 +3386,21 @@ condition under which it is taken up.
   records the removals in that order, which replays to the same state but is
   not Redis's file. `MGET` and `MSETNX` walk their arguments in order through
   `key_ranks` (`apps/firn/commands/strings.wf`). The change: walk the
-  arguments the same way where these record. Reopen with the next change to
-  those commands, or when a case compares firn's file with Redis's.
-- **Two removal paths have no maintained check.** `take_due`
-  (`apps/firn/store/store.wf`) stops at a queued expiry equal to the time,
-  so that the expiring context keeps a key through its expiry's millisecond,
-  as Redis's `activeExpireCycleTryExpire` does; were it to take that key, a
-  command reading in the same millisecond after the context's tick would
-  find it absent, but no case can place a command there without one whose
-  reading precedes the tick failing too. And `MSET`'s record of the removal
-  of a key it finds expired cannot be seen in a replayed state, since `MSET`
-  replaces the value and its expiry either way; only the file's bytes show
-  it, and a case cannot reach the file, `CompiledProgram`'s directory being
-  private to the harness. The scratch comparison with redis-server covers
-  both. The change: a case that reads firn's file and compares its records
-  with the forms Redis propagates, which would also pin the byte order
-  above, once the harness gives a case its program's directory. Reopen then,
-  or when either path changes.
+  arguments the same way where these record, and add such a command to
+  `firn_records_its_writes_as_redis_propagates_them`. Reopen with the next
+  change to those commands.
+- **No case checks that the expiring context keeps a key through its
+  expiry's millisecond.** `take_due` (`apps/firn/store/store.wf`) leaves a
+  queued expiry equal to the time in the queue, so that the expiring context
+  keeps the key through that millisecond, as Redis's
+  `activeExpireCycleTryExpire` does (`now > t`). Were it to take the key,
+  only a command reading the clock in that millisecond after the context's
+  tick would find it absent, and no case can make a command's reading fall
+  there, since the context ticks when the program chooses; nor does the
+  file show it, recording the removal as `DEL` whichever context makes it.
+  The change: none is known short of a way for a case to run the expiring
+  context at a time it names. Reopen when the runtime or firn gives one, or
+  when `take_due` changes.
 - **firn converts decimals to binary twice, by one algorithm.**
   `apps/firn/scores/decimal.wf` reads a double and
   `apps/firn/extended/extended.wf` a long double by the same Simple Decimal
