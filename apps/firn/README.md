@@ -12,8 +12,9 @@ Its commands are the ones `redis-benchmark`'s default suite sends, with
 expiry, an append-only file and the connection commands clients send on their
 own:
 
-- keys: `DEL`, `EXISTS`, `TYPE`, `EXPIRE`, `PEXPIRE`, `PEXPIREAT`, `TTL`,
-  `PTTL`, `PERSIST`, `DBSIZE`;
+- keys: `DEL`, `EXISTS`, `TYPE`, `EXPIRE`, `PEXPIRE`, `EXPIREAT` and
+  `PEXPIREAT` with their options `NX`, `XX`, `GT` and `LT`, `TTL`, `PTTL`,
+  `EXPIRETIME`, `PEXPIRETIME`, `PERSIST`, `DBSIZE`;
 - strings: `GET`, `SET` with its options `NX`, `XX`, `GET`, `KEEPTTL`,
   `EX`, `PX`, `EXAT` and `PXAT`, `SETNX`, `SETEX`, `PSETEX`, `GETSET`,
   `GETDEL`, `GETEX`, `MSET`, `INCR`;

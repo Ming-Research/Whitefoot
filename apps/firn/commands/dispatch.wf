@@ -45,6 +45,14 @@ const code_pexpire: u64 = 19512248227087696_u64;
 
 const code_pexpireat: u64 = 18394198727898711376_u64;
 
+const code_expireat: u64 = 6071209992391776325_u64;
+
+const code_expiretime: u64 = 18398406597434955845_u64;
+
+const word_expiretime: Array<u8, 10> =[69_u8, 88_u8, 80_u8, 73_u8, 82_u8, 69_u8, 84_u8, 73_u8, 77_u8, 69_u8];
+
+const word_pexpiretime: Array<u8, 11> =[80_u8, 69_u8, 88_u8, 80_u8, 73_u8, 82_u8, 69_u8, 84_u8, 73_u8, 77_u8, 69_u8];
+
 const code_ttl: u64 = 5002324_u64;
 
 const code_pttl: u64 = 1280595024_u64;
@@ -120,13 +128,6 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   let count = args^.inner.len;
   let name = arg(args: args, index: 0_u64);
   let code = name_code(input: input, start: name.start, length: name.length);
-  if code == code_pexpireat {
-    let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_pexpireat[0_u64..9_u64]);
-    if spelled {
-    } else {
-      set code = 0_u64;
-    }
-  }
   let relative = False();
   let calendar = True();
   let whole_seconds = True();
@@ -264,7 +265,7 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
     return unit;
   }
   if code == code_expire {
-    let fits = count == 3_u64;
+    let fits = count >= 3_u64;
     let go = admitted(client: client, input: input, name: name, fits: fits);
     if go {
       run_expire(store: store, input: input, args: args, client: client, env: env, time: time, scale: 1000_u64, absolute: relative, invalid: &text_expire_expire[0_u64..43_u64]);
@@ -272,26 +273,57 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
     return unit;
   }
   if code == code_pexpire {
-    let fits = count == 3_u64;
+    let fits = count >= 3_u64;
     let go = admitted(client: client, input: input, name: name, fits: fits);
     if go {
       run_expire(store: store, input: input, args: args, client: client, env: env, time: time, scale: 1_u64, absolute: relative, invalid: &text_expire_pexpire[0_u64..44_u64]);
     }
     return unit;
   }
-  if code == code_pexpireat {
-    let fits = count == 3_u64;
+  if code == code_expireat {
+    let fits = count >= 3_u64;
     let go = admitted(client: client, input: input, name: name, fits: fits);
     if go {
-      run_expire(store: store, input: input, args: args, client: client, env: env, time: time, scale: 1_u64, absolute: calendar, invalid: &text_expire_pexpireat[0_u64..46_u64]);
+      run_expire(store: store, input: input, args: args, client: client, env: env, time: time, scale: 1000_u64, absolute: calendar, invalid: &text_expire_expireat[0_u64..45_u64]);
     }
     return unit;
+  }
+  if code == code_pexpireat {
+    let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_pexpireat[0_u64..9_u64]);
+    if spelled {
+      let fits = count >= 3_u64;
+      let go = admitted(client: client, input: input, name: name, fits: fits);
+      if go {
+        run_expire(store: store, input: input, args: args, client: client, env: env, time: time, scale: 1_u64, absolute: calendar, invalid: &text_expire_pexpireat[0_u64..46_u64]);
+      }
+      return unit;
+    }
+    let timed = name_is(input: input, start: name.start, length: name.length, word: &word_pexpiretime[0_u64..11_u64]);
+    if timed {
+      let fits = count == 2_u64;
+      let go = admitted(client: client, input: input, name: name, fits: fits);
+      if go {
+        run_ttl(store: store, input: input, args: args, client: client, env: env, time: time, in_seconds: milliseconds, absolute: calendar);
+      }
+      return unit;
+    }
+  }
+  if code == code_expiretime {
+    let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_expiretime[0_u64..10_u64]);
+    if spelled {
+      let fits = count == 2_u64;
+      let go = admitted(client: client, input: input, name: name, fits: fits);
+      if go {
+        run_ttl(store: store, input: input, args: args, client: client, env: env, time: time, in_seconds: whole_seconds, absolute: calendar);
+      }
+      return unit;
+    }
   }
   if code == code_ttl {
     let fits = count == 2_u64;
     let go = admitted(client: client, input: input, name: name, fits: fits);
     if go {
-      run_ttl(store: store, input: input, args: args, client: client, env: env, time: time, in_seconds: whole_seconds);
+      run_ttl(store: store, input: input, args: args, client: client, env: env, time: time, in_seconds: whole_seconds, absolute: relative);
     }
     return unit;
   }
@@ -299,7 +331,7 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
     let fits = count == 2_u64;
     let go = admitted(client: client, input: input, name: name, fits: fits);
     if go {
-      run_ttl(store: store, input: input, args: args, client: client, env: env, time: time, in_seconds: milliseconds);
+      run_ttl(store: store, input: input, args: args, client: client, env: env, time: time, in_seconds: milliseconds, absolute: relative);
     }
     return unit;
   }

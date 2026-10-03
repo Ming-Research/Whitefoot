@@ -1048,7 +1048,14 @@ fn firn_serves_every_client_over_one_keyspace() {
 /// expiries in calendar milliseconds; a negative `EXPIRE` removes the key at
 /// once, so that `DBSIZE` no longer counts it, and
 /// one whose milliseconds leave the range of i64, alone or added to the time,
-/// is refused, also when they would wrap to a small number. A key set with `PX 100` answers a
+/// is refused, also when they would wrap to a small number. `EXPIRE` takes NX,
+/// XX, GT and LT as Redis 7.0.15 does, a key without an expiry failing GT and
+/// passing LT, refuses NX beside another option and GT beside LT, and echoes
+/// an unknown option up to a zero byte, its trailing line ends dropped and any
+/// others written as spaces; `EXPIREAT` and `PEXPIREAT` set calendar times
+/// that `EXPIRETIME`, rounded to the second as Redis rounds it, and
+/// `PEXPIRETIME` give back exactly, and a name only sharing their first eight
+/// letters is unknown. A key set with `PX 100` answers a
 /// positive `PTTL` and is absent 200 milliseconds later. A key read 5
 /// milliseconds after its expiry is absent too, which the command's own check
 /// answers: the expiring context wakes only every 100 milliseconds, so without
@@ -1091,13 +1098,50 @@ fn firn_expires_keys_on_both_routes() {
             vec!["PEXPIRE", "kept", "9223372036854775000"],
             vec!["EXPIRE", "kept", "18446744073709552"],
             vec!["EXPIRE", "kept", "-18446744073709552"],
+            vec!["SET", "e", "v"],
+            vec!["EXPIRE", "e", "100", "nx"],
+            vec!["EXPIRE", "e", "200", "NX"],
+            vec!["EXPIRE", "e", "50", "gt"],
+            vec!["EXPIRE", "e", "300", "GT"],
+            vec!["TTL", "e"],
+            vec!["EXPIRE", "e", "400", "lt"],
+            vec!["EXPIRE", "e", "100", "LT"],
+            vec!["EXPIRE", "e", "100", "XX"],
+            vec!["PERSIST", "e"],
+            vec!["EXPIRE", "e", "100", "XX"],
+            vec!["EXPIRE", "e", "100", "GT"],
+            vec!["EXPIRE", "e", "100", "LT"],
+            vec!["EXPIRE", "e", "100", "NX", "GT"],
+            vec!["EXPIRE", "e", "100", "GT", "LT"],
+            vec!["EXPIRE", "e", "abc", "FOO"],
+            vec!["EXPIRE", "e", "100", "\r\nab\nc\r"],
+            vec!["EXPIRE", "e", "100", "fo\0o"],
+            vec!["EXPIRE", "e", "100", "nx\0garbage"],
+            vec!["EXPIREAT", "e", "99999999999"],
+            vec!["EXPIRETIME", "e"],
+            vec!["PEXPIRETIME", "e"],
+            vec!["PEXPIREAT", "e", "99999999999500"],
+            vec!["EXPIRETIME", "e"],
+            vec!["PEXPIREAT", "e", "99999999999499"],
+            vec!["EXPIRETIME", "e"],
+            vec!["PEXPIREAT", "e", "99999999999499", "GT"],
+            vec!["PEXPIREAT", "e", "99999999999499", "LT"],
+            vec!["EXPIRE", "e", "100", "ab\r\n\0x"],
+            vec!["EXPIREAT", "e", "9223372036854776"],
+            vec!["EXPIRETIME", "kept"],
+            vec!["PEXPIRETIME", "absent"],
+            vec!["EXPIRE", "e", "-1", "GT"],
+            vec!["EXPIRE", "e", "-1", "XX"],
+            vec!["EXISTS", "e"],
+            vec!["PEXPIRETIMEX", "e"],
+            vec!["EXPIRETIMEX", "e"],
         ] {
             batch.extend(resp(&request));
         }
         client.write_all(&batch).expect("send the expiry batch");
         expect_replies(
             &mut client,
-            b"+OK\r\n+OK\r\n:-1\r\n:-2\r\n:1\r\n:100\r\n:1\r\n:-1\r\n:0\r\n-ERR invalid expire time in 'set' command\r\n-ERR syntax error\r\n-ERR value is not an integer or out of range\r\n:2\r\n+OK\r\n:100000000000\r\n:1\r\n:2\r\n:0\r\n-ERR invalid expire time in 'set' command\r\n-ERR invalid expire time in 'set' command\r\n-ERR invalid expire time in 'pexpire' command\r\n-ERR invalid expire time in 'expire' command\r\n-ERR invalid expire time in 'expire' command\r\n",
+            b"+OK\r\n+OK\r\n:-1\r\n:-2\r\n:1\r\n:100\r\n:1\r\n:-1\r\n:0\r\n-ERR invalid expire time in 'set' command\r\n-ERR syntax error\r\n-ERR value is not an integer or out of range\r\n:2\r\n+OK\r\n:100000000000\r\n:1\r\n:2\r\n:0\r\n-ERR invalid expire time in 'set' command\r\n-ERR invalid expire time in 'set' command\r\n-ERR invalid expire time in 'pexpire' command\r\n-ERR invalid expire time in 'expire' command\r\n-ERR invalid expire time in 'expire' command\r\n+OK\r\n:1\r\n:0\r\n:0\r\n:1\r\n:300\r\n:0\r\n:1\r\n:1\r\n:1\r\n:0\r\n:0\r\n:1\r\n-ERR NX and XX, GT or LT options at the same time are not compatible\r\n-ERR GT and LT options at the same time are not compatible\r\n-ERR Unsupported option FOO\r\n-ERR Unsupported option   ab c\r\n-ERR Unsupported option fo\r\n:0\r\n:1\r\n:99999999999\r\n:99999999999000\r\n:1\r\n:100000000000\r\n:1\r\n:99999999999\r\n:0\r\n:0\r\n-ERR Unsupported option ab\r\n-ERR invalid expire time in 'expireat' command\r\n:-1\r\n:-2\r\n:0\r\n:1\r\n:0\r\n-ERR unknown command 'PEXPIRETIMEX', with args beginning with: 'e' \r\n-ERR unknown command 'EXPIRETIMEX', with args beginning with: 'e' \r\n",
             &what,
         );
         client
@@ -1184,8 +1228,12 @@ fn firn_removes_expired_keys_no_command_reads_on_both_routes() {
 /// and a `SET` with NX after `EXISTS`, `GET`, `TTL`, `TYPE`, `DEL`, `PERSIST`,
 /// `EXPIRE`, a negative `EXPIRE`, `GETDEL` or `GETEX` found it so, hold their
 /// values after the restart, the `INCR` counting from zero and KEEPTTL keeping
-/// no expiry. The first run ends once its one client has closed, after its
-/// writer appended and synced the last changes.
+/// no expiry. Each expiry given relative to the time, by `SET` with EX or PX,
+/// `SETEX`, `PSETEX`, `GETEX`, `EXPIRE` with an option and `PEXPIRE`, keeps
+/// the very calendar millisecond `PEXPIRETIME` gave before the restart, which
+/// a file recording the relative amount would replay later. The first run
+/// ends once its one client has closed, after its writer appended and synced
+/// the last changes.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_replays_its_append_only_file_after_a_restart_on_both_routes() {
@@ -1251,15 +1299,39 @@ fn firn_replays_its_append_only_file_after_a_restart_on_both_routes() {
             vec!["SET", "lazy:m", "old", "PXAT", "1"],
             vec!["EXPIRE", "lazy:m", "-1"],
             vec!["SET", "lazy:m", "new", "NX"],
+            vec!["SETEX", "at:setex", "100", "v"],
+            vec!["PSETEX", "at:psetex", "100000", "v"],
+            vec!["SET", "at:getex", "v"],
+            vec!["GETEX", "at:getex", "EX", "100"],
+            vec!["SET", "at:expire", "v"],
+            vec!["EXPIRE", "at:expire", "100", "NX"],
+            vec!["SET", "at:pexpire", "v"],
+            vec!["PEXPIRE", "at:pexpire", "100000"],
         ] {
             batch.extend(resp(&request));
         }
         client.write_all(&batch).expect("send the changes");
         expect_replies(
             &mut client,
-            b"+OK\r\n+OK\r\n+OK\r\n:1\r\n:2\r\n:1\r\n+OK\r\n:1\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n:6\r\n+OK\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n+OK\r\n+OK\r\n:-2\r\n+OK\r\n+OK\r\n+none\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n",
+            b"+OK\r\n+OK\r\n+OK\r\n:1\r\n:2\r\n:1\r\n+OK\r\n:1\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n:6\r\n+OK\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n+OK\r\n+OK\r\n:-2\r\n+OK\r\n+OK\r\n+none\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n+OK\r\n+OK\r\n$1\r\nv\r\n+OK\r\n:1\r\n+OK\r\n:1\r\n",
             &what,
         );
+        let timed = [
+            "long",
+            "later",
+            "at:setex",
+            "at:psetex",
+            "at:getex",
+            "at:expire",
+            "at:pexpire",
+        ];
+        let mut expiries = Vec::new();
+        for key in timed {
+            client
+                .write_all(&resp(&["PEXPIRETIME", key]))
+                .expect("ask the expiry");
+            expiries.push(integer_reply(&mut client, &what));
+        }
         drop(client);
         let (status, _) = finished(child);
         assert_eq!(status, 0, "{what}: the first run");
@@ -1304,9 +1376,16 @@ fn firn_replays_its_append_only_file_after_a_restart_on_both_routes() {
         client.write_all(&batch).expect("read the replayed keys");
         expect_replies(
             &mut client,
-            b"$-1\r\n$-1\r\n$1\r\nv\r\n$1\r\n2\r\n$1\r\nv\r\n:-1\r\n$1\r\nv\r\n:-1\r\n$-1\r\n:18\r\n$3\r\nnew\r\n$1\r\n1\r\n:-1\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n:-1\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n",
+            b"$-1\r\n$-1\r\n$1\r\nv\r\n$1\r\n2\r\n$1\r\nv\r\n:-1\r\n$1\r\nv\r\n:-1\r\n$-1\r\n:23\r\n$3\r\nnew\r\n$1\r\n1\r\n:-1\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n:-1\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n",
             &what,
         );
+        for (key, expiry) in timed.iter().zip(&expiries) {
+            client
+                .write_all(&resp(&["PEXPIRETIME", key]))
+                .expect("ask the replayed expiry");
+            let replayed = integer_reply(&mut client, &what);
+            assert_eq!(replayed, *expiry, "{what}: the expiry of {key}");
+        }
         client
             .write_all(&resp(&["TTL", "long"]))
             .expect("ask the time left");
