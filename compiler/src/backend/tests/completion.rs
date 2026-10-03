@@ -582,3 +582,24 @@ fn linked_c_units_avoid_identifiers_the_host_compiler_predefines() {
         }
     }
 }
+
+/// The frame records a statement keeps for the runtime are reserved at the
+/// sizes the runtime defines and asserts (compiler/waiting-contexts/state-locks),
+/// and a shared object's state begins where the runtime puts it.
+#[test]
+fn frame_record_sizes_are_the_runtime_s_own() {
+    let defined = |name: &str| -> u64 {
+        let line = crate::COMPLETION_BRIDGE_HEADER
+            .lines()
+            .find(|line| line.starts_with(&format!("#define {name} ")))
+            .unwrap_or_else(|| panic!("bridge.h defines {name}"));
+        line.trim_start_matches(&format!("#define {name} "))
+            .trim_end_matches('u')
+            .parse()
+            .unwrap_or_else(|_| panic!("{name} is a number: {line}"))
+    };
+    assert_eq!(defined("WF_TABLE_ENTRY_SIZE"), crate::backend::TABLE_ENTRY_SIZE);
+    assert_eq!(defined("WF_TABLE_HOLD_SIZE"), crate::backend::TABLE_HOLD_SIZE);
+    assert_eq!(defined("WF_WATCH_SIZE"), crate::backend::WATCH_SIZE);
+    assert_eq!(defined("WF_SHARED_STATE_OFFSET"), crate::backend::SHARED_STATE_OFFSET);
+}

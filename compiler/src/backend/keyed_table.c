@@ -59,25 +59,25 @@ static inline void table_written(wf_cmap *map) {
         wf__watch_written(&map->watch);
 }
 
-void wf__key_set_new(wf_key_set *out, uint64_t capacity) { wf_key_set_new(out, capacity); }
+void wf__key_set_new(wf_key_set *out, uint64_t capacity) { wf_cmap_key_set_new(out, capacity); }
 
 void wf__key_set_put(wf_key_set *set, const unsigned char *key, uint64_t length, uint64_t payload) {
-    wf_key_set_put(set, key, length, payload);
+    wf_cmap_key_set_put(set, key, length, payload);
 }
 
 void wf__key_set_add(wf_key_set *set, const unsigned char *key, uint64_t length, uint64_t amount) {
-    wf_key_set_add(set, key, length, amount);
+    wf_cmap_key_set_add(set, key, length, amount);
 }
 
-uint64_t wf__key_set_payload(const wf_key_set *set, uint64_t index) { return wf_key_set_payload(set, index); }
+uint64_t wf__key_set_payload(const wf_key_set *set, uint64_t index) { return wf_cmap_key_set_payload(set, index); }
 
 const unsigned char *wf__key_set_key(const wf_key_set *set, uint64_t index, uint64_t *length) {
-    return wf_key_set_key(set, index, length);
+    return wf_cmap_key_set_key(set, index, length);
 }
 
-void wf__key_set_release(wf_key_set *set) { wf_key_set_release(set); }
+void wf__key_set_release(wf_key_set *set) { wf_cmap_key_set_release(set); }
 
-void wf__key_set_free(void *store) { wf_key_set_free_store(store); }
+void wf__key_set_free(void *store) { wf_cmap_key_set_free_store(store); }
 
 void *wf__keyed_table_new(uint64_t slot_size, uint64_t slot_align, uint64_t capacity) {
     return wf_cmap_create_entries(slot_size, slot_align, capacity);

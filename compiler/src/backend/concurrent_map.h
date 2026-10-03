@@ -87,20 +87,20 @@ typedef struct wf_key_set {
 } wf_key_set;
 
 /* An empty set with room for capacity keys. */
-void wf_key_set_new(wf_key_set *set, uint64_t capacity);
+void wf_cmap_key_set_new(wf_key_set *set, uint64_t capacity);
 /* Adds key with payload when the set lacks it, else replaces its payload. */
-void wf_key_set_put(wf_key_set *set, const unsigned char *key, uint64_t length, uint64_t payload);
+void wf_cmap_key_set_put(wf_key_set *set, const unsigned char *key, uint64_t length, uint64_t payload);
 /* Adds key with payload amount when the set lacks it, else adds amount to
  * its payload modulo 2^64. */
-void wf_key_set_add(wf_key_set *set, const unsigned char *key, uint64_t length, uint64_t amount);
+void wf_cmap_key_set_add(wf_key_set *set, const unsigned char *key, uint64_t length, uint64_t amount);
 /* The payload and the bytes of the key at index, below len; the bytes stay
  * where they are until the set next changes. */
-uint64_t wf_key_set_payload(const wf_key_set *set, uint64_t index);
-const unsigned char *wf_key_set_key(const wf_key_set *set, uint64_t index, uint64_t *length);
+uint64_t wf_cmap_key_set_payload(const wf_key_set *set, uint64_t index);
+const unsigned char *wf_cmap_key_set_key(const wf_key_set *set, uint64_t index, uint64_t *length);
 /* Gives the set's memory back, leaving it empty; or gives back the memory
  * of a set whose `store` alone is at hand, NULL for none. */
-void wf_key_set_release(wf_key_set *set);
-void wf_key_set_free_store(void *store);
+void wf_cmap_key_set_release(wf_key_set *set);
+void wf_cmap_key_set_free_store(void *store);
 
 /* A hold of several entries of one map, which a statement keeps in its own
  * frame from wf_cmap_hold_begin to wf_cmap_hold_release, so that one

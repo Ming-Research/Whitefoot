@@ -2113,7 +2113,7 @@ static void holds_in_one_order(void) {
  * memory alone, gives back every block the set took. */
 static int key_is(const wf_key_set *set, uint64_t index, const char *bytes, uint64_t length) {
     uint64_t got;
-    const unsigned char *key = wf_key_set_key(set, index, &got);
+    const unsigned char *key = wf_cmap_key_set_key(set, index, &got);
     return got == length && (length == 0 || memcmp(key, bytes, (size_t)length) == 0);
 }
 
@@ -2127,27 +2127,27 @@ static void key_sets(void) {
     enum { WORDS = sizeof words / sizeof words[0] };
     int64_t before = atomic_load(&blocks_out);
     wf_key_set set;
-    wf_key_set_new(&set, 0);
+    wf_cmap_key_set_new(&set, 0);
     if (set.len != 0 || set.store != NULL)
         fail("a set of no capacity took memory (len, store)", set.len, set.store != NULL);
     for (unsigned i = 0; i < WORDS; i++)
-        wf_key_set_put(&set, (const unsigned char *)words[i].bytes, words[i].length, 100 + i);
+        wf_cmap_key_set_put(&set, (const unsigned char *)words[i].bytes, words[i].length, 100 + i);
     if (set.len != WORDS)
         fail("a set lost or repeated a key (len, words)", set.len, WORDS);
     for (unsigned i = 0; i < WORDS; i++)
         if (!key_is(&set, i, words[order[i]].bytes, words[order[i]].length) ||
-            wf_key_set_payload(&set, i) != 100 + order[i])
+            wf_cmap_key_set_payload(&set, i) != 100 + order[i])
             fail("a set's keys are not in byte order, a prefix first (index, word)", i, order[i]);
     /* "ab" stands at index 4, and "zz" goes between "b" and the byte 0xff. */
-    wf_key_set_put(&set, (const unsigned char *)"ab", 2, 7);
-    wf_key_set_add(&set, (const unsigned char *)"ab", 2, 5);
-    wf_key_set_add(&set, (const unsigned char *)"zz", 2, UINT64_MAX);
-    wf_key_set_add(&set, (const unsigned char *)"zz", 2, 3);
-    wf_key_set_put(&set, (const unsigned char *)"a", 1, 1);
-    if (set.len != WORDS + 1 || wf_key_set_payload(&set, 4) != 12 || !key_is(&set, WORDS - 1, "zz", 2) ||
-        wf_key_set_payload(&set, WORDS - 1) != 2 || wf_key_set_payload(&set, 2) != 1 || !key_is(&set, WORDS, "\xff", 1))
-        fail("put or add disagrees (len, payload of ab)", set.len, wf_key_set_payload(&set, 4));
-    wf_key_set_release(&set);
+    wf_cmap_key_set_put(&set, (const unsigned char *)"ab", 2, 7);
+    wf_cmap_key_set_add(&set, (const unsigned char *)"ab", 2, 5);
+    wf_cmap_key_set_add(&set, (const unsigned char *)"zz", 2, UINT64_MAX);
+    wf_cmap_key_set_add(&set, (const unsigned char *)"zz", 2, 3);
+    wf_cmap_key_set_put(&set, (const unsigned char *)"a", 1, 1);
+    if (set.len != WORDS + 1 || wf_cmap_key_set_payload(&set, 4) != 12 || !key_is(&set, WORDS - 1, "zz", 2) ||
+        wf_cmap_key_set_payload(&set, WORDS - 1) != 2 || wf_cmap_key_set_payload(&set, 2) != 1 || !key_is(&set, WORDS, "\xff", 1))
+        fail("put or add disagrees (len, payload of ab)", set.len, wf_cmap_key_set_payload(&set, 4));
+    wf_cmap_key_set_release(&set);
     if (set.len != 0 || set.store != NULL || atomic_load(&blocks_out) != before)
         fail("a released set kept memory (len, blocks)", set.len, (uint64_t)(atomic_load(&blocks_out) - before));
     /* Many keys of many lengths, added in no order, some of them again,
@@ -2156,41 +2156,41 @@ static void key_sets(void) {
     static uint64_t added[MANY];
     static unsigned char bytes[ENTRY_KEY_BYTES];
     memset(added, 0, sizeof added);
-    wf_key_set_new(&set, 3);
+    wf_cmap_key_set_new(&set, 3);
     uint64_t state = 41, distinct = 0;
     for (unsigned i = 0; i < 2 * MANY; i++) {
         unsigned k = (unsigned)(next(&state) % MANY);
         uint64_t length = entry_key(k, bytes);
         distinct += added[k] == 0;
         added[k] += 1;
-        wf_key_set_add(&set, bytes, length, 1);
+        wf_cmap_key_set_add(&set, bytes, length, 1);
     }
     if (set.len != distinct)
         fail("a grown set lost or repeated keys (len, distinct)", set.len, distinct);
     for (uint64_t i = 0; i < set.len; i++) {
         uint64_t length, earlier_length, k;
-        const unsigned char *key = wf_key_set_key(&set, i, &length);
+        const unsigned char *key = wf_cmap_key_set_key(&set, i, &length);
         if (i > 0) {
-            const unsigned char *earlier = wf_key_set_key(&set, i - 1, &earlier_length);
+            const unsigned char *earlier = wf_cmap_key_set_key(&set, i - 1, &earlier_length);
             if (compare_keys(earlier, earlier_length, key, length) >= 0)
                 fail("a grown set's keys do not increase", i, 0);
         }
         /* A key begins with the eight bytes of the number it was made from. */
         memcpy(&k, key, 8);
-        if (k >= MANY || wf_key_set_payload(&set, i) != added[k])
-            fail("a grown set's payload is not its key's count (key, payload)", k, wf_key_set_payload(&set, i));
+        if (k >= MANY || wf_cmap_key_set_payload(&set, i) != added[k])
+            fail("a grown set's payload is not its key's count (key, payload)", k, wf_cmap_key_set_payload(&set, i));
     }
     /* Released through its memory alone, as compiled code does. */
-    wf_key_set_free_store(set.store);
-    wf_key_set_free_store(NULL);
+    wf_cmap_key_set_free_store(set.store);
+    wf_cmap_key_set_free_store(NULL);
     if (atomic_load(&blocks_out) != before)
         fail("a set released through its memory kept some (blocks)", (uint64_t)(atomic_load(&blocks_out) - before), 0);
-    wf_key_set_new(&set, 1ull << 60);
+    wf_cmap_key_set_new(&set, 1ull << 60);
     if (((key_store *)set.store)->room != KEY_SET_FIRST_LIMIT)
         fail("a capacity past the limit sized another store (room, limit)", ((key_store *)set.store)->room,
              KEY_SET_FIRST_LIMIT);
-    wf_key_set_put(&set, (const unsigned char *)"k", 1, 1);
-    wf_key_set_release(&set);
+    wf_cmap_key_set_put(&set, (const unsigned char *)"k", 1, 1);
+    wf_cmap_key_set_release(&set);
     if (atomic_load(&blocks_out) != before)
         fail("a set sized at the limit kept memory (blocks)", (uint64_t)(atomic_load(&blocks_out) - before), 0);
 }
@@ -2227,10 +2227,10 @@ static void holds_positions(void) {
         wf_cmap *map = wf_cmap_create_entries(16, 8, 0);
         wf_cmap_user *user = wf_cmap_user_at(map, 0);
         wf_key_set set;
-        wf_key_set_new(&set, 4);
-        wf_key_set_put(&set, (const unsigned char *)"k6", 2, 0);
-        wf_key_set_put(&set, (const unsigned char *)"k2", 2, 0);
-        wf_key_set_put(&set, (const unsigned char *)"k4", 2, 0);
+        wf_cmap_key_set_new(&set, 4);
+        wf_cmap_key_set_put(&set, (const unsigned char *)"k6", 2, 0);
+        wf_cmap_key_set_put(&set, (const unsigned char *)"k2", 2, 0);
+        wf_cmap_key_set_put(&set, (const unsigned char *)"k4", 2, 0);
         wf_cmap_holding hold;
         wf_cmap_hold_begin(&hold, map);
         uint64_t five = wf_cmap_hold_key(&hold, (const unsigned char *)"k5", 2);
@@ -2291,7 +2291,7 @@ static void holds_positions(void) {
         unsigned char first;
         if (read_present(user, (const unsigned char *)"k1", 2, &first))
             fail("a hold of one key added five times kept it against its tag (width)", width, 0);
-        wf_key_set_release(&set);
+        wf_cmap_key_set_release(&set);
         wf_cmap_destroy(map);
     }
 }

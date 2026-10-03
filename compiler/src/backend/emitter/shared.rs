@@ -448,7 +448,7 @@ impl FunctionEmitter<'_, '_> {
         if record.kind() != IrRecordKind::TableHold {
             return Err(BackendFailure::InvalidIr);
         }
-        let arguments = format!("ptr {}, i64 0, i32 32, i64 0", record_name(record));
+        let arguments = format!("ptr {}, i64 0, i32 4, i64 0", record_name(record));
         self.emit_unit_call(result, "wf__table_hold_release", &arguments)
     }
 

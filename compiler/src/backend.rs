@@ -34,13 +34,14 @@ pub use stack_ledger::{Architecture, stack_ledger};
 pub(crate) const SHARED_STATE_OFFSET: u64 = 64;
 
 /// Bytes of the record a lock of one table entry keeps in the frame; equals
-/// `WF_TABLE_ENTRY_SIZE` in the runtime (compiler/waiting-contexts/state-locks).
-pub(crate) const TABLE_ENTRY_SIZE: u64 = 64;
+/// `WF_TABLE_ENTRY_SIZE` in `completion/bridge.h`
+/// (compiler/waiting-contexts/state-locks).
+pub(crate) const TABLE_ENTRY_SIZE: u64 = 40;
 
 /// Bytes of the record a hold of a table's entries keeps in the frame;
-/// equals `WF_TABLE_HOLD_SIZE` in the runtime.
-pub(crate) const TABLE_HOLD_SIZE: u64 = 256;
+/// equals `WF_TABLE_HOLD_SIZE` in `completion/bridge.h`.
+pub(crate) const TABLE_HOLD_SIZE: u64 = 248;
 
 /// Bytes of the record a guard's watch keeps in the frame; equals
-/// `WF_WATCH_SIZE` in the runtime.
-pub(crate) const WATCH_SIZE: u64 = 128;
+/// `WF_WATCH_SIZE` in `completion/bridge.h`.
+pub(crate) const WATCH_SIZE: u64 = 152;

@@ -1428,12 +1428,12 @@ static void insert_key(wf_key_set *set, uint64_t at, const unsigned char *key, u
     set->len += 1;
 }
 
-void wf_key_set_new(wf_key_set *set, uint64_t capacity) {
+void wf_cmap_key_set_new(wf_key_set *set, uint64_t capacity) {
     set->len = 0;
     set->store = capacity == 0 ? NULL : new_store(capacity < KEY_SET_FIRST_LIMIT ? capacity : KEY_SET_FIRST_LIMIT);
 }
 
-void wf_key_set_put(wf_key_set *set, const unsigned char *key, uint64_t length, uint64_t payload) {
+void wf_cmap_key_set_put(wf_key_set *set, const unsigned char *key, uint64_t length, uint64_t payload) {
     int found;
     uint64_t at = find_key(set, key, length, &found);
     if (found)
@@ -1442,7 +1442,7 @@ void wf_key_set_put(wf_key_set *set, const unsigned char *key, uint64_t length, 
         insert_key(set, at, key, length, payload);
 }
 
-void wf_key_set_add(wf_key_set *set, const unsigned char *key, uint64_t length, uint64_t amount) {
+void wf_cmap_key_set_add(wf_key_set *set, const unsigned char *key, uint64_t length, uint64_t amount) {
     int found;
     uint64_t at = find_key(set, key, length, &found);
     if (found)
@@ -1459,15 +1459,15 @@ static const key_item *item_at(const wf_key_set *set, uint64_t index) {
     return &((const key_store *)set->store)->items[index];
 }
 
-uint64_t wf_key_set_payload(const wf_key_set *set, uint64_t index) { return item_at(set, index)->payload; }
+uint64_t wf_cmap_key_set_payload(const wf_key_set *set, uint64_t index) { return item_at(set, index)->payload; }
 
-const unsigned char *wf_key_set_key(const wf_key_set *set, uint64_t index, uint64_t *length) {
+const unsigned char *wf_cmap_key_set_key(const wf_key_set *set, uint64_t index, uint64_t *length) {
     const key_item *item = item_at(set, index);
     *length = item->length;
     return item_bytes(set->store, item);
 }
 
-void wf_key_set_free_store(void *store) {
+void wf_cmap_key_set_free_store(void *store) {
     key_store *s = store;
     if (s == NULL)
         return;
@@ -1476,8 +1476,8 @@ void wf_key_set_free_store(void *store) {
     WF_CMAP_GIVE(s, store_bytes(s->room));
 }
 
-void wf_key_set_release(wf_key_set *set) {
-    wf_key_set_free_store(set->store);
+void wf_cmap_key_set_release(wf_key_set *set) {
+    wf_cmap_key_set_free_store(set->store);
     set->len = 0;
     set->store = NULL;
 }
