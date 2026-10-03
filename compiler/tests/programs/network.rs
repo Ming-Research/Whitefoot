@@ -1986,7 +1986,12 @@ fn firn_answers_string_commands_as_redis_does() {
         vec!["GETRANGE", "nope", "0", "1"],
         vec!["GETRANGE", "nope", "x", "1"],
         vec!["GETRANGE", "l2", "0", "1"],
-        vec!["GETRANGE", "r", "-9223372036854775808", "9223372036854775807"],
+        vec![
+            "GETRANGE",
+            "r",
+            "-9223372036854775808",
+            "9223372036854775807",
+        ],
         vec!["GETRANGE", "r", "-10", "-20"],
         vec!["GETRANGE", "r", "-20", "-10"],
         vec!["SUBSTR", "r", "1", "3"],
