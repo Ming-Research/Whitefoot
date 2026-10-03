@@ -3319,7 +3319,7 @@ condition under which it is taken up.
   answers as unknown, and a command table, which `COMMAND` and
   `COMMAND COUNT` report empty and `COMMAND DOCS`, `INFO`, `LIST` and
   `GETKEYS` answer as unknown subcommands; `KEYS` and `SCAN`, which can match
-  with `glob_match` (`apps/firn/bytes/bytes.wf`), `INFO`, RESP3, which
+  with `glob_match` (`apps/firn/bytes/bytes.wf`), RESP3, which
   `HELLO 3` refuses, the blocking list commands, `MULTI` and `EXEC`, publish
   and subscribe, and a random hash seed. No test of Redis's own suite reaches
   firn, since the suite's framework sends `FLUSHALL` and `FUNCTION FLUSH`
@@ -3394,3 +3394,20 @@ condition under which it is taken up.
   `compiler/src/backend/completion/bridge.c`), which an unpipelined benchmark
   pays on every request. Measure that cost with `redis-bench.sh quick` before
   choosing; reopen when a deployment changes the limit while it runs.
+- **`INFO` leaves out what firn does not measure.** `run_info`
+  (`apps/firn/commands/info.wf`) reports real values for the port, the
+  calendar time, the uptime, the clients connected, whether the append-only
+  file is kept, the connections accepted and the keys held, and constants
+  that are true of firn, but no memory used, processor time, commands or
+  errors counted, keyspace hits or misses, keys expired or changes since a
+  save, so its CPU, Commandstats, Errorstats and Latencystats sections are
+  empty; the keyspace line's `expires` and `avg_ttl` are 0 whatever the keys
+  hold. Tests of Redis's suite that read those fields fail on firn: all three
+  of `unit/info-command`, which expect `rejected_calls` in Commandstats, and
+  those reading `used_memory`, `total_error_replies` or `expired_keys`.
+  Counting `expires` needs the statements that set, clear or remove an
+  expiry to keep a count beside the table, or the table to count entries by a
+  property; per-command counts need per-connection counters merged without a
+  shared statement on each command, which would serialize every connection.
+  Reopen when firn is monitored through `INFO`, or with the next work on
+  firn's statistics.

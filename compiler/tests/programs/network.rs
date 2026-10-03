@@ -924,6 +924,50 @@ fn integer_reply(stream: &mut TcpStream, what: &str) -> i64 {
         .unwrap_or_else(|| panic!("{what}: not an integer reply: {line:?}"))
 }
 
+/// Reads one RESP bulk string reply whole.
+#[cfg(target_os = "linux")]
+fn bulk_reply(stream: &mut TcpStream, what: &str) -> String {
+    let header = reply_line(stream, what);
+    let length = header
+        .strip_prefix('$')
+        .and_then(|rest| rest.strip_suffix("\r\n"))
+        .and_then(|digits| digits.parse::<usize>().ok())
+        .unwrap_or_else(|| panic!("{what}: not a bulk string reply: {header:?}"));
+    let mut body = vec![0_u8; length + 2];
+    stream
+        .read_exact(&mut body)
+        .unwrap_or_else(|error| panic!("{what}: {error}"));
+    assert!(body.ends_with(b"\r\n"), "{what}: {body:?}");
+    body.truncate(length);
+    String::from_utf8(body).unwrap_or_else(|error| panic!("{what}: {error}"))
+}
+
+/// The section names of an INFO reply in order, checking Redis's form: each
+/// section a `# ` header and lines that end in CR LF, one blank line between
+/// two sections.
+#[cfg(target_os = "linux")]
+fn info_sections(info: &str, what: &str) -> Vec<String> {
+    assert!(
+        info.is_empty() || info.ends_with("\r\n"),
+        "{what}: {info:?}"
+    );
+    info.split("\r\n\r\n")
+        .filter(|section| !section.is_empty())
+        .map(|section| {
+            let header = section.split("\r\n").next().unwrap_or_default();
+            assert!(header.starts_with("# "), "{what}: {section:?}");
+            header[2..].to_owned()
+        })
+        .collect()
+}
+
+/// The value of one field of an INFO reply.
+#[cfg(target_os = "linux")]
+fn info_field(info: &str, name: &str) -> Option<String> {
+    info.split("\r\n")
+        .find_map(|line| line.strip_prefix(&format!("{name}:")).map(str::to_owned))
+}
+
 /// Reads exactly the bytes of the expected replies and compares them.
 #[cfg(target_os = "linux")]
 fn expect_replies(stream: &mut TcpStream, expected: &[u8], what: &str) {
@@ -1978,7 +2022,8 @@ fn firn_carries_requests_and_replies_larger_than_its_windows() {
 /// others. A string set before FLUSHALL and a list pushed before FLUSHDB stay
 /// absent, since the file records both commands, and FUNCTION FLUSH after
 /// them, as Redis does: the file's first bytes are those redis-server 7.0.15
-/// appends for the same requests, the SELECT it writes first aside.
+/// appends for the same requests, the SELECT it writes first aside. INFO
+/// reports the file as kept.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_replays_the_value_types_from_its_append_only_file() {
@@ -2076,6 +2121,11 @@ fn firn_replays_the_value_types_from_its_append_only_file() {
         b"*2\r\n$1\r\nb\r\n$1\r\nc\r\n$1\r\nv\r\n:1\r\n$1\r\n2\r\n$19\r\n0.10000000000000001\r\n:25\r\n:0\r\n:0\r\n",
         "the replayed values",
     );
+    client
+        .write_all(&resp(&["INFO", "persistence"]))
+        .expect("ask whether the file is kept");
+    let info = bulk_reply(&mut client, "INFO persistence");
+    assert_eq!(info_field(&info, "aof_enabled").as_deref(), Some("1"));
     drop(client);
     let (status, _) = finished(child);
     assert_eq!(status, 0, "the second run");
@@ -2483,6 +2533,8 @@ fn firn_requires_its_password_as_redis_does() {
         vec!["FUNCTION", "FLUSH"],
         vec!["DEBUG"],
         vec!["DEBUG", "LOG", "x"],
+        vec!["INFO"],
+        vec!["CONFIG", "RESETSTAT", "x"],
         vec!["HELLO", "2"],
         vec!["AUTH", "wrong"],
         vec!["AUTH", "secreT"],
@@ -2501,7 +2553,7 @@ fn firn_requires_its_password_as_redis_does() {
     client.write_all(&batch).expect("send the locked batch");
     expect_replies(
         &mut client,
-        b"-NOAUTH Authentication required.\r\n-ERR unknown command 'NOPE', with args beginning with: 'a' \r\n-ERR wrong number of arguments for 'get' command\r\n-ERR wrong number of arguments for 'config|get' command\r\n-NOAUTH Authentication required.\r\n-ERR unknown subcommand 'FOO'. Try CLIENT HELP.\r\n-ERR unknown subcommand 'NOPE'. Try FUNCTION HELP.\r\n-NOAUTH Authentication required.\r\n-ERR wrong number of arguments for 'debug' command\r\n-NOAUTH Authentication required.\r\n-NOAUTH HELLO must be called with the client already authenticated, otherwise the HELLO AUTH <user> <pass> option can be used to authenticate the client and select the RESP protocol version at the same time\r\n-WRONGPASS invalid username-password pair or user is disabled.\r\n-WRONGPASS invalid username-password pair or user is disabled.\r\n-WRONGPASS invalid username-password pair or user is disabled.\r\n-WRONGPASS invalid username-password pair or user is disabled.\r\n-NOAUTH Authentication required.\r\n+OK\r\n+PONG\r\n-WRONGPASS invalid username-password pair or user is disabled.\r\n+PONG\r\n*2\r\n$11\r\nrequirepass\r\n$6\r\nsecret\r\n:0\r\n",
+        b"-NOAUTH Authentication required.\r\n-ERR unknown command 'NOPE', with args beginning with: 'a' \r\n-ERR wrong number of arguments for 'get' command\r\n-ERR wrong number of arguments for 'config|get' command\r\n-NOAUTH Authentication required.\r\n-ERR unknown subcommand 'FOO'. Try CLIENT HELP.\r\n-ERR unknown subcommand 'NOPE'. Try FUNCTION HELP.\r\n-NOAUTH Authentication required.\r\n-ERR wrong number of arguments for 'debug' command\r\n-NOAUTH Authentication required.\r\n-NOAUTH Authentication required.\r\n-ERR wrong number of arguments for 'config|resetstat' command\r\n-NOAUTH HELLO must be called with the client already authenticated, otherwise the HELLO AUTH <user> <pass> option can be used to authenticate the client and select the RESP protocol version at the same time\r\n-WRONGPASS invalid username-password pair or user is disabled.\r\n-WRONGPASS invalid username-password pair or user is disabled.\r\n-WRONGPASS invalid username-password pair or user is disabled.\r\n-WRONGPASS invalid username-password pair or user is disabled.\r\n-NOAUTH Authentication required.\r\n+OK\r\n+PONG\r\n-WRONGPASS invalid username-password pair or user is disabled.\r\n+PONG\r\n*2\r\n$11\r\nrequirepass\r\n$6\r\nsecret\r\n:0\r\n",
         "the locked batch",
     );
     drop(client);
@@ -2600,8 +2652,13 @@ fn firn_requires_its_password_as_redis_does() {
 /// configured password is answered with Redis's error for the password alone
 /// and succeeds for the user default; SELECT takes 0 alone, as Redis does with
 /// one database; COMMAND and COMMAND COUNT describe no command and COMMAND
-/// DOCS is an unknown subcommand; TIME answers the calendar time; and QUIT
-/// answers OK and closes the connection, leaving the request after it
+/// DOCS is an unknown subcommand; TIME answers the calendar time; INFO
+/// answers Redis's sections in Redis's form and order, the default ones, all
+/// of them for all or everything, or those named, an unknown name adding none,
+/// with the real port, clients connected, connections accepted, calendar time
+/// and uptime, and its cluster, keyspace and modules sections byte for byte as
+/// Redis answers them; CONFIG RESETSTAT zeroes the connections INFO counts;
+/// and QUIT answers OK and closes the connection, leaving the request after it
 /// unanswered. The expected bytes are redis-server 7.0.15's, started with one
 /// database, but for the ids and HELLO 3, which Redis would answer in RESP3.
 #[cfg(target_os = "linux")]
@@ -2610,6 +2667,7 @@ fn firn_answers_connection_commands_as_redis_does() {
     let program = firn();
     let port = free_port();
     let text = port.to_string();
+    let spawned = Instant::now();
     let child = program.spawn_on_route(true, &[text.as_bytes(), b"2"]);
     let mut client = connect_when_ready(port);
     let mut batch = Vec::new();
@@ -2673,6 +2731,109 @@ fn firn_answers_connection_commands_as_redis_does() {
     let micro = micro.trim_end();
     assert_eq!(length, format!("${}\r\n", micro.len()));
     assert!(micro.parse::<u64>().expect("TIME's microseconds") < 1_000_000);
+    let mut batch = resp(&["SET", "k", "v"]);
+    for request in [
+        vec!["INFO", "cluster"],
+        vec!["INFO", "NoSuch"],
+        vec!["INFO", "KEYSPACE\0x", "nosuch"],
+        vec!["INFO", "module_list"],
+    ] {
+        batch.extend(resp(&request));
+    }
+    client
+        .write_all(&batch)
+        .expect("ask for INFO's fixed sections");
+    expect_replies(
+        &mut client,
+        b"+OK\r\n$30\r\n# Cluster\r\ncluster_enabled:0\r\n\r\n$0\r\n\r\n$44\r\n# Keyspace\r\ndb0:keys=1,expires=0,avg_ttl=0\r\n\r\n$11\r\n# Modules\r\n\r\n",
+        "INFO's fixed sections",
+    );
+    let defaults = [
+        "Server",
+        "Clients",
+        "Memory",
+        "Persistence",
+        "Stats",
+        "Replication",
+        "CPU",
+        "Modules",
+        "Errorstats",
+        "Cluster",
+        "Keyspace",
+    ];
+    let everything = [
+        "Server",
+        "Clients",
+        "Memory",
+        "Persistence",
+        "Stats",
+        "Replication",
+        "CPU",
+        "Modules",
+        "Commandstats",
+        "Errorstats",
+        "Latencystats",
+        "Cluster",
+        "Keyspace",
+    ];
+    for (request, sections) in [
+        (vec!["INFO", "cpu", "DEFAULT", "cpu"], &defaults[..]),
+        (vec!["INFO", "everything"], &everything[..]),
+        (vec!["INFO", "All"], &everything[..]),
+        (vec!["INFO", "stats", "server"], &["Server", "Stats"][..]),
+    ] {
+        client.write_all(&resp(&request)).expect("ask for INFO");
+        let info = bulk_reply(&mut client, "INFO");
+        assert_eq!(info_sections(&info, "INFO"), sections, "{request:?}");
+    }
+    let before = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("the host clock is past 1970")
+        .as_micros();
+    client.write_all(&resp(&["INFO"])).expect("ask for INFO");
+    let info = bulk_reply(&mut client, "INFO");
+    assert_eq!(info_sections(&info, "INFO"), &defaults[..]);
+    for (field, value) in [
+        ("redis_version", "7.0.15"),
+        ("tcp_port", text.as_str()),
+        ("connected_clients", "1"),
+        ("loading", "0"),
+        ("aof_enabled", "0"),
+        ("aof_rewrite_in_progress", "0"),
+        ("aof_rewrite_scheduled", "0"),
+        ("total_connections_received", "1"),
+        ("role", "master"),
+    ] {
+        assert_eq!(
+            info_field(&info, field).as_deref(),
+            Some(value),
+            "INFO's {field}"
+        );
+    }
+    let now = info_field(&info, "server_time_usec")
+        .and_then(|value| value.parse::<u128>().ok())
+        .expect("INFO's server_time_usec");
+    assert!(
+        now + 5_000_000 >= before && now <= before + 5_000_000,
+        "{now} against {before}"
+    );
+    let uptime = info_field(&info, "uptime_in_seconds")
+        .and_then(|value| value.parse::<u64>().ok())
+        .expect("INFO's uptime_in_seconds");
+    let elapsed = spawned.elapsed().as_secs();
+    assert!(
+        uptime <= elapsed + 1,
+        "{uptime} seconds up, {elapsed} since the start"
+    );
+    let mut batch = resp(&["CONFIG", "RESETSTAT"]);
+    batch.extend(resp(&["INFO", "stats"]));
+    client.write_all(&batch).expect("reset the counts");
+    expect_replies(&mut client, b"+OK\r\n", "CONFIG RESETSTAT");
+    let stats = bulk_reply(&mut client, "INFO stats");
+    assert_eq!(
+        info_field(&stats, "total_connections_received").as_deref(),
+        Some("0")
+    );
     let mut batch = resp(&["QUIT"]);
     batch.extend(resp(&["PING"]));
     client.write_all(&batch).expect("send QUIT and a ping");

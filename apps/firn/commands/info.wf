@@ -1,0 +1,280 @@
+alias Client = pkg::protocol::Client;
+alias Entry = pkg::store::Entry;
+alias Keyspace = pkg::store::Keyspace;
+alias Span = pkg::protocol::Span;
+alias Time = pkg::store::Time;
+alias arg = pkg::protocol::arg;
+alias name_is = pkg::bytes::name_is;
+alias reply_bulk = pkg::protocol::reply_bulk;
+
+const section_default: Array<u8, 7> = "DEFAULT";
+
+const section_all: Array<u8, 3> = "ALL";
+
+const section_everything: Array<u8, 10> = "EVERYTHING";
+
+const section_module_list: Array<u8, 11> = "MODULE_LIST";
+
+const section_names: Array<u8, 105> = "SERVERCLIENTSMEMORYPERSISTENCESTATSREPLICATIONCPUMODULESCOMMANDSTATSERRORSTATSLATENCYSTATSCLUSTERKEYSPACE";
+
+const section_ends: Array<u64, 13> =[6_u64, 13_u64, 19_u64, 30_u64, 35_u64, 46_u64, 49_u64, 56_u64, 68_u64, 78_u64, 90_u64, 97_u64, 105_u64];
+
+const info_server_head: Array<u8, 78> = "# Server\r\nredis_version:7.0.15\r\nredis_mode:standalone\r\narch_bits:64\r\ntcp_port:";
+
+const info_server_time: Array<u8, 19> = "\r\nserver_time_usec:";
+
+const info_uptime_seconds: Array<u8, 20> = "\r\nuptime_in_seconds:";
+
+const info_uptime_days: Array<u8, 17> = "\r\nuptime_in_days:";
+
+const info_server_tail: Array<u8, 41> = "\r\nhz:10\r\nconfigured_hz:10\r\nconfig_file:\r\n";
+
+const info_clients_head: Array<u8, 29> = "# Clients\r\nconnected_clients:";
+
+const info_clients_tail: Array<u8, 92> = "\r\ncluster_connections:0\r\nblocked_clients:0\r\ntracking_clients:0\r\nclients_in_timeout_table:0\r\n";
+
+const info_memory: Array<u8, 195> = "# Memory\r\nnumber_of_cached_scripts:0\r\nnumber_of_functions:0\r\nnumber_of_libraries:0\r\nmaxmemory:0\r\nmaxmemory_human:0B\r\nmaxmemory_policy:noeviction\r\nlazyfree_pending_objects:0\r\nlazyfreed_objects:0\r\n";
+
+const info_persistence_head: Array<u8, 121> = "# Persistence\r\nloading:0\r\nasync_loading:0\r\nrdb_bgsave_in_progress:0\r\nrdb_last_bgsave_status:ok\r\nrdb_saves:0\r\naof_enabled:";
+
+const info_persistence_tail: Array<u8, 127> = "\r\naof_rewrite_in_progress:0\r\naof_rewrite_scheduled:0\r\naof_last_bgrewrite_status:ok\r\naof_rewrites:0\r\nmodule_fork_in_progress:0\r\n";
+
+const info_stats_head: Array<u8, 36> = "# Stats\r\ntotal_connections_received:";
+
+const info_stats_tail: Array<u8, 340> = "\r\nrejected_connections:0\r\nsync_full:0\r\nsync_partial_ok:0\r\nsync_partial_err:0\r\nevicted_keys:0\r\nevicted_clients:0\r\npubsub_channels:0\r\npubsub_patterns:0\r\npubsubshard_channels:0\r\nlatest_fork_usec:0\r\ntotal_forks:0\r\nmigrate_cached_sockets:0\r\ntracking_total_keys:0\r\ntracking_total_items:0\r\ntracking_total_prefixes:0\r\ndump_payload_sanitizations:0\r\n";
+
+const info_replication: Array<u8, 209> = "# Replication\r\nrole:master\r\nconnected_slaves:0\r\nmaster_failover_state:no-failover\r\nmaster_repl_offset:0\r\nsecond_repl_offset:-1\r\nrepl_backlog_active:0\r\nrepl_backlog_first_byte_offset:0\r\nrepl_backlog_histlen:0\r\n";
+
+const info_cpu: Array<u8, 7> = "# CPU\r\n";
+
+const info_modules: Array<u8, 11> = "# Modules\r\n";
+
+const info_commandstats: Array<u8, 16> = "# Commandstats\r\n";
+
+const info_errorstats: Array<u8, 14> = "# Errorstats\r\n";
+
+const info_latencystats: Array<u8, 16> = "# Latencystats\r\n";
+
+const info_cluster: Array<u8, 30> = "# Cluster\r\ncluster_enabled:0\r\n";
+
+const info_keyspace: Array<u8, 12> = "# Keyspace\r\n";
+
+const info_db0: Array<u8, 9> = "db0:keys=";
+
+const info_db0_tail: Array<u8, 22> = ",expires=0,avg_ttl=0\r\n";
+
+const info_gap: Array<u8, 2> = "\r\n";
+
+fn section_matches(input: &[u8], start: u64, length: u64, which: u64) -> matched: Bool reads(input) {
+  doc "Whether length bytes of the input from start name section which of INFO's thirteen, in either case.";
+  let first = 0_u64;
+  if which > 0_u64 {
+    let before = which -wrap 1_u64;
+    if before < 13_u64 {
+      set first = section_ends[before];
+    }
+  }
+  let last = 105_u64;
+  if which < 13_u64 {
+    set last = section_ends[which];
+  }
+  if last <= 105_u64 {
+    if first <= last {
+      let matched = name_is(input: input, start: start, length: length, word: &section_names[first..last]);
+      return matched;
+    }
+  }
+  return False();
+}
+
+fn text_reserve(text: &Box<Slots<u8>>, needed: u64) -> result: unit writes(text) {
+  doc "Grows the text, at least doubling it, until it has room for needed more bytes; INFO's text stays far below the 2^62 bytes the growth stops at.";
+  let length = text^.inner.len;
+  let capacity = text^.inner.cap;
+  let wanted = length +wrap needed;
+  if wanted > capacity {
+    let doubled = capacity +wrap capacity;
+    let target = imax(doubled, wanted);
+    let fits = target <= 4611686018427387904_u64;
+    if fits {
+      if target >= text^.inner.cap {
+        grow(cell: text, capacity: target);
+      }
+    }
+  }
+  return unit;
+}
+
+fn text_word(text: &Box<Slots<u8>>, word: &[u8]) -> result: unit reads(word), writes(text) {
+  doc "Appends a constant word to the text.";
+  let count = word^.len;
+  text_reserve(text: text, needed: count);
+  for @bytes (offset in 0_u64..count) {
+    let byte = word^[offset];
+    if text^.inner.len < text^.inner.cap {
+      place_back(window: &text^.inner, value: byte);
+    }
+  }
+  return unit;
+}
+
+fn text_number(text: &Box<Slots<u8>>, value: u64) -> result: unit writes(text) {
+  doc "Appends a number in decimal to the text.";
+  let digits = array_filled::<u8, 20>(value: 0_u8);
+  let count = 0_u64;
+  let rest = value;
+  loop @digits {
+    let low = rest % 10_u64;
+    let narrow = cvt.wrap::<u64, u8>(low);
+    let glyph = narrow +wrap 48_u8;
+    if count < 20_u64 {
+      set digits[count] = glyph;
+      set count = count +wrap 1_u64;
+    }
+    set rest = rest / 10_u64;
+    if rest == 0_u64 {
+      break @digits;
+    }
+  }
+  text_reserve(text: text, needed: count);
+  for @emit (index in 0_u64..count) {
+    let back = count -wrap index;
+    let from = back -wrap 1_u64;
+    let glyph = 48_u8;
+    if from < 20_u64 {
+      set glyph = digits[from];
+    }
+    if text^.inner.len < text^.inner.cap {
+      place_back(window: &text^.inner, value: glyph);
+    }
+  }
+  return unit;
+}
+
+fn run_info(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+  doc "INFO [section [section ...]]: answers a bulk string of Redis's sections in Redis's order and form, a # header and lines of name:value each, a blank line between sections: with no argument or default, server, clients, memory, persistence, stats, replication, cpu, modules, errorstats, cluster and keyspace; with all or everything, those and commandstats and latencystats; and otherwise the sections the arguments name, modules also as module_list, in either case and up to a zero byte, as Redis compares them, an unknown name adding none. The fields carry real values where firn has them: the port, the calendar time, the seconds and days since the server started, the clients connected, whether the append-only file is kept, the connections accepted since the start or CONFIG RESETSTAT, and the keys the keyspace holds, counted in an atomic statement that holds its table whole, as DBSIZE counts them. Every other field is one whose value is fixed for firn: Redis's version 7.0.15, whose replies firn follows, standalone mode, a server of 64 bits, its active expiry's 10 runs a second, no configuration file, no memory limit and so no eviction, no scripts or functions, no replica, background save, rewrite, fork, module, publish and subscribe, tracking or cluster, so that their counts are 0, and the keyspace's expires and avg_ttl, which firn does not count, given as 0. Fields firn cannot measure, memory used and processor time among them, and the per-command and per-error counts, are left out, their sections empty.";
+  let count = args^.inner.len;
+  let chosen = array_filled::<u64, 13>(value: 0_u64);
+  if count == 1_u64 {
+    for @defaults (which in 0_u64..13_u64) {
+      set chosen[which] = 1_u64;
+    }
+    set chosen[8_u64] = 0_u64;
+    set chosen[10_u64] = 0_u64;
+  }
+  for @arguments (index in 1_u64..count) {
+    let section = arg(args: args, index: index);
+    let spelled = before_zero(input: input, span: section);
+    let defaults = name_is(input: input, start: section.start, length: spelled, word: &section_default[0_u64..7_u64]);
+    let all = name_is(input: input, start: section.start, length: spelled, word: &section_all[0_u64..3_u64]);
+    let everything = name_is(input: input, start: section.start, length: spelled, word: &section_everything[0_u64..10_u64]);
+    let module_list = name_is(input: input, start: section.start, length: spelled, word: &section_module_list[0_u64..11_u64]);
+    let whole = bor(all, everything);
+    if whole {
+      for @every (which in 0_u64..13_u64) {
+        set chosen[which] = 1_u64;
+      }
+    } else if defaults {
+      for @usual (which in 0_u64..13_u64) {
+        let extra = which == 8_u64;
+        let latency = which == 10_u64;
+        let left_out = bor(extra, latency);
+        if left_out {
+        } else {
+          set chosen[which] = 1_u64;
+        }
+      }
+    } else if module_list {
+      set chosen[7_u64] = 1_u64;
+    } else {
+      for @named (which in 0_u64..13_u64) {
+        let matched = section_matches(input: input, start: section.start, length: spelled, which: which);
+        if matched {
+          set chosen[which] = 1_u64;
+        }
+      }
+    }
+  }
+  let clients = 0_u64;
+  if chosen[1_u64] == 1_u64 {
+    atomic s = &store^.state {
+      set clients = s^.meta.clients;
+    }
+  }
+  let connections = 0_u64;
+  if chosen[4_u64] == 1_u64 {
+    atomic v = &store^.server {
+      set connections = v^.connections;
+    }
+  }
+  let keys = 0_u64;
+  if chosen[12_u64] == 1_u64 {
+    atomic s = &store^.state {
+      set keys = keyed_table_count::<Entry>(table: &s^.map);
+    }
+  }
+  let text = box_slots_new::<u8>(capacity: 2048_u64);
+  let written = 0_u64;
+  for @sections (which in 0_u64..13_u64) {
+    if chosen[which] == 1_u64 {
+      if written > 0_u64 {
+        text_word(text: &text, word: &info_gap[0_u64..2_u64]);
+      }
+      set written = written +wrap 1_u64;
+      if which == 0_u64 {
+        let seconds = time^.now / 1000000000_u64;
+        let days = seconds / 86400_u64;
+        text_word(text: &text, word: &info_server_head[0_u64..78_u64]);
+        text_number(text: &text, value: client^.settings.port);
+        text_word(text: &text, word: &info_server_time[0_u64..19_u64]);
+        text_number(text: &text, value: client^.unix_us);
+        text_word(text: &text, word: &info_uptime_seconds[0_u64..20_u64]);
+        text_number(text: &text, value: seconds);
+        text_word(text: &text, word: &info_uptime_days[0_u64..17_u64]);
+        text_number(text: &text, value: days);
+        text_word(text: &text, word: &info_server_tail[0_u64..41_u64]);
+      } else if which == 1_u64 {
+        text_word(text: &text, word: &info_clients_head[0_u64..29_u64]);
+        text_number(text: &text, value: clients);
+        text_word(text: &text, word: &info_clients_tail[0_u64..92_u64]);
+      } else if which == 2_u64 {
+        text_word(text: &text, word: &info_memory[0_u64..195_u64]);
+      } else if which == 3_u64 {
+        text_word(text: &text, word: &info_persistence_head[0_u64..121_u64]);
+        let kept = 0_u64;
+        if store^.logging {
+          set kept = 1_u64;
+        }
+        text_number(text: &text, value: kept);
+        text_word(text: &text, word: &info_persistence_tail[0_u64..127_u64]);
+      } else if which == 4_u64 {
+        text_word(text: &text, word: &info_stats_head[0_u64..36_u64]);
+        text_number(text: &text, value: connections);
+        text_word(text: &text, word: &info_stats_tail[0_u64..340_u64]);
+      } else if which == 5_u64 {
+        text_word(text: &text, word: &info_replication[0_u64..209_u64]);
+      } else if which == 6_u64 {
+        text_word(text: &text, word: &info_cpu[0_u64..7_u64]);
+      } else if which == 7_u64 {
+        text_word(text: &text, word: &info_modules[0_u64..11_u64]);
+      } else if which == 8_u64 {
+        text_word(text: &text, word: &info_commandstats[0_u64..16_u64]);
+      } else if which == 9_u64 {
+        text_word(text: &text, word: &info_errorstats[0_u64..14_u64]);
+      } else if which == 10_u64 {
+        text_word(text: &text, word: &info_latencystats[0_u64..16_u64]);
+      } else if which == 11_u64 {
+        text_word(text: &text, word: &info_cluster[0_u64..30_u64]);
+      } else {
+        text_word(text: &text, word: &info_keyspace[0_u64..12_u64]);
+        if keys > 0_u64 {
+          text_word(text: &text, word: &info_db0[0_u64..9_u64]);
+          text_number(text: &text, value: keys);
+          text_word(text: &text, word: &info_db0_tail[0_u64..22_u64]);
+        }
+      }
+    }
+  }
+  reply_bulk(client: client, stored: &text);
+  return unit;
+}

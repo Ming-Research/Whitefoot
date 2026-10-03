@@ -24,14 +24,14 @@ own:
   version 2, version 3 being refused as unsupported, `SELECT 0`, firn
   having one database, and `CLIENT ID`, `CLIENT GETNAME` and
   `CLIENT SETNAME`;
-- server: `CONFIG GET`, `CONFIG SET` and `CONFIG RESETSTAT`, described
-  below, `TIME`, and `COMMAND` and `COMMAND COUNT`, which describe no
-  command. `COMMAND DOCS` is answered as an unknown subcommand, so that
-  `redis-cli` uses its own help. `FLUSHALL`
-  and `FLUSHDB`, with `ASYNC` or `SYNC`, empty firn's one database and its
-  queued expiries in one atomic statement and are appended to the
-  append-only file as Redis appends them; the old keys are released before
-  the reply under either option. `FUNCTION FLUSH`, with `ASYNC` or `SYNC`,
+- server: `CONFIG GET`, `CONFIG SET`, `CONFIG RESETSTAT` and `INFO`,
+  described below, `TIME`, and `COMMAND` and `COMMAND COUNT`, which
+  describe no command. `COMMAND DOCS` is answered as an unknown subcommand,
+  so that `redis-cli` uses its own help. `FLUSHALL` and `FLUSHDB`, with
+  `ASYNC` or `SYNC`, empty firn's one database and its queued expiries in
+  one atomic statement and are appended to the append-only file as Redis
+  appends them; the old keys are released before the reply under either
+  option. `FUNCTION FLUSH`, with `ASYNC` or `SYNC`,
   succeeds as Redis does with no function loaded, firn having none, and is
   appended to the file as Redis appends it; every other `FUNCTION`
   subcommand is answered as an unknown one. `DEBUG LOG` with a message
@@ -65,8 +65,22 @@ change them while it runs and saves no snapshot; Redis would apply them.
 `CONFIG RESETSTAT` answers OK and zeroes the count of connections the server
 has accepted.
 
-`HELLO` reports the server as `redis` version 7.0.15, the version whose
-replies firn follows.
+`INFO`, with no section, `default`, `all`, `everything` or named sections,
+answers Redis's sections in Redis's order and form. Its fields carry real
+values for the port, the calendar time, the uptime, the clients connected,
+whether the append-only file is kept, the connections accepted and the keys
+held, which it counts holding the table whole, as `DBSIZE` does; the other
+fields it reports have values that are fixed and true of firn: Redis's
+version 7.0.15, standalone mode, 64 bits, its active expiry's 10 runs a
+second, no configuration file, memory limit, eviction, script, function,
+replica, background save, rewrite, fork, module, publish and subscribe,
+tracking or cluster. What firn does not measure, memory and processor time,
+per-command and per-error counts among them, is left out, so its CPU,
+Commandstats, Errorstats and Latencystats sections are empty, and the
+keyspace line's `expires` and `avg_ttl`, which firn does not count, are 0.
+
+`HELLO` and `INFO` report the server as `redis` version 7.0.15, the version
+whose replies firn follows.
 
 What is not there yet is listed in [docs/todo.md](../../docs/todo.md) under
 "firn"; the measurements and the design are in
