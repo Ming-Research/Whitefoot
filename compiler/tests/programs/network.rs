@@ -1772,31 +1772,31 @@ fn firn_answers_commands_naming_a_key_twice_as_redis_does() {
     assert_eq!(status, 0);
 }
 
-/// firn answers `CONFIG` with too few arguments, an unpaired option or
-/// several parameters, and echoes client bytes in its errors, as Redis does:
-/// a zero byte ends an echoed name or argument, carriage return and line feed
-/// become spaces so that an error stays one line, an unknown subcommand is
-/// echoed to 128 bytes and an unknown `CONFIG SET` option whole, and a
-/// carriage return a malformed request holds where a dollar sign belongs is
-/// echoed as a space before the connection closes. `CONFIG SET` answers the
-/// first unknown, immutable or repeated name as Redis does, an alias not
-/// repeating its parameter; then the first refused value, read as string2ll or
-/// memtoull reads it, the latter's product wrapping modulo 2^64, with Redis's
-/// range and the parameter's own name; and sets nothing when any pair is
-/// refused. `CONFIG RESETSTAT` succeeds. `FUNCTION FLUSH` succeeds
-/// with no option, or with `ASYNC` or `SYNC` read up to a zero byte, and
-/// refuses another option and two of them; `FUNCTION` alone is short of
-/// arguments, and a subcommand whose name holds a zero byte is unknown.
+/// firn answers `CONFIG` with too few arguments, an unpaired option or several
+/// parameters, and echoes client bytes in its errors, as Redis does: a zero
+/// byte ends an echoed name or argument, carriage return and line feed become
+/// spaces so that an error stays one line, an unknown subcommand is echoed to
+/// 128 bytes and an unknown `CONFIG SET` option whole, and a carriage return a
+/// malformed request holds where a dollar sign belongs is echoed as a space
+/// before the connection closes. `CONFIG SET` answers the first unknown,
+/// immutable or repeated name as Redis does, an alias not repeating its
+/// parameter; then the first refused value, read as string2ll or memtoull reads
+/// it, the latter's product wrapping modulo 2^64, with Redis's range and the
+/// parameter's own name, or a save schedule as Redis splits and reads one, a
+/// lone piece that starts with a zero byte being the empty schedule; and sets
+/// nothing when any pair is refused. `CONFIG RESETSTAT` succeeds. `FUNCTION
+/// FLUSH` succeeds with no option, or with `ASYNC` or `SYNC` read up to a zero
+/// byte, and refuses another option and two of them; `FUNCTION` alone is short
+/// of arguments, and a subcommand whose name holds a zero byte is unknown.
 /// `DEBUG LOG` with one message, empty or not, succeeds, its name read up to a
 /// zero byte, while `LOG` without exactly one message and an unknown
 /// subcommand, its line breaks echoed as spaces, are answered as Redis answers
-/// a `DEBUG` subcommand it does not know. The expected replies are
-/// redis-server 7.0.15's to the same bytes, its debug command enabled, a
-/// `CONFIG GET` of several parameters in alphabetical order, one of the orders
-/// Redis answers in, but for the last three `CONFIG SET`s, which ask for a
-/// snapshot schedule, the append-only file and another address: Redis would
-/// apply them, and firn refuses them in Redis's form for a refused value, with
-/// its own reason.
+/// a `DEBUG` subcommand it does not know. The expected replies are redis-server
+/// 7.0.15's to the same bytes, its debug command enabled, a `CONFIG GET` of
+/// several parameters in alphabetical order, one of the orders Redis answers
+/// in, but for the last three `CONFIG SET`s, which ask for a snapshot schedule,
+/// the append-only file and another address: Redis would apply them, and firn
+/// refuses them in Redis's form for a refused value, with its own reason.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_answers_config_and_echoes_client_bytes_as_redis_does() {
@@ -1873,6 +1873,8 @@ fn firn_answers_config_and_echoes_client_bytes_as_redis_does() {
         vec!["CONFIG", "SET", "appendonly", "No\0x"],
         vec!["CONFIG", "SET", "save", "1 2 3"],
         vec!["CONFIG", "SET", "save", ""],
+        vec!["CONFIG", "SET", "save", "\0zz"],
+        vec!["CONFIG", "SET", "save", "\0 1"],
         vec!["CONFIG", "SET", "bind", addresses.as_str()],
         vec!["CONFIG", "SET", "timeout", "9", "port", "70000"],
         vec!["CONFIG", "SET", "port", "70000", "timeout", "abc"],
@@ -1931,6 +1933,8 @@ fn firn_answers_config_and_echoes_client_bytes_as_redis_does() {
              +OK\r\n\
              {failed} 'save') - Invalid save parameters\r\n\
              +OK\r\n\
+             +OK\r\n\
+             {failed} 'save') - Invalid save parameters\r\n\
              {failed} 'bind') - Too many bind addresses specified.\r\n\
              {failed} 'port') - argument must be between 0 and 65535 inclusive\r\n\
              {failed} 'port') - argument must be between 0 and 65535 inclusive\r\n\

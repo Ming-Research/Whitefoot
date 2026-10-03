@@ -579,7 +579,7 @@ fn save_token_valid(input: &[u8], start: u64, end: u64, changes: Bool) -> valid:
 }
 
 fn save_schedule(input: &[u8], span: Span) -> verdict: u64 reads(input) {
-  doc "Reads a save schedule as Redis 7.0's CONFIG SET reads one: the argument split at every space into pieces, empty ones included, which must come in pairs of seconds and changes, each passing save_token_valid. Answers 1 for the empty argument, the empty schedule, 2 for a valid schedule of one pair or more, and 0 for an invalid one.";
+  doc "Reads a save schedule as Redis 7.0's CONFIG SET reads one: the argument split at every space into pieces, empty ones included, which must come in pairs of seconds and changes, each passing save_token_valid; a lone piece that starts with a zero byte, which Redis compares as the empty C string, is the empty schedule. Answers 1 for the empty argument or the empty schedule, 2 for a valid schedule of one pair or more, and 0 for an invalid one.";
   if span.length == 0_u64 {
     return 1_u64;
   }
@@ -597,6 +597,14 @@ fn save_schedule(input: &[u8], span: Span) -> verdict: u64 reads(input) {
         break @scan;
       }
       set stop = stop +wrap 1_u64;
+    }
+    if ordinal == 0_u64 {
+      if stop >= end {
+        let first = byte_at(input: input, index: position);
+        if first == 0_u8 {
+          return 1_u64;
+        }
+      }
     }
     let parity = ordinal % 2_u64;
     let changes = parity == 1_u64;
