@@ -56,6 +56,23 @@ fn optimized() -> &'static str {
     MODULE.get_or_init(|| host_optimized_module(emitted()))
 }
 
+fn initialization_oracle_module() -> String {
+    // Keep the independently observed suffix fill at its source boundary in
+    // this structural view. Default optimization inlines it into file-search
+    // callers, where a whole-payload fresh-allocation test cannot distinguish
+    // it from a refill. Allocation counts and the native content/mutation
+    // observations still use the unmodified default optimized module.
+    let headers: Vec<_> = emitted()
+        .lines()
+        .filter(|line| line.starts_with("define ") && line.contains(" @wf_widen_window("))
+        .collect();
+    assert_eq!(headers.len(), 1, "instrument only the source suffix helper");
+    let header = headers[0];
+    let signature = header.strip_suffix(" {").expect("a definition has a body");
+    let module = emitted().replacen(header, &format!("{signature} noinline {{"), 1);
+    host_optimized_module(&module)
+}
+
 fn entry() -> &'static str {
     optimized_main(optimized())
 }
@@ -263,8 +280,98 @@ initialize:
   ret void
 }"#;
     assert!(bulk_initializations_use_fresh_storage(reused).is_err());
+    let reallocated = fresh.replace("@malloc(i64 4112)", "@realloc(ptr %old, i64 4112)");
+    assert!(bulk_initializations_use_fresh_storage(&reallocated).is_err());
     let calloc = fresh.replace("@malloc(i64 4112)", "@calloc(i64 1, i64 4112)");
     assert!(bulk_initializations_use_fresh_storage(&calloc).is_err());
+}
+
+/// `widen_window` deliberately initializes only the newly live suffix. Its
+/// backing pointer can join fresh, reallocated and unchanged empty routes, so
+/// the whole-payload fresh-allocation oracle does not describe this operation.
+/// Observe its old-prefix preservation independently instead of granting
+/// general permission to initialize through a realloc result.
+fn widened_tail_preserves_existing_bytes() {
+    use super::{BoundedOutput, build_linked_executable, test_directory};
+    use std::process::Command;
+
+    const OBSERVER: &str = r#"#include <stdbool.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+struct Run { uint64_t length, capacity; unsigned char *payload; };
+extern bool wf_widen_window(struct Run *, uint64_t);
+static unsigned char empty_anchor;
+static int observe(uint64_t length, uint64_t capacity, uint64_t total) {
+    struct Run run = {length, capacity, capacity ? malloc(capacity) : &empty_anchor};
+    if (!run.payload) return 2;
+    memset(run.payload, 0xa5, capacity);
+    for (uint64_t i = 0; i < length; ++i) run.payload[i] = (unsigned char)(17 + i);
+    if (!wf_widen_window(&run, total)) return 3;
+    int wrong = run.length != total || run.capacity != total;
+    for (uint64_t i = 0; i < length; ++i)
+        wrong |= run.payload[i] != (unsigned char)(17 + i);
+    for (uint64_t i = length; i < total; ++i) wrong |= run.payload[i] != 0;
+    if (run.capacity) free(run.payload);
+    return wrong ? 1 : 0;
+}
+int main(int argc, char **argv) {
+    (void)argv;
+    if (argc > 1) return observe(13, 13, 31);
+    return observe(13, 13, 31) || observe(5, 13, 31) ||
+           observe(0, 0, 17) || observe(0, 0, 0);
+}
+"#;
+
+    let function = source_function(optimized(), "wf_widen_window");
+    let fills: Vec<_> = function
+        .lines()
+        .filter(|line| call_target(line).is_some_and(|name| name.contains("memset")))
+        .collect();
+    assert_eq!(fills.len(), 1, "qualify every suffix fill independently");
+    let fill = fills[0];
+    let callee = call_target(fill).expect("the suffix fill is a call");
+    let destination = call_argument(fill, callee, 0)
+        .and_then(|argument| argument.split_whitespace().next_back())
+        .expect("the suffix fill has a destination");
+    let prefix = format!("  {destination} = ");
+    let address = function
+        .lines()
+        .find(|line| line.starts_with(&prefix))
+        .expect("the suffix has an explicit address");
+    let definition = address.strip_prefix(&prefix).unwrap();
+    let payload = getelementptr_base(definition).expect("the suffix is a payload offset");
+    let offset = comma_item(definition.strip_prefix("getelementptr ").unwrap(), 2)
+        .expect("the suffix has one byte offset");
+    assert!(
+        offset.starts_with("i64 %"),
+        "the tail starts at a runtime length"
+    );
+
+    let prefix_fill = function.replacen(fill, &fill.replacen(destination, payload, 1), 1);
+    let wrong_offset = function.replacen(address, &address.replacen(offset, "i64 1", 1), 1);
+    for (body, fault) in [
+        (function.to_owned(), false),
+        (prefix_fill, true),
+        (wrong_offset, true),
+    ] {
+        let module = optimized()
+            .replacen(function, &body, 1)
+            .replace("@main(", "@wf_cost_shape_main(");
+        let directory = test_directory();
+        let executable = build_linked_executable(&module, Some(OBSERVER), &[], &directory);
+        let mut command = Command::new(executable);
+        if fault {
+            // A full run leaves room for either deliberately wrong fill, so
+            // these controls fail on contents rather than an invalid address.
+            command.arg("fault");
+        }
+        let output = command
+            .bounded_output()
+            .expect("run the independent tail observer");
+        std::fs::remove_dir_all(directory).expect("remove tail observer artifacts");
+        assert_eq!(output.status.code(), Some(i32::from(fault)), "{output:?}");
+    }
 }
 
 /// A compact pointer-provenance trace for optimizer-version failures in the
@@ -391,10 +498,10 @@ fn pointer_root<'module>(function: &'module str, mut pointer: &'module str) -> &
     pointer
 }
 
-/// Recognize an allocation that remakes an existing run instead of taking a
-/// new one. `grow` [OP-10] allocates the larger block, copies the old window
-/// into it, and frees the old block, so the allocation is the destination of a
-/// bulk copy whose source block the same function frees. A take may also be a
+/// Recognize only growth's allocation/copy/free route, rather than a new
+/// take. Its allocation is the destination of a bulk copy whose source block
+/// the same function frees. The test below also permits full-payload realloc;
+/// this recognizer does not classify that route. A take may also be a
 /// copy destination, as `walk`'s child path is for the prefix it copies in,
 /// but its source is never a block the function releases.
 fn remakes_a_run(function: &str, allocation: &str) -> bool {
@@ -425,8 +532,8 @@ fn remakes_a_run(function: &str, allocation: &str) -> bool {
 #[test]
 fn the_reused_buffers_are_initialized_once_at_allocation() {
     // `wfgrep` asks for exactly eleven runs, and gets exactly eleven store
-    // takes. The numbers here are payload capacities; each runtime `Slots`
-    // allocation also contains its 16-byte `len`/`cap` descriptor. Derived
+    // takes. Runtime Slots keeps its descriptor inline, so each allocation
+    // contains only these payload capacities. Derived
     // from source, function by function: `main` takes the pattern (4096), the
     // root name (4096), the root path (4096), and the diagnostic report
     // (4352); `walk` takes its enumeration batch (8192), its record store
@@ -444,8 +551,8 @@ fn the_reused_buffers_are_initialized_once_at_allocation() {
     // flagship re-attribution has to explain. Growth is extra and is not a
     // take: `widen_window` remakes the read input for a line longer than it,
     // and `push_byte` and `push_word` remake a store for a directory whose
-    // names pass 4096 bytes or whose entries pass 512. Each remake allocates
-    // the larger block, copies the old run into it and frees the old block.
+    // names pass 4096 bytes or whose entries pass 512. Remakes preserve the
+    // live prefix, through allocation/copy/free or full-payload reallocation.
     //
     // The source still owns initialization. With exclusive run rows LLVM can
     // fold malloc plus the zero-fill loop into calloc. Count either optimized
@@ -496,15 +603,15 @@ fn the_reused_buffers_are_initialized_once_at_allocation() {
                 helper_retained = true;
                 // Capacity is the helper's final source argument. Optimizers
                 // can remove its unused provider argument but do not change
-                // that value. The observed allocation also contains the
-                // runtime Slots descriptor before its payload.
+                // that value. The observed allocation contains the payload;
+                // the runtime Slots descriptor lives in its owner.
                 let count = (0..)
                     .map_while(|ordinal| call_argument(line, "wf_zeroed_bytes", ordinal))
                     .last()
                     .and_then(|argument| argument.split_whitespace().next_back())
                     .and_then(|value| value.parse::<u64>().ok());
                 match count {
-                    Some(count) => *sizes.entry(16 + count).or_insert(0) += 1,
+                    Some(count) => *sizes.entry(count).or_insert(0) += 1,
                     None => prefix_sized += 1,
                 }
             }
@@ -529,14 +636,16 @@ fn the_reused_buffers_are_initialized_once_at_allocation() {
     );
     assert_eq!(
         sizes,
-        std::collections::BTreeMap::from([(4112, 6), (8208, 2), (4368, 1)]),
-        "all nine constant source takes retain their exact descriptor-plus-payload byte extents"
+        std::collections::BTreeMap::from([(4096, 6), (8192, 2), (4352, 1)]),
+        "all nine constant source takes retain their exact payload-only byte extents"
     );
     assert!(
         remakes >= 3,
         "widen_window, push_byte and push_word each remake a run by copying it: {remakes}"
     );
-    // Nothing reallocates in place, and nothing re-initializes. That the fill
+    // The old malloc-only lowering banned realloc outright. The selected
+    // full-payload growth may reallocate, but cannot authorize a fresh fill
+    // over preserved elements. Nothing re-initializes. That the fill
     // runs once per take is a source fact under this surface rather than an
     // allocator guarantee: the fill loop is inside `zeroed_bytes`, between the
     // take and the hand-back, so a caller cannot reach a filled run without
@@ -551,17 +660,29 @@ fn the_reused_buffers_are_initialized_once_at_allocation() {
     // which aggregate stores this optimizer combines.
     // Keep the no-refill claim on pointer provenance, rather than forbidding
     // the unrelated aggregate initialization instruction by name.
-    for forbidden in ["@realloc(", "@reallocf(", "bzero"] {
+    for forbidden in ["@reallocf(", "bzero"] {
         assert!(
             !optimized().contains(forbidden),
             "the reused buffers must not reach {forbidden}"
         );
     }
-    for definition in optimized().split("\ndefine ").skip(1) {
+    widened_tail_preserves_existing_bytes();
+    let initialization_module = initialization_oracle_module();
+    for definition in initialization_module.split("\ndefine ").skip(1) {
         let function = definition
             .split("\n}")
             .next()
             .expect("a definition has a body");
+        if function
+            .lines()
+            .next()
+            .is_some_and(|header| header.contains(" @wf_widen_window("))
+        {
+            // Its one suffix fill is covered above, including controls that
+            // corrupt the preserved prefix and misplace the suffix. All other
+            // heap fills retain the fresh-allocation/no-refill requirement.
+            continue;
+        }
         bulk_initializations_use_fresh_storage(function).unwrap();
     }
     // Allocation begins in each function's prologue: the first allocation a

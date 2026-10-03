@@ -1,0 +1,175 @@
+Spare append A/B cross-check: frozen full-growth-route images
+
+Purpose: qualify the spare path of this append API under the registered RAW-clock
+screen. Retire with final append qualification. No source, compiler, driver or
+new replay patch. Dependencies, source/observer qualification and unchanged timed
+objects are those in ecosystem-append-growth-full-route-timing.txt and
+full-growth-route.patch; no additional compiler capability is claimed.
+
+A is complete append exposure; B replaces its full-positive growth route with
+malloc/memcpy/free. Images are frozen as below. Existing timed/account api-check
+passes in the dependency record include zero allocations during spare append.
+The two new growth-api-check calls additionally verify each image's RAW clock:
+200000 reads, 41 ns minimum, quantized=0, exit 0. Then one fixed A1-B1-B2-A2
+sequence runs api-measure 4194304 7 with ordinary preparation and empty-batch
+controls. All four screen exits are 0. No rebuild, retry, filtering or subtraction.
+
+Native audit: read otool -tvV of both frozen images, following public
+wf_vector_api_{word,record}_append_batch tail entries to their ordinary instances.
+Scalar A/B frame 80 B; same eight-instruction spare loop modulo register allocation,
+capacity retained in a register and final length stored at batch exit. Wider
+cold growth bodies differ but are not taken by this pre-reserved workload.
+Wide A/B frames 336/352 B. Each stores seven q-register pairs (224B constants)
+once before entering the loop; reloads occur after growth calls, not per appended
+value on the spare path. B has extra entry preservation and a 16 B larger frame.
+Rust scalar/wide frames 48/304 B; wide also saves 224 B constants before its loop.
+C++ scalar frame 112 B; wide batch frame 64 B calls a 64 B emplace_back helper for every
+record. The helper constructs directly into spare storage; the call is not itself
+evidence of a bulk payload copy. These native observations do not assign elapsed
+time shares to instructions, setup stores or call boundaries.
+
+Frozen image SHA-256
+e6ac87ecd481bfae91e8f0ea3cf9a7dc6839004ca94f62a14bbc42fa866b57d0  A <scratch-root>/append-spine-exposure/vector-costs-timed
+8e583b5524e22ff8190095908f69308d660f2f203ab1be3356bf5848e73043a8  B <scratch-root>/full-growth-route/vector-costs-timed
+Paths: <repository-root> is the checkout; <scratch-root> is this Vector home's
+.build directory. All recorded commands below run from <repository-root> with
+WHITEFOOT_CHECK_TIMEOUT=180. Relative repository paths preserve the input recipe.
+
+Direct commands and terminal statuses
+perl .github/run-check.pl spare-route-A-clock research/experiments/container-representation/vector-library/.build/append-spine-exposure/vector-costs-timed growth-api-check
+exit 0; outer seconds 0.1351846670731902
+perl .github/run-check.pl spare-route-B-clock research/experiments/container-representation/vector-library/.build/full-growth-route/vector-costs-timed growth-api-check
+exit 0; outer seconds 0.13280091574415565
+perl .github/run-check.pl spare-route-A1 sh -c 'research/experiments/container-representation/vector-library/.build/append-spine-exposure/vector-costs-timed api-measure 4194304 7 > research/experiments/container-representation/vector-library/.build/spare-route-crosscheck/A1-samples.csv'
+exit 0; outer seconds 20.67748091602698
+perl .github/run-check.pl spare-route-B1 sh -c 'research/experiments/container-representation/vector-library/.build/full-growth-route/vector-costs-timed api-measure 4194304 7 > research/experiments/container-representation/vector-library/.build/spare-route-crosscheck/B1-samples.csv'
+exit 0; outer seconds 20.740870791953057
+perl .github/run-check.pl spare-route-B2 sh -c 'research/experiments/container-representation/vector-library/.build/full-growth-route/vector-costs-timed api-measure 4194304 7 > research/experiments/container-representation/vector-library/.build/spare-route-crosscheck/B2-samples.csv'
+exit 0; outer seconds 20.765245458111167
+perl .github/run-check.pl spare-route-A2 sh -c 'research/experiments/container-representation/vector-library/.build/append-spine-exposure/vector-costs-timed api-measure 4194304 7 > research/experiments/container-representation/vector-library/.build/spare-route-crosscheck/A2-samples.csv'
+exit 0; outer seconds 20.793153041042387
+
+Run | Min real ns | Min control ns | Max cohort peer spread | Max cohort WF/peer spread
+A1 | 1333581 | 1582 | 3.356187% | 2.838280%
+B1 | 1333667 | 1542 | 1.955757% | 1.856855%
+B2 | 1334330 | 1541 | 1.259361% | 4.015958%
+A2 | 1332253 | 1580 | 1.741644% | 1.789308%
+
+All 2016 unique rows retained (1008 real, 1008 controls), seven samples per group.
+Every real duration exceeds 1 ms; all cohort spreads are below 10%. Qualification
+requires max(WF)<min(median-slower peer) separately in every launch/cohort; C++ is
+that peer in all 48 groups. Both images qualify all six cells. Each displayed range
+below spans four cohort medians, not an envelope of all samples; exact envelopes
+and pass checks follow. Every peer is reported separately.
+
+| Element / count | WF A | WF B | Rust in A | Rust in B | C++ in A | C++ in B | Spare qualification A / B |
+|---|---:|---:|---:|---:|---:|---:|---|
+| 8 B / 16 | 0.468–0.471 | 0.468–0.474 | 0.468–0.474 | 0.472–0.485 | 1.009–1.012 | 1.009–1.021 | Pass / Pass |
+| 8 B / 256 | 0.372–0.373 | 0.372–0.374 | 0.423–0.427 | 0.425–0.433 | 0.931–0.939 | 0.933–0.936 | Pass / Pass |
+| 8 B / 4096 | 0.319–0.323 | 0.318–0.333 | 0.836–0.867 | 0.833–0.895 | 0.926–0.950 | 0.925–0.962 | Pass / Pass |
+| 256 B / 16 | 4.508–4.568 | 4.540–4.574 | 4.545–4.578 | 4.525–4.613 | 7.128–7.155 | 7.101–7.136 | Pass / Pass |
+| 256 B / 256 | 4.277–4.289 | 4.280–4.332 | 4.308–4.322 | 4.309–4.402 | 7.073–7.121 | 7.038–7.086 | Pass / Pass |
+| 256 B / 4096 | 4.262–4.345 | 4.247–4.330 | 4.272–4.302 | 4.289–4.333 | 7.034–7.149 | 7.078–7.161 | Pass / Pass |
+
+Exact seven-sample ranges, ns/append (run/bytes/count/cohort; slower peer=C++):
+A1/8/16/0 | 0.467141867..0.507393360 | 0.466894388..0.493248224 | 1.008511066..1.026213169 | Pass
+A1/8/16/1 | 0.467338800..0.475565195 | 0.471820831..0.479856253 | 1.007704735..1.017641544 | Pass
+A1/8/256/0 | 0.371029139..0.388861656 | 0.422289848..0.429391384 | 0.927965164..0.937372446 | Pass
+A1/8/256/1 | 0.372022152..0.384380341 | 0.422389030..0.439852715 | 0.926882505..0.957311153 | Pass
+A1/8/4096/0 | 0.318945169..0.337233067 | 0.823119879..1.005331278 | 0.925113440..0.972480059 | Pass
+A1/8/4096/1 | 0.317950487..0.336368561 | 0.798979759..0.905285120 | 0.919511318..0.949044943 | Pass
+A1/256/16/0 | 4.500925779..4.747785330 | 4.522298336..4.581199884 | 7.107016563..7.241272211 | Pass
+A1/256/16/1 | 4.500606060..4.624755621 | 4.510404587..4.701072693 | 7.112630606..7.335862160 | Pass
+A1/256/256/0 | 4.257634163..4.366133451 | 4.277576685..4.396481752 | 7.061136246..7.312238932 | Pass
+A1/256/256/1 | 4.256084442..4.355315924 | 4.278988600..4.396636248 | 7.046584606..7.204802752 | Pass
+A1/256/4096/0 | 4.250662088..4.337523699 | 4.252901793..4.378170252 | 7.002700567..7.267426491 | Pass
+A1/256/4096/1 | 4.243755817..4.378041983 | 4.261638403..4.485236645 | 7.014679193..7.215168238 | Pass
+B1/8/16/0 | 0.467010021..0.474221706 | 0.468134165..0.476630449 | 1.008608580..1.020450115 | Pass
+B1/8/16/1 | 0.467100143..0.496229887 | 0.471563578..0.494311810 | 1.008709669..1.056255341 | Pass
+B1/8/256/0 | 0.371168852..0.396758318 | 0.423282385..0.448257208 | 0.930468559..0.948289871 | Pass
+B1/8/256/1 | 0.371028662..0.395228148 | 0.422954082..0.443150043 | 0.929555416..0.957896709 | Pass
+B1/8/4096/0 | 0.317970991..0.347645044 | 0.794529200..0.853995085 | 0.922153473..0.950454950 | Pass
+B1/8/4096/1 | 0.318039417..0.358641863 | 0.801563263..0.861396313 | 0.922640562..0.932356596 | Pass
+B1/256/16/0 | 4.526244879..4.683522701 | 4.514614820..4.614715576 | 7.063837528..7.220392466 | Pass
+B1/256/16/1 | 4.518690109..4.637854576 | 4.511667013..4.673733473 | 7.041573524..7.330759764 | Pass
+B1/256/256/0 | 4.257089138..4.401996851 | 4.286495924..4.737731934 | 6.981202126..7.840216398 | Pass
+B1/256/256/1 | 4.261775970..4.365605593 | 4.279533386..4.371130466 | 7.011141777..7.180802584 | Pass
+B1/256/4096/0 | 4.237523794..4.367198706 | 4.262223244..4.380368471 | 7.035354376..7.261956453 | Pass
+B1/256/4096/1 | 4.229841709..4.310171843 | 4.270902157..4.452162504 | 7.047215462..7.191993237 | Pass
+B2/8/16/0 | 0.469960928..0.477692604 | 0.476945162..0.480293036 | 1.008521080..1.018542290 | Pass
+B2/8/16/1 | 0.470521212..0.475337744 | 0.482391119..0.489492178 | 1.008533478..1.015035629 | Pass
+B2/8/256/0 | 0.370115280..0.373115778 | 0.421285629..0.450124979 | 0.926285982..0.947972298 | Pass
+B2/8/256/1 | 0.370930195..0.407526731 | 0.422358990..0.452468157 | 0.926563740..0.960101843 | Pass
+B2/8/4096/0 | 0.318129063..0.344405890 | 0.839850187..0.924984932 | 0.925769806..0.968327761 | Pass
+B2/8/4096/1 | 0.328242302..0.334004641 | 0.859171867..1.005520344 | 0.948309660..0.969777584 | Pass
+B2/256/16/0 | 4.524350166..4.678789616 | 4.520044804..4.648574591 | 7.076474190..7.243865967 | Pass
+B2/256/16/1 | 4.531361341..4.772330999 | 4.516765118..4.597665548 | 7.046097040..7.192809105 | Pass
+B2/256/256/0 | 4.266840219..4.429060698 | 4.298548222..4.394631386 | 7.001555681..7.215180159 | Pass
+B2/256/256/1 | 4.268658638..4.345517874 | 4.287810326..4.363452435 | 7.010010242..7.080126762 | Pass
+B2/256/4096/0 | 4.232068777..4.408214569 | 4.288315535..4.363647938 | 7.035095453..7.256458998 | Pass
+B2/256/4096/1 | 4.229154587..4.318416834 | 4.276290894..4.345122576 | 6.993399382..7.384654284 | Pass
+A2/8/16/0 | 0.466763735..0.484517097 | 0.467408419..0.478515863 | 1.008210897..1.021060467 | Pass
+A2/8/16/1 | 0.467291117..0.480920553 | 0.473089695..0.483255625 | 1.008491278..1.016071558 | Pass
+A2/8/256/0 | 0.370870352..0.383983850 | 0.422338724..0.435808897 | 0.927736282..0.960220575 | Pass
+A2/8/256/1 | 0.372310877..0.423937798 | 0.422348499..0.439683676 | 0.927985668..0.951240540 | Pass
+A2/8/4096/0 | 0.317633867..0.354329824 | 0.819445372..0.913003206 | 0.925252676..0.965565920 | Pass
+A2/8/4096/1 | 0.317781925..0.320990562 | 0.786990166..0.933895588 | 0.922430277..0.933726788 | Pass
+A2/256/16/0 | 4.491143465..4.649803400 | 4.529215336..4.643143415 | 7.137469053..7.322623491 | Pass
+A2/256/16/1 | 4.501105785..4.587522507 | 4.518286943..4.581505060 | 7.125091314..7.204683304 | Pass
+A2/256/256/0 | 4.258793831..4.370156765 | 4.276036978..4.552777529 | 7.036363840..7.255425692 | Pass
+A2/256/256/1 | 4.257061243..4.342233419 | 4.287996531..4.445908308 | 7.036716938..7.332814455 | Pass
+A2/256/4096/0 | 4.247707844..4.423185825 | 4.268460751..4.355938911 | 7.078997850..7.279082060 | Pass
+A2/256/4096/1 | 4.254866600..4.409166336 | 4.269360542..4.510752201 | 7.126165628..7.386853218 | Pass
+
+Columns above: WF range | Rust range | C++ range | slower-peer pass.
+A/B attribution still requires consistent separated WF envelopes in both cohorts
+of both adjacent pairs and each peer median abs(B/A-1)<=10%. Pair1=A1/B1;
+pair2=A2/B2 with A2 as denominator, despite reverse chronological order. F=B faster,
+S=B slower,O=overlap. Every cell is unresolved; one scalar-4096 comparison is slower
+for B, while the other three overlap. A/B cost equivalence is not established.
+
+Cell | Pair1 c0/c1 | Pair2 c0/c1 | Max peer drift | Attribution
+8/16 | O/O | O/O | 2.235% | Unresolved
+8/256 | O/O | O/O | 2.348% | Unresolved
+8/4096 | O/O | O/S | 7.120% | Unresolved
+256/16 | O/O | O/O | 0.776% | Unresolved
+256/256 | O/O | O/O | 1.912% | Unresolved
+256/4096 | O/O | O/O | 1.810% | Unresolved
+
+Lossless CSV SHA-256 and original identities
+dd1df87e61c1972ad3a1b0c3b20901439787210188a2fee5d6ec62f8d49281be  ecosystem-append-spare-route-samples.csv
+e3d96687ee14f3834d1166ffa058613c47bbf74eb47e742ba62c4f1ee6cf0f2f  A1-samples.csv
+9ffbbd178a3b63c03e0152d24e0c9fb454a60597a9baae8b6f66d74b0242eaa2  B1-samples.csv
+19519838e3d55315b6bdb00c5b797f0328cdd173dcb7cd47dff37f5ab5516e80  B2-samples.csv
+2f90b5482992d7764de7be0986b76fd1b34755d684c31757efa8b067be3faee0  A2-samples.csv
+To reconstruct an original: remove run from the combined header, select that
+run's rows and remove exactly the first field/comma. Each reconstruction is
+byte-identical to its original file. No sample values or ordering are changed.
+
+Actual scalar spare-loop excerpts (same instruction sequence, different registers):
+A:
+00000001000109dc	ldr	x10, [x20, #0x10]
+00000001000109e0	str	x21, [x10, x9, lsl #3]
+00000001000109e4	add	x9, x9, #0x1
+00000001000109e8	add	x21, x21, #0x1
+00000001000109ec	subs	x22, x22, #0x1
+00000001000109f0	b.eq	0x100010ac4
+00000001000109f4	cmp	x8, x9
+00000001000109f8	b.ne	0x1000109dc
+B:
+0000000100010a3c	ldr	x9, [x20, #0x10]
+0000000100010a40	str	x21, [x9, x8, lsl #3]
+0000000100010a44	add	x8, x8, #0x1
+0000000100010a48	add	x21, x21, #0x1
+0000000100010a4c	subs	x22, x22, #0x1
+0000000100010a50	b.eq	0x100010b38
+0000000100010a54	cmp	x25, x8
+0000000100010a58	b.ne	0x100010a3c
+
+Raw clock/terminal observations
+A-clock: growth append clock: reads=200000 minimum_nonzero_ns=41 quantized=0 / == END spare-route-A-clock: 0.11 s, exit 0 ==
+B-clock: growth append clock: reads=200000 minimum_nonzero_ns=41 quantized=0 / == END spare-route-B-clock: 0.11 s, exit 0 ==
+A1: == END spare-route-A1: 20.66 s, exit 0 ==
+B1: == END spare-route-B1: 20.72 s, exit 0 ==
+B2: == END spare-route-B2: 20.75 s, exit 0 ==
+A2: == END spare-route-A2: 20.77 s, exit 0 ==

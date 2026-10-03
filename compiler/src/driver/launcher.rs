@@ -8,7 +8,7 @@ use std::fmt::Write;
 
 use crate::backend::abi::{FunctionAbi, ParameterAbi, ResultAbi};
 use crate::backend::emission::{FunctionBody, Module, Parameter, Signature};
-use crate::backend::emitter::source_symbol;
+use crate::backend::emitter::{floor_runtime_fallback, source_symbol};
 use crate::{BackendFailure, IrNominalKind, IrProgram, IrSourceMode, IrType};
 
 /// The standard library's invocation inputs and exit status, by the
@@ -65,7 +65,9 @@ pub(crate) fn render(program: &IrProgram, selected: &str) -> Result<Module, Back
         ResultAbi::Value(IrType::Unit) => None,
         _ => return Ok(Module::default()),
     };
-    let mut module = Module::default();
+    // Only this admitted runner supplies wf__main_body. Keep its floor
+    // fallback with it, so a callable library names no nonexistent entry.
+    let mut module = floor_runtime_fallback()?;
     if inputs.is_some() {
         module.text("\n");
         module.declare(Signature::new(

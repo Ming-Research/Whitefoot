@@ -1,0 +1,18 @@
+--- vector-costs.c
++++ vector-costs.c
+@@ -500,6 +500,15 @@
+             capacity = capacity > CEILING / 2 ? CEILING : capacity * 2;
+         }
+     }
++#if defined(NULLABLE_WF_ZERO_OWNER_V1)
++    // Each source trace creates one logical zero-capacity Slots owner. The
++    // nullable representation issues no physical request for that owner.
++    if (variant == WHITEFOOT) {
++        --per_requests;
++        per_bytes -= 16;
++        if (path != 1 || count == 0) per_peak -= 16;
++    }
++#endif
+     size_t traces = path < 2 ? rounds : 1;
+     require(requests == per_requests * traces && requested_bytes == per_bytes * traces
+             && peak_bytes == (traces ? per_peak : 0),

@@ -24,6 +24,9 @@ use super::super::super::places::{
 };
 use super::super::references::{OWN1_ROOTED_CONSUME, WIN3_NO_TAKE};
 
+/// [TYPE-9] a borrowed or slot-selected runtime content has no Box to move.
+const TYPE9_KEEP_CONTENT_BOXED: &str =
+    "borrow the runtime-capacity content, or read its elements and measures in place";
 use super::super::{CheckStop, Checker, EffectSet, LocalBinding, PlaceAccess, TypedExpression};
 use super::{PlaceUseContext, PlaceUseOptions, ResolvedPlaceSet};
 
@@ -216,6 +219,65 @@ impl<'unit> Checker<'_, 'unit> {
                     "the run a range reference names, which is read by `p^[i]` or \
                      `p^.len` [REF-4, MSR-1]",
                 ),
+            );
+        }
+        // [TYPE-9] both copying and moving a complete runtime-capacity
+        // content would materialize an owned value outside its Box. Judge
+        // that placement separately from [OWN-1]'s capabilities: an Array
+        // content may be copy even though it cannot be an inline value.
+        // Borrow formation has its own path and never reaches this read.
+        if matches!(
+            place.ty,
+            CheckedType::Buffer { .. }
+                | CheckedType::Segments { .. }
+                | CheckedType::Window { capacity: None, .. }
+        ) {
+            let mut mechanical_fix = TYPE9_KEEP_CONTENT_BOXED.to_owned();
+            // A source reference or an element does not own the Box it
+            // reaches. Offer owner moves/releases only for an owned field
+            // path whose final content step has an actual Box parent.
+            if !self.types.declarations.tree.place_has_dereference(node)?
+                && bindings
+                    .get(&place.declaration)
+                    .is_some_and(|local| local.mode == CheckedMode::Own)
+                && place
+                    .resolved
+                    .identity
+                    .path
+                    .iter()
+                    .all(|step| matches!(step, PlaceStep::Field(_) | PlaceStep::Deref))
+                && matches!(place.resolved.identity.path.last(), Some(PlaceStep::Deref))
+            {
+                let mut cell = place.resolved.identity.clone();
+                cell.path.pop();
+                if let Some(CheckedType::Nominal(id)) =
+                    self.types.resolved_place_type(&cell, bindings)?
+                    && let CheckedNominalKind::Box { referent, .. } = self.types.nominal(id)?.kind
+                    && referent == place.ty
+                {
+                    let cell = self.types.render_resolved_place(&cell, bindings)?;
+                    mechanical_fix = if options.explicit_move {
+                        super::super::repairs::runtime_content_move(
+                            &cell,
+                            matches!(place.ty, CheckedType::Window { .. }),
+                            self.types
+                                .linear_release_obligation(check_context, place.ty)?
+                                .is_none(),
+                        )
+                    } else {
+                        format!(
+                            "borrow the runtime-capacity content, or move the complete Box `{cell}` instead"
+                        )
+                    };
+                }
+            }
+            return self.types.declarations.issue_node(
+                SemanticRule::Type9,
+                node,
+                SemanticIssueKind::InlineRuntimeCapacityShape {
+                    spelling: self.types.checked_type_name(place.ty)?,
+                    mechanical_fix,
+                },
             );
         }
         let copy = self.types.is_copy_type(check_context, place.ty)?;
@@ -923,9 +985,8 @@ impl<'unit> TypeContext<'unit> {
     /// the content is this expression's value. A cell has exactly one field,
     /// so no other part of the owner survives to take a derived release.
     ///
-    /// [TYPE-9] refuses the same spelling at a runtime-capacity content: its
-    /// block is the cell's heap object, and taking the window out of the cell
-    /// would leave a `Slots<T>` value in a position the rule admits nowhere.
+    /// The value-place boundary has already refused runtime-capacity content
+    /// [TYPE-9], whose block cannot become an inline owned value.
     #[allow(clippy::too_many_arguments)]
     fn check_box_unbox(
         &self,
@@ -941,38 +1002,6 @@ impl<'unit> TypeContext<'unit> {
             .get(&declaration)
             .cloned()
             .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-        if matches!(
-            referent,
-            CheckedType::Buffer { .. }
-                | CheckedType::Segments { .. }
-                | CheckedType::Window { capacity: None, .. }
-        ) {
-            // The last content step selects the runtime-capacity value;
-            // its prefix is the Box that can move or be released [TYPE-9].
-            let (PlaceStep::Deref, cell_path) = resolved_path
-                .split_last()
-                .ok_or(SemanticCompilerFailure::InvalidResolution)?
-            else {
-                return Err(SemanticCompilerFailure::InvalidResolution.into());
-            };
-            let mut cell = ResolvedPlace::binding(local.binding);
-            cell.path = cell_path.to_vec();
-            let cell = self.render_resolved_place(&cell, bindings)?;
-            let window = matches!(referent, CheckedType::Window { .. });
-            let droppable = self
-                .linear_release_obligation(check_context, referent)?
-                .is_none();
-            return self.declarations.issue_node(
-                SemanticRule::Type9,
-                use_node,
-                SemanticIssueKind::InlineRuntimeCapacityShape {
-                    spelling: self.checked_type_name(referent)?,
-                    mechanical_fix: super::super::repairs::runtime_content_move(
-                        &cell, window, droppable,
-                    ),
-                },
-            );
-        }
         let path = self.checked_owned_take_path(local.ty, resolved_path)?;
         let mut cleanup = Vec::new();
         for action in self.owned_take_cleanup(check_context, local.ty, &path)? {

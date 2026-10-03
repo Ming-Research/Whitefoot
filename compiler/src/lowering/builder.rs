@@ -15,6 +15,7 @@ mod runs;
 mod split;
 mod storage;
 mod targets;
+mod terminal_consumption;
 mod work;
 
 use crate::CheckedProgram;
@@ -183,6 +184,7 @@ pub(crate) fn lower_checked_from(
             };
             lower_function(
                 function,
+                &checked.data.functions,
                 index,
                 &symbols[index],
                 context,
@@ -190,26 +192,29 @@ pub(crate) fn lower_checked_from(
                 overlap,
             )
         })
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Result<Vec<_>, LoweringFailure>>()?;
     #[cfg(test)]
     let loop_candidate_constructions = synthesis.borrow().candidate_constructions;
     let (synthesized, mut actualization) = synthesis.into_inner().finish()?;
     functions.extend(synthesized);
-    let weights = split::assign_weights(&mut functions);
-    if call_grain == CallGrain::WorkUnit {
-        call_grain::prune(&mut functions, &weights, &mut actualization);
-    }
-    Ok(IrProgram {
+    let mut program = IrProgram {
         nominals,
         elements,
         constants,
         functions,
-        actualization,
+        actualization: Vec::new(),
         sequential_compute_refusal,
         recursion_budget,
         #[cfg(test)]
         loop_candidate_constructions,
-    })
+    };
+    super::window_length_residency::select(&mut program, target);
+    let weights = split::assign_weights(&mut program.functions);
+    if call_grain == CallGrain::WorkUnit {
+        call_grain::prune(&mut program.functions, &weights, &mut actualization);
+    }
+    program.actualization = actualization;
+    Ok(program)
 }
 
 /// What every builder of one lowering shares: the program-wide tables it reads
@@ -424,6 +429,7 @@ fn lower_nominals(
 
 fn lower_function<'program>(
     function: &crate::semantic::CheckedFunction,
+    functions: &[crate::semantic::CheckedFunction],
     physical_index: usize,
     symbol: &'program str,
     context: LoweringContext<'program>,
@@ -514,7 +520,7 @@ fn lower_function<'program>(
     if let Some(body) = &function.body {
         if uninhabited {
             builder.terminate(IrTerminator::Unreachable)?;
-        } else {
+        } else if !builder.lower_terminal_consumption(function, functions)? {
             builder.lower_statements(body, None)?;
         }
     } else if compiler_owned {
@@ -610,14 +616,15 @@ fn lower_parameter_type(
 /// The representation a borrow-mode value carries.
 ///
 /// A borrow addresses the owner's storage, including a Box's pointer slot.
-/// Ordinary opaque values use the same address path. The buffer/view ABI
-/// retains its descriptor representation for every callable body [REF-1].
+/// Ordinary opaque values use the same address path. Runtime-capacity content
+/// references retain the selected Box slot, and range references retain their
+/// element-pointer/count pair, across every callable body [REF-1].
 fn lower_borrow_mode_type(
     mode: CheckedMode,
     ty: IrType,
     nominals: &[IrNominal],
 ) -> Result<IrType, LoweringFailure> {
-    if mode == CheckedMode::Own || matches!(ty, IrType::Buffer { .. } | IrType::Range { .. }) {
+    if mode == CheckedMode::Own || matches!(ty, IrType::Range { .. }) {
         return Ok(ty);
     }
     let Some(referent) = IrAddressed::of(ty) else {

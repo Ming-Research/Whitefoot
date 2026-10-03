@@ -65,10 +65,13 @@ mod reinterpret;
 mod requires;
 mod resource_enums;
 mod result_abi;
+mod runtime_content_swap;
 mod stack_ledger;
 mod system;
 mod tail_calls;
 mod target_frame;
+mod terminal_consumption;
+mod window_length_residency;
 /// [TYPE-9]'s storage shapes and the cell as the backend emits them: their
 /// construction [OP-13], target qualification [STOR-6, OP-9] and
 /// compiler-derived release [STOR-3, WIN-3].
@@ -1077,7 +1080,26 @@ fn main() -> status: std::process::ExitStatus pure {
             .expect("each selected payload field has a destination");
         initialized(body, &compact, tag, &[(address, field_type)]);
     }
-    assert!(llvm.contains("call void @abort()"));
+    // The initialized enum domain makes each exhaustive match's default
+    // unreachable; the selected tag widths and payload writes above remain
+    // independent obligations.
+    let main = emitted_function(&llvm, "main");
+    let defaults: Vec<_> = main
+        .lines()
+        .filter(|line| line.trim_start().starts_with("switch "))
+        .map(|line| {
+            line.split_once(", label %")
+                .and_then(|(_, suffix)| suffix.strip_suffix(" ["))
+                .expect("each match names its default block")
+        })
+        .collect();
+    assert!(!defaults.is_empty(), "the fixture must exercise matches");
+    for label in defaults {
+        assert!(
+            main.contains(&format!("\n{label}:\n  unreachable\n")),
+            "an exhaustive match has an unreachable default: {main}"
+        );
+    }
     assert!(!llvm.contains(&format!("{} = type", nominal_type("Flag"))));
     let output = compile_and_run(&llvm);
     assert!(output.status.success(), "{output:?}");

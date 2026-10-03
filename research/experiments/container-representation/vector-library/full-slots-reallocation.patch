@@ -1,0 +1,551 @@
+diff --git a/compiler/src/backend/emitter.rs b/compiler/src/backend/emitter.rs
+index 3e954dfda..37666c75a 100644
+--- a/compiler/src/backend/emitter.rs
++++ b/compiler/src/backend/emitter.rs
+@@ -402,6 +402,11 @@ pub(super) fn emit_llvm_with_window_address_facts(
+             "ptr",
+             vec![Parameter::unnamed("i64")],
+         ));
++        text.declare(Signature::new(
++            "realloc",
++            "ptr",
++            vec![Parameter::unnamed("ptr"), Parameter::unnamed("i64")],
++        ));
+         text.declare(Signature::new(
+             "free",
+             "void",
+diff --git a/compiler/src/backend/emitter/runs.rs b/compiler/src/backend/emitter/runs.rs
+index 836ced81a..d0cec27ab 100644
+--- a/compiler/src/backend/emitter/runs.rs
++++ b/compiler/src/backend/emitter/runs.rs
+@@ -1196,10 +1196,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
+     /// [OP-10] `grow`: the cell's content is remade whole at the new
+     /// capacity.
+     ///
+-    /// One allocation, header stores and one filled-prefix byte copy, one
+-    /// free, and the cell's pointer slot takes the new block. [STOR-7] makes
+-    /// the copying route legal at every value, because no judgment depends
+-    /// on the block's address.
++    /// A full run resizes its whole allocation. A partial run allocates and
++    /// copies only the initialized prefix, then frees the old block. [STOR-7]
++    /// permits either route without changing the values' judgments.
+     pub(super) fn emit_window_grow(
+         &mut self,
+         result: IrValueId,
+@@ -1240,20 +1239,43 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
+             "  %{length} = load i64, ptr {old_length_address}"
+         )
+         .map_err(|_| BackendFailure::TextEmission)?;
++        let capacity_field = shape.capacity_field().ok_or(BackendFailure::InvalidIr)?;
++        let old_capacity_address =
++            self.aggregate_field_pointer(block_type, &old_block, capacity_field as usize)?;
++        let old_capacity = self.next_temporary()?;
++        let full = self.next_temporary()?;
+         let slots_bytes = self.next_temporary()?;
+         let bytes = self.next_temporary()?;
++        let resized = self.next_temporary()?;
++        let resized_nonnull = self.next_temporary()?;
+         let fresh = self.next_temporary()?;
+         let nonnull = self.next_temporary()?;
++        let selected = self.next_temporary()?;
+         let ready = window_block_ready_label(result);
+         let oom = window_block_oom_label(result);
++        let resize = format!("{ready}.resize");
++        let allocate = format!("{ready}.allocate");
++        let copy = format!("{ready}.copy");
+         {
+             let emission_argument_0 = self.value_name(capacity);
+-
++            writeln!(
++                self.output,
++                "  %{old_capacity} = load i64, ptr {old_capacity_address}\n  %{full} = icmp eq i64 %{length}, %{old_capacity}\n  %{slots_bytes} = mul nuw i64 {emission_argument_0}, {element_size}\n  %{bytes} = add nuw i64 %{slots_bytes}, {header_size}\n  br i1 %{full}, label %{resize}, label %{allocate}"
++            )
++            .map_err(|_| BackendFailure::TextEmission)?;
++            self.output.open_block(resize.clone());
++            self.output.symbol("realloc");
++            writeln!(
++                self.output,
++                "  %{resized} = call ptr @realloc(ptr %{old}, i64 %{bytes})\n  %{resized_nonnull} = icmp ne ptr %{resized}, null\n  br i1 %{resized_nonnull}, label %{ready}, label %{oom}"
++            )
++            .map_err(|_| BackendFailure::TextEmission)?;
++            self.output.open_block(allocate);
+             {
+                 self.output.symbol("malloc");
+                 write!(
+                     self.output,
+-                    "  %{slots_bytes} = mul nuw i64 {emission_argument_0}, {element_size}\n  %{bytes} = add nuw i64 %{slots_bytes}, {header_size}\n  %{fresh} = call ptr @malloc(i64 %{bytes})\n  %{nonnull} = icmp ne ptr %{fresh}, null\n  br i1 %{nonnull}, label %{ready}, label %{oom}\n"
++                    "  %{fresh} = call ptr @malloc(i64 %{bytes})\n  %{nonnull} = icmp ne ptr %{fresh}, null\n  br i1 %{nonnull}, label %{copy}, label %{oom}\n"
+                 )
+             }?;
+             self.output.open_block(oom.to_string());
+@@ -1264,7 +1286,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
+                     "  call void @wf_resource_abort()\n  unreachable\n"
+                 )
+             }?;
+-            self.output.open_block(ready.to_string());
++            self.output.open_block(copy.clone());
+         };
+         let fresh_block = format!("%{fresh}");
+         let fresh_length_address =
+@@ -1274,15 +1296,6 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
+             "  store i64 %{length}, ptr {fresh_length_address}"
+         )
+         .map_err(|_| BackendFailure::TextEmission)?;
+-        let capacity_field = shape.capacity_field().ok_or(BackendFailure::InvalidIr)?;
+-        let fresh_capacity_address =
+-            self.aggregate_field_pointer(block_type, &fresh_block, capacity_field as usize)?;
+-        writeln!(
+-            self.output,
+-            "  store i64 {}, ptr {fresh_capacity_address}",
+-            self.value_name(capacity)
+-        )
+-        .map_err(|_| BackendFailure::TextEmission)?;
+         // The filled slots move as bytes: no value's judgment depends on its
+         // address [STOR-7], and a `Slots` window begins at slot zero, so the
+         // filled prefix is one contiguous extent.
+@@ -1301,7 +1314,24 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
+         self.output.symbol("free");
+         writeln!(
+             self.output,
+-            "  call void @llvm.memmove.p0.p0.i64(ptr %{fresh_slots}, ptr %{old_slots}, i64 %{moved}, i1 false)\n  call void @free(ptr %{old})\n  store ptr %{fresh}, ptr {cell_address}"
++            "  call void @llvm.memmove.p0.p0.i64(ptr %{fresh_slots}, ptr %{old_slots}, i64 %{moved}, i1 false)\n  call void @free(ptr %{old})\n  br label %{ready}"
++        )
++        .map_err(|_| BackendFailure::TextEmission)?;
++        self.output.open_block(ready);
++        writeln!(
++            self.output,
++            "  %{selected} = phi ptr [ %{resized}, %{resize} ], [ %{fresh}, %{copy} ]"
++        )
++        .map_err(|_| BackendFailure::TextEmission)?;
++        let selected_capacity_address = self.aggregate_field_pointer(
++            block_type,
++            &format!("%{selected}"),
++            capacity_field as usize,
++        )?;
++        writeln!(
++            self.output,
++            "  store i64 {}, ptr {selected_capacity_address}\n  store ptr %{selected}, ptr {cell_address}",
++            self.value_name(capacity)
+         )
+         .map_err(|_| BackendFailure::TextEmission)?;
+         self.emit_constant(result, ty, IrConstant::Unit)
+diff --git a/compiler/src/backend/tests/containers.rs b/compiler/src/backend/tests/containers.rs
+index 361226822..f0b57b9a5 100644
+--- a/compiler/src/backend/tests/containers.rs
++++ b/compiler/src/backend/tests/containers.rs
+@@ -374,3 +374,137 @@ fn growing_a_run_keeps_the_original_data_at_capacity_and_target_limits() {
+         b"growth: 36 boundary traces; all owners returned\n"
+     );
+ }
++
++#[test]
++fn full_slots_reallocation_preserves_contents_owners_and_failure_publication() {
++    let source = br#"fn grow_owned() -> result: u64 pure {
++  let values = box_slots_new::<Box<u64>>(capacity: 2_u64);
++  let first = box_new::<u64>(value: 17_u64);
++  place_back(window: &values.inner, value: move first);
++  let second = box_new::<u64>(value: 29_u64);
++  place_back(window: &values.inner, value: move second);
++  grow(cell: &values, capacity: 4_u64);
++  if values.inner.len != 2_u64 {
++    return 1_u64;
++  }
++  if values.inner.cap != 4_u64 {
++    return 2_u64;
++  }
++  let first_value = values.inner[0_u64].inner;
++  let second_value = values.inner[1_u64].inner;
++  if first_value != 17_u64 {
++    return 3_u64;
++  }
++  if second_value != 29_u64 {
++    return 4_u64;
++  }
++  return 0_u64;
++}
++
++fn grow_partial() -> result: u64 pure {
++  let values = box_slots_new::<u8>(capacity: 4_u64);
++  place_back(window: &values.inner, value: 31_u8);
++  place_back(window: &values.inner, value: 47_u8);
++  grow(cell: &values, capacity: 8_u64);
++  if values.inner.len != 2_u64 {
++    return 1_u64;
++  }
++  if values.inner.cap != 8_u64 {
++    return 2_u64;
++  }
++  if values.inner[0_u64] != 31_u8 {
++    return 3_u64;
++  }
++  if values.inner[1_u64] != 47_u8 {
++    return 4_u64;
++  }
++  return 0_u64;
++}
++
++fn grow_zero_capacity() -> result: u64 pure {
++  let values = box_slots_new::<u8>(capacity: 0_u64);
++  grow(cell: &values, capacity: 3_u64);
++  if values.inner.len != 0_u64 {
++    return 1_u64;
++  }
++  if values.inner.cap != 3_u64 {
++    return 2_u64;
++  }
++  return 0_u64;
++}
++
++fn grow_zero_stride() -> result: u64 pure {
++  let values = box_slots_new::<Array<u64, 0>>(capacity: 1_u64);
++  let empty = array_filled::<u64, 0>(value: 0_u64);
++  place_back(window: &values.inner, value: empty);
++  grow(cell: &values, capacity: 4_u64);
++  if values.inner.len != 1_u64 {
++    return 1_u64;
++  }
++  if values.inner.cap != 4_u64 {
++    return 2_u64;
++  }
++  let value = values.inner[0_u64];
++  return 0_u64;
++}
++
++fn grow_failure(values: &Box<Slots<u8>>) -> result: u64 writes(values) contract {
++  requires values^.inner.len == 1_u64;
++  requires values^.inner.cap == 1_u64;
++} {
++  grow(cell: values, capacity: 2_u64);
++  return 0_u64;
++}
++
++fn main() -> status: std::process::ExitStatus pure {
++  return std::process::exit_status(code: 0_u8);
++}
++"#;
++    let mut module = observe_allocations(&emit(source));
++    assert_eq!(module.matches("declare ptr @realloc(ptr, i64)").count(), 1);
++    assert!(module.contains("call ptr @realloc(ptr "));
++    assert!(!module.contains("wf_observe_reallocate"));
++    module = module.replace("@realloc(", "@wf_observe_reallocate(");
++    // Observe the existing exhaustion edge before it can publish a null
++    // owner or alter the old header. This is not a source-visible refusal.
++    assert!(module.contains("call void @wf_resource_abort()"));
++    module = module.replace(
++        "call void @wf_resource_abort()",
++        "call void @wf_observe_abort()",
++    );
++    module.push_str("\ndeclare void @wf_observe_abort()\n");
++    module = module.replacen(
++        "define i32 @wf__main_body(",
++        "define i32 @wf_fixture_body(",
++        1,
++    );
++    module.push_str("\ndeclare i32 @wf__main_body(i32, ptr)\n");
++    let host = Some(include_str!("reallocation_observer.c"));
++    let output = compile_link_and_run(&module, host, &[]);
++    assert_eq!(output.status.code(), Some(0), "{output:?}");
++    assert!(output.stderr.is_empty(), "{output:?}");
++    assert_eq!(
++        output.stdout,
++        b"reallocation: 8 full/partial/zero/nested-owner cases; exact releases\n"
++    );
++    let failed = compile_link_and_run(&module, host, &[b"failure"]);
++    assert_eq!(failed.status.code(), Some(73), "{failed:?}");
++    assert!(failed.stderr.is_empty(), "{failed:?}");
++    assert_eq!(
++        failed.stdout,
++        b"reallocation: null result reached floor with old owner and header intact\n"
++    );
++    // The observer's returned block can safely hold both valid owners in the
++    // wrong order. Ordinary expected values stay fixed and must detect it.
++    let corrupt_host = format!(
++        "#define CORRUPT_PRESERVED_ORDER\n{}",
++        include_str!("reallocation_observer.c")
++    );
++    let corrupt = compile_link_and_run(&module, Some(&corrupt_host), &[]);
++    assert_eq!(corrupt.status.code(), Some(1), "{corrupt:?}");
++    assert!(corrupt.stdout.is_empty(), "{corrupt:?}");
++    assert_eq!(
++        corrupt.stderr,
++        b"reallocation observer: source content/header assertion\n"
++    );
++}
+diff --git a/compiler/src/backend/tests/cost_shape.rs b/compiler/src/backend/tests/cost_shape.rs
+index 728cc58fa..8f5eeea52 100644
+--- a/compiler/src/backend/tests/cost_shape.rs
++++ b/compiler/src/backend/tests/cost_shape.rs
+@@ -265,6 +265,15 @@ initialize:
+     assert!(bulk_initializations_use_fresh_storage(reused).is_err());
+     let calloc = fresh.replace("@malloc(i64 4112)", "@calloc(i64 1, i64 4112)");
+     assert!(bulk_initializations_use_fresh_storage(&calloc).is_err());
++    let reallocated = fresh
++        .replace("@fresh()", "@fresh(ptr nonnull %old)")
++        .replace("@malloc(i64 4112)", "@realloc(ptr nonnull %old, i64 4112)");
++    let remake = reallocated
++        .lines()
++        .find(|line| call_target(line) == Some("realloc"))
++        .unwrap();
++    assert!(remakes_a_run(&reallocated, remake));
++    assert!(bulk_initializations_use_fresh_storage(&reallocated).is_err());
+ }
+ 
+ /// A compact pointer-provenance trace for optimizer-version failures in the
+@@ -392,12 +401,16 @@ fn pointer_root<'module>(function: &'module str, mut pointer: &'module str) -> &
+ }
+ 
+ /// Recognize an allocation that remakes an existing run instead of taking a
+-/// new one. `grow` [OP-10] allocates the larger block, copies the old window
+-/// into it, and frees the old block, so the allocation is the destination of a
+-/// bulk copy whose source block the same function frees. A take may also be a
+-/// copy destination, as `walk`'s child path is for the prefix it copies in,
+-/// but its source is never a block the function releases.
++/// new one. A full `grow` [OP-10] reallocates its nonnull existing block; a
++/// partial grow copies into an allocation and frees the source block. A take
++/// may also be a copy destination, as `walk`'s child path is for its prefix,
++/// but its source is never a block the function releases. Neither remake
++/// grants the fresh-storage permission required by the fill oracle.
+ fn remakes_a_run(function: &str, allocation: &str) -> bool {
++    if call_target(allocation) == Some("realloc") {
++        return call_argument(allocation, "realloc", 0)
++            .is_some_and(|argument| argument.starts_with("ptr nonnull %"));
++    }
+     let Some(register) = allocation.trim_start().split(" = ").next() else {
+         return false;
+     };
+@@ -444,8 +457,8 @@ fn the_reused_buffers_are_initialized_once_at_allocation() {
+     // flagship re-attribution has to explain. Growth is extra and is not a
+     // take: `widen_window` remakes the read input for a line longer than it,
+     // and `push_byte` and `push_word` remake a store for a directory whose
+-    // names pass 4096 bytes or whose entries pass 512. Each remake allocates
+-    // the larger block, copies the old run into it and frees the old block.
++    // names pass 4096 bytes or whose entries pass 512. Full runs may reallocate
++    // the existing block; partial runs allocate, copy their prefix and free.
+     //
+     // The source still owns initialization. With exclusive run rows LLVM can
+     // fold malloc plus the zero-fill loop into calloc. Count either optimized
+@@ -464,6 +477,13 @@ fn the_reused_buffers_are_initialized_once_at_allocation() {
+         let helper = signature.contains(" @wf_zeroed_bytes(");
+         helper_defined |= helper;
+         for line in function.lines() {
++            if call_target(line) == Some("realloc") {
++                assert!(
++                    remakes_a_run(function, line),
++                    "existing nonnull backing: {line}"
++                );
++                remakes += 1;
++            }
+             if let Some(callee @ ("malloc" | "calloc")) = call_target(line) {
+                 if helper {
+                     helper_takes += 1;
+@@ -534,14 +554,25 @@ fn the_reused_buffers_are_initialized_once_at_allocation() {
+     );
+     assert!(
+         remakes >= 3,
+-        "widen_window, push_byte and push_word each remake a run by copying it: {remakes}"
++        "widen_window, push_byte and push_word each remake existing backing: {remakes}"
+     );
+-    // Nothing reallocates in place, and nothing re-initializes. That the fill
+-    // runs once per take is a source fact under this surface rather than an
++    for name in ["widen_window", "push_byte", "push_word"] {
++        let function = source_function(optimized(), &format!("wf_{name}"));
++        assert!(
++            function.lines().any(|line| {
++                matches!(call_target(line), Some("malloc" | "calloc" | "realloc"))
++                    && remakes_a_run(function, line)
++            }),
++            "{name} must still remake existing backing"
++        );
++    }
++    // The former blanket realloc ban described the provisional malloc-only
++    // route. Reallocation may now remake full backing, but permits no refill.
++    // That the fill runs once per take is a source fact rather than an
+     // allocator guarantee: the fill loop is inside `zeroed_bytes`, between the
+     // take and the hand-back, so a caller cannot reach a filled run without
+     // having taken it and cannot re-reach the fill without taking another. A
+-    // remake fills only the slots it added, and only once, after its copy.
++    // remake fills only the slots it added, and only once, after growth.
+     // LLVM may retain that first fill as a memset after malloc and
+     // its null check, instead of a calloc. The provenance/control-flow oracle
+     // permits one such fill per allocation and refuses repeated fills, fills
+@@ -551,7 +582,7 @@ fn the_reused_buffers_are_initialized_once_at_allocation() {
+     // which aggregate stores this optimizer combines.
+     // Keep the no-refill claim on pointer provenance, rather than forbidding
+     // the unrelated aggregate initialization instruction by name.
+-    for forbidden in ["@realloc(", "@reallocf(", "bzero"] {
++    for forbidden in ["@reallocf(", "bzero"] {
+         assert!(
+             !optimized().contains(forbidden),
+             "the reused buffers must not reach {forbidden}"
+diff --git a/compiler/src/backend/tests/reallocation_observer.c b/compiler/src/backend/tests/reallocation_observer.c
+new file mode 100644
+index 000000000..ac3b5d757
+--- /dev/null
++++ b/compiler/src/backend/tests/reallocation_observer.c
+@@ -0,0 +1,166 @@
++/* Deterministic allocator routes for grow, independent of the host allocator's
++ * choice to move. Retire with the lowering if that obligation disappears. */
++#include <stdint.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++
++extern uint64_t wf_grow_owned(void);
++extern uint64_t wf_grow_partial(void);
++extern uint64_t wf_grow_zero_capacity(void);
++extern uint64_t wf_grow_zero_stride(void);
++extern uint64_t wf_grow_failure(void **);
++extern int wf__floor_run(int, char **);
++
++struct allocation { unsigned char *pointer; size_t bytes; unsigned live; };
++static struct allocation allocations[4];
++static size_t allocated, malloc_calls, realloc_calls, releases;
++static unsigned moving, selected_case, failing;
++static void **failure_cell;
++
++static void require(int okay, const char *message) {
++    if (!okay) { fprintf(stderr, "reallocation observer: %s\n", message); exit(1); }
++}
++static struct allocation *find(void *pointer) {
++    for (size_t i = 0; i < allocated; ++i)
++        if (allocations[i].pointer == pointer) return &allocations[i];
++    require(0, "foreign allocation");
++    return NULL;
++}
++static struct allocation *make(size_t bytes, unsigned char poison) {
++    require(allocated < 4 && bytes <= 64, "unexpected allocation size/count");
++    struct allocation *allocation = &allocations[allocated++];
++    /* Reserve room for the forced in-place route, while recording only the
++     * exact logical extent the emitted allocator actually requested. */
++    allocation->pointer = malloc(64);
++    require(allocation->pointer != NULL, "observer allocation failed");
++    allocation->bytes = bytes;
++    allocation->live = 1;
++    memset(allocation->pointer, poison, 64);
++    return allocation;
++}
++static void corrupt_preserved_order(void *pointer) {
++#ifdef CORRUPT_PRESERVED_ORDER
++    if (selected_case == 0) {
++        unsigned char *payload = (unsigned char *)pointer + 16;
++        void *first, *second;
++        memcpy(&first, payload, sizeof first);
++        memcpy(&second, payload + sizeof first, sizeof second);
++        memcpy(payload, &second, sizeof second);
++        memcpy(payload + sizeof second, &first, sizeof first);
++    }
++#else
++    (void)pointer;
++#endif
++}
++void *wf_observe_allocate(uint64_t bytes) {
++    const size_t nested[] = {32, 8, 8};
++    size_t expected = selected_case == 0 ? nested[malloc_calls < 3 ? malloc_calls : 0]
++        : selected_case == 1 ? (malloc_calls == 0 ? 20 : 24)
++        : selected_case == 4 ? 17 : 16;
++    if (bytes != expected)
++        fprintf(stderr, "case=%u malloc=%zu expected=%zu observed=%llu\n",
++                selected_case, malloc_calls, expected, (unsigned long long)bytes);
++    require(bytes == expected, "malloc extent");
++    require(malloc_calls < (selected_case == 0 ? 3u : selected_case == 1 ? 2u : 1u),
++            "extra malloc");
++    ++malloc_calls;
++    return make((size_t)bytes, malloc_calls == 2 ? 0xa6 : 0xa5)->pointer;
++}
++void *wf_observe_reallocate(void *pointer, uint64_t bytes) {
++    struct allocation *old = find(pointer);
++    require(old->live && realloc_calls++ == 0 && selected_case != 1,
++            "realloc route/identity");
++    uint64_t *header = (uint64_t *)pointer;
++    uint64_t length = selected_case == 0 ? 2 : selected_case == 2 ? 0 : 1;
++    uint64_t capacity = selected_case == 0 ? 2 : selected_case == 2 ? 0 : 1;
++    size_t expected = selected_case == 0 ? 48 : selected_case == 2 ? 19
++        : selected_case == 3 ? 16 : 18;
++    require(header[0] == length && header[1] == capacity && bytes == expected,
++            "realloc old header or requested extent");
++    if (failing) return NULL;
++    if (!moving) {
++        if (bytes > old->bytes)
++            memset(old->pointer + old->bytes, 0xa6, (size_t)bytes - old->bytes);
++        old->bytes = (size_t)bytes;
++        corrupt_preserved_order(pointer);
++        return pointer;
++    }
++    struct allocation *fresh = make((size_t)bytes, 0xa6);
++    memcpy(fresh->pointer, old->pointer, old->bytes);
++    old->live = 0; /* realloc retires the old allocation without an owner free. */
++    memset(old->pointer, 0xdd, old->bytes);
++    corrupt_preserved_order(fresh->pointer);
++    return fresh->pointer;
++}
++void wf_observe_release(void *pointer) {
++    struct allocation *allocation = find(pointer);
++    require(allocation->live, "release of retired/released allocation");
++    if (selected_case == 0 && allocation->bytes == 8) {
++        uint64_t value = *(uint64_t *)pointer;
++        require(value == 17 || value == 29, "nested owner content");
++    } else {
++        uint64_t *header = (uint64_t *)pointer;
++        if (selected_case == 0)
++            require(header[0] == 2 && header[1] == 4, "nested run final header");
++        if (selected_case == 1 && allocation->bytes == 24) {
++            require(header[0] == 2 && header[1] == 8, "partial final header");
++            unsigned char *payload = allocation->pointer + 16;
++            require(payload[0] == 31 && payload[1] == 47, "partial prefix contents");
++            for (size_t i = 2; i < 8; ++i)
++                require(payload[i] == 0xa6, "partial grow copied uninitialized spare bytes");
++        }
++        if (selected_case == 2)
++            require(header[0] == 0 && header[1] == 3, "zero-capacity final header");
++        if (selected_case == 3)
++            require(header[0] == 1 && header[1] == 4, "zero-stride final header");
++    }
++    allocation->live = 0;
++    ++releases;
++    memset(pointer, 0xdd, allocation->bytes);
++}
++void wf_observe_abort(void) {
++    require(failing && realloc_calls == 1 && malloc_calls == 1 && releases == 0,
++            "unexpected floor path");
++    require(failure_cell && *failure_cell == allocations[0].pointer && allocations[0].live,
++            "owner published before realloc failure");
++    uint64_t *header = (uint64_t *)*failure_cell;
++    require(header[0] == 1 && header[1] == 1 && allocations[0].pointer[16] == 17,
++            "old header/content changed before realloc failure");
++    puts("reallocation: null result reached floor with old owner and header intact");
++    exit(73);
++}
++static void reset(void) {
++    memset(allocations, 0, sizeof allocations);
++    allocated = malloc_calls = realloc_calls = releases = 0;
++}
++int wf__main_body(int argc, char **argv) {
++    if (argc == 2 && strcmp(argv[1], "failure") == 0) {
++        reset(); selected_case = 4; failing = 1;
++        void *owner = wf_observe_allocate(17);
++        uint64_t *header = owner; header[0] = 1; header[1] = 1;
++        ((unsigned char *)owner)[16] = 17;
++        failure_cell = &owner;
++        (void)wf_grow_failure(&owner);
++        require(0, "null realloc returned to caller");
++    }
++    uint64_t (*const cases[])(void) = {
++        wf_grow_owned, wf_grow_partial, wf_grow_zero_capacity, wf_grow_zero_stride
++    };
++    for (moving = 0; moving < 2; ++moving)
++        for (selected_case = 0; selected_case < 4; ++selected_case) {
++            reset();
++            require(cases[selected_case]() == 0, "source content/header assertion");
++            size_t wanted_mallocs = selected_case == 0 ? 3 : selected_case == 1 ? 2 : 1;
++            require(malloc_calls == wanted_mallocs && releases == wanted_mallocs
++                    && realloc_calls == (selected_case == 1 ? 0u : 1u),
++                    "exact allocation/release route");
++            for (size_t i = 0; i < allocated; ++i) {
++                require(!allocations[i].live, "live owner after return");
++                free(allocations[i].pointer);
++            }
++        }
++    puts("reallocation: 8 full/partial/zero/nested-owner cases; exact releases");
++    return 0;
++}
++int main(int argc, char **argv) { return wf__floor_run(argc, argv); }

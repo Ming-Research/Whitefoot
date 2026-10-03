@@ -508,3 +508,100 @@ fn top_level_fields(inner: &str) -> Vec<&str> {
     }
     fields
 }
+
+/// Inline runtime Slots owners use the same callable ABI as other stored
+/// aggregates, including when an owner itself is a run element. Retaining the
+/// calls prevents host inlining from hiding a mismatched boundary.
+#[test]
+fn runtime_slots_owners_cross_retained_calls_and_nested_storage() {
+    let source = br#"struct Tagged {
+  owner: Box<Slots<u64>>;
+  tag: u64;
+}
+
+fn handoff(owner: Box<Slots<u64>>) -> result: Box<Slots<u64>> pure {
+  return move owner;
+}
+
+fn tagged(owner: Box<Slots<u64>>) -> result: Tagged pure {
+  return Tagged(owner: move owner, tag: 93_u64);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let cleanup_outer = box_slots_new::<Box<Slots<u64>>>(capacity: 2_u64);
+  let zero_child = box_slots_new::<u64>(capacity: 0_u64);
+  let positive_child = box_slots_new::<u64>(capacity: 1_u64);
+  place_back(window: &positive_child.inner, value: 41_u64);
+  place_back(window: &cleanup_outer.inner, value: move zero_child);
+  place_back(window: &cleanup_outer.inner, value: move positive_child);
+  if cleanup_outer.inner.len != 2_u64 {
+    return std::process::exit_status(code: 9_u8);
+  }
+  if cleanup_outer.inner[0_u64].inner.cap != 0_u64 {
+    return std::process::exit_status(code: 10_u8);
+  }
+  if cleanup_outer.inner[1_u64].inner.len != 1_u64 {
+    return std::process::exit_status(code: 11_u8);
+  }
+  if cleanup_outer.inner[1_u64].inner[0_u64] != 41_u64 {
+    return std::process::exit_status(code: 12_u8);
+  }
+  let empty = box_slots_new::<u64>(capacity: 0_u64);
+  let owner = handoff(owner: move empty);
+  if owner.inner.len != 0_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if owner.inner.cap != 0_u64 {
+    return std::process::exit_status(code: 8_u8);
+  }
+  grow(cell: &owner, capacity: 2_u64);
+  place_back(window: &owner.inner, value: 37_u64);
+  let wrapped = tagged(owner: move owner);
+  if wrapped.tag != 93_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  if wrapped.owner.inner.len != 1_u64 {
+    return std::process::exit_status(code: 3_u8);
+  }
+  if wrapped.owner.inner.cap != 2_u64 {
+    return std::process::exit_status(code: 4_u8);
+  }
+  if wrapped.owner.inner[0_u64] != 37_u64 {
+    return std::process::exit_status(code: 5_u8);
+  }
+  let outer = box_slots_new::<Box<Slots<u64>>>(capacity: 2_u64);
+  place_back(window: &outer.inner, value: move wrapped.owner);
+  grow(cell: &outer, capacity: 3_u64);
+  let recovered = take_back(window: &outer.inner);
+  free_empty(window: move outer);
+  let final_owner = handoff(owner: move recovered);
+  if final_owner.inner.len != 1_u64 {
+    return std::process::exit_status(code: 6_u8);
+  }
+  if final_owner.inner[0_u64] != 37_u64 {
+    return std::process::exit_status(code: 7_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_ir(source, |program| {
+        let module = crate::emit_llvm(program)
+            .expect("inline owner ABI emits")
+            .into_string();
+        assert_classification_matches_emitted_leaves(program, &module);
+        let handoff = emitted_function(&module, "handoff");
+        assert!(
+            handoff.starts_with("define { i64, i64, ptr } @wf_handoff(ptr "),
+            "{handoff}"
+        );
+        let tagged = emitted_function(&module, "tagged");
+        assert!(
+            tagged.starts_with("define void @wf_tagged(ptr %wf.result, ptr "),
+            "{tagged}"
+        );
+    });
+    let output = compile_and_run(&super::owned_places::retain_calls(&compile(source)));
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(output.stdout.is_empty(), "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
+}

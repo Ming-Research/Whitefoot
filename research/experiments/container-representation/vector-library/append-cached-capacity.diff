@@ -1,0 +1,10 @@
+--- append-payload-base-control.s
++++ append-cached-capacity-candidate.s
+@@ -757,0 +758 @@
++	ldr	x12, [x8, #8]
+@@ -770,2 +771 @@
+-	ldr	x10, [x8, #8]
+-	cmp	x10, x9
++	cmp	x12, x9
+@@ -778,0 +779 @@
++	ldr	x12, [x8, #8]

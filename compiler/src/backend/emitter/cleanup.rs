@@ -247,16 +247,17 @@ fn emit_run_drop_helper(
     let mut output = FunctionBody::default();
     let run_llvm = output.type_name(program, ty)?;
     let symbol = run_drop_helper_symbol(program, ty)?;
-    // A runtime-capacity block is reached only through the `Box` that owns
-    // it [TYPE-9], so its helper takes the block pointer. A memory-only run
+    // Runtime Slots pass their inline descriptor; other runtime-capacity
+    // blocks pass the owning Box's pointer. A memory-only run
     // (compiler/payload-enum-layout) is released from its address too; every
     // other run is a value and its helper takes that value.
     let by_address = is_memory_only(program, ty)?;
     let parameter = if by_address
-        || matches!(
-            ty,
-            IrType::Window { capacity: None, .. } | IrType::Buffer { .. }
-        ) {
+        || (!crate::target::inline_slots_descriptor(ty)
+            && matches!(
+                ty,
+                IrType::Window { capacity: None, .. } | IrType::Buffer { .. }
+            )) {
         "ptr".to_owned()
     } else {
         run_llvm.clone()
@@ -341,10 +342,19 @@ fn emit_run_drop_helper(
             .map_err(|_| BackendFailure::TextEmission)?;
             element
         }
-        // A runtime-capacity block is `[len | cap | head? | slots]` in one
-        // allocation (compiler/storage-representation): every measure the
-        // walk needs is a header word of the block the parameter points at,
-        // and the slots follow that header.
+        IrType::Window {
+            shape: IrWindowShape::Slots,
+            element,
+            capacity: None,
+        } => {
+            // No temporary descriptor allocation: the private release helper
+            // consumes these three scalar words directly, including when this
+            // owner is nested inside an ordinary first-class aggregate.
+            writeln!(output,
+                "  %length = extractvalue {run_llvm} %value, 0\n  %capacity = extractvalue {run_llvm} %value, 1\n  %pointer = extractvalue {run_llvm} %value, 2\n  %origin = add i64 0, 0"
+            ).map_err(|_| BackendFailure::TextEmission)?;
+            element
+        }
         IrType::Window {
             shape,
             element,
@@ -379,7 +389,7 @@ fn emit_run_drop_helper(
     {
         writeln!(output, "  br label %walk").map_err(|_| BackendFailure::TextEmission)?;
         output.open_block("walk".to_string());
-        write!(output, "  %index = phi i64 [ 0, %entry ], [ %next, %body ]\n  %continue = icmp ult i64 %index, %length\n  br i1 %continue, label %body, label %done\n").map_err(|_| BackendFailure::TextEmission)?;
+        write!(output, "  %index = phi i64 [ 0, %entry ], [ %next, %advance ]\n  %continue = icmp ult i64 %index, %length\n  br i1 %continue, label %body, label %done\n").map_err(|_| BackendFailure::TextEmission)?;
         output.open_block("body".to_string());
         write!(output, "  %raw = add i64 %origin, %index\n  %over = icmp uge i64 %raw, %capacity\n  %reduced = sub i64 %raw, %capacity\n  %physical = select i1 %over, i64 %reduced, i64 %raw\n  %element.pointer = getelementptr inbounds {element_llvm}, ptr %pointer, i64 {address_index}\n").map_err(|_| BackendFailure::TextEmission)?;
     };
@@ -396,6 +406,8 @@ fn emit_run_drop_helper(
         CleanupOperand::Value("%element".to_owned())
     };
     emit_cleanup(program, &mut output, &mut temporary, element_ty, element)?;
+    output.push_str("  br label %advance\n");
+    output.open_block("advance".to_owned());
     output.push_str("  %next = add i64 %index, 1\n  br label %walk\n");
     output.open_block("done".to_owned());
     output.push_str("  ret void\n");
@@ -657,6 +669,40 @@ pub(super) fn emit_cleanup(
     emit_cleanup_jobs(program, output, temporary, vec![job])
 }
 
+/// Release only positive physical payload extent. Capacity and the qualified
+/// element stride classify ownership, including owners from another module;
+/// neither logical length nor the address of that module's anchor decides it.
+pub(super) fn emit_slots_payload_release(
+    program: &IrProgram,
+    output: &mut FunctionBody,
+    temporary: &mut u32,
+    referent: IrType,
+    capacity: &str,
+    payload: &str,
+) -> Result<(), BackendFailure> {
+    let IrType::Window { element, .. } = referent else {
+        return Err(BackendFailure::InvalidIr);
+    };
+    let element = program.element(element).ok_or(BackendFailure::InvalidIr)?;
+    let element_llvm = output.type_name(program, element)?;
+    let extent = next_temporary(temporary)?;
+    let allocated = next_temporary(temporary)?;
+    let release = format!("slots.release.{allocated}");
+    let done = format!("slots.release.done.{allocated}");
+    writeln!(
+        output,
+        "  %{extent} = mul nuw i64 {capacity}, ptrtoint (ptr getelementptr ({element_llvm}, ptr null, i64 1) to i64)\n  %{allocated} = icmp ne i64 %{extent}, 0\n  br i1 %{allocated}, label %{release}, label %{done}"
+    )?;
+    output.open_block(release);
+    output.symbol("free");
+    writeln!(
+        output,
+        "  call void @free(ptr {payload})\n  br label %{done}"
+    )?;
+    output.open_block(done);
+    Ok(())
+}
+
 fn emit_cleanup_jobs(
     program: &IrProgram,
     output: &mut FunctionBody,
@@ -863,13 +909,39 @@ fn emit_cleanup_jobs(
                         // [PROV-6, STOR-3] release the referent first, then
                         // free the cell back to the one heap.
                         IrNominalKind::Box { referent, release } => {
-                            // A boxed runtime-capacity shape is thin: the
+                            if crate::target::inline_slots_descriptor(*referent) {
+                                let llvm = output.type_name(program, ty)?;
+                                let payload = next_temporary(temporary)?;
+                                writeln!(output, "  %{payload} = extractvalue {llvm} {operand}, 2")
+                                    .map_err(|_| BackendFailure::TextEmission)?;
+                                if let Some(symbol) = run_drop_helper(program, *referent)? {
+                                    output.symbol(&symbol);
+                                    writeln!(output, "  call void @{symbol}({llvm} {operand})")
+                                        .map_err(|_| BackendFailure::TextEmission)?;
+                                }
+                                if *release == IrReleaseClass::General {
+                                    let capacity = next_temporary(temporary)?;
+                                    writeln!(
+                                        output,
+                                        "  %{capacity} = extractvalue {llvm} {operand}, 1"
+                                    )?;
+                                    emit_slots_payload_release(
+                                        program,
+                                        output,
+                                        temporary,
+                                        *referent,
+                                        &format!("%{capacity}"),
+                                        &format!("%{payload}"),
+                                    )?;
+                                }
+                                continue;
+                            }
+                            // The remaining boxed runtime-capacity shapes are thin: the
                             // cell pointer is the block, whose header and
                             // elements are the same allocation
-                            // (compiler/storage-representation), which is
-                            // what [TYPE-9]'s "exactly one heap object" and
-                            // [STOR-3]'s "one compiler-derived heap free"
-                            // say. Loading the block would read past its
+                            // (compiler/storage-representation and STOR-1).
+                            // STOR-3 releases that allocation after its content.
+                            // Loading the block would read past its
                             // declared zero-length element array, so its
                             // walk takes the pointer and the cell's own free
                             // is the block's.

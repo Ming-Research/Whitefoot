@@ -1,0 +1,384 @@
+// Native container traces; the C driver independently checks every outcome.
+#include <absl/container/flat_hash_map.h>
+#include <array>
+#include <cstdint>
+#include <cstdlib>
+#include <functional>
+#include <memory>
+#include <new>
+#include <unordered_map>
+#include <utility>
+#include <type_traits>
+
+#ifdef ACCOUNT_ONLY
+#include "../ecosystem-allocator.hpp"
+template<class T> using NativeAllocator = EcosystemAllocator<T>;
+extern "C" void wf_ecosystem_map_geometry(std::uint64_t, std::uint64_t,
+    std::uint64_t, std::uint64_t, std::uint64_t, double, double);
+#else
+template<class T> using NativeAllocator = std::allocator<T>;
+#endif
+
+namespace {
+using Word = std::uint64_t;
+struct Record {
+    std::array<Word, 32> words;
+    Record() = default;
+    Record(const Record&) = delete;
+    Record& operator=(const Record&) = delete;
+    Record(Record&&) noexcept = default;
+    Record& operator=(Record&&) noexcept = default;
+};
+static_assert(sizeof(Record) == 256);
+enum : Word { Hit, Miss, Replace, Churn, Grow, Rehash, Setup, Edit, Policy, ReserveCheck, ReserveOmitted };
+
+Word mix(Word value) {
+    value ^= value >> 30; value *= UINT64_C(0xbf58476d1ce4e5b9);
+    value ^= value >> 27; value *= UINT64_C(0x94d049bb133111eb);
+    return value ^ (value >> 31);
+}
+struct AlignedHash {
+    Word salt;
+    bool collide;
+    std::size_t operator()(Word key) const { return collide ? 0 : mix(key ^ salt); }
+};
+
+template<class V> struct Payload;
+template<> struct Payload<Word> {
+    static Word make(Word seed) { return seed; }
+    static Word identity(const Word& value) { return value; }
+    static Word content(Word key, Word value) { return key * 131 + value; }
+    static Word increment(Word& value) { return ++value; }
+};
+template<> struct Payload<Record> {
+    static Record make(Word seed) {
+        Record value;
+        for (std::size_t index = 0; index < value.words.size(); ++index) value.words[index] = seed + index;
+        return value;
+    }
+    static Word identity(const Record& value) { return value.words[0]; }
+    static Word content(Word key, Record value) {
+        for (Word word : value.words) key = key * 131 + word;
+        return key;
+    }
+    static Word increment(Record& value) { return ++value.words[0]; }
+};
+struct Digest {
+    Word ordered_value, sum = 0, parity = 0, count = 0;
+    explicit Digest(Word seed) : ordered_value(seed) {}
+    void ordered(Word value) { ordered_value = ordered_value * 131 + value; }
+    void consume(Word value) { sum += value; parity ^= mix(value); ++count; }
+    Word finish() const { return mix(ordered_value) ^ mix(sum) ^ parity
+        ^ (count * UINT64_C(0x9e3779b97f4a7c15)); }
+};
+Word key_at(Word index) { return index * 2 + 1; }
+
+template<class V, class Hash>
+using StdMap = std::unordered_map<Word, V, Hash, std::equal_to<Word>,
+                                NativeAllocator<std::pair<const Word, V>>>;
+template<class V, class Hash>
+using FlatMap = absl::flat_hash_map<Word, V, Hash, std::equal_to<Word>,
+                                  NativeAllocator<std::pair<const Word, V>>>;
+
+template<class Map>
+void put(Map& map, Digest& digest, Word key, typename Map::mapped_type offered, Word ceiling) {
+    using V = typename Map::mapped_type;
+    if (map.size() == ceiling) {
+        // Replacement succeeds at the application ceiling. Only this path
+        // needs a prior lookup to keep a missing insertion from allocating.
+        auto entry = map.find(key);
+        if (entry == map.end()) {
+            digest.ordered(2);
+            digest.ordered(Payload<V>::content(key, std::move(offered)));
+        } else {
+            digest.ordered(1);
+            V old = std::exchange(entry->second, std::move(offered));
+            digest.ordered(Payload<V>::content(entry->first, std::move(old)));
+        }
+        return;
+    }
+    auto [entry, inserted] = map.try_emplace(key, std::move(offered));
+    digest.ordered(inserted ? 0 : 1);
+    if (!inserted) {
+        // try_emplace leaves the offered value intact on an occupied key.
+        // Consume the displaced value rather than discarding it via assignment.
+        V old = std::exchange(entry->second, std::move(offered));
+        digest.ordered(Payload<V>::content(entry->first, std::move(old)));
+    }
+}
+
+template<class Map>
+Word trace(Word capacity, Word count, Word rounds, Word seed, Word path,
+           typename Map::hasher hash) {
+    if (path > ReserveOmitted || path == Rehash) std::abort();
+    using V = typename Map::mapped_type;
+    Map map(0, hash);
+    map.reserve(capacity);
+    Digest digest(seed);
+    const Word ceiling = path == Policy ? 3 : 16384;
+    for (Word index = 0; index < count; ++index)
+        put(map, digest, key_at(index), Payload<V>::make(seed + index), ceiling);
+#ifdef ACCOUNT_ONLY
+    if constexpr (requires { map.capacity(); }) {
+        // Abseil reports physical element slots, including empty/deleted ones.
+        // Its compatibility maximum load factor is not a usable-entry bound.
+        wf_ecosystem_map_geometry(3, map.size(), UINT64_MAX, map.capacity(),
+            UINT64_MAX, map.load_factor(), map.max_load_factor());
+    } else {
+        // Standard unordered_map exposes chaining buckets, not element slots.
+        wf_ecosystem_map_geometry(2, map.size(), UINT64_MAX, UINT64_MAX,
+            map.bucket_count(), map.load_factor(), map.max_load_factor());
+    }
+#endif
+    if (path == Policy) {
+        put(map, digest, key_at(0), Payload<V>::make(seed + 10), ceiling);
+        put(map, digest, key_at(count), Payload<V>::make(seed + 20), ceiling);
+    }
+    for (Word round = 0; round < rounds; ++round) {
+        if (path == Grow || path == ReserveCheck || path == ReserveOmitted) {
+            Word target = capacity ? capacity * 2 : 1;
+            if (path != ReserveOmitted) map.reserve(target);
+            digest.ordered(1);
+            if (path != Grow) {
+                if constexpr (requires { map.capacity(); })
+                    digest.ordered(map.capacity() >= target);
+                else
+                    digest.ordered(map.bucket_count() * map.max_load_factor() >= target);
+            }
+        }
+        for (Word index = 0; index < count; ++index) {
+            Word key = key_at(path == Miss ? count + index : index);
+            if (path == Hit || path == Miss || path == Grow || path == ReserveCheck || path == ReserveOmitted) {
+                auto found = map.find(key);
+                digest.ordered(found != map.end());
+                if (found != map.end()) digest.ordered(Payload<V>::identity(found->second));
+            } else if (path == Replace) {
+                put(map, digest, key, Payload<V>::make(seed + (round + 1) * count + index), ceiling);
+            } else if (path == Churn) {
+                auto removed = map.extract(key);
+                digest.ordered(!removed.empty());
+                if (!removed.empty())
+                    digest.ordered(Payload<V>::content(removed.key(), std::move(removed.mapped())));
+                // Release a detached node before inserting its replacement.
+                removed = {};
+                auto absent = map.find(key);
+                digest.ordered(absent != map.end());
+                if (absent != map.end()) digest.ordered(Payload<V>::identity(absent->second));
+                put(map, digest, key, Payload<V>::make(seed + (round + 1) * count + index), ceiling);
+            } else if (path == Edit) {
+                auto found = map.find(key);
+                digest.ordered(found != map.end());
+                if (found != map.end()) digest.ordered(Payload<V>::increment(found->second));
+            }
+        }
+    }
+    for (auto& [key, value] : map) digest.consume(Payload<V>::content(key, std::move(value)));
+    return digest.finish(); // map destruction reclaims all native backing/nodes.
+}
+
+// The isolated lookup caller supplies the owner storage. Its map remains an
+// ordinary unordered_map: reservation, population and release are untimed.
+template<class V> struct LookupOwner {
+    StdMap<V, AlignedHash> map;
+    Word count, seed;
+    LookupOwner(Word count, Word seed)
+        : map(0, AlignedHash{seed ^ UINT64_C(0x9e3779b97f4a7c15), false}),
+          count(count), seed(seed) {}
+};
+
+template<class V>
+void lookup_prepare(void* storage, Word slots, Word count, Word seed) {
+    static_assert(sizeof(LookupOwner<V>) <= 128, "lookup owner fits caller storage");
+    static_assert(alignof(LookupOwner<V>) <= 16, "lookup owner fits caller alignment");
+    if (count > slots || slots > UINT32_MAX) std::abort();
+    auto* owner = new (storage) LookupOwner<V>(count, seed);
+    owner->map.reserve(slots);
+    for (Word index = 0; index < count; ++index)
+        owner->map.try_emplace(key_at(index), Payload<V>::make(seed + index));
+    if (owner->map.size() != count || owner->map.bucket_count() > UINT32_MAX)
+        std::abort();
+}
+
+template<class V>
+Word lookup_query(const void* storage, Word rounds, Word miss) {
+    const auto& owner = *static_cast<const LookupOwner<V>*>(storage);
+    Digest digest(owner.seed);
+    for (Word round = 0; round < rounds; ++round)
+        for (Word index = 0; index < owner.count; ++index) {
+            Word key = key_at(index) + (miss != 0);
+            auto found = owner.map.find(key);
+            digest.ordered(found != owner.map.end());
+            if (found != owner.map.end())
+                digest.ordered(Payload<V>::identity(found->second));
+        }
+    return digest.finish();
+}
+
+template<class V>
+Word edit_batch(void* storage, Word rounds, Word miss) {
+    auto& owner = *static_cast<LookupOwner<V>*>(storage);
+    Digest digest(owner.seed);
+    const Word first_key = miss ? 2 : 1;
+    for (Word round = 0; round < rounds; ++round)
+        for (Word index = 0; index < owner.count; ++index) {
+            auto found = owner.map.find(index * 2 + first_key);
+            digest.ordered(found != owner.map.end());
+            if (found != owner.map.end())
+                digest.ordered(Payload<V>::increment(found->second));
+        }
+    return digest.finish();
+}
+
+template<class V>
+void edit_damage(void* storage) {
+    auto& owner = *static_cast<LookupOwner<V>*>(storage);
+    auto found = owner.map.find(1);
+    if (found == owner.map.end()) return;
+    if constexpr (std::is_same_v<V, Word>) ++found->second;
+    else ++found->second.words[31];
+}
+
+extern "C" Word eco_cpp_map_edit_word_batch(void* storage, Word rounds, Word miss) { return edit_batch<Word>(storage, rounds, miss); }
+extern "C" Word eco_cpp_map_edit_record_batch(void* storage, Word rounds, Word miss) { return edit_batch<Record>(storage, rounds, miss); }
+extern "C" std::uint8_t eco_cpp_map_edit_word_damage(void* storage) { edit_damage<Word>(storage); return 0; }
+extern "C" std::uint8_t eco_cpp_map_edit_record_damage(void* storage) { edit_damage<Record>(storage); return 0; }
+
+template<class V>
+Word lookup_geometry(const void* storage) {
+    const auto& owner = *static_cast<const LookupOwner<V>*>(storage);
+    // Return the implementation's actual bucket count, never the reservation
+    // request: the caller qualifies the expected geometry before timing.
+    return (Word(owner.map.bucket_count()) << 32) | Word(owner.map.size());
+}
+
+template<class V>
+Word lookup_finish(void* storage) {
+    auto* owner = static_cast<LookupOwner<V>*>(storage);
+    Digest digest(owner->seed);
+    for (auto& [key, value] : owner->map)
+        digest.consume(Payload<V>::content(key, std::move(value)));
+    Word result = digest.finish();
+    std::destroy_at(owner);
+    return result;
+}
+
+// Reserve-only owners preserve the ordinary default/aligned library policies.
+template<class V, class H> struct ReserveOwner {
+    StdMap<V, H> map;
+    Word seed;
+    ReserveOwner(Word seed, H hash) : map(0, hash), seed(seed) {}
+};
+template<class V, class H>
+void reserve_prepare(void* storage, Word total, Word count, Word seed, H hash) {
+    static_assert(sizeof(ReserveOwner<V, H>) <= 128);
+    static_assert(alignof(ReserveOwner<V, H>) <= 16);
+    auto* owner = new (storage) ReserveOwner<V, H>(seed, hash);
+    owner->map.reserve(total);
+    for (Word i = 0; i < count; ++i)
+        owner->map.try_emplace(key_at(i), Payload<V>::make(seed + i));
+}
+template<class V, class H> Word reserve_step(void* storage, Word total) {
+    static_cast<ReserveOwner<V, H>*>(storage)->map.reserve(total);
+    return 1;
+}
+template<class V, class H> Word reserve_geometry(const void* storage) {
+    const auto& map = static_cast<const ReserveOwner<V, H>*>(storage)->map;
+    return (Word(map.bucket_count()) << 32) | Word(map.size());
+}
+template<class V, class H> double reserve_load_factor(const void* storage) {
+    return static_cast<const ReserveOwner<V, H>*>(storage)->map.max_load_factor();
+}
+template<class V, class H> Word reserve_insert(void* storage, Word index, Word corrupt) {
+    auto& owner = *static_cast<ReserveOwner<V, H>*>(storage);
+    auto value = Payload<V>::make(owner.seed + index);
+    if (corrupt) {
+        if constexpr (std::is_same_v<V, Word>) ++value;
+        else ++value.words[31];
+    }
+    return owner.map.try_emplace(key_at(index), std::move(value)).second;
+}
+template<class V, class H> Word reserve_finish(void* storage) {
+    auto* owner = static_cast<ReserveOwner<V, H>*>(storage);
+    Digest digest(owner->seed);
+    for (auto& [key, value] : owner->map)
+        digest.consume(Payload<V>::content(key, std::move(value)));
+    Word result = digest.finish();
+    std::destroy_at(owner);
+    return result;
+}
+
+} // namespace
+
+#define DEFAULT_ENTRY(NAME, MAP, VALUE, HASH)                             \
+extern "C" Word NAME(Word capacity, Word count, Word rounds, Word seed,    \
+                      Word path, Word collide) {                         \
+    if (collide != 0) std::abort();                                       \
+    return trace<MAP<VALUE, HASH>>(capacity, count, rounds, seed, path, {}); \
+}
+#define ALIGNED_ENTRY(NAME, MAP, VALUE)                                   \
+extern "C" Word NAME(Word capacity, Word count, Word rounds, Word seed,    \
+                      Word path, Word collide) {                         \
+    return trace<MAP<VALUE, AlignedHash>>(capacity, count, rounds, seed, path, \
+        AlignedHash{seed ^ UINT64_C(0x9e3779b97f4a7c15), collide != 0});     \
+}
+
+DEFAULT_ENTRY(eco_cpp_map_word_default, StdMap, Word, std::hash<Word>)
+DEFAULT_ENTRY(eco_cpp_map_record_default, StdMap, Record, std::hash<Word>)
+ALIGNED_ENTRY(eco_cpp_map_word_aligned, StdMap, Word)
+ALIGNED_ENTRY(eco_cpp_map_record_aligned, StdMap, Record)
+using FlatDefaultHash = absl::flat_hash_map<Word, Word>::hasher;
+DEFAULT_ENTRY(eco_absl_map_word_default, FlatMap, Word, FlatDefaultHash)
+DEFAULT_ENTRY(eco_absl_map_record_default, FlatMap, Record, FlatDefaultHash)
+ALIGNED_ENTRY(eco_absl_map_word_aligned, FlatMap, Word)
+ALIGNED_ENTRY(eco_absl_map_record_aligned, FlatMap, Record)
+
+#define LOOKUP_ENTRY(WIDTH, VALUE)                                        \
+extern "C" void eco_cpp_map_lookup_##WIDTH##_prepare(                    \
+    void* storage, Word slots, Word count, Word seed) {                   \
+    lookup_prepare<VALUE>(storage, slots, count, seed);                   \
+}                                                                       \
+extern "C" Word eco_cpp_map_lookup_##WIDTH##_query(                      \
+    const void* storage, Word rounds, Word miss) {                        \
+    return lookup_query<VALUE>(storage, rounds, miss);                    \
+}                                                                       \
+extern "C" Word eco_cpp_map_lookup_##WIDTH##_geometry(const void* storage) { \
+    return lookup_geometry<VALUE>(storage);                              \
+}                                                                       \
+extern "C" Word eco_cpp_map_lookup_##WIDTH##_finish(void* storage) {      \
+    return lookup_finish<VALUE>(storage);                                \
+}
+
+LOOKUP_ENTRY(word, Word)
+LOOKUP_ENTRY(record, Record)
+
+#ifdef ACCOUNT_ONLY
+#define ECO_STRING_INNER(VALUE) #VALUE
+#define ECO_STRING(VALUE) ECO_STRING_INNER(VALUE)
+extern "C" const char* eco_cpp_map_library_identity() {
+#if defined(_LIBCPP_VERSION)
+    return "libc++-" ECO_STRING(_LIBCPP_VERSION);
+#elif defined(__GLIBCXX__)
+    return "libstdc++-" ECO_STRING(__GLIBCXX__);
+#elif defined(_MSVC_STL_VERSION)
+    return "msvc-stl-" ECO_STRING(_MSVC_STL_VERSION);
+#else
+    return "cpp-standard-library-unidentified";
+#endif
+}
+extern "C" const char* eco_absl_map_library_identity() {
+    return "abseil-" ECO_STRING(ABSL_LTS_RELEASE_VERSION) "." ECO_STRING(ABSL_LTS_RELEASE_PATCH_LEVEL);
+}
+#endif
+
+#define RESERVE_EXPORTS(WIDTH, VALUE, SERIES, HASH, HASH_VALUE) \
+extern "C" void eco_cpp_map_reserve_##WIDTH##_##SERIES##_prepare(void* p, Word n, Word c, Word s) { reserve_prepare<VALUE,HASH>(p,n,c,s,HASH_VALUE); } \
+extern "C" Word eco_cpp_map_reserve_##WIDTH##_##SERIES##_step(void* p, Word n) { return reserve_step<VALUE,HASH>(p,n); } \
+extern "C" Word eco_cpp_map_reserve_##WIDTH##_##SERIES##_geometry(const void* p) { return reserve_geometry<VALUE,HASH>(p); } \
+extern "C" double eco_cpp_map_reserve_##WIDTH##_##SERIES##_load_factor(const void* p) { return reserve_load_factor<VALUE,HASH>(p); } \
+extern "C" Word eco_cpp_map_reserve_##WIDTH##_##SERIES##_insert(void* p, Word n, Word bad) { return reserve_insert<VALUE,HASH>(p,n,bad); } \
+extern "C" Word eco_cpp_map_reserve_##WIDTH##_##SERIES##_finish(void* p) { return reserve_finish<VALUE,HASH>(p); }
+RESERVE_EXPORTS(word, Word, default, std::hash<Word>, std::hash<Word>{})
+RESERVE_EXPORTS(record, Record, default, std::hash<Word>, std::hash<Word>{})
+RESERVE_EXPORTS(word, Word, aligned, AlignedHash, (AlignedHash{s ^ UINT64_C(0x9e3779b97f4a7c15), false}))
+RESERVE_EXPORTS(record, Record, aligned, AlignedHash, (AlignedHash{s ^ UINT64_C(0x9e3779b97f4a7c15), false}))
+#undef RESERVE_EXPORTS

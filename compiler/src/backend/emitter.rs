@@ -2,8 +2,8 @@
 //!
 //! Emission consumes typed IR after optional loop shapes have been selected for
 //! the same target. It preserves every retained
-//! check, emits no overflow or alias promises, initializes complete aggregate
-//! representations, and keeps a defensive abort edge for enum discriminants.
+//! check, emits qualified target facts, initializes complete aggregate
+//! representations, and exposes the closed domain of initialized enum tags.
 
 mod array;
 mod boxes;
@@ -47,7 +47,7 @@ use crate::{
 };
 use cleanup::{CleanupOperand, emit_cleanup, emit_resource_drop_helpers, type_requires_cleanup};
 pub use floor::FLOOR_STACK_BYTES;
-use floor::floor_runtime_fallback;
+pub(crate) use floor::floor_runtime_fallback;
 pub use floor::{FLOOR_RUNTIME_SOURCE, FLOOR_WINDOWS_RUNTIME_SOURCE};
 pub(crate) use frontier::is_recursion_budget_symbol;
 use frontier::{Grain, RecursiveFrontiers, recursion_budget_symbol};
@@ -59,6 +59,8 @@ use parallel::{
     parallel_split_budget_declaration, parallel_split_budget_fallback, sequential_clone_set,
     sequential_clone_symbol,
 };
+
+const EMPTY_SLOTS_ANCHOR: &str = ".wf.empty.slots.payload";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BackendFailure {
@@ -350,6 +352,21 @@ pub(super) fn emit_llvm_with_window_address_facts(
     text.text("\n");
     emit_nominal_declarations(&mut text, program, target)?;
     emit_global_constants(&mut text, program)?;
+    if program.nominals().iter().any(|nominal| {
+        matches!(nominal.kind(), IrNominalKind::Box { referent, .. }
+            if crate::target::inline_slots_descriptor(*referent))
+    }) {
+        let anchor = crate::target::empty_slots_anchor_layout(target, program)
+            .map_err(BackendFailure::TargetLayout)?;
+        text.global(
+            EMPTY_SLOTS_ANCHOR.to_owned(),
+            "global",
+            format!("[{} x i8]", anchor.size()),
+            "zeroinitializer".to_owned(),
+            Some(anchor.align()),
+            References::default(),
+        );
+    }
     // An allocation this host refuses is the heap twin of an exhausted stack,
     // and it gets the same treatment: one record naming the resource class,
     // written once, before a defined abort. The bytes carry no `rule_id`, no
@@ -401,6 +418,11 @@ pub(super) fn emit_llvm_with_window_address_facts(
             "malloc",
             "ptr",
             vec![Parameter::unnamed("i64")],
+        ));
+        text.declare(Signature::new(
+            "realloc",
+            "ptr",
+            vec![Parameter::unnamed("ptr"), Parameter::unnamed("i64")],
         ));
         text.declare(Signature::new(
             "free",
@@ -546,11 +568,6 @@ pub(super) fn emit_llvm_with_window_address_facts(
         text.text("\n");
         text.append(functions);
     }
-    // Unconditional, unlike the parallel runtime's: every program can run out
-    // of stack, so every module names the floor and carries its own answer for
-    // a link that does not supply one.
-    text.text("\n");
-    text.append(floor_runtime_fallback()?);
     text.text("\n");
     text.attribute_group(0, format!("\"probe-stack\"=\"{}\"", target.stack_probe()));
     let mut ledger = frontiers.ledger().to_vec();
@@ -1060,6 +1077,31 @@ struct FunctionFrameContents<'plan> {
     result_slot: Option<usize>,
 }
 
+/// Optional lowering qualifies the actual selected frame before replacing the
+/// ordinary function. A cache or helper that does not fit leaves that function
+/// unchanged, rather than turning an optimizer choice into target rejection.
+pub(crate) fn validate_resident_frame(
+    target: TargetLayout,
+    program: &IrProgram,
+    function: &IrFunction,
+) -> Result<(), BackendFailure> {
+    FunctionAbi::build(program, function)?;
+    for sequential in [false, true] {
+        let storage = FunctionStoragePlan::build_in_world(program, function, sequential)?;
+        let result_slot = places::returned_storage_slot(function, &storage);
+        FunctionFramePlan::build(
+            target,
+            program,
+            function,
+            FunctionFrameContents {
+                storage: &storage,
+                result_slot,
+            },
+        )?;
+    }
+    Ok(())
+}
+
 impl FunctionFramePlan {
     fn build(
         target: TargetLayout,
@@ -1075,6 +1117,7 @@ impl FunctionFramePlan {
         let mut ordered = Vec::new();
         for (slot, ty) in storage.slots().iter().copied().enumerate() {
             if Some(slot) != result_slot
+                && storage.incoming(slot).is_none()
                 && storage.destination(slot).is_none()
                 && storage.field_destination(slot).is_none()
             {
@@ -1575,14 +1618,22 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         }
         facts.push_str(" nonnull ");
         facts.push_str(NO_CAPTURE_ATTRIBUTE);
-        // The referent's own selected-target extent. A shape whose block
-        // extends past its statically typed header states only the header it
-        // is sure of, which is the direction `dereferenceable` needs.
+        // State the selected-target extent of the storage actually addressed.
+        // Runtime-content references address the owner: an inline Slots
+        // descriptor or another shape's pointer slot, never its payload.
         if let Some(referent) = referent
             && let Ok(layout) = crate::target::validate_static_storage(
                 self.target,
                 self.program,
-                &crate::target::TargetStorageType::source(referent.ty()),
+                &crate::target::TargetStorageType::source(
+                    if referent.is_runtime_content()
+                        && !crate::target::inline_slots_descriptor(referent.ty())
+                    {
+                        IrType::Address(referent)
+                    } else {
+                        referent.ty()
+                    },
+                ),
             )
             && layout.size() > 0
         {
@@ -1774,6 +1825,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             Signature::new(body_symbol.clone(), result, parameters)
         };
         signature.references = references;
+        if self.function.synthesis() == Some(crate::IrSynthesis::ResidentWindow) {
+            // This version is a piece of its caller's selected local region;
+            // a per-item cache-address call is not its intended rendering.
+            signature.suffix.push_str(" alwaysinline");
+        }
         if entry {
             signature.linkage = Linkage::Internal;
         }
@@ -1836,7 +1892,13 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                                 self.storage.allocation_root(slot) == result_slot
                             })
                         });
-                        if !parameter.is_indirect() || uses_result != writes_result {
+                        if !parameter.is_indirect()
+                            || uses_result != writes_result
+                            || self
+                                .storage
+                                .slot(*value)
+                                .is_some_and(|slot| self.storage.incoming(slot).is_some())
+                        {
                             continue;
                         }
                         let destination = self.value_place(*value)?;
@@ -1927,6 +1989,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         }
         let mut signature = Signature::new(symbol, result.clone(), parameters);
         signature.references = references;
+        if self.function.synthesis() == Some(crate::IrSynthesis::ResidentWindow) {
+            signature.suffix.push_str(" alwaysinline");
+        }
         let mut output = FunctionBody::default();
         output.open_block("entry".to_owned());
         output.symbol(body_symbol);
@@ -2324,8 +2389,17 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 target_domain,
             } => self.emit_run_index(result, ty, *run, *offset, *target_domain),
             IrOperation::RunTaken { row, run } => self.emit_run_taken(result, ty, *row, *run),
+            IrOperation::RunConsumeFinish { run, retained } => {
+                self.emit_run_consume_finish(result, ty, *run, *retained)
+            }
             IrOperation::RunBoundary { row, run, value } => {
                 self.emit_run_boundary(result, ty, *row, *run, *value)
+            }
+            IrOperation::RunBoundaryResident { run, value, length } => {
+                self.emit_run_boundary_resident(result, ty, *run, *value, *length)
+            }
+            IrOperation::RunLengthCommit { run, length } => {
+                self.emit_run_length_commit(result, ty, *run, *length)
             }
             IrOperation::RunShift { run, index, open } => {
                 self.emit_run_shift(result, ty, *run, *index, *open)
@@ -2492,6 +2566,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             IrOperation::Load { address, referent } => {
                 self.emit_load(result, ty, *address, *referent)
             }
+            IrOperation::RuntimeContentSwap { first, second } => {
+                self.emit_runtime_content_swap(result, ty, *first, *second)
+            }
         }
     }
 
@@ -2561,6 +2638,12 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 enum_type,
                 targets,
             } => {
+                // [ERR-2, SCOPE-3] Checked matches cover every declared tag;
+                // lowering preserves their arms and synthesizes complete
+                // Bool/Result matches. An initialized typed scrutinee has one
+                // of those tags, including at an ordinary linked boundary.
+                // Its default is unreachable without constraining inactive
+                // payload bytes or rechecking semantic exhaustiveness here.
                 self.materialize_operands([*scrutinee])?;
                 let (tag, tag_ty) = self.match_tag(*scrutinee, *enum_type)?;
                 writeln!(
@@ -2587,10 +2670,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
 
                     writeln!(self.output, "  ]").map_err(|_| BackendFailure::TextEmission)?;
                     self.output.open_block(emission_argument_0.to_string());
-                    {
-                        self.output.symbol("abort");
-                        write!(self.output, "  call void @abort()\n  unreachable\n")
-                    }?;
+                    self.output.push_str("  unreachable\n");
                     Ok::<_, BackendFailure>(())
                 }
             }
@@ -2975,13 +3055,18 @@ pub(super) fn llvm_type_with_references(
                 references,
             )?;
             Ok(match shape {
-                IrWindowShape::Slots => format!("{{ i64, i64, [0 x {element}] }}"),
+                IrWindowShape::Slots => "{ i64, i64, ptr }".to_owned(),
                 IrWindowShape::Ring => format!("{{ i64, i64, i64, [0 x {element}] }}"),
             })
         }
         IrType::Address(_) | IrType::RuntimeBoxPayload { .. } => Ok("ptr".to_owned()),
         IrType::Nominal(id) => {
             let nominal = program.nominal(id).ok_or(BackendFailure::InvalidIr)?;
+            if let IrNominalKind::Box { referent, .. } = nominal.kind()
+                && crate::target::inline_slots_descriptor(*referent)
+            {
+                return llvm_type_with_references(program, *referent, references);
+            }
             if matches!(
                 nominal.kind(),
                 IrNominalKind::Box { .. } | IrNominalKind::Shared { .. }
@@ -3276,12 +3361,12 @@ pub(super) fn windows_sequential_resource_record_writer() -> Result<Module, Back
 /// two records on one channel. Asking the floor for the address is what makes
 /// "no execution writes a second one" a mechanism rather than an argument.
 ///
-/// The `weak` definition here is the same standalone answer
-/// [`floor::floor_runtime_fallback`] gives: an emitted module must link and run
-/// without the floor's translation unit, and the real definition replaces this
-/// one whenever that unit is linked, which is every ordinary build. Zero until
-/// some thread writes a record, and no path outside the writer reads it, so a
-/// program that writes none pays nothing for it.
+/// [`resource_record_latch_fallback`] exposes this storage through a weak
+/// accessor when a module needs the latched writer. The floor runtime replaces
+/// that accessor when linked. The executable launcher's separate
+/// [`floor::floor_runtime_fallback`] is not part of callable library emission.
+/// The latch stays zero until a thread writes a record; no path outside the
+/// writer reads it, so a program that writes none pays nothing for it.
 pub(super) fn resource_record_latch() -> Result<Module, BackendFailure> {
     let mut module = Module::default();
     module.global(

@@ -400,7 +400,6 @@ static size_t compared_runs, compared_owners, compared_backings;
 static uint64_t expected_requests[7];
 static bool expected_resources[7];
 static size_t expected_request_count;
-static const uint64_t wf_slots_header_bytes = 16;
 static const uint64_t wf_slot_stride_bytes = 24;
 
 static void require(bool condition, const char *message) {
@@ -461,6 +460,23 @@ void wf_observe_release(void *pointer) {
     require(false, "release did not return the original allocation address");
 }
 
+/* A moving realloc keeps the observer's allocation identities explicit. */
+void *wf_observe_reallocate(void *old, uint64_t bytes) {
+    for (size_t i = 0; i < observation.allocated; ++i) {
+        ObservedAllocation *entry = &observation.allocations[i];
+        if (entry->pointer != old) continue;
+        require(!entry->released && !entry->is_resource, "realloc backing owner");
+        uint64_t old_bytes = entry->bytes;
+        require(bytes >= old_bytes, "realloc growth extent");
+        void *fresh = wf_observe_allocate(bytes);
+        memcpy(fresh, old, (size_t)old_bytes);
+        wf_observe_release(old);
+        return fresh;
+    }
+    require(false, "realloc of a foreign allocation");
+    return NULL;
+}
+
 static void observation_reset(uint64_t scenario, bool whitefoot) {
     require(observation.live == 0, "live allocations before reset");
     for (size_t i = 0; i < observation.allocated; ++i)
@@ -468,12 +484,10 @@ static void observation_reset(uint64_t scenario, bool whitefoot) {
     memset(&observation, 0, sizeof observation);
     memset(expected_resources, 0, sizeof expected_resources);
     /* LLVM lays out the Whitefoot Slot and sparse-owned.c's ISlot at the same
-     * 24-byte element stride. The emitted Whitefoot allocation precedes its
-     * payload with the runtime Slots len/cap descriptor. Check each side's
+     * 24-byte element stride. Both allocate only their payload. Check each side's
      * exact allocation sequence, not the larger source OP-9 ceiling. */
     const uint64_t stride = whitefoot ? wf_slot_stride_bytes : sizeof(ISlot);
-    expected_requests[0] = (whitefoot ? wf_slots_header_bytes : 0) +
-                           (scenario >= 3 ? 1 : 8) * stride;
+    expected_requests[0] = (scenario >= 3 ? 1 : 8) * stride;
     const size_t resources = scenario >= 3 ? 1 : scenario == 0 ? 5 : 3;
     for (size_t i = 1; i <= resources; ++i) {
         expected_requests[i] = sizeof(Resource);
@@ -485,7 +499,6 @@ static void observation_reset(uint64_t scenario, bool whitefoot) {
         expected_resources[expected_request_count++] = true;
     } else {
         expected_requests[expected_request_count++] =
-            (whitefoot ? wf_slots_header_bytes : 0) +
             (scenario == 0 ? 16 : scenario == 3 ? 1 : 8) * stride;
         if (scenario == 3) {
             expected_requests[expected_request_count] = sizeof(Resource);
@@ -649,9 +662,7 @@ static void compare(uint64_t seed, uint64_t scenario, size_t budget) {
             require(wf.allocations[i].bytes == sizeof(Resource), "resource extent changed");
             ++compared_owners;
         } else {
-            require(wf.allocations[i].bytes >= wf_slots_header_bytes,
-                    "released backing is smaller than its Slots descriptor");
-            uint64_t wf_payload = wf.allocations[i].bytes - wf_slots_header_bytes;
+            uint64_t wf_payload = wf.allocations[i].bytes;
             require(wf_payload % wf_slot_stride_bytes == 0,
                     "released Whitefoot backing has a partial slot payload");
             require(native.allocations[i].bytes % sizeof(ISlot) == 0,
@@ -668,9 +679,9 @@ static void compare(uint64_t seed, uint64_t scenario, size_t budget) {
 #ifdef BEHAVIOR_DEMOS
 static void check_behavior_demos(void) {
     /* Both concrete Slot instances have a 24-byte target stride. Each first
-     * request includes the 16-byte runtime Slots descriptor; later requests
-     * are scalar Box allocations with their exact content extents. */
-    const uint64_t extents[3][4] = {{112, 40, 0, 0}, {112, 8, 8, 40}, {64, 40, 40, 0}};
+     * request is the payload alone; later requests are scalar Box allocations
+     * with their exact content extents. */
+    const uint64_t extents[3][4] = {{96, 40, 0, 0}, {96, 8, 8, 40}, {48, 40, 40, 0}};
     const bool resources[3][4] = {
         {false, true, false, false},
         {false, false, false, true},

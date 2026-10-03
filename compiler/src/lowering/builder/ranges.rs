@@ -29,9 +29,9 @@ impl IrBuilder<'_> {
             CheckedRangeSource::Storage(root) => {
                 let address = self.lower_place_address(root)?;
                 // A runtime-capacity `Array<T>` [TYPE-9] is one block
-                // `[len | elements]` reached by pointer, so the descriptor is
-                // read out of that block's header and its first element
-                // address; a window is the ordinary run formation.
+                // `[len | elements]` reached through its owner slot, so
+                // emission resolves the current block for its length and
+                // first element address; windows use ordinary run formation.
                 if matches!(lower_type(self.erasure, root.ty)?, IrType::Buffer { .. }) {
                     self.define(ty, IrOperation::SliceFromBuffer { buffer: address })?
                 } else {

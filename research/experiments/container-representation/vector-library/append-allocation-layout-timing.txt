@@ -1,0 +1,642 @@
+Append allocation layout discriminator. One fixed measurement; plain C only.
+$ git rev-parse HEAD
+94c808ef3261e644725742259ea6450ea2c0065b
+$ uname -a
+Darwin <host> 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:18:49 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6000 arm64
+$ clang --version
+Apple clang version 21.0.0 (clang-2100.3.34.2)
+Target: arm64-apple-darwin25.6.0
+Thread model: posix
+InstalledDir: /Library/Developer/CommandLineTools/usr/bin
+$ shasum -a 256 research/experiments/container-representation/vector-library/append-allocation-layout.c research/experiments/container-representation/vector-library/.build/append-allocation-layout/append-layout
+d6d6814650c9a370f913a88a955ef2dd22544fa17a802b4b8a078cae45f058ce  research/experiments/container-representation/vector-library/append-allocation-layout.c
+69926d26be5299f7e7b96fde7ef065fa3dccc7695c026cadcc3b85b8c2b4b72a  research/experiments/container-representation/vector-library/.build/append-allocation-layout/append-layout
+
+<scratch-root>/append-layout-build.txt
+== START append-layout-build (limit 1800s): make -C research/experiments/container-representation/vector-library -j2 append-layout-check ==
+mkdir -p .build/append-allocation-layout
+clang -std=c11 -O2 -Wall -Wextra -Werror -fno-lto -DLAYOUT_HELPER -c append-allocation-layout.c -o .build/append-allocation-layout/helper.o
+clang -std=c11 -O2 -Wall -Wextra -Werror -fno-lto -c append-allocation-layout.c -o .build/append-allocation-layout/caller.o
+In file included from append-allocation-layout.c:10:
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/malloc/malloc.h:112:70: error: unknown type name 'malloc_zone_t'
+In file included from append-allocation-layout.c:  112 | void * __sized_by_or_null(size) malloc_type_zone_malloc_10:
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/malloc/malloc.h:112:70: error: unknown type name 'malloc_zone_t'
+with_options(malloc_zone_t *zone, size_t alignment, size_t size, malloc_type_id_t type_id, malloc_zone_malloc_options_t opts) __result_use_check __alloc_align(2) __alloc_size(3);
+      |                                                                      ^
+  112 | void * __sized_by_or_null(size) malloc_type_zone_malloc_with_options(malloc_zone_t *zone, size_t alignment, size_t size, malloc_type_id_t type_id, malloc_zone_malloc_options_t opts) __result_use_check __alloc_align(2) __alloc_size(3);
+      |                                                                      ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/malloc/malloc.h:112:122: error: unknown type name 'malloc_type_id_t'
+  112 | void * __sized_by_or_null(size) malloc_type_zone_malloc_with_options(malloc_zone_t *zone, size_t alignment, size_t size, malloc_type_id_t type_id, malloc_zone_malloc_options_t opts) __result_use_check __alloc_align(2) __alloc_size(3);
+      |                                                                                                                          ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/malloc/malloc.h:112:122: error: unknown type name 'malloc_type_id_t'
+  112 | void * __sized_by_or_null(size) malloc_type_zone_malloc_with_options(malloc_zone_t *zone, size_t alignment, size_t size, malloc_type_id_t type_id, malloc_zone_malloc_options_t opts) __result_use_check __alloc_align(2) __alloc_size(3);
+      |                                                                                                                          ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/malloc/malloc.h:233:46: error: unknown type name 'malloc_type_id_t'
+  233 |                         struct _malloc_zone_t *zone, size_t size, malloc_type_id_t type_id);
+      |                                                                   ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/malloc/malloc.h:233:46: error: unknown type name 'malloc_type_id_t'
+  233 |                         struct _malloc_zone_t *zone, size_t size, malloc_type_id_t type_id);
+      |                                                                   ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/malloc/malloc.h:237:4: error: unknown type name 'malloc_type_id_t'
+  237 |                         malloc_type_id_t type_id);
+      |                         ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/malloc/malloc.h:237:4: error: unknown type name 'malloc_type_id_t'
+  237 |                         malloc_type_id_t type_id);
+      |                         ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/malloc/malloc.h:241:17: error: unknown type name 'malloc_type_id_t'
+  241 |                         size_t size, malloc_type_id_t type_id);
+      |                                      ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/malloc/malloc.h:241:17: error: unknown type name 'malloc_type_id_t'
+  241 |                         size_t size, malloc_type_id_t type_id);
+      |                                      ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/malloc/malloc.h:245:4: error: unknown type name 'malloc_type_id_t'
+  245 |                         malloc_type_id_t type_id);
+      |                         ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/malloc/malloc.h:245:4: error: unknown type name 'malloc_type_id_t'
+  245 |                         malloc_type_id_t type_id);
+      |                         ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/malloc/malloc.h:249:22: error: unknown type name 'malloc_type_id_t'
+  249 |                         uint64_t options, malloc_type_id_t type_id);
+      |                                           ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/malloc/malloc.h:249:22: error: unknown type name 'malloc_type_id_t'
+  249 |                         uint64_t options, malloc_type_id_t type_id);
+      |                                           ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/malloc/malloc.h:389:2: error: unknown type name 'malloc_type_id_t'; did you mean 'malloc_type_kind_v0_t'?
+  389 |         m/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/malloc/malloc.h:389:2: error: unknown type name 'malloc_type_id_t'; did you mean 'malloc_type_kind_v0_t'?
+alloc_type_id_t type_id;
+      |         ^
+  389 |         malloc_type_id_t type_id;
+      |         ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/malloc/malloc.h:292:3: note: 'malloc_type_kind_v0_t' declared here
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/malloc/malloc.h:292:3: note: 'malloc_type_kind_v0_t' declared here
+  292 | } malloc_type_kind_v0_t;
+      |   ^
+  292 | } malloc_type_kind_v0_t;
+      |   ^
+8 errors generated.
+make: *** [.build/append-allocation-layout/helper.o] Error 1
+make: *** Waiting for unfinished jobs....
+append-allocation-layout.c:46:27: error: use of undeclared identifier 'CLOCK_MONOTONIC_RAW'; did you mean '_CLOCK_MONOTONIC'?
+   46 |     require(clock_gettime(CLOCK_MONOTONIC_RAW, &t) == 0, "clock read");
+      |                           ^~~~~~~~~~~~~~~~~~~
+      |                           _CLOCK_MONOTONIC
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/_time.h:159:1: note: '_CLOCK_MONOTONIC' declared here
+  159 | _CLOCK_MONOTONIC __CLOCK_AVAILABILITY = 6,
+      | ^
+9 errors generated.
+make: *** [.build/append-allocation-layout/caller.o] Error 1
+real 0.10
+user 0.07
+sys 0.05
+== END append-layout-build: 0.11 s, exit 2 ==
+
+<scratch-root>/append-layout-build-fixed.txt
+== START append-layout-build (limit 1800s): make -C research/experiments/container-representation/vector-library -j2 append-layout-check ==
+clang -std=c11 -O2 -Wall -Wextra -Werror -fno-lto -DLAYOUT_HELPER -c append-allocation-layout.c -o .build/append-allocation-layout/helper.o
+clang -std=c11 -O2 -Wall -Wextra -Werror -fno-lto -c append-allocation-layout.c -o .build/append-allocation-layout/caller.o
+clang -fno-lto .build/append-allocation-layout/helper.o .build/append-allocation-layout/caller.o -o .build/append-allocation-layout/append-layout
+.build/append-allocation-layout/append-layout check
+clock minimum_nonzero_ns=41 quantized=0
+all six layouts and both payload widths passed
+append layout: old payload
+append layout: post capacity
+append layout: clock precision
+real 0.54
+user 0.18
+sys 0.09
+== END append-layout-build: 0.64 s, exit 0 ==
+
+<scratch-root>/append-layout-build-final.txt
+== START append-layout-build (limit 1800s): make -C research/experiments/container-representation/vector-library -j2 append-layout-check ==
+clang -std=c11 -O2 -Wall -Wextra -Werror -fno-lto -DLAYOUT_HELPER -c append-allocation-layout.c -o .build/append-allocation-layout/helper.o
+clang -std=c11 -O2 -Wall -Wextra -Werror -fno-lto -c append-allocation-layout.c -o .build/append-allocation-layout/caller.o
+clang -fno-lto .build/append-allocation-layout/helper.o .build/append-allocation-layout/caller.o -o .build/append-allocation-layout/append-layout
+.build/append-allocation-layout/append-layout check
+clock minimum_nonzero_ns=41 quantized=0
+all six layouts and both payload widths passed
+append layout: old payload
+append layout: post capacity
+append layout: clock precision
+real 0.34
+user 0.16
+sys 0.07
+== END append-layout-build: 0.43 s, exit 0 ==
+
+Injected payload failure:
+clock minimum_nonzero_ns=41 quantized=0
+append layout: old payload
+
+Injected capacity failure:
+clock minimum_nonzero_ns=41 quantized=0
+append layout: post capacity
+
+Injected clock failure:
+clock minimum_nonzero_ns=1000 quantized=1
+append layout: clock precision
+
+$ nm research/experiments/container-representation/vector-library/.build/append-allocation-layout/append-layout
+00000001000012c4 t _OUTLINED_FUNCTION_0
+00000001000012d4 t _OUTLINED_FUNCTION_1
+                 U ___chkstk_darwin
+                 U ___stack_chk_fail
+                 U ___stack_chk_guard
+                 U ___stderrp
+                 U ___stdoutp
+0000000100000000 T __mh_execute_header
+0000000100000df0 t _check
+000000010000141c t _check.cold.1
+0000000100001100 t _clock_check
+0000000100001444 t _clock_check.cold.1
+000000010000146c t _clock_check.cold.2
+0000000100001494 t _clock_check.cold.3
+00000001000014bc t _clock_check.cold.4
+                 U _clock_gettime
+                 U _exit
+0000000100001630 s _extras
+                 U _fflush
+                 U _fprintf
+                 U _free
+00000001000004b0 T _layout_append
+0000000100000658 T _main
+00000001000012dc t _main.cold.1
+0000000100001304 t _main.cold.2
+000000010000132c t _main.cold.3
+0000000100001354 t _main.cold.4
+000000010000137c t _main.cold.5
+00000001000013a4 t _main.cold.6
+00000001000013cc t _main.cold.7
+00000001000013f4 t _main.cold.8
+                 U _malloc
+                 U _malloc_size
+                 U _memmove
+0000000100001648 s _offsets
+                 U _printf
+                 U _puts
+                 U _realloc
+                 U _strcmp
+0000000100001218 t _verify
+00000001000014e4 t _verify.cold.1
+000000010000150c t _verify.cold.2
+0000000100001534 t _verify.cold.3
+000000010000155c t _verify.cold.4
+
+$ otool -tvV research/experiments/container-representation/vector-library/.build/append-allocation-layout/helper.o
+research/experiments/container-representation/vector-library/.build/append-allocation-layout/helper.o:
+(__TEXT,__text) section
+_layout_append:
+0000000000000000	sub	sp, sp, #0x60
+0000000000000004	stp	x26, x25, [sp, #0x10]
+0000000000000008	stp	x24, x23, [sp, #0x20]
+000000000000000c	stp	x22, x21, [sp, #0x30]
+0000000000000010	stp	x20, x19, [sp, #0x40]
+0000000000000014	stp	x29, x30, [sp, #0x50]
+0000000000000018	add	x29, sp, #0x50
+000000000000001c	mov	x20, x5
+0000000000000020	mov	x21, x4
+0000000000000024	mov	x23, x1
+0000000000000028	mov	x19, x0
+000000000000002c	ldp	x8, x9, [x0, #0x8]
+0000000000000030	mul	x22, x8, x1
+0000000000000034	lsl	x25, x9, #1
+0000000000000038	cbz	w2, 0x58
+000000000000003c	ldr	x0, [x19]
+0000000000000040	madd	x1, x25, x23, x3
+0000000000000044	bl	0x44
+0000000000000048	cbz	x0, 0x164
+000000000000004c	cmp	x23, #0x8
+0000000000000050	b.hs	0x90
+0000000000000054	b	0x138
+0000000000000058	madd	x0, x25, x23, x3
+000000000000005c	bl	0x5c
+0000000000000060	cbz	x0, 0x17c
+0000000000000064	ldr	x24, [x19]
+0000000000000068	mov	x26, x0
+000000000000006c	add	x0, x0, x21
+0000000000000070	add	x1, x24, x21
+0000000000000074	mov	x2, x22
+0000000000000078	bl	0x78
+000000000000007c	mov	x0, x24
+0000000000000080	bl	0x80
+0000000000000084	mov	x0, x26
+0000000000000088	cmp	x23, #0x8
+000000000000008c	b.lo	0x138
+0000000000000090	lsr	x8, x23, #3
+0000000000000094	cmp	x23, #0x40
+0000000000000098	b.hs	0xa4
+000000000000009c	mov	x9, #0x0
+00000000000000a0	b	0x11c
+00000000000000a4	and	x9, x8, #0x1ffffffffffffff8
+00000000000000a8	dup.2d	v0, x20
+00000000000000ac	add	x10, x21, x22
+00000000000000b0	add	x10, x10, x0
+00000000000000b4	add	x10, x10, #0x20
+00000000000000b8	adrp	x11, 0 ; 0x0
+00000000000000bc	ldr	q1, [x11]
+00000000000000c0	mov	w11, #0x2
+00000000000000c4	dup.2d	v2, x11
+00000000000000c8	mov	w11, #0x4
+00000000000000cc	dup.2d	v3, x11
+00000000000000d0	mov	w11, #0x6
+00000000000000d4	dup.2d	v4, x11
+00000000000000d8	mov	w11, #0x8
+00000000000000dc	dup.2d	v5, x11
+00000000000000e0	mov	x11, x9
+00000000000000e4	add.2d	v6, v1, v2
+00000000000000e8	add.2d	v7, v1, v3
+00000000000000ec	add.2d	v16, v1, v4
+00000000000000f0	eor.16b	v17, v1, v0
+00000000000000f4	eor.16b	v6, v6, v0
+00000000000000f8	eor.16b	v7, v7, v0
+00000000000000fc	eor.16b	v16, v16, v0
+0000000000000100	stp	q17, q6, [x10, #-0x20]
+0000000000000104	stp	q7, q16, [x10], #0x40
+0000000000000108	add.2d	v1, v1, v5
+000000000000010c	subs	x11, x11, #0x8
+0000000000000110	b.ne	0xe4
+0000000000000114	cmp	x8, x9
+0000000000000118	b.eq	0x138
+000000000000011c	add	x10, x21, x22
+0000000000000120	add	x10, x0, x10
+0000000000000124	eor	x11, x9, x20
+0000000000000128	str	x11, [x10, x9, lsl #3]
+000000000000012c	add	x9, x9, #0x1
+0000000000000130	cmp	x8, x9
+0000000000000134	b.ne	0x124
+0000000000000138	ldr	x8, [x19, #0x8]
+000000000000013c	add	x8, x8, #0x1
+0000000000000140	str	x0, [x19]
+0000000000000144	stp	x8, x25, [x19, #0x8]
+0000000000000148	ldp	x29, x30, [sp, #0x50]
+000000000000014c	ldp	x20, x19, [sp, #0x40]
+0000000000000150	ldp	x22, x21, [sp, #0x30]
+0000000000000154	ldp	x24, x23, [sp, #0x20]
+0000000000000158	ldp	x26, x25, [sp, #0x10]
+000000000000015c	add	sp, sp, #0x60
+0000000000000160	ret
+0000000000000164	adrp	x8, 0 ; 0x0
+0000000000000168	ldr	x8, [x8]
+000000000000016c	ldr	x0, [x8]
+0000000000000170	adrp	x8, 0 ; 0x0
+0000000000000174	add	x8, x8, #0x0
+0000000000000178	b	0x190
+000000000000017c	adrp	x8, 0 ; 0x0
+0000000000000180	ldr	x8, [x8]
+0000000000000184	ldr	x0, [x8]
+0000000000000188	adrp	x8, 0 ; 0x0
+000000000000018c	add	x8, x8, #0x0
+0000000000000190	str	x8, [sp]
+0000000000000194	adrp	x1, 0 ; 0x0
+0000000000000198	add	x1, x1, #0x0
+000000000000019c	bl	0x19c
+00000000000001a0	mov	w0, #0x1
+00000000000001a4	bl	0x1a4
+
+$ otool -rv research/experiments/container-representation/vector-library/.build/append-allocation-layout/helper.o
+research/experiments/container-representation/vector-library/.build/append-allocation-layout/helper.o:
+Relocation information (__TEXT,__text) 18 entries
+address  pcrel length extern type    scattered symbolnum/value
+000001a4 True  long   True   BR26    False     _exit
+0000019c True  long   True   BR26    False     _fprintf
+00000198 False long   True   PAGOF12 False     l_.str.2
+00000194 True  long   True   PAGE21  False     l_.str.2
+0000018c False long   True   PAGOF12 False     l_.str.1
+00000188 True  long   True   PAGE21  False     l_.str.1
+00000180 False long   True   GOTLDPOFFalse     ___stderrp
+0000017c True  long   True   GOTLDP  False     ___stderrp
+00000174 False long   True   PAGOF12 False     l_.str
+00000170 True  long   True   PAGE21  False     l_.str
+00000168 False long   True   GOTLDPOFFalse     ___stderrp
+00000164 True  long   True   GOTLDP  False     ___stderrp
+000000bc False long   True   PAGOF12 False     lCPI0_0
+000000b8 True  long   True   PAGE21  False     lCPI0_0
+00000080 True  long   True   BR26    False     _free
+00000078 True  long   True   BR26    False     _memmove
+0000005c True  long   True   BR26    False     _malloc
+00000044 True  long   True   BR26    False     _realloc
+Relocation information (__LD,__compact_unwind) 1 entries
+address  pcrel length extern type    scattered symbolnum/value
+00000000 False ?( 3)  False  UNSIGND False     1 (__TEXT,__text)
+
+Caller relocations to shared kernel:
+00000a30 True  long   True   BR26    False     _layout_append
+000008e8 True  long   True   BR26    False     _layout_append
+000006bc True  long   True   BR26    False     _layout_append
+00000558 True  long   True   BR26    False     _layout_append
+000003a0 True  long   True   BR26    False     _layout_append
+
+Timed caller native instructions (clock / shared call / clock):
+0000000000000350	stur	q0, [x8, #0x8]
+0000000000000354	add	x24, x24, #0x1
+0000000000000358	cmp	x24, x28
+000000000000035c	b.ne	0x2d8
+0000000000000360	add	x1, sp, #0x110
+0000000000000364	mov	w0, #0x4
+0000000000000368	bl	0x368
+000000000000036c	cbnz	w0, 0x780
+0000000000000370	ldp	x26, x8, [sp, #0x110]
+0000000000000374	str	x8, [sp, #0x90]
+0000000000000378	cbz	x28, 0x3b4
+000000000000037c	add	x24, sp, #0x120
+0000000000000380	ldr	x25, [sp, #0xb0]
+0000000000000384	mov	x27, x28
+0000000000000388	mov	x0, x24
+000000000000038c	mov	x1, x20
+0000000000000390	mov	x2, x23
+0000000000000394	mov	x3, x21
+0000000000000398	mov	x4, x22
+000000000000039c	mov	x5, x25
+00000000000003a0	bl	0x3a0
+00000000000003a4	add	x25, x25, #0x1
+00000000000003a8	add	x24, x24, #0x18
+00000000000003ac	subs	x27, x27, #0x1
+00000000000003b0	b.ne	0x388
+00000000000003b4	add	x1, sp, #0x110
+00000000000003b8	mov	w0, #0x4
+00000000000003bc	bl	0x3bc
+00000000000003c0	cbnz	w0, 0x784
+00000000000003c4	mov	w10, #0xca00
+00000000000003c8	movk	w10, #0x3b9a, lsl #16
+00000000000003cc	ldr	x8, [sp, #0x90]
+00000000000003d0	madd	x11, x26, x10, x8
+00000000000003d4	ldp	x8, x9, [sp, #0x110]
+00000000000003d8	madd	x27, x8, x10, x9
+00000000000003dc	cmp	x27, x11
+00000000000003e0	b.lo	0x77c
+
+<scratch-root>/append-layout-observe.txt
+== START append-layout-observe (limit 1800s): research/experiments/container-representation/vector-library/.build/append-allocation-layout/append-layout observe ==
+element_bytes,route,extra,offset,old_request,new_request,old_usable,new_usable,moved
+8,0,0,0,32768,65536,32768,65536,1
+8,0,16,0,32784,65552,49152,81920,1
+8,0,16,16,32784,65552,49152,81920,1
+8,1,0,0,32768,65536,32768,65536,1
+8,1,16,0,32784,65552,49152,81920,0
+8,1,16,16,32784,65552,49152,81920,0
+256,0,0,0,1048576,2097152,1048576,2097152,1
+256,0,16,0,1048592,2097168,1064960,2113536,1
+256,0,16,16,1048592,2097168,1064960,2113536,1
+256,1,0,0,1048576,2097152,1048576,2097152,0
+256,1,16,0,1048592,2097168,1064960,2113536,1
+256,1,16,16,1048592,2097168,1064960,2113536,1
+real 0.00
+user 0.00
+sys 0.00
+== END append-layout-observe: 0.10 s, exit 0 ==
+
+<scratch-root>/append-layout-measure.txt
+== START append-layout-measure (limit 1800s): sh -c research/experiments/container-representation/vector-library/.build/append-allocation-layout/append-layout measure > research/experiments/container-representation/vector-library/append-allocation-layout-samples.csv ==
+clock minimum_nonzero_ns=41 quantized=0
+== RUNNING append-layout-measure: 30 s, child 14804, group 14804 ==
+== RUNNING append-layout-measure: 60 s, child 14804, group 14804 ==
+append layout: unresolved samples below 1 ms
+real 64.08
+user 63.76
+sys 0.18
+== END append-layout-measure: 64.12 s, exit 1 ==
+
+O3 helper only; no new timing:
+== START append-layout-o3-helper (limit 1800s): clang -std=c11 -O3 -Wall -Wextra -Werror -fno-lto -DLAYOUT_HELPER -c research/experiments/container-representation/vector-library/append-allocation-layout.c -o <scratch-root>/append-layout-o3-helper.o ==
+real 0.04
+user 0.02
+sys 0.01
+== END append-layout-o3-helper: 0.10 s, exit 0 ==
+otool -s __TEXT __text: O2/O3 exact output match = False
+O2:
+(__TEXT,__text) section
+0000000000000000 d10183ff a90167fa a9025ff8 a90357f6 
+0000000000000010 a9044ff4 a9057bfd 910143fd aa0503f4 
+0000000000000020 aa0403f5 aa0103f7 aa0003f3 a940a408 
+0000000000000030 9b017d16 d37ff939 34000102 f9400260 
+0000000000000040 9b170f21 94000000 b40008e0 f10022ff 
+0000000000000050 54000202 14000039 9b170f20 94000000 
+0000000000000060 b40008e0 f9400278 aa0003fa 8b150000 
+0000000000000070 8b150301 aa1603e2 94000000 aa1803e0 
+0000000000000080 94000000 aa1a03e0 f10022ff 54000563 
+0000000000000090 d343fee8 f10102ff 54000062 d2800009 
+00000000000000a0 1400001f 927de509 4e080e80 8b1602aa 
+00000000000000b0 8b00014a 9100814a 9000000b 3dc00161 
+00000000000000c0 5280004b 4e080d62 5280008b 4e080d63 
+00000000000000d0 528000cb 4e080d64 5280010b 4e080d65 
+00000000000000e0 aa0903eb 4ee28426 4ee38427 4ee48430 
+00000000000000f0 6e201c31 6e201cc6 6e201ce7 6e201e10 
+0000000000000100 ad3f1951 ac824147 4ee58421 f100216b 
+0000000000000110 54fffea1 eb09011f 54000100 8b1602aa 
+0000000000000120 8b0a000a ca14012b f829794b 91000529 
+0000000000000130 eb09011f 54ffff81 f9400668 91000508 
+0000000000000140 f9000260 a900e668 a9457bfd a9444ff4 
+0000000000000150 a94357f6 a9425ff8 a94167fa 910183ff 
+0000000000000160 d65f03c0 90000008 f9400108 f9400100 
+0000000000000170 90000008 91000108 14000006 90000008 
+0000000000000180 f9400108 f9400100 90000008 91000108 
+0000000000000190 f90003e8 90000001 91000021 94000000 
+00000000000001a0 52800020 94000000 
+O3:
+(__TEXT,__text) section
+0000000000000000 d10183ff a90167fa a9025ff8 a90357f6 
+0000000000000010 a9044ff4 a9057bfd 910143fd aa0503f4 
+0000000000000020 aa0403f5 aa0103f7 aa0003f3 a940a408 
+0000000000000030 9b017d16 d37ff939 34000102 f9400260 
+0000000000000040 9b170f21 94000000 b40008e0 f10022ff 
+0000000000000050 54000202 14000039 9b170f20 94000000 
+0000000000000060 b4000980 f9400278 aa0003fa 8b150000 
+0000000000000070 8b150301 aa1603e2 94000000 aa1803e0 
+0000000000000080 94000000 aa1a03e0 f10022ff 54000563 
+0000000000000090 d343fee8 f10102ff 54000062 d2800009 
+00000000000000a0 1400001f 927de509 4e080e80 8b1602aa 
+00000000000000b0 8b00014a 9100814a 9000000b 3dc00161 
+00000000000000c0 5280004b 4e080d62 5280008b 4e080d63 
+00000000000000d0 528000cb 4e080d64 5280010b 4e080d65 
+00000000000000e0 aa0903eb 4ee28426 4ee38427 4ee48430 
+00000000000000f0 6e201c31 6e201cc6 6e201ce7 6e201e10 
+0000000000000100 ad3f1951 ac824147 4ee58421 f100216b 
+0000000000000110 54fffea1 eb09011f 54000100 8b1602aa 
+0000000000000120 8b0a000a ca14012b f829794b 91000529 
+0000000000000130 eb09011f 54ffff81 f9400668 91000508 
+0000000000000140 f9000260 a900e668 a9457bfd a9444ff4 
+0000000000000150 a94357f6 a9425ff8 a94167fa 910183ff 
+0000000000000160 d65f03c0 90000008 f9400108 f9400100 
+0000000000000170 90000008 91000108 f90003e8 90000001 
+0000000000000180 91000021 94000000 52800020 94000000 
+0000000000000190 90000008 f9400108 f9400100 90000008 
+00000000000001a0 91000108 f90003e8 90000001 91000021 
+00000000000001b0 94000000 52800020 94000000 
+otool -s __TEXT __literal16: O2/O3 exact output match = False
+O2:
+Contents of (__TEXT,__literal16) section
+00000000000001b0	00000000 00000000 00000001 00000000 
+O3:
+Contents of (__TEXT,__literal16) section
+00000000000001c0	00000000 00000000 00000001 00000000 
+otool -rv: O2/O3 exact output match = False
+O2:
+Relocation information (__TEXT,__text) 18 entries
+address  pcrel length extern type    scattered symbolnum/value
+000001a4 True  long   True   BR26    False     _exit
+0000019c True  long   True   BR26    False     _fprintf
+00000198 False long   True   PAGOF12 False     l_.str.2
+00000194 True  long   True   PAGE21  False     l_.str.2
+0000018c False long   True   PAGOF12 False     l_.str.1
+00000188 True  long   True   PAGE21  False     l_.str.1
+00000180 False long   True   GOTLDPOFFalse     ___stderrp
+0000017c True  long   True   GOTLDP  False     ___stderrp
+00000174 False long   True   PAGOF12 False     l_.str
+00000170 True  long   True   PAGE21  False     l_.str
+00000168 False long   True   GOTLDPOFFalse     ___stderrp
+00000164 True  long   True   GOTLDP  False     ___stderrp
+000000bc False long   True   PAGOF12 False     lCPI0_0
+000000b8 True  long   True   PAGE21  False     lCPI0_0
+00000080 True  long   True   BR26    False     _free
+00000078 True  long   True   BR26    False     _memmove
+0000005c True  long   True   BR26    False     _malloc
+00000044 True  long   True   BR26    False     _realloc
+Relocation information (__LD,__compact_unwind) 1 entries
+address  pcrel length extern type    scattered symbolnum/value
+00000000 False ?( 3)  False  UNSIGND False     1 (__TEXT,__text)
+O3:
+Relocation information (__TEXT,__text) 22 entries
+address  pcrel length extern type    scattered symbolnum/value
+000001b8 True  long   True   BR26    False     _exit
+000001b0 True  long   True   BR26    False     _fprintf
+000001ac False long   True   PAGOF12 False     l_.str.2
+000001a8 True  long   True   PAGE21  False     l_.str.2
+000001a0 False long   True   PAGOF12 False     l_.str.1
+0000019c True  long   True   PAGE21  False     l_.str.1
+00000194 False long   True   GOTLDPOFFalse     ___stderrp
+00000190 True  long   True   GOTLDP  False     ___stderrp
+0000018c True  long   True   BR26    False     _exit
+00000184 True  long   True   BR26    False     _fprintf
+00000180 False long   True   PAGOF12 False     l_.str.2
+0000017c True  long   True   PAGE21  False     l_.str.2
+00000174 False long   True   PAGOF12 False     l_.str
+00000170 True  long   True   PAGE21  False     l_.str
+00000168 False long   True   GOTLDPOFFalse     ___stderrp
+00000164 True  long   True   GOTLDP  False     ___stderrp
+000000bc False long   True   PAGOF12 False     lCPI0_0
+000000b8 True  long   True   PAGE21  False     lCPI0_0
+00000080 True  long   True   BR26    False     _free
+00000078 True  long   True   BR26    False     _memmove
+0000005c True  long   True   BR26    False     _malloc
+00000044 True  long   True   BR26    False     _realloc
+Relocation information (__LD,__compact_unwind) 1 entries
+address  pcrel length extern type    scattered symbolnum/value
+00000000 False ?( 3)  False  UNSIGND False     1 (__TEXT,__text)
+e064945913b7f3bd937b47438a7f0259085c05956e20a7fb56eda712a0b1f2f2  <scratch-root>/append-layout-o3-helper.o
+
+O3 helper disassembly:
+<scratch-root>/append-layout-o3-helper.o:
+(__TEXT,__text) section
+_layout_append:
+0000000000000000	sub	sp, sp, #0x60
+0000000000000004	stp	x26, x25, [sp, #0x10]
+0000000000000008	stp	x24, x23, [sp, #0x20]
+000000000000000c	stp	x22, x21, [sp, #0x30]
+0000000000000010	stp	x20, x19, [sp, #0x40]
+0000000000000014	stp	x29, x30, [sp, #0x50]
+0000000000000018	add	x29, sp, #0x50
+000000000000001c	mov	x20, x5
+0000000000000020	mov	x21, x4
+0000000000000024	mov	x23, x1
+0000000000000028	mov	x19, x0
+000000000000002c	ldp	x8, x9, [x0, #0x8]
+0000000000000030	mul	x22, x8, x1
+0000000000000034	lsl	x25, x9, #1
+0000000000000038	cbz	w2, 0x58
+000000000000003c	ldr	x0, [x19]
+0000000000000040	madd	x1, x25, x23, x3
+0000000000000044	bl	0x44
+0000000000000048	cbz	x0, 0x164
+000000000000004c	cmp	x23, #0x8
+0000000000000050	b.hs	0x90
+0000000000000054	b	0x138
+0000000000000058	madd	x0, x25, x23, x3
+000000000000005c	bl	0x5c
+0000000000000060	cbz	x0, 0x190
+0000000000000064	ldr	x24, [x19]
+0000000000000068	mov	x26, x0
+000000000000006c	add	x0, x0, x21
+0000000000000070	add	x1, x24, x21
+0000000000000074	mov	x2, x22
+0000000000000078	bl	0x78
+000000000000007c	mov	x0, x24
+0000000000000080	bl	0x80
+0000000000000084	mov	x0, x26
+0000000000000088	cmp	x23, #0x8
+000000000000008c	b.lo	0x138
+0000000000000090	lsr	x8, x23, #3
+0000000000000094	cmp	x23, #0x40
+0000000000000098	b.hs	0xa4
+000000000000009c	mov	x9, #0x0
+00000000000000a0	b	0x11c
+00000000000000a4	and	x9, x8, #0x1ffffffffffffff8
+00000000000000a8	dup.2d	v0, x20
+00000000000000ac	add	x10, x21, x22
+00000000000000b0	add	x10, x10, x0
+00000000000000b4	add	x10, x10, #0x20
+00000000000000b8	adrp	x11, 0 ; 0x0
+00000000000000bc	ldr	q1, [x11]
+00000000000000c0	mov	w11, #0x2
+00000000000000c4	dup.2d	v2, x11
+00000000000000c8	mov	w11, #0x4
+00000000000000cc	dup.2d	v3, x11
+00000000000000d0	mov	w11, #0x6
+00000000000000d4	dup.2d	v4, x11
+00000000000000d8	mov	w11, #0x8
+00000000000000dc	dup.2d	v5, x11
+00000000000000e0	mov	x11, x9
+00000000000000e4	add.2d	v6, v1, v2
+00000000000000e8	add.2d	v7, v1, v3
+00000000000000ec	add.2d	v16, v1, v4
+00000000000000f0	eor.16b	v17, v1, v0
+00000000000000f4	eor.16b	v6, v6, v0
+00000000000000f8	eor.16b	v7, v7, v0
+00000000000000fc	eor.16b	v16, v16, v0
+0000000000000100	stp	q17, q6, [x10, #-0x20]
+0000000000000104	stp	q7, q16, [x10], #0x40
+0000000000000108	add.2d	v1, v1, v5
+000000000000010c	subs	x11, x11, #0x8
+0000000000000110	b.ne	0xe4
+0000000000000114	cmp	x8, x9
+0000000000000118	b.eq	0x138
+000000000000011c	add	x10, x21, x22
+0000000000000120	add	x10, x0, x10
+0000000000000124	eor	x11, x9, x20
+0000000000000128	str	x11, [x10, x9, lsl #3]
+000000000000012c	add	x9, x9, #0x1
+0000000000000130	cmp	x8, x9
+0000000000000134	b.ne	0x124
+0000000000000138	ldr	x8, [x19, #0x8]
+000000000000013c	add	x8, x8, #0x1
+0000000000000140	str	x0, [x19]
+0000000000000144	stp	x8, x25, [x19, #0x8]
+0000000000000148	ldp	x29, x30, [sp, #0x50]
+000000000000014c	ldp	x20, x19, [sp, #0x40]
+0000000000000150	ldp	x22, x21, [sp, #0x30]
+0000000000000154	ldp	x24, x23, [sp, #0x20]
+0000000000000158	ldp	x26, x25, [sp, #0x10]
+000000000000015c	add	sp, sp, #0x60
+0000000000000160	ret
+0000000000000164	adrp	x8, 0 ; 0x0
+0000000000000168	ldr	x8, [x8]
+000000000000016c	ldr	x0, [x8]
+0000000000000170	adrp	x8, 0 ; 0x0
+0000000000000174	add	x8, x8, #0x0
+0000000000000178	str	x8, [sp]
+000000000000017c	adrp	x1, 0 ; 0x0
+0000000000000180	add	x1, x1, #0x0
+0000000000000184	bl	0x184
+0000000000000188	mov	w0, #0x1
+000000000000018c	bl	0x18c
+0000000000000190	adrp	x8, 0 ; 0x0
+0000000000000194	ldr	x8, [x8]
+0000000000000198	ldr	x0, [x8]
+000000000000019c	adrp	x8, 0 ; 0x0
+00000000000001a0	add	x8, x8, #0x0
+00000000000001a4	str	x8, [sp]
+00000000000001a8	adrp	x1, 0 ; 0x0
+00000000000001ac	add	x1, x1, #0x0
+00000000000001b0	bl	0x1b0
+00000000000001b4	mov	w0, #0x1
+00000000000001b8	bl	0x1b8
+
+Instruction comparison through return at 0x160: sole difference [('0x60', 'cbz\tx0, 0x17c', 'cbz\tx0, 0x190')]
+The differing branch targets the cold malloc-failure path. Successful-path instructions and their allocator/copy relocations match; literal vector contents match but section address differs. Caller O3 behavior not compared or timed.

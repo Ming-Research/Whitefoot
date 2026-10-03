@@ -1,5 +1,244 @@
 # Containers over the x1 language
 
+## Runtime-capacity content references and exchange
+
+This pending implementation choice repairs the runtime-content exchange
+defect recorded in the [maintained TODO](../../../docs/todo.md), under unchanged
+OP-11, TYPE-9 and REF-2 rules. An implicit swap of `&empty.inner` and
+`&full.inner` is admitted even when the runtime Slots capacities are zero and
+one. The existing shared swap body loads and stores only the typed header,
+leaving both allocation pointers and payloads in place. Changing the empty
+header to length one does not create the element storage that length permits
+the program to access. The original invalid read was inspected in emitted
+IR and was not executed. The owning runtime Array witness
+`Box<Array<Box<u64>>>` is separately source-accepted but stops during lowering;
+its borrow parameter is represented as bare Buffer while its actual argument
+and shared swap body require an address.
+
+A separate frozen source check confirms a checker defect: constructing two
+`box_array_filled::<u64>` owners and swapping their `.inner` places is accepted,
+although OWN-1 makes these contents copy and OP-11 refuses that written swap.
+The checker classified every runtime Array as noncopy; this also caused bare
+content bindings to reject under OWN-1 rather than TYPE-9. The bounded routine
+repair derives either Array placement's capability from its element and
+enforces TYPE-9 independently at the owned-value read boundary. Borrowing the
+content and aliasing that reference remain admitted. OP-11 still judges the
+written bound only: an unconstrained `Array<T>` helper may instantiate with
+`u64`, while the direct and `T: copy` forms reject. These paired source controls
+must pass separately from the representation repair's native observations.
+
+The proposed reference is one pointer to the selected Box owner slot, using
+the existing distinction between `Address(Buffer)` or a runtime Window address
+and a fixed-size storage address. Projecting the runtime `.inner` retains that
+slot; measures, element access, window updates, range formation, byte probes
+and scheduling length observations load its current backing through one
+shared resolver. Exact-content aliases, their copies, joins and admitted
+captures therefore continue to name the same source place after a swap.
+Selected element and range references retain their existing representation and
+are invalidated by a proper-prefix content exchange under REF-2. A reference
+to `.inner` also does not survive `grow`'s declared `writes(cell)` boundary.
+
+The Box value remains one allocation pointer and its selected-target header,
+tail padding, alignment and complete-allocation qualification are unchanged.
+An ordinary `&Box<...>` still addresses that pointer word, and `&[T]` still
+passes an element pointer and count. The changed ABI interpretation is the
+implicit runtime-content reference: all materialized PRE-1 bodies, calls and
+any linked definitions of that same boundary must receive the owner-slot
+address, not the allocation address. Reference extent attributes must describe
+the slot actually addressed; swap retains its equal-place allowance and carries
+no `noalias`. TYPE-9's existing written-parameter and content-move refusals are
+unchanged. Shared empty backing and a new capacity policy are outside this
+repair.
+
+The structural choice is one typed runtime-content exchange operation in the
+existing shared swap body. It checks equal runtime-content reference types,
+loads both owner pointer words, then stores them exchanged; equal operands
+leave the owner unchanged. Existing `Load` and `Store` require values of the
+addressed referent type, so using them directly would still construct header
+values rather than represent complete runtime content. Treating those values
+as integers or untyped pointers would discard that invariant. A new inverse
+projection to a recovered Box nominal could reuse ordinary loads and stores,
+but would add the same new typed operation plus a nominal-recovery dependency
+solely for exchange. The bounded exchange operation avoids that dependency
+while leaving fixed-size swap's existing path intact. Its runtime operands
+participate in the existing capture, CFG and effect inventories.
+
+A direct-call rewrite is insufficient because previously formed aliases
+retain their old allocation address. In-place header or payload copying cannot
+fit an unequal source extent into the old destination allocation. A wider
+reference or a separate stable descriptor could carry owner provenance, but
+the existing selected owner slot supplies it without another word or allocation.
+The current parallel Box snapshot decision remains applicable: PAR-2 denies
+whole-content writes to captured enclosing storage. Iteration-local owners and
+owner slots selected through admitted disjoint ranges still need validation.
+
+Before treating the repair as established, require ordinary and retained-call
+execution of zero/one and unequal nonzero capacities, same-place exchange,
+earlier and later exact aliases, rebinding and joins, nested selected owner
+slots, Ring wrap/head order, zero-stride and aligned payloads, exact owning
+cleanup and explicit linear consumption. Exercise direct and generic Box
+reference helpers, a linked C oracle for owning runtime Arrays, and both
+sequential and parallel lowering. Reuse the maintained conformance and native
+test machinery; formal tests do not import this investigation. The first
+cap0 native falsifier uses padded scalar storage so the old header-only swap
+produces a deterministic wrong observation without an invalid read. Wrong
+payload, stale alias and missing or duplicate release observations must each
+fail. Retain the negative source controls for invalid descendant references,
+runtime-content values and moves, written unboxed runtime parameters, and
+OP-11's written-bound capability distinction. No performance
+claim follows from this correctness repair; target facts and code generation
+remain subject to their existing checks.
+
+The first negative observation ran against frozen compiler SHA-256
+`e77f0a97b85cf795aa3fe7e0afca88c00a6ea8307fa38fdf3bef368a9e27e4e4`.
+The [maintained zero/one-capacity oracle](../../../compiler/src/backend/tests/runtime_content_swap.rs)
+adds 64 bytes to each requested allocation and initializes the padding to
+`0xa5`, making the old header-only implementation's sole element read valid
+but observably wrong. With retained calls and Clang `-O2`, construction exits 0
+in 0.0831 seconds; execution exits 3, the wrong-element branch, in 0.2470 seconds.
+Its allocation log is `A1;A2;F2;F1;` with empty stderr. This falsifies the old
+exchange without executing the original out-of-bounds witness.
+
+The owner-slot repair now passes the maintained native observations on the
+working branch. `runtime_content_swap.rs` runs ordinary and retained-call
+links for zero-capacity, unequal-capacity, same-place, alias, join, nested and
+wrapped Ring cases in both lowering modes. Its owning observer checks every
+element and owner identity exactly once; an atomic test ledger permits only
+the interleaving that disjoint parallel drains can produce. A separate link
+uses the real worker-schedule and grant observer and requires a worker grant
+while the same owning cleanup ledger remains complete. The source controls
+cover direct and generic references, stale element/range descendants,
+runtime-content values and explicit moves, TYPE-9 and OP-11 capability
+boundaries. The affected backend filters (new runtime tests, owned places,
+windows, arrays, ranges, parallel, references and range references) pass in
+the gate profile. The remaining X1 obligation is performance attribution;
+this correctness repair makes no speed claim.
+
+## Checked terminal consumption lowering candidate
+
+This is a pending compiler implementation choice under the unchanged source
+language and Vector algorithm. The [current practical comparison](../../experiments/container-representation/vector-library/RESULTS.md)
+supplies the reopening ground: the frozen forward-consumption plus ordinary
+behavior-hint diagnostic improves complete useful traces without an observed
+useful-cell regression in its one paired matrix. That manual LLVM experiment
+does not establish a general recognizer, arbitrary callback equivalence, or
+production performance. The separate behavior-hint proposal remains distinct.
+
+The follow-up [consumer-counter diagnostic](../../experiments/container-representation/vector-library/RESULTS.md#consumer-counter-diagnostic-the-wide-suffix-one-gap-is-real-but-incomplete)
+isolated the wide `grow_vector_truncate` loop on the same frozen image. It
+reduced the wide suffix-one candidate/control median to `0.531–0.562`, while
+the candidate still measured `1.143–1.202` against the slower standard
+container and gave no broad useful-cell improvement. The loop controller is
+therefore a confirmed contributor, but this source-only replacement is not a
+selected lowering or a Vector completion.
+A follow-up tail-boundary `inlinehint` was then tested on the same frozen
+wide image. It left the optimized object and executable assembly byte-for-byte
+unchanged and retained the trace-to-tail call, so the preregistered boundary
+criterion failed before timing; the patch and hashes are recorded with the
+[rejected diagnostic](../../experiments/container-representation/vector-library/RESULTS.md#wide-tail-boundary-inlinehint-completed-and-rejected).
+The preregistered counted-consumer plus wide tail-only `alwaysinline` then
+removed that call without adding a frame or transfer. It brought wide
+suffix-one to near parity but left all three cells range-overlapping, so it is
+also a diagnostic rejection; the paired samples and accounting identity are
+recorded in the [completed result](../../experiments/container-representation/vector-library/RESULTS.md#counted-consumer-with-wide-tail-only-alwaysinline-completed-near-parity-but-rejected).
+
+A final wide truncate-only exposure improved the diagnostic matrix to 21
+passes and four scalar deficits, but the remaining scalar growth/suffix-two
+cells and overlapping wide ranges still reject production selection. The
+paired result is recorded in the [truncate-boundary diagnostic](../../experiments/container-representation/vector-library/RESULTS.md#counted-consumer-with-wide-tail-and-truncate-alwaysinline-completed-improved-but-rejected).
+
+The first recognizer is deliberately closed. After ignoring erased proof
+statements, the whole own-unit body must contain an entry window length `n`,
+exact `n-r` and division by two, the counted first-half take-back/exchange/
+consumer loop, the final take-back/consumer loop to `r`, and a unit return.
+Both loops must have no extra runtime statements, releases, partial exits or
+other observations. The same resolved consumer receives the selected owner
+and unchanged incoming arguments at both sites; both physical call targets
+must agree. The compiler-owned take-back and exchange identities, typed
+places and binding identities select this shape, never user function names,
+the collection module, element size or concrete payload type.
+
+The window is a stable field/Box projection of an incoming reference, with
+no dynamic subscript or local reference alias in that projection. A declared
+write prefix covers its complete state. Other consumer actuals are unchanged
+incoming references rooted at distinct parameters, or unconsumed incoming
+copy values. The accepted enclosing boundary's EFF-5 separation therefore
+excludes callback access to this window; its environment may otherwise read,
+write, allocate, release, recurse or diverge under its ordinary contract.
+Function-wide possible-reference inventories are not point-current evidence.
+
+For removed values `x0..x(m-1)`, the first `floor(m/2)` iterations call the
+consumer on `x0..x(h-1)` and move rear values into those vacated positions.
+The remaining suffix is in reverse order, so the final back takes deliver
+`xh..x(m-1)`. A forward traversal delivers exactly that same sequence. Each
+call and every release or divergence prefix remains in order. Intermediate
+backing and length states cannot be observed within the selected closed
+region. STOR-7 permits relocation; no reference to the backing escapes.
+The consumer may retain the delivered owner in its environment: the same
+owner reaches the same call at the same ordinal in both traversals. No assumption
+about a consumer's arithmetic, purity, size, termination or willingness to inline is
+part of this equivalence.
+
+The lowering builder owns recognition and the replacement CFG. Existing
+`RunIndex` already transports owned values for `remove_at`; reuse it for the
+selected handoff and keep the consumer as an ordinary `Call` with source
+argument metadata. A private `RunConsumeFinish` publishes the retained length
+only after the nonempty traversal. An empty suffix returns before that store:
+this removes unnecessary work present in the diagnostic LLVM, whose wide
+suffix-zero controls regressed. The store's isolated time cost is unmeasured. Existing logical
+element addressing retains Ring wrapping and selected-target zero-stride
+normalization; logical counts themselves remain unchanged. No call ABI,
+alias attribute, source operation, proof rule or target qualification changes.
+
+The replacement's bounds are an implementation equivalence argument, not a
+new source OP-4 receipt. Acceptance of exact `n-r` gives `r<=n`, and the
+standing window domain gives `n<=cap`. The generated cursor starts at `r`;
+its guard establishes `cursor<n` for every read, and therefore
+`cursor+1<=n<=u64::MAX`. On a Ring, take-back and exchange preserve the entry
+head, so the same logical cursor uses the existing wrap calculation at that
+head. Positive stride uses the already qualified complete allocation extent;
+zero stride substitutes zero only in address formation, including logical
+coordinates above `i64::MAX`, and still executes every logical handoff.
+
+The cohesive matcher belongs beside the existing lowering-builder recognizers;
+the small final-boundary operation belongs with the typed run operations and
+their shared operand/emission consumers. This avoids a second optimizer in
+the structured LLVM printing model and an opaque operation hiding callbacks
+from ABI, dependency or scheduler consumers. Any unmatched body follows the
+existing lowering without changing acceptance.
+
+Before production selection, require renamed positive witnesses; empty,
+one-element, odd, even, full and retained-prefix outcomes; exact arbitrary
+owner/callback/release order; zero-byte logical elements and qualified address
+formation; and negative shapes with additional backing observations, changed
+consumers, partial exits or unsupported reference provenance retaining their
+ordinary lowering. Wrong owner order and missing release must falsify their
+oracles. Inspect actual optimized callers for avoided relocation and any
+replacement snapshots or boundaries. The complete unchanged practical matrix,
+both cohorts, accounting, controls and range qualifications must be rerun on
+the actual implementation before making a performance selection. A favorable
+manual LLVM result is not substituted for these obligations.
+
+The [focused implementation tests](../../../compiler/src/backend/tests/terminal_consumption.rs)
+now pass: four renamed helpers select the rewrite, four accepted near-matches
+keep ordinary lowering, and an independent native oracle checks 507 cases in
+each lowering mode. These include owner identity and callback/release order,
+retained prefixes, wrapped Ring heads, zero-stride logical indices beyond
+`i64::MAX`, and an observable intermediate-length case that must retain the
+original algorithm. Wrong release order, a skipped release and changed
+callback/release interleaving each fail their distinct oracle. The same oracle
+and all three faults first passed against the frozen ordinary compiler in both
+modes. Candidate native construction took 1.716 s and execution 1.268 s; the
+shared gate-profile test build took 72.267 s, followed by ten passing focused
+tests across six filtered runs in 9.388 s, including behavior-hint and floor
+controls. An earlier 104.980 s test build was followed by fixture-authoring repairs:
+noncanonical final whitespace, an invalid copy-value swap subsequently replaced
+by an explicit zero-byte `nocopy` owner, and incomplete C-link setup. Those
+repairs are test-authoring costs, not compiler failures; the separately found
+entryless-library emission defect has its own regression. Full family checks,
+accounting, final native-code inspection, performance comparison and the
+canonical gate remain outstanding for this implementation candidate.
+
 The reassessment and first Vector trial below use the merged PR #70 baseline,
 `36be8784e84a26d34bc24668babd789e0f4c96fb`, kernel v0.60, and their stated
 subsequent implementation revisions. The Box-placement and consumption
@@ -2336,6 +2575,65 @@ interface, permitted callback effects, retained contents and capacity are
 unchanged. This still relocates rear elements and is not a minimum-transfer
 algorithm.
 
+The later Vector diagnostics separate the remaining scalar cost. With the
+counted consumer and wide tail/truncate calls exposed, a reserved scalar tail
+whose append call was replaced by a direct slot store and length increment
+reduced the 8-byte suffix-two ratio from `0.523–0.559` to `0.523–0.527` times
+the slower standard peer, while preserving the complete checksum and release
+ledger. The corrected pair moved the target matrix from 20 passes, 3 deficits
+and 13 inconclusive cells to 25 passes, 1 deficit and 10 inconclusive cells;
+the remaining strict deficit is scalar growth at 8-byte length 16. The
+replacement is a frozen LLVM witness that removes a public capacity check; it
+is therefore causal evidence about the helper boundary and the carried
+spare-capacity fact, not a selected API or unchecked lowering. An earlier
+tail-only run lacked the wide truncate attribute and is retained only as
+historical evidence, not as a current composite comparison. For the remaining
+growth-at-16 row, WF/direct-C is `1.018–1.024`, compared with WF/C++
+`1.085–1.107` and WF/Rust `1.152–1.154`. Direct C uses the same header-first
+representation, so most of the standard-library gap is the empty-header and
+first-growth contract; the residual roughly two percent against direct C is a
+lowering question. This attribution does not relax the Rust/C++ target. The
+follow-up scalar pointer/count loop was rejected before timing: after
+inlining it used five native instructions per element, while its preregistered
+criterion required at most four. Its exact LLVM diff and construction record
+are retained in the Vector results; no pointer-loop speed claim is made.
+The native C++ empty-header A/B then added one 16-byte allocation/release per
+fresh growth round. It changed the diagnostic composite from two strict
+deficits to none, with the scalar growth ratio moving from `1.086–1.088` to
+`0.967–0.971` and the wide growth ratio from `1.026–1.029` to `0.976–0.979`.
+Because the injected header remains live until the end of `work`, this is
+evidence for the allocation contract rather than an exact time split. A
+lazy-empty storage candidate is therefore the next production experiment;
+its enum representation and contract changes remain pending design work.
+
+The following source-equivalent trial was rejected. The gate compiler was
+rebuilt once for the zero-capacity baseline and once for the positive-ceiling
+one-slot candidate; stale-binary timings were discarded. Both arms passed
+1,260 configurations / 8,820 executions and the candidate's complete
+allocation, checksum and cleanup checks. The candidate removed the scalar
+growth-at-16 deficit (`1.101858/1.097282` to `0.952456/0.959992` times the
+slower standard peer), but scalar suffix-2 at 4096 moved from inconclusive
+(`1.034401/1.062385`) to a strict deficit (`1.065974/1.065284`). The target
+summary was therefore baseline 18/5/13 versus candidate 18/4/14
+(pass/deficit/inconclusive; six unranked in each), so the preregistered
+no-regression criterion fails. The allocator ledger gives the expected local
+effect: growth-at-16 scalar requests fall 21 to 18 and requested bytes 1,848
+to 1,800 per three-round trace at the same 416-byte peak, while reserved-16
+keeps two requests but grows 504 to 528 bytes and 168 to 176 peak bytes.
+The complete evidence and frozen patch are in the Vector results' initial-cap
+artifacts. The candidate is not adopted.
+
+The lazy-empty alternative also stops at the current source-contract boundary.
+The exact rejected forms are `requires
+deref(values).storage.Full.storage.inner.len < 16_u64;` (`TYPE-5`),
+`requires lazy_len(values: values) < 16_u64;` (`FN-8`),
+`ensures deref(values).capacity > deref(values).length;` (`FN-9`) and
+`invariant values.length >= index` (`INV-1`). A small enum micro-witness
+executes, but its 32-byte descriptor and runtime checks are not the existing
+Vector API. No production Vector representation was selected; the next
+discriminator must be a compiler/lowering change or a separately recorded
+representation-and-contract decision.
+
 Two target choices address the demonstrated extra temporary copies. A complete
 take captures the old physical slot, updates the window descriptor, then
 transfers the element. Its header and element bytes are disjoint, and no call,
@@ -2541,12 +2839,13 @@ probe was rerun.
 
 ### Exact unavailable source forms
 
-These are the rejected additions or functions in the linked library's type
-context. They state current rules, not proposed amendments.
+These record rejected additions or functions in the linked library's type
+context. The result-projection row is historical; its superseding rule is
+identified below.
 
 | Rejected source | Rule and cause | Implemented alternative |
 | --- | --- | --- |
-| In `slab_new`: `ensures result.cells.inner.len == 0_u64;` | FN-9's result-selector domain does not include an arbitrary aggregate result field. A nominal Deque wrapper's `made.storage.inner.len` has the same limit. | Slab retains its necessary free-list state; the caller establishes length through an ordinary read/branch. Deque needs no extra wrapper state and uses direct `Box<Ring<T>>`, whose `made.inner.len` is admitted. |
+| In `slab_new`: `ensures result.cells.inner.len == 0_u64;` | Historical result-selector rejection, superseded by CALL-4's admission of owned descendant result measures in [the module-program change](https://github.com/mbbill/Whitefoot/commit/dcbbc613323267825f98accdfc8122c692dc130c). The current [GrowVector module witness](../../../tests/conformance/cases/mod6-pos-grow-vector-boundary/vec/vector.wf) publishes the exact `made.storage.inner.len` projection through a named returned owner. | Slab's read/branch caller and Deque's direct `Box<Ring<T>>` carrier remain implemented source choices; their existence no longer establishes a wrapper-result language limit. |
 | In `slab_find_index`: `ensures when Ok(value: index): deref(slab).cells.inner[index].storage.len > 0_u64;` | FN-9/CALL-4 do not admit this indexed postcondition target. | Export the outer index bound; use `slab_visit` to keep validation and callback in one helper, or re-read occupancy before direct access. |
 | The signature `fn borrow_out<T>(value: &T) -> result: &T reads(value) {` | Current GRAM-3 admits a value type at the result; REF-3/FN-1 prohibit reference escape. | Return owned callback data or a validated index. |
 | After `let values = box_ring_new::<u64>(capacity: 4_u64);`: `let count = observe::<u64>(first: &values.inner[0_u64..0_u64], second: &values.inner[0_u64..0_u64]);`, with `observe` taking two `&[T]` arguments | REF-4 refuses even empty Ring ranges. | Per-slot visitation; this remains an explicit missing zero-copy two-span interface. |

@@ -157,6 +157,579 @@ fn slots_addresses_use_proved_offsets_and_ring_addresses_still_wrap() {
     }
 }
 
+/// [WIN-1] selects physical head modulo capacity, while [MSR-2] permits
+/// head == cap. Ordinary linked calls owe those contracts, not a stricter
+/// representation invariant inferred from the compiler's constructors.
+#[test]
+fn ring_front_removal_normalizes_only_the_physical_address() {
+    const SOURCE: &[u8] =
+        br#"fn fixed_scalar(window: &Ring<u64, 1>) -> result: u64 writes(window) contract {
+  requires window^.len > 0_u64;
+  requires window^.head == window^.cap;
+} {
+  let value = take_front(window: window);
+  return value;
+}
+
+fn runtime_scalar(window: &Box<Ring<u64>>) -> result: u64 writes(window.inner) contract {
+  requires window^.inner.len > 0_u64;
+  requires window^.inner.head == window^.inner.cap;
+} {
+  let value = take_front(window: &window^.inner);
+  return value;
+}
+
+fn fixed_zst(window: &Ring<Array<u64, 0>, 1>) -> result: u64 writes(window) contract {
+  requires window^.len > 0_u64;
+  requires window^.head == window^.cap;
+} {
+  let value = take_front(window: window);
+  return window^.head;
+}
+
+fn runtime_zst(window: &Box<Ring<Array<u64, 0>>>) -> result: u64 writes(window.inner) contract {
+  requires window^.inner.len > 0_u64;
+  requires window^.inner.head == window^.inner.cap;
+} {
+  let value = take_front(window: &window^.inner);
+  return window^.inner.head;
+}
+
+fn main() -> result: u64 pure {
+  let single = ring_new::<u64, 1>();
+  place_front(window: &single, value: 17_u64);
+  let one = take_front(window: &single);
+  if one != 17_u64 {
+    return 1_u64;
+  }
+  if single.head != 0_u64 {
+    return 2_u64;
+  }
+  let fixed = ring_new::<u64, 7>();
+  place_back(window: &fixed, value: 29_u64);
+  let first = take_front(window: &fixed);
+  if first != 29_u64 {
+    return 3_u64;
+  }
+  if fixed.head != 1_u64 {
+    return 4_u64;
+  }
+  if fixed.len != 0_u64 {
+    return 5_u64;
+  }
+  let runtime = box_ring_new::<u64>(capacity: 7_u64);
+  place_front(window: &runtime.inner, value: 41_u64);
+  if runtime.inner.head != 6_u64 {
+    return 6_u64;
+  }
+  let wrapped = take_front(window: &runtime.inner);
+  if wrapped != 41_u64 {
+    return 7_u64;
+  }
+  if runtime.inner.head != 0_u64 {
+    return 8_u64;
+  }
+  free_empty(window: move runtime);
+  let empty_fixed = ring_new::<Array<u64, 0>, 0>();
+  if empty_fixed.head != 0_u64 {
+    return 9_u64;
+  }
+  let empty_runtime = box_ring_new::<Array<u64, 0>>(capacity: 0_u64);
+  if empty_runtime.inner.head != 0_u64 {
+    return 10_u64;
+  }
+  free_empty(window: move empty_runtime);
+  let zero = array_filled::<u64, 0>(value: 0_u64);
+  let large = box_ring_new::<Array<u64, 0>>(capacity: 18446744073709551615_u64);
+  place_front(window: &large.inner, value: zero);
+  if large.inner.head != 18446744073709551614_u64 {
+    return 11_u64;
+  }
+  place_front(window: &large.inner, value: zero);
+  if large.inner.head != 18446744073709551613_u64 {
+    return 12_u64;
+  }
+  let large_first = take_front(window: &large.inner);
+  if large.inner.head != 18446744073709551614_u64 {
+    return 13_u64;
+  }
+  let large_last = take_front(window: &large.inner);
+  if large.inner.head != 0_u64 {
+    return 14_u64;
+  }
+  if large.inner.len != 0_u64 {
+    return 15_u64;
+  }
+  free_empty(window: move large);
+  return 0_u64;
+}
+"#;
+    const OBSERVER: &str = r#"#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+extern uint64_t wf_fixed_scalar(void *window);
+extern uint64_t wf_runtime_scalar(void *window);
+extern uint64_t wf_fixed_zst(void *window);
+extern uint64_t wf_runtime_zst(void *window);
+extern uint64_t wf_main(void);
+
+typedef uint64_t (*TakeFront)(void *);
+
+static int observe(TakeFront take, int runtime, int zst,
+                   uint64_t capacity, uint64_t length, uint64_t guard, int fault) {
+    const size_t header = runtime ? 3 : 2;
+    const size_t payload = zst ? 0 : (size_t)capacity;
+    /* The guard lies inside the same allocation. An unnormalized head reads
+     * this initialized word, so the regression fails without an invalid load. */
+    uint64_t *allocation = calloc(header + payload + 1, sizeof(uint64_t));
+    if (allocation == NULL) return 70;
+    allocation[0] = length;
+    if (runtime) allocation[1] = capacity;
+    allocation[header - 1] = capacity;
+    for (size_t index = 0; index < payload; ++index)
+        allocation[header + index] = UINT64_C(17) + (uint64_t)index;
+    allocation[header + payload] = guard;
+    uint64_t *owner = allocation;
+    uint64_t result = take(runtime ? (void *)&owner : (void *)allocation);
+    uint64_t observed_length = allocation[0];
+    uint64_t observed_head = allocation[header - 1];
+    uint64_t observed_guard = allocation[header + payload];
+    int owner_ok = owner == allocation;
+    /* Faults alter observer snapshots, never a source precondition, address,
+     * or LLVM assumption. Each independent observation must detect its fault. */
+    if (fault == 'v' && !zst) result ^= UINT64_C(1);
+    if (fault == 'z' && zst) result ^= UINT64_C(1);
+    if (fault == 'l') observed_length ^= UINT64_C(1);
+    if (fault == 'h' && capacity == 1) observed_head = 2;
+    if (fault == 'g') observed_guard ^= UINT64_C(1);
+    if (fault == 'o') owner_ok = 0;
+    free(allocation);
+    if (!owner_ok) { fputs("ring front: owner\n", stderr); return 71; }
+    if (observed_length != length - 1) { fputs("ring front: length\n", stderr); return 72; }
+    if (observed_head > capacity) { fputs("ring front: head bound\n", stderr); return 73; }
+    if (observed_guard != guard) { fputs("ring front: guard\n", stderr); return 74; }
+    if (!zst && result != 17) { fputs("ring front: payload\n", stderr); return 75; }
+    /* PRE-1 bounds the post-head, but does not require its canonical residue. */
+    if (zst && result != observed_head) { fputs("ring front: observed head\n", stderr); return 76; }
+    return 0;
+}
+
+int wf__main_body(int argc, char **argv) {
+    const int fault = argc == 2 ? argv[1][0] : 0;
+    const uint64_t guards[] = {61, 127};
+    unsigned cases = 0;
+    for (int kind = 0; kind < 4; ++kind) {
+        const int runtime = kind == 1 || kind == 3;
+        const int zst = kind == 2 || kind == 3;
+        TakeFront take = kind == 0 ? wf_fixed_scalar : kind == 1 ? wf_runtime_scalar
+            : kind == 2 ? wf_fixed_zst : wf_runtime_zst;
+        const uint64_t capacities[] = {1, 7, UINT64_MAX};
+        const int count = runtime ? (zst ? 3 : 2) : 1;
+        for (int index = 0; index < count; ++index) {
+            for (size_t guard = 0; guard < 2; ++guard) {
+                const uint64_t cap = capacities[index];
+                const int status = observe(take, runtime, zst, cap, cap == 1 ? 1 : 2,
+                                           guards[guard], fault);
+                if (status != 0) return status;
+                ++cases;
+            }
+        }
+    }
+    uint64_t closed = wf_main();
+    if (fault == 'c') closed ^= UINT64_C(1);
+    if (closed != 0) { fputs("ring front: closed control\n", stderr); return 77; }
+    printf("ring front boundary: %u cases\n", cases + 1);
+    return 0;
+}
+
+extern int wf__floor_run(int argc, char **argv);
+int main(int argc, char **argv) { return wf__floor_run(argc, argv); }
+"#;
+    let modules = with_ir(SOURCE, |program| {
+        let target = TargetLayout::host().expect("supported target");
+        [WindowAddressFacts::Emit, WindowAddressFacts::Withhold].map(|facts| {
+            emit_llvm_with_window_address_facts(program, target, facts)
+                .expect("the inclusive Ring head domain emits")
+                .into_string()
+        })
+    });
+    for module in modules {
+        let directory = test_directory();
+        let executable = build_linked_executable(&module, Some(OBSERVER), &[], &directory);
+        let output = Command::new(&executable)
+            .output()
+            .expect("run Ring boundary observer");
+        assert_eq!(output.status.code(), Some(0), "{output:?}");
+        assert_eq!(
+            output.stdout, b"ring front boundary: 15 cases\n",
+            "{output:?}"
+        );
+        assert!(output.stderr.is_empty(), "{output:?}");
+        for (fault, code, message) in [
+            ("o", 71, "owner"),
+            ("l", 72, "length"),
+            ("h", 73, "head bound"),
+            ("g", 74, "guard"),
+            ("v", 75, "payload"),
+            ("z", 76, "observed head"),
+            ("c", 77, "closed control"),
+        ] {
+            let output = Command::new(&executable)
+                .arg(fault)
+                .output()
+                .expect("run Ring observer fault");
+            assert_eq!(output.status.code(), Some(code), "{fault}: {output:?}");
+            assert!(output.stdout.is_empty(), "{fault}: {output:?}");
+            assert_eq!(
+                output.stderr,
+                format!("ring front: {message}\n").as_bytes(),
+                "{fault}: {output:?}"
+            );
+        }
+        std::fs::remove_file(executable).expect("remove Ring observer executable");
+        std::fs::remove_dir(directory).expect("remove Ring observer directory");
+    }
+}
+
+/// Back placement preserves payload order and descriptor values when it fills
+/// the last vacancy or crosses the physical end. Header-only storage also
+/// admits capacities outside the signed domain. These expectations come from
+/// the source operations and do not depend on optional LLVM facts.
+#[test]
+fn ring_back_placement_preserves_wrapping_and_unsigned_measures() {
+    let mut source = String::new();
+    for (name, constructor, window) in [
+        ("fixed", "ring_new::<u64, 4>()", "values"),
+        (
+            "runtime",
+            "box_ring_new::<u64>(capacity: 4_u64)",
+            "values.inner",
+        ),
+    ] {
+        source.push_str(&format!(
+            r#"fn {name}() -> result: u8 pure {{
+  let values = {constructor};
+  place_back(window: &{window}, value: 10_u64);
+  place_back(window: &{window}, value: 20_u64);
+  place_back(window: &{window}, value: 30_u64);
+  place_back(window: &{window}, value: 40_u64);
+  if {window}.len != 4_u64 {{
+    return 1_u8;
+  }}
+  let first = take_front(window: &{window});
+  if first != 10_u64 {{
+    return 2_u8;
+  }}
+  if {window}.head != 1_u64 {{
+    return 3_u8;
+  }}
+  if {window}.len != 3_u64 {{
+    return 4_u8;
+  }}
+  place_back(window: &{window}, value: 50_u64);
+  if {window}.len != 4_u64 {{
+    return 5_u8;
+  }}
+  if {window}.head != 1_u64 {{
+    return 6_u8;
+  }}
+  if {window}.cap != 4_u64 {{
+    return 7_u8;
+  }}
+  let second = take_front(window: &{window});
+  let third = take_front(window: &{window});
+  let fourth = take_front(window: &{window});
+  let fifth = take_front(window: &{window});
+  if second != 20_u64 {{
+    return 8_u8;
+  }}
+  if third != 30_u64 {{
+    return 9_u8;
+  }}
+  if fourth != 40_u64 {{
+    return 10_u8;
+  }}
+  if fifth != 50_u64 {{
+    return 11_u8;
+  }}
+  if {window}.len != 0_u64 {{
+    return 12_u8;
+  }}
+  if {window}.head != 1_u64 {{
+    return 13_u8;
+  }}
+  if {window}.cap != 4_u64 {{
+    return 14_u8;
+  }}
+  return 0_u8;
+}}
+
+"#,
+        ));
+    }
+    for (name, constructor, window) in [
+        (
+            "large_fixed",
+            "ring_new::<Array<u64, 0>, 9223372036854775809>()",
+            "values",
+        ),
+        (
+            "large_runtime",
+            "box_ring_new::<Array<u64, 0>>(capacity: 9223372036854775809_u64)",
+            "values.inner",
+        ),
+    ] {
+        source.push_str(&format!(
+            r#"fn {name}() -> result: u8 pure {{
+  let values = {constructor};
+  let empty = array_filled::<u64, 0>(value: 0_u64);
+  place_back(window: &{window}, value: empty);
+  if {window}.len != 1_u64 {{
+    return 15_u8;
+  }}
+  if {window}.head != 0_u64 {{
+    return 16_u8;
+  }}
+  if {window}.cap != 9223372036854775809_u64 {{
+    return 17_u8;
+  }}
+  let removed = take_back(window: &{window});
+  if {window}.len != 0_u64 {{
+    return 18_u8;
+  }}
+  if {window}.head != 0_u64 {{
+    return 19_u8;
+  }}
+  return 0_u8;
+}}
+
+"#,
+        ));
+    }
+    source.push_str("fn main() -> status: std::process::ExitStatus pure {\n");
+    for name in ["fixed", "runtime", "large_fixed", "large_runtime"] {
+        source.push_str(&format!(
+            "  let {name}_result = {name}();\n  if {name}_result != 0_u8 {{\n    return std::process::exit_status(code: {name}_result);\n  }}\n"
+        ));
+    }
+    source.push_str("  return std::process::exit_status(code: 0_u8);\n}\n");
+    let modules = with_ir(source.as_bytes(), |program| {
+        let target = TargetLayout::host().expect("supported target");
+        [WindowAddressFacts::Emit, WindowAddressFacts::Withhold].map(|facts| {
+            let mut module = emit_llvm_with_window_address_facts(program, target, facts)
+                .expect("all fact observations qualify the same admitted storage")
+                .into_string();
+            module.push_str(
+                &crate::driver::launcher::render(program, "main")
+                    .expect("ordinary test launcher")
+                    .render(),
+            );
+            module
+        })
+    });
+    for module in &modules {
+        for retained in [false, true] {
+            let observed = if retained {
+                super::owned_places::retain_calls(module)
+            } else {
+                module.clone()
+            };
+            let output = super::compile_and_run(&observed);
+            assert_eq!(output.status.code(), Some(0), "{output:?}");
+            assert!(output.stdout.is_empty(), "{output:?}");
+            assert!(output.stderr.is_empty(), "{output:?}");
+        }
+    }
+    let withheld = super::owned_places::retain_calls(&modules[1]);
+    assert!(!withheld.contains("call void @llvm.assume("));
+    for (fault, code) in [
+        (RingBackPlacementFault::WrappedSlot, 8),
+        (RingBackPlacementFault::HeadAfterWrap, 6),
+    ] {
+        let corrupted = corrupt_fixed_ring_back_placement(&withheld, fault);
+        let output = super::compile_and_run(&corrupted);
+        assert_eq!(output.status.code(), Some(code), "{fault:?}: {output:?}");
+        assert!(output.stdout.is_empty(), "{fault:?}: {output:?}");
+        assert!(output.stderr.is_empty(), "{fault:?}: {output:?}");
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum RingBackPlacementFault {
+    WrappedSlot,
+    HeadAfterWrap,
+}
+
+/// Corrupt only the fixed scalar placement implementation. The fifth
+/// placement wraps after all four slots have been initialized, so slot 1 is
+/// an in-allocation wrong destination. A wrong head is observed before a take.
+fn corrupt_fixed_ring_back_placement(module: &str, fault: RingBackPlacementFault) -> String {
+    let mut lines = module.split('\n').map(str::to_owned).collect::<Vec<_>>();
+    let starts = lines
+        .iter()
+        .enumerate()
+        .filter_map(|(index, line)| {
+            (line.starts_with("define ")
+                && line.contains("@wf_place_back$")
+                && line.contains(", i64 "))
+            .then_some(index)
+        })
+        .collect::<Vec<_>>();
+    let mut changed = 0;
+    for start in starts {
+        let end = start
+            + lines[start..]
+                .iter()
+                .position(|line| line == "}")
+                .expect("complete scalar placement body");
+        let Some((wrap, condition, sum)) = (start + 1..end).find_map(|index| {
+            let (condition, operands) = lines[index].trim().split_once(" = icmp uge i64 ")?;
+            let (sum, capacity) = operands.rsplit_once(", ")?;
+            (capacity == "4").then_some((index, condition.to_owned(), sum.to_owned()))
+        }) else {
+            continue;
+        };
+        let (wrapped, operands) = lines[wrap + 1]
+            .trim()
+            .split_once(" = sub i64 ")
+            .expect("the wrapped slot subtracts capacity");
+        assert_eq!(operands, format!("{sum}, 4"));
+        let (_, selection) = lines[wrap + 2]
+            .trim()
+            .split_once(" = select i1 ")
+            .expect("the physical slot selects the wrapped arm");
+        assert_eq!(selection, format!("{condition}, i64 {wrapped}, i64 {sum}"));
+        match fault {
+            RingBackPlacementFault::WrappedSlot => {
+                lines[wrap + 1] = format!("  {wrapped} = add i64 1, 0");
+            }
+            RingBackPlacementFault::HeadAfterWrap => {
+                let store = (start + 1..end)
+                    .rev()
+                    .find(|&index| lines[index].trim().starts_with("store i64 "))
+                    .expect("the final descriptor store preserves head");
+                let (head, address) = lines[store]
+                    .trim()
+                    .strip_prefix("store i64 ")
+                    .expect("head store")
+                    .split_once(", ptr ")
+                    .expect("head destination");
+                let pointer = (start + 1..store)
+                    .find(|&index| {
+                        lines[index]
+                            .trim()
+                            .starts_with(&format!("{address} = getelementptr inbounds "))
+                    })
+                    .expect("the fixed Ring head field is addressed");
+                assert!(
+                    lines[pointer].ends_with(", i32 0, i32 1"),
+                    "the fixed Ring head field must be addressed: {}",
+                    lines[pointer]
+                );
+                assert!(!module.contains("%wf.test.wrong_head"));
+                lines[store] = format!(
+                    "  %wf.test.wrong_head = select i1 {condition}, i64 0, i64 {head}\n  store i64 %wf.test.wrong_head, ptr {address}"
+                );
+            }
+        }
+        changed += 1;
+    }
+    assert_eq!(changed, 1, "exactly one fixed Ring placement is corrupted");
+    lines.join("\n")
+}
+
+/// One OP-10 placement uses its entry length for both the payload offset
+/// and the final length. The payload transfer cannot modify that descriptor.
+#[test]
+fn back_placement_reads_its_length_once_for_scalar_aggregate_and_zero_size_values() {
+    for element in ["u64", "Array<u64, 2>", "Array<u64, 0>", "Box<u64>"] {
+        for (ty, window) in [
+            (format!("Slots<{element}, 4>"), "values^"),
+            (format!("Box<Slots<{element}>>"), "values^.inner"),
+        ] {
+            let transfer = if element == "Box<u64>" {
+                "move value"
+            } else {
+                "value"
+            };
+            let source = format!(
+                "fn back(values: &{ty}, value: {element}) -> result: unit writes(values) contract {{\n  requires {window}.len < {window}.cap;\n}} {{\n  place_back(window: &{window}, value: {transfer});\n  return unit;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
+            );
+            let module = emit(source.as_bytes());
+            let body = emitted_prelude_row(&module, "place_back");
+            // A Slots back-placement needs no head or capacity read. This
+            // observes the unoptimized emitted operation, so an optimizer
+            // cannot hide a redundant post-transfer descriptor read.
+            assert_eq!(
+                body.lines()
+                    .filter(|line| line.contains(" = load i64, "))
+                    .count(),
+                1,
+                "one entry length for {ty}: {body}"
+            );
+        }
+    }
+}
+
+/// A front placement already has the physical slot it just wrote. The
+/// descriptor update must reuse that slot as the new Ring origin instead of
+/// reloading head/capacity and recomputing the predecessor [OP-10, WIN-1].
+#[test]
+fn front_placement_reuses_the_written_ring_slot_for_the_new_head() {
+    let source = br#"fn front(values: &Box<Ring<u64>>, value: u64) -> result: unit writes(values.inner) contract {
+  requires values^.inner.len < values^.inner.cap;
+} {
+  place_front(window: &values^.inner, value: value);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let module = with_ir(source, |program| {
+        let target = TargetLayout::host().expect("supported target");
+        emit_llvm_with_window_address_facts(program, target, WindowAddressFacts::Emit)
+            .expect("front placement emits")
+            .into_string()
+    });
+    let body = emitted_prelude_row(&module, "place_front");
+    let lines = body.lines().collect::<Vec<_>>();
+    let payload_store = lines
+        .iter()
+        .position(|line| line.contains("store i64 %v1, ptr"))
+        .expect("the placement stores its payload");
+    let payload_gep = lines[..payload_store]
+        .iter()
+        .rev()
+        .find(|line| line.contains("getelementptr inbounds") && line.contains(", i64 "))
+        .expect("the payload store has a physical index");
+    let physical = payload_gep
+        .rsplit_once(", i64 ")
+        .expect("the payload GEP has an index")
+        .1
+        .trim();
+    let tail = &lines[payload_store + 1..];
+    assert_eq!(
+        tail.iter().filter(|line| line.contains("load i64")).count(),
+        0,
+        "the boundary reuses its entry length and written head: {body}"
+    );
+    let descriptor_stores = tail
+        .iter()
+        .filter(|line| line.contains("store i64"))
+        .copied()
+        .collect::<Vec<_>>();
+    assert_eq!(descriptor_stores.len(), 2, "length and head stores: {body}");
+    assert!(
+        descriptor_stores
+            .iter()
+            .any(|line| line.contains(&format!("store i64 {physical}, ptr"))),
+        "the new head reuses the written physical slot: {body}"
+    );
+}
+
 #[test]
 fn empty_fixed_windows_initialize_descriptors_before_return() {
     let source = br#"fn main() -> status: std::process::ExitStatus pure {
@@ -1159,20 +1732,24 @@ fn main() -> status: std::process::ExitStatus pure {
     let captured = update
         .rfind(" = load ptr, ptr ")
         .expect("the projected Box pointer must be captured");
-    let pointer = update[..captured]
-        .lines()
-        .next_back()
-        .expect("captured pointer definition")
-        .trim();
     assert!(guard < captured && captured < rhs && rhs < store);
     assert_eq!(update[guard..rhs].matches(" = load ptr, ptr ").count(), 1);
-    let address = update[captured..rhs]
-        .lines()
-        .find_map(|line| {
-            line.trim()
-                .strip_suffix(&format!(" = getelementptr i8, ptr {pointer}, i64 0"))
-        })
-        .expect("the captured pointer forms the array address before the RHS");
+    // Runtime-capacity content references retain the Box owner slot. The
+    // target resolves that slot once to the current allocation immediately
+    // before forming the element address; the length guard's earlier load is
+    // intentionally a separate access so an intervening content exchange
+    // would not silently reuse a stale backing pointer.
+    let target_line_start = update[..captured]
+        .rfind('\n')
+        .map_or(0, |newline| newline + 1);
+    let target_line_end = update[captured..rhs]
+        .find('\n')
+        .map_or(rhs, |newline| captured + newline);
+    let address = update[target_line_start..target_line_end]
+        .trim()
+        .split_once(" = ")
+        .map(|(result, _)| result)
+        .expect("the target allocation load has an SSA result");
     let element_projection = format!(
         " = getelementptr inbounds {{ i64, [0 x i16] }}, ptr {address}, i64 0, i32 1, i64 "
     );
@@ -1283,7 +1860,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#;
     let llvm = compile(source);
-    let take = emitted_function(&llvm, "take");
+    let take = emitted_body(&llvm, "take");
     // Three residual siblings released where the projected field left
     // [WIN-3, PROV-6].
     assert_eq!(take.matches("call void @free").count(), 3);
@@ -1383,4 +1960,196 @@ fn main() -> status: std::process::ExitStatus pure {
     assert!(output.status.success());
     assert!(output.stdout.is_empty());
     assert!(output.stderr.is_empty());
+}
+
+/// Contiguous shifts preserve each distinct owner, including empty tails;
+/// wrapped Rings retain their coordinate loop. The allocation ledger catches
+/// duplicated or lost ownership independently of the element-value checks.
+#[test]
+fn slots_bulk_shifts_preserve_order_boundaries_and_owning_elements() {
+    for shape in ["Slots", "Ring"] {
+        for runtime in [false, true] {
+            let lower = shape.to_ascii_lowercase();
+            let capacity = if shape == "Slots" { 5 } else { 6 };
+            let construct = if runtime {
+                format!("box_{lower}_new::<Box<u64>>(capacity: {capacity}_u64)")
+            } else {
+                format!("{lower}_new::<Box<u64>, {capacity}>()")
+            };
+            let window = if runtime { "values.inner" } else { "values" };
+            let wrap = if shape == "Ring" {
+                format!(
+                    "  let sentinel = box_new::<u64>(value: 99_u64);\n  place_back(window: &{window}, value: move sentinel);\n  let step_one = take_front(window: &{window});\n  place_back(window: &{window}, value: move step_one);\n  let step_two = take_front(window: &{window});\n  place_back(window: &{window}, value: move step_two);\n  let step_three = take_front(window: &{window});\n  place_back(window: &{window}, value: move step_three);\n  let removed_sentinel = take_front(window: &{window});\n"
+                )
+            } else {
+                String::new()
+            };
+            let source = format!(
+                r#"fn main() -> status: std::process::ExitStatus pure {{
+  let values = {construct};
+{wrap}  let a = box_new::<u64>(value: 11_u64);
+  insert_at(window: &{window}, index: 0_u64, value: move a);
+  let c = box_new::<u64>(value: 33_u64);
+  insert_at(window: &{window}, index: 1_u64, value: move c);
+  let b = box_new::<u64>(value: 22_u64);
+  insert_at(window: &{window}, index: 1_u64, value: move b);
+  let front = box_new::<u64>(value: 7_u64);
+  insert_at(window: &{window}, index: 0_u64, value: move front);
+  let end = box_new::<u64>(value: 44_u64);
+  insert_at(window: &{window}, index: 4_u64, value: move end);
+  let checked_end = remove_at(window: &{window}, index: 4_u64);
+  if checked_end.inner != 44_u64 {{
+    return std::process::exit_status(code: 7_u8);
+  }}
+  insert_at(window: &{window}, index: 4_u64, value: move checked_end);
+  let middle = remove_at(window: &{window}, index: 2_u64);
+  let first = remove_at(window: &{window}, index: 0_u64);
+  let last = remove_at(window: &{window}, index: 2_u64);
+  if middle.inner != 22_u64 {{
+    return std::process::exit_status(code: 1_u8);
+  }}
+  if first.inner != 7_u64 {{
+    return std::process::exit_status(code: 2_u8);
+  }}
+  if last.inner != 44_u64 {{
+    return std::process::exit_status(code: 3_u8);
+  }}
+  if {window}.len != 2_u64 {{
+    return std::process::exit_status(code: 4_u8);
+  }}
+  if {window}[0_u64].inner != 11_u64 {{
+    return std::process::exit_status(code: 5_u8);
+  }}
+  if {window}[1_u64].inner != 33_u64 {{
+    return std::process::exit_status(code: 6_u8);
+  }}
+  return std::process::exit_status(code: 0_u8);
+}}
+"#
+            );
+            let module = compile(source.as_bytes());
+            for row in ["insert_at", "remove_at"] {
+                let body = emitted_prelude_row(&module, row);
+                assert_eq!(body.contains("run.shift.head."), shape == "Ring", "{body}");
+                if shape == "Slots" {
+                    assert!(
+                        body.contains("call void @llvm.memmove.p0.p0.i64("),
+                        "{body}"
+                    );
+                    assert!(body.contains("run.shift.done."), "{body}");
+                }
+            }
+            let observed = super::owned_places::retain_calls(&module)
+                .replace("@malloc(", "@wf_test_allocate(")
+                .replace("@free(", "@wf_test_release(");
+            let allocations = 5 + usize::from(runtime) + usize::from(shape == "Ring");
+            let observer = super::owned_places::allocation_observer(allocations, 0);
+            let output = compile_link_and_run(&observed, Some(&observer), &[]);
+            assert_eq!(
+                output.status.code(),
+                Some(0),
+                "{shape}/{runtime}: {output:?}"
+            );
+            assert!(output.stderr.is_empty(), "{output:?}");
+            let trace = std::str::from_utf8(&output.stdout).unwrap();
+            let mut released = trace
+                .split(';')
+                .filter_map(|record| record.strip_prefix('F'))
+                .map(|id| id.parse::<usize>().unwrap())
+                .collect::<Vec<_>>();
+            released.sort_unstable();
+            assert_eq!(released, (1..=allocations).collect::<Vec<_>>(), "{trace}");
+            if shape == "Slots" && !runtime {
+                for row in ["insert_at", "remove_at"] {
+                    let body = emitted_prelude_row(&observed, row);
+                    let transfer = body
+                        .lines()
+                        .find(|line| {
+                            line.contains("call void @llvm.memmove.") && line.contains("i64 %")
+                        })
+                        .expect("one contiguous tail transfer");
+                    let broken = observed.replacen(transfer, "  ; omitted tail transfer", 1);
+                    let output = compile_link_and_run(&broken, Some(&observer), &[]);
+                    assert!(
+                        !output.status.success(),
+                        "missing {row} transfer escaped the value/ownership observer"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// A zero-byte element retains its full logical index domain. One shift at
+/// u64's boundary must execute zero-byte movement rather than a cardinality
+/// loop, for both inline and heap-backed payload placements.
+#[test]
+fn zero_stride_slots_shifts_preserve_maximum_logical_coordinates() {
+    for runtime in [false, true] {
+        let ty = if runtime {
+            "Box<Slots<Array<u64, 0>>>"
+        } else {
+            "Slots<Array<u64, 0>, 18446744073709551615>"
+        };
+        let window = if runtime { "values^.inner" } else { "values^" };
+        let source = format!(
+            r#"fn insert_zero(values: &{ty}, index: u64) -> result: unit writes(values) contract {{
+  requires {window}.len < {window}.cap;
+  requires index <= {window}.len;
+}} {{
+  let value = array_filled::<u64, 0>(value: 0_u64);
+  insert_at(window: &{window}, index: index, value: value);
+  return unit;
+}}
+
+fn remove_zero(values: &{ty}, index: u64) -> result: unit writes(values) contract {{
+  requires index < {window}.len;
+}} {{
+  let value = remove_at(window: &{window}, index: index);
+  return unit;
+}}
+"#
+        );
+        let module = compile(source.as_bytes());
+        for row in ["insert_at", "remove_at"] {
+            assert!(!emitted_prelude_row(&module, row).contains("run.shift.head."));
+        }
+        let host = format!(
+            r#"#include <stdint.h>
+#include <stdlib.h>
+extern uint8_t wf_insert_zero(void *, uint64_t);
+extern uint8_t wf_remove_zero(void *, uint64_t);
+extern int wf__floor_run(int, char **);
+int wf__main_body(int argc, char **argv) {{
+    (void)argc; (void)argv;
+    static _Alignas(16) unsigned char anchor[16];
+    struct {{ uint64_t len, cap; void *payload; }} owner = {{UINT64_MAX - 1, UINT64_MAX, anchor}};
+    void *storage = {storage};
+    (void)wf_insert_zero(storage, 0);
+    if (owner.len != UINT64_MAX) return 1;
+    (void)wf_remove_zero(storage, UINT64_MAX - 1);
+    if (owner.len != UINT64_MAX - 1) return 2;
+    (void)wf_insert_zero(storage, UINT64_MAX - 1);
+    if (owner.len != UINT64_MAX) return 3;
+    (void)wf_remove_zero(storage, 0);
+    if (owner.len != UINT64_MAX - 1) return 4;
+    if (owner.cap != UINT64_MAX || owner.payload != anchor) return 5;
+    for (unsigned i = 0; i < sizeof(anchor); ++i) if (anchor[i] != 0) return 6;
+    return 0;
+}}
+int main(int argc, char **argv) {{ return wf__floor_run(argc, argv); }}
+"#,
+            storage = if runtime { "&owner" } else { "&owner.len" }
+        );
+        let output = compile_link_and_run(&module, Some(&host), &[]);
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "runtime={runtime}: {output:?}"
+        );
+        assert!(
+            output.stdout.is_empty() && output.stderr.is_empty(),
+            "{output:?}"
+        );
+    }
 }

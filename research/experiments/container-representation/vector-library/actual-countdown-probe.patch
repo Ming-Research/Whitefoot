@@ -1,0 +1,114 @@
+--- a/compiler/src/backend/tests/terminal_consumption.rs
++++ b/compiler/src/backend/tests/terminal_consumption.rs
+@@ -225,8 +225,9 @@
+       }
+     }
+   }
+-  for (unsigned large = 0; large != 2; ++large) for (uint64_t removed = 0; removed <= 5; ++removed) {
+-    uint64_t length = large ? UINT64_C(9223372036854775811) : 5;
++  const uint64_t lengths[] = {5, UINT64_C(9223372036854775811), UINT64_MAX};
++  for (unsigned large = 0; large != 3; ++large) for (uint64_t removed = 0; removed <= 5; ++removed) {
++    uint64_t length = lengths[large];
+     Zero zero = {length, UINT64_MAX, UINT64_MAX - 2}; Zero *boxed = &zero;
+     Ledger log = {0}; wf_retire_zero(&boxed, length - removed, &log);
+     if (zero.len != length - removed || zero.cap != UINT64_MAX || zero.head != UINT64_MAX - 2
+@@ -255,7 +256,7 @@
+         assert!(output.stderr.is_empty(), "{output:?}");
+         assert_eq!(
+             String::from_utf8(output.stdout).unwrap(),
+-            "terminal consumption: 507 cases; owner order, prefix, head and zero-stride counts checked\n"
++            "terminal consumption: 513 cases; owner order, prefix, head and zero-stride counts checked\n"
+         );
+         for (fault, reason) in [
+             (b"1".as_slice(), "owner release order\n"),
+--- a/compiler/src/lowering/builder/terminal_consumption.rs
++++ b/compiler/src/lowering/builder/terminal_consumption.rs
+@@ -485,7 +485,7 @@
+             },
+         )?;
+         let (start, _) = self.new_block(&[])?;
+-        let (walk, cursor) = self.new_block(&[U64])?;
++        let (walk, induction) = self.new_block(&[U64, U64])?;
+         let (next_iteration, _) = self.new_block(&[])?;
+         let (finish, _) = self.new_block(&[])?;
+         let (done, _) = self.new_block(&[])?;
+@@ -504,22 +504,34 @@
+             ],
+         })?;
+         self.current = Some(start);
++        let remaining = self.define(
++            U64,
++            IrOperation::Integer {
++                operation: IrIntegerOperation::SubtractExact,
++                operand_type: U64,
++                arguments: vec![length, retained],
++            },
++        )?;
+         self.terminate(IrTerminator::Jump {
+             target: walk,
+-            arguments: vec![retained],
++            arguments: vec![retained, remaining],
+             drops: Vec::new(),
+         })?;
+         self.current = Some(walk);
+-        // Exact entry subtraction gives r<=n, the window gives n<=cap, and
+-        // the guarded induction gives r<=cursor<n. Thus cursor+1<=n cannot
+-        // wrap. Qualified layout bounds positive-stride addressing; zero
+-        // stride changes only the physical GEP, never this logical count.
++        let cursor = induction[0];
++        let remaining = induction[1];
++        // Exact entry subtraction gives r<=n and the window gives n<=cap.
++        // The induction preserves cursor+remaining=n over mathematical
++        // integers, with r<=cursor<n and remaining>0 at each handoff. Thus
++        // cursor+1<=n<=u64::MAX and remaining-1 cannot wrap. Zero stride
++        // changes only the physical GEP, never either logical count; neither
++        // count has a signed bound. Positive stride keeps qualified layout.
+         // Back takes and exchanges leave Ring head fixed throughout.
+         let owner = self.define(
+             lower_type(self.erasure, region.element)?,
+             IrOperation::RunIndex {
+                 run,
+-                offset: cursor[0],
++                offset: cursor,
+                 target_domain: IrTargetDomainObligation::ElementAddress,
+             },
+         )?;
+@@ -535,15 +547,24 @@
+             IrOperation::Integer {
+                 operation: IrIntegerOperation::AddExact,
+                 operand_type: U64,
+-                arguments: vec![cursor[0], one],
+-            },
+-        )?;
++                arguments: vec![cursor, one],
++            },
++        )?;
++        let remaining = self.define(
++            U64,
++            IrOperation::Integer {
++                operation: IrIntegerOperation::SubtractExact,
++                operand_type: U64,
++                arguments: vec![remaining, one],
++            },
++        )?;
++        let zero = self.lower_fixed_measure(0)?;
+         let more = self.define(
+             IrType::Bool,
+             IrOperation::Integer {
+-                operation: IrIntegerOperation::Less,
++                operation: IrIntegerOperation::NotEqual,
+                 operand_type: U64,
+-                arguments: vec![next, length],
++                arguments: vec![remaining, zero],
+             },
+         )?;
+         self.terminate(IrTerminator::Match {
+@@ -563,7 +584,7 @@
+         self.current = Some(next_iteration);
+         self.terminate(IrTerminator::Jump {
+             target: walk,
+-            arguments: vec![next],
++            arguments: vec![next, remaining],
+             drops: Vec::new(),
+         })?;
+         self.current = Some(finish);

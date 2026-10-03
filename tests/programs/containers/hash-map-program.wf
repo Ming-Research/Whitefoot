@@ -167,6 +167,19 @@ fn hash_map_test_scalars() -> result: u64 pure {
     hash_map_test_fail(seen: &seen);
   }
   let zero = hash_map_new::<u64, u64, 0>(capacity: 0_u64);
+  let zero_key = 9_u64;
+  let before_zero = seen.visits;
+  let zero_lookup = hash_map_lookup::<HashMapScalarKey, u64, HashMapTestSeen, u64, fn hash_map_test_scalar_read, 0>(map: &zero, key: &zero_key, key_env: &env, visit_env: &seen);
+  match zero_lookup {
+    Ok(value: unexpected) => {
+      hash_map_test_fail(seen: &seen);
+    }
+    Err(error: absent) => {
+    }
+  }
+  if seen.visits != before_zero {
+    hash_map_test_fail(seen: &seen);
+  }
   let refused = hash_map_put::<HashMapScalarKey, u64, 0>(map: &zero, key: 9_u64, value: 90_u64, env: &env);
   hash_map_test_scalar_outcome(outcome: refused, expected: 2_u64, key: 9_u64, value: 90_u64, seen: &seen);
   hash_map_free::<HashMapScalarConsume, 0>(map: move zero, env: &seen);
@@ -225,6 +238,20 @@ fn hash_map_test_wrapping() -> result: u64 pure {
       hash_map_test_fail(seen: &seen);
     }
   }
+  hash_map_test_scalar_expect(map: &map, key: 7_u64, expected: 70_u64, env: &env, seen: &seen);
+  let missing_key = 15_u64;
+  let before_missing = seen.visits;
+  let missing = hash_map_lookup::<HashMapIdentityKey, u64, HashMapTestSeen, u64, fn hash_map_test_scalar_read, 8>(map: &map, key: &missing_key, key_env: &env, visit_env: &seen);
+  match missing {
+    Ok(value: unexpected) => {
+      hash_map_test_fail(seen: &seen);
+    }
+    Err(error: absent) => {
+    }
+  }
+  if seen.visits != before_missing {
+    hash_map_test_fail(seen: &seen);
+  }
   let replaced = hash_map_put::<HashMapIdentityKey, u64, 8>(map: &map, key: 7_u64, value: 700_u64, env: &env);
   hash_map_test_scalar_outcome(outcome: replaced, expected: 1_u64, key: 7_u64, value: 70_u64, seen: &seen);
   hash_map_test_scalar_expect(map: &map, key: 7_u64, expected: 700_u64, env: &env, seen: &seen);
@@ -259,7 +286,7 @@ fn hash_map_test_wrapping() -> result: u64 pure {
   if seen.value_sum != 910_u64 {
     hash_map_test_fail(seen: &seen);
   }
-  if seen.visits != 6_u64 {
+  if seen.visits != 7_u64 {
     hash_map_test_fail(seen: &seen);
   }
   return seen.failures;
@@ -350,10 +377,17 @@ fn hash_map_test_growth() -> result: u64 pure {
   hash_map_free::<HashMapScalarConsume, 64>(map: move map, env: &seen);
   let small = hash_map_new::<u64, u64, 64>(capacity: 3_u64);
   for (key in 0_u64..3_u64) {
-    hash_map_test_growth_put(map: &small, key: key, env: &env, seen: &seen);
+    let offered = key;
+    if key == 0_u64 {
+      set offered = 3_u64;
+    }
+    hash_map_test_growth_put(map: &small, key: offered, env: &env, seen: &seen);
+    if key == 0_u64 {
+      hash_map_test_growth_expect(map: &small, key: 3_u64, env: &env, seen: &seen);
+    }
   }
   hash_map_test_growth_shape(map: &small, capacity: 3_u64, length: 3_u64, vacated: 0_u64, seen: &seen);
-  hash_map_test_growth_put(map: &small, key: 3_u64, env: &env, seen: &seen);
+  hash_map_test_growth_put(map: &small, key: 0_u64, env: &env, seen: &seen);
   hash_map_test_growth_shape(map: &small, capacity: 6_u64, length: 4_u64, vacated: 0_u64, seen: &seen);
   hash_map_free::<HashMapScalarConsume, 64>(map: move small, env: &seen);
   let at_half = hash_map_new::<u64, u64, 64>(capacity: 16_u64);
@@ -405,7 +439,7 @@ binding HashMapCycleKey : HashMapKey<u64, HashMapHashEnv> {
 }
 
 fn hash_map_test_cycle() -> result: u64 pure {
-  doc "Three live entries collide at home two in a three-slot table. Rehash must preserve every pair; all subsequent lookups are checked without depending on physical order.";
+  doc "Three live entries collide at home two in a three-slot table. A full cycle must refuse a new owner and report a missing removal. Removing a wrapped entry leaves a tombstone before a duplicate: replacement must find the duplicate before reusing that tombstone for a new key. Rehash then preserves every remaining pair.";
   let seen = HashMapTestSeen(failures: 0_u64, consumed: 0_u64, key_sum: 0_u64, value_sum: 0_u64, visits: 0_u64, observed: 0_u64);
   let false_value = False();
   let true_value = True();
@@ -416,10 +450,61 @@ fn hash_map_test_cycle() -> result: u64 pure {
     let inserted = hash_map_put::<HashMapCycleKey, u64, 3>(map: &map, key: key, value: value, env: &env);
     hash_map_test_scalar_outcome(outcome: inserted, expected: 0_u64, key: key, value: value, seen: &seen);
   }
+  let refused = hash_map_try_put::<HashMapCycleKey, u64, 3>(map: &map, key: 4_u64, value: 40_u64, env: &env);
+  hash_map_test_scalar_outcome(outcome: refused, expected: 2_u64, key: 4_u64, value: 40_u64, seen: &seen);
+  let absent_key = 5_u64;
+  let absent = hash_map_remove::<HashMapCycleKey, u64, 3>(map: &map, key: &absent_key, env: &env);
+  match absent {
+    Some(value: unexpected) => {
+      hash_map_test_fail(seen: &seen);
+      hash_map_pair_consume::<HashMapScalarConsume>(pair: unexpected, env: &seen);
+    }
+    None() => {
+    }
+  }
+  let removed_key = 2_u64;
+  let removed = hash_map_remove::<HashMapCycleKey, u64, 3>(map: &map, key: &removed_key, env: &env);
+  match removed {
+    Some(value: previous) => {
+      if previous.key != 2_u64 {
+        hash_map_test_fail(seen: &seen);
+      }
+      if previous.value != 20_u64 {
+        hash_map_test_fail(seen: &seen);
+      }
+      hash_map_pair_consume::<HashMapScalarConsume>(pair: previous, env: &seen);
+    }
+    None() => {
+      hash_map_test_fail(seen: &seen);
+    }
+  }
+  let replaced = hash_map_try_put::<HashMapCycleKey, u64, 3>(map: &map, key: 3_u64, value: 300_u64, env: &env);
+  hash_map_test_scalar_outcome(outcome: replaced, expected: 1_u64, key: 3_u64, value: 30_u64, seen: &seen);
+  if map.length != 2_u64 {
+    hash_map_test_fail(seen: &seen);
+  }
+  if map.vacated != 1_u64 {
+    hash_map_test_fail(seen: &seen);
+  }
+  let reused = hash_map_try_put::<HashMapCycleKey, u64, 3>(map: &map, key: 4_u64, value: 40_u64, env: &env);
+  hash_map_test_scalar_outcome(outcome: reused, expected: 0_u64, key: 4_u64, value: 40_u64, seen: &seen);
+  if map.length != 3_u64 {
+    hash_map_test_fail(seen: &seen);
+  }
+  if map.vacated != 0_u64 {
+    hash_map_test_fail(seen: &seen);
+  }
   let rebuilt = hash_map_rehash::<HashMapCycleKey, u64, 3>(map: &map, env: &env);
   hash_map_test_check_reserve(outcome: rebuilt, expected: true_value, seen: &seen);
-  for (key in 1_u64..4_u64) {
+  for (visit in 0_u64..3_u64) {
+    let key = visit + 2_u64;
+    if visit == 0_u64 {
+      set key = 1_u64;
+    }
     let expected = key * 10_u64;
+    if key == 3_u64 {
+      set expected = 300_u64;
+    }
     let observed = hash_map_lookup::<HashMapCycleKey, u64, HashMapTestSeen, u64, fn hash_map_test_scalar_read, 3>(map: &map, key: &key, key_env: &env, visit_env: &seen);
     match observed {
       Ok(value: actual) => {
@@ -433,13 +518,13 @@ fn hash_map_test_cycle() -> result: u64 pure {
     }
   }
   hash_map_free::<HashMapScalarConsume, 3>(map: move map, env: &seen);
-  if seen.consumed != 3_u64 {
+  if seen.consumed != 6_u64 {
     hash_map_test_fail(seen: &seen);
   }
-  if seen.key_sum != 6_u64 {
+  if seen.key_sum != 17_u64 {
     hash_map_test_fail(seen: &seen);
   }
-  if seen.value_sum != 60_u64 {
+  if seen.value_sum != 440_u64 {
     hash_map_test_fail(seen: &seen);
   }
   if seen.visits != 3_u64 {
@@ -461,6 +546,7 @@ struct HashMapOwnedRecord {
 
 nodrop struct HashMapOwnedNode {
   child: Box<HashMapOwnedRecord>;
+  words: Array<u64, 31>;
 }
 
 struct HashMapOwnerEnv {
@@ -475,7 +561,39 @@ struct HashMapOwnerLedger {
 fn hash_map_test_owned_make(id: u64, serial: u64) -> result: HashMapOwnedNode pure {
   let record = HashMapOwnedRecord(id: id, serial: serial);
   let child = box_new::<HashMapOwnedRecord>(value: record);
-  return HashMapOwnedNode(child: move child);
+  let base = serial *wrap 257_u64;
+  let words = array_filled::<u64, 31>(value: base);
+  set words[1_u64] = base +wrap 1_u64;
+  set words[2_u64] = base +wrap 2_u64;
+  set words[3_u64] = base +wrap 3_u64;
+  set words[4_u64] = base +wrap 4_u64;
+  set words[5_u64] = base +wrap 5_u64;
+  set words[6_u64] = base +wrap 6_u64;
+  set words[7_u64] = base +wrap 7_u64;
+  set words[8_u64] = base +wrap 8_u64;
+  set words[9_u64] = base +wrap 9_u64;
+  set words[10_u64] = base +wrap 10_u64;
+  set words[11_u64] = base +wrap 11_u64;
+  set words[12_u64] = base +wrap 12_u64;
+  set words[13_u64] = base +wrap 13_u64;
+  set words[14_u64] = base +wrap 14_u64;
+  set words[15_u64] = base +wrap 15_u64;
+  set words[16_u64] = base +wrap 16_u64;
+  set words[17_u64] = base +wrap 17_u64;
+  set words[18_u64] = base +wrap 18_u64;
+  set words[19_u64] = base +wrap 19_u64;
+  set words[20_u64] = base +wrap 20_u64;
+  set words[21_u64] = base +wrap 21_u64;
+  set words[22_u64] = base +wrap 22_u64;
+  set words[23_u64] = base +wrap 23_u64;
+  set words[24_u64] = base +wrap 24_u64;
+  set words[25_u64] = base +wrap 25_u64;
+  set words[26_u64] = base +wrap 26_u64;
+  set words[27_u64] = base +wrap 27_u64;
+  set words[28_u64] = base +wrap 28_u64;
+  set words[29_u64] = base +wrap 29_u64;
+  set words[30_u64] = base +wrap 30_u64;
+  return HashMapOwnedNode(child: move child, words: words);
 }
 
 fn hash_map_test_owned_fail(ledger: &HashMapOwnerLedger) -> result: unit writes(ledger) {
@@ -484,8 +602,15 @@ fn hash_map_test_owned_fail(ledger: &HashMapOwnerLedger) -> result: unit writes(
 }
 
 fn hash_map_test_owned_release(value: HashMapOwnedNode, ledger: &HashMapOwnerLedger) -> result: unit writes(ledger) {
-  let HashMapOwnedNode(child: owned_child) = move value;
+  let HashMapOwnedNode(child: owned_child, words: owned_words) = move value;
   let serial = owned_child.inner.serial;
+  for (index in 0_u64..31_u64) {
+    let base = serial *wrap 257_u64;
+    let expected = base +wrap index;
+    if owned_words[index] != expected {
+      hash_map_test_owned_fail(ledger: ledger);
+    }
+  }
   if serial < ledger^.releases.len {
     set ledger^.releases[serial] = ledger^.releases[serial] +wrap 1_u64;
   } else {
@@ -551,7 +676,7 @@ fn hash_map_test_owned_check_pair(pair: &HashMapPair<HashMapOwnedNode, HashMapOw
 }
 
 fn hash_map_test_owned() -> result: u64 pure {
-  doc "Distinct child serials distinguish the replaced pair from the offered pair even when key IDs compare equal. Callbacks check retained identities around edit, and a second edit returns a fresh owned Box holding the prior value for separate caller consumption.";
+  doc "Distinct child serials distinguish the replaced pair from the offered pair even when key IDs compare equal. Each node also carries thirty-one distinct inline words, all checked against its immutable serial when the owner is consumed; an old/new payload mix or partial wide transfer fails independently of the child-release ledger. Callbacks check retained identities around edit, and a second edit returns a fresh owned Box holding the prior value for separate caller consumption.";
   let releases = array_filled::<u64, 32>(value: 0_u64);
   let ledger = HashMapOwnerLedger(releases: releases, failures: 0_u64, visits: 0_u64);
   let env = HashMapOwnerEnv();
@@ -675,6 +800,145 @@ fn hash_map_test_owned() -> result: u64 pure {
     }
   }
   return ledger.failures;
+}
+
+struct HashMapMigrationEnv {
+  home: u64;
+  equal: Bool;
+}
+
+fn hash_map_test_migration_hash(env: &HashMapMigrationEnv, key: &HashMapOwnedNode) -> result: u64 reads(env) {
+  return env^.home;
+}
+
+fn hash_map_test_migration_equal(env: &HashMapMigrationEnv, left: &HashMapOwnedNode, right: &HashMapOwnedNode) -> result: Bool reads(env) {
+  return env^.equal;
+}
+
+binding HashMapMigrationKey : HashMapKey<HashMapOwnedNode, HashMapMigrationEnv> {
+  hash = hash_map_test_migration_hash;
+  equal = hash_map_test_migration_equal;
+}
+
+fn hash_map_test_migration_visit(env: &HashMapOwnerLedger, key: &HashMapOwnedNode, value: &HashMapOwnedNode) -> result: unit reads(key), reads(value), writes(env) {
+  let key_serial = key^.child.inner.serial;
+  let value_serial = value^.child.inner.serial;
+  if key^.child.inner.id != 7_u64 {
+    hash_map_test_owned_fail(ledger: env);
+  }
+  if value^.child.inner.id != 70_u64 {
+    hash_map_test_owned_fail(ledger: env);
+  }
+  let paired_serial = key_serial +wrap 10_u64;
+  if value_serial != paired_serial {
+    hash_map_test_owned_fail(ledger: env);
+  }
+  for (index in 0_u64..31_u64) {
+    let key_base = key_serial *wrap 257_u64;
+    let expected_key = key_base +wrap index;
+    if key^.words[index] != expected_key {
+      hash_map_test_owned_fail(ledger: env);
+    }
+    let value_base = value_serial *wrap 257_u64;
+    let expected_value = value_base +wrap index;
+    if value^.words[index] != expected_value {
+      hash_map_test_owned_fail(ledger: env);
+    }
+  }
+  if key_serial < env^.releases.len {
+    set env^.releases[key_serial] = env^.releases[key_serial] +wrap 1_u64;
+  } else {
+    hash_map_test_owned_fail(ledger: env);
+  }
+  if value_serial < env^.releases.len {
+    set env^.releases[value_serial] = env^.releases[value_serial] +wrap 1_u64;
+  } else {
+    hash_map_test_owned_fail(ledger: env);
+  }
+  return unit;
+}
+
+fn hash_map_test_owned_migration() -> result: u64 pure {
+  doc "Three complete wide nodrop pairs wrap from the final bucket, migrate through a full same-capacity rebuild and then grow to another non-power-of-two capacity. Equality changes from never equal to always equal before migration, so re-insertion through equality would merge owners. A separate borrowed-visit ledger observes every serial and inline word after each rebuild; final consumption checks the complete owners again and releases each serial once.";
+  let releases = array_filled::<u64, 32>(value: 0_u64);
+  let visits = array_filled::<u64, 32>(value: 0_u64);
+  let ledger = HashMapOwnerLedger(releases: releases, failures: 0_u64, visits: 0_u64);
+  let observed = HashMapOwnerLedger(releases: visits, failures: 0_u64, visits: 0_u64);
+  let unequal = False();
+  let env = HashMapMigrationEnv(home: 2_u64, equal: unequal);
+  let map = hash_map_new::<HashMapOwnedNode, HashMapOwnedNode, 5>(capacity: 3_u64);
+  for (serial in 1_u64..4_u64) {
+    let key = hash_map_test_owned_make(id: 7_u64, serial: serial);
+    let value_serial = serial +wrap 10_u64;
+    let value = hash_map_test_owned_make(id: 70_u64, serial: value_serial);
+    let inserted = hash_map_try_put::<HashMapMigrationKey, HashMapOwnedNode, 5>(map: &map, key: move key, value: move value, env: &env);
+    match move inserted {
+      HashMapInserted() => {
+      }
+      HashMapReturned(reason: return_reason, pair: returned_pair) => {
+        hash_map_test_owned_fail(ledger: &ledger);
+        hash_map_pair_consume::<HashMapOwnedConsume>(pair: move returned_pair, env: &ledger);
+      }
+    }
+  }
+  set env.equal = True();
+  let rebuilt = hash_map_rehash::<HashMapMigrationKey, HashMapOwnedNode, 5>(map: &map, env: &env);
+  match rebuilt {
+    Ok(value: complete) => {
+    }
+    Err(error: refused) => {
+      hash_map_test_owned_fail(ledger: &ledger);
+    }
+  }
+  let rebuilt_length = hash_map_len::<HashMapOwnedNode, HashMapOwnedNode, 5>(map: &map);
+  if rebuilt_length != 3_u64 {
+    hash_map_test_owned_fail(ledger: &ledger);
+  }
+  let rebuilt_capacity = hash_map_capacity::<HashMapOwnedNode, HashMapOwnedNode, 5>(map: &map);
+  if rebuilt_capacity != 3_u64 {
+    hash_map_test_owned_fail(ledger: &ledger);
+  }
+  hash_map_each::<HashMapOwnedNode, HashMapOwnedNode, HashMapOwnerLedger, fn hash_map_test_migration_visit, 5>(map: &map, env: &observed);
+  set env.home = 4_u64;
+  let grown = hash_map_reserve::<HashMapMigrationKey, HashMapOwnedNode, 5>(map: &map, capacity: 5_u64, env: &env);
+  match grown {
+    Ok(value: complete) => {
+    }
+    Err(error: refused) => {
+      hash_map_test_owned_fail(ledger: &ledger);
+    }
+  }
+  let grown_length = hash_map_len::<HashMapOwnedNode, HashMapOwnedNode, 5>(map: &map);
+  if grown_length != 3_u64 {
+    hash_map_test_owned_fail(ledger: &ledger);
+  }
+  let grown_capacity = hash_map_capacity::<HashMapOwnedNode, HashMapOwnedNode, 5>(map: &map);
+  if grown_capacity != 5_u64 {
+    hash_map_test_owned_fail(ledger: &ledger);
+  }
+  hash_map_each::<HashMapOwnedNode, HashMapOwnedNode, HashMapOwnerLedger, fn hash_map_test_migration_visit, 5>(map: &map, env: &observed);
+  hash_map_free::<HashMapOwnedConsume, 5>(map: move map, env: &ledger);
+  for (serial in 0_u64..32_u64) {
+    let expected = 0_u64;
+    if serial >= 1_u64 {
+      if serial <= 3_u64 {
+        set expected = 1_u64;
+      }
+    }
+    if serial >= 11_u64 {
+      if serial <= 13_u64 {
+        set expected = 1_u64;
+      }
+    }
+    if ledger.releases[serial] != expected {
+      hash_map_test_owned_fail(ledger: &ledger);
+    }
+    let expected_visits = expected *wrap 2_u64;
+    if observed.releases[serial] != expected_visits {
+      hash_map_test_owned_fail(ledger: &ledger);
+    }
+  }
+  return ledger.failures +wrap observed.failures;
 }
 
 fn hash_map_test_scalar_outcome(outcome: HashMapPut<u64, u64>, expected: u64, key: u64, value: u64, seen: &HashMapTestSeen) -> result: unit writes(seen) {
@@ -1003,15 +1267,142 @@ fn hash_map_test_units() -> result: u64 pure {
   return seen.failures;
 }
 
+fn hash_map_test_edit_ordered(env: &HashMapTestSeen, key: &u64, value: &u64) -> result: u64 reads(key), writes(env), writes(value) {
+  set env^.visits = env^.visits +wrap 1_u64;
+  let prefix = env^.observed *wrap 10_u64;
+  let digit = key^ +wrap 1_u64;
+  set env^.observed = prefix +wrap digit;
+  set value^ = value^ +wrap 1_u64;
+  return value^;
+}
+
+fn hash_map_test_edit_home(env: &HashMapHashEnv, key: &u64) -> result: u64 pure {
+  return 5_u64;
+}
+
+binding HashMapEditBoundaryKey : HashMapKey<u64, HashMapHashEnv> {
+  hash = hash_map_test_edit_home;
+  equal = hash_map_test_scalar_equal;
+}
+
+fn hash_map_test_edit_boundaries() -> result: u64 pure {
+  doc "At capacity three, hash five starts in the last bucket, while an incorrect unconditional mask starts at a vacant bucket. Editing the sparse map checks modulo fallback; filling it, deleting the home entry and editing both survivors checks wrapped traversal through tombstones. Full-cycle and empty misses never invoke the update. Ordered callbacks and complete consumed key/value sums observe every mutation.";
+  let seen = HashMapTestSeen(failures: 0_u64, consumed: 0_u64, key_sum: 0_u64, value_sum: 0_u64, visits: 0_u64, observed: 0_u64);
+  let no = False();
+  let env = HashMapHashEnv(hostile: no);
+  let map = hash_map_new::<u64, u64, 3>(capacity: 3_u64);
+  let first_inserted = hash_map_try_put::<HashMapEditBoundaryKey, u64, 3>(map: &map, key: 0_u64, value: 0_u64, env: &env);
+  hash_map_test_scalar_outcome(outcome: first_inserted, expected: 0_u64, key: 0_u64, value: 0_u64, seen: &seen);
+  let initial_key = 0_u64;
+  let sparse = hash_map_edit::<HashMapEditBoundaryKey, u64, HashMapTestSeen, u64, fn hash_map_test_edit_ordered, 3>(map: &map, key: &initial_key, key_env: &env, edit_env: &seen);
+  match sparse {
+    Ok(value: reached) => {
+      if reached != 1_u64 {
+        hash_map_test_fail(seen: &seen);
+      }
+    }
+    Err(error: absent) => {
+      hash_map_test_fail(seen: &seen);
+    }
+  }
+  for (index in 1_u64..3_u64) {
+    let outcome = hash_map_try_put::<HashMapEditBoundaryKey, u64, 3>(map: &map, key: index, value: index, env: &env);
+    hash_map_test_scalar_outcome(outcome: outcome, expected: 0_u64, key: index, value: index, seen: &seen);
+  }
+  let absent_key = 9_u64;
+  let absent = hash_map_edit::<HashMapEditBoundaryKey, u64, HashMapTestSeen, u64, fn hash_map_test_edit_ordered, 3>(map: &map, key: &absent_key, key_env: &env, edit_env: &seen);
+  match absent {
+    Ok(value: unexpected) => {
+      hash_map_test_fail(seen: &seen);
+    }
+    Err(error: expected) => {
+    }
+  }
+  let first = 0_u64;
+  let removed = hash_map_remove::<HashMapEditBoundaryKey, u64, 3>(map: &map, key: &first, env: &env);
+  match removed {
+    Some(value: pair) => {
+      hash_map_pair_consume::<HashMapScalarConsume>(pair: pair, env: &seen);
+    }
+    None() => {
+      hash_map_test_fail(seen: &seen);
+    }
+  }
+  let wrapped = 1_u64;
+  let edited = hash_map_edit::<HashMapEditBoundaryKey, u64, HashMapTestSeen, u64, fn hash_map_test_edit_ordered, 3>(map: &map, key: &wrapped, key_env: &env, edit_env: &seen);
+  match edited {
+    Ok(value: reached) => {
+      if reached != 2_u64 {
+        hash_map_test_fail(seen: &seen);
+      }
+    }
+    Err(error: not_found) => {
+      hash_map_test_fail(seen: &seen);
+    }
+  }
+  let last_key = 2_u64;
+  let last = hash_map_edit::<HashMapEditBoundaryKey, u64, HashMapTestSeen, u64, fn hash_map_test_edit_ordered, 3>(map: &map, key: &last_key, key_env: &env, edit_env: &seen);
+  match last {
+    Ok(value: reached) => {
+      if reached != 3_u64 {
+        hash_map_test_fail(seen: &seen);
+      }
+    }
+    Err(error: last_absent) => {
+      hash_map_test_fail(seen: &seen);
+    }
+  }
+  let cycle = hash_map_edit::<HashMapEditBoundaryKey, u64, HashMapTestSeen, u64, fn hash_map_test_edit_ordered, 3>(map: &map, key: &absent_key, key_env: &env, edit_env: &seen);
+  match cycle {
+    Ok(value: unexpected) => {
+      hash_map_test_fail(seen: &seen);
+    }
+    Err(error: expected) => {
+    }
+  }
+  hash_map_free::<HashMapScalarConsume, 3>(map: move map, env: &seen);
+  let empty = hash_map_new::<u64, u64, 3>(capacity: 0_u64);
+  let missing = hash_map_edit::<HashMapEditBoundaryKey, u64, HashMapTestSeen, u64, fn hash_map_test_edit_ordered, 3>(map: &empty, key: &absent_key, key_env: &env, edit_env: &seen);
+  match missing {
+    Ok(value: unexpected) => {
+      hash_map_test_fail(seen: &seen);
+    }
+    Err(error: expected) => {
+    }
+  }
+  hash_map_free::<HashMapScalarConsume, 3>(map: move empty, env: &seen);
+  if seen.visits != 3_u64 {
+    hash_map_test_fail(seen: &seen);
+  }
+  if seen.consumed != 3_u64 {
+    hash_map_test_fail(seen: &seen);
+  }
+  if seen.value_sum != 6_u64 {
+    hash_map_test_fail(seen: &seen);
+  }
+  if seen.key_sum != 3_u64 {
+    hash_map_test_fail(seen: &seen);
+  }
+  if seen.observed != 123_u64 {
+    hash_map_test_fail(seen: &seen);
+  }
+  return seen.failures;
+}
+
 fn main() -> status: ExitStatus pure {
   doc "One representation-independent library caller covers copyable pairs, must-consume Box-owning pairs, zero-sized pairs, hostile equality, wrap, tombstones, replacement, real capacity refusal, growth and its thresholds, rehash, borrowed edit, owned callback results and exact cleanup. All observations use public operations rather than bucket fields or iteration order.";
+  let boundary_failures = hash_map_test_edit_boundaries();
   let scalar_failures = hash_map_test_scalars();
   let wrapping_failures = hash_map_test_wrapping();
   let cycle_failures = hash_map_test_cycle();
   let growth_failures = hash_map_test_growth();
   let edit_failures = hash_map_test_edit();
   let owned_failures = hash_map_test_owned();
+  let migration_failures = hash_map_test_owned_migration();
   let unit_failures = hash_map_test_units();
+  if boundary_failures != 0_u64 {
+    return exit_status(code: 7_u8);
+  }
   if scalar_failures != 0_u64 {
     return exit_status(code: 1_u8);
   }
@@ -1029,6 +1420,9 @@ fn main() -> status: ExitStatus pure {
   }
   if owned_failures != 0_u64 {
     return exit_status(code: 1_u8);
+  }
+  if migration_failures != 0_u64 {
+    return exit_status(code: 6_u8);
   }
   if unit_failures != 0_u64 {
     return exit_status(code: 1_u8);

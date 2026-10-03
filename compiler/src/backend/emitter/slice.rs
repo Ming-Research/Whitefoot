@@ -29,7 +29,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             },
         )?;
         let descriptor_type = self.output.type_name(self.program, ty)?;
-        let address = self.value_name(buffer);
+        let address = self.addressed_storage_pointer(buffer)?;
         let pointer = self.next_temporary()?;
         let length_address = self.next_temporary()?;
         let length = self.next_temporary()?;

@@ -1,0 +1,112 @@
+--- a/whitefoot-timed.ll
++++ b/whitefoot-timed.ll
+@@ -1879,7 +1879,7 @@
+   ret %wf.t.4fe45f1358b41568 %wf.returned
+ }
+ 
+-define i64 @wf_std.collections.vector.grow_vector_reserve$instance$8c4c85d67cb438a6(ptr noalias nonnull captures(none) dereferenceable(24) %v0, i64 %v1) #0 {
++define i64 @wf_std.collections.vector.grow_vector_reserve$instance$8c4c85d67cb438a6(ptr noalias nonnull captures(none) dereferenceable(24) %v0, i64 %v1) alwaysinline #0 {
+ entry:
+   %t0 = getelementptr inbounds %wf.t.4fe45f1358b41568, ptr %v0, i32 0, i32 0
+   %v2 = getelementptr i8, ptr %t0, i64 0
+@@ -2276,7 +2276,7 @@
+   ret %wf.t.c59a17969695b1c4 %wf.returned
+ }
+ 
+-define i64 @wf_std.collections.vector.grow_vector_reserve$instance$979fcc4ac6e818fb(ptr noalias nonnull captures(none) dereferenceable(24) %v0, i64 %v1) #0 {
++define i64 @wf_std.collections.vector.grow_vector_reserve$instance$979fcc4ac6e818fb(ptr noalias nonnull captures(none) dereferenceable(24) %v0, i64 %v1) alwaysinline #0 {
+ entry:
+   %t0 = getelementptr inbounds %wf.t.c59a17969695b1c4, ptr %v0, i32 0, i32 0
+   %v2 = getelementptr i8, ptr %t0, i64 0
+@@ -3122,7 +3122,7 @@
+   ret i8 %v14
+ }
+ 
+-define i8 @wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6(ptr noalias nonnull captures(none) dereferenceable(24) %v0) #0 {
++define i8 @wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6(ptr noalias nonnull captures(none) dereferenceable(24) %v0) alwaysinline #0 {
+ entry:
+   %t0 = getelementptr inbounds %wf.t.4fe45f1358b41568, ptr %v0, i32 0, i32 0
+   %v1 = getelementptr i8, ptr %t0, i64 0
+@@ -3191,7 +3191,7 @@
+   br label %bb7
+ }
+ 
+-define i8 @wf_std.collections.vector.grow_vector_grow_full$instance$979fcc4ac6e818fb(ptr noalias nonnull captures(none) dereferenceable(24) %v0) #0 {
++define i8 @wf_std.collections.vector.grow_vector_grow_full$instance$979fcc4ac6e818fb(ptr noalias nonnull captures(none) dereferenceable(24) %v0) alwaysinline #0 {
+ entry:
+   %t0 = getelementptr inbounds %wf.t.c59a17969695b1c4, ptr %v0, i32 0, i32 0
+   %v1 = getelementptr i8, ptr %t0, i64 0
+@@ -3304,7 +3304,7 @@
+   ret i8 %v2
+ }
+ 
+-define i8 @wf_grow$instance$e194368921a477a7(ptr noalias nonnull captures(none) dereferenceable(24) %v0, i64 %v1) #0 {
++define i8 @wf_grow$instance$e194368921a477a7(ptr noalias nonnull captures(none) dereferenceable(24) %v0, i64 %v1) alwaysinline #0 {
+ entry:
+   %t0 = getelementptr inbounds { i64, i64, ptr }, ptr %v0, i32 0, i32 1
+   %t1 = getelementptr inbounds { i64, i64, ptr }, ptr %v0, i32 0, i32 0
+@@ -3384,7 +3384,7 @@
+   ret i8 %v2
+ }
+ 
+-define i8 @wf_grow$instance$04ee659886c12146(ptr noalias nonnull captures(none) dereferenceable(24) %v0, i64 %v1) #0 {
++define i8 @wf_grow$instance$04ee659886c12146(ptr noalias nonnull captures(none) dereferenceable(24) %v0, i64 %v1) alwaysinline #0 {
+ entry:
+   %t0 = getelementptr inbounds { i64, i64, ptr }, ptr %v0, i32 0, i32 1
+   %t1 = getelementptr inbounds { i64, i64, ptr }, ptr %v0, i32 0, i32 0
+--- a/whitefoot-account.ll
++++ b/whitefoot-account.ll
+@@ -1879,7 +1879,7 @@
+   ret %wf.t.4fe45f1358b41568 %wf.returned
+ }
+ 
+-define i64 @wf_std.collections.vector.grow_vector_reserve$instance$8c4c85d67cb438a6(ptr noalias nonnull captures(none) dereferenceable(24) %v0, i64 %v1) #0 {
++define i64 @wf_std.collections.vector.grow_vector_reserve$instance$8c4c85d67cb438a6(ptr noalias nonnull captures(none) dereferenceable(24) %v0, i64 %v1) alwaysinline #0 {
+ entry:
+   %t0 = getelementptr inbounds %wf.t.4fe45f1358b41568, ptr %v0, i32 0, i32 0
+   %v2 = getelementptr i8, ptr %t0, i64 0
+@@ -2276,7 +2276,7 @@
+   ret %wf.t.c59a17969695b1c4 %wf.returned
+ }
+ 
+-define i64 @wf_std.collections.vector.grow_vector_reserve$instance$979fcc4ac6e818fb(ptr noalias nonnull captures(none) dereferenceable(24) %v0, i64 %v1) #0 {
++define i64 @wf_std.collections.vector.grow_vector_reserve$instance$979fcc4ac6e818fb(ptr noalias nonnull captures(none) dereferenceable(24) %v0, i64 %v1) alwaysinline #0 {
+ entry:
+   %t0 = getelementptr inbounds %wf.t.c59a17969695b1c4, ptr %v0, i32 0, i32 0
+   %v2 = getelementptr i8, ptr %t0, i64 0
+@@ -3122,7 +3122,7 @@
+   ret i8 %v14
+ }
+ 
+-define i8 @wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6(ptr noalias nonnull captures(none) dereferenceable(24) %v0) #0 {
++define i8 @wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6(ptr noalias nonnull captures(none) dereferenceable(24) %v0) alwaysinline #0 {
+ entry:
+   %t0 = getelementptr inbounds %wf.t.4fe45f1358b41568, ptr %v0, i32 0, i32 0
+   %v1 = getelementptr i8, ptr %t0, i64 0
+@@ -3191,7 +3191,7 @@
+   br label %bb7
+ }
+ 
+-define i8 @wf_std.collections.vector.grow_vector_grow_full$instance$979fcc4ac6e818fb(ptr noalias nonnull captures(none) dereferenceable(24) %v0) #0 {
++define i8 @wf_std.collections.vector.grow_vector_grow_full$instance$979fcc4ac6e818fb(ptr noalias nonnull captures(none) dereferenceable(24) %v0) alwaysinline #0 {
+ entry:
+   %t0 = getelementptr inbounds %wf.t.c59a17969695b1c4, ptr %v0, i32 0, i32 0
+   %v1 = getelementptr i8, ptr %t0, i64 0
+@@ -3304,7 +3304,7 @@
+   ret i8 %v2
+ }
+ 
+-define i8 @wf_grow$instance$e194368921a477a7(ptr noalias nonnull captures(none) dereferenceable(24) %v0, i64 %v1) #0 {
++define i8 @wf_grow$instance$e194368921a477a7(ptr noalias nonnull captures(none) dereferenceable(24) %v0, i64 %v1) alwaysinline #0 {
+ entry:
+   %t0 = getelementptr inbounds { i64, i64, ptr }, ptr %v0, i32 0, i32 1
+   %t1 = getelementptr inbounds { i64, i64, ptr }, ptr %v0, i32 0, i32 0
+@@ -3384,7 +3384,7 @@
+   ret i8 %v2
+ }
+ 
+-define i8 @wf_grow$instance$04ee659886c12146(ptr noalias nonnull captures(none) dereferenceable(24) %v0, i64 %v1) #0 {
++define i8 @wf_grow$instance$04ee659886c12146(ptr noalias nonnull captures(none) dereferenceable(24) %v0, i64 %v1) alwaysinline #0 {
+ entry:
+   %t0 = getelementptr inbounds { i64, i64, ptr }, ptr %v0, i32 0, i32 1
+   %t1 = getelementptr inbounds { i64, i64, ptr }, ptr %v0, i32 0, i32 0

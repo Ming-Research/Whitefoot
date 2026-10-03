@@ -401,6 +401,13 @@ rarely insert at the same place.
   single-source pair cannot hold, so pinning it needs a module-form pair;
   and FN-9's propagated-exit repair is pinned for a refuted relation only,
   its unproved sentence still unpinned.
+  The generic HashMap atomic-update attempt also reaches
+  `LinearAssignmentTarget` with "take the linear value out and consume it
+  before writing this place" (`semantic/check/expressions.rs`), although
+  WIN-3 forbids taking an element out of a window slot. Offer a valid
+  whole-value exchange with `swap` where applicable, rather than a hole;
+  pin a linear-slot rejection and its accepted repaired program when this
+  repair is revisited.
   Pin each with a program per
   alternative, rewording those that fail, and move the sentences into
   `check/repairs.rs`; validate by the pair test. Found in the review of the
@@ -546,6 +553,29 @@ rarely insert at the same place.
   inventory is next edited; the storage-destructuring repair uses its actual
   identities and needs no inventory change.
 
+- **Direct returns can require an intermediate result binding.**
+  The growth-append comparison wrapper's `return grow_vector_append::<T,
+  8193>(values: values, value: move value);` cannot discharge an ensures
+  relating its returned length to the mutated vector under the current FN-9
+  return-datum boundary; naming the call result and returning that name works
+  with identical contracts. The paired direct/bound-return tests in
+  `compiler/src/semantic/tests/postconditions.rs` already cover this boundary.
+  The cached-reciprocal HashMap trial exposes the arithmetic form: a function
+  `remainder(hash: u64, count: u64) -> index: u64` with `requires count > 0_u64`
+  and `ensures index < count` rejects `return hash % count;` with
+  `FN-9 InvalidPostconditionReturn`. FN-9 requires the selected returned datum
+  to denote an ENT-2 term or constant; the arithmetic expression is neither.
+  `let exact = hash % count; return exact;` instead supplies a tracked place,
+  with the unsigned remainder bound established at its binding by ENT-3.S7.
+  This is the specified return-datum boundary, not a demonstrated compiler bug.
+  Impact: ordinary forwarding wrappers and direct arithmetic returns require
+  an extra source binding; the optimized append example retains no extra work.
+  Reopen with return-contract ergonomics, compare direct and bound call and
+  arithmetic forms including refuted and recursive contracts, and decide
+  whether a broader return datum is warranted. Any expansion of accepted source
+  needs a specification decision; do not change that boundary as part of the
+  container timing experiment.
+
 - **Data only proofs read is computed, stored and passed at run time.** A
   range requirement can only name what the callee receives, so
   `cascade_level` in
@@ -565,6 +595,60 @@ rarely insert at the same place.
   profile puts such data on its critical path.
 
 ## Containers and storage lowering
+
+- **Check measure-fact transport when wrapping a runtime-content Box.** A new
+  append fallback fixture constructs `inner = box_slots_new::<u64>(capacity:
+  4_u64)`, then `outer = box_new::<Box<Slots<u64>>>(value: move inner)`. Calling
+  a helper requiring `outer^.inner.inner.len == 0_u64` is rejected at FN-8 by
+  frozen compiler `f99bd0bb2bb51fa09c5ea8c09fcb0e029bfc309e`. The rejection
+  alone does not establish a language gap: determine whether the current
+  rules transport the constructor fact automatically or need an explicit proof,
+  and fix the implementation if that specified path is missing. Reopen with
+  nested-owner fact transport; qualify zero length and preserved capacity after
+  wrapping, with a nonempty negative. The append optimization's outer-Box
+  fallback test checks IR selection only; it does not claim this constructor
+  chain executes. No runtime guard or changed verdict substitutes for that gap.
+
+- **Readonly storage measures cannot yet be passed by reference.** TYPE-2,
+  OP-15, PRE-1 and REF-1 describe ordinary readonly fields and field-reference
+  paths, but the compiler's borrow-place selection rejects this minimal program:
+
+  ```wf
+  fn read_word(word: &u64) -> value: u64 reads(word) {
+    return word^;
+  }
+  fn main() -> status: std::process::ExitStatus pure {
+    let values = box_slots_new::<u64>(capacity: 1_u64);
+    let length = read_word(word: &values.inner.len);
+    return std::process::exit_status(code: 0_u8);
+  }
+  ```
+
+  The frozen `f99bd0bb2bb51fa09c5ea8c09fcb0e029bfc309e` compiler rejects
+  `.len` with TYPE-5, expecting a source struct and finding `Slots<u64>`;
+  `compiler/src/semantic/check/expressions/places.rs` takes the ordinary
+  field-rejection path instead of resolving the declared measure. This is a
+  compiler/specification discrepancy, not an alias guarantee for optimization.
+  Reopen with measure-reference support: resolve these readonly fields through
+  the ordinary reference path, preserve readonly effects and reference validity,
+  and qualify both stored runtime measures and omitted constant measures.
+  Add an executing positive for this program and observations across permitted
+  writes, plus negative writes through readonly references. The current append
+  work uses a container-reference observer and retains conservative alias rules;
+  it does not repair or redefine measure references.
+
+- **Window-length selection repeats helper-graph analysis.** The append-path
+  discovery and scalar-only check in
+  `compiler/src/lowering/window_length_residency.rs` stop recursive cycles but
+  revisit shared acyclic callees for each incoming call. A layered shared-call
+  graph can therefore multiply lowering work without increasing program size
+  proportionally. Reuse completed per-function summaries, distinguishing a
+  complete result from a recursion-cut partial result; keep helper-version keys
+  relative to the selected path and roll back unsuccessful versions. Reopen
+  when admitting additional helper shapes or when compiler phase measurements
+  expose repeated traversal. Validate on a shared-call graph with an independent
+  visit-count bound, alongside unchanged generated behavior; the current small
+  append program's emission time does not qualify larger helper graphs.
 
 - **A hash map offers no sample or bounded visit.**
   `std::collections::hash_map` visits every pair (`hash_map_each`) and
@@ -627,6 +711,102 @@ rarely insert at the same place.
   against direct C and the current WF implementation. No new language operation
   is selected yet.
 
+  A separate implementation possibility is a checked-IR rewrite of the
+  complete take/swap permutation into forward owned consumption, with ordinary
+  lowering for unmatched regions. EFF-5 callback separation and STOR-7
+  relocation support that question but do not prove the rewrite: an extra
+  backing read or partial-progress return can observe the displaced rear
+  owner and must prevent selection. Preserve callback, release and divergence
+  order, prefix/capacity, arbitrary linear elements and target qualification.
+  Validate a fixed permutation-equivalence argument, structural positive and
+  negative witnesses, owning cleanup and same-source timing before adopting a
+  recognizer. No semantic impossibility or new primitive follows from the
+  current native gap. A conservative recognizer is now implemented on the
+  work branch under a pending amendment. Its
+  [actual-compiler factor isolation](../research/experiments/container-representation/vector-library/RESULTS.md#actual-compiler-factor-isolation-after-ownership-integration)
+  finds useful traversal gains but adverse wide suffix-one medians and strict
+  wide empty-control losses; ordinary function-actual hints produce identical
+  native code in both traversal settings. Keep this item open for the
+  remaining traversal/controller and code-placement costs. The remaining-count
+  spelling was rejected by its native-code screen; open constructor-constant
+  setup and digest-handoff leads are recorded under short Vector cycles below.
+  The subsequent [ordinary controller composition](../research/experiments/container-representation/vector-library/RESULTS.md#ordinary-controller-composition-scalar-suffix-three-losses-prevent-selection)
+  passes complete correctness and release checks but regresses scalar suffix-3
+  at all three populations, so its four useful gains do not select that
+  source rewrite. The separately qualified
+  [countdown batch controller](../research/experiments/container-representation/vector-library/RESULTS.md#countdown-batch-controller-balanced-pair-selects-caller-composition)
+  changes that outer live-state dataflow, recovers the original scalar cycle
+  count and passes the full balanced no-loss screen with three scalar
+  suffix-two gains. Only this caller composition is selected; the baseline
+  scalar tail already inlines, and neither result justifies a uniform hint.
+  The recognizer's
+  existence neither settles that performance tradeoff nor justifies extending
+  its equivalence domain.
+
+  The owner withdrew uniform function-actual hints after their claimed current
+  benefit failed the [actual-compiler comparison](../research/investigations/containers-and-resources/BEHAVIOR.md#ordinary-inlining-hints-for-supplied-functions).
+  The old callback threshold effect belongs to a combined raw-LLVM artifact;
+  it is not evidence for the removed heuristic. Reopen only with a real
+  consumer that separates hinted and unhinted native code and passes matched
+  performance checks. Terminal traversal's separate costs remain open.
+
+- **Empty-Slots allocation removal needs complete ownership and ABI coverage.**
+  The inline-owner zero-extent representation now under evaluation differs
+  from these shared-header prototypes: metadata remains per owner, and
+  positive capacity times qualified stride is the uniform allocation
+  boundary, including ordinary linked bodies. Its required closure evidence
+  is explicit, implicit, nested and worker cleanup, empty owner transport,
+  growth from zero and cleared positive owners, followed by matched API
+  timings. Do not infer that evidence from an earlier prototype.
+  The unselected [zero-capacity candidate](../research/experiments/container-representation/vector-library/RESULTS.md#zero-capacity-slots-sentinel-complete-samples-selection-unresolved)
+  changes explicit growth and empty release, but its patch does not change
+  derived Box cleanup's ordinary `FreePointer` path. A shared header must
+  never reach an allocator release through implicit scope cleanup. The
+  [read-only ownership/native audit](../research/experiments/container-representation/vector-library/RESULTS.md#empty-storage-native-scope-and-ownership-audit)
+  also finds that legal `grow(capacity: 0)` still allocates a heap header which
+  the patch's capacity-zero release test skips, while zero-count `append` and
+  `split_off` still write length words. These are inspected gaps in the
+  unselected patch, not demonstrated defects in the retained compiler.
+  Before reopening, cover explicit, implicit and nested cleanup, grow-zero,
+  whole-Box replacement/exchange, two independent empty owners, zero-count
+  writes and ordinary linked constructors/consumers under one physical ABI.
+  Capacity zero is not an allocation-ownership tag. Account for any new
+  metadata or runtime checks on positive-capacity hot paths; do not revive the
+  old patch.
+  A separate [nullable-owner prototype](../research/experiments/container-representation/vector-library/RESULTS.md#nullable-zero-extent-owner-allocation-gain-useful-regressions-refuse-selection)
+  covers the measured Vector owner/linked ABI path and removes the zero
+  request, but its full pair has 14 qualified useful losses against four
+  gains; repeated scalar reuse roughly doubles. The preregistered no-loss
+  condition refuses it. Its immutable READ-only fallback fails the native
+  append-promotion/frame screen before behavior or timing. Reopen only with
+  a general nonnull hot-path lowering that passes a discriminating native
+  screen, then complete real-worker and all-bin lifetime qualification before
+  any representation selection.
+  The [canonical-header successor](../research/experiments/container-representation/vector-library/RESULTS.md#canonical-empty-header-tag-balanced-diagnostic-misses-the-growth-criterion)
+  restores baseline hot operand streams but fails both trace-frame screens.
+  Its balanced measured diagnostic has two suffix-two gains and no qualified
+  useful loss; the required growth/16 gain overlaps in both pairs, so the
+  primary criterion remains unmet. Its near-C++ growth medians are peer-target
+  inconclusive, and inherited `memmove(0)` elision prevents isolated allocation
+  attribution. Keep this frozen pre-countdown result separate from selected
+  caller gains; reopen only with a materially changed general lowering and
+  complete lifetime coverage, not a rerun of this unchanged candidate.
+  The surviving native empty allocation/free pair occurs per reserved/growing
+  round; optimized reuse/suffix construction already omits it, unlike the
+  instrumented ledger. Local fresh-allocation coalescing is an unimplemented
+  hypothesis, limited by conditional lifetime and the growing path's surviving
+  call boundaries. A new pass is not justified by this benchmark alone.
+  A capacity-taking convenience constructor could address reserved setup but
+  is absent from the current API and would not fix default growth-16. Defer
+  implementation until a complete ordinary consumer and ownership/ABI argument
+  justify the scope; the earlier realloc and initial-capacity refusals remain.
+  The separate zero-byte growth-copy elision is still unverified and is excluded
+  from the spare-capacity append comparison. Reopen it with the reserve/grow
+  API: preserve allocation, header initialization, owner replacement and release,
+  and distinguish empty scalar storage, nonempty scalar storage and nonempty
+  zero-sized elements with an independent copy/release observer. Do not attribute
+  its possible benefit to a length-publication or empty-owner change.
+
 - **Deque scalar costs remain after payload-address qualification.** The
   [paired comparison](../research/experiments/container-representation/deque-library/RESULTS.md)
   isolates the qualified index fact and reduces normal scalar forward churn
@@ -646,6 +826,102 @@ rarely insert at the same place.
   tuning while this causal question is open; reopen for a workload dominated
   by retained reverse calls, a native-toolchain change or another material
   regression under the matched comparison.
+
+  The fresh [standard-container series](../research/experiments/container-representation/deque-library/RESULTS.md#fresh-practical-timing)
+  makes the payload distinction explicit: scalar reverse churn costs
+  2.712–2.795 times Rust VecDeque across the measured populations, while
+  wide forward/reverse traces stay within ten percent of both native deques.
+  At 4096 elements the scalar reverse gap to the source ring-loop C control
+  is only 1.172–1.185 times, so the native gap alone cannot select a compiler
+  fix. Compare modulo/index handling and the generated churn loop with
+  the same ring representation before attributing a share. The wide growth
+  trace also exposes allocation-policy tradeoffs: WF makes six requests,
+  Rust nine including six reallocations, and C++ 1572, but C++ has the lowest
+  requested-byte peak. Preserve those distinctions; this is neither an
+  isolated growth-latency result nor a physical-memory measurement.
+
+  The 2026-09-27 emitter fix
+  [`5ae2cdd40793e617dbbe88d3fc38681db983166f`](../research/experiments/container-representation/deque-library/RESULTS.md#production-lowering-reuse-a-front-placement-slot)
+  carries a `place_front` Ring's already computed physical slot into its
+  descriptor update. The raw body no longer reloads head/capacity or repeats
+  the predecessor calculation; its focused backend test and the complete
+  ownership/checksum matrix pass. A matched seven-sample, two-cohort run
+  reduces scalar reverse churn from about 1.39--1.41 times C++ to
+  0.49--0.50 times, without a useful regression elsewhere. The remaining
+  scalar growth traces include rebase's per-element transfer and additional
+  appends; this front-placement fix does not explain those costs. Keep a
+  same-source bulk-transfer discriminator separate, preserving allocation
+  policy and the logical-order oracle before changing the Ring API or
+  selecting a new operation.
+
+  The [uniform entry-capacity trial](../research/experiments/container-representation/deque-library/RESULTS.md#entry-capacity-pair-scalar-gains-wide-regression-candidate-rejected)
+  is rejected: three scalar growth gains accompany a qualified wide growth
+  loss. Removing destination wrapping permits adjacent scalar stores, but
+  the wide append instead vectorizes corresponding fields across records
+  and shuffles them back into record order, with a larger frame and a seed
+  reload. The pair does not apportion those costs. The isolated
+  [representation-limited trial](../research/experiments/container-representation/deque-library/RESULTS.md#representation-limited-pair-scalar-gains-historical-target-unresolved)
+  preserves aggregate control instructions and obtains three scalar growth
+  gains, including both required populations, with unchanged semantic and
+  120-row accounting observations and no qualified loss in all 24 cells.
+  Selection remains pending: the historical scalar forward-churn 256 target
+  pass disappears in both current arms, so the original historical-target
+  condition is unresolved without a demonstrated candidate-caused loss.
+  Keep that condition separate from any prospective final-current-main
+  comparison. The SSA-value versus stored-aggregate boundary excludes even
+  one-word structs and arrays; its current success is not a profitability
+  theorem. Scalar growth 4096 still costs about 1.18 times Rust and 1.30 times
+  C++, while growth 256 and both wide growth populations still overlap their
+  slower standard peer. Reopen selection on the separately specified current
+  comparison or a representation/native-consumer change, and investigate
+  remaining transfer and controller costs with the same source and complete
+  family controls. The uniform trial's refusal and standard-peer deficits
+  remain; no new API or allocation-policy change follows from this pair.
+
+  The [retained native comparison](../research/experiments/container-representation/deque-library/RESULTS.md#remaining-margins-and-retained-native-work)
+  narrows a next lowering question to the one-step Ring front-removal
+  successor: WF still uses the general wrap subtraction in rebase and drain,
+  while C uses equality and a shorter conditional increment. The current
+  constructor/writer induction preserves `head < cap` at positive capacity,
+  but [MSR-2 and PRE-1](../spec/kernel-spec.md) publish only `head <= cap`,
+  and the [storage representation](../design/compiler/storage-representation.md)
+  and ordinary ABI decisions state no stricter linked-caller obligation.
+  PROG-3 permits an ordinary Ring-taking entry; an inventory of today's host
+  modules cannot close that boundary. For a zero-size Ring with `len = 1`
+  and `cap = head = 1`, the bounded O0/O3 native observer returns head 1;
+  an equality-only successor would yield 2 and violate the declared bound.
+  Fixed/runtime scalar and zero-size boundary sources pass source checking
+  and LLVM emission, as does a closed constructor control. The positive-stride
+  boundary exposed a separate correctness defect: TakeFront used the raw head
+  as its physical index and returned the initialized one-past guard instead of
+  slot zero. The physical-address correction and its
+  [ordinary-signature regression](../compiler/src/backend/tests/windows.rs)
+  normalize that address without changing the numerical head update. The
+  minimal ordinary-call boundary below is not a closed Whitefoot construction
+  trace.
+
+  ```wf
+  fn main(window: &Ring<Array<u64, 0>, 1>) -> result: u64 writes(window) contract {
+    requires window^.len > 0_u64;
+    requires window^.head == window^.cap;
+  } {
+    let value = take_front(window: window);
+    return window^.head;
+  }
+  ```
+
+  Head is observable logical state; zero-stride address normalization changes
+  only the physical operand. The current unsigned addition can wrap at a
+  maximum-capacity zero-stride Ring, so the positive-stride allocation bound
+  is not a proof about that numerical successor. Any shorter successor must
+  cover the inclusive head domain and the full zero-stride range under the
+  existing OP-10/PRE-1 rules; no source fact or new acceptance path follows
+  from the compiler's stronger reachable invariant. Reopen only with that
+  equivalence argument and the pending policy comparison resolved, requiring
+  scalar native work to decrease without wide shuffle/spill expansion and
+  preserving every semantic, accounting and useful-cell control. Defer bulk
+  transfer as its separate algorithm/API question, and do not attribute
+  elapsed shares from static instruction counts.
 
 - **Slab aggregate results retain extra transfers and layout overhead.**
   The [Slab comparison](../research/experiments/container-representation/slab-library/RESULTS.md)
@@ -696,6 +972,70 @@ rarely insert at the same place.
   application dominated by these paths. Do not report universal native parity
   from the large scalar queue results.
 
+  The current-module [standard-container comparison](../research/experiments/container-representation/priority-library/RESULTS.md#practical-timing-results)
+  measures ordinary O3 after the register-result change; it does not isolate
+  that change from the earlier toolchain and trace. In the qualified work-64
+  series, wide pop/push costs 2.022–2.315 times Rust BinaryHeap across the
+  measured populations. At 4096 elements it costs 1.070–1.096 times swap C
+  and 1.827–1.882 times hole C, making sifting movement a useful source
+  discriminator. Wide replacement also remains 1.264–1.371 times Rust and
+  1.240–1.297 times swap C across populations; C++'s two-repair replacement is
+  a distinct algorithm. First compare a justified WF source shape and inspect
+  optimized transfers under the same owning contract; do not subtract the
+  whole-trace controls to assign a copy or ABI percentage. Preserve both work
+  settings because extending churn materially changes setup amortization.
+
+  The [bounded-scratch exchange trial](../research/experiments/container-representation/priority-library/RESULTS.md#fixed-storage-exchange-timing-three-gains-and-six-useful-losses)
+  is refused: three useful gains, six losses and fifteen overlaps. Smaller
+  scratch retained 416 bytes of exchange traffic, added hot call boundaries,
+  and increased replacement's root-exchange operand traffic despite the
+  smaller complete frame. Its compiler machinery is withdrawn; generic
+  ownership, equal/disjoint, padding and zero-size behavior tests remain.
+  Reopen with a distinct ownership or source data flow that removes complete
+  transfers while preserving the shared sift and placement-reporting protocol,
+  rather than another chunk-size choice. Delayed reverse rotation changes the
+  observable indexed reporter order and cannot replace the shared core. The
+  owned-element atomic helper rejects a potentially linear T under WIN-3;
+  narrowing the owner domain is not a replacement. The ordinary
+  [distinct-reference helper](../research/experiments/container-representation/priority-library/RESULTS.md#distinct-reference-helper-result-native-movement-gate-failed)
+  admits T and exposes the expected noalias fact, but retains the same three
+  wide copies and 512 bytes of stack payload traffic, failing its native gate.
+  Merely adding that source boundary is therefore insufficient on the tested
+  toolchain. Reopen with evidence for eliminating complete transfers while
+  preserving generic ownership and immediate resident-position reporting;
+  none of these probes selects a language or compiler-rule change.
+
+  The read-only [replacement placement diagnosis](../research/experiments/container-representation/priority-library/RESULTS.md#replacement-result-placement-unselected-lowering-diagnosis)
+  identifies a separate complete copy from an addressed local owner into its
+  already-selected whole result, after the sink. Investigate qualified whole
+  addressed-binding result placement, retaining entry capture, independent
+  intermediate snapshots and caller-visible reference reads until commit.
+  Reopen with the recorded native transfer/frame/call discriminator and
+  same/distinct-result, late-alias-read, competing-return and ownership tests;
+  retained input/result aliasing may exchange an outgoing copy for an incoming
+  capture, so removing the final copy alone is not a performance result.
+
+  A separate, unselected lead is backend promotion of the pending sift value
+  while preserving every comparison and position report's order, value and
+  index, distinct from the refused deferred or reordered rotation.
+  [STOR-7, REF-3/4 and EFF-5](../spec/kernel-spec.md) make addresses
+  unobservable, prevent reference escape and separate the callback
+  environments' accessed state from queue writes, giving grounds to
+  investigate physical residency without changing source acceptance or API.
+  Callback-environment disjointness alone is insufficient:
+  `priority_queue_child` declares `reads(queue.storage)`. The sink needs a
+  verified actual access slice, or ordinary inlining, proving that the
+  child's reads are disjoint from the pending slot. Current
+  `IrSourceSignature` and `IrSourceCall` retain modes and borrow/allocation
+  information but no complete access map. This requires a separate proof
+  over the closed CFG and owner flow, beyond result placement.
+  The generic owner domain and every ordinary exit's materialization and
+  cleanup still need proof; contexts, waits, unknown transport and the CFG
+  carrying that owner remain obligations. Lazy capture at the first exchange
+  would add no transfers when `k = 0`; `k + 2` instead of `3k` for `k >= 1`
+  is only a prospective transfer discriminator, not a measured result or
+  selected mechanism. Reopen after the current one-time placement screen.
+
 - **Small results beyond the per-leaf register budget still use a
   destination.** A stored result returns in registers only when its scalar
   leaves fit the x86-64 budget of three integer-class words and two floating
@@ -732,6 +1072,23 @@ rarely insert at the same place.
   registers, so the inlining separates them. How much of that gain an
   inlined, fully unrolled `find` keeps is unmeasured, as is whether other
   small container operations with fixed probe loops behave the same way.
+  The [2026-09-27 code-only follow-up](../research/experiments/container-representation/ECOSYSTEM.md#generic-native-pipeline-pilot-completed-negative-result)
+  reproduces the delayed-unroll mechanism on current AArch64 Clang 21 O3:
+  deferring full unrolling in the first stage lets `find` and `remove` inline,
+  and both records ASCII loops survive. Map text grows 78.991% and the
+  three-module total 28.793%, failing the preregistered provisional 25%/10%
+  selection screens. Those are experiment screens, not owner-approved
+  performance ceilings. Fixed-eight map runtime, full-corpus effects and
+  production O2 remain unmeasured; the short construction-cost observations
+  remain unqualified. A distinct [frozen Vector F runtime diagnostic](../research/experiments/container-representation/ECOSYSTEM.md#frozen-f-runtime-diagnostic-preregistration)
+  subsequently found gains and regressions across all original cells. The
+  two-stage delayed-unroll form improves wide suffix-1 but regresses wide
+  suffix-2/3; ordinary second O3 improves suffix-1 more while regressing small
+  scalar cells and wide suffix-3. Single-stage unroll deferral already inlines
+  truncate, but retains array loops/stack copies and regresses every wide
+  useful cell. These results select no pipeline policy and measure no current
+  fixed-eight lookup runtime. They do not replace the historical Clang 18
+  x86-64 runtime evidence above.
   Candidate levers: loop metadata on the emitted probe loop that leaves it
   to the late unroll pass, after inlining; an unroll threshold or pass order
   in the pipeline the driver requests that runs full unrolling after the
@@ -743,7 +1100,8 @@ rarely insert at the same place.
   `.text` across the maintained programs and container bundles stays within
   a stated growth bound, and the maintained paired compute comparison
   passes. Deferred because it is a host inlining-policy question separate
-  from the result ABI, with one program as evidence. Reopen when a
+  from the result ABI, with only historical runtime evidence for the fixed
+  probe lookup. Reopen when a
   maintained workload's time is dominated by an out-of-line container
   lookup, or when the driver's optimization pipeline is revisited.
 
@@ -781,6 +1139,84 @@ rarely insert at the same place.
   that cause is established; reopen for a workload dominated by these cycles.
   The [paired samples and limits](../research/experiments/container-representation/vector-library/RESULTS.md)
   are the starting evidence, not a claim of uniform improvement.
+  The selected countdown caller now has balanced-order peer-target counts
+  19/1/16 and 25/1/10 with every raw sample retained. Scalar growth/16 remains
+  the sole candidate deficit, about 1.08–1.09× C++ and 1.10–1.12× Rust; it
+  does not reach the changed suffix controller. Reopen that cause next with
+  the existing growth body/native allocation evidence and original workload,
+  preserving all capacity/growth policies and the refused nullable alternative.
+  Wide suffix-one's raw improvements remain paired-instability inconclusive;
+  no selected general lowering or isolated digest-cost percentage follows.
+
+  The historical module [Rust/C++ comparison](../research/experiments/container-representation/vector-library/RESULTS.md#fresh-practical-timing)
+  reproduces a material gap at ordinary O3: 4096-element scalar reserved/reuse
+  traces cost 2.136–2.175 times Rust Vec, and wide one-element suffix cycles
+  cost 2.843–2.865 times Rust and 2.714–2.728 times C++ std::vector. The latter
+  also costs 2.523–2.554 times the take/swap C control with matching transfer
+  order and allocation policy. All useful native comparison cells meet the
+  duration and cohort-stability criteria. This supplies a current consumer
+  for the existing lowering discriminator; it does not attribute the gap to
+  copies or select a new consumption primitive. Compare unchanged-source
+  optimized loops, callback boundaries and surviving aggregate transfers
+  before choosing a change. Keep the zero-removal overhead control unranked.
+
+  The [frozen wide-tail inspection](../research/experiments/container-representation/vector-library/RESULTS.md#wide-tail-setup-and-digest-handoff-deferred-discriminators)
+  identified per-cycle constructor-constant saves and digest handoff through
+  memory. The [native save-placement discriminator](../research/experiments/container-representation/vector-library/RESULTS.md#constructor-save-placement-native-code-discriminator)
+  now gives two qualified short-wide-cycle gains while preserving call depth,
+  other functions and linked layout. Local instruction placement also changes;
+  the result does not isolate stack traffic or select a compiler policy.
+  Find a general source/IR/lowering route, then compare its actual generated
+  code and cross-program performance; do not ship a benchmark-specific native
+  edit. Digest handoff remains a separate unmeasured lead. Reopen it when its
+  change can be isolated without compensating spills or changed call depth.
+  The [metadata-only growth-edge discriminator](../research/experiments/container-representation/vector-library/RESULTS.md#branch-weight-growth-edge-discriminator-qualified-behavior-timing-inconclusive)
+  obtains that seven-save placement through the existing LLVM pipeline and
+  passes the complete owner/behavior witness, but its one full pair has no
+  qualified useful gain and all three wide suffix-one peer targets remain
+  inconclusive. The fixed 2000:1 ratio is no general policy; test a
+  type/name-independent cold-growth rule against growth-dense and short-lived
+  callers before selecting it. The separate unchanged-IR spill-sinking option
+  gives byte-identical native code here.
+  The [ordinary spill-splitting screen](../research/experiments/container-representation/vector-library/RESULTS.md#ordinary-spill-splitting-unchanged-target-rejected-before-execution)
+  changed Apple Clang's actual `speed` default to partition mode at O3, but
+  retained all seven saves and identical target MIR/native code. It is rejected
+  before correctness or timing; reopening this option requires changed code
+  evidence, not another measurement of the same target. A general lowering
+  route remains unresolved; this result says nothing about the driver's O2 path.
+
+  The checked-source [reserved-append comparison](../research/experiments/container-representation/vector-library/RESULTS.md#checked-append-within-reserved-capacity-useful-regressions-prevent-selection)
+  removes growth from the proved-capacity suffix path but regresses four useful
+  wide cells, so its provisional API and caller edits were restored. Six scalar
+  cells improve; all three wide one-element cells are unstable. The wide tail
+  now vectorizes across two records, with 32 lane-shuffle instructions, a
+  96-byte spill area and unconditional preservation of eight D registers. The
+  code change identifies a competing cost, not its isolated timing share.
+  Reopen with a loop-scoped discriminator that preserves within-record SIMD,
+  other helpers and the full correctness/performance matrix; do not select a
+  global no-vectorization policy or a benchmark-specific lowering rule. The
+  timed suffix batches contain only one to three records, so this result also
+  leaves the API's bulk-append performance unmeasured.
+
+  The [save-placement preflight](../research/experiments/container-representation/ECOSYSTEM.md#next-discriminator-constructor-saves-on-the-growth-edge)
+  also finds different inlining and allocation elision in timed and observed
+  images. Existing observed ledgers establish their own lifecycle, not the
+  timed image's request count. Preserve this distinction in cost attribution;
+  reopen measurement of actual optimized allocations before selecting any
+  allocation policy on the basis of those ledgers. Whole-matrix post-O3
+  accounting is deferred while the narrower native-code discriminator runs.
+
+  Separately, `grow_vector_new` does not publish its returned backing's empty
+  length and zero capacity, although CALL-4 admits both owned descendant
+  result measures. Adding those guarantees would let callers establish empty
+  cleanup without a dynamic length branch; the current
+  [module witness](../tests/conformance/cases/mod6-pos-grow-vector-boundary/vec/vector.wf)
+  already publishes the nested length through a named returned owner. This is
+  a library API opportunity, with no established runtime benefit or missing
+  compiler capability. Keep it separate from the direct-capacity constructor
+  comparison so unreserved growth's source stays fixed. Reopen afterward with
+  a caller that frees the empty result directly, checking the zero length and
+  capacity and retaining wrong-contract and stale-write rejection controls.
 
 - **Historical container comparisons need an explicit replay scope.** The
   current-library Slab, Vector, Deque, PriorityQueue and shared Indexed
@@ -795,6 +1231,23 @@ rarely insert at the same place.
   new timing. Until then, use the recorded revision for historical replay;
   partial syntax edits would break its pinned source identities without
   establishing a usable current experiment.
+  The [indexed first-rise screen](../research/experiments/container-representation/priority-library/RESULTS.md#indexed-repair-reuses-its-first-rise-comparison)
+  also finds a concrete shared-Indexed caller mismatch: `indexed-costs.c`
+  still passes a 24-byte `Log` with a thin `Words *`, while current WF expects
+  a 40-byte `IndexedCostLog` with an inline `Box<Slots<u64>>` descriptor.
+  Port that descriptor, its C accesses and accounting together before linking
+  or timing; verify both scalar and wide complete traces against the existing
+  transcript/owner oracle. Reopen when an indexed operation needs timing;
+  the first-rise source candidate currently has no measured speedup.
+  The OrderedMap Makefile's `LIBRARY_SOURCE` override also changes only
+  prerequisites and recorded identities: the current CLI embeds its `std`
+  records, so changing that path does not select a candidate implementation.
+  A current source experiment must use a rebuilt CLI or an explicit ordinary
+  package containing the selected body, with the same package transport in
+  both arms and a baseline code comparison. Otherwise an apparent A/B run can
+  silently compile the baseline twice. The drained-node experiment reopens
+  this issue; clarify the recipe and prove which source reached emission
+  before using an override for performance evidence.
 
 - **Inactive-payload omission has measured optimizer regressions.** The
   destination-construction candidate removes the owning map's 264-byte vacant
@@ -816,8 +1269,26 @@ rarely insert at the same place.
   argument addressing those optimizer losses. Compare the same full matrices,
   null controls and ordinary/retained boundaries; preserve the dirty-storage,
   selected-variant, partial-window, linked-body and parallel cleanup checks.
+  Defined dirty-byte fixtures do not establish transport of undefined inactive
+  LLVM value fields. Any reopening must cover that distinction, including Bool
+  and pointer payloads, nested products/unions, returns and parallel frames,
+  while checking active values and exact ownership. An indirect callable ABI
+  does not by itself make a product enum a memory-only representation.
   SSA construction and general aggregate forwarding are separate paths, not
   improvements established by this candidate.
+
+- **Mixed-width scalar access can block private aggregate promotion.** A
+  mixed i1-store/i8-load optimizer fixture retains an alloca after O3; a
+  coherent one-byte emitter prototype promotes it while plain addressed Bool
+  still promotes. In the [Map native stop](../research/experiments/container-representation/map-library/RESULTS.md#coherent-byte-memory-prototype-native-stop),
+  the reached scalar reason scratch disappears, but no additional timed
+  mechanism beyond the rejected store-only floor appears; wide instruction
+  counts, frames, calls and stack streams stay unchanged. The compiler files
+  were restored without prototype timing. Reopen for a consumer with material
+  blocked aggregate promotion or a toolchain change relevant to the unresolved
+  Map timing; require a discriminating full-workload gain before selection. Check direct, aggregate,
+  linked and worker paths, source/ABI behavior and broad transport before
+  selecting general lowering; accepted source behavior is unchanged.
 
 - **Consumed aggregate locals can retain an argument snapshot.** An exposed
   mutable local is loaded into an immutable argument snapshot before a consuming
@@ -833,37 +1304,221 @@ rarely insert at the same place.
   snapshot controls. The
   [transfer evidence](../research/experiments/container-representation/vector-library/RESULTS.md#v061-copy-and-consumption-trial)
   separates this opportunity from the library's remaining element relocation.
+  The isolated HashMap follow-up found two 256-byte snapshots across
+  `hash_map_put` and `hash_map_try_put`: blanket function-entry materialization
+  copied each indirect owned parameter while call lowering passed its address. The isolated mutation adapter calls `try_put` directly,
+  so its reached path retains only that helper's entry snapshot; `exchange`'s
+  raw-IR copy already folds into register capture in the optimized native code.
+  Reopen on the insert/replacement API measurements, not the unreached `put`
+  wrapper. Forwarding needs complete liveness, interference and result/input
+  alias analysis: the incoming content pointer is not writable private storage,
+  and refusal must preserve its bytes before an overlapping result is written.
+  This requires a general argument, not a HashMap-specific bypass.
+  The [fixed-sink atomic slot attempt](../research/experiments/container-representation/map-library/RESULTS.md#generic-atomic-slot-update-admission-stop)
+  stops at WIN-3: OP-12 covers affine/copy targets, while unbounded `K`/`V`
+  leave the generic slot linear under FN-2/PROV-6. This is a specified capability
+  boundary; a fixed result sink does not admit that update, and a `drop` bound
+  would narrow the supported owner domain. Keep generic replacement work within
+  the current rules; reopen the limitation only with ownership-rule work.
+  The
+  [isolated mutation comparison](../research/experiments/container-representation/map-library/RESULTS.md#mutation-running-index-outcome)
+  now supplies a measured consumer: 256-byte duplicate replacement still
+  trails both Rust and C++ at matched half load. The direct-field swap control
+  reduces offered snapshot traffic but regresses wide replacement at small
+  capacity and wide churn at both capacities, so it is rejected; fewer copies
+  alone do not settle the cost. Attribute the swap's scalar-register/spill
+  shape and generic aggregate transfer lowering before changing general entry
+  materialization. Any compiler forwarding change must preserve overlapping-result,
+  retained input and constant-input cases.
+  The [ordinary incoming-backing trial](../research/experiments/container-representation/map-library/RESULTS.md#ordinary-incoming-backing-measured-implementation)
+  removes the reached helper's entry copy while keeping source loads and
+  exposed/interior snapshots. The final Jump-edge result-write guard passes its
+  regression, and final emitted/native benchmark outputs are byte-identical
+  to the measured candidate. The original whole-Map adverse hit cells remain
+  recorded alongside the longer overlapping replay. Reopen broader forwarding
+  only for an independently measured remaining copy with
+  complete interference proof. The [offered-input disjointness floor](../research/experiments/container-representation/map-library/RESULTS.md#offered-input-disjointness-native-frame-removed-timing-unqualified)
+  removes the exchange vector-save frame on audited separate batch storage,
+  but its fixed panel has no separated gain and fails unchanged-peer drift.
+  Full inline composition reproduces the earlier equivalent payload spills.
+  Keep both unselected: ordinary input/result overlap remains supported, and
+  any alias variant needs a general interference proof plus qualified timing.
+  The [replacement-continuation floor](../research/experiments/container-representation/map-library/RESULTS.md#replacement-continuation-placement-gains-and-churn-losses)
+  reduces old-word store traffic after O3, but paired replacement gains coexist
+  with separated churn losses; the full panel fails. Keep it rejected and the
+  churn attribution unresolved. Reopen continuation placement only with a
+  general pre-O3 mechanism, complete ownership/result controls and benefit
+  across the matched mutation panel, preserving all adverse observations.
+  The [tag-directed private-capture floor](../research/experiments/container-representation/map-library/RESULTS.md#tag-directed-private-capture-native-pass-timing-unqualified)
+  avoids inactive old-slot loads with original cell-before-result write order,
+  but its full timing criterion fails scalar spread despite small-wide churn
+  gains; overlapping adverse replacement medians remain. The separate
+  [borrowed-tag source form](../research/experiments/container-representation/map-library/RESULTS.md#borrowed-tag-source-exposure-native-stop)
+  is admitted but fails its native frame/spill criterion. Keep both unselected;
+  reopen only with general typed capture/overlap proof and qualified full-panel
+  benefit, preserving active old values and all adverse observations.
+  The [late Pair-field transfer floor](../research/experiments/container-representation/map-library/RESULTS.md#late-pair-field-result-construction-native-stop)
+  preserves commit-before-result ordering but compiles to identical object bytes;
+  changing that final copy alone supplies no native-cost mechanism or timing gain.
+  Repeated syntactic-candidate/callee and
+  per-parameter liveness walks are an unprofiled analysis-cost opportunity:
+  profile representative compilation before sharing or caching those facts.
 
-- **Ordered node construction and cleanup retain wide transfers.** The
+- **Ordered node construction retains wide transfers.** The
   [ordered-map attribution](../research/experiments/container-representation/ordered-library/RESULTS.md#transfer-and-generated-code-attribution)
-  shows field-expanded node-to-Box construction and a 504/4224-byte copy of
-  each exhausted node before only its leading link is consumed. Reducing that
-  work could improve split/build and final cleanup without changing the tree.
-  Static transfer counts do not isolate its timing contribution. Validate a
-  bounded construction/consumption improvement with unchanged ownership
-  outcomes, node allocation counts, dirty/quarantined release checks and
-  normal/retained scalar and wide comparisons; inspect optimized code to
-  establish which transfers disappear. Keep aggregate-result ABI and general
-  argument forwarding under the existing Slab and consumed-argument items;
-  this task isolates fixed-node construction and consumed-field selection.
-  As with the indexed snapshot/result work, validate general lowering rather
-  than a container-specific compiler path. Defer a change until these
-  construction/consumption paths isolate its benefit; reopen when the transfers
-  materially affect a measured consumer or lowering work reaches those paths.
+  shows field-expanded node-to-Box construction whose timing contribution
+  remains unisolated. The
+  [selected cleanup rewrite](../research/experiments/container-representation/ordered-library/RESULTS.md#paired-timing-selects-the-cleanup-rewrite)
+  removes the exhausted-node 504/4,224-byte copies; fixed-node construction
+  and other materialization are the remaining scope here. Validate a bounded
+  construction improvement with unchanged ownership outcomes, node allocation
+  counts, dirty/quarantined release checks and normal/retained scalar and wide
+  comparisons; inspect optimized code to establish which transfers disappear.
+  Keep aggregate-result ABI and general argument forwarding under the existing
+  Slab and consumed-argument items. Reopen when construction materialization
+  remains in a measured split/build path after the selected cleanup change.
 
-- **Box/window representation costs remain unqualified.** The current runtime-
-  capacity Box is one pointer to one header-first allocation; `grow` uses
-  allocation, memmove and free. A one-word owner, one allocation and header
-  placement are distinct choices: a fat descriptor can also own one element
-  allocation and make measure reads direct, while widening transport and
-  capture storage. Neither alternative is established as generally faster.
-  Keep the current implementation while separating owner width, measure loads,
-  allocation count, copying and linked layout in representative single-thread
-  and parallel comparisons. The successful bounded capture repair above is
+  The current-module [native-library series](../research/experiments/container-representation/ordered-library/RESULTS.md#verified-practical-run)
+  supplies that consumer without reusing the old ABI timings. At 4096 wide
+  pairs, complete construction/cleanup costs 1.71–1.76 times Rust BTreeMap
+  and 1.69–1.75 times C++ std::map, while all five wide paths cost only
+  1.03–1.13 times the source C control. Reinspect current optimized IR before
+  treating the historical node copies as surviving costs. Keep the library's
+  node layout and repair policy separate from any compiler transfer fix;
+  closeness to source C alone does not assign either a causal percentage.
+
+  The [aggregate-opening comparison](../research/experiments/container-representation/ordered-library/RESULTS.md#aggregate-opening-full-pair-refuses-selection)
+  removes wide per-entry shift calls but fails selection on two scalar Ordered
+  cells. The [guarded follow-up](../research/experiments/container-representation/ordered-library/RESULTS.md#guarded-aggregate-opening-full-matrix-still-refuses-selection)
+  also fails its full comparison: Vector has no qualified useful gain, while
+  OrderedMap has five gains and three scalar losses. Skipping empty-suffix
+  calls is therefore insufficient grounds for this policy. Small positive
+  transfers and caller spills remain unpriced. Reopen only with a different
+  transfer-cost hypothesis and a discriminating native observation, preserving
+  the full family controls rather than selecting a container or observed-winner
+  whitelist. Node occupancy and key/child layout remain separate unresolved
+  factors for lookup/traversal after these refused shift trials.
+
+- **Vector reserve no-op still executes growth-path register saves.**
+  The retained scalar4096 reserve-noop cell overlaps C++ but is separated
+  slower than Rust in both cohorts of one launch. Reached WF and C++ paths
+  eagerly save 64 bytes; Rust saves registers only after selecting growth.
+  The source already returns early when capacity suffices. Investigate general
+  fast-path frame placement, using the exact image and per-peer ranges in the
+  [matched Vector API results](../research/experiments/container-representation/vector-library/RESULTS.md#matched-edit-apis-inline-owner-zero-extents-and-local-swap-remove).
+  Reopen with native evidence that removes no-op stack traffic without adding
+  growth-path calls, copies or spills, then measure both widths and preserve
+  reserve growth, arbitrary admitted capacities, allocation failure and owner
+  cleanup checks. Instruction counts do not assign the observed timing cost;
+  overlap alone establishes neither an unavoidable floor nor qualification.
+
+- **Current Slots bulk shifts lack a same-layout paired selection.**
+  The earlier header-first bulk-shift trial failed its no-regression criterion,
+  while the inline-owner compiler currently emits a contiguous Slots memmove.
+  The retained per-API peer panel observes that implementation, not an A/B
+  comparison against its logical-index walk. The representation change reopens
+  the question without attributing a gain or resolving the earlier scalar
+  reuse loss. Before claiming a shift speedup, compare the current compiler
+  against a walk-only variant with identical owner layout, source, peers and
+  harness; retain small scalar reuse and wide owning-element controls, zero
+  extents and wrapped Ring behavior. Record the criterion before measuring and
+  reopen on any repeatable loss. The [earlier failed trial](../research/experiments/container-representation/vector-library/RESULTS.md#slots-final-code-and-paired-timing-regression-prevents-selection)
+  and [current API panel](../research/experiments/container-representation/vector-library/RESULTS.md#matched-edit-apis-inline-owner-zero-extents-and-local-swap-remove)
+  remain separate evidence.
+
+- **Vector wide insertion still materializes records across bulk shifts.**
+  The reached native wide insertion constructs a 256-byte offered record
+  before `memmove` and spills 240 bytes across it; the Rust adapter constructs
+  the same fields afterward. Full insertion also resizes then shifts, whereas
+  C++ can copy prefix and suffix directly into their final positions. These
+  are distinct costs: instruction counts alone do not attribute their timing.
+  Reopen after the matched per-API measurements in the
+  [Vector results](../research/experiments/container-representation/vector-library/RESULTS.md)
+  with an ordinary-source witness separating pure value construction from
+  effectful construction, and compare optimized IR plus reached native code.
+  A lowering change must preserve evaluation, failure and ownership order;
+  a fused growth/insert interface needs its own grounds. Swap-remove now avoids
+  writing the removed owner into the retired slot, but reached wide code still
+  materializes the last value into a local before an earlier-slot exchange;
+  compare that remaining transfer with the peer paths before selecting another
+  transform. Validate both element widths, spare/full capacity, exact returned
+  contents and owner cleanup. Construction/destruction still need independent
+  timing rows, followed by a current whole-Vector performance qualification;
+  successful API correctness runs do not establish those missing measurements.
+
+- **Box/window representation costs remain unqualified.** Runtime Slots uses
+  an inline length/capacity/payload owner with an element allocation for positive physical extent; runtime
+  Array, Ring and Segments retain thin owners and header-first allocations.
+  `grow` trials full positive-extent reallocation, retains a disjoint initialized-prefix copy for partial windows, and changes zero-extent metadata without allocating. The small-growth tradeoff remains open. Owner width, measure loads, allocation
+  count, copying and linked layout remain distinct costs: direct measure reads
+  widen transport and capture storage, and no representation is established as
+  generally faster. Separate these costs in representative single-thread and
+  parallel comparisons. The successful bounded capture repair above is
   evidence about the synthesized task ABI; it neither attributes the earlier
   `records` failure nor proves that any one general layout choice caused it.
   Keep the deferred general representation study separate, and close this item
   only when the relevant costs and chosen tradeoffs have discriminating evidence.
+
+  The [inline runtime-Slots owner screen](../research/experiments/container-representation/vector-library/RESULTS.md#inline-runtime-slots-owner-registered-descriptor-placement-discriminator)
+  removes the descriptor-pointer load and heap descriptor while retaining the
+  separate payload, full realloc and allocated empty placeholder. It qualifies
+  only two of six matched growth-append cells and does not by itself justify
+  representation selection.
+  Source and post-lowering linked ownership checks pass; worker lifetimes and
+  changed containing-layout ceilings remain open. The independent
+  [allocation-free empty-payload screen](../research/experiments/container-representation/vector-library/RESULTS.md#allocation-free-empty-payload-registered-independent-discriminator)
+  uses a target-aligned static anchor: its capacity-zero cells lie below both
+  peers, but only the same two of six matched growth cells pass. Native call
+  placement also changes without an inline directive, so that unpaired screen
+  does not isolate allocator-route timing or establish a gain against B.
+  That screen passed empty/zero-stride and post-lowering linked transport
+  checks before the current representation amendment; it does not qualify
+  the current compiler. Reopen with a discriminating
+  hypothesis for remaining positive-capacity append costs, including
+  allocator/setup-state attribution before another layout change, and a
+  complete representation/lifetime qualification. The
+  [scalar-4096 native census](../research/experiments/container-representation/vector-library/RESULTS.md#scalar-4096-census-outcome-equal-extents-and-movement-in-both-orders)
+  finds equal usable extents and address changes in all 31 contexts per peer
+  and order. It refutes differing size classes or movement counts in that
+  census only. The [preparation-history discriminator](../research/experiments/container-representation/vector-library/RESULTS.md#scalar-4096-history-outcome-attribution-remains-unresolved)
+  does not reproduce the original disjoint gap; WF's ordinary and common-read
+  ranges overlap in both cohorts. Timed-run frequencies and preparation/cache
+  attribution remain open. No allocator cause is yet established; preserve
+  these evidence limits. The [growth-body/chain exposure trials](../research/experiments/container-representation/vector-library/RESULTS.md#growth-exposure-outcomes-dispatch-removed-append-remains-unqualified)
+  move the opaque edge to `reserve` when only the primitive is exposed, then
+  remove repeated full/partial dispatch when the chain is exposed. The latter
+  adds 224 bytes of wide vector stack stores/reloads and expands that append
+  frame from 32 to 288 bytes; only two of six matched cells pass. Complete
+  append exposure removes those spills and internal growth calls, with
+  48-byte frames, but again passes only two of six cells and increases emitted
+  WF instruction bytes from 16,160 to 17,860. Allocation/movement attribution
+  remains open; no new route or size threshold is selected. Reopen body
+  exposure with a new discriminating cost hypothesis and an account of
+  aggregate placement and duplication, preserving the native prerequisite
+  and full append comparison.
+  No general inlining policy or causal timing improvement follows from these
+  unpaired trials.
+  The subsequent [paired full-growth route comparison](../research/experiments/container-representation/vector-library/RESULTS.md#full-growth-route-comparison-registered-attribution-experiment)
+  isolates a route tradeoff on the complete-append overlay: malloc/copy/free
+  beats realloc for scalar capacities 16 and 256 in both adjacent pairs and
+  cohorts, but loses at wide capacity 4096; the other matched cells remain
+  unresolved. This measures the route including its extra calls and register
+  saves, not allocator internals alone. A uniform replacement is unsuitable;
+  no size threshold is selected. Reopen with an explanation of the remaining
+  cells and a policy whose growth and spare-append costs are both qualified.
+
+  The [Vector length-store diagnosis](../research/experiments/container-representation/vector-library/RESULTS.md#length-store-dependence-read-only-llvm-diagnosis)
+  finds conservative header/payload dependencies in optimized take loops,
+  despite length already being held in SSA. The qualified physical-index fact
+  is already emitted; repeating it after optimization does not remove those
+  dependencies. Extra alias metadata is therefore unselected, not a missing
+  correctness fix. Reopen with a different complete mapping or source shape
+  that removes the actual repeated stores. Validate unchanged-source native
+  work and full timings, nested windows whose inner headers are outer payload,
+  whole-owner writes and zero-stride elements before adopting a mapping.
+  Defer this separate optimizer investigation while the allocation and
+  consumption discriminators establish their costs; do not infer its elapsed
+  benefit from alias-analysis output alone.
 
 - **Checking accepts a program whose build stops at target layout.**
   `whitefootc --check` stops before lowering, so a program whose concrete
@@ -906,6 +1561,98 @@ rarely insert at the same place.
   which is correct but copies it by memmove where its other fields alone
   would be first-class, reopened if a measured path moves many of them.
 
+- **Runtime-content swap exchanges only headers, losing the allocation extent.**
+  [OP-11 and TYPE-9](../spec/kernel-spec.md) admit the implicit `swap` instance
+  over two runtime `Slots` contents; no runtime-content local or move is needed.
+  The following sequence in a pure entry is accepted by both `--check` and
+  `--emit-llvm` with the [frozen integrated-main compiler](../research/experiments/container-representation/vector-library/RESULTS.md#fresh-main-integration-identical-executable-inputs-no-retiming):
+
+  ```wf
+  let empty = box_slots_new::<u64>(capacity: 0_u64);
+  let full = box_slots_new::<u64>(capacity: 1_u64);
+  place_back(window: &full.inner, value: 7_u64);
+  swap(first: &empty.inner, second: &full.inner);
+  if empty.inner.len > 0_u64 {
+    let observed = empty.inner[0_u64];
+  }
+  ```
+
+  [Swap lowering](../compiler/src/lowering/builder/prelude.rs) emits two loads
+  and two stores of `{ i64, i64, [0 x i64] }`, exchanging only the descriptor.
+  Both Box pointers remain unchanged: the exchanged length permits an
+  eight-byte read at offset 16 in the original 16-byte empty allocation.
+  This invalid read was identified in emitted IR; no native execution of the
+  zero-capacity witness occurred. This is a lowering correctness defect,
+  separate from the whole-Box swap measure-fact gap below.
+
+  Assess retaining the owner slot in inferred runtime-content references and
+  resolving the backing on each use, so content swap can exchange owner
+  pointers. This candidate must preserve earlier same-path aliases under
+  REF-2, reference joins and captures, and every measure, index, transfer,
+  growth, release and admitted call-ABI consumer; rewriting only a direct
+  swap call is insufficient. Written `&Slots<u64>` user parameters remain
+  outside TYPE-9 admission. A separate helper taking two
+  `&Box<Array<Box<u64>>>` parameters, retaining an alias to the first `.inner`,
+  swapping the contents and reading through that alias is also source-accepted
+  by the same frozen compiler (`--check` exit 0), but `--emit-llvm` exits 1 with
+  `Lowering: InvalidCheckedProgram` and produces no LLVM bytes. Its inert main
+  does not construct or execute those owning Arrays. Repair and audit runtime
+  Array content lowering separately; do not confuse its unsupported lowering
+  with the Slots descriptor-only miscompilation. Require source-admission
+  controls, unequal capacities,
+  same-place swaps, live aliases, nested/linear ownership, zero-stride and
+  aligned payloads, and capture/linked-ABI checks. Use a padded or checked
+  allocator oracle before executing the cap0 witness. Repair lowering without
+  narrowing accepted source or selecting shared empty backing. The branch
+  now implements the owner-slot repair under the
+  [provisional representation decision](../design/compiler/storage-representation.md).
+  The maintained runtime-content tests pass ordinary and retained links in
+  both lowering modes, with exact concurrent release ledgers and a real worker
+  grant; the affected backend and reference filters also pass. Keep this item
+  open only for the separate performance attribution and any zero-stride
+  workload it may expose. Shared-empty optimization remains deferred until
+  that measurement.
+
+- **Classify Segments content exchange after the main integration.** This is
+  an **untested source/IR hypothesis**, with no observed source verdict or
+  native result. [TYPE-9 and PRE-1](../spec/kernel-spec.md) place `Segments<T>`
+  only in a Box and declare it noncopy; OP-11 exchanges the complete values
+  at its two admitted places and REF-2 governs earlier exact-content aliases.
+  [IrAddressed::is_runtime_content](../compiler/src/ir.rs) currently includes
+  runtime Array and window contents but omits Segments. The
+  [shared swap body](../compiler/src/lowering/builder/prelude.rs) therefore
+  appears to select owned header loads and stores for Segments, while
+  [Segments readers](../compiler/src/backend/emitter/segments.rs) expect the
+  captured backing address. Hypothesis: unequal segment counts and bounds
+  would exchange only headers or stop during lowering rather than exchange
+  the complete content. Impact, if admitted: a Segments content exchange
+  would fail OP-11 or leave aliases observing the wrong allocation extent.
+  The untested scratch draft `segments-swap-witness-draft.wf` is retained
+  outside the repository in the PR 108 preservation bundle
+  `/private/tmp/whitefoot-pr108-pre-main-4dwglu_x/`. It builds lengths `[1]`
+  and `[2, 2]` with distinct 11/22 payloads, forms content aliases before
+  exchange, and observes segment counts, total element counts and values.
+  Reopen at the next clean production CLI verification after this main
+  integration: establish its source verdict and inspect emitted IR before
+  executing it with an allocation-bounded observer. If confirmed, assess
+  extending the existing owner-slot reference path and every Segments
+  measure/range/ABI consumer, retaining unequal-count, equal-place and live
+  alias controls. No source-rule change or new mechanism is selected by
+  this code-reading lead; it is recorded while the serial container
+  measurement proceeds, and a confirmed correctness defect must be repaired.
+
+- **Runtime Array copy capability ignores the element type.** The same frozen
+  compiler accepts a direct `.inner` swap between two `box_array_filled::<u64>`
+  owners, contrary to OWN-1 and OP-11. Its blanket noncopy `Buffer`
+  classification also provides an accidental OWN-1 barrier to forbidden bare
+  runtime-content bindings. The branch repair derives runtime Array copy
+  capability from its element and checks TYPE-9 at the owned-value boundary
+  independently. Close this routine checker defect after direct and
+  copy-bound swaps reject, bare content values reject under TYPE-9, and an
+  unconstrained generic swap instantiated with `u64` remains admitted under
+  FN-2. The [runtime-content investigation](../research/investigations/containers-and-resources/X1-LIBRARY.md#runtime-capacity-content-references-and-exchange)
+  records why these source controls are separate from native exchange.
+
 - **A local `slots_new::<T, N>()` clears all N slots when it is created.**
   Snowghost's `match_complex` (`renderer/css/selectors/match.wf`) creates
   `slots_new::<Frame, 64>()`, 12-byte frames, on every call, and the code
@@ -928,6 +1675,32 @@ rarely insert at the same place.
   again.
 
 ## Parallel lowering and runtime
+
+- **Wide local owners expand waiting callers and native compilation.** The
+  [wide HashMap ownership witness](../research/experiments/container-representation/map-library/RESULTS.md#wide-owner-waiting-frame-cost)
+  emits a 4.26 MB waiting caller against a 64 KB sequential clone after each
+  node gains 31 inline words. Local parallel native builds take about eleven
+  seconds while sequential builds stay below two. The improved Linux CI
+  diagnostic identifies Clang `-O2` compilation as the native-child timeout.
+  Equivalent fixed-size literal initialization reduces the maintained transfer
+  fixture's parallel module to 0.87 MB and local Clang compilation below one
+  second; the original loop remains at `e39dbc277`. Preserve its complete word,
+  identity, cleanup and lowering-mode observations. Reopen with that loop to
+  reduce redundant waiting-frame/aggregate transfers or compare bounded ordinary
+  helper lifetimes, without increasing the deadline or suppressing overlap
+  permission. Validate exact outcomes and native build/run phases
+  separately; a smaller source shape alone does not resolve the general cost.
+
+- **Addressed call results can suppress proved overlap.** In
+  `lowering/builder.rs::overlaps`, promoting a non-final call result to local
+  storage would read it before its join, so that call ends the offered group.
+  Direct field observations of a returned Slots owner expose this boundary;
+  the worker-owner regression uses ordinary consuming helpers to exercise
+  the currently supported capture and return path. Investigate delaying the
+  placement until the join, preserving every original permission and read
+  ordering. Reopen when a real parallel workload loses overlap this way;
+  validate direct field reads, worker capture, forced sequential fallback
+  and exactly-once owner cleanup before measuring any gain.
 
 - **The concurrent map's writers wait a count of pauses, not a time.** A
   writer that finds its key locked waits 16 to 1,024 pauses
@@ -2046,6 +2819,20 @@ rarely insert at the same place.
   Reopen when a test needs a deadline order that real time cannot produce
   reliably.
 
+  The append gate exposed a concrete relative-timer risk in
+  `compiler/tests/programs/support.rs::run_with_late_input_and_settings`:
+  the parent sleeps 400 ms after spawning, while `stdin_deadline.wf` starts
+  its 50 ms deadline only after child startup. Both deadline tests returned
+  exit 10 (the first read succeeded) in a full host-permitted corpus run;
+  both passed unchanged in a single-thread isolated run. Baseline and append
+  compilers emit byte-identical LLVM for this program. This supports, but
+  does not prove, a startup/scheduling race. Synchronize the test's writer
+  with the child's deadline/read state or control the clock, then deliberately
+  delay child startup to show the asserted order survives; merely increasing
+  sleeps is not a fix. Reopen on the next deadline-test change. Preserve the
+  failed full-suite observation rather than treating the isolated pass as a
+  green full gate.
+
 ## Modules and libraries
 
 - **Library capacity ceilings that existed for OP-9.**
@@ -2176,7 +2963,56 @@ rarely insert at the same place.
   for a concrete privacy consumer that cannot use one module's private
   implementation files.
 
+- **Executable caller synthesis moves reference arguments.** The Ring
+  boundary sources above pass checking and emit callable libraries, but
+  [caller_source](../compiler/src/driver/launcher.rs) spells their generated
+  call as `main(window: move window)` and reports OWN-1 `MoveOfCopy` for its
+  own reference argument. This is a tool-generated caller defect, not a
+  source rejection. A minimal follow-up source without a requirement is:
+
+  ```wf
+  fn main(value: &u64) -> result: unit reads(value) {
+    return unit;
+  }
+  ```
+
+  Derive argument transfer from the checked parameter mode and capability,
+  retaining ordinary contract checks and owning-value transfer controls.
+  The bundled runner currently supplies only Inputs or no arguments; these
+  reference entries remain available through ordinary linked calls. Repair
+  the synthesized call and its misleading diagnostic without silently adding
+  a runner argument policy. Defer from the Ring address-domain probe; reopen
+  when caller synthesis or entry support is next changed, requiring this
+  reference-copy case to pass its ordinary call check while an unsatisfied
+  declared requirement still prevents the generated executable caller.
+
 ## Code structure
+
+- **Container performance reports obscure the current conclusion.** The Vector,
+  Map and Ordered `RESULTS.md` files under
+  `research/experiments/container-representation/` mix many frozen trials with
+  current proposals; the Vector report alone exceeds 5,000 lines. A stale
+  prospective projection paragraph already linked an unavailable amendment,
+  making a refused broad factor look like the current candidate. Reopen at
+  the five-family comparison handoff: keep one short current-result map and
+  clearly bounded historical experiment sections in the existing family homes,
+  preserving raw samples, adverse results, source identities and inbound
+  anchors. Verify that each headline resolves to its measured revision and
+  that every existing decision/evidence link still resolves. Do not relocate
+  load-bearing paths or treat frozen timings as current capabilities.
+
+  The Map evidence bundle also reached 51.42 MiB at f63496c4d, triggering
+  GitHub's recommended 50 MiB file-size warning. Each append rewrites a large
+  compressed Git blob, increasing repository transfer and retention costs.
+  Reopen before further bundle growth: investigate lossless raw-data compression
+  and deduplication of repeated source/log payloads behind a reconstruction
+  index. Require reconstruction of every original member name and byte hash,
+  including failed trials, adverse samples, source pins and replay limits,
+  before replacing any representation. Preserve current evidence and links;
+  The next matched-C record uses a small ordinary archive linked by the existing
+  JSON index, leaving this historical blob frozen; no compaction or evidence
+  removal is performed. Keep new evidence bounded in the same experiment home,
+  with its existing removal/maintenance owner.
 
 - **Five parallel substitution walkers over a type invariant.**
   `compiler/src/semantic/check/type_invariants.rs` rewrites the invariant's
@@ -2203,6 +3039,63 @@ rarely insert at the same place.
   behavior: identical `make check` results and a diff of moved items and
   module declarations only. Split when no open branch has large edits in
   these files; close when both are under 4,000 lines.
+
+- **External helper visibility retains text after inlining.** The
+  [native-pipeline attribution](../research/experiments/container-representation/ECOSYSTEM.md#generic-native-pipeline-pilot-completed-negative-result)
+  finds externally visible WF helpers outside the complete benchmark-root
+  reference graph; 2,212 of the deferred-unroll arm's 5,716 added object bytes
+  are in that pool, while reachable callers also grow. Symbol extents are not
+  measured linked savings, and the original object-size screen still fails.
+  First compare final-link dead stripping with unchanged objects before
+  considering root-sensitive emitted visibility. Preserve foreign entry
+  points, address-taken callbacks, result-body optimization order and
+  cross-fragment ownership; validate native/ThinLTO/full-LTO builds, cache
+  invalidation, linked text and same-source runtime on admitted targets.
+  No policy is selected. Defer beyond the code-only pilot; reopen when
+  evaluating a concrete inlining/footprint tradeoff or native export boundary.
+  The [fresh-insertion linkage screen](../research/experiments/container-representation/map-library/RESULTS.md#fresh-insertion-linkage-result-memory-boundary-remains)
+  internalizes four closed-witness instances but leaves scalar result storage
+  and its caller tag load, with a new wide per-item call. No runtime benefit
+  follows. The [four-leaf register-result discriminator](../research/experiments/container-representation/map-library/RESULTS.md#fresh-insertion-register-result-native-success-without-timing-gain)
+  now removes scalar result transport but qualifies no gain; all wide controls
+  fail drift admission. Do not select an ABI change from native load/store
+  removal. The [guarded constant-divisor and cached-reciprocal screens](../research/experiments/container-representation/map-library/RESULTS.md#guarded-constant-divisor-ir-dynamic-division-remains)
+  both retain reached dynamic division; the source candidate also grows its
+  descriptor and computes the fallback eagerly. Neither supplies runtime
+  evidence. The [matched post-O3 reciprocal-loop diagnostic](../research/experiments/container-representation/map-library/RESULTS.md#exact-reciprocal-in-the-exposed-loop-mechanism-passes-timing-unqualified)
+  later removes per-item division and passes exact arithmetic/owner checks,
+  but qualifies no scalar gain despite lower medians; its frame grows 16 bytes.
+  Keep setup, live-state/transport and arbitrary-capacity costs visible when
+  reopening insertion work against the unchanged range/peer criterion.
+  The [matched-C panel](../research/experiments/container-representation/map-library/RESULTS.md#matched-c-fresh-insertion-wf-gains-and-c-attribution-remain-distinct)
+  separates four scalar WF inline gains from two aligned scalar peer targets;
+  C is slower in every scalar cell, with different descriptors/ABI and table
+  geometries still limiting causal attribution. Default peer gaps and invalid
+  wide controls remain open; do not treat this C implementation as a codegen floor.
+  This does not select a production O2 reciprocal policy. Keep callable-result
+  classification distinct from enum
+  representation and preserve shared caller/callee ABI and body/wrapper order
+  if future evidence reopens the existing return-register decision.
+  The [direct-Put union screen](../research/experiments/container-representation/map-library/RESULTS.md#direct-put-variants-under-union-lowering-native-criterion-fails)
+  has no scalar/wide size penalty under current union lowering, but its reached
+  wide consumer adds eager capture, seven payload spills and a 160-byte frame.
+  Reopen a general consumer scheduling/form improvement only with independent
+  alias/snapshot obligations, no new payload copies and a complete-operation
+  gain. The exact source/O3 interaction is observed; no compiler defect or
+  universally avoidable cost is established, and runtime remains untested.
+  The [separate two-definition inline experiment](../research/experiments/container-representation/map-library/RESULTS.md#two-definition-inline-chain-three-scalar-gains-incomplete-qualification)
+  qualifies three scalar insertion gains after removing the per-item boundary
+  and hoisting state, but only two aligned peer targets pass and two wide controls
+  are drift-invalid. The one-definition screen remains a native failure.
+  Reopen generally justified call-site selection and complete regression/peer
+  qualification, retaining code growth and linked-layout effects; do not
+  substitute a function-name rule or revive the withdrawn uniform inline hint.
+  The [ordinary O2 threshold and actual ThinLTO inspection](../research/experiments/container-representation/map-library/RESULTS.md#ordinary-o2-threshold-closure-fails-thinlto-import-remains-separate)
+  separate two blockers: one threshold increase leaves an enlarged caller
+  outlined, while the fragmented route does not import the measured scalar
+  callee. Inspect import availability and ordinary call-site cost separately;
+  the local 330/250 remark does not price the missing cross-fragment fresh
+  call. No numerical import budget or production option is established.
 
 - **Machinery with no remaining consumer.** The checker keeps the region
   machinery STOR-8 retired, though every value it produces is empty:
@@ -2643,6 +3536,18 @@ condition under which it is taken up.
   syntax investigation while the owned rebase meets that contract; reopen
   when selecting its reference counterpart. Do not manufacture an impossible
   branch or weaken a postcondition to complete the comparison.
+
+  A separate, **unverified** OP-12 concern is dynamic index separation in
+  `set heap[parent] = exchange_owned(held: move heap[parent], other:
+  &heap[child]);`, with both indices in bounds and `parent < child`. The early
+  `check_atomic_update_row` uses `UnprovedSeparations` before EFF-5's proved
+  pairwise check, so it may classify the second write as reaching the target.
+  This is a code-reading hypothesis, not an established compiler violation.
+  Reopen with a complete affine-owner witness admitted by OP-12/EFF-5, compare
+  the direct call with a two-reference wrapper and an equal-index negative,
+  and classify the result before changing proof plumbing. Keep this distinct
+  from the linear-target restriction above; no source bound or rule changes
+  are selected by the PriorityQueue exchange-helper native probe.
 - **Conditional measure controls expose a branch-join limit.** A counted-loop control calling a length/capacity-preserving
   helper in only one arm rejects its backedge facts, as do lockstep growth
   under a branch and a binary search that updates `low` in one arm and `high`
@@ -2666,6 +3571,37 @@ condition under which it is taken up.
   attributing memory growth and repeating the affected comparisons with a
   qualified control; retain the original time/RSS criterion and source-rule
   negatives. Reduce and classify the full sparse-map loop separately.
+
+- **Classify the zero-ceiling Map invariant rejection.** The frozen compiler
+  identified in the [two-span experiment](../research/experiments/container-representation/map-library/RESULTS.md#prospective-two-span-cyclic-probing)
+  rejects the migration header
+  `invariant home_low: home >= 0_u64` with `INV-1`, Backedge,
+  `required_relation: 0_u64 <= home`, `disposition: Unproved`. The retained
+  standalone `invariant-isolation/map-zero/witness.wf` instantiates
+  `hash_map_new::<u64, u64, 0>` and `hash_map_rehash::<Key, u64, 0>`; its
+  included `hash_map/hash-map.wf:313` carries the rejected header. Otherwise
+  identical ceilings 8 and 17 admit. Tiny generic-loop and nested `Slots`
+  controls admit too, so this is not a demonstrated general failure of
+  unsigned type bounds. The [exact sources and diagnostics](../research/experiments/container-representation/map-library/RESULTS.md#prospective-two-span-cyclic-probing)
+  preserve all forms and the successful span-local endpoint alternative.
+  The remaining full-library context prevents a minimal rule-level verdict.
+  Reopen during invariant proof work to reduce the zero-ceiling context and
+  classify it under ENT-2's implicit type bounds and INV-1's reachable
+  backedge obligations before changing the checker. It limits one proof
+  spelling; it does not narrow the public Map domain or block the admitted
+  source experiment. Defer that separate diagnosis because the five-scan
+  experiment already failed its independent native gate.
+- **Legacy HashMap research targets reference retired library paths.**
+  `research/experiments/container-representation/map-library/Makefile` still
+  sets `LIBRARY_SOURCE` to the absent `lib/containers/hash-map.wf`; its older
+  normal/retained recipes and allocation expectations therefore do not replay
+  against the current ordinary module. The current `ecosystem-*` comparison
+  uses the maintained source and is the route for new measurements. Before
+  reusing a legacy recipe, migrate its actual bundle, symbols and full-content
+  ownership oracle together or mark it as a historical replay tied to its
+  recorded revision. Validate both normal and retained executions and exact
+  allocation ledgers; changing only the path would not establish equivalence.
+
 - **Owning HashMap has a remaining large-value performance gap.** The
   [matched comparison](../research/experiments/container-representation/map-library/RESULTS.md)
   exercises the actual generic library, including must-consume pairs, without
@@ -2685,6 +3621,20 @@ condition under which it is taken up.
   measured contribution; copy counts alone do not establish that contribution.
   Dense storage remains faster for wide growth but adds reserved metadata and
   dependent lookup, while a fresh sparse rehash retains two complete backings.
+  The ordinary index-chain prototype cannot replace the current public map
+  unchanged: [its interface](../lib/std/collections/hash_map/module.wfm)
+  exposes `cells: Box<Slots<HashMapSlot<K, V>>>` and `vacated`, while the
+  [prototype](../research/experiments/container-representation/map-library/RESULTS.md#full-operation-index-chain-correctness-discriminator)
+  stores separate heads and dense entries.
+  Its seven vacated-count mismatches and one capacity mismatch follow from
+  dropping physical tombstones and the filled-plus-vacated pressure rule;
+  merely adding a counter would not identify which tombstone an insertion
+  reuses. Its wide replacement also loses to the current flat candidate, and
+  its growth still expands the dense entry backing when capacity rises beyond
+  that backing's reserve. Reopen a chain replacement only with a separately
+  chosen public-shape change or a compatible occupancy representation, then
+  check all public fields, policy stages, owner cleanup, wide mutation and
+  reserve together.
   Reopen for a workload dominated by these costs, preserving full backing and
   peak bytes, hash/load policy, retained helpers and exact cleanup. Defer a
   second maintained representation until that consumer supplies its grounds;
@@ -2694,6 +3644,363 @@ condition under which it is taken up.
   the earlier [native hash-slot study](https://github.com/mbbill/Whitefoot/blob/38c28403a2defd0b65b8a2ab2b5e4794315e9940/research/experiments/hash-slot-occupancy/RESULTS.md)
   did not establish a recurring tag-check tax. A working library does not
   close either question or imply a universal native-performance ceiling.
+
+  The qualified [current Rust/C++ comparison](../research/experiments/container-representation/map-library/RESULTS.md#size-hashing-and-follow-up-interpretation)
+  separates two present consumers. With 3584 entries in WF's 4096 buckets,
+  aligned-hash misses cost 7.17–14.65 times the three native maps, while WF
+  is faster than direct sparse C (0.76–0.79 times). Native reserve semantics
+  and capacity rounding differ; WF's wide steady backing uses 1,114,128
+  requested bytes versus about 2.17 MB for Rust/Abseil. The subsequent
+  [unchanged-source occupancy sweep](../research/experiments/container-representation/map-library/RESULTS.md#frozen-source-occupancy-continuation)
+  fixes 3584 entries and establishes complete-trace miss reductions of about
+  64% for scalar payloads and 72–74% for wide payloads at 8192 versus 4096
+  slots. Its six memory pairs were selected before timing; substantial native
+  deficits remain, and six of their 24 path comparisons are unstable. This
+  jointly changes placement, backing size and setup/cleanup, without isolating
+  a probing share. Next compare a justified ordinary-library probing/layout
+  candidate before choosing extra metadata, a second representation or a
+  compiler primitive. Keep requested memory and both hash series visible.
+
+  Separately, wide replacement costs 1.95–2.25 times direct C across the
+  measured populations/hash series, large wide fill/free 1.50–1.52 times,
+  and reserve 1.60–1.63 times, with matching allocation counts and bytes.
+  Large scalar fill/free is near parity and aligned wide in-place edit is
+  faster than C. These contrasts supply current inputs for unchanged-source
+  transfer/initialization/cleanup attribution; they do not reverse the
+  rejected inactive-payload candidates above. Fifteen replay comparisons
+  remain unstable and are unranked. Defer production changes until the two
+  separate discriminators preserve complete returned owners, cleanup, timing
+  and memory outcomes without relying on those unstable cells.
+
+
+  The [isolated reserve baseline](../research/experiments/container-representation/map-library/RESULTS.md#isolated-public-reserve-entry-headroom-baseline)
+  now verifies future ordinary-put headroom rather than equating raw reserve
+  arguments. WF's physical-slot request needs B(T)=floor(4(T−1)/3)+1 to match
+  the peers' application entry floor. Aligned large wide growth costs
+  121.666/121.512 µs versus Rust 64.215/62.520 and C++ 12.678/12.747 µs, with
+  complete owners and exact backing ledgers retained. Only seven of 16 cells
+  meet the registered target; three cells have short aggregate intervals and
+  one has unstable peer medians. Reopen reserve optimization at its reached
+  rebuild initialization, migration and probing work, preserving arbitrary
+  capacities, all returned owners and future-put headroom. Require maintained
+  generic admission and both normal/collision native paths before timing: the
+  source running-index rebuild trial failed the former and traded normal-probe
+  savings for more collision work. This does not close scalar replacement or
+  select the previously rejected inactive-payload initialization policy.
+
+  The isolated fresh-Vacant zero-store floor also fails its wide reserve
+  criterion: aligned S64 overlaps and S4096 is slower in both valid cohorts,
+  despite removing payload initialization stores. Preserve the current policy;
+  reopen storage or migration changes for a distinct reached-code mechanism
+  with complete-content and ownership checks. This result neither attributes
+  the loss to cache/allocation state nor rules out every inactive-byte strategy.
+
+  Ordinary-source owner migration retains a narrower performance limit: self-tail scanning
+  removes inactive destination capture and Inserted-result clearing, reducing
+  simultaneous wide frames from 752 to 336 bytes, but retains 256-byte argument
+  staging. Small aligned wide reserve gains pass the supplemental paired gates;
+  large raw gains fail the unchanged C++ cohort-stability limit, and both sizes
+  remain behind both peers. Establish complete paired qualification for the
+  parameter-held owner protocol and measure any further removal of reached
+  work with generic ownership and hostile callback checks. Avoid replacing it with
+  the rejected backing-slot swap's three full 272-byte transfers.
+
+  Combining that source shape with a scratch fresh-Vacant initialization floor
+  gives a qualified small-wide gain, but large-wide overlap/gain and excessive
+  Rust/C++ peer drift fail the complete criterion. Preserve both the raw outlier
+  and unchanged initialization policy. Reopen only for a distinct mechanism
+  with complete ownership checks and qualified large-cell evidence; fewer stores
+  alone neither prove the elapsed cause nor authorize generic inactive bytes.
+
+  The old-backing owner-argument floor removes the remaining 256-byte caller
+  snapshot and reduces its frame from 336 to 64 bytes, but neither primary
+  complete range separates in both cohorts and peer stability fails. It does
+  not demonstrate a qualified runtime contribution. Keep source-load/projection
+  snapshot behavior unchanged; reopen general forwarding only with qualified
+  performance evidence and established lifetime, alias and intervening-write
+  conditions, rather than the native copy count alone.
+
+  A distinct zero-preserving [padding discriminator](../research/experiments/container-representation/map-library/RESULTS.md#zero-preserving-padding-discriminator-native-fusion-succeeds)
+  changes four fresh slot constructions to zero their complete allocated size.
+  Ordinary LLVM then fuses allocation and initialization into `calloc` for both
+  widths; existing tag/key/value zeros, argument staging and copy sites remain.
+  The subsequent [generic implementation comparison](../research/experiments/container-representation/map-library/RESULTS.md#complete-constructor-zeroing-implementation-comparison-does-not-qualify)
+  passes construction, zero-size, ownership and post-optimization calloc
+  accounting checks. It also inlines wide migration and removes argument staging,
+  so its runtime difference cannot isolate zero-store cost. All eight growth
+  cells fail instrument or stability qualification; small aligned-wide raw
+  medians worsen while large medians improve. Keep the candidate experimental;
+  production selection still needs qualified complete-panel evidence, including
+  the adverse small case, standalone extend and whole-module inlining collateral.
+
+  The generic complete-zero constructor candidate also exposes a store-free
+  counting loop in fresh HashMap rebuilds after LLVM fuses initialization into
+  `calloc`. The physical-index nonnegativity assumption from
+  `compiler/src/backend/emitter/runs.rs` survives with the induction variable;
+  the final index still feeds migration's probe limit. An equal-pass raw-IR
+  discriminator removes only six initializer assumptions: LLVM then deletes
+  all four loops and derives the live final index, while the control retains
+  residual loops. A source-admitted generic positive-stride Slots append rule
+  now removes those loops without deleting assumptions: target qualification
+  and len < cap justify signed and unsigned no-wrap flags. Zero-stride lengths
+  retain the complete u64 domain. The [combined comparison](../research/experiments/container-representation/map-library/RESULTS.md#complete-zeroing-with-bounded-append-scalar-gains-wide-criterion-unmet)
+  has four qualified scalar growth gains, but small-wide overlap with adverse
+  medians and large-wide candidate/ratio drift leave its wide criterion unmet.
+  Keep this implementation experimental; its combined result does not isolate
+  the loop's elapsed contribution or select constructor lowering.
+  The subsequent [fresh-tag diagnostic](../research/experiments/container-representation/map-library/RESULTS.md#fresh-tag-initialization-after-bounded-append-small-wide-gain-only)
+  retains the small frame/direct payload transfer and obtains a qualified
+  small-wide gain, but loses 12–14 percent on large scalar growth and leaves
+  large-wide improvement unqualified. It is not a general omission policy;
+  keep the adverse cells, complete transport obligations and peer target open.
+
+  The same ledger/native audit separates the peers' remaining representation
+  costs. Rust relocates the same wide payload bytes while initializing compact
+  control metadata and scanning/probing it in groups; WF initializes complete
+  inline slots and scans strided tags. C++ instead retains separately allocated
+  payload nodes and rebuilds bucket links. Reopen initialization and metadata
+  attribution against Rust with fixed capacities, full ownership/headroom
+  checks and adverse results retained. A boxed-value alternative would add
+  per-offer allocation and lookup indirection and change the exposed cells
+  type; reserve-only improvement cannot select it for the ordinary map API.
+
+  The [current-policy dense experiment](../research/experiments/container-representation/map-library/RESULTS.md#current-policy-dense-storage-wide-reserve-gains-and-scalar-losses)
+  obtains qualified small-wide reserve gains of about 64 percent, but scalar
+  reserve regresses by about 76–119 percent and large-wide comparisons remain
+  unstable. Keep the flat map; this does not select a second representation.
+  Dense storage adds 16 bytes per reserved bucket plus an 8-byte header and
+  changes exposed fields. Its fixed-layout metadata also requires a schema
+  allocation bound absent from the generic constructor; the matched 16384
+  ceiling is only an experimental domain. Reopen a dense alternative only with
+  a concrete consumer and complete lookup/mutation measurements, an explicit
+  public-shape/domain choice, and accounted owning-program allocations. The
+  rejected unnecessary loop invariant is retained as an unresolved proof
+  observation, not a demonstrated compiler defect. In parallel, investigate
+  reductions of the flat map's initialization and transfer costs that preserve
+  its scalar behavior; this experiment does not measure those alternatives.
+
+  Extending the running-index source form to `hash_map_edit` removes reached
+  native bucket reconstruction, but its [complete EDIT comparison](../research/experiments/container-representation/map-library/RESULTS.md#edit-running-index-native-improvement-without-qualified-timing-gain)
+  has no before/after cell with separated ranges in both cohorts, despite lower
+  medians. Its frozen failed verdict remains unchanged when the Draft integrates
+  the same probe algorithm's mask/running-index implementation. Keep remaining
+  result staging or probe work subject to the same complete-outcome and peer
+  criteria; instruction removal alone does not qualify an optimization.
+  The same campaign has only one observation per seed/arm/cohort, so marginal
+  ranges combine input variation and execution variation. The later
+  [repeated-seed diagnostic](../research/experiments/container-representation/map-library/RESULTS.md#repeated-seed-diagnostic-unresolved-execution-variation)
+  retains two median-spread flags among 160 groups and mixed paired ratios;
+  it does not isolate execution history, allocation, cache or address effects.
+  Reopen attribution with a discriminator for the reached mechanism when that
+  uncertainty blocks selection, retaining every workload and peer target.
+  The existing experiment and its failed verdict remain unchanged.
+
+  The [retrospective peer-selector correction](../research/experiments/container-representation/map-library/RESULTS.md#retrospective-edit-peer-selection-unchanged-verdicts)
+  changes one selected peer among 56 cells and no historical verdict. Its
+  separately labeled canonical audit preserves the historical stricter drift
+  refusals. Historical strict-target Booleans omit an explicit duration guard;
+  all observed intervals are at least 3.769 ms, but a future short sample could be
+  mislabeled by consuming that Boolean alone. Add a tested duration refusal
+  before reusing this reduction for another selection; retain the sub-1-ms
+  rejecting fixture and distinguish that future correction from frozen flags.
+
+  The [independent-alignment compiler prototype](../research/experiments/container-representation/map-library/RESULTS.md#independent-local-alignment-native-reduction-without-qualified-edit-gain)
+  removes three private Result stores on the reached successful EDIT path, but
+  its registered timing criterion fails. The Draft's broader eligibility is now
+  a provisional implementation proposal, not a revised verdict for that trial.
+  Whole-trace frame/instruction reductions include other operations and do not
+  attribute elapsed EDIT cost. The separate [EDIT home-mask trial](../research/experiments/container-representation/map-library/RESULTS.md#edit-home-mask-native-division-bypass-without-qualified-timing-gain)
+  also fails, including adverse small-case medians despite division bypass.
+  Establish the integrated candidate's complete-root, snapshot, overlap and
+  parallel-lifetime correctness and retain the unchanged complete-outcome/peer
+  target; its conditional API screen remains unqualified as recorded below.
+
+  The [outer EDIT-dispatch caller trial](../research/experiments/container-representation/map-library/RESULTS.md#outer-edit-dispatch-qualified-caller-form-gains-on-large-maps)
+  qualifies large-map gains with unchanged library/compiler bytes, but small-map
+  comparisons still overlap and miss both aligned peers. The gain includes
+  load hoisting and other caller code-generation changes, not a subtractable
+  dispatch cost or a container API improvement. Preserve the original multipath
+  verdict. Reopen remaining EDIT/result/digest work against the same complete
+  outcomes and both peers; any new caller benchmark needs an explicit scope
+  rather than replacing adverse results.
+
+  The [Result-materialization interaction](../research/experiments/container-representation/map-library/RESULTS.md#result-materialization-and-alignment-in-the-outer-edit-caller)
+  falsifies the helper-spelling remedy: a direct match retains the private stores.
+  Independent local allocation in the outer-dispatch caller qualifies five
+  gain cells, but small aligned peer targets still fail and scalar-large aligned
+  qualification is invalidated by C-direct drift. Keep the earlier multipath
+  failure separate. Validate the Draft eligibility change against its complete-root
+  extent/snapshot/alias obligations and remaining API regressions; do not infer
+  per-store cost or a general library gain from this caller-context result.
+
+  The [conditional API screen](../research/experiments/container-representation/map-library/RESULTS.md#conditional-api-screen-no-separated-loss-incomplete-qualification)
+  detects no separated loss but remains unqualified: three lookup and one
+  mutation cell fail drift checks. Identical address-normalized lookup object
+  bodies do not explain that drift or establish linked/runtime equivalence.
+  Preserve the invalid cells; reopen their attribution with a fixed-input,
+  prospective discriminator before any compiler adoption claim. The
+  [new-context EDIT mask](../research/experiments/container-representation/map-library/RESULTS.md#marginal-home-mask-with-the-alignment-compiler)
+  qualifies four small-map gains, but small aligned scalar still misses the
+  peer-range target and large wide is drift-invalid. Its per-key capacity test
+  and wide-frame growth remain native costs to attribute; prior mask failure
+  and the incomplete regression qualification remain unchanged.
+
+  The [running-index interaction](../research/experiments/container-representation/map-library/RESULTS.md#running-index-in-the-combined-experimental-context)
+  meets both small aligned peer targets in the combined experimental context,
+  but both large aligned cells remain drift-invalid and the conditional API
+  screen remains unqualified. Preserve those gaps before any adoption claim;
+  reopen large-map variability and required API regressions with prospective
+  criteria. The separately rejected unswitch threshold grows whole bodies
+  beyond its cap and adds wide hot-loop reload work, so branch hoisting alone
+  does not justify that global compiler option.
+
+  Public `hash_map_lookup` already has isolated hit/miss measurement;
+  `hash_map_find` is a private helper. Lookup's miss performance gap remains
+  open. [Fresh insertion now has an ordinary batch window](../research/experiments/container-representation/map-library/RESULTS.md#isolated-fresh-insertion-no-qualified-candidate-gain),
+  with no qualified candidate gain and only three aligned peer targets. Owned
+  [removal now has a separate hit/miss window](../research/experiments/container-representation/map-library/RESULTS.md#isolated-public-remove-scalar-hits-qualify-misses-remain-open):
+  four scalar-hit targets qualify, all misses/wide hits fail, and one wide hit
+  is Rust-drift-invalid. Reopen absent-probe and complete wide-return costs in
+  that caller, preserving returned owners, allocation differences and both
+  peers; establish production O2 behavior before generalizing experimental O3.
+  The unexplained outer-guard/direct-process wall discrepancy also needs a
+  durable timing-boundary observation before attributing that elapsed-time gap;
+  it does not replace the independent sample-clock admission. The separate
+  callsite-native floor removes the full wide result but retains 144 bytes of
+  partial payload spills. Its [fixed paired campaign](../research/experiments/container-representation/map-library/RESULTS.md#paired-remove-callsite-floor-no-qualified-gain)
+  passes candidate correctness checks but qualifies no paired gain: the first
+  control process fails clock admission, seven wide cells fail cohort drift,
+  and the remaining wide hit ranges overlap. Reopen with a distinct mechanism
+  or a prospectively qualified timing campaign before treating the structural
+  result as a speedup or selecting an inline policy.
+  The
+  [reached wide CHURN remove caller](../research/experiments/container-representation/map-library/RESULTS.md#wide-remove-caller-full-return-transfer-already-eliminated)
+  already eliminates the full aggregate return transfer, retaining 104 bytes
+  of partial scalar spills and slot clearing. Use the new isolated owned-remove
+  batch's reached native path before attributing standalone helper copies; retain
+  complete owning outcomes, clocks and both peers. This neither selects a
+  compiler change nor reopens rejected inactive-payload omission. The
+  [isolated public EDIT consumer](../research/experiments/container-representation/map-library/RESULTS.md#isolated-public-edit-hit-targets-pass-misses-remain-open)
+  now measures integer-fixture hit/miss batches with ordinary public calls,
+  complete independent outcomes, off-clock full cleanup and qualified clocks.
+  Four hit cells pass the selected-peer target in one fixed campaign; four
+  misses fail, including two large misses invalidated by C-attribution drift.
+  Reopen absent-key probe work and those invalid cells without dropping that
+  control or weakening the registered criterion. Keep the group-metadata and
+  occupancy questions open: half-load EDIT does not settle them. The instrument
+  does not establish repeatability, generic owning costs or application parity.
+  Complete the remaining API gaps in the Map phase with ordinary wrappers,
+  independent oracles, qualified windows and the same Rust/C++ target. Do not
+  relabel churn or whole traces as per-API completion, or compare the new API
+  window with complete-trace ns/edit as a before/after improvement.
+
+  The [EDIT-only two-span trial](../research/experiments/container-representation/map-library/RESULTS.md#edit-only-two-span-probing-rejected)
+  addresses the new isolated miss gap separately from the older five-function
+  trial, but supplies zero qualified miss gains and three qualified two-cohort
+  hit losses; wide-small hit also loses in cohort 1. Keep its source rejected.
+  Smaller bodies add a 16-byte frame increment, per-key collision-mode testing
+  and a shared hit tail with address recomputation; their elapsed contributions
+  are not isolated. Reopen only with a discriminator for reached miss/hit work
+  that preserves complete outcomes and all drift/peer gates, not an instruction
+  count alone. Original API/application failures remain open.
+
+  The [first-probe controls native trial](../research/experiments/container-representation/map-library/RESULTS.md#first-probe-controls-rejected-at-the-native-gate)
+  removes optional-owner/header and repeated extent fallback from continuation,
+  but adds a repeated-round count spill and per-key hash-constant materialization.
+  Its native gate fails before execution or timing; keep the representation
+  unselected. Reopen only with a discriminator that preserves first-hit native
+  work and complete callback/ownership behavior, including the extra 32-byte
+  descriptor and allocation already at capacity eight. No measured performance
+  conclusion or generic correctness follows from source admission.
+
+  The [EDIT-only first-probe peel](../research/experiments/container-representation/map-library/RESULTS.md#first-probe-peel-native-pass-timing-rejection)
+  passes its narrow native screen but has no qualified miss gain and a qualified
+  large-scalar hit loss; large-wide raw losses are ratio-invalid. Keep it rejected
+  despite lower large-wide miss medians. Its ordinary capacity-one supplement
+  covers a previously missing boundary; promote that sequence into maintained
+  tests before any future adoption of this source form. Discarded equality-counter
+  IR instrumentation is not qualification. Reopen only with a discriminating
+  mechanism that also preserves hit cost and unchanged stability/peer gates.
+
+  The [fixed-hash sensitivity](../research/experiments/container-representation/map-library/RESULTS.md#fixed-hash-sensitivity-supplemental-rejection)
+  still has zero qualified miss gains and retains hit losses. Three supplemental
+  peer-target passes do not replace original qualification; smaller owner layouts
+  and changed capacity hoisting prevent pure collision-branch attribution.
+  Keep the peeled source rejected and both large-miss drift failures visible.
+
+  The [byte-pack native screen](../research/experiments/container-representation/map-library/RESULTS.md#byte-pack-load-native-only-result)
+  reaches one payload load in its bounded consumer. The subsequent
+  [mirrored-byte sequence](../research/experiments/container-representation/map-library/RESULTS.md#mirrored-byte-sequence-bounded-checks-rejected-timing)
+  checks selected metadata/ownership boundaries and predicted allocation costs,
+  but has no qualified miss gain or peer target, three qualified two-cohort hit
+  losses and two small-miss losses. Its larger frame, per-key hash constants and
+  extra metadata allocation remain costs; the early strict native failures are
+  not overturned by the later diagnostic. Keep this representation unselected.
+  Reopen only a concrete discriminator in the authorized Map phase, preserving
+  first-hit pressure, ownership/callback witnesses and full timing/drift gates;
+  fewer instructions alone do not qualify performance or generic correctness.
+  The [matches-first follow-up](../research/experiments/container-representation/map-library/RESULTS.md#matches-first-order-native-improvement-timing-rejection)
+  also has zero miss gains/peer targets and retains hit losses. Its ordinary
+  inconsistent-key witness changes the answer safely; any future order choice
+  must state conditional hash/equality laws and extra callback behavior, without
+  claiming universal callback-order or termination equivalence.
+  The [mask-lowering cost floor](../research/experiments/container-representation/map-library/RESULTS.md#mask-lowering-sequence-toy-success-full-map-rejection)
+  removes numeric byte reconstruction through an explicit LLVM intervention,
+  but still has zero miss gains/peer targets and four qualified hit losses.
+  A possible general selector remains unselected and unimplemented;
+  reopen only with a reached consumer benefit and preserved source/word-oracle
+  checks, rather than projecting toy instruction reductions onto map performance.
+  The ordinary-source [masked-continuation trial](../research/experiments/container-representation/map-library/RESULTS.md#masked-continuation-large-hit-gains-miss-criterion-fails)
+  qualifies two large-hit gains and four hit peer targets, but its miss-gain
+  criterion fails: small misses overlap and both large misses remain invalid.
+  Keep it unselected; reopen miss performance with the same full drift/oracle
+  gates and account for its worse unmeasured constant-collision native paths.
+  The [physical tag-order trial](../research/experiments/container-representation/map-library/RESULTS.md#tag-order-native-miss-dispatch-failure)
+  leaves vacant dispatch unchanged while losing all-zero Vacant and increasing
+  native initialization/rebuild counts. Do not reopen declaration order as an
+  established miss improvement; any new discriminator must address that failed
+  path and the module-wide tag ABI. Its frozen status collector is malformed;
+  use the retained corrected collector before replay, without inventing lost timings.
+  The separate [original-tag Filled-first IR trial](../research/experiments/container-representation/map-library/RESULTS.md#filled-first-ir-identical-native-objects)
+  produces byte-identical objects after ordinary optimization. Branch-chain
+  spelling alone therefore supplies no dispatch improvement on this pipeline;
+  reopen only with a discriminator that changes the reached native policy.
+  The separately preregistered [frequency-weighted tag follow-up](../research/experiments/container-representation/map-library/RESULTS.md#tag-order-frequency-weighted-follow-up-rejected)
+  also fails despite source-derived Filled-visit savings: no qualified miss
+  gain, three qualified two-cohort hit losses and only one peer target. Preserve
+  the original vacant-only failure; any further work needs new reached-cost
+  evidence rather than an instruction-count prediction alone.
+  The [Robin Hood probe model](../research/experiments/container-representation/map-library/RESULTS.md#robin-hood-probe-model-and-tombstone-boundary)
+  reduces modeled failed probes, but naive distance stopping fails after ordinary
+  tombstone reuse. Reopen in this Map phase with invariant-preserving reuse or
+  local restoration, retaining public cells/Deleted/vacated and owned refusal/
+  replacement behavior. Screen resident-hash and relocation cost before whole-API
+  correctness and the fixed peer criterion; the model selects no algorithm.
+  The [saved-vacancy insertion candidate](../research/experiments/container-representation/map-library/RESULTS.md#insertion-saved-vacancy-state-bounded-nativecheck-result)
+  removes commit-time reclassification but adds per-Deleted flag work and has
+  caller collateral. Its [ordinary fresh-insertion campaign](../research/experiments/container-representation/map-library/RESULTS.md#isolated-fresh-insertion-no-qualified-candidate-gain)
+  now supplies no qualified before/after gain in eight valid cells; default
+  peer targets all fail. Reopen reached insertion costs against that unchanged
+  criterion, retaining replacement/refusal and dense-tombstone costs. Do not
+  subtract snapshot controls or equate their work-unit count with C-ABI calls.
+  No source adoption is selected.
+
+  The [actual integrated-candidate comparison](../research/experiments/container-representation/map-library/RESULTS.md#integrated-candidate-with-the-maintained-caller)
+  has no qualified before/after gain in 40 maintained-caller cells; all four
+  overall screens remain unqualified. Its reserve maximum empty interval of
+  9,500 ns invalidates every growth cell, while lookup, mutation and EDIT also
+  retain drift failures. Reopen clock qualification and those invalid cells
+  in the authorized API phase; preserve the failed run without treating overlap
+  or no separated loss as proof of nonregression.
+
+  Wide EDIT's ordered digest remains memory-resident because later cleanup
+  receives its complete address-exposed value. The [cleanup-boundary source discriminator](../research/experiments/container-representation/map-library/RESULTS.md#late-cleanup-exposure-native-success-without-qualified-gain)
+  removes the reached load/store pair but fails its timing criterion; it is
+  not an adopted caller change or a general compiler fix. Reopen storage-lifetime
+  splitting only with private-backing, complete-transfer, alias, final-observation
+  and target-extent evidence, then the unchanged complete-outcome/peer criteria.
+  Per-key dispatch and the unmeasured individual public API windows remain
+  distinct costs; do not assign them the elapsed gain of earlier outer callers.
 
 - **Ordered insertion replacement costs need attribution.** Both the
   [aggregate-result candidate](../research/experiments/container-representation/ordered-library/RESULTS.md#single-descent-insertion-candidate)
@@ -2713,6 +4020,13 @@ condition under which it is taken up.
   under the existing compiler items; a different return form alone no longer
   supplies the reopening ground.
 
+  In the qualified current-module native-library series, replacement-only
+  at 256 entries costs WF/source C 0.66–0.67 for scalars but 1.41 for wide
+  values, with identical allocation records. That payload-size contrast is
+  a concrete discriminator for the existing code-generation question, not
+  evidence that either rejected insertion form should return. Use unchanged
+  source and optimized transfer/stack/loop observations before another variant.
+
 - **Ordered-map occupancy and tree choice remain workload-dependent.** The
   [reserved-storage comparison](../research/experiments/container-representation/ordered-library/RESULTS.md#allocations-and-reserved-storage)
   records 48.6% peak reserved-slot utilization during 4096-pair bundled-tree
@@ -2728,6 +4042,17 @@ condition under which it is taken up.
   concrete index supplies its governing
   workload; reopen before choosing a default ordered representation or when
   an index is dominated by wide reserved storage or churn.
+
+  The fresh [Rust/C++ comparison](../research/experiments/container-representation/ordered-library/RESULTS.md#requested-allocation-storage)
+  preserves the same 363-to-562 peak-node growth at fixed cardinality. Wide
+  churn peaks at 2,373,888 requested bytes versus Rust's 1,673,656,
+  std::map's 1,212,416 and Abseil's 1,453,928, and costs WF 1.53–1.58 times
+  Rust and 2.11–2.17 times std::map at 4096 entries. Small scalar costs also
+  matter: at 256 entries hit/miss costs 1.66–1.82 times Rust, although WF
+  and source C are close. Reopen the occupancy/representation discriminator
+  with both sizes and payloads; tuning only the largest wide case can hide
+  a different search and fanout tradeoff. These synthetic streams supply
+  no real-application frequency weighting and select no replacement tree.
 
 - **Channel primitive.** An ownership-transfer queue in the trusted base for
   producer/consumer pipelines and work stealing; lock-free rings are not
@@ -2762,8 +4087,60 @@ condition under which it is taken up.
   handle or adjacent layout. Compare full allocation bytes, dependent accesses,
   initialization, movement/growth and cleanup against both ordinary alternatives;
   no new layout or construction spelling is selected without that evidence.
-- **Bitmask fact.** `x & (c - 1) < c` for a power-of-two `c`, which would
-  remove the per-probe bounds compare in hash tables.
+- **HashMap bucket indexing.** ENT-3.S7's [tested unsigned operand bounds](../tests/conformance/cases/ent3-pos-stage8b-bit-sources.wf)
+  already derive `iand(x, c - 1) < c` for positive `c`. The
+  [query-only comparison](../research/experiments/container-representation/map-library/RESULTS.md#paired-lookup-results-and-remaining-gap)
+  admits ordinary source using a power-of-two mask with the exact modulo
+  fallback and confirms removal of division on that native path. It improves
+  small-table hits, but the large-table miss is unstable across cohorts and
+  the generic query body/frame grow; the mask fast path is not selected.
+  The retained running index reduces bucket reconstruction, but misses still
+  trail Rust/C++ at matched half load. The matched C linear-probe control
+  separates part of that miss cost from the probing algorithm, and the
+  [grouped lookup screen](../research/experiments/container-representation/map-library/RESULTS.md#single-backing-grouped-lookup-screen)
+  rejects its tested single-backing group shape for separated hit losses.
+  The [normalized-caller retry](../research/experiments/container-representation/map-library/RESULTS.md#normalized-mask-retry-outcome)
+  removes the previous frame growth and gives separated small-hit gains,
+  but still qualifies no miss against the slower native peer; some control
+  medians drift. Keep it unselected while the representation comparison
+  proceeds. The later [conditional mutation-home mask](../research/experiments/container-representation/map-library/RESULTS.md#conditional-home-mask-in-the-source-library)
+  gives separated wide gains, but scalar replacement medians worsen
+  12.07–16.86 percent while full ranges overlap; unchanged chain drift exceeds
+  the registered limit. The scalar direction remains uncertain and the mask
+  remains unselected. The separate [prepared capacity snapshot](../research/experiments/container-representation/map-library/RESULTS.md#prepared-capacity-snapshot-cost-floor)
+  partially hoists count/mask work but qualifies no separated benefit and fails
+  its spread/drift controls. Reopen indexing with stable paired evidence on the
+  selected complete representation, distinguishing home arithmetic from count
+  lifetime and descriptor accesses. Preserve
+  arbitrary capacities, non-power-of-two lookup, wrap and empty-table behavior.
+  The separate [longer final-peer panel](../research/experiments/container-representation/map-library/RESULTS.md#source-mask-final-peer-qualification)
+  passes only five of eight cells in both cohorts and fails unchanged-chain
+  drift; scalar replacement adverse medians still overlap. It qualifies neither
+  the complete native-peer goal nor adoption, and does not supersede the
+  earlier short-panel verdict. Preserve both questions and all peer ranges
+  when reopening bucket-index selection.
+  The [explicit fast-arm spelling](../research/experiments/container-representation/map-library/RESULTS.md#explicit-mask-fast-arm-native-stop)
+  is admitted but LLVM selects between eagerly computed mask and modulo results,
+  restoring division on the power-of-two path. That native-only trial stops
+  without timing; another spelling needs a distinct code-generation ground.
+  The [first-probe peel](../research/experiments/container-representation/map-library/RESULTS.md#first-probe-peel-partial-native-mechanism-unqualified-peer-panel)
+  shortens the first equal-hit native path but still sets the available-slot
+  sentinel. Its separate full peer panel reaches six of eight strict cells,
+  fails both scalar replacement cells, and exceeds paired-spread and unchanged
+  chain-drift limits. The linked chain bytes stay equal while their placement
+  moves; that is a lead, not an established cause. Reopen a first-probe source
+  change only with a complete owner-safe continuation and a stable peer panel
+  that qualifies replacement as well as churn; do not select this peel.
+- **Packing a byte-comparison mask loses the vector form.** Three ordinary
+  `Array<u8, 8>` source forms generate vector comparisons, but packing their
+  0x80/0 results into a word becomes lane widening and an AND/OR reduction.
+  The [grouped lookup discriminator](../research/experiments/container-representation/map-library/RESULTS.md#single-backing-grouped-lookup-screen)
+  measures an equivalent LLVM vector mask 11–26% faster than its original
+  scalar mask; the grouped container still loses on hits and is not selected.
+  Reopen with a competitive grouped consumer: compare a general lowering
+  improvement against the ordinary source forms, preserve exact byte
+  semantics and callback paths, and require executed correctness and paired
+  benefit. No new source operation or container layout is selected.
 - **Handing checker facts to the backend.** Emitted since the v0.60 port:
   `noalias` (not on `swap`), `nonnull`, `dereferenceable`,
   `captures(none)` or `nocapture` by a build-time probe, `inbounds`, and
@@ -2775,10 +4152,43 @@ condition under which it is taken up.
   qualified Ring payload-address
   `llvm.assume` is measured in the [Deque comparison](../research/experiments/container-representation/deque-library/RESULTS.md);
   its remaining costs are tracked above. Not emitted: `memory(argmem: ...)` (the
-  IR carries neither the declared row nor the allocation fact), scoped
+  IR retains per-call allocation bounds and readonly-reference markers,
+  but not a complete transitive memory-effects summary; the semantic model's
+  EFF-3 `allocates` fact is not itself such a summary), scoped
   alias metadata and `llvm.loop.parallel_accesses` (the emitter has no
   metadata table). Build the metadata subsystem as its own step with a
-  before/after benchmark.
+  before/after benchmark. The scoped [descriptor-versus-payload trial](../research/experiments/container-representation/map-library/RESULTS.md#descriptor-and-payload-alias-metadata)
+  has byte-identical native output under equal extra O3 passes; it neither
+  establishes a general alias bottleneck nor justifies a metadata policy.
+  Preserve its audited access/lifetime premise separately from the manual
+  count-snapshot cost floor, and reopen with a discriminating real consumer.
+  The [Vector full-growth helper](../lib/std/collections/vector/grow-vector.wf)
+  also exposes a scalar-contract case: `len < ceiling` and `cap <= len`, with
+  the Slots window invariant, imply `len == cap < ceiling`. The
+  [split-payload native record](../research/experiments/container-representation/vector-library/ecosystem-append-growth-split-payload-timing.txt)
+  still contains the capacity-above-8192 return guard in the ceiling-8193
+  instance. This is redundant source control flow, not an inserted safety
+  check; its runtime cost has not been isolated. The later
+  [entry-equality discriminator](../research/experiments/container-representation/vector-library/RESULTS.md#full-growth-entry-equality-registered-fact-transport-discriminator)
+  supplies only `len == cap` to the frozen inline-owner IR: both full helpers
+  lose their length-versus-capacity branch, while the ceiling guard remains.
+  Its single screen still passes only two of six matched cells; the branch
+  removal does not meet the append target and establishes no paired gain or
+  regression. The independent [post-call preserved-length diagnostic](../research/experiments/container-representation/vector-library/RESULTS.md#post-call-preserved-length-outcome-load-removed-append-remains-unqualified)
+  supplies `make_room` exit length equal to entry length on normal return,
+  rather than F's entry `len == cap`. Both actual append paths lose their
+  post-growth length reload without a new runtime comparison, but their
+  frames grow from 32 to 48 bytes and only one of six matched cells passes
+  both cohorts. This unpaired screen selects no production transport and
+  establishes no gain or regression against the earlier screens. Reopen when
+  a generic retained relation and a discriminating measured case justify that
+  work; newly resolve post-call places, including equal-length whole-owner
+  replacement, without retaining stale payload identity.
+  Retain and lower proved entry-measure relations generically, with explicit
+  support and mutation boundaries, rather than recognizing this helper's name.
+  Require a complete target-fact mapping, unchanged acceptance and target
+  qualification, negatives for stale facts after writes, and a measured
+  before/after result before selecting that optimization.
 - **Subscripted integer places as terms.** A place with subscripts is a
   term only when its last step is a readonly field, a measure or a writer's
   own (v0.71, [investigation](../research/investigations/readonly-field-terms/DESIGN.md#alternatives)).
@@ -2971,6 +4381,23 @@ condition under which it is taken up.
 
 ## Verification tooling
 
+- **Native stack sampling loses the append caller across WF frames.** In the
+  [bounded Vector diagnostic](../research/experiments/container-representation/vector-library/RESULTS.md#scalar-growth-attribution-registered-bounded-stack-sample),
+  the macOS sampler recovers the WF append body and its libc descendants but
+  usually omits the known noinline caller marker. The frozen body saves x29
+  and the return address without establishing an x29 frame. This prevents
+  reliable attribution under the registered complete-call-chain criterion;
+  it is not evidence of incorrect program execution or allocator latency.
+  The linked FDE already matches the body stack layout at allocator-call
+  return PCs; missing body metadata is not an established cause. Reopen now
+  with a known frameless native control or alternate unwinder to distinguish
+  target sampling support. A frame-pointer diagnostic changes instructions;
+  verify caller recovery and do not reuse its timing as unchanged-code evidence.
+  A production change needs an ordinary
+  compiler regression and target coverage, not a research-only fixture. Keep
+  ambiguous stacks excluded rather than adjusting the profiler criterion to
+  obtain a favorable share.
+
 - **The trusted runtime is large and growing.** Every program links about
   20,000 lines of C and LLVM IR in `compiler/src/backend` that no checker
   reads (the scheduler, the completion bridge at 3,871 lines, the hosts' I/O
@@ -3064,9 +4491,23 @@ condition under which it is taken up.
   base consistently with hosted CI. Validate old local main, advancing remote
   main, an integrated branch and a real branch amendment; retain archive
   immutability, version-transition and changed-node coverage checks. Reopen
-  when updating verification-base selection. This research uses the existing
+  at the next workflow-maintenance change. This research uses the existing
   `DESIGN_REVIEW_BASE` override for the actual merge base and records default
   failures; it does not change the checks or another worktree's main ref.
+- **The host-wide check guard has no queued admission.**
+  `.github/run-check.pl` rejects a competing invocation with exit 75; it
+  records the current owner but no waiting command. During concurrent
+  container and compiler investigations, successive commands from other
+  worktrees acquired the released lock before the waiting container stage
+  could start. Single-command serialization works, but repeated polling does
+  not give a waiting investigation a turn and adds coordination delay.
+  Investigate an optional cancellable admission queue when multi-worktree
+  contention next delays a registered experiment. Preserve one heavy owner,
+  nested-command handling, process-group cleanup and stale-owner checks;
+  report queue time separately from command time. Validate three competing
+  worktrees, cancellation before admission, owner failure and a nested check,
+  with no overlapping heavy children or abandoned queue entries. Do not
+  bypass the existing lock while this remains deferred.
 - **The corpus stage waits on one serial conformance walk.** Each of the
   conformance adapter's two walks visits every conformance case on one
   thread, 62 s and 78 s on the four-core container where it was profiled, so
@@ -3109,6 +4550,92 @@ condition under which it is taken up.
   least seven runs per model trips no build or case stage. Reopen when an
   overrun is traced to a change that earlier runs on faster machines passed,
   or when clippy's variance overruns come more than about once a week.
+
+  The [63f2c0685 Linux unit job](https://github.com/mbbill/Whitefoot/actions/runs/36757483524/job/110031390661)
+  passes all 1,912 cases in 103.51 s, but its 140.87 s build and 244.61 s total
+  exceed the 135 s and 235 s budgets. The
+  [preceding 52f982 job](https://github.com/mbbill/Whitefoot/actions/runs/36753958765/job/110019446011)
+  has identical compiler, tests and `.github` trees: build 86.73 s, test stage
+  70.95 s and total 157.79 s. Both use Rust 1.98.1; their recorded processors
+  differ (EPYC 7763 versus 9V74). This is host-variation evidence, not an
+  isolated processor-model cause. Keep the tests and budgets unchanged; the
+  next published head supplies the next CI observation.
+
+  The [4d6641c45 Linux corpus job](https://github.com/mbbill/Whitefoot/actions/runs/36791591539/job/110145715292)
+  likewise passes all 131 cases, but its 95.74 s build exceeds the 95 s
+  budget. The [preceding 61229c993 job](https://github.com/mbbill/Whitefoot/actions/runs/36789881763/job/110140089314)
+  builds the identical compiler/tests/CI trees in 56.00 s. Both use Rust
+  1.98.1; their host records name Xeon Platinum 8573C and EPYC 9V45,
+  respectively. Test execution also differs, 92.14 versus 66.31 s. This
+  extends the host-variation evidence without isolating a processor cause;
+  retain the failed observation and the unchanged budgets.
+
+- **Compute build-budget variance repeats maintained performance comparisons.** The
+  research/documentation-only revision 212c3a6b3 passes its actual comparison in
+  [run 36990984618, first attempt](https://github.com/mbbill/Whitefoot/actions/runs/36990984618/attempts/1),
+  but fails only the budget verdict: candidate compiler 135.1 s against 115 s
+  and candidate images 12.1 s against 10 s. Its single rerun passes.
+  The preceding
+  [cea2c2f48 run 36988911413](https://github.com/mbbill/Whitefoot/actions/runs/36988911413)
+  first exceeded only the image budget (10.1 s against 10 s), then passed its
+  single rerun. These observations do not isolate a host or source cause, but
+  repeating the full compiler/image build and comparison to resolve budget-only
+  variance adds work without a new measured change. Reopen on the next compute
+  workflow change: inspect stage/host distributions, cache behavior and actual
+  work before proposing any owner-approved budget increase. Preserve all tests,
+  comparisons, failed observations and current budgets; repeated reruns must not
+  replace investigation.
+  At research-only revision 711a8716a,
+  [gate attempt 1](https://github.com/mbbill/Whitefoot/actions/runs/37002452057/attempts/1)
+  also exceeds Linux lint 46.6/40 s and static 70.1/65 s, and macOS unit
+  104.0/100 s and its group 284.6/280 s. The matching
+  [compute attempt 1](https://github.com/mbbill/Whitefoot/actions/runs/37002456996/attempts/1)
+  records candidate compilation 116.3/115 s. These are budget observations,
+  not an isolated source cause. One failed-job rerun of each workflow passes;
+  retain the failed attempts and unchanged test budgets and gates.
+
+- **Vector append comparisons do not fully balance variant order.** The
+  [growth driver](../research/experiments/container-representation/vector-library/vector-costs.c)
+  rotates three variants with `(sample + offset) % 3` and reverses the second
+  cohort, but seven samples leave unequal position counts. Across both
+  cohorts, WF and C++ occupy first/middle/last positions 5/4/5 times each;
+  Rust occupies them 4/6/4 times. A position-dependent effect could therefore
+  weight the peer comparison unequally; no measured deficit is attributed to
+  this limitation. Reopen at the next append comparison: preregister a sample
+  count divisible by three or an explicitly balanced schedule, verify equal
+  position counts, and retain the same API outcomes and timing criteria.
+  Keep the old seven-sample data and verdicts; do not retroactively qualify,
+  filter or reinterpret them as a balanced experiment.
+  The [fresh-element placement screen](../research/experiments/container-representation/vector-library/RESULTS.md#fresh-element-placement-registered-append-ordering-discriminator)
+  uses nine samples and verifies equal positions for that image. Final paired
+  and production comparisons remain open; close this item when they also use
+  a verified balanced schedule.
+
+- **Qualify the clock at each container API's individual timing window.**
+  The Vector growth pilot on the current macOS host reports 1,000 ns for
+  `CLOCK_MONOTONIC` and observes only 1,000 ns nonzero read steps, while one
+  measured growth call can finish in about 200 ns. Summed sample duration
+  alone does not qualify such windows. The same native probe reports 42 ns
+  for `CLOCK_MONOTONIC_RAW` and observes a 41 ns minimum nonzero step. Vector's
+  instrument repair and retained pilot belong to its
+  [growth comparison](../research/experiments/container-representation/vector-library/RESULTS.md#append-that-triggers-growth-correctness-and-native-checkpoint).
+  Deque, PriorityQueue, OrderedMap and both Map cost drivers also use
+  `CLOCK_MONOTONIC`; reopen their clock qualification when each family reaches
+  the per-API phase, and require an observation that rejects an artificially
+  coarsened clock. Keep old samples with their original instrument identity;
+  this finding does not by itself invalidate longer whole-trace windows.
+  Recheck Vector's spare-append comparisons with the repaired instrument before
+  declaring the complete append API qualified. Qualify each other family's
+  benchmarks during its authorized API phase, preserving the historical samples
+  and their original instrument identity.
+  The [frozen growth-route spare cross-check](../research/experiments/container-representation/vector-library/RESULTS.md#spare-append-after-growth-exposure-registered-api-cross-check)
+  supplies that RAW evidence for the two experimental images: all six spare
+  cells pass in both launches and both cohorts of each image, with every real
+  interval above 1 ms and zero allocations during spare append in the account
+  checks. This closes the clock question for those images, not the unfinished
+  growth path
+  or a future production implementation. Recheck the final selected append
+  implementation if its emitted code changes; keep both paths distinct.
 
 ## firn
 

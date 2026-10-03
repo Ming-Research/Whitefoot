@@ -1,12 +1,13 @@
-alias deque_new = std::collections::deque::deque_new;
-alias deque_push_back = std::collections::deque::deque_push_back;
-alias deque_push_front = std::collections::deque::deque_push_front;
-alias deque_pop_back = std::collections::deque::deque_pop_back;
-alias deque_pop_front = std::collections::deque::deque_pop_front;
-alias deque_rebase = std::collections::deque::deque_rebase;
+alias DequeDrain = std::collections::deque::DequeDrain;
+alias ExitStatus = std::process::ExitStatus;
 alias deque_drain = std::collections::deque::deque_drain;
 alias deque_free_empty = std::collections::deque::deque_free_empty;
-alias ExitStatus = std::process::ExitStatus;
+alias deque_new = std::collections::deque::deque_new;
+alias deque_pop_back = std::collections::deque::deque_pop_back;
+alias deque_pop_front = std::collections::deque::deque_pop_front;
+alias deque_push_back = std::collections::deque::deque_push_back;
+alias deque_push_front = std::collections::deque::deque_push_front;
+alias deque_rebase = std::collections::deque::deque_rebase;
 alias exit_status = std::process::exit_status;
 
 struct DequeDigest {
@@ -82,6 +83,33 @@ fn deque_library_trace<interface DequeElement<T>>(count: u64, rounds: u64, seed:
   requires count <= 4096_u64;
 } {
   let checksum = seed;
+  if path == 3_u64 {
+    for (round in 0_u64..rounds) {
+      let base = seed +wrap round;
+      let digest = DequeDigest(value: base);
+      let values = deque_new::<T, 4096>(capacity: count);
+      deque_library_fill::<DequeElement<T>>(values: &values, count: count, seed: base);
+      let doubled = count * 2_u64;
+      let capacity = doubled + 1_u64;
+      let grown = deque_rebase::<T, 8193>(values: move values, capacity: capacity);
+      let additional = count + 1_u64;
+      for @grow (
+        index in 0_u64..additional,
+        invariant length: grown.inner.len == count + index,
+        invariant kept_capacity: grown.inner.cap == capacity
+      ) {
+        let offset = count +wrap index;
+        let next = base +wrap offset;
+        let value = DequeElement::make(seed: next);
+        let length = deque_push_back::<T>(values: &grown, value: move value);
+      }
+      deque_drain::<T, DequeDigest, fn DequeElement::accept>(values: &grown, env: &digest);
+      deque_free_empty::<T>(values: move grown);
+      let prefix = checksum *wrap 257_u64;
+      set checksum = prefix +wrap digest.value;
+    }
+    return checksum;
+  }
   if path == 2_u64 {
     for (round in 0_u64..rounds) {
       let base = seed +wrap round;

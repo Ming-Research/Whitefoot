@@ -914,6 +914,138 @@ fn an_entry_build_is_reused_for_an_unchanged_composition() {
     ));
 }
 
+/// A binding-only edit changes the selected call and invalidates that entry,
+/// while ordinary concrete definitions keep their unchanged fragment content.
+#[test]
+fn imported_function_actuals_preserve_cached_entry_scope_and_callee_fragments() {
+    const GRAPH: &[u8] = b"pkg::lib: [];\npkg: [pkg::lib, std::fs, std::io, std::process, std::text];\n\nentry bound = pkg::bound;\n\nentry plain = pkg::plain;\n";
+    const INTERFACE: &[u8] = br#"public interface Convert {
+  fn convert(value: u8) -> result: u8 pure;
+}
+
+public fn apply<interface Convert>(value: u8) -> result: u8 pure doc "Applies the supplied conversion.";
+
+public fn first(value: u8) -> result: u8 pure doc "Preserves the first value.";
+
+public fn second(value: u8) -> result: u8 pure doc "Advances the second value.";
+"#;
+    const LIBRARY: &[u8] = br#"fn apply<interface Convert>(value: u8) -> result: u8 pure {
+  return Convert::convert(value: value);
+}
+
+fn first(value: u8) -> result: u8 pure {
+  return value;
+}
+
+fn second(value: u8) -> result: u8 pure {
+  return value +wrap 1_u8;
+}
+"#;
+    const ROOT_INTERFACE: &[u8] = br#"public fn bound() -> status: std::process::ExitStatus pure doc "Uses the supplied conversion.";
+
+public fn plain() -> status: std::process::ExitStatus pure doc "Uses ordinary calls only.";
+"#;
+    const ROOT: &str = r#"binding Selected : pkg::lib::Convert {
+  convert = pkg::lib::first;
+}
+
+binding Forwarded : pkg::lib::Convert {
+  convert = Selected::convert;
+}
+
+fn forward<interface pkg::lib::Convert>(value: u8) -> result: u8 pure {
+  return pkg::lib::apply::<pkg::lib::Convert>(value: value);
+}
+
+fn bound() -> status: std::process::ExitStatus pure {
+  let selected = forward::<Forwarded>(value: 3_u8);
+  let one = pkg::lib::first(value: selected);
+  let two = pkg::lib::second(value: one);
+  return std::process::exit_status(code: two);
+}
+
+fn plain() -> status: std::process::ExitStatus pure {
+  let one = pkg::lib::first(value: 3_u8);
+  let two = pkg::lib::second(value: one);
+  return std::process::exit_status(code: two);
+}
+"#;
+    let directory = CacheDirectory::new("function-actual-bindings");
+    let cache = directory.open();
+    let graph = crate::form_module_graph(
+        SourceInput::new("modules.wfg", GRAPH),
+        CompilerLimits::default(),
+    )
+    .expect("the graph forms");
+    let build = |root: &str, entry: &str| {
+        let records = [
+            ("lib/module.wfm", INTERFACE),
+            ("lib/apply.wf", LIBRARY),
+            ("module.wfm", ROOT_INTERFACE),
+            ("main.wf", root.as_bytes()),
+        ];
+        let inputs = module_inputs(&graph, &records);
+        let cached = super::build_module_entry(
+            &graph,
+            &inputs,
+            super::ModuleEntry::Named(entry),
+            CompilerLimits::default(),
+            OverlapLowering::Off,
+            Some(&cache),
+        )
+        .expect("the cached entry builds");
+        let cold = super::compile_module_program(
+            &graph,
+            &inputs,
+            super::ModuleEntry::Named(entry),
+            CompilerLimits::default(),
+            OverlapLowering::Off,
+        )
+        .expect("the cold entry builds");
+        assert_eq!(cached.0, cold, "cached and cold selected calls agree");
+        cached
+    };
+    let selected_call = |module: &crate::LlvmModule, name: &str| {
+        let body = module
+            .lines()
+            .skip_while(|line| {
+                !line.starts_with("define ") || !line.contains("@wf_lib.apply$instance$")
+            })
+            .take_while(|line| *line != "}")
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(body.contains(&format!("call i8 @wf_{name}(")), "{body}");
+    };
+    let (bound, reused) = build(ROOT, "bound");
+    assert!(!reused);
+    selected_call(&bound, "lib.first");
+    assert!(build(ROOT, "bound").1);
+    let (plain, reused) = build(ROOT, "plain");
+    assert!(!reused);
+    assert!(!plain.contains("@wf_lib.apply$instance$"));
+    let edited = ROOT.replace("convert = pkg::lib::first;", "convert = pkg::lib::second;");
+    let (changed, reused) = build(&edited, "bound");
+    assert!(!reused, "the binding context invalidates the entry cache");
+    selected_call(&changed, "lib.second");
+    assert!(build(&edited, "bound").1);
+    assert!(
+        build(ROOT, "bound").1,
+        "reverting reuses the original module"
+    );
+    let fragment = |module: &crate::LlvmModule| {
+        crate::split_module(module, crate::FragmentGranularity::Function)
+            .expect("module splits")
+            .into_iter()
+            .find(|fragment| fragment.contains("define i8 @wf_lib.first("))
+            .expect("the first definition has a fragment")
+    };
+    assert_eq!(
+        super::content_digest(fragment(&bound).as_bytes()),
+        super::content_digest(fragment(&changed).as_bytes()),
+        "a binding-only edit preserves an unchanged concrete function's fragment"
+    );
+}
+
 /// [MOD-9] a module program's entry build reports the permission ledger of
 /// its whole composition, a line from a module other than the entry's
 /// included, and emits the module the same build without the ledger emits.

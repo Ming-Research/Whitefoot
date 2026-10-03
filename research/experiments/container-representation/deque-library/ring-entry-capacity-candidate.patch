@@ -1,0 +1,106 @@
+--- a/compiler/src/backend/emitter.rs
++++ b/compiler/src/backend/emitter.rs
+@@ -193,6 +193,6 @@
+-    emit_llvm_with_window_address_facts(program, target, WindowAddressFacts::Emit)
+-}
+-
+-/// Controls only the optional fact about a window's normalized address
+-/// operand. Withholding it is a test observation over the same checked IR,
+-/// target qualification and ordinary lowering.
++    emit_llvm_with_window_facts(program, target, WindowFacts::Emit)
++}
++
++/// Controls only optional window facts. Withholding either family is a test
++/// observation over the same checked IR, target qualification and ordinary
++/// lowering; production emits both through the one ordinary path.
+@@ -200 +200 @@
+-pub(super) enum WindowAddressFacts {
++pub(super) enum WindowFacts {
+@@ -202,0 +203,2 @@
++    AddressOnly,
++    #[cfg(test)]
+@@ -206 +208,17 @@
+-pub(super) fn emit_llvm_with_window_address_facts(
++impl WindowFacts {
++    const fn address(self) -> bool {
++        match self {
++            Self::Emit => true,
++            #[cfg(test)]
++            Self::AddressOnly => true,
++            #[cfg(test)]
++            Self::Withhold => false,
++        }
++    }
++
++    const fn entry_capacity(self) -> bool {
++        matches!(self, Self::Emit)
++    }
++}
++
++pub(super) fn emit_llvm_with_window_facts(
+@@ -209 +227 @@
+-    window_address_facts: WindowAddressFacts,
++    window_facts: WindowFacts,
+@@ -253 +271 @@
+-                window_address_facts,
++                window_facts,
+@@ -278 +296 @@
+-                    window_address_facts,
++                    window_facts,
+@@ -312 +330 @@
+-                        window_address_facts,
++                        window_facts,
+@@ -1174 +1192 @@
+-    window_address_facts: WindowAddressFacts,
++    window_facts: WindowFacts,
+@@ -1251 +1269 @@
+-    window_address_facts: WindowAddressFacts,
++    window_facts: WindowFacts,
+@@ -1268 +1286 @@
+-            window_address_facts,
++            window_facts,
+@@ -1316 +1334 @@
+-            window_address_facts,
++            window_facts,
+--- a/compiler/src/backend/emitter/runs.rs
++++ b/compiler/src/backend/emitter/runs.rs
+@@ -539 +539,20 @@
+-                self.wrap_offset(shape, run_type, run, &head, &offset)
++                if row == IrBoundary::PlaceBack && shape.shape == IrWindowShape::Ring {
++                    let capacity = self.run_capacity(shape, run_type, run)?;
++                    if self.window_facts.entry_capacity() {
++                        // The checked PRE-1 body contains this one placement.
++                        // FN-8 discharged entry len < cap before the call;
++                        // these are its entry operands, before any store.
++                        // Zero-stride capacity may exceed i64::MAX, and a
++                        // nonzero head may still require physical wrapping.
++                        self.intrinsics.insert(IntrinsicDeclaration::Assume);
++                        self.output.symbol("llvm.assume");
++                        writeln!(
++                            self.output,
++                            "  {offset}.entry_room = icmp ult i64 {offset}, {capacity}\n  call void @llvm.assume(i1 {offset}.entry_room)",
++                        )
++                        .map_err(|_| BackendFailure::TextEmission)?;
++                    }
++                    self.wrap_offset_at_capacity(&head, &offset, &capacity)
++                } else {
++                    self.wrap_offset(shape, run_type, run, &head, &offset)
++                }
+@@ -558,0 +578,9 @@
++        self.wrap_offset_at_capacity(base, offset, &capacity)
++    }
++
++    fn wrap_offset_at_capacity(
++        &mut self,
++        base: &str,
++        offset: &str,
++        capacity: &str,
++    ) -> Result<String, BackendFailure> {
+@@ -595,2 +623,2 @@
+-    /// The run's capacity: a `FixedVector`'s type constant, or a `Vector`'s
+-    /// own descriptor word.
++    /// A Slots or Ring capacity: its type constant for fixed storage, or
++    /// its own descriptor word for runtime-capacity storage.
+@@ -643 +671 @@
+-        if self.window_address_facts == WindowAddressFacts::Emit {
++        if self.window_facts.address() {

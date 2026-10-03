@@ -6,12 +6,21 @@ CLANG ?= clang
 BUILD ?= .build
 SAMPLES ?= $(BUILD)/measurements.csv
 SOURCES := priority-library.wf
+STD_SOURCES := $(wildcard $(ROOT)/lib/std/collections/priority_queue/* $(ROOT)/lib/std/process/*)
 .DELETE_ON_ERROR:
 .DEFAULT_GOAL := check
 
 include $(ROOT)/compiler/runtime.mk
 
-.PHONY: native-check build check measure events summarize clean
+ECO_FAMILY := priority
+ECO_RUST_SOURCE := priority-rust.rs
+ECO_CPP_SOURCE := priority-cpp.cc
+include ../ecosystem.mk
+ECO_WORK ?= 16
+.SECONDARY: $(foreach mode,timed account,$(addprefix $(ECO_BUILD)/,driver-$(mode).o whitefoot-$(mode).o cpp-$(mode).o rust-$(mode).a))
+
+.PHONY: native-check build check measure events summarize clean \
+        ecosystem-build ecosystem-check ecosystem-account ecosystem-measure
 
 $(BUILD):
 	mkdir -p $@
@@ -24,7 +33,7 @@ native-check: $(addprefix $(BUILD)/priority-native-,normal$(EXE) retained$(EXE))
 	$(BUILD)/priority-native-normal$(EXE) check
 	$(BUILD)/priority-native-retained$(EXE) check
 
-$(BUILD)/priority-library.raw.ll: $(SOURCES) $(WHITEFOOTC) Makefile | $(BUILD)
+$(BUILD)/priority-library.raw.ll: $(SOURCES) $(STD_SOURCES) $(WHITEFOOTC) Makefile | $(BUILD)
 	$(WHITEFOOTC) --emit-llvm $(SOURCES) -o $@
 
 $(BUILD)/priority-library-normal.ll: $(BUILD)/priority-library.raw.ll Makefile
@@ -33,7 +42,7 @@ $(BUILD)/priority-library-normal.ll: $(BUILD)/priority-library.raw.ll Makefile
 	  awk '/^define .* @wf_priority_cost_(word|record)_trace\(/ { if (sub(/ #0 [{]$$/, " noinline #0 {") != 1) exit 1; traces++ } { print } END { if (traces != 2) exit 1 }' > $@
 
 $(BUILD)/priority-library-retained.ll: $(BUILD)/priority-library-normal.ll Makefile
-	awk '/^define .* @(wf_priority_queue_|wf_std\.collections\.priority_queue\.priority_queue_)(new|len|reserve|push|peek|pop|replace_top|heapify|drain|free)[$$(]/ || /^define .* @wf_priority_cost_cleanup[$$(]/ || /^define .* @wf_priority_cost_(word|record)_(make|accept|compare|observe)\(/ \
+	awk '(/^define .* @"?wf_(std[.]collections[.]priority_queue[.])?priority_queue_(new|len|reserve|push|peek|pop|replace_top|heapify|drain|free)[$$(]/ || /^define .* @"?wf_priority_cost_cleanup[$$(]/ || /^define .* @wf_priority_cost_(word|record)_(make|accept|compare|observe)\(/) && !/[.]body"?[(]/ \
 	  { if (sub(/ #0 [{]$$/, " noinline #0 {") != 1) exit 1; retained++ } \
 	  { print } END { if (retained == 0) exit 1; print "Retained queue/callback definitions: " retained > "/dev/stderr" }' $< > $@
 
@@ -57,7 +66,7 @@ check: native-check build
 	$(BUILD)/priority-costs-normal$(EXE) check
 	$(BUILD)/priority-costs-retained$(EXE) check
 	@set -eu; for operation in new len reserve push peek pop replace_top heapify drain free; do \
-	  grep -Eq "call .*@\"?(wf_priority_queue_|wf_std\\.collections\\.priority_queue\\.priority_queue_)$${operation}"'[$$(]' $(BUILD)/priority-library-retained.opt.ll; \
+	  grep -Eq "call .*@\"?wf_(std[.]collections[.]priority_queue[.])?priority_queue_$${operation}"'[$$(]' $(BUILD)/priority-library-retained.opt.ll; \
 	done; \
 	for operation in new len reserve push peek pop replace_top heapify drain free; do \
 	  grep -Eq "call .*@(word|record)_(swap|hole)_$${operation}[.(]" $(BUILD)/control-retained.opt.ll; \
@@ -68,7 +77,7 @@ check: native-check build
 	done; \
 	grep -Eq 'call .*@"?wf_priority_cost_cleanup[$$(]' $(BUILD)/priority-library-retained.opt.ll; \
 	echo 'Public queue operations and payload callbacks survive in both retained modules'; \
-	wf=$$(grep -Ec 'call .*@"?(wf_priority_queue_|wf_std\.collections\.priority_queue\.priority_queue_)(child|make_room|sift_rise|sift_sink)' $(BUILD)/priority-library-retained.opt.ll || true); \
+	wf=$$(grep -Ec 'call .*@"?wf_(std[.]collections[.]priority_queue[.])?priority_queue_(child|make_room|sift_rise|sift_sink)' $(BUILD)/priority-library-retained.opt.ll || true); \
 	control=$$(grep -Ec 'call .*@(word|record)_(swap|hole)_(child|make_room|rise|sink)' $(BUILD)/control-retained.opt.ll || true); \
 	echo "Ordinarily optimized private helper call sites: WF=$$wf C=$$control"
 
@@ -107,6 +116,54 @@ summarize:
 	    END { if (NR > 0) emit() }' $(BUILD)/summary-sorted.csv > $(BUILD)/medians.csv; \
 	  rm $(BUILD)/summary-input.csv $(BUILD)/summary-sorted.csv; \
 	  echo 'Grouped medians: $(BUILD)/medians.csv'
+
+# Practical builds preserve only the complete-trace call boundary. Queue
+# operations, callbacks and native container algorithms optimize ordinarily.
+# Timed WF/C allocations remain plain malloc/free; only accounting redirects.
+$(ECO_BUILD)/priority-library-timed.ll: $(BUILD)/priority-library.raw.ll Makefile $(ECO_CONFIG) | $(ECO_BUILD)
+	sed 's/@main(/@wf_fixture_main(/g' $< | \
+	  awk '/^define .* @wf_priority_cost_(word|record)_trace\(/ { if (sub(/ #0 [{]$$/, " noinline #0 {") != 1) exit 1; traces++ } { print } END { if (traces != 2) exit 1 }' > $@
+
+$(ECO_BUILD)/priority-library-account.ll: $(ECO_BUILD)/priority-library-timed.ll Makefile
+	sed -e 's/@malloc(/@wf_cost_allocate(/g' -e 's/@free(/@wf_cost_release(/g' \
+	    -e 's/^declare ptr @wf_cost_allocate(i64)$$/declare noalias nonnull ptr @wf_cost_allocate(i64)/' $< > $@
+
+$(ECO_BUILD)/whitefoot-%.o: $(ECO_BUILD)/priority-library-%.ll $(ECO_CONFIG)
+	$(CLANG) $(ECO_LDFLAGS) -Wno-override-module -x ir -c $< -o $@
+
+$(ECO_BUILD)/driver-%.o: priority-costs.c Makefile $(ECO_CONFIG) | $(ECO_BUILD)
+	@set -eu; case '$*' in timed) account= ;; account) account=-DACCOUNT_ONLY ;; *) exit 1 ;; esac; \
+	  $(CLANG) $(ECO_CPPFLAGS) $(ECO_CFLAGS) -DWITH_WF $$account -c $< -o $@
+
+$(ECO_BUILD)/priority-%$(EXE): $(ECO_BUILD)/driver-%.o $(ECO_BUILD)/whitefoot-%.o \
+                             $(ECO_BUILD)/cpp-%.o $(ECO_BUILD)/rust-%.a $(NATIVE_OBJECTS) $(ECO_CONFIG)
+	$(CXX) $(ECO_LDFLAGS) $(filter %.o %.a,$^) $(NATIVE_LINK_FLAGS) $(ECO_RUST_LINK_FLAGS) -o $@
+
+ecosystem-build: $(ECO_BUILD)/priority-timed$(EXE) $(ECO_BUILD)/priority-account$(EXE)
+
+ecosystem-check: ecosystem-build
+	$(ECO_BUILD)/priority-timed$(EXE) check
+	$(ECO_BUILD)/priority-account$(EXE) check
+	@! grep -q 'wf_cost_allocate\|wf_cost_release\|wf_ecosystem_note_' $(ECO_BUILD)/priority-library-timed.ll
+	@grep -Eq '^declare noalias nonnull ptr @wf_cost_allocate\(i64\)' $(ECO_BUILD)/priority-library-account.ll
+	@set -eu; set +e; $(ECO_BUILD)/priority-timed$(EXE) negative-checksum > $(ECO_BUILD)/negative-checksum.log 2>&1; status=$$?; set -e; \
+	  test "$$status" = 1; grep -Fx 'priority library costs: independent sorted-sequence checksum' $(ECO_BUILD)/negative-checksum.log
+	@set -eu; set +e; $(ECO_BUILD)/priority-account$(EXE) negative-accounting > $(ECO_BUILD)/negative-accounting.log 2>&1; status=$$?; set -e; \
+	  test "$$status" = 1; grep -Fx 'priority library costs: every observed backing request is released or reallocated' $(ECO_BUILD)/negative-accounting.log
+
+ecosystem-account: ecosystem-build
+	$(ECO_BUILD)/priority-account$(EXE) account > '$(ECO_ACCOUNT)'
+	@echo 'Allocation observations: $(ECO_ACCOUNT)'
+
+ecosystem-measure: ecosystem-build
+	@set -eu; output='$(ECO_SAMPLE_FILE)'; first=yes; \
+	  for cohort in 0 1; do \
+	    sample_file='$(ECO_BUILD)/cohort-'$$cohort.csv; \
+	    $(ECO_BUILD)/priority-timed$(EXE) measure $$cohort $(ECO_WORK) > "$$sample_file"; \
+	    if test "$$first" = yes; then head -n 1 "$$sample_file" > "$$output"; first=no; fi; \
+	    awk 'NR > 1' "$$sample_file" >> "$$output"; \
+	  done; \
+	  echo "Raw ecosystem samples: $$output"
 
 clean:
 	rm -rf $(BUILD)

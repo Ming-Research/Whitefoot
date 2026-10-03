@@ -131,3 +131,154 @@ fn generic_instances_forward_across_ordered_source_records() {
     assert!(output.stdout.is_empty());
     assert!(output.stderr.is_empty());
 }
+
+#[test]
+fn function_actuals_and_ordinary_calls_share_definitions_and_execute() {
+    let source = br#"fn apply<fn transform(value: u64) -> result: u64 pure>(value: u64) -> result: u64 pure {
+  return transform(value: value);
+}
+
+fn supplied(value: u64) -> result: u64 pure {
+  return value +wrap 1_u64;
+}
+
+fn ordinary(value: u64) -> result: u64 pure {
+  return value +wrap 1_u64;
+}
+
+fn recursive(value: u64) -> result: u64 pure {
+  if value == 0_u64 {
+    return 0_u64;
+  }
+  let next = value - 1_u64;
+  let previous = recursive(value: next);
+  return previous +wrap value;
+}
+
+fn looping(value: u64) -> result: u64 pure {
+  let total = value;
+  for (i in 0_u64..64_u64) {
+    set total = total +wrap i;
+  }
+  return total;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let bound = apply::<fn supplied>(value: 7_u64);
+  let direct = supplied(value: bound);
+  let control = ordinary(value: direct);
+  let sum = apply::<fn recursive>(value: control);
+  let total = apply::<fn looping>(value: sum);
+  if total != 2071_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let module = compile(source);
+    assert_eq!(
+        module
+            .lines()
+            .filter(|line| public_definition(line, "@wf_supplied("))
+            .count(),
+        1,
+        "ordinary and bound use share one definition"
+    );
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+    assert!(output.stdout.is_empty());
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn function_actuals_survive_group_forwarding_and_structured_fragments() {
+    let source = br#"struct Packet {
+  value: u64;
+}
+
+interface Builder {
+  fn make(value: u64) -> result: Packet pure;
+}
+
+fn make_packet(value: u64) -> result: Packet pure {
+  return Packet(value: value);
+}
+
+binding First : Builder {
+  make = make_packet;
+}
+
+binding Second : Builder {
+  make = make_packet;
+}
+
+fn gather<interface Builder>(value: u64) -> result: Packet pure {
+  return Builder::make(value: value);
+}
+
+fn forward<interface Builder>(value: u64) -> result: Packet pure {
+  return gather::<Builder>(value: value);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let first = forward::<First>(value: 11_u64);
+  let second = forward::<Second>(value: first.value);
+  if second.value != 11_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let module = crate::compile(
+        &[crate::SourceInput::new("groups.wf", source)],
+        crate::CompilerLimits::default(),
+    )
+    .expect("groups compile");
+    let llvm = module.as_str();
+    assert_eq!(llvm, compile(source), "emission is deterministic");
+    for symbol in ["@wf_make_packet(", "@wf_make_packet.body("] {
+        let definitions = llvm
+            .lines()
+            .filter(|line| line.starts_with("define ") && line.contains(symbol))
+            .collect::<Vec<_>>();
+        assert_eq!(definitions.len(), 1, "{symbol}: {definitions:?}");
+    }
+    for name in ["gather", "forward"] {
+        let definitions = llvm
+            .lines()
+            .filter(|line| public_definition(line, &format!("@wf_{name}$instance$")))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            definitions.len(),
+            1,
+            "equivalent bindings share one {name}: {definitions:?}"
+        );
+    }
+    let decoded = crate::LlvmModule::decode(&module.encode()).expect("structured module decodes");
+    assert_eq!(decoded, module);
+    for granularity in [
+        crate::FragmentGranularity::Function,
+        crate::FragmentGranularity::Module,
+    ] {
+        let fragments = crate::split_module(&decoded, granularity).expect("module splits");
+        let definitions = fragments
+            .iter()
+            .flat_map(|fragment| fragment.lines())
+            .filter(|line| {
+                line.starts_with("define ")
+                    && (line.contains("@wf_make_packet(") || line.contains("@wf_make_packet.body("))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(definitions.len(), 2, "{definitions:?}");
+        assert!(
+            fragments.iter().any(|fragment| fragment
+                .lines()
+                .any(|line| line.starts_with("declare ") && line.contains("@wf_make_packet("))),
+            "a caller's fragment declares its concrete callee"
+        );
+    }
+    let output = compile_and_run(llvm);
+    assert!(output.status.success(), "{output:?}");
+    assert!(output.stdout.is_empty());
+    assert!(output.stderr.is_empty());
+}

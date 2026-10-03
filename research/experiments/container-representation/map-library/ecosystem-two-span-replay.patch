@@ -1,0 +1,225 @@
+--- a/hash_map/hash-map.wf
++++ b/hash_map/hash-map.wf
+@@ -43,14 +42,0 @@
+-fn hash_map_probe(home: u64, step: u64, count: u64) -> index: u64 pure contract {
+-  requires home < count;
+-  requires step < count;
+-  ensures index < count;
+-} {
+-  let remaining = count - home;
+-  if step >= remaining {
+-    let wrapped = step - remaining;
+-    return wrapped;
+-  }
+-  let straight = home + step;
+-  return straight;
+-}
+-
+@@ -80 +66 @@
+-  for (step in 0_u64..count) {
++  if count > 0_u64 {
+@@ -82,12 +68,21 @@
+-    let index = hash_map_probe(home: home, step: step, count: count);
+-    let action = hash_map_action::<HashMapKey<K, E>, V>(slot: &map^.cells.inner[index], key: key, env: env);
+-    match action {
+-      HashMapMatch() => {
+-        return Ok<u64, unit>(value: index);
+-      }
+-      HashMapStop() => {
+-        return Err<u64, unit>(error: unit);
+-      }
+-      HashMapSkip() => {
+-      }
+-      HashMapMiss() => {
++    for (span in 0_u64..2_u64) {
++      let start = 0_u64;
++      let limit = home;
++      if span == 0_u64 {
++        set start = home;
++        set limit = count;
++      }
++      for (index in start..limit) {
++        let action = hash_map_action::<HashMapKey<K, E>, V>(slot: &map^.cells.inner[index], key: key, env: env);
++        match action {
++          HashMapMatch() => {
++            return Ok<u64, unit>(value: index);
++          }
++          HashMapStop() => {
++            return Err<u64, unit>(error: unit);
++          }
++          HashMapSkip() => {
++          }
++          HashMapMiss() => {
++          }
++        }
+@@ -103 +98 @@
+-  for (step in 0_u64..count) {
++  if count > 0_u64 {
+@@ -105,14 +100,23 @@
+-    let index = hash_map_probe(home: home, step: step, count: count);
+-    let slot = &map^.cells.inner[index];
+-    match slot^ {
+-      HashMapFilled(key: saved_key, value: saved_value) => {
+-        let equal = HashMapKey::equal(env: key_env, left: saved_key, right: key);
+-        if equal {
+-          let observed = observe(env: visit_env, key: saved_key, value: saved_value);
+-          return Ok<R, unit>(value: move observed);
+-        }
+-      }
+-      HashMapVacant() => {
+-        return Err<R, unit>(error: unit);
+-      }
+-      HashMapDeleted() => {
++    for (span in 0_u64..2_u64) {
++      let start = 0_u64;
++      let limit = home;
++      if span == 0_u64 {
++        set start = home;
++        set limit = count;
++      }
++      for (index in start..limit) {
++        let slot = &map^.cells.inner[index];
++        match slot^ {
++          HashMapFilled(key: saved_key, value: saved_value) => {
++            let equal = HashMapKey::equal(env: key_env, left: saved_key, right: key);
++            if equal {
++              let observed = observe(env: visit_env, key: saved_key, value: saved_value);
++              return Ok<R, unit>(value: move observed);
++            }
++          }
++          HashMapVacant() => {
++            return Err<R, unit>(error: unit);
++          }
++          HashMapDeleted() => {
++          }
++        }
+@@ -131 +135 @@
+-  for (step in 0_u64..count) {
++  if count > 0_u64 {
+@@ -133,14 +137,23 @@
+-    let index = hash_map_probe(home: home, step: step, count: count);
+-    let slot = &map^.cells.inner[index];
+-    match slot^ {
+-      HashMapFilled(key: saved_key, value: saved_value) => {
+-        let equal = HashMapKey::equal(env: key_env, left: saved_key, right: key);
+-        if equal {
+-          let updated = update(env: edit_env, key: saved_key, value: saved_value);
+-          return Ok<R, unit>(value: move updated);
+-        }
+-      }
+-      HashMapVacant() => {
+-        return Err<R, unit>(error: unit);
+-      }
+-      HashMapDeleted() => {
++    for (span in 0_u64..2_u64) {
++      let start = 0_u64;
++      let limit = home;
++      if span == 0_u64 {
++        set start = home;
++        set limit = count;
++      }
++      for (index in start..limit) {
++        let slot = &map^.cells.inner[index];
++        match slot^ {
++          HashMapFilled(key: saved_key, value: saved_value) => {
++            let equal = HashMapKey::equal(env: key_env, left: saved_key, right: key);
++            if equal {
++              let updated = update(env: edit_env, key: saved_key, value: saved_value);
++              return Ok<R, unit>(value: move updated);
++            }
++          }
++          HashMapVacant() => {
++            return Err<R, unit>(error: unit);
++          }
++          HashMapDeleted() => {
++          }
++        }
+@@ -183 +196 @@
+-  for @probe (step in 0_u64..count) {
++  if count > 0_u64 {
+@@ -185,19 +198,28 @@
+-    let index = hash_map_probe(home: home, step: step, count: count);
+-    let action = hash_map_action::<HashMapKey<K, E>, V>(slot: &map^.cells.inner[index], key: &key, env: env);
+-    match action {
+-      HashMapMatch() => {
+-        let replaced = hash_map_exchange::<K, V>(cells: &map^.cells, index: index, key: move key, value: move value);
+-        return move replaced;
+-      }
+-      HashMapStop() => {
+-        if available == count {
+-          set available = index;
+-        }
+-        break @probe;
+-      }
+-      HashMapSkip() => {
+-        if available == count {
+-          set available = index;
+-        }
+-      }
+-      HashMapMiss() => {
++    for @probe (span in 0_u64..2_u64) {
++      let start = 0_u64;
++      let limit = home;
++      if span == 0_u64 {
++        set start = home;
++        set limit = count;
++      }
++      for (index in start..limit) {
++        let action = hash_map_action::<HashMapKey<K, E>, V>(slot: &map^.cells.inner[index], key: &key, env: env);
++        match action {
++          HashMapMatch() => {
++            let replaced = hash_map_exchange::<K, V>(cells: &map^.cells, index: index, key: move key, value: move value);
++            return move replaced;
++          }
++          HashMapStop() => {
++            if available == count {
++              set available = index;
++            }
++            break @probe;
++          }
++          HashMapSkip() => {
++            if available == count {
++              set available = index;
++            }
++          }
++          HashMapMiss() => {
++          }
++        }
+@@ -269 +291 @@
+-          for @vacancy (step in 0_u64..count) {
++          if count > 0_u64 {
+@@ -271,11 +293,21 @@
+-            let index = hash_map_probe(home: home, step: step, count: count);
+-            let available = hash_map_is_available::<K, V>(slot: &map^.cells.inner[index]);
+-            if available {
+-              let offered = take_back(window: &pending);
+-              let HashMapPair(key: offered_key, value: offered_value) = move offered;
+-              let exchanged = hash_map_exchange::<K, V>(cells: &map^.cells, index: index, key: move offered_key, value: move offered_value);
+-              match move exchanged {
+-                HashMapInserted() => {
+-                }
+-                HashMapReturned(reason: returned_reason, pair: returned_pair) => {
+-                  place_back(window: &pending, value: move returned_pair);
++            for @vacancy (span in 0_u64..2_u64) {
++              let start = 0_u64;
++              let limit = home;
++              if span == 0_u64 {
++                set start = home;
++                set limit = count;
++              }
++              for (index in start..limit) {
++                let available = hash_map_is_available::<K, V>(slot: &map^.cells.inner[index]);
++                if available {
++                  let offered = take_back(window: &pending);
++                  let HashMapPair(key: offered_key, value: offered_value) = move offered;
++                  let exchanged = hash_map_exchange::<K, V>(cells: &map^.cells, index: index, key: move offered_key, value: move offered_value);
++                  match move exchanged {
++                    HashMapInserted() => {
++                    }
++                    HashMapReturned(reason: returned_reason, pair: returned_pair) => {
++                      place_back(window: &pending, value: move returned_pair);
++                    }
++                  }
++                  break @vacancy;
+@@ -284 +315,0 @@
+-              break @vacancy;

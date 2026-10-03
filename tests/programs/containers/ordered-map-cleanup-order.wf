@@ -1,0 +1,91 @@
+alias ExitStatus = std::process::ExitStatus;
+alias OrderedKey = std::collections::ordered_map::OrderedKey;
+alias OrderedMap = std::collections::ordered_map::OrderedMap;
+alias OrderedPair = std::collections::ordered_map::OrderedPair;
+alias OrderedPut = std::collections::ordered_map::OrderedPut;
+alias exit_status = std::process::exit_status;
+alias ordered_map_new = std::collections::ordered_map::ordered_map_new;
+alias ordered_map_put = std::collections::ordered_map::ordered_map_put;
+alias ordered_map_free = std::collections::ordered_map::ordered_map_free;
+
+struct OrderedCleanupPayload {
+  key: u64;
+}
+
+nodrop struct OrderedCleanupValue {
+  child: Box<OrderedCleanupPayload>;
+}
+
+struct OrderedCleanupLedger {
+  cursor: u64;
+  failures: u64;
+}
+
+fn ordered_cleanup_compare(env: &unit, left: &u64, right: &u64) -> result: i32 reads(left), reads(right) {
+  if left^ < right^ {
+    return -1_i32;
+  }
+  if left^ > right^ {
+    return 1_i32;
+  }
+  return 0_i32;
+}
+
+binding OrderedCleanupKey : OrderedKey<u64, unit> {
+  compare = ordered_cleanup_compare;
+}
+
+fn ordered_cleanup_consume(env: &OrderedCleanupLedger, key: u64, value: OrderedCleanupValue) -> result: unit writes(env) {
+  doc "Ascending keys 0 through 15 split into root 7, left 0 through 6 and right 8 through 15. The recorded cleanup visits root 7, then the right leaf backwards, then the left leaf backwards.";
+  let OrderedCleanupValue(child: child) = move value;
+  let payload_key = child.inner.key;
+  if payload_key != key {
+    set env^.failures = env^.failures +wrap 1_u64;
+  }
+  let cursor = env^.cursor;
+  if cursor < 16_u64 {
+    let expected = if cursor == 0_u64 {
+      give 7_u64;
+    } else if cursor <= 8_u64 {
+      give 16_u64 - cursor;
+    } else {
+      give 15_u64 - cursor;
+    }
+    if key != expected {
+      set env^.failures = env^.failures +wrap 1_u64;
+    }
+  } else {
+    set env^.failures = env^.failures +wrap 1_u64;
+  }
+  set env^.cursor = cursor +wrap 1_u64;
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  let ledger = OrderedCleanupLedger(cursor: 0_u64, failures: 0_u64);
+  let order = unit;
+  let map = ordered_map_new::<u64, OrderedCleanupValue, 16>();
+  for (key in 0_u64..16_u64) {
+    let payload = OrderedCleanupPayload(key: key);
+    let child = box_new::<OrderedCleanupPayload>(value: payload);
+    let value = OrderedCleanupValue(child: move child);
+    let outcome = ordered_map_put::<OrderedCleanupKey, OrderedCleanupValue, 16>(map: &map, key: key, value: move value, env: &order);
+    match move outcome {
+      OrderedInserted() => {
+      }
+      OrderedReturned(reason: returned_reason, pair: returned_pair) => {
+        let OrderedPair(key: returned_key, value: returned_value) = move returned_pair;
+        ordered_cleanup_consume(env: &ledger, key: returned_key, value: move returned_value);
+        set ledger.failures = ledger.failures +wrap 1_u64;
+      }
+    }
+  }
+  ordered_map_free::<u64, OrderedCleanupValue, OrderedCleanupLedger, fn ordered_cleanup_consume, 16>(map: move map, env: &ledger);
+  if ledger.cursor != 16_u64 {
+    return exit_status(code: 1_u8);
+  }
+  if ledger.failures != 0_u64 {
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 0_u8);
+}

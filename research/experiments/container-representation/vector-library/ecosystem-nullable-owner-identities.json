@@ -1,0 +1,206 @@
+{
+  "experiment": "Nullable physical owner for zero-extent runtime Array/Slots/Ring; refused after full Vector pair",
+  "native": {
+    "account_driver_define": "NULLABLE_WF_ZERO_OWNER_V1",
+    "account_driver_delta": "nullable-zero-owner-account.patch",
+    "account_driver_delta_sha256": "78e434582a58f41899986440409ad86f0634a5b8d6b6c37b14f78617223fa4e6",
+    "account_driver_source": "vector-costs.c",
+    "account_driver_source_sha256": "ff6e158d54c338a1e48f8bcbf5ec7f017bd0d53259eca4ff746a84f361b62e40",
+    "account_image_sha256": {
+      "candidate": "f456a2d6a065fd9a3532b72036672a8cc5d8f5a1c4cddca1656bf21b650d7a27",
+      "control": "af469d711272fe8e12a2c558e6506313fb329563b05f77ffa3aaba6e9b3435cb"
+    },
+    "host_clang_path": "/usr/bin/clang",
+    "host_clang_sha256": "b8763cf250e607a778bb4603cecb5b90338814d0a3dfcba0d57b1de242f610e9",
+    "llvm_optimization_argv": [
+      "/usr/bin/clang",
+      "-O3",
+      "-Wno-override-module",
+      "-x",
+      "ir",
+      "-S",
+      "ARM.timed.ll",
+      "-o",
+      "ARM.s"
+    ],
+    "ordinary_checks": "Both timed and account images pass 1260 configurations x seven variants; four checksum and two cleanup faults exit 1; 294 accounting rows agree with source-derived deltas.",
+    "timed_image_sha256": {
+      "candidate": "7f19f9f53d6c4a105053bc974c2087449a3a4c8629a4837c6013e2a43d725e19",
+      "control": "e5dec48cf7b3144fbea89f6c5d4db81698fa54c095ab9ac1bc785e23fc1fc433"
+    },
+    "timed_ir_sha256": {
+      "candidate": "cd4ad45820746acb27757381e09ae88fa6da414d68cf622074dfd6a8223411cf",
+      "control": "4466a9f68575ac8dea1599d5c179e14ea55ac2b0a66a298b41d03528a0f6bd85"
+    },
+    "unchanged_link_input_sha256": {
+      "peer/cpp-account.o": "94a69e9f50a1ba182bdc130aca291bdc2d2f1525dc713874e47361acd64c6bfb",
+      "peer/cpp-timed.o": "d3c51cf441054e8ba6bc337ccf64f90ecce78df770f1333453e7c3fa107ebc7f",
+      "peer/driver-account.o": "75a7dcbe11086b29f352c4d194736cf8eba4a2b154c19bbb85731514e2805b32",
+      "peer/driver-timed.o": "2bd0ff0962381a90f486bd8682196efea3214b7d9c0969bf58ec2380f3e9f77d",
+      "peer/rust-account.a": "f661e352339ea993b53870dae435602c0c39f466480b3d3f10e46ab8a94e28c5",
+      "peer/rust-timed.a": "7fffbc66201cd03866f7540451c551c417bf04f2ecb1467699adfac05260ced6",
+      "runtime/completion/bridge.o": "cdd9dc3e067943096f3324e1eb0169513bfa2abd73c4c53e65abbea9a408c728",
+      "runtime/completion/file_adapter.o": "5cb12d765edebbef18ddbe0f40368f1c79e1c877883f87020f431c7bcbad754d",
+      "runtime/completion/file_posix.o": "3dd03e94cef7a789a2dbe2e69fe5d83972f02cd0b92d99e36fbfbeb5e519eadb",
+      "runtime/completion/linux_io_uring.o": "e389769ac8c9f38af9cd00e5bc5d56d3c180dff5985fb81ddfff63dfa89eb453",
+      "runtime/completion/runtime.o": "75cb971977625c9b05adcf74b14989544ccbf61b0a81fe4843ec72226eb36c61",
+      "runtime/completion/wait_host.o": "d95b24c2367aa6dcf60a9d9e4e36acf79fa502d4ded856f244c6f4afcf28aa10",
+      "runtime/ordinary_values.o": "27fb1587c0f16e7c8150595b90065270344abbafa13ea81f4fa1a773f9954eb9",
+      "runtime/ordinary_values_ir.o": "c537ffa1ef86ef11ba76b749870793dc3b13afd7792a62a423e98a52feec3a06",
+      "runtime/sched/core.o": "0655633c69666fcce21bf67258101aedb49c914fc50a6cc8edbfe22a8315e645",
+      "runtime/sched/entry.o": "e04734d7a1ddbe9083b47570ca2854963803b88a7197628bed2ca66cb4924d5c",
+      "runtime/sched/prim_host.o": "c3a5140b8221a57d27a510995ae37c7b33a64ebc87ec9f9286b99ece649bce45",
+      "runtime/wf_floor.o": "8342e7ea0b8d6a0817d543e8c05e807c96527393945e95597718ba9a27ce722d"
+    },
+    "whitefoot_emit_argv": [
+      "whitefootc",
+      "--emit-llvm",
+      "vector-library.wf",
+      "-o",
+      "ARM.raw.ll"
+    ]
+  },
+  "read_fallback": {
+    "base_timed_ir_sha256": "cd4ad45820746acb27757381e09ae88fa6da414d68cf622074dfd6a8223411cf",
+    "native_result": "Failed registered positive-append promotion/frame criterion; no linked behavior or timing run.",
+    "patch": "nullable-zero-read-fallback.patch",
+    "patch_sha256": "b39bc24ce5cf673306a26a728d8d1209e528f3299f891bcc7b68190e16f9a181",
+    "scope": "IR-only private immutable zero-header READ selection, not the compiler patch",
+    "variant_assembly_sha256": "120b5adca39e4ea5fd31379c612f9907c1b56aaad3dd17e2e654e6a225963177",
+    "variant_timed_ir_sha256": "989ad050159e6181caf186c03aeed15a3d781063d7e7b791255f697777dce6a6"
+  },
+  "selected": false,
+  "source": {
+    "base_revision": "1226083e2375044483109c17bcc46a7c652f44bf",
+    "baseline_cli_sha256": "0118a8206ee7e811e7c903b6e7b340754c50107ff7e454aadb48751481dc9f74",
+    "candidate_cli_profile": "gate; jobs2",
+    "candidate_cli_sha256": "b826b6e90ccbfe6fd79f3a6478c34d521ec3571b40a24e4e227a25e45803c558",
+    "compiler_patch": "nullable-zero-owner.patch",
+    "compiler_patch_sha256": "dbe8a4c5c19bb32fa80a98b163a378b1a9a1ff14a7e130b1bdad1a680c1a59c0",
+    "fixture_status": "Published patch is the final repaired source. The gate/jobs2 CLI was built before fixture-only grammar/routing repairs; the focused test binary was rebuilt after them. Production emitter bytes used for Vector were unchanged.",
+    "patched_file_hashes": {
+      "compiler/src/backend/emitter.rs": {
+        "base": "ab565e9a90ce38184e7ade2e9118b6bf258099abe17cd35320927e87ce590799",
+        "candidate": "6850a2a694cb62555f975ebcfc8055e9d338ede1f7e0793719611e4a50110a85"
+      },
+      "compiler/src/backend/emitter/buffer.rs": {
+        "base": "0748cc852ba6fae70adc9c450122553143442c63cca5881b9313e255d0023690",
+        "candidate": "2421fdf2017450452e9bf90a93cd92dac3bc39e8bf53839fda9fdf0ec020405e"
+      },
+      "compiler/src/backend/emitter/cleanup.rs": {
+        "base": "fad04c978f06abdb46486200f361a376d0d4ffbee9d4137c7e85aabf6fc4d3dd",
+        "candidate": "c22ae22e3109f3c766e721bce1d37ea88fa8dac94d4878ef6216e5914b7a976e"
+      },
+      "compiler/src/backend/emitter/nullable_shapes.rs": {
+        "base": null,
+        "candidate": "359d7e987d6e195b4bf3c379af6e4ce79c551df82a1dc02b9a84fc704dc9b284"
+      },
+      "compiler/src/backend/emitter/parallel.rs": {
+        "base": "ae5cab439833bb9d29d3a8d68df1d57349aaf56166f53606c70435d0f0b3ddff",
+        "candidate": "afdf688f67b5c7686c0e310ac28a033ad58d907d0853631c2ea58e842011557c"
+      },
+      "compiler/src/backend/emitter/runs.rs": {
+        "base": "336cb8406e255bcc1374f5d113ecac8f066c309ec8628c59229e7036634751f7",
+        "candidate": "28c41c49498a9d796bcd3b8f0c56ab68396afef926cc4242ee742068e1b9aaf2"
+      },
+      "compiler/src/backend/emitter/slice.rs": {
+        "base": "f190665b7a4b4635c2ab077d8587d7bda4b37bbc84bd3d1c56cb99053949c8c6",
+        "candidate": "5de8ddd1360558a32611965db86507024fdcc08e163f5c0a401c3983071d6eda"
+      },
+      "compiler/src/backend/tests.rs": {
+        "base": "9e9b7b47f1a7daf6cdbe549d4ffc99a0e2599a50ee3008a3d4e5bb348714f2fa",
+        "candidate": "1204bfecee3617030215e5b9f243c1a481c136158977909c61e1c2f854126254"
+      },
+      "compiler/src/backend/tests/arrays.rs": {
+        "base": "56e37392befa11c73a36421e9cc0ccd958ba957f8fb30d66402b8fcfcd994201",
+        "candidate": "eecc08b350407c9d0fa41c381b4aa98bdd66f14052dd237625bd20bbd34c5d30"
+      },
+      "compiler/src/backend/tests/exhaustion.rs": {
+        "base": "8ddd4e4f5bd0b5394d50f310cf078bb6871adb49881d44fca6336161e3817321",
+        "candidate": "2c9e5c15c4c15f666c778de089bc16b9c74a316844a2aaae12a27ebed5a330f8"
+      },
+      "compiler/src/backend/tests/loop_split.rs": {
+        "base": "aa6b58307ad417f477eae9b4453343d4ec517745bbc8fd05fa9d9c7bf53a7a64",
+        "candidate": "f40901311a4c43319c9b304d48805b2bd7c5c3523601083816ee6bc84c9cea02"
+      },
+      "compiler/src/backend/tests/nullable_shapes.rs": {
+        "base": null,
+        "candidate": "73d62ac89627d9ac023ce28a95d9b8a3e1c32f9f7eaa7a94a011983a445d6e83"
+      },
+      "compiler/src/backend/tests/runtime_content_swap.rs": {
+        "base": "d65e4bb62dbba52d220334adabc48576585de83b16cc50f0872ad33cf292ea7c",
+        "candidate": "1a4dc14acbc14c0fd3bf35b11962dd16171b46ea02c8e73c6e362e3c03e74244"
+      },
+      "compiler/src/backend/tests/windows.rs": {
+        "base": "ed25dccec5b2782ee51714d0df9695667457b7330c72d1b326f58630a34cba60",
+        "candidate": "0e86a30e26b8165fffcf218bf17acfca1c7489f4a47c028ec0f6b51953eba81d"
+      }
+    },
+    "vector_program": "vector-library.wf",
+    "vector_program_sha256": "7feb508efa973f65b4fac5c044ec4eeacad78382d157bbfe1e10ba20d1ad8b7a",
+    "focused_lifecycle": {
+      "wrapper_argv": [
+        "perl",
+        ".github/run-check.pl",
+        "compiler/test-unit",
+        "cargo",
+        "test",
+        "--manifest-path",
+        "compiler/Cargo.toml",
+        "--profile",
+        "gate",
+        "--locked",
+        "--offline",
+        "--lib",
+        "backend::tests::nullable_shapes",
+        "--",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "test_names": [
+        "backend::tests::nullable_shapes::nullable_shapes_do_not_admit_shrinking_positive_capacity_to_zero",
+        "backend::tests::nullable_shapes::nullable_shapes_preserve_linked_real_zero_owners_and_nested_lifecycle"
+      ],
+      "environment": {
+        "WF_WORKERS": "0"
+      },
+      "result": "exit 0; two focused tests pass; four positive mode/retained combinations preserve exact 27-allocation/release ledger; routing and refusal controls have expected failures; real workers unqualified"
+    }
+  },
+  "timing": {
+    "argv": [
+      "ARM-timed",
+      "measure",
+      "1048576",
+      "7"
+    ],
+    "ordered_arms": [
+      "control",
+      "candidate"
+    ],
+    "paired_summary_sha256": "078ca0f2427860acb57d6e48c022065a3d2498e7995931dab52ef1608960b8cc",
+    "raw_samples_rows_per_arm": 4116,
+    "raw_samples_sha256": {
+      "candidate": "aed81d15dde769e710d037c0cd4ac747a90aab52504801760de61489d467b262",
+      "control": "0fabf259224ccd53e6528ed84d4a1a4d6de09daedb1c8889de5c825102b44f87"
+    },
+    "reducer": "research/experiments/container-representation/summarize-ecosystem.pl --complete/--targets; established paired reduction with two-cohort range separation, 1 ms floor and 10% ratio-spread ceiling",
+    "target_counts": {
+      "candidate": {
+        "deficit": 16,
+        "inconclusive": 15,
+        "pass": 5
+      },
+      "control": {
+        "deficit": 3,
+        "inconclusive": 15,
+        "pass": 18
+      }
+    },
+    "useful_qualified": {
+      "gain": 4,
+      "loss": 14,
+      "overlap": 18
+    }
+  }
+}

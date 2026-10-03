@@ -1169,6 +1169,10 @@ Artifact SHA-256 digests:
 
 ## Limits
 
+- Earlier revisions of `run.sh` suppressed compiler failure statuses. Their
+  timing rows alone do not establish successful builds. The current runner
+  preserves compiler failures before recording timing rows; this repair does
+  not retrospectively qualify the earlier data.
 - The original backend comparison above used two small runtime loops on one
   host. Its link times and runtime conclusions apply to that compiler pair.
 - Module-product qualification uses seven workloads on one host. The candidate

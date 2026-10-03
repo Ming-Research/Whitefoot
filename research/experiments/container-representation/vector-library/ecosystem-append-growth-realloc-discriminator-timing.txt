@@ -1,0 +1,194 @@
+Rejected full-run realloc append discriminator. Paths are role-redacted.
+
+== retained append-qualification.log ==
+== START vector-full-slots-append-qualification (limit 120s): sh -eu ==
+frozen candidate CLI hash verified
+== START vector-full-slots-append-build (limit 60s): make -j2 ecosystem-build BUILD=.build/full-slots-reallocation WHITEFOOTC=.build/full-slots-reallocation/whitefootc-candidate WF_FULL_SLOTS_REALLOC=1 ==
+mkdir -p .build/full-slots-reallocation/native/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/ordinary_values.c -o .build/full-slots-reallocation/native/ordinary_values.o
+mkdir -p .build/full-slots-reallocation/native/sched/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/sched/core.c -o .build/full-slots-reallocation/native/sched/core.o
+mkdir -p .build/full-slots-reallocation/native/sched/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/sched/entry.c -o .build/full-slots-reallocation/native/sched/entry.o
+mkdir -p .build/full-slots-reallocation/native/completion/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/completion/runtime.c -o .build/full-slots-reallocation/native/completion/runtime.o
+mkdir -p .build/full-slots-reallocation/native/completion/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/completion/file_adapter.c -o .build/full-slots-reallocation/native/completion/file_adapter.o
+mkdir -p .build/full-slots-reallocation/native/completion/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/completion/bridge.c -o .build/full-slots-reallocation/native/completion/bridge.o
+mkdir -p .build/full-slots-reallocation/native/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/wf_floor.c -o .build/full-slots-reallocation/native/wf_floor.o
+mkdir -p .build/full-slots-reallocation/native/sched/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/sched/prim_host.c -o .build/full-slots-reallocation/native/sched/prim_host.o
+mkdir -p .build/full-slots-reallocation/native/completion/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/completion/wait_host.c -o .build/full-slots-reallocation/native/completion/wait_host.o
+mkdir -p .build/full-slots-reallocation/native/completion/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/completion/file_posix.c -o .build/full-slots-reallocation/native/completion/file_posix.o
+mkdir -p .build/full-slots-reallocation/native/completion/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/completion/linux_io_uring.c -o .build/full-slots-reallocation/native/completion/linux_io_uring.o
+mkdir -p .build/full-slots-reallocation/native/
+clang -O2 -Wno-override-module -x ir -c <repository-root>/compiler/src/backend/ordinary_values.ll -o .build/full-slots-reallocation/native/ordinary_values_ir.o
+sed -e 's/@malloc(/@wf_cost_allocate(/g' -e 's/@realloc(/@wf_cost_reallocate(/g' \
+	    -e 's/@free(/@wf_cost_release(/g' \
+	    -e 's/@main(/@wf_fixture_main(/g' \
+	    -e 's/^declare ptr @wf_cost_allocate(i64)$/declare noalias nonnull ptr @wf_cost_allocate(i64)/' .build/full-slots-reallocation/vector-library.raw.ll > .build/full-slots-reallocation/ecosystem/whitefoot-account.ll
+sed 's/@main(/@wf_fixture_main(/g' .build/full-slots-reallocation/vector-library.raw.ll > .build/full-slots-reallocation/ecosystem/whitefoot-timed.ll
+note: link against the following native artifacts when linking against this static library. The order and any duplication can be significant on some platforms
+
+note: native-static-libs: -lSystem -lc -lm
+
+clang -O3 -Wno-override-module -x ir -c .build/full-slots-reallocation/ecosystem/whitefoot-account.ll -o .build/full-slots-reallocation/ecosystem/whitefoot-account.o
+note: link against the following native artifacts when linking against this static library. The order and any duplication can be significant on some platforms
+
+note: native-static-libs: -lSystem -lc -lm
+
+clang -O3 -Wno-override-module -x ir -c .build/full-slots-reallocation/ecosystem/whitefoot-timed.ll -o .build/full-slots-reallocation/ecosystem/whitefoot-timed.o
+clang++ -O3 .build/full-slots-reallocation/ecosystem/driver-account.o .build/full-slots-reallocation/ecosystem/whitefoot-account.o \
+	  .build/full-slots-reallocation/ecosystem/cpp-account.o .build/full-slots-reallocation/ecosystem/rust-account.a .build/full-slots-reallocation/native/ordinary_values.o .build/full-slots-reallocation/native/sched/core.o .build/full-slots-reallocation/native/sched/entry.o .build/full-slots-reallocation/native/completion/runtime.o .build/full-slots-reallocation/native/completion/file_adapter.o .build/full-slots-reallocation/native/completion/bridge.o .build/full-slots-reallocation/native/wf_floor.o .build/full-slots-reallocation/native/sched/prim_host.o .build/full-slots-reallocation/native/completion/wait_host.o .build/full-slots-reallocation/native/completion/file_posix.o .build/full-slots-reallocation/native/completion/linux_io_uring.o .build/full-slots-reallocation/native/ordinary_values_ir.o \
+	  -pthread -lm -liconv -lSystem -lc -lm -o .build/full-slots-reallocation/ecosystem/vector-costs-account
+clang++ -O3 .build/full-slots-reallocation/ecosystem/driver-timed.o .build/full-slots-reallocation/ecosystem/whitefoot-timed.o \
+	  .build/full-slots-reallocation/ecosystem/cpp-timed.o .build/full-slots-reallocation/ecosystem/rust-timed.a .build/full-slots-reallocation/native/ordinary_values.o .build/full-slots-reallocation/native/sched/core.o .build/full-slots-reallocation/native/sched/entry.o .build/full-slots-reallocation/native/completion/runtime.o .build/full-slots-reallocation/native/completion/file_adapter.o .build/full-slots-reallocation/native/completion/bridge.o .build/full-slots-reallocation/native/wf_floor.o .build/full-slots-reallocation/native/sched/prim_host.o .build/full-slots-reallocation/native/completion/wait_host.o .build/full-slots-reallocation/native/completion/file_posix.o .build/full-slots-reallocation/native/completion/linux_io_uring.o .build/full-slots-reallocation/native/ordinary_values_ir.o \
+	  -pthread -lm -liconv -lSystem -lc -lm -o .build/full-slots-reallocation/ecosystem/vector-costs-timed
+ld: warning: ignoring duplicate libraries: '-lSystem', '-lm'
+ld: warning: ignoring duplicate libraries: '-lSystem', '-lm'
+real 2.71
+user 4.26
+sys 0.75
+== END vector-full-slots-append-build: 2.81 s, exit 0 ==
+== START vector-full-slots-growth-check (limit 30s): make -j2 ecosystem-append-growth-check BUILD=.build/full-slots-reallocation WHITEFOOTC=.build/full-slots-reallocation/whitefootc-candidate WF_FULL_SLOTS_REALLOC=1 ==
+.build/full-slots-reallocation/ecosystem/vector-costs-timed growth-api-check
+growth append clock: reads=200000 minimum_nonzero_ns=41 quantized=0
+growth append policy: whitefoot bytes=8 requested=0 initial=0 length=1 capacity=1
+growth append policy: rust-vec bytes=8 requested=0 initial=0 length=1 capacity=4
+growth append policy: cpp-std-vector bytes=8 requested=0 initial=0 length=1 capacity=1
+growth append policy: whitefoot bytes=256 requested=0 initial=0 length=1 capacity=1
+growth append policy: rust-vec bytes=256 requested=0 initial=0 length=1 capacity=4
+growth append policy: cpp-std-vector bytes=256 requested=0 initial=0 length=1 capacity=1
+growth append policy: whitefoot bytes=8 requested=1 initial=1 length=2 capacity=2
+growth append policy: rust-vec bytes=8 requested=1 initial=1 length=2 capacity=4
+growth append policy: cpp-std-vector bytes=8 requested=1 initial=1 length=2 capacity=2
+growth append policy: whitefoot bytes=256 requested=1 initial=1 length=2 capacity=2
+growth append policy: rust-vec bytes=256 requested=1 initial=1 length=2 capacity=4
+growth append policy: cpp-std-vector bytes=256 requested=1 initial=1 length=2 capacity=2
+vector append growth: scalar/256B, five capacities, three APIs passed
+.build/full-slots-reallocation/ecosystem/vector-costs-account growth-api-check
+growth append policy: whitefoot bytes=8 requested=0 initial=0 length=1 capacity=1
+growth append policy: rust-vec bytes=8 requested=0 initial=0 length=1 capacity=4
+growth append policy: cpp-std-vector bytes=8 requested=0 initial=0 length=1 capacity=1
+growth append policy: whitefoot bytes=256 requested=0 initial=0 length=1 capacity=1
+growth append policy: rust-vec bytes=256 requested=0 initial=0 length=1 capacity=4
+growth append policy: cpp-std-vector bytes=256 requested=0 initial=0 length=1 capacity=1
+growth append policy: whitefoot bytes=8 requested=1 initial=1 length=2 capacity=2
+growth append policy: rust-vec bytes=8 requested=1 initial=1 length=2 capacity=4
+growth append policy: cpp-std-vector bytes=8 requested=1 initial=1 length=2 capacity=2
+growth append policy: whitefoot bytes=256 requested=1 initial=1 length=2 capacity=2
+growth append policy: rust-vec bytes=256 requested=1 initial=1 length=2 capacity=4
+growth append policy: cpp-std-vector bytes=256 requested=1 initial=1 length=2 capacity=2
+vector append growth: scalar/256B, five capacities, three APIs passed
+.build/full-slots-reallocation/ecosystem/vector-costs-account allocator-check
+vector allocator observer: preserved bytes, alignment and exact ledger passed
+vector library costs: reallocation observer preserved bytes
+vector library costs: reallocation observer exact ledger
+vector library costs: growth append clock precision
+vector library costs: growth append full values and checksum
+vector library costs: growth append post state
+vector library costs: growth append full values and checksum
+vector library costs: growth append post state
+real 0.75
+user 0.08
+sys 0.07
+== END vector-full-slots-growth-check: 0.86 s, exit 0 ==
+== START vector-full-slots-spare-check (limit 30s): make -j2 ecosystem-append-check BUILD=.build/full-slots-reallocation WHITEFOOTC=.build/full-slots-reallocation/whitefootc-candidate WF_FULL_SLOTS_REALLOC=1 ==
+.build/full-slots-reallocation/ecosystem/vector-costs-timed api-check
+vector spare append: scalar/256B, five counts, three APIs passed
+.build/full-slots-reallocation/ecosystem/vector-costs-account api-check
+vector spare append: scalar/256B, five counts, three APIs passed
+grep -Fx 'vector library costs: spare append full values and checksum' .build/full-slots-reallocation/ecosystem/api-fail-values.txt
+vector library costs: spare append full values and checksum
+grep -Fx 'vector library costs: spare append zero allocation' .build/full-slots-reallocation/ecosystem/api-fail-allocation.txt
+vector library costs: spare append zero allocation
+real 0.10
+user 0.06
+sys 0.05
+== END vector-full-slots-spare-check: 0.11 s, exit 0 ==
+== START vector-full-slots-growth-account (limit 30s): make -j2 ecosystem-append-growth-account BUILD=.build/full-slots-reallocation WHITEFOOTC=.build/full-slots-reallocation/whitefootc-candidate WF_FULL_SLOTS_REALLOC=1 ==
+.build/full-slots-reallocation/ecosystem/vector-costs-account growth-api-account > '.build/full-slots-reallocation/ecosystem/append-growth-accounting.csv'
+Append growth allocation observations: .build/full-slots-reallocation/ecosystem/append-growth-accounting.csv
+real 0.09
+user 0.05
+sys 0.04
+== END vector-full-slots-growth-account: 0.11 s, exit 0 ==
+real 4.08
+user 4.55
+sys 0.97
+== END vector-full-slots-append-qualification: 4.09 s, exit 0 ==
+
+== retained append-discriminator.log ==
+== START vector-full-slots-append-discriminator (limit 600s): sh -eu ==
+dd87ce830d631b75e1e9456134010fd3596e6ed28fcea036f147eaa74ae9d976  .build/full-slots-reallocation/whitefootc-candidate
+f7bcad1d3ac754ee90f4c44ef85acfd668b351326562b1cdb174518ba5ce2567  vector-costs.c
+59b0b921d2f4a18bde215458ebc30483d48a32c3feb7840a1ab0e0a69ccd7c2e  Makefile
+0047545db3691b9bbfb21cbd9c8293f931561ad2f8047b6a0e179ead19bfd822  vector-library.wf
+52024edc4509edacf29b60aab686dca587c80c1eed7ea2844e44ada9a17ec4a3  vector-ecosystem.cpp
+6099b4bef37fa91bb63e5396dbf740b154455ac22ddb734c0ee93a47ddb12eab  vector-ecosystem.rs
+63500dad64d4f54a55f2c2d4be1e9b6e99a2eeab1484b20630b759df259caebf  .build/full-slots-reallocation/ecosystem/vector-costs-timed
+7ba9dda6476312ee0aad907f4dc050c80d1bfbd0a96a3cdf4c1941a48b582e67  .build/full-slots-reallocation/ecosystem/driver-timed.o
+79e6dc214a40e04d9c3af0828a4c4c8e661da6da4b893864329b88562357ae0e  .build/full-slots-reallocation/ecosystem/whitefoot-timed.o
+c35ec1f01eef08066ef381b06da6fc72ef6aba12d98a1b33c48a016de6313dd1  .build/full-slots-reallocation/ecosystem/cpp-timed.o
+b1eccd7d521f678bd123531708f67a1cce0f6b6fa509edb907acab53f1f11873  .build/full-slots-reallocation/ecosystem/rust-timed.a
+07ebcae5ed98fa7ff1a218150170f56c961e9dbae682781b62a5878a094da58b  .build/full-slots-reallocation/native/ordinary_values.o
+846bc08916aadbe77111a2c45aff15f33fd1fb7ffe816c198c2bf6f96dcad210  .build/full-slots-reallocation/native/ordinary_values_ir.o
+8342e7ea0b8d6a0817d543e8c05e807c96527393945e95597718ba9a27ce722d  .build/full-slots-reallocation/native/wf_floor.o
+0655633c69666fcce21bf67258101aedb49c914fc50a6cc8edbfe22a8315e645  .build/full-slots-reallocation/native/sched/core.o
+e04734d7a1ddbe9083b47570ca2854963803b88a7197628bed2ca66cb4924d5c  .build/full-slots-reallocation/native/sched/entry.o
+c3a5140b8221a57d27a510995ae37c7b33a64ebc87ec9f9286b99ece649bce45  .build/full-slots-reallocation/native/sched/prim_host.o
+a1def81793c4229e41586590b91d134a9a2375a6ad9d31189b8164e91aaf137b  .build/full-slots-reallocation/native/completion/bridge.o
+1bcbb49aa9a44031faf6397e01a960b2ce5d5d02f42cc2aaecb4edc0818d8ec6  .build/full-slots-reallocation/native/completion/file_adapter.o
+f1fa09d7c0831333726c367986a3811d588e639f090435b1cbf1fce62758bf33  .build/full-slots-reallocation/native/completion/file_posix.o
+e389769ac8c9f38af9cd00e5bc5d56d3c180dff5985fb81ddfff63dfa89eb453  .build/full-slots-reallocation/native/completion/linux_io_uring.o
+75cb971977625c9b05adcf74b14989544ccbf61b0a81fe4843ec72226eb36c61  .build/full-slots-reallocation/native/completion/runtime.o
+b9dbbb1485b2c3e47ef248568020130e7e27446e56be5a2c52f224bbd7a2f463  .build/full-slots-reallocation/native/completion/wait_host.o
+growth append clock: reads=200000 minimum_nonzero_ns=41 quantized=0
+== RUNNING vector-full-slots-append-discriminator: 30 s, child 50338, group 50338 ==
+== RUNNING vector-full-slots-append-discriminator: 60 s, child 50338, group 50338 ==
+== RUNNING vector-full-slots-append-discriminator: 90 s, child 50338, group 50338 ==
+real 119.67
+user 119.25
+sys 0.32
+== END vector-full-slots-append-discriminator: 119.70 s, exit 0 ==
+
+== exact growth account rows (untimed observer image) ==
+contract,element_bytes,requested_capacity,initial_capacity,variant,length,capacity,requests,reallocations,releases,requested_bytes,live_before,live_after
+append-growth-o3,8,16,16,whitefoot,17,32,1,1,0,272,144,272
+append-growth-o3,8,16,16,rust-vec,17,32,1,1,0,256,128,256
+append-growth-o3,8,16,16,cpp-std-vector,17,32,1,0,1,256,128,256
+append-growth-o3,256,16,16,whitefoot,17,32,1,1,0,8208,4112,8208
+append-growth-o3,256,16,16,rust-vec,17,32,1,1,0,8192,4096,8192
+append-growth-o3,256,16,16,cpp-std-vector,17,32,1,0,1,8192,4096,8192
+append-growth-o3,8,256,256,whitefoot,257,512,1,1,0,4112,2064,4112
+append-growth-o3,8,256,256,rust-vec,257,512,1,1,0,4096,2048,4096
+append-growth-o3,8,256,256,cpp-std-vector,257,512,1,0,1,4096,2048,4096
+append-growth-o3,256,256,256,whitefoot,257,512,1,1,0,131088,65552,131088
+append-growth-o3,256,256,256,rust-vec,257,512,1,1,0,131072,65536,131072
+append-growth-o3,256,256,256,cpp-std-vector,257,512,1,0,1,131072,65536,131072
+append-growth-o3,8,4096,4096,whitefoot,4097,8192,1,1,0,65552,32784,65552
+append-growth-o3,8,4096,4096,rust-vec,4097,8192,1,1,0,65536,32768,65536
+append-growth-o3,8,4096,4096,cpp-std-vector,4097,8192,1,0,1,65536,32768,65536
+append-growth-o3,256,4096,4096,whitefoot,4097,8192,1,1,0,2097168,1048592,2097168
+append-growth-o3,256,4096,4096,rust-vec,4097,8192,1,1,0,2097152,1048576,2097152
+append-growth-o3,256,4096,4096,cpp-std-vector,4097,8192,1,0,1,2097152,1048576,2097152
+append-growth-o3,8,0,0,whitefoot,1,1,1,1,0,24,16,24
+append-growth-o3,8,0,0,rust-vec,1,4,1,0,0,32,0,32
+append-growth-o3,8,0,0,cpp-std-vector,1,1,1,0,0,8,0,8
+append-growth-o3,256,0,0,whitefoot,1,1,1,1,0,272,16,272
+append-growth-o3,256,0,0,rust-vec,1,4,1,0,0,1024,0,1024
+append-growth-o3,256,0,0,cpp-std-vector,1,1,1,0,0,256,0,256
+append-growth-o3,8,1,1,whitefoot,2,2,1,1,0,32,24,32
+append-growth-o3,8,1,1,rust-vec,2,4,1,1,0,32,8,32
+append-growth-o3,8,1,1,cpp-std-vector,2,2,1,0,1,16,8,16
+append-growth-o3,256,1,1,whitefoot,2,2,1,1,0,528,272,528
+append-growth-o3,256,1,1,rust-vec,2,4,1,1,0,1024,256,1024
+append-growth-o3,256,1,1,cpp-std-vector,2,2,1,0,1,512,256,512
+
+== ordinary timed driver native comparison ==
+Both objects102432B;15760instructions. Only2bytes/oneoperand differ: clock assertion line immediate395→494. All other operand instructions match after removing display addresses. Both peers and12runtimeobjects byte-identical baseline. TimedIR/image observerhooks absent.

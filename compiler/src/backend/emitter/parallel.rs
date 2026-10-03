@@ -452,6 +452,7 @@ pub(crate) fn sequential_clone_set(program: &IrProgram) -> HashSet<u32> {
             {
                 Some(IrSynthesis::Splitter) => false,
                 Some(IrSynthesis::Chunk) => true,
+                Some(IrSynthesis::ResidentWindow) => reaches_hand_out.contains(ordinal),
                 None => reaches_hand_out.contains(ordinal),
             }
         })
@@ -876,6 +877,8 @@ impl FunctionEmitter<'_, '_> {
                     *value,
                     &crate::IrPlaceStep::BoxReferent { nominal },
                 )?;
+                let pointer =
+                    self.referent_storage_pointer(IrAddressed::Buffer { element }, pointer)?;
                 let address = self.aggregate_field_pointer(block, &pointer, 0)?;
                 let result = format!("%{}", self.next_temporary()?);
                 writeln!(self.output, "  {result} = load i64, ptr {address}")
@@ -889,7 +892,7 @@ impl FunctionEmitter<'_, '_> {
                 // reference carries its count beside its pointer [REF-4].
                 if let IrType::Address(IrAddressed::Buffer { element }) = ty {
                     let block = IrType::Buffer { element };
-                    let address = self.value_name(*value);
+                    let address = self.addressed_storage_pointer(*value)?;
                     let length_address = self.aggregate_field_pointer(block, &address, 0)?;
                     let result = format!("%{}", self.next_temporary()?);
                     writeln!(self.output, "  {result} = load i64, ptr {length_address}")

@@ -1,0 +1,18 @@
+--- /private/tmp/whitefoot-scalar-reserved-append/raw/control/whitefoot-timed.ll	2026-09-27 06:06:23
++++ /private/tmp/whitefoot-scalar-reserved-append/raw/candidate/whitefoot-timed.ll	2026-09-27 06:06:23
+@@ -1271,7 +1271,14 @@
+   %v20 = add i64 %v9, %v7
+   %v21 = add i64 %v20, %v13
+   %v22 = call i64 @wf_vector_word_make(i64 %v21)
+-  %v23 = call i64 @wf_std.collections.vector.grow_vector_append$instance$8c4c85d67cb438a6(ptr %v6, i64 %v22)
++  %r0 = getelementptr inbounds %wf.t.4fe45f1358b41568, ptr %v6, i32 0, i32 0
++  %r1 = load ptr, ptr %r0
++  %r2 = getelementptr inbounds { i64, i64, [0 x i64] }, ptr %r1, i32 0, i32 0
++  %r3 = load i64, ptr %r2
++  %r4 = getelementptr inbounds { i64, i64, [0 x i64] }, ptr %r1, i64 0, i32 2, i64 %r3
++  store i64 %v22, ptr %r4
++  %r5 = add i64 %r3, 1
++  store i64 %r5, ptr %r2
+   br label %bb5
+ bb3:
+   br label %bb4

@@ -112,6 +112,76 @@ fn buffer_module() -> String {
         .clone()
 }
 
+/// A library has no generated runner, even when it defines a main whose
+/// signature the runner cannot call. Its LLVM must still link to an ordinary
+/// C caller. An executable retains the standalone floor and needs no C entry.
+#[test]
+fn libraries_and_executables_supply_only_their_own_entry_dependencies() {
+    let helper = r#"fn increment(value: u64) -> result: u64 pure {
+  return value +wrap 1_u64;
+}
+"#;
+    let uncallable_main = r#"fn main() -> result: u64 pure {
+  return 7_u64;
+}
+"#;
+    let executable_main = r#"fn main() -> result: unit pure {
+  return unit;
+}
+"#;
+    let caller = r#"#include <stdint.h>
+extern uint64_t wf_increment(uint64_t);
+int main(void) {
+    return wf_increment(41) != 42 || wf_increment(UINT64_MAX) != 0;
+}
+"#;
+    let cases = [
+        ("entryless", helper.to_owned(), Some(caller)),
+        (
+            "uncallable-entry",
+            format!("{helper}\n{uncallable_main}"),
+            Some(caller),
+        ),
+        ("executable", executable_main.to_owned(), None),
+    ];
+    for (name, source, caller) in cases {
+        let module = compile(source.as_bytes());
+        let directory = test_directory();
+        let llvm = directory.join("program.ll");
+        let executable = directory.join("program");
+        std::fs::write(&llvm, &module).expect("write entry-boundary module");
+        let mut command = Command::new("/usr/bin/clang");
+        command.arg("-std=c11").arg(&llvm);
+        if let Some(caller) = caller {
+            let host = directory.join("caller.c");
+            std::fs::write(&host, caller).expect("write ordinary C caller");
+            command.arg(host);
+        }
+        let built = crate::native_test_support::timed("native-build", || {
+            command
+                .args(crate::HOST_OPTIMIZATION_ARGUMENTS)
+                .arg("-o")
+                .arg(&executable)
+                .output()
+                .expect("compile the entry-boundary module")
+        });
+        assert!(
+            built.status.success(),
+            "{name}: clang rejected the emitted module:\n{}\n{module}",
+            String::from_utf8_lossy(&built.stderr)
+        );
+        let observed = crate::native_test_support::timed("native-run", || {
+            Command::new(&executable)
+                .output()
+                .expect("run the entry-boundary oracle")
+        });
+        assert!(observed.status.success(), "{name}: {observed:?}");
+        assert!(observed.stdout.is_empty(), "{name}: {observed:?}");
+        assert!(observed.stderr.is_empty(), "{name}: {observed:?}");
+        std::fs::remove_dir_all(directory).expect("remove entry-boundary artifacts");
+    }
+}
+
 /// Every definition the module emits carries the probe attribute, and the
 /// group it names is the host's.
 ///
@@ -338,22 +408,12 @@ fn main() -> status: std::process::ExitStatus pure {
 /// and receives no payload, and an exhausted heap ends the process from the
 /// trusted base with the one record naming the resource class.
 ///
-/// One [OP-13] cell construction is one interposed allocation, for every one
-/// of the four forms. [TYPE-9] fixes it in the language: a `Box`'s one field
-/// `inner` is its content, "stored in exactly one heap object the `Box` value
-/// owns [STOR-1]", and [STOR-1] repeats that a `Box<T>` is "one
-/// compiler-derived allocation released by one compiler-derived free at owner
-/// scope exit [STOR-3]" while a runtime-capacity shape "exists only as `Box`
-/// content [TYPE-9] and is heap-owned with that `Box`" -- one owner, one
-/// object, not a cell beside a block. The implementation choice under that
-/// rule is the pending amendment compiler/storage-representation: "A boxed
-/// runtime-capacity shape is thin: `Box<Slots<T>>`, `Box<Ring<T>>` and
-/// `Box<Array<T>>` are each one pointer to one block laid out `[len | cap |
-/// elements]`". The four-form image is therefore four interposed allocations
-/// and four frees, and the observer limit, the refusal range and both
-/// identity lists below say exactly that. It is the same count
-/// `a_runtime_capacity_window_crosses_functions_updates_and_frees_once` reads
-/// as one `@free` per boxed `Array`.
+/// One [OP-13] construction is one interposed allocation for each form.
+/// These positive-capacity runtime Slots keep their descriptor inline and
+/// allocate only the payload;
+/// the other forms retain their heap-resident content. In either placement
+/// each owner releases exactly its one allocation [STOR-1, STOR-3]. The
+/// four-form image therefore retains four allocations and four frees.
 #[test]
 fn each_generated_allocation_form_reaches_its_refusal_record() {
     let directory = test_directory();
@@ -395,6 +455,380 @@ fn each_generated_allocation_form_reaches_its_refusal_record() {
         }
     }
     std::fs::remove_dir_all(directory).expect("remove allocation refusal image");
+}
+
+/// Refusing a replacement payload leaves the caller's inline owner and its
+/// complete old allocation intact until the ordinary heap-resource abort.
+/// Full positive-extent runs force both in-place and moving reallocations;
+/// partial runs distinguish initialized-prefix movement from copying spare
+/// bytes. Zero extent uses a nonowning aligned anchor: the first positive
+/// allocation can fail without changing it, and zero-stride growth only
+/// changes logical capacity. Anchor addresses never select ownership.
+#[test]
+fn failed_slots_grow_preserves_the_inline_owner_and_payload() {
+    let source =
+        br#"fn grow_values(values: &Box<Slots<u64>>) -> result: unit writes(values) contract {
+  requires values^.inner.cap <= 4_u64;
+} {
+  grow(cell: values, capacity: 8_u64);
+  return unit;
+}
+
+fn grow_zero_stride(values: &Box<Slots<Array<u64, 0>>>) -> result: unit writes(values) contract {
+  requires values^.inner.cap <= 4_u64;
+} {
+  grow(cell: values, capacity: 8_u64);
+  return unit;
+}
+
+fn release_values(values: Box<Slots<u64>>) -> result: unit pure {
+  return unit;
+}
+
+fn release_zero_stride(values: Box<Slots<Array<u64, 0>>>) -> result: unit pure {
+  return unit;
+}
+
+fn identity(value: Box<Slots<u64>>) -> result: Box<Slots<u64>> pure {
+  return move value;
+}
+
+fn transport<fn carry(value: Box<Slots<u64>>) -> result: Box<Slots<u64>> pure>(value: Box<Slots<u64>>) -> result: Box<Slots<u64>> pure {
+  return carry(value: move value);
+}
+
+fn inspect_empty(value: &Box<Slots<u64>>) -> result: u64 reads(value) {
+  if value^.inner.len != 0_u64 {
+    return 3_u64;
+  }
+  if value^.inner.cap != 0_u64 {
+    return 4_u64;
+  }
+  let range = &value^.inner[0_u64..0_u64];
+  let resliced = &range^[0_u64..0_u64];
+  return resliced^.len;
+}
+
+fn empty_allocations() -> result: u64 pure {
+  let first = box_slots_new::<u64>(capacity: 0_u64);
+  let second = box_slots_new::<u64>(capacity: 0_u64);
+  let moved_first = transport::<fn identity>(value: move first);
+  let moved_second = transport::<fn identity>(value: move second);
+  let first_check = inspect_empty(value: &moved_first);
+  let second_check = inspect_empty(value: &moved_second);
+  if first_check != 0_u64 {
+    return first_check;
+  }
+  if second_check != 0_u64 {
+    return second_check;
+  }
+  let empty = box_slots_new::<u64>(capacity: 0_u64);
+  let zero_stride = box_slots_new::<Array<u64, 0>>(capacity: 3_u64);
+  if empty.inner.len != 0_u64 {
+    return 1_u64;
+  }
+  if zero_stride.inner.cap != 3_u64 {
+    return 2_u64;
+  }
+  return 0_u64;
+}
+"#;
+    let host = r#"#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+
+struct owner { uint64_t len, cap; unsigned char *payload; };
+_Static_assert(sizeof(struct owner) == 24, "inline Slots owner extent");
+extern uint8_t wf_grow_values(struct owner *);
+extern uint8_t wf_grow_zero_stride(struct owner *);
+extern uint8_t wf_release_values(struct owner *);
+extern uint8_t wf_release_zero_stride(struct owner *);
+extern uint64_t wf_empty_allocations(void);
+extern int wf__floor_run(int, char **);
+static struct owner value, original;
+static unsigned char *held[2], saved[32];
+static size_t extents[2], old_extent, new_extent, initialized;
+static unsigned attempts, copies, releases, live[2], refusing, constructing;
+static unsigned reallocations, realloc_route, moving, cleanup_started, zero_owner;
+static _Alignas(16) unsigned char anchor[32];
+static unsigned inspected;
+
+
+static void require(int okay, int code) { if (!okay) _Exit(code); }
+void wf_test_inspect_empty(const struct owner *owner) {
+    require(owner->len == 0 && owner->cap == 0 && owner->payload != NULL, 96);
+    require((uintptr_t)owner->payload % _Alignof(uint64_t) == 0, 96);
+    require(owner->payload[0] == 0, 97);
+    ++inspected;
+}
+static void unchanged_payload(void) {
+    if (zero_owner) {
+        require(memcmp(anchor, saved, sizeof(anchor)) == 0, 92);
+        return;
+    }
+    require(live[0], 90);
+    require(memcmp(held[0], saved, old_extent) == 0, 92);
+}
+static void unchanged_owner(void) {
+    require(value.len == original.len && value.cap == original.cap
+            && value.payload == original.payload, 91);
+}
+static void refused_state(void) {
+    require(refusing && attempts == (zero_owner ? 1u : 2u) && copies == 0 && releases == 0
+            && (zero_owner ? !live[0] : live[0]) && held[1] == NULL
+            && reallocations == realloc_route, 90);
+    unchanged_owner();
+    unchanged_payload();
+}
+void *wf_test_allocate(uint64_t bytes) {
+    require(!constructing, 80);
+    if (zero_owner) {
+        require(attempts == 0 && bytes == new_extent && new_extent > 0, 81);
+        ++attempts;
+        if (refusing) return NULL;
+        held[1] = malloc((size_t)bytes); require(held[1] != NULL, 82);
+        extents[1] = (size_t)bytes; live[1] = 1;
+        memset(held[1], 0xa6, (size_t)bytes);
+        return held[1];
+    }
+    require(attempts < 2 && (constructing || attempts == 0 || !realloc_route), 80);
+    size_t expected = constructing ? 1 : attempts == 0 ? old_extent : new_extent;
+    require(bytes == expected, 81);
+    unsigned at = attempts++;
+    if (refusing && at == 1) return NULL;
+    /* Reserve enough observer backing to force an in-place full growth.
+     * The recorded extent remains the exact allocator request. */
+    held[at] = malloc(64);
+    require(held[at] != NULL, 82);
+    extents[at] = (size_t)bytes; live[at] = 1;
+    memset(held[at], 0xa6, 64);
+    return held[at];
+}
+void *wf_test_reallocate(void *pointer, uint64_t bytes) {
+    require(!constructing && realloc_route && attempts == 1 && reallocations == 0
+            && pointer == held[0] && live[0] && bytes == new_extent, 95);
+    unchanged_payload();
+    ++attempts; ++reallocations;
+    if (refusing) return NULL;
+    if (moving) {
+        held[1] = malloc((size_t)bytes); require(held[1] != NULL, 82);
+        extents[1] = (size_t)bytes; live[1] = 1;
+        memset(held[1], 0xa6, (size_t)bytes);
+        memcpy(held[1], held[0], old_extent);
+        live[0] = 0; memset(held[0], 0xdd, old_extent);
+        return held[1];
+    }
+    extents[0] = (size_t)bytes;
+    return held[0];
+}
+void wf_test_copy(void *destination, const void *source, uint64_t bytes, _Bool is_volatile) {
+    require(source != anchor, 83);
+    if (source == held[0] && !constructing) {
+        require(!refusing && !realloc_route && attempts == 2 && copies == 0 && releases == 0
+                && live[0] && live[1] && destination == held[1]
+                && bytes == initialized && !is_volatile, 83);
+        unchanged_payload();
+        ++copies;
+    }
+    memmove(destination, source, (size_t)bytes);
+}
+void wf_test_release(void *pointer) {
+    unsigned at = pointer == held[0] ? 0 : pointer == held[1] ? 1 : 2;
+    require(!refusing && at < 2 && live[at], 84);
+    if (zero_owner) {
+        require(cleanup_started && at == 1 && attempts == 1 && copies == 0
+                && releases == 0 && reallocations == 0, 85);
+        unchanged_payload();
+    } else if (!constructing && realloc_route) {
+        require(cleanup_started && reallocations == 1 && copies == 0 && releases == 0
+                && at == (moving ? 1u : 0u), 85);
+    } else if (!constructing && at == 0) {
+        require(!cleanup_started && copies == 1 && releases == 0, 85);
+        unchanged_payload();
+        require(memcmp(held[1], saved, initialized) == 0, 86);
+        for (size_t i = initialized; i < new_extent; ++i)
+            require(held[1][i] == 0xa6, 87);
+    } else if (!constructing) {
+        require(cleanup_started && copies == 1 && releases == 1, 85);
+    }
+    live[at] = 0; ++releases;
+    memset(pointer, 0xdd, extents[at]);
+}
+_Noreturn void wf_test_abort(void) {
+    refused_state();
+    abort();
+}
+int wf__main_body(int argc, char **argv) {
+    require(argc >= 2, 70);
+    constructing = strcmp(argv[1], "construct") == 0;
+    if (constructing) {
+        require(wf_empty_allocations() == 0 && inspected == 2 && attempts == 0 && releases == 0
+                && copies == 0 && reallocations == 0 && !live[0] && !live[1], 71);
+    } else {
+        unsigned zero_stride = strcmp(argv[1], "zst") == 0;
+        zero_owner = zero_stride || strcmp(argv[1], "empty") == 0
+            || strncmp(argv[1], "anchor-", 7) == 0;
+        if (zero_owner) {
+            memset(anchor, 0x5c, sizeof(anchor)); memcpy(saved, anchor, sizeof(anchor));
+            value = (struct owner){zero_stride ? 2u : 0u, zero_stride ? 2u : 0u, anchor};
+            original = value; new_extent = zero_stride ? 0 : 64;
+            if (strcmp(argv[1], "anchor-release") == 0) { wf_test_release(anchor); return 72; }
+            if (strcmp(argv[1], "anchor-realloc") == 0) { (void)wf_test_reallocate(anchor, 64); return 72; }
+            refusing = argc == 3 && strcmp(argv[2], "refuse") == 0;
+            if (zero_stride) (void)wf_grow_zero_stride(&value);
+            else (void)wf_grow_values(&value);
+            require(!refusing && value.len == original.len && value.cap == 8
+                    && value.payload == (zero_stride ? anchor : held[1]), 88);
+            require(attempts == (zero_stride ? 0u : 1u) && copies == 0
+                    && releases == 0 && reallocations == 0, 88);
+            unchanged_payload();
+            if (!zero_stride) {
+                for (size_t i = 0; i < new_extent; ++i) require(held[1][i] == 0xa6, 87);
+            }
+            cleanup_started = 1;
+            if (zero_stride) (void)wf_release_zero_stride(&value);
+            else (void)wf_release_values(&value);
+            require(releases == (zero_stride ? 0u : 1u) && !live[0] && !live[1], 89);
+            unchanged_payload();
+            free(held[1]); return 0;
+        }
+        uint64_t capacity = strcmp(argv[1], "empty") == 0 ? 0
+            : strcmp(argv[1], "partial") == 0 ? 4 : 2;
+        uint64_t length = capacity == 0 ? 0 : capacity == 4 ? 1 : 2;
+        old_extent = zero_stride || capacity == 0 ? 1 : (size_t)capacity * 8;
+        new_extent = zero_stride ? 1 : 64;
+        initialized = zero_stride ? 0 : (size_t)length * 8;
+        realloc_route = !zero_stride && capacity != 0 && length == capacity;
+        moving = argc == 3 && strcmp(argv[2], "moving") == 0;
+        value = (struct owner){length, capacity, wf_test_allocate(old_extent)};
+        for (size_t i = 0; i < initialized; ++i) value.payload[i] = (unsigned char)(17 + i);
+        if (old_extent > initialized) memset(value.payload + initialized, 0x5c, old_extent - initialized);
+        original = value; memcpy(saved, value.payload, old_extent);
+        if (strcmp(argv[1], "allocator-foreign-realloc") == 0) {
+            (void)wf_test_reallocate(saved, new_extent);
+            return 72;
+        }
+        if (strcmp(argv[1], "allocator-retired-release") == 0) {
+            moving = 1;
+            (void)wf_test_reallocate(held[0], new_extent);
+            cleanup_started = 1;
+            wf_test_release(held[0]);
+            return 72;
+        }
+        if (strncmp(argv[1], "observer-", 9) == 0) {
+            /* Exercise the observer outside any WF call, so deliberate caller
+             * corruption introduces no violation of a noalias parameter. */
+            refusing = 1; attempts = 2; reallocations = realloc_route;
+            if (strcmp(argv[1], "observer-owner") == 0) ++value.cap;
+            if (strcmp(argv[1], "observer-payload") == 0) value.payload[0] ^= 1;
+            if (strcmp(argv[1], "observer-retired") == 0) live[0] = 0;
+            if (strcmp(argv[1], "observer-copy") == 0) copies = 1;
+            refused_state();
+            return 72;
+        }
+        refusing = argc == 3 && strcmp(argv[2], "refuse") == 0;
+        if (zero_stride) (void)wf_grow_zero_stride(&value);
+        else (void)wf_grow_values(&value);
+        unsigned current = realloc_route && !moving ? 0 : 1;
+        require(!refusing && value.len == length && value.cap == 8
+                && value.payload == held[current] && attempts == 2 && live[current], 88);
+        if (realloc_route) {
+            require(reallocations == 1 && copies == 0 && releases == 0
+                    && (moving ? !live[0] : held[1] == NULL), 88);
+        } else {
+            require(reallocations == 0 && copies == 1 && releases == 1 && !live[0], 88);
+        }
+        require(memcmp(value.payload, saved, initialized) == 0, 86);
+        for (size_t i = initialized; i < new_extent; ++i)
+            require(value.payload[i] == 0xa6, 87);
+        cleanup_started = 1;
+        if (zero_stride) (void)wf_release_zero_stride(&value);
+        else (void)wf_release_values(&value);
+        require(releases == (realloc_route ? 1u : 2u) && !live[0] && !live[1], 89);
+    }
+    free(held[0]); free(held[1]);
+    return 0;
+}
+int main(int argc, char **argv) { return wf__floor_run(argc, argv); }
+"#;
+    let mut module = compile(source)
+        .replace("@malloc(", "@wf_test_allocate(")
+        .replace("@realloc(", "@wf_test_reallocate(")
+        .replace("@free(", "@wf_test_release(")
+        .replace("@abort(", "@wf_test_abort(");
+    // Fresh payloads use memcpy; ordinary aggregate storage can still require
+    // memmove. Observe either operation through the same exact extent ledger.
+    for intrinsic in ["memcpy", "memmove"] {
+        module = module
+            .replace(
+                &format!("declare void @llvm.{intrinsic}.p0.p0.i64(ptr, ptr, i64, i1 immarg)"),
+                "",
+            )
+            .replace(&format!("@llvm.{intrinsic}.p0.p0.i64("), "@wf_test_copy(");
+    }
+    module.push_str("\ndeclare void @wf_test_copy(ptr, ptr, i64, i1)\n");
+    // Keep the source body and ordinary public reference ABI; observe its
+    // incoming descriptor before executing its independent source assertions.
+    let body = super::parallel::function_body(&module, "@wf_inspect_empty").to_owned();
+    let renamed = body.replacen("@wf_inspect_empty(", "@wf_inspect_empty.source(", 1);
+    module = module.replace(&body, &renamed);
+    module.push_str(
+        "\ndeclare void @wf_test_inspect_empty(ptr)\n\
+         define i64 @wf_inspect_empty(ptr %owner) {\n\
+         entry:\n\
+           call void @wf_test_inspect_empty(ptr %owner)\n\
+           %result = call i64 @wf_inspect_empty.source(ptr %owner)\n\
+           ret i64 %result\n}\n",
+    );
+    let directory = test_directory();
+    let executable = build_linked_executable(&module, Some(host), &[], &directory);
+    for kind in ["full", "partial", "empty", "zst"] {
+        let outcomes: &[&str] = if kind == "full" {
+            &["in-place", "moving", "refuse"]
+        } else if kind == "zst" {
+            &["success"]
+        } else {
+            &["success", "refuse"]
+        };
+        for &outcome in outcomes {
+            let output = Command::new(&executable)
+                .args([kind, outcome])
+                .bounded_output()
+                .expect("run observed Slots growth");
+            assert!(output.stdout.is_empty(), "{kind}/{outcome}: {output:?}");
+            if outcome != "refuse" {
+                assert_eq!(output.status.code(), Some(0), "{kind}: {output:?}");
+                assert!(output.stderr.is_empty(), "{kind}: {output:?}");
+            } else {
+                assert_eq!(
+                    signal_of(&output),
+                    Some(libc_sigabrt()),
+                    "{kind}: {output:?}"
+                );
+                assert_resource_record(&output.stderr, "heap");
+            }
+        }
+    }
+    for (mode, expected) in [
+        ("construct", 0),
+        ("anchor-release", 84),
+        ("anchor-realloc", 95),
+        ("observer-owner", 91),
+        ("observer-payload", 92),
+        ("observer-retired", 90),
+        ("observer-copy", 90),
+        ("allocator-foreign-realloc", 95),
+        ("allocator-retired-release", 84),
+    ] {
+        let output = Command::new(&executable)
+            .arg(mode)
+            .bounded_output()
+            .expect("run the allocation and observer controls");
+        assert_eq!(output.status.code(), Some(expected), "{mode}: {output:?}");
+        assert!(output.stdout.is_empty(), "{mode}: {output:?}");
+        assert!(output.stderr.is_empty(), "{mode}: {output:?}");
+    }
+    std::fs::remove_dir_all(directory).expect("remove observed Slots growth");
 }
 
 /// Script only the generated record write, leaving host startup and the floor
@@ -590,10 +1024,10 @@ fn target_qualified_buffers_keep_only_the_heap_refusal_path() {
 /// distinct refusal edges over four allocations: `box_new`'s scalar cell takes
 /// `box.new.oom.`, the one block of `box_array_filled` takes
 /// `buffer.fill.oom.`, and `box_slots_new` and `box_ring_new` share
-/// `window.block.oom.`, because a window's block is header-first and one
-/// address computation serves both [STOR-1, WIN-1]. Each construction takes
-/// exactly one block: [TYPE-9] stores a `Box`'s content "in exactly one heap
-/// object the `Box` value owns".
+/// `window.block.oom.`, the shared heap-exhaustion edge for their selected
+/// representations [STOR-1, WIN-1]. These positive-capacity, positive-stride
+/// fixtures each own one allocation; a zero-extent Slots owner has no
+/// allocation and uses its aligned static storage instead [STOR-1].
 #[test]
 fn every_allocation_refusal_edge_reaches_the_resource_abort() {
     let module = heap_module();
@@ -623,7 +1057,9 @@ fn every_allocation_refusal_edge_reaches_the_resource_abort() {
 /// allocate with the count `n`.
 fn runtime_count_allocation(statements: &str) -> String {
     format!(
-        r#"fn allocate(n: u64) -> result: u64 pure {{
+        r#"fn allocate(n: u64) -> result: u64 pure contract {{
+  requires n >= 2_u64;
+}} {{
   {statements}
   return 7_u64;
 }}
@@ -668,10 +1104,11 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure w
 /// its check would hand the allocator a wrapped, small byte count, or ask it
 /// for more than the target serves. 1000 elements allocate once and run.
 ///
-/// `grow` computes its size at its own emitted site, so it is observed the
-/// same way: an empty window takes its first allocation, `grow` to 1000
-/// takes the second and releases the first, and a refused count ends the run
-/// after the first allocation alone.
+/// `grow` computes its size at its own emitted site. An empty inline Slots
+/// owner allocates nothing before growth; full and partial positive owners
+/// allocate once before growth, then respectively resize or allocate and
+/// release. A refused count reaches exhaustion before either route calls an
+/// allocator, leaving the original positive allocation unreleased.
 ///
 /// `box_segments_filled` [OP-13] sums its lengths before it sizes its block,
 /// so its run has two lengths of `n` one-byte elements behind a 32-byte
@@ -694,7 +1131,7 @@ fn an_allocation_size_the_target_cannot_serve_is_heap_exhaustion_before_the_allo
         (
             "Slots",
             "let values = box_slots_new::<u16>(capacity: n);",
-            16_u64,
+            0_u64,
             "A1;F1;",
             "",
         ),
@@ -708,7 +1145,21 @@ fn an_allocation_size_the_target_cannot_serve_is_heap_exhaustion_before_the_allo
         (
             "grow",
             "let values = box_slots_new::<u16>(capacity: 0_u64);\n  grow(cell: &values, capacity: n);",
-            16_u64,
+            0_u64,
+            "A1;F1;",
+            "",
+        ),
+        (
+            "grow-full",
+            "let values = box_slots_new::<u16>(capacity: 1_u64);\n  place_back(window: &values.inner, value: 7_u16);\n  grow(cell: &values, capacity: n);",
+            0_u64,
+            "A1;R1;F1;",
+            "A1;",
+        ),
+        (
+            "grow-partial",
+            "let values = box_slots_new::<u16>(capacity: 2_u64);\n  place_back(window: &values.inner, value: 7_u16);\n  grow(cell: &values, capacity: n);",
+            0_u64,
             "A1;A2;F1;F2;",
             "A1;",
         ),
@@ -735,10 +1186,14 @@ fn an_allocation_size_the_target_cannot_serve_is_heap_exhaustion_before_the_allo
         });
         let observed = module
             .replace("@malloc(", "@wf_test_allocate(")
-            .replace("@free(", "@wf_test_release(");
+            .replace("@free(", "@wf_test_release(")
+            .replace("@realloc(", "@wf_test_resize(");
         let observer = format!(
             "{}\n__attribute__((constructor)) static void unbuffer(void) {{ setvbuf(stdout, NULL, _IONBF, 0); }}\n",
             super::owned_places::allocation_observer_by_process(2)
+        );
+        let observer = format!(
+            "{observer}\nvoid *wf_test_resize(void *old, size_t bytes) {{ printf(\"R1;\"); if (old != held[1]) abort(); void *fresh = realloc(old, bytes); if (!fresh) abort(); held[1] = fresh; return fresh; }}\n"
         );
         let directory = test_directory();
         let executable = build_linked_executable(&observed, Some(&observer), &[], &directory);
@@ -1412,13 +1867,13 @@ fn definition_body<'a>(module: &'a str, signature: &str) -> &'a str {
 }
 
 /// [STOR-3] fixes a window's release as each element's release in ascending
-/// logical index order. Its enclosing `Box` then performs the one heap free,
+/// logical index order. This positive-extent owner then performs one heap free,
 /// and a window inside a cycle follows the same walk as any other.
 ///
 /// The run action walks the live elements but frees no separate backing:
-/// [TYPE-9] places a runtime-capacity `Slots` only inside its `Box`, and
-/// [STOR-1] gives that pair exactly one heap object. The enclosing owner action
-/// therefore calls the run action and then frees the cell [STOR-3].
+/// [TYPE-9] places a runtime-capacity `Slots` only inside its `Box`. Its
+/// descriptor is inline and this fixture has one positive-extent payload. The
+/// enclosing owner calls the run action and then frees that payload [STOR-3].
 ///
 /// The order is pinned where it is chosen because nothing downstream can see
 /// it: [STOR-3] gives memory reclamation the empty effect row. Walking the
@@ -1441,7 +1896,7 @@ fn a_buffer_in_a_cleanup_cycle_is_walked_in_the_order_the_rule_fixes() {
     };
     let buffer_drop = definition_body(&module, run_definition.trim_end_matches(" #0 {"));
     assert!(
-        buffer_drop.contains("%index = phi i64 [ 0, %entry ], [ %next, %body ]")
+        buffer_drop.contains("%index = phi i64 [ 0, %entry ], [ %next, %advance ]")
             && buffer_drop.contains("%next = add i64 %index, 1"),
         "the elements must be released from index zero upward: {buffer_drop}"
     );
@@ -1503,10 +1958,10 @@ fn a_buffer_in_a_cleanup_cycle_is_walked_in_the_order_the_rule_fixes() {
 /// order and releases the placeholder the exchange left behind, and the final
 /// walk still descends left before right.
 ///
-/// Each `box_slots_new` is one interposed allocation: [TYPE-9] makes the
-/// runtime-capacity shape the content of its `Box`, and [STOR-1] stores the
-/// pair in exactly one heap object. The nested and wide fixtures each create
-/// one root cell and four child cells.
+/// Each `box_slots_new` here has positive physical extent and therefore one
+/// interposed payload allocation; the owner descriptor stays inline. The
+/// nested and wide fixtures each create one root payload and four child
+/// payloads, so their exact five-allocation ledgers remain unchanged.
 #[test]
 fn branching_and_nested_release_walks_reclaim_each_instance_in_order() {
     let mut boxed_trace = String::from("A1;");

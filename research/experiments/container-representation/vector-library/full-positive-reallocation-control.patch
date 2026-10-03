@@ -1,0 +1,87 @@
+--- a/compiler/src/backend/emitter/runs.rs
++++ b/compiler/src/backend/emitter/runs.rs
+@@ -1333,65 +1333,31 @@
+         let capacity_field = self.aggregate_field_pointer(block_type, &descriptor, 1)?;
+         let payload_field = self.aggregate_field_pointer(block_type, &descriptor, 2)?;
+         let length = self.next_temporary()?;
+-        let old_capacity = self.next_temporary()?;
+         let old_payload = self.next_temporary()?;
+-        let old_bytes = self.next_temporary()?;
+-        let bytes = self.next_temporary()?;
+-        let full = self.next_temporary()?;
+-        let positive = self.next_temporary()?;
+-        let reuse = self.next_temporary()?;
+-        let resized = self.next_temporary()?;
+-        let resized_nonnull = self.next_temporary()?;
+-        let zero = self.next_temporary()?;
+-        let allocated = self.next_temporary()?;
+-        let fresh = self.next_temporary()?;
+-        let fresh_nonnull = self.next_temporary()?;
++        writeln!(
++            self.output,
++            "  %{length} = load i64, ptr {length_field}\n  %{old_payload} = load ptr, ptr {payload_field}"
++        )
++        .map_err(|_| BackendFailure::TextEmission)?;
++        let fresh = self.allocate_window_payload(result, capacity, &element_size)?;
++        // The filled slots move as bytes: no value's judgment depends on its
++        // address [STOR-7], and a `Slots` window begins at slot zero, so the
++        // filled prefix is one contiguous extent.
+         let moved = self.next_temporary()?;
+-        let selected = self.next_temporary()?;
+-        let reallocate = format!("window.grow.reallocate.v{}", result.ordinal());
+-        let copy = format!("window.grow.copy.v{}", result.ordinal());
+-        let copy_ready = format!("window.grow.copy.ready.v{}", result.ordinal());
+-        let ready = window_block_ready_label(result);
+-        let oom = window_block_oom_label(result);
+-        writeln!(self.output,
+-            "  %{length} = load i64, ptr {length_field}\n  %{old_capacity} = load i64, ptr {capacity_field}\n  %{old_payload} = load ptr, ptr {payload_field}\n  %{old_bytes} = mul nuw i64 %{old_capacity}, {element_size}\n  %{bytes} = mul nuw i64 {}, {element_size}\n  %{full} = icmp eq i64 %{length}, %{old_capacity}\n  %{positive} = icmp ne i64 %{old_bytes}, 0\n  %{reuse} = and i1 %{full}, %{positive}\n  br i1 %{reuse}, label %{reallocate}, label %{copy}",
+-            self.value_name(capacity)
+-        ).map_err(|_| BackendFailure::TextEmission)?;
+-        // A full positive payload contains only initialized elements.
+-        // realloc may retain or move it; failure leaves the original live.
+-        self.output.open_block(reallocate.clone());
+-        self.output.symbol("realloc");
+-        writeln!(self.output,
+-            "  %{resized} = call ptr @realloc(ptr %{old_payload}, i64 %{bytes})\n  %{resized_nonnull} = icmp ne ptr %{resized}, null\n  br i1 %{resized_nonnull}, label %{ready}, label %{oom}"
+-        ).map_err(|_| BackendFailure::TextEmission)?;
+-        self.output.open_block(copy.clone());
+-        self.output.symbol("malloc");
+-        writeln!(self.output,
+-            "  %{zero} = icmp eq i64 %{bytes}, 0\n  %{allocated} = select i1 %{zero}, i64 1, i64 %{bytes}\n  %{fresh} = call ptr @malloc(i64 %{allocated})\n  %{fresh_nonnull} = icmp ne ptr %{fresh}, null\n  br i1 %{fresh_nonnull}, label %{copy_ready}, label %{oom}"
+-        ).map_err(|_| BackendFailure::TextEmission)?;
+-        self.output.open_block(copy_ready.clone());
+-        // A partial payload copies only initialized elements. Successful
+-        // malloc provides disjoint storage; zero extents still allocate one
+-        // byte and preserve their logical length and capacity independently.
++        writeln!(
++            self.output,
++            "  %{moved} = mul nuw i64 %{length}, {element_size}"
++        )
++        .map_err(|_| BackendFailure::TextEmission)?;
+         self.intrinsics.insert(IntrinsicDeclaration::MemoryCopy);
+         self.output.symbol("llvm.memcpy.p0.p0.i64");
+         self.output.symbol("free");
+-        writeln!(self.output,
+-            "  %{moved} = mul nuw i64 %{length}, {element_size}\n  call void @llvm.memcpy.p0.p0.i64(ptr %{fresh}, ptr %{old_payload}, i64 %{moved}, i1 false)\n  call void @free(ptr %{old_payload})\n  br label %{ready}"
+-        ).map_err(|_| BackendFailure::TextEmission)?;
+-        self.output.open_block(oom.clone());
+-        self.output.symbol("wf_resource_abort");
+-        writeln!(
+-            self.output,
+-            "  call void @wf_resource_abort()\n  unreachable"
+-        )
+-        .map_err(|_| BackendFailure::TextEmission)?;
+-        // Keep the established exit label for successor phi predecessors.
+-        self.output.open_block(ready);
+-        writeln!(self.output,
+-            "  %{selected} = phi ptr [ %{resized}, %{reallocate} ], [ %{fresh}, %{copy_ready} ]\n  store ptr %{selected}, ptr {payload_field}\n  store i64 {}, ptr {capacity_field}",
++        writeln!(
++            self.output,
++            "  call void @llvm.memcpy.p0.p0.i64(ptr {fresh}, ptr %{old_payload}, i64 %{moved}, i1 false)\n  call void @free(ptr %{old_payload})\n  store ptr {fresh}, ptr {payload_field}\n  store i64 {}, ptr {capacity_field}",
+             self.value_name(capacity)
+-        ).map_err(|_| BackendFailure::TextEmission)?;
++        )
++        .map_err(|_| BackendFailure::TextEmission)?;
+         self.emit_constant(result, ty, IrConstant::Unit)
+     }
+ 

@@ -10,10 +10,29 @@ fn source_enum_cleanup_switches_on_the_active_variant() {
 enum Owner {
   Empty();
   Full(value: PairBuffers);
+  Last();
 }
 
 fn make_empty() -> result: Owner pure {
   return Owner::Empty();
+}
+
+fn make_last() -> result: Owner pure {
+  return Owner::Last();
+}
+
+fn inspect(owner: &Owner) -> result: u64 reads(owner) {
+  match owner^ {
+    Empty() => {
+      return 0_u64;
+    }
+    Full(value: pair) => {
+      return pair^.left.inner.len;
+    }
+    Last() => {
+      return 2_u64;
+    }
+  }
 }
 
 fn relay(owner: Owner) -> result: Owner pure {
@@ -44,6 +63,9 @@ fn consume(owner: Owner) -> result: u8 pure {
       }
       return byte;
     }
+    Last() => {
+      return 2_u8;
+    }
   }
 }
 
@@ -55,6 +77,28 @@ fn main() -> status: std::process::ExitStatus pure {
   let abandoned_pair = PairBuffers(left: move abandoned_left, right: move abandoned_right);
   let abandoned = Owner::Full(value: move abandoned_pair);
   let empty = make_empty();
+  let last = make_last();
+  let first_tag = inspect(owner: &empty);
+  let middle_tag = inspect(owner: &abandoned);
+  let last_tag = inspect(owner: &last);
+  if first_tag != 0_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  if middle_tag != 1_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  if last_tag != 2_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  let last_byte = consume(owner: move last);
+  if last_byte != 2_u8 {
+    return std::process::exit_status(code: 3_u8);
+  }
+  let consumed_empty = make_empty();
+  let empty_byte = consume(owner: move consumed_empty);
+  if empty_byte != 0_u8 {
+    return std::process::exit_status(code: 4_u8);
+  }
   swap(first: &abandoned, second: &empty);
   swap(first: &empty, second: &empty);
   clear(owner: &empty);
@@ -108,38 +152,51 @@ fn main() -> status: std::process::ExitStatus pure {
     assert!(helper.contains("switch i32 %tag"));
     assert!(helper.contains("i32 0, label %variant.0"));
     assert!(helper.contains("i32 1, label %variant.1"));
+    assert!(helper.contains("i32 2, label %variant.2"));
+    assert!(
+        helper.contains("call void @abort()"),
+        "cleanup is unchanged"
+    );
     assert_eq!(helper.matches("call void @free").count(), 2);
     assert_eq!(abandon.matches(&format!("call void @{cleanup}")).count(), 1);
     let consume = emitted_function(&llvm, "consume");
+    assert!(!consume.contains("call void @abort()"));
+    assert!(!emitted_function(&llvm, "inspect").contains("call void @abort()"));
     assert!(!consume.contains(&format!("call void @{cleanup}")));
     assert_eq!(consume.matches("call void @free").count(), 2);
 
-    // A linked implementation of the same ordinary signature sets only the
-    // active tag and returns deliberately dirty bits for the inactive Box
-    // representations, which must never enter cleanup. `Owner` has three
-    // scalar leaves, a tag and two pointers, so it returns in registers
-    // (compiler/src/backend/abi.rs), and that implementation is written in
-    // LLVM because C returns a small struct differently on each target.
-    //
-    // The previous C wrapper passed a deliberately dirty destination to the
-    // WF constructor. That observation retired with the destination for
-    // this result: a register-returned constructor never sees its caller's
-    // storage, and the caller stores every field of the returned value.
+    // The two inline Slots owners make this result exceed the register-return
+    // ceiling. A linked implementation dirties the complete destination before
+    // setting only the Empty or Last tag; inactive owner bytes must never enter
+    // borrowed payload reads or cleanup.
     let make_empty = emitted_function(&llvm, "make_empty");
-    let (result, _) = make_empty
-        .strip_prefix("define ")
-        .and_then(|header| header.split_once(" @wf_make_empty()"))
-        .expect("make_empty takes no argument");
-    assert!(result.starts_with("%wf.t"), "Owner returns in registers");
+    assert!(
+        make_empty.starts_with("define void @wf_make_empty(ptr %wf.result)"),
+        "Owner returns through its destination: {make_empty}"
+    );
     let renamed = llvm.replacen(
-        &format!("define {result} @wf_make_empty("),
-        &format!("define {result} @wf_test_empty_body("),
+        "define void @wf_make_empty(",
+        "define void @wf_test_empty_body(",
         1,
     );
     assert_ne!(renamed, llvm);
-    let dirty = "ptr inttoptr (i64 -6510615555426900571 to ptr)";
+    let with_last = renamed.replacen(
+        "define void @wf_make_last(",
+        "define void @wf_test_last_body(",
+        1,
+    );
+    assert_ne!(with_last, renamed);
+    // Eight bytes for the tag and alignment, then two 24-byte Slots owners.
+    let dirty_stores = (0..7)
+        .map(|word| {
+            format!(
+                "  %dirty.{word} = getelementptr i8, ptr %wf.result, i64 {}\n  store i64 -6510615555426900571, ptr %dirty.{word}, align 8\n",
+                word * 8
+            )
+        })
+        .collect::<String>();
     let linked_constructor = format!(
-        "{renamed}\ndefine {result} @wf_make_empty() {{\n  %tag = insertvalue {result} poison, i32 0, 0\n  %left = insertvalue {result} %tag, {dirty}, 1, 0\n  %right = insertvalue {result} %left, {dirty}, 1, 1\n  ret {result} %right\n}}\n"
+        "{with_last}\ndefine void @wf_make_empty(ptr %wf.result) {{\n{dirty_stores}  store i32 0, ptr %wf.result, align 4\n  ret void\n}}\ndefine void @wf_make_last(ptr %wf.result) {{\n{dirty_stores}  store i32 2, ptr %wf.result, align 4\n  ret void\n}}\n"
     );
     for module in [&llvm, &linked_constructor] {
         let observed = super::owned_places::retain_calls(module)
@@ -153,6 +210,66 @@ fn main() -> status: std::process::ExitStatus pure {
         // result boundary, and is consumed through its selected payload.
         assert_eq!(output.stdout, b"A1;A2;F1;F2;A3;A4;F3;F4;", "{output:?}");
         assert!(output.stderr.is_empty(), "{output:?}");
+    }
+}
+
+#[test]
+fn tag_only_matches_execute_every_declared_variant() {
+    let source = br#"enum Choice {
+  First();
+  Middle();
+  Last();
+}
+
+fn select(value: Choice) -> result: u8 pure {
+  match value {
+    First() => {
+      return 1_u8;
+    }
+    Middle() => {
+      return 2_u8;
+    }
+    Last() => {
+      return 3_u8;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let first = Choice::First();
+  let first_value = select(value: first);
+  if first_value != 1_u8 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let middle = Choice::Middle();
+  let middle_value = select(value: middle);
+  if middle_value != 2_u8 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  let last = Choice::Last();
+  let last_value = select(value: last);
+  if last_value != 3_u8 {
+    return std::process::exit_status(code: 3_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let llvm = compile(source);
+    let select = emitted_function(&llvm, "select");
+    assert!(select.contains("switch i32"));
+    assert!(!select.contains("call void @abort()"));
+    let observed = super::owned_places::retain_calls(&llvm);
+    let output = compile_link_and_run(&observed, None, &[]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    // Each result check must detect a wrong value from its own arm, even
+    // though every mutated source still has a complete, valid tag domain.
+    for tag_result in 1..=3 {
+        let wrong = std::str::from_utf8(source)
+            .unwrap()
+            .replace(&format!("return {tag_result}_u8;"), "return 9_u8;");
+        let llvm = super::owned_places::retain_calls(&compile(wrong.as_bytes()));
+        let output = compile_link_and_run(&llvm, None, &[]);
+        assert_eq!(output.status.code(), Some(tag_result), "{output:?}");
     }
 }
 

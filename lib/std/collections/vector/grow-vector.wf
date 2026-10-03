@@ -20,6 +20,41 @@ fn grow_vector_reserve<T, const ceiling: u64>(values: &GrowVector<T, ceiling>, t
   return total;
 }
 
+fn grow_vector_grow_full<T, const ceiling: u64>(values: &GrowVector<T, ceiling>) -> result: unit writes(values.storage) contract {
+  requires values^.storage.inner.len < ceiling;
+  requires values^.storage.inner.cap <= values^.storage.inner.len;
+  ensures values^.storage.inner.cap > values^.storage.inner.len;
+  ensures values^.storage.inner.cap >= entry(values)^.storage.inner.cap;
+  ensures values^.storage.inner.len == entry(values)^.storage.inner.len;
+} {
+  let current = values^.storage.inner.cap;
+  let requested = ceiling;
+  if current == 0_u64 {
+    set requested = 1_u64;
+  } else if current <= 9223372036854775807_u64 {
+    let doubled = current + current;
+    if doubled <= ceiling {
+      set requested = doubled;
+    }
+  }
+  let grown = grow_vector_reserve::<T, ceiling>(values: values, total: requested);
+  return unit;
+}
+
+fn grow_vector_make_room<T, const ceiling: u64>(values: &GrowVector<T, ceiling>) -> result: unit writes(values.storage) contract {
+  requires values^.storage.inner.len < ceiling;
+  ensures values^.storage.inner.cap > values^.storage.inner.len;
+  ensures values^.storage.inner.cap >= entry(values)^.storage.inner.cap;
+  ensures values^.storage.inner.len == entry(values)^.storage.inner.len;
+} {
+  let spare = values^.storage.inner.cap - values^.storage.inner.len;
+  if spare > 0_u64 {
+    return unit;
+  }
+  grow_vector_grow_full::<T, ceiling>(values: values);
+  return unit;
+}
+
 fn grow_vector_append<T, const ceiling: u64>(values: &GrowVector<T, ceiling>, value: T) -> length: u64 writes(values.storage) contract {
   requires values^.storage.inner.len < ceiling;
   ensures length == values^.storage.inner.len;
@@ -27,29 +62,7 @@ fn grow_vector_append<T, const ceiling: u64>(values: &GrowVector<T, ceiling>, va
   ensures values^.storage.inner.cap >= entry(values)^.storage.inner.cap;
 } {
   doc "Appends one value, doubling full nonempty backing while that total stays within the caller-selected ceiling, saturating at the ceiling otherwise, and taking one slot when the backing is empty.";
-  let spare = values^.storage.inner.cap - values^.storage.inner.len;
-  if spare > 0_u64 {
-    place_back(window: &values^.storage.inner, value: move value);
-    let reached = values^.storage.inner.len;
-    return reached;
-  }
-  let current = values^.storage.inner.cap;
-  if current == 0_u64 {
-    let opened = grow_vector_reserve::<T, ceiling>(values: values, total: 1_u64);
-    place_back(window: &values^.storage.inner, value: move value);
-    let reached = values^.storage.inner.len;
-    return reached;
-  }
-  if current <= 9223372036854775807_u64 {
-    let doubled = current + current;
-    if doubled <= ceiling {
-      let widened = grow_vector_reserve::<T, ceiling>(values: values, total: doubled);
-      place_back(window: &values^.storage.inner, value: move value);
-      let reached = values^.storage.inner.len;
-      return reached;
-    }
-  }
-  let stretched = grow_vector_reserve::<T, ceiling>(values: values, total: ceiling);
+  grow_vector_make_room::<T, ceiling>(values: values);
   place_back(window: &values^.storage.inner, value: move value);
   let reached = values^.storage.inner.len;
   return reached;
@@ -63,29 +76,7 @@ fn grow_vector_insert<T, const ceiling: u64>(values: &GrowVector<T, ceiling>, in
   ensures values^.storage.inner.cap >= entry(values)^.storage.inner.cap;
 } {
   doc "Inserts before a proved index and preserves order. The manual exchange-and-shift loop v0.59 wrote for this retired with [OP-10]'s insert_at, which is the one operation that writes the append slot and the filled run together.";
-  let spare = values^.storage.inner.cap - values^.storage.inner.len;
-  if spare > 0_u64 {
-    insert_at(window: &values^.storage.inner, index: index, value: move value);
-    let reached = values^.storage.inner.len;
-    return reached;
-  }
-  let current = values^.storage.inner.cap;
-  if current == 0_u64 {
-    let opened = grow_vector_reserve::<T, ceiling>(values: values, total: 1_u64);
-    insert_at(window: &values^.storage.inner, index: index, value: move value);
-    let reached = values^.storage.inner.len;
-    return reached;
-  }
-  if current <= 9223372036854775807_u64 {
-    let doubled = current + current;
-    if doubled <= ceiling {
-      let widened = grow_vector_reserve::<T, ceiling>(values: values, total: doubled);
-      insert_at(window: &values^.storage.inner, index: index, value: move value);
-      let reached = values^.storage.inner.len;
-      return reached;
-    }
-  }
-  let stretched = grow_vector_reserve::<T, ceiling>(values: values, total: ceiling);
+  grow_vector_make_room::<T, ceiling>(values: values);
   insert_at(window: &values^.storage.inner, index: index, value: move value);
   let reached = values^.storage.inner.len;
   return reached;
@@ -106,11 +97,11 @@ fn grow_vector_swap_remove<T, const ceiling: u64>(values: &GrowVector<T, ceiling
   ensures values^.storage.inner.len + 1_u64 == entry(values)^.storage.inner.len;
   ensures values^.storage.inner.cap == entry(values)^.storage.inner.cap;
 } {
-  doc "Returns the selected value and fills its position with the last value, without preserving order. OP-11 admits exchanging a slot with itself, so selecting the last element needs no separate branch. The operation moves a constant number of elements.";
-  let count = values^.storage.inner.len;
-  let last = count - 1_u64;
-  swap(first: &values^.storage.inner[index], second: &values^.storage.inner[last]);
+  doc "Returns the selected value and fills its position with the last value, without preserving order. Taking the last value first avoids writing the removed value back into the retired slot. Selecting that last position returns the local directly; an earlier position exchanges with the local through OP-11. The operation moves a constant number of elements.";
   let removed = take_back(window: &values^.storage.inner);
+  if index < values^.storage.inner.len {
+    swap(first: &values^.storage.inner[index], second: &removed);
+  }
   return move removed;
 }
 

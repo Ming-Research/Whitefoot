@@ -1,0 +1,621 @@
+{
+  "factor": "Unguarded stored-aggregate opening Slots range transfer; refused by the preregistered complete pair.",
+  "status": "Native and correctness screens pass; three qualified useful gains and two qualified useful losses refuse selection. No production integration.",
+  "source": {
+    "compiler_source_revision": "7abd6bb34746b7b983b83103c68ee429b24859bb",
+    "archive_sha256": "d27c700cd935064cbb7ddfd8cd56911bcb3bfce9d199efe0f85db6e0d0eb8ade",
+    "baseline_cli_sha256": "5753999f224f89a9a99e0399b76bfd7b92cd53d5f22b0d204df4f2ec3ffbc20b",
+    "candidate_cli_sha256": "ff7def76e016e25082e9bd73561fa1422f1eeab05ec27bf48a5be0a9ac985312",
+    "selected_cleanup_sha256": "1f70037928f71fbf69475ec596b56cb52904540482b823e9d2bdd549c6b51493",
+    "selected_source_test_files": {
+      "lib/std/collections/ordered_map/ordered-map.wf": "1f70037928f71fbf69475ec596b56cb52904540482b823e9d2bdd549c6b51493",
+      "compiler/tests/programs/containers.rs": "ec509686aaf58819a11c64f255a0880676665244d055dde55b136d718291f542",
+      "tests/programs/containers/ordered-map-cleanup-order.wf": "6b3b8e277909ae6b862a82ba7112eca96ce8a06a57b4542ac9329730a2c638ac",
+      "tests/programs/containers/ordered-map-cleanup-observer.c": "90ae91865db414569994727407e0cd9d7ff45820b3a667136227f6c1ea1e6490"
+    },
+    "candidate_files": {
+      "compiler/src/backend/emitter/array.rs": {
+        "added": 1,
+        "removed": 1,
+        "sha256": "f3531e07390c2eb4f29dc62df1868c8f98981aa18358e7b076bff146aa30d257"
+      },
+      "compiler/src/backend/emitter/runs.rs": {
+        "added": 68,
+        "removed": 6,
+        "sha256": "4d244b4c0e50ec5b783157f6254ad29793f7c500c99326156e52028c9dd888f8"
+      },
+      "compiler/src/backend/tests/windows.rs": {
+        "added": 416,
+        "removed": 0,
+        "sha256": "7a4637fbcf04e8c59009bc3976db91a6e39f35182469a76687f2b970e7ba7e2b"
+      },
+      "compiler/src/ir.rs": {
+        "added": 4,
+        "removed": 4,
+        "sha256": "3e80fef6d0a4cfd633ab171b0bf630436616dec783fd3ac28df4e76cde8e5296"
+      }
+    },
+    "source_freeze_sha256": "c077f73ad571c8c505a4c53398a201f7437120756b858241029e4cd468442f9a",
+    "measured_patch_sha256": "413b5f92c9f77097fa059122627eb4be7ddc28ca7cced3b5d809143a00f98976",
+    "public_replay_patch_sha256": "bdc1e42681344f6edc2443fa3886b8a9c74d1b4d42034fc6d84db1044a364ef0",
+    "public_replay_format": "Zero-context unified diff; apply with git apply --unidiff-zero. Formatting-only publication repair removes whitespace-only context lines. Exact four candidate files and reverse restoration to the pinned revision were verified byte-for-byte."
+  },
+  "selected_cleanup_revision": "846275596c74e1df011ab8f99b1ed61d9576e359",
+  "ordinary_ordered_carrier": {
+    "graph": "pkg::collections::ordered_map: [];\npkg: [pkg::collections::ordered_map, std::process];\n\nentry experiment = pkg::main;\n",
+    "interface": "public fn ordered_cost_word_trace(count: u64, rounds: u64, seed: u64, path: u64) -> result: u64 pure contract {\n  requires count <= 8192_u64;\n} doc \"Completes the unchanged scalar OrderedMap trace and returns its checksum.\";\n\npublic fn ordered_cost_record_trace(count: u64, rounds: u64, seed: u64, path: u64) -> result: u64 pure contract {\n  requires count <= 8192_u64;\n} doc \"Completes the unchanged wide OrderedMap trace and returns its checksum.\";\n\npublic fn main() -> status: std::process::ExitStatus pure doc \"Keeps both unchanged benchmark trace bridges in the entry closure.\";\n",
+    "import_remap": "std::collections::ordered_map:: -> pkg::collections::ordered_map:: in the otherwise unchanged fixture; the same ordinary pkg graph and selected source are used in both arms. LIBRARY_SOURCE does not override embedded std.",
+    "files_sha256": {
+      "carriers/ordered/collections/ordered_map/module.wfm": "bce14839d9c10de51ec4c3d0408490c823cf866781d6d4a0fe521798df6d6442",
+      "carriers/ordered/collections/ordered_map/ordered-map.wf": "1f70037928f71fbf69475ec596b56cb52904540482b823e9d2bdd549c6b51493",
+      "carriers/ordered/module.wfm": "a6e66319045a72575d4d4d9bac14418bed221c3915ac70fb6411019b1f9fda4c",
+      "carriers/ordered/modules.wfg": "99be722c35f61d4549768375eb02520b48ce26ab516a05e963f688e2434a008b",
+      "carriers/ordered/ordered-library.wf": "a3049df3132c61b6c8346fb6a70d96127949d35ab21df6086fadc044545bc6a4"
+    }
+  },
+  "timed_images": {
+    "vector-baseline-timed": {
+      "path": "/private/tmp/whitefoot-vector-actual-ablation/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/vector-costs-timed",
+      "sha256": "c8cbb79e5b8806f4d06029b9a23c58b4bc299f4b36c60c05b366ea1c3efa4090"
+    },
+    "vector-candidate-timed": {
+      "path": "/private/tmp/whitefoot-slots-aggregate-opening-ks7ia9u0/continuation/candidate/vector/vector-costs-timed",
+      "sha256": "0af987e89b2ce46df678b9aa809b66d4318a023bb23bfc1ce641b6c8b7a9ad34"
+    },
+    "ordered-baseline-timed": {
+      "path": "/private/tmp/whitefoot-ordered-cleanup-source-ux6gm4u5/build/candidate/ecosystem/ordered-ecosystem-timed",
+      "sha256": "f6e060ebb289d9a7484a5d95106c6e4333d6b0d860cce3982b2f1855ad27de99"
+    },
+    "ordered-candidate-timed": {
+      "path": "/private/tmp/whitefoot-slots-aggregate-opening-ks7ia9u0/continuation/candidate/ordered/ordered-ecosystem-timed",
+      "sha256": "5729cd9e0fa4393f2d14d445f530e808c692c7ac6b64be6a93a2fd826ed8aaea"
+    }
+  },
+  "commands": [
+    {
+      "label": "vector-baseline",
+      "argv": [
+        "/private/tmp/whitefoot-vector-actual-ablation/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/vector-costs-timed",
+        "measure",
+        "1048576",
+        "7"
+      ],
+      "stdout": "vector-baseline-samples.csv",
+      "stderr": "vector-baseline.stderr",
+      "expected_rows": 4116,
+      "started_utc": "2026-09-28T12:37:06.914870+00:00",
+      "status": 0,
+      "seconds": 80.6536975831259,
+      "ended_utc": "2026-09-28T12:38:27.568442+00:00",
+      "overrun": false,
+      "stdout_sha256": "f9ab046e20d3a24465cc2dc251744550d331d46c821859c8b7510e79d1a7c009",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "vector-candidate",
+      "argv": [
+        "/private/tmp/whitefoot-slots-aggregate-opening-ks7ia9u0/continuation/candidate/vector/vector-costs-timed",
+        "measure",
+        "1048576",
+        "7"
+      ],
+      "stdout": "vector-candidate-samples.csv",
+      "stderr": "vector-candidate.stderr",
+      "expected_rows": 4116,
+      "started_utc": "2026-09-28T12:38:27.577419+00:00",
+      "status": 0,
+      "seconds": 80.35726954089478,
+      "ended_utc": "2026-09-28T12:39:47.934549+00:00",
+      "overrun": false,
+      "stdout_sha256": "f994ae2677b240f53b8e9b707e2bc71bab1563d12f6bc16adfb834d41d1a0539",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "ordered-baseline-0",
+      "argv": [
+        "/private/tmp/whitefoot-ordered-cleanup-source-ux6gm4u5/build/candidate/ecosystem/ordered-ecosystem-timed",
+        "measure",
+        "0",
+        "64"
+      ],
+      "stdout": "ordered-baseline-cohort-0.csv",
+      "stderr": "ordered-baseline-cohort-0.stderr",
+      "expected_rows": 1260,
+      "started_utc": "2026-09-28T12:39:47.944993+00:00",
+      "status": 0,
+      "seconds": 77.21986891608685,
+      "ended_utc": "2026-09-28T12:41:05.164813+00:00",
+      "overrun": false,
+      "stdout_sha256": "6db18bf6efad7df650c9a18e3f140b303d955f5a964fbfae6c983e1ff72e2f10",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "ordered-candidate-0",
+      "argv": [
+        "/private/tmp/whitefoot-slots-aggregate-opening-ks7ia9u0/continuation/candidate/ordered/ordered-ecosystem-timed",
+        "measure",
+        "0",
+        "64"
+      ],
+      "stdout": "ordered-candidate-cohort-0.csv",
+      "stderr": "ordered-candidate-cohort-0.stderr",
+      "expected_rows": 1260,
+      "started_utc": "2026-09-28T12:41:05.168401+00:00",
+      "status": 0,
+      "seconds": 77.34920287504792,
+      "ended_utc": "2026-09-28T12:42:22.511066+00:00",
+      "overrun": false,
+      "stdout_sha256": "be32bcb9faac6f97eceff9b5d2e1216448c77787a02ca18d72a71f4d33b694dd",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "ordered-candidate-1",
+      "argv": [
+        "/private/tmp/whitefoot-slots-aggregate-opening-ks7ia9u0/continuation/candidate/ordered/ordered-ecosystem-timed",
+        "measure",
+        "1",
+        "64"
+      ],
+      "stdout": "ordered-candidate-cohort-1.csv",
+      "stderr": "ordered-candidate-cohort-1.stderr",
+      "expected_rows": 1260,
+      "started_utc": "2026-09-28T12:42:22.514547+00:00",
+      "status": 0,
+      "seconds": 77.71640541707166,
+      "ended_utc": "2026-09-28T12:43:40.226408+00:00",
+      "overrun": false,
+      "stdout_sha256": "e45062e2bdf04231606a4e7b37048c280fadadde26fbef935e3699ca78739cba",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "ordered-baseline-1",
+      "argv": [
+        "/private/tmp/whitefoot-ordered-cleanup-source-ux6gm4u5/build/candidate/ecosystem/ordered-ecosystem-timed",
+        "measure",
+        "1",
+        "64"
+      ],
+      "stdout": "ordered-baseline-cohort-1.csv",
+      "stderr": "ordered-baseline-cohort-1.stderr",
+      "expected_rows": 1260,
+      "started_utc": "2026-09-28T12:43:40.230194+00:00",
+      "status": 0,
+      "seconds": 77.32009841687977,
+      "ended_utc": "2026-09-28T12:44:57.549952+00:00",
+      "overrun": false,
+      "stdout_sha256": "df14ec2432029a64455ed17b03a53203f164ee9f40e2858df667c34b99e80d60",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "environment": {
+    "WF_WORKERS": null,
+    "DYLD_INSERT_LIBRARIES": null,
+    "MallocNanoZone": null
+  },
+  "timing_construction_seconds": 0,
+  "timing_execution_seconds": 470.6165427491069,
+  "all_timing_statuses_zero": true,
+  "timing_inputs_unchanged": true,
+  "qualification": {
+    "native": "315cad281bbe185acdd4b6fddc9bb52bd24554db8e0bb8df84e98918de2cda34",
+    "focused_tests": "ab705dfd317ad2311d2bf609344795c6b83006cf38bd4d733644ae4885ae8101",
+    "full_correctness": "43324ed459dd6623007cec9a8e2071fd22cc4b0a086e91d720cce84ff2e35e49",
+    "cli_build_seconds": 61.28964595799334,
+    "native_construction_seconds": 10.90454617422074,
+    "test_build_seconds": 103.35913762496784,
+    "focused_execution_seconds": 15.22626479063183,
+    "continuation_construction_seconds": 15.775756544200704,
+    "continuation_execution_seconds": 14.793415250722319
+  },
+  "native_flags": [
+    "/usr/bin/clang",
+    "-O3",
+    "-Wno-override-module",
+    "-x",
+    "ir"
+  ],
+  "timed_link_argv": {
+    "vector-timed-link": [
+      "/usr/bin/clang++",
+      "-O3",
+      "/private/tmp/whitefoot-vector-actual-ablation/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/driver-timed.o",
+      "/private/tmp/whitefoot-slots-aggregate-opening-ks7ia9u0/native/candidate/vector-library/native.o",
+      "/private/tmp/whitefoot-vector-actual-ablation/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/cpp-timed.o",
+      "/private/tmp/whitefoot-vector-actual-ablation/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/rust-timed.a",
+      "/private/tmp/whitefoot-vector-actual-ablation/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/ordinary_values.o",
+      "/private/tmp/whitefoot-vector-actual-ablation/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/sched/core.o",
+      "/private/tmp/whitefoot-vector-actual-ablation/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/sched/entry.o",
+      "/private/tmp/whitefoot-vector-actual-ablation/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/runtime.o",
+      "/private/tmp/whitefoot-vector-actual-ablation/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/file_adapter.o",
+      "/private/tmp/whitefoot-vector-actual-ablation/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/bridge.o",
+      "/private/tmp/whitefoot-vector-actual-ablation/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/wf_floor.o",
+      "/private/tmp/whitefoot-vector-actual-ablation/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/sched/prim_host.o",
+      "/private/tmp/whitefoot-vector-actual-ablation/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/wait_host.o",
+      "/private/tmp/whitefoot-vector-actual-ablation/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/file_posix.o",
+      "/private/tmp/whitefoot-vector-actual-ablation/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/linux_io_uring.o",
+      "/private/tmp/whitefoot-vector-actual-ablation/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/ordinary_values_ir.o",
+      "-pthread",
+      "-lm",
+      "-liconv",
+      "-lSystem",
+      "-lc",
+      "-lm",
+      "-o",
+      "/private/tmp/whitefoot-slots-aggregate-opening-ks7ia9u0/continuation/candidate/vector/vector-costs-timed"
+    ],
+    "ordered-timed-link": [
+      "/usr/bin/clang++",
+      "-O3",
+      "/private/tmp/whitefoot-ordered-cleanup-source-ux6gm4u5/build/candidate/ecosystem/driver-timed.o",
+      "/private/tmp/whitefoot-ordered-cleanup-source-ux6gm4u5/build/candidate/ecosystem/control-word-source-timed.o",
+      "/private/tmp/whitefoot-ordered-cleanup-source-ux6gm4u5/build/candidate/ecosystem/control-record-source-timed.o",
+      "/private/tmp/whitefoot-ordered-cleanup-source-ux6gm4u5/build/candidate/ecosystem/control-word-direct-timed.o",
+      "/private/tmp/whitefoot-ordered-cleanup-source-ux6gm4u5/build/candidate/ecosystem/control-record-direct-timed.o",
+      "/private/tmp/whitefoot-ordered-cleanup-source-ux6gm4u5/build/candidate/ecosystem/control-word-avl-timed.o",
+      "/private/tmp/whitefoot-ordered-cleanup-source-ux6gm4u5/build/candidate/ecosystem/control-record-avl-timed.o",
+      "/private/tmp/whitefoot-slots-aggregate-opening-ks7ia9u0/native/candidate/ordered-library/native.o",
+      "/private/tmp/whitefoot-ordered-cleanup-source-ux6gm4u5/build/candidate/ecosystem/rust-timed.a",
+      "/private/tmp/whitefoot-ordered-cleanup-source-ux6gm4u5/build/candidate/ecosystem/cpp-timed.o",
+      "/private/tmp/whitefoot-ordered-cleanup-source-ux6gm4u5/shared/native/ordinary_values.o",
+      "/private/tmp/whitefoot-ordered-cleanup-source-ux6gm4u5/shared/native/ordinary_values_ir.o",
+      "/private/tmp/whitefoot-ordered-cleanup-source-ux6gm4u5/shared/native/wf_floor.o",
+      "/private/tmp/whitefoot-ordered-cleanup-source-ux6gm4u5/shared/native/sched/core.o",
+      "/private/tmp/whitefoot-ordered-cleanup-source-ux6gm4u5/shared/native/sched/entry.o",
+      "/private/tmp/whitefoot-ordered-cleanup-source-ux6gm4u5/shared/native/sched/prim_host.o",
+      "/private/tmp/whitefoot-ordered-cleanup-source-ux6gm4u5/shared/native/completion/bridge.o",
+      "/private/tmp/whitefoot-ordered-cleanup-source-ux6gm4u5/shared/native/completion/file_adapter.o",
+      "/private/tmp/whitefoot-ordered-cleanup-source-ux6gm4u5/shared/native/completion/file_posix.o",
+      "/private/tmp/whitefoot-ordered-cleanup-source-ux6gm4u5/shared/native/completion/linux_io_uring.o",
+      "/private/tmp/whitefoot-ordered-cleanup-source-ux6gm4u5/shared/native/completion/runtime.o",
+      "/private/tmp/whitefoot-ordered-cleanup-source-ux6gm4u5/shared/native/completion/wait_host.o",
+      "-L/private/tmp/whitefoot-abseil-20260817.0-install/lib",
+      "-labsl_cord",
+      "-labsl_cordz_info",
+      "-labsl_cord_internal",
+      "-labsl_hash",
+      "-labsl_city",
+      "-labsl_cordz_functions",
+      "-labsl_exponential_biased",
+      "-labsl_cordz_handle",
+      "-labsl_synchronization",
+      "-labsl_graphcycles_internal",
+      "-labsl_kernel_timeout_internal",
+      "-labsl_stacktrace",
+      "-labsl_symbolize",
+      "-labsl_demangle_internal",
+      "-labsl_demangle_rust",
+      "-labsl_decode_rust_punycode",
+      "-labsl_utf8_for_code_point",
+      "-labsl_malloc_internal",
+      "-labsl_tracing_internal",
+      "-labsl_time",
+      "-labsl_civil_time",
+      "-labsl_time_zone",
+      "-labsl_crc_cord_state",
+      "-labsl_crc32c",
+      "-labsl_crc_internal",
+      "-labsl_base_cpu_detect",
+      "-labsl_str_format_internal",
+      "-labsl_debugging_internal",
+      "-labsl_strings",
+      "-labsl_strings_internal",
+      "-labsl_hardening",
+      "-labsl_int128",
+      "-labsl_base",
+      "-labsl_spinlock_wait",
+      "-labsl_source_location",
+      "-labsl_throw_delegate",
+      "-labsl_raw_logging_internal",
+      "-labsl_log_severity",
+      "-framework",
+      "CoreFoundation",
+      "-liconv",
+      "-lSystem",
+      "-lc",
+      "-lm",
+      "-pthread",
+      "-lm",
+      "-o",
+      "/private/tmp/whitefoot-slots-aggregate-opening-ks7ia9u0/continuation/candidate/ordered/ordered-ecosystem-timed"
+    ]
+  },
+  "timed_link_input_sha256": {
+    "/private/tmp/whitefoot-vector-actual-ablation/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/driver-timed.o": "2bd0ff0962381a90f486bd8682196efea3214b7d9c0969bf58ec2380f3e9f77d",
+    "/private/tmp/whitefoot-slots-aggregate-opening-ks7ia9u0/native/candidate/vector-library/native.o": "05b3e70706ca74a5b2c342ee368e8fffa7fa0c4bd062f15c8f96fd1f05d7c382",
+    "/private/tmp/whitefoot-vector-actual-ablation/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/cpp-timed.o": "d3c51cf441054e8ba6bc337ccf64f90ecce78df770f1333453e7c3fa107ebc7f",
+    "/private/tmp/whitefoot-vector-actual-ablation/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/ecosystem/rust-timed.a": "7fffbc66201cd03866f7540451c551c417bf04f2ecb1467699adfac05260ced6",
+    "/private/tmp/whitefoot-vector-actual-ablation/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/ordinary_values.o": "b0b82798cd758c54023ae7f3670f4625b0f82f6a9aee1ec656fca2ff33295eac",
+    "/private/tmp/whitefoot-vector-actual-ablation/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/sched/core.o": "0655633c69666fcce21bf67258101aedb49c914fc50a6cc8edbfe22a8315e645",
+    "/private/tmp/whitefoot-vector-actual-ablation/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/sched/entry.o": "e04734d7a1ddbe9083b47570ca2854963803b88a7197628bed2ca66cb4924d5c",
+    "/private/tmp/whitefoot-vector-actual-ablation/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/runtime.o": "75cb971977625c9b05adcf74b14989544ccbf61b0a81fe4843ec72226eb36c61",
+    "/private/tmp/whitefoot-vector-actual-ablation/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/file_adapter.o": "fb4ee3f397da5bcee9188332d56fb3c854b931b4c1f07b4c8350a9c941891937",
+    "/private/tmp/whitefoot-vector-actual-ablation/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/bridge.o": "af91032f29dc1b1c22dcf43099d933303ff3b1e4741a93122f987bdbdb70c4ec",
+    "/private/tmp/whitefoot-vector-actual-ablation/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/wf_floor.o": "8342e7ea0b8d6a0817d543e8c05e807c96527393945e95597718ba9a27ce722d",
+    "/private/tmp/whitefoot-vector-actual-ablation/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/sched/prim_host.o": "c3a5140b8221a57d27a510995ae37c7b33a64ebc87ec9f9286b99ece649bce45",
+    "/private/tmp/whitefoot-vector-actual-ablation/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/wait_host.o": "d95b24c2367aa6dcf60a9d9e4e36acf79fa502d4ded856f244c6f4afcf28aa10",
+    "/private/tmp/whitefoot-vector-actual-ablation/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/file_posix.o": "1d1fe1c3033038fc69cd031e32b5eff6e85571da89176f85e442f52f0fb1b940",
+    "/private/tmp/whitefoot-vector-actual-ablation/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/completion/linux_io_uring.o": "e389769ac8c9f38af9cd00e5bc5d56d3c180dff5985fb81ddfff63dfa89eb453",
+    "/private/tmp/whitefoot-vector-actual-ablation/research/experiments/container-representation/vector-library/.build/actual-ablation/terminal/native/ordinary_values_ir.o": "d5509f631fb4a388fbd380444b24bd1dfa3420082bc678ceec106058d4122932",
+    "/private/tmp/whitefoot-ordered-cleanup-source-ux6gm4u5/build/candidate/ecosystem/driver-timed.o": "97b5c306b9a6fb534b9c4a6efcadc03554eaa3f3178ad504fa25a08c292321e9",
+    "/private/tmp/whitefoot-ordered-cleanup-source-ux6gm4u5/build/candidate/ecosystem/control-word-source-timed.o": "33efc89c0a710307fb44b27160ce8bf5db3b6922e0dd40ea756bfc53cc134656",
+    "/private/tmp/whitefoot-ordered-cleanup-source-ux6gm4u5/build/candidate/ecosystem/control-record-source-timed.o": "c66e86b509b37598b4cf840175c397c612e951d068a3a1583b3a78601c5ffeab",
+    "/private/tmp/whitefoot-ordered-cleanup-source-ux6gm4u5/build/candidate/ecosystem/control-word-direct-timed.o": "06e958d4703ee0e7a8e87b86ac3766bd7ae07b04ae679cb6976c5f8d55b6335c",
+    "/private/tmp/whitefoot-ordered-cleanup-source-ux6gm4u5/build/candidate/ecosystem/control-record-direct-timed.o": "327882bc92d07ae57e88e11c2bae23b19bb053c42259e710a99853adb6a1b005",
+    "/private/tmp/whitefoot-ordered-cleanup-source-ux6gm4u5/build/candidate/ecosystem/control-word-avl-timed.o": "b2b6472de73d5990c5cffaabc20c345406331b9931e48e2649e4594568cd43e1",
+    "/private/tmp/whitefoot-ordered-cleanup-source-ux6gm4u5/build/candidate/ecosystem/control-record-avl-timed.o": "9fed467ce4f9d0e50bb4013ed0c0bc62f30efea948a436169c853e5b5b4ac184",
+    "/private/tmp/whitefoot-slots-aggregate-opening-ks7ia9u0/native/candidate/ordered-library/native.o": "078dff9e649ac591b3277d9fc190ebb2ee0390edcff3f64e326b85e7073c26df",
+    "/private/tmp/whitefoot-ordered-cleanup-source-ux6gm4u5/build/candidate/ecosystem/rust-timed.a": "5fa085e148d6d059d923cccf757e17fb33db445c544166c2e785a13394c6d753",
+    "/private/tmp/whitefoot-ordered-cleanup-source-ux6gm4u5/build/candidate/ecosystem/cpp-timed.o": "23e9b2e138a84348f9068f75de9cbabb397c9448c4e92b71ed0b416eb3cae56d",
+    "/private/tmp/whitefoot-ordered-cleanup-source-ux6gm4u5/shared/native/ordinary_values.o": "b0b82798cd758c54023ae7f3670f4625b0f82f6a9aee1ec656fca2ff33295eac",
+    "/private/tmp/whitefoot-ordered-cleanup-source-ux6gm4u5/shared/native/ordinary_values_ir.o": "d5509f631fb4a388fbd380444b24bd1dfa3420082bc678ceec106058d4122932",
+    "/private/tmp/whitefoot-ordered-cleanup-source-ux6gm4u5/shared/native/wf_floor.o": "8342e7ea0b8d6a0817d543e8c05e807c96527393945e95597718ba9a27ce722d",
+    "/private/tmp/whitefoot-ordered-cleanup-source-ux6gm4u5/shared/native/sched/core.o": "0655633c69666fcce21bf67258101aedb49c914fc50a6cc8edbfe22a8315e645",
+    "/private/tmp/whitefoot-ordered-cleanup-source-ux6gm4u5/shared/native/sched/entry.o": "e04734d7a1ddbe9083b47570ca2854963803b88a7197628bed2ca66cb4924d5c",
+    "/private/tmp/whitefoot-ordered-cleanup-source-ux6gm4u5/shared/native/sched/prim_host.o": "c3a5140b8221a57d27a510995ae37c7b33a64ebc87ec9f9286b99ece649bce45",
+    "/private/tmp/whitefoot-ordered-cleanup-source-ux6gm4u5/shared/native/completion/bridge.o": "af91032f29dc1b1c22dcf43099d933303ff3b1e4741a93122f987bdbdb70c4ec",
+    "/private/tmp/whitefoot-ordered-cleanup-source-ux6gm4u5/shared/native/completion/file_adapter.o": "fb4ee3f397da5bcee9188332d56fb3c854b931b4c1f07b4c8350a9c941891937",
+    "/private/tmp/whitefoot-ordered-cleanup-source-ux6gm4u5/shared/native/completion/file_posix.o": "1d1fe1c3033038fc69cd031e32b5eff6e85571da89176f85e442f52f0fb1b940",
+    "/private/tmp/whitefoot-ordered-cleanup-source-ux6gm4u5/shared/native/completion/linux_io_uring.o": "e389769ac8c9f38af9cd00e5bc5d56d3c180dff5985fb81ddfff63dfa89eb453",
+    "/private/tmp/whitefoot-ordered-cleanup-source-ux6gm4u5/shared/native/completion/runtime.o": "75cb971977625c9b05adcf74b14989544ccbf61b0a81fe4843ec72226eb36c61",
+    "/private/tmp/whitefoot-ordered-cleanup-source-ux6gm4u5/shared/native/completion/wait_host.o": "d95b24c2367aa6dcf60a9d9e4e36acf79fa502d4ded856f244c6f4afcf28aa10"
+  },
+  "tool_identities": {
+    "clang": "Apple clang version 21.0.0 (clang-2100.3.34.2)\nTarget: arm64-apple-darwin25.6.0\nThread model: posix\nInstalledDir: /Library/Developer/CommandLineTools/usr/bin\n",
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: aarch64-apple-darwin\nrelease: 1.98.1\nLLVM version: 22.1.8\n",
+    "cargo": "cargo 1.98.1 (797e8a9bc 2026-08-05)\n"
+  },
+  "reduction": {
+    "criterion": "Disjoint WF baseline/candidate ranges in the same direction in both cohorts; both arms WF samples >=1ms and C/B cohort median-ratio spread <=10%. One qualified useful-cell gain and no strict qualified useful-cell loss across the full66-useful-cell pair. Overlap/inadequate duration/instability remains inconclusive; no narrowed cells or retimed arms.",
+    "warmups": {
+      "vector": "all emitted sample IDs 0..6 ranked; short harness warmup unrecorded",
+      "ordered": "recorded sample 0 retained and excluded; 1..5 ranked"
+    },
+    "full_cells": 72,
+    "useful_cells": 66,
+    "unranked_vector_controls": 6,
+    "qualified_useful_gains": 3,
+    "qualified_useful_losses": 2,
+    "criterion_met": false,
+    "standard_peers": {
+      "vector": {
+        "baseline": {
+          "rust": {
+            "deficit": 17,
+            "inconclusive": 19,
+            "unranked": 6
+          },
+          "cpp": {
+            "inconclusive": 16,
+            "pass": 16,
+            "deficit": 4,
+            "unranked": 6
+          }
+        },
+        "candidate": {
+          "rust": {
+            "deficit": 16,
+            "inconclusive": 20,
+            "unranked": 6
+          },
+          "cpp": {
+            "inconclusive": 17,
+            "pass": 16,
+            "deficit": 3,
+            "unranked": 6
+          }
+        }
+      },
+      "ordered": {
+        "baseline": {
+          "rust": {
+            "deficit": 22,
+            "pass": 7,
+            "inconclusive": 1
+          },
+          "cpp": {
+            "pass": 6,
+            "deficit": 22,
+            "inconclusive": 2
+          }
+        },
+        "candidate": {
+          "rust": {
+            "deficit": 22,
+            "pass": 6,
+            "inconclusive": 2
+          },
+          "cpp": {
+            "pass": 3,
+            "inconclusive": 3,
+            "deficit": 24
+          }
+        }
+      }
+    },
+    "targets": {
+      "baseline": {
+        "vector": {
+          "inconclusive": 16,
+          "pass": 16,
+          "unranked": 6,
+          "deficit": 4
+        },
+        "ordered": {
+          "pass": 9,
+          "deficit": 19,
+          "inconclusive": 2
+        }
+      },
+      "candidate": {
+        "vector": {
+          "inconclusive": 17,
+          "pass": 16,
+          "unranked": 6,
+          "deficit": 3
+        },
+        "ordered": {
+          "inconclusive": 3,
+          "deficit": 20,
+          "pass": 7
+        }
+      }
+    },
+    "native_peer_drift_useful": {
+      "vector": {
+        "cpp-std-vector": {
+          "minimum_cohort_median_ratio": 0.8740849194729137,
+          "maximum_cohort_median_ratio": 1.0608614232209739,
+          "qualified_results": {
+            "overlap": 35,
+            "gain": 1
+          }
+        },
+        "direct-c": {
+          "minimum_cohort_median_ratio": 0.5951219512195122,
+          "maximum_cohort_median_ratio": 1.0737370567932225,
+          "qualified_results": {
+            "overlap": 35,
+            "inconclusive": 1
+          }
+        },
+        "reverse-c": {
+          "minimum_cohort_median_ratio": 0.9656203288490284,
+          "maximum_cohort_median_ratio": 1.0256492465533824,
+          "qualified_results": {
+            "overlap": 36
+          }
+        },
+        "rust-vec": {
+          "minimum_cohort_median_ratio": 0.9702823179791976,
+          "maximum_cohort_median_ratio": 1.0339547270306257,
+          "qualified_results": {
+            "overlap": 36
+          }
+        },
+        "swap-take-c": {
+          "minimum_cohort_median_ratio": 0.9374389051808406,
+          "maximum_cohort_median_ratio": 1.0340264650283555,
+          "qualified_results": {
+            "overlap": 36
+          }
+        },
+        "take-swap-c": {
+          "minimum_cohort_median_ratio": 0.934908604547481,
+          "maximum_cohort_median_ratio": 1.0534274193548387,
+          "qualified_results": {
+            "overlap": 36
+          }
+        }
+      },
+      "ordered": {
+        "absl-btree-map": {
+          "minimum_cohort_median_ratio": 0.8942222825717971,
+          "maximum_cohort_median_ratio": 1.0406259404152873,
+          "qualified_results": {
+            "overlap": 30
+          }
+        },
+        "avl-c": {
+          "minimum_cohort_median_ratio": 0.9589974293059126,
+          "maximum_cohort_median_ratio": 1.099710724616978,
+          "qualified_results": {
+            "overlap": 29,
+            "inconclusive": 1
+          }
+        },
+        "cpp-map": {
+          "minimum_cohort_median_ratio": 0.8559810233819044,
+          "maximum_cohort_median_ratio": 1.1376486542875026,
+          "qualified_results": {
+            "overlap": 26,
+            "inconclusive": 1,
+            "gain": 2,
+            "loss": 1
+          }
+        },
+        "direct-c": {
+          "minimum_cohort_median_ratio": 0.9693558474046279,
+          "maximum_cohort_median_ratio": 1.0581126253535613,
+          "qualified_results": {
+            "overlap": 30
+          }
+        },
+        "rust-btree-map": {
+          "minimum_cohort_median_ratio": 0.9671036560540672,
+          "maximum_cohort_median_ratio": 1.034712383111363,
+          "qualified_results": {
+            "overlap": 29,
+            "loss": 1
+          }
+        },
+        "source-c": {
+          "minimum_cohort_median_ratio": 0.9708695652173913,
+          "maximum_cohort_median_ratio": 1.1036365845878082,
+          "qualified_results": {
+            "overlap": 28,
+            "inconclusive": 2
+          }
+        }
+      }
+    },
+    "reducer_sha256": "f9669548af494ccd27285c78b04fcc0e0ddffaa88a574e5733e593dbd70dfd59",
+    "pair_recipe": "For each family/width/path/count, compute min/median/max of ranked Whitefoot samples in each arm and cohort. A gain requires candidate.max < baseline.min in both cohorts; a loss requires candidate.min > baseline.max in both. Qualify only when every ranked sample in both arms is >=1000000 ns and max(C/B median ratios)/min(C/B median ratios)-1 <=0.1. Otherwise report overlap or inconclusive; retain all six suffix-zero controls as unranked. Standard peer and slower-standard targets use summarize-ecosystem.pl --complete and --targets per arm."
+  },
+  "published_sha256": {
+    "vector-library/ecosystem-aggregate-opening-baseline-samples.csv": "f9ab046e20d3a24465cc2dc251744550d331d46c821859c8b7510e79d1a7c009",
+    "vector-library/ecosystem-aggregate-opening-candidate-samples.csv": "f994ae2677b240f53b8e9b707e2bc71bab1563d12f6bc16adfb834d41d1a0539",
+    "ordered-library/ecosystem-aggregate-opening-baseline-samples.csv": "8d116619712927803dffcce8fbcb1ba7c973632a3f717c1c8b798d99bb95e2bf",
+    "ordered-library/ecosystem-aggregate-opening-candidate-samples.csv": "a174c7b806224ad34079b9a1b1ddfa58cf049c354269782ce3ff59fd11799991",
+    "ordered-library/ecosystem-aggregate-opening-paired.csv": "b56205a2c3e3ba592a0683fc66388b4198e3666d35206b44baac3c6fa861141b",
+    "ordered-library/aggregate-opening-candidate.patch": "bdc1e42681344f6edc2443fa3886b8a9c74d1b4d42034fc6d84db1044a364ef0"
+  },
+  "retained_scratch": "/private/tmp/whitefoot-slots-aggregate-opening-ks7ia9u0",
+  "retained_record_sha256": {
+    "IDENTITIES.json": "4e84c4a2d044f762693b0fabdd3aea6ec637910f5d395f3f5f15cef6acc001cc",
+    "source-freeze.json": "c077f73ad571c8c505a4c53398a201f7437120756b858241029e4cd468442f9a",
+    "fixture-inputs.json": "6b910e078df281b231c1c3431c59948dcfe8c922c0718aadd9d2241bae336959",
+    "timing/plan.json": "4e35a1cfd4a1c83cfd6ad41dc47fbf9672da3132b1f901608ca02c80cdc4f442",
+    "timing/inputs.json": "eca4b4993c52707805c9b857f604272e7d9e5010fdffdbdc07933c9b439363b3",
+    "timing/execution.json": "f84f6e22683a331551439ac6de2c4dee0e149e1e47bb489388c3a99ac7a74d98",
+    "timing/reduction.json": "8e3a4e23025c362daf6a703aab7af291fd65aaf0d35ebbca061bc00826db3776",
+    "timing/standard-peer-cells.csv": "78e2545689a1a162d15771d0e54595e16f83a76a2a78257f9d4012475ef50691",
+    "timing/native-peer-drift.csv": "d17802160552e211da75c3fd4e2d6ca819b70000a79f3c4477a32d0fe7bd3dd7",
+    "native-screen.json": "315cad281bbe185acdd4b6fddc9bb52bd24554db8e0bb8df84e98918de2cda34",
+    "correctness-tests/summary.json": "ab705dfd317ad2311d2bf609344795c6b83006cf38bd4d733644ae4885ae8101",
+    "continuation/result.json": "43324ed459dd6623007cec9a8e2071fd22cc4b0a086e91d720cce84ff2e35e49",
+    "aggregate-opening.patch": "413b5f92c9f77097fa059122627eb4be7ddc28ca7cced3b5d809143a00f98976"
+  },
+  "path_note": "Recorded /private/tmp paths identify retained measured artifacts, not a promise that a rebuild produces those images. No personal-home path normalization was needed in this record. Raw CSV publication is byte-identical; the paired derived CSV uses LF.",
+  "public_replay_verification": {
+    "compiler_revision": "7abd6bb34746b7b983b83103c68ee429b24859bb",
+    "file_count": 4,
+    "forward_candidate_bytes_equal": true,
+    "reverse_baseline_bytes_equal": true,
+    "direct_statuses": [
+      {
+        "stage": "forward-check",
+        "status": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      {
+        "stage": "forward",
+        "status": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      {
+        "stage": "reverse-check",
+        "status": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      {
+        "stage": "reverse",
+        "status": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    ]
+  }
+}

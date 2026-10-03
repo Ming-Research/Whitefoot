@@ -1646,6 +1646,159 @@ fn owned_pair_results_survive_ordinary_join_and_forced_refusal() {
     run_owned_lane_cases(OWNED_PAIR_RESULTS, &module, 0, 1, 0, 0, 1);
 }
 
+/// Both the owned parameter and the result occupy three words in a worker
+/// frame. Granted, deferred and refused lanes must return each payload once.
+#[test]
+fn runtime_slots_owner_survives_worker_capture_result_and_refusal() {
+    let source = br#"fn make(seed: u64) -> result: Box<Slots<Box<u64>>> pure {
+  let owner = box_slots_new::<Box<u64>>(capacity: 1_u64);
+  let value = box_new::<u64>(value: seed);
+  place_back(window: &owner.inner, value: move value);
+  return move owner;
+}
+
+fn handoff(owner: Box<Slots<Box<u64>>>) -> result: Box<Slots<Box<u64>>> pure {
+  if owner.inner.len == 1_u64 {
+    let value = take_back(window: &owner.inner);
+    place_back(window: &owner.inner, value: move value);
+  }
+  return move owner;
+}
+
+fn consume(owner: Box<Slots<Box<u64>>>) -> result: u64 pure {
+  if owner.inner.cap != 1_u64 {
+    return 0_u64;
+  }
+  if owner.inner.len != 1_u64 {
+    return 0_u64;
+  }
+  let value = take_back(window: &owner.inner);
+  return value.inner;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let left = make(seed: 17_u64);
+  let right = make(seed: 29_u64);
+  let first = handoff(owner: move left);
+  let second = handoff(owner: move right);
+  let first_value = consume(owner: move first);
+  let second_value = consume(owner: move second);
+  if first_value != 17_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if second_value != 29_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_ir(source, |program| {
+        let handoff = program
+            .functions()
+            .iter()
+            .find(|f| f.name() == "handoff")
+            .unwrap();
+        let layout = parallel_lane_frame_layout(
+            TargetLayout::host().unwrap(),
+            program.nominals(),
+            program.elements(),
+            handoff.parameters().iter().map(|(_, ty)| *ty),
+            handoff.result(),
+            false,
+        )
+        .expect("the complete owner frame qualifies")
+        .expect("the owner frame fits a lane");
+        assert_eq!(
+            layout.size(),
+            48,
+            "one 24-byte argument plus one 24-byte result"
+        );
+        assert_eq!(layout.align(), 8);
+    });
+    let module = emit_with_overlap(source);
+    assert!(module.contains("call void @wf__par_publish(ptr "));
+    let thunk = function_body(&module, "@wf__par_thunk_main.1");
+    assert!(
+        thunk.contains("call { i64, i64, ptr } @wf_handoff(ptr "),
+        "{thunk}"
+    );
+    run_owned_lane_cases(source, &module, 0, 3, 4, 0, 1);
+}
+
+/// Two zero-capacity owners keep separate descriptors while their nonowning
+/// payload anchors cross real, deferred and refused worker lanes. The source
+/// allocator ledger remains exactly empty; any attempted anchor free fails.
+#[test]
+fn empty_runtime_slots_owners_survive_worker_transport_without_allocation() {
+    let source = br#"fn handoff(owner: Box<Slots<u64>>) -> result: Box<Slots<u64>> pure {
+  return move owner;
+}
+
+fn consume(owner: Box<Slots<u64>>) -> result: u64 pure {
+  if owner.inner.cap != 0_u64 {
+    return 1_u64;
+  }
+  if owner.inner.len != 0_u64 {
+    return 2_u64;
+  }
+  let range = &owner.inner[0_u64..0_u64];
+  let resliced = &range^[0_u64..0_u64];
+  return resliced^.len;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let left = box_slots_new::<u64>(capacity: 0_u64);
+  let right = box_slots_new::<u64>(capacity: 0_u64);
+  let first = handoff(owner: move left);
+  let second = handoff(owner: move right);
+  let first_value = consume(owner: move first);
+  let second_value = consume(owner: move second);
+  if first_value != 0_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if second_value != 0_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let mut module = emit_with_overlap(source);
+    assert!(module.contains("call void @wf__par_publish(ptr "));
+    // Observe the public owned-argument ABI without replacing the source body.
+    // The volatile byte read witnesses an aligned, live anchor on the worker;
+    // neither owner may write it or send it to the allocator's release hook.
+    let body = function_body(&module, "@wf_handoff").to_owned();
+    let renamed = body.replacen("@wf_handoff(", "@wf_handoff.source(", 1);
+    module = module.replace(&body, &renamed);
+    module.push_str(
+        r#"
+define { i64, i64, ptr } @wf_handoff(ptr %owner) {
+entry:
+  %payload.field = getelementptr i8, ptr %owner, i64 16
+  %payload = load ptr, ptr %payload.field
+  %nonnull = icmp ne ptr %payload, null
+  %address = ptrtoint ptr %payload to i64
+  %low = and i64 %address, 7
+  %aligned = icmp eq i64 %low, 0
+  %valid = and i1 %nonnull, %aligned
+  br i1 %valid, label %read, label %bad
+read:
+  %byte = load volatile i8, ptr %payload
+  %untouched = icmp eq i8 %byte, 0
+  br i1 %untouched, label %forward, label %bad
+forward:
+  %result = call { i64, i64, ptr } @wf_handoff.source(ptr %owner)
+  ret { i64, i64, ptr } %result
+bad:
+  call void @abort()
+  unreachable
+}
+"#,
+    );
+    // Construction, owned handoff and consumption each form one sibling pair.
+    run_owned_lane_cases(source, &module, 0, 3, 0, 0, 1);
+}
+
 /// Both Empty and a partial window of Box owners cross argument and result
 /// boundaries. Each granted frame keeps its dirty inactive storage until join;
 /// refusal executes the same calls and must release the same four cells.
@@ -2427,6 +2580,52 @@ fn main() -> status: std::process::ExitStatus pure {
 /// One pinned budget, as the matrix below writes it.
 fn pinned(levels: u8) -> crate::RecursionBudget {
     crate::RecursionBudget::Pinned(std::num::NonZeroU8::new(levels).expect("a positive budget"))
+}
+
+#[test]
+fn function_actuals_preserve_recursive_budget_entries_and_worlds() {
+    let source = br#"fn fold(depth: u64, seed: &u64) -> result: u64 reads(seed) {
+  if depth == 0_u64 {
+    return seed^;
+  }
+  let below = depth - 1_u64;
+  let left = fold(depth: below, seed: seed);
+  let right = fold(depth: below, seed: seed);
+  return left +wrap right;
+}
+
+fn invoke<fn work(depth: u64, seed: &u64) -> result: u64 reads(seed)>(depth: u64, seed: &u64) -> result: u64 reads(seed) {
+  return work(depth: depth, seed: seed);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let seed = 3_u64;
+  let total = invoke::<fn fold>(depth: 2_u64, seed: &seed);
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    for budget in [crate::RecursionBudget::RuntimeDerived, pinned(2)] {
+        let module = super::emit_lowered(
+            source,
+            crate::OverlapLowering::OnWithRecursionBudget {
+                budget,
+                call_grain: crate::CallGrain::WorkUnit,
+                sequential_refusal: false,
+            },
+        );
+        for symbol in ["@wf_fold", "@wf__par_budget_fold", "@wf__par_seq_fold"] {
+            let definitions = module
+                .lines()
+                .filter(|line| line.starts_with("define ") && line.contains(&format!(" {symbol}(")))
+                .collect::<Vec<_>>();
+            assert_eq!(definitions.len(), 1, "{symbol}: {definitions:?}");
+        }
+        assert_eq!(
+            module.contains("call i64 @wf__par_recursion_budget()"),
+            budget == crate::RecursionBudget::RuntimeDerived,
+            "the ordinary entry preserves the existing budget policy"
+        );
+    }
 }
 
 /// Self/mutual budget families and rejecting a task must compute every leaf.

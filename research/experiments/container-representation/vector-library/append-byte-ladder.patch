@@ -1,0 +1,100 @@
+--- a/vector-costs-route.c
++++ b/vector-costs-ladder.c
+@@ -783,13 +783,13 @@
+     api->prepare(requested, owner);
+     ApiObservation state = {0};
+     uint64_t length = api->snapshot(owner, &state);
+-    if (requested >= 16 && state.capacity != requested)
++    if (requested >= 2 && state.capacity != requested)
+         fprintf(stderr, "growth append capacity: %s requested=%" PRIu64
+                 " observed=%" PRIu64 "\n", api->name, requested, state.capacity);
+     require(length == 0 && state.length == 0 && state.valid == 1
+             && state.checksum == 0 && state.capacity >= requested
+             && state.capacity < CEILING, "growth append reserved state");
+-    if (requested >= 16)
++    if (requested >= 2)
+         require(state.capacity == requested, "growth append matched initial capacity");
+     const uint64_t initial = state.capacity;
+     require(api->append_batch(owner, initial, seed) == initial,
+@@ -807,7 +807,7 @@
+     ApiObservation state = {0};
+     uint64_t length = api->snapshot(owner, &state);
+     const uint64_t expected_length = initial + 1 + fail_state;
+-    if (initial >= 16 && state.capacity != 2 * initial)
++    if (initial >= 2 && state.capacity != 2 * initial)
+         fprintf(stderr, "growth append capacity: %s bytes=%zu old=%" PRIu64
+                 " new=%" PRIu64 " expected=%" PRIu64 "\n", api->name,
+                 wide ? sizeof(Record) : sizeof(uint64_t), initial, state.capacity,
+@@ -815,7 +815,7 @@
+     require(returned == initial + 1 && length == expected_length
+             && state.length == expected_length && state.capacity > initial
+             && state.valid == 1 && state.checksum == 0
+-            && (initial < 16 || state.capacity == 2 * initial),
++            && (initial < 2 || state.capacity == 2 * initial),
+             "growth append post state");
+     ApiObservation actual = {0};
+     uint64_t valid = api->inspect_reset(owner, initial + 1, seed, &actual);
+@@ -832,7 +832,7 @@
+ }
+ 
+ static void growth_check(bool fail_values, bool fail_state, bool report) {
+-    const uint64_t capacities[] = {16, 256, 4096, 0, 1};
++    const uint64_t capacities[2][5] = {{64, 192, 384, 1024, 0}, {2, 6, 12, 32, 4096}};
+     const uint64_t seed = UINT64_MAX - 7;
+ #if defined(ACCOUNT_ONLY)
+     if (report)
+@@ -840,14 +840,14 @@
+ #else
+     (void)report;
+ #endif
+-    for (size_t n = 0; n < sizeof capacities / sizeof capacities[0]; ++n)
+-        for (unsigned wide = 0; wide < 2; ++wide)
++    for (unsigned wide = 0; wide < 2; ++wide)
++        for (size_t n = 0; n < (wide ? 5u : 4u); ++n)
+             for (unsigned variant = 0; variant < 3; ++variant) {
+                 const ApiOperations *api = &append_api[wide][variant];
+                 const size_t stride = wide ? sizeof(Record) : sizeof(uint64_t);
+                 reset_accounting();
+                 ApiStorage owner;
+-                uint64_t initial = growth_prepare(api, &owner, capacities[n], seed);
++                uint64_t initial = growth_prepare(api, &owner, capacities[wide][n], seed);
+ #if defined(ACCOUNT_ONLY)
+                 ApiAccount before = append_account_snapshot();
+                 const size_t header = variant == 0
+@@ -895,16 +895,16 @@
+ #endif
+                 if (report)
+                     printf("append-growth-o3,%zu,%" PRIu64 ",%" PRIu64 ",%s,%" PRIu64 ",%" PRIu64 ",%zu,%zu,%zu,%zu,%zu,%zu\n",
+-                           stride, capacities[n], initial, api->name, length, capacity,
++                           stride, capacities[wide][n], initial, api->name, length, capacity,
+                            after.requests - before.requests,
+                            after.reallocations - before.reallocations,
+                            after.releases - before.releases, after.bytes - before.bytes,
+                            before.live, after.live);
+ #endif
+-                if (capacities[n] < 16 && !report)
++                if (capacities[wide][n] < 2 && !report)
+                     printf("growth append policy: %s bytes=%zu requested=%" PRIu64
+                            " initial=%" PRIu64 " length=%" PRIu64 " capacity=%" PRIu64 "\n",
+-                           api->name, stride, capacities[n], initial, length, capacity);
++                           api->name, stride, capacities[wide][n], initial, length, capacity);
+                 (void)api->destroy(&owner);
+ #if defined(ACCOUNT_ONLY)
+                 require(live_bytes == 0 && requests == releases + realloc_requests,
+@@ -1011,13 +1011,13 @@
+ }
+ 
+ static void growth_measure(uint64_t work_bytes, unsigned samples, uint64_t large_work_bytes) {
+-    const uint64_t capacities[] = {0, 1, 16, 256, 4096};
++    const uint64_t capacities[2][5] = {{64, 192, 384, 1024, 0}, {2, 6, 12, 32, 4096}};
+     // Sizing allowance only; it neither models latency nor adjusts a sample.
+     const uint64_t allowance = 256;
+     puts("contract,cohort,element_bytes,count,variant,sample,control,contexts,payload_bytes,descriptor_bytes,cycles,operations,elapsed_ns,initial_capacity,capacity,work_bytes,allowance_bytes");
+     for (unsigned wide = 0; wide < 2; ++wide)
+-        for (size_t n = 0; n < sizeof capacities / sizeof capacities[0]; ++n) {
+-            const uint64_t requested = capacities[n];
++        for (size_t n = 0; n < (wide ? 5u : 4u); ++n) {
++            const uint64_t requested = capacities[wide][n];
+             const size_t stride = wide ? sizeof(Record) : sizeof(uint64_t);
+             const uint64_t budget = wide && requested == 4096 ? large_work_bytes : work_bytes;
+             uint64_t initial_caps[3], post_caps[3];

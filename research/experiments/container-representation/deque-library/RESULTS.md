@@ -1,6 +1,313 @@
 # Deque library costs
 
-This explicit experiment bundles [`deque.wf`](../../../../lib/containers/deque.wf).
+## Current standard-container comparison
+
+The opt-in `ecosystem-*` targets implement [ECOSYSTEM.md](../ECOSYSTEM.md) with
+the current [`std::collections::deque`](../../../../lib/std/collections/deque/module.wfm)
+module, Rust `VecDeque`, and C++ `std::deque`. The C loop and bulk variants
+remain attribution controls. This fresh O3 comparison is separate from the
+historical O2 and retained-helper measurements below.
+
+The whole trace stays inside each implementation behind one C ABI call;
+there is no per-operation foreign call. The common application tasks are
+forward churn, reverse churn, actual growth, and setup plus cleanup. No trace
+keeps references into the deque across mutation. All removed owners and all
+remaining elements are consumed in logical order and every payload word
+enters the digest. Native values are an 8-byte scalar or a 256-byte inline
+record, with Rust `Copy`/`Clone` absent and C++ copies deleted. There is no
+per-element allocation and no nested-owner performance claim.
+
+Growth (source path 3) fills `count`, then appends `count + 1` further values
+and consumes all `2 * count + 1` owners. Whitefoot explicitly rebases its full
+ring to that capacity. Rust starts with capacity for `count` and grows through
+its ordinary deque policy. C++ deque has no reserve operation and keeps its
+ordinary block policy. Native capacities and reference stability guarantees
+are not made to imitate Whitefoot. The former wrapped-rebase trace (source
+path 2) is still checked for Whitefoot/C, but excluded from native ranking:
+it never uses its extra capacity and neither native API promises its exact
+conversion. Whitefoot's fixture bounds the original population by 4096 and
+the larger backing by 8193.
+
+The independent oracle derives the logical sequence arithmetically without
+constructing a deque. Correctness includes counts 0, 1, 2, 3, 16, 63, 256 and
+4096; rounds 0, 1 and 3; seeds 0, 17 and `UINT64_MAX`; and both payloads. The
+zero-count growth trace still appends and consumes one value whenever rounds
+are nonzero. The measured populations are 16, 256 and 4096.
+
+Run the phases separately under the repository guard from the root:
+
+```sh
+perl .github/run-check.pl deque-ecosystem \
+  make -C research/experiments/container-representation/deque-library <target>
+```
+
+Replace `<target>` by `ecosystem-build`, `ecosystem-check`,
+`ecosystem-account`, or `ecosystem-measure`. Outputs live in
+`.build/ecosystem/`: `configuration.txt` records native flags and toolchains,
+`accounting.csv` contains allocation observations, and `measurements.csv`
+contains raw timed samples. Keep these with recorded source/compiler
+identities. These adapters and targets retire with this experiment or a
+maintained successor that preserves its evidence.
+
+`ECO_ACCOUNT` and `ECO_SAMPLE_FILE` override those output paths.
+`ECO_WORK` defaults to 1048576 and `ECO_REPEATS` to 7. Each active trace uses
+`max(1, ECO_WORK / count)` rounds. A churn round performs `count` pop/push
+pairs; a growth round constructs and consumes `2 * count + 1` values.
+Setup-cleanup instead has zero rounds and repeats that many complete
+fill/drain/free traces. Thus equal work does not mean equal individual
+operation counts between path names. Warmup runs every implementation with
+one sixteenth of the nonzero rounds or trace repetitions, clamped to one.
+Two cohorts rotate implementation order by sample and reverse it in the
+second cohort. The CSV records work, rounds and repetitions. Compare whole
+trace costs; do not subtract setup or call these isolated growth pauses.
+Extend bounded runs where a cell remains too short or unstable.
+
+Timed images use ordinary allocation and omit all observer hooks. Separate
+allocation images execute three rounds (zero for setup) and one trace per
+cell. Whitefoot/C request, requested-byte and peak formulas are independent
+of observed counters; native policies are measured without forcing those
+formulas. All paths require complete cleanup and balanced allocation lifetimes.
+`requests` includes successful reallocations, `realloc_requests` counts them
+separately, and final deallocations are `releases`; native totals must satisfy
+`requests == releases + realloc_requests`. `peak_bytes` records logical live
+requested storage. `peak_overlap_upper_bytes` permits old and new requests
+to overlap at Rust realloc without claiming that hidden allocator storage
+did overlap. Both exclude private observer headers, RSS and allocator-resident
+memory. `ecosystem-check` requires checksum-corruption and unreleased-allocation
+controls to fail and verifies that timed images contain no observer symbols.
+No specification rule changes for this comparison.
+
+### Verified correctness and allocation observations
+
+The current guarded build and both correctness images completed successfully.
+Each image passed 576 configurations and 2,592 complete trace
+executions, for 5,184 executions across timed and accounting builds.
+The negative checksum and cleanup controls produced their expected rejection
+messages; the target also checked that observer hooks are absent from the
+timed image. The allocation CSV contains 120 rows. Independently reading
+the CSV confirms equal complete checksums within every application cell,
+balanced allocation lifetimes, and the stated peak upper bound; every C
+control's allocation columns equal Whitefoot's corresponding row.
+
+The existing O2 normal and retained drivers also passed 432 configurations
+and 1,296 executions each, totaling 2,592 historical-control executions with
+the current module imports. Their retained-helper call checks passed. This
+requalifies those reproduction paths without adding historical-series timing.
+
+A separate scratch mutation omitted the final newly appended owner from the
+C growth loop while leaving the oracle and allocation schedule unchanged.
+The check rejected it with `independent logical-order checksum`, exit 1, at
+`variant=1 path=3 count=0 rounds=1 seed=17 wide=0`. This observes the missing
+new owner in an initially empty deque and establishes that the growth oracle
+checks the added values, beyond the generic checksum-bit corruption control.
+The scratch mutation is outside the maintained driver and adds no timing data.
+
+The preserved [allocation CSV](ecosystem-accounting.csv) SHA-256 is
+`0ac88c02c5e9ca9517a584cdb75236a3ce1cc09497c4bd2f1e64ae9c835a2fcc`. These are requested-storage observations
+from the accounting build, separate from the timing samples below. Build/check
+phase durations belong to the central [experiment record](../ECOSYSTEM.md).
+
+At population 4096, forward churn, reverse churn and setup-cleanup have
+identical allocation columns within each implementation and payload, despite
+their different consumed sequences and round counts. The table shows forward
+churn; both C controls have the Whitefoot entries shown.
+
+| Payload bytes | Implementation | Requests | Reallocations | Releases | Requested bytes | Logical peak bytes | Possible-overlap upper bytes |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 8 | Whitefoot / C controls | 1 | 0 | 1 | 32,792 | 32,792 | 32,792 |
+| 8 | Rust VecDeque | 1 | 0 | 1 | 32,768 | 32,768 | 32,768 |
+| 8 | C++ std::deque | 14 | 0 | 14 | 37,112 | 37,056 | 37,056 |
+| 256 | Whitefoot / C controls | 1 | 0 | 1 | 1,048,600 | 1,048,600 | 1,048,600 |
+| 256 | Rust VecDeque | 1 | 0 | 1 | 1,048,576 | 1,048,576 | 1,048,576 |
+| 256 | C++ std::deque | 267 | 0 | 267 | 1,060,856 | 1,058,816 | 1,058,816 |
+
+That equality does not generalize to every smaller population. With 16 scalar
+items, C++ forward churn requests 4,104 bytes in two requests, while reverse
+churn requests 8,216 in four. With 256 scalar items, setup-cleanup requests
+4,104 bytes in two requests but churn requests 8,216 in four. Native block
+policy therefore remains an observable part of the path, rather than a fixed
+per-container adjustment. At 16 scalar items, Whitefoot and Rust forward
+churn request 152 and 128 bytes respectively; the large-population ratios
+would conceal this small-population overhead.
+
+The three-round growth trace at population 4096 has different allocation
+tradeoffs:
+
+| Payload bytes | Implementation | Requests | Reallocations | Releases | Requested bytes | Logical peak bytes | Possible-overlap upper bytes |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 8 | Whitefoot / C controls | 6 | 0 | 6 | 295,080 | 98,360 | 98,360 |
+| 8 | Rust VecDeque | 9 | 6 | 3 | 688,128 | 131,072 | 196,608 |
+| 8 | C++ std::deque | 69 | 0 | 69 | 210,408 | 70,016 | 70,016 |
+| 256 | Whitefoot / C controls | 6 | 0 | 6 | 9,438,096 | 3,146,032 | 3,146,032 |
+| 256 | Rust VecDeque | 9 | 6 | 3 | 22,020,096 | 4,194,304 | 6,291,456 |
+| 256 | C++ std::deque | 1,572 | 0 | 1,572 | 6,352,872 | 2,113,536 | 2,113,536 |
+
+Rust records one initial allocation and two reallocations per growth round.
+Its logical peak corresponds to storage for 16,384 elements for the required
+8,193, consistent with the native growth policy crossing that capacity.
+Whitefoot explicitly chooses 8,193 slots and holds the old 4,096-slot backing
+while rebasing. C++ growth makes substantially more requests for wide values,
+yet has a lower logical requested-byte peak than either contiguous-ring
+implementation in this cell. Request count, cumulative requested bytes and
+live peak answer different questions; none is an elapsed-cost or RSS result.
+Rust's possible-overlap column is an upper bound around realloc, so its
+relationship to Whitefoot's observed old/new overlap cannot establish a
+physical-memory ratio.
+
+### Fresh practical timing
+
+The complete [timing samples](ecosystem-samples.csv) and
+[allocation observations](ecosystem-accounting.csv) are preserved beside this
+record. They serve the standard-container comparison and remain its evidence
+until it is retired or superseded with that evidence preserved. Timing source
+revision is `0c3203aa6111f14247aa950e3794e83082d4f29c`. The measurement phase
+completed in 49.435 seconds, separate from construction and correctness.
+The timing CSV has 1,680 rows and SHA-256
+`3787a2e45c30fa4bb2ab2d1f11b852d8e76b87afdc560802ad406f145230a591`.
+
+All measured cells use `ECO_WORK=1048576`, seven ranked samples per
+implementation per cohort, and separately executed warmup. An independent
+read of the raw CSV verified the complete payload/path/population/variant
+matrix, sample IDs, both cohorts, exact checksums, and the shared summarizer's
+minimum, median and maximum values. These are fresh O3 controls and native
+baselines; no historical sample supplies a denominator.
+
+At population 4096, ranges below span the two cohort medians. Ratios divide
+Whitefoot's median by the comparator's median in the same cohort: above one
+means Whitefoot took longer. Time is the complete sample, including its stated
+rounds/repetitions, setup, all consumed words and cleanup. Path names have
+different operation denominators, so neither the time nor the ratio is an
+isolated operation latency.
+
+| Payload bytes | Path | WF whole trace ms | WF / Rust | WF / C++ | WF / loop C | WF / bulk C |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| 8 | forward-churn | 1.649–1.649 | 0.979–0.983 | 1.462–1.463 | 1.228–1.230 | 1.231–1.232 |
+| 8 | reverse-churn | 3.531–3.636 | 2.712–2.795 | 1.390–1.427 | 1.172–1.185 | 1.185–1.207 |
+| 8 | growth | 5.034–5.090 | 1.266–1.271 | 1.391–1.406 | 1.385–1.400 | 1.809–1.829 |
+| 8 | setup-cleanup | 1.614–1.615 | 0.865–0.870 | 0.865–0.881 | 1.394–1.407 | 1.404–1.412 |
+| 256 | forward-churn | 32.063–32.278 | 0.988–0.993 | 0.936–0.937 | 0.980–0.984 | 1.002–1.002 |
+| 256 | reverse-churn | 31.886–32.206 | 0.993–0.998 | 0.929–0.934 | 0.995–0.998 | 0.999–0.999 |
+| 256 | growth | 81.414–82.914 | 1.014–1.019 | 0.980–0.982 | 0.991–0.996 | 1.044–1.049 |
+| 256 | setup-cleanup | 36.228–36.496 | 0.995–1.001 | 0.874–0.883 | 0.964–0.974 | 0.971–0.972 |
+
+Scalar reverse churn is the clearest native-library gap: Whitefoot takes
+2.712–2.795 times Rust and 1.390–1.427 times C++ at population 4096.
+Across all tested populations, the Rust ratio remains 2.712–2.795. The fresh
+C loop control follows Whitefoot's ring layout, allocation policy and endpoint
+composition, yet its ratio is only 1.172–1.185 at population 4096. Endpoint
+lowering and native representation/API differences are therefore separate
+follow-up questions; the present matrix does not assign either a causal
+percentage. Scalar forward churn is close to Rust (0.979–0.983 at 4096) while
+still slower than C++ (1.462–1.463), which prevents a single scalar-deque
+ranking from representing both directions.
+
+Wide forward/reverse churn stays within 2% of Rust at population 4096 and
+within 10% of C++ throughout the tested populations. The same fresh C
+controls are close as well. The 32-word ordered checksum is material work
+in these cells; closeness here is not a general native-parity or pure data
+movement result. Setup-cleanup is measured separately and is never subtracted
+from a mutation trace to create an isolated operation latency.
+
+Growth changes with population. Scalar Whitefoot/Rust is 0.614–0.621 at 16,
+1.118–1.120 at 256 and 1.266–1.271 at 4096. The wide-value ratio is
+0.875–0.880, 1.136–1.138 and 1.014–1.019 respectively. Allocation observations
+show different capacity policies and request counts, but they do not isolate
+why those elapsed ratios change. At population 4096, scalar growth also
+costs 1.385–1.400 times loop C and 1.809–1.829 times bulk C. The loop/bulk
+pair changes rebase copying while preserving the application result; a
+same-source Whitefoot discriminator is still needed before attributing its
+cost to that composition or choosing an optimization.
+
+All 24 application cells and every native/C comparator pass the recorded
+sample-length and cohort-spread criteria: no paired minimum is below 1 ms
+and no ratio changes more than 10% between cohorts. Individual outliers are
+preserved in the raw samples; stable medians do not establish tail latency.
+No deque cell needs a longer replay for the conclusions stated here.
+
+### Native-code follow-up: unmeasured endpoint candidates
+
+Read-only inspection on 2026-09-26 used the baseline preserved at
+`c75520e9d59d74e19ba158e1cae5f394b3a2d874`; its compiler, Deque library and
+measurement sources are unchanged from the timing revision above. The emitting
+compiler SHA-256 is
+`cb918e191bb344733347e0602171d2ec53bd1d201044fdbc5dd7666468eea0a0`,
+verified against the retained compiler, with the recorded Apple Clang 21.0.0
+and Rust 1.98.1 settings. The inspected `.build/ecosystem/deque-costs-timed`
+SHA-256 is `f4ffd2d0da12d90272702f4619a6de6af25f01c4f3e2d1ce242f79275737574f`;
+its pre-optimization `whitefoot-timed.ll` SHA-256 is
+`89622404e240d377a5be6e330a631173c1d26babf07c6342f579e0e34dd854f7`.
+Use that checkout and emitter with the phase commands above for reproduction;
+a compiler rebuilt with changed bundled library sources is a different emitter.
+
+In the final scalar trace symbol
+`_wf_deque_library_trace$instance$29cf4bd076d714eb`, reverse churn's hot loop
+at `0x10000637c`–`0x1000063d4` stores the new element, reloads all three
+descriptor words (`ldp` plus `ldr`), and recomputes the front predecessor.
+Each iteration also stores length twice and head once. Forward churn at
+`0x100006420`–`0x100006458` keeps those words in registers. Rust's reverse loop
+at `0x10000b7e4`–`0x10000b814`, in `_rust_deque_word_trace`, also keeps its
+descriptor state in registers. Both reverse loops use conditional arithmetic,
+with no integer division or per-element calls. These addresses identify the
+hashed image; symbol names locate the bodies after a rebuild. For example,
+from the repository root:
+
+```sh
+deque_image=research/experiments/container-representation/deque-library/.build/ecosystem/deque-costs-timed
+/Library/Developer/CommandLineTools/usr/bin/llvm-objdump \
+  --no-show-raw-insn --disassemble \
+  --start-address=0x10000637c --stop-address=0x10000645c "$deque_image"
+```
+
+The ordinary Deque endpoint wrappers already call only their primitive and
+return the required value. In [`runs.rs`](../../../../compiler/src/backend/emitter/runs.rs),
+`emit_run_boundary` stores the payload before `move_run_boundary` reloads
+the descriptor; its `PlaceFront` arm calls `boundary_slot` again. The final
+`_wf_place_front$instance$4c5620a98e7f6ca7` body retains the same reload and
+recomputation. This is a concrete lowering lead, not a measured explanation
+of the whole gap: the same-layout C control also retains descriptor traffic.
+
+Two proposed experiments must remain separate, using the same caller, inputs,
+toolchain, flags and oracle before and after each change:
+
+- **A: qualify one unsigned subtraction.** In `boundary_slot`'s `PlaceFront`
+  arm, try `sub nuw` only for `select(head == 0, cap, head) - 1`.
+  Admitted placement proves `len < cap`, hence positive capacity; the selected
+  operand is therefore positive whether head is zero or nonzero. This proves
+  unsigned non-underflow without extending the flag to any wrapping sum or
+  unused subtraction alternative. It does not prove `nsw`: a zero-stride Ring
+  can have head `2^63`, whose decrement crosses the signed boundary. The
+  hypothesis is that this exact fact removes the observed descriptor reloads;
+  unchanged final code or no repeatable same-source improvement falsifies
+  that proposed benefit.
+- **B: capture the placement update once.** Separately, calculate the new
+  descriptor words before the payload store and reuse the already computed
+  front physical slot as the new head, initially preserving payload-then-header
+  store order. Test whether this removes the duplicate loads/calculation in
+  the final loop and improves the same trace. Persistent work or no repeatable
+  improvement falsifies its proposed benefit. Do not bundle B with A and
+  attribute the combined result to either alone.
+
+The [backend-fact grounds](../../../../design/compiler/backend-facts.md)
+require the complete target promise and reject broad Ring no-wrap assertions;
+A proposes only the positive-predecessor domain. The
+[storage representation](../../../../design/compiler/storage-representation.md)
+normalizes zero-stride addresses, not logical coordinates. Regression coverage
+must retain huge zero-size capacities, head-zero/nonzero transitions, fixed
+and runtime shapes, all endpoints, and owned/nodrop cleanup. The existing
+`zero_sized_takes_update_slots_and_wrapped_ring_boundaries_once` test already
+crosses the signed boundary on its second front placement at capacity
+`2^63 + 1`; add its fixed-capacity counterpart and observe both ordinary and
+retained calls. Preserve the selected
+[take ordering](../../../../design/compiler/storage-placement.md) and
+[Deque contract](../../../../design/language/data-model/deque-rebase.md).
+Neither proposal has been built or measured. Correctness and accounting must
+pass before timing under the central per-cell criterion; growth and close
+forward cells remain separate questions. No speedup or design selection follows
+from this inspection.
+
+## Historical source-composition evidence
+
+This explicit experiment bundles [`deque.wf`](../../../../lib/std/collections/deque/deque.wf).
 It is outside daily correctness CI. `make check` verifies the operation traces;
 `make measure` checks them first and writes interleaved timing samples under
 `.build/`. Retire this experiment when a maintained successor covers the same
@@ -812,3 +1119,1082 @@ through the same four Make targets took 0.27 seconds, and the shared
 WF module correspondence on the recorded Apple Clang 21 / arm64
 configuration. No native relink, execution, probe or timing was repeated;
 the v0.64 CSV remains the dated measured cohort, not a fresh v0.65 result.
+
+### Next scalar reverse-churn discriminator: precise endpoint effects
+
+The current optimized scalar reverse loop reloads `cap` and `head` around the
+`pop_back`/`push_front` pair even though the endpoint contracts leave capacity
+unchanged. The next source-only diagnostic narrows `deque_push_front` from
+`writes(values.inner)` to the fields it actually changes: `head`, `next` and
+`len`. Its algorithm, ownership transfer, public arguments, and checksums stay
+unchanged; `deque_pop_back` is untouched. The hypothesis is that the narrower
+row lets the emitter or LLVM retain the invariant capacity across the pair.
+
+Before timing, the rebuilt candidate must pass the full Deque correctness and
+allocation images. The optimized scalar reverse loop must show at least one
+fewer capacity load per inner iteration, with no new call, spill, frame growth,
+or extra payload transfer; forward, wide, rebase and cleanup bodies must be
+unchanged except for symbol/hash renaming. A code or ledger mismatch stops
+without timing. If the code criterion passes, run the complete ecosystem
+matrix with the existing 1 ms/10% stability qualification; any useful-cell
+regression rejects the row change. This experiment measures whether effect-row
+precision exposes an existing invariant; it does not amend the specification
+or promise a new operation.
+
+The source candidate was rejected before IR generation. With the exact row
+
+```text
+fn deque_push_front<T>(values: &Box<Ring<T>>, value: T) -> length: u64
+  writes(values.inner.head), writes(values.inner.next), writes(values.inner.len)
+```
+
+the compiler reports `EFF-2 EffectMismatch`: the body calls the prelude
+`place_front`, whose declared row is `writes(window)`, so the required covering
+row is `writes(values.inner)`. The rejection is the current effect-row
+boundary, not a performance observation. The candidate source was restored;
+no Deque timing or production API change resulted. A follow-up would have to
+re-evaluate the prelude operation's own row and its specification grounds
+before any code-generation comparison.
+
+### Follow-up discriminator: prelude `place_front` row precision
+
+The rejected source row points at the prelude boundary. A scratch-only follow-up
+will change the ordinary prelude declaration of `place_front` to
+`writes(window.head), writes(window.next), writes(window.len)` and add no new
+operation or syntax; the Deque wrapper will use the same three-field row. The
+candidate is admissible only if the prelude contract still covers the endpoint
+semantics and all existing users compile. Before timing, the scalar reverse
+inner loop must lose at least one repeated `cap` load, while the forward, wide,
+rebase and cleanup bodies remain unchanged apart from identity renaming. The
+complete Deque correctness, allocation, checksum and cleanup checks must pass.
+Any acceptance failure, unchanged optimized shape, extra transfer, or useful
+cell regression rejects the diagnostic. This is an investigation of a possible
+effect-row correction; it does not select a specification amendment or change
+the production branch.
+
+The follow-up was rejected before IR generation. The prelude declaration is
+generic over `W`, so the requested field paths are not admitted by the prefix
+type:
+
+```text
+<prelude>/place_front.wf:1:67: compiler failure in Semantics: InvalidEffectRow
+  source: fn place_front<W, T>(window: &W, value: T) -> result: unit writes(window.head), writes(window.next), writes(window.len) contract {
+  marker:                                                                   ^^^^^^^^^^^
+  reason: each effect-path suffix must select a field, payload, measure, window part, or indexed position admitted by its prefix type
+  mechanical_fix: select a member or position admitted by the prefix type, or name the reference parameter's complete state; use .inner for Box contents
+```
+
+This is a generic effect-row typing restriction, not a timing result. The
+scratch prelude, wrapper and module changes were restored; no candidate binary,
+matrix or production change was retained.
+
+### Scratch compound back-to-front replacement
+
+The original description called reverse churn a rotation of the same owner
+and proposed unchanged ordinary take/place source. The retained patch does
+neither. The original trace takes the back value, consumes it, constructs a
+new value from the next seed, and places the new value at the front. The
+scratch fixture constructs first, calls a new `replace_back_front` prelude
+row, then consumes the removed value. Its operation is
+`RunReplaceBackFront`, not `RunRotateBackFront`.
+
+The compound body captures the old back payload before writing the new front
+slot and updates head while leaving length unchanged. This covers the
+full-capacity same-slot case but changes the intermediate ring state and
+construction/consumption order. The measured scalar and inline-record
+bindings perform bounded local arithmetic, with no per-element allocation,
+nested-owner release or external effects; the consumers receive the same
+values in the same order. Their logical sequence, digest and instrumented
+allocation ledger are preserved. That evidence does not establish equivalence
+for arbitrary `DequeElement` implementations: a boxed payload can change from
+release-before-allocation to allocation-before-release. A `pure` constructor
+does not exclude allocation under STOR-8.
+
+The recorded code criterion required removal of duplicate descriptor loads
+and boundary arithmetic without additional calls, spills, frame growth or
+payload transfers, and preservation of the other workload bodies apart from
+symbol identity. The scratch package passed those code and concrete-fixture
+oracle screens. The baseline optimized reverse block loads old
+length/head/capacity around two endpoint operations; the candidate loads
+length and capacity once, captures the back slot, writes the replacement
+front slot and stores only the new head. Both images passed 576 configurations
+and 2,592 executions, including checksum/cleanup faults; the 120 instrumented
+accounting rows match. These observations do not test callback commutation or
+nested-owner lifetimes for a general source transformation.
+
+The matched O3 matrix used the same work (`1048576`), seeds, seven samples,
+two cohorts and native controls. Baseline qualified as 14 pass, 5 deficit and
+5 inconclusive cells; the candidate qualified as 17 pass, 2 deficit and 5
+inconclusive. The three scalar 8-byte reverse-churn cells moved from
+`1.412/1.406`, `1.409/1.409` and `1.387/1.389` times C++ to
+`0.513/0.510`, `0.512/0.510` and `0.508/0.507` (cohorts 0/1). Scalar growth
+deficits remain; one wide reverse cell became inconclusive from sample overlap,
+not a measured slowdown. Baseline and candidate samples are retained in
+`ecosystem-replace-back-front-baseline-samples.csv` and
+`ecosystem-replace-back-front-candidate-samples.csv` (SHA-256
+`b731c9660942d0dc1e252840a191c709641751e9983d440871e47eb79c5965b2` and
+`7713699d175a3ca4b041e247e1df617f5eefae9d1e98818512aeb50394d20`), with the
+scratch source/compiler patch in `deque-replace-back-front.patch`.
+
+These timings describe the rewritten concrete fixture with a temporary
+compound prelude operation, not a source-equivalent production optimization.
+The patch remains research evidence and was restored from the worktree. A
+future ordinary operation or checked fusion proposal must state its ordering
+contract and prove the applicable owner/callback domain; the existing samples
+do not select either. The later ordinary front-slot reuse change below is
+independent and preserves the source operation sequence.
+
+### Production lowering: reuse a front-placement slot
+
+The source-level `place_front` operation already computes the physical slot it
+stores. Before commit `5ae2cdd40793e617dbbe88d3fc38681db983166f`, the emitter
+called `boundary_slot` a second time while updating the Ring header. That
+second call reloaded `head` and `cap`, repeated the zero-head select and
+predecessor subtraction, and then stored the same slot as the new `head`.
+The production lowering now carries the first slot through
+`move_run_boundary`; the take and back-placement paths keep their old code.
+This is a spec-neutral lowering change and does not add a source operation.
+
+The backend regression
+`front_placement_reuses_the_written_ring_slot_for_the_new_head` checks the
+raw emitted `place_front` body: after the payload store only the length is
+loaded, exactly two descriptor stores remain, and the head store uses the
+payload GEP's physical index. The focused gate test passed. The unchanged
+source/accounting images each passed 576 configurations and 2,592 executions,
+including checksum and cleanup fault controls; their 120 accounting rows are byte
+for byte identical. The retained source checks still passed 432
+configurations and 1,296 executions per image.
+
+The matched practical A/B used the same compiler revision except for this
+commit, the same work (`1048576`), seeds, seven samples, two cohorts and native
+controls. The fresh reducer classified baseline as 16 pass, 5 deficit and 3
+inconclusive cells; the candidate as 18 pass, 2 deficit and 4 inconclusive.
+The three scalar 8-byte reverse-churn cells moved from WF/C++
+`1.411/1.411`, `1.405/1.399` and `1.386/1.384` (cohorts 0/1) to
+`0.499/0.498`, `0.497/0.503` and `0.494/0.493`. Candidate/baseline paired
+medians for those cells were `0.353`, `0.355` and `0.355`. Forward, growth,
+wide and setup cells changed by at most about 2.1%, within the recorded
+sample variation; the two scalar growth deficits at counts 256 and 4096
+remain. The durable samples are
+`ecosystem-boundary-reuse-baseline-samples.csv`
+(`f488a5386dbdbc0b5bc5f928dbdaa7382084d44b32d4e783c2c520d44a20d784`) and
+`ecosystem-boundary-reuse-candidate-samples.csv`
+(`1786cf4bc907a01b20e805f34920a63a62e7d8e061d0664988bdea6378ed6f2e`);
+both accounting files have SHA-256
+`0ac88c02c5e9ca9517a584cdb75236a3ce1cc09497c4bd2f1e64ae9c835a2fcc`.
+
+This closes the previously measured duplicate descriptor work in the
+front-placement lowering. Rebase's per-element transfer and the remaining
+scalar growth gap are separate questions and remain open.
+
+### Prospective Ring back-placement entry-capacity fact
+
+This criterion is recorded before implementing or measuring the candidate.
+The question is whether stating one already-discharged PRE-1 precondition to
+LLVM removes the destination-wrap work in scalar growth, including its
+additional append loop. The candidate changes only optional fact emission;
+the source program, operation rows, typed IR, library policy, allocation
+schedule and per-element transfer remain unchanged. The completed comparison
+below rejects this uniform candidate under the recorded regression rule.
+
+The complete mapping starts at `place_back`'s `window^.len < window^.cap`
+requirement in [PRE-1, OP-10, FN-8]. Actual-expression obligations and all
+instantiated requirements succeed before ordinary call transfer. The private
+checked program is the lowering authority [DIAG-2]. Its compiler-owned row
+body becomes one typed `RunBoundary::PlaceBack`; the emitter verifies the
+window-reference and element types and reads the entry descriptor before any
+payload or header store. The length and capacity are u64 measures [MSR-1].
+Therefore `icmp ult i64 entry_len, entry_cap` is true at that point. It is not
+a fact about the post-placement length, the physical index, or head plus
+length. No requirement is rechecked at runtime or rediscovered by another
+acceptance path.
+
+The source precondition applies to fixed/runtime Slots and Ring storage,
+including zero-size and owning elements. The experiment emits it only for
+Ring `PlaceBack`, where the existing address calculation already reads
+capacity. Fixed capacity comes from the type constant; runtime capacity comes
+from the existing descriptor accessor, including the owner-slot indirection
+of runtime-content references. Capacity zero admits no reachable placement.
+Capacities above `i64::MAX` remain valid for admitted zero-size storage, so the
+comparison must be unsigned. Nonzero head remains unrestricted by this fact:
+`cap=4, head=3, len=1` is a valid placement whose destination wraps. The fact
+does not authorize `head + len < cap`, no-wrap arithmetic, or a signed bound
+on logical coordinates. Ordinary target qualification remains unconditional
+and precedes both facts-on and facts-off emission.
+
+With a head value already known to LLVM to be zero, the existing back-slot
+expression adds zero to entry length and tests that sum against capacity.
+The new fact makes that comparison false and leaves a direct length index.
+Fresh construction already stores head zero; no new head fact is supplied.
+This deduction does not eliminate a rebase source's front update: its final
+`head + 1` legitimately wraps. Nor does it establish SIMD by itself; inlining,
+induction analysis, alias information and native optimizer decisions still
+determine the additional append loop's code. Its scalar make callback is an
+identity, so a retained wrap expression is a concrete discriminator rather
+than evidence of a callback cost.
+
+The structural assessment covers `compiler`, `language`,
+`compiler/backend-facts`, `compiler/prelude-records`,
+`compiler/storage-representation`, `compiler/storage-placement`, and the
+Deque rebase decision. The existing optional window-address-fact emitter is
+the appropriate owner: extend its test observations to both fact families,
+the existing address family alone, and neither. Production retains one
+emission choice. Keep the new assertion in Ring `PlaceBack` and share the
+existing wrap arithmetic through a helper accepting its already-loaded
+capacity; do not give arbitrary callers an unchecked proof flag. Name its
+predicate from an existing fresh SSA operand so withholding it changes no
+ordinary SSA numbering or instructions. This requires no new IR operation,
+checker fact store, module or production switch. The pending
+[backend-fact amendment](../../../../design/amendments/ring-placement-entry-capacity.md)
+records the proposed narrowing of the current decision to withhold logical
+coordinate assertions. It is the only new file, serves this fact experiment,
+and is removed when ruled; this section remains the evidence owner. Bulk
+transfer and broader fact propagation remain separate investigations because
+their proof scope and generated work differ.
+
+Before timing, require all of the following observations:
+
+- The existing four-shape backend matrix keeps its normalized-address
+  checks. Only Ring `PlaceBack` gains one unsigned entry-capacity predicate,
+  before every payload/header store and using the existing entry operands.
+  Removing that predicate and its assumption reproduces the address-only
+  module; removing both families reproduces ordinary emission. Target
+  qualification and ordinary arithmetic flags are identical in all three.
+- Fixed/runtime programs independently check payload order and descriptor
+  outcomes when placement ends exactly full and when nonzero head requires
+  physical wrapping. Zero-size placements at capacities above the signed
+  range check the unsigned domain. Execute ordinary and retained-call forms,
+  preserving existing ownership and zero-capacity qualification controls.
+  Fault observations replace the new assumption with a runtime observer
+  before optimization: signed comparison, post-length and head-plus-length
+  mutations must be detected. A false `llvm.assume` is undefined behavior,
+  not a dependable fault oracle.
+- On the unchanged Deque source, the final native scalar growth body loses
+  destination-wrap comparison/select/subtraction work on the fresh-head-zero
+  path, with no new runtime check, helper call, descriptor traffic or payload
+  transfer. Inspect the additional append loop separately for vectorization;
+  a surviving destination wrap falsifies the proposed mechanism. Preserve
+  the ordinary source-head wrap and inspect all other trace/payload bodies.
+- Rerun the complete practical correctness and accounting matrices, including
+  checksum and cleanup faults, and require all 120 accounting rows unchanged.
+  Preserve wrapped-rebase and normal/retained ownership observations. A
+  changed outcome, owner order, allocation ledger or fault observability
+  rejects the candidate before timing.
+
+The same-source A/B keeps compiler inputs, toolchain, flags, harness, work
+`1048576`, seeds, all seven samples and both order cohorts fixed; the sole
+compiler difference is emission of the new fact. Preserve both images and
+sample sets. Measure all 24 Deque application cells and all native controls,
+not only scalar growth. For each remaining scalar growth cell at counts 256
+and 4096, require the candidate's largest sample below the baseline's
+smallest in both cohorts before selecting a repeatable improvement. Reject
+selection on a useful-cell regression established by the reverse observed-
+range test in both cohorts, or on a lost previously established target win.
+Overlapping samples remain inconclusive; do not average cells, drop outliers,
+change qualifications, or repeat a losing pair to obtain a favorable one.
+Every claimed completed target cell must independently satisfy the central
+[optimization criterion](../ECOSYSTEM.md#optimization-criterion): compare
+against each cohort's median-slower Rust/C++ peer, require WF's largest
+sample below that peer's smallest in both cohorts, paired minima at least
+1 ms, cohort-ratio spread at most 10%, and native inter-arm drift at most
+10% for attribution. A valid fact or improved native loop alone does not
+complete a performance target. Build, correctness execution and timing remain
+separate guarded stages.
+
+### Entry-capacity native screen before execution
+
+The first screen used the unchanged Deque fixture and library at documentation
+head `262c662a46ffb06e7dc62a482ff02bfbb214e2e1`, with only the pending
+Ring entry-capacity emitter change. The frozen control compiler SHA-256 is
+`5753999f224f89a9a99e0399b76bfd7b92cd53d5f22b0d204df4f2ec3ffbc20b`;
+the candidate is
+`e7ad848067a702de0941d9c7bf61d842573ab4ef884988aeb32687c48c7a116e`.
+The candidate CLI build, using the gate profile and two jobs, exited zero in
+44.55 seconds. Same-source emission and native construction exited zero in
+1.96 seconds. These are construction observations, not workload timings; no
+generated candidate program was executed in this screen.
+
+Both compilers ran `--emit-llvm deque-library.wf -o <output>` from this
+fixture directory. The ordinary timed-module rename changed `@main(` to
+`@wf_fixture_main(`. Apple Clang 21.0.0 (`clang-2100.3.34.2`), target
+`arm64-apple-darwin25.6.0`, consumed each module with
+`-O3 -Wno-override-module -x ir -S -emit-llvm` for optimized LLVM and the
+same command without `-emit-llvm` for native assembly. No Rust/C++ peer,
+driver or runtime rebuild was needed for this mechanism question.
+
+Removing exactly four candidate raw-LLVM lines, the unsigned predicate and
+its assumption in each scalar/record `place_back` body, reproduces the
+control bytes without any other normalization. That ordinary module SHA-256
+is `351f6de53267932d3e4a2091da4ca6a19be3d8039db91e98515fb7b8c78fd033`.
+The candidate raw module is
+`37acb683279e52e02174c2b3868ca0fb783766df9aff21f9c48ede99a5783c38`.
+Control/candidate native assembly SHA-256 values are respectively
+`fd628b4796509c8e9e42649c021c0971ad90b97d925ffccf91a9d64b4629e9e0` and
+`d0112c863b4b63aaf12f6bd9b2c9760b5f3d62a1a0a4b8639605a4458d9f5089`.
+
+The native growth loops give the following static observations. Instruction
+counts describe one loop-body execution, including its backedge; they are
+not elapsed-time ratios.
+
+| Growth loop | Control | Candidate | Payload traffic per logical element |
+|---|---|---|---|
+| Scalar rebase | 13 instructions per element, `LBB10_40` | 10 per element, `LBB10_39` | One 8-byte load and store in each |
+| Scalar additional append | 32 instructions per four elements, `LBB10_44` | 10 per eight elements, `LBB10_43` | One 8-byte store in each |
+| Scalar append remainder | 9 instructions, `LBB10_47` | 6, `LBB10_46` | One 8-byte store in each |
+| Record rebase | 37 instructions per element, `LBB11_21` | 35 per element, `LBB11_22` | 256 bytes loaded and stored in each |
+| Record additional append | 37 instructions per element, `LBB11_24` | 124 per two elements, `LBB11_27` | 256 bytes stored in each |
+
+Scalar rebase loses the destination comparison, select and subtraction;
+source-head wrapping remains. The additional scalar append uses two paired
+Q-register stores for eight values, and its scalar remainder also loses
+destination wrapping. Neither loop gains a helper call, descriptor access,
+payload snapshot or runtime test of the entry requirement. The existing
+scalar append trip-count dispatch changes from four to eight elements as
+its vector width changes. The wrapped-rebase control likewise loses only
+the destination wrap in its transfer loop, from 13 to 10 instructions for
+scalars and 37 to 35 for records; source wrapping is still present.
+
+All 45 emitted native function bodies retain the same call-target multisets,
+including tail calls. Thirty-nine retain identical instruction text after
+excluding assembly directives, labels and comments, including all primitive
+endpoints, drains, constructors, releases and element callbacks. The six
+changed instruction bodies are the two complete trace instances, the two
+fill instances and the two rebase instances:
+
+| Body | Control instructions | Candidate instructions | Other observed change |
+|---|---:|---:|---|
+| Scalar trace | 476 | 465 | Total frame grows from 240 to 304 bytes |
+| Record trace | 654 | 879 | Total frame grows from 448 to 832 bytes |
+| Scalar fill | 69 | 66 | Ordinary head-relative wrapping remains in this shared helper |
+| Record fill | 76 | 76 | Register/induction arrangement changes; wrapping remains |
+| Scalar rebase | 39 | 36 | Destination wrapping removed; 48-byte frame retained |
+| Record rebase | 63 | 61 | Destination wrapping removed; 48-byte frame retained |
+
+The complete inventory corrects an earlier 33-body specialization-only count.
+The twelve omitted resource helpers, callbacks, exported trace wrappers and
+entry points are identical; they introduce no further changed bodies. The
+corrected table includes each final operand-free `ret`, adding one to the
+previously reported total in each body. The original subset artifact remains
+frozen; `native-body-comparison-complete.json` in the same private home records
+all 45 bodies, instruction counts and direct/tail-call targets. This accounting
+correction changes neither the loop observations nor the timing disposition.
+
+The scalar trace's initial-growth fill loop gains one `dup` instruction per
+eight values. Forward/reverse hot-loop instruction counts stay at 15/19 for
+scalars and 97/101 for records, without new hot stack accesses; their enclosing
+trace frames still incur the reported growth. The wide additional append
+introduces a two-record vector dispatch and remainder. Its vector loop has
+32 zip operations and one 16-byte stack reload of the loop-invariant seed
+vector per two records. That value was stored before the vector loop; this
+is new controller traffic, not a copied record or descriptor. The larger
+frame, setup, shuffle work and repeated seed load are costs, not an inferred
+speedup. Allocation calls, payload bytes per logical element and source-head
+wraps are unchanged in this inspection; the subsequent complete outcome and
+allocation observations are recorded below.
+
+The scalar native mechanism passes the prerecorded code discriminator: the
+fresh-head-zero destination wrap is gone without substituted calls, entry
+checks, descriptor traffic or payload movement. The criterion did not require
+unchanged frame size or instruction count in every other body; the wider
+code effects above must therefore proceed to the unchanged full-family
+regression criterion rather than being hidden or declared harmless. This
+screen selects neither the production change nor a performance result.
+The focused test, practical matrix and accounting results below satisfy the
+recorded correctness prerequisites for timing.
+
+The private screen directory
+`/private/tmp/whitefoot-deque-entry-capacity-screen-gwjchlar` retains both
+compiler copies, source/test patches, exact criterion, input snapshots,
+commands, exit statuses, construction logs, raw/optimized LLVM, assembly and
+the complete body/call comparison. Its `source.patch` SHA-256 is
+`1feacd3e8901aa4c2a1b54dead49b990294950e5b0235a450285ab80ec7f9cf0`;
+the pre-implementation criterion snapshot is
+`169f1721f8b85a0bb21826824fe1698930f48250921becd2a3ff2d2f04aa5126`.
+The directory is a local artifact location, not a maintained dependency.
+
+### Entry-capacity focused test and fixture authoring correction
+
+The first window-test run stopped the new regression fixture at canonical
+source admission, before semantic checking or native execution. Its generated
+one-line `if` bodies used a space where [FORM-2] requires a newline and four
+spaces; consecutive generated functions also lacked the required blank line.
+Only whitespace inside the test's Whitefoot source strings was corrected.
+All non-whitespace source bytes, twelve placements, three deliberately wrong
+fact predicates and expected exit codes are unchanged. Neither compiler
+emission nor the measured Deque source changed in this repair.
+
+The original source and rejection remain in the screen directory's
+`fixture-authoring/`: `before.wf` SHA-256 is
+`3bd0358c7550339ef48290a621dbd80c0951f5062f1ed0ee03f796393d9220d4`.
+The frozen candidate CLI rejected it with `FORM-2 NonCanonicalTrivia` at
+line 7, column 27, exit 1. It admitted the corrected `after.wf`, SHA-256
+`f61fe8814918b8873c7a4d3e30150da56ffcff03eaf4f461cabd854ad1bae397`,
+with `--check`, exit 0, before rebuilding the Rust test binary. The first
+test failure remains in
+`/private/tmp/whitefoot-fixed-storage-swap/semantics-continuation/windows.stderr`.
+
+The repaired gate-profile test
+`ring_back_placement_entry_capacity_preserves_wrapping_and_unsigned_measures`
+passed as part of the 25-test window filter, direct exit 0. It executes all
+three fact observations in ordinary and retained-call forms, independently
+checking order and descriptors for fixed/runtime rings, nonzero heads,
+placements ending full and zero-size capacities above the signed domain.
+The correct runtime observer sees twelve placements and exits 0; the signed,
+post-length and head-plus-length mutations each exit 91. The test continues
+to replace the new assumption with the observer before optimization, so no
+false assumption serves as its fault oracle.
+
+Primary command/status evidence is
+`/private/tmp/whitefoot-fixed-storage-swap/semantics-repaired/result.json`
+(SHA-256
+`6ee68ef854624cfbff37289660e37acb16f331b544b3a6a7a3ac1f25dde283bd`);
+the adjacent `windows.stdout` explicitly names the passing new test and has
+SHA-256 `d80c8fdb23a4e1d0a65688f34b3eab491bc45ae8dd625cc62b2295ed5232f89b`.
+The corrected `windows.rs` SHA-256 is
+`fff6048aa86c86894fffda1363636b5029fcf0bb84f848443df0c4732538740a`.
+This is focused correctness evidence, not a Deque performance result or a
+production-selection verdict.
+
+### Isolated entry-capacity correctness and accounting
+
+The practical pair uses the frozen control and candidate compilers above,
+without the later fixed-storage exchange candidate. The previously qualified
+raw Deque modules supply each native arm. The unchanged O3 C driver, Rust/C++
+peer and native-runtime objects are reused byte-for-byte from the recorded
+`main-6bb-f` build after checking their retained identities and source hashes.
+Only Whitefoot objects, links, historical O2 C-driver objects and the
+maintained owning fixture's native images are constructed. No compiler, peer
+or runtime rebuild and no performance timing occur in this stage.
+
+The separate guarded build and execution stages both exit 0, in 4.24 and
+4.86 seconds respectively. In each arm, the practical ordinary-allocation
+and accounting images each pass 576 configurations and 2,592 executions,
+including the historical wrapped-rebase control. Thus the four images pass
+10,368 complete traces. Each arm's checksum and cleanup faults exit 1 with
+the expected distinct messages. Timed LLVM and native symbols contain no
+allocation-observer hooks.
+
+Both allocation files contain all 120 rows across 24 application cells.
+The ledgers are byte-identical to each other and to
+[the retained allocation observations](ecosystem-accounting.csv), SHA-256
+`0ac88c02c5e9ca9517a584cdb75236a3ce1cc09497c4bd2f1e64ae9c835a2fcc`.
+Independent CSV checks also verify cell coverage, complete-checksum agreement,
+balanced allocation lifetimes, Whitefoot/C request and byte formulas, and
+the requested-overlap bound.
+
+Each arm's O2 normal and retained-helper images pass 432 configurations and
+1,296 executions apiece; the retained LLVM still contains 26 Whitefoot and
+48 C helper call sites. The maintained `deque-program.wf` also passes with
+each frozen CLI under both sequential and `--par` lowering, both with ordinary
+deallocation and with its existing identity observer. Each observed image
+reports exactly 21 allocations, every one released once. The practical and
+both owning modules reproduce control LLVM byte-for-byte after removing
+only the new fact lines.
+
+The screen directory's `practical-matrix/` keeps the pinned inputs, reused
+objects, images, commands, outputs and direct exit statuses. Its
+`build/result.json` SHA-256 is
+`053dcabe81bd2a561bfe2b33e897fda0fc2b05d2fcbb5ab880c74905db4035f0`;
+`check/result.json` is
+`ffab3032f49c9ce6df3774355f07b7b9c7d6f72de7fbc33383368269c635ac7a`.
+The ordinary-allocation executable identities are
+`73633cdb1f005f5c29a95386ef456170f218a02cfc60761f7cc5fa68cd984adc`
+(control) and
+`daff768a97e95cdfc558195933f2c24275201212c10bcc6155805616a821fd06`
+(candidate). These observations qualify the isolated pair for the recorded
+full-family timing experiment; they do not select the production change.
+
+### Entry-capacity pair: scalar gains, wide regression, candidate rejected
+
+The single preregistered control/candidate pair rejects uniform entry-capacity
+fact emission. Both remaining scalar growth cells improve with complete range
+separation, but 256-byte growth at 4096 has a qualified loss in both cohorts.
+Its candidate/control medians are 1.028733 and 1.033201; even its smallest
+candidate samples exceed the largest control samples, by factors 1.002800
+and 1.007236. This violates the recorded no-regression rule. No sample is
+removed and no replay or extra variant is selected.
+
+Scalar growth falls by 10.36–10.90% at count 16, 10.04–10.37% at 256 and
+6.64–7.54% at 4096. The last two still do not complete the standard-peer
+target: at 256 the candidate is 1.004–1.015 times Rust and 1.228–1.232 times
+C++, leaving the target inconclusive; at 4096 it is 1.185–1.192 times Rust
+and 1.299–1.306 times C++, a robust deficit. The code screen correctly
+predicted a scalar gain. Its wider append expansion, zip operations, seed
+reload and larger frame accompanied the measured wide loss, but this pair
+does not apportion the loss among those changes.
+
+Each arm retains 1,680 rows: both cohorts, all seven samples and all five
+implementations in 24 cells. The built-in warmups, work 1048576 and seeds
+101–107 are unchanged. Control ran first in 48.027098 seconds, candidate
+second in 48.208711 seconds; both exited 0, and the guarded timing stage took
+96.40 seconds. All non-timing CSV fields match. The smallest sample across
+all arms and implementations is 1.093 ms, and the smallest WF sample is
+1.240 ms. Maximum candidate/control WF cohort-ratio spread is 2.746%.
+Maximum inter-arm median drift is 3.391% for loop C, 3.451% for bulk C,
+3.183% for Rust and 2.920% for C++. Every pair cell and every separate
+standard-peer comparison satisfies the registered duration, stability and
+drift screens; none of the adverse observations is excluded as unqualified.
+
+The complete-cell result is three gains, one loss and twenty overlaps.
+In the table, ratios list cohorts 0 / 1; below one means the candidate or WF
+is faster than its named denominator. Pair gain/loss means complete range
+separation in both cohorts. P/D/I are qualified range pass, deficit and
+inconclusive, respectively; median ratios alone do not determine them.
+
+| Bytes | Path | Count | Candidate/control, cohorts 0 / 1 | Pair | Candidate/Rust | Candidate/C++ | Slower target, control → candidate |
+|---:|---|---:|---:|---|---:|---:|---|
+| 8 | forward-churn | 16 | 1.0000 / 1.0167 | overlap | 0.977 / 0.990 (I) | 1.435 / 1.433 (D) | I → I |
+| 8 | forward-churn | 256 | 1.0018 / 1.0293 | overlap | 0.982 / 0.980 (I) | 1.496 / 1.493 (D) | I → I |
+| 8 | forward-churn | 4096 | 0.9988 / 0.9994 | overlap | 0.981 / 0.980 (I) | 1.457 / 1.458 (D) | I → I |
+| 8 | reverse-churn | 16 | 0.9992 / 1.0016 | overlap | 0.970 / 0.974 (I) | 0.498 / 0.498 (P) | P → P |
+| 8 | reverse-churn | 256 | 0.9976 / 1.0000 | overlap | 0.971 / 0.970 (P) | 0.497 / 0.497 (P) | P → P |
+| 8 | reverse-churn | 4096 | 0.9944 / 0.9984 | overlap | 0.969 / 0.967 (I) | 0.493 / 0.493 (P) | P → P |
+| 8 | growth | 16 | 0.8910 / 0.8964 | gain | 0.555 / 0.557 (P) | 0.983 / 0.984 (I) | P → P |
+| 8 | growth | 256 | 0.8963 / 0.8996 | gain | 1.015 / 1.004 (I) | 1.228 / 1.232 (D) | D → I |
+| 8 | growth | 4096 | 0.9246 / 0.9336 | gain | 1.185 / 1.192 (D) | 1.299 / 1.306 (D) | D → D |
+| 8 | setup-cleanup | 16 | 0.9995 / 0.9989 | overlap | 0.864 / 0.868 (P) | 0.466 / 0.467 (P) | P → P |
+| 8 | setup-cleanup | 256 | 1.0032 / 0.9987 | overlap | 0.829 / 0.831 (P) | 0.862 / 0.861 (P) | P → P |
+| 8 | setup-cleanup | 4096 | 1.0006 / 1.0019 | overlap | 0.871 / 0.871 (P) | 0.886 / 0.890 (P) | P → P |
+| 256 | forward-churn | 16 | 1.0038 / 0.9998 | overlap | 1.003 / 0.997 (I) | 0.950 / 0.944 (P) | P → P |
+| 256 | forward-churn | 256 | 1.0008 / 1.0018 | overlap | 0.997 / 0.997 (I) | 0.945 / 0.945 (P) | P → P |
+| 256 | forward-churn | 4096 | 1.0015 / 1.0004 | overlap | 0.998 / 0.996 (I) | 0.942 / 0.940 (P) | P → P |
+| 256 | reverse-churn | 16 | 0.9998 / 1.0008 | overlap | 1.000 / 0.997 (I) | 0.941 / 0.940 (I) | P → I |
+| 256 | reverse-churn | 256 | 1.0003 / 1.0036 | overlap | 0.988 / 1.000 (I) | 0.938 / 0.940 (P) | P → P |
+| 256 | reverse-churn | 4096 | 0.9996 / 0.9981 | overlap | 0.999 / 0.999 (I) | 0.936 / 0.936 (P) | P → P |
+| 256 | growth | 16 | 1.0256 / 1.0203 | overlap | 0.901 / 0.895 (P) | 0.974 / 0.972 (I) | P → P |
+| 256 | growth | 256 | 1.0264 / 1.0313 | overlap | 1.175 / 1.180 (D) | 1.036 / 1.044 (D) | I → D |
+| 256 | growth | 4096 | 1.0287 / 1.0332 | loss | 1.044 / 1.055 (D) | 1.012 / 1.024 (I) | I → I |
+| 256 | setup-cleanup | 16 | 1.0054 / 1.0007 | overlap | 1.013 / 1.010 (I) | 0.858 / 0.853 (P) | P → P |
+| 256 | setup-cleanup | 256 | 0.9976 / 0.9989 | overlap | 0.992 / 0.994 (I) | 0.873 / 0.881 (P) | P → P |
+| 256 | setup-cleanup | 4096 | 1.0015 / 0.9991 | overlap | 1.002 / 0.999 (I) | 0.881 / 0.881 (P) | P → P |
+
+The concurrent control has slower-standard totals 17 P / 2 D / 5 I, versus
+16 P / 2 D / 6 I for the candidate. Against Rust alone they are 5 / 3 / 16
+and 6 / 3 / 15; against C++ alone, 16 / 6 / 2 and 14 / 6 / 4. Wide reverse
+churn at 16 loses the concurrent control's sufficient target pass, despite
+its overlapping before/after samples. Wide growth at 256 becomes a robust
+standard-target deficit, while its two-arm ranges overlap in one cohort.
+The prior retained front-slot result was 18 / 2 / 4; its scalar forward
+churn/256 pass is inconclusive in both current arms, so that historical
+change cannot be attributed to this candidate. The qualified wide growth/4096
+loss alone is sufficient to reject selection.
+
+Raw evidence is preserved in
+[control samples](ecosystem-entry-capacity-control-samples.csv), SHA-256
+`5fa717091a00df543f1eed86518f0fd8228b5455b1be2e6c03eece7180630f53`,
+and [candidate samples](ecosystem-entry-capacity-candidate-samples.csv),
+SHA-256 `b951b203f390f70bc63210efdc0a3ce01a973265273d1f3868d9b0ab641758ef`.
+The existing screen directory's `practical-matrix/timing-pair/` contains the
+37-input pre-run manifest, exact commands, raw streams, direct statuses,
+complete maintained reductions, per-cell paired bounds, individual-peer
+statuses and all native-control drift rows. Its manifest SHA-256 is
+`d3db28aed82d58a24222496058cc0cfffc176c346ffc4119b0e08bffd2405f58`;
+`result.json` is
+`f989a06ee4dd302d25c66b65e2312cf01203c49882d2f2a0cf5df301c9e549c9`.
+These private artifacts are evidence locations, not maintained dependencies.
+
+Reproduce the complete standard comparisons without timing, from this family
+directory:
+
+```sh
+perl ../summarize-ecosystem.pl --complete deque=ecosystem-entry-capacity-control-samples.csv
+perl ../summarize-ecosystem.pl --complete deque=ecosystem-entry-capacity-candidate-samples.csv
+perl ../summarize-ecosystem.pl --targets deque=ecosystem-entry-capacity-control-samples.csv
+perl ../summarize-ecosystem.pl --targets deque=ecosystem-entry-capacity-candidate-samples.csv
+```
+
+For the paired WF comparison, divide candidate by control within each cohort:
+median/median gives the descriptive ratio, maximum/minimum the gain bound,
+and minimum/maximum the loss bound. Both gain bounds must be below one or
+both loss bounds above one. Apply the recorded minimum-duration,
+cohort-ratio-spread and native-drift screens before selection. This preserves
+every sample rather than comparing an average of cells.
+
+The exact tested lowering is retained as the data artifact
+[Ring entry-capacity candidate patch](ring-entry-capacity-candidate.patch),
+SHA-256 `4446da35265bd5a0f169ce6281ea531f72345e02636d041488aac1efba4233ce`.
+This publication uses zero context to avoid whitespace-only context lines in
+an embedded patch. The measured full-context patch remains privately frozen
+as `source.patch`, SHA-256
+`1feacd3e8901aa4c2a1b54dead49b990294950e5b0235a450285ab80ec7f9cf0`;
+applying either patch produces identical candidate source bytes. The
+published patch applies with `--unidiff-zero` to
+`262c662a46ffb06e7dc62a482ff02bfbb214e2e1` and reconstructs
+the two tested emitter source files exactly: `emitter.rs` has SHA-256
+`d6e954969760b95017ec656670979ad2ce11b26d2d72990eeef9e807ea5e92e4`
+and `emitter/runs.rs` has
+`1f1e8c7c5b2db7b5a1111f4b5660e8bffba4044e4ebd93ea6eba5138e287daef`.
+This reconstruction was checked by applying the patch to private copies of
+the base files and comparing those hashes, without a new build or timing.
+The patch serves reproduction of this rejected compiler experiment, remains
+frozen with its result and retires with this experiment's evidence.
+
+To reconstruct the candidate in a fresh disposable checkout, run from the
+repository root; these are reproduction commands, not a rerun of this trial:
+
+```sh
+git worktree add --detach /private/tmp/deque-entry-reproduce 262c662a46ffb06e7dc62a482ff02bfbb214e2e1
+git -C /private/tmp/deque-entry-reproduce apply --unidiff-zero "$PWD/research/experiments/container-representation/deque-library/ring-entry-capacity-candidate.patch"
+perl .github/run-check.pl deque-entry-reproduce-cli cargo build --manifest-path /private/tmp/deque-entry-reproduce/compiler/Cargo.toml --profile gate --locked --offline --bin whitefootc --jobs 2
+perl .github/run-check.pl deque-entry-reproduce-native make -C /private/tmp/deque-entry-reproduce/research/experiments/container-representation/deque-library ecosystem-build
+perl .github/run-check.pl deque-entry-reproduce-check make -C /private/tmp/deque-entry-reproduce/research/experiments/container-representation/deque-library ecosystem-check
+perl .github/run-check.pl deque-entry-reproduce-account make -C /private/tmp/deque-entry-reproduce/research/experiments/container-representation/deque-library ecosystem-account
+```
+
+The unpatched base reconstructs the control. Any new measurement requires
+its own authorization and retains the full `measure 1048576 7` commands;
+these commands reconstruct source and behavior, not a claim that a fresh
+build reproduces the stored executable bytes or timings. The tested frozen
+images and their hashes above remain the identities of this pair.
+
+The rejected production emission and its test-only third fact mode are
+withdrawn. The existing address-fact mode, its structure assertions and
+ordinary wrapping arithmetic remain. The new fixed/runtime Ring behavior
+source remains in `backend/tests/windows.rs` as
+`ring_back_placement_preserves_wrapping_and_unsigned_measures`: its twelve
+placements check full capacity, nonzero head, logical payload order and
+zero-size capacities above the signed domain, through the two existing
+address-fact modes with ordinary and retained calls. Its expected outcomes
+and source operations are unchanged.
+
+Only the new entry-assumption structure assertions and the runtime observer
+that mutates that assumption are retired: after withdrawal their subject
+no longer exists in production. They passed before the performance decision;
+the twelve-observation success and signed/post-length/head-plus-length
+faults, each observed with the ordinary runtime observer rather than false
+LLVM assumptions, remain in the historical unit evidence above. This
+retirement removes experimental assertions with their rejected optimization;
+it does not revise a failed semantic expectation or suppress an existing
+correctness check. The source-only FORM2 repair and its initial failure are
+also retained above. Withdrawal itself has received text/pin checks, not a
+separate rebuild; the shared final gate checks the resulting compiler.
+
+## Representation-limited entry facts: native and correctness screens
+
+The uniform candidate remains rejected. A separate isolated candidate limits
+its same unsigned Ring PlaceBack entry relation to elements for which the
+existing `is_stored_aggregate` classification is false. This is the emitter's
+ordinary-value versus stored-payload transfer boundary, already used by
+`store_value_at`; no source name, payload-size threshold or fixture identity
+selects it. Primitives, Box pointers and tag-only enums use the ordinary
+value path. Structs, inline Arrays, fixed windows and payload enums use the
+stored path. The relation's authority remains the discharged entry
+precondition, independently of that performance policy.
+
+This boundary is deliberately coarse. A one-word struct or array can have
+the same payload extent as u64 and may become the same representation after
+inlining, yet remains excluded here. Direct values can also acquire costly
+vectorization. The question is whether this existing representation boundary
+retains the scalar improvement while avoiding the wide record's lane
+rearrangement; it is not a general profitability claim or a solution to the
+remaining standard-peer deficit. The proposed tree change remains pending.
+
+The criterion was frozen before construction as `CRITERION.md`, SHA-256
+`96d7af526430d7933d06a1fc558bca49fbc31acd81dcdf7b4210125959fab88f`,
+in `/private/tmp/whitefoot-deque-entry-capacity-screen-gwjchlar/representation-policy-preparation/`.
+It incorporates the complete 45-function inventory correction described above;
+the earlier 33-specialization criterion remains preserved beside it. The
+native prediction requires exactly one scalar predicate/assume pair, all
+ordinary LLVM unchanged, the scalar loops from the uniform trial, every
+record body equal to control, and unchanged call targets across all 45
+functions. Later selection still requires strict gains at both scalar growth
+counts 256 and 4096, no qualified loss or lost established target win in any
+of the 24 cells, the same 120-row ledger, and separate Rust/C++ comparisons.
+The original duration, cohort spread, native drift and full observed-range
+rules are unchanged.
+
+The isolated source base is `262c662a46ffb06e7dc62a482ff02bfbb214e2e1`, with
+control CLI SHA-256
+`5753999f224f89a9a99e0399b76bfd7b92cd53d5f22b0d204df4f2ec3ffbc20b`.
+The private two-file `source.patch`, SHA-256
+`3d43112697ddad29bf4a19e8ea11097309ae1e29a1821e2bba7c4dd47b23fa3b`,
+adds only this emission policy and the existing test-only fact observations.
+No shared compiler or library source was changed for the trial. The one
+isolated gate/jobs-2 CLI build exited zero in 62.368170 seconds; its frozen
+CLI is `screen/candidate-whitefootc`, SHA-256
+`0dc2a0af8967fcd041fa0933f2954b6dfa0712385db879eae961a5a5300db1a0`.
+The seven native-screen commands all exited zero; their guarded stage took
+1.52 seconds and rebuilt neither peers nor runtime.
+
+The native screen passes its recorded discriminator. Removing only the two
+new `.entry_room` lines exactly reproduces the control raw module, including
+SSA names. Control assembly is byte-identical to the earlier frozen control.
+Forty-two complete instruction bodies are unchanged; only scalar trace, fill
+and rebase change, and each matches the corresponding uniform-candidate
+instructions and constants. All 45 direct/tail-call target multisets are
+unchanged. Whole-body instruction totals, including `ret`, are 476 to 465,
+69 to 66 and 39 to 36 respectively.
+
+| Observation | Control | Representation-limited candidate |
+|---|---:|---:|
+| Scalar growth rebase loop | 13 instructions per element | 10 |
+| Scalar additional append loop | 32 instructions per four elements | 10 per eight |
+| Scalar append remainder | 9 instructions per element | 6 |
+| Record growth rebase loop | 37 instructions per record | 37 |
+| Record additional append loop | 37 instructions per record | 37 |
+| Scalar trace frame | 240 bytes | 304 bytes |
+| Record trace frame | 448 bytes | 448 bytes |
+
+The inspected loops have no hot stack accesses. Scalar rebase and append
+remove the destination wrap without new calls, source checks, descriptor
+traffic or payload snapshots; source wrapping remains where required.
+The scalar frame/setup costs from the uniform result remain costs. Record
+append preserves within-record SIMD, avoiding the refused two-record zip
+sequence and repeated seed reload. Complete instruction identity does not
+establish timing identity: scalar changes can move other functions in the
+image, so every wide cell remains a required timing control.
+
+Source admission first failed on `eligibility.wf:22:45`, OWN-1 MoveOfCopy,
+with direct exit 1 in 0.029754 seconds. The generated concrete fixtures had
+used explicit `move` even for copy types. The source and diagnostics remain
+under `screen/admit/`; original source SHA-256 is
+`0a48141b2a8b947da20a87be05cce2982ea1b73947f9d6c6a6b86d76b7e71c27`.
+The repair removes only `move ` in the 36 copyable roundtrips and their test
+source builder, retaining it for Box/Slots/Ring values. Types, 48 cases,
+eight positive eligibility expectations and all operations are unchanged.
+The repaired source, SHA-256
+`423f581e337111c9c6ac737410de8746786be3650f20dd8beba6d35f3f2dfa1e`,
+and the unchanged twelve-placement behavior source both admitted in
+`screen/admit-2/`, with direct exits zero in 0.045320/0.028066 seconds.
+This authoring failure changes neither the emission patch nor the criterion.
+
+The single isolated lib construction exited zero in 102.902999 seconds,
+separate from the focused `backend::tests::windows::` execution: all 26 tests
+passed, zero failed or ignored, in 8.084697 seconds. The eligibility test
+covers fixed/runtime Slots and Ring over twelve element representations,
+with literal expected choices rather than the classifier under test. The
+behavior source retains all twelve placements, including nonzero head,
+ending full, logical payload order and fixed/runtime zero-size capacities
+9223372036854775809. It executes through all three fact observations and both
+ordinary/retained-call forms. Only ten scalar placements receive the new
+fact; the two aggregate zero-size cases retain their complete behavior
+checks without that optional relation.
+
+A runtime observer replaces the new assumptions before optimization: the
+correct relation exits zero with exactly ten observations at two static
+sites; reversed operands, post-length and head-plus-length each exit 91.
+The unsigned operator is pinned structurally. The former signed-comparison
+mutant is not an informative failure in this policy's eligible positive-stride
+capacity domain, so the prerecorded reversed-operand control replaces it;
+the large zero-size witnesses remain tested but are ineligible for the fact.
+No deliberately false LLVM assumption is used as a fault oracle. The unit
+input manifest pins 345 files; all stayed unchanged during the run.
+
+The complete native outcome/accounting stage reuses 42 frozen control,
+peer and runtime artifacts and constructs only the candidate images. All
+42 relevant native-source inputs match the earlier trial; the later Rust
+aggregate program-test harness differs but is not an input to this direct
+WF/C owning-source recipe. Construction exited zero in 2.08 seconds and the
+separate observation stage in 4.95 seconds. Each arm passes both 576-case /
+2,592-execution practical images and both 432-case / 1,296-execution historical
+images. Sequential and parallel owning programs pass with allocation
+observers reporting 21 allocations, each released exactly once. Retained
+helper sites remain present (26 WF and 48 C). Checksum and missing-cleanup
+controls each exit 1 with their expected diagnostic; timed images contain
+no allocation-observer hooks.
+
+Both complete 120-row ledgers are byte-identical to the retained ledger,
+SHA-256 `0ac88c02c5e9ca9517a584cdb75236a3ce1cc09497c4bd2f1e64ae9c835a2fcc`.
+The control timed image remains
+`73633cdb1f005f5c29a95386ef456170f218a02cfc60761f7cc5fa68cd984adc`;
+the limited candidate image is
+`2741bd0dcdc4184e4cbee63e697939393a925fe1464237525df15ac9ed21a67d`.
+These screens justify the registered complete timing pair, not selection.
+The subsequent complete pair is recorded below; these observations precede it.
+
+Primary evidence below is relative to the private preparation directory;
+its manifests retain exact argv, direct statuses, streams and input hashes.
+
+| Evidence | SHA-256 |
+|---|---|
+| `screen/native/candidate.raw.ll` | `fc9200fa5820d7a7866887fff445f80718c6cb4bc9b938388320ae2b60be5911` |
+| `screen/native/candidate.opt.ll` | `1dc6dd5208cda6412b0467516d226412f7ad4b96dc087699138d743001821bfb` |
+| `screen/native/candidate.s` | `0f8ff452a9aa86c5f468063ec848f9a2100220ccd486a6583aee35729efd5d72` |
+| `screen/native-body-comparison.json` | `13f2be60278c2f4160bf1ba68a96f8a58b331471892f1cd0e7a75a143b8dd8e6` |
+| `screen/native-loop-comparison.json` | `70cd0e0ebf4a4f341060e596e9c73fd3d4170743d5fefd01802ca8d0c5c1c898` |
+| `tests.patch` | `8c373434fb6bf9fc35499b6c9d6e47db59874e21e4178b8d4d336f6df956a969` |
+| `correctness/inputs.json` | `e22de2ef31473590712af40a7f2262e4e7e86c68ca8a91d4ddf1bb54ff8c6272` |
+| `correctness/build/result.json` | `8532fe6e91fe391bcf869186cf87a7721b99498ae92d911406c6d48c001f4835` |
+| `correctness/windows/result.json` | `9c6479913f2c99595f973ea560042b7294356086cb42c590be3b83ceb07bd40b` |
+| `correctness/windows/windows.stdout` | `63f566e3210b8ebcaa3e888d07e65872bee7cd040f3f8ec2b346d71d03de857e` |
+| `practical-matrix/manifest.json` | `99782bcf6896e2190f84ab9c511728819f52bee99f193157d5f445719721f909` |
+| `practical-matrix/build/result.json` | `1e07e1ed548fa63177ae5f465894c00a76f7f5b008b500792c830a229c425726` |
+| `practical-matrix/check/result.json` | `64c279ee002d6a5743270ce65c0dacbaab5cf9fcfecf0959d3534cbe258597e7` |
+
+
+## Representation-limited pair: scalar gains, historical target unresolved
+
+The single preregistered pair has three qualified gains, no qualified losses
+and 21 overlaps. Both required scalar growth populations improve: count 256
+by 10.30/10.23 percent and count 4096 by 7.16/6.98 percent in cohorts 0/1.
+No contemporaneous control target pass is lost. The result nevertheless
+keeps `recommend_select=false`: the historical scalar forward-churn pass at
+count 256 is absent in both current arms. This leaves the registered
+historical-target condition unresolved; it is not evidence of a regression
+caused by this candidate. The representation-limited mechanism remains a
+pending proposal, with no shared compiler change selected. The separate
+uniform candidate's qualified wide loss and refusal remain unchanged.
+
+The frozen control and candidate images identified above each ran exactly
+`measure 1048576 7`, control first and candidate second. Both direct exits
+were zero, in 48.010326 and 47.927807 seconds; the guarded pair took 96.09
+seconds. Each arm retains all 1,680 rows: 24 application cells, five
+implementations, seven samples and two cohorts. The unchanged driver warms
+each implementation at seed 97 with one sixteenth of the work, clamped to a
+nonzero quantity, checks those outcomes without emitting them as samples,
+then records seeds 101 through 107. All non-timing fields match between
+arms, and all 47 frozen input identities remained unchanged. No compiler,
+peer or runtime rebuild occurred, no interim rankings were inspected, and
+no rerun or threshold change followed the result.
+
+The original rule requires strict complete-range gains in both scalar
+growth 256 and 4096 in both cohorts, no qualified useful-cell loss and no
+lost established target win. A paired gain means candidate maximum is below
+control minimum in each cohort; a paired loss uses the reverse separation.
+Every cell must also pass the 1 ms minimum, at most ten percent cohort-ratio
+spread and at most ten percent native-control drift screens. The smallest
+sample is 1.093 ms, the smallest WF sample 1.240 ms, maximum paired ratio
+spread 3.8362 percent, and maximum native drift 5.5556 percent. Maximum
+absolute drift is 3.0281 percent for loop C, 3.9508 for bulk C, 4.9320 for
+Rust and 5.5556 for C++; no individual peer qualification fails. All 192
+native drift rows and all 96 separate Rust/C++ comparisons are retained.
+
+The complete table uses median time ratios, with both cohorts shown in
+order. `P` means full observed-range separation in WF's favor, `D` separation
+against WF, and `I` inconclusive. The target chooses the median-slower
+standard container per cohort; individual Rust/C++ columns remain separate.
+An overlapping pair is not a demonstrated equality or a gain.
+
+| Bytes | Path | Count | Candidate/control, cohorts 0 / 1 | Pair | Candidate/Rust | Candidate/C++ | Slower target, control → candidate |
+|---:|---|---:|---:|---|---:|---:|---|
+| 8 | forward-churn | 16 | 0.9994 / 0.9941 | overlap | 0.973 / 0.973 (I) | 1.454 / 1.445 (D) | I → I |
+| 8 | forward-churn | 256 | 0.9976 / 1.0000 | overlap | 0.983 / 0.974 (I) | 1.466 / 1.466 (D) | I → I |
+| 8 | forward-churn | 4096 | 0.9827 / 0.9747 | overlap | 0.968 / 0.986 (I) | 1.380 / 1.423 (D) | I → I |
+| 8 | reverse-churn | 16 | 0.9976 / 1.0169 | overlap | 0.968 / 0.987 (I) | 0.497 / 0.488 (P) | P → P |
+| 8 | reverse-churn | 256 | 0.9992 / 0.9976 | overlap | 0.973 / 0.970 (P) | 0.498 / 0.497 (P) | P → P |
+| 8 | reverse-churn | 4096 | 0.9984 / 1.0000 | overlap | 0.969 / 0.970 (I) | 0.493 / 0.493 (P) | P → P |
+| 8 | growth | 16 | 0.8855 / 0.8986 | gain | 0.555 / 0.562 (P) | 0.977 / 0.982 (I) | P → P |
+| 8 | growth | 256 | 0.8970 / 0.8977 | gain | 1.001 / 1.004 (I) | 1.227 / 1.227 (D) | D → I |
+| 8 | growth | 4096 | 0.9284 / 0.9302 | gain | 1.183 / 1.183 (D) | 1.296 / 1.299 (D) | D → D |
+| 8 | setup-cleanup | 16 | 0.9963 / 1.0005 | overlap | 0.870 / 0.872 (P) | 0.475 / 0.476 (P) | P → P |
+| 8 | setup-cleanup | 256 | 1.0064 / 0.9692 | overlap | 0.802 / 0.822 (P) | 0.859 / 0.861 (P) | P → P |
+| 8 | setup-cleanup | 4096 | 1.0062 / 0.9899 | overlap | 0.841 / 0.890 (P) | 0.865 / 0.896 (P) | P → P |
+| 256 | forward-churn | 16 | 1.0015 / 1.0020 | overlap | 0.996 / 0.998 (I) | 0.947 / 0.947 (P) | P → P |
+| 256 | forward-churn | 256 | 1.0013 / 1.0002 | overlap | 0.996 / 0.996 (I) | 0.928 / 0.934 (P) | P → P |
+| 256 | forward-churn | 4096 | 0.9990 / 0.9921 | overlap | 0.997 / 0.995 (I) | 0.943 / 0.941 (P) | P → P |
+| 256 | reverse-churn | 16 | 0.9983 / 0.9980 | overlap | 0.999 / 1.000 (I) | 0.936 / 0.939 (P) | P → P |
+| 256 | reverse-churn | 256 | 0.9995 / 1.0003 | overlap | 0.995 / 0.999 (I) | 0.938 / 0.940 (P) | P → P |
+| 256 | reverse-churn | 4096 | 0.9983 / 1.0129 | overlap | 0.998 / 1.010 (I) | 0.938 / 0.949 (P) | P → P |
+| 256 | growth | 16 | 0.9961 / 1.0019 | overlap | 0.882 / 0.878 (P) | 0.959 / 0.957 (P) | P → P |
+| 256 | growth | 256 | 0.9977 / 1.0000 | overlap | 1.142 / 1.143 (D) | 1.010 / 1.011 (I) | I → I |
+| 256 | growth | 4096 | 0.9998 / 1.0038 | overlap | 1.016 / 1.016 (I) | 0.983 / 0.989 (I) | I → I |
+| 256 | setup-cleanup | 16 | 1.0004 / 0.9977 | overlap | 1.009 / 1.009 (I) | 0.854 / 0.855 (P) | P → P |
+| 256 | setup-cleanup | 256 | 0.9945 / 1.0010 | overlap | 0.996 / 0.996 (I) | 0.881 / 0.885 (P) | P → P |
+| 256 | setup-cleanup | 4096 | 1.0011 / 0.9986 | overlap | 1.003 / 0.999 (I) | 0.878 / 0.882 (P) | P → P |
+
+The slower-standard counts are control 17 P / 2 D / 5 I and candidate
+17 P / 1 D / 6 I, versus historical retained 18 P / 2 D / 4 I. Separately,
+the candidate is 6 P / 2 D / 16 I against Rust and 16 P / 5 D / 3 I against
+C++; the control is 7 P / 3 D / 14 I and 16 P / 6 D / 2 I respectively.
+Scalar growth 256 changes from deficit to overlap, not to a target pass.
+Scalar growth 4096 still costs 1.1832/1.1834 times Rust and 1.2965/1.2986
+times C++. Wide growth 4096 overlaps its control at 0.9998/1.0038; the
+uniform candidate's wide loss is not reproduced by this limited policy.
+
+For the historical scalar forward-churn 256 cell, the current WF
+candidate/control medians are 0.9976/1.0000, with overlapping ranges and
+2.0110 percent maximum native drift. The slower peer is Rust in both
+cohorts. Its WF/peer observed upper bounds are 1.018018/0.999399 in the
+control and 1.024654/0.986170 in the candidate, whereas the historical
+bounds were 0.987365/0.986161. Thus both current arms lose the historical
+complete-range pass through cohort 0 overlap, and neither shows a qualified
+WF loss in the current pair. The original historical condition is retained,
+not replaced with the weaker contemporaneous condition. Any later comparison
+against final current main needs its own prospective criterion and images;
+this pair alone neither resolves that condition nor justifies rejecting the
+mechanism as causally regressive.
+
+All measurements are published in
+[control samples](ecosystem-representation-entry-control-samples.csv) and
+[candidate samples](ecosystem-representation-entry-candidate-samples.csv),
+SHA-256 `52c418a9da15f735ffac55bed378d0bf9c65438bce52fc7da246c7413415a865`
+and `b76a1505c1baa7a69a45c6bfc6382e7a801c12e5eb7fcbd25fea8f9c9b0b6790`.
+These are frozen comparison evidence in the existing Deque experiment home
+and retire with that evidence. The private complete record is
+`representation-policy-preparation/practical-matrix/timing-pair/` under the
+artifact directory above. Its exact argv/status and analysis identities are:
+
+| Evidence | SHA-256 |
+|---|---|
+| `manifest.json` | `2095ff69a5334a56b7029c90033c6204e1131db0bfbe48b1ec46010d6f9f03a7` |
+| `result.json` | `526756086723f84679988d995cf1fb04121f6b9d14657f43e69e2746983152b6` |
+| `summary-commands.json` | `36ae2d3e9cc7ea8b3776e7586edabdeb024a0d1116b05710c7d3b884657cb242` |
+| `paired-cells.csv` | `d0104f8a0541670c88cf46844ec1338a10ddfcb80df9f54a8ea59384ef3696df` |
+| `native-drift.csv` | `d8e05018516aa983f116b84981c7f9ea0db2ade58a59de31ea628b4868900f0a` |
+| `individual-peers.csv` | `54fae8276549b908a3f08a1eaf23502dcbc285c56fd0a0b0cd9c910a2c9344dc` |
+| `reduction.json` | `98d95a595fe3d0e7a97c7d7556df77571edf4b0fe15ab37aba96b38f8173a0b5` |
+
+All five maintained summary commands exited zero. To reproduce their
+complete peer/target reductions from the published rows, run from the
+repository root, substituting each arm in the same command:
+
+```sh
+perl research/experiments/container-representation/summarize-ecosystem.pl --complete deque=research/experiments/container-representation/deque-library/ecosystem-representation-entry-control-samples.csv
+perl research/experiments/container-representation/summarize-ecosystem.pl --targets deque=research/experiments/container-representation/deque-library/ecosystem-representation-entry-control-samples.csv
+perl research/experiments/container-representation/summarize-ecosystem.pl --complete deque=research/experiments/container-representation/deque-library/ecosystem-representation-entry-candidate-samples.csv
+perl research/experiments/container-representation/summarize-ecosystem.pl --targets deque=research/experiments/container-representation/deque-library/ecosystem-representation-entry-candidate-samples.csv
+perl research/experiments/container-representation/summarize-ecosystem.pl --targets deque=research/experiments/container-representation/deque-library/ecosystem-boundary-reuse-candidate-samples.csv
+```
+
+The tested emitter is retained as the data artifact
+[representation-limited candidate patch](ring-entry-capacity-representation-candidate.patch),
+SHA-256 `f35149018980581abdc9a05a8326490684b68f7ebe6fd35287350ff2d268e697`.
+It contains only the two production source files; the private focused test
+patch and its passing input manifest are identified in the preceding stage.
+The publication patch uses zero context, while private `source.patch`
+remains unchanged at SHA-256
+`3d43112697ddad29bf4a19e8ea11097309ae1e29a1821e2bba7c4dd47b23fa3b`.
+Applying either to `262c662a46ffb06e7dc62a482ff02bfbb214e2e1`
+reconstructs exactly the tested `emitter.rs` SHA-256
+`72736ea266815d81709305edf7463f642cf45e62fdd91989b669d4874b9da766`
+and `emitter/runs.rs`
+`608ed325fc91ba78d18961744c83b1959a13d7fc524b8d734a70b58a9d1f4fc8`.
+This was checked by applying the publication patch to private base-file
+copies and comparing source hashes, without a new build. It serves
+reconstruction of the isolated policy and retires with this experiment.
+
+For a fresh disposable checkout, the explicit reconstruction commands are:
+
+```sh
+git clone --shared --no-checkout . /private/tmp/deque-representation-reproduce
+git -C /private/tmp/deque-representation-reproduce checkout --detach 262c662a46ffb06e7dc62a482ff02bfbb214e2e1
+git -C /private/tmp/deque-representation-reproduce apply --unidiff-zero "$PWD/research/experiments/container-representation/deque-library/ring-entry-capacity-representation-candidate.patch"
+perl .github/run-check.pl deque-representation-reproduce-cli cargo build --manifest-path /private/tmp/deque-representation-reproduce/compiler/Cargo.toml --profile gate --locked --offline --bin whitefootc --jobs 2
+perl .github/run-check.pl deque-representation-reproduce-native make -C /private/tmp/deque-representation-reproduce/research/experiments/container-representation/deque-library ecosystem-build
+perl .github/run-check.pl deque-representation-reproduce-check make -C /private/tmp/deque-representation-reproduce/research/experiments/container-representation/deque-library ecosystem-check
+perl .github/run-check.pl deque-representation-reproduce-account make -C /private/tmp/deque-representation-reproduce/research/experiments/container-representation/deque-library ecosystem-account
+```
+
+The unpatched base reconstructs the control source. These commands do not
+claim fresh executable identity, reproduce the private focused test patch,
+or authorize another measurement; the frozen image hashes above identify
+this completed pair. No specification, source acceptance, boundary row,
+library API or allocation policy changes in this candidate.
+
+
+### Remaining margins and retained native work
+
+The following is a read-only reduction of the completed pair and inspection
+of its retained code, not another trial. These are all seven unresolved
+slower-standard targets in the candidate arm. The upper quotient is WF's
+maximum divided by that cohort's median-slower peer's minimum, so a complete
+range pass needs both entries below one. These margins describe the stored
+samples, not a prediction of the gain a later change would deliver.
+
+| Bytes | Path | Count | Slower peer | Upper quotient, cohorts 0 / 1 | Current target |
+|---:|---|---:|---|---:|---|
+| 8 | forward-churn | 16 | Rust | 1.070439 / 1.016081 | I |
+| 8 | forward-churn | 256 | Rust | 1.024654 / 0.986170 | I |
+| 8 | forward-churn | 4096 | Rust | 1.044883 / 1.043686 | I |
+| 8 | growth | 256 | Rust | 1.008128 / 1.025467 | I |
+| 8 | growth | 4096 | Rust | 1.208110 / 1.198423 | D |
+| 256 | growth | 256 | C++ | 1.012591 / 1.027223 | I |
+| 256 | growth | 4096 | C++ | 1.011751 / 1.024694 | I |
+
+The source-policy distinction remains material. WF's growth trace explicitly
+allocates `count`, fills it, rebases into a fresh `2*count+1` backing, appends
+`count+1` values, drains in order and releases. Its
+[`deque_rebase`](../../../../lib/std/collections/deque/deque.wf) transfers each
+element through `take_front` and `place_back`. The C loop control has the
+same allocation policy and layout; the bulk C control changes only that
+conversion to at most two `memcpy` spans. Rust pushes into `VecDeque` and
+uses automatic growth; C++ uses segmented `std::deque` without reserve.
+Those standard containers do not implement WF's explicit fresh-backing
+operation, so their timings cannot isolate its lowering cost.
+
+There is nevertheless a residual against the same-policy C loop: scalar
+growth 256 is 1.2843/1.2818 times loop C and 1.6490/1.6484 times bulk C;
+scalar growth 4096 is 1.2794/1.2886 and 1.6728/1.6796 respectively. The wide
+results are different: at 256, WF is 0.9905/0.9901 times loop C and
+1.0693/1.0702 times bulk C; at 4096, 0.9842/0.9949 and 1.0431/1.0516.
+Thus allocation-policy differences alone cannot explain the scalar C-loop
+gap, and a wide compiler penalty cannot be inferred from the standard-peer
+gap when WF already has lower medians than this source-loop control.
+
+Frozen scalar growth code narrows the remaining work:
+
+| Loop | WF limited candidate | C loop control |
+|---|---:|---:|
+| Initial-to-fresh rebase | 10 instructions per element | 27 per five elements |
+| Additional append | 10 per eight elements | 32 per four elements |
+| Final drain | 9 per element | 6 per element |
+
+WF rebase keeps a loop-carried source head, increment, unsigned comparison,
+conditional capacity selection and subtraction; destination wrapping is
+already gone. C's head successor uses equality and `csinc`, and its transfer
+loop is unrolled five times. WF's drain similarly retains the more general
+head-wrap form and an extra address addition; both drains keep the required
+checksum dependency. These loops have no helper calls, descriptor reloads
+or hot stack accesses. WF's faster append form therefore does not establish
+that its transfer and drain work are equivalent to C's. Static instruction
+counts and the full-trace pair do not apportion their elapsed cost.
+
+The retained Rust scalar body still performs capacity checks and descriptor
+stack stores on pushes, calls `VecDeque::grow` when full, and drains with
+nine instructions per element. Its growth helper calls `RawVec::grow_one`
+and conditionally repairs wrapped storage with `memmove` or `memcpy`; the
+head-zero fixture follows the branch that needs no wrapped-storage repair.
+Reallocation can still move data, which this instruction inspection and
+requested-byte ledger do not measure. C++ computes a block-table index and
+within-block offset, adds capacity when needed, and frees blocks as the
+front crosses a block boundary. These are policy and representation
+tradeoffs, not evidence that the WF transfer loop costs no time because its
+request count is lower.
+
+For the existing three-round growth-4096 ledger, scalar WF and both C
+controls each make six requests and six releases, request 295,080 bytes,
+and have 98,360 peak requested bytes. Rust makes nine requests including six
+reallocations, releases three final allocations, requests 688,128 bytes,
+and peaks at 131,072; C++ makes/releases 69 requests, requests 210,408 bytes,
+and peaks at 70,016. These are logical allocator observations, not physical
+memory or a division of the measured runtime into allocation and copying.
+The complete wide and other-cell accounting remains in the unchanged
+120-row ledger.
+
+The bounded next lowering question is the Ring front-removal successor:
+can its one-step normalized origin use an equality/select form instead of
+the general offset-wrap subtraction, reducing transfer/drain dependencies
+without supplying a new fact or changing the bulk-transfer API? This is a
+prospective opportunity, not an implemented or timed candidate. Before
+construction it needs a complete domain argument for every origin writer,
+including fixed/runtime storage, capacity one, nonzero head and maximal
+zero-size capacities. The frontend's published `head <= cap` fact alone is
+not a proof of the backend's strict normalized-head invariant. A cheap
+screen would falsify the idea if the scalar successor sequence or drain
+remains unchanged, or if wide code acquires the refused shuffle/spill cost;
+any surviving form still needs semantic/fault, full accounting and complete
+family performance controls. Bulk transfer is a separate algorithm/API
+question and is not authorized by this observation.
+
+The subsequent [ordinary-call boundary analysis](../../../../docs/todo.md)
+closes the raw-head equality-only candidate: the published `head <= cap`
+contract admits `head == cap`, for which that successor can exceed capacity.
+The [boundary regression](../../../../compiler/src/backend/tests/windows.rs)
+therefore normalizes only TakeFront's physical address and preserves its
+numerical head update. The earlier native counts remain observations; this
+raw-head successor is not a valid next optimization under the current contract.
+
+The read-only native record is `residual-diagnosis/loop-observations.json`
+under the private preparation directory, SHA-256
+`b87e2092dff9addc16ed10cd1051c024b8bf52f972899ad0ac7647c9df0fb598`.
+It pins the existing candidate assembly, timed image and C driver object;
+C object SHA-256 is
+`41784651edd4c6aebdaed30cd5cb6af83c88177be16b01a4cb7c6cb94560f3fc`.
+The C-loop spans are `0x3d30..0x3d98`, `0x3e14..0x3e90` and
+`0x3ee0..0x3ef4` in `_word_loop_library_trace`; WF spans are
+`LBB10_39`, `LBB10_43` and `LBB10_48` in the pinned candidate assembly.
+The same WF loop forms and counts are also present in the actual timed
+image at `0x10000612c..0x100006150`, `0x1000061a0..0x1000061c4` and
+`0x100006200..0x100006220`. The Rust/C++ descriptions come from `otool -tvV` on the same frozen timed
+image, with direct disassembly exit zero. No executable was run for this
+inspection.

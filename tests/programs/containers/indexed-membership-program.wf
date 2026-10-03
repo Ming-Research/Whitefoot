@@ -1,4 +1,5 @@
 alias ExitStatus = std::process::ExitStatus;
+alias PriorityOrder = std::collections::priority_queue::PriorityOrder;
 alias Slab = std::collections::slab::Slab;
 alias SlabHandle = std::collections::slab::SlabHandle;
 alias exit_status = std::process::exit_status;
@@ -7,6 +8,7 @@ alias priority_queue_heapify_indexed = std::collections::priority_queue::priorit
 alias priority_queue_len = std::collections::priority_queue::priority_queue_len;
 alias priority_queue_peek_at = std::collections::priority_queue::priority_queue_peek_at;
 alias priority_queue_remove_at_indexed = std::collections::priority_queue::priority_queue_remove_at_indexed;
+alias priority_queue_replace_at_indexed = std::collections::priority_queue::priority_queue_replace_at_indexed;
 alias slab_edit = std::collections::slab::slab_edit;
 alias slab_free = std::collections::slab::slab_free;
 alias slab_insert = std::collections::slab::slab_insert;
@@ -1053,6 +1055,121 @@ fn indexed_heapify_reports() -> failures: u64 pure {
   return log.failures;
 }
 
+struct IndexedRiseReports {
+  events: Array<u64, 5>;
+  count: u64;
+  failures: u64;
+}
+
+fn indexed_rise_placed(env: &IndexedRiseReports, value: &RecordDue, index: u64) -> result: unit reads(value), writes(env) {
+  let at = env^.count;
+  if at < 5_u64 {
+    let identity = value^.id *wrap 16_u64;
+    set env^.events[at] = identity +wrap index;
+  } else {
+    set env^.failures = env^.failures +wrap 1_u64;
+  }
+  set env^.count = at +wrap 1_u64;
+  return unit;
+}
+
+fn indexed_always_rise(env: &RecordEmpty, left: &RecordDue, right: &RecordDue) -> order: i32 pure {
+  return 1_i32;
+}
+
+binding IndexedAlwaysRise : PriorityOrder<RecordDue, RecordEmpty> {
+  compare = indexed_always_rise;
+}
+
+fn indexed_repair_rise(multiple: Bool, hostile: Bool) -> failures: u64 pure {
+  doc "The independent expected event sequence checks the initial replacement and each parent-then-child resident report. A one-level rise stops below the root; a two-level rise reaches it. An always-positive comparator must still stop at the root and retain every identity.";
+  let storage = box_slots_new::<RecordDue>(capacity: 7_u64);
+  for (index in 0_u64..7_u64) {
+    let offset = index *wrap 10_u64;
+    let deadline = 20_u64 +wrap offset;
+    let handle = SlabHandle(index: index, generation: 0_u64);
+    let value = RecordDue(deadline: deadline, id: index, handle: handle);
+    if storage.inner.len < storage.inner.cap {
+      place_back(window: &storage.inner, value: value);
+    }
+  }
+  let positions = array_filled::<u64, 8>(value: 8_u64);
+  let calls = array_filled::<u64, 8>(value: 0_u64);
+  let initial = IndexedPositions(positions: positions, calls: calls, failures: 0_u64);
+  let empty = RecordEmpty();
+  let queue = priority_queue_heapify_indexed::<RecordDueOrder, IndexedPositions, fn indexed_placed, 7>(storage: move storage, order_env: &empty, position_env: &initial);
+  let events = array_filled::<u64, 5>(value: 0_u64);
+  let reports = IndexedRiseReports(events: events, count: 0_u64, failures: 0_u64);
+  let selected = 4_u64;
+  let deadline = 25_u64;
+  let expected_count = 3_u64;
+  let expected_events = array_filled::<u64, 5>(value: 0_u64);
+  set expected_events[0_u64] = 68_u64;
+  set expected_events[1_u64] = 65_u64;
+  set expected_events[2_u64] = 20_u64;
+  let expected_ids = array_filled::<u64, 7>(value: 0_u64);
+  for (index in 0_u64..7_u64) {
+    set expected_ids[index] = index;
+  }
+  set expected_ids[1_u64] = 4_u64;
+  set expected_ids[4_u64] = 1_u64;
+  if multiple {
+    set selected = 6_u64;
+    set deadline = 1_u64;
+    set expected_count = 5_u64;
+    set expected_events[0_u64] = 102_u64;
+    set expected_events[1_u64] = 98_u64;
+    set expected_events[2_u64] = 38_u64;
+    set expected_events[3_u64] = 96_u64;
+    set expected_events[4_u64] = 2_u64;
+    set expected_ids[0_u64] = 6_u64;
+    set expected_ids[1_u64] = 1_u64;
+    set expected_ids[2_u64] = 0_u64;
+    set expected_ids[4_u64] = 4_u64;
+    set expected_ids[6_u64] = 2_u64;
+  }
+  let length = priority_queue_len::<RecordDue, 7>(queue: &queue);
+  if length != 7_u64 {
+    set reports.failures = reports.failures +wrap 1_u64;
+  }
+  if selected < length {
+    let handle = SlabHandle(index: selected, generation: 0_u64);
+    let value = RecordDue(deadline: deadline, id: selected, handle: handle);
+    let previous = if hostile {
+      let removed = priority_queue_replace_at_indexed::<IndexedAlwaysRise, IndexedRiseReports, fn indexed_rise_placed, 7>(queue: &queue, index: selected, value: value, order_env: &empty, position_env: &reports);
+      give removed;
+    } else {
+      let removed = priority_queue_replace_at_indexed::<RecordDueOrder, IndexedRiseReports, fn indexed_rise_placed, 7>(queue: &queue, index: selected, value: value, order_env: &empty, position_env: &reports);
+      give removed;
+    }
+    if previous.id != selected {
+      set reports.failures = reports.failures +wrap 1_u64;
+    }
+  } else {
+    set reports.failures = reports.failures +wrap 1_u64;
+  }
+  if reports.count != expected_count {
+    set reports.failures = reports.failures +wrap 1_u64;
+  }
+  for (index in 0_u64..5_u64) {
+    if reports.events[index] != expected_events[index] {
+      set reports.failures = reports.failures +wrap 1_u64;
+    }
+  }
+  for (index in 0_u64..length) {
+    let value = priority_queue_peek_at::<RecordDue, RecordEmpty, RecordDue, fn record_read_due, 7>(queue: &queue, index: index, env: &empty);
+    if index < 7_u64 {
+      if value.id != expected_ids[index] {
+        set reports.failures = reports.failures +wrap 1_u64;
+      }
+    } else {
+      set reports.failures = reports.failures +wrap 1_u64;
+    }
+  }
+  priority_queue_free::<RecordDue, RecordEmpty, fn record_discard_due, 7>(queue: move queue, env: &empty);
+  return reports.failures;
+}
+
 struct IndexedEdit {
   calls: u64;
 }
@@ -1166,6 +1283,18 @@ fn main() -> status: ExitStatus pure {
   let edited = indexed_edit_result();
   if edited != 0_u64 {
     return exit_status(code: 7_u8);
+  }
+  let single_rise = indexed_repair_rise(multiple: weak, hostile: weak);
+  if single_rise != 0_u64 {
+    return exit_status(code: 8_u8);
+  }
+  let multiple_rise = indexed_repair_rise(multiple: retained, hostile: weak);
+  if multiple_rise != 0_u64 {
+    return exit_status(code: 9_u8);
+  }
+  let hostile_rise = indexed_repair_rise(multiple: retained, hostile: retained);
+  if hostile_rise != 0_u64 {
+    return exit_status(code: 10_u8);
   }
   return exit_status(code: 0_u8);
 }

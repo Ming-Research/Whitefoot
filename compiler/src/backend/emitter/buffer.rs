@@ -10,8 +10,8 @@
 //! boxed `Slots` stores `len` and `cap` and a boxed `Ring` stores `head`
 //! beside them.
 //!
-//! Every operand below is therefore the block's address, never a descriptor
-//! copied beside the owner.
+//! Runtime-content references retain the selected Box owner slot; each access
+//! resolves its current block so an earlier alias follows content exchange.
 
 use crate::IrElement;
 
@@ -36,10 +36,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         Ok(*referent)
     }
 
-    /// The block address one buffer operand names.
+    /// The block type one buffer reference names.
     ///
     /// [TYPE-9] admits a runtime-capacity shape only as `Box` content, so the
-    /// operand is the address of the block and never a value of it.
+    /// operand addresses the selected Box slot and is never a value of the
+    /// runtime content itself.
     pub(super) fn buffer_block(
         &self,
         buffer: IrValueId,
@@ -331,7 +332,7 @@ writeln!(self.output, "  %{pointer} = getelementptr inbounds {}, ptr {address}, 
             return Err(BackendFailure::InvalidIr);
         }
         let (block, _) = self.buffer_block(buffer)?;
-        let address = self.value_name(buffer);
+        let address = self.addressed_storage_pointer(buffer)?;
         let length_address = self.aggregate_field_pointer(block, &address, LENGTH_FIELD)?;
         writeln!(
             self.output,
@@ -370,7 +371,7 @@ writeln!(self.output, "  %{pointer} = getelementptr inbounds {}, ptr {address}, 
         {
             return Err(BackendFailure::InvalidIr);
         }
-        let address = self.value_name(buffer);
+        let address = self.addressed_storage_pointer(buffer)?;
         let index = self.value_name(offset);
         let element_pointer = self.buffer_element_pointer(block, &address, &index)?;
         self.load_place_result(result, ty, &element_pointer)
@@ -436,7 +437,7 @@ writeln!(self.output, "  %{pointer} = getelementptr inbounds {}, ptr {address}, 
                     == u8_type =>
             {
                 let block = IrType::Buffer { element };
-                let address = self.value_name(buffer);
+                let address = self.addressed_storage_pointer(buffer)?;
                 let length_address = self.aggregate_field_pointer(block, &address, LENGTH_FIELD)?;
                 let length = self.next_temporary()?;
                 writeln!(self.output, "  %{length} = load i64, ptr {length_address}")

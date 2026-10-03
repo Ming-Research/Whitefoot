@@ -1,0 +1,447 @@
+--- a/hash_map/module.wfm
++++ b/hash_map/module.wfm
+@@ -28,0 +29,5 @@
++struct HashMapControls {
++  tail: u64;
++  words: Slots<Box<Array<u64>>, 1>;
++}
++
+@@ -31,0 +37 @@
++  controls: HashMapControls;
+--- a/hash_map/hash-map.wf
++++ b/hash_map/hash-map.wf
+@@ -31 +31,2 @@
+-  return HashMap<K, V, ceiling>(cells: move cells, length: 0_u64);
++  let controls = hash_map_controls_new::<ceiling>(capacity: capacity);
++  return HashMap<K, V, ceiling>(cells: move cells, length: 0_u64, controls: move controls);
+@@ -80,15 +81,62 @@
+-  for (step in 0_u64..count) {
+-    let home = hash % count;
+-    let index = hash_map_probe(home: home, step: step, count: count);
+-    let action = hash_map_action::<HashMapKey<K, E>, V>(slot: &map^.cells.inner[index], key: key, env: env);
+-    match action {
+-      HashMapMatch() => {
+-        return Ok<u64, unit>(value: index);
+-      }
+-      HashMapStop() => {
+-        return Err<u64, unit>(error: unit);
+-      }
+-      HashMapSkip() => {
+-      }
+-      HashMapMiss() => {
+-      }
++  if count == 0_u64 {
++    return Err<u64, unit>(error: unit);
++  }
++  let fingerprint = hash_map_control_fingerprint(hash: hash);
++  let cursor = hash % count;
++  let remaining = count;
++  for @groups (
++    turn in 0_u64..count,
++    invariant cursor_bounded: cursor < count,
++    invariant remaining_bounded: remaining <= count
++  ) {
++    if remaining == 0_u64 {
++      break @groups;
++    }
++    let lane = cursor % 8_u64;
++    let suffix = count - cursor;
++    let span = hash_map_control_span(lane: lane, suffix: suffix, remaining: remaining);
++    let group = cursor / 8_u64;
++    let word = hash_map_control_word(controls: &map^.controls, group: group);
++    let active = hash_map_control_active(lane: lane, span: span);
++    let matches_all = hash_map_control_equal(word: word, code: fingerprint);
++    let matches = iand(matches_all, active);
++    let empty_all = hash_map_control_equal(word: word, code: 128_u64);
++    let empty = iand(empty_all, active);
++    let stop = hash_map_control_stop(empty: empty, lane: lane, span: span);
++    for @candidates (candidate in 0_u64..8_u64) {
++      if matches == 0_u64 {
++        break @candidates;
++      }
++      let selected = hash_map_control_first(mask: matches);
++      let without_first = matches - 1_u64;
++      set matches = iand(matches, without_first);
++      if selected >= lane {
++        let offset = selected - lane;
++        if offset < stop {
++          let index = cursor + offset;
++          let slot = &map^.cells.inner[index];
++          match slot^ {
++            HashMapFilled(key: saved_key, value: saved_value) => {
++              let equal = HashMapKey::equal(env: env, left: saved_key, right: key);
++              if equal {
++                return Ok<u64, unit>(value: index);
++              }
++            }
++            HashMapVacant() => {
++              return Err<u64, unit>(error: unit);
++            }
++            HashMapDeleted() => {
++            }
++          }
++        }
++      }
++    }
++    if stop < span {
++      return Err<u64, unit>(error: unit);
++    }
++    set remaining = remaining - span;
++    let next = cursor + span;
++    if next < count {
++      set cursor = next;
++    } else {
++      set cursor = 0_u64;
+@@ -101,10 +149,6 @@
+-  let hash = HashMapKey::hash(env: key_env, key: key);
+-  let count = map^.cells.inner.len;
+-  for (step in 0_u64..count) {
+-    let home = hash % count;
+-    let index = hash_map_probe(home: home, step: step, count: count);
+-    let slot = &map^.cells.inner[index];
+-    match slot^ {
+-      HashMapFilled(key: saved_key, value: saved_value) => {
+-        let equal = HashMapKey::equal(env: key_env, left: saved_key, right: key);
+-        if equal {
++  let found = hash_map_find::<HashMapKey<K, E>, V, ceiling>(map: map, key: key, env: key_env);
++  match found {
++    Ok(value: index) => {
++      let slot = &map^.cells.inner[index];
++      match slot^ {
++        HashMapFilled(key: saved_key, value: saved_value) => {
+@@ -114,9 +158,12 @@
+-      }
+-      HashMapVacant() => {
+-        return Err<R, unit>(error: unit);
+-      }
+-      HashMapDeleted() => {
+-      }
+-    }
+-  }
+-  return Err<R, unit>(error: unit);
++        HashMapVacant() => {
++          return Err<R, unit>(error: unit);
++        }
++        HashMapDeleted() => {
++          return Err<R, unit>(error: unit);
++        }
++      }
++    }
++    Err(error: missing) => {
++      return Err<R, unit>(error: unit);
++    }
++  }
+@@ -129,10 +176,6 @@
+-  let hash = HashMapKey::hash(env: key_env, key: key);
+-  let count = map^.cells.inner.len;
+-  for (step in 0_u64..count) {
+-    let home = hash % count;
+-    let index = hash_map_probe(home: home, step: step, count: count);
+-    let slot = &map^.cells.inner[index];
+-    match slot^ {
+-      HashMapFilled(key: saved_key, value: saved_value) => {
+-        let equal = HashMapKey::equal(env: key_env, left: saved_key, right: key);
+-        if equal {
++  let found = hash_map_find::<HashMapKey<K, E>, V, ceiling>(map: map, key: key, env: key_env);
++  match found {
++    Ok(value: index) => {
++      let slot = &map^.cells.inner[index];
++      match slot^ {
++        HashMapFilled(key: saved_key, value: saved_value) => {
+@@ -142,9 +185,12 @@
+-      }
+-      HashMapVacant() => {
+-        return Err<R, unit>(error: unit);
+-      }
+-      HashMapDeleted() => {
+-      }
+-    }
+-  }
+-  return Err<R, unit>(error: unit);
++        HashMapVacant() => {
++          return Err<R, unit>(error: unit);
++        }
++        HashMapDeleted() => {
++          return Err<R, unit>(error: unit);
++        }
++      }
++    }
++    Err(error: missing) => {
++      return Err<R, unit>(error: unit);
++    }
++  }
+@@ -180,0 +227 @@
++  let fingerprint = hash_map_control_fingerprint(hash: hash);
+@@ -183,21 +230,81 @@
+-  for @probe (step in 0_u64..count) {
+-    let home = hash % count;
+-    let index = hash_map_probe(home: home, step: step, count: count);
+-    let action = hash_map_action::<HashMapKey<K, E>, V>(slot: &map^.cells.inner[index], key: &key, env: env);
+-    match action {
+-      HashMapMatch() => {
+-        let replaced = hash_map_exchange::<K, V>(cells: &map^.cells, index: index, key: move key, value: move value);
+-        return move replaced;
+-      }
+-      HashMapStop() => {
+-        if available == count {
+-          set available = index;
+-        }
+-        break @probe;
+-      }
+-      HashMapSkip() => {
+-        if available == count {
+-          set available = index;
+-        }
+-      }
+-      HashMapMiss() => {
++  if count > 0_u64 {
++    let cursor = hash % count;
++    let remaining = count;
++    for @groups (
++      turn in 0_u64..count,
++      invariant cursor_bounded: cursor < count,
++      invariant remaining_bounded: remaining <= count
++    ) {
++      if remaining == 0_u64 {
++        break @groups;
++      }
++      let lane = cursor % 8_u64;
++      let suffix = count - cursor;
++      let span = hash_map_control_span(lane: lane, suffix: suffix, remaining: remaining);
++      let group = cursor / 8_u64;
++      let word = hash_map_control_word(controls: &map^.controls, group: group);
++      let active = hash_map_control_active(lane: lane, span: span);
++      let matches_all = hash_map_control_equal(word: word, code: fingerprint);
++      let matches = iand(matches_all, active);
++      let empty_all = hash_map_control_equal(word: word, code: 128_u64);
++      let empty = iand(empty_all, active);
++      let deleted_all = hash_map_control_equal(word: word, code: 254_u64);
++      let deleted = iand(deleted_all, active);
++      let reusable = ior(empty, deleted);
++      let stop = hash_map_control_stop(empty: empty, lane: lane, span: span);
++      if available == count {
++        if reusable > 0_u64 {
++          let selected = hash_map_control_first(mask: reusable);
++          if selected >= lane {
++            let offset = selected - lane;
++            if offset < span {
++              set available = cursor + offset;
++            }
++          }
++        }
++      }
++      for @candidates (candidate in 0_u64..8_u64) {
++        if matches == 0_u64 {
++          break @candidates;
++        }
++        let selected = hash_map_control_first(mask: matches);
++        let without_first = matches - 1_u64;
++        set matches = iand(matches, without_first);
++        if selected >= lane {
++          let offset = selected - lane;
++          if offset < stop {
++            let index = cursor + offset;
++            let action = hash_map_action::<HashMapKey<K, E>, V>(slot: &map^.cells.inner[index], key: &key, env: env);
++            match action {
++              HashMapMatch() => {
++                let replaced = hash_map_exchange::<K, V>(cells: &map^.cells, index: index, key: move key, value: move value);
++                hash_map_control_set(controls: &map^.controls, index: index, code: fingerprint);
++                return move replaced;
++              }
++              HashMapStop() => {
++                if available == count {
++                  set available = index;
++                }
++                set stop = offset;
++                break @candidates;
++              }
++              HashMapSkip() => {
++                if available == count {
++                  set available = index;
++                }
++              }
++              HashMapMiss() => {
++              }
++            }
++          }
++        }
++      }
++      if stop < span {
++        break @groups;
++      }
++      set remaining = remaining - span;
++      let next = cursor + span;
++      if next < count {
++        set cursor = next;
++      } else {
++        set cursor = 0_u64;
+@@ -210 +316,0 @@
+-      set map^.length = before + 1_u64;
+@@ -211,0 +318,5 @@
++      hash_map_control_set(controls: &map^.controls, index: available, code: fingerprint);
++      let added = hash_map_control_inserted::<K, V>(outcome: &inserted);
++      if added {
++        set map^.length = before + 1_u64;
++      }
+@@ -235 +346 @@
+-  doc "Direct migration keeps the original enum buckets and uses one temporary inline one-slot window for a pending pair. Refusal precedes owner mutation. Every exchange result has useful behavior: Inserted empties the staging window; Replaced and Full restore their complete returned owner for retry. Each attempt hashes the current staged key and probes only occupancy, never equality. With at most the old bucket count of owners and at least that many fresh destinations, each retained owner reaches a vacant bucket in one capacity-bounded scan. No global occupancy fact authorizes a discard or a partial operation. A zero-capacity rebuild is allocation-free. The backing swap does not publish an extent relation under the current proof rules, so this function promises no monotone extent postcondition; subsequent operations read their current bounds.";
++  doc "The controls follow each actual exchanged owner; migration still probes actual enum occupancy and never equality. Direct migration keeps the original enum buckets and uses one temporary inline one-slot window for a pending pair. Refusal precedes owner mutation. Every exchange result has useful behavior: Inserted empties the staging window; Replaced and Full restore their complete returned owner for retry. Each attempt hashes the current staged key and probes only occupancy, never equality. With at most the old bucket count of owners and at least that many fresh destinations, each retained owner reaches a vacant bucket in one capacity-bounded scan. No global occupancy fact authorizes a discard or a partial operation. A zero-capacity rebuild is allocation-free. The backing swap does not publish an extent relation under the current proof rules, so this function promises no monotone extent postcondition; subsequent operations read their current bounds.";
+@@ -247,0 +359 @@
++  let previous_controls = hash_map_controls_new::<ceiling>(capacity: capacity);
+@@ -248,0 +361 @@
++  swap(first: &map^.controls, second: &previous_controls);
+@@ -276,0 +390,2 @@
++              let fingerprint = hash_map_control_fingerprint(hash: hash);
++              hash_map_control_set(controls: &map^.controls, index: index, code: fingerprint);
+@@ -367,0 +483 @@
++      hash_map_control_set(controls: &map^.controls, index: index, code: 254_u64);
+@@ -412 +528 @@
+-  let HashMap(cells: storage, length: live) = move map;
++  let HashMap(cells: storage, length: live, controls: old_controls) = move map;
+--- /dev/null
++++ b/hash_map/controls.wf
+@@ -0,0 +1,144 @@
++fn hash_map_controls_new<const ceiling: u64>(capacity: u64) -> result: HashMapControls pure contract {
++  requires capacity <= ceiling;
++} {
++  let empty = 9259542123273814144_u64;
++  let words = slots_new::<Box<Array<u64>>, 1>();
++  if capacity > 8_u64 {
++    let groups = capacity / 8_u64;
++    let backing = box_array_filled::<u64>(count: groups, value: empty);
++    place_back(window: &words, value: move backing);
++  }
++  return HashMapControls(tail: empty, words: move words);
++}
++
++fn hash_map_control_fingerprint(hash: u64) -> result: u64 pure contract {
++  ensures result <= 127_u64;
++} {
++  let fingerprint = ishr(hash, 57_u32);
++  return fingerprint;
++}
++
++fn hash_map_control_word(controls: &HashMapControls, group: u64) -> result: u64 reads(controls) {
++  if controls^.words.len == 0_u64 {
++    if group == 0_u64 {
++      return controls^.tail;
++    }
++    return 9259542123273814144_u64;
++  }
++  let stored_words = &controls^.words[0_u64];
++  if group < stored_words^.inner.len {
++    return stored_words^.inner[group];
++  }
++  if group == stored_words^.inner.len {
++    return controls^.tail;
++  }
++  return 9259542123273814144_u64;
++}
++
++fn hash_map_control_set(controls: &HashMapControls, index: u64, code: u64) -> result: unit writes(controls) contract {
++  requires code <= 255_u64;
++} {
++  let group = index / 8_u64;
++  let lane = index % 8_u64;
++  let distance = lane * 8_u64;
++  let shift = cvt::<u64, u32>(distance);
++  let lane_bits = ishl(255_u64, shift);
++  let keep = inot(lane_bits);
++  let bits = ishl(code, shift);
++  if controls^.words.len == 0_u64 {
++    if group == 0_u64 {
++      let kept = iand(controls^.tail, keep);
++      set controls^.tail = ior(kept, bits);
++    }
++    return unit;
++  }
++  let stored_words = &controls^.words[0_u64];
++  if group < stored_words^.inner.len {
++    let kept = iand(stored_words^.inner[group], keep);
++    set stored_words^.inner[group] = ior(kept, bits);
++  } else if group == stored_words^.inner.len {
++    let kept = iand(controls^.tail, keep);
++    set controls^.tail = ior(kept, bits);
++  }
++  return unit;
++}
++
++fn hash_map_control_equal(word: u64, code: u64) -> result: u64 pure {
++  let repeated = code *wrap 72340172838076673_u64;
++  let different = ixor(word, repeated);
++  let lower = iand(different, 9187201950435737471_u64);
++  let nonzero = lower +wrap 9187201950435737471_u64;
++  let either = ior(nonzero, different);
++  let filled = ior(either, 9187201950435737471_u64);
++  let inverse = inot(filled);
++  return iand(inverse, 9259542123273814144_u64);
++}
++
++fn hash_map_control_span(lane: u64, suffix: u64, remaining: u64) -> result: u64 pure contract {
++  requires lane < 8_u64;
++  requires suffix > 0_u64;
++  requires remaining > 0_u64;
++  ensures result >= 1_u64;
++  ensures result <= 8_u64;
++  ensures result <= suffix;
++  ensures result <= remaining;
++} {
++  let span = 8_u64 - lane;
++  if span > suffix {
++    set span = suffix;
++  }
++  if span > remaining {
++    set span = remaining;
++  }
++  return span;
++}
++
++fn hash_map_control_active(lane: u64, span: u64) -> result: u64 pure contract {
++  requires lane < 8_u64;
++  requires span >= 1_u64;
++  requires span <= 8_u64;
++} {
++  let width = span * 8_u64;
++  let width32 = cvt::<u64, u32>(width);
++  let discard = 64_u32 - width32;
++  let prefix = ishr(9259542123273814144_u64, discard);
++  let distance = lane * 8_u64;
++  let shift = cvt::<u64, u32>(distance);
++  return ishl(prefix, shift);
++}
++
++fn hash_map_control_first(mask: u64) -> result: u64 pure contract {
++  requires mask > 0_u64;
++  ensures result < 8_u64;
++} {
++  let bit = ictz(mask);
++  let lane = bit / 8_u32;
++  let selected = cvt::<u32, u64>(lane);
++  return selected;
++}
++
++fn hash_map_control_stop(empty: u64, lane: u64, span: u64) -> result: u64 pure contract {
++  ensures result <= span;
++} {
++  if empty > 0_u64 {
++    let first = hash_map_control_first(mask: empty);
++    if first >= lane {
++      let offset = first - lane;
++      if offset < span {
++        return offset;
++      }
++    }
++  }
++  return span;
++}
++
++fn hash_map_control_inserted<K, V>(outcome: &HashMapPut<K, V>) -> result: Bool reads(outcome) {
++  match outcome^ {
++    HashMapInserted() => {
++      return True();
++    }
++    HashMapReturned(reason: returned_reason, pair: returned_pair) => {
++      return False();
++    }
++  }
++}

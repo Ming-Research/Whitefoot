@@ -16,6 +16,7 @@ use crate::semantic::{
 mod operands;
 mod physical_types;
 mod specialize;
+mod window_length_residency;
 
 /// A closed executable instance's type interpretation. Source region identity
 /// has already been checked; only its storage reclamation remains in the IR.

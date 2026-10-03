@@ -1,0 +1,880 @@
+Boundary-length reuse: local primitive fix, plus separate unchanged A2 overlay for matched measurement.
+Base: d576072ccf3a60950b95e71662e38fc9cbf287c5. No specification change.
+The first old-control fixture was rejected by OWN-1 (MoveOfCopy); corrected scalar/Array arguments use ordinary copy. The corrected old-emitter assertion fails on actual two versus one length reads. A duplicate attempted orchestration was refused by runner exit75; it launched no build.
+Gate profile; CARGO_BUILD_JOBS=2; RUST_TEST_THREADS=2.
+
+=== old-test-build.log ===
+== START boundary-length-old-test-build (limit 185s): cargo test --manifest-path compiler/Cargo.toml --profile gate --lib --no-run --locked --offline -j2 ==
+   Compiling whitefoot v0.1.0 (<repository-root>/compiler)
+== RUNNING boundary-length-old-test-build: 30 s, child 72673, group 72673 ==
+== RUNNING boundary-length-old-test-build: 60 s, child 72673, group 72673 ==
+    Finished `gate` profile [optimized] target(s) in 1m 12s
+  Executable unittests src/lib.rs (compiler/target/gate/deps/whitefoot-55a165931a02985a)
+real 72.27
+user 133.09
+sys 3.06
+== END boundary-length-old-test-build: 72.37 s, exit 0 ==
+
+=== old-test-run.log ===
+== START boundary-length-old-test-run (limit 185s): cargo test --manifest-path compiler/Cargo.toml --profile gate --lib --locked --offline -j2 back_placement_reads_its_length_once_for_scalar_aggregate_and_zero_size_values -- --nocapture --test-threads=2 ==
+   Compiling whitefoot v0.1.0 (<repository-root>/compiler)
+    Finished `gate` profile [optimized] target(s) in 4.62s
+     Running unittests src/lib.rs (compiler/target/gate/deps/whitefoot-55a165931a02985a)
+
+running 1 test
+
+thread 'backend::tests::windows::back_placement_reads_its_length_once_for_scalar_aggregate_and_zero_size_values' (145305833) panicked at src/backend/tests.rs:213:10:
+ordinary compiler and executable builder must emit: CompilationFailure { stage: Semantics, kind: Source, rule_id: Some("OWN-1"), record: Record { kind: Some("MoveOfCopy"), at: Some(Place { file: "test.wf", line: 4, column: 39, start: 166, end: 176, bytes: [32, 32, 112, 108, 97, 99, 101, 95, 98, 97, 99, 107, 40, 119, 105, 110, 100, 111, 119, 58, 32, 38, 118, 97, 108, 117, 101, 115, 94, 44, 32, 118, 97, 108, 117, 101, 58, 32, 109, 111, 118, 101, 32, 118, 97, 108, 117, 101, 41, 59], anchor: 38, covered_end: 48 }), detail: [("mechanical_fix", Text("use the copy place without `move`"))] } }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test backend::tests::windows::back_placement_reads_its_length_once_for_scalar_aggregate_and_zero_size_values ... FAILED
+
+failures:
+
+failures:
+    backend::tests::windows::back_placement_reads_its_length_once_for_scalar_aggregate_and_zero_size_values
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1910 filtered out; finished in 0.03s
+
+error: test failed, to rerun pass `--lib`
+real 5.35
+user 3.59
+sys 1.20
+== END boundary-length-old-test-run: 5.41 s, exit 101 ==
+
+=== old-corrected-build.log ===
+== START old-corrected-build (limit 185s): cargo test --manifest-path compiler/Cargo.toml --profile gate --lib --no-run --locked --offline -j2 ==
+   Compiling whitefoot v0.1.0 (<repository-root>/compiler)
+== RUNNING old-corrected-build: 30 s, child 78940, group 78940 ==
+== RUNNING old-corrected-build: 60 s, child 78940, group 78940 ==
+    Finished `gate` profile [optimized] target(s) in 1m 01s
+  Executable unittests src/lib.rs (compiler/target/gate/deps/whitefoot-55a165931a02985a)
+real 61.32
+user 110.09
+sys 2.42
+== END old-corrected-build: 61.37 s, exit 0 ==
+
+=== old-corrected-regression.log ===
+== START old-corrected-regression (limit 185s): compiler/target/gate/deps/whitefoot-55a165931a02985a backend::tests::windows::back_placement_reads_its_length_once_for_scalar_aggregate_and_zero_size_values --exact --nocapture --test-threads=2 ==
+
+running 1 test
+
+thread 'backend::tests::windows::back_placement_reads_its_length_once_for_scalar_aggregate_and_zero_size_values' (145321849) panicked at src/backend/tests/windows.rs:677:13:
+assertion `left == right` failed: one entry length for Slots<u64, 4>: define i8 @wf_place_back$instance$f7c29ddd892c0356(ptr noalias nonnull captures(none) dereferenceable(40) %v0, i64 %v1) #0 {
+entry:
+  %t1 = getelementptr inbounds { i64, [4 x i64] }, ptr %v0, i32 0, i32 0
+  %t0 = load i64, ptr %t1
+  %t2.nonnegative = icmp sge i64 %t0, 0
+  call void @llvm.assume(i1 %t2.nonnegative)
+  %t2 = getelementptr inbounds { i64, [4 x i64] }, ptr %v0, i64 0, i32 1, i64 %t0
+  store i64 %v1, ptr %t2
+  %t4 = getelementptr inbounds { i64, [4 x i64] }, ptr %v0, i32 0, i32 0
+  %t3 = load i64, ptr %t4
+  %t5 = add i64 %t3, 1
+  %t6 = getelementptr inbounds { i64, [4 x i64] }, ptr %v0, i32 0, i32 0
+  store i64 %t5, ptr %t6
+  %v2 = select i1 true, i8 0, i8 0
+  ret i8 %v2
+}
+
+  left: 2
+ right: 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test backend::tests::windows::back_placement_reads_its_length_once_for_scalar_aggregate_and_zero_size_values ... FAILED
+
+failures:
+
+failures:
+    backend::tests::windows::back_placement_reads_its_length_once_for_scalar_aggregate_and_zero_size_values
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1910 filtered out; finished in 0.04s
+
+real 0.69
+user 0.03
+sys 0.01
+== END old-corrected-regression: 0.75 s, exit 101 ==
+
+=== fixed-test-build.log ===
+== START fixed-test-build (limit 240s): cargo test --manifest-path compiler/Cargo.toml --profile gate --lib --no-run --locked --offline -j2 ==
+   Compiling whitefoot v0.1.0 (<repository-root>/compiler)
+    Finished `gate` profile [optimized] target(s) in 18.44s
+  Executable unittests src/lib.rs (compiler/target/gate/deps/whitefoot-55a165931a02985a)
+real 18.46
+user 30.66
+sys 1.37
+== END fixed-test-build: 18.51 s, exit 0 ==
+
+=== fixed-window-tests.log ===
+== START fixed-window-tests (limit 240s): compiler/target/gate/deps/whitefoot-55a165931a02985a backend::tests::windows:: --test-threads=2 ==
+
+running 27 tests
+test backend::tests::windows::a_projected_window_target_is_formed_once_before_rhs ... ok
+test backend::tests::windows::a_projected_run_move_releases_only_residual_siblings ... ok
+test backend::tests::windows::a_referenced_pool_tree_preserves_range_reference_and_result_abi ... ok
+test backend::tests::windows::a_reference_parameter_updates_caller_storage_through_one_address_path ... ok
+test backend::tests::windows::a_runtime_capacity_window_op9_overflow_is_rejected_before_lowering ... ok
+test backend::tests::windows::a_runtime_window_and_a_cell_must_fit_the_selected_allocator_alignment ... ok
+test backend::tests::windows::a_runtime_capacity_window_crosses_functions_updates_and_frees_once ... ok
+test backend::tests::windows::a_transitive_generic_allocation_executes_and_releases_its_concrete_value ... ok
+test backend::tests::windows::affine_invariant_ceiling_controls_the_exact_selected_target_boundary ... ok
+test backend::tests::windows::an_above_u64_zero_count_reaches_target_qualification ... ok
+test backend::tests::windows::an_out_of_bounds_run_set_is_an_op4_compile_rejection ... ok
+test backend::tests::windows::back_placement_reads_its_length_once_for_scalar_aggregate_and_zero_size_values ... ok
+test backend::tests::windows::chunk_summary_instances_preserve_window_abi_and_avoid_allocation ... ok
+test backend::tests::windows::a_window_length_qualifies_same_element_reallocation_without_a_target_guard ... ok
+test backend::tests::windows::front_placement_reuses_the_written_ring_slot_for_the_new_head ... ok
+test backend::tests::windows::empty_fixed_windows_initialize_descriptors_before_return ... ok
+test backend::tests::windows::op9_overflow_is_rejected_before_lowering ... ok
+test backend::tests::windows::nested_struct_cleanup_releases_every_run_field ... ok
+test backend::tests::windows::range_references_cross_helpers_without_transferring_ownership ... ok
+test backend::tests::windows::ring_front_removal_normalizes_only_the_physical_address ... ok
+test backend::tests::windows::run_cleanup_is_explicit_on_return_and_break_edges ... ok
+test backend::tests::windows::slots_addresses_use_proved_offsets_and_ring_addresses_still_wrap ... ok
+test backend::tests::windows::trivially_droppable_affine_elements_keep_the_single_free ... ok
+test backend::tests::windows::weigh_invariant_proves_domains_then_erases_before_llvm ... ok
+test backend::tests::windows::ring_back_placement_preserves_wrapping_and_unsigned_measures ... ok
+test backend::tests::windows::zero_capacity_windows_keep_header_layout_inside_nonempty_storage ... ok
+test backend::tests::windows::zero_sized_takes_update_slots_and_wrapped_ring_boundaries_once ... ok
+
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 1884 filtered out; finished in 5.98s
+
+real 6.63
+user 3.17
+sys 1.33
+== END fixed-window-tests: 6.68 s, exit 0 ==
+
+=== fixed-cli-build.log ===
+== START fixed-cli-build (limit 240s): cargo build --manifest-path compiler/Cargo.toml --profile gate --bin whitefootc --locked --offline -j2 ==
+   Compiling whitefoot v0.1.0 (<repository-root>/compiler)
+    Finished `gate` profile [optimized] target(s) in 14.70s
+real 14.74
+user 23.82
+sys 1.07
+== END fixed-cli-build: 14.75 s, exit 0 ==
+
+=== production-api-check.log ===
+== START boundary-length-production-api (limit 1800s): make -C research/experiments/container-representation/vector-library -j2 BUILD=.build/boundary-length-reuse/production-api WHITEFOOTC=<repository-root>/research/experiments/container-representation/vector-library/.build/boundary-length-reuse/whitefootc-production ECO_CFLAGS=-std=c11 -O3 -Wall -Wextra -Werror ecosystem-build ecosystem-append-growth-check ecosystem-append-check ecosystem-append-growth-account ==
+mkdir -p .build/boundary-length-reuse/production-api/ecosystem
+mkdir -p .build/boundary-length-reuse/production-api
+<repository-root>/research/experiments/container-representation/vector-library/.build/boundary-length-reuse/whitefootc-production --emit-llvm vector-library.wf -o .build/boundary-length-reuse/production-api/vector-library.raw.ll
+mkdir -p .build/boundary-length-reuse/production-api/native/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/ordinary_values.c -o .build/boundary-length-reuse/production-api/native/ordinary_values.o
+mkdir -p .build/boundary-length-reuse/production-api/native/sched/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/sched/core.c -o .build/boundary-length-reuse/production-api/native/sched/core.o
+mkdir -p .build/boundary-length-reuse/production-api/native/sched/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/sched/entry.c -o .build/boundary-length-reuse/production-api/native/sched/entry.o
+mkdir -p .build/boundary-length-reuse/production-api/native/completion/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/completion/runtime.c -o .build/boundary-length-reuse/production-api/native/completion/runtime.o
+mkdir -p .build/boundary-length-reuse/production-api/native/completion/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/completion/file_adapter.c -o .build/boundary-length-reuse/production-api/native/completion/file_adapter.o
+mkdir -p .build/boundary-length-reuse/production-api/native/completion/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/completion/bridge.c -o .build/boundary-length-reuse/production-api/native/completion/bridge.o
+mkdir -p .build/boundary-length-reuse/production-api/native/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/wf_floor.c -o .build/boundary-length-reuse/production-api/native/wf_floor.o
+mkdir -p .build/boundary-length-reuse/production-api/native/sched/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/sched/prim_host.c -o .build/boundary-length-reuse/production-api/native/sched/prim_host.o
+mkdir -p .build/boundary-length-reuse/production-api/native/completion/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/completion/wait_host.c -o .build/boundary-length-reuse/production-api/native/completion/wait_host.o
+mkdir -p .build/boundary-length-reuse/production-api/native/completion/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/completion/file_posix.c -o .build/boundary-length-reuse/production-api/native/completion/file_posix.o
+mkdir -p .build/boundary-length-reuse/production-api/native/completion/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/completion/linux_io_uring.c -o .build/boundary-length-reuse/production-api/native/completion/linux_io_uring.o
+mkdir -p .build/boundary-length-reuse/production-api/native/
+clang -O2 -Wno-override-module -x ir -c <repository-root>/compiler/src/backend/ordinary_values.ll -o .build/boundary-length-reuse/production-api/native/ordinary_values_ir.o
+sed -e 's/@malloc(/@wf_cost_allocate(/g' -e 's/@realloc(/@wf_cost_reallocate(/g' \
+	    -e 's/@free(/@wf_cost_release(/g' \
+	    -e 's/@main(/@wf_fixture_main(/g' \
+	    -e 's/^declare ptr @wf_cost_allocate(i64)$/declare noalias nonnull ptr @wf_cost_allocate(i64)/' .build/boundary-length-reuse/production-api/vector-library.raw.ll > .build/boundary-length-reuse/production-api/ecosystem/whitefoot-account.ll
+note: link against the following native artifacts when linking against this static library. The order and any duplication can be significant on some platforms
+
+note: native-static-libs: -lSystem -lc -lm
+
+sed 's/@main(/@wf_fixture_main(/g' .build/boundary-length-reuse/production-api/vector-library.raw.ll > .build/boundary-length-reuse/production-api/ecosystem/whitefoot-timed.ll
+clang -O3 -Wno-override-module -x ir -c .build/boundary-length-reuse/production-api/ecosystem/whitefoot-account.ll -o .build/boundary-length-reuse/production-api/ecosystem/whitefoot-account.o
+note: link against the following native artifacts when linking against this static library. The order and any duplication can be significant on some platforms
+
+note: native-static-libs: -lSystem -lc -lm
+
+clang -O3 -Wno-override-module -x ir -c .build/boundary-length-reuse/production-api/ecosystem/whitefoot-timed.ll -o .build/boundary-length-reuse/production-api/ecosystem/whitefoot-timed.o
+clang++ -O3 .build/boundary-length-reuse/production-api/ecosystem/driver-account.o .build/boundary-length-reuse/production-api/ecosystem/whitefoot-account.o \
+	  .build/boundary-length-reuse/production-api/ecosystem/cpp-account.o .build/boundary-length-reuse/production-api/ecosystem/rust-account.a .build/boundary-length-reuse/production-api/native/ordinary_values.o .build/boundary-length-reuse/production-api/native/sched/core.o .build/boundary-length-reuse/production-api/native/sched/entry.o .build/boundary-length-reuse/production-api/native/completion/runtime.o .build/boundary-length-reuse/production-api/native/completion/file_adapter.o .build/boundary-length-reuse/production-api/native/completion/bridge.o .build/boundary-length-reuse/production-api/native/wf_floor.o .build/boundary-length-reuse/production-api/native/sched/prim_host.o .build/boundary-length-reuse/production-api/native/completion/wait_host.o .build/boundary-length-reuse/production-api/native/completion/file_posix.o .build/boundary-length-reuse/production-api/native/completion/linux_io_uring.o .build/boundary-length-reuse/production-api/native/ordinary_values_ir.o \
+	  -pthread -lm -liconv -lSystem -lc -lm -o .build/boundary-length-reuse/production-api/ecosystem/vector-costs-account
+ld: warning: ignoring duplicate libraries: '-lSystem', '-lm'
+.build/boundary-length-reuse/production-api/ecosystem/vector-costs-account growth-api-account > '.build/boundary-length-reuse/production-api/ecosystem/append-growth-accounting.csv'
+clang++ -O3 .build/boundary-length-reuse/production-api/ecosystem/driver-timed.o .build/boundary-length-reuse/production-api/ecosystem/whitefoot-timed.o \
+	  .build/boundary-length-reuse/production-api/ecosystem/cpp-timed.o .build/boundary-length-reuse/production-api/ecosystem/rust-timed.a .build/boundary-length-reuse/production-api/native/ordinary_values.o .build/boundary-length-reuse/production-api/native/sched/core.o .build/boundary-length-reuse/production-api/native/sched/entry.o .build/boundary-length-reuse/production-api/native/completion/runtime.o .build/boundary-length-reuse/production-api/native/completion/file_adapter.o .build/boundary-length-reuse/production-api/native/completion/bridge.o .build/boundary-length-reuse/production-api/native/wf_floor.o .build/boundary-length-reuse/production-api/native/sched/prim_host.o .build/boundary-length-reuse/production-api/native/completion/wait_host.o .build/boundary-length-reuse/production-api/native/completion/file_posix.o .build/boundary-length-reuse/production-api/native/completion/linux_io_uring.o .build/boundary-length-reuse/production-api/native/ordinary_values_ir.o \
+	  -pthread -lm -liconv -lSystem -lc -lm -o .build/boundary-length-reuse/production-api/ecosystem/vector-costs-timed
+ld: warning: ignoring duplicate libraries: '-lSystem', '-lm'
+.build/boundary-length-reuse/production-api/ecosystem/vector-costs-timed growth-api-check
+Append growth allocation observations: .build/boundary-length-reuse/production-api/ecosystem/append-growth-accounting.csv
+.build/boundary-length-reuse/production-api/ecosystem/vector-costs-timed api-check
+vector spare append: scalar/256B, five counts, three APIs passed
+.build/boundary-length-reuse/production-api/ecosystem/vector-costs-account api-check
+growth append clock: reads=200000 minimum_nonzero_ns=41 quantized=0
+growth append policy: whitefoot bytes=8 requested=0 initial=0 length=1 capacity=1
+growth append policy: rust-vec bytes=8 requested=0 initial=0 length=1 capacity=4
+growth append policy: cpp-std-vector bytes=8 requested=0 initial=0 length=1 capacity=1
+growth append policy: whitefoot bytes=256 requested=0 initial=0 length=1 capacity=1
+growth append policy: rust-vec bytes=256 requested=0 initial=0 length=1 capacity=4
+growth append policy: cpp-std-vector bytes=256 requested=0 initial=0 length=1 capacity=1
+growth append policy: whitefoot bytes=8 requested=1 initial=1 length=2 capacity=2
+growth append policy: rust-vec bytes=8 requested=1 initial=1 length=2 capacity=4
+growth append policy: cpp-std-vector bytes=8 requested=1 initial=1 length=2 capacity=2
+growth append policy: whitefoot bytes=256 requested=1 initial=1 length=2 capacity=2
+growth append policy: rust-vec bytes=256 requested=1 initial=1 length=2 capacity=4
+growth append policy: cpp-std-vector bytes=256 requested=1 initial=1 length=2 capacity=2
+vector append growth: scalar/256B, five capacities, three APIs passed
+.build/boundary-length-reuse/production-api/ecosystem/vector-costs-account growth-api-check
+vector spare append: scalar/256B, five counts, three APIs passed
+growth append policy: whitefoot bytes=8 requested=0 initial=0 length=1 capacity=1
+growth append policy: rust-vec bytes=8 requested=0 initial=0 length=1 capacity=4
+growth append policy: cpp-std-vector bytes=8 requested=0 initial=0 length=1 capacity=1
+growth append policy: whitefoot bytes=256 requested=0 initial=0 length=1 capacity=1
+growth append policy: rust-vec bytes=256 requested=0 initial=0 length=1 capacity=4
+growth append policy: cpp-std-vector bytes=256 requested=0 initial=0 length=1 capacity=1
+growth append policy: whitefoot bytes=8 requested=1 initial=1 length=2 capacity=2
+growth append policy: rust-vec bytes=8 requested=1 initial=1 length=2 capacity=4
+growth append policy: cpp-std-vector bytes=8 requested=1 initial=1 length=2 capacity=2
+growth append policy: whitefoot bytes=256 requested=1 initial=1 length=2 capacity=2
+growth append policy: rust-vec bytes=256 requested=1 initial=1 length=2 capacity=4
+growth append policy: cpp-std-vector bytes=256 requested=1 initial=1 length=2 capacity=2
+vector append growth: scalar/256B, five capacities, three APIs passed
+.build/boundary-length-reuse/production-api/ecosystem/vector-costs-account allocator-check
+vector allocator observer: preserved bytes, alignment and exact ledger passed
+grep -Fx 'vector library costs: spare append full values and checksum' .build/boundary-length-reuse/production-api/ecosystem/api-fail-values.txt
+vector library costs: spare append full values and checksum
+grep -Fx 'vector library costs: spare append zero allocation' .build/boundary-length-reuse/production-api/ecosystem/api-fail-allocation.txt
+vector library costs: spare append zero allocation
+vector library costs: reallocation observer preserved bytes
+vector library costs: reallocation observer exact ledger
+vector library costs: growth append clock precision
+vector library costs: growth append full values and checksum
+vector library costs: growth append post state
+vector library costs: growth append full values and checksum
+vector library costs: growth append post state
+real 3.19
+user 4.44
+sys 0.70
+== END boundary-length-production-api: 3.23 s, exit 0 ==
+
+=== a2-cli-build.log ===
+== START boundary-length-a2-cli-build (limit 185s): cargo build --manifest-path compiler/Cargo.toml --profile gate --bin whitefootc --locked --offline -j2 ==
+   Compiling whitefoot v0.1.0 (<repository-root>/compiler)
+    Finished `gate` profile [optimized] target(s) in 14.23s
+real 14.25
+user 23.79
+sys 1.01
+== END boundary-length-a2-cli-build: 14.32 s, exit 0 ==
+
+=== a2-api-check.log ===
+== START boundary-length-a2-api (limit 1800s): make -C research/experiments/container-representation/vector-library -j2 BUILD=.build/boundary-length-reuse/a2-api WHITEFOOTC=<repository-root>/research/experiments/container-representation/vector-library/.build/boundary-length-reuse/whitefootc-a2 ECO_CFLAGS=-std=c11 -O3 -Wall -Wextra -Werror -DWF_SPLIT_SLOTS_PAYLOAD=1 -DWF_SPLIT_SLOTS_REALLOC=1 ecosystem-build ecosystem-append-growth-check ecosystem-append-check ecosystem-append-growth-account ==
+mkdir -p .build/boundary-length-reuse/a2-api/ecosystem
+mkdir -p .build/boundary-length-reuse/a2-api
+<repository-root>/research/experiments/container-representation/vector-library/.build/boundary-length-reuse/whitefootc-a2 --emit-llvm vector-library.wf -o .build/boundary-length-reuse/a2-api/vector-library.raw.ll
+mkdir -p .build/boundary-length-reuse/a2-api/native/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/ordinary_values.c -o .build/boundary-length-reuse/a2-api/native/ordinary_values.o
+mkdir -p .build/boundary-length-reuse/a2-api/native/sched/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/sched/core.c -o .build/boundary-length-reuse/a2-api/native/sched/core.o
+mkdir -p .build/boundary-length-reuse/a2-api/native/sched/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/sched/entry.c -o .build/boundary-length-reuse/a2-api/native/sched/entry.o
+mkdir -p .build/boundary-length-reuse/a2-api/native/completion/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/completion/runtime.c -o .build/boundary-length-reuse/a2-api/native/completion/runtime.o
+mkdir -p .build/boundary-length-reuse/a2-api/native/completion/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/completion/file_adapter.c -o .build/boundary-length-reuse/a2-api/native/completion/file_adapter.o
+mkdir -p .build/boundary-length-reuse/a2-api/native/completion/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/completion/bridge.c -o .build/boundary-length-reuse/a2-api/native/completion/bridge.o
+mkdir -p .build/boundary-length-reuse/a2-api/native/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/wf_floor.c -o .build/boundary-length-reuse/a2-api/native/wf_floor.o
+mkdir -p .build/boundary-length-reuse/a2-api/native/sched/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/sched/prim_host.c -o .build/boundary-length-reuse/a2-api/native/sched/prim_host.o
+mkdir -p .build/boundary-length-reuse/a2-api/native/completion/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/completion/wait_host.c -o .build/boundary-length-reuse/a2-api/native/completion/wait_host.o
+mkdir -p .build/boundary-length-reuse/a2-api/native/completion/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/completion/file_posix.c -o .build/boundary-length-reuse/a2-api/native/completion/file_posix.o
+mkdir -p .build/boundary-length-reuse/a2-api/native/completion/
+clang -std=c11 -O2 -pthread -I<repository-root>/compiler/src/backend -I<repository-root>/compiler/src/backend/completion -c <repository-root>/compiler/src/backend/completion/linux_io_uring.c -o .build/boundary-length-reuse/a2-api/native/completion/linux_io_uring.o
+mkdir -p .build/boundary-length-reuse/a2-api/native/
+clang -O2 -Wno-override-module -x ir -c <repository-root>/compiler/src/backend/ordinary_values.ll -o .build/boundary-length-reuse/a2-api/native/ordinary_values_ir.o
+sed -e 's/@malloc(/@wf_cost_allocate(/g' -e 's/@realloc(/@wf_cost_reallocate(/g' \
+	    -e 's/@free(/@wf_cost_release(/g' \
+	    -e 's/@main(/@wf_fixture_main(/g' \
+	    -e 's/^declare ptr @wf_cost_allocate(i64)$/declare noalias nonnull ptr @wf_cost_allocate(i64)/' .build/boundary-length-reuse/a2-api/vector-library.raw.ll > .build/boundary-length-reuse/a2-api/ecosystem/whitefoot-account.ll
+note: link against the following native artifacts when linking against this static library. The order and any duplication can be significant on some platforms
+
+note: native-static-libs: -lSystem -lc -lm
+
+sed 's/@main(/@wf_fixture_main(/g' .build/boundary-length-reuse/a2-api/vector-library.raw.ll > .build/boundary-length-reuse/a2-api/ecosystem/whitefoot-timed.ll
+clang -O3 -Wno-override-module -x ir -c .build/boundary-length-reuse/a2-api/ecosystem/whitefoot-account.ll -o .build/boundary-length-reuse/a2-api/ecosystem/whitefoot-account.o
+note: link against the following native artifacts when linking against this static library. The order and any duplication can be significant on some platforms
+
+note: native-static-libs: -lSystem -lc -lm
+
+clang -O3 -Wno-override-module -x ir -c .build/boundary-length-reuse/a2-api/ecosystem/whitefoot-timed.ll -o .build/boundary-length-reuse/a2-api/ecosystem/whitefoot-timed.o
+clang++ -O3 .build/boundary-length-reuse/a2-api/ecosystem/driver-account.o .build/boundary-length-reuse/a2-api/ecosystem/whitefoot-account.o \
+	  .build/boundary-length-reuse/a2-api/ecosystem/cpp-account.o .build/boundary-length-reuse/a2-api/ecosystem/rust-account.a .build/boundary-length-reuse/a2-api/native/ordinary_values.o .build/boundary-length-reuse/a2-api/native/sched/core.o .build/boundary-length-reuse/a2-api/native/sched/entry.o .build/boundary-length-reuse/a2-api/native/completion/runtime.o .build/boundary-length-reuse/a2-api/native/completion/file_adapter.o .build/boundary-length-reuse/a2-api/native/completion/bridge.o .build/boundary-length-reuse/a2-api/native/wf_floor.o .build/boundary-length-reuse/a2-api/native/sched/prim_host.o .build/boundary-length-reuse/a2-api/native/completion/wait_host.o .build/boundary-length-reuse/a2-api/native/completion/file_posix.o .build/boundary-length-reuse/a2-api/native/completion/linux_io_uring.o .build/boundary-length-reuse/a2-api/native/ordinary_values_ir.o \
+	  -pthread -lm -liconv -lSystem -lc -lm -o .build/boundary-length-reuse/a2-api/ecosystem/vector-costs-account
+ld: warning: ignoring duplicate libraries: '-lSystem', '-lm'
+.build/boundary-length-reuse/a2-api/ecosystem/vector-costs-account growth-api-account > '.build/boundary-length-reuse/a2-api/ecosystem/append-growth-accounting.csv'
+clang++ -O3 .build/boundary-length-reuse/a2-api/ecosystem/driver-timed.o .build/boundary-length-reuse/a2-api/ecosystem/whitefoot-timed.o \
+	  .build/boundary-length-reuse/a2-api/ecosystem/cpp-timed.o .build/boundary-length-reuse/a2-api/ecosystem/rust-timed.a .build/boundary-length-reuse/a2-api/native/ordinary_values.o .build/boundary-length-reuse/a2-api/native/sched/core.o .build/boundary-length-reuse/a2-api/native/sched/entry.o .build/boundary-length-reuse/a2-api/native/completion/runtime.o .build/boundary-length-reuse/a2-api/native/completion/file_adapter.o .build/boundary-length-reuse/a2-api/native/completion/bridge.o .build/boundary-length-reuse/a2-api/native/wf_floor.o .build/boundary-length-reuse/a2-api/native/sched/prim_host.o .build/boundary-length-reuse/a2-api/native/completion/wait_host.o .build/boundary-length-reuse/a2-api/native/completion/file_posix.o .build/boundary-length-reuse/a2-api/native/completion/linux_io_uring.o .build/boundary-length-reuse/a2-api/native/ordinary_values_ir.o \
+	  -pthread -lm -liconv -lSystem -lc -lm -o .build/boundary-length-reuse/a2-api/ecosystem/vector-costs-timed
+ld: warning: ignoring duplicate libraries: '-lSystem', '-lm'
+.build/boundary-length-reuse/a2-api/ecosystem/vector-costs-timed growth-api-check
+Append growth allocation observations: .build/boundary-length-reuse/a2-api/ecosystem/append-growth-accounting.csv
+.build/boundary-length-reuse/a2-api/ecosystem/vector-costs-timed api-check
+vector spare append: scalar/256B, five counts, three APIs passed
+.build/boundary-length-reuse/a2-api/ecosystem/vector-costs-account api-check
+growth append clock: reads=200000 minimum_nonzero_ns=41 quantized=0
+growth append policy: whitefoot bytes=8 requested=0 initial=0 length=1 capacity=1
+growth append policy: rust-vec bytes=8 requested=0 initial=0 length=1 capacity=4
+growth append policy: cpp-std-vector bytes=8 requested=0 initial=0 length=1 capacity=1
+growth append policy: whitefoot bytes=256 requested=0 initial=0 length=1 capacity=1
+growth append policy: rust-vec bytes=256 requested=0 initial=0 length=1 capacity=4
+growth append policy: cpp-std-vector bytes=256 requested=0 initial=0 length=1 capacity=1
+growth append policy: whitefoot bytes=8 requested=1 initial=1 length=2 capacity=2
+growth append policy: rust-vec bytes=8 requested=1 initial=1 length=2 capacity=4
+growth append policy: cpp-std-vector bytes=8 requested=1 initial=1 length=2 capacity=2
+growth append policy: whitefoot bytes=256 requested=1 initial=1 length=2 capacity=2
+growth append policy: rust-vec bytes=256 requested=1 initial=1 length=2 capacity=4
+growth append policy: cpp-std-vector bytes=256 requested=1 initial=1 length=2 capacity=2
+vector append growth: scalar/256B, five capacities, three APIs passed
+.build/boundary-length-reuse/a2-api/ecosystem/vector-costs-account growth-api-check
+vector spare append: scalar/256B, five counts, three APIs passed
+growth append policy: whitefoot bytes=8 requested=0 initial=0 length=1 capacity=1
+growth append policy: rust-vec bytes=8 requested=0 initial=0 length=1 capacity=4
+growth append policy: cpp-std-vector bytes=8 requested=0 initial=0 length=1 capacity=1
+growth append policy: whitefoot bytes=256 requested=0 initial=0 length=1 capacity=1
+growth append policy: rust-vec bytes=256 requested=0 initial=0 length=1 capacity=4
+growth append policy: cpp-std-vector bytes=256 requested=0 initial=0 length=1 capacity=1
+growth append policy: whitefoot bytes=8 requested=1 initial=1 length=2 capacity=2
+growth append policy: rust-vec bytes=8 requested=1 initial=1 length=2 capacity=4
+growth append policy: cpp-std-vector bytes=8 requested=1 initial=1 length=2 capacity=2
+growth append policy: whitefoot bytes=256 requested=1 initial=1 length=2 capacity=2
+growth append policy: rust-vec bytes=256 requested=1 initial=1 length=2 capacity=4
+growth append policy: cpp-std-vector bytes=256 requested=1 initial=1 length=2 capacity=2
+vector append growth: scalar/256B, five capacities, three APIs passed
+.build/boundary-length-reuse/a2-api/ecosystem/vector-costs-account allocator-check
+vector allocator observer: preserved bytes, alignment and exact ledger passed
+grep -Fx 'vector library costs: spare append full values and checksum' .build/boundary-length-reuse/a2-api/ecosystem/api-fail-values.txt
+vector library costs: spare append full values and checksum
+grep -Fx 'vector library costs: spare append zero allocation' .build/boundary-length-reuse/a2-api/ecosystem/api-fail-allocation.txt
+vector library costs: spare append zero allocation
+vector library costs: reallocation observer preserved bytes
+vector library costs: reallocation observer exact ledger
+vector library costs: growth append clock precision
+vector library costs: growth append full values and checksum
+vector library costs: growth append post state
+vector library costs: growth append full values and checksum
+vector library costs: growth append post state
+real 3.12
+user 4.37
+sys 0.62
+== END boundary-length-a2-api: 3.14 s, exit 0 ==
+
+=== native-statuses.json ===
+[
+  {
+    "stage": "native-emission",
+    "command": [
+      "research/experiments/container-representation/vector-library/.build/boundary-length-reuse/whitefootc-a2",
+      "--emit-llvm",
+      "research/experiments/container-representation/vector-library/.build/split-slots-payload-realloc/focused-fixture.wf",
+      "-o",
+      "research/experiments/container-representation/vector-library/.build/boundary-length-reuse/focused-fixture.ll"
+    ],
+    "exit": 0,
+    "expected": 0,
+    "seconds": 0.13337195897474885
+  },
+  {
+    "stage": "native-build",
+    "command": [
+      "clang",
+      "-std=c11",
+      "-O3",
+      "-Wall",
+      "-Wextra",
+      "-Werror",
+      "-Wno-override-module",
+      "research/experiments/container-representation/vector-library/.build/boundary-length-reuse/focused-observed.ll",
+      "research/experiments/container-representation/vector-library/.build/split-slots-payload-realloc/observer.c",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/ordinary_values.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/ordinary_values_ir.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/wf_floor.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/bridge.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/file_adapter.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/file_posix.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/linux_io_uring.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/runtime.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/wait_host.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/sched/core.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/sched/entry.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/sched/prim_host.o",
+      "-pthread",
+      "-lm",
+      "-o",
+      "research/experiments/container-representation/vector-library/.build/boundary-length-reuse/focused-native"
+    ],
+    "exit": 0,
+    "expected": 0,
+    "seconds": 0.24141162494197488
+  },
+  {
+    "stage": "native-normal",
+    "command": [
+      "research/experiments/container-representation/vector-library/.build/boundary-length-reuse/focused-native"
+    ],
+    "exit": 0,
+    "expected": 0,
+    "seconds": 0.3440654161386192
+  },
+  {
+    "stage": "native-failure",
+    "command": [
+      "research/experiments/container-representation/vector-library/.build/boundary-length-reuse/focused-native",
+      "failure"
+    ],
+    "exit": 73,
+    "expected": 73,
+    "seconds": 0.15368737513199449
+  },
+  {
+    "stage": "native-mutant-build",
+    "command": [
+      "clang",
+      "-DCORRUPT_PRESERVED_ORDER",
+      "-std=c11",
+      "-O3",
+      "-Wall",
+      "-Wextra",
+      "-Werror",
+      "-Wno-override-module",
+      "research/experiments/container-representation/vector-library/.build/boundary-length-reuse/focused-observed.ll",
+      "research/experiments/container-representation/vector-library/.build/split-slots-payload-realloc/observer.c",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/ordinary_values.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/ordinary_values_ir.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/wf_floor.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/bridge.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/file_adapter.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/file_posix.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/linux_io_uring.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/runtime.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/wait_host.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/sched/core.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/sched/entry.o",
+      "research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/sched/prim_host.o",
+      "-pthread",
+      "-lm",
+      "-o",
+      "research/experiments/container-representation/vector-library/.build/boundary-length-reuse/focused-native-mutant"
+    ],
+    "exit": 0,
+    "expected": 0,
+    "seconds": 0.259958959184587
+  },
+  {
+    "stage": "native-mutant",
+    "command": [
+      "research/experiments/container-representation/vector-library/.build/boundary-length-reuse/focused-native-mutant"
+    ],
+    "exit": 1,
+    "expected": 1,
+    "seconds": 0.3552095000632107
+  }
+]
+=== native-normal.log ===
+== START boundary-length-native-normal (limit 60s): research/experiments/container-representation/vector-library/.build/boundary-length-reuse/focused-native ==
+split Slots realloc: 12 in-place/moving nested/partial/cap0/ZST/empty cases; exact releases
+real 0.30
+user 0.00
+sys 0.00
+== END boundary-length-native-normal: 0.32 s, exit 0 ==
+
+=== native-failure.log ===
+== START boundary-length-native-failure (limit 60s): research/experiments/container-representation/vector-library/.build/boundary-length-reuse/focused-native failure ==
+split Slots realloc: NULL preserves owner, descriptor and payload
+real 0.00
+user 0.00
+sys 0.00
+== END boundary-length-native-failure: 0.11 s, exit 73 ==
+
+=== native-mutant.log ===
+== START boundary-length-native-mutant (limit 60s): research/experiments/container-representation/vector-library/.build/boundary-length-reuse/focused-native-mutant ==
+split Slots realloc observer: source content/header assertion
+real 0.24
+user 0.00
+sys 0.00
+== END boundary-length-native-mutant: 0.33 s, exit 1 ==
+
+=== production-api/ecosystem/configuration.txt ===
+vector
+<repository-root>/research/experiments/container-representation/vector-library/.build/boundary-length-reuse/whitefootc-production
+clang
+clang++
+rustc
+vector-ecosystem.rs
+vector-ecosystem.cpp
+-DECOSYSTEM
+-std=c11 -O3 -Wall -Wextra -Werror
+-std=c++20 -O3 -DNDEBUG -Wall -Wextra -Werror
+--edition=2024 -C opt-level=3 -C panic=abort -D warnings
+-O3
+-liconv -lSystem -lc -lm
+
+
+
+
+Apple clang version 21.0.0 (clang-2100.3.34.2)
+Target: arm64-apple-darwin25.6.0
+Thread model: posix
+InstalledDir: /Library/Developer/CommandLineTools/usr/bin
+Apple clang version 21.0.0 (clang-2100.3.34.2)
+Target: arm64-apple-darwin25.6.0
+Thread model: posix
+InstalledDir: /Library/Developer/CommandLineTools/usr/bin
+rustc 1.98.1 (48a229cea 2026-09-01)
+binary: rustc
+commit-hash: 48a229ceaefd4985c50990b14116b6d856af0985
+commit-date: 2026-09-01
+host: aarch64-apple-darwin
+release: 1.98.1
+LLVM version: 22.1.8
+
+=== a2-api/ecosystem/configuration.txt ===
+vector
+<repository-root>/research/experiments/container-representation/vector-library/.build/boundary-length-reuse/whitefootc-a2
+clang
+clang++
+rustc
+vector-ecosystem.rs
+vector-ecosystem.cpp
+-DECOSYSTEM
+-std=c11 -O3 -Wall -Wextra -Werror -DWF_SPLIT_SLOTS_PAYLOAD=1 -DWF_SPLIT_SLOTS_REALLOC=1
+-std=c++20 -O3 -DNDEBUG -Wall -Wextra -Werror
+--edition=2024 -C opt-level=3 -C panic=abort -D warnings
+-O3
+-liconv -lSystem -lc -lm
+
+
+
+
+Apple clang version 21.0.0 (clang-2100.3.34.2)
+Target: arm64-apple-darwin25.6.0
+Thread model: posix
+InstalledDir: /Library/Developer/CommandLineTools/usr/bin
+Apple clang version 21.0.0 (clang-2100.3.34.2)
+Target: arm64-apple-darwin25.6.0
+Thread model: posix
+InstalledDir: /Library/Developer/CommandLineTools/usr/bin
+rustc 1.98.1 (48a229cea 2026-09-01)
+binary: rustc
+commit-hash: 48a229ceaefd4985c50990b14116b6d856af0985
+commit-date: 2026-09-01
+host: aarch64-apple-darwin
+release: 1.98.1
+LLVM version: 22.1.8
+
+=== production-api/ecosystem/append-growth-accounting.csv ===
+contract,element_bytes,requested_capacity,initial_capacity,variant,length,capacity,requests,reallocations,releases,requested_bytes,live_before,live_after
+append-growth-o3,8,16,16,whitefoot,17,32,1,0,1,272,144,272
+append-growth-o3,8,16,16,rust-vec,17,32,1,1,0,256,128,256
+append-growth-o3,8,16,16,cpp-std-vector,17,32,1,0,1,256,128,256
+append-growth-o3,256,16,16,whitefoot,17,32,1,0,1,8208,4112,8208
+append-growth-o3,256,16,16,rust-vec,17,32,1,1,0,8192,4096,8192
+append-growth-o3,256,16,16,cpp-std-vector,17,32,1,0,1,8192,4096,8192
+append-growth-o3,8,256,256,whitefoot,257,512,1,0,1,4112,2064,4112
+append-growth-o3,8,256,256,rust-vec,257,512,1,1,0,4096,2048,4096
+append-growth-o3,8,256,256,cpp-std-vector,257,512,1,0,1,4096,2048,4096
+append-growth-o3,256,256,256,whitefoot,257,512,1,0,1,131088,65552,131088
+append-growth-o3,256,256,256,rust-vec,257,512,1,1,0,131072,65536,131072
+append-growth-o3,256,256,256,cpp-std-vector,257,512,1,0,1,131072,65536,131072
+append-growth-o3,8,4096,4096,whitefoot,4097,8192,1,0,1,65552,32784,65552
+append-growth-o3,8,4096,4096,rust-vec,4097,8192,1,1,0,65536,32768,65536
+append-growth-o3,8,4096,4096,cpp-std-vector,4097,8192,1,0,1,65536,32768,65536
+append-growth-o3,256,4096,4096,whitefoot,4097,8192,1,0,1,2097168,1048592,2097168
+append-growth-o3,256,4096,4096,rust-vec,4097,8192,1,1,0,2097152,1048576,2097152
+append-growth-o3,256,4096,4096,cpp-std-vector,4097,8192,1,0,1,2097152,1048576,2097152
+append-growth-o3,8,0,0,whitefoot,1,1,1,0,1,24,16,24
+append-growth-o3,8,0,0,rust-vec,1,4,1,0,0,32,0,32
+append-growth-o3,8,0,0,cpp-std-vector,1,1,1,0,0,8,0,8
+append-growth-o3,256,0,0,whitefoot,1,1,1,0,1,272,16,272
+append-growth-o3,256,0,0,rust-vec,1,4,1,0,0,1024,0,1024
+append-growth-o3,256,0,0,cpp-std-vector,1,1,1,0,0,256,0,256
+append-growth-o3,8,1,1,whitefoot,2,2,1,0,1,32,24,32
+append-growth-o3,8,1,1,rust-vec,2,4,1,1,0,32,8,32
+append-growth-o3,8,1,1,cpp-std-vector,2,2,1,0,1,16,8,16
+append-growth-o3,256,1,1,whitefoot,2,2,1,0,1,528,272,528
+append-growth-o3,256,1,1,rust-vec,2,4,1,1,0,1024,256,1024
+append-growth-o3,256,1,1,cpp-std-vector,2,2,1,0,1,512,256,512
+
+=== a2-api/ecosystem/append-growth-accounting.csv ===
+contract,element_bytes,requested_capacity,initial_capacity,variant,length,capacity,requests,reallocations,releases,requested_bytes,live_before,live_after
+append-growth-o3,8,16,16,whitefoot,17,32,1,1,0,256,152,280
+append-growth-o3,8,16,16,rust-vec,17,32,1,1,0,256,128,256
+append-growth-o3,8,16,16,cpp-std-vector,17,32,1,0,1,256,128,256
+append-growth-o3,256,16,16,whitefoot,17,32,1,1,0,8192,4120,8216
+append-growth-o3,256,16,16,rust-vec,17,32,1,1,0,8192,4096,8192
+append-growth-o3,256,16,16,cpp-std-vector,17,32,1,0,1,8192,4096,8192
+append-growth-o3,8,256,256,whitefoot,257,512,1,1,0,4096,2072,4120
+append-growth-o3,8,256,256,rust-vec,257,512,1,1,0,4096,2048,4096
+append-growth-o3,8,256,256,cpp-std-vector,257,512,1,0,1,4096,2048,4096
+append-growth-o3,256,256,256,whitefoot,257,512,1,1,0,131072,65560,131096
+append-growth-o3,256,256,256,rust-vec,257,512,1,1,0,131072,65536,131072
+append-growth-o3,256,256,256,cpp-std-vector,257,512,1,0,1,131072,65536,131072
+append-growth-o3,8,4096,4096,whitefoot,4097,8192,1,1,0,65536,32792,65560
+append-growth-o3,8,4096,4096,rust-vec,4097,8192,1,1,0,65536,32768,65536
+append-growth-o3,8,4096,4096,cpp-std-vector,4097,8192,1,0,1,65536,32768,65536
+append-growth-o3,256,4096,4096,whitefoot,4097,8192,1,1,0,2097152,1048600,2097176
+append-growth-o3,256,4096,4096,rust-vec,4097,8192,1,1,0,2097152,1048576,2097152
+append-growth-o3,256,4096,4096,cpp-std-vector,4097,8192,1,0,1,2097152,1048576,2097152
+append-growth-o3,8,0,0,whitefoot,1,1,1,1,0,8,25,32
+append-growth-o3,8,0,0,rust-vec,1,4,1,0,0,32,0,32
+append-growth-o3,8,0,0,cpp-std-vector,1,1,1,0,0,8,0,8
+append-growth-o3,256,0,0,whitefoot,1,1,1,1,0,256,25,280
+append-growth-o3,256,0,0,rust-vec,1,4,1,0,0,1024,0,1024
+append-growth-o3,256,0,0,cpp-std-vector,1,1,1,0,0,256,0,256
+append-growth-o3,8,1,1,whitefoot,2,2,1,1,0,16,32,40
+append-growth-o3,8,1,1,rust-vec,2,4,1,1,0,32,8,32
+append-growth-o3,8,1,1,cpp-std-vector,2,2,1,0,1,16,8,16
+append-growth-o3,256,1,1,whitefoot,2,2,1,1,0,512,280,536
+append-growth-o3,256,1,1,rust-vec,2,4,1,1,0,1024,256,1024
+append-growth-o3,256,1,1,cpp-std-vector,2,2,1,0,1,512,256,512
+
+=== Identical paired driver/peer objects ===
+driver-timed.o cf2ade4964789f1932380cf558673f4c682163d61091ae7e4d7d37553a009f15
+cpp-timed.o c35ec1f01eef08066ef381b06da6fc72ef6aba12d98a1b33c48a016de6313dd1
+rust-timed.a b1eccd7d521f678bd123531708f67a1cce0f6b6fa509edb907acab53f1f11873
+
+=== SHA256 ===
+c4bd6ee0d5deecd3b75545f5ed17a495641d82afca163f386ec5a7bcd60c0326 research/experiments/container-representation/vector-library/boundary-length-reuse.patch
+9a3cc23ca8e829d922845ab8cf9a96e3dafff0c29edc88beca63526f2f06231f compiler/src/backend/emitter/runs.rs
+508670a88c6fe46ed76e7d1bf683d4ef4febd0d732fad3b975158070958c4070 compiler/src/backend/tests/windows.rs
+5e8d37585a06e7b7040b43032b1cd5d4f41cce16d0e91aa77b35e7d0e83c74ac research/experiments/container-representation/vector-library/.build/boundary-length-reuse/whitefootc-production
+2b668d006477c4079c036b4baa38049276ec619573a9c583667cbf809679b48d research/experiments/container-representation/vector-library/.build/boundary-length-reuse/whitefootc-a2
+2bbe19279469a320825f0de904075dd18aa52badb07a54eb687bab90e2ed9774 research/experiments/container-representation/vector-library/.build/boundary-length-reuse/production-api/ecosystem/vector-costs-timed
+5efc26fed2a63f2d8e6bc7e521bf64b0586491fc181de3f58070100e29673ab0 research/experiments/container-representation/vector-library/.build/split-slots-payload-realloc/api/ecosystem/vector-costs-timed
+b2beba8cf19113948643eba4aeac07a9fbba7191f397deccc530cbc469aafc6c research/experiments/container-representation/vector-library/.build/boundary-length-reuse/a2-api/ecosystem/vector-costs-timed
+
+=== production-append-native.asm (scalar and wide single-append bodies) ===
+_wf_vector_api_word_append_one:
+000000010000ff08	stp	x20, x19, [sp, #-0x20]!
+000000010000ff0c	stp	x29, x30, [sp, #0x10]
+000000010000ff10	mov	x19, x1
+000000010000ff14	ldr	x8, [x0]
+000000010000ff18	ldp	x9, x10, [x8]
+000000010000ff1c	cmp	x10, x9
+000000010000ff20	b.ne	0x10000ff34
+000000010000ff24	mov	x20, x0
+000000010000ff28	bl	_wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6
+000000010000ff2c	ldr	x8, [x20]
+000000010000ff30	ldr	x9, [x8]
+000000010000ff34	add	x10, x8, x9, lsl #3
+000000010000ff38	str	x19, [x10, #0x10]
+000000010000ff3c	add	x0, x9, #0x1
+000000010000ff40	str	x0, [x8]
+000000010000ff44	ldp	x29, x30, [sp, #0x10]
+000000010000ff48	ldp	x20, x19, [sp], #0x20
+000000010000ff4c	ret
+_wf_vector_api_append_one$instance$694069a978d9626c:
+0000000100010aa4	stp	x20, x19, [sp, #-0x20]!
+0000000100010aa8	stp	x29, x30, [sp, #0x10]
+0000000100010aac	mov	x19, x1
+0000000100010ab0	ldr	x8, [x0]
+0000000100010ab4	ldp	x9, x10, [x8]
+0000000100010ab8	cmp	x10, x9
+0000000100010abc	b.ne	0x100010ad0
+0000000100010ac0	mov	x20, x0
+0000000100010ac4	bl	_wf_std.collections.vector.grow_vector_grow_full$instance$979fcc4ac6e818fb
+0000000100010ac8	ldr	x8, [x20]
+0000000100010acc	ldr	x9, [x8]
+0000000100010ad0	dup.2d	v0, x19
+0000000100010ad4	add	x10, x19, #0x1f
+0000000100010ad8	adrp	x11, 166 ; 0x1000b6000
+0000000100010adc	ldr	q1, [x11, #0xd0]
+0000000100010ae0	add.2d	v1, v0, v1
+0000000100010ae4	adrp	x11, 166 ; 0x1000b6000
+0000000100010ae8	ldr	q2, [x11, #0xc0]
+0000000100010aec	add.2d	v2, v0, v2
+0000000100010af0	adrp	x11, 166 ; 0x1000b6000
+0000000100010af4	ldr	q3, [x11, #0xb0]
+0000000100010af8	add.2d	v3, v0, v3
+0000000100010afc	adrp	x11, 166 ; 0x1000b6000
+0000000100010b00	ldr	q4, [x11, #0xa0]
+0000000100010b04	add.2d	v4, v0, v4
+0000000100010b08	adrp	x11, 166 ; 0x1000b6000
+0000000100010b0c	ldr	q5, [x11, #0x90]
+0000000100010b10	add.2d	v5, v0, v5
+0000000100010b14	adrp	x11, 166 ; 0x1000b6000
+0000000100010b18	ldr	q6, [x11, #0x80]
+0000000100010b1c	add.2d	v6, v0, v6
+0000000100010b20	adrp	x11, 166 ; 0x1000b6000
+0000000100010b24	ldr	q7, [x11, #0x70]
+0000000100010b28	add.2d	v7, v0, v7
+0000000100010b2c	adrp	x11, 166 ; 0x1000b6000
+0000000100010b30	ldr	q16, [x11, #0x60]
+0000000100010b34	add.2d	v16, v0, v16
+0000000100010b38	adrp	x11, 166 ; 0x1000b6000
+0000000100010b3c	ldr	q17, [x11, #0x50]
+0000000100010b40	add.2d	v17, v0, v17
+0000000100010b44	adrp	x11, 166 ; 0x1000b6000
+0000000100010b48	ldr	q18, [x11, #0x40]
+0000000100010b4c	add.2d	v18, v0, v18
+0000000100010b50	adrp	x11, 166 ; 0x1000b6000
+0000000100010b54	ldr	q19, [x11, #0x30]
+0000000100010b58	add.2d	v19, v0, v19
+0000000100010b5c	adrp	x11, 166 ; 0x1000b6000
+0000000100010b60	ldr	q20, [x11, #0x20]
+0000000100010b64	add.2d	v20, v0, v20
+0000000100010b68	adrp	x11, 166 ; 0x1000b6000
+0000000100010b6c	ldr	q21, [x11, #0x10]
+0000000100010b70	add.2d	v21, v0, v21
+0000000100010b74	adrp	x11, 166 ; 0x1000b6000
+0000000100010b78	ldr	q22, [x11]
+0000000100010b7c	add.2d	v22, v0, v22
+0000000100010b80	adrp	x11, 165 ; 0x1000b5000
+0000000100010b84	ldr	q23, [x11, #0xff0]
+0000000100010b88	add.2d	v0, v0, v23
+0000000100010b8c	add	x11, x8, x9, lsl #8
+0000000100010b90	str	x19, [x11, #0x10]
+0000000100010b94	stur	q0, [x11, #0x18]
+0000000100010b98	stur	q22, [x11, #0x28]
+0000000100010b9c	stur	q21, [x11, #0x38]
+0000000100010ba0	stur	q20, [x11, #0x48]
+0000000100010ba4	stur	q19, [x11, #0x58]
+0000000100010ba8	stur	q18, [x11, #0x68]
+0000000100010bac	stur	q17, [x11, #0x78]
+0000000100010bb0	stur	q16, [x11, #0x88]
+0000000100010bb4	stur	q7, [x11, #0x98]
+0000000100010bb8	stur	q6, [x11, #0xa8]
+0000000100010bbc	stur	q5, [x11, #0xb8]
+0000000100010bc0	stur	q4, [x11, #0xc8]
+0000000100010bc4	stur	q3, [x11, #0xd8]
+0000000100010bc8	stur	q2, [x11, #0xe8]
+0000000100010bcc	stur	q1, [x11, #0xf8]
+0000000100010bd0	str	x10, [x11, #0x108]
+0000000100010bd4	add	x0, x9, #0x1
+0000000100010bd8	str	x0, [x8]
+0000000100010bdc	ldp	x29, x30, [sp, #0x10]
+0000000100010be0	ldp	x20, x19, [sp], #0x20
+0000000100010be4	ret
+
+=== a2-append-native.asm (scalar and wide single-append bodies) ===
+_wf_vector_api_word_append_one:
+000000010000ff00	stp	x20, x19, [sp, #-0x20]!
+000000010000ff04	stp	x29, x30, [sp, #0x10]
+000000010000ff08	mov	x19, x1
+000000010000ff0c	ldr	x20, [x0]
+000000010000ff10	ldp	x8, x9, [x20]
+000000010000ff14	cmp	x9, x8
+000000010000ff18	b.ne	0x10000ff24
+000000010000ff1c	bl	_wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6
+000000010000ff20	ldr	x8, [x20]
+000000010000ff24	ldr	x9, [x20, #0x10]
+000000010000ff28	str	x19, [x9, x8, lsl #3]
+000000010000ff2c	add	x0, x8, #0x1
+000000010000ff30	str	x0, [x20]
+000000010000ff34	ldp	x29, x30, [sp, #0x10]
+000000010000ff38	ldp	x20, x19, [sp], #0x20
+000000010000ff3c	ret
+_wf_vector_api_append_one$instance$694069a978d9626c:
+0000000100010bb8	stp	x20, x19, [sp, #-0x20]!
+0000000100010bbc	stp	x29, x30, [sp, #0x10]
+0000000100010bc0	mov	x19, x1
+0000000100010bc4	ldr	x20, [x0]
+0000000100010bc8	ldp	x8, x9, [x20]
+0000000100010bcc	cmp	x9, x8
+0000000100010bd0	b.ne	0x100010bdc
+0000000100010bd4	bl	_wf_std.collections.vector.grow_vector_grow_full$instance$979fcc4ac6e818fb
+0000000100010bd8	ldr	x8, [x20]
+0000000100010bdc	dup.2d	v0, x19
+0000000100010be0	add	x9, x19, #0x1f
+0000000100010be4	adrp	x10, 166 ; 0x1000b6000
+0000000100010be8	ldr	q1, [x10, #0x140]
+0000000100010bec	add.2d	v1, v0, v1
+0000000100010bf0	adrp	x10, 166 ; 0x1000b6000
+0000000100010bf4	ldr	q2, [x10, #0x130]
+0000000100010bf8	add.2d	v2, v0, v2
+0000000100010bfc	adrp	x10, 166 ; 0x1000b6000
+0000000100010c00	ldr	q3, [x10, #0x120]
+0000000100010c04	add.2d	v3, v0, v3
+0000000100010c08	adrp	x10, 166 ; 0x1000b6000
+0000000100010c0c	ldr	q4, [x10, #0x110]
+0000000100010c10	add.2d	v4, v0, v4
+0000000100010c14	adrp	x10, 166 ; 0x1000b6000
+0000000100010c18	ldr	q5, [x10, #0x100]
+0000000100010c1c	add.2d	v5, v0, v5
+0000000100010c20	adrp	x10, 166 ; 0x1000b6000
+0000000100010c24	ldr	q6, [x10, #0xf0]
+0000000100010c28	add.2d	v6, v0, v6
+0000000100010c2c	adrp	x10, 166 ; 0x1000b6000
+0000000100010c30	ldr	q7, [x10, #0xe0]
+0000000100010c34	add.2d	v7, v0, v7
+0000000100010c38	adrp	x10, 166 ; 0x1000b6000
+0000000100010c3c	ldr	q16, [x10, #0xd0]
+0000000100010c40	add.2d	v16, v0, v16
+0000000100010c44	adrp	x10, 166 ; 0x1000b6000
+0000000100010c48	ldr	q17, [x10, #0xc0]
+0000000100010c4c	add.2d	v17, v0, v17
+0000000100010c50	adrp	x10, 166 ; 0x1000b6000
+0000000100010c54	ldr	q18, [x10, #0xb0]
+0000000100010c58	add.2d	v18, v0, v18
+0000000100010c5c	adrp	x10, 166 ; 0x1000b6000
+0000000100010c60	ldr	q19, [x10, #0xa0]
+0000000100010c64	add.2d	v19, v0, v19
+0000000100010c68	adrp	x10, 166 ; 0x1000b6000
+0000000100010c6c	ldr	q20, [x10, #0x90]
+0000000100010c70	add.2d	v20, v0, v20
+0000000100010c74	adrp	x10, 166 ; 0x1000b6000
+0000000100010c78	ldr	q21, [x10, #0x80]
+0000000100010c7c	add.2d	v21, v0, v21
+0000000100010c80	adrp	x10, 166 ; 0x1000b6000
+0000000100010c84	ldr	q22, [x10, #0x70]
+0000000100010c88	add.2d	v22, v0, v22
+0000000100010c8c	adrp	x10, 166 ; 0x1000b6000
+0000000100010c90	ldr	q23, [x10, #0x60]
+0000000100010c94	add.2d	v0, v0, v23
+0000000100010c98	ldr	x10, [x20, #0x10]
+0000000100010c9c	add	x10, x10, x8, lsl #8
+0000000100010ca0	str	x19, [x10]
+0000000100010ca4	stur	q0, [x10, #0x8]
+0000000100010ca8	stur	q22, [x10, #0x18]
+0000000100010cac	stur	q21, [x10, #0x28]
+0000000100010cb0	stur	q20, [x10, #0x38]
+0000000100010cb4	stur	q19, [x10, #0x48]
+0000000100010cb8	stur	q18, [x10, #0x58]
+0000000100010cbc	stur	q17, [x10, #0x68]
+0000000100010cc0	stur	q16, [x10, #0x78]
+0000000100010cc4	stur	q7, [x10, #0x88]
+0000000100010cc8	stur	q6, [x10, #0x98]
+0000000100010ccc	stur	q5, [x10, #0xa8]
+0000000100010cd0	stur	q4, [x10, #0xb8]
+0000000100010cd4	stur	q3, [x10, #0xc8]
+0000000100010cd8	stur	q2, [x10, #0xd8]
+0000000100010cdc	stur	q1, [x10, #0xe8]
+0000000100010ce0	str	x9, [x10, #0xf8]
+0000000100010ce4	add	x0, x8, #0x1
+0000000100010ce8	str	x0, [x20]
+0000000100010cec	ldp	x29, x30, [sp, #0x10]
+0000000100010cf0	ldp	x20, x19, [sp], #0x20
+0000000100010cf4	ret
+
+=== screen-a-timing.txt ===
+== START boundary-length-screen-a (limit 240s): sh -c research/experiments/container-representation/vector-library/.build/split-slots-payload-realloc/api/ecosystem/vector-costs-timed growth-api-measure 67108864 7 8589934592 > research/experiments/container-representation/vector-library/.build/boundary-length-reuse/screen-a-samples.csv ==
+growth append clock: reads=200000 minimum_nonzero_ns=41 quantized=0
+== RUNNING boundary-length-screen-a: 30 s, child 94039, group 94039 ==
+== RUNNING boundary-length-screen-a: 60 s, child 94039, group 94039 ==
+== RUNNING boundary-length-screen-a: 90 s, child 94039, group 94039 ==
+real 117.16
+user 116.90
+sys 0.18
+== END boundary-length-screen-a: 117.18 s, exit 0 ==
+
+=== screen-b-timing.txt ===
+== START boundary-length-screen-b (limit 240s): sh -c research/experiments/container-representation/vector-library/.build/boundary-length-reuse/a2-api/ecosystem/vector-costs-timed growth-api-measure 67108864 7 8589934592 > research/experiments/container-representation/vector-library/.build/boundary-length-reuse/screen-b-samples.csv ==
+growth append clock: reads=200000 minimum_nonzero_ns=41 quantized=0
+== RUNNING boundary-length-screen-b: 30 s, child 98323, group 98323 ==
+== RUNNING boundary-length-screen-b: 60 s, child 98323, group 98323 ==
+== RUNNING boundary-length-screen-b: 90 s, child 98323, group 98323 ==
+real 117.02
+user 116.76
+sys 0.17
+== END boundary-length-screen-b: 117.05 s, exit 0 ==

@@ -137,6 +137,7 @@ fn execute_container_program(
         assert_eq!(llvm.matches("define i32 @main(").count(), 1, "{context}");
         let observed = llvm
             .replace("@malloc(", "@wf_observe_allocate(")
+            .replace("@realloc(", "@wf_observe_reallocate(")
             .replace("@free(", "@wf_observe_release(")
             .replace("@main(", "@wf_fixture_main(");
         let observer =
@@ -166,8 +167,8 @@ fn execute_container_program(
 
         if check_observer_controls && mode == "parallel" {
             // Reuse this native image for observer controls: simultaneous
-            // registration and cross-worker release, then three independent
-            // wrong ledgers. No extra WF compilation or C build is needed.
+            // registration and cross-worker release, realloc prefix/NULL
+            // preservation, then independent wrong ledgers. No extra WF compilation or C build is needed.
             let concurrent =
                 observed_program.run_with_workers_and_arguments(None, &[b"concurrent"]);
             assert_eq!(concurrent.status.code(), Some(0), "{concurrent:?}");
@@ -176,8 +177,30 @@ fn execute_container_program(
                 concurrent.stdout,
                 b"container allocation observer: 32 allocations, each released exactly once\n"
             );
+            for (argument, allocations) in [("reallocate", 4), ("reallocate-null", 9)] {
+                let output =
+                    observed_program.run_with_workers_and_arguments(None, &[argument.as_bytes()]);
+                assert_eq!(output.status.code(), Some(0), "{argument}: {output:?}");
+                assert!(output.stderr.is_empty(), "{argument}: {output:?}");
+                assert_eq!(
+                    output.stdout,
+                    format!(
+                        "container allocation observer: {allocations} allocations, each released exactly once\n"
+                    )
+                    .as_bytes(),
+                    "{argument}: {output:?}"
+                );
+            }
             for (argument, message) in [
                 ("double-release", "allocation released twice"),
+                (
+                    "released-reallocation",
+                    "reallocation of a released allocation",
+                ),
+                (
+                    "foreign-reallocation",
+                    "reallocation did not use an allocated address",
+                ),
                 (
                     "foreign-release",
                     "release did not return an allocated address",
@@ -207,7 +230,9 @@ fn grow_vector_executes_and_releases_every_allocation_in_both_lowering_modes() {
         "containers/grow-vector-program.wf",
         include_bytes!("../../../tests/programs/containers/grow-vector-program.wf"),
     )];
-    execute_container_program("grow-vector", &sources, 25, true);
+    // The five grow_vector_new calls (three in main and one in each
+    // consumption helper) now use the empty anchor, removing five requests.
+    execute_container_program("grow-vector", &sources, 20, true);
 }
 
 #[test]
@@ -222,9 +247,10 @@ fn slab_operations_and_memberships_release_every_owner_in_both_lowering_modes() 
             include_bytes!("../../../tests/programs/containers/slab-program.wf"),
         ),
     ];
-    // Seven total backings, nine operation payloads (four affine and five
+    // Six positive backings; the zero-capacity scalar slab uses the anchor.
+    // Nine operation payloads (four affine and five
     // nodrop), and three payloads in the two membership protocols.
-    execute_container_program("slab", &sources, 19, false);
+    execute_container_program("slab", &sources, 18, false);
 }
 
 #[test]
@@ -244,13 +270,18 @@ fn hash_map_operations_preserve_owned_pairs_in_both_lowering_modes() {
         "containers/hash-map-program.wf",
         include_bytes!("../../../tests/programs/containers/hash-map-program.wf"),
     )];
-    // Seventeen map backings, ten payload/query child Boxes, and one fresh
+    // Fifteen positive map backings: the zero-ceiling scalar map and the
+    // initially empty unit map use the anchor; rehash at zero is a no-op.
+    // Ten payload/query child Boxes, and one fresh
     // Box returned by the borrowed edit callback and consumed by its caller.
     // The growth case adds ten backings: a map of eight buckets, its doubled
     // and its same-capacity rebuild, a map of three buckets and its doubled
     // rebuild, two maps of sixteen buckets, one doubled and one rebuilt at the
     // same capacity, and a map at its ceiling that is not rebuilt.
-    execute_container_program("hash-map", &sources, 38, false);
+    // The wide migration case adds three backings (initial three, rehash three,
+    // reserve five) and six child Boxes, preserving each complete owner.
+    // The edit boundary case adds one capacity-three backing; its empty map uses the anchor.
+    execute_container_program("hash-map", &sources, 46, false);
 }
 
 #[test]
@@ -259,11 +290,14 @@ fn priority_queue_orders_and_preserves_every_owner_in_both_lowering_modes() {
         "containers/priority-queue-program.wf",
         include_bytes!("../../../tests/programs/containers/priority-queue-program.wf"),
     )];
-    // Twenty-three backings and forty payload Boxes. The independent source
+    // Sixteen positive backings and forty payload Boxes. Five queue_new
+    // calls and the direct empty heapify use the anchor; the zero-sized
+    // queue's reserve also has no payload allocation. These remove seven
+    // requests from the former twenty-three backings. The independent source
     // oracle sorts a separate array and checks each owner identity. The native
     // ledger additionally observes actual releases, including growth, refused
     // owner retry, zero capacity and zero-sized u64-max logical capacity.
-    execute_container_program("priority-queue", &sources, 63, false);
+    execute_container_program("priority-queue", &sources, 56, false);
 }
 
 #[test]
@@ -278,13 +312,18 @@ fn indexed_memberships_match_the_model_and_release_every_owner_in_both_lowering_
             include_bytes!("../../../tests/programs/containers/indexed-membership-program.wf"),
         ),
     ];
-    // Four policy/payload traces each allocate six initial store backings,
-    // eight index growth backings and fifteen payload Boxes: 116 total.
-    // Capacity/refusal, retirement and zero capacity add nine backings;
+    // Four policy/payload traces each allocate two positive initial Slab
+    // backings, eight index growth backings and fifteen payload Boxes: 100
+    // total. Each trace's two initially empty ID maps and expiry heaps use
+    // the anchor. Capacity/refusal and retirement add four positive backings;
+    // the limited store's two empty indexes and the zero store's three
+    // empty backings add none.
     // direct indexed heapify adds one; the nodrop SlabEdit result adds one
     // backing and two payload Boxes. The source model independently checks
     // dictionary membership, sorted expiration and exact owner identities.
-    execute_container_program("indexed-membership", &sources, 129, false);
+    // Three direct indexed repairs add three backings and check exact rise
+    // reporter order, including a comparator that always requests a swap.
+    execute_container_program("indexed-membership", &sources, 111, false);
 }
 
 #[test]
@@ -298,4 +337,57 @@ fn ordered_map_mutations_match_sorted_oracle_and_preserve_every_owner_in_both_lo
     // below its ceiling: three nodes and thirty-six payloads add 39 to the
     // original 64-allocation public mutation and traversal chain.
     execute_container_program("ordered-map", &sources, 103, false);
+}
+
+#[test]
+fn ordered_map_cleanup_preserves_callback_and_parent_release_order_in_both_lowering_modes() {
+    let sources: [(&str, &[u8]); 1] = [(
+        "containers/ordered-map-cleanup-order.wf",
+        include_bytes!("../../../tests/programs/containers/ordered-map-cleanup-order.wf"),
+    )];
+    let modes = [
+        ("sequential", compile_sources(&sources)),
+        (
+            "parallel",
+            compile_sources_with_cli_parallel_defaults(&sources),
+        ),
+    ];
+    for (mode, llvm) in modes {
+        // The source checks owning-value callbacks independently. The native
+        // observer additionally requires parent release before the leading
+        // child callbacks, which an unordered allocation ledger cannot see.
+        let output = build_program(&llvm).run_with_workers(None);
+        assert_eq!(output.status.code(), Some(0), "{mode}: {output:?}");
+        assert!(output.stdout.is_empty(), "{mode}: {output:?}");
+        assert!(output.stderr.is_empty(), "{mode}: {output:?}");
+
+        assert!(llvm.contains("@malloc("), "{mode}: missing allocator calls");
+        assert!(llvm.contains("@free("), "{mode}: missing release calls");
+        assert_eq!(llvm.matches("define i32 @main(").count(), 1, "{mode}");
+        let observed = llvm
+            .replace("@malloc(", "@wf_observe_allocate(")
+            .replace("@free(", "@wf_observe_release(")
+            .replace("@main(", "@wf_fixture_main(");
+        let observer =
+            include_str!("../../../tests/programs/containers/ordered-map-cleanup-observer.c");
+        let program = build_program_with_driver_arguments(
+            &observed,
+            Some(observer),
+            &[
+                "-std=c11",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-Wno-override-module",
+            ],
+        );
+        let output = program.run_with_workers(None);
+        assert_eq!(output.status.code(), Some(0), "{mode}: {output:?}");
+        assert!(output.stderr.is_empty(), "{mode}: {output:?}");
+        assert_eq!(
+            output.stdout,
+            b"ordered cleanup observer: 16 callbacks and 3 node releases preserve order\n",
+            "{mode}: {output:?}"
+        );
+    }
 }

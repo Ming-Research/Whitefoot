@@ -1,0 +1,815 @@
+--- a/compiler/src/target.rs
++++ b/compiler/src/target.rs
+@@ -630,6 +630,19 @@
+     }
+ }
+ 
++/// Runtime Slots metadata occupies its Box owner's inline storage. Other
++/// runtime shapes retain their pointer-owned header and payload block.
++pub(crate) const fn inline_slots_descriptor(ty: IrType) -> bool {
++    matches!(
++        ty,
++        IrType::Window {
++            shape: IrWindowShape::Slots,
++            capacity: None,
++            ..
++        }
++    )
++}
++
+ /// The integer-class words one returned first-class value can occupy on
+ /// every admitted target: LLVM's x86-64 return convention assigns RAX, RDX
+ /// and RCX, one per scalar leaf, and AArch64 assigns X0 to X7.
+@@ -725,7 +738,8 @@
+             } => {
+                 let header = match (shape, capacity) {
+                     (IrWindowShape::Slots, Some(_)) => 1,
+-                    (IrWindowShape::Slots, None) | (IrWindowShape::Ring, Some(_)) => 2,
++                    (IrWindowShape::Slots, None) => 3,
++                    (IrWindowShape::Ring, Some(_)) => 2,
+                     (IrWindowShape::Ring, None) => 3,
+                 };
+                 self.integer(copies, header);
+@@ -739,6 +753,9 @@
+                     .get(id.index())
+                     .ok_or(TargetLayoutFailure::InvalidIr)?;
+                 match nominal.kind() {
++                    IrNominalKind::Box { referent, .. } if inline_slots_descriptor(*referent) => {
++                        self.integer(copies, 3)
++                    }
+                     // A pointer owner or a shared object's handle.
+                     IrNominalKind::Box { .. } | IrNominalKind::Shared { .. } => {
+                         self.integer(copies, 1)
+@@ -1162,16 +1179,21 @@
+     header: u64,
+ }
+ 
+-/// Computes the exact terms the emitter uses for `header + count * stride`.
+-/// The zero-length tail array can require padding after the fixed words, so
+-/// the header is its selected-target field offset rather than merely its word
+-/// count.
++/// Computes the exact terms used for the heap allocation. Runtime Slots
++/// allocate only their payload; other shapes include the padded header. A
++/// zero payload receives a one-byte allocation, within every admitted target's
++/// nonzero allocation domain, while its inline descriptor is checked separately.
+ fn runtime_capacity_allocation_layout(
+     layouts: &mut LayoutComputer<'_>,
+     content: IrType,
+     ceiling: IrLayoutCeiling,
+ ) -> Result<RuntimeCapacityAllocationLayout, TargetLayoutFailure> {
+     let (actual, allocation) = runtime_capacity_layout(layouts, content)?;
++    if layouts.target.runtime_allocation_max() == 0 {
++        return Err(TargetLayoutFailure::Unrepresentable(
++            TargetObject::RuntimeSizedAllocation,
++        ));
++    }
+     if !ceiling.size.permits(actual.size)
+         || actual.align > ceiling.align
+         || !ceiling.stride.permits(allocation.stride)
+@@ -1217,7 +1239,7 @@
+                 .copied()
+                 .ok_or(TargetLayoutFailure::InvalidIr)?,
+             match shape {
+-                IrWindowShape::Slots => 2,
++                IrWindowShape::Slots => 0,
+                 IrWindowShape::Ring => 3,
+             },
+         ),
+@@ -1740,8 +1762,13 @@
+                 self.element(element)?;
+                 Ok(Layout { size: 16, align: 8 })
+             }
+-            // [TYPE-9] a runtime-capacity block is reached only through the
+-            // `Box` that owns it, so it never occupies inline storage.
++            IrType::Window {
++                shape: IrWindowShape::Slots,
++                capacity: None,
++                ..
++            } => Ok(Layout { size: 24, align: 8 }),
++            // Other runtime-capacity blocks are reached through the Box's
++            // pointer rather than occupying the owner's inline storage.
+             IrType::Window { capacity: None, .. } => Ok(Layout { size: 8, align: 8 }),
+             // compiler/storage-representation: header first, `len` always,
+             // `head` only for a `Ring`, and no capacity word where the type
+@@ -1831,7 +1858,10 @@
+             self.nominal.insert(id, layout);
+             return Ok(layout);
+         }
+-        let layout = if matches!(
++        let layout = if matches!(nominal.kind(), IrNominalKind::Box { referent, .. } if inline_slots_descriptor(*referent))
++        {
++            Layout { size: 24, align: 8 }
++        } else if matches!(
+             nominal.kind(),
+             IrNominalKind::Box { .. } | IrNominalKind::Shared { .. }
+         ) {
+--- a/compiler/src/backend/storage.rs
++++ b/compiler/src/backend/storage.rs
+@@ -20,9 +20,9 @@
+ 
+ use super::BackendFailure;
+ 
+-/// These values contain their payload inline. Descriptors retain their
+-/// ordinary SSA representation: their payload is elsewhere. This
+-/// choice depends on representation, not source names or a size threshold.
++/// Values with complete inline storage, including a runtime Slots owner's
++/// descriptor. This choice depends on representation, not source names or a
++/// size threshold; its element payload remains separately heap-owned.
+ pub(super) fn is_stored_aggregate(program: &IrProgram, ty: IrType) -> Result<bool, BackendFailure> {
+     Ok(match ty {
+         IrType::Array { .. }
+@@ -34,7 +34,10 @@
+             match nominal.kind() {
+                 IrNominalKind::Struct { .. } | IrNominalKind::Opaque => true,
+                 IrNominalKind::Enum { .. } => !nominal.is_tag_only_enum(),
+-                IrNominalKind::Box { .. } | IrNominalKind::Shared { .. } => false,
++                IrNominalKind::Box { referent, .. } => {
++                    crate::target::inline_slots_descriptor(*referent)
++                }
++                IrNominalKind::Shared { .. } => false,
+             }
+         }
+         IrType::Unit
+--- a/compiler/src/backend/emitter.rs
++++ b/compiler/src/backend/emitter.rs
+@@ -1602,11 +1602,15 @@
+             && let Ok(layout) = crate::target::validate_static_storage(
+                 self.target,
+                 self.program,
+-                &crate::target::TargetStorageType::source(if referent.is_runtime_content() {
+-                    IrType::Address(referent)
+-                } else {
+-                    referent.ty()
+-                }),
++                &crate::target::TargetStorageType::source(
++                    if referent.is_runtime_content()
++                        && !crate::target::inline_slots_descriptor(referent.ty())
++                    {
++                        IrType::Address(referent)
++                    } else {
++                        referent.ty()
++                    },
++                ),
+             )
+             && layout.size() > 0
+         {
+@@ -3006,13 +3010,18 @@
+                 references,
+             )?;
+             Ok(match shape {
+-                IrWindowShape::Slots => format!("{{ i64, i64, [0 x {element}] }}"),
++                IrWindowShape::Slots => "{ i64, i64, ptr }".to_owned(),
+                 IrWindowShape::Ring => format!("{{ i64, i64, i64, [0 x {element}] }}"),
+             })
+         }
+         IrType::Address(_) | IrType::RuntimeBoxPayload { .. } => Ok("ptr".to_owned()),
+         IrType::Nominal(id) => {
+             let nominal = program.nominal(id).ok_or(BackendFailure::InvalidIr)?;
++            if let IrNominalKind::Box { referent, .. } = nominal.kind()
++                && crate::target::inline_slots_descriptor(*referent)
++            {
++                return llvm_type_with_references(program, *referent, references);
++            }
+             if matches!(
+                 nominal.kind(),
+                 IrNominalKind::Box { .. } | IrNominalKind::Shared { .. }
+--- a/compiler/src/backend/emitter/cleanup.rs
++++ b/compiler/src/backend/emitter/cleanup.rs
+@@ -179,16 +179,17 @@
+     let mut output = FunctionBody::default();
+     let run_llvm = output.type_name(program, ty)?;
+     let symbol = run_drop_helper_symbol(program, ty)?;
+-    // A runtime-capacity block is reached only through the `Box` that owns
+-    // it [TYPE-9], so its helper takes the block pointer. A memory-only run
++    // Runtime Slots pass their inline descriptor; other runtime-capacity
++    // blocks pass the owning Box's pointer. A memory-only run
+     // (compiler/payload-enum-layout) is released from its address too; every
+     // other run is a value and its helper takes that value.
+     let by_address = is_memory_only(program, ty)?;
+     let parameter = if by_address
+-        || matches!(
+-            ty,
+-            IrType::Window { capacity: None, .. } | IrType::Buffer { .. }
+-        ) {
++        || (!crate::target::inline_slots_descriptor(ty)
++            && matches!(
++                ty,
++                IrType::Window { capacity: None, .. } | IrType::Buffer { .. }
++            )) {
+         "ptr".to_owned()
+     } else {
+         run_llvm.clone()
+@@ -273,10 +274,19 @@
+             .map_err(|_| BackendFailure::TextEmission)?;
+             element
+         }
+-        // A runtime-capacity block is `[len | cap | head? | slots]` in one
+-        // allocation (compiler/storage-representation): every measure the
+-        // walk needs is a header word of the block the parameter points at,
+-        // and the slots follow that header.
++        IrType::Window {
++            shape: IrWindowShape::Slots,
++            element,
++            capacity: None,
++        } => {
++            // No temporary descriptor allocation: the private release helper
++            // consumes these three scalar words directly, including when this
++            // owner is nested inside an ordinary first-class aggregate.
++            writeln!(output,
++                "  %length = extractvalue {run_llvm} %value, 0\n  %capacity = extractvalue {run_llvm} %value, 1\n  %pointer = extractvalue {run_llvm} %value, 2\n  %origin = add i64 0, 0"
++            ).map_err(|_| BackendFailure::TextEmission)?;
++            element
++        }
+         IrType::Window {
+             shape,
+             element,
+@@ -790,7 +800,22 @@
+                         // [PROV-6, STOR-3] release the referent first, then
+                         // free the cell back to the one heap.
+                         IrNominalKind::Box { referent, release } => {
+-                            // A boxed runtime-capacity shape is thin: the
++                            if crate::target::inline_slots_descriptor(*referent) {
++                                let llvm = output.type_name(program, ty)?;
++                                let payload = next_temporary(temporary)?;
++                                writeln!(output, "  %{payload} = extractvalue {llvm} {operand}, 2")
++                                    .map_err(|_| BackendFailure::TextEmission)?;
++                                if let Some(symbol) = run_drop_helper(program, *referent)? {
++                                    output.symbol(&symbol);
++                                    writeln!(output, "  call void @{symbol}({llvm} {operand})")
++                                        .map_err(|_| BackendFailure::TextEmission)?;
++                                }
++                                if *release == IrReleaseClass::General {
++                                    jobs.push(CleanupJob::FreePointer(format!("%{payload}")));
++                                }
++                                continue;
++                            }
++                            // The remaining boxed runtime-capacity shapes are thin: the
+                             // cell pointer is the block, whose header and
+                             // elements are the same allocation
+                             // (compiler/storage-representation), which is
+--- a/compiler/src/backend/emitter/operations.rs
++++ b/compiler/src/backend/emitter/operations.rs
+@@ -93,6 +93,15 @@
+         }
+         let first_slot = self.value_name(first);
+         let second_slot = self.value_name(second);
++        if crate::target::inline_slots_descriptor(referent.ty()) {
++            let llvm = self.output.type_name(self.program, referent.ty())?;
++            let first_owner = self.next_temporary()?;
++            let second_owner = self.next_temporary()?;
++            writeln!(self.output,
++                "  %{first_owner} = load {llvm}, ptr {first_slot}\n  %{second_owner} = load {llvm}, ptr {second_slot}\n  store {llvm} %{second_owner}, ptr {first_slot}\n  store {llvm} %{first_owner}, ptr {second_slot}"
++            ).map_err(|_| BackendFailure::TextEmission)?;
++            return self.emit_constant(result, ty, IrConstant::Unit);
++        }
+         let first_owner = self.load_pointer_at(&first_slot)?;
+         let second_owner = self.load_pointer_at(&second_slot)?;
+         writeln!(
+--- a/compiler/src/backend/emitter/places.rs
++++ b/compiler/src/backend/emitter/places.rs
+@@ -91,6 +91,13 @@
+             } if !self.overlap_handed_out.contains(&result) => {
+                 self.emit_call(result, ty, *function, arguments)?;
+             }
++            IrOperation::WindowBlockNew {
++                nominal,
++                capacity,
++                obligations,
++            } if self.storage.slot(result).is_some() => {
++                self.emit_window_block_new(result, ty, *nominal, *capacity, *obligations)?;
++            }
+             IrOperation::Window => self.emit_fixed_vector(result, ty)?,
+             IrOperation::ArrayFill {
+                 value,
+@@ -452,7 +459,7 @@
+         referent: IrAddressed,
+         address: String,
+     ) -> Result<String, BackendFailure> {
+-        if referent.is_runtime_content() {
++        if referent.is_runtime_content() && !crate::target::inline_slots_descriptor(referent.ty()) {
+             self.load_pointer_at(&address)
+         } else {
+             Ok(address)
+--- a/compiler/src/backend/emitter/runs.rs
++++ b/compiler/src/backend/emitter/runs.rs
+@@ -6,12 +6,10 @@
+ //! operation updates those words and the selected slot through the reference
+ //! the operand names.
+ //!
+-//! The layout is header-first, so the inline and the boxed placement of one
+-//! shape share one address computation
+-//! (compiler/storage-representation): a `Slots` is `{ len, slots }` and a
+-//! `Ring` is `{ len, head, slots }`, each with a `cap` word after `len` in
+-//! the runtime-capacity placement and none at all where the type constant
+-//! already fixes it.
++//! Fixed windows keep their descriptor before their inline elements. A runtime
++//! Slots owner keeps `{ len, cap, payload }` inline and allocates only the
++//! payload. Runtime Ring keeps its descriptor and elements in one heap block.
++//! The typed shape selects the corresponding element-address computation.
+ //!
+ //! Slots uses its proved logical offset directly. A Ring window is `len`
+ //! slots beginning at `head` modulo `cap` [WIN-1], so its subscript at
+@@ -93,6 +91,14 @@
+             (IrWindowShape::Slots, None) | (IrWindowShape::Ring, Some(_)) => 2,
+             (IrWindowShape::Ring, None) => 3,
+         }
++    }
++
++    const fn split_payload(self) -> bool {
++        crate::target::inline_slots_descriptor(IrType::Window {
++            shape: self.shape,
++            element: self.element,
++            capacity: self.capacity,
++        })
+     }
+ }
+ 
+@@ -720,7 +726,8 @@
+ 
+     /// The address of one physical slot of a window.
+     ///
+-    /// The slots follow the header in the same block in both placements
++    /// Runtime Slots load the payload pointer; other placements keep their
++    /// slots after the header in the same block
+     /// (compiler/storage-representation), so one `getelementptr` serves the
+     /// inline window and the boxed one alike; only where the block address
+     /// comes from differs.
+@@ -736,6 +743,21 @@
+         let llvm = self.output.type_name(self.program, run_type)?;
+         let slot = self.run_storage(run)?.ok_or(BackendFailure::InvalidIr)?;
+         let pointer = self.next_temporary()?;
++        let address = if shape.split_payload() {
++            let payload_field = self.aggregate_field_pointer(run_type, &slot, 2)?;
++            let payload = self.next_temporary()?;
++            writeln!(self.output, "  %{payload} = load ptr, ptr {payload_field}")
++                .map_err(|_| BackendFailure::TextEmission)?;
++            let element = self
++                .output
++                .type_name(self.program, shape.element_type(self.program)?)?;
++            format!("getelementptr inbounds {element}, ptr %{payload}, i64 {physical}")
++        } else {
++            format!(
++                "getelementptr inbounds {llvm}, ptr {slot}, i64 0, i32 {}, i64 {physical}",
++                shape.slots_field()
++            )
++        };
+         if self.window_address_facts == WindowAddressFacts::Emit {
+             // For positive stride S, the qualified complete object or
+             // allocation has H + cap*S within the signed address domain.
+@@ -753,12 +775,8 @@
+             )
+             .map_err(|_| BackendFailure::TextEmission)?;
+         }
+-        writeln!(
+-            self.output,
+-            "  %{pointer} = getelementptr inbounds {llvm}, ptr {slot}, i64 0, i32 {}, i64 {physical}",
+-            shape.slots_field(),
+-        )
+-        .map_err(|_| BackendFailure::TextEmission)?;
++        writeln!(self.output, "  %{pointer} = {address}")
++            .map_err(|_| BackendFailure::TextEmission)?;
+         Ok(pointer)
+     }
+ }
+@@ -831,6 +849,38 @@
+             "ptrtoint (ptr getelementptr ({block}, ptr null, i64 0, i32 {}) to i64)",
+             shape.slots_field()
+         ))
++    }
++
++    /// Allocate the runtime Slots payload, retaining a nonnull one-byte
++    /// allocation for zero extent. Target qualification has checked the
++    /// stride, allocation domain and alignment before this multiplication.
++    fn allocate_window_payload(
++        &mut self,
++        result: IrValueId,
++        capacity: IrValueId,
++        element_size: &str,
++    ) -> Result<String, BackendFailure> {
++        let extent = self.next_temporary()?;
++        let zero = self.next_temporary()?;
++        let bytes = self.next_temporary()?;
++        let payload = self.next_temporary()?;
++        let nonnull = self.next_temporary()?;
++        let ready = window_block_ready_label(result);
++        let oom = window_block_oom_label(result);
++        self.output.symbol("malloc");
++        writeln!(self.output,
++            "  %{extent} = mul nuw i64 {}, {element_size}\n  %{zero} = icmp eq i64 %{extent}, 0\n  %{bytes} = select i1 %{zero}, i64 1, i64 %{extent}\n  %{payload} = call ptr @malloc(i64 %{bytes})\n  %{nonnull} = icmp ne ptr %{payload}, null\n  br i1 %{nonnull}, label %{ready}, label %{oom}",
++            self.value_name(capacity)
++        ).map_err(|_| BackendFailure::TextEmission)?;
++        self.output.open_block(oom.to_string());
++        self.output.symbol("wf_resource_abort");
++        writeln!(
++            self.output,
++            "  call void @wf_resource_abort()\n  unreachable"
++        )
++        .map_err(|_| BackendFailure::TextEmission)?;
++        self.output.open_block(ready.to_string());
++        Ok(format!("%{payload}"))
+     }
+ 
+     /// Copies one element between two physical slots of two windows.
+@@ -1108,11 +1158,9 @@
+ 
+     /// [OP-13] one runtime-capacity window block and the cell that owns it.
+     ///
+-    /// The block is `[len | cap | head? | slots]` in one allocation, so the
+-    /// cell pointer is the block pointer and every later access reaches the
+-    /// header and the slots through one address
+-    /// (compiler/storage-representation). The window starts empty, which is
+-    /// exactly what the row's `ensures` publishes.
++    /// Runtime Slots construct an inline descriptor over a payload allocation;
++    /// Ring retains its descriptor and elements in one heap block. Both start
++    /// empty, exactly as the row's `ensures` publishes.
+     pub(super) fn emit_window_block_new(
+         &mut self,
+         result: IrValueId,
+@@ -1141,6 +1189,18 @@
+             return Err(BackendFailure::InvalidIr);
+         }
+         let element_size = self.window_element_size(shape)?;
++        if shape.split_payload() {
++            let payload = self.allocate_window_payload(result, capacity, &element_size)?;
++            let descriptor = self.value_place(result)?;
++            let length_field = self.aggregate_field_pointer(block_type, &descriptor, 0)?;
++            let capacity_field = self.aggregate_field_pointer(block_type, &descriptor, 1)?;
++            let payload_field = self.aggregate_field_pointer(block_type, &descriptor, 2)?;
++            writeln!(self.output,
++                "  store i64 0, ptr {length_field}\n  store i64 {}, ptr {capacity_field}\n  store ptr {payload}, ptr {payload_field}",
++                self.value_name(capacity)
++            ).map_err(|_| BackendFailure::TextEmission)?;
++            return Ok(());
++        }
+         let header_size = self.window_header_size(shape, block_type)?;
+         let block = self.output.type_name(self.program, block_type)?;
+         let slots_bytes = self.next_temporary()?;
+@@ -1200,8 +1260,8 @@
+     /// [OP-10] `grow`: the cell's content is remade whole at the new
+     /// capacity.
+     ///
+-    /// One allocation, header stores and one filled-prefix byte copy, one
+-    /// free, and the cell's pointer slot takes the new block. [STOR-7] makes
++    /// One allocation and initialized-prefix byte copy, then one free and
++    /// publication of the new payload and capacity. [STOR-7] makes
+     /// the copying route legal at every value, because no judgment depends
+     /// on the block's address.
+     pub(super) fn emit_window_grow(
+@@ -1230,74 +1290,25 @@
+             return Err(BackendFailure::InvalidIr);
+         }
+         let element_size = self.window_element_size(shape)?;
+-        let header_size = self.window_header_size(shape, block_type)?;
+-        let cell_address = self.value_name(cell);
+-        let old = self.next_temporary()?;
+-        writeln!(self.output, "  %{old} = load ptr, ptr {cell_address}")
+-            .map_err(|_| BackendFailure::TextEmission)?;
+-        let old_block = format!("%{old}");
+-        let old_length_address =
+-            self.aggregate_field_pointer(block_type, &old_block, shape.length_field() as usize)?;
++        let descriptor = self.value_name(cell);
++        let length_field = self.aggregate_field_pointer(block_type, &descriptor, 0)?;
++        let capacity_field = self.aggregate_field_pointer(block_type, &descriptor, 1)?;
++        let payload_field = self.aggregate_field_pointer(block_type, &descriptor, 2)?;
+         let length = self.next_temporary()?;
+-        writeln!(
+-            self.output,
+-            "  %{length} = load i64, ptr {old_length_address}"
+-        )
+-        .map_err(|_| BackendFailure::TextEmission)?;
+-        let slots_bytes = self.next_temporary()?;
+-        let bytes = self.next_temporary()?;
+-        let fresh = self.next_temporary()?;
+-        let nonnull = self.next_temporary()?;
+-        let ready = window_block_ready_label(result);
+-        let oom = window_block_oom_label(result);
+-        {
+-            let emission_argument_0 = self.value_name(capacity);
+-
+-            {
+-                self.output.symbol("malloc");
+-                write!(
+-                    self.output,
+-                    "  %{slots_bytes} = mul nuw i64 {emission_argument_0}, {element_size}\n  %{bytes} = add nuw i64 %{slots_bytes}, {header_size}\n  %{fresh} = call ptr @malloc(i64 %{bytes})\n  %{nonnull} = icmp ne ptr %{fresh}, null\n  br i1 %{nonnull}, label %{ready}, label %{oom}\n"
+-                )
+-            }?;
+-            self.output.open_block(oom.to_string());
+-            {
+-                self.output.symbol("wf_resource_abort");
+-                write!(
+-                    self.output,
+-                    "  call void @wf_resource_abort()\n  unreachable\n"
+-                )
+-            }?;
+-            self.output.open_block(ready.to_string());
+-        };
+-        let fresh_block = format!("%{fresh}");
+-        let fresh_length_address =
+-            self.aggregate_field_pointer(block_type, &fresh_block, shape.length_field() as usize)?;
+-        writeln!(
+-            self.output,
+-            "  store i64 %{length}, ptr {fresh_length_address}"
+-        )
+-        .map_err(|_| BackendFailure::TextEmission)?;
+-        let capacity_field = shape.capacity_field().ok_or(BackendFailure::InvalidIr)?;
+-        let fresh_capacity_address =
+-            self.aggregate_field_pointer(block_type, &fresh_block, capacity_field as usize)?;
+-        writeln!(
+-            self.output,
+-            "  store i64 {}, ptr {fresh_capacity_address}",
+-            self.value_name(capacity)
+-        )
+-        .map_err(|_| BackendFailure::TextEmission)?;
++        let old_payload = self.next_temporary()?;
++        writeln!(
++            self.output,
++            "  %{length} = load i64, ptr {length_field}\n  %{old_payload} = load ptr, ptr {payload_field}"
++        )
++        .map_err(|_| BackendFailure::TextEmission)?;
++        let fresh = self.allocate_window_payload(result, capacity, &element_size)?;
+         // The filled slots move as bytes: no value's judgment depends on its
+         // address [STOR-7], and a `Slots` window begins at slot zero, so the
+         // filled prefix is one contiguous extent.
+-        let old_slots = self.next_temporary()?;
+-        let fresh_slots = self.next_temporary()?;
+         let moved = self.next_temporary()?;
+-        let block = self.output.type_name(self.program, block_type)?;
+-        writeln!(
+-            self.output,
+-            "  %{old_slots} = getelementptr inbounds {block}, ptr %{old}, i64 0, i32 {slots}, i64 0\n  %{fresh_slots} = getelementptr inbounds {block}, ptr %{fresh}, i64 0, i32 {slots}, i64 0\n  %{moved} = mul nuw i64 %{length}, {element_size}",
+-            slots = shape.slots_field(),
++        writeln!(
++            self.output,
++            "  %{moved} = mul nuw i64 %{length}, {element_size}"
+         )
+         .map_err(|_| BackendFailure::TextEmission)?;
+         self.intrinsics.insert(IntrinsicDeclaration::MemoryMove);
+@@ -1305,7 +1316,8 @@
+         self.output.symbol("free");
+         writeln!(
+             self.output,
+-            "  call void @llvm.memmove.p0.p0.i64(ptr %{fresh_slots}, ptr %{old_slots}, i64 %{moved}, i1 false)\n  call void @free(ptr %{old})\n  store ptr %{fresh}, ptr {cell_address}"
++            "  call void @llvm.memmove.p0.p0.i64(ptr {fresh}, ptr %{old_payload}, i64 %{moved}, i1 false)\n  call void @free(ptr %{old_payload})\n  store ptr {fresh}, ptr {payload_field}\n  store i64 {}, ptr {capacity_field}",
++            self.value_name(capacity)
+         )
+         .map_err(|_| BackendFailure::TextEmission)?;
+         self.emit_constant(result, ty, IrConstant::Unit)
+@@ -1322,9 +1334,22 @@
+         if ty != IrType::Unit || self.value_type(value) != Some(IrType::Nominal(nominal)) {
+             return Err(BackendFailure::InvalidIr);
+         }
+-        let IrNominalKind::Box { .. } = self.nominal(nominal)?.kind() else {
+-            return Err(BackendFailure::InvalidIr);
+-        };
++        let IrNominalKind::Box { referent, .. } = self.nominal(nominal)?.kind() else {
++            return Err(BackendFailure::InvalidIr);
++        };
++        if crate::target::inline_slots_descriptor(*referent) {
++            let block_type = *referent;
++            let value = self.value_place(value)?;
++            let payload_field = self.aggregate_field_pointer(block_type, &value, 2)?;
++            let payload = self.next_temporary()?;
++            self.output.symbol("free");
++            writeln!(
++                self.output,
++                "  %{payload} = load ptr, ptr {payload_field}\n  call void @free(ptr %{payload})"
++            )
++            .map_err(|_| BackendFailure::TextEmission)?;
++            return self.emit_constant(result, ty, IrConstant::Unit);
++        }
+         {
+             self.output.symbol("free");
+             writeln!(
+--- a/compiler/src/semantic/check/expressions/flat_storage.rs
++++ b/compiler/src/semantic/check/expressions/flat_storage.rs
+@@ -2059,9 +2059,25 @@
+                 }
+                 let nominal = self.nominal(id).ok()?;
+                 let result = match &nominal.kind {
+-                    // [OP-9] `Box<T>` is `(8,8)`, one pointer; its `inner`
+-                    // field lives in the heap object and enters no sequence.
+-                    CheckedNominalKind::Box { .. } => finish(CheckedLayoutMagnitude::Finite(8), 8),
++                    // [OP-9] runtime Slots owns an inline descriptor; other
++                    // Boxes are one pointer. Neither expands its content.
++                    CheckedNominalKind::Box { referent, .. } => finish(
++                        CheckedLayoutMagnitude::Finite(
++                            if matches!(
++                                referent,
++                                CheckedType::Window {
++                                    shape: super::super::super::model::WindowShape::Slots,
++                                    capacity: None,
++                                    ..
++                                }
++                            ) {
++                                24
++                            } else {
++                                8
++                            },
++                        ),
++                        8,
++                    ),
+                     // A handle is one pointer to its shared object [SHARE-1].
+                     CheckedNominalKind::Shared { .. } => {
+                         finish(CheckedLayoutMagnitude::Finite(8), 8)
+--- a/compiler/src/lowering/builder/prelude.rs
++++ b/compiler/src/lowering/builder/prelude.rs
+@@ -773,9 +773,25 @@
+             }
+             let nominal = nominals.get(id.index())?;
+             let pair = match nominal.kind() {
+-                // One pointer; the content lives in the heap object and
+-                // enters no sequence.
+-                IrNominalKind::Box { .. } => (Finite(8), 8),
++                // Runtime Slots owns an inline descriptor; other Boxes are
++                // one pointer. Neither expands its content [OP-9].
++                IrNominalKind::Box { referent, .. } => (
++                    Finite(
++                        if matches!(
++                            referent,
++                            IrType::Window {
++                                shape: IrWindowShape::Slots,
++                                capacity: None,
++                                ..
++                            }
++                        ) {
++                            24
++                        } else {
++                            8
++                        },
++                    ),
++                    8,
++                ),
+                 // One pointer to the shared object [SHARE-1].
+                 IrNominalKind::Shared { .. } => (Finite(8), 8),
+                 // Every fieldless opaque struct carries the host handles'
+--- a/research/experiments/container-representation/vector-library/vector-library.wf
++++ b/research/experiments/container-representation/vector-library/vector-library.wf
+@@ -247,6 +247,11 @@
+   return result;
+ }
+ 
++struct VectorApiPrepared<T> {
++  owner: GrowVector<T, 8193>;
++  abi_padding: Array<u64, 3>;
++}
++
+ struct VectorApiObservation {
+   length: u64;
+   capacity: u64;
+@@ -374,6 +379,22 @@
+   return vector_api_prepare::<ApiRecordElement>(capacity: capacity);
+ }
+ 
++fn vector_api_word_prepare_for_c(capacity: u64) -> made: VectorApiPrepared<u64> pure contract {
++  requires capacity <= 8193_u64;
++} {
++  let owner = vector_api_word_prepare(capacity: capacity);
++  let padding = array_filled::<u64, 3>(value: 0_u64);
++  return VectorApiPrepared<u64>(owner: move owner, abi_padding: padding);
++}
++
++fn vector_api_record_prepare_for_c(capacity: u64) -> made: VectorApiPrepared<VectorRecord> pure contract {
++  requires capacity <= 8193_u64;
++} {
++  let owner = vector_api_record_prepare(capacity: capacity);
++  let padding = array_filled::<u64, 3>(value: 0_u64);
++  return VectorApiPrepared<VectorRecord>(owner: move owner, abi_padding: padding);
++}
++
+ fn vector_api_word_append_batch(values: &GrowVector<u64, 8193>, count: u64, seed: u64) -> length: u64 writes(values.storage) contract {
+   requires count <= 8192_u64;
+   requires values^.storage.inner.len <= 0_u64;
+--- a/research/experiments/container-representation/vector-library/vector-costs.c
++++ b/research/experiments/container-representation/vector-library/vector-costs.c
+@@ -38,6 +38,12 @@
+ extern uint64_t cpp_vector_record_trace(uint64_t, uint64_t, uint64_t, uint64_t);
+ #endif
+ 
++// Current inline owner layout; retained thin-compiler replay sets this to 0
++// explicitly through ECO_CFLAGS so the build configuration records the ABI.
++#ifndef WF_INLINE_SLOTS_OWNER
++#define WF_INLINE_SLOTS_OWNER 1
++#endif
++
+ #if !defined(ECOSYSTEM) || defined(ACCOUNT_ONLY)
+ typedef union {
+     struct { size_t bytes; uint64_t magic; } value;
+@@ -48,6 +54,12 @@
+ #ifndef WF_FULL_SLOTS_REALLOC
+ #define WF_FULL_SLOTS_REALLOC 0
+ #endif
++// Physical requested extent: C controls retain their two-word header.
++static size_t owned_allocation_bytes(bool whitefoot, uint64_t capacity, size_t stride) {
++    size_t payload = (size_t)capacity * stride;
++    if (whitefoot && WF_INLINE_SLOTS_OWNER) return payload ? payload : 1;
++    return 16 + payload;
++}
+ #endif
+ static volatile uint64_t observed;
+ 
+@@ -444,21 +456,23 @@
+ #if defined(ECOSYSTEM)
+     if (variant >= RUST_VECTOR) return;
+ #endif
+-    // Source trace: one initial header, then only full-window growth for WF;
++    // Source trace: one initial owned allocation, then full-window growth for WF;
+     // the C controls retain allocate/move/free. The expectation flag is fixed
+     // by the compiler being qualified, never selected from observed counters.
+     const bool resizing = variant == WHITEFOOT && WF_FULL_SLOTS_REALLOC;
+     const size_t stride = wide ? sizeof(Record) : sizeof(uint64_t);
+-    size_t per_requests = 2, per_bytes = 32 + (count + 1) * stride;
++    const size_t empty_bytes = owned_allocation_bytes(variant == WHITEFOOT, 0, stride);
++    const size_t reserved_bytes = owned_allocation_bytes(variant == WHITEFOOT, count + 1, stride);
++    size_t per_requests = 2, per_bytes = empty_bytes + reserved_bytes;
+     size_t per_reallocs = resizing ? 1 : 0;
+-    size_t per_peak = resizing ? per_bytes - 16 : per_bytes;
++    size_t per_peak = resizing ? reserved_bytes : per_bytes;
+     size_t per_overlap = per_bytes;
+     if (path == 1) {
+-        per_requests = 1; per_bytes = 16; per_peak = per_overlap = 16;
++        per_requests = 1; per_bytes = empty_bytes; per_peak = per_overlap = empty_bytes;
+         per_reallocs = 0;
+-        size_t old_bytes = 16;
++        size_t old_bytes = empty_bytes;
+         for (uint64_t capacity = 1;;) {
+-            size_t bytes = 16 + capacity * stride;
++            size_t bytes = owned_allocation_bytes(variant == WHITEFOOT, capacity, stride);
+             ++per_requests; per_bytes += bytes;
+             if (resizing) ++per_reallocs;
+             per_peak = resizing ? bytes : old_bytes + bytes;
+@@ -581,9 +595,18 @@
+     "whitefoot", "reverse-c", "direct-c", "swap-take-c", "take-swap-c", "rust-vec", "cpp-std-vector"
+ };
+ 
+-// The language-specific descriptors stay opaque. Whitefoot's ordinary result
+-// ABI is a one-pointer struct; mutation and consumption borrow that owner slot.
++#if WF_INLINE_SLOTS_OWNER
++typedef struct { uint64_t length, capacity; void *payload; } ApiOwner;
++#else
+ typedef struct { void *state; } ApiOwner;
++#endif
++// Both source prepare wrappers use the shared destination-first result ABI.
++// Only setup copies the returned owner's representation into the opaque slot;
++// mutation and consumption receive that slot directly for either layout.
++typedef struct { ApiOwner owner; uint64_t abi_padding[3]; } ApiPrepared;
++_Static_assert(offsetof(ApiPrepared, owner) == 0, "prepared owner prefix");
++_Static_assert(offsetof(ApiPrepared, abi_padding) == sizeof(ApiOwner),
++               "prepared result layout");
+ typedef union { max_align_t alignment; unsigned char bytes[3 * sizeof(void *)]; } ApiStorage;
+ typedef struct { uint64_t length, capacity, checksum, valid; } ApiObservation;
+ typedef struct {
+@@ -605,11 +628,12 @@
+     extern void prefix##_##width##_prepare(uint64_t, void *);               \
+     DECLARE_APPEND_OPERATIONS(prefix, width)
+ #define DECLARE_WF_APPEND_API(width)                                        \
+-    extern ApiOwner wf_vector_api_##width##_prepare(uint64_t);             \
++    extern void wf_vector_api_##width##_prepare_for_c(void *, uint64_t);   \
+     DECLARE_APPEND_OPERATIONS(wf_vector_api, width);                         \
+     static void wf_vector_api_##width##_prepare_slot(uint64_t capacity, void *storage) { \
+-        ApiOwner owner = wf_vector_api_##width##_prepare(capacity);         \
+-        memcpy(storage, &owner, sizeof owner);                             \
++        ApiPrepared prepared;                                             \
++        wf_vector_api_##width##_prepare_for_c(&prepared, capacity);         \
++        memcpy(storage, &prepared.owner, sizeof prepared.owner);           \
+     }
+ DECLARE_WF_APPEND_API(word)
+ DECLARE_WF_APPEND_API(record)
+@@ -772,9 +796,15 @@
+                 uint64_t initial = growth_prepare(api, &owner, capacities[n], seed);
+ #if defined(ACCOUNT_ONLY)
+                 ApiAccount before = append_account_snapshot();
+-                const size_t header = variant == 0 ? 16 : 0;
+-                require(before.live == header + initial * stride,
++                const size_t initial_bytes = variant == 0
++                    ? owned_allocation_bytes(true, initial, stride) : initial * stride;
++                require(before.live == initial_bytes,
+                         "growth append initial live bytes");
++                if (variant == 0)
++                    require(before.requests == (initial == 0 ? 1u : 2u)
++                            && before.reallocations == (initial != 0 && WF_FULL_SLOTS_REALLOC ? 1u : 0u)
++                            && before.releases == (initial != 0 && !WF_FULL_SLOTS_REALLOC ? 1u : 0u),
++                            "growth append WF preparation ledger");
+ #endif
+                 uint64_t length = api->append_one(&owner, seed + initial + fail_values);
+ #if defined(ACCOUNT_ONLY)
+@@ -784,12 +814,19 @@
+                                                          length, wide != 0, fail_state);
+ #if defined(ACCOUNT_ONLY)
+                 require(after.requests > before.requests && after.bytes > before.bytes
+-                        && after.live == header + capacity * stride
++                        && after.live == (variant == 0
++                            ? owned_allocation_bytes(true, capacity, stride) : capacity * stride)
+                         && after.requests - before.requests
+                             == after.releases - before.releases
+                                + after.reallocations - before.reallocations
+                                + (initial == 0 && variant != 0),
+                         "growth append allocation ledger");
++                if (variant == 0)
++                    require(after.requests - before.requests == 1
++                            && after.reallocations - before.reallocations == (WF_FULL_SLOTS_REALLOC ? 1u : 0u)
++                            && after.releases - before.releases == (WF_FULL_SLOTS_REALLOC ? 0u : 1u)
++                            && after.bytes - before.bytes == owned_allocation_bytes(true, capacity, stride),
++                            "growth append WF route ledger");
+                 if (report)
+                     printf("append-growth-o3,%zu,%" PRIu64 ",%" PRIu64 ",%s,%" PRIu64 ",%" PRIu64 ",%zu,%zu,%zu,%zu,%zu,%zu\n",
+                            stride, capacities[n], initial, api->name, length, capacity,

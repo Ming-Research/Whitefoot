@@ -1,0 +1,1296 @@
+Full-growth entry equality: post-lowering diagnostic
+
+This record serves the entry-relation discriminator in RESULTS.md. Retain with that
+experiment; retire when superseding fact-transport evidence makes it redundant.
+No production compiler change and no paired performance conclusion.
+
+Inputs: frozen inline-owner B, reproduced by inline-slots-owner.patch on
+b7d386c193134cfe90505c80c445d2ef4d48ddae. This diagnostic adds precisely the
+five entry instructions shown by full-entry-equality.patch to each of two
+full-growth bodies in both timed/accounting IR, with no other IR differences.
+Removing those exact additions recovers both input files byte for byte.
+All frozen input checksums below were independently re-read; both IR inputs,
+and all driver/Rust/C++ objects match the original B experiment byte for byte.
+
+Reproduction after rebuilding B with the commands in its retained timing log:
+copy B whitefoot-timed.ll and whitefoot-account.ll to a fresh working directory,
+then run git apply --directory=<that-directory> full-entry-equality.patch.
+The frozen input SHA-256 values below distinguish this diagnostic from any
+new compiler emission. The exact compile/link/check commands follow.
+
+The initial link used the same runtime objects in sorted order, unlike B.
+All initial checks passed, but object order changes native placement. Before
+any timing, the experiment relinked both images in B's original order and
+reran all checks and negative controls. Both generations and their exits are
+retained below. The single screen used only the repaired-order image.
+
+Input configuration
+vector
+/private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/inline-slots-owner/whitefootc-inline
+clang
+clang++
+rustc
+vector-ecosystem.rs
+vector-ecosystem.cpp
+-DECOSYSTEM
+-std=c11 -O3 -Wall -Wextra -Werror -DWF_SPLIT_SLOTS_PAYLOAD=1 -DWF_SPLIT_SLOTS_REALLOC=1 -DWF_INLINE_SLOTS_OWNER=1
+-std=c++20 -O3 -DNDEBUG -Wall -Wextra -Werror
+--edition=2024 -C opt-level=3 -C panic=abort -D warnings
+-O3
+-liconv -lSystem -lc -lm
+
+
+
+
+Apple clang version 21.0.0 (clang-2100.3.34.2)
+Target: arm64-apple-darwin25.6.0
+Thread model: posix
+InstalledDir: /Library/Developer/CommandLineTools/usr/bin
+Apple clang version 21.0.0 (clang-2100.3.34.2)
+Target: arm64-apple-darwin25.6.0
+Thread model: posix
+InstalledDir: /Library/Developer/CommandLineTools/usr/bin
+rustc 1.98.1 (48a229cea 2026-09-01)
+binary: rustc
+commit-hash: 48a229ceaefd4985c50990b14116b6d856af0985
+commit-date: 2026-09-01
+host: aarch64-apple-darwin
+release: 1.98.1
+LLVM version: 22.1.8
+
+Verified frozen input SHA-256 identities
+{
+  "inputs/ecosystem/configuration.txt": "15223bdbe5560bf61985e2072b298af7df3cafa0b468de9c566b41765f27b6fc",
+  "inputs/ecosystem/cpp-account.o": "7584d61db0d902bfa4b5975c5fcd2f717f9d34fa174c9ae4650f457178477de5",
+  "inputs/ecosystem/cpp-timed.o": "c35ec1f01eef08066ef381b06da6fc72ef6aba12d98a1b33c48a016de6313dd1",
+  "inputs/ecosystem/driver-account.o": "a667d1c7b0ea23a06d6db925c9782e613d5cdbe9528efabb1d3ee1693d903a29",
+  "inputs/ecosystem/driver-timed.o": "8e08f4bf349fa82ba5e04f79d8fbd458baeeacff60e11562f108a79ab043ebb4",
+  "inputs/ecosystem/rust-account.a": "f35af52b27861a01c37bf9cbdc0c103949619ba8fb3cd479812d07ed1b45c563",
+  "inputs/ecosystem/rust-timed.a": "b1eccd7d521f678bd123531708f67a1cce0f6b6fa509edb907acab53f1f11873",
+  "inputs/ecosystem/whitefoot-account.ll": "17919b4f36a8e205509bd1910c23cac953a9e624e1694168d02b7c2e413208ea",
+  "inputs/ecosystem/whitefoot-timed.ll": "b62568b78ed2710bce849c60dde5ad6bcd7877d067b17e22ca40d4fc540c73df",
+  "inputs/native/completion/bridge.o": "a1def81793c4229e41586590b91d134a9a2375a6ad9d31189b8164e91aaf137b",
+  "inputs/native/completion/file_adapter.o": "1bcbb49aa9a44031faf6397e01a960b2ce5d5d02f42cc2aaecb4edc0818d8ec6",
+  "inputs/native/completion/file_posix.o": "f1fa09d7c0831333726c367986a3811d588e639f090435b1cbf1fce62758bf33",
+  "inputs/native/completion/linux_io_uring.o": "e389769ac8c9f38af9cd00e5bc5d56d3c180dff5985fb81ddfff63dfa89eb453",
+  "inputs/native/completion/runtime.o": "75cb971977625c9b05adcf74b14989544ccbf61b0a81fe4843ec72226eb36c61",
+  "inputs/native/completion/wait_host.o": "b9dbbb1485b2c3e47ef248568020130e7e27446e56be5a2c52f224bbd7a2f463",
+  "inputs/native/configuration.txt": "4d71c7a03bc4d783825679fefbed737a6d2a90f9058abcd636111e6784f07ef2",
+  "inputs/native/ordinary_values.o": "07ebcae5ed98fa7ff1a218150170f56c961e9dbae682781b62a5878a094da58b",
+  "inputs/native/ordinary_values_ir.o": "846bc08916aadbe77111a2c45aff15f33fd1fb7ffe816c198c2bf6f96dcad210",
+  "inputs/native/sched/core.o": "0655633c69666fcce21bf67258101aedb49c914fc50a6cc8edbfe22a8315e645",
+  "inputs/native/sched/entry.o": "e04734d7a1ddbe9083b47570ca2854963803b88a7197628bed2ca66cb4924d5c",
+  "inputs/native/sched/prim_host.o": "c3a5140b8221a57d27a510995ae37c7b33a64ebc87ec9f9286b99ece649bce45",
+  "inputs/native/wf_floor.o": "8342e7ea0b8d6a0817d543e8c05e807c96527393945e95597718ba9a27ce722d",
+  "inputs/prepare-bridge.ll": "b196ebd1484e688c1979efad738c697b22ec9d4e2179f851097c17e1d01ff0f8",
+  "inputs/prepare-bridge.o": "b201a1b4c00d3b534a5b9df19e354d1166e3de19f24db79d8d1a805c9c7305a3"
+}
+226bdaa1b0bc50b7a87b55d7e3ba4bfbeba525f313d9f1f5a8be0bee2a2cfd4c  whitefoot-timed.ll
+372b70202f6f26d3c6b603a4b20dab8557b8e57a1463f93bc1140072abae2ae6  whitefoot-timed.o
+fefbd8e5bc725f4ac3dedca82bbecbbbd07813995528c356bdbc68615ab13fad  vector-costs-timed
+ba7cce88f65e08ed8dcadd6ca4173044ae59c2949610cf52c5f66814cd96348d  before-link-order-repair/vector-costs-timed
+062cc66295e9a833b61c1ec8449db7892d4c64cff16a2ab263f970cfc1a43a66  whitefoot-account.ll
+45e21c08a97d4c7de6fe9b725ff7f7ed19541dae0cd80669091910c9dca95ddd  whitefoot-account.o
+29763471fb3b63874c4a2cd56691fa0be562e775fcc61c079b59fbfd02a9c951  vector-costs-account
+899c9ccfb03cc5ae985afc169fb500ba3faf92ca39dfeedfc0d5f6333e4849c7  before-link-order-repair/vector-costs-account
+
+All command stages (recorded commands; runner log follows each)
+
+statuses.json
+
+$ perl .github/run-check.pl full-entry-timed-compile clang -O3 -Wno-override-module -x ir -c research/experiments/container-representation/vector-library/.build/full-entry-equality/whitefoot-timed.ll -o research/experiments/container-representation/vector-library/.build/full-entry-equality/whitefoot-timed.o
+Expected exit 0; actual exit 0
+== START full-entry-timed-compile (limit 120s): clang -O3 -Wno-override-module -x ir -c research/experiments/container-representation/vector-library/.build/full-entry-equality/whitefoot-timed.ll -o research/experiments/container-representation/vector-library/.build/full-entry-equality/whitefoot-timed.o ==
+real 0.17
+user 0.16
+sys 0.01
+== END full-entry-timed-compile: 0.22 s, exit 0 ==
+
+$ perl .github/run-check.pl full-entry-timed-link clang++ -O3 research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/ecosystem/driver-timed.o research/experiments/container-representation/vector-library/.build/full-entry-equality/whitefoot-timed.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/ecosystem/cpp-timed.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/ecosystem/rust-timed.a research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/bridge.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/file_adapter.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/file_posix.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/linux_io_uring.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/runtime.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/wait_host.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/ordinary_values.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/ordinary_values_ir.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/sched/core.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/sched/entry.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/sched/prim_host.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/wf_floor.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/prepare-bridge.o -pthread -lm -liconv -lSystem -lc -lm -o research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-timed
+Expected exit 0; actual exit 0
+== START full-entry-timed-link (limit 120s): clang++ -O3 research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/ecosystem/driver-timed.o research/experiments/container-representation/vector-library/.build/full-entry-equality/whitefoot-timed.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/ecosystem/cpp-timed.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/ecosystem/rust-timed.a research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/bridge.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/file_adapter.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/file_posix.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/linux_io_uring.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/runtime.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/wait_host.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/ordinary_values.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/ordinary_values_ir.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/sched/core.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/sched/entry.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/sched/prim_host.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/wf_floor.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/prepare-bridge.o -pthread -lm -liconv -lSystem -lc -lm -o research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-timed ==
+ld: warning: ignoring duplicate libraries: '-lSystem', '-lm'
+real 0.05
+user 0.09
+sys 0.04
+== END full-entry-timed-link: 0.11 s, exit 0 ==
+
+$ perl .github/run-check.pl full-entry-account-compile clang -O3 -Wno-override-module -x ir -c research/experiments/container-representation/vector-library/.build/full-entry-equality/whitefoot-account.ll -o research/experiments/container-representation/vector-library/.build/full-entry-equality/whitefoot-account.o
+Expected exit 0; actual exit 0
+== START full-entry-account-compile (limit 120s): clang -O3 -Wno-override-module -x ir -c research/experiments/container-representation/vector-library/.build/full-entry-equality/whitefoot-account.ll -o research/experiments/container-representation/vector-library/.build/full-entry-equality/whitefoot-account.o ==
+real 0.17
+user 0.16
+sys 0.01
+== END full-entry-account-compile: 0.22 s, exit 0 ==
+
+$ perl .github/run-check.pl full-entry-account-link clang++ -O3 research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/ecosystem/driver-account.o research/experiments/container-representation/vector-library/.build/full-entry-equality/whitefoot-account.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/ecosystem/cpp-account.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/ecosystem/rust-account.a research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/bridge.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/file_adapter.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/file_posix.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/linux_io_uring.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/runtime.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/wait_host.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/ordinary_values.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/ordinary_values_ir.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/sched/core.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/sched/entry.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/sched/prim_host.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/wf_floor.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/prepare-bridge.o -pthread -lm -liconv -lSystem -lc -lm -o research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-account
+Expected exit 0; actual exit 0
+== START full-entry-account-link (limit 120s): clang++ -O3 research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/ecosystem/driver-account.o research/experiments/container-representation/vector-library/.build/full-entry-equality/whitefoot-account.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/ecosystem/cpp-account.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/ecosystem/rust-account.a research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/bridge.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/file_adapter.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/file_posix.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/linux_io_uring.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/runtime.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/wait_host.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/ordinary_values.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/ordinary_values_ir.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/sched/core.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/sched/entry.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/sched/prim_host.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/wf_floor.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/prepare-bridge.o -pthread -lm -liconv -lSystem -lc -lm -o research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-account ==
+ld: warning: ignoring duplicate libraries: '-lSystem', '-lm'
+real 0.05
+user 0.09
+sys 0.04
+== END full-entry-account-link: 0.11 s, exit 0 ==
+
+$ perl .github/run-check.pl full-entry-timed-growth-api-check research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-timed growth-api-check
+Expected exit 0; actual exit 0
+== START full-entry-timed-growth-api-check (limit 120s): research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-timed growth-api-check ==
+growth append clock: reads=200000 minimum_nonzero_ns=41 quantized=0
+growth append policy: whitefoot bytes=8 requested=0 initial=0 length=1 capacity=1
+growth append policy: rust-vec bytes=8 requested=0 initial=0 length=1 capacity=4
+growth append policy: cpp-std-vector bytes=8 requested=0 initial=0 length=1 capacity=1
+growth append policy: whitefoot bytes=256 requested=0 initial=0 length=1 capacity=1
+growth append policy: rust-vec bytes=256 requested=0 initial=0 length=1 capacity=4
+growth append policy: cpp-std-vector bytes=256 requested=0 initial=0 length=1 capacity=1
+growth append policy: whitefoot bytes=8 requested=1 initial=1 length=2 capacity=2
+growth append policy: rust-vec bytes=8 requested=1 initial=1 length=2 capacity=4
+growth append policy: cpp-std-vector bytes=8 requested=1 initial=1 length=2 capacity=2
+growth append policy: whitefoot bytes=256 requested=1 initial=1 length=2 capacity=2
+growth append policy: rust-vec bytes=256 requested=1 initial=1 length=2 capacity=4
+growth append policy: cpp-std-vector bytes=256 requested=1 initial=1 length=2 capacity=2
+vector append growth: scalar/256B, five capacities, three APIs passed
+real 0.40
+user 0.00
+sys 0.00
+== END full-entry-timed-growth-api-check: 0.42 s, exit 0 ==
+
+$ perl .github/run-check.pl full-entry-timed-api-check research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-timed api-check
+Expected exit 0; actual exit 0
+== START full-entry-timed-api-check (limit 120s): research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-timed api-check ==
+vector spare append: scalar/256B, five counts, three APIs passed
+real 0.00
+user 0.00
+sys 0.00
+== END full-entry-timed-api-check: 0.11 s, exit 0 ==
+
+$ perl .github/run-check.pl full-entry-timed-growth-fail-values research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-timed growth-api-fail-values
+Expected exit 1; actual exit 1
+== START full-entry-timed-growth-fail-values (limit 120s): research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-timed growth-api-fail-values ==
+vector library costs: growth append full values and checksum
+real 0.00
+user 0.00
+sys 0.00
+== END full-entry-timed-growth-fail-values: 0.11 s, exit 1 ==
+
+$ perl .github/run-check.pl full-entry-timed-growth-fail-state research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-timed growth-api-fail-state
+Expected exit 1; actual exit 1
+== START full-entry-timed-growth-fail-state (limit 120s): research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-timed growth-api-fail-state ==
+vector library costs: growth append post state
+real 0.00
+user 0.00
+sys 0.00
+== END full-entry-timed-growth-fail-state: 0.11 s, exit 1 ==
+
+$ perl .github/run-check.pl full-entry-account-growth-api-check research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-account growth-api-check
+Expected exit 0; actual exit 0
+== START full-entry-account-growth-api-check (limit 120s): research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-account growth-api-check ==
+growth append policy: whitefoot bytes=8 requested=0 initial=0 length=1 capacity=1
+growth append policy: rust-vec bytes=8 requested=0 initial=0 length=1 capacity=4
+growth append policy: cpp-std-vector bytes=8 requested=0 initial=0 length=1 capacity=1
+growth append policy: whitefoot bytes=256 requested=0 initial=0 length=1 capacity=1
+growth append policy: rust-vec bytes=256 requested=0 initial=0 length=1 capacity=4
+growth append policy: cpp-std-vector bytes=256 requested=0 initial=0 length=1 capacity=1
+growth append policy: whitefoot bytes=8 requested=1 initial=1 length=2 capacity=2
+growth append policy: rust-vec bytes=8 requested=1 initial=1 length=2 capacity=4
+growth append policy: cpp-std-vector bytes=8 requested=1 initial=1 length=2 capacity=2
+growth append policy: whitefoot bytes=256 requested=1 initial=1 length=2 capacity=2
+growth append policy: rust-vec bytes=256 requested=1 initial=1 length=2 capacity=4
+growth append policy: cpp-std-vector bytes=256 requested=1 initial=1 length=2 capacity=2
+vector append growth: scalar/256B, five capacities, three APIs passed
+real 0.27
+user 0.00
+sys 0.00
+== END full-entry-account-growth-api-check: 0.33 s, exit 0 ==
+
+$ perl .github/run-check.pl full-entry-account-api-check research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-account api-check
+Expected exit 0; actual exit 0
+== START full-entry-account-api-check (limit 120s): research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-account api-check ==
+vector spare append: scalar/256B, five counts, three APIs passed
+real 0.00
+user 0.00
+sys 0.00
+== END full-entry-account-api-check: 0.11 s, exit 0 ==
+
+$ perl .github/run-check.pl full-entry-account-growth-fail-values research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-account growth-api-fail-values
+Expected exit 1; actual exit 1
+== START full-entry-account-growth-fail-values (limit 120s): research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-account growth-api-fail-values ==
+vector library costs: growth append full values and checksum
+real 0.00
+user 0.00
+sys 0.00
+== END full-entry-account-growth-fail-values: 0.11 s, exit 1 ==
+
+$ perl .github/run-check.pl full-entry-account-growth-fail-state research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-account growth-api-fail-state
+Expected exit 1; actual exit 1
+== START full-entry-account-growth-fail-state (limit 120s): research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-account growth-api-fail-state ==
+vector library costs: growth append post state
+real 0.00
+user 0.00
+sys 0.00
+== END full-entry-account-growth-fail-state: 0.11 s, exit 1 ==
+
+$ perl .github/run-check.pl full-entry-account-allocator-check research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-account allocator-check
+Expected exit 0; actual exit 0
+== START full-entry-account-allocator-check (limit 120s): research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-account allocator-check ==
+vector allocator observer: preserved bytes, alignment and exact ledger passed
+real 0.00
+user 0.00
+sys 0.00
+== END full-entry-account-allocator-check: 0.10 s, exit 0 ==
+
+$ perl .github/run-check.pl full-entry-account-allocator-fail-values research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-account allocator-fail-values
+Expected exit 1; actual exit 1
+== START full-entry-account-allocator-fail-values (limit 120s): research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-account allocator-fail-values ==
+vector library costs: reallocation observer preserved bytes
+real 0.00
+user 0.00
+sys 0.00
+== END full-entry-account-allocator-fail-values: 0.10 s, exit 1 ==
+
+$ perl .github/run-check.pl full-entry-account-allocator-fail-accounting research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-account allocator-fail-accounting
+Expected exit 1; actual exit 1
+== START full-entry-account-allocator-fail-accounting (limit 120s): research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-account allocator-fail-accounting ==
+vector library costs: reallocation observer exact ledger
+real 0.00
+user 0.00
+sys 0.00
+== END full-entry-account-allocator-fail-accounting: 0.10 s, exit 1 ==
+
+$ perl .github/run-check.pl full-entry-account-api-fail-values research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-account api-fail-values
+Expected exit 1; actual exit 1
+== START full-entry-account-api-fail-values (limit 120s): research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-account api-fail-values ==
+vector library costs: spare append full values and checksum
+real 0.00
+user 0.00
+sys 0.00
+== END full-entry-account-api-fail-values: 0.11 s, exit 1 ==
+
+$ perl .github/run-check.pl full-entry-account-api-fail-allocation research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-account api-fail-allocation
+Expected exit 1; actual exit 1
+== START full-entry-account-api-fail-allocation (limit 120s): research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-account api-fail-allocation ==
+vector library costs: spare append zero allocation
+real 0.00
+user 0.00
+sys 0.00
+== END full-entry-account-api-fail-allocation: 0.11 s, exit 1 ==
+
+$ perl .github/run-check.pl full-entry-timed-clock-fault research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-timed growth-api-fail-clock
+Expected exit 1; actual exit 1
+== START full-entry-timed-clock-fault (limit 120s): research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-timed growth-api-fail-clock ==
+growth append clock: reads=200000 minimum_nonzero_ns=1000 quantized=1
+vector library costs: growth append clock precision
+real 0.00
+user 0.00
+sys 0.00
+== END full-entry-timed-clock-fault: 0.11 s, exit 1 ==
+
+$ perl .github/run-check.pl full-entry-account-rows sh -c 'research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-account growth-api-account > research/experiments/container-representation/vector-library/.build/full-entry-equality/append-growth-accounting.csv'
+Expected exit 0; actual exit 0
+== START full-entry-account-rows (limit 120s): sh -c research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-account growth-api-account > research/experiments/container-representation/vector-library/.build/full-entry-equality/append-growth-accounting.csv ==
+real 0.01
+user 0.00
+sys 0.00
+== END full-entry-account-rows: 0.11 s, exit 0 ==
+
+relink-statuses.json
+
+$ perl .github/run-check.pl full-entry-relink-timed clang++ -O3 research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/ecosystem/driver-timed.o research/experiments/container-representation/vector-library/.build/full-entry-equality/whitefoot-timed.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/ecosystem/cpp-timed.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/ecosystem/rust-timed.a research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/ordinary_values.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/sched/core.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/sched/entry.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/runtime.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/file_adapter.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/bridge.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/wf_floor.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/sched/prim_host.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/wait_host.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/file_posix.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/linux_io_uring.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/ordinary_values_ir.o -pthread -lm /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/prepare-bridge.o -liconv -lSystem -lc -lm -o research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-timed
+Expected exit 0; actual exit 0
+== START full-entry-relink-timed (limit 120s): clang++ -O3 research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/ecosystem/driver-timed.o research/experiments/container-representation/vector-library/.build/full-entry-equality/whitefoot-timed.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/ecosystem/cpp-timed.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/ecosystem/rust-timed.a research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/ordinary_values.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/sched/core.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/sched/entry.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/runtime.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/file_adapter.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/bridge.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/wf_floor.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/sched/prim_host.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/wait_host.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/file_posix.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/linux_io_uring.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/ordinary_values_ir.o -pthread -lm /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/prepare-bridge.o -liconv -lSystem -lc -lm -o research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-timed ==
+ld: warning: ignoring duplicate libraries: '-lSystem', '-lm'
+real 0.06
+user 0.09
+sys 0.04
+== END full-entry-relink-timed: 0.11 s, exit 0 ==
+
+$ perl .github/run-check.pl full-entry-relink-account clang++ -O3 research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/ecosystem/driver-account.o research/experiments/container-representation/vector-library/.build/full-entry-equality/whitefoot-account.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/ecosystem/cpp-account.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/ecosystem/rust-account.a research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/ordinary_values.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/sched/core.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/sched/entry.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/runtime.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/file_adapter.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/bridge.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/wf_floor.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/sched/prim_host.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/wait_host.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/file_posix.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/linux_io_uring.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/ordinary_values_ir.o -pthread -lm /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/prepare-bridge.o -liconv -lSystem -lc -lm -o research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-account
+Expected exit 0; actual exit 0
+== START full-entry-relink-account (limit 120s): clang++ -O3 research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/ecosystem/driver-account.o research/experiments/container-representation/vector-library/.build/full-entry-equality/whitefoot-account.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/ecosystem/cpp-account.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/ecosystem/rust-account.a research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/ordinary_values.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/sched/core.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/sched/entry.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/runtime.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/file_adapter.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/bridge.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/wf_floor.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/sched/prim_host.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/wait_host.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/file_posix.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/completion/linux_io_uring.o research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/native/ordinary_values_ir.o -pthread -lm /private/tmp/whitefoot-container-library-complete/research/experiments/container-representation/vector-library/.build/full-entry-equality/inputs/prepare-bridge.o -liconv -lSystem -lc -lm -o research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-account ==
+ld: warning: ignoring duplicate libraries: '-lSystem', '-lm'
+real 0.05
+user 0.09
+sys 0.04
+== END full-entry-relink-account: 0.11 s, exit 0 ==
+
+$ perl .github/run-check.pl full-entry-relinked-timed-growth-api-check research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-timed growth-api-check
+Expected exit 0; actual exit 0
+== START full-entry-relinked-timed-growth-api-check (limit 120s): research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-timed growth-api-check ==
+growth append clock: reads=200000 minimum_nonzero_ns=41 quantized=0
+growth append policy: whitefoot bytes=8 requested=0 initial=0 length=1 capacity=1
+growth append policy: rust-vec bytes=8 requested=0 initial=0 length=1 capacity=4
+growth append policy: cpp-std-vector bytes=8 requested=0 initial=0 length=1 capacity=1
+growth append policy: whitefoot bytes=256 requested=0 initial=0 length=1 capacity=1
+growth append policy: rust-vec bytes=256 requested=0 initial=0 length=1 capacity=4
+growth append policy: cpp-std-vector bytes=256 requested=0 initial=0 length=1 capacity=1
+growth append policy: whitefoot bytes=8 requested=1 initial=1 length=2 capacity=2
+growth append policy: rust-vec bytes=8 requested=1 initial=1 length=2 capacity=4
+growth append policy: cpp-std-vector bytes=8 requested=1 initial=1 length=2 capacity=2
+growth append policy: whitefoot bytes=256 requested=1 initial=1 length=2 capacity=2
+growth append policy: rust-vec bytes=256 requested=1 initial=1 length=2 capacity=4
+growth append policy: cpp-std-vector bytes=256 requested=1 initial=1 length=2 capacity=2
+vector append growth: scalar/256B, five capacities, three APIs passed
+real 0.41
+user 0.01
+sys 0.00
+== END full-entry-relinked-timed-growth-api-check: 0.43 s, exit 0 ==
+
+$ perl .github/run-check.pl full-entry-relinked-timed-api-check research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-timed api-check
+Expected exit 0; actual exit 0
+== START full-entry-relinked-timed-api-check (limit 120s): research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-timed api-check ==
+vector spare append: scalar/256B, five counts, three APIs passed
+real 0.00
+user 0.00
+sys 0.00
+== END full-entry-relinked-timed-api-check: 0.11 s, exit 0 ==
+
+$ perl .github/run-check.pl full-entry-relinked-timed-growth-fail-values research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-timed growth-api-fail-values
+Expected exit 1; actual exit 1
+== START full-entry-relinked-timed-growth-fail-values (limit 120s): research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-timed growth-api-fail-values ==
+vector library costs: growth append full values and checksum
+real 0.00
+user 0.00
+sys 0.00
+== END full-entry-relinked-timed-growth-fail-values: 0.11 s, exit 1 ==
+
+$ perl .github/run-check.pl full-entry-relinked-timed-growth-fail-state research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-timed growth-api-fail-state
+Expected exit 1; actual exit 1
+== START full-entry-relinked-timed-growth-fail-state (limit 120s): research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-timed growth-api-fail-state ==
+vector library costs: growth append post state
+real 0.00
+user 0.00
+sys 0.00
+== END full-entry-relinked-timed-growth-fail-state: 0.11 s, exit 1 ==
+
+$ perl .github/run-check.pl full-entry-relinked-account-growth-api-check research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-account growth-api-check
+Expected exit 0; actual exit 0
+== START full-entry-relinked-account-growth-api-check (limit 120s): research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-account growth-api-check ==
+growth append policy: whitefoot bytes=8 requested=0 initial=0 length=1 capacity=1
+growth append policy: rust-vec bytes=8 requested=0 initial=0 length=1 capacity=4
+growth append policy: cpp-std-vector bytes=8 requested=0 initial=0 length=1 capacity=1
+growth append policy: whitefoot bytes=256 requested=0 initial=0 length=1 capacity=1
+growth append policy: rust-vec bytes=256 requested=0 initial=0 length=1 capacity=4
+growth append policy: cpp-std-vector bytes=256 requested=0 initial=0 length=1 capacity=1
+growth append policy: whitefoot bytes=8 requested=1 initial=1 length=2 capacity=2
+growth append policy: rust-vec bytes=8 requested=1 initial=1 length=2 capacity=4
+growth append policy: cpp-std-vector bytes=8 requested=1 initial=1 length=2 capacity=2
+growth append policy: whitefoot bytes=256 requested=1 initial=1 length=2 capacity=2
+growth append policy: rust-vec bytes=256 requested=1 initial=1 length=2 capacity=4
+growth append policy: cpp-std-vector bytes=256 requested=1 initial=1 length=2 capacity=2
+vector append growth: scalar/256B, five capacities, three APIs passed
+real 0.27
+user 0.00
+sys 0.00
+== END full-entry-relinked-account-growth-api-check: 0.32 s, exit 0 ==
+
+$ perl .github/run-check.pl full-entry-relinked-account-api-check research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-account api-check
+Expected exit 0; actual exit 0
+== START full-entry-relinked-account-api-check (limit 120s): research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-account api-check ==
+vector spare append: scalar/256B, five counts, three APIs passed
+real 0.00
+user 0.00
+sys 0.00
+== END full-entry-relinked-account-api-check: 0.10 s, exit 0 ==
+
+$ perl .github/run-check.pl full-entry-relinked-account-growth-fail-values research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-account growth-api-fail-values
+Expected exit 1; actual exit 1
+== START full-entry-relinked-account-growth-fail-values (limit 120s): research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-account growth-api-fail-values ==
+vector library costs: growth append full values and checksum
+real 0.00
+user 0.00
+sys 0.00
+== END full-entry-relinked-account-growth-fail-values: 0.11 s, exit 1 ==
+
+$ perl .github/run-check.pl full-entry-relinked-account-growth-fail-state research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-account growth-api-fail-state
+Expected exit 1; actual exit 1
+== START full-entry-relinked-account-growth-fail-state (limit 120s): research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-account growth-api-fail-state ==
+vector library costs: growth append post state
+real 0.00
+user 0.00
+sys 0.00
+== END full-entry-relinked-account-growth-fail-state: 0.11 s, exit 1 ==
+
+$ perl .github/run-check.pl full-entry-relinked-account-allocator-check research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-account allocator-check
+Expected exit 0; actual exit 0
+== START full-entry-relinked-account-allocator-check (limit 120s): research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-account allocator-check ==
+vector allocator observer: preserved bytes, alignment and exact ledger passed
+real 0.00
+user 0.00
+sys 0.00
+== END full-entry-relinked-account-allocator-check: 0.11 s, exit 0 ==
+
+$ perl .github/run-check.pl full-entry-relinked-account-allocator-fail-values research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-account allocator-fail-values
+Expected exit 1; actual exit 1
+== START full-entry-relinked-account-allocator-fail-values (limit 120s): research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-account allocator-fail-values ==
+vector library costs: reallocation observer preserved bytes
+real 0.00
+user 0.00
+sys 0.00
+== END full-entry-relinked-account-allocator-fail-values: 0.10 s, exit 1 ==
+
+$ perl .github/run-check.pl full-entry-relinked-account-allocator-fail-accounting research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-account allocator-fail-accounting
+Expected exit 1; actual exit 1
+== START full-entry-relinked-account-allocator-fail-accounting (limit 120s): research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-account allocator-fail-accounting ==
+vector library costs: reallocation observer exact ledger
+real 0.00
+user 0.00
+sys 0.00
+== END full-entry-relinked-account-allocator-fail-accounting: 0.11 s, exit 1 ==
+
+$ perl .github/run-check.pl full-entry-relinked-account-api-fail-values research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-account api-fail-values
+Expected exit 1; actual exit 1
+== START full-entry-relinked-account-api-fail-values (limit 120s): research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-account api-fail-values ==
+vector library costs: spare append full values and checksum
+real 0.00
+user 0.00
+sys 0.00
+== END full-entry-relinked-account-api-fail-values: 0.11 s, exit 1 ==
+
+$ perl .github/run-check.pl full-entry-relinked-account-api-fail-allocation research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-account api-fail-allocation
+Expected exit 1; actual exit 1
+== START full-entry-relinked-account-api-fail-allocation (limit 120s): research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-account api-fail-allocation ==
+vector library costs: spare append zero allocation
+real 0.00
+user 0.00
+sys 0.00
+== END full-entry-relinked-account-api-fail-allocation: 0.10 s, exit 1 ==
+
+$ perl .github/run-check.pl full-entry-relinked-timed-clock-fault research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-timed growth-api-fail-clock
+Expected exit 1; actual exit 1
+== START full-entry-relinked-timed-clock-fault (limit 120s): research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-timed growth-api-fail-clock ==
+growth append clock: reads=200000 minimum_nonzero_ns=1000 quantized=1
+vector library costs: growth append clock precision
+real 0.01
+user 0.00
+sys 0.00
+== END full-entry-relinked-timed-clock-fault: 0.11 s, exit 1 ==
+
+$ perl .github/run-check.pl full-entry-relinked-account-rows sh -c 'research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-account growth-api-account > research/experiments/container-representation/vector-library/.build/full-entry-equality/append-growth-accounting.csv'
+Expected exit 0; actual exit 0
+== START full-entry-relinked-account-rows (limit 120s): sh -c research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-account growth-api-account > research/experiments/container-representation/vector-library/.build/full-entry-equality/append-growth-accounting.csv ==
+real 0.01
+user 0.00
+sys 0.00
+== END full-entry-relinked-account-rows: 0.11 s, exit 0 ==
+
+Allocation ledger after the repaired link order (30 data rows)
+contract,element_bytes,requested_capacity,initial_capacity,variant,length,capacity,requests,reallocations,releases,requested_bytes,live_before,live_after
+append-growth-o3,8,16,16,whitefoot,17,32,1,1,0,256,128,256
+append-growth-o3,8,16,16,rust-vec,17,32,1,1,0,256,128,256
+append-growth-o3,8,16,16,cpp-std-vector,17,32,1,0,1,256,128,256
+append-growth-o3,256,16,16,whitefoot,17,32,1,1,0,8192,4096,8192
+append-growth-o3,256,16,16,rust-vec,17,32,1,1,0,8192,4096,8192
+append-growth-o3,256,16,16,cpp-std-vector,17,32,1,0,1,8192,4096,8192
+append-growth-o3,8,256,256,whitefoot,257,512,1,1,0,4096,2048,4096
+append-growth-o3,8,256,256,rust-vec,257,512,1,1,0,4096,2048,4096
+append-growth-o3,8,256,256,cpp-std-vector,257,512,1,0,1,4096,2048,4096
+append-growth-o3,256,256,256,whitefoot,257,512,1,1,0,131072,65536,131072
+append-growth-o3,256,256,256,rust-vec,257,512,1,1,0,131072,65536,131072
+append-growth-o3,256,256,256,cpp-std-vector,257,512,1,0,1,131072,65536,131072
+append-growth-o3,8,4096,4096,whitefoot,4097,8192,1,1,0,65536,32768,65536
+append-growth-o3,8,4096,4096,rust-vec,4097,8192,1,1,0,65536,32768,65536
+append-growth-o3,8,4096,4096,cpp-std-vector,4097,8192,1,0,1,65536,32768,65536
+append-growth-o3,256,4096,4096,whitefoot,4097,8192,1,1,0,2097152,1048576,2097152
+append-growth-o3,256,4096,4096,rust-vec,4097,8192,1,1,0,2097152,1048576,2097152
+append-growth-o3,256,4096,4096,cpp-std-vector,4097,8192,1,0,1,2097152,1048576,2097152
+append-growth-o3,8,0,0,whitefoot,1,1,1,1,0,8,1,8
+append-growth-o3,8,0,0,rust-vec,1,4,1,0,0,32,0,32
+append-growth-o3,8,0,0,cpp-std-vector,1,1,1,0,0,8,0,8
+append-growth-o3,256,0,0,whitefoot,1,1,1,1,0,256,1,256
+append-growth-o3,256,0,0,rust-vec,1,4,1,0,0,1024,0,1024
+append-growth-o3,256,0,0,cpp-std-vector,1,1,1,0,0,256,0,256
+append-growth-o3,8,1,1,whitefoot,2,2,1,1,0,16,8,16
+append-growth-o3,8,1,1,rust-vec,2,4,1,1,0,32,8,32
+append-growth-o3,8,1,1,cpp-std-vector,2,2,1,0,1,16,8,16
+append-growth-o3,256,1,1,whitefoot,2,2,1,1,0,512,256,512
+append-growth-o3,256,1,1,rust-vec,2,4,1,1,0,1024,256,1024
+append-growth-o3,256,1,1,cpp-std-vector,2,2,1,0,1,512,256,512
+
+Native discriminator
+Both full-growth bodies lose the length-versus-capacity reload/branch and
+retain realloc refusal plus capacity policy/ceiling branches. General reserve
+retains its unequal-length/capacity branch, malloc, initialized-prefix memmove,
+free, and realloc. No inline directive was added. Ordinary optimizer inlining
+also changes calls in four trace/suffix functions; this is not an isolated
+machine-instruction deletion. These complete native bodies and the call list
+make that limit visible. The single-append body still calls its full helper.
+
+B full-growth bodies
+_wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6:
+00000001000129dc	stp	x24, x23, [sp, #-0x40]!
+00000001000129e0	stp	x22, x21, [sp, #0x10]
+00000001000129e4	stp	x20, x19, [sp, #0x20]
+00000001000129e8	stp	x29, x30, [sp, #0x30]
+00000001000129ec	mov	x19, x0
+00000001000129f0	ldr	x22, [x0, #0x8]
+00000001000129f4	cbz	x22, 0x100012a28
+00000001000129f8	cmp	x22, #0x1, lsl #12
+00000001000129fc	b.hi	0x100012a5c
+0000000100012a00	ldr	x23, [x19]
+0000000100012a04	ldr	x20, [x19, #0x10]
+0000000100012a08	lsl	x1, x22, #4
+0000000100012a0c	cmp	x23, x22
+0000000100012a10	b.ne	0x100012a90
+0000000100012a14	mov	x0, x20
+0000000100012a18	bl	0x1000b5d08 ; symbol stub for: _realloc
+0000000100012a1c	mov	x21, x0
+0000000100012a20	cbnz	x0, 0x100012ab4
+0000000100012a24	b	0x100012b2c
+0000000100012a28	ldr	x22, [x19]
+0000000100012a2c	ldr	x20, [x19, #0x10]
+0000000100012a30	cbz	x22, 0x100012ac0
+0000000100012a34	mov	w0, #0x8
+0000000100012a38	bl	0x1000b5a08 ; symbol stub for: _malloc
+0000000100012a3c	cbz	x0, 0x100012b2c
+0000000100012a40	mov	x21, x0
+0000000100012a44	lsl	x2, x22, #3
+0000000100012a48	mov	x1, x20
+0000000100012a4c	bl	0x1000b5a38 ; symbol stub for: _memmove
+0000000100012a50	mov	x0, x20
+0000000100012a54	bl	0x1000b5888 ; symbol stub for: _free
+0000000100012a58	b	0x100012ad4
+0000000100012a5c	cmp	x22, #0x2, lsl #12
+0000000100012a60	b.hi	0x100012b14
+0000000100012a64	ldr	x23, [x19]
+0000000100012a68	ldr	x20, [x19, #0x10]
+0000000100012a6c	cmp	x23, x22
+0000000100012a70	b.ne	0x100012ae0
+0000000100012a74	mov	x0, x20
+0000000100012a78	mov	w1, #0x8
+0000000100012a7c	movk	w1, #0x1, lsl #16
+0000000100012a80	bl	0x1000b5d08 ; symbol stub for: _realloc
+0000000100012a84	mov	x21, x0
+0000000100012a88	cbnz	x0, 0x100012b08
+0000000100012a8c	b	0x100012b2c
+0000000100012a90	mov	x0, x1
+0000000100012a94	bl	0x1000b5a08 ; symbol stub for: _malloc
+0000000100012a98	cbz	x0, 0x100012b2c
+0000000100012a9c	mov	x21, x0
+0000000100012aa0	lsl	x2, x23, #3
+0000000100012aa4	mov	x1, x20
+0000000100012aa8	bl	0x1000b5a38 ; symbol stub for: _memmove
+0000000100012aac	mov	x0, x20
+0000000100012ab0	bl	0x1000b5888 ; symbol stub for: _free
+0000000100012ab4	lsl	x8, x22, #1
+0000000100012ab8	str	x21, [x19, #0x10]
+0000000100012abc	b	0x100012b10
+0000000100012ac0	mov	x0, x20
+0000000100012ac4	mov	w1, #0x8
+0000000100012ac8	bl	0x1000b5d08 ; symbol stub for: _realloc
+0000000100012acc	mov	x21, x0
+0000000100012ad0	cbz	x0, 0x100012b2c
+0000000100012ad4	str	x21, [x19, #0x10]
+0000000100012ad8	mov	w8, #0x1
+0000000100012adc	b	0x100012b10
+0000000100012ae0	mov	w0, #0x8
+0000000100012ae4	movk	w0, #0x1, lsl #16
+0000000100012ae8	bl	0x1000b5a08 ; symbol stub for: _malloc
+0000000100012aec	cbz	x0, 0x100012b2c
+0000000100012af0	mov	x21, x0
+0000000100012af4	lsl	x2, x23, #3
+0000000100012af8	mov	x1, x20
+0000000100012afc	bl	0x1000b5a38 ; symbol stub for: _memmove
+0000000100012b00	mov	x0, x20
+0000000100012b04	bl	0x1000b5888 ; symbol stub for: _free
+0000000100012b08	str	x21, [x19, #0x10]
+0000000100012b0c	mov	w8, #0x2001
+0000000100012b10	str	x8, [x19, #0x8]
+0000000100012b14	mov	w0, #0x0
+0000000100012b18	ldp	x29, x30, [sp, #0x30]
+0000000100012b1c	ldp	x20, x19, [sp, #0x20]
+0000000100012b20	ldp	x22, x21, [sp, #0x10]
+0000000100012b24	ldp	x24, x23, [sp], #0x40
+0000000100012b28	ret
+0000000100012b2c	bl	0x10000f848
+_wf_std.collections.vector.grow_vector_grow_full$instance$979fcc4ac6e818fb:
+0000000100012b30	stp	x24, x23, [sp, #-0x40]!
+0000000100012b34	stp	x22, x21, [sp, #0x10]
+0000000100012b38	stp	x20, x19, [sp, #0x20]
+0000000100012b3c	stp	x29, x30, [sp, #0x30]
+0000000100012b40	mov	x19, x0
+0000000100012b44	ldr	x22, [x0, #0x8]
+0000000100012b48	cbz	x22, 0x100012b7c
+0000000100012b4c	cmp	x22, #0x1, lsl #12
+0000000100012b50	b.hi	0x100012bb0
+0000000100012b54	ldr	x23, [x19]
+0000000100012b58	ldr	x20, [x19, #0x10]
+0000000100012b5c	lsl	x1, x22, #9
+0000000100012b60	cmp	x23, x22
+0000000100012b64	b.ne	0x100012be4
+0000000100012b68	mov	x0, x20
+0000000100012b6c	bl	0x1000b5d08 ; symbol stub for: _realloc
+0000000100012b70	mov	x21, x0
+0000000100012b74	cbnz	x0, 0x100012c08
+0000000100012b78	b	0x100012c80
+0000000100012b7c	ldr	x22, [x19]
+0000000100012b80	ldr	x20, [x19, #0x10]
+0000000100012b84	cbz	x22, 0x100012c14
+0000000100012b88	mov	w0, #0x100
+0000000100012b8c	bl	0x1000b5a08 ; symbol stub for: _malloc
+0000000100012b90	cbz	x0, 0x100012c80
+0000000100012b94	mov	x21, x0
+0000000100012b98	lsl	x2, x22, #8
+0000000100012b9c	mov	x1, x20
+0000000100012ba0	bl	0x1000b5a38 ; symbol stub for: _memmove
+0000000100012ba4	mov	x0, x20
+0000000100012ba8	bl	0x1000b5888 ; symbol stub for: _free
+0000000100012bac	b	0x100012c28
+0000000100012bb0	cmp	x22, #0x2, lsl #12
+0000000100012bb4	b.hi	0x100012c68
+0000000100012bb8	ldr	x23, [x19]
+0000000100012bbc	ldr	x20, [x19, #0x10]
+0000000100012bc0	cmp	x23, x22
+0000000100012bc4	b.ne	0x100012c34
+0000000100012bc8	mov	x0, x20
+0000000100012bcc	mov	w1, #0x100
+0000000100012bd0	movk	w1, #0x20, lsl #16
+0000000100012bd4	bl	0x1000b5d08 ; symbol stub for: _realloc
+0000000100012bd8	mov	x21, x0
+0000000100012bdc	cbnz	x0, 0x100012c5c
+0000000100012be0	b	0x100012c80
+0000000100012be4	mov	x0, x1
+0000000100012be8	bl	0x1000b5a08 ; symbol stub for: _malloc
+0000000100012bec	cbz	x0, 0x100012c80
+0000000100012bf0	mov	x21, x0
+0000000100012bf4	lsl	x2, x23, #8
+0000000100012bf8	mov	x1, x20
+0000000100012bfc	bl	0x1000b5a38 ; symbol stub for: _memmove
+0000000100012c00	mov	x0, x20
+0000000100012c04	bl	0x1000b5888 ; symbol stub for: _free
+0000000100012c08	lsl	x8, x22, #1
+0000000100012c0c	str	x21, [x19, #0x10]
+0000000100012c10	b	0x100012c64
+0000000100012c14	mov	x0, x20
+0000000100012c18	mov	w1, #0x100
+0000000100012c1c	bl	0x1000b5d08 ; symbol stub for: _realloc
+0000000100012c20	mov	x21, x0
+0000000100012c24	cbz	x0, 0x100012c80
+0000000100012c28	str	x21, [x19, #0x10]
+0000000100012c2c	mov	w8, #0x1
+0000000100012c30	b	0x100012c64
+0000000100012c34	mov	w0, #0x100
+0000000100012c38	movk	w0, #0x20, lsl #16
+0000000100012c3c	bl	0x1000b5a08 ; symbol stub for: _malloc
+0000000100012c40	cbz	x0, 0x100012c80
+0000000100012c44	mov	x21, x0
+0000000100012c48	lsl	x2, x23, #8
+0000000100012c4c	mov	x1, x20
+0000000100012c50	bl	0x1000b5a38 ; symbol stub for: _memmove
+0000000100012c54	mov	x0, x20
+0000000100012c58	bl	0x1000b5888 ; symbol stub for: _free
+0000000100012c5c	str	x21, [x19, #0x10]
+0000000100012c60	mov	w8, #0x2001
+0000000100012c64	str	x8, [x19, #0x8]
+0000000100012c68	mov	w0, #0x0
+0000000100012c6c	ldp	x29, x30, [sp, #0x30]
+0000000100012c70	ldp	x20, x19, [sp, #0x20]
+0000000100012c74	ldp	x22, x21, [sp, #0x10]
+0000000100012c78	ldp	x24, x23, [sp], #0x40
+0000000100012c7c	ret
+0000000100012c80	bl	0x10000f848
+
+F full-growth bodies
+_wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6:
+0000000100012ad0	stp	x20, x19, [sp, #-0x20]!
+0000000100012ad4	stp	x29, x30, [sp, #0x10]
+0000000100012ad8	mov	x19, x0
+0000000100012adc	ldr	x20, [x0]
+0000000100012ae0	cbz	x20, 0x100012b08
+0000000100012ae4	cmp	x20, #0x1, lsl #12
+0000000100012ae8	b.hi	0x100012b24
+0000000100012aec	ldr	x0, [x19, #0x10]
+0000000100012af0	lsl	x1, x20, #4
+0000000100012af4	bl	0x1000b5c74 ; symbol stub for: _realloc
+0000000100012af8	cbz	x0, 0x100012b5c
+0000000100012afc	lsl	x8, x20, #1
+0000000100012b00	str	x0, [x19, #0x10]
+0000000100012b04	b	0x100012b48
+0000000100012b08	ldr	x0, [x19, #0x10]
+0000000100012b0c	mov	w1, #0x8
+0000000100012b10	bl	0x1000b5c74 ; symbol stub for: _realloc
+0000000100012b14	cbz	x0, 0x100012b5c
+0000000100012b18	str	x0, [x19, #0x10]
+0000000100012b1c	mov	w8, #0x1
+0000000100012b20	b	0x100012b48
+0000000100012b24	cmp	x20, #0x2, lsl #12
+0000000100012b28	b.hi	0x100012b4c
+0000000100012b2c	ldr	x0, [x19, #0x10]
+0000000100012b30	mov	w1, #0x8
+0000000100012b34	movk	w1, #0x1, lsl #16
+0000000100012b38	bl	0x1000b5c74 ; symbol stub for: _realloc
+0000000100012b3c	cbz	x0, 0x100012b5c
+0000000100012b40	str	x0, [x19, #0x10]
+0000000100012b44	mov	w8, #0x2001
+0000000100012b48	str	x8, [x19, #0x8]
+0000000100012b4c	mov	w0, #0x0
+0000000100012b50	ldp	x29, x30, [sp, #0x10]
+0000000100012b54	ldp	x20, x19, [sp], #0x20
+0000000100012b58	ret
+0000000100012b5c	bl	0x10000f848
+_wf_std.collections.vector.grow_vector_grow_full$instance$979fcc4ac6e818fb:
+0000000100012b60	stp	x20, x19, [sp, #-0x20]!
+0000000100012b64	stp	x29, x30, [sp, #0x10]
+0000000100012b68	mov	x19, x0
+0000000100012b6c	ldr	x20, [x0]
+0000000100012b70	cbz	x20, 0x100012b98
+0000000100012b74	cmp	x20, #0x1, lsl #12
+0000000100012b78	b.hi	0x100012bb4
+0000000100012b7c	ldr	x0, [x19, #0x10]
+0000000100012b80	lsl	x1, x20, #9
+0000000100012b84	bl	0x1000b5c74 ; symbol stub for: _realloc
+0000000100012b88	cbz	x0, 0x100012bec
+0000000100012b8c	lsl	x8, x20, #1
+0000000100012b90	str	x0, [x19, #0x10]
+0000000100012b94	b	0x100012bd8
+0000000100012b98	ldr	x0, [x19, #0x10]
+0000000100012b9c	mov	w1, #0x100
+0000000100012ba0	bl	0x1000b5c74 ; symbol stub for: _realloc
+0000000100012ba4	cbz	x0, 0x100012bec
+0000000100012ba8	str	x0, [x19, #0x10]
+0000000100012bac	mov	w8, #0x1
+0000000100012bb0	b	0x100012bd8
+0000000100012bb4	cmp	x20, #0x2, lsl #12
+0000000100012bb8	b.hi	0x100012bdc
+0000000100012bbc	ldr	x0, [x19, #0x10]
+0000000100012bc0	mov	w1, #0x100
+0000000100012bc4	movk	w1, #0x20, lsl #16
+0000000100012bc8	bl	0x1000b5c74 ; symbol stub for: _realloc
+0000000100012bcc	cbz	x0, 0x100012bec
+0000000100012bd0	str	x0, [x19, #0x10]
+0000000100012bd4	mov	w8, #0x2001
+0000000100012bd8	str	x8, [x19, #0x8]
+0000000100012bdc	mov	w0, #0x0
+0000000100012be0	ldp	x29, x30, [sp, #0x10]
+0000000100012be4	ldp	x20, x19, [sp], #0x20
+0000000100012be8	ret
+0000000100012bec	bl	0x10000f848
+
+F general reserve bodies
+_wf_std.collections.vector.grow_vector_reserve$instance$8c4c85d67cb438a6:
+0000000100010e74	stp	x24, x23, [sp, #-0x40]!
+0000000100010e78	stp	x22, x21, [sp, #0x10]
+0000000100010e7c	stp	x20, x19, [sp, #0x20]
+0000000100010e80	stp	x29, x30, [sp, #0x30]
+0000000100010e84	mov	x20, x0
+0000000100010e88	ldr	x0, [x0, #0x8]
+0000000100010e8c	cmp	x0, x1
+0000000100010e90	b.hs	0x100010eec
+0000000100010e94	mov	x19, x1
+0000000100010e98	ldr	x23, [x20]
+0000000100010e9c	ldr	x21, [x20, #0x10]
+0000000100010ea0	lsl	x1, x1, #3
+0000000100010ea4	cmp	x23, x0
+0000000100010ea8	b.ne	0x100010ec0
+0000000100010eac	mov	x0, x21
+0000000100010eb0	bl	0x1000b5c74 ; symbol stub for: _realloc
+0000000100010eb4	mov	x22, x0
+0000000100010eb8	cbnz	x0, 0x100010ee4
+0000000100010ebc	b	0x100010f00
+0000000100010ec0	mov	x0, x1
+0000000100010ec4	bl	0x1000b5974 ; symbol stub for: _malloc
+0000000100010ec8	cbz	x0, 0x100010f00
+0000000100010ecc	mov	x22, x0
+0000000100010ed0	lsl	x2, x23, #3
+0000000100010ed4	mov	x1, x21
+0000000100010ed8	bl	0x1000b59a4 ; symbol stub for: _memmove
+0000000100010edc	mov	x0, x21
+0000000100010ee0	bl	0x1000b57f4 ; symbol stub for: _free
+0000000100010ee4	stp	x19, x22, [x20, #0x8]
+0000000100010ee8	mov	x0, x19
+0000000100010eec	ldp	x29, x30, [sp, #0x30]
+0000000100010ef0	ldp	x20, x19, [sp, #0x20]
+0000000100010ef4	ldp	x22, x21, [sp, #0x10]
+0000000100010ef8	ldp	x24, x23, [sp], #0x40
+0000000100010efc	ret
+0000000100010f00	bl	0x10000f848
+_wf_std.collections.vector.grow_vector_reserve$instance$979fcc4ac6e818fb:
+00000001000114a4	stp	x24, x23, [sp, #-0x40]!
+00000001000114a8	stp	x22, x21, [sp, #0x10]
+00000001000114ac	stp	x20, x19, [sp, #0x20]
+00000001000114b0	stp	x29, x30, [sp, #0x30]
+00000001000114b4	mov	x20, x0
+00000001000114b8	ldr	x0, [x0, #0x8]
+00000001000114bc	cmp	x0, x1
+00000001000114c0	b.hs	0x10001151c
+00000001000114c4	mov	x19, x1
+00000001000114c8	ldr	x23, [x20]
+00000001000114cc	ldr	x21, [x20, #0x10]
+00000001000114d0	lsl	x1, x1, #8
+00000001000114d4	cmp	x23, x0
+00000001000114d8	b.ne	0x1000114f0
+00000001000114dc	mov	x0, x21
+00000001000114e0	bl	0x1000b5c74 ; symbol stub for: _realloc
+00000001000114e4	mov	x22, x0
+00000001000114e8	cbnz	x0, 0x100011514
+00000001000114ec	b	0x100011530
+00000001000114f0	mov	x0, x1
+00000001000114f4	bl	0x1000b5974 ; symbol stub for: _malloc
+00000001000114f8	cbz	x0, 0x100011530
+00000001000114fc	mov	x22, x0
+0000000100011500	lsl	x2, x23, #8
+0000000100011504	mov	x1, x21
+0000000100011508	bl	0x1000b59a4 ; symbol stub for: _memmove
+000000010001150c	mov	x0, x21
+0000000100011510	bl	0x1000b57f4 ; symbol stub for: _free
+0000000100011514	stp	x19, x22, [x20, #0x8]
+0000000100011518	mov	x0, x19
+000000010001151c	ldp	x29, x30, [sp, #0x30]
+0000000100011520	ldp	x20, x19, [sp, #0x20]
+0000000100011524	ldp	x22, x21, [sp, #0x10]
+0000000100011528	ldp	x24, x23, [sp], #0x40
+000000010001152c	ret
+0000000100011530	bl	0x10000f848
+
+F single-append bodies
+_wf_vector_api_word_append_one:
+000000010000fea0	stp	x20, x19, [sp, #-0x20]!
+000000010000fea4	stp	x29, x30, [sp, #0x10]
+000000010000fea8	mov	x20, x1
+000000010000feac	mov	x19, x0
+000000010000feb0	ldp	x8, x9, [x0]
+000000010000feb4	cmp	x9, x8
+000000010000feb8	b.ne	0x10000fec8
+000000010000febc	mov	x0, x19
+000000010000fec0	bl	_wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6
+000000010000fec4	ldr	x8, [x19]
+000000010000fec8	ldr	x9, [x19, #0x10]
+000000010000fecc	str	x20, [x9, x8, lsl #3]
+000000010000fed0	add	x0, x8, #0x1
+000000010000fed4	str	x0, [x19]
+000000010000fed8	ldp	x29, x30, [sp, #0x10]
+000000010000fedc	ldp	x20, x19, [sp], #0x20
+000000010000fee0	ret
+_wf_vector_api_record_append_one:
+000000010000fee4	b	_wf_vector_api_append_one$instance$694069a978d9626c
+_wf_vector_api_append_one$instance$b2fcb9cda4b45694:
+0000000100010b38	stp	x20, x19, [sp, #-0x20]!
+0000000100010b3c	stp	x29, x30, [sp, #0x10]
+0000000100010b40	mov	x20, x1
+0000000100010b44	mov	x19, x0
+0000000100010b48	ldp	x8, x9, [x0]
+0000000100010b4c	cmp	x9, x8
+0000000100010b50	b.ne	0x100010b60
+0000000100010b54	mov	x0, x19
+0000000100010b58	bl	_wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6
+0000000100010b5c	ldr	x8, [x19]
+0000000100010b60	ldr	x9, [x19, #0x10]
+0000000100010b64	str	x20, [x9, x8, lsl #3]
+0000000100010b68	add	x0, x8, #0x1
+0000000100010b6c	str	x0, [x19]
+0000000100010b70	ldp	x29, x30, [sp, #0x10]
+0000000100010b74	ldp	x20, x19, [sp], #0x20
+0000000100010b78	ret
+_wf_vector_api_append_one$instance$694069a978d9626c:
+0000000100010b7c	stp	x20, x19, [sp, #-0x20]!
+0000000100010b80	stp	x29, x30, [sp, #0x10]
+0000000100010b84	mov	x20, x1
+0000000100010b88	mov	x19, x0
+0000000100010b8c	ldp	x8, x9, [x0]
+0000000100010b90	cmp	x9, x8
+0000000100010b94	b.ne	0x100010ba4
+0000000100010b98	mov	x0, x19
+0000000100010b9c	bl	_wf_std.collections.vector.grow_vector_grow_full$instance$979fcc4ac6e818fb
+0000000100010ba0	ldr	x8, [x19]
+0000000100010ba4	dup.2d	v0, x20
+0000000100010ba8	add	x9, x20, #0x1f
+0000000100010bac	adrp	x10, 166 ; 0x1000b6000
+0000000100010bb0	ldr	q1, [x10, #0x130]
+0000000100010bb4	add.2d	v1, v0, v1
+0000000100010bb8	adrp	x10, 166 ; 0x1000b6000
+0000000100010bbc	ldr	q2, [x10, #0x120]
+0000000100010bc0	add.2d	v2, v0, v2
+0000000100010bc4	adrp	x10, 166 ; 0x1000b6000
+0000000100010bc8	ldr	q3, [x10, #0x110]
+0000000100010bcc	add.2d	v3, v0, v3
+0000000100010bd0	adrp	x10, 166 ; 0x1000b6000
+0000000100010bd4	ldr	q4, [x10, #0x100]
+0000000100010bd8	add.2d	v4, v0, v4
+0000000100010bdc	adrp	x10, 166 ; 0x1000b6000
+0000000100010be0	ldr	q5, [x10, #0xf0]
+0000000100010be4	add.2d	v5, v0, v5
+0000000100010be8	adrp	x10, 166 ; 0x1000b6000
+0000000100010bec	ldr	q6, [x10, #0xe0]
+0000000100010bf0	add.2d	v6, v0, v6
+0000000100010bf4	adrp	x10, 166 ; 0x1000b6000
+0000000100010bf8	ldr	q7, [x10, #0xd0]
+0000000100010bfc	add.2d	v7, v0, v7
+0000000100010c00	adrp	x10, 166 ; 0x1000b6000
+0000000100010c04	ldr	q16, [x10, #0xc0]
+0000000100010c08	add.2d	v16, v0, v16
+0000000100010c0c	adrp	x10, 166 ; 0x1000b6000
+0000000100010c10	ldr	q17, [x10, #0xb0]
+0000000100010c14	add.2d	v17, v0, v17
+0000000100010c18	adrp	x10, 166 ; 0x1000b6000
+0000000100010c1c	ldr	q18, [x10, #0xa0]
+0000000100010c20	add.2d	v18, v0, v18
+0000000100010c24	adrp	x10, 166 ; 0x1000b6000
+0000000100010c28	ldr	q19, [x10, #0x90]
+0000000100010c2c	add.2d	v19, v0, v19
+0000000100010c30	adrp	x10, 166 ; 0x1000b6000
+0000000100010c34	ldr	q20, [x10, #0x80]
+0000000100010c38	add.2d	v20, v0, v20
+0000000100010c3c	adrp	x10, 166 ; 0x1000b6000
+0000000100010c40	ldr	q21, [x10, #0x70]
+0000000100010c44	add.2d	v21, v0, v21
+0000000100010c48	adrp	x10, 166 ; 0x1000b6000
+0000000100010c4c	ldr	q22, [x10, #0x60]
+0000000100010c50	add.2d	v22, v0, v22
+0000000100010c54	adrp	x10, 166 ; 0x1000b6000
+0000000100010c58	ldr	q23, [x10, #0x50]
+0000000100010c5c	add.2d	v0, v0, v23
+0000000100010c60	ldr	x10, [x19, #0x10]
+0000000100010c64	add	x10, x10, x8, lsl #8
+0000000100010c68	str	x20, [x10]
+0000000100010c6c	stur	q0, [x10, #0x8]
+0000000100010c70	stur	q22, [x10, #0x18]
+0000000100010c74	stur	q21, [x10, #0x28]
+0000000100010c78	stur	q20, [x10, #0x38]
+0000000100010c7c	stur	q19, [x10, #0x48]
+0000000100010c80	stur	q18, [x10, #0x58]
+0000000100010c84	stur	q17, [x10, #0x68]
+0000000100010c88	stur	q16, [x10, #0x78]
+0000000100010c8c	stur	q7, [x10, #0x88]
+0000000100010c90	stur	q6, [x10, #0x98]
+0000000100010c94	stur	q5, [x10, #0xa8]
+0000000100010c98	stur	q4, [x10, #0xb8]
+0000000100010c9c	stur	q3, [x10, #0xc8]
+0000000100010ca0	stur	q2, [x10, #0xd8]
+0000000100010ca4	stur	q1, [x10, #0xe8]
+0000000100010ca8	str	x9, [x10, #0xf8]
+0000000100010cac	add	x0, x8, #0x1
+0000000100010cb0	str	x0, [x19]
+0000000100010cb4	ldp	x29, x30, [sp, #0x10]
+0000000100010cb8	ldp	x20, x19, [sp], #0x20
+0000000100010cbc	ret
+_cpp_vector_api_word_append_one:
+0000000100014058	sub	sp, sp, #0x50
+000000010001405c	stp	x20, x19, [sp, #0x30]
+0000000100014060	stp	x29, x30, [sp, #0x40]
+0000000100014064	add	x29, sp, #0x40
+0000000100014068	ldp	x8, x9, [x0, #0x8]
+000000010001406c	stur	x8, [x29, #-0x18]
+0000000100014070	sub	x10, x29, #0x18
+0000000100014074	add	x11, sp, #0x8
+0000000100014078	stp	x1, x10, [sp, #0x8]
+000000010001407c	stp	x11, x0, [sp, #0x18]
+0000000100014080	cmp	x8, x9
+0000000100014084	b.hs	0x1000140ac
+0000000100014088	str	x1, [x8], #0x8
+000000010001408c	str	x8, [x0, #0x8]
+0000000100014090	ldr	x9, [x0]
+0000000100014094	sub	x8, x8, x9
+0000000100014098	asr	x0, x8, #3
+000000010001409c	ldp	x29, x30, [sp, #0x40]
+00000001000140a0	ldp	x20, x19, [sp, #0x30]
+00000001000140a4	add	sp, sp, #0x50
+00000001000140a8	ret
+00000001000140ac	mov	x19, x0
+00000001000140b0	add	x0, sp, #0x10
+00000001000140b4	bl	__ZZNSt3__16vectorIyNS_9allocatorIyEEE12emplace_backIJyEEERyDpOT_ENKUlvE0_clEv
+00000001000140b8	mov	x0, x19
+00000001000140bc	ldur	x8, [x29, #-0x18]
+00000001000140c0	b	0x10001408c
+_cpp_vector_api_record_append_one:
+0000000100014240	sub	sp, sp, #0x50
+0000000100014244	stp	x20, x19, [sp, #0x30]
+0000000100014248	stp	x29, x30, [sp, #0x40]
+000000010001424c	add	x29, sp, #0x40
+0000000100014250	ldp	x8, x9, [x0, #0x8]
+0000000100014254	stur	x8, [x29, #-0x18]
+0000000100014258	sub	x10, x29, #0x18
+000000010001425c	add	x11, sp, #0x8
+0000000100014260	stp	x1, x10, [sp, #0x8]
+0000000100014264	stp	x11, x0, [sp, #0x18]
+0000000100014268	cmp	x8, x9
+000000010001426c	b.hs	0x10001439c
+0000000100014270	str	x1, [x8]
+0000000100014274	dup.2d	v0, x1
+0000000100014278	adrp	x9, 162 ; 0x1000b6000
+000000010001427c	ldr	q1, [x9, #0x50]
+0000000100014280	add.2d	v1, v0, v1
+0000000100014284	stur	q1, [x8, #0x8]
+0000000100014288	adrp	x9, 162 ; 0x1000b6000
+000000010001428c	ldr	q1, [x9, #0x60]
+0000000100014290	add.2d	v1, v0, v1
+0000000100014294	stur	q1, [x8, #0x18]
+0000000100014298	adrp	x9, 162 ; 0x1000b6000
+000000010001429c	ldr	q1, [x9, #0x70]
+00000001000142a0	add.2d	v1, v0, v1
+00000001000142a4	stur	q1, [x8, #0x28]
+00000001000142a8	adrp	x9, 162 ; 0x1000b6000
+00000001000142ac	ldr	q1, [x9, #0x80]
+00000001000142b0	add.2d	v1, v0, v1
+00000001000142b4	stur	q1, [x8, #0x38]
+00000001000142b8	adrp	x9, 162 ; 0x1000b6000
+00000001000142bc	ldr	q1, [x9, #0x90]
+00000001000142c0	add.2d	v1, v0, v1
+00000001000142c4	stur	q1, [x8, #0x48]
+00000001000142c8	adrp	x9, 162 ; 0x1000b6000
+00000001000142cc	ldr	q1, [x9, #0xa0]
+00000001000142d0	add.2d	v1, v0, v1
+00000001000142d4	stur	q1, [x8, #0x58]
+00000001000142d8	adrp	x9, 162 ; 0x1000b6000
+00000001000142dc	ldr	q1, [x9, #0xb0]
+00000001000142e0	add.2d	v1, v0, v1
+00000001000142e4	stur	q1, [x8, #0x68]
+00000001000142e8	adrp	x9, 162 ; 0x1000b6000
+00000001000142ec	ldr	q1, [x9, #0xc0]
+00000001000142f0	add.2d	v1, v0, v1
+00000001000142f4	stur	q1, [x8, #0x78]
+00000001000142f8	adrp	x9, 162 ; 0x1000b6000
+00000001000142fc	ldr	q1, [x9, #0xd0]
+0000000100014300	add.2d	v1, v0, v1
+0000000100014304	stur	q1, [x8, #0x88]
+0000000100014308	adrp	x9, 162 ; 0x1000b6000
+000000010001430c	ldr	q1, [x9, #0xe0]
+0000000100014310	add.2d	v1, v0, v1
+0000000100014314	stur	q1, [x8, #0x98]
+0000000100014318	adrp	x9, 162 ; 0x1000b6000
+000000010001431c	ldr	q1, [x9, #0xf0]
+0000000100014320	add.2d	v1, v0, v1
+0000000100014324	stur	q1, [x8, #0xa8]
+0000000100014328	adrp	x9, 162 ; 0x1000b6000
+000000010001432c	ldr	q1, [x9, #0x100]
+0000000100014330	add.2d	v1, v0, v1
+0000000100014334	stur	q1, [x8, #0xb8]
+0000000100014338	adrp	x9, 162 ; 0x1000b6000
+000000010001433c	ldr	q1, [x9, #0x110]
+0000000100014340	add.2d	v1, v0, v1
+0000000100014344	stur	q1, [x8, #0xc8]
+0000000100014348	adrp	x9, 162 ; 0x1000b6000
+000000010001434c	ldr	q1, [x9, #0x120]
+0000000100014350	add.2d	v1, v0, v1
+0000000100014354	stur	q1, [x8, #0xd8]
+0000000100014358	adrp	x9, 162 ; 0x1000b6000
+000000010001435c	ldr	q1, [x9, #0x130]
+0000000100014360	add.2d	v0, v0, v1
+0000000100014364	stur	q0, [x8, #0xe8]
+0000000100014368	add	x9, x1, #0x1f
+000000010001436c	str	x9, [x8, #0xf8]
+0000000100014370	add	x8, x8, #0x100
+0000000100014374	stur	x8, [x29, #-0x18]
+0000000100014378	ldur	x8, [x29, #-0x18]
+000000010001437c	str	x8, [x0, #0x8]
+0000000100014380	ldr	x9, [x0]
+0000000100014384	sub	x8, x8, x9
+0000000100014388	asr	x0, x8, #8
+000000010001438c	ldp	x29, x30, [sp, #0x40]
+0000000100014390	ldp	x20, x19, [sp, #0x30]
+0000000100014394	add	sp, sp, #0x50
+0000000100014398	ret
+000000010001439c	mov	x19, x0
+00000001000143a0	add	x0, sp, #0x10
+00000001000143a4	bl	__ZZNSt3__16vectorIN12_GLOBAL__N_16RecordENS_9allocatorIS2_EEE12emplace_backIJRyEEERS2_DpOT_ENKUlvE0_clEv
+00000001000143a8	mov	x0, x19
+00000001000143ac	b	0x100014378
+_rust_vector_api_record_append_one:
+0000000100016570	stp	x22, x21, [sp, #-0x30]!
+0000000100016574	stp	x20, x19, [sp, #0x10]
+0000000100016578	stp	x29, x30, [sp, #0x20]
+000000010001657c	add	x29, sp, #0x20
+0000000100016580	ldr	x20, [x0, #0x10]
+0000000100016584	ldr	x8, [x0]
+0000000100016588	cmp	x20, x8
+000000010001658c	b.eq	0x1000166b4
+0000000100016590	dup.2d	v0, x1
+0000000100016594	add	x8, x1, #0x1f
+0000000100016598	adrp	x9, 160 ; 0x1000b6000
+000000010001659c	ldr	q1, [x9, #0x130]
+00000001000165a0	add.2d	v1, v0, v1
+00000001000165a4	adrp	x9, 160 ; 0x1000b6000
+00000001000165a8	ldr	q2, [x9, #0x120]
+00000001000165ac	add.2d	v2, v0, v2
+00000001000165b0	adrp	x9, 160 ; 0x1000b6000
+00000001000165b4	ldr	q3, [x9, #0x110]
+00000001000165b8	add.2d	v3, v0, v3
+00000001000165bc	adrp	x9, 160 ; 0x1000b6000
+00000001000165c0	ldr	q4, [x9, #0x100]
+00000001000165c4	add.2d	v4, v0, v4
+00000001000165c8	adrp	x9, 160 ; 0x1000b6000
+00000001000165cc	ldr	q5, [x9, #0xf0]
+00000001000165d0	add.2d	v5, v0, v5
+00000001000165d4	adrp	x9, 160 ; 0x1000b6000
+00000001000165d8	ldr	q6, [x9, #0xe0]
+00000001000165dc	add.2d	v6, v0, v6
+00000001000165e0	adrp	x9, 160 ; 0x1000b6000
+00000001000165e4	ldr	q7, [x9, #0xd0]
+00000001000165e8	add.2d	v7, v0, v7
+00000001000165ec	adrp	x9, 160 ; 0x1000b6000
+00000001000165f0	ldr	q16, [x9, #0xc0]
+00000001000165f4	add.2d	v16, v0, v16
+00000001000165f8	adrp	x9, 160 ; 0x1000b6000
+00000001000165fc	ldr	q17, [x9, #0xb0]
+0000000100016600	add.2d	v17, v0, v17
+0000000100016604	adrp	x9, 160 ; 0x1000b6000
+0000000100016608	ldr	q18, [x9, #0xa0]
+000000010001660c	add.2d	v18, v0, v18
+0000000100016610	adrp	x9, 160 ; 0x1000b6000
+0000000100016614	ldr	q19, [x9, #0x90]
+0000000100016618	add.2d	v19, v0, v19
+000000010001661c	adrp	x9, 160 ; 0x1000b6000
+0000000100016620	ldr	q20, [x9, #0x80]
+0000000100016624	add.2d	v20, v0, v20
+0000000100016628	adrp	x9, 160 ; 0x1000b6000
+000000010001662c	ldr	q21, [x9, #0x70]
+0000000100016630	add.2d	v21, v0, v21
+0000000100016634	adrp	x9, 160 ; 0x1000b6000
+0000000100016638	ldr	q22, [x9, #0x60]
+000000010001663c	add.2d	v22, v0, v22
+0000000100016640	adrp	x9, 160 ; 0x1000b6000
+0000000100016644	ldr	q23, [x9, #0x50]
+0000000100016648	add.2d	v0, v0, v23
+000000010001664c	ldr	x9, [x0, #0x8]
+0000000100016650	add	x9, x9, x20, lsl #8
+0000000100016654	str	x1, [x9]
+0000000100016658	stur	q0, [x9, #0x8]
+000000010001665c	stur	q22, [x9, #0x18]
+0000000100016660	stur	q21, [x9, #0x28]
+0000000100016664	stur	q20, [x9, #0x38]
+0000000100016668	stur	q19, [x9, #0x48]
+000000010001666c	stur	q18, [x9, #0x58]
+0000000100016670	stur	q17, [x9, #0x68]
+0000000100016674	stur	q16, [x9, #0x78]
+0000000100016678	stur	q7, [x9, #0x88]
+000000010001667c	stur	q6, [x9, #0x98]
+0000000100016680	stur	q5, [x9, #0xa8]
+0000000100016684	stur	q4, [x9, #0xb8]
+0000000100016688	stur	q3, [x9, #0xc8]
+000000010001668c	stur	q2, [x9, #0xd8]
+0000000100016690	stur	q1, [x9, #0xe8]
+0000000100016694	str	x8, [x9, #0xf8]
+0000000100016698	add	x8, x20, #0x1
+000000010001669c	str	x8, [x0, #0x10]
+00000001000166a0	mov	x0, x8
+00000001000166a4	ldp	x29, x30, [sp, #0x20]
+00000001000166a8	ldp	x20, x19, [sp, #0x10]
+00000001000166ac	ldp	x22, x21, [sp], #0x30
+00000001000166b0	ret
+00000001000166b4	mov	x19, x0
+00000001000166b8	mov	x21, x1
+00000001000166bc	bl	__RNvMs4_NtCshxvaOLs88l5_5alloc7raw_vecINtB5_6RawVecNtCsiKPtVfYLcbR_16vector_ecosystem6RecordE8grow_oneBO_
+00000001000166c0	mov	x1, x21
+00000001000166c4	mov	x0, x19
+00000001000166c8	b	0x100016590
+_rust_vector_api_word_append_one:
+0000000100016b08	stp	x22, x21, [sp, #-0x30]!
+0000000100016b0c	stp	x20, x19, [sp, #0x10]
+0000000100016b10	stp	x29, x30, [sp, #0x20]
+0000000100016b14	add	x29, sp, #0x20
+0000000100016b18	ldr	x20, [x0, #0x10]
+0000000100016b1c	ldr	x8, [x0]
+0000000100016b20	cmp	x20, x8
+0000000100016b24	b.eq	0x100016b4c
+0000000100016b28	ldr	x8, [x0, #0x8]
+0000000100016b2c	str	x1, [x8, x20, lsl #3]
+0000000100016b30	add	x8, x20, #0x1
+0000000100016b34	str	x8, [x0, #0x10]
+0000000100016b38	mov	x0, x8
+0000000100016b3c	ldp	x29, x30, [sp, #0x20]
+0000000100016b40	ldp	x20, x19, [sp, #0x10]
+0000000100016b44	ldp	x22, x21, [sp], #0x30
+0000000100016b48	ret
+0000000100016b4c	mov	x19, x0
+0000000100016b50	mov	x21, x1
+0000000100016b54	bl	__RNvMs4_NtCshxvaOLs88l5_5alloc7raw_vecINtB5_6RawVecyE8grow_oneCsiKPtVfYLcbR_16vector_ecosystem
+0000000100016b58	mov	x1, x21
+0000000100016b5c	mov	x0, x19
+0000000100016b60	b	0x100016b28
+
+Other WF native call-boundary differences
+{
+  "_wf_vector_library_suffix_cycles$instance$8f6b633c945d12a3": {
+    "before": [
+      "_wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6"
+    ],
+    "after": []
+  },
+  "_wf_vector_library_suffix_cycles$instance$c3abe4db44181f7a": {
+    "before": [
+      "_wf_std.collections.vector.grow_vector_truncate$instance$d6739d8f89f405bd",
+      "_wf_std.collections.vector.grow_vector_grow_full$instance$979fcc4ac6e818fb",
+      "_wf_std.collections.vector.grow_vector_truncate$instance$d6739d8f89f405bd"
+    ],
+    "after": [
+      "_wf_std.collections.vector.grow_vector_truncate$instance$d6739d8f89f405bd",
+      "_wf_std.collections.vector.grow_vector_truncate$instance$d6739d8f89f405bd"
+    ]
+  },
+  "_wf_vector_library_trace$instance$8f6b633c945d12a3": {
+    "before": [
+      "_wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6",
+      "_wf_vector_library_work$instance$8f6b633c945d12a3",
+      "_wf_std.collections.vector.grow_vector_grow_full$instance$8c4c85d67cb438a6",
+      "_wf_vector_library_round$instance$8f6b633c945d12a3"
+    ],
+    "after": [
+      "_wf_vector_library_work$instance$8f6b633c945d12a3",
+      "_wf_vector_library_round$instance$8f6b633c945d12a3",
+      "_wf_vector_library_suffix_cycles$instance$8f6b633c945d12a3"
+    ]
+  },
+  "_wf_vector_library_trace$instance$c3abe4db44181f7a": {
+    "before": [
+      "_wf_std.collections.vector.grow_vector_grow_full$instance$979fcc4ac6e818fb",
+      "_wf_vector_library_work$instance$c3abe4db44181f7a",
+      "_wf_vector_library_suffix_cycles$instance$c3abe4db44181f7a",
+      "_wf_std.collections.vector.grow_vector_truncate$instance$d6739d8f89f405bd",
+      "_wf_vector_library_round$instance$c3abe4db44181f7a"
+    ],
+    "after": [
+      "_wf_vector_library_work$instance$c3abe4db44181f7a",
+      "_wf_vector_library_round$instance$c3abe4db44181f7a",
+      "_wf_vector_library_suffix_cycles$instance$c3abe4db44181f7a",
+      "_wf_std.collections.vector.grow_vector_truncate$instance$d6739d8f89f405bd"
+    ]
+  }
+}
+
+One registered RAW-clock screen
+$ perl .github/run-check.pl full-entry-equality-screen sh -c 'research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-timed growth-api-measure 67108864 7 8589934592 > research/experiments/container-representation/vector-library/.build/full-entry-equality/append-growth-screen-samples.csv'
+== START full-entry-equality-screen (limit 240s): sh -c research/experiments/container-representation/vector-library/.build/full-entry-equality/vector-costs-timed growth-api-measure 67108864 7 8589934592 > research/experiments/container-representation/vector-library/.build/full-entry-equality/append-growth-screen-samples.csv ==
+growth append clock: reads=200000 minimum_nonzero_ns=41 quantized=0
+== RUNNING full-entry-equality-screen: 30 s, child 5418, group 5418 ==
+== RUNNING full-entry-equality-screen: 60 s, child 5418, group 5418 ==
+== RUNNING full-entry-equality-screen: 90 s, child 5418, group 5418 ==
+real 116.75
+user 116.44
+sys 0.21
+== END full-entry-equality-screen: 116.79 s, exit 0 ==
+
+Recomputed from raw CSV: 840 unique cohort/element/capacity/variant/sample/control rows; 420 real, 420 controls; seven samples per real cell.
+Minimum real duration 1271836 ns; minimum control 1045 ns.
+No row removed, no control subtraction, no retry. Clock: 200000 reads, minimum increment41ns, quantized0.
+Matched maximum cohort peer median spread 2.514382%; maximum WF/peer ratio spread 3.279337%.
+
+Median [minimum–maximum] ns/append; PASS compares the complete WF range
+to the peer whose median is slower in that cohort. Capacity0/1 are policy
+cells, excluded from the six matched cells.
+| Bytes / capacity | Cohort | WF | Rust | C++ | Screen |
+|---|---:|---|---|---|---|
+| 8 / 16 | 0 | 34.63 [34.43–36.30] | 36.81 [36.68–37.99] | 25.47 [25.40–26.42] | PASS |
+| 8 / 16 | 1 | 34.55 [34.38–34.94] | 36.88 [36.65–38.11] | 25.45 [25.33–25.71] | PASS |
+| 256 / 16 | 0 | 147.95 [146.65–166.20] | 150.93 [149.13–167.25] | 143.01 [141.52–151.11] | OVERLAP |
+| 256 / 16 | 1 | 147.88 [145.70–159.69] | 150.67 [149.11–158.92] | 142.46 [141.74–150.88] | OVERLAP |
+| 8 / 256 | 0 | 100.65 [99.35–114.93] | 103.10 [101.56–106.70] | 92.12 [91.34–95.97] | OVERLAP |
+| 8 / 256 | 1 | 100.20 [98.90–105.68] | 103.18 [102.30–108.01] | 91.07 [90.89–230.02] | OVERLAP |
+| 256 / 256 | 0 | 1316.03 [1310.22–1347.34] | 1310.47 [1307.01–1330.15] | 1305.20 [1299.75–1322.59] | OVERLAP |
+| 256 / 256 | 1 | 1337.24 [1309.38–1423.88] | 1318.72 [1311.22–1392.27] | 1319.81 [1311.63–1427.10] | OVERLAP |
+| 8 / 4096 | 0 | 746.30 [737.13–809.24] | 629.40 [621.93–733.05] | 642.01 [622.60–695.77] | LOSE |
+| 8 / 4096 | 1 | 754.58 [737.05–963.32] | 645.23 [621.62–714.61] | 628.52 [625.17–642.25] | LOSE |
+| 256 / 4096 | 0 | 160.48 [159.66–162.29] | 161.63 [160.19–164.40] | 14831.65 [14795.27–14859.56] | PASS |
+| 256 / 4096 | 1 | 161.89 [159.84–163.25] | 161.13 [159.01–164.77] | 14809.59 [14756.58–14877.09] | PASS |
+| 8 / 0 | 0 | 18.32 [18.25–18.38] | 11.75 [11.72–12.03] | 10.97 [10.92–12.19] | LOSE |
+| 8 / 0 | 1 | 18.35 [18.24–18.63] | 11.78 [11.73–12.08] | 11.00 [10.94–11.25] | LOSE |
+| 256 / 0 | 0 | 34.07 [33.98–34.38] | 22.38 [22.31–22.77] | 15.66 [15.65–15.80] | LOSE |
+| 256 / 0 | 1 | 34.03 [33.93–35.55] | 22.44 [22.23–23.25] | 15.73 [15.66–16.63] | LOSE |
+| 8 / 1 | 0 | 18.17 [18.07–18.76] | 33.02 [32.35–33.90] | 19.19 [19.04–19.90] | PASS |
+| 8 / 1 | 1 | 18.19 [18.06–18.61] | 32.36 [32.17–32.51] | 19.08 [19.05–19.57] | PASS |
+| 256 / 1 | 0 | 49.23 [48.41–50.31] | 53.47 [52.58–54.46] | 43.10 [42.98–45.39] | PASS |
+| 256 / 1 | 1 | 48.65 [48.43–50.25] | 52.90 [52.42–54.84] | 43.22 [43.06–43.71] | PASS |
+
+Only scalar16 and wide4096 pass both cohorts:2/6 matched cells, not all six.
+No paired comparison was launched; the evidence establishes neither a gain
+nor a regression against B. Production fact transport remains unresolved.
+
+SHA-256 full-entry-equality.patch: 2b1ce6238a7dbf7e3fbf7ec614a58830f888e65d3abf15bf7b6cff4ba04273d1
+
+SHA-256 ecosystem-append-growth-entry-equality-samples.csv: a65f81da11ff5a71d91fa2915c0a1f1c1372e36f7649744a39eb0e49c68624a9

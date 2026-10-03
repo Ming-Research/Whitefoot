@@ -1,0 +1,366 @@
+Full-positive growth route: paired attribution record
+
+Purpose: reproduce the registered Vector append allocation/movement comparison;
+retire with a qualified growth implementation. This is research on the existing
+nonconforming inline-owner/static-anchor overlay. No production compiler/library/
+driver change, specification revision or route policy is adopted. Other APIs pause.
+
+A is the frozen complete-append exposure image from the prior exposure record.
+B starts with its exact two LLVM modules and replaces only each scalar/wide
+full-positive realloc block with malloc, a null check, initialized-prefix memcpy,
+old-payload free and the existing descriptor publication. Empty/partial/ZST paths
+and all ten exposure attributes remain. No extra alignment/alias facts are added.
+This compares complete routes and their generated code, not allocator internals.
+B's API account-only flag expects malloc/free instead of realloc in eight positive
+WF rows. All 30 rows otherwise preserve requests, byte extents, capacity and final
+live bytes; zero-capacity and peer rows are unchanged. Simultaneous live payload
+is old plus new. Timed driver object, peers, runtime and link order are unchanged.
+The copied raw LLVM inputs are intentionally A's modules, not Z's earlier modules.
+
+Native: public entries still tail to reached instances. Full-positive append calls
+malloc, checks null, calls memcpy for len*stride, frees old payload and publishes.
+The same spare/full and capacity-policy branches remain. No new internal growth
+helper or q-register payload spill appears; wide construction follows allocation.
+Frames grow from 48 to 80 bytes for register preservation; reached scalar/wide
+bodies grow 43/107 to 59/123 instructions. Total WF instruction bytes grow 17860 to
+18996 (+1136), counting unique AArch64 instruction addresses including alignment
+nops, excluding data/other objects. Partial reserve retains malloc/memmove/free.
+Code/register/copy-call changes belong to this route comparison's measured cost.
+
+Prerequisites: all 20 API/account stages and 24 focused stages return their expected
+exits, independently cross-checked against raw guard END lines. Focused check and
+emission initially pass, without fixture repair. The observer's fixed expectations
+cover scalar and nested Box<u64> full relocation, ordered element cleanup, partial
+spare bytes, empty allocation, ZST, ranges, linked owner transfer and foreign
+anchors. Real NULL injection at the newly introduced full malloc exits 73 only
+after observing all descriptor words, initialized contents and nested owners
+unchanged, with no copy/free/publication; first-allocation refusal exits 74.
+Early-free and early-descriptor-write IR mutants fail for scalar and owning cases;
+wrong-copy-order swaps two valid 8-byte elements and fails before old retirement.
+Linked checks replace ordinary public LLVM bodies; they do not qualify source
+fn_sig formation. The API extra-allocation counter fault is not an OOM witness.
+
+Instrument audit: initial timed preprocessor byte comparison differed only in
+Darwin assert's embedded input basename. Feeding both source byte streams to the
+same stdin filename yields identical output; the actual timed driver object is
+unchanged throughout. This was no compiler/test rejection or timing rerun.
+
+Reproduction dependencies and paths
+The recorded logical scratch location is V/.build; <scratch-root> denotes it.
+R=<repository-root>
+V=<repository-root>/research/experiments/container-representation/vector-library
+A=<scratch-root>/append-spine-exposure
+Z=<scratch-root>/empty-payload-anchor
+D=<scratch-root>/full-growth-route
+F=<scratch-root>/full-growth-route/focused
+Earlier retained artifacts: inline-slots-owner.patch, empty-payload-anchor.patch,
+append-spine-exposure.patch and ecosystem-append-growth-exposure-timing.txt give
+A's compiler/module/object replay. The frozen Z CLI remains a transient dependency,
+not an included executable; rebuilding it requires those earlier compiler-overlay
+instructions. Its exact hash is below. This record does not make stock production
+CLI output interchangeable with that frozen compiler.
+
+Prepare a fresh D, preserving the existing experiments. Copy A's two LLVM modules
+into D/whitefoot-{timed,account}.ll; copy Z/measured-vector-costs.c to D/vector-costs.c.
+Copy Z/focused-fixture.wf and Z/observer.c into D/focused/. Copy A/inputs linked
+objects/bridge to D/inputs, retaining the exact object names and link order below.
+From D, apply full-growth-route.patch with patch -p1 < <V>/full-growth-route.patch;
+rename
+D/vector-costs.c to D/vector-costs-route.c. The patch contains module/account-driver
+deltas plus focused fixture/observer deltas, linked bridge and route/mutant patches.
+It was replayed byte-for-byte against all five source inputs and four added files.
+Do not apply the full-growth route to A's public source or the production worktree.
+
+In the focused stage order: run check/emit first, then the transforms below, then
+native builds/executions. In F, copy focused-realloc.raw.ll to focused-malloc.raw.ll
+and run patch focused-malloc.raw.ll < focused-route.patch. This adds memcpy's
+missing declaration and changes three nonzero-stride full blocks (u8,u64,Box<u64>).
+Then use this exact one-shot textual observer/linked transform, cwd=F:
+python3 - <<'REPLAY'
+from pathlib import Path
+import re
+p=Path('.')
+t=(p/'focused-malloc.raw.ll').read_text()
+t,n=re.subn(r'define private void @wf_resource_abort\(\) noreturn #0 \{\n.*?\n\}', 'declare void @wf_observe_abort() noreturn',t,flags=re.S)
+assert n==1
+for old,new in [('@malloc(', '@wf_observe_allocate('),('@realloc(', '@wf_observe_reallocate('),('@free(', '@wf_observe_release('),('@wf_resource_abort(', '@wf_observe_abort('),('@wf__main_body(', '@wf__fixture_body('),('@main(', '@wf_fixture_main(')]:
+    t=t.replace(old,new)
+t=t.replace('declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1 immarg)','declare void @wf_observe_full_copy(ptr, ptr, i64)')
+t=t.replace('call void @llvm.memcpy.p0.p0.i64(ptr %t14, ptr %t5, i64 %route.copy.bytes, i1 false)','call void @wf_observe_full_copy(ptr %t14, ptr %t5, i64 %route.copy.bytes)')
+(p/'focused-observed.ll').write_text(t)
+bridge=(p/'linked-bridge.ll').read_text()
+for block in re.findall(r'^define .*?^\}',bridge,re.M|re.S):
+    name=re.search(r'@([^ (]+)\(',block)[1]
+    t,n=re.subn(r'^define [^\n]*@'+re.escape(name)+r'\([^\n]*\{\n.*?^\}',lambda _:block,t,flags=re.M|re.S)
+    assert n==1
+t+='\n'+'\n'.join(line for line in bridge.splitlines() if line.startswith('declare '))+'\n'
+(p/'focused-linked.ll').write_text(t)
+REPLAY
+For each mutant: copy focused-observed.ll to early-free.ll or
+ early-descriptor-write.ll, then patch that file using the correspondingly named
+.patch. Wrong copy order is the observer's CORRUPT_COPY_ORDER compile flag.
+All route/observer/linked/mutant reconstructions were verified against frozen IR.
+
+Exact commands: replace angle-bracket path tokens before shell parsing.
+API stage cwd=V; focused stage cwd=R; WHITEFOOT_CHECK_TIMEOUT=120 throughout.
+API build commands (each used once, in numbered table order):
+API0: perl '<R>/.github/run-check.pl' full-route-account-driver clang -std=c11 -O3 -Wall -Wextra -Werror -DECOSYSTEM -DWF_SPLIT_SLOTS_PAYLOAD=1 -DWF_SPLIT_SLOTS_REALLOC=1 -DWF_INLINE_SLOTS_OWNER=1 -DWF_EMPTY_PAYLOAD_ANCHOR=1 -DACCOUNT_ONLY -DWF_FULL_GROWTH_MALLOC_COPY=1 -c '<D>/vector-costs-route.c' -o '<D>/driver-account.o'
+API1: perl '<R>/.github/run-check.pl' full-route-timed-compile clang -O3 -Wno-override-module -x ir -c '<D>/whitefoot-timed.ll' -o '<D>/whitefoot-timed.o'
+API2: perl '<R>/.github/run-check.pl' full-route-timed-link clang++ -O3 '<D>/inputs/driver-timed.o' '<D>/whitefoot-timed.o' '<D>/inputs/cpp-timed.o' '<D>/inputs/rust-timed.a' '<D>/inputs/native/ordinary_values.o' '<D>/inputs/native/sched/core.o' '<D>/inputs/native/sched/entry.o' '<D>/inputs/native/completion/runtime.o' '<D>/inputs/native/completion/file_adapter.o' '<D>/inputs/native/completion/bridge.o' '<D>/inputs/native/wf_floor.o' '<D>/inputs/native/sched/prim_host.o' '<D>/inputs/native/completion/wait_host.o' '<D>/inputs/native/completion/file_posix.o' '<D>/inputs/native/completion/linux_io_uring.o' '<D>/inputs/native/ordinary_values_ir.o' -pthread -lm '<D>/inputs/prepare-bridge.o' -liconv -lSystem -lc -lm -o '<D>/vector-costs-timed'
+API3: perl '<R>/.github/run-check.pl' full-route-account-compile clang -O3 -Wno-override-module -x ir -c '<D>/whitefoot-account.ll' -o '<D>/whitefoot-account.o'
+API4: perl '<R>/.github/run-check.pl' full-route-account-link clang++ -O3 '<D>/driver-account.o' '<D>/whitefoot-account.o' '<D>/inputs/cpp-account.o' '<D>/inputs/rust-account.a' '<D>/inputs/native/ordinary_values.o' '<D>/inputs/native/sched/core.o' '<D>/inputs/native/sched/entry.o' '<D>/inputs/native/completion/runtime.o' '<D>/inputs/native/completion/file_adapter.o' '<D>/inputs/native/completion/bridge.o' '<D>/inputs/native/wf_floor.o' '<D>/inputs/native/sched/prim_host.o' '<D>/inputs/native/completion/wait_host.o' '<D>/inputs/native/completion/file_posix.o' '<D>/inputs/native/completion/linux_io_uring.o' '<D>/inputs/native/ordinary_values_ir.o' -pthread -lm '<D>/inputs/prepare-bridge.o' -liconv -lSystem -lc -lm -o '<D>/vector-costs-account'
+API-CALL: perl <R>/.github/run-check.pl <stage> <D>/vector-costs-<arm> <mode>
+API-ROWS: perl <R>/.github/run-check.pl full-route-account-rows sh -c "<D>/vector-costs-account growth-api-account > <D>/append-growth-accounting.csv"
+
+API stage | command / arm / mode | exit (expected) | outer seconds
+full-route-account-driver | API0 | 0 (0) | 0.683047
+full-route-timed-compile | API1 | 0 (0) | 0.237004
+full-route-timed-link | API2 | 0 (0) | 0.128755
+full-route-account-compile | API3 | 0 (0) | 0.240573
+full-route-account-link | API4 | 0 (0) | 0.129592
+full-route-timed-growth-api-check | API-CALL / timed / growth-api-check | 0 (0) | 0.453389
+full-route-timed-api-check | API-CALL / timed / api-check | 0 (0) | 0.131988
+full-route-timed-growth-fail-values | API-CALL / timed / growth-api-fail-values | 1 (1) | 0.137714
+full-route-timed-growth-fail-state | API-CALL / timed / growth-api-fail-state | 1 (1) | 0.143594
+full-route-account-growth-api-check | API-CALL / account / growth-api-check | 0 (0) | 0.364814
+full-route-account-api-check | API-CALL / account / api-check | 0 (0) | 0.151144
+full-route-account-growth-fail-values | API-CALL / account / growth-api-fail-values | 1 (1) | 0.129936
+full-route-account-growth-fail-state | API-CALL / account / growth-api-fail-state | 1 (1) | 0.137694
+full-route-account-allocator-check | API-CALL / account / allocator-check | 0 (0) | 0.143561
+full-route-account-allocator-fail-values | API-CALL / account / allocator-fail-values | 1 (1) | 0.144719
+full-route-account-allocator-fail-accounting | API-CALL / account / allocator-fail-accounting | 1 (1) | 0.153991
+full-route-account-api-fail-values | API-CALL / account / api-fail-values | 1 (1) | 0.164682
+full-route-account-api-fail-allocation | API-CALL / account / api-fail-allocation | 1 (1) | 0.149956
+full-route-timed-clock-fault | API-CALL / timed / growth-api-fail-clock | 1 (1) | 0.129631
+full-route-account-rows | API-ROWS | 0 (0) | 0.135444
+
+Focused source commands:
+perl .github/run-check.pl route-focused-check research/experiments/container-representation/vector-library/.build/empty-payload-anchor/whitefootc-anchor --check research/experiments/container-representation/vector-library/.build/full-growth-route/focused/focused-fixture.wf
+perl .github/run-check.pl route-focused-emit research/experiments/container-representation/vector-library/.build/empty-payload-anchor/whitefootc-anchor --emit-llvm research/experiments/container-representation/vector-library/.build/full-growth-route/focused/focused-fixture.wf -o research/experiments/container-representation/vector-library/.build/full-growth-route/focused/focused-realloc.raw.ll
+FOCUS-BUILD: perl .github/run-check.pl <stage> clang <flags> -std=c11 -O3 -Wall -Wextra -Werror -Wno-override-module <IR> research/experiments/container-representation/vector-library/.build/full-growth-route/focused/observer.c research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/ordinary_values.o research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/ordinary_values_ir.o research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/wf_floor.o research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/bridge.o research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/file_adapter.o research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/file_posix.o research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/linux_io_uring.o research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/runtime.o research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/completion/wait_host.o research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/sched/core.o research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/sched/entry.o research/experiments/container-representation/vector-library/.build/append-growth-baseline/native/sched/prim_host.o -pthread -lm -o <output>
+FOCUS-CALL: perl .github/run-check.pl <stage> <image> [mode]
+Focused table IR/image filenames resolve under F; paths passed from R retain
+the recorded repository-relative V/.build/full-growth-route/focused prefix.
+
+Focused stage | flags, IR -> image or image/mode | exit (expected) | outer seconds
+route-focused-check | source command above | 0 (0) | 0.130468
+route-focused-emit | source command above | 0 (0) | 0.125733
+route-focused-native-build |  focused-observed.ll -> focused-native | 0 (0) | 0.242398
+route-focused-linked-build | -DEXPECT_LINKED_TRANSFER focused-linked.ll -> focused-linked | 0 (0) | 0.237042
+route-focused-wrong-copy-order-build | -DCORRUPT_COPY_ORDER focused-observed.ll -> focused-wrong-copy-order | 0 (0) | 0.240224
+route-focused-early-free-build |  early-free.ll -> focused-early-free | 0 (0) | 0.243017
+route-focused-early-descriptor-write-build |  early-descriptor-write.ll -> focused-early-descriptor-write | 0 (0) | 0.242569
+route-focused-native-normal | focused-native  | 0 (0) | 0.446485
+route-focused-native-failure | focused-native failure | 73 (73) | 0.135157
+route-focused-native-scalar-failure | focused-native scalar-failure | 73 (73) | 0.139010
+route-focused-native-owned-failure | focused-native owned-failure | 73 (73) | 0.145056
+route-focused-native-first-failure | focused-native first-failure | 74 (74) | 0.157392
+route-focused-linked-normal | focused-linked  | 0 (0) | 0.477033
+route-focused-linked-failure | focused-linked failure | 73 (73) | 0.134472
+route-focused-linked-scalar-failure | focused-linked scalar-failure | 73 (73) | 0.135781
+route-focused-linked-owned-failure | focused-linked owned-failure | 73 (73) | 0.147045
+route-focused-linked-first-failure | focused-linked first-failure | 74 (74) | 0.148959
+route-focused-early-free-scalar-failure | focused-early-free scalar-failure | 1 (1) | 0.365386
+route-focused-early-free-owned-failure | focused-early-free owned-failure | 1 (1) | 0.137235
+route-focused-early-descriptor-write-scalar-failure | focused-early-descriptor-write scalar-failure | 1 (1) | 0.355574
+route-focused-early-descriptor-write-owned-failure | focused-early-descriptor-write owned-failure | 1 (1) | 0.160943
+route-focused-wrong-copy-order | focused-wrong-copy-order  | 1 (1) | 0.340364
+route-focused-wrong-release | focused-native wrong-release | 1 (1) | 0.138641
+route-focused-wrong-realloc | focused-native wrong-realloc | 1 (1) | 0.133860
+
+Identity anchors (SHA-256; unchanged peers/runtime hashes remain in earlier exposure record):
+d01ae503322ea77fe208ca28dacb747c0b689fa4a7b5257dccd1054944252754  frozen-Z-CLI
+e6ac87ecd481bfae91e8f0ea3cf9a7dc6839004ca94f62a14bbc42fa866b57d0  A-timed-image
+8e583b5524e22ff8190095908f69308d660f2f203ab1be3356bf5848e73043a8  B-timed-image
+97681ddd92ab0313478d94209ecc0845770ae98580fba66bb71f3794a033c271  B-account-image
+f4e6904f2dec97d7fbaf6a3c560cc9ea829f964844ece5a46a559b82fb6f0d62  A-timed-LLVM
+09a6d488955e209a44ac93ad08bd2346e27d2ef970627ecbbb2196e93a1a3f2b  A-account-LLVM
+2a239e8c4d7e1623b7f177b146943767b50deed382b553d12f7e4a4274a2c7bc  B-timed-LLVM
+ebde1b8930364faf533c755abefb355215179cfe084d11e28771cee360fdc720  B-account-LLVM
+ec126907c9b488dcbc6ed99ddf06296306315fe34a273e6d7e2e0c6c3fc7c038  A-driver-source
+e77fc43f3f4c43d609f5707dde19c68f7b9f37b6393c99d69702e8cf552fd2d8  B-driver-source
+62c903e561dc7b7e4b7d01131e34d0f9981811d3cfc771da90e8928f695ecb8b  full-growth-route.patch
+3d403fb26a00b6efd27337fb5ffb470ba1bff19a1551ce7261ae4b5f3603d8db  focused-fixture
+0eeb90e0d650164c452566805bb085221ecb018e67d6b43ebf4eb1cdd3b86eb6  focused-observer
+c166e876e515a9c0e6596858047617ef4beefbafe266d243e7f8283b34eba64d  focused-emitted-LLVM
+12cfbaf0e2f9fd217f6d3d4eb35b9c20b55474245c45b3a0960454928d66dcc1  focused-route-LLVM
+4ae04ab0154482f286b1535824034b2a0ec4e5d148e34743f3f888da2cf0f77c  focused-observed-LLVM
+4f41c82211a57f88fda6d1348e88e998d1ead112dfdf70ea3fcdcd05001d8e54  focused-linked-LLVM
+
+Selected direct diagnostic output:
+route-focused-native-normal.log: full malloc/copy: nested/partial/cap0/ZST/ranges/exchanges pass; exact releases / == END route-focused-native-normal: 0.43 s, exit 0 ==
+route-focused-native-scalar-failure.log: full malloc/copy: NULL preserves descriptor, payload and owners without copy/free / == END route-focused-native-scalar-failure: 0.11 s, exit 73 ==
+route-focused-native-owned-failure.log: full malloc/copy: NULL preserves descriptor, payload and owners without copy/free / == END route-focused-native-owned-failure: 0.11 s, exit 73 ==
+route-focused-native-first-failure.log: full malloc/copy: NULL first malloc preserves caller descriptor / == END route-focused-native-first-failure: 0.11 s, exit 74 ==
+route-focused-early-free-owned-failure.log: full malloc/copy observer: old allocation freed before full-growth allocation success / == END route-focused-early-free-owned-failure: 0.11 s, exit 1 ==
+route-focused-early-descriptor-write-owned-failure.log: full malloc/copy observer: failed full malloc preserves all descriptor words / == END route-focused-early-descriptor-write-owned-failure: 0.11 s, exit 1 ==
+route-focused-wrong-copy-order.log: full malloc/copy observer: full nested copy order before retirement / == END route-focused-wrong-copy-order: 0.32 s, exit 1 ==
+
+Actual B scalar append (complete reached body; public entry tail-branches here):
+_wf_vector_api_append_one$instance$b2fcb9cda4b45694:
+0000000100010e10	stp	x26, x25, [sp, #-0x50]!
+0000000100010e14	stp	x24, x23, [sp, #0x10]
+0000000100010e18	stp	x22, x21, [sp, #0x20]
+0000000100010e1c	stp	x20, x19, [sp, #0x30]
+0000000100010e20	stp	x29, x30, [sp, #0x40]
+0000000100010e24	mov	x20, x1
+0000000100010e28	mov	x19, x0
+0000000100010e2c	ldp	x23, x24, [x0]
+0000000100010e30	cmp	x24, x23
+0000000100010e34	b.ne	0x100010ed0
+0000000100010e38	cbz	x24, 0x100010e78
+0000000100010e3c	cmp	x24, #0x1, lsl #12
+0000000100010e40	b.hi	0x100010e90
+0000000100010e44	ldr	x21, [x19, #0x10]
+0000000100010e48	lsl	x0, x24, #4
+0000000100010e4c	bl	0x1000b67a8 ; symbol stub for: _malloc
+0000000100010e50	cbz	x0, 0x100010ef8
+0000000100010e54	mov	x22, x0
+0000000100010e58	lsl	x25, x24, #1
+0000000100010e5c	lsl	x2, x24, #3
+0000000100010e60	mov	x1, x21
+0000000100010e64	bl	0x1000b67cc ; symbol stub for: _memcpy
+0000000100010e68	mov	x0, x21
+0000000100010e6c	bl	0x1000b6628 ; symbol stub for: _free
+0000000100010e70	str	x22, [x19, #0x10]
+0000000100010e74	b	0x100010ecc
+0000000100010e78	mov	w0, #0x8
+0000000100010e7c	bl	0x1000b67a8 ; symbol stub for: _malloc
+0000000100010e80	cbz	x0, 0x100010ef8
+0000000100010e84	str	x0, [x19, #0x10]
+0000000100010e88	mov	w25, #0x1
+0000000100010e8c	b	0x100010ecc
+0000000100010e90	cmp	x24, #0x2, lsl #12
+0000000100010e94	b.hi	0x100010ed0
+0000000100010e98	ldr	x21, [x19, #0x10]
+0000000100010e9c	mov	w0, #0x8
+0000000100010ea0	movk	w0, #0x1, lsl #16
+0000000100010ea4	bl	0x1000b67a8 ; symbol stub for: _malloc
+0000000100010ea8	cbz	x0, 0x100010ef8
+0000000100010eac	mov	x22, x0
+0000000100010eb0	lsl	x2, x24, #3
+0000000100010eb4	mov	x1, x21
+0000000100010eb8	bl	0x1000b67cc ; symbol stub for: _memcpy
+0000000100010ebc	mov	x0, x21
+0000000100010ec0	bl	0x1000b6628 ; symbol stub for: _free
+0000000100010ec4	str	x22, [x19, #0x10]
+0000000100010ec8	mov	w25, #0x2001
+0000000100010ecc	str	x25, [x19, #0x8]
+0000000100010ed0	ldr	x8, [x19, #0x10]
+0000000100010ed4	str	x20, [x8, x23, lsl #3]
+0000000100010ed8	add	x0, x23, #0x1
+0000000100010edc	str	x0, [x19]
+0000000100010ee0	ldp	x29, x30, [sp, #0x40]
+0000000100010ee4	ldp	x20, x19, [sp, #0x30]
+0000000100010ee8	ldp	x22, x21, [sp, #0x20]
+0000000100010eec	ldp	x24, x23, [sp, #0x10]
+0000000100010ef0	ldp	x26, x25, [sp], #0x50
+0000000100010ef4	ret
+0000000100010ef8	bl	0x10000f848
+
+Paired screen, fixed chronological order A1-B1-B2-A2 (one launch each)
+All 3360 unique rows remain: 1680 real and 1680 snapshot controls. Every real sample
+exceeds 1 ms; each screen's RAW minimum is 41 ns. No control subtraction, retry or row
+selection. Within-run drift uses max(cohort medians)/min-1; pair peer drift uses
+abs(B_peer_median/A_peer_median-1), with A as the named baseline in both pairs.
+The symmetric max(A,B)/min(A,B)-1 convention also flags only scalar-4096, at 15.645%;
+the attribution verdict is unchanged.
+Pair 1 compares A1/B1; pair 2 compares B2/A2 in chronological order while preserving
+A2 as denominator. Require disjoint WF ranges with the same direction in both
+cohorts of both pairs, plus each matched peer median's drift <=10%.
+Table entries are WF median ns/append as cohort 0/cohort 1. F means B's maximum is
+below A's minimum; S means B's minimum is above A's maximum; O means overlap.
+Each pair column reports cohort 0/cohort 1. Range comparisons retain all 7 samples.
+
+| Run | Exit | Seconds | Min real ms | Min control ns | Max cohort peer drift | Max cohort WF/peer drift |
+|---|---:|---:|---:|---:|---:|---:|
+| A1 | 0 | 115.951 | 1.215999 | 1374 | 4.455% | 2.045% |
+| B1 | 0 | 117.539 | 1.267625 | 1250 | 1.687% | 8.275% |
+| B2 | 0 | 117.599 | 1.278952 | 1294 | 2.169% | 1.565% |
+| A2 | 0 | 116.039 | 1.274389 | 1293 | 1.469% | 1.788% |
+
+| Element / initial capacity | A1 WF | B1 WF | B2 WF | A2 WF | Pair 1; pair 2 | Max peer drift | Attribution |
+|---|---:|---:|---:|---:|---|---:|---|
+| 8 B / 0 (policy) | 7.57 / 7.49 | 7.80 / 7.94 | 7.83 / 7.84 | 7.56 / 7.51 | O/S; O/S | 0.854% | Unresolved |
+| 8 B / 1 (policy) | 17.91 / 17.93 | 16.50 / 16.52 | 16.56 / 16.44 | 17.91 / 17.87 | F/F; F/F | 6.794% | B faster |
+| 8 B / 16 | 34.15 / 34.14 | 22.54 / 22.53 | 22.54 / 22.44 | 34.03 / 33.99 | F/F; F/F | 0.473% | B faster |
+| 8 B / 256 | 100.31 / 101.18 | 89.88 / 90.20 | 88.71 / 88.19 | 100.13 / 100.66 | F/F; F/F | 2.672% | B faster |
+| 8 B / 4096 | 710.70 / 710.33 | 729.18 / 679.56 | 708.17 / 704.16 | 723.30 / 717.25 | O/O; O/O | 13.529% | Unresolved: drift |
+| 256 B / 0 (policy) | 11.83 / 11.87 | 12.18 / 12.16 | 12.15 / 12.14 | 11.78 / 11.82 | O/S; O/S | 0.784% | Unresolved |
+| 256 B / 1 (policy) | 48.50 / 48.31 | 36.92 / 36.97 | 37.03 / 37.07 | 48.39 / 48.29 | F/F; F/F | 0.984% | B faster |
+| 256 B / 16 | 150.22 / 149.42 | 140.17 / 140.04 | 136.87 / 136.04 | 147.17 / 146.99 | O/O; O/F | 2.057% | Unresolved |
+| 256 B / 256 | 1314.89 / 1320.70 | 1316.11 / 1316.14 | 1313.09 / 1310.23 | 1319.85 / 1316.43 | O/O; O/O | 1.507% | Unresolved |
+| 256 B / 4096 | 156.66 / 152.61 | 14905.61 / 14919.30 | 14834.43 / 14809.45 | 157.77 / 157.58 | S/S; S/S | 5.688% | B slower |
+
+Verdict: B has supported paired route gains at matched scalar-16 and scalar-256,
+and a supported loss at wide-4096. Scalar-4096 overlaps and also fails pair peer
+stability (13.529%); wide-16 and wide-256 overlap the requisite envelopes. Capacity-1
+policy rows favor B; capacity-0 remains unresolved. No uniform replacement, size
+threshold, allocator-internal attribution or production choice follows. Native
+frame/copy-call changes are included in this complete-route comparison. General
+spare-append cost qualification remains outside this trial; other APIs stay paused.
+
+Combined CSV SHA-256: 1ffb89812c16ea0a36ec979a0d7248fa9165140e8a8533798ca8804eac1b8667
+Raw CSV identities (losslessly reconstructible by removing run column):
+2d254e8d14a927629d54d89a542071390950b71c0c1069ad2ae9d160898e0029  A1-samples.csv
+7ccd507d2726ad8567439abcd8024e617d0c39f9f8424dcf01f47811887a4050  B1-samples.csv
+6103e6bc33bd7ec74ac0e47ce5de87ae60bea970ca1aad87fa2ae3db1a9585ff  B2-samples.csv
+c2a545854434ac1d65edea9ac90538f9d3544c9dc37d9455e4d635b6042ab021  A2-samples.csv
+Reconstruction: retain the combined header after its first comma; select all
+rows whose first field is the desired run, remove exactly that field and comma,
+and prepend the retained header. Byte equality and each original hash were checked.
+
+Exact screen commands: cwd=<repository-root>, WHITEFOOT_CHECK_TIMEOUT=240.
+perl .github/run-check.pl full-route-A1 sh -c 'research/experiments/container-representation/vector-library/.build/append-spine-exposure/vector-costs-timed growth-api-measure 67108864 7 8589934592 > research/experiments/container-representation/vector-library/.build/full-growth-route/A1-samples.csv'
+exit 0; outer seconds 115.95078308368102
+perl .github/run-check.pl full-route-B1 sh -c 'research/experiments/container-representation/vector-library/.build/full-growth-route/vector-costs-timed growth-api-measure 67108864 7 8589934592 > research/experiments/container-representation/vector-library/.build/full-growth-route/B1-samples.csv'
+exit 0; outer seconds 117.53931579180062
+perl .github/run-check.pl full-route-B2 sh -c 'research/experiments/container-representation/vector-library/.build/full-growth-route/vector-costs-timed growth-api-measure 67108864 7 8589934592 > research/experiments/container-representation/vector-library/.build/full-growth-route/B2-samples.csv'
+exit 0; outer seconds 117.59893129160628
+perl .github/run-check.pl full-route-A2 sh -c 'research/experiments/container-representation/vector-library/.build/append-spine-exposure/vector-costs-timed growth-api-measure 67108864 7 8589934592 > research/experiments/container-representation/vector-library/.build/full-growth-route/A2-samples.csv'
+exit 0; outer seconds 116.03930579219013
+
+Raw screen guard output (relative paths retained):
+--- A1 ---
+== START full-route-A1 (limit 240s): sh -c research/experiments/container-representation/vector-library/.build/append-spine-exposure/vector-costs-timed growth-api-measure 67108864 7 8589934592 > research/experiments/container-representation/vector-library/.build/full-growth-route/A1-samples.csv ==
+growth append clock: reads=200000 minimum_nonzero_ns=41 quantized=0
+== RUNNING full-route-A1: 30 s, child 3447, group 3447 ==
+== RUNNING full-route-A1: 60 s, child 3447, group 3447 ==
+== RUNNING full-route-A1: 90 s, child 3447, group 3447 ==
+real 115.86
+user 115.49
+sys 0.18
+== END full-route-A1: 115.93 s, exit 0 ==
+
+--- B1 ---
+== START full-route-B1 (limit 240s): sh -c research/experiments/container-representation/vector-library/.build/full-growth-route/vector-costs-timed growth-api-measure 67108864 7 8589934592 > research/experiments/container-representation/vector-library/.build/full-growth-route/B1-samples.csv ==
+growth append clock: reads=200000 minimum_nonzero_ns=41 quantized=0
+== RUNNING full-route-B1: 30 s, child 7525, group 7525 ==
+== RUNNING full-route-B1: 60 s, child 7525, group 7525 ==
+== RUNNING full-route-B1: 90 s, child 7525, group 7525 ==
+real 117.50
+user 117.22
+sys 0.19
+== END full-route-B1: 117.52 s, exit 0 ==
+
+--- B2 ---
+== START full-route-B2 (limit 240s): sh -c research/experiments/container-representation/vector-library/.build/full-growth-route/vector-costs-timed growth-api-measure 67108864 7 8589934592 > research/experiments/container-representation/vector-library/.build/full-growth-route/B2-samples.csv ==
+growth append clock: reads=200000 minimum_nonzero_ns=41 quantized=0
+== RUNNING full-route-B2: 30 s, child 11525, group 11525 ==
+== RUNNING full-route-B2: 60 s, child 11525, group 11525 ==
+== RUNNING full-route-B2: 90 s, child 11525, group 11525 ==
+real 117.55
+user 117.27
+sys 0.18
+== END full-route-B2: 117.58 s, exit 0 ==
+
+--- A2 ---
+== START full-route-A2 (limit 240s): sh -c research/experiments/container-representation/vector-library/.build/append-spine-exposure/vector-costs-timed growth-api-measure 67108864 7 8589934592 > research/experiments/container-representation/vector-library/.build/full-growth-route/A2-samples.csv ==
+growth append clock: reads=200000 minimum_nonzero_ns=41 quantized=0
+== RUNNING full-route-A2: 30 s, child 15562, group 15562 ==
+== RUNNING full-route-A2: 60 s, child 15562, group 15562 ==
+== RUNNING full-route-A2: 90 s, child 15562, group 15562 ==
+real 116.00
+user 115.74
+sys 0.19
+== END full-route-A2: 116.02 s, exit 0 ==

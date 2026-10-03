@@ -505,3 +505,44 @@ written recursive components. The finite `first<second<stop>>` counterexample
 is deliberately refused by this selected structural rule, while its acyclic
 variant is admitted. This is a rule-compliance repair, not evidence that that
 particular program would instantiate forever.
+
+## Ordinary inlining hints for supplied functions
+
+The owner withdrew the uniform function-actual `inlinehint` candidate after
+independent review. A concrete supplied function no longer carries a
+hint-specific provenance flag through physical specialization and IR emission;
+ordinary LLVM inlining still applies to its definition and calls. Source
+acceptance, function binding, direct-call specialization, callable ABI and the
+separate terminal-consumption candidate are unchanged.
+
+The [original Vector artifact](../../experiments/container-representation/vector-library/RESULTS.md#ordinary-behavior-hints-combined-k-gains-without-useful-cell-regression)
+was a valid reason to investigate, but did not establish an independent hint
+benefit. F+hint alone produced identical native objects and images to F. In the
+combined K+hint artifact, the wide callback's cost 450 fit the hinted threshold
+487 instead of 375; that conditional observation belonged to K's changed raw
+LLVM shape, not to every concrete function actual.
+
+The subsequent [actual-compiler factor comparison](../../experiments/container-representation/vector-library/RESULTS.md#actual-compiler-factor-isolation-after-ownership-integration)
+constructed four compiler arms at its recorded source and toolchain pin. Hint
+pairs produced byte-identical timed and accounting objects with or without
+terminal consumption; no accept callback survived either setting. The
+traversal gains therefore supply no separate selection ground for the hint.
+The earlier [five-family construction](../../experiments/container-representation/ECOSYSTEM.md#actual-compiler-construction-and-native-admission)
+also found unchanged objects and linked sections for the other four families
+at that pin. These bounded observations establish no current benefit, not a
+universal claim that hints cannot help.
+
+The withdrawal removes the hint inventory, IR flag and emission, and retires
+only assertions that require that rejected metadata. The existing test
+programs retain their independent obligations: physical definition sharing,
+group forwarding, structured fragments, recursive entry/world wrappers,
+imported binding and cache selection, and ordinary linked-call behavior.
+This is an explained retirement of an experimental expectation, not a change
+to source-language conformance.
+
+FN-2 and FN-5 define concrete function actuals but imply neither small bodies,
+frequent calls, termination nor an inlining benefit. Reopen a hint policy only
+when a real program supplies a discriminating native-code effect and matched
+performance evidence without the recorded regressions. The withdrawal
+removes the pending amendment; it selects no global threshold, forced inlining,
+name-based rule or export-visibility change.

@@ -1,0 +1,6 @@
+Node: language/data-model/hash-map-storage
+
+Decision: Retain both existing owning-bucket and shared-result decisions because the [complete same-capacity trial](../../research/experiments/container-representation/map-library/RESULTS.md#paired-outcome-and-refusal) finds 52 qualified operation-cell regressions against seven gains for ordinary group controls, instead of adopting that representation or rescuing it by narrowing capacities or operations after measurement. This revises the earlier provisional adoption proposal into a refusal proposal: append the single rejected alternative below, leaving both live decisions and every existing rejected alternative unchanged. The amendment is removed when its ruling is recorded.
+
+Rejected:
+- Ordinary packed control words beside the same sparse enum buckets, with an inline tail and one complete-word allocation above eight buckets: rejected because the full practical and occupancy pair establishes repeatable tiny-map, edit, reserve and lower-occupancy hit losses despite a dense wide-miss benefit, while the candidate's correctness and ownership screens pass. Reopening requires a new mechanism addressing those measured costs and the same complete no-loss criterion; favorable cells alone do not justify adoption.

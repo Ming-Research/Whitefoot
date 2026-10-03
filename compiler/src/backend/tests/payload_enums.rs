@@ -784,9 +784,9 @@ void *wf_test_allocate(size_t size) {
     let output = compile_link_and_run(&module, Some(observer), &[]);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     let requests = String::from_utf8(output.stdout).expect("sizes");
-    // The block's two header words, then 8,000,000 slots of 40 bytes.
+    // The inline owner allocates only 8,000,000 slots of 40 bytes.
     assert!(
-        requests.lines().any(|line| line == "320000016"),
+        requests.lines().any(|line| line == "320000000"),
         "{requests}"
     );
 }

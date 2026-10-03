@@ -1,0 +1,407 @@
+--- a/whitefoot-timed.ll
++++ b/whitefoot-timed.ll
+@@ -3304,6 +3304,20 @@
+   ret i8 %v2
+ }
+ 
++define internal ptr @wf_small_full_copy(ptr %old, i64 %old_bytes, i64 %new_bytes) noinline #0 {
++entry:
++  %fresh = call ptr @malloc(i64 %new_bytes)
++  %okay = icmp ne ptr %fresh, null
++  br i1 %okay, label %ready, label %oom
++oom:
++  call void @wf_resource_abort()
++  unreachable
++ready:
++  call void @llvm.memcpy.p0.p0.i64(ptr %fresh, ptr %old, i64 %old_bytes, i1 false)
++  call void @free(ptr %old)
++  ret ptr %fresh
++}
++
+ define i8 @wf_grow$instance$e194368921a477a7(ptr noalias nonnull captures(none) dereferenceable(24) %v0, i64 %v1) alwaysinline #0 {
+ entry:
+   %t0 = getelementptr inbounds { i64, i64, ptr }, ptr %v0, i32 0, i32 1
+@@ -3341,12 +3355,9 @@
+   %route.small = icmp ule i64 %route.old.bytes, 2048
+   br i1 %route.small, label %route.copy.allocate, label %route.resize
+ route.copy.allocate:
+-  %route.fresh = call ptr @malloc(i64 %t13)
+-  %route.fresh.ok = icmp ne ptr %route.fresh, null
+-  br i1 %route.fresh.ok, label %route.copy.ready, label %window.block.oom.v2.realloc
++  %route.fresh = call ptr @wf_small_full_copy(ptr %t5, i64 %route.old.bytes, i64 %t13)
++  br label %route.copy.ready
+ route.copy.ready:
+-  call void @llvm.memcpy.p0.p0.i64(ptr %route.fresh, ptr %t5, i64 %route.old.bytes, i1 false)
+-  call void @free(ptr %t5)
+   br label %window.block.ready.v2.realloc
+ route.resize:
+   %route.resized = call ptr @realloc(ptr %t5, i64 %t13)
+@@ -3436,12 +3447,9 @@
+   %route.small = icmp ule i64 %route.old.bytes, 2048
+   br i1 %route.small, label %route.copy.allocate, label %route.resize
+ route.copy.allocate:
+-  %route.fresh = call ptr @malloc(i64 %t13)
+-  %route.fresh.ok = icmp ne ptr %route.fresh, null
+-  br i1 %route.fresh.ok, label %route.copy.ready, label %window.block.oom.v2.realloc
++  %route.fresh = call ptr @wf_small_full_copy(ptr %t5, i64 %route.old.bytes, i64 %t13)
++  br label %route.copy.ready
+ route.copy.ready:
+-  call void @llvm.memcpy.p0.p0.i64(ptr %route.fresh, ptr %t5, i64 %route.old.bytes, i1 false)
+-  call void @free(ptr %t5)
+   br label %window.block.ready.v2.realloc
+ route.resize:
+   %route.resized = call ptr @realloc(ptr %t5, i64 %t13)
+--- a/whitefoot-account.ll
++++ b/whitefoot-account.ll
+@@ -3304,6 +3304,20 @@
+   ret i8 %v2
+ }
+ 
++define internal ptr @wf_small_full_copy(ptr %old, i64 %old_bytes, i64 %new_bytes) noinline #0 {
++entry:
++  %fresh = call ptr @wf_cost_allocate(i64 %new_bytes)
++  %okay = icmp ne ptr %fresh, null
++  br i1 %okay, label %ready, label %oom
++oom:
++  call void @wf_resource_abort()
++  unreachable
++ready:
++  call void @llvm.memcpy.p0.p0.i64(ptr %fresh, ptr %old, i64 %old_bytes, i1 false)
++  call void @wf_cost_release(ptr %old)
++  ret ptr %fresh
++}
++
+ define i8 @wf_grow$instance$e194368921a477a7(ptr noalias nonnull captures(none) dereferenceable(24) %v0, i64 %v1) alwaysinline #0 {
+ entry:
+   %t0 = getelementptr inbounds { i64, i64, ptr }, ptr %v0, i32 0, i32 1
+@@ -3341,12 +3355,9 @@
+   %route.small = icmp ule i64 %route.old.bytes, 2048
+   br i1 %route.small, label %route.copy.allocate, label %route.resize
+ route.copy.allocate:
+-  %route.fresh = call ptr @wf_cost_allocate(i64 %t13)
+-  %route.fresh.ok = icmp ne ptr %route.fresh, null
+-  br i1 %route.fresh.ok, label %route.copy.ready, label %window.block.oom.v2.realloc
++  %route.fresh = call ptr @wf_small_full_copy(ptr %t5, i64 %route.old.bytes, i64 %t13)
++  br label %route.copy.ready
+ route.copy.ready:
+-  call void @llvm.memcpy.p0.p0.i64(ptr %route.fresh, ptr %t5, i64 %route.old.bytes, i1 false)
+-  call void @wf_cost_release(ptr %t5)
+   br label %window.block.ready.v2.realloc
+ route.resize:
+   %route.resized = call ptr @wf_cost_reallocate(ptr %t5, i64 %t13)
+@@ -3436,12 +3447,9 @@
+   %route.small = icmp ule i64 %route.old.bytes, 2048
+   br i1 %route.small, label %route.copy.allocate, label %route.resize
+ route.copy.allocate:
+-  %route.fresh = call ptr @wf_cost_allocate(i64 %t13)
+-  %route.fresh.ok = icmp ne ptr %route.fresh, null
+-  br i1 %route.fresh.ok, label %route.copy.ready, label %window.block.oom.v2.realloc
++  %route.fresh = call ptr @wf_small_full_copy(ptr %t5, i64 %route.old.bytes, i64 %t13)
++  br label %route.copy.ready
+ route.copy.ready:
+-  call void @llvm.memcpy.p0.p0.i64(ptr %route.fresh, ptr %t5, i64 %route.old.bytes, i1 false)
+-  call void @wf_cost_release(ptr %t5)
+   br label %window.block.ready.v2.realloc
+ route.resize:
+   %route.resized = call ptr @wf_cost_reallocate(ptr %t5, i64 %t13)
+--- H/focused/api-observed.ll
++++ J/focused/api-observed.ll
+@@ -3305,6 +3305,20 @@
+   ret i8 %v2
+ }
+ 
++define internal ptr @wf_small_full_copy(ptr %old, i64 %old_bytes, i64 %new_bytes) noinline #0 {
++entry:
++  %fresh = call ptr @wf_policy_allocate(i64 %new_bytes)
++  %okay = icmp ne ptr %fresh, null
++  br i1 %okay, label %ready, label %oom
++oom:
++  call void @wf_resource_abort()
++  unreachable
++ready:
++  call void @wf_policy_copy(ptr %fresh, ptr %old, i64 %old_bytes, i1 false)
++  call void @wf_policy_release(ptr %old)
++  ret ptr %fresh
++}
++
+ define i8 @wf_grow$instance$e194368921a477a7(ptr noalias nonnull captures(none) dereferenceable(24) %v0, i64 %v1) alwaysinline #0 {
+ entry:
+   %t0 = getelementptr inbounds { i64, i64, ptr }, ptr %v0, i32 0, i32 1
+@@ -3342,12 +3356,9 @@
+   %route.small = icmp ule i64 %route.old.bytes, 2048
+   br i1 %route.small, label %route.copy.allocate, label %route.resize
+ route.copy.allocate:
+-  %route.fresh = call ptr @wf_policy_allocate(i64 %t13)
+-  %route.fresh.ok = icmp ne ptr %route.fresh, null
+-  br i1 %route.fresh.ok, label %route.copy.ready, label %window.block.oom.v2.realloc
++  %route.fresh = call ptr @wf_small_full_copy(ptr %t5, i64 %route.old.bytes, i64 %t13)
++  br label %route.copy.ready
+ route.copy.ready:
+-  call void @wf_policy_copy(ptr %route.fresh, ptr %t5, i64 %route.old.bytes, i1 false)
+-  call void @wf_policy_release(ptr %t5)
+   br label %window.block.ready.v2.realloc
+ route.resize:
+   %route.resized = call ptr @wf_policy_reallocate(ptr %t5, i64 %t13)
+@@ -3437,12 +3448,9 @@
+   %route.small = icmp ule i64 %route.old.bytes, 2048
+   br i1 %route.small, label %route.copy.allocate, label %route.resize
+ route.copy.allocate:
+-  %route.fresh = call ptr @wf_policy_allocate(i64 %t13)
+-  %route.fresh.ok = icmp ne ptr %route.fresh, null
+-  br i1 %route.fresh.ok, label %route.copy.ready, label %window.block.oom.v2.realloc
++  %route.fresh = call ptr @wf_small_full_copy(ptr %t5, i64 %route.old.bytes, i64 %t13)
++  br label %route.copy.ready
+ route.copy.ready:
+-  call void @wf_policy_copy(ptr %route.fresh, ptr %t5, i64 %route.old.bytes, i1 false)
+-  call void @wf_policy_release(ptr %t5)
+   br label %window.block.ready.v2.realloc
+ route.resize:
+   %route.resized = call ptr @wf_policy_reallocate(ptr %t5, i64 %t13)
+--- H/focused/early-publish.ll
++++ J/focused/early-publish.ll
+@@ -1805,12 +1805,9 @@
+   br i1 %route.small, label %route.copy.allocate, label %route.resize
+ route.copy.allocate:
+   store ptr null, ptr %t2
+-  %route.fresh = call ptr @wf_observe_allocate(i64 %t13)
+-  %route.fresh.ok = icmp ne ptr %route.fresh, null
+-  br i1 %route.fresh.ok, label %route.copy.ready, label %window.block.oom.v2.realloc
++  %route.fresh = call ptr @wf_small_full_copy(ptr %t5, i64 %route.old.bytes, i64 %t13)
++  br label %route.copy.ready
+ route.copy.ready:
+-  call void @wf_observe_full_copy(ptr %route.fresh, ptr %t5, i64 %route.old.bytes)
+-  call void @wf_observe_release(ptr %t5)
+   br label %window.block.ready.v2.realloc
+ route.resize:
+   %route.resized = call ptr @wf_observe_reallocate(ptr %t5, i64 %t13)
+@@ -1901,12 +1898,9 @@
+   br i1 %route.small, label %route.copy.allocate, label %route.resize
+ route.copy.allocate:
+   store ptr null, ptr %t2
+-  %route.fresh = call ptr @wf_observe_allocate(i64 %t13)
+-  %route.fresh.ok = icmp ne ptr %route.fresh, null
+-  br i1 %route.fresh.ok, label %route.copy.ready, label %window.block.oom.v2.realloc
++  %route.fresh = call ptr @wf_small_full_copy(ptr %t5, i64 %route.old.bytes, i64 %t13)
++  br label %route.copy.ready
+ route.copy.ready:
+-  call void @wf_observe_full_copy(ptr %route.fresh, ptr %t5, i64 %route.old.bytes)
+-  call void @wf_observe_release(ptr %t5)
+   br label %window.block.ready.v2.realloc
+ route.resize:
+   %route.resized = call ptr @wf_observe_reallocate(ptr %t5, i64 %t13)
+@@ -2081,12 +2075,9 @@
+   br i1 %route.small, label %route.copy.allocate, label %route.resize
+ route.copy.allocate:
+   store ptr null, ptr %t2
+-  %route.fresh = call ptr @wf_observe_allocate(i64 %t13)
+-  %route.fresh.ok = icmp ne ptr %route.fresh, null
+-  br i1 %route.fresh.ok, label %route.copy.ready, label %window.block.oom.v2.realloc
++  %route.fresh = call ptr @wf_small_full_copy(ptr %t5, i64 %route.old.bytes, i64 %t13)
++  br label %route.copy.ready
+ route.copy.ready:
+-  call void @wf_observe_full_copy(ptr %route.fresh, ptr %t5, i64 %route.old.bytes)
+-  call void @wf_observe_release(ptr %t5)
+   br label %window.block.ready.v2.realloc
+ route.resize:
+   %route.resized = call ptr @wf_observe_reallocate(ptr %t5, i64 %t13)
+@@ -2147,3 +2138,17 @@
+   %status = call i32 @wf__floor_run(i32 %argc, ptr %argv)
+   ret i32 %status
+ }
++
++define internal ptr @wf_small_full_copy(ptr %old, i64 %old_bytes, i64 %new_bytes) noinline #0 {
++entry:
++  %fresh = call ptr @wf_observe_allocate(i64 %new_bytes)
++  %okay = icmp ne ptr %fresh, null
++  br i1 %okay, label %ready, label %oom
++oom:
++  call void @wf_observe_abort()
++  unreachable
++ready:
++  call void @wf_observe_full_copy(ptr %fresh, ptr %old, i64 %old_bytes)
++  call void @wf_observe_release(ptr %old)
++  ret ptr %fresh
++}
+--- H/focused/nested-observed.ll
++++ J/focused/nested-observed.ll
+@@ -1804,12 +1804,9 @@
+   %route.small = icmp ule i64 %route.old.bytes, 2048
+   br i1 %route.small, label %route.copy.allocate, label %route.resize
+ route.copy.allocate:
+-  %route.fresh = call ptr @wf_observe_allocate(i64 %t13)
+-  %route.fresh.ok = icmp ne ptr %route.fresh, null
+-  br i1 %route.fresh.ok, label %route.copy.ready, label %window.block.oom.v2.realloc
++  %route.fresh = call ptr @wf_small_full_copy(ptr %t5, i64 %route.old.bytes, i64 %t13)
++  br label %route.copy.ready
+ route.copy.ready:
+-  call void @wf_observe_full_copy(ptr %route.fresh, ptr %t5, i64 %route.old.bytes)
+-  call void @wf_observe_release(ptr %t5)
+   br label %window.block.ready.v2.realloc
+ route.resize:
+   %route.resized = call ptr @wf_observe_reallocate(ptr %t5, i64 %t13)
+@@ -1899,12 +1896,9 @@
+   %route.small = icmp ule i64 %route.old.bytes, 2048
+   br i1 %route.small, label %route.copy.allocate, label %route.resize
+ route.copy.allocate:
+-  %route.fresh = call ptr @wf_observe_allocate(i64 %t13)
+-  %route.fresh.ok = icmp ne ptr %route.fresh, null
+-  br i1 %route.fresh.ok, label %route.copy.ready, label %window.block.oom.v2.realloc
++  %route.fresh = call ptr @wf_small_full_copy(ptr %t5, i64 %route.old.bytes, i64 %t13)
++  br label %route.copy.ready
+ route.copy.ready:
+-  call void @wf_observe_full_copy(ptr %route.fresh, ptr %t5, i64 %route.old.bytes)
+-  call void @wf_observe_release(ptr %t5)
+   br label %window.block.ready.v2.realloc
+ route.resize:
+   %route.resized = call ptr @wf_observe_reallocate(ptr %t5, i64 %t13)
+@@ -2078,12 +2072,9 @@
+   %route.small = icmp ule i64 %route.old.bytes, 2048
+   br i1 %route.small, label %route.copy.allocate, label %route.resize
+ route.copy.allocate:
+-  %route.fresh = call ptr @wf_observe_allocate(i64 %t13)
+-  %route.fresh.ok = icmp ne ptr %route.fresh, null
+-  br i1 %route.fresh.ok, label %route.copy.ready, label %window.block.oom.v2.realloc
++  %route.fresh = call ptr @wf_small_full_copy(ptr %t5, i64 %route.old.bytes, i64 %t13)
++  br label %route.copy.ready
+ route.copy.ready:
+-  call void @wf_observe_full_copy(ptr %route.fresh, ptr %t5, i64 %route.old.bytes)
+-  call void @wf_observe_release(ptr %t5)
+   br label %window.block.ready.v2.realloc
+ route.resize:
+   %route.resized = call ptr @wf_observe_reallocate(ptr %t5, i64 %t13)
+@@ -2144,3 +2135,17 @@
+   %status = call i32 @wf__floor_run(i32 %argc, ptr %argv)
+   ret i32 %status
+ }
++
++define internal ptr @wf_small_full_copy(ptr %old, i64 %old_bytes, i64 %new_bytes) noinline #0 {
++entry:
++  %fresh = call ptr @wf_observe_allocate(i64 %new_bytes)
++  %okay = icmp ne ptr %fresh, null
++  br i1 %okay, label %ready, label %oom
++oom:
++  call void @wf_observe_abort()
++  unreachable
++ready:
++  call void @wf_observe_full_copy(ptr %fresh, ptr %old, i64 %old_bytes)
++  call void @wf_observe_release(ptr %old)
++  ret ptr %fresh
++}
+--- H/focused/api-early-publish.ll
++++ J/focused/api-early-publish.ll
+@@ -3305,6 +3305,20 @@
+   ret i8 %v2
+ }
+ 
++define internal ptr @wf_small_full_copy(ptr %old, i64 %old_bytes, i64 %new_bytes) noinline #0 {
++entry:
++  %fresh = call ptr @wf_policy_allocate(i64 %new_bytes)
++  %okay = icmp ne ptr %fresh, null
++  br i1 %okay, label %ready, label %oom
++oom:
++  call void @wf_resource_abort()
++  unreachable
++ready:
++  call void @wf_policy_copy(ptr %fresh, ptr %old, i64 %old_bytes, i1 false)
++  call void @wf_policy_release(ptr %old)
++  ret ptr %fresh
++}
++
+ define i8 @wf_grow$instance$e194368921a477a7(ptr noalias nonnull captures(none) dereferenceable(24) %v0, i64 %v1) alwaysinline #0 {
+ entry:
+   %t0 = getelementptr inbounds { i64, i64, ptr }, ptr %v0, i32 0, i32 1
+@@ -3343,12 +3357,9 @@
+   br i1 %route.small, label %route.copy.allocate, label %route.resize
+ route.copy.allocate:
+   store ptr null, ptr %t2
+-  %route.fresh = call ptr @wf_policy_allocate(i64 %t13)
+-  %route.fresh.ok = icmp ne ptr %route.fresh, null
+-  br i1 %route.fresh.ok, label %route.copy.ready, label %window.block.oom.v2.realloc
++  %route.fresh = call ptr @wf_small_full_copy(ptr %t5, i64 %route.old.bytes, i64 %t13)
++  br label %route.copy.ready
+ route.copy.ready:
+-  call void @wf_policy_copy(ptr %route.fresh, ptr %t5, i64 %route.old.bytes, i1 false)
+-  call void @wf_policy_release(ptr %t5)
+   br label %window.block.ready.v2.realloc
+ route.resize:
+   store ptr null, ptr %t2
+@@ -3440,12 +3451,9 @@
+   br i1 %route.small, label %route.copy.allocate, label %route.resize
+ route.copy.allocate:
+   store ptr null, ptr %t2
+-  %route.fresh = call ptr @wf_policy_allocate(i64 %t13)
+-  %route.fresh.ok = icmp ne ptr %route.fresh, null
+-  br i1 %route.fresh.ok, label %route.copy.ready, label %window.block.oom.v2.realloc
++  %route.fresh = call ptr @wf_small_full_copy(ptr %t5, i64 %route.old.bytes, i64 %t13)
++  br label %route.copy.ready
+ route.copy.ready:
+-  call void @wf_policy_copy(ptr %route.fresh, ptr %t5, i64 %route.old.bytes, i1 false)
+-  call void @wf_policy_release(ptr %t5)
+   br label %window.block.ready.v2.realloc
+ route.resize:
+   store ptr null, ptr %t2
+--- H/focused/early-free.ll
++++ J/focused/early-free.ll
+@@ -1805,12 +1805,9 @@
+   br i1 %route.small, label %route.copy.allocate, label %route.resize
+ route.copy.allocate:
+   call void @wf_observe_release(ptr %t5)
+-  %route.fresh = call ptr @wf_observe_allocate(i64 %t13)
+-  %route.fresh.ok = icmp ne ptr %route.fresh, null
+-  br i1 %route.fresh.ok, label %route.copy.ready, label %window.block.oom.v2.realloc
++  %route.fresh = call ptr @wf_small_full_copy(ptr %t5, i64 %route.old.bytes, i64 %t13)
++  br label %route.copy.ready
+ route.copy.ready:
+-  call void @wf_observe_full_copy(ptr %route.fresh, ptr %t5, i64 %route.old.bytes)
+-  call void @wf_observe_release(ptr %t5)
+   br label %window.block.ready.v2.realloc
+ route.resize:
+   %route.resized = call ptr @wf_observe_reallocate(ptr %t5, i64 %t13)
+@@ -1901,12 +1898,9 @@
+   br i1 %route.small, label %route.copy.allocate, label %route.resize
+ route.copy.allocate:
+   call void @wf_observe_release(ptr %t5)
+-  %route.fresh = call ptr @wf_observe_allocate(i64 %t13)
+-  %route.fresh.ok = icmp ne ptr %route.fresh, null
+-  br i1 %route.fresh.ok, label %route.copy.ready, label %window.block.oom.v2.realloc
++  %route.fresh = call ptr @wf_small_full_copy(ptr %t5, i64 %route.old.bytes, i64 %t13)
++  br label %route.copy.ready
+ route.copy.ready:
+-  call void @wf_observe_full_copy(ptr %route.fresh, ptr %t5, i64 %route.old.bytes)
+-  call void @wf_observe_release(ptr %t5)
+   br label %window.block.ready.v2.realloc
+ route.resize:
+   %route.resized = call ptr @wf_observe_reallocate(ptr %t5, i64 %t13)
+@@ -2081,12 +2075,9 @@
+   br i1 %route.small, label %route.copy.allocate, label %route.resize
+ route.copy.allocate:
+   call void @wf_observe_release(ptr %t5)
+-  %route.fresh = call ptr @wf_observe_allocate(i64 %t13)
+-  %route.fresh.ok = icmp ne ptr %route.fresh, null
+-  br i1 %route.fresh.ok, label %route.copy.ready, label %window.block.oom.v2.realloc
++  %route.fresh = call ptr @wf_small_full_copy(ptr %t5, i64 %route.old.bytes, i64 %t13)
++  br label %route.copy.ready
+ route.copy.ready:
+-  call void @wf_observe_full_copy(ptr %route.fresh, ptr %t5, i64 %route.old.bytes)
+-  call void @wf_observe_release(ptr %t5)
+   br label %window.block.ready.v2.realloc
+ route.resize:
+   %route.resized = call ptr @wf_observe_reallocate(ptr %t5, i64 %t13)
+@@ -2147,3 +2138,17 @@
+   %status = call i32 @wf__floor_run(i32 %argc, ptr %argv)
+   ret i32 %status
+ }
++
++define internal ptr @wf_small_full_copy(ptr %old, i64 %old_bytes, i64 %new_bytes) noinline #0 {
++entry:
++  %fresh = call ptr @wf_observe_allocate(i64 %new_bytes)
++  %okay = icmp ne ptr %fresh, null
++  br i1 %okay, label %ready, label %oom
++oom:
++  call void @wf_observe_abort()
++  unreachable
++ready:
++  call void @wf_observe_full_copy(ptr %fresh, ptr %old, i64 %old_bytes)
++  call void @wf_observe_release(ptr %old)
++  ret ptr %fresh
++}

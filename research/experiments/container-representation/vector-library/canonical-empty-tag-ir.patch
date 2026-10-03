@@ -1,0 +1,75 @@
+--- nullable-owner.timed.ll
++++ canonical-known-contents.timed.ll
+@@ -79,0 +80,2 @@
++@wf_runtime_empty_header = available_externally constant [3 x i64] zeroinitializer, align 8
++
+@@ -82,5 +83,0 @@
+-  %empty = icmp eq ptr %block, null
+-  br i1 %empty, label %zero, label %real
+-zero:
+-  ret i64 0
+-real:
+@@ -93 +90 @@
+-  %empty = icmp eq ptr %block, null
++  %empty = icmp eq ptr %block, @wf_runtime_empty_header
+@@ -104 +101 @@
+-  %empty = icmp eq ptr %block, null
++  %empty = icmp eq ptr %block, @wf_runtime_empty_header
+@@ -114 +111 @@
+-  %empty = icmp eq ptr %block, null
++  %empty = icmp eq ptr %block, @wf_runtime_empty_header
+@@ -127 +124 @@
+-  ret ptr null
++  ret ptr @wf_runtime_empty_header
+@@ -1917 +1914 @@
+-  %v1 = phi ptr [ null, %window.block.empty.v1 ], [ %v1.fresh, %window.block.ready.v1 ]
++  %v1 = phi ptr [ @wf_runtime_empty_header, %window.block.empty.v1 ], [ %v1.fresh, %window.block.ready.v1 ]
+@@ -1998 +1995,2 @@
+-  call void @wf.runtime.shape.write(ptr %t6, i64 0, i64 %v1)
++  %wf.direct.header.0 = getelementptr inbounds i64, ptr %t6, i64 0
++  store i64 %v1, ptr %wf.direct.header.0
+@@ -2087 +2085 @@
+-  %v1 = phi ptr [ null, %window.block.empty.v1 ], [ %v1.fresh, %window.block.ready.v1 ]
++  %v1 = phi ptr [ @wf_runtime_empty_header, %window.block.empty.v1 ], [ %v1.fresh, %window.block.ready.v1 ]
+@@ -2169 +2167,2 @@
+-  call void @wf.runtime.shape.write(ptr %t6, i64 0, i64 %v1)
++  %wf.direct.header.1 = getelementptr inbounds i64, ptr %t6, i64 0
++  store i64 %v1, ptr %wf.direct.header.1
+@@ -2384 +2383 @@
+-  store ptr null, ptr %v0
++  store ptr @wf_runtime_empty_header, ptr %v0
+@@ -2431 +2430,2 @@
+-  call void @wf.runtime.shape.write(ptr %t9, i64 0, i64 %t8)
++  %wf.direct.header.2 = getelementptr inbounds i64, ptr %t9, i64 0
++  store i64 %t8, ptr %wf.direct.header.2
+@@ -2452 +2452 @@
+-  store ptr null, ptr %v0
++  store ptr @wf_runtime_empty_header, ptr %v0
+@@ -2501 +2501,2 @@
+-  call void @wf.runtime.shape.write(ptr %t9, i64 0, i64 %t8)
++  %wf.direct.header.3 = getelementptr inbounds i64, ptr %t9, i64 0
++  store i64 %t8, ptr %wf.direct.header.3
+@@ -2527 +2528,2 @@
+-  call void @wf.runtime.shape.write(ptr %t10, i64 0, i64 %t9)
++  %wf.direct.header.4 = getelementptr inbounds i64, ptr %t10, i64 0
++  store i64 %t9, ptr %wf.direct.header.4
+@@ -2568 +2570,2 @@
+-  call void @wf.runtime.shape.write(ptr %t11, i64 0, i64 %t10)
++  %wf.direct.header.5 = getelementptr inbounds i64, ptr %t11, i64 0
++  store i64 %t10, ptr %wf.direct.header.5
+@@ -2611 +2614,2 @@
+-  call void @wf.runtime.shape.write(ptr %t14, i64 0, i64 %t13)
++  %wf.direct.header.6 = getelementptr inbounds i64, ptr %t14, i64 0
++  store i64 %t13, ptr %wf.direct.header.6
+@@ -2629 +2633,2 @@
+-  call void @wf.runtime.shape.write(ptr %t10, i64 0, i64 %t9)
++  %wf.direct.header.7 = getelementptr inbounds i64, ptr %t10, i64 0
++  store i64 %t9, ptr %wf.direct.header.7
+@@ -2674 +2679,2 @@
+-  call void @wf.runtime.shape.write(ptr %t11, i64 0, i64 %t10)
++  %wf.direct.header.8 = getelementptr inbounds i64, ptr %t11, i64 0
++  store i64 %t10, ptr %wf.direct.header.8
+@@ -2717 +2723,2 @@
+-  call void @wf.runtime.shape.write(ptr %t14, i64 0, i64 %t13)
++  %wf.direct.header.9 = getelementptr inbounds i64, ptr %t14, i64 0
++  store i64 %t13, ptr %wf.direct.header.9

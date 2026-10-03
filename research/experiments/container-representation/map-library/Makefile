@@ -11,9 +11,9 @@ STAGED_SOURCE_DIR := $(abspath $(BUILD)/staged-source)
 STAGED_BASE := $(STAGED_SOURCE_DIR)/sparse-map.wf
 STAGED_SOURCE := $(STAGED_SOURCE_DIR)/staged-map.wf
 LIBRARY_SOURCE := $(ROOT)/lib/containers/hash-map.wf
-SOURCES := dense-map.wf sparse-map.wf slot-map.wf $(STAGED_SOURCE) $(LIBRARY_SOURCE) map-library.wf
+SOURCES := dense-map.wf sparse-map.wf slot-map.wf $(STAGED_SOURCE) $(LIBRARY_SOURCE) map-candidates.wf map-library.wf
 COMPACT_SOURCE_DIR := $(abspath $(BUILD)/compact-source)
-COMPACT_SOURCES := $(addprefix $(COMPACT_SOURCE_DIR)/,dense-map.wf sparse-map.wf) $(abspath slot-map.wf) $(STAGED_SOURCE) $(LIBRARY_SOURCE) $(COMPACT_SOURCE_DIR)/map-library.wf
+COMPACT_SOURCES := $(addprefix $(COMPACT_SOURCE_DIR)/,dense-map.wf sparse-map.wf) $(abspath slot-map.wf) $(STAGED_SOURCE) $(LIBRARY_SOURCE) $(COMPACT_SOURCE_DIR)/map-candidates.wf map-library.wf
 INLINE_SOURCE_DIR := $(abspath $(BUILD)/inline-source)
 INLINE_SOURCE := $(INLINE_SOURCE_DIR)/hash-map.wf
 OBSERVER := $(ROOT)/tests/programs/containers/container-allocation-observer.c
@@ -40,7 +40,7 @@ $(STAGED_SOURCE): $(STAGED_BASE) Makefile
 
 staged-source: $(STAGED_SOURCE)
 
-$(BUILD)/map-native-%$(EXE): map-costs.c Makefile | $(BUILD)
+$(BUILD)/map-native-%$(EXE): map-costs.c map-oracle.h Makefile | $(BUILD)
 	@set -eu; case '$*' in normal) flags= ;; retained) flags=-DRETAIN_HELPERS ;; *) exit 1 ;; esac; \
 	  $(CLANG) -std=c11 -O2 -Wall -Wextra -Werror $$flags $< -o $@
 
@@ -134,7 +134,7 @@ $(BUILD)/map-library-retained.ll: $(BUILD)/map-library-normal.ll Makefile
 $(BUILD)/map-library-%.opt.ll: $(BUILD)/map-library-%.ll
 	$(CLANG) -O2 -Wno-override-module -x ir -S -emit-llvm $< -o $@
 
-$(BUILD)/control-%.opt.ll: map-costs.c Makefile | $(BUILD)
+$(BUILD)/control-%.opt.ll: map-costs.c map-oracle.h Makefile | $(BUILD)
 	@set -eu; case '$*' in normal) flags= ;; retained) flags=-DRETAIN_HELPERS ;; *) exit 1 ;; esac; \
 	  $(CLANG) -std=c11 -O2 -Wall -Wextra -Werror -DWITH_WF $$flags -S -emit-llvm $< -o $@
 
@@ -173,10 +173,11 @@ check: native-check check-candidates check-costs
 
 # A reproducible source-shape control, kept separate from the original result
 # and from ordinary correctness gates. It reuses the same build and oracle.
-$(COMPACT_SOURCE_DIR)/.patched: dense-map.wf sparse-map.wf map-library.wf compact-put.patch
+$(COMPACT_SOURCE_DIR)/.patched: dense-map.wf sparse-map.wf map-candidates.wf compact-put.patch
 	mkdir -p $(COMPACT_SOURCE_DIR)
-	cp dense-map.wf sparse-map.wf map-library.wf $(COMPACT_SOURCE_DIR)/
-	patch -s -f -F 0 -p1 -d $(COMPACT_SOURCE_DIR) < compact-put.patch
+	cp dense-map.wf sparse-map.wf map-candidates.wf $(COMPACT_SOURCE_DIR)/
+	sed -e 's,a/map-library.wf,a/map-candidates.wf,' -e 's,b/map-library.wf,b/map-candidates.wf,' compact-put.patch > $(COMPACT_SOURCE_DIR)/compact-put.patch
+	patch -s -f -F 0 -p1 -d $(COMPACT_SOURCE_DIR) < $(COMPACT_SOURCE_DIR)/compact-put.patch
 	touch $@
 
 compact-source: $(COMPACT_SOURCE_DIR)/.patched
@@ -247,3 +248,253 @@ summarize:
 
 clean:
 	rm -rf $(BUILD)
+
+# Explicit current-library comparison. The legacy representation targets above
+# retain their historical sources and recorded results; this path imports the
+# compiler-bundled std module through map-library.wf alone.
+ECO_FAMILY := map
+ECO_ABSL_PACKAGES := absl_flat_hash_map
+ECO_WORK ?= 262144
+ECO_LOOKUP_WORK ?= 2097152
+ECO_EDIT_WORK ?= 4194304
+include ../ecosystem.mk
+ECO_OCCUPANCY_WORK ?= 1048576
+ECO_GEOMETRY_FILE ?= $(ECO_BUILD)/geometry.csv
+ECO_GEOMETRY_METADATA ?= $(ECO_BUILD)/geometry-environment.txt
+ECO_OCCUPANCY_ACCOUNT ?= $(ECO_BUILD)/occupancy-accounting.csv
+ECO_OCCUPANCY_SAMPLES ?= $(ECO_BUILD)/occupancy-measurements.csv
+
+.PHONY: ecosystem-build ecosystem-check ecosystem-account ecosystem-measure \
+        ecosystem-lookup-check ecosystem-lookup-account ecosystem-lookup-measure \
+        ecosystem-edit-check ecosystem-edit-account ecosystem-edit-measure \
+        ecosystem-occupancy-check ecosystem-geometry ecosystem-occupancy-account ecosystem-occupancy-measure
+
+$(ECO_BUILD)/map.raw.ll: map-library.wf $(WHITEFOOTC) $(ECO_CONFIG) Makefile | $(ECO_BUILD)
+	$(WHITEFOOTC) --emit-llvm $< -o $@
+
+$(ECO_BUILD)/wf-timed.ll: $(ECO_BUILD)/map.raw.ll Makefile
+	sed -e 's/@main(/@wf_fixture_main(/g' $< > $@
+
+$(ECO_BUILD)/wf-account.ll: $(ECO_BUILD)/map.raw.ll Makefile
+	sed -e 's/@malloc(/@wf_cost_allocate(/g' -e 's/@free(/@wf_cost_release(/g' \
+	    -e 's/@main(/@wf_fixture_main(/g' $< > $@
+
+$(ECO_BUILD)/wf-%.o: $(ECO_BUILD)/wf-%.ll $(ECO_CONFIG)
+	$(CLANG) -O3 -Wno-override-module -c $< -o $@
+
+$(ECO_BUILD)/driver-%.o: map-ecosystem.c map-oracle.h $(ECO_CONFIG) Makefile
+	@set -eu; case '$*' in timed) account= ;; account) account=-DACCOUNT_ONLY ;; *) exit 1 ;; esac; \
+	  $(CLANG) $(ECO_CPPFLAGS) $(ECO_CFLAGS) $$account -c $< -o $@
+
+$(ECO_BUILD)/control-%.o: map-costs.c map-oracle.h $(ECO_CONFIG) Makefile
+	@set -eu; case '$*' in timed) account= ;; account) account=-DACCOUNT_ONLY ;; *) exit 1 ;; esac; \
+	  $(CLANG) $(ECO_CPPFLAGS) $(ECO_CFLAGS) -DECO_MAP_CONTROL $$account -c $< -o $@
+
+$(ECO_BUILD)/map-%$(EXE): $(ECO_BUILD)/driver-%.o $(ECO_BUILD)/rust-%.a \
+                         $(ECO_BUILD)/cpp-%.o $(ECO_BUILD)/control-%.o $(NATIVE_OBJECTS) $(ECO_BUILD)/wf-%.o
+	$(CXX) $(ECO_LDFLAGS) $^ $(ECO_ABSL_LDFLAGS) $(ECO_RUST_LINK_FLAGS) $(NATIVE_LINK_FLAGS) -o $@
+
+.SECONDARY: $(addprefix $(ECO_BUILD)/,wf-timed.ll wf-account.ll wf-timed.o wf-account.o driver-timed.o driver-account.o rust-timed.a rust-account.a cpp-timed.o cpp-account.o control-timed.o control-account.o)
+
+ecosystem-build: $(ECO_BUILD)/map-timed$(EXE) $(ECO_BUILD)/map-account$(EXE)
+
+ecosystem-check: ecosystem-build
+	$(ECO_BUILD)/map-timed$(EXE) check
+	$(ECO_BUILD)/map-account$(EXE) check
+	@set -eu; \
+	  status=0; $(ECO_BUILD)/map-timed$(EXE) negative-checksum > $(ECO_BUILD)/negative.stdout 2> $(ECO_BUILD)/negative.stderr || status=$$?; \
+	  test "$$status" = 1; test ! -s $(ECO_BUILD)/negative.stdout; \
+	  test "$$(cat $(ECO_BUILD)/negative.stderr)" = 'map ecosystem: independent key-ID/content/outcome oracle'; \
+	  status=0; $(ECO_BUILD)/map-account$(EXE) negative-leak > $(ECO_BUILD)/negative.stdout 2> $(ECO_BUILD)/negative.stderr || status=$$?; \
+	  test "$$status" = 1; test ! -s $(ECO_BUILD)/negative.stdout; \
+	  test "$$(cat $(ECO_BUILD)/negative.stderr)" = 'map ecosystem: every allocation is reclaimed'; \
+	  for variant in 0 1 2 3 5 6 7 8; do \
+	    status=0; $(ECO_BUILD)/map-timed$(EXE) negative-reserve $$variant > $(ECO_BUILD)/negative.stdout 2> $(ECO_BUILD)/negative.stderr || status=$$?; \
+	    test "$$status" = 1; test ! -s $(ECO_BUILD)/negative.stdout; \
+	    test "$$(cat $(ECO_BUILD)/negative.stderr)" = 'map ecosystem: reserve capacity floor'; \
+	  done; \
+	  echo 'Map ecosystem: checksum, cleanup and eight omitted-reserve controls rejected'
+
+ecosystem-account: ecosystem-build
+	$(ECO_BUILD)/map-account$(EXE) account $(ECO_WORK) > '$(ECO_ACCOUNT)'
+	@echo 'Map allocation accounting: $(ECO_ACCOUNT)'
+
+ecosystem-measure: ecosystem-build
+	@set -eu; \
+	  for cohort in 0 1; do \
+	    $(ECO_BUILD)/map-timed$(EXE) measure $$cohort $(ECO_WORK) > $(ECO_BUILD)/cohort-$$cohort.csv; \
+	  done; \
+	  cat $(ECO_BUILD)/cohort-0.csv > '$(ECO_SAMPLE_FILE)'; \
+	  awk 'NR > 1' $(ECO_BUILD)/cohort-1.csv >> '$(ECO_SAMPLE_FILE)'; \
+	  echo 'Map raw samples: $(ECO_SAMPLE_FILE)'
+
+ecosystem-lookup-check: ecosystem-build
+	$(ECO_BUILD)/map-timed$(EXE) lookup-check
+	$(ECO_BUILD)/map-account$(EXE) lookup-check
+	@set -eu; \
+	  for fault in population capacity checksum cleanup; do \
+	    case $$fault in \
+	      population) expected='lookup filled population' ;; \
+	      capacity) expected='lookup filled backing geometry' ;; \
+	      checksum) expected='lookup independent query oracle' ;; \
+	      cleanup) expected='lookup independent full-content cleanup oracle' ;; \
+	    esac; \
+	    status=0; $(ECO_BUILD)/map-timed$(EXE) negative-lookup $$fault \
+	      > $(ECO_BUILD)/lookup-negative.stdout 2> $(ECO_BUILD)/lookup-negative.stderr || status=$$?; \
+	    test "$$status" = 1; test ! -s $(ECO_BUILD)/lookup-negative.stdout; \
+	    test "$$(cat $(ECO_BUILD)/lookup-negative.stderr)" = "map ecosystem: $$expected"; \
+	  done; \
+	  for fault in filled-allocation allocation leak; do \
+	    case $$fault in allocation) expected='lookup query has no allocation' ;; \
+	      leak) expected='every allocation is reclaimed' ;; \
+	      filled-allocation) expected='lookup filled allocation' ;; esac; \
+	    status=0; $(ECO_BUILD)/map-account$(EXE) negative-lookup $$fault \
+	      > $(ECO_BUILD)/lookup-negative.stdout 2> $(ECO_BUILD)/lookup-negative.stderr || status=$$?; \
+	    test "$$status" = 1; test ! -s $(ECO_BUILD)/lookup-negative.stdout; \
+	    test "$$(cat $(ECO_BUILD)/lookup-negative.stderr)" = "map ecosystem: $$expected"; \
+	  done
+
+ecosystem-lookup-account: ecosystem-build
+	$(ECO_BUILD)/map-account$(EXE) lookup-account $(ECO_LOOKUP_WORK) > $(ECO_BUILD)/lookup-accounting.csv
+
+ecosystem-lookup-measure: ecosystem-build
+	@set -eu; \
+	  for cohort in 0 1; do \
+	    $(ECO_BUILD)/map-timed$(EXE) lookup-measure $$cohort $(ECO_LOOKUP_WORK) > $(ECO_BUILD)/lookup-cohort-$$cohort.csv; \
+	  done; \
+	  cat $(ECO_BUILD)/lookup-cohort-0.csv > $(ECO_BUILD)/lookup-measurements.csv; \
+	  awk 'NR > 1' $(ECO_BUILD)/lookup-cohort-1.csv >> $(ECO_BUILD)/lookup-measurements.csv
+
+# The capacity discriminator is opt-in and preserves every practical output.
+# Its timed trace bodies are shared with ecosystem-measure; observers occur
+# only in the separate ACCOUNT_ONLY image and untimed filled-map witnesses.
+ecosystem-occupancy-check: ecosystem-build
+	$(ECO_BUILD)/map-timed$(EXE) occupancy-check
+	$(ECO_BUILD)/map-account$(EXE) occupancy-check
+	$(ECO_BUILD)/map-account$(EXE) geometry-check
+	@set -eu; \
+	  for control in missing population identity capacity allocation checksum diagnostic wf-growth-allocation wf-growth-capacity; do \
+	    case "$$control" in \
+	      missing) reason='one filled geometry snapshot' ;; \
+	      population) reason='filled geometry population' ;; \
+	      identity) reason='geometry implementation identity' ;; \
+	      capacity|wf-growth-capacity) reason='exposed capacity geometry' ;; \
+	      allocation|wf-growth-allocation) reason='filled geometry allocation snapshot' ;; \
+	      checksum) reason='geometry independent setup oracle' ;; \
+	      diagnostic) reason='diagnostic matches trace allocation' ;; \
+	    esac; \
+	    status=0; $(ECO_BUILD)/map-account$(EXE) negative-geometry "$$control" \
+	      > $(ECO_BUILD)/geometry-negative.stdout 2> $(ECO_BUILD)/geometry-negative.stderr || status=$$?; \
+	    test "$$status" = 1; test ! -s $(ECO_BUILD)/geometry-negative.stdout; \
+	    test "$$(cat $(ECO_BUILD)/geometry-negative.stderr)" = "map ecosystem: $$reason"; \
+	  done; \
+	  echo 'Map geometry: nine missing/corrupted-observation controls rejected'
+
+ecosystem-geometry: ecosystem-build
+	$(ECO_BUILD)/map-account$(EXE) geometry > '$(ECO_GEOMETRY_FILE)'
+	@set -eu; \
+	  cat '$(ECO_CONFIG)' > '$(ECO_GEOMETRY_METADATA)'; \
+	  $(ECO_BUILD)/map-account$(EXE) geometry-identities >> '$(ECO_GEOMETRY_METADATA)'; \
+	  git -C '$(ROOT)' rev-parse HEAD >> '$(ECO_GEOMETRY_METADATA)'; \
+	  echo 'Map geometry: $(ECO_GEOMETRY_FILE); environment: $(ECO_GEOMETRY_METADATA)'
+
+ecosystem-occupancy-account: ecosystem-build
+	$(ECO_BUILD)/map-account$(EXE) occupancy-account $(ECO_OCCUPANCY_WORK) > '$(ECO_OCCUPANCY_ACCOUNT)'
+	@echo 'Map occupancy accounting: $(ECO_OCCUPANCY_ACCOUNT)'
+
+ecosystem-occupancy-measure: ecosystem-build
+	@set -eu; \
+	  for cohort in 0 1; do \
+	    $(ECO_BUILD)/map-timed$(EXE) occupancy-measure $$cohort $(ECO_OCCUPANCY_WORK) \
+	      > $(ECO_BUILD)/occupancy-cohort-$$cohort.csv; \
+	  done; \
+	  cat $(ECO_BUILD)/occupancy-cohort-0.csv > '$(ECO_OCCUPANCY_SAMPLES)'; \
+	  awk 'NR > 1' $(ECO_BUILD)/occupancy-cohort-1.csv >> '$(ECO_OCCUPANCY_SAMPLES)'; \
+	  echo 'Map occupancy raw samples: $(ECO_OCCUPANCY_SAMPLES)'
+
+# Reserve-only API consumes the same adapters and independent complete-owner
+# oracle. No timing is implicit in either qualification target.
+.PHONY: ecosystem-reserve-check ecosystem-reserve-account
+ecosystem-reserve-check: ecosystem-build
+	$(ECO_BUILD)/map-timed$(EXE) reserve-clock-check
+	$(ECO_BUILD)/map-timed$(EXE) reserve-check
+	$(ECO_BUILD)/map-account$(EXE) reserve-check
+	@set -eu; \
+	  for peer in 0 1 2; do \
+	    for fault in omitted payload population capacity; do \
+	      status=0; $(ECO_BUILD)/map-timed$(EXE) negative-reserve-api $$fault $$peer > $(ECO_BUILD)/reserve-negative-$$peer-$$fault.stdout 2> $(ECO_BUILD)/reserve-negative-$$peer-$$fault.stderr || status=$$?; \
+	      echo "reserve fault $$fault peer $$peer exit $$status"; test "$$status" = 1; test ! -s $(ECO_BUILD)/reserve-negative-$$peer-$$fault.stdout; \
+	      case $$fault in omitted|capacity) expected='map ecosystem: reserve application entry floor';; payload) expected='map ecosystem: reserve independent complete-owner oracle';; population) expected='map ecosystem: reserve prepared population';; esac; \
+	      test "$$(cat $(ECO_BUILD)/reserve-negative-$$peer-$$fault.stderr)" = "$$expected"; \
+	    done; \
+	    for fault in leak allocation; do \
+	      status=0; $(ECO_BUILD)/map-account$(EXE) negative-reserve-api $$fault $$peer > $(ECO_BUILD)/reserve-negative-$$peer-$$fault.stdout 2> $(ECO_BUILD)/reserve-negative-$$peer-$$fault.stderr || status=$$?; \
+	      echo "reserve fault $$fault peer $$peer exit $$status"; test "$$status" = 1; test ! -s $(ECO_BUILD)/reserve-negative-$$peer-$$fault.stdout; \
+	      case $$fault in leak) expected='map ecosystem: every allocation is reclaimed';; allocation) expected='map ecosystem: reserve noop has no allocation';; esac; \
+	      test "$$(cat $(ECO_BUILD)/reserve-negative-$$peer-$$fault.stderr)" = "$$expected"; \
+	    done; \
+	  done; \
+	  status=0; $(ECO_BUILD)/map-timed$(EXE) negative-reserve-api raw-slots 0 > $(ECO_BUILD)/reserve-negative-raw-slots.stdout 2> $(ECO_BUILD)/reserve-negative-raw-slots.stderr || status=$$?; \
+	  test "$$status" = 1; test ! -s $(ECO_BUILD)/reserve-negative-raw-slots.stdout; \
+	  test "$$(sed -n '1p' $(ECO_BUILD)/reserve-negative-raw-slots.stderr)" = 'reserve headroom first growth at insertion 97 of 128'; \
+	  test "$$(sed -n '2p' $(ECO_BUILD)/reserve-negative-raw-slots.stderr)" = 'map ecosystem: reserve future puts retain backing capacity'; \
+	  test "$$(wc -l < $(ECO_BUILD)/reserve-negative-raw-slots.stderr | tr -d ' ')" = 2; \
+	  for fault in quantized backwards; do \
+	    status=0; $(ECO_BUILD)/map-timed$(EXE) negative-reserve-clock $$fault > $(ECO_BUILD)/reserve-clock-$$fault.stdout 2> $(ECO_BUILD)/reserve-clock-$$fault.stderr || status=$$?; \
+	    echo "reserve clock fault $$fault exit $$status"; test "$$status" = 1; test ! -s $(ECO_BUILD)/reserve-clock-$$fault.stdout; \
+	    case $$fault in quantized) expected='map ecosystem: reserve clock quantum at most 100 ns';; backwards) expected='map ecosystem: reserve clock nondecreasing';; esac; \
+	    test "$$(tail -1 $(ECO_BUILD)/reserve-clock-$$fault.stderr)" = "$$expected"; \
+	  done; \
+	  echo 'Map reserve: twenty-one independent fault controls rejected'
+ecosystem-reserve-account: ecosystem-build
+	$(ECO_BUILD)/map-account$(EXE) reserve-account > $(ECO_BUILD)/reserve-accounting.csv
+
+# One fixed cohort per explicit call; the caller serializes the two cohorts.
+ECO_RESERVE_COHORT ?= 0
+.PHONY: ecosystem-reserve-measure
+ecosystem-reserve-measure: ecosystem-build
+	$(ECO_BUILD)/map-timed$(EXE) reserve-measure $(ECO_RESERVE_COHORT) > $(ECO_BUILD)/reserve-cohort-$(ECO_RESERVE_COHORT).csv
+
+# Isolated public EDIT batches reuse lookup owners; old traces remain separate.
+ecosystem-edit-check: ecosystem-build
+	$(ECO_BUILD)/map-timed$(EXE) edit-check
+	$(ECO_BUILD)/map-account$(EXE) edit-check
+	@set -eu; \
+	  for peer in 0 1 2 3 4 5 6 7; do \
+	    for fault in population capacity result callback cleanup repeat tail filled-allocation allocation leak; do \
+	      image=timed; \
+	      case $$fault in \
+	        population) expected='edit filled population' ;; \
+	        capacity) expected='edit filled backing geometry' ;; \
+	        result) expected='edit independent result oracle' ;; \
+	        callback) expected='edit exact callback updates' ;; \
+	        cleanup|repeat) expected='edit independent full-content cleanup oracle' ;; \
+	        tail) if test $$peer -lt 4; then continue; fi; expected='edit independent full-content cleanup oracle' ;; \
+	        filled-allocation) image=account; expected='edit filled allocation' ;; \
+	        allocation) image=account; expected='edit batch has no allocation' ;; \
+	        leak) image=account; expected='every allocation is reclaimed' ;; \
+	      esac; \
+	      stem=$(ECO_BUILD)/edit-negative-$$peer-$$fault; status=0; \
+	      $(ECO_BUILD)/map-$$image$(EXE) negative-edit $$fault $$peer > $$stem.stdout 2> $$stem.stderr || status=$$?; \
+	      printf '%s\n' $$status > $$stem.status; \
+	      test "$$status" = 1; test ! -s $$stem.stdout; \
+	      test "$$(cat $$stem.stderr)" = "map ecosystem: $$expected"; \
+	    done; \
+	  done
+	@set -eu; for fault in quantized backwards; do \
+	  case $$fault in quantized) expected='reserve clock quantum at most 100 ns' ;; backwards) expected='reserve clock nondecreasing' ;; esac; \
+	  stem=$(ECO_BUILD)/edit-clock-$$fault; status=0; \
+	  $(ECO_BUILD)/map-timed$(EXE) negative-reserve-clock $$fault > $$stem.stdout 2> $$stem.stderr || status=$$?; \
+	  printf '%s\n' $$status > $$stem.status; test "$$status" = 1; test ! -s $$stem.stdout; \
+	  test "$$(tail -n 1 $$stem.stderr)" = "map ecosystem: $$expected"; \
+	done
+
+ecosystem-edit-account: ecosystem-build
+	$(ECO_BUILD)/map-account$(EXE) edit-account $(ECO_EDIT_WORK) > $(ECO_BUILD)/edit-accounting.csv
+
+ecosystem-edit-measure: ecosystem-build
+	@set -eu; failed=0; for cohort in 0 1; do \
+	  status=0; $(ECO_BUILD)/map-timed$(EXE) edit-measure $$cohort $(ECO_EDIT_WORK) > $(ECO_BUILD)/edit-cohort-$$cohort.csv 2> $(ECO_BUILD)/edit-cohort-$$cohort.stderr || status=$$?; \
+	  printf '%s\n' $$status > $(ECO_BUILD)/edit-cohort-$$cohort.status; \
+	  if test $$status -ne 0; then failed=1; fi; \
+	done; exit $$failed

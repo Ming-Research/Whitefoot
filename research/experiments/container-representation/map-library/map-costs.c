@@ -70,6 +70,17 @@ static void require(bool condition, const char *message) {
     }
 }
 
+#if defined(ECO_MAP_CONTROL)
+#if defined(ACCOUNT_ONLY)
+extern void *wf_cost_allocate(uint64_t bytes);
+extern void wf_cost_release(void *pointer);
+#else
+/* Practical C attribution image: ordinary allocation, without an observer
+ * wrapper or a forced operation boundary. */
+#define wf_cost_allocate malloc
+#define wf_cost_release free
+#endif
+#else
 NOINLINE void *wf_cost_allocate(uint64_t bytes) {
     require(bytes <= SIZE_MAX - sizeof(AllocationHeader), "allocation extent");
     AllocationHeader *header = malloc(sizeof *header + (size_t)bytes);
@@ -93,6 +104,7 @@ NOINLINE void wf_cost_release(void *pointer) {
     header->data.magic = 0;
     free(header);
 }
+#endif
 
 static void reset_ledger(void) {
     require(ledger.live == 0, "owner remained live between traces");
@@ -1115,69 +1127,7 @@ POLICY_CHECK(record_planned_small, record, Record)
 POLICY_CHECK(word_repaired_small, word, uint64_t)
 POLICY_CHECK(record_repaired_small, record, Record)
 
-/* The oracle uses key IDs and generations, not buckets, probing, a reverse
- * index, or any of the control implementations. All arithmetic wraps in u64. */
-static uint64_t oracle_content(bool wide, uint64_t key, uint64_t seed) {
-    unsigned words = wide ? WORDS : 1;
-    for (unsigned i = 0; i < words; ++i) key = key * UINT64_C(131) + seed + i;
-    return key;
-}
-static uint64_t oracle_edited_content(bool wide, uint64_t key, uint64_t seed, uint64_t rounds) {
-    unsigned words = wide ? WORDS : 1;
-    for (unsigned i = 0; i < words; ++i) {
-        uint64_t word = seed + i;
-        if (i == 0) word += rounds;
-        key = key * UINT64_C(131) + word;
-    }
-    return key;
-}
-static uint64_t oracle(bool wide, uint64_t count, uint64_t rounds,
-                       uint64_t seed, unsigned path) {
-    Digest digest = {seed, 0, 0, 0};
-    for (uint64_t i = 0; i < count; ++i) ordered(&digest, INSERTED);
-    for (uint64_t round = 0; round < rounds; ++round) {
-        if (path == REHASH) {
-            for (uint64_t i = 0; i < count; i += 2) {
-                ordered(&digest, true);
-                ordered(&digest, oracle_content(wide, key_at(i), seed + round * count + i));
-                ordered(&digest, false);
-            }
-            ordered(&digest, true);
-            for (uint64_t i = 0; i < count; ++i) {
-                ordered(&digest, i % 2 != 0);
-                if (i % 2 != 0) ordered(&digest, seed + i);
-            }
-            for (uint64_t i = 0; i < count; i += 2) ordered(&digest, INSERTED);
-            continue;
-        }
-        if (path == GROW) ordered(&digest, true);
-        for (uint64_t i = 0; i < count; ++i) {
-            uint64_t key = key_at(i);
-            if (path == HIT || path == GROW) {
-                ordered(&digest, true); ordered(&digest, seed + i);
-            } else if (path == MISS) ordered(&digest, false);
-            else if (path == REPLACE) {
-                ordered(&digest, REPLACED);
-                ordered(&digest, oracle_content(wide, key, seed + round * count + i));
-            } else if (path == CHURN) {
-                ordered(&digest, true);
-                ordered(&digest, oracle_content(wide, key, seed + round * count + i));
-                ordered(&digest, false); ordered(&digest, INSERTED);
-            } else if (path == EDIT) {
-                ordered(&digest, true);
-                ordered(&digest, seed + i + round + 1);
-            }
-        }
-    }
-    for (uint64_t i = 0; i < count; ++i) {
-        uint64_t generation = path == REPLACE || path == CHURN
-            || (path == REHASH && i % 2 == 0) ? rounds : 0;
-        final_value(&digest, path == EDIT
-            ? oracle_edited_content(wide, key_at(i), seed + i, rounds)
-            : oracle_content(wide, key_at(i), seed + generation * count + i));
-    }
-    return finish(digest);
-}
+#include "map-oracle.h"
 
 typedef uint64_t (*Trace)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 enum { WF_VARIANT = 1, REBUILD_VARIANT = 2, ZERO_REHASH_NOOP = 4,
@@ -1268,6 +1218,9 @@ static void check_ledger(Ledger expected) {
             && ledger.peak == expected.peak, "backing counts, bytes, peak and cleanup");
 }
 
+#if defined(ECO_MAP_CONTROL)
+__attribute__((unused))
+#endif
 static void check(void) {
     const struct { uint64_t capacity, count; } shapes[] = {
         {0, 0}, {1, 0}, {1, 1}, {3, 2}, {3, 3}, {63, 55}, {64, 32}, {64, 56}, {64, 64}
@@ -1425,6 +1378,135 @@ static void measure(unsigned cohort, unsigned set, const char *source_shape) {
 }
 #endif
 
+#if defined(ECO_MAP_CONTROL)
+/* Reuse the existing ordinary sparse implementation and its complete trace.
+ * Only this C ABI boundary remains visible to the ecosystem driver. */
+uint64_t eco_c_map_word(uint64_t capacity, uint64_t count, uint64_t rounds,
+                        uint64_t seed, uint64_t path, uint64_t collide) {
+    return word_sparse_trace(capacity, count, rounds, seed, path, collide);
+}
+uint64_t eco_c_map_record(uint64_t capacity, uint64_t count, uint64_t rounds,
+                          uint64_t seed, uint64_t path, uint64_t collide) {
+    return record_sparse_trace(capacity, count, rounds, seed, path, collide);
+}
+
+/* Isolated running-index lookup attribution. The caller owns the context;
+ * the existing sparse backing retains its 16-byte length/capacity header and
+ * ordinary 24/272-byte enum cells. Unlike the insertion probe, this lookup
+ * tracks no vacancy: it follows the WF lookup's bounded live/deleted/empty
+ * decisions, one initial remainder and increment with conditional wrap.
+ * Retire these exports with the isolated lookup comparison. */
+#define ECO_LOOKUP(WIDTH, P, B)                                           \
+typedef struct { P##_Map map; HashEnv env; uint64_t seed; } WIDTH##_LookupOwner; \
+_Static_assert(sizeof(WIDTH##_LookupOwner) <= 128, "lookup context extent"); \
+_Static_assert(_Alignof(WIDTH##_LookupOwner) <= 16, "lookup context alignment"); \
+static HELPER Lookup WIDTH##_lookup_one(const WIDTH##_LookupOwner *owner, uint64_t key) { \
+    uint64_t hash = key_hash(&owner->env, &key);                          \
+    uint64_t count = owner->map.slots->capacity;                          \
+    if (count == 0) return (Lookup){false, 0};                            \
+    uint64_t index = hash % count;                                      \
+    for (uint64_t step = 0; step < count; ++step) {                       \
+        const P##_Cell *slot = &owner->map.slots->cells[index];           \
+        if (slot->tag == LIVE) {                                         \
+            if (key_equal(&owner->env, &slot->pair.key, &key))            \
+                return (Lookup){true, B##_identity(&slot->pair.value)};  \
+        } else if (slot->tag == EMPTY) {                                 \
+            return (Lookup){false, 0};                                   \
+        }                                                               \
+        uint64_t next = index + 1;                                       \
+        index = next < count ? next : 0;                                 \
+    }                                                                   \
+    return (Lookup){false, 0};                                           \
+}                                                                       \
+void eco_c_map_lookup_##WIDTH##_prepare(void *storage, uint64_t slots, uint64_t count, uint64_t seed) { \
+    require(count <= slots && slots <= CEILING, "isolated lookup capacity"); \
+    WIDTH##_LookupOwner *owner = storage;                                \
+    *owner = (WIDTH##_LookupOwner){P##_new(slots),                        \
+        {seed ^ UINT64_C(0x9e3779b97f4a7c15), false}, seed};              \
+    for (uint64_t i = 0; i < count; ++i) {                               \
+        B##_Put result = P##_put(&owner->map, &owner->env,                \
+            (B##_Pair){key_at(i), B##_make(seed + i)});                   \
+        require(result.kind == INSERTED, "isolated lookup population"); \
+    }                                                                   \
+}                                                                       \
+uint64_t eco_c_map_lookup_##WIDTH##_query(const void *storage, uint64_t rounds, uint64_t miss) { \
+    const WIDTH##_LookupOwner *owner = storage;                          \
+    Digest digest = {owner->seed, 0, 0, 0};                              \
+    for (uint64_t round = 0; round < rounds; ++round)                     \
+        for (uint64_t i = 0; i < owner->map.count; ++i) {                  \
+            uint64_t key = key_at(i) + (miss != 0);                      \
+            Lookup found = WIDTH##_lookup_one(owner, key);               \
+            ordered(&digest, found.found);                               \
+            if (found.found) ordered(&digest, found.identity);            \
+        }                                                               \
+    return finish(digest);                                              \
+}                                                                       \
+uint64_t eco_c_map_lookup_##WIDTH##_geometry(const void *storage) {       \
+    const WIDTH##_LookupOwner *owner = storage;                          \
+    return (owner->map.slots->capacity << 32) | owner->map.count;          \
+}                                                                       \
+uint64_t eco_c_map_lookup_##WIDTH##_finish(void *storage) {               \
+    WIDTH##_LookupOwner *owner = storage;                                \
+    Digest digest = {owner->seed, 0, 0, 0};                              \
+    P##_free(owner->map, &digest);                                       \
+    *owner = (WIDTH##_LookupOwner){0};                                   \
+    return finish(digest);                                              \
+}
+ECO_LOOKUP(word, word_sparse, word)
+ECO_LOOKUP(record, record_sparse, record)
+#undef ECO_LOOKUP
+
+/* EDIT shares only setup/storage/cleanup with lookup; its batch mutates owners. */
+static void word_edit_damage(uint64_t *value) { ++*value; }
+static void record_edit_damage(Record *value) { ++value->words[31]; }
+#define ECO_EDIT(WIDTH, P, B)                                             \
+uint64_t eco_c_map_edit_##WIDTH##_batch(void *storage, uint64_t rounds, uint64_t miss) { \
+    WIDTH##_LookupOwner *owner = storage;                                \
+    Digest digest = {owner->seed, 0, 0, 0};                              \
+    const uint64_t first_key = miss ? 2 : 1;                             \
+    for (uint64_t round = 0; round < rounds; ++round)                     \
+        for (uint64_t index = 0; index < owner->map.count; ++index) {     \
+            uint64_t key = index * 2 + first_key;                        \
+            Lookup edited = P##_edit(&owner->map, &owner->env, &key, &digest); \
+            ordered(&digest, edited.found);                              \
+            if (edited.found) ordered(&digest, edited.identity);          \
+        }                                                               \
+    return finish(digest);                                              \
+}                                                                       \
+uint8_t eco_c_map_edit_##WIDTH##_damage(void *storage) {                     \
+    WIDTH##_LookupOwner *owner = storage;                                \
+    uint64_t key = 1;                                                    \
+    Probe found = P##_probe(&owner->map, &owner->env, &key);                \
+    if (found.found) B##_edit_damage(&owner->map.slots->cells[found.index].pair.value); \
+    return 0;                                                           \
+}
+ECO_EDIT(word, word_sparse, word)
+ECO_EDIT(record, record_sparse, record)
+#undef ECO_EDIT
+
+#if defined(ACCOUNT_ONLY)
+/* A separate filled-map witness keeps geometry reads out of the timed trace.
+ * The low/high halves encode count/capacity, combined with the setup digest. */
+#define ECO_GEOMETRY(NAME, P, B) \
+uint64_t NAME(uint64_t capacity, uint64_t count, uint64_t seed) { \
+    HashEnv env = {seed ^ UINT64_C(0x9e3779b97f4a7c15), false}; \
+    P##_Map map = P##_new(capacity); \
+    Digest digest = {seed, 0, 0, 0}; \
+    for (uint64_t i = 0; i < count; ++i) { \
+        B##_Put result = P##_put(&map, &env, (B##_Pair){key_at(i), B##_make(seed + i)}); \
+        ordered(&digest, result.kind); \
+        if (result.kind != INSERTED) \
+            ordered(&digest, B##_content(result.owner.key, result.owner.value)); \
+    } \
+    uint64_t geometry = (map.slots->capacity << 32) | map.count; \
+    P##_free(map, &digest); \
+    return finish(digest) ^ geometry; \
+}
+ECO_GEOMETRY(eco_c_map_word_geometry, word_sparse, word)
+ECO_GEOMETRY(eco_c_map_record_geometry, record_sparse, record)
+#undef ECO_GEOMETRY
+#endif
+#else
 int main(int argc, char **argv) {
     require(argc >= 2, "usage: map-costs check | clock-quantum | measure 0|1 primary|boundary|edit|rebuild|library|inactive original|compact");
     if (strcmp(argv[1], "check") == 0) {
@@ -1458,3 +1540,4 @@ int main(int argc, char **argv) {
     else require(false, "unknown mode");
     return 0;
 }
+#endif

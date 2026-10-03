@@ -303,9 +303,10 @@ impl TargetFrameField {
 /// byte array whose requested address alignment is stronger than its natural
 /// type alignment. `logical_fields` maps each source/emitter slot, in the
 /// caller's order, to the physical field that owns it. Positive-sized roots
-/// with one common natural alignment and no padding may instead be separate
-/// allocations: every ordering has the same complete extent. Other frames
-/// keep the struct allocation, including zero-sized or over-aligned roots.
+/// whose sizes are multiples of the maximum natural alignment, with no
+/// padding, may instead be separate allocations at that common alignment:
+/// every ordering has the same complete extent. Other frames keep the struct
+/// allocation, including zero-sized or explicitly over-aligned roots.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct TargetFramePlan {
     physical_fields: Vec<TargetStorageType>,
@@ -352,7 +353,7 @@ pub(super) fn plan_target_frame(
     let mut logical_fields = Vec::with_capacity(slots.len());
     let mut size = 0_u64;
     let mut frame_alignment = 1_u64;
-    let mut common_slot_alignment = None;
+    let mut slot_sizes = Vec::with_capacity(slots.len());
     let mut independent_slots = true;
 
     for slot in slots {
@@ -367,9 +368,8 @@ pub(super) fn plan_target_frame(
         independent_slots &= requested == layout.align
             && layout.size > 0
             && layout.size % requested == 0
-            && start == size
-            && common_slot_alignment.is_none_or(|alignment| alignment == requested);
-        common_slot_alignment = Some(requested);
+            && start == size;
+        slot_sizes.push(layout.size);
         if start != size {
             physical_fields.push(TargetStorageType::bytes(start - size));
         }
@@ -385,7 +385,12 @@ pub(super) fn plan_target_frame(
     }
 
     let complete = align_up(target, size, frame_alignment, TargetObject::StackFrame)?;
-    independent_slots &= complete == size;
+    // Every root begins and ends on the selected common alignment in any
+    // ordering. Strengthening an individual alloca's alignment therefore
+    // introduces no additional padding or unchecked complete extent.
+    independent_slots &= complete == size
+        && !slot_sizes.is_empty()
+        && slot_sizes.iter().all(|size| size % frame_alignment == 0);
     if complete != size {
         physical_fields.push(TargetStorageType::bytes(complete - size));
     }
@@ -397,7 +402,7 @@ pub(super) fn plan_target_frame(
             size: complete,
             align: frame_alignment,
         },
-        independent_slot_alignment: independent_slots.then_some(common_slot_alignment).flatten(),
+        independent_slot_alignment: independent_slots.then_some(frame_alignment),
     })
 }
 
@@ -601,6 +606,19 @@ fn holds_union_enum(
     }
 }
 
+/// Runtime Slots metadata occupies its Box owner's inline storage. Other
+/// runtime shapes retain their pointer-owned header and payload block.
+pub(crate) const fn inline_slots_descriptor(ty: IrType) -> bool {
+    matches!(
+        ty,
+        IrType::Window {
+            shape: IrWindowShape::Slots,
+            capacity: None,
+            ..
+        }
+    )
+}
+
 /// The integer-class words one returned first-class value can occupy on
 /// every admitted target: LLVM's x86-64 return convention assigns RAX, RDX
 /// and RCX, one per scalar leaf, and AArch64 assigns X0 to X7.
@@ -696,7 +714,8 @@ impl<'types> ReturnLeaves<'types> {
             } => {
                 let header = match (shape, capacity) {
                     (IrWindowShape::Slots, Some(_)) => 1,
-                    (IrWindowShape::Slots, None) | (IrWindowShape::Ring, Some(_)) => 2,
+                    (IrWindowShape::Slots, None) => 3,
+                    (IrWindowShape::Ring, Some(_)) => 2,
                     (IrWindowShape::Ring, None) => 3,
                 };
                 self.integer(copies, header);
@@ -710,6 +729,9 @@ impl<'types> ReturnLeaves<'types> {
                     .get(id.index())
                     .ok_or(TargetLayoutFailure::InvalidIr)?;
                 match nominal.kind() {
+                    IrNominalKind::Box { referent, .. } if inline_slots_descriptor(*referent) => {
+                        self.integer(copies, 3)
+                    }
                     // A pointer owner or a shared object's handle.
                     IrNominalKind::Box { .. } | IrNominalKind::Shared { .. } => {
                         self.integer(copies, 1)
@@ -796,6 +818,27 @@ pub(super) fn validate_static_storage(
         size: layout.size,
         align: layout.align,
     })
+}
+
+/// Static backing for empty Slots payloads, aligned for every concrete element
+/// the module can address. Its lifetime covers owners transferred to workers or
+/// ordinary linked calls; no byte is accessed for a zero physical extent.
+pub(super) fn empty_slots_anchor_layout(
+    target: TargetLayout,
+    program: &IrProgram,
+) -> Result<TargetAggregateLayout, TargetLayoutFailure> {
+    let mut layouts = LayoutComputer::new(target, program.nominals(), program.elements());
+    let mut align = 1;
+    for nominal in program.nominals() {
+        if let IrNominalKind::Box { referent, .. } = nominal.kind()
+            && inline_slots_descriptor(*referent)
+            && let IrType::Window { element, .. } = referent
+        {
+            align = align.max(layouts.element(*element)?.align);
+        }
+    }
+    let size = align_up(target, 1, align, TargetObject::Static)?;
+    Ok(TargetAggregateLayout { size, align })
 }
 
 /// The selected-target layout of one fully assembled backend aggregate.
@@ -1028,7 +1071,7 @@ fn runtime_capacity_layout(
                 .copied()
                 .ok_or(TargetLayoutFailure::InvalidIr)?,
             match shape {
-                IrWindowShape::Slots => 2,
+                IrWindowShape::Slots => 0,
                 IrWindowShape::Ring => 3,
             },
         ),
@@ -1073,6 +1116,44 @@ fn validate_target_obligation(
     operation: &IrOperation,
 ) -> Result<(), TargetLayoutFailure> {
     match operation {
+        IrOperation::RunBoundaryResident { run, value, length } => {
+            let u64_type = IrType::Integer {
+                width: 64,
+                signed: false,
+            };
+            let Some(IrType::Address(crate::IrAddressed::Window {
+                shape: crate::IrWindowShape::Slots,
+                element,
+                ..
+            })) = function.value_type(*run)
+            else {
+                return Err(TargetLayoutFailure::InvalidIr);
+            };
+            if result_type != u64_type
+                || function.value_type(*length) != Some(u64_type)
+                || function.value_type(*value) != program.element(element)
+            {
+                return Err(TargetLayoutFailure::InvalidIr);
+            }
+        }
+        IrOperation::RunLengthCommit { run, length } => {
+            if result_type != IrType::Unit
+                || function.value_type(*length)
+                    != Some(IrType::Integer {
+                        width: 64,
+                        signed: false,
+                    })
+                || !matches!(
+                    function.value_type(*run),
+                    Some(IrType::Address(crate::IrAddressed::Window {
+                        shape: crate::IrWindowShape::Slots,
+                        ..
+                    }))
+                )
+            {
+                return Err(TargetLayoutFailure::InvalidIr);
+            }
+        }
         IrOperation::BoxNew { nominal, value } => {
             if result_type != IrType::Nominal(*nominal) {
                 return Err(TargetLayoutFailure::InvalidIr);
@@ -1386,8 +1467,13 @@ impl<'types> LayoutComputer<'types> {
                 self.element(element)?;
                 Ok(Layout { size: 16, align: 8 })
             }
-            // [TYPE-9] a runtime-capacity block is reached only through the
-            // `Box` that owns it, so it never occupies inline storage.
+            IrType::Window {
+                shape: IrWindowShape::Slots,
+                capacity: None,
+                ..
+            } => Ok(Layout { size: 24, align: 8 }),
+            // Other runtime-capacity blocks are reached through the Box's
+            // pointer rather than occupying the owner's inline storage.
             IrType::Window { capacity: None, .. } => Ok(Layout { size: 8, align: 8 }),
             // compiler/storage-representation: header first, `len` always,
             // `head` only for a `Ring`, and no capacity word where the type
@@ -1477,7 +1563,10 @@ impl<'types> LayoutComputer<'types> {
             self.nominal.insert(id, layout);
             return Ok(layout);
         }
-        let layout = if matches!(
+        let layout = if matches!(nominal.kind(), IrNominalKind::Box { referent, .. } if inline_slots_descriptor(*referent))
+        {
+            Layout { size: 24, align: 8 }
+        } else if matches!(
             nominal.kind(),
             IrNominalKind::Box { .. } | IrNominalKind::Shared { .. }
         ) {

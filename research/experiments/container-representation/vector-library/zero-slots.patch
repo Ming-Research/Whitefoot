@@ -1,0 +1,227 @@
+diff --git a/compiler/src/backend/emitter.rs b/compiler/src/backend/emitter.rs
+index 8f6a8361f..9cbd25788 100644
+--- a/compiler/src/backend/emitter.rs
++++ b/compiler/src/backend/emitter.rs
+@@ -55,6 +55,11 @@ use parallel::{
+     sequential_clone_symbol,
+ };
+ 
++/// Shared zero-capacity header for runtime `Slots` allocations. The lowering
++/// never writes this header; growth and release recognize its zero capacity
++/// before treating the pointer as an owned allocation.
++pub(super) const ZERO_SLOTS_HEADER_SYMBOL: &str = "wf_zero_slots_header";
++
+ #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+ pub enum BackendFailure {
+     TargetLayout(TargetLayoutFailure),
+@@ -345,6 +350,28 @@ pub(super) fn emit_llvm_with_window_address_facts(
+     text.text("\n");
+     emit_nominal_declarations(&mut text, program)?;
+     emit_global_constants(&mut text, program)?;
++    if program.functions().iter().any(|function| {
++        function.blocks().iter().any(|block| {
++            block.instructions().iter().any(|instruction| {
++                matches!(
++                    instruction,
++                    IrInstruction::Define {
++                        operation: IrOperation::WindowBlockNew { .. },
++                        ..
++                    }
++                )
++            })
++        })
++    }) {
++        text.global(
++            ZERO_SLOTS_HEADER_SYMBOL.to_owned(),
++            "global",
++            "{ i64, i64 }".to_owned(),
++            "zeroinitializer".to_owned(),
++            Some(8),
++            References::default(),
++        );
++    }
+     // An allocation this host refuses is the heap twin of an exhausted stack,
+     // and it gets the same treatment: one record naming the resource class,
+     // written once, before a defined abort. The bytes carry no `rule_id`, no
+diff --git a/compiler/src/backend/emitter/runs.rs b/compiler/src/backend/emitter/runs.rs
+index 88652d3ea..a356f75c1 100644
+--- a/compiler/src/backend/emitter/runs.rs
++++ b/compiler/src/backend/emitter/runs.rs
+@@ -1047,6 +1047,69 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
+         let element_size = self.window_element_size(shape)?;
+         let header_size = self.window_header_size(shape, block_type)?;
+         let block = self.output.type_name(self.program, block_type)?;
++        // A zero-capacity `Slots` has no element storage to own.  Keep one
++        // module-local header for that state so construction does not enter
++        // the allocator; the header is never written and growth recognizes
++        // its zero capacity before releasing it.  `Ring` keeps the ordinary
++        // allocation path because its header has a different shape.
++        if shape.shape == IrWindowShape::Slots {
++            let slots_bytes = self.next_temporary()?;
++            let bytes = self.next_temporary()?;
++            let nonnull = self.next_temporary()?;
++            let zero = self.next_temporary()?;
++            let zero_address = format!("{}.zero", self.value_name(result));
++            let fresh_address = format!("{}.fresh", self.value_name(result));
++            let result_name = self.value_name(result);
++            let ready = window_block_ready_label(result);
++            let oom = window_block_oom_label(result);
++            let zero_label = format!("window.block.zero.v{}", result.ordinal());
++            let allocate_label = format!("window.block.allocate.v{}", result.ordinal());
++            let done_label = format!("window.block.done.v{}", result.ordinal());
++            let capacity_name = self.value_name(capacity);
++            self.output.symbol(super::ZERO_SLOTS_HEADER_SYMBOL);
++            writeln!(
++                self.output,
++                "  %{zero} = icmp eq i64 {capacity_name}, 0\n  br i1 %{zero}, label %{zero_label}, label %{allocate_label}",
++            )?;
++            self.output.open_block(zero_label.clone());
++            writeln!(
++                self.output,
++                "  {zero_address} = getelementptr {{ i64, i64 }}, ptr @{symbol}, i64 0, i32 0\n  br label %{done_label}",
++                symbol = super::ZERO_SLOTS_HEADER_SYMBOL,
++            )?;
++            self.output.open_block(allocate_label);
++            self.output.symbol("malloc");
++            writeln!(
++                self.output,
++                "  %{slots_bytes} = mul nuw i64 {capacity_name}, {element_size}\n  %{bytes} = add nuw i64 %{slots_bytes}, {header_size}\n  {fresh_address} = call ptr @malloc(i64 %{bytes})\n  %{nonnull} = icmp ne ptr {fresh_address}, null\n  br i1 %{nonnull}, label %{ready}, label %{oom}",
++            )?;
++            self.output.open_block(oom.clone());
++            self.output.symbol("wf_resource_abort");
++            writeln!(
++                self.output,
++                "  call void @wf_resource_abort()\n  unreachable"
++            )?;
++            self.output.open_block(ready.clone());
++            let length_address = self.aggregate_field_pointer(
++                block_type,
++                &fresh_address,
++                shape.length_field() as usize,
++            )?;
++            writeln!(self.output, "  store i64 0, ptr {length_address}")?;
++            let capacity_field = shape.capacity_field().ok_or(BackendFailure::InvalidIr)?;
++            let capacity_address =
++                self.aggregate_field_pointer(block_type, &fresh_address, capacity_field as usize)?;
++            writeln!(
++                self.output,
++                "  store i64 {capacity_name}, ptr {capacity_address}\n  br label %{done_label}",
++            )?;
++            self.output.open_block(done_label);
++            writeln!(
++                self.output,
++                "  {result_name} = phi ptr [ {zero_address}, %{zero_label} ], [ {fresh_address}, %{ready} ]",
++            )?;
++            return Ok(());
++        }
+         let slots_bytes = self.next_temporary()?;
+         let bytes = self.next_temporary()?;
+         let nonnull = self.next_temporary()?;
+@@ -1148,6 +1211,23 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
+             "  %{length} = load i64, ptr {old_length_address}"
+         )
+         .map_err(|_| BackendFailure::TextEmission)?;
++        let old_capacity_address = self.aggregate_field_pointer(
++            block_type,
++            &old_block,
++            shape.capacity_field().ok_or(BackendFailure::InvalidIr)? as usize,
++        )?;
++        let old_capacity = self.next_temporary()?;
++        writeln!(
++            self.output,
++            "  %{old_capacity} = load i64, ptr {old_capacity_address}"
++        )
++        .map_err(|_| BackendFailure::TextEmission)?;
++        let old_is_owned = self.next_temporary()?;
++        writeln!(
++            self.output,
++            "  %{old_is_owned} = icmp ne i64 %{old_capacity}, 0"
++        )
++        .map_err(|_| BackendFailure::TextEmission)?;
+         let slots_bytes = self.next_temporary()?;
+         let bytes = self.next_temporary()?;
+         let fresh = self.next_temporary()?;
+@@ -1197,6 +1277,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
+         let old_slots = self.next_temporary()?;
+         let fresh_slots = self.next_temporary()?;
+         let moved = self.next_temporary()?;
++        let free_old_label = format!("window.grow.free.v{}", result.ordinal());
++        let keep_old_label = format!("window.grow.keep.v{}", result.ordinal());
++        let after_free_label = format!("window.grow.after-free.v{}", result.ordinal());
+         let block = self.output.type_name(self.program, block_type)?;
+         writeln!(
+             self.output,
+@@ -1206,12 +1289,21 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
+         .map_err(|_| BackendFailure::TextEmission)?;
+         self.intrinsics.insert(IntrinsicDeclaration::MemoryMove);
+         self.output.symbol("llvm.memmove.p0.p0.i64");
+-        self.output.symbol("free");
+         writeln!(
+             self.output,
+-            "  call void @llvm.memmove.p0.p0.i64(ptr %{fresh_slots}, ptr %{old_slots}, i64 %{moved}, i1 false)\n  call void @free(ptr %{old})\n  store ptr %{fresh}, ptr {cell_address}"
++            "  call void @llvm.memmove.p0.p0.i64(ptr %{fresh_slots}, ptr %{old_slots}, i64 %{moved}, i1 false)\n  br i1 %{old_is_owned}, label %{free_old_label}, label %{keep_old_label}"
+         )
+         .map_err(|_| BackendFailure::TextEmission)?;
++        self.output.open_block(free_old_label);
++        self.output.symbol("free");
++        writeln!(
++            self.output,
++            "  call void @free(ptr %{old})\n  br label %{after_free_label}"
++        )?;
++        self.output.open_block(keep_old_label);
++        writeln!(self.output, "  br label %{after_free_label}")?;
++        self.output.open_block(after_free_label);
++        writeln!(self.output, "  store ptr %{fresh}, ptr {cell_address}")?;
+         self.emit_constant(result, ty, IrConstant::Unit)
+     }
+ 
+@@ -1226,9 +1318,47 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
+         if ty != IrType::Unit || self.value_type(value) != Some(IrType::Nominal(nominal)) {
+             return Err(BackendFailure::InvalidIr);
+         }
+-        let IrNominalKind::Box { .. } = self.nominal(nominal)?.kind() else {
+-            return Err(BackendFailure::InvalidIr);
++        let referent = match self.nominal(nominal)?.kind() {
++            IrNominalKind::Box { referent, .. } => *referent,
++            _ => return Err(BackendFailure::InvalidIr),
+         };
++        if let Some(shape) = RunShape::of(referent)
++            && shape.shape == IrWindowShape::Slots
++            && shape.capacity.is_none()
++        {
++            let block = self.output.type_name(self.program, referent)?;
++            let value_name = self.value_name(value);
++            let capacity_address = self.aggregate_field_pointer(
++                referent,
++                &value_name,
++                shape.capacity_field().ok_or(BackendFailure::InvalidIr)? as usize,
++            )?;
++            let capacity = self.next_temporary()?;
++            writeln!(
++                self.output,
++                "  %{capacity} = load i64, ptr {capacity_address}"
++            )?;
++            let owned = self.next_temporary()?;
++            writeln!(self.output, "  %{owned} = icmp ne i64 %{capacity}, 0")?;
++            let free_label = format!("cell.free.real.v{}", result.ordinal());
++            let skip_label = format!("cell.free.zero.v{}", result.ordinal());
++            let done_label = format!("cell.free.done.v{}", result.ordinal());
++            writeln!(
++                self.output,
++                "  br i1 %{owned}, label %{free_label}, label %{skip_label}"
++            )?;
++            self.output.open_block(free_label);
++            self.output.symbol("free");
++            writeln!(
++                self.output,
++                "  call void @free(ptr {value_name})\n  br label %{done_label}"
++            )?;
++            self.output.open_block(skip_label);
++            writeln!(self.output, "  br label %{done_label}")?;
++            self.output.open_block(done_label);
++            let _ = block;
++            return self.emit_constant(result, ty, IrConstant::Unit);
++        }
+         {
+             self.output.symbol("free");
+             writeln!(

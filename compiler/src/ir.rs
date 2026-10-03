@@ -69,10 +69,10 @@ impl IrElement {
     }
 }
 
-/// The content of an [`IrType::Address`]. A typed place may hold inline
-/// content, a descriptor, or a handle. Source borrows of descriptors and
-/// handles still use their value ABI; a place containing one is distinct
-/// from the storage or resource that descriptor or handle denotes.
+/// The content of an [`IrType::Address`]. Fixed-size places use their storage
+/// address. A runtime-capacity content reference instead carries the address
+/// of its selected Box owner slot: resolving that slot on access preserves
+/// exact-content aliases when the complete content is exchanged.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum IrAddressed {
     Unit,
@@ -97,9 +97,8 @@ pub enum IrAddressed {
         element: IrElement,
         length: u64,
     },
-    /// One inline window [TYPE-9]. A constant-capacity `Slots` or `Ring` is
-    /// inline storage in its owner exactly as a struct is, so a reference to
-    /// one is the address of that storage rather than a copy of the window.
+    /// One window [TYPE-9]. A constant-capacity window addresses its inline
+    /// storage; a runtime-capacity window addresses its Box owner slot.
     Window {
         shape: IrWindowShape,
         element: IrElement,
@@ -108,6 +107,16 @@ pub enum IrAddressed {
 }
 
 impl IrAddressed {
+    /// Runtime-capacity content has no fixed-size owned value. Its reference
+    /// is the selected Box slot, while element and range references resolve
+    /// the current allocation and retain their ordinary direct addresses.
+    pub(crate) const fn is_runtime_content(self) -> bool {
+        matches!(
+            self,
+            Self::Buffer { .. } | Self::Window { capacity: None, .. }
+        )
+    }
+
     pub const fn ty(self) -> IrType {
         match self {
             Self::Unit => IrType::Unit,
@@ -179,6 +188,8 @@ pub enum IrType {
         width: u8,
     },
     Nominal(IrNominalId),
+    /// A typed source place reference. Runtime-capacity referents use their
+    /// selected Box slot; fixed-size referents use their own storage address.
     Address(IrAddressed),
     Array {
         element: IrElement,
@@ -732,7 +743,8 @@ impl IrBoundary {
 pub enum IrPlaceStep {
     /// A field of directly stored nominal content.
     Field { nominal: IrNominalId, field: u32 },
-    /// The allocation payload reached through a stored Box owner slot.
+    /// Box content reached through a stored owner slot. Runtime-capacity
+    /// content keeps the slot; fixed-size content follows its pointer.
     BoxReferent { nominal: IrNominalId },
     /// One payload field of an enum in directly addressed storage.
     EnumVariant {
@@ -901,8 +913,8 @@ pub enum IrOperation {
         segments: IrValueId,
     },
     /// [MSR-1] the one measure a runtime-capacity `Array<T>` has, read from
-    /// the `len` word at the head of its block. `buffer` is the block's
-    /// address.
+    /// the `len` word at the head of its current block. `buffer` retains the
+    /// selected Box owner slot until the measure access.
     BufferMeasure {
         buffer: IrValueId,
     },
@@ -924,6 +936,9 @@ pub enum IrOperation {
     /// One discharged source subscript read of a run [OP-4, WIN-1]: the
     /// offset is a logical one and the storage read is slot
     /// `(head + i) mod cap`. See [`Self::ArrayIndex`] for the discharge.
+    /// A selected closed owned-consumption region can also generate a read:
+    /// its entry length and guarded cursor establish the same bounds without
+    /// inventing a source proof receipt.
     RunIndex {
         run: IrValueId,
         offset: IrValueId,
@@ -936,12 +951,36 @@ pub enum IrOperation {
         /// The placed element. Takes use the complete `RunTaken` operation.
         value: Option<IrValueId>,
     },
+    /// A selected closed scalar append region carries its logical length
+    /// separately. This places the admitted boundary element and returns the
+    /// new logical length; publication is explicit at every observable edge.
+    RunBoundaryResident {
+        run: IrValueId,
+        value: IrValueId,
+        length: IrValueId,
+    },
+    /// Publish a resident length to the current owner only when it differs.
+    /// Comparing at the boundary preserves an unexecuted region's no-write
+    /// behavior without a second compiler-local dirty flag.
+    RunLengthCommit {
+        run: IrValueId,
+        length: IrValueId,
+    },
     /// [OP-10] take one element and move the window boundary. The physical
     /// element address is captured before changing the descriptor; no source
     /// observation occurs between that change and reading the captured slot.
     RunTaken {
         row: IrBoundary,
         run: IrValueId,
+    },
+    /// Publish the retained length after a selected closed forward-owned
+    /// consumption region. Its ordinary calls have consumed exactly the
+    /// suffix in logical order; no callback can observe this window, and the
+    /// generated empty edge bypasses this operation. Capacity and head stay
+    /// unchanged. This is a lowering operation, not a source storage row.
+    RunConsumeFinish {
+        run: IrValueId,
+        retained: IrValueId,
     },
     /// [OP-10] the one shift `insert_at` and `remove_at` each perform over
     /// `window.filled`, followed by the boundary move that shift makes room
@@ -1001,8 +1040,8 @@ pub enum IrOperation {
         value: IrValueId,
     },
     /// One discharged source subscript read [OP-4]; see [`Self::ArrayIndex`].
-    /// `buffer` is the block's address, and the element address is one
-    /// `inbounds` step into it.
+    /// `buffer` is a runtime-content reference; its current backing supplies
+    /// the element address, one `inbounds` step into the block.
     BufferIndex {
         buffer: IrValueId,
         offset: IrValueId,
@@ -1219,6 +1258,14 @@ pub enum IrOperation {
     Load {
         address: IrValueId,
         referent: IrAddressed,
+    },
+    /// Exchange two equal-typed runtime-capacity contents [OP-11]. Both
+    /// references address their selected Box owner slots; reading both pointer
+    /// words before either store also preserves the admitted same-place case.
+    /// No runtime header is materialized as a fixed-size owned value.
+    RuntimeContentSwap {
+        first: IrValueId,
+        second: IrValueId,
     },
     /// One permitted counted loop [PAR-2 candidate], actualized as a recursive
     /// split of its index range.
@@ -1460,6 +1507,9 @@ pub enum IrSynthesis {
     /// reach it, so it is cloned like a source function and each world's copy
     /// has exactly one caller.
     Chunk,
+    /// An ordinary acyclic scalar helper with a compiler-local length cache.
+    /// It keeps its original public definition and has no scheduler role.
+    ResidentWindow,
 }
 
 /// A checked source signature's kind [GRAM-3, REF-1, REF-4], independent of

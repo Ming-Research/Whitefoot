@@ -1,0 +1,364 @@
+Fresh-element placement: append ordering trial
+
+Purpose: reproduce the registered fresh-element placement discriminator; retire
+with superseding append qualification. Sole API: Vector append, concrete i64 and
+{[32 x i64]} integral payloads. No production compiler/library/specification change,
+pointer-bearing relocation rule, effectful-constructor rule or policy is selected.
+Dependencies: full-growth-route.patch and ecosystem-append-growth-full-route-timing.txt
+reconstruct B and its frozen compiler/object inputs. The compiler executable stays
+transient; production compiler output is not interchangeable with that overlay.
+
+Control and change
+B's raw timed/account modules first undergo the recorded extra -O3 LLVM-emission
+pass. Both optimized controls are compiled and linked, separately from candidates.
+The patch changes exactly two reached append definitions per optimized module;
+all other definitions remain byte-identical. Within each changed definition,
+copy the existing integral construction/stores into both full-positive success
+blocks (doubling and saturated capacity), after successful allocation and before
+prefix memcpy. Their target is fresh + old_length*stride, disjoint from the old
+prefix. Both routes bypass the common construction block and join final length
+publication. Empty/spare paths keep the common block. Three static construction
+copies therefore produce exactly one runtime new-element write per taken path;
+this is code duplication, not double construction of a value. Existing proof/alias
+metadata is transported with the existing operations; no new runtime comparison,
+allocator/copy call or separate source rule is introduced.
+
+Native evidence: public append tails followed into reached instances.
+                                frozen B   optimized control   candidate
+scalar complete instructions       59              59              61
+wide complete instructions        123             123             253
+scalar positive executed path      38              38              36
+wide positive executed path       102             102             100
+frame bytes (both widths)          80              80              80
+executed conditional branches       4               4               4
+executed allocator/copy calls        3               3               3
+all WF instruction bytes         18996           19016           19544
+Whole-object counts include alignment nops, exclude data/peer/runtime objects.
+Complete function counts include cold/saturated/empty/spare paths. Executed counts
+include the public tail and ret, exclude malloc/memcpy/free internals, and follow
+successful full doubling at each matched positive capacity (16/256/4096).
+Control's extra optimization changes total WF code by +20 bytes; its reached
+append counts stay unchanged. Candidate adds 528 bytes (+2.777% versus control),
+not an isolated instruction-order-only binary change. In particular, the optimizer
+combines post-free cap and pointer publication into one stp. This is a consequence
+of the placement change; no atomic publication guarantee is claimed. Wide payload
+stores now precede memcpy; neither width adds q-register stack payload spills,
+helper/library calls or executed conditionals. The ordinary 80-byte frame remains.
+Extra construction code and optimizer consequences belong to the experiment.
+
+Replay (replace angle-bracket tokens before shell parsing)
+R=<repository-root>
+V=<repository-root>/research/experiments/container-representation/vector-library
+B=<scratch-root>/full-growth-route
+D=<scratch-root>/fresh-element-placement
+Logical scratch-root is V/.build. Use a fresh D and copy B's two LLVM modules to
+D/inputs/whitefoot-{timed,account}.ll; copy B's peer/runtime/bridge and timed-driver
+inputs into D/inputs. IMPORTANT: copy B/driver-account.o to D/inputs/driver-account.o.
+Do not use B/inputs/driver-account.o, which is the older copied input, not B's
+full-growth malloc/copy account driver. Actual linked driver identity is verified:
+correct B/driver-account.o 6f567fe1242d40380a3ae888b6f7e04fa071b2b19d6ad8450c116c946a62206d
+older B/inputs/driver-account.o 98a755bf6896da1aa130a959183ccdbb2934541500a8e1380acc77436e17beab
+The current placement manifest names the correct source/hash. The linked command's
+D/inputs path is not evidence that the older B/inputs bytes were used.
+
+First run optimization stages 01 and 02 below. Copy baseline-{timed,account}.ll to
+candidate-{timed,account}.ll; in D apply patch -p1 < <V>/fresh-element-placement.patch.
+Patch replay reconstructs both candidate modules byte-for-byte. Initial authoring
+stopped on account SSA-name differences before compilation, then completed the
+account adaptation; no failed native build or repeated native attempt is hidden.
+
+Exact command templates; WHITEFOOT_CHECK_TIMEOUT=120; cwd=V.
+G means perl <R>/.github/run-check.pl <stage>.
+N expands to separate D/inputs/native/ arguments in this exact link order:
+ordinary_values.o sched/core.o sched/entry.o completion/runtime.o
+completion/file_adapter.o completion/bridge.o wf_floor.o sched/prim_host.o
+completion/wait_host.o completion/file_posix.o completion/linux_io_uring.o
+ordinary_values_ir.o
+01 placement-timed-opt-control: G clang -O3 -Wno-override-module -S -emit-llvm -x ir <D>/inputs/whitefoot-timed.ll -o <D>/baseline-timed.ll
+02 placement-account-opt-control: G clang -O3 -Wno-override-module -S -emit-llvm -x ir <D>/inputs/whitefoot-account.ll -o <D>/baseline-account.ll
+03 placement-baseline-timed-compile: G clang -O3 -Wno-override-module -x ir -c <D>/baseline-timed.ll -o <D>/baseline-timed.o
+04 placement-baseline-timed-link: G clang++ -O3 <D>/inputs/driver-timed.o <D>/baseline-timed.o <D>/inputs/cpp-timed.o <D>/inputs/rust-timed.a N -pthread -lm <D>/inputs/prepare-bridge.o -liconv -lSystem -lc -lm -o <D>/vector-costs-baseline-timed
+05 placement-candidate-timed-compile: G clang -O3 -Wno-override-module -x ir -c <D>/candidate-timed.ll -o <D>/candidate-timed.o
+06 placement-candidate-timed-link: G clang++ -O3 <D>/inputs/driver-timed.o <D>/candidate-timed.o <D>/inputs/cpp-timed.o <D>/inputs/rust-timed.a N -pthread -lm <D>/inputs/prepare-bridge.o -liconv -lSystem -lc -lm -o <D>/vector-costs-candidate-timed
+07 placement-baseline-account-compile: G clang -O3 -Wno-override-module -x ir -c <D>/baseline-account.ll -o <D>/baseline-account.o
+08 placement-baseline-account-link: G clang++ -O3 <D>/inputs/driver-account.o <D>/baseline-account.o <D>/inputs/cpp-account.o <D>/inputs/rust-account.a N -pthread -lm <D>/inputs/prepare-bridge.o -liconv -lSystem -lc -lm -o <D>/vector-costs-baseline-account
+09 placement-candidate-account-compile: G clang -O3 -Wno-override-module -x ir -c <D>/candidate-account.ll -o <D>/candidate-account.o
+10 placement-candidate-account-link: G clang++ -O3 <D>/inputs/driver-account.o <D>/candidate-account.o <D>/inputs/cpp-account.o <D>/inputs/rust-account.a N -pthread -lm <D>/inputs/prepare-bridge.o -liconv -lSystem -lc -lm -o <D>/vector-costs-candidate-account
+11 placement-baseline-timed-growth-api-check: G <D>/vector-costs-baseline-timed growth-api-check
+12 placement-baseline-timed-api-check: G <D>/vector-costs-baseline-timed api-check
+13 placement-baseline-timed-growth-fail-values: G <D>/vector-costs-baseline-timed growth-api-fail-values
+14 placement-baseline-timed-growth-fail-state: G <D>/vector-costs-baseline-timed growth-api-fail-state
+15 placement-baseline-account-growth-api-check: G <D>/vector-costs-baseline-account growth-api-check
+16 placement-baseline-account-api-check: G <D>/vector-costs-baseline-account api-check
+17 placement-baseline-account-growth-fail-values: G <D>/vector-costs-baseline-account growth-api-fail-values
+18 placement-baseline-account-growth-fail-state: G <D>/vector-costs-baseline-account growth-api-fail-state
+19 placement-baseline-account-allocator-check: G <D>/vector-costs-baseline-account allocator-check
+20 placement-baseline-account-allocator-fail-values: G <D>/vector-costs-baseline-account allocator-fail-values
+21 placement-baseline-account-allocator-fail-accounting: G <D>/vector-costs-baseline-account allocator-fail-accounting
+22 placement-baseline-account-api-fail-values: G <D>/vector-costs-baseline-account api-fail-values
+23 placement-baseline-account-api-fail-allocation: G <D>/vector-costs-baseline-account api-fail-allocation
+24 placement-baseline-timed-clock-fault: G <D>/vector-costs-baseline-timed growth-api-fail-clock
+25 placement-baseline-account-rows: G sh -c <D>/vector-costs-baseline-account growth-api-account > <D>/baseline-append-growth-accounting.csv
+26 placement-candidate-timed-growth-api-check: G <D>/vector-costs-candidate-timed growth-api-check
+27 placement-candidate-timed-api-check: G <D>/vector-costs-candidate-timed api-check
+28 placement-candidate-timed-growth-fail-values: G <D>/vector-costs-candidate-timed growth-api-fail-values
+29 placement-candidate-timed-growth-fail-state: G <D>/vector-costs-candidate-timed growth-api-fail-state
+30 placement-candidate-account-growth-api-check: G <D>/vector-costs-candidate-account growth-api-check
+31 placement-candidate-account-api-check: G <D>/vector-costs-candidate-account api-check
+32 placement-candidate-account-growth-fail-values: G <D>/vector-costs-candidate-account growth-api-fail-values
+33 placement-candidate-account-growth-fail-state: G <D>/vector-costs-candidate-account growth-api-fail-state
+34 placement-candidate-account-allocator-check: G <D>/vector-costs-candidate-account allocator-check
+35 placement-candidate-account-allocator-fail-values: G <D>/vector-costs-candidate-account allocator-fail-values
+36 placement-candidate-account-allocator-fail-accounting: G <D>/vector-costs-candidate-account allocator-fail-accounting
+37 placement-candidate-account-api-fail-values: G <D>/vector-costs-candidate-account api-fail-values
+38 placement-candidate-account-api-fail-allocation: G <D>/vector-costs-candidate-account api-fail-allocation
+39 placement-candidate-timed-clock-fault: G <D>/vector-costs-candidate-timed growth-api-fail-clock
+40 placement-candidate-account-rows: G sh -c <D>/vector-costs-candidate-account growth-api-account > <D>/candidate-append-growth-accounting.csv
+
+Stage | direct exit | outer seconds
+01 | 0 | 0.246388167
+02 | 0 | 0.246393583
+03 | 0 | 0.240662083
+04 | 0 | 0.124812625
+05 | 0 | 0.230538125
+06 | 0 | 0.129755000
+07 | 0 | 0.242377542
+08 | 0 | 0.129169583
+09 | 0 | 0.235917833
+10 | 0 | 0.125507250
+11 | 0 | 0.451692208
+12 | 0 | 0.133616375
+13 | 1 | 0.130073791
+14 | 1 | 0.140467292
+15 | 0 | 0.363751333
+16 | 0 | 0.156293834
+17 | 1 | 0.145018791
+18 | 1 | 0.132698167
+19 | 0 | 0.138958625
+20 | 1 | 0.142845791
+21 | 1 | 0.149516708
+22 | 1 | 0.144093334
+23 | 1 | 0.148929833
+24 | 1 | 0.136347375
+25 | 0 | 0.127541833
+26 | 0 | 0.458032625
+27 | 0 | 0.147224041
+28 | 1 | 0.140085375
+29 | 1 | 0.138153167
+30 | 0 | 0.353084833
+31 | 0 | 0.151957084
+32 | 1 | 0.152876958
+33 | 1 | 0.153695250
+34 | 0 | 0.148767542
+35 | 1 | 0.125057916
+36 | 1 | 0.138187000
+37 | 1 | 0.142728333
+38 | 1 | 0.152920833
+39 | 1 | 0.150709083
+40 | 0 | 0.144637500
+All ten exits independently match raw guard END lines.
+
+SHA-256 inputs/outputs:
+B/timed raw 2a239e8c4d7e1623b7f177b146943767b50deed382b553d12f7e4a4274a2c7bc
+B/account raw ebde1b8930364faf533c755abefb355215179cfe084d11e28771cee360fdc720
+control/timed IR 4c323383d613c5d550012d7cfb7ae12c787c8726a3d170bed3685ad397578984
+control/account IR bb43ee915c4263f550c922acf8fce939a73cc842d940dbf05ef97a09a4e5fd09
+candidate/timed IR d166054f1e9d23100157ed684559ff85ded77d31de456dca5a7505acbbaaa107
+candidate/account IR a310bac9b6f3d6f09a411714adebb4cfb13d57cfb6fae70f470256d7ad5d80fc
+candidate/timed image 484304d82173c059dc1b28752928f806e548ca311a970cc7e0c4b1e101918ac0
+candidate/account image 881be6fb345c2311b939224a0a27350005f30799734a1fe8740c3bdb41f6a945
+replay patch 561c925611da8a558a6e03f910f54a0ef851e91bece2ec69f57464bf9f1886a7
+
+Actual scalar doubling-path excerpt (the public tail adds one instruction):
+0000000100010e48	ldr	x21, [x19, #0x10]
+0000000100010e4c	lsl	x0, x24, #4
+0000000100010e50	bl	0x1000b69cc ; symbol stub for: _malloc
+0000000100010e54	cbz	x0, 0x100010f04
+0000000100010e58	mov	x22, x0
+0000000100010e5c	lsl	x25, x24, #1
+0000000100010e60	lsl	x2, x24, #3
+0000000100010e64	str	x20, [x0, x2]
+0000000100010e68	mov	x1, x21
+0000000100010e6c	bl	0x1000b69f0 ; symbol stub for: _memcpy
+0000000100010e70	mov	x0, x21
+0000000100010e74	bl	0x1000b684c ; symbol stub for: _free
+0000000100010e78	stp	x25, x22, [x19, #0x8]
+0000000100010e7c	b	0x100010ea8
+
+Correctness: all 30 API/account executions and 14 focused stages return their
+expected exits, independently checked against raw guard END lines. Both 30-row
+account tables are byte-identical to frozen B. Timed/account growth and spare
+contents/state/cleanup checks pass; deliberate value/state/allocation/clock faults
+fail. No native/API stage was retried.
+
+The focused observer covers scalar/wide at capacities 1 (doubling) and 4097
+(saturation to 8193). Four candidate positives exit 0, four actual malloc-NULL
+cases exit 73. Before copying, it verifies every fresh appended word; before old
+retirement it verifies full preserved prefix/order, appended value and untouched
+remaining spare bytes. Exact allocation/copy/free/live/peak counts are checked.
+On NULL, all old payload bytes plus one element of guard bytes and the entire
+canary-wrapped descriptor remain unchanged, with no copy/free/publication. Four
+otherwise identical baseline cases each exit 1 because their appended value is
+not yet present when prefix copy begins: this rejects the contrary ordering.
+The observer's final C cleanup is not an ordinary library-destroy witness; the
+separate complete API checks cover ordinary cleanup. Account wf_cost_allocate's
+nonnull declaration is not used as the NULL-refusal observation.
+
+Focused reproduction: the same replay patch creates focused/observer.c and a
+one-shot focused/instrument.py in scratch only. Run python3 <D>/focused/instrument.py
+before the two focused builds below; remove with the experiment scratch. This
+avoids retaining whole observed modules or multi-thousand-line instrumentation
+diffs. The exact transform replaces malloc/free/memcpy calls with unconstrained
+callbacks and the abort body with the observer floor. It strips original argument,
+return, call-site effect attributes and call metadata on those callbacks; clones
+effect groups for the entire transitive caller closure, removing memory(...),
+mustprogress/nocallback/nofree/nosync/nounwind/willreturn/norecurse/speculatable.
+Original intrinsic groups and ordinary public parameter/result ABI remain intact.
+Both arms instrument 90 malloc, 68 free and 67 memcpy calls. Replay regenerates
+both observed modules byte-for-byte; timing images remain uninstrumented.
+F=<scratch-root>/fresh-element-placement/focused
+Q expands to separate <scratch-root>/append-growth-baseline/native/ paths:
+ordinary_values.o ordinary_values_ir.o wf_floor.o completion/bridge.o
+completion/file_adapter.o completion/file_posix.o completion/linux_io_uring.o
+completion/runtime.o completion/wait_host.o sched/core.o sched/entry.o sched/prim_host.o
+API cwd=V, focused cwd=R; same guard timeout120. G retains the stage label.
+11 placement-baseline-timed-growth-api-check: G <D>/vector-costs-baseline-timed growth-api-check
+12 placement-baseline-timed-api-check: G <D>/vector-costs-baseline-timed api-check
+13 placement-baseline-timed-growth-fail-values: G <D>/vector-costs-baseline-timed growth-api-fail-values
+14 placement-baseline-timed-growth-fail-state: G <D>/vector-costs-baseline-timed growth-api-fail-state
+15 placement-baseline-account-growth-api-check: G <D>/vector-costs-baseline-account growth-api-check
+16 placement-baseline-account-api-check: G <D>/vector-costs-baseline-account api-check
+17 placement-baseline-account-growth-fail-values: G <D>/vector-costs-baseline-account growth-api-fail-values
+18 placement-baseline-account-growth-fail-state: G <D>/vector-costs-baseline-account growth-api-fail-state
+19 placement-baseline-account-allocator-check: G <D>/vector-costs-baseline-account allocator-check
+20 placement-baseline-account-allocator-fail-values: G <D>/vector-costs-baseline-account allocator-fail-values
+21 placement-baseline-account-allocator-fail-accounting: G <D>/vector-costs-baseline-account allocator-fail-accounting
+22 placement-baseline-account-api-fail-values: G <D>/vector-costs-baseline-account api-fail-values
+23 placement-baseline-account-api-fail-allocation: G <D>/vector-costs-baseline-account api-fail-allocation
+24 placement-baseline-timed-clock-fault: G <D>/vector-costs-baseline-timed growth-api-fail-clock
+25 placement-baseline-account-rows: G sh -c "<D>/vector-costs-baseline-account growth-api-account > <D>/baseline-append-growth-accounting.csv"
+26 placement-candidate-timed-growth-api-check: G <D>/vector-costs-candidate-timed growth-api-check
+27 placement-candidate-timed-api-check: G <D>/vector-costs-candidate-timed api-check
+28 placement-candidate-timed-growth-fail-values: G <D>/vector-costs-candidate-timed growth-api-fail-values
+29 placement-candidate-timed-growth-fail-state: G <D>/vector-costs-candidate-timed growth-api-fail-state
+30 placement-candidate-account-growth-api-check: G <D>/vector-costs-candidate-account growth-api-check
+31 placement-candidate-account-api-check: G <D>/vector-costs-candidate-account api-check
+32 placement-candidate-account-growth-fail-values: G <D>/vector-costs-candidate-account growth-api-fail-values
+33 placement-candidate-account-growth-fail-state: G <D>/vector-costs-candidate-account growth-api-fail-state
+34 placement-candidate-account-allocator-check: G <D>/vector-costs-candidate-account allocator-check
+35 placement-candidate-account-allocator-fail-values: G <D>/vector-costs-candidate-account allocator-fail-values
+36 placement-candidate-account-allocator-fail-accounting: G <D>/vector-costs-candidate-account allocator-fail-accounting
+37 placement-candidate-account-api-fail-values: G <D>/vector-costs-candidate-account api-fail-values
+38 placement-candidate-account-api-fail-allocation: G <D>/vector-costs-candidate-account api-fail-allocation
+39 placement-candidate-timed-clock-fault: G <D>/vector-costs-candidate-timed growth-api-fail-clock
+40 placement-candidate-account-rows: G sh -c "<D>/vector-costs-candidate-account growth-api-account > <D>/candidate-append-growth-accounting.csv"
+41 placement-focused-candidate-build: G clang -std=c11 -O3 -Wall -Wextra -Werror -Wno-override-module <F>/candidate-observed.ll <F>/observer.c Q -pthread -lm -o <F>/candidate-native
+42 placement-focused-baseline-build: G clang -std=c11 -O3 -Wall -Wextra -Werror -Wno-override-module <F>/baseline-observed.ll <F>/observer.c Q -pthread -lm -o <F>/baseline-native
+43 placement-focused-candidate-word-1-positive: G <F>/candidate-native word 1 positive
+44 placement-focused-candidate-word-1-null: G <F>/candidate-native word 1 null
+45 placement-focused-baseline-word-1-positive: G <F>/baseline-native word 1 positive
+46 placement-focused-candidate-word-4097-positive: G <F>/candidate-native word 4097 positive
+47 placement-focused-candidate-word-4097-null: G <F>/candidate-native word 4097 null
+48 placement-focused-baseline-word-4097-positive: G <F>/baseline-native word 4097 positive
+49 placement-focused-candidate-record-1-positive: G <F>/candidate-native record 1 positive
+50 placement-focused-candidate-record-1-null: G <F>/candidate-native record 1 null
+51 placement-focused-baseline-record-1-positive: G <F>/baseline-native record 1 positive
+52 placement-focused-candidate-record-4097-positive: G <F>/candidate-native record 4097 positive
+53 placement-focused-candidate-record-4097-null: G <F>/candidate-native record 4097 null
+54 placement-focused-baseline-record-4097-positive: G <F>/baseline-native record 4097 positive
+
+Stage | actual / expected | outer seconds
+11 | 0 / 0 | 0.451692208
+12 | 0 / 0 | 0.133616375
+13 | 1 / 1 | 0.130073791
+14 | 1 / 1 | 0.140467292
+15 | 0 / 0 | 0.363751333
+16 | 0 / 0 | 0.156293834
+17 | 1 / 1 | 0.145018791
+18 | 1 / 1 | 0.132698167
+19 | 0 / 0 | 0.138958625
+20 | 1 / 1 | 0.142845791
+21 | 1 / 1 | 0.149516708
+22 | 1 / 1 | 0.144093334
+23 | 1 / 1 | 0.148929833
+24 | 1 / 1 | 0.136347375
+25 | 0 / 0 | 0.127541833
+26 | 0 / 0 | 0.458032625
+27 | 0 / 0 | 0.147224041
+28 | 1 / 1 | 0.140085375
+29 | 1 / 1 | 0.138153167
+30 | 0 / 0 | 0.353084833
+31 | 0 / 0 | 0.151957084
+32 | 1 / 1 | 0.152876958
+33 | 1 / 1 | 0.153695250
+34 | 0 / 0 | 0.148767542
+35 | 1 / 1 | 0.125057916
+36 | 1 / 1 | 0.138187000
+37 | 1 / 1 | 0.142728333
+38 | 1 / 1 | 0.152920833
+39 | 1 / 1 | 0.150709083
+40 | 0 / 0 | 0.144637500
+41 | 0 / 0 | 0.341748291
+42 | 0 / 0 | 0.350202041
+43 | 0 / 0 | 0.455432584
+44 | 73 / 73 | 0.157423167
+45 | 1 / 1 | 0.376030625
+46 | 0 / 0 | 0.146645875
+47 | 73 / 73 | 0.133285625
+48 | 1 / 1 | 0.138899292
+49 | 0 / 0 | 0.144356166
+50 | 73 / 73 | 0.144831084
+51 | 1 / 1 | 0.141542458
+52 | 0 / 0 | 0.152187958
+53 | 73 / 73 | 0.141667750
+54 | 1 / 1 | 0.129364125
+
+Focused observed module SHA-256:
+baseline 75add60473eb08808e052d5355472eccd50b33af826d7d720ab1933aaa62a750
+candidate 9588e7bee61ffb6ed1eb57835e81b15c2d081b22591de15e82e200a57122f52c
+
+Single balanced candidate screen, cwd=R, WHITEFOOT_CHECK_TIMEOUT=240:
+perl <R>/.github/run-check.pl fresh-placement-screen sh -c "<D>/vector-costs-candidate-timed growth-api-measure 67108864 9 8589934592 > <D>/samples.csv"
+Direct exit 0; outer elapsed 151.6391538749449 s.
+Raw guard: == END fresh-placement-screen: 151.62 s, exit 0 ==
+RAW reads=200000 minimum_nonzero_ns=41 quantized=0.
+All 1080 unique rows retained: 540 real / 540 controls, 60 real groups of 9.
+Minimum real 1.311726 ms (all above 1 ms); minimum control 1376 ns.
+Maximum cohort WF/peer ratio spread 1.540538383%; peer median spread 1.605688446%,
+below unchanged 10% bounds. Repeated-launch drift remains untested.
+CSV order independently confirms every variant first/middle/last 3 times per
+width/capacity/cohort. No row filtering, control subtraction, retry or new policy.
+
+Full 20 cohort cells, ns/append median [nine-sample minimum..maximum].
+P=WF full range below peer; O=overlap; L=WF full range above peer.
+Both cohorts must separate below median-slower peer to qualify a matched cell.
+Element/count/cohort | WF | Rust | C++ | vs Rust/C++ | selected slower-peer result
+8/0/0 | 7.63 [7.56..8.30] | 11.84 [11.76..12.64] | 10.96 [10.92..11.65] | P/P | rust-vec P
+8/0/1 | 7.58 [7.56..7.74] | 11.82 [11.77..11.94] | 10.96 [10.92..11.29] | P/P | rust-vec P
+8/1/0 | 16.22 [16.18..16.66] | 32.47 [32.26..33.74] | 19.30 [19.19..21.57] | P/P | rust-vec P
+8/1/1 | 16.23 [16.16..16.81] | 32.41 [32.24..33.47] | 19.23 [19.12..19.77] | P/P | rust-vec P
+8/16/0 | 22.51 [22.31..24.00] | 36.77 [36.62..38.22] | 25.59 [25.41..26.43] | P/P | rust-vec P
+8/16/1 | 22.42 [22.32..23.12] | 36.72 [36.58..36.79] | 25.52 [25.42..26.02] | P/P | rust-vec P
+8/256/0 | 88.73 [87.09..98.40] | 104.71 [102.47..112.33] | 92.98 [91.68..102.91] | P/O | rust-vec P
+8/256/1 | 88.57 [87.17..96.36] | 103.72 [102.11..109.87] | 93.94 [91.22..97.08] | P/O | rust-vec P
+8/4096/0 | 685.46 [664.67..741.96] | 685.24 [676.60..795.21] | 662.67 [658.87..699.68] | O/O | rust-vec O
+8/4096/1 | 698.66 [672.08..838.34] | 690.96 [680.68..751.18] | 665.41 [662.19..718.50] | O/O | rust-vec O
+256/0/0 | 12.60 [12.58..13.36] | 22.55 [22.28..23.64] | 15.77 [15.68..16.46] | P/P | rust-vec P
+256/0/1 | 12.68 [12.63..12.75] | 22.41 [22.33..23.59] | 15.64 [15.61..15.66] | P/P | rust-vec P
+256/1/0 | 39.32 [38.43..40.37] | 52.93 [52.40..54.48] | 43.10 [42.77..44.68] | P/P | rust-vec P
+256/1/1 | 38.82 [38.63..39.04] | 52.74 [52.52..53.89] | 43.03 [42.95..43.20] | P/P | rust-vec P
+256/16/0 | 136.69 [135.81..162.60] | 151.52 [149.93..164.35] | 139.20 [138.33..147.01] | O/O | rust-vec O
+256/16/1 | 139.03 [135.81..146.98] | 151.81 [149.32..161.35] | 139.43 [137.79..152.17] | P/O | rust-vec P
+256/256/0 | 1306.32 [1293.24..1343.97] | 1310.39 [1304.31..1327.54] | 1308.93 [1301.34..1336.87] | O/O | rust-vec O
+256/256/1 | 1325.53 [1286.31..1381.56] | 1324.52 [1307.24..1425.77] | 1329.95 [1295.85..1418.08] | O/O | cpp-std-vector O
+256/4096/0 | 14815.82 [14763.05..14876.77] | 162.49 [160.14..163.61] | 14809.33 [14786.75..15253.63] | L/O | cpp-std-vector O
+256/4096/1 | 14831.27 [14764.56..14880.90] | 163.32 [161.82..166.41] | 14816.00 [14754.66..15063.07] | L/O | cpp-std-vector O
+
+Outcome: 2/6 matched cells qualify (scalar16/256); all 4 policy cells pass separately.
+The other 4 matched cells overlap their selected slower peer in at least one cohort;
+wide16 is overlap/pass. None is a disjoint loss to that selected peer. Wide4096
+still costs about 14.8 us versus Rust 162–163 ns and overlaps C++ 14.8 us: both peers
+remain visible. This candidate does not qualify complete append growth.
+One unpaired screen neither proves gain against optimized control/B nor generally
+refutes early placement. No production ordering/copy policy or another API follows.
+Raw CSV SHA-256 68811a712865d49c01878c74c60149ebbd7112cbb4301c96d6de9d982e7aa8a5

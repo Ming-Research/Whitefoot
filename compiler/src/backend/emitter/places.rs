@@ -91,6 +91,13 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             } if !self.overlap_handed_out.contains(&result) => {
                 self.emit_call(result, ty, *function, arguments)?;
             }
+            IrOperation::WindowBlockNew {
+                nominal,
+                capacity,
+                obligations,
+            } if self.storage.slot(result).is_some() => {
+                self.emit_window_block_new(result, ty, *nominal, *capacity, *obligations)?;
+            }
             IrOperation::Window => self.emit_fixed_vector(result, ty)?,
             IrOperation::ArrayFill {
                 value,
@@ -132,6 +139,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             IrOperation::Load { address, referent } if self.storage.slot(result).is_some() => {
                 if ty != referent.ty()
                     || self.value_type(*address) != Some(IrType::Address(*referent))
+                    || referent.is_runtime_content()
                 {
                     return Err(BackendFailure::InvalidIr);
                 }
@@ -431,6 +439,40 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         .map_err(|_| BackendFailure::TextEmission)
     }
 
+    /// Resolve the storage an ordinary typed reference currently names.
+    /// Runtime-capacity contents retain their Box slot so aliases follow
+    /// complete-content exchange; fixed-size references already name storage.
+    pub(super) fn addressed_storage_pointer(
+        &mut self,
+        address: IrValueId,
+    ) -> Result<String, BackendFailure> {
+        let Some(IrType::Address(referent)) = self.value_type(address) else {
+            return Err(BackendFailure::InvalidIr);
+        };
+        self.referent_storage_pointer(referent, self.value_name(address))
+    }
+
+    /// The same resolution for a projection whose pointer has not been bound
+    /// to an IR value, such as a checked Box-array scheduling observation.
+    pub(super) fn referent_storage_pointer(
+        &mut self,
+        referent: IrAddressed,
+        address: String,
+    ) -> Result<String, BackendFailure> {
+        if referent.is_runtime_content() && !crate::target::inline_slots_descriptor(referent.ty()) {
+            self.load_pointer_at(&address)
+        } else {
+            Ok(address)
+        }
+    }
+
+    pub(super) fn load_pointer_at(&mut self, address: &str) -> Result<String, BackendFailure> {
+        let pointer = self.next_temporary()?;
+        writeln!(self.output, "  %{pointer} = load ptr, ptr {address}")
+            .map_err(|_| BackendFailure::TextEmission)?;
+        Ok(format!("%{pointer}"))
+    }
+
     pub(super) fn projected_address_pointer(
         &mut self,
         ty: IrType,
@@ -465,14 +507,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 if base.ty() != IrType::Nominal(*nominal) || *boxed != referent.ty() {
                     return Err(BackendFailure::InvalidIr);
                 }
-                let pointer = self.next_temporary()?;
-                writeln!(
-                    self.output,
-                    "  %{pointer} = load ptr, ptr {}",
+                if referent.is_runtime_content() {
                     self.value_name(address)
-                )
-                .map_err(|_| BackendFailure::TextEmission)?;
-                format!("%{pointer}")
+                } else {
+                    self.load_pointer_at(&self.value_name(address))?
+                }
             }
             crate::IrPlaceStep::EnumVariant {
                 nominal,
@@ -550,11 +589,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     return Err(BackendFailure::InvalidIr);
                 }
                 let (block, _) = self.buffer_block(address)?;
-                self.buffer_element_pointer(
-                    block,
-                    &self.value_name(address),
-                    &self.value_name(*offset),
-                )?
+                let storage = self.addressed_storage_pointer(address)?;
+                self.buffer_element_pointer(block, &storage, &self.value_name(*offset))?
             }
         };
         Ok(pointer)
@@ -579,7 +615,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     }
 
     fn slot_place(&mut self, slot: usize) -> Result<String, BackendFailure> {
-        if let Some(destination) = self.storage.destination(slot) {
+        if let Some(parameter) = self.storage.incoming(slot) {
+            Ok(format!("%wf.arg.v{}", parameter.ordinal()))
+        } else if let Some(destination) = self.storage.destination(slot) {
             self.binding_place(destination)
         } else if Some(slot) == self.result_slot {
             Ok(RESULT_POINTER.to_owned())

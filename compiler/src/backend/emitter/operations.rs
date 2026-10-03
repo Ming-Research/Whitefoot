@@ -37,7 +37,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         address: IrValueId,
         referent: IrAddressed,
     ) -> Result<(), BackendFailure> {
-        if ty != referent.ty() || self.value_type(address) != Some(IrType::Address(referent)) {
+        if ty != referent.ty()
+            || self.value_type(address) != Some(IrType::Address(referent))
+            || referent.is_runtime_content()
+        {
             return Err(BackendFailure::InvalidIr);
         }
         {
@@ -61,6 +64,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     ) -> Result<(), BackendFailure> {
         if self.value_type(address) != Some(IrType::Address(referent))
             || self.value_type(value) != Some(referent.ty())
+            || referent.is_runtime_content()
         {
             return Err(BackendFailure::InvalidIr);
         }
@@ -68,7 +72,50 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         self.store_value_at(value, &destination)
     }
 
+    /// Runtime contents exchange their complete backing through the selected
+    /// owner slots. The type check distinguishes this from loading a header as
+    /// an owned value; both reads precede both writes for OP-11's equal case.
+    pub(super) fn emit_runtime_content_swap(
+        &mut self,
+        result: IrValueId,
+        ty: IrType,
+        first: IrValueId,
+        second: IrValueId,
+    ) -> Result<(), BackendFailure> {
+        let Some(IrType::Address(referent)) = self.value_type(first) else {
+            return Err(BackendFailure::InvalidIr);
+        };
+        if ty != IrType::Unit
+            || !referent.is_runtime_content()
+            || self.value_type(second) != Some(IrType::Address(referent))
+        {
+            return Err(BackendFailure::InvalidIr);
+        }
+        let first_slot = self.value_name(first);
+        let second_slot = self.value_name(second);
+        if crate::target::inline_slots_descriptor(referent.ty()) {
+            let llvm = self.output.type_name(self.program, referent.ty())?;
+            let first_owner = self.next_temporary()?;
+            let second_owner = self.next_temporary()?;
+            writeln!(self.output,
+                "  %{first_owner} = load {llvm}, ptr {first_slot}\n  %{second_owner} = load {llvm}, ptr {second_slot}\n  store {llvm} %{second_owner}, ptr {first_slot}\n  store {llvm} %{first_owner}, ptr {second_slot}"
+            ).map_err(|_| BackendFailure::TextEmission)?;
+            return self.emit_constant(result, ty, IrConstant::Unit);
+        }
+        let first_owner = self.load_pointer_at(&first_slot)?;
+        let second_owner = self.load_pointer_at(&second_slot)?;
+        writeln!(
+            self.output,
+            "  store ptr {second_owner}, ptr {first_slot}\n  store ptr {first_owner}, ptr {second_slot}"
+        )
+        .map_err(|_| BackendFailure::TextEmission)?;
+        self.emit_constant(result, ty, IrConstant::Unit)
+    }
+
     fn referent_is_stored(&self, referent: IrAddressed) -> Result<bool, BackendFailure> {
+        if referent.is_runtime_content() {
+            return Ok(false);
+        }
         Ok(match referent {
             IrAddressed::Nominal(nominal) => matches!(
                 self.nominal(nominal)?.kind(),

@@ -1,0 +1,17 @@
+--- whitefoot-timed.ll
++++ whitefoot-timed.ll
+@@ -1996,7 +1996,7 @@
+   switch i1 %v9, label %invalid.tag.b0 [
+     i1 1, label %bb2
+     i1 0, label %bb3
+-  ]
++  ], !prof !0
+ invalid.tag.b0:
+   call void @abort()
+   unreachable
+@@ -2632,3 +2632,5 @@
+   %status = call i32 @wf__floor_run(i32 %argc, ptr %argv)
+   ret i32 %status
+ }
++
++!0 = !{!"branch_weights", i32 1, i32 2000, i32 1}

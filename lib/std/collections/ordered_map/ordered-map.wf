@@ -9,17 +9,24 @@ fn ordered_map_len<K, V, const ceiling: u64>(map: &OrderedMap<K, V, ceiling>) ->
   return map^.length;
 }
 
-fn ordered_map_search<interface OrderedKey<K, E>, V>(node: &OrderedNode<K, V>, key: &K, env: &E) -> position: u64 reads(node), reads(key), reads(env) contract {
+fn ordered_map_search_result<interface OrderedKey<K, E>, V>(node: &OrderedNode<K, V>, key: &K, env: &E) -> (position: u64, comparison: i32) reads(node), reads(key), reads(env) contract {
   ensures position <= node^.entries.len;
 } {
   let count = node^.entries.len;
   for (index in 0_u64..count) {
     let order = OrderedKey<K, E>::compare(env: env, left: key, right: &node^.entries[index].pair.key);
     if order <= 0_i32 {
-      return index;
+      return index, order;
     }
   }
-  return count;
+  return count, 1_i32;
+}
+
+fn ordered_map_search<interface OrderedKey<K, E>, V>(node: &OrderedNode<K, V>, key: &K, env: &E) -> position: u64 reads(node), reads(key), reads(env) contract {
+  ensures position <= node^.entries.len;
+} {
+  let (position, comparison) = ordered_map_search_result::<OrderedKey<K, E>, V>(node: node, key: key, env: env);
+  return position;
 }
 
 fn ordered_map_replace_node<interface OrderedKey<K, E>, V>(node: &OrderedNode<K, V>, offered: &OrderedPair<K, V>, env: &E) -> found: Bool reads(env), writes(node), writes(offered) {
@@ -367,10 +374,9 @@ fn ordered_map_remove<interface OrderedKey<K, E>, V, const ceiling: u64>(map: &O
 }
 
 fn ordered_map_lookup_node<interface OrderedKey<K, E>, V, F, R, fn observe(env: &F, key: &K, value: &V) -> result: R reads(key), reads(value), writes(env)>(node: &OrderedNode<K, V>, key: &K, key_env: &E, visit_env: &F) -> result: Result<R, unit> reads(node), reads(key), reads(key_env), writes(visit_env) {
-  let position = ordered_map_search::<OrderedKey<K, E>, V>(node: node, key: key, env: key_env);
-  if position < node^.entries.len {
-    let order = OrderedKey<K, E>::compare(env: key_env, left: key, right: &node^.entries[position].pair.key);
-    if order == 0_i32 {
+  let (position, order) = ordered_map_search_result::<OrderedKey<K, E>, V>(node: node, key: key, env: key_env);
+  if order == 0_i32 {
+    if position < node^.entries.len {
       let observed = observe(env: visit_env, key: &node^.entries[position].pair.key, value: &node^.entries[position].pair.value);
       return Ok<R, unit>(value: move observed);
     }
@@ -488,7 +494,10 @@ fn ordered_map_free_node<K, V, F, fn consume(env: &F, key: K, value: V) -> resul
     consume(env: env, key: move key, value: move value);
     ordered_map_free_link::<K, V, F, fn consume>(link: move after, env: env);
   }
-  let OrderedNode(leading: leading, entries: empty_entries) = move node.inner;
+  let leading = slots_new::<Box<OrderedNode<K, V>>, 1>();
+  append(destination: &leading, source: &node.inner.leading);
+  let OrderedNode(leading: empty_leading, entries: empty_entries) = move node.inner;
+  free_empty(window: move empty_leading);
   free_empty(window: move empty_entries);
   ordered_map_free_link::<K, V, F, fn consume>(link: move leading, env: env);
   return unit;

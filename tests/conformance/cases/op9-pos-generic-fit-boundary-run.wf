@@ -18,9 +18,9 @@ fn inline_run_boundary(count: u64) -> made: Box<Slots<Slots<u64, 2>>> pure contr
 }
 
 fn stored_cell_boundary(count: u64) -> made: Box<Slots<Box<Slots<u8>>>> pure contract {
-  requires count <= 2305843009213693951_u64;
+  requires count <= 768614336404564650_u64;
 } {
-  doc "A stored cell is one pointer, so its stride ceiling is eight, as the scalar's is [OP-9].";
+  doc "A stored runtime Slots owner is an inline three-word descriptor, so its stride ceiling is twenty-four [OP-9].";
   let taken = box_slots_new::<Box<Slots<u8>>>(capacity: count);
   return move taken;
 }
