@@ -249,11 +249,12 @@ The *Correct* criterion rests on four observations:
   hexadecimal subnormal that redis-server rounds down by one unit where the
   nearest double is above. glibc's `strtod` itself differs from correct
   rounding (Python's `float.fromhex`) on 110 of 100,000 hexadecimal
-  subnormals of 13 to 15 digits, and firn on none. Fifteen of the kinds,
-  3,000,000 scores, also ran against the module's first commit, d30d7808a,
-  with no differing reply; none of them makes the sixteenth kind's scores,
-  and on 5,000 of those d30d7808a, which rounded a padded halfway point to
-  even when a nonzero digit followed the zeros, differs in 3,220 replies.
+  subnormals of 13 to 15 digits, and firn on none. An earlier run of the
+  first fifteen kinds, 3,000,000 other random scores, against the module's
+  first commit, d30d7808a, differed in no reply. None of those kinds makes
+  the sixteenth kind's scores, and on 5,000 of them d30d7808a, which rounded
+  a padded halfway point to even when a nonzero digit followed the zeros,
+  differs in 3,220 replies.
 
 A build a result names by commit is on the branch. A refused variant's code
 was not kept; its section describes it, and the drivers that ran the rounds
