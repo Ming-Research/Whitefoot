@@ -1223,6 +1223,14 @@ rarely insert at the same place.
   new timing. Until then, use the recorded revision for historical replay;
   partial syntax edits would break its pinned source identities without
   establishing a usable current experiment.
+  The [indexed first-rise screen](../research/experiments/container-representation/priority-library/RESULTS.md#indexed-repair-reuses-its-first-rise-comparison)
+  also finds a concrete shared-Indexed caller mismatch: `indexed-costs.c`
+  still passes a 24-byte `Log` with a thin `Words *`, while current WF expects
+  a 40-byte `IndexedCostLog` with an inline `Box<Slots<u64>>` descriptor.
+  Port that descriptor, its C accesses and accounting together before linking
+  or timing; verify both scalar and wide complete traces against the existing
+  transcript/owner oracle. Reopen when an indexed operation needs timing;
+  the first-rise source candidate currently has no measured speedup.
   The OrderedMap Makefile's `LIBRARY_SOURCE` override also changes only
   prerequisites and recorded identities: the current CLI embeds its `std`
   records, so changing that path does not select a candidate implementation.

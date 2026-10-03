@@ -1225,3 +1225,71 @@ order; inventory every changed body. Failure stops before runtime/timing.
 Only an admitted candidate proceeds to the existing complete owning/refusal,
 normal/retained and 150-row accounting checks, then a separately authorized
 full practical pair. No implementation, build or new measurement ran here.
+
+## Indexed repair reuses its first rise comparison
+
+The bounded source candidate performs the first parent/child swap immediately
+when `priority_queue_repair_at_indexed` has selected a rise, reports the parent
+then the child in the existing order, and continues the shared sift from that
+parent. Previously the sift began at the original index and repeated the
+comparison before its first swap. No public declaration, compiler rule,
+ownership domain or reporter protocol changes. Meaningful ordering retains the
+existing consistent-comparator requirement; an inconsistent returning
+comparator still follows a bounded parent path.
+
+The source and native screen uses the worktree based on
+`bf33d3fdca9d4342c13bf1172f0abab1e3edcbf2`, with the candidate source and test
+bytes pinned in `pins.json` inside the compact
+[evidence archive](first-rise-reuse-evidence.tar.gz). It retains the source
+overlays, exact commands and exits, criterion, and complete assemblies; unpack
+into the existing `.build/first-rise-reuse` scratch home for inspection.
+The cached optimized compiler has SHA-256
+`fb19727639fd2b5301b164f58c299754b884b970f447610ac7dcd6ea7e1ccea0`.
+Private module graphs compile the current library body explicitly instead of
+using the cached compiler's embedded library. Control graphs use the unchanged
+queue body with the same new fixtures. Commands run serially under
+`perl .github/run-check.pl`; no Cargo build was needed.
+
+The maintained indexed-membership fixture passes ordinary O2 native execution
+in default and `--no-overlap` modes, and the existing C allocation observer
+reports **111 allocations, each released exactly once**, in each mode. The
+unchanged queue also passes the new fixture and that ledger. Three added
+backings serve independent one-level, two-level and always-positive-comparator
+rise cases. They compare the complete placement-event order, returned identity
+and final resident identities with written expectations. A scratch mutation
+reversing the candidate's two first-swap reports is accepted and builds, then
+exits **8** at the new one-level sequence check. Initial authoring diagnostics
+were corrected before these successes; the first observer build omitted the
+runtime include path and failed, then passed with
+`-I compiler/src/backend`. These are direct CLI/native observations, not a run
+of the Rust integration-test target or the complete repository gate.
+
+Apple Clang 21.0.0, `clang -O2 -Wno-override-module -S`, shows the reached
+first comparison removed in ordinary emission and under the existing indexed
+experiment's normal and retained boundary policies. The retained policy makes
+its comparator calls explicit: entry comparison is followed directly by the
+first swap and reports, with the next comparison belonging to the next parent.
+Each swap retains two SIMD loads and two SIMD stores; no additional dynamic
+report, copy helper or payload spill appears. Static code and frame size grow:
+
+| Repair body | Instructions, control → candidate | Frame bytes, control → candidate |
+|---|---:|---:|
+| Ordinary store instance `2a15825f0f6e194e` | 34 → 67 | 16 → 48 |
+| Normal indexed boundary | 127 → 158 | 32 → 64 |
+| Retained indexed boundary | 90 → 105 | 144 → 176 |
+
+Counts include operand-free `ret`; the first scratch count omitted it and was
+corrected. The retained body saves the same five register pairs. The ordinary
+body retains the same saved FP/LR pair but uses separate stack adjustment
+instructions instead of folded adjustments. This is a real first-comparison
+reduction with code/frame tradeoffs, not measured acceleration.
+
+No before/after timing was run. The existing indexed timing driver's `Log`
+contains a thin `Words *` and occupies 24 bytes, while the current emitted trace
+expects a 40-byte `IndexedCostLog` containing an inline `Box<Slots<u64>>`
+descriptor. Its old header-first `Words` and accounting accesses therefore need
+a caller-ABI port before linking is valid. The assembly-only boundary screen
+above does not qualify that C caller, and only the scalar trace selected by the
+existing benchmark entry was instantiated. Timing, the wide benchmark trace,
+and full operation-family performance remain unverified; this candidate makes
+no no-regression or speedup claim.

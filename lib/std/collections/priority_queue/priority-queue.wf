@@ -187,7 +187,10 @@ fn priority_queue_repair_at_indexed<interface PriorityOrder<T, E>, P, fn placed(
     invariant bounded_parent: parent < index;
     let order = PriorityOrder::compare(env: order_env, left: &queue^.storage.inner[parent], right: &queue^.storage.inner[index]);
     if order > 0_i32 {
-      priority_queue_sift_rise_indexed::<PriorityOrder<T, E>, P, fn placed, ceiling>(queue: queue, start: index, count: count, order_env: order_env, position_env: position_env);
+      swap(first: &queue^.storage.inner[parent], second: &queue^.storage.inner[index]);
+      placed(env: position_env, value: &queue^.storage.inner[parent], index: parent);
+      placed(env: position_env, value: &queue^.storage.inner[index], index: index);
+      priority_queue_sift_rise_indexed::<PriorityOrder<T, E>, P, fn placed, ceiling>(queue: queue, start: parent, count: count, order_env: order_env, position_env: position_env);
       return unit;
     }
   }

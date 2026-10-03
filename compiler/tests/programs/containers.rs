@@ -321,7 +321,9 @@ fn indexed_memberships_match_the_model_and_release_every_owner_in_both_lowering_
     // direct indexed heapify adds one; the nodrop SlabEdit result adds one
     // backing and two payload Boxes. The source model independently checks
     // dictionary membership, sorted expiration and exact owner identities.
-    execute_container_program("indexed-membership", &sources, 108, false);
+    // Three direct indexed repairs add three backings and check exact rise
+    // reporter order, including a comparator that always requests a swap.
+    execute_container_program("indexed-membership", &sources, 111, false);
 }
 
 #[test]
