@@ -946,10 +946,10 @@ rarely insert at the same place.
   12 microseconds on the 4-CPU measuring host, where a pause took about
   12 ns; pause latency differs several times over between x86 cores, so
   the same counts wait longer elsewhere and the batching that won one-key
-  `update` may cost latency instead. A keyed statement's patience, 2^16
-  pauses before it holds the whole map, is a count of pauses too, 0.77 ms
-  on that host. The change: bound the waits by elapsed time, read from the
-  cycle counter, or let keyed statements park. Reopen when the 14900K
+  `update` may cost latency instead. The patience of a statement on one
+  key, 2^16 pauses before it holds the table whole, is a count of pauses
+  too, 0.77 ms on that host. The change: bound the waits by elapsed time,
+  read from the cycle counter, or let statements on one key park. Reopen when the 14900K
   measures one-key `update`, when waiting writers park, or when holds show
   in a workload's profile or tail latency. The 14900K has measured it
   ([the longest wait](../research/investigations/concurrent-map/DESIGN.md#the-longest-wait-for-a-held-cell)):
@@ -1002,7 +1002,7 @@ rarely insert at the same place.
   when a native caller needs tables, or say in the comment that the list
   holds what native callers link. Reopen with the first such caller.
 
-- **A keyed statement on an absent key allocates a node it then frees.**
+- **A statement on an absent key's entry allocates a node it then frees.**
   `wf_cmap_lock_entry` (`compiler/src/backend/concurrent_map.c`) claims a
   cell for an absent key, reusing the first removed cell its probe passed,
   and allocates the key's node so the block can write `Some`; a block that
@@ -1015,8 +1015,8 @@ rarely insert at the same place.
   the user for the next claim of the same size. Reopen when a profile of a
   miss-heavy workload shows the allocation.
 
-- **A keyed statement that waits for its entry spins and does not park.**
-  Its wait is bounded, since one out of patience holds the whole map
+- **A statement that waits for its one entry spins and does not park.**
+  Its wait is bounded, since one out of patience holds the table whole
   ([bounded waits](../research/investigations/concurrent-map/DESIGN.md#bounded-waits)),
   but the driver it runs on spins instead of running its other contexts.
   Readers of one key no longer wait for each other
@@ -1024,9 +1024,9 @@ rarely insert at the same place.
   9.72 µs of server CPU per `LRANGE mylist 0 599` reply on two drivers
   against 8.76 µs on one, where exclusive holds spent 16.4 µs), but writers
   of one key still do: firn's `ZADD` spent 60% of its server CPU waiting
-  for its one key on four server CPUs. The change: let a keyed statement
-  that has not yet locked
-  anything suspend like an object statement, with a mark for waiters (a bit
+  for its one key on four server CPUs. The change: let a statement on one
+  entry that has not yet locked anything suspend, as one whose first unit
+  is the state's other fields does, with a mark for waiters (a bit
   of the hash or a word beside the cell, since the key word's second bit
   marks a pending claim) that the entry's unlock reads to wake it. Validate
   by `ZADD`'s server CPU per request on four drivers against one. Reopen
@@ -1049,8 +1049,8 @@ rarely insert at the same place.
   per-user chunks. A workload of long keys from many drivers would contend
   on it. Reopen when a measured workload's keys exceed 512 bytes.
 
-- **A keyed statement takes two dependent cache misses where firn's old
-  keyspace took one.** `wf_cmap_lock_entry`
+- **A statement on one key takes two dependent cache misses where firn's
+  old keyspace took one.** `wf_cmap_lock_entry`
   (`compiler/src/backend/concurrent_map.c`) loads the probed cell's key word
   and then the node it points to, both missing the cache under the suite's
   100,000 keys: under `INCR` at depth 16 on one server CPU it took 28.1% of
@@ -1114,21 +1114,25 @@ rarely insert at the same place.
   Reopen when `GET`'s rate is within 4% of a criterion.
 
 - **A statement that holds its keys' entries locks each one exclusively.**
-  A block that only reads its entries, firn's `EXISTS` of several keys,
-  holds them alone, where a statement on one entry that only reads shares
-  it. The change: lock a set's entries as readers when no entry statement
-  in the block writes through its binder. Reopen when a workload's readers
-  of several keys contend.
+  A block that only reads the entries of a key set holds them alone
+  (`wf_cmap_hold_keys` has no reader's take), where a block that only reads
+  its one entry shares it
+  ([state locks](../design/compiler/waiting-contexts/state-locks.md)). No
+  firn command is such a block: its reads of several keys, `EXISTS`'s
+  among them, remove the expired keys they find. The change: take a set's
+  entries as readers when the block only reads them and the guard reads
+  none of them. Reopen when a workload's readers of several keys contend.
 
-- **An object statement that only reads holds its object alone.** The
-  checker classes a statement on an entry that writes nothing through its
-  binder as a reader, and classes no statement on a `Shared<T>` object: the
-  object runtime holds exclusively whatever the block does, so the class
-  would decide nothing. The owner's principle of 2026-10-02 is that the
-  language treats every atomic statement alike; the rule in the
-  specification now does, and the checker's class and the object runtime's
-  shared hold are the change. Reopen with a workload whose readers of one
-  object contend.
+- **A statement that only reads a state's fields outside its tables holds
+  them alone.** The checker classes an entry binding through which the
+  guard and block write nothing as a reader [SHARE-3], and the lowering
+  takes one key's entry so classed beside other readers; the unit of the
+  state's other fields it takes exclusively whatever the block does, since
+  the object runtime has no shared hold. The owner's principle of 2026-10-02 is that the language
+  treats every atomic statement alike; the rule in the specification now
+  does, and a reader's take of that unit, with the object runtime's shared
+  hold, is the change. Reopen with a workload whose readers of one state's
+  fields contend.
 
 - **firn spends more CPU per `SADD` and `HSET` than before the shared map
   on four drivers.** On the 14900K with 4 server CPUs both firn and firn at
