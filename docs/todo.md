@@ -3321,13 +3321,20 @@ condition under which it is taken up.
   `GETKEYS` answer as unknown subcommands; `KEYS` and `SCAN`, which can match
   with `glob_match` (`apps/firn/bytes/bytes.wf`), RESP3, which
   `HELLO 3` refuses, the blocking list commands, `MULTI` and `EXEC`, publish
-  and subscribe, and a random hash seed. The calls the suite's framework
-  makes before any test, `FLUSHALL`, `FUNCTION FLUSH`, `CONFIG GET` and
-  `CONFIG SET` of a block's overrides, `INFO` and `DEBUG LOG`, are answered,
-  so Redis's own suite runs on firn as released until a test reaches a
-  command firn lacks, but for a block whose override names a parameter firn
-  refuses, `appendonly yes`, which ends `unit/type/stream`, or does not
-  know, `slowlog-log-slower-than`, which ends `unit/slowlog`. The
+  and subscribe, and a random hash seed. firn answers the calls the suite's
+  framework makes around its tests: `FLUSHALL` and `FUNCTION FLUSH` at the
+  start of each block, `CONFIG GET` and `CONFIG SET` of the block's
+  overrides, `INFO`'s `aof_rewrite_in_progress` after an `appendonly yes`
+  override, and `DEBUG LOG` before each test. In a run on 2026-10-03 of firn
+  at `acca9c9d5` without `--tolerant`, its output not kept, tests ran in 36
+  of the 39 units in which Redis passes any, and firn passed 157 of the
+  1,994 tests Redis passes. Blocks stopped where a test sent `HELLO 3`,
+  which left 217 tests of `unit/type/list` and 95 of `unit/type/zset`
+  unreached, or `MEMORY`, 71 of `unit/type/hash`, and where an override
+  named a parameter firn refuses, `appendonly yes`, which ends
+  `unit/type/stream`, or does not know, `slowlog-log-slower-than`, which
+  ends `unit/slowlog`; past those, the commands firn lacks that fail the
+  most tests are `FUNCTION LOAD`, `EVAL`, `XADD`, `SORT` and `GEOADD`. The
   measurement in redis-compat is of firn at `cea9188d4`, before those
   commands, when every unit stopped at the first `FLUSHALL`; with the calls
   allowed to fail it passed 107 of the 1,994 tests Redis passes there, 25 of
@@ -3446,3 +3453,14 @@ condition under which it is taken up.
   helper that takes the parameter's range from a table like
   `encoding_lower` and `encoding_upper`. Reopen with the next change to
   either writer or to `CONFIG SET`'s parameters.
+- **firn kept a key past its expiry once in Redis's suite.** In a
+  redis-compat run on 2026-10-03 of firn at `c2dca4616`, made while the host
+  built and tested in parallel, `unit/expire`'s "EXPIRE - After 2.1 seconds
+  the key should no longer be here" found the key still there at least 2.1
+  seconds after `EXPIRE x 2`: `GET` answered its value and `EXISTS` 1. The
+  run before, the run after and five runs of the unit alone on the same
+  binary passed it. A key's expiry is an instant of the monotonic clock,
+  which `serve` (`apps/firn/server/server.wf`) reads once after each
+  receive, so no wait should leave a key past it; the cause is unknown.
+  Reopen when it recurs, with each `EXPIRE`'s instant and each read's clock
+  logged in a run under load.
