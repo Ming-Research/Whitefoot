@@ -2498,8 +2498,11 @@ fn firn_listens_again_on_its_port_after_a_restart() {
 /// protocol error that closes the connection, and once unlocked an array of
 /// 11 elements is a command. CONFIG SET requirepass changes the password: the
 /// connection that changed it stays authenticated, a new one is refused the
-/// old password, and removing the password unlocks that one at once. The
-/// expected bytes are redis-server 7.0.15's with the same password, the
+/// old password, and removing the password lets that one in at once, but only
+/// until a password is set again, since it has not authenticated, as Redis's
+/// flag of authentication has it; AUTH as the user default while no password
+/// is set authenticates it, so that a password set afterwards leaves it in.
+/// The expected bytes are redis-server 7.0.15's with the same password, the
 /// connection's id aside.
 #[cfg(target_os = "linux")]
 #[test]
@@ -2616,6 +2619,38 @@ fn firn_requires_its_password_as_redis_does() {
         b"+PONG\r\n-ERR AUTH <password> called without any password configured for the default user. Are you sure your configuration is correct?\r\n",
         "once the password is removed",
     );
+    setter
+        .write_all(&resp(&["CONFIG", "SET", "requirepass", "again"]))
+        .expect("set a password again");
+    expect_replies(&mut setter, b"+OK\r\n", "a password set again");
+    waiting
+        .write_all(&resp(&["PING"]))
+        .expect("send once a password is set again");
+    expect_replies(
+        &mut waiting,
+        b"-NOAUTH Authentication required.\r\n",
+        "once a password is set again",
+    );
+    setter
+        .write_all(&resp(&["CONFIG", "SET", "requirepass", ""]))
+        .expect("remove the password again");
+    expect_replies(&mut setter, b"+OK\r\n", "the password removed again");
+    waiting
+        .write_all(&resp(&["AUTH", "default", "x"]))
+        .expect("authenticate with no password set");
+    expect_replies(&mut waiting, b"+OK\r\n", "AUTH with no password set");
+    setter
+        .write_all(&resp(&["CONFIG", "SET", "requirepass", "again"]))
+        .expect("set a password once more");
+    expect_replies(&mut setter, b"+OK\r\n", "a password set once more");
+    waiting
+        .write_all(&resp(&["PING"]))
+        .expect("send once authenticated");
+    expect_replies(&mut waiting, b"+PONG\r\n", "once authenticated");
+    setter
+        .write_all(&resp(&["CONFIG", "SET", "requirepass", ""]))
+        .expect("remove the password for the last connection");
+    expect_replies(&mut setter, b"+OK\r\n", "the password removed at last");
     drop(waiting);
     drop(setter);
     let mut fresh = connect_when_ready(port);

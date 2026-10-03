@@ -160,7 +160,7 @@ fn set_name(client: &Client, input: &[u8], name: Span) -> named: Bool reads(inpu
 }
 
 fn run_auth(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client) -> result: unit reads(store), reads(input), reads(args), writes(client) waits {
-  doc "AUTH [username] password: authenticates the connection as Redis 7.0 does with its one user, default, against the password the server's state holds now, which CONFIG SET may have changed. With a password configured, the right one, alone or after the user name default, unlocks the connection, and a wrong one or another user name is answered WRONGPASS and leaves the connection as it was. With none configured, a password alone is answered with Redis's error for that and default with any password succeeds. More than two arguments are a syntax error.";
+  doc "AUTH [username] password: authenticates the connection as Redis 7.0 does with its one user, default, against the password the server's state holds now, which CONFIG SET may have changed. With a password configured, the right one, alone or after the user name default, authenticates the connection, which then stays authenticated as Redis's flag does, and a wrong one or another user name is answered WRONGPASS and leaves the connection as it was. With none configured, a password alone is answered with Redis's error for that, and default with any password succeeds and authenticates the connection, as in Redis. More than two arguments are a syntax error.";
   let count = args^.inner.len;
   if count > 3_u64 {
     reply_error(client: client, word: &text_syntax[0_u64..16_u64]);
@@ -188,6 +188,7 @@ fn run_auth(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
     }
   }
   if accepted {
+    set client^.authenticated = True();
     set client^.locked = False();
     reply_ok(client: client);
   } else {
@@ -236,6 +237,7 @@ fn run_hello(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &C
         set accepted = credentials_accepted(secret: &v^.password, input: input, user: user, password: password);
       }
       if accepted {
+        set client^.authenticated = True();
         set client^.locked = False();
       } else {
         reply_error(client: client, word: &text_wrongpass[0_u64..61_u64]);

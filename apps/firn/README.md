@@ -53,8 +53,10 @@ what `CONFIG SET` gives them, and they change nothing else.
 
 `CONFIG SET` takes these parameters with Redis's checks and errors, refusing
 any other as Redis refuses one it does not know, and applies all of its pairs
-or none. `requirepass` changes the password for new connections and for
-those that have not given it, and removing it lets those in; `timeout`
+or none. `requirepass` changes the password for every connection that has
+not authenticated, as in Redis: a connection authenticates by giving the
+password, or by being accepted while none is set, and stays authenticated;
+removing the password lets the others in until one is set again. `timeout`
 changes the idle limit for new connections and for connections waiting under
 a limit, while a connection that waits with no limit reads a new one only
 once it sends again. `appendfilename` and `databases` are refused as Redis

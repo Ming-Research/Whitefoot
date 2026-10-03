@@ -249,7 +249,7 @@ fn read_time(clock: &Clock, wall: &WallClock, origin: Instant) -> result: Readin
 }
 
 fn serve(connection: TcpConnection, factory: HandleFactory, store: Keyspace, clock: Clock, wall: WallClock, origin: Instant, required: Bool, settings: Settings, id: u64) -> result: unit pure waits {
-  doc "Serves one client, the id-th the server accepted, in a context of its own: reads requests into its input, which grows to hold a request larger than it, answers every complete request the input holds with one send, sending sooner once 16,384 bytes of replies are waiting, and keeps an incomplete one for the next read. Every command of one read sees the clocks as read once after it. A client silent for the idle limit the server's state holds, when it is not zero, is closed: while a limit is set, each read waits no longer than the limit leaves, and the client reads the limit again when that wait ends and at most once a second while it sends, so that a limit CONFIG SET changes reaches it; a client that waits with no limit set reads none until it sends. A client that sends a malformed request is closed after its error, and one that sends QUIT after its reply. A client accepted while a password is required, when required is true, must give it before other commands, unless the password is removed first, which it reads again before each request while it has not given it.";
+  doc "Serves one client, the id-th the server accepted, in a context of its own: reads requests into its input, which grows to hold a request larger than it, answers every complete request the input holds with one send, sending sooner once 16,384 bytes of replies are waiting, and keeps an incomplete one for the next read. Every command of one read sees the clocks as read once after it. A client silent for the idle limit the server's state holds, when it is not zero, is closed: while a limit is set, each read waits no longer than the limit leaves, and the client reads the limit again when that wait ends and at most once a second while it sends, so that a limit CONFIG SET changes reaches it; a client that waits with no limit set reads none until it sends. A client that sends a malformed request is closed after its error, and one that sends QUIT after its reply. A client accepted while a password is required, when required is true, has not authenticated until it gives the password, as AUTH and HELLO record; until then it reads the password again before each request and must give it before other commands while one is set, as Redis's clients must.";
   let env = KeyEnv();
   let client = client_new(capacity: 16384_u64);
   atomic s = &store.state {
@@ -260,6 +260,7 @@ fn serve(connection: TcpConnection, factory: HandleFactory, store: Keyspace, clo
   let args = box_slots_new::<Span>(capacity: 16_u64);
   let input = input_new(capacity: 16384_u64);
   set client.id = id;
+  set client.authenticated = bnot(required);
   set client.locked = required;
   set client.settings = move settings;
   let idle = idle_limit(store: &store);
@@ -339,15 +340,12 @@ fn serve(connection: TcpConnection, factory: HandleFactory, store: Keyspace, clo
     loop @commands {
       let current = input.inner.len;
       let bytes = &input.inner[0_u64..current];
-      let locked = client.locked;
-      if locked {
+      if client.authenticated {
+      } else {
         let demanded = password_required(store: &store);
-        if demanded {
-        } else {
-          set client.locked = False();
-          set locked = False();
-        }
+        set client.locked = demanded;
       }
+      let locked = client.locked;
       let parsed = parse_request(input: bytes, start: consumed, held: held, args: &args, locked: locked);
       if parsed.state == 0_u64 {
         break @commands;
@@ -819,7 +817,7 @@ fn read_options(args: &std::text::Args) -> options: Options reads(args) {
 }
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  doc "firn, a server of Redis's protocol: PING, ECHO, GET, SET with EX or PX, MSET, INCR, DEL, EXISTS, TYPE, EXPIRE, PEXPIRE, PEXPIREAT, TTL, PTTL, PERSIST, DBSIZE, FLUSHALL, FLUSHDB, CONFIG GET with patterns, CONFIG SET, CONFIG RESETSTAT, INFO, FUNCTION FLUSH, DEBUG LOG, the lists' LPUSH, RPUSH, LPOP, RPOP, LRANGE and LLEN, the sets' SADD, SREM, SPOP and SCARD, the hashes' HSET and HGET, the sorted sets' ZADD, ZPOPMIN, ZCARD and ZSCORE, and the connection commands QUIT, AUTH, HELLO, SELECT, CLIENT ID, GETNAME and SETNAME, TIME, COMMAND and COMMAND COUNT, over TCP in RESP2 or as inline commands, with pipelining. It serves each accepted client in a context of its own over one keyspace, a shared state every client reaches through atomic statements that hold the entries of the keys a command names, or the keyspace's table whole for DBSIZE and FLUSHALL. Its invocation, which read_options reads, names up to four arguments by position, the port, how many clients to accept, zero for no limit, the append-only file's name or - for none, and the idle limit, then options by name, --port, --bind, --timeout, --appendonly, --appendfilename, --requirepass and --clients; an invocation that does not read stops firn with status 1. firn listens on the address --bind names, the loopback address by default. An append-only file is replayed before firn listens and every change is appended to it, the file synced once a second. A client silent for the idle limit, when it is not zero, is closed, and while a password is required a client must give it before other commands; CONFIG SET changes both while firn runs, in the server's state beside the keyspace. Expired keys are removed when a command finds them and by a context that wakes ten times a second.";
+  doc "firn, a server of Redis's protocol: PING, ECHO, GET, SET with EX or PX, MSET, INCR, DEL, EXISTS, TYPE, EXPIRE, PEXPIRE, PEXPIREAT, TTL, PTTL, PERSIST, DBSIZE, FLUSHALL, FLUSHDB, CONFIG GET with patterns, CONFIG SET, CONFIG RESETSTAT, INFO, FUNCTION FLUSH, DEBUG LOG, the lists' LPUSH, RPUSH, LPOP, RPOP, LRANGE and LLEN, the sets' SADD, SREM, SPOP and SCARD, the hashes' HSET and HGET, the sorted sets' ZADD, ZPOPMIN, ZCARD and ZSCORE, and the connection commands QUIT, AUTH, HELLO, SELECT, CLIENT ID, GETNAME and SETNAME, TIME, COMMAND and COMMAND COUNT, over TCP in RESP2 or as inline commands, with pipelining. It serves each accepted client in a context of its own over one keyspace, a shared state every client reaches through atomic statements that hold the entries of the keys a command names, or the keyspace's table whole for DBSIZE and FLUSHALL. Its invocation, which read_options reads, names up to four arguments by position, the port, how many clients to accept, zero for no limit, the append-only file's name or - for none, and the idle limit, then options by name, --port, --bind, --timeout, --appendonly, --appendfilename, --requirepass and --clients; an invocation that does not read stops firn with status 1. firn listens on the address --bind names, the loopback address by default. An append-only file is replayed before firn listens and every change is appended to it, the file synced once a second. A client silent for the idle limit, when it is not zero, is closed, and while a password is required a client that has not authenticated, by giving it or by being accepted while none was required, must give it before other commands; CONFIG SET changes both while firn runs, in the server's state beside the keyspace. Expired keys are removed when a command finds them and by a context that wakes ten times a second.";
   let Inputs(args: args, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: clock, wall_clock: wall_clock) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   let options = read_options(args: &args);
