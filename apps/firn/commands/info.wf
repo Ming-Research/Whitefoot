@@ -19,7 +19,7 @@ const section_names: Array<u8, 105> = "SERVERCLIENTSMEMORYPERSISTENCESTATSREPLIC
 
 const section_ends: Array<u64, 13> =[6_u64, 13_u64, 19_u64, 30_u64, 35_u64, 46_u64, 49_u64, 56_u64, 68_u64, 78_u64, 90_u64, 97_u64, 105_u64];
 
-const info_server_head: Array<u8, 78> = "# Server\r\nredis_version:7.0.15\r\nredis_mode:standalone\r\narch_bits:64\r\ntcp_port:";
+const info_server_head: Array<u8, 103> = "# Server\r\nredis_version:7.0.15\r\nredis_git_sha1:00000000\r\nredis_mode:standalone\r\narch_bits:64\r\ntcp_port:";
 
 const info_server_time: Array<u8, 19> = "\r\nserver_time_usec:";
 
@@ -152,7 +152,7 @@ fn text_number(text: &Box<Slots<u8>>, value: u64) -> result: unit writes(text) {
 }
 
 fn run_info(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
-  doc "INFO [section [section ...]]: answers a bulk string of Redis's sections in Redis's order and form, a # header and lines of name:value each, a blank line between sections: with no argument or default, server, clients, memory, persistence, stats, replication, cpu, modules, errorstats, cluster and keyspace; with all or everything, those and commandstats and latencystats; and otherwise the sections the arguments name, modules also as module_list, in either case and up to a zero byte, as Redis compares them, an unknown name adding none. The fields carry real values where firn has them: the port, the calendar time, the seconds and days since the server started, the clients connected, whether the append-only file is kept, the connections accepted since the start or CONFIG RESETSTAT, and the keys the keyspace holds, counted in an atomic statement that holds its table whole, as DBSIZE counts them. Every other field is one whose value is fixed for firn: Redis's version 7.0.15, whose replies firn follows, standalone mode, a server of 64 bits, its active expiry's 10 runs a second, no configuration file, no memory limit and so no eviction, no scripts or functions, no replica, background save, rewrite, fork, module, publish and subscribe, tracking or cluster, so that their counts are 0, and the keyspace's expires and avg_ttl, which firn does not count, given as 0. Fields firn cannot measure, memory used and processor time among them, and the per-command and per-error counts, are left out, their sections empty.";
+  doc "INFO [section [section ...]]: answers a bulk string of Redis's sections in Redis's order and form, a # header and lines of name:value each, a blank line between sections: with no argument or default, server, clients, memory, persistence, stats, replication, cpu, modules, errorstats, cluster and keyspace; with all or everything, those and commandstats and latencystats; and otherwise the sections the arguments name, modules also as module_list, in either case and up to a zero byte, as Redis compares them, an unknown name adding none. The fields carry real values where firn has them: the port, the calendar time, the seconds and days since the server started, the clients connected, whether the append-only file is kept, the connections accepted since the start or CONFIG RESETSTAT, and the keys the keyspace holds, counted in an atomic statement that holds its table whole, as DBSIZE counts them. Every other field is one whose value is fixed for firn: Redis's version 7.0.15, whose replies firn follows, no git revision, as Redis's builds from a release report, standalone mode, a server of 64 bits, its active expiry's 10 runs a second, no configuration file, no memory limit and so no eviction, no scripts or functions, no replica, background save, rewrite, fork, module, publish and subscribe, tracking or cluster, so that their counts are 0, and the keyspace's expires and avg_ttl, which firn does not count, given as 0. Fields firn cannot measure, memory used and processor time among them, and the per-command and per-error counts, are left out, their sections empty.";
   let count = args^.inner.len;
   let chosen = array_filled::<u64, 13>(value: 0_u64);
   if count == 1_u64 {
@@ -224,7 +224,7 @@ fn run_info(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
       if which == 0_u64 {
         let seconds = time^.now / 1000000000_u64;
         let days = seconds / 86400_u64;
-        text_word(text: &text, word: &info_server_head[0_u64..78_u64]);
+        text_word(text: &text, word: &info_server_head[0_u64..103_u64]);
         text_number(text: &text, value: client^.settings.port);
         text_word(text: &text, word: &info_server_time[0_u64..19_u64]);
         text_number(text: &text, value: client^.unix_us);

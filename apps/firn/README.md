@@ -78,13 +78,15 @@ values for the port, the calendar time, the uptime, the clients connected,
 whether the append-only file is kept, the connections accepted and the keys
 held, which it counts holding the table whole, as `DBSIZE` does; the other
 fields it reports have values that are fixed and true of firn: Redis's
-version 7.0.15, standalone mode, 64 bits, its active expiry's 10 runs a
-second, no configuration file, memory limit, eviction, script, function,
-replica, background save, rewrite, fork, module, publish and subscribe,
-tracking or cluster. What firn does not measure, memory and processor time,
-per-command and per-error counts among them, is left out, so its CPU,
-Commandstats, Errorstats and Latencystats sections are empty, and the
-keyspace line's `expires` and `avg_ttl`, which firn does not count, are 0.
+version 7.0.15, no git revision, `redis_git_sha1` being 00000000 as in
+Redis's builds from a release, standalone mode, 64 bits, its active
+expiry's 10 runs a second, no configuration file, memory limit, eviction,
+script, function, replica, background save, rewrite, fork, module, publish
+and subscribe, tracking or cluster. What firn does not measure, memory and
+processor time, per-command and per-error counts among them, is left out,
+so its CPU, Commandstats, Errorstats and Latencystats sections are empty,
+and the keyspace line's `expires` and `avg_ttl`, which firn does not count,
+are 0.
 
 `HELLO` and `INFO` report the server as `redis` version 7.0.15, the version
 whose replies firn follows.

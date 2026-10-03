@@ -2944,6 +2944,7 @@ fn firn_answers_connection_commands_as_redis_does() {
     assert_eq!(info_sections(&info, "INFO"), &defaults[..]);
     for (field, value) in [
         ("redis_version", "7.0.15"),
+        ("redis_git_sha1", "00000000"),
         ("tcp_port", text.as_str()),
         ("uptime_in_days", "0"),
         ("connected_clients", "2"),
