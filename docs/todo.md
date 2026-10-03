@@ -3370,10 +3370,32 @@ condition under which it is taken up.
   propagates more than one record, a key it found expired and the command
   itself, or several expired keys, Redis 7.0.15 brackets them in `MULTI`
   and `EXEC`; firn has no transactions to replay, so it writes the records
-  alone, which replays to the same state. `DEL`, `UNLINK`, `EXISTS`, `TOUCH`
-  and `MSET` also record the keys they find expired in byte order, where Redis
-  records them in the order the command names them, as firn's `MGET` and
-  `MSETNX` do. Reopen when firn answers `MULTI` and `EXEC`.
+  alone, which replays to the same state. Reopen when firn answers `MULTI`
+  and `EXEC`.
+- **`DEL`, `UNLINK`, `EXISTS`, `TOUCH` and `MSET` record the keys they find
+  expired in byte order.** Redis 7.0.15 looks the keys up, and propagates
+  each expired one's removal, in the order the command names them; these
+  statements walk their key set, whose order is the keys' bytes, so the file
+  records the removals in that order, which replays to the same state but is
+  not Redis's file. `MGET` and `MSETNX` walk their arguments in order through
+  `key_ranks` (`apps/firn/commands/strings.wf`). The change: walk the
+  arguments the same way where these record. Reopen with the next change to
+  those commands, or when a case compares firn's file with Redis's.
+- **Two removal paths have no maintained check.** `take_due`
+  (`apps/firn/store/store.wf`) stops at a queued expiry equal to the time,
+  so that the expiring context keeps a key through its expiry's millisecond,
+  as Redis's `activeExpireCycleTryExpire` does; were it to take that key, a
+  command reading in the same millisecond after the context's tick would
+  find it absent, but no case can place a command there without one whose
+  reading precedes the tick failing too. And `MSET`'s record of the removal
+  of a key it finds expired cannot be seen in a replayed state, since `MSET`
+  replaces the value and its expiry either way; only the file's bytes show
+  it, and a case cannot reach the file, `CompiledProgram`'s directory being
+  private to the harness. The scratch comparison with redis-server covers
+  both. The change: a case that reads firn's file and compares its records
+  with the forms Redis propagates, which would also pin the byte order
+  above, once the harness gives a case its program's directory. Reopen then,
+  or when either path changes.
 - **firn converts decimals to binary twice, by one algorithm.**
   `apps/firn/scores/decimal.wf` reads a double and
   `apps/firn/extended/extended.wf` a long double by the same Simple Decimal

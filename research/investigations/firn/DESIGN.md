@@ -169,8 +169,7 @@ Redis's observable behavior on the suite's commands and says what it refused.
 - **The append-only file records each change as Redis 7 records it**: a
   command as it was sent or in the form Redis 7.0.15 propagates it, an expiry
   as `PEXPIREAT`, a `SET` with an expiry as `SET` with `PXAT`, `INCRBYFLOAT`
-  as `SET` with `KEEPTTL`; the removal of a key found expired as `DEL`, which
-  the lists', sets', hashes' and sorted sets' writes do not yet record; and
+  as `SET` with `KEEPTTL`; the removal of a key found expired as `DEL`; and
   an `SPOP` as the `SREM` of the members it chose, so that a replay removes
   the same members. `SPOP` draws from a generator
   seeded by the clock when the server starts, as Redis seeds its own.

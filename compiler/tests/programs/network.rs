@@ -2196,11 +2196,13 @@ fn firn_answers_string_commands_as_redis_does() {
 /// set holds the keys in byte order, and nil for an absent key or one of
 /// another kind; `MSETNX` keeps the last value named for a key and stores
 /// nothing when any key is live, of any kind, looking its keys up in the
-/// order named and stopping at the first live one, so that a key expired
-/// before the command and named after that one stays in place for `DBSIZE`
-/// to count, as Redis leaves it; the expiring context, which may remove it at
-/// any time, could change that count only between `MSETNX`'s statement and the
-/// second `DBSIZE`, a window of microseconds. `RENAME` and `RENAMENX` naming
+/// order named and stopping at the first live one, as Redis does: a key
+/// expired before the command stays in place for `DBSIZE` to count when it is
+/// named after that one, and is removed when named before it, though it sorts
+/// after it. The expiring context, which may remove that key at any time,
+/// could upset the first count only between the two `DBSIZE` commands around
+/// `MSETNX`, outside its statement, a window of microseconds, and cannot upset
+/// the second. `RENAME` and `RENAMENX` naming
 /// one key twice leave a live key as it is, answering OK and 0, and refuse an
 /// absent one; `COPY` refuses one key named twice before it reads the key,
 /// and `RENAMENX` and `COPY` without REPLACE leave a live destination alone.
@@ -2275,6 +2277,8 @@ fn firn_answers_commands_naming_a_key_twice_as_redis_does() {
     late.extend(resp(&["DBSIZE"]));
     late.extend(resp(&["MSETNX", "k", "1", "late", "2"]));
     late.extend(resp(&["DBSIZE"]));
+    late.extend(resp(&["MSETNX", "late", "1", "k", "2"]));
+    late.extend(resp(&["DBSIZE"]));
     client
         .write_all(&late)
         .expect("send MSETNX past a live key");
@@ -2285,6 +2289,12 @@ fn firn_answers_commands_naming_a_key_twice_as_redis_does() {
     assert_eq!(
         after, before,
         "MSETNX looked up a key named after a live one"
+    );
+    assert_eq!(integer_reply(&mut client, "MSETNX before a live key"), 0);
+    assert_eq!(
+        integer_reply(&mut client, "DBSIZE after the second MSETNX"),
+        4,
+        "MSETNX did not look up a key named before a live one"
     );
     drop(client);
     let (status, _) = finished(child);

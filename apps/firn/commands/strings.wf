@@ -1331,6 +1331,35 @@ fn key_rank(input: &[u8], args: &Box<Slots<Span>>, order: &Box<Slots<u64>>, inde
   return order^.inner.len;
 }
 
+fn key_ranks(input: &[u8], args: &Box<Slots<Span>>, keys: &KeySet, back: u64, stride: u64, named: u64) -> ranks: Box<Slots<u64>> reads(input), reads(args), reads(keys) {
+  doc "The position in the key set, whose order is the keys' byte order, of the key each of named key arguments names, in the order named: the arguments at 1, 1 + stride and so on, a key's payload less back being the index of an argument that names it, as key_rank needs.";
+  let distinct = keys^.len;
+  let order = box_slots_new::<u64>(capacity: 0_u64);
+  if distinct <= 1073741824_u64 {
+    set order = box_slots_new::<u64>(capacity: distinct);
+  }
+  for @ordered (at in 0_u64..keys^.len) {
+    let payload = key_set_payload(keys: keys, index: at);
+    let naming = payload -wrap back;
+    if order.inner.len < order.inner.cap {
+      place_back(window: &order.inner, value: naming);
+    }
+  }
+  let ranks = box_slots_new::<u64>(capacity: 0_u64);
+  if named <= 1073741824_u64 {
+    set ranks = box_slots_new::<u64>(capacity: named);
+  }
+  for @ranked (step in 0_u64..named) {
+    let offset = step *wrap stride;
+    let index = offset +wrap 1_u64;
+    let rank = key_rank(input: input, args: args, order: &order, index: index);
+    if ranks.inner.len < ranks.inner.cap {
+      place_back(window: &ranks.inner, value: rank);
+    }
+  }
+  return move ranks;
+}
+
 fn run_mget(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
   doc "MGET key [key ...]: answers each key's live string, or nil for an absent or expired key or one of another kind, in the order the keys are named, a key named twice answered twice, written into the reply inside one statement on the keys' entries, as Redis 7.0.15 does. Before the statement each argument is given its key's position in the key set, whose order is the keys' byte order; a key found expired is removed, and the file records its removal as log_removal does.";
   let count = args^.inner.len;
@@ -1340,28 +1369,8 @@ fn run_mget(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
     let key = &input^[place.start..place.end];
     key_set_put(keys: &keys, key: key, payload: index);
   }
-  let distinct = keys.len;
-  let order = box_slots_new::<u64>(capacity: 0_u64);
-  if distinct <= 1073741824_u64 {
-    set order = box_slots_new::<u64>(capacity: distinct);
-  }
-  for @ordered (at in 0_u64..keys.len) {
-    let naming = key_set_payload(keys: &keys, index: at);
-    if order.inner.len < order.inner.cap {
-      place_back(window: &order.inner, value: naming);
-    }
-  }
-  let ranks = box_slots_new::<u64>(capacity: 0_u64);
-  if count <= 1073741824_u64 {
-    set ranks = box_slots_new::<u64>(capacity: count);
-  }
-  for @ranked (index in 1_u64..count) {
-    let rank = key_rank(input: input, args: args, order: &order, index: index);
-    if ranks.inner.len < ranks.inner.cap {
-      place_back(window: &ranks.inner, value: rank);
-    }
-  }
   let named = count -wrap 1_u64;
+  let ranks = key_ranks(input: input, args: args, keys: &keys, back: 0_u64, stride: 1_u64, named: named);
   reply_array(client: client, count: named);
   set client^.now = time^.check;
   let logged = store^.logging;
@@ -1404,30 +1413,7 @@ fn run_msetnx(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
     let next = index +wrap 1_u64;
     key_set_put(keys: &keys, key: key, payload: next);
   }
-  let distinct = keys.len;
-  let order = box_slots_new::<u64>(capacity: 0_u64);
-  if distinct <= 1073741824_u64 {
-    set order = box_slots_new::<u64>(capacity: distinct);
-  }
-  for @ordered (at in 0_u64..keys.len) {
-    let position = key_set_payload(keys: &keys, index: at);
-    let naming = position -wrap 1_u64;
-    if order.inner.len < order.inner.cap {
-      place_back(window: &order.inner, value: naming);
-    }
-  }
-  let ranks = box_slots_new::<u64>(capacity: 0_u64);
-  if pairs <= 1073741824_u64 {
-    set ranks = box_slots_new::<u64>(capacity: pairs);
-  }
-  for @ranked (pair in 0_u64..pairs) {
-    let doubled = pair *wrap 2_u64;
-    let index = doubled +wrap 1_u64;
-    let rank = key_rank(input: input, args: args, order: &order, index: index);
-    if ranks.inner.len < ranks.inner.cap {
-      place_back(window: &ranks.inner, value: rank);
-    }
-  }
+  let ranks = key_ranks(input: input, args: args, keys: &keys, back: 1_u64, stride: 2_u64, named: pairs);
   set client^.now = time^.check;
   let logged = store^.logging;
   let stored = False();
