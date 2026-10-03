@@ -37,7 +37,6 @@ alias input_new = pkg::protocol::input_new;
 alias instant_after = std::time::instant_after;
 alias keep_rest = pkg::protocol::keep_rest;
 alias name_is = pkg::bytes::name_is;
-alias nanoseconds_from = std::time::nanoseconds_from;
 alias open_append = std::fs::open_append;
 alias parse_request = pkg::protocol::parse_request;
 alias protocol_error = pkg::protocol::protocol_error;
@@ -105,10 +104,8 @@ struct Reading {
   unix_us: u64;
 }
 
-fn read_time(clock: &Clock, wall: &WallClock, origin: Instant) -> result: Reading reads(wall), writes(clock) {
-  doc "Reads both clocks: the monotonic one as nanoseconds from the program's origin, and the calendar one as milliseconds since 1970 for the commands' time and as microseconds for TIME.";
-  let reading = std::time::now(clock: clock);
-  let offset = nanoseconds_from(earlier: origin, later: reading);
+fn read_time(wall: &WallClock) -> result: Reading reads(wall) {
+  doc "Reads the calendar clock as milliseconds since 1970 for the commands' time, against which expiries are kept as Redis keeps them, and as microseconds for TIME.";
   let calendar = unix_nanoseconds(clock: wall);
   let unix_ms = 0_u64;
   let unix_us = 0_u64;
@@ -118,12 +115,12 @@ fn read_time(clock: &Clock, wall: &WallClock, origin: Instant) -> result: Readin
     set unix_us = wide / 1000_u64;
   }
   let live = False();
-  let time = Time(now: offset, unix_ms: unix_ms, check: offset, loading: live);
+  let time = Time(unix_ms: unix_ms, check: unix_ms, loading: live);
   return Reading(time: time, unix_us: unix_us);
 }
 
-fn serve(connection: TcpConnection, factory: HandleFactory, store: Keyspace, clock: Clock, wall: WallClock, origin: Instant, idle: u64, settings: Settings, id: u64) -> result: unit pure waits {
-  doc "Serves one client, the id-th the server accepted, in a context of its own: reads requests into its input, which grows to hold a request larger than it, answers every complete request the input holds with one send, sending sooner once 16,384 bytes of replies are waiting, and keeps an incomplete one for the next read. Every command of one read sees the clocks as read once after it; a client silent for idle seconds, when idle is not zero, is closed, and so is one that sends a malformed request, after its error, or QUIT, after its reply. While the settings require a password, the client must give it before other commands.";
+fn serve(connection: TcpConnection, factory: HandleFactory, store: Keyspace, clock: Clock, wall: WallClock, idle: u64, settings: Settings, id: u64) -> result: unit pure waits {
+  doc "Serves one client, the id-th the server accepted, in a context of its own: reads requests into its input, which grows to hold a request larger than it, answers every complete request the input holds with one send, sending sooner once 16,384 bytes of replies are waiting, and keeps an incomplete one for the next read. Every command of one read sees the calendar clock as read once after it; a client silent for idle seconds, when idle is not zero, is closed, and so is one that sends a malformed request, after its error, or QUIT, after its reply. While the settings require a password, the client must give it before other commands.";
   let env = KeyEnv();
   let client = client_new(capacity: 16384_u64);
   atomic s = &store.state {
@@ -166,7 +163,7 @@ fn serve(connection: TcpConnection, factory: HandleFactory, store: Keyspace, clo
     if ended {
       break @requests;
     }
-    let reading = read_time(clock: &clock, wall: &wall, origin: origin);
+    let reading = read_time(wall: &wall);
     let time = reading.time;
     set client.unix_us = reading.unix_us;
     let consumed = 0_u64;
@@ -223,16 +220,16 @@ fn serve(connection: TcpConnection, factory: HandleFactory, store: Keyspace, clo
   return unit;
 }
 
-fn expire_keys(store: Keyspace, clock: Clock, origin: Instant) -> result: unit pure waits {
-  doc "Wakes ten times a second and removes the keys whose expiry has passed, in batches of atomic statements so that clients proceed between them, until the server stops. A key whose expiry did not fit the queue is removed only when a command finds it expired.";
+fn expire_keys(store: Keyspace, clock: Clock, wall: WallClock) -> result: unit pure waits {
+  doc "Wakes ten times a second and removes the keys whose expiry has passed on the calendar clock, in batches of atomic statements so that clients proceed between them, until the server stops. A key whose expiry did not fit the queue is removed only when a command finds it expired.";
   let env = KeyEnv();
   let batch = box_slots_new::<Due>(capacity: 256_u64);
   loop @ticks {
     let started = std::time::now(clock: &clock);
     let wake = instant_after(instant: started, nanoseconds: 100000000_u64);
     sleep_until(deadline: wake);
-    let reading = std::time::now(clock: &clock);
-    let current = nanoseconds_from(earlier: origin, later: reading);
+    let reading = read_time(wall: &wall);
+    let current = reading.time.unix_ms;
     let stop = False();
     loop @batches {
       atomic s = &store.state {
@@ -671,7 +668,6 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let password_window = &options.password.inner[0_u64..password_length];
   let password_text = bytes_new(input: password_window, start: 0_u64, length: password_length);
   let settings = Settings(port: options.port, timeout: idle, bind: move bind_text, appendfilename: move file_text, password: move password_text);
-  let origin = std::time::now(clock: &clock);
   let calendar = unix_nanoseconds(clock: &wall_clock);
   let seed = cvt.wrap::<i64, u64>(calendar);
   let quiet = False();
@@ -679,9 +675,9 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let logging = False();
   let failed = False();
   if options.logging {
-    let read = read_time(clock: &clock, wall: &wall_clock, origin: origin);
+    let read = read_time(wall: &wall_clock);
     let replaying = True();
-    let time = Time(now: read.time.now, unix_ms: read.time.unix_ms, check: 0_u64, loading: replaying);
+    let time = Time(unix_ms: read.time.unix_ms, check: 0_u64, loading: replaying);
     let applied = replay(store: &root, factory: &handles, root: &cwd, name: name, name_length: name_length, time: &time);
     match open_append(factory: &handles, root: &cwd_write, name: name, start: 0_u64, end: name_length) {
       Ok(value: file) => {
@@ -704,7 +700,8 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let keyspace = keyspace_logging(store: &root, logging: logging);
   let expiring_store = keyspace_share(store: &keyspace);
   let expiring_clock = clock_share(clock: &clock);
-  spawn expire_keys(store: move expiring_store, clock: move expiring_clock, origin: origin);
+  let expiring_wall = wall_clock_share(clock: &wall_clock);
+  spawn expire_keys(store: move expiring_store, clock: move expiring_clock, wall: move expiring_wall);
   let address = socket_address_v4(a: listen_at.a, b: listen_at.b, c: listen_at.c, d: listen_at.d, port: port);
   let listened = True();
   match tcp_listen(factory: &handles, address: &address) {
@@ -729,7 +726,7 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
             atomic s = &keyspace.state {
               set s^.meta.clients = s^.meta.clients +wrap 1_u64;
             }
-            spawn serve(connection: move connection, factory: move factory, store: move handle, clock: move serving_clock, wall: move serving_wall, origin: origin, idle: idle, settings: move serving_settings, id: id);
+            spawn serve(connection: move connection, factory: move factory, store: move handle, clock: move serving_clock, wall: move serving_wall, idle: idle, settings: move serving_settings, id: id);
           }
           Err(error: problem) => {
             break @accepting;
