@@ -3296,8 +3296,7 @@ condition under which it is taken up.
   a server someone deploys in place of Redis needs more. Missing, among
   others: `CONFIG SET`, which firn answers as an unknown option for
   every parameter where Redis sets those it knows, and the parameters beyond
-  the eight `CONFIG GET` reports; `ZADD`'s options `NX`, `XX`, `CH`, `INCR`,
-  `GT` and `LT`, which firn answers as a syntax error; a score of negative
+  the eight `CONFIG GET` reports; a score of negative
   zero in a sorted set Redis encodes as a skiplist, one of more than 128
   members or with a member longer than 64 bytes, which Redis keeps and writes
   as `-0` where firn keeps and writes 0, as Redis does in a smaller set; more
@@ -3321,20 +3320,19 @@ condition under which it is taken up.
   ([redis-compat](../research/experiments/redis-compat/README.md)). The
   owner sets the list for the deployment stage; reopen when this stage's
   measurement is handed back.
-- **A list, set, hash or sorted-set write that finds its key expired leaves
-  the removal out of the append-only file.** A replay counts no key as
-  expired, so a removal the file does not record is undone there: the
-  replay applies the next command to the old value. The read paths, the
-  expiring context and the string and key commands record each removal as
+- **A list or set write that finds its key expired leaves the removal out
+  of the append-only file.** A replay counts no key as expired, so a
+  removal the file does not record is undone there: the replay applies the
+  next command to the old value. The read paths, the expiring context and
+  the string, key, hash and sorted-set commands record each removal as
   `DEL key`, as Redis 7.0.15 propagates it (`log_removal` in
   `apps/firn/store/store.wf`), but the visitors of `LPUSH`, `RPUSH`, `LPOP`,
-  `RPOP`, `SADD`, `SREM`, `SPOP`, `HSET`, `ZADD` and `ZPOPMIN` replace or
-  drop an expired value inside their statements without it, so an `LPUSH`
-  onto a list that had expired replays onto the old elements. The change:
-  call `log_removal` where each of those statements finds its entry
-  expired, as `set_key` (`apps/firn/commands/strings.wf`) does, touching
-  the keyspace's `meta` only on that branch. Reopen with the next change to
-  those commands.
+  `RPOP`, `SADD`, `SREM` and `SPOP` replace or drop an expired value inside
+  their statements without it, so an `LPUSH` onto a list that had expired
+  replays onto the old elements. The change: call `log_removal` where each
+  of those statements finds its entry expired, as `set_key`
+  (`apps/firn/commands/strings.wf`) does, touching the keyspace's `meta`
+  only on that branch. Reopen with the next change to those commands.
 - **firn writes a removal and the command that made it as two records
   where Redis wraps them in `MULTI` and `EXEC`.** When one command
   propagates more than one record, a key it found expired and the command
@@ -3352,14 +3350,16 @@ condition under which it is taken up.
   stopped at. Keeping the parse position and the spans found so far in the
   client between reads would remove it; reopen when firn faces clients it
   does not trust, or a profile shows parsing past a few percent.
-- **Writing a score far from 1 is slow, and `ZSCORE` and `ZPOPMIN` write it
-  while the key is held.** The `scores` module writes a score from its exact
-  decimal expansion, one digit per byte, so the cost grows with the score's
-  binary exponent; with two drivers and `redis-benchmark -c 50 -P 16 -n
-  200000`, `ZSCORE` answered 3.85M requests per second for a score of 7,
-  2.94M for 0.1, 0.36M for 1e300 and 0.28M for 4.9e-324 on the i9-14900K, in
-  one run of one server. The visitors
-  `member_score` and `pop_lowest` (`apps/firn/commands/sorted.wf`) write the
+- **Writing a score far from 1 is slow, and the commands that answer scores
+  write them while the key is held.** The `scores` module writes a score
+  from its exact decimal expansion, one digit per byte, so the cost grows
+  with the score's binary exponent; with two drivers and
+  `redis-benchmark -c 50 -P 16 -n 200000`, `ZSCORE` answered 3.85M requests
+  per second for a score of 7, 2.94M for 0.1, 0.36M for 1e300 and 0.28M for
+  4.9e-324 on the i9-14900K, in one run of one server. The visitors of
+  `ZSCORE`, `ZMSCORE`, `ZPOPMIN`, `ZPOPMAX` and `ZRANGE` with `WITHSCORES`
+  (`member_score`, `member_scores` and `pop_ranked` in
+  `apps/firn/commands/sorted.wf`, `walk_visit` in `ranges.wf`) write the
   reply inside the key's atomic statement, so that time is also time the key
   is held. Carrying the scores out in the client, as a command's other
   results are carried, and writing the reply after the statement would take
@@ -3384,12 +3384,38 @@ condition under which it is taken up.
   (`hash_map_rebuild` accepting fewer buckets than it had while they
   outnumber the pairs, and a check after each removal) and would join the
   growth decision of `hash-map-storage` in the design tree.
-- **`SPOP` reads the hash map's buckets.** The library has no entry that
-  returns a member at random, so firn's `pick_member`
-  (`apps/firn/commands/sets.wf`) reads the map's public bucket array and
-  matches its slot variants, which ties firn to the library's representation,
-  and takes the first filled bucket from a random position, which favors a
-  member that follows a run of empty buckets; Redis samples buckets instead.
+- **`SPOP` and `HRANDFIELD` read the hash map's buckets.** The library has
+  no entry that returns a member at random, so firn's `pick_member`
+  (`apps/firn/commands/sets.wf`) and `random_field` and `distinct_fields`
+  (`apps/firn/commands/hashes.wf`) read the map's public bucket array and
+  match its slot variants, which ties firn to the library's representation;
+  the first two take the first filled bucket from a random position, which
+  favors a member that follows a run of empty buckets, where Redis samples
+  buckets instead, and `distinct_fields` passes over every bucket once, even
+  for a count far below the hash's size.
   A library entry that picks a filled bucket, as uniformly as its layout
-  allows, would remove both. Reopen with the library's next hash map change
-  or when a second program needs a random member.
+  allows, would remove the first two; one that picks several distinct ones,
+  the third. Reopen with the library's next hash map change or when a third
+  command needs a random member.
+- **Sorted-set ranks and counts walk the order element by element.** The
+  library's `OrderedMap` keeps no subtree sizes, so `ZRANK` and `ZREVRANK`
+  count the members before the one asked, `ZRANGE` by position and
+  `ZREMRANGEBYRANK` skip the members before the range, and `ZCOUNT` and
+  `ZLEXCOUNT` count the members in it (`rank_before` in
+  `apps/firn/commands/sorted.wf`, `walk_node` in `ranges.wf`): linear in the
+  rank or the count, where Redis's skiplist spans make them logarithmic. A
+  range by score or member does find its start by comparison. An ordered map
+  that keeps each node's subtree size would make ranks and counts
+  logarithmic; it changes the library's representation, a design decision.
+  Reopen when a workload ranks or counts in large sorted sets, or with the
+  library's next ordered map change.
+- **`MSET`, `LPOP`, `RPOP` and `SPOP` check their whole argument count before
+  authentication.** Redis checks only its command table's minimum before a
+  connection authenticates and the rest inside the command, so a connection
+  that must still authenticate is answered `NOAUTH` for `MSET a b c`,
+  `LPOP l 1 2`, `RPOP l 1 2` and `SPOP s 1 2`, where firn's `execute`
+  (`apps/firn/commands/dispatch.wf`) answers the wrong number of arguments;
+  after authentication Redis answers `SPOP s 1 2` with a syntax error, where
+  firn again answers the wrong number of arguments. The change: admit each by
+  the table's minimum, as `HSET` and `ZPOPMIN` are now admitted, and check
+  the rest in the command. Reopen when those commands next change.

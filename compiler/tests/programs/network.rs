@@ -1358,14 +1358,75 @@ fn firn_closes_a_client_silent_past_its_idle_limit_on_both_routes() {
     }
 }
 
+/// Reads one RESP2 reply of bulk strings: a bulk string, none for the null
+/// bulk string, or each element of an array of bulk strings.
+#[cfg(target_os = "linux")]
+fn bulk_strings(stream: &mut TcpStream, what: &str) -> Vec<String> {
+    let number = |line: &str| -> i64 {
+        line[1..line.len() - 2]
+            .parse()
+            .unwrap_or_else(|_| panic!("{what}: not a count: {line:?}"))
+    };
+    let body = |stream: &mut TcpStream, line: &str| -> Option<String> {
+        let length = usize::try_from(number(line)).ok()?;
+        let mut bytes = vec![0_u8; length + 2];
+        stream
+            .read_exact(&mut bytes)
+            .unwrap_or_else(|error| panic!("{what}: {error}"));
+        bytes.truncate(length);
+        Some(String::from_utf8_lossy(&bytes).into_owned())
+    };
+    let header = reply_line(stream, what);
+    if header.starts_with('$') {
+        return body(stream, &header).into_iter().collect();
+    }
+    assert!(
+        header.starts_with('*'),
+        "{what}: not bulk strings: {header:?}"
+    );
+    (0..number(&header))
+        .map(|_| {
+            let line = reply_line(stream, what);
+            assert!(line.starts_with('$'), "{what}: not a bulk string: {line:?}");
+            body(stream, &line).unwrap_or_else(|| panic!("{what}: a null element"))
+        })
+        .collect()
+}
+
 /// firn answers the value types as Redis does. One pipelined batch pushes,
 /// ranges and pops a list until it is empty, which removes its key; adds and
 /// removes set members; sets and reads hash fields; adds, rescores and pops
 /// sorted-set members; refuses a list command on a string and a string command
 /// on a hash; sets ten keys in one MSET, a command of eleven arguments; and
 /// names an unknown command and a command short of arguments as Redis does.
-/// Two inline commands close the batch. The expected bytes are those
-/// redis-server 7.0.15 returns for the same bytes.
+/// Two inline commands close the batch.
+///
+/// A batch of hash commands follows: HMSET's OK, an unpaired field refused as
+/// the wrong number of arguments after the count Redis's table admits, HMGET's
+/// null fields, HDEL counting a field named twice once and removing an emptied
+/// key, HEXISTS, HSTRLEN and HLEN, HINCRBY's sum and its three errors,
+/// HINCRBYFLOAT in x87 extended precision (0.1 then 0.2 is 0.3, which a double
+/// sum writes as 0.30000000000000004), its %.17Lf tie to even, a subnormal
+/// and negative zero written as 0, 1e400 written whole, a sum at 2^64 that
+/// only rounding reaches, and its refusals of overflow, inf, nan, white space
+/// and a zero byte, HSETNX, a one-field HGETALL, HKEYS and HVALS, and
+/// HRANDFIELD's errors. A
+/// batch of sorted-set commands follows: ZADD's NX, XX, GT, LT, CH and INCR and
+/// their conflicts, ZINCRBY's negative zero and NaN, ZRANGE by rank, score and
+/// member with REV, LIMIT and WITHSCORES, the commands it generalizes, score
+/// bounds read as strtod reads them (white space before, overflow to infinity,
+/// an empty string as 0), ranges by member over unequal scores as Redis walks
+/// a small set, ZCOUNT, ZLEXCOUNT, ZRANK, ZREVRANK, ZMSCORE, ZREM, ZPOPMAX and
+/// ZPOPMIN's errors, and the ZREMRANGEBY commands. The expected bytes of the
+/// three batches are those redis-server 7.0.15 returns for the same bytes on
+/// one server.
+///
+/// HRANDFIELD then draws from a hash of five fields what Redis promises: one
+/// field, distinct fields up to the hash's size for a positive count, the
+/// count asked with repeats for a negative one, each value its field's, and
+/// not always the same field. Last, sets of 200 members, several levels of
+/// firn's ordered map, answer ranges by rank, score and member, ranks, counts
+/// and removals as Redis answers them, which the expected replies compute.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_answers_the_value_types_as_redis_does() {
@@ -1421,6 +1482,313 @@ fn firn_answers_the_value_types_as_redis_does() {
         b":3\r\n:4\r\n*4\r\n$1\r\nz\r\n$1\r\na\r\n$1\r\nb\r\n$1\r\nc\r\n*2\r\n$1\r\na\r\n$1\r\nb\r\n$1\r\nz\r\n*2\r\n$1\r\nc\r\n$1\r\nb\r\n:1\r\n$1\r\na\r\n:0\r\n:3\r\n:1\r\n:2\r\n:2\r\n:0\r\n$1\r\n3\r\n$-1\r\n:3\r\n:0\r\n$1\r\n0\r\n*4\r\n$1\r\nc\r\n$1\r\n0\r\n$1\r\na\r\n$1\r\n1\r\n:1\r\n+OK\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n:1\r\n+set\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n+OK\r\n$1\r\n5\r\n-ERR unknown command 'NOPE', with args beginning with: 'a' 'b' \r\n-ERR wrong number of arguments for 'llen' command\r\n+OK\r\n$3\r\nyes\r\n",
         "the value-type batch",
     );
+    let mut batch = Vec::new();
+    for request in [
+        vec!["HSET", "hash", "f", "v", "g", "2"],
+        vec!["HMSET", "hash", "x", "1", "y", "2"],
+        vec!["HMSET", "hash", "z"],
+        vec!["HSET", "hash", "x", "1", "z"],
+        vec!["HMGET", "hash", "f", "nope", "x"],
+        vec!["HMGET", "nohash", "a", "b"],
+        vec!["HDEL", "hash", "x", "nope", "y", "x"],
+        vec!["HEXISTS", "hash", "f"],
+        vec!["HEXISTS", "hash", "x"],
+        vec!["HSTRLEN", "hash", "f"],
+        vec!["HSTRLEN", "hash", "nope"],
+        vec!["HLEN", "hash"],
+        vec!["HLEN", "nohash"],
+        vec!["HINCRBY", "hash", "g", "40"],
+        vec!["HINCRBY", "hash", "f", "1"],
+        vec!["HINCRBY", "hash", "g", "9223372036854775807"],
+        vec!["HINCRBY", "hash", "g", "x"],
+        vec!["HINCRBY", "hash", "new", "-5"],
+        vec!["HINCRBYFLOAT", "hash", "r", "0.1"],
+        vec!["HINCRBYFLOAT", "hash", "r", "0.2"],
+        vec!["HINCRBYFLOAT", "hash", "t", "3.814697265625e-06"],
+        vec!["HINCRBYFLOAT", "hash", "u", "0x1p-16445"],
+        vec!["HINCRBYFLOAT", "hash", "u", "1.2e4932"],
+        vec!["HINCRBYFLOAT", "hash", "w", "18446744073709551615"],
+        vec!["HINCRBYFLOAT", "hash", "w", "0.5"],
+        vec!["HINCRBYFLOAT", "hash", "f", "1"],
+        vec!["HINCRBYFLOAT", "hash", "r", "inf"],
+        vec!["HINCRBYFLOAT", "hash", "r", "1\0"],
+        vec!["HINCRBYFLOAT", "hash", "r", "nan"],
+        vec!["HINCRBYFLOAT", "hash", "r", " 1"],
+        vec!["HINCRBYFLOAT", "hash", "big", "1e400"],
+        vec!["HINCRBYFLOAT", "hash", "zero", "-0"],
+        vec!["HINCRBYFLOAT", "hash", "zero", "-1e-30"],
+        vec!["HSET", "hash", "i", "inf"],
+        vec!["HINCRBYFLOAT", "hash", "i", "1"],
+        vec!["HSETNX", "hash", "f", "w"],
+        vec!["HSETNX", "hash", "n", "w"],
+        vec!["HSETNX", "fresh", "a", "1"],
+        vec!["HSET", "single", "a", "b"],
+        vec!["HGETALL", "single"],
+        vec!["HKEYS", "single"],
+        vec!["HVALS", "single"],
+        vec!["HGETALL", "nohash"],
+        vec!["HDEL", "single", "a"],
+        vec!["EXISTS", "single"],
+        vec!["SET", "text", "v"],
+        vec!["HGET", "text", "f"],
+        vec!["HMGET", "text", "f"],
+        vec!["HINCRBYFLOAT", "text", "f", "x"],
+        vec!["HINCRBYFLOAT", "text", "f", "1"],
+        vec!["HRANDFIELD", "nohash"],
+        vec!["HRANDFIELD", "nohash", "3"],
+        vec!["HRANDFIELD", "hash", "1", "WITHVALUE"],
+        vec!["HRANDFIELD", "hash", "-4611686018427387904", "WITHVALUES"],
+        vec!["HRANDFIELD", "hash", "-9223372036854775808"],
+    ] {
+        batch.extend(resp(&request));
+    }
+    client.write_all(&batch).expect("send the hash batch");
+    expect_replies(
+        &mut client,
+        b":2\r\n+OK\r\n-ERR wrong number of arguments for 'hmset' command\r\n-ERR wrong number of arguments for 'hset' command\r\n*3\r\n$1\r\nv\r\n$-1\r\n$1\r\n1\r\n*2\r\n$-1\r\n$-1\r\n:2\r\n:1\r\n:0\r\n:1\r\n:0\r\n:2\r\n:0\r\n:42\r\n-ERR hash value is not an integer\r\n-ERR increment or decrement would overflow\r\n-ERR value is not an integer or out of range\r\n:-5\r\n$3\r\n0.1\r\n$3\r\n0.3\r\n$19\r\n0.00000381469726562\r\n$1\r\n0\r\n-ERR value is not a valid float\r\n$20\r\n18446744073709551615\r\n$20\r\n18446744073709551616\r\n-ERR hash value is not a float\r\n-ERR value is NaN or Infinity\r\n-ERR value is not a valid float\r\n-ERR value is not a valid float\r\n-ERR value is not a valid float\r\n$401\r\n10000000000000000000281880683947586514586453433629052038625910693539685534008629862039363994848324160522094053927317616200295822777259255734023828976593340661017797447434546173917862448116674971723778943824391593338047470675026246684401359237513603830343735485505244955964979021825038280091068414947402456898653040951017512658092615827588920183472511643316591362664138176309734806343732497430221946880\r\n$1\r\n0\r\n$1\r\n0\r\n:1\r\n-ERR increment would produce NaN or Infinity\r\n:0\r\n:1\r\n:1\r\n:1\r\n*2\r\n$1\r\na\r\n$1\r\nb\r\n*1\r\n$1\r\na\r\n*1\r\n$1\r\nb\r\n*0\r\n:1\r\n:0\r\n+OK\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n-ERR value is not a valid float\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n$-1\r\n*0\r\n-ERR syntax error\r\n-ERR value is out of range\r\n-ERR value is out of range, value must between -9223372036854775807 and 9223372036854775807\r\n",
+        "the hash batch",
+    );
+    let mut batch = Vec::new();
+    for request in [
+        vec!["ZADD", "zset", "1", "a", "2", "b", "3", "c", "4", "d"],
+        vec!["ZADD", "zset", "NX", "CH", "9", "a", "5", "e"],
+        vec!["ZADD", "zset", "XX", "CH", "1.5", "a", "9", "nobody"],
+        vec!["ZADD", "zset", "GT", "CH", "0", "b", "10", "c"],
+        vec!["ZADD", "zset", "LT", "100", "d"],
+        vec!["ZADD", "zset", "INCR", "1", "a"],
+        vec!["ZADD", "zset", "INCR", "NX", "1", "a"],
+        vec!["ZADD", "zset", "nx", "xx", "1", "a"],
+        vec!["ZADD", "zset", "gt", "lt", "1", "a"],
+        vec!["ZADD", "zset", "incr", "1", "a", "2", "b"],
+        vec!["ZADD", "zset", "ch"],
+        vec!["ZINCRBY", "zset", "-0", "fresh"],
+        vec!["ZSCORE", "zset", "fresh"],
+        vec!["ZINCRBY", "zset", "inf", "inc"],
+        vec!["ZINCRBY", "zset", "-inf", "inc"],
+        vec!["ZRANGE", "zset", "0", "-1", "WITHSCORES"],
+        vec!["ZRANGE", "zset", "1", "2", "REV"],
+        vec!["ZRANGE", "zset", "(2", "+inf", "BYSCORE", "LIMIT", "1", "2"],
+        vec![
+            "ZRANGE",
+            "zset",
+            "+inf",
+            "(2",
+            "BYSCORE",
+            "REV",
+            "WITHSCORES",
+        ],
+        vec!["ZRANGE", "zset", "0", "-1", "LIMIT", "1", "2"],
+        vec!["ZRANGE", "zset", "0", "-1", "REV", "REV"],
+        vec!["ZREVRANGE", "zset", "0", "1"],
+        vec!["ZRANGEBYSCORE", "zset", "-inf", "2.5"],
+        vec!["ZREVRANGEBYSCORE", "zset", "10", "(2"],
+        vec!["ZRANGEBYSCORE", "zset", " 2", "1e400"],
+        vec!["ZRANGEBYSCORE", "zset", "", "("],
+        vec!["ZRANGEBYSCORE", "zset", "x", "1"],
+        vec!["ZRANGEBYSCORE", "zset", "1", "2", "REV"],
+        vec!["ZADD", "lex", "0", "a", "0", "b", "0", "c", "0", "d"],
+        vec!["ZRANGEBYLEX", "lex", "[b", "(d"],
+        vec!["ZREVRANGEBYLEX", "lex", "+", "-", "LIMIT", "1", "2"],
+        vec!["ZRANGE", "lex", "-", "+", "BYLEX", "WITHSCORES"],
+        vec!["ZRANGEBYLEX", "lex", "b", "+"],
+        vec!["ZLEXCOUNT", "lex", "[b", "+"],
+        vec!["ZADD", "mixed", "1", "d", "2", "a", "3", "c", "4", "b"],
+        vec!["ZRANGEBYLEX", "mixed", "[b", "[c"],
+        vec!["ZRANGEBYLEX", "mixed", "[a", "[c"],
+        vec!["ZRANGEBYLEX", "mixed", "[c", "+"],
+        vec!["ZREVRANGEBYLEX", "mixed", "[b", "[a"],
+        vec!["ZCOUNT", "zset", "(2", "10"],
+        vec!["ZRANK", "zset", "c"],
+        vec!["ZREVRANK", "zset", "c"],
+        vec!["ZRANK", "zset", "nope"],
+        vec!["ZMSCORE", "zset", "a", "nope", "e"],
+        vec!["ZMSCORE", "nozset", "a"],
+        vec!["ZREM", "zset", "e", "nope"],
+        vec!["ZPOPMAX", "zset", "2"],
+        vec!["ZPOPMIN", "zset", "x"],
+        vec!["ZPOPMIN", "zset", "1", "2"],
+        vec!["ZPOPMIN", "text", "0"],
+        vec![
+            "ZADD", "ranks", "1", "a", "2", "b", "3", "c", "4", "d", "5", "e",
+        ],
+        vec!["ZREMRANGEBYRANK", "ranks", "-2", "-1"],
+        vec!["ZREMRANGEBYSCORE", "ranks", "(1", "2"],
+        vec!["ZREMRANGEBYLEX", "lex", "[b", "[c"],
+        vec!["ZRANGE", "ranks", "0", "-1"],
+        vec!["ZRANGE", "lex", "0", "-1"],
+        vec!["ZREMRANGEBYRANK", "ranks", "0", "-1"],
+        vec!["EXISTS", "ranks"],
+        vec!["ZRANGE", "text", "0", "-1"],
+        vec!["ZCOUNT", "text", "0", "1"],
+    ] {
+        batch.extend(resp(&request));
+    }
+    client.write_all(&batch).expect("send the sorted-set batch");
+    expect_replies(
+        &mut client,
+        b":4\r\n:1\r\n:1\r\n:1\r\n:0\r\n$3\r\n2.5\r\n$-1\r\n-ERR XX and NX options at the same time are not compatible\r\n-ERR GT, LT, and/or NX options at the same time are not compatible\r\n-ERR INCR option supports a single increment-element pair\r\n-ERR wrong number of arguments for 'zadd' command\r\n$2\r\n-0\r\n$1\r\n0\r\n$3\r\ninf\r\n-ERR resulting score is not a number (NaN)\r\n*14\r\n$5\r\nfresh\r\n$1\r\n0\r\n$1\r\nb\r\n$1\r\n2\r\n$1\r\na\r\n$3\r\n2.5\r\n$1\r\nd\r\n$1\r\n4\r\n$1\r\ne\r\n$1\r\n5\r\n$1\r\nc\r\n$2\r\n10\r\n$3\r\ninc\r\n$3\r\ninf\r\n*2\r\n$1\r\nc\r\n$1\r\ne\r\n*2\r\n$1\r\nd\r\n$1\r\ne\r\n*10\r\n$3\r\ninc\r\n$3\r\ninf\r\n$1\r\nc\r\n$2\r\n10\r\n$1\r\ne\r\n$1\r\n5\r\n$1\r\nd\r\n$1\r\n4\r\n$1\r\na\r\n$3\r\n2.5\r\n-ERR syntax error, LIMIT is only supported in combination with either BYSCORE or BYLEX\r\n-ERR syntax error\r\n*2\r\n$3\r\ninc\r\n$1\r\nc\r\n*3\r\n$5\r\nfresh\r\n$1\r\nb\r\n$1\r\na\r\n*4\r\n$1\r\nc\r\n$1\r\ne\r\n$1\r\nd\r\n$1\r\na\r\n*6\r\n$1\r\nb\r\n$1\r\na\r\n$1\r\nd\r\n$1\r\ne\r\n$1\r\nc\r\n$3\r\ninc\r\n*0\r\n-ERR min or max is not a float\r\n-ERR syntax error\r\n:4\r\n*2\r\n$1\r\nb\r\n$1\r\nc\r\n*2\r\n$1\r\nc\r\n$1\r\nb\r\n-ERR syntax error, WITHSCORES not supported in combination with BYLEX\r\n-ERR min or max not valid string range item\r\n:3\r\n:4\r\n*0\r\n*0\r\n*0\r\n*0\r\n:4\r\n:5\r\n:1\r\n$-1\r\n*3\r\n$3\r\n2.5\r\n$-1\r\n$1\r\n5\r\n*1\r\n$-1\r\n:1\r\n*4\r\n$3\r\ninc\r\n$3\r\ninf\r\n$1\r\nc\r\n$2\r\n10\r\n-ERR value is out of range, must be positive\r\n-ERR syntax error\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n:5\r\n:2\r\n:1\r\n:2\r\n*2\r\n$1\r\na\r\n$1\r\nc\r\n*2\r\n$1\r\na\r\n$1\r\nd\r\n:2\r\n:0\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n",
+        "the sorted-set batch",
+    );
+    let fields = [
+        ("f1", "v1"),
+        ("f2", "v2"),
+        ("f3", "v3"),
+        ("f4", "v4"),
+        ("f5", "v5"),
+    ];
+    let mut fill = vec!["HSET", "drawn"];
+    for (field, value) in fields {
+        fill.push(field);
+        fill.push(value);
+    }
+    client
+        .write_all(&resp(&fill))
+        .expect("fill the hash to draw from");
+    expect_replies(&mut client, b":5\r\n", "the hash to draw from");
+    for (count, values) in [
+        (None, false),
+        (Some(3), false),
+        (Some(9), false),
+        (Some(-9), false),
+        (Some(2), true),
+        (Some(-4), true),
+    ] {
+        let number = count.map(|count: i64| count.to_string());
+        let mut request = vec!["HRANDFIELD", "drawn"];
+        request.extend(number.as_deref());
+        if values {
+            request.push("WITHVALUES");
+        }
+        client.write_all(&resp(&request)).expect("draw fields");
+        let what = format!("{request:?}");
+        let drawn = bulk_strings(&mut client, &what);
+        let names = if values {
+            assert_eq!(drawn.len() % 2, 0, "{what}: {drawn:?}");
+            for pair in drawn.chunks(2) {
+                let value = fields
+                    .iter()
+                    .find(|(field, _)| *field == pair[0])
+                    .map(|(_, value)| *value);
+                assert_eq!(value, Some(pair[1].as_str()), "{what}: {drawn:?}");
+            }
+            drawn.iter().step_by(2).cloned().collect::<Vec<_>>()
+        } else {
+            drawn
+        };
+        let wanted = match count {
+            None => 1,
+            Some(count) if count >= 0 => count.min(fields.len() as i64) as usize,
+            Some(count) => count.unsigned_abs() as usize,
+        };
+        assert_eq!(names.len(), wanted, "{what}: {names:?}");
+        assert!(
+            names
+                .iter()
+                .all(|name| fields.iter().any(|(field, _)| field == name)),
+            "{what}: {names:?}"
+        );
+        if !matches!(count, Some(count) if count < 0) {
+            let distinct = names.iter().collect::<std::collections::BTreeSet<_>>();
+            assert_eq!(distinct.len(), names.len(), "{what}: {names:?}");
+        }
+    }
+    let mut draws = Vec::new();
+    for _ in 0..50 {
+        draws.extend(resp(&["HRANDFIELD", "drawn"]));
+    }
+    client.write_all(&draws).expect("draw single fields");
+    let mut seen = std::collections::BTreeSet::new();
+    for _ in 0..50 {
+        seen.extend(bulk_strings(&mut client, "a single draw"));
+    }
+    assert!(seen.len() > 1, "fifty draws all chose {seen:?}");
+    let words = |list: &[&str]| list.iter().map(|word| word.to_string()).collect::<Vec<_>>();
+    let array = |items: Vec<String>| {
+        let mut text = format!("*{}\r\n", items.len());
+        for item in items {
+            text.push_str(&format!("${}\r\n{item}\r\n", item.len()));
+        }
+        text
+    };
+    let scored = |index: usize| format!("m{index:03}");
+    let equal = |index: usize| format!("w{index:03}");
+    let mut scored_set = words(&["ZADD", "big"]);
+    let mut equal_set = words(&["ZADD", "lexbig"]);
+    for index in 0..200 {
+        scored_set.push(index.to_string());
+        scored_set.push(scored(index));
+        equal_set.push("0".to_owned());
+        equal_set.push(equal(index));
+    }
+    let checks = [
+        (scored_set, ":200\r\n".to_owned()),
+        (
+            words(&["ZRANGE", "big", "37", "41"]),
+            array((37..42).map(scored).collect()),
+        ),
+        (
+            words(&["ZRANGE", "big", "0", "2", "REV"]),
+            array([199, 198, 197].map(scored).to_vec()),
+        ),
+        (
+            words(&["ZRANGEBYSCORE", "big", "(99.5", "102"]),
+            array((100..103).map(scored).collect()),
+        ),
+        (
+            words(&["ZREVRANGEBYSCORE", "big", "150", "-inf", "LIMIT", "10", "3"]),
+            array([140, 139, 138].map(scored).to_vec()),
+        ),
+        (words(&["ZRANK", "big", "m123"]), ":123\r\n".to_owned()),
+        (words(&["ZREVRANK", "big", "m123"]), ":76\r\n".to_owned()),
+        (words(&["ZCOUNT", "big", "10", "(20"]), ":10\r\n".to_owned()),
+        (
+            words(&["ZREMRANGEBYSCORE", "big", "50", "(60"]),
+            ":10\r\n".to_owned(),
+        ),
+        (
+            words(&["ZRANGE", "big", "49", "51", "WITHSCORES"]),
+            array(words(&["m049", "49", "m060", "60", "m061", "61"])),
+        ),
+        (
+            words(&["ZREMRANGEBYRANK", "big", "0", "9"]),
+            ":10\r\n".to_owned(),
+        ),
+        (words(&["ZCARD", "big"]), ":180\r\n".to_owned()),
+        (
+            words(&["ZPOPMAX", "big", "2"]),
+            array(words(&["m199", "199", "m198", "198"])),
+        ),
+        (equal_set, ":200\r\n".to_owned()),
+        (
+            words(&["ZRANGEBYLEX", "lexbig", "[w123", "(w127"]),
+            array((123..127).map(equal).collect()),
+        ),
+        (
+            words(&["ZREVRANGEBYLEX", "lexbig", "(w050", "-", "LIMIT", "0", "2"]),
+            array([49, 48].map(equal).to_vec()),
+        ),
+        (
+            words(&["ZLEXCOUNT", "lexbig", "[w100", "+"]),
+            ":100\r\n".to_owned(),
+        ),
+        (
+            words(&["ZREMRANGEBYLEX", "lexbig", "-", "(w100"]),
+            ":100\r\n".to_owned(),
+        ),
+        (
+            words(&["ZRANGE", "lexbig", "0", "0"]),
+            array(vec![equal(100)]),
+        ),
+    ];
+    let mut batch = Vec::new();
+    let mut expected = String::new();
+    for (request, reply) in &checks {
+        let request = request.iter().map(String::as_str).collect::<Vec<_>>();
+        batch.extend(resp(&request));
+        expected.push_str(reply);
+    }
+    client.write_all(&batch).expect("send the large sets");
+    expect_replies(&mut client, expected.as_bytes(), "the sets of 200 members");
     drop(client);
     let (status, _) = finished(child);
     assert_eq!(status, 0);
@@ -1940,6 +2308,44 @@ fn firn_carries_requests_and_replies_larger_than_its_windows() {
     assert_eq!(status, 0);
 }
 
+/// The commands an append-only file holds, each a RESP array of bulk
+/// strings, up to the first one not yet written whole.
+#[cfg(target_os = "linux")]
+fn aof_records(bytes: &[u8]) -> Vec<Vec<String>> {
+    fn number(bytes: &[u8], at: &mut usize, marker: u8) -> Option<usize> {
+        if bytes.get(*at) != Some(&marker) {
+            return None;
+        }
+        let end = *at + bytes[*at..].windows(2).position(|pair| pair == b"\r\n")?;
+        let value = std::str::from_utf8(&bytes[*at + 1..end])
+            .ok()?
+            .parse()
+            .ok()?;
+        *at = end + 2;
+        Some(value)
+    }
+    let mut records = Vec::new();
+    let mut at = 0;
+    while let Some(count) = number(bytes, &mut at, b'*') {
+        let mut record = Vec::new();
+        for _ in 0..count {
+            let Some(length) = number(bytes, &mut at, b'$') else {
+                return records;
+            };
+            let Some(body) = bytes.get(at..at + length) else {
+                return records;
+            };
+            record.push(String::from_utf8_lossy(body).into_owned());
+            at += length + 2;
+        }
+        if at > bytes.len() {
+            break;
+        }
+        records.push(record);
+    }
+    records
+}
+
 /// firn replays the value types from its append-only file: after a restart a
 /// list keeps the elements its pushes and pops left, a hash its field, a
 /// sorted set the member ZPOPMIN left at its score, and a member added at 0.1
@@ -1951,6 +2357,20 @@ fn firn_carries_requests_and_replies_larger_than_its_windows() {
 /// others. A key the expiring context removed is recorded as removed, as Redis
 /// propagates it, so a `SET` with NX that found it absent holds its value after
 /// the restart, where a replay keeping the expired key would refuse it.
+///
+/// The file records HINCRBYFLOAT's sum as the HSET of its text, as Redis
+/// propagates it, so after the restart 0.1 and 0.2 read back as 0.3; HDEL's
+/// removal holds, and so does the field HSETNX refused to replace. Each hash
+/// write path that finds its key expired, a key set already expired with
+/// PXAT 1, records the removal before its own record, so that after the
+/// restart HSET's, HSETNX's, HINCRBY's and HINCRBYFLOAT's new hashes hold
+/// and a SET with NX after HDEL holds its value, where a replay that kept the
+/// old string would refuse each. ZADD
+/// with INCR and ZINCRBY are recorded as sent, as Redis propagates them, so
+/// their increments sum to 3.5 again, and the removals ZREMRANGEBYSCORE,
+/// ZPOPMAX and ZREM made hold; the sorted-set write paths record a removal
+/// as the hash ones do, so ZADD's new set holds and a SET with NX after ZADD
+/// with XX, ZREM, ZPOPMIN or ZREMRANGEBYSCORE holds its value.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_replays_the_value_types_from_its_append_only_file() {
@@ -1978,13 +2398,49 @@ fn firn_replays_the_value_types_from_its_append_only_file() {
         vec!["ZADD", "f", "0.1", "m"],
         add,
         vec!["SET", "lapse", "old", "PX", "1"],
+        vec!["HINCRBYFLOAT", "h", "r", "0.1"],
+        vec!["HINCRBYFLOAT", "h", "r", "0.2"],
+        vec!["HSET", "h", "gone", "1"],
+        vec!["HDEL", "h", "gone"],
+        vec!["HSETNX", "h", "f", "w"],
+        vec!["SET", "gone:hset", "old", "PXAT", "1"],
+        vec!["HSET", "gone:hset", "f", "v"],
+        vec!["SET", "gone:hsetnx", "old", "PXAT", "1"],
+        vec!["HSETNX", "gone:hsetnx", "f", "v"],
+        vec!["SET", "gone:hincrby", "old", "PXAT", "1"],
+        vec!["HINCRBY", "gone:hincrby", "f", "5"],
+        vec!["SET", "gone:hincrbyfloat", "old", "PXAT", "1"],
+        vec!["HINCRBYFLOAT", "gone:hincrbyfloat", "f", "1.5"],
+        vec!["SET", "gone:hdel", "old", "PXAT", "1"],
+        vec!["HDEL", "gone:hdel", "f"],
+        vec!["SET", "gone:hdel", "new", "NX"],
+        vec!["ZADD", "zi", "INCR", "1.5", "m"],
+        vec!["ZINCRBY", "zi", "2", "m"],
+        vec!["ZADD", "zr", "1", "a", "2", "b", "3", "c", "4", "d"],
+        vec!["ZREMRANGEBYSCORE", "zr", "(1", "2"],
+        vec!["ZPOPMAX", "zr"],
+        vec!["ZREM", "zr", "a"],
+        vec!["SET", "gone:zadd", "old", "PXAT", "1"],
+        vec!["ZADD", "gone:zadd", "1", "m"],
+        vec!["SET", "gone:zaddxx", "old", "PXAT", "1"],
+        vec!["ZADD", "gone:zaddxx", "XX", "1", "m"],
+        vec!["SET", "gone:zaddxx", "new", "NX"],
+        vec!["SET", "gone:zrem", "old", "PXAT", "1"],
+        vec!["ZREM", "gone:zrem", "m"],
+        vec!["SET", "gone:zrem", "new", "NX"],
+        vec!["SET", "gone:zpopmin", "old", "PXAT", "1"],
+        vec!["ZPOPMIN", "gone:zpopmin"],
+        vec!["SET", "gone:zpopmin", "new", "NX"],
+        vec!["SET", "gone:zremrange", "old", "PXAT", "1"],
+        vec!["ZREMRANGEBYSCORE", "gone:zremrange", "-inf", "+inf"],
+        vec!["SET", "gone:zremrange", "new", "NX"],
     ] {
         batch.extend(resp(&request));
     }
     client.write_all(&batch).expect("send the changes");
     expect_replies(
         &mut client,
-        b":3\r\n$1\r\na\r\n:1\r\n:2\r\n*2\r\n$1\r\na\r\n$1\r\n1\r\n:1\r\n:50\r\n+OK\r\n",
+        b":3\r\n$1\r\na\r\n:1\r\n:2\r\n*2\r\n$1\r\na\r\n$1\r\n1\r\n:1\r\n:50\r\n+OK\r\n$3\r\n0.1\r\n$3\r\n0.3\r\n:1\r\n:1\r\n:0\r\n+OK\r\n:1\r\n+OK\r\n:1\r\n+OK\r\n:5\r\n+OK\r\n$3\r\n1.5\r\n+OK\r\n:0\r\n+OK\r\n$3\r\n1.5\r\n$3\r\n3.5\r\n:4\r\n:1\r\n*2\r\n$1\r\nd\r\n$1\r\n4\r\n:1\r\n+OK\r\n:1\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n*0\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n",
         "the first run's changes",
     );
     client
@@ -2013,6 +2469,37 @@ fn firn_replays_the_value_types_from_its_append_only_file() {
         .write_all(&resp(&["SET", "lapse", "new", "NX"]))
         .expect("set the expired key again");
     expect_replies(&mut client, b"+OK\r\n", "the key set again");
+    let file = format!("/proc/{}/cwd/{name}", child.id());
+    let started = Instant::now();
+    let records = loop {
+        let records = aof_records(&std::fs::read(&file).unwrap_or_default());
+        if records
+            .iter()
+            .any(|record| record == &["SET", "gone:zremrange", "new", "NX"])
+        {
+            break records;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "the file holds {records:?}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    for record in [
+        &["HSET", "h", "r", "0.1"][..],
+        &["HSET", "h", "r", "0.3"],
+        &["ZADD", "zi", "INCR", "1.5", "m"],
+        &["ZINCRBY", "zi", "2", "m"],
+    ] {
+        assert!(
+            records.iter().any(|held| held == record),
+            "{record:?} not in {records:?}"
+        );
+    }
+    assert!(
+        records.iter().all(|record| record[0] != "HINCRBYFLOAT"),
+        "{records:?}"
+    );
     drop(client);
     let (status, _) = finished(child);
     assert_eq!(status, 0, "the first run");
@@ -2035,13 +2522,27 @@ fn firn_replays_the_value_types_from_its_append_only_file() {
         vec!["SCARD", "s"],
         remove,
         vec!["GET", "lapse"],
+        vec!["HGET", "h", "r"],
+        vec!["HEXISTS", "h", "gone"],
+        vec!["HGETALL", "gone:hset"],
+        vec!["HGETALL", "gone:hsetnx"],
+        vec!["HGETALL", "gone:hincrby"],
+        vec!["HGETALL", "gone:hincrbyfloat"],
+        vec!["GET", "gone:hdel"],
+        vec!["ZSCORE", "zi", "m"],
+        vec!["ZRANGE", "zr", "0", "-1", "WITHSCORES"],
+        vec!["ZRANGE", "gone:zadd", "0", "-1", "WITHSCORES"],
+        vec!["GET", "gone:zaddxx"],
+        vec!["GET", "gone:zrem"],
+        vec!["GET", "gone:zpopmin"],
+        vec!["GET", "gone:zremrange"],
     ] {
         batch.extend(resp(&request));
     }
     client.write_all(&batch).expect("read the replayed values");
     expect_replies(
         &mut client,
-        b"*2\r\n$1\r\nb\r\n$1\r\nc\r\n$1\r\nv\r\n:1\r\n$1\r\n2\r\n$19\r\n0.10000000000000001\r\n:25\r\n:0\r\n$3\r\nnew\r\n",
+        b"*2\r\n$1\r\nb\r\n$1\r\nc\r\n$1\r\nv\r\n:1\r\n$1\r\n2\r\n$19\r\n0.10000000000000001\r\n:25\r\n:0\r\n$3\r\nnew\r\n$3\r\n0.3\r\n:0\r\n*2\r\n$1\r\nf\r\n$1\r\nv\r\n*2\r\n$1\r\nf\r\n$1\r\nv\r\n*2\r\n$1\r\nf\r\n$1\r\n5\r\n*2\r\n$1\r\nf\r\n$3\r\n1.5\r\n$3\r\nnew\r\n$3\r\n3.5\r\n*2\r\n$1\r\nc\r\n$1\r\n3\r\n*2\r\n$1\r\nm\r\n$1\r\n1\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n",
         "the replayed values",
     );
     drop(client);
