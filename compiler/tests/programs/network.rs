@@ -1791,10 +1791,12 @@ fn firn_answers_commands_naming_a_key_twice_as_redis_does() {
 /// zero byte, while `LOG` without exactly one message and an unknown
 /// subcommand, its line breaks echoed as spaces, are answered as Redis answers
 /// a `DEBUG` subcommand it does not know. The expected replies are
-/// redis-server 7.0.15's to the same bytes, its debug command enabled, but for
-/// the last three `CONFIG SET`s, which ask for a snapshot schedule, the
-/// append-only file and another address: Redis would apply them, and firn
-/// refuses them in Redis's form for a refused value, with its own reason.
+/// redis-server 7.0.15's to the same bytes, its debug command enabled, a
+/// `CONFIG GET` of several parameters in alphabetical order, one of the orders
+/// Redis answers in, but for the last three `CONFIG SET`s, which ask for a
+/// snapshot schedule, the append-only file and another address: Redis would
+/// apply them, and firn refuses them in Redis's form for a refused value, with
+/// its own reason.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_answers_config_and_echoes_client_bytes_as_redis_does() {
