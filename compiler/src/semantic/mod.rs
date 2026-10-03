@@ -9,7 +9,6 @@ mod check;
 mod entailment;
 mod entry;
 mod goal;
-mod held_keys;
 mod loop_permission;
 mod model;
 mod obligations;
@@ -40,7 +39,6 @@ pub(crate) use entry::{EntryRejection, EntryRequest};
 
 /// [SHARE-3] the statements that compute a whole-map statement's keys
 /// before its block runs, which lowering runs first when one exists.
-pub(crate) use held_keys::{key_twins, runs_object_sections};
 
 /// The permission table the overlap lowering reads. It is the same table the
 /// ledger renders; nothing derives a second judgment from it.
@@ -52,9 +50,10 @@ pub(crate) use permission::FunctionPermissions;
 pub(crate) use loop_permission::{LoopActualization, LoopCombine, LoopPermission};
 
 pub(crate) use model::{
-    BindingId, CheckedArrayRoot, CheckedAtomicForm, CheckedBodyDisposition,
+    BindingId, CheckedArrayRoot, CheckedBodyDisposition,
     CheckedBooleanOperation, CheckedBufferRoot, CheckedConst, CheckedContainerRoot,
-    CheckedConversionMode, CheckedDrop, CheckedElement, CheckedEnumType, CheckedExpression,
+    CheckedConversionMode, CheckedDrop, CheckedElement, CheckedEntryBinding, CheckedEntryIndex,
+    CheckedEnumType, CheckedExpression,
     CheckedFloatOperation, CheckedFunction, CheckedIntegerOperation, CheckedLayoutCeiling,
     CheckedLayoutMagnitude, CheckedLoopId, CheckedMatchArm, CheckedMeasure, CheckedMode,
     CheckedNominalKind, CheckedNumericType, CheckedOwnedTakeCleanup, CheckedParameter,
@@ -1147,16 +1146,26 @@ pub enum SemanticIssueKind {
         /// The repair [DIAG-1].
         mechanical_fix: &'static str,
     },
-    /// A keyed atomic statement whose key is not a `&[u8]` range [SHARE-2].
+    /// An entry binding whose index atom is neither a `&[u8]` range nor a
+    /// place of type `KeySet` [SHARE-2].
     AtomicKeyNotBytes {
         /// The key's value.
         found: String,
         /// The repair [DIAG-1].
         mechanical_fix: &'static str,
     },
-    /// A guard on an atomic statement that holds a map's state or an entry,
-    /// or that is inside the block of one [SHARE-2].
-    AtomicGuardOnMap {
+    /// An entry binding the guard and block never use, or a statement whose
+    /// guard and block reach nothing of its state through any binding
+    /// [SHARE-2].
+    AtomicBindingUnused {
+        /// The binding's name.
+        binding: String,
+        /// The repair [DIAG-1].
+        mechanical_fix: &'static str,
+    },
+    /// A key set written while an entry binding names its keys [SHARE-2,
+    /// REF-2].
+    AtomicKeySetWritten {
         /// The repair [DIAG-1].
         mechanical_fix: &'static str,
     },
@@ -1628,6 +1637,10 @@ impl CheckStop {
 
 impl From<SemanticCompilerFailure> for CheckStop {
     fn from(value: SemanticCompilerFailure) -> Self {
+        if std::env::var_os("WF_DEBUG_FAILURE").is_some() {
+            eprintln!("DEBUG failure {value:?}
+{}", std::backtrace::Backtrace::force_capture());
+        }
         Self::Compiler(value)
     }
 }

@@ -300,7 +300,10 @@ fn type_holds_heap(
     match ty {
         CheckedType::Buffer { .. }
         | CheckedType::Window { capacity: None, .. }
-        | CheckedType::Segments { .. } => true,
+        | CheckedType::Segments { .. }
+        | CheckedType::KeySet => true,
+        // An entry binding's referent, never a value of its own [SHARE-2].
+        CheckedType::KeyedEntries { .. } => false,
         CheckedType::Array { element, .. } | CheckedType::Window { element, .. } => program
             .elements
             .get(element.index())

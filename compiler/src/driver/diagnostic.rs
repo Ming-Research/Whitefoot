@@ -897,7 +897,8 @@ impl Report for SemanticIssueKind {
             AtomicTargetNotShared { found, mechanical_fix };
             WaitInsideAtomic { construct, mechanical_fix };
             AtomicKeyNotBytes { found, mechanical_fix };
-            AtomicGuardOnMap { mechanical_fix };
+            AtomicBindingUnused { binding, mechanical_fix };
+            AtomicKeySetWritten { mechanical_fix };
             AtomicGuardWrites { mechanical_fix };
             InvalidSpawn { condition };
             InvalidMusttail { condition, subject };

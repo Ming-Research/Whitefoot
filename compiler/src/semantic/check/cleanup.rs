@@ -102,7 +102,7 @@ impl<'unit> TypeContext<'unit> {
                 // release of a handle does.
                 CheckedStatement::Atomic {
                     target,
-                    key,
+                    entries,
                     guard,
                     body,
                     fallthrough_drops,
@@ -110,7 +110,7 @@ impl<'unit> TypeContext<'unit> {
                 } => {
                     self.validate_expression_release_graphs(target)?;
                     self.release_graph_nodes(target.ty())?;
-                    if let Some(key) = key {
+                    for key in entries.iter().flat_map(crate::semantic::CheckedEntryBinding::expressions) {
                         self.validate_expression_release_graphs(key)?;
                     }
                     if let Some(guard) = guard {
@@ -243,7 +243,9 @@ impl<'unit> TypeContext<'unit> {
                 CheckedType::Array { .. }
                 | CheckedType::Buffer { .. }
                 | CheckedType::Window { .. }
-                | CheckedType::Segments { .. } => {
+                | CheckedType::Segments { .. }
+                | CheckedType::KeySet
+                | CheckedType::KeyedEntries { .. } => {
                     // [OWN-1, STOR-3] an `Array` of copy elements is copy and
                     // a copy value has an empty release.
                     if !self.is_copy_type(check_context, current)? {
@@ -317,6 +319,8 @@ impl<'unit> TypeContext<'unit> {
                 | CheckedType::Buffer { .. }
                 | CheckedType::Window { .. }
                 | CheckedType::Segments { .. }
+                | CheckedType::KeySet
+                | CheckedType::KeyedEntries { .. }
                     if selected =>
                 {
                     return Err(SemanticCompilerFailure::InvalidResolution.into());
@@ -331,7 +335,9 @@ impl<'unit> TypeContext<'unit> {
                 | CheckedType::Array { .. }
                 | CheckedType::Buffer { .. }
                 | CheckedType::Window { .. }
-                | CheckedType::Segments { .. } => {
+                | CheckedType::Segments { .. }
+                | CheckedType::KeySet
+                | CheckedType::KeyedEntries { .. } => {
                     if !self.is_copy_type(check_context, current)? {
                         drops.push((path, current));
                     }

@@ -131,7 +131,7 @@ impl Input<'_, '_> {
             // falls through to the statement's successor.
             CheckedStatement::Atomic {
                 target,
-                key,
+                entries,
                 guard,
                 body,
                 ..
@@ -140,7 +140,7 @@ impl Input<'_, '_> {
                     self.collect_continuing_loop_kills(body, normal_reaches, reachability, kills);
                 if reaches {
                     self.collect_loop_expression_kills(target, kills);
-                    if let Some(key) = key {
+                    for key in entries.iter().flat_map(crate::semantic::CheckedEntryBinding::expressions) {
                         self.collect_loop_expression_kills(key, kills);
                     }
                     if let Some(guard) = guard {

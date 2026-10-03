@@ -137,7 +137,9 @@ fn complete_inventory_is_pinned() {
     // v0.79 adds a STRING arm to the existing `cvalue` alternation
     // [CONST-2]: no decision, and nine rows for its continuations.
     // v0.82's `atomic_stmt` adds its optional guard and its statement
-    // repeat [GRAM-4, SHARE-2]: two decisions.
+    // repeat [GRAM-4, SHARE-2]: two decisions. v0.86's entry bindings add
+    // the repeat of `"," IDENT "=" "&" place` after the binder [SHARE-2]:
+    // one decision, which moves every later decision by one.
     // v0.82's `type_invariant*` repeat closes `struct_decl` [GRAM-2, TYPE-11]:
     // one decision, which moves every later decision by one.
     // v0.84's range facts [RANGE-1, RANGE-4, RANGE-5] add ten decisions:
@@ -147,8 +149,8 @@ fn complete_inventory_is_pinned() {
     // argument list, `apart_clause`'s `proof_use` repeat, and in
     // `range_clause` the binder repeat, the optional `when` list, its repeat
     // and the conclusion repeat. `apart` and `forall` are two new terminals.
-    assert_eq!(DECISIONS.len(), 173);
-    assert_eq!(SELECT_ROWS.len(), 7_756);
+    assert_eq!(DECISIONS.len(), 174);
+    assert_eq!(SELECT_ROWS.len(), 7_794);
     assert_eq!(diagnostic_terminal_order().len(), 113);
     assert_eq!(productions()[0], Production::Program);
     // v0.70 [GRAM-2] adds the file alias header as an `item` arm and closes
@@ -311,32 +313,33 @@ fn complete_inventory_is_pinned() {
     // The call-site marker optional, and v0.82's `atomic_stmt` guard and
     // statement repeat, shift the later place/effect choices; v0.82's
     // retired `for_stmt` marker moves every decision after it back by one,
-    // and v0.84's range decisions move them forward again.
-    assert_eq!(DECISIONS[131].production(), Production::Call);
-    assert_eq!(DECISIONS[131].kind(), DecisionKind::Optional);
+    // and v0.84's range decisions and v0.86's entry bindings move them
+    // forward again.
+    assert_eq!(DECISIONS[132].production(), Production::Call);
+    assert_eq!(DECISIONS[132].kind(), DecisionKind::Optional);
     // `psuffix` carries the field, payload and index-or-range choice, and the
     // factored `range_tail?` that keeps the index and range steps
     // strong-LL(2) [GRAM-1, GRAM-5].
-    assert_eq!(DECISIONS[151].production(), Production::Psuffix);
-    assert_eq!(DECISIONS[151].kind(), DecisionKind::Choice);
     assert_eq!(DECISIONS[152].production(), Production::Psuffix);
-    assert_eq!(DECISIONS[152].kind(), DecisionKind::Optional);
+    assert_eq!(DECISIONS[152].kind(), DecisionKind::Choice);
+    assert_eq!(DECISIONS[153].production(), Production::Psuffix);
+    assert_eq!(DECISIONS[153].kind(), DecisionKind::Optional);
     // v0.84's `range_clause` [RANGE-1]: the binder repeat, the optional guard
     // list and its repeat, and the conclusion repeat.
     for (index, kind) in [
-        (153, DecisionKind::Repeat0),
-        (154, DecisionKind::Optional),
-        (155, DecisionKind::Repeat0),
+        (154, DecisionKind::Repeat0),
+        (155, DecisionKind::Optional),
         (156, DecisionKind::Repeat0),
+        (157, DecisionKind::Repeat0),
     ] {
         assert_eq!(DECISIONS[index].production(), Production::RangeClause);
         assert_eq!(DECISIONS[index].kind(), kind);
     }
     // `epsuffix` mirrors it inside an effect row [EFF-1].
-    assert_eq!(DECISIONS[171].production(), Production::Epsuffix);
-    assert_eq!(DECISIONS[171].kind(), DecisionKind::Choice);
     assert_eq!(DECISIONS[172].production(), Production::Epsuffix);
-    assert_eq!(DECISIONS[172].kind(), DecisionKind::Optional);
+    assert_eq!(DECISIONS[172].kind(), DecisionKind::Choice);
+    assert_eq!(DECISIONS[173].production(), Production::Epsuffix);
+    assert_eq!(DECISIONS[173].kind(), DecisionKind::Optional);
 }
 
 /// `borrow_expr` is `"&" place` and owns no decision.
@@ -466,14 +469,14 @@ fn every_decision_has_two_position_rows_and_complete_arm_coverage() {
             stack.extend_from_slice(node.children());
         }
     }
-    // The same 173 decisions `complete_inventory_is_pinned` reads out of the
+    // The same 174 decisions `complete_inventory_is_pinned` reads out of the
     // generated table, counted a second time by walking every production's
     // node tree. `struct_decl`'s `"opaque"?` optional [GRAM-2, TYPE-2] is
     // reachable from `item`, so the walk and the table agree on it; a
     // decision in the table that no production reaches would show up as the
     // two counts disagreeing.
     assert_eq!(decisions, DECISIONS.len());
-    assert_eq!(decisions, 173);
+    assert_eq!(decisions, 174);
 }
 
 #[test]
@@ -530,7 +533,7 @@ fn overlaps(left: LookaheadPredicate, right: LookaheadPredicate) -> bool {
 
 #[test]
 fn all_detailed_rows_retain_provenance_and_remain_cross_arm_disjoint() {
-    assert_eq!(DECISIONS.len(), 173);
+    assert_eq!(DECISIONS.len(), 174);
     let mut total_rows = 0_usize;
     let mut saw_atom_only = false;
     for decision in &DECISIONS {
@@ -576,6 +579,6 @@ fn all_detailed_rows_retain_provenance_and_remain_cross_arm_disjoint() {
     }
     // Count the complete inventory independently by summing each decision's
     // rows, including the explicit interface import arm [FN-3].
-    assert_eq!(total_rows, 7_756);
+    assert_eq!(total_rows, 7_794);
     assert!(saw_atom_only);
 }

@@ -105,6 +105,12 @@ pub enum IrAddressed {
         element: IrElement,
         capacity: Option<u64>,
     },
+    /// One `KeySet` place [SHARE-1].
+    KeySet,
+    /// The entries an entry binding over a key set names [SHARE-2].
+    KeyedEntries {
+        element: IrElement,
+    },
 }
 
 impl IrAddressed {
@@ -117,6 +123,8 @@ impl IrAddressed {
             Self::Nominal(id) => IrType::Nominal(id),
             Self::Buffer { element } => IrType::Buffer { element },
             Self::Segments { element } => IrType::Segments { element },
+            Self::KeySet => IrType::KeySet,
+            Self::KeyedEntries { element } => IrType::KeyedEntries { element },
             Self::Array { element, length } => IrType::Array { element, length },
             Self::Window {
                 shape,
@@ -139,6 +147,8 @@ impl IrAddressed {
             IrType::Nominal(id) => Self::Nominal(id),
             IrType::Buffer { element } => Self::Buffer { element },
             IrType::Segments { element } => Self::Segments { element },
+            IrType::KeySet => Self::KeySet,
+            IrType::KeyedEntries { element } => Self::KeyedEntries { element },
             IrType::Range { .. } | IrType::RuntimeBoxPayload { .. } => return None,
             IrType::Array { element, length } => Self::Array { element, length },
             IrType::Window {
@@ -221,6 +231,16 @@ pub enum IrType {
     RuntimeBoxPayload {
         nominal: IrNominalId,
     },
+    /// One `KeySet` [SHARE-1]: its key count, the type's one measure, then a
+    /// pointer to the runtime's store of its keys and payloads, `{ i64, ptr }`.
+    KeySet,
+    /// The entries an entry binding over a key set names [SHARE-2]: the
+    /// statement's record of its hold, the position of the set's first key in
+    /// that hold and the set's count, `{ ptr, i64, i64 }`. It is only ever
+    /// reached through its address, which the binding names.
+    KeyedEntries {
+        element: IrElement,
+    },
     /// One `Slots<T, N>`, `Slots<T>`, `Ring<T, N>` or `Ring<T>` [TYPE-9].
     ///
     /// The layout is header-first so that the inline and the boxed placement
@@ -277,6 +297,9 @@ pub(crate) fn type_derives_release(
             | IrType::Window {
                 capacity: None, ..
             } => return Some(true),
+            // A key set's store is the runtime's, which its release frees
+            // [SHARE-1].
+            IrType::KeySet => return Some(true),
             // A constant-capacity window reclaims nothing of its own; it
             // still needs a walk when its slots hold values that derive one,
             // and [PROV-6] visits those before the block is released.
@@ -340,6 +363,9 @@ pub(crate) fn type_derives_release(
             // A synthesized payload capture borrows the source Box allocation
             // and never carries ownership or cleanup authority.
             | IrType::RuntimeBoxPayload { .. }
+            // The entries an entry binding names are its statement's record,
+            // which owns nothing [SHARE-2].
+            | IrType::KeyedEntries { .. }
             | IrType::Address(_) => {}
         }
     }
@@ -393,8 +419,8 @@ pub enum IrNominalKind {
     Opaque,
     /// [SHARE-1] a handle to a shared object: one pointer to the object,
     /// whose state of type `state` the runtime keeps behind its header; or a
-    /// handle to a shared map whose values have type `state`, or that map's
-    /// state, one pointer to the map, as `shape` says.
+    /// keyed table whose values have type `state`, one pointer to the
+    /// runtime's index, as `shape` says.
     Shared {
         state: IrType,
         shape: IrShared,
@@ -406,11 +432,41 @@ pub enum IrNominalKind {
 pub enum IrShared {
     /// `Shared<T>`: the state lives behind the object's header.
     Object,
-    /// `SharedMap<V>`: every entry is an `entry`, the `Option<V>` the runtime
-    /// keeps a slot of in each of the map's nodes.
-    Map { entry: IrType },
-    /// `SharedMapState<V>`: the map's state, whose address is the map itself.
-    State { entry: IrType },
+    /// `KeyedTable<V>`: every entry is an `entry`, the `Option<V>` the
+    /// runtime keeps a slot of in each of the table's nodes.
+    Table { entry: IrType },
+}
+
+/// A record a statement keeps in its frame for the runtime
+/// (compiler/waiting-contexts/state-locks): the lock of one entry, a hold of
+/// a table's entries, the entries an entry binding over a key set names, or
+/// a guard's watch. A function numbers its records; the backend reserves
+/// each once in the frame, so a statement inside a loop reuses its own.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct IrRecord {
+    pub(crate) index: u32,
+    pub(crate) kind: IrRecordKind,
+}
+
+impl IrRecord {
+    #[must_use]
+    pub const fn index(self) -> u32 {
+        self.index
+    }
+
+    #[must_use]
+    pub const fn kind(self) -> IrRecordKind {
+        self.kind
+    }
+}
+
+/// What an [`IrRecord`] holds, which fixes its size.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum IrRecordKind {
+    TableEntry,
+    TableHold,
+    KeyedEntries,
+    Watch,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -785,6 +841,10 @@ pub enum IrPlaceStep {
         offset: IrValueId,
         target_domain: IrTargetDomainObligation,
     },
+    /// [OP-4] entry `offset`, below their `len`, of the entries an entry
+    /// binding over a key set names: the slot its hold keeps for the set's
+    /// key `offset` [SHARE-2].
+    KeyedEntriesElement { offset: IrValueId },
 }
 
 /// A total, nonnegative estimate evaluated only for a parallel split budget.
@@ -1139,10 +1199,10 @@ pub enum IrOperation {
     SharedAcquire {
         object: IrValueId,
     },
-    /// [SHARE-2, SHARE-3] inside the block of a statement holding a map's
-    /// state or an entry: waits, without suspending, until this context holds
-    /// the object alone, since that block's holder keeps its driver. Defines
-    /// `Unit`.
+    /// [SHARE-2, SHARE-3] for a statement already holding an entry of one of
+    /// its state's tables: waits, without suspending, until this context
+    /// holds the object alone, since the entry's holder keeps its driver.
+    /// Defines `Unit`.
     SharedTake {
         object: IrValueId,
     },
@@ -1156,99 +1216,150 @@ pub enum IrOperation {
     SharedUnlock {
         object: IrValueId,
     },
-    /// [SHARE-1] a new shared map of `nominal`, sized for `capacity` values,
-    /// holding one handle and no entry. Defines the handle.
-    SharedMapNew {
+    /// [SHARE-1] a new keyed table of `nominal`, whose entries are its
+    /// `Option<V>`, sized for `capacity` keys and holding none. Defines the
+    /// table, one pointer to the runtime's index.
+    KeyedTableNew {
         nominal: IrNominalId,
         capacity: IrValueId,
     },
-    /// [SHARE-2] the address of the state of the map `object` names, which is
-    /// the map itself. Defines an address of `state`, a `SharedMapState` nominal.
-    SharedMapState {
-        state: IrNominalId,
-        object: IrValueId,
+    /// [SHARE-1] how many entries of the table `table` holds hold `Some`,
+    /// exact while the statement holds the table whole or no other context
+    /// reaches it. Defines `u64`.
+    KeyedTableCount {
+        table: IrValueId,
     },
-    /// [SHARE-2, SHARE-3] waits until this context holds the state of the map
-    /// `object` names, every keyed statement on it having ended. Defines
-    /// `Unit`.
-    SharedMapHold {
-        object: IrValueId,
+    /// Exchanges the entries of the tables `first` and `second`, each keeping
+    /// its identity, which statements on a state's other units read without
+    /// a lock (compiler/waiting-contexts/state-locks): the assignment of a
+    /// table over a live one. Defines `Unit`.
+    KeyedTableSwap {
+        first: IrValueId,
+        second: IrValueId,
     },
-    /// [SHARE-3] gives up the hold of a map's state. Defines `Unit`.
-    SharedMapUnhold {
-        object: IrValueId,
+    /// [SHARE-3] locks the entry under the bytes the range `key` names in the
+    /// table `table`, creating it holding `None` when absent, and keeps the
+    /// lock in `record`; with `read`, beside the other statements that only
+    /// read it. Defines `Unit`; [`Self::TableEntrySlot`] reads the entry's
+    /// address.
+    TableLockEntry {
+        record: IrRecord,
+        table: IrValueId,
+        key: IrValueId,
+        read: bool,
     },
-    /// [SHARE-2, SHARE-3] waits until this context holds the entry under the
-    /// bytes the range `key` names of the map `object` names, a handle or,
-    /// with `held`, the address of a state this context holds; an absent key
-    /// gets an entry holding `None`. Defines the address of the entry, an
-    /// `Option<V>`; one context holds one entry at a time. With `reads`, for
-    /// a statement that writes nothing through its binder, other such
-    /// statements hold the entry beside it, and an absent key's address is
-    /// a `None` no statement writes.
-    SharedMapLock {
+    /// The address of the entry the lock in `record` holds, an `Option<V>` of
+    /// the table nominal `nominal`. Defines that address.
+    TableEntrySlot {
         nominal: IrNominalId,
-        object: IrValueId,
-        key: IrValueId,
-        held: bool,
-        reads: bool,
+        record: IrRecord,
     },
-    /// [SHARE-3] gives up the entry `entry` names, the address
-    /// [`Self::SharedMapLock`] defined: kept when it holds `Some`, removed
-    /// when it holds `None`, or, with `reads`, left as it was. Defines
-    /// `Unit`.
-    SharedMapUnlock {
-        object: IrValueId,
-        entry: IrValueId,
-        held: bool,
-        reads: bool,
-    },
-    /// [SHARE-3] begins collecting the keys a statement holding the state of
-    /// the map `object` names will reach, for a statement whose keys are
-    /// computed before its block runs. Defines `Unit`.
-    SharedMapKeys {
-        object: IrValueId,
-    },
-    /// One key such a statement will reach, the bytes the range `key`
-    /// names, which stay as they are until the release. Defines `Unit`.
-    SharedMapKey {
-        object: IrValueId,
-        key: IrValueId,
-    },
-    /// [SHARE-2, SHARE-3] waits until this context holds the entries under
-    /// the collected keys together, or the whole map when the runtime cannot
-    /// hold them so; statements on the map's other keys go on beside it,
-    /// which gives no outcome the whole hold would not in a program with no
-    /// object section (`semantic::runs_object_sections`), the only programs
-    /// lowering emits this in. Defines `Unit`.
-    SharedMapHoldKeys {
-        object: IrValueId,
-    },
-    /// [SHARE-3] gives up what [`Self::SharedMapHoldKeys`] holds, each entry
-    /// kept when it holds `Some` and removed when it holds `None`. Defines
-    /// `Unit`.
-    SharedMapReleaseKeys {
-        object: IrValueId,
-    },
-    /// [SHARE-2] the entry under the bytes the range `key` names, one of the
-    /// keys collected for the statement that holds the state `object`
-    /// addresses. Defines the address of the entry, an `Option<V>`.
-    SharedMapHeld {
+    /// [SHARE-3] ends the lock in `record`: the entry is kept when it holds
+    /// `Some` and removed when it holds `None`, or left as it was after a
+    /// read. Defines `Unit`.
+    TableUnlockEntry {
         nominal: IrNominalId,
-        object: IrValueId,
+        record: IrRecord,
+        read: bool,
+    },
+    /// Begins the hold `record` of entries of the table `table`. Defines
+    /// `Unit`.
+    TableHoldBegin {
+        record: IrRecord,
+        table: IrValueId,
+    },
+    /// Adds the key the range `key` names to a hold. Defines its position in
+    /// the hold, a `u64`.
+    TableHoldKey {
+        record: IrRecord,
         key: IrValueId,
     },
-    /// Ends the block on the entry `entry` names, the address
-    /// [`Self::SharedMapHeld`] defined, which stays held until the release.
-    /// Defines `Unit`.
-    SharedMapLeaveHeld {
-        object: IrValueId,
-        entry: IrValueId,
+    /// Adds every key of the key set `set` addresses to a hold, in the set's
+    /// order. Defines the position of the set's first key, a `u64`; key i is
+    /// at that position plus i.
+    TableHoldKeys {
+        record: IrRecord,
+        set: IrValueId,
     },
-    /// [SHARE-1] how many entries of the state `state` addresses hold `Some`.
-    /// Defines `u64`.
-    SharedMapCount {
-        state: IrValueId,
+    /// Makes a hold's take hold the table whole. Defines `Unit`.
+    TableHoldWhole {
+        record: IrRecord,
+    },
+    /// [SHARE-3] takes a hold: the entries of its keys, locked in the order
+    /// of their bytes without repeats, or the table whole. Defines `Unit`.
+    TableHoldTake {
+        record: IrRecord,
+    },
+    /// The address of the entry added at `position` to the taken hold
+    /// `record`, an `Option<V>` of the table nominal `nominal`.
+    TableHoldSlot {
+        nominal: IrNominalId,
+        record: IrRecord,
+        position: IrValueId,
+    },
+    /// [SHARE-3] gives up a hold, each entry kept when it holds `Some` and
+    /// removed when it holds `None`. Defines `Unit`.
+    TableHoldRelease {
+        nominal: IrNominalId,
+        record: IrRecord,
+    },
+    /// The entries an entry binding over a key set names [SHARE-2], kept in
+    /// `record`, which [`Self::KeyedEntriesFill`] fills when the hold is
+    /// taken. Defines their address, an [`IrAddressed::KeyedEntries`].
+    KeyedEntriesRecord {
+        record: IrRecord,
+        element: IrElement,
+    },
+    /// Records in the entries `entries` addresses the hold `hold`, the
+    /// position `position` of the first key of the set `set` addresses in
+    /// it, and the set's count. Defines `Unit`.
+    KeyedEntriesFill {
+        entries: IrValueId,
+        hold: IrRecord,
+        position: IrValueId,
+        set: IrValueId,
+    },
+    /// [SHARE-1] an empty key set with room for `capacity` keys. Defines the
+    /// set.
+    KeySetNew {
+        capacity: IrValueId,
+    },
+    /// [SHARE-1] adds the key the range `key` names to the set `set`
+    /// addresses with `payload`, replacing the payload of a key the set
+    /// holds or, with `add`, adding to it modulo 2^64. Defines `Unit`.
+    KeySetPut {
+        set: IrValueId,
+        key: IrValueId,
+        payload: IrValueId,
+        add: bool,
+    },
+    /// The payload of key `index` of the set `set` addresses. Defines `u64`.
+    KeySetPayload {
+        set: IrValueId,
+        index: IrValueId,
+    },
+    /// [SHARE-3] a guard read false: begins the watch `record`, before the
+    /// statement gives up anything it holds. Defines `Unit`.
+    WatchBegin {
+        record: IrRecord,
+    },
+    /// Watches the object `object` names for a statement that writes its
+    /// state outside its tables. Defines `Unit`.
+    WatchObject {
+        record: IrRecord,
+        object: IrValueId,
+    },
+    /// Watches the table `table` for a statement that writes an entry of it
+    /// or holds it whole. Defines `Unit`.
+    WatchTable {
+        record: IrRecord,
+        table: IrValueId,
+    },
+    /// With everything the statement held given up: waits until a watched
+    /// unit has been written since the watch began, which may suspend the
+    /// frame. Defines `Unit`.
+    WatchPark {
+        record: IrRecord,
     },
     /// The first-element pointer used only by a synthesized split capture of
     /// a `Box<Array<T>>`. The source Box value remains the allocation-base

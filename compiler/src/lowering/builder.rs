@@ -165,12 +165,6 @@ pub(crate) fn lower_checked_from(
                 .clone()
         })
         .collect::<Vec<_>>();
-    // [SHARE-3] the program's functions, for the statements holding a map's
-    // state that can hold their keys' entries instead; none when some
-    // statement of the program runs two object statements while it holds an
-    // entry or a map, in which case every such statement holds its map.
-    let keyed = (!crate::semantic::runs_object_sections(&checked.data.functions))
-        .then_some(checked.data.functions.as_slice());
     let mut functions = physical
         .variants
         .iter()
@@ -189,7 +183,6 @@ pub(crate) fn lower_checked_from(
             };
             lower_function(
                 function,
-                keyed,
                 index,
                 &symbols[index],
                 context,
@@ -402,10 +395,7 @@ fn lower_nominals(
                     state: lower_type(erasure, *state)?,
                     shape: match shape {
                         CheckedShared::Object => IrShared::Object,
-                        CheckedShared::Map { entry } => IrShared::Map {
-                            entry: lower_type(erasure, *entry)?,
-                        },
-                        CheckedShared::State { entry } => IrShared::State {
+                        CheckedShared::Table { entry } => IrShared::Table {
                             entry: lower_type(erasure, *entry)?,
                         },
                     },
@@ -431,7 +421,6 @@ fn lower_nominals(
 
 fn lower_function<'program>(
     function: &crate::semantic::CheckedFunction,
-    keyed: Option<&[crate::semantic::CheckedFunction]>,
     physical_index: usize,
     symbol: &'program str,
     context: LoweringContext<'program>,
@@ -469,13 +458,6 @@ fn lower_function<'program>(
         overlap,
         symbol,
     )?;
-    if let Some(functions) = keyed
-        && !uninhabited
-        && function.body.is_some()
-    {
-        builder.key_twins =
-            crate::semantic::key_twins(function, functions, &builder.addressed_bindings);
-    }
     builder
         .context_starts
         .clone_from(&function.waiting.context_starts);
@@ -724,14 +706,9 @@ struct IrBuilder<'program> {
     /// [SHARE-2] the atomic statements whose blocks enclose the statement
     /// being lowered, innermost last.
     atomics: Vec<atomic::AtomicRegion>,
-    /// [SHARE-3] for each statement holding a map's state that can hold its
-    /// keys' entries instead, the statements that compute those keys
-    /// (`semantic::key_twins`). Empty in every synthesized function.
-    key_twins: HashMap<NodePath, Vec<CheckedStatement>>,
-    /// The map whose keys the statements being lowered collect, while such
-    /// a twin is lowered: a statement on an entry then adds its key and runs
-    /// no block.
-    collecting: Option<IrValueId>,
+    /// How many frame records the function's atomic statements have
+    /// numbered (compiler/waiting-contexts/state-locks).
+    records: u32,
 }
 
 #[derive(Clone)]
@@ -792,8 +769,7 @@ impl<'program> IrBuilder<'program> {
             context_awaits: Vec::new(),
             pending_contexts: Vec::new(),
             atomics: Vec::new(),
-            key_twins: HashMap::new(),
-            collecting: None,
+            records: 0,
         };
         let (entry, parameters) = builder.new_block(&[])?;
         if !parameters.is_empty() {
@@ -1064,6 +1040,11 @@ impl<'program> IrBuilder<'program> {
                 return Err(LoweringFailure::InvalidCheckedProgram);
             }
             self.await_contexts_before(outer_pending, index)?;
+            // [SHARE-3] inside an atomic block, the units the statement
+            // reaches are taken before it runs.
+            if !self.atomics.is_empty() {
+                self.take_units_for(statement)?;
+            }
             match statement {
                 // [WAIT-3] a bound spawn: its call runs as a context
                 // and its binding is defined where the plan awaits it.
@@ -1315,25 +1296,21 @@ impl<'program> IrBuilder<'program> {
                     })?;
                 }
                 CheckedStatement::Atomic {
-                    node_path,
                     target,
-                    form,
                     borrowed,
-                    key,
                     binding,
                     state,
+                    entries,
                     guard,
                     body,
                     fallthrough_drops,
                     ..
                 } => self.lower_atomic(
-                    node_path,
                     target,
-                    *form,
                     *borrowed,
-                    key.as_deref(),
                     *binding,
                     *state,
+                    entries,
                     guard.as_deref(),
                     body,
                     fallthrough_drops,
@@ -2208,7 +2185,10 @@ impl<'program> IrBuilder<'program> {
     ) -> Result<(), LoweringFailure> {
         let target = self.prepare_target(target, displaces_live_value)?;
         let value = self.expression(value)?;
-        let displaced = self.displaced_release(&target)?;
+        let (value, displaced) = match self.keep_table_identities(&target, value)? {
+            Some(kept) => kept,
+            None => (value, self.displaced_release(&target)?),
+        };
         self.write_target(&target, value)?;
         if let Some(drop) = displaced {
             self.append_drops(vec![drop])?;

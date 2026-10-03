@@ -86,21 +86,31 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 }
 "#,
     ),
-    // A shared map's handle and its state [SHARE-1]: both are reached only
-    // through atomic statements and the prelude's functions, so neither
-    // declares a field; `V: drop` because the last handle's release drops
-    // every value.
+    // A keyed table [SHARE-1]: its entries are reached only through the entry
+    // bindings of an atomic statement, so it declares no field; `V: drop`
+    // because releasing a table drops every value its entries hold.
     (
-        "prelude/SharedMap.wf",
+        "prelude/KeyedTable.wf",
         PreludeSource::Opaque,
-        r#"opaque nocopy struct SharedMap<V: drop> {
+        r#"opaque nocopy struct KeyedTable<V: drop> {
+}
+"#,
+    ),
+    // A key set [SHARE-1] and the entries an entry binding names over one
+    // [SHARE-2]: each declares its one measure, `len` [MSR-1].
+    (
+        "prelude/KeySet.wf",
+        PreludeSource::Opaque,
+        r#"opaque nocopy struct KeySet {
+  readonly len: u64;
 }
 "#,
     ),
     (
-        "prelude/SharedMapState.wf",
+        "prelude/KeyedEntries.wf",
         PreludeSource::Opaque,
-        r#"opaque nocopy struct SharedMapState<V: drop> {
+        r#"opaque nocopy struct KeyedEntries<V: drop> {
+  readonly len: u64;
 }
 "#,
     ),
@@ -305,21 +315,49 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 "#,
     ),
     (
-        "prelude/shared_map_new.wf",
+        "prelude/keyed_table_new.wf",
         PreludeSource::Function,
-        r#"fn shared_map_new<V: drop>(capacity: u64) -> result: SharedMap<V> pure;
+        r#"fn keyed_table_new<V: drop>(capacity: u64) -> result: KeyedTable<V> pure;
 "#,
     ),
     (
-        "prelude/shared_map_share.wf",
+        "prelude/keyed_table_count.wf",
         PreludeSource::Function,
-        r#"fn shared_map_share<V: drop>(shared: &SharedMap<V>) -> result: SharedMap<V> reads(shared);
+        r#"fn keyed_table_count<V: drop>(table: &KeyedTable<V>) -> count: u64 reads(table);
 "#,
     ),
     (
-        "prelude/shared_map_count.wf",
+        "prelude/key_set_new.wf",
         PreludeSource::Function,
-        r#"fn shared_map_count<V: drop>(state: &SharedMapState<V>) -> count: u64 reads(state);
+        r#"fn key_set_new(capacity: u64) -> result: KeySet pure contract {
+  ensures result.len == 0_u64;
+};
+"#,
+    ),
+    (
+        "prelude/key_set_put.wf",
+        PreludeSource::Function,
+        r#"fn key_set_put(keys: &KeySet, key: &[u8], payload: u64) -> result: unit reads(key), writes(keys) contract {
+  ensures keys^.len >= entry(keys)^.len;
+  ensures keys^.len <= entry(keys)^.len + 1_u64;
+};
+"#,
+    ),
+    (
+        "prelude/key_set_add.wf",
+        PreludeSource::Function,
+        r#"fn key_set_add(keys: &KeySet, key: &[u8], amount: u64) -> result: unit reads(key), writes(keys) contract {
+  ensures keys^.len >= entry(keys)^.len;
+  ensures keys^.len <= entry(keys)^.len + 1_u64;
+};
+"#,
+    ),
+    (
+        "prelude/key_set_payload.wf",
+        PreludeSource::Function,
+        r#"fn key_set_payload(keys: &KeySet, index: u64) -> payload: u64 reads(keys) contract {
+  requires index < keys^.len;
+};
 "#,
     ),
     (
@@ -380,27 +418,30 @@ mod tests {
         let SemanticOutcome::Complete(checked) = checked else {
             panic!("ordinary declaration and owned transfer: {checked:?}");
         };
-        let signatures = checked
+        let mut signatures = checked
             .data
             .executable_functions()
             .filter(|function| function.body.is_none())
-            .count();
+            .map(|function| function.name.as_str())
+            .collect::<Vec<_>>();
+        signatures.sort_unstable();
         // [PRE-1] keeps no host record: the host signatures are the standard
-        // library's [PRE-2], which this unit names none of. The twenty-two
-        // compiler-owned rows — the nine construction functions [OP-13], the
-        // nine window operations [OP-10], `swap` [OP-11], `free_empty`
-        // [OP-14], `shared_new` and `shared_share` [SHARE-1] — are every one
-        // of them generic, so [FN-2] gives them a
-        // ordinary checked function only per concrete instance and this unit, which
-        // calls none of them, has no instance of any.
-        assert_eq!(signatures, 0);
+        // library's [PRE-2], which this unit names none of. Of the
+        // compiler-owned rows only the key set's four functions [SHARE-1]
+        // take no type parameter, so each is one ordinary checked function;
+        // every other row is generic, and [FN-2] gives it a checked function
+        // only per concrete instance, of which this unit, calling none of
+        // them, has none.
+        let ungeneric = ["key_set_add", "key_set_new", "key_set_payload", "key_set_put"];
+        assert_eq!(signatures, ungeneric);
         for row in crate::lowering::COMPILER_OWNED_PRELUDE_ROWS {
-            assert!(
-                !checked
+            assert_eq!(
+                checked
                     .data
                     .executable_functions()
                     .any(|function| function.name == row),
-                "{row} is generic and this unit instantiates it nowhere"
+                ungeneric.contains(&row),
+                "{row} is generic and this unit instantiates it nowhere, or takes no type parameter"
             );
         }
         assert!(

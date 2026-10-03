@@ -91,13 +91,16 @@ impl Checker<'_, '_> {
                 }
                 CheckedStatement::Atomic {
                     target,
-                    key,
+                    entries,
                     guard,
                     body,
                     ..
                 } => {
                     Checker::install_expression_allocation_bounds(target, bounds)?;
-                    if let Some(key) = key {
+                    for key in entries
+                        .iter_mut()
+                        .flat_map(crate::semantic::CheckedEntryBinding::expressions_mut)
+                    {
                         Checker::install_expression_allocation_bounds(key, bounds)?;
                     }
                     if let Some(guard) = guard {

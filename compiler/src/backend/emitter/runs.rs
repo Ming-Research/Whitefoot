@@ -196,6 +196,47 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         {
             return Err(BackendFailure::InvalidIr);
         }
+        // [MSR-1] a key set's count is its first word, held in a value or in
+        // its place; the entries an entry binding names keep the set's count
+        // in their record's third word [SHARE-2].
+        match self.value_type(container) {
+            Some(IrType::KeySet) if measure == IrMeasure::Length => {
+                return writeln!(
+                    self.output,
+                    "  {} = extractvalue {{ i64, ptr }} {}, 0",
+                    self.value_name(result),
+                    self.value_name(container)
+                )
+                .map_err(|_| BackendFailure::TextEmission);
+            }
+            Some(IrType::Address(IrAddressed::KeySet)) if measure == IrMeasure::Length => {
+                return writeln!(
+                    self.output,
+                    "  {} = load i64, ptr {}",
+                    self.value_name(result),
+                    self.value_name(container)
+                )
+                .map_err(|_| BackendFailure::TextEmission);
+            }
+            Some(IrType::Address(IrAddressed::KeyedEntries { .. }))
+                if measure == IrMeasure::Length =>
+            {
+                let count = self.next_temporary()?;
+                return writeln!(
+                    self.output,
+                    "  %{count} = getelementptr inbounds i8, ptr {}, i64 16
+  {} = load i64, ptr %{count}",
+                    self.value_name(container),
+                    self.value_name(result)
+                )
+                .map_err(|_| BackendFailure::TextEmission);
+            }
+            Some(
+                IrType::KeySet
+                | IrType::Address(IrAddressed::KeySet | IrAddressed::KeyedEntries { .. }),
+            ) => return Err(BackendFailure::InvalidIr),
+            _ => {}
+        }
         let container_type = self.run_value_type(container)?;
         // A runtime-capacity `Array<T>` has no window at all: every slot
         // holds a value, so the one stored count is its `len`, and x1's

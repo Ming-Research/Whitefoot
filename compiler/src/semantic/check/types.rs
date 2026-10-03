@@ -433,6 +433,8 @@ impl<'unit> Checker<'_, 'unit> {
             crate::ContainerShape::Slots => "Slots<T, N> or Slots<T>",
             crate::ContainerShape::Ring => "Ring<T, N> or Ring<T>",
             crate::ContainerShape::Segments => "Segments<T>",
+            crate::ContainerShape::KeySet => "KeySet with no type argument",
+            crate::ContainerShape::KeyedEntries => "KeyedEntries<V> with one value type",
             crate::ContainerShape::Box => "Box<T> with one referent type",
         };
         let mismatch = |found: &str| -> Result<CheckedType, CheckStop> {
@@ -446,7 +448,9 @@ impl<'unit> Checker<'_, 'unit> {
         // a runtime-capacity shape or `Segments`, which is the type half of what that
         // declaration withdraws; the call half is judged at the `call`.
         if self.types.declarations.no_heap
-            && (shape == crate::ContainerShape::Box || arguments.len() == 1)
+            && (shape == crate::ContainerShape::Box
+                || shape == crate::ContainerShape::KeySet
+                || arguments.len() == 1)
             && !self.types.declarations.tree.is_prelude_node(node)?
         {
             return self.types.declarations.issue_node(
@@ -457,6 +461,36 @@ impl<'unit> Checker<'_, 'unit> {
                     mechanical_fix: STOR8_NO_HEAP,
                 },
             );
+        }
+        // [SHARE-1] a key set takes no type argument.
+        if shape == crate::ContainerShape::KeySet {
+            if !arguments.is_empty() {
+                return mismatch("a KeySet type-argument list");
+            }
+            return Ok(CheckedType::KeySet);
+        }
+        // [SHARE-2] the entries an entry binding names over a key set: one
+        // prelude `Option<V>` place per key.
+        if shape == crate::ContainerShape::KeyedEntries {
+            let [value] = arguments.as_slice() else {
+                return mismatch("a KeyedEntries type-argument list of a different length");
+            };
+            let Some(value_node) = self
+                .types
+                .declarations
+                .tree
+                .first_child_with(*value, Production::Type)?
+            else {
+                return mismatch("a const argument in the KeyedEntries value position");
+            };
+            let value = self.parse_type_with(check_context, value_node, substitution)?;
+            let entry = CheckedType::Nominal(
+                self.types
+                    .intern_prelude_nominal(PreludeType::Option(value))?,
+            );
+            return Ok(CheckedType::KeyedEntries {
+                element: self.types.intern_element(entry)?,
+            });
         }
         if shape == crate::ContainerShape::Box {
             let [referent] = arguments.as_slice() else {
@@ -564,9 +598,12 @@ impl<'unit> Checker<'_, 'unit> {
             (crate::ContainerShape::Segments, Some(_)) => {
                 mismatch("a capacity argument, which Segments<T> does not take")
             }
-            (crate::ContainerShape::Box, _) => {
-                Err(SemanticCompilerFailure::InvalidResolution.into())
-            }
+            (
+                crate::ContainerShape::Box
+                | crate::ContainerShape::KeySet
+                | crate::ContainerShape::KeyedEntries,
+                _,
+            ) => Err(SemanticCompilerFailure::InvalidResolution.into()),
         }
     }
 
@@ -1482,7 +1519,9 @@ impl<'unit> TypeContext<'unit> {
                 | CheckedType::GenericFloat(_)
                 | CheckedType::Window { .. }
                 | CheckedType::Buffer { .. }
-                | CheckedType::Segments { .. } => return Ok(false),
+                | CheckedType::Segments { .. }
+                | CheckedType::KeySet
+                | CheckedType::KeyedEntries { .. } => return Ok(false),
             }
         }
         Ok(true)

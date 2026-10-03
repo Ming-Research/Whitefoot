@@ -58,7 +58,6 @@ const CANONICAL_LIMITS: CanonicalLimits = CanonicalLimits {
     max_path_components: 8_192,
 };
 
-mod held_keys;
 
 /// An ordinary function selected by executable fixtures.
 const PLAIN_ENTRY: &str = "fn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n";
@@ -718,8 +717,15 @@ fn main() -> status: std::process::ExitStatus pure {
                 .iter()
                 .filter(|variant| variant.source == function.id)
                 .count();
+            // A compiler-owned [PRE-1] record is emitted where a call reaches
+            // it: a generic one's instance exists only where called, and the
+            // key set's four, which take no type parameter, are not called
+            // here.
+            let record = function.body.is_none()
+                && crate::lowering::COMPILER_OWNED_PRELUDE_ROWS.contains(&function.name.as_str());
+            let expected = usize::from(!record || !function.name.starts_with("key_set_"));
             assert_eq!(
-                variants, 1,
+                variants, expected,
                 "{}: one heap leaves one release environment, and every ordinary \
                  definition is still emitted",
                 function.name
@@ -739,7 +745,16 @@ fn main() -> status: std::process::ExitStatus pure {
                 .iter()
                 .map(|variant| variant.source)
                 .collect::<Vec<_>>(),
-            checked.data.executable_functions,
+            checked
+                .data
+                .executable_functions
+                .iter()
+                .copied()
+                .filter(|source| {
+                    let function = &checked.data.functions[source.0 as usize];
+                    function.body.is_some() || !function.name.starts_with("key_set_")
+                })
+                .collect::<Vec<_>>(),
             "physical order follows ordinary discovery order"
         );
     });

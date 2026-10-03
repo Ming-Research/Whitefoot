@@ -87,7 +87,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             // An inline window's storage lives in its owner, so a reference
             // to one addresses that storage [TYPE-9, REF-1].
             | IrAddressed::Array { .. }
-            | IrAddressed::Window { .. } => true,
+            | IrAddressed::Window { .. }
+            | IrAddressed::KeySet
+            | IrAddressed::KeyedEntries { .. } => true,
         })
     }
 

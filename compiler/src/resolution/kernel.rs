@@ -65,15 +65,25 @@ pub enum ContainerShape {
     /// `Segments<T>`: a run of segments of T whose boundaries are fixed at
     /// construction; it exists only as `Box` content [TYPE-9].
     Segments,
+    /// `KeySet`: distinct byte-string keys in increasing lexicographic order,
+    /// each with a payload, whose one measure is its bounded `len`
+    /// [SHARE-1, MSR-1].
+    KeySet,
+    /// `KeyedEntries<V>`: the entries of a keyed table an entry binding names
+    /// over a key set, one `Option<V>` place per key, reached only as that
+    /// binding's referent [SHARE-2, OP-4].
+    KeyedEntries,
     /// `Box<T>`: one heap object of any nameable T, carrying no brand and no
     /// measure at all, a cell being never empty [TYPE-9]. Its declaration is
     /// the prelude's opaque struct [TYPE-2, PRE-1], not a row below.
     Box,
 }
 
-/// The four storage nominals, in [TYPE-9] order. The cell is not one of them:
-/// it is declared by [PRE-1] and read through [`CELL_NOMINAL`].
-pub const CONTAINER_NOMINALS: [ContainerNominal; 4] = [
+/// The four storage nominals, in [TYPE-9] order, then the key set and the
+/// keyed entries [SHARE-1, SHARE-2], the two measured types [MSR-1] that are
+/// not storage shapes. The cell is not one of them: it is declared by [PRE-1]
+/// and read through [`CELL_NOMINAL`].
+pub const CONTAINER_NOMINALS: [ContainerNominal; 6] = [
     ContainerNominal {
         spelling: "Array",
         shape: ContainerShape::Array,
@@ -89,6 +99,14 @@ pub const CONTAINER_NOMINALS: [ContainerNominal; 4] = [
     ContainerNominal {
         spelling: "Segments",
         shape: ContainerShape::Segments,
+    },
+    ContainerNominal {
+        spelling: "KeySet",
+        shape: ContainerShape::KeySet,
+    },
+    ContainerNominal {
+        spelling: "KeyedEntries",
+        shape: ContainerShape::KeyedEntries,
     },
 ];
 
@@ -193,14 +211,31 @@ mod tests {
             .split_once("\n\n")
             .expect("exact TYPE-9 body")
             .0;
-        for nominal in CONTAINER_NOMINALS {
+        let (shapes, measured) = CONTAINER_NOMINALS.split_at(4);
+        for nominal in shapes {
             assert!(
                 body.contains(&format!("`{}<", nominal.spelling)),
                 "TYPE-9 does not name {}",
                 nominal.spelling
             );
         }
-        assert_eq!(CONTAINER_NOMINALS.len(), 4);
+        // [SHARE-1, PRE-1] the key set and the keyed entries are the two
+        // measured types that are not storage shapes, declared by the prelude
+        // beside the keyed table.
+        for nominal in measured {
+            assert!(
+                crate::ACTIVE_KERNEL_SPEC_TEXT
+                    .contains(&format!("opaque nocopy struct {}", nominal.spelling)),
+                "PRE-1 does not declare {}",
+                nominal.spelling
+            );
+            assert!(
+                !body.contains(&format!("`{}", nominal.spelling)),
+                "TYPE-9 names {}, which is no storage shape",
+                nominal.spelling
+            );
+        }
+        assert_eq!(measured.len(), 2);
     }
 
     /// [TYPE-2, PRE-1]: the cell is declared by the prelude, so it takes no

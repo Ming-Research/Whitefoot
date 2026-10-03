@@ -2411,16 +2411,16 @@ fn keyed_table_count<V: drop>(table: &KeyedTable<V>) -> count: u64 reads(table);
 fn key_set_new(capacity: u64) -> result: KeySet pure contract {
   ensures result.len == 0_u64;
 };
-fn key_set_put(set: &KeySet, key: &[u8], payload: u64) -> result: unit writes(set), reads(key) contract {
-  ensures set^.len >= entry(set)^.len;
-  ensures set^.len <= entry(set)^.len + 1_u64;
+fn key_set_put(keys: &KeySet, key: &[u8], payload: u64) -> result: unit reads(key), writes(keys) contract {
+  ensures keys^.len >= entry(keys)^.len;
+  ensures keys^.len <= entry(keys)^.len + 1_u64;
 };
-fn key_set_add(set: &KeySet, key: &[u8], amount: u64) -> result: unit writes(set), reads(key) contract {
-  ensures set^.len >= entry(set)^.len;
-  ensures set^.len <= entry(set)^.len + 1_u64;
+fn key_set_add(keys: &KeySet, key: &[u8], amount: u64) -> result: unit reads(key), writes(keys) contract {
+  ensures keys^.len >= entry(keys)^.len;
+  ensures keys^.len <= entry(keys)^.len + 1_u64;
 };
-fn key_set_payload(set: &KeySet, index: u64) -> payload: u64 reads(set) contract {
-  requires index < set^.len;
+fn key_set_payload(keys: &KeySet, index: u64) -> payload: u64 reads(keys) contract {
+  requires index < keys^.len;
 };
 fn free_empty<W>(window: W) -> result: unit pure contract {
   requires window.len == 0_u64;

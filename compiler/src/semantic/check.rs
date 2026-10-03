@@ -617,28 +617,15 @@ struct BodyChecker {
     /// Every retry starts fresh; only its complete final walk is published.
     reference_origins: Vec<Vec<ResolvedPlace>>,
     /// [SHARE-2] how many atomic statements enclose the construct being
-    /// checked: inside one, a waiting call is refused.
+    /// checked: inside one, a waiting call or another atomic statement is
+    /// refused.
     atomic_depth: u32,
-    /// [SHARE-2] what each enclosing atomic statement holds, innermost last,
-    /// which decides the atomic statements its block may contain.
-    atomic_holds: Vec<AtomicHold>,
     /// [RANGE-1] the range clauses of the function being checked, published
     /// with its finished body. Every retry starts empty.
     range_facts: super::range_facts::CheckedRangeFacts,
     /// [RANGE-1, RANGE-4] the range facts that state nothing at this
     /// concrete instance, which a certificate's `use` of them skips.
     unformed_range_facts: HashSet<DeclarationId>,
-}
-
-/// [SHARE-2] what an enclosing atomic statement holds.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum AtomicHold {
-    /// An object's state.
-    Object,
-    /// A map's state, named by this binder.
-    Map(BindingId),
-    /// One entry of a map.
-    Entry,
 }
 
 /// Program-wide judgments and reuse records, published after checking succeeds.
@@ -2424,13 +2411,16 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 }
                 CheckedStatement::Atomic {
                     target,
-                    key,
+                    entries,
                     guard,
                     body,
                     ..
                 } => {
                     self.install_expression_call_requirements(check_context, target, requirements)?;
-                    if let Some(key) = key {
+                    for key in entries
+                        .iter_mut()
+                        .flat_map(crate::semantic::CheckedEntryBinding::expressions_mut)
+                    {
                         self.install_expression_call_requirements(
                             check_context,
                             key,
@@ -2988,13 +2978,22 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     .map(|capacity| self.types.instantiate_goal_const(capacity, signature))
                     .transpose()?,
             },
+            CheckedType::KeyedEntries { element } => CheckedType::KeyedEntries {
+                element: self.instantiate_goal_element(
+                    check_context,
+                    element,
+                    signature,
+                    regions,
+                )?,
+            },
             CheckedType::Nominal(id) => {
                 self.instantiate_goal_nominal(check_context, id, signature, regions)?
             }
             CheckedType::Unit
             | CheckedType::Bool
             | CheckedType::Integer(_)
-            | CheckedType::Float(_) => ty,
+            | CheckedType::Float(_)
+            | CheckedType::KeySet => ty,
         })
     }
 

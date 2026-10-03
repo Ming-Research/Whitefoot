@@ -1396,9 +1396,9 @@ impl<'unit> Checker<'_, 'unit> {
             // [OP-4] each suffix selects the complete element type of its
             // already-typed base. Array storage can be nested in a run slot.
             let element_type = match ty {
-                CheckedType::Array { element, .. } | CheckedType::Window { element, .. } => {
-                    self.types.element_type(element)?
-                }
+                CheckedType::Array { element, .. }
+                | CheckedType::Window { element, .. }
+                | CheckedType::KeyedEntries { element } => self.types.element_type(element)?,
                 CheckedType::Buffer { element } => self.types.element_type(element)?,
                 _ => {
                     return self.types.declarations.issue_node(
@@ -1648,8 +1648,11 @@ impl<'unit> Checker<'_, 'unit> {
             }
             // [OP-4] the indexable bases, reached through `^` exactly as
             // an inline one is: a run is one measured place wherever it is
-            // reached from [MSR-1].
-            CheckedType::Array { .. } | CheckedType::Window { .. } => {
+            // reached from [MSR-1]. The `KeyedEntries` an entry binding names
+            // is reached only so [SHARE-2].
+            CheckedType::Array { .. }
+            | CheckedType::Window { .. }
+            | CheckedType::KeyedEntries { .. } => {
                 Ok(CheckedIndexedPlace::Container(CheckedContainerPlace {
                     root: CheckedContainerRoot {
                         root: PlaceRoot::Binding(binding),
@@ -1901,8 +1904,11 @@ impl<'unit> Checker<'_, 'unit> {
                 )
             }
             // [MSR-1] gives each storage shape a measure-table row and [OP-4]
-            // makes it an indexable base.
-            CheckedType::Array { .. } | CheckedType::Window { .. } => {
+            // makes it an indexable base, as it does the `KeyedEntries` an
+            // entry binding names [SHARE-2].
+            CheckedType::Array { .. }
+            | CheckedType::Window { .. }
+            | CheckedType::KeyedEntries { .. } => {
                 let (Some(binding), Some(declaration)) = (binding, declaration) else {
                     return Err(SemanticCompilerFailure::InvalidResolution.into());
                 };
@@ -2010,6 +2016,12 @@ impl<'unit> TypeContext<'unit> {
             // A `Segments<T>` is reached only as `Box` content, whose cell is
             // one pointer; this row sizes the content as a runtime array is.
             CheckedType::Segments { .. } => finish(CheckedLayoutMagnitude::Finite(16), 8),
+            // A `KeySet` is its count and a pointer to the runtime's store
+            // [SHARE-1]; the `KeyedEntries` an entry binding names is the
+            // statement's record of the hold, the position of the set's first
+            // key in it and the set's count, and is never stored elsewhere.
+            CheckedType::KeySet => finish(CheckedLayoutMagnitude::Finite(16), 8),
+            CheckedType::KeyedEntries { .. } => finish(CheckedLayoutMagnitude::Finite(24), 8),
             // [OP-9] a constant-capacity `Slots<T, N>` repeats T's pair N
             // times and then applies the sequence rule to that block followed
             // by one `(8,8)` word, its length; a `Ring<T, N>` follows it with
