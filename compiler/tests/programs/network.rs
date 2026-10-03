@@ -2607,8 +2607,9 @@ fn firn_listens_again_on_its_port_after_a_restart() {
 /// until a password is set again, since it has not authenticated, as Redis's
 /// flag of authentication has it; AUTH as the user default while no password
 /// is set authenticates it, so that a password set afterwards leaves it in.
-/// The expected bytes are redis-server 7.0.15's with the same password, the
-/// connection's id aside.
+/// A connection accepted while no password is set has authenticated too, and
+/// stays in once it sets one. The expected bytes are redis-server 7.0.15's
+/// with the same password, the connection's id aside.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_requires_its_password_as_redis_does() {
@@ -2766,6 +2767,16 @@ fn firn_requires_its_password_as_redis_does() {
         &mut fresh,
         b"+PONG\r\n",
         "a new connection with no password",
+    );
+    let mut batch = resp(&["CONFIG", "SET", "requirepass", "last"]);
+    batch.extend(resp(&["PING"]));
+    fresh
+        .write_all(&batch)
+        .expect("set a password from a connection accepted with none");
+    expect_replies(
+        &mut fresh,
+        b"+OK\r\n+PONG\r\n",
+        "a connection accepted with no password, once one is set",
     );
     drop(fresh);
     let (status, _) = finished(child);
